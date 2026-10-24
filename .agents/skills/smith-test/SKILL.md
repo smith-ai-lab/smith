@@ -29,11 +29,15 @@ export void test_addition(void) {
 
 export void test_sorted_stays_sorted(random::Key key) { // a property test: runs on 100 keys
     arena::Arena a = test::memory(1 << 16); // this test's memory, given back before each key
-    usize count = (usize)random::uniform_int64_sample(random::key_derive(key, 0), (random::UniformInt64){.low = 0, .high = 100});
+    random::Key parts[2];
+    random::split(key, parts); // a key is used once: split it for each use
+    usize count = (usize)random::uniform_int64_sample(parts[0], (random::UniformInt64){.low = 0, .high = 100});
     test::note("count %zu", count); // printed under a failure
     usize items[:] = arena::push_slice(&a, usize, count);
-    for (usize i = 0; i < count; i++) {
-        items[i] = (usize)random::uniform_int64_sample(random::key_derive(key, i + 1), (random::UniformInt64){.low = 0, .high = 9});
+    random::Key item_keys[:] = arena::push_slice(&a, random::Key, count); // one key per item
+    random::split(parts[1], item_keys);
+    for (usize i = 0; i < countof(item_keys); i++) {
+        items[i] = (usize)random::uniform_int64_sample(item_keys[i], (random::UniformInt64){.low = 0, .high = 9});
     }
 }
 
@@ -45,7 +49,7 @@ export void test_writes_a_file(io::Io *io) { // a real io, in a scratch folder t
 ```
 
 - `<name>` is `[a-z0-9_]`, the parameter's name `[a-z_]`. The build finds the property test by the literal text `SmithKey`, `c::SmithKey` or `random::Key` (`<alias>::Key` for `import smith::random as <alias>;`), and the io test by `SmithIo *`, `c::SmithIo *` or `io::Io *` (`<alias>::Io` for `import smith::io as <alias>;`). A test written another way (`void test_x (void) {`, or on two lines) is a compile error: "no previous prototype". A helper is `static`. A test file imports the C headers it calls (`import <string.h>;` for `c::strcmp`): the header of `smith::test` carries none, so a `c::strcmp` that only worked because that header included `<string.h>` fails with `call to undeclared library function 'strcmp'` until the file imports it.
-- A property test draws everything from its key (derive one key per use) and is run on `--seeds` keys. The seed in a failure replays it exactly.
+- A property test draws everything from its key (split it: a key is used once) and is run on `--seeds` keys. The seed in a failure replays it exactly.
 - `test::memory(capacity)` is the test's memory (an `arena::Arena`), given back before each test and each key. `test::note(format, ...)` prints under a failure; each note replaces the last. `test::full()` is true when the run was given `--full`.
 
 Also in this family: [smith-test-modules](../smith-test-modules/SKILL.md), [smith-test-checks](../smith-test-checks/SKILL.md), [smith-test-workers](../smith-test-workers/SKILL.md), [smith-test-c](../smith-test-c/SKILL.md), [smith-build-tests](../smith-build-tests/SKILL.md).

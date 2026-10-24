@@ -25,9 +25,18 @@ static typeof(const char[:]) test_text(const char *string) {
     return text::make(string);
 }
 
+// The next key of a stream: `stream` moves on (the reassignment pattern) and the key returned is for one use.
+static random::Key take(random::Key *stream) {
+    random::Key next[2];
+    random::split_n(*stream, next, 2);
+    *stream = next[0];
+    return next[1];
+}
+
 static u64 test_text_draw_u64(random::Key key) {
-    u64 shift = random::key_bits(random::key_derive(key, 1), 0) % 64; // spreads values over every length
-    return random::key_bits(random::key_derive(key, 0), 0) >> shift;
+    random::Key *key_stream = &key;
+    u64 shift = random::key_bits(take(key_stream)) % 64; // spreads values over every length
+    return random::key_bits(take(key_stream)) >> shift;
 }
 
 static i64 test_text_uniform(random::Key key, i64 low, i64 high) {
@@ -101,11 +110,14 @@ export void test_text_is_compares_whole_words(void) {
 
 // A line of words is read back from what was written, for any words.
 export void test_text_words_round_trip(random::Key key) {
+    random::Key *key_stream = &key;
     char buffer[test_text_capacity];
     usize used = 0;
-    usize count = (usize)test_text_uniform(random::key_derive(key, 0), 0, 20);
+    usize count = (usize)test_text_uniform(take(key_stream), 0, 20);
+    u64 seeds[20]; // each value is drawn from a key made again from its seed, to check it is read back as written
     for (usize i = 0; i < count; i++) {
-        used += text::write_u64(buffer[used:test_text_capacity], test_text_draw_u64(random::key_derive(key, 100 + i)));
+        seeds[i] = random::key_bits(take(key_stream));
+        used += text::write_u64(buffer[used:test_text_capacity], test_text_draw_u64(random::key_make(seeds[i])));
         buffer[used++] = i % 2 == 0 ? ' ' : '\t';
     }
     const char line[:] = buffer[0:used];
@@ -114,7 +126,7 @@ export void test_text_words_round_trip(random::Key key) {
     while (text::take_word(&line, &word)) {
         u64 value = 0;
         test::check(text::parse_u64(word, &value));
-        test::check_equal(value, test_text_draw_u64(random::key_derive(key, 100 + seen)));
+        test::check_equal(value, test_text_draw_u64(random::key_make(seeds[seen])));
         seen += 1;
     }
     test::check_equal(seen, count);
@@ -151,7 +163,8 @@ export void test_text_write_stays_in_capacity(void) {
 }
 
 export void test_text_u64_round_trip(random::Key key) {
-    u64 value = test_text_draw_u64(key);
+    random::Key *key_stream = &key;
+    u64 value = test_text_draw_u64(take(key_stream));
     char out[text::number_capacity];
     usize count = text::write_u64(out, value);
     test::check_less_equal(count, text::number_capacity);
@@ -160,7 +173,7 @@ export void test_text_u64_round_trip(random::Key key) {
     test::check_equal(back, value);
     // Leading zeros change nothing, however many.
     char padded[test_text_capacity];
-    usize zeros = (usize)test_text_uniform(random::key_derive(key, 5), 0, 200);
+    usize zeros = (usize)test_text_uniform(take(key_stream), 0, 200);
     __builtin_memset(padded, '0', zeros);
     __builtin_memcpy(padded + zeros, out, count);
     u64 again = 0;
@@ -169,9 +182,10 @@ export void test_text_u64_round_trip(random::Key key) {
 }
 
 export void test_text_i64_round_trip(random::Key key) {
-    u64 bits = test_text_draw_u64(key);
+    random::Key *key_stream = &key;
+    u64 bits = test_text_draw_u64(take(key_stream));
     i64 value = (i64)bits;
-    if (random::key_bits(random::key_derive(key, 7), 0) % 2 == 1) value = (i64)(0 - bits); // both signs, all lengths
+    if (random::key_bits(take(key_stream)) % 2 == 1) value = (i64)(0 - bits); // both signs, all lengths
     char out[text::number_capacity];
     usize count = text::write_i64(out, value);
     test::check_less_equal(count, text::number_capacity);
@@ -179,7 +193,7 @@ export void test_text_i64_round_trip(random::Key key) {
     test::check(text::parse_i64(out[0:count], &back));
     test::check_equal(back, value);
     char padded[test_text_capacity];
-    usize zeros = (usize)test_text_uniform(random::key_derive(key, 5), 0, 200);
+    usize zeros = (usize)test_text_uniform(take(key_stream), 0, 200);
     usize sign = value < 0 ? 1 : 0;
     __builtin_memcpy(padded, out, sign);
     __builtin_memset(padded + sign, '0', zeros);
@@ -190,7 +204,8 @@ export void test_text_i64_round_trip(random::Key key) {
 }
 
 export void test_text_hex_round_trip(random::Key key) {
-    u64 value = test_text_draw_u64(key);
+    random::Key *key_stream = &key;
+    u64 value = test_text_draw_u64(take(key_stream));
     char out[16];
     test::check_equal(text::write_hex(out, value), 16);
     u64 back = 0;
@@ -199,7 +214,7 @@ export void test_text_hex_round_trip(random::Key key) {
     for (usize i = 0; i < 16; i++)
         test::check((out[i] >= '0' && out[i] <= '9') || (out[i] >= 'a' && out[i] <= 'f'));
     char padded[test_text_capacity];
-    usize zeros = (usize)test_text_uniform(random::key_derive(key, 5), 0, 200);
+    usize zeros = (usize)test_text_uniform(take(key_stream), 0, 200);
     __builtin_memset(padded, '0', zeros);
     __builtin_memcpy(padded + zeros, out, 16);
     u64 again = 0;
@@ -283,10 +298,11 @@ export void test_text_failed_parse_writes_nothing(void) {
 
 // One past the top of a type fails, and so does everything above it.
 export void test_text_overflow_fails(random::Key key) {
-    u64 value = test_text_draw_u64(key);
+    random::Key *key_stream = &key;
+    u64 value = test_text_draw_u64(take(key_stream));
     char out[text::number_capacity + 4];
     usize count = text::write_u64(out, value);
-    out[count++] = (char)('0' + test_text_uniform(random::key_derive(key, 3), 0, 9));
+    out[count++] = (char)('0' + test_text_uniform(take(key_stream), 0, 9));
     u64 result = 0;
     bool fits = text::parse_u64(out[0:count], &result);
     // The text of value followed by a digit is value * 10 + digit, which fits exactly when it does not wrap.
@@ -415,19 +431,19 @@ export void test_text_f32_overflow_edge(void) {
 
 // Random decimals: any digits, a point anywhere, an exponent that reaches subnormals and the overflow.
 static usize test_text_random_decimal(random::Key key, char *out) {
+    random::Key *stream = &key;
     usize used = 0;
-    if (random::bernoulli_sample(random::key_derive(key, 0), (random::Bernoulli){.probability = 0.3}))
-        out[used++] = '-';
-    usize digits = (usize)test_text_uniform(random::key_derive(key, 1), 1, 60);
-    usize point = (usize)test_text_uniform(random::key_derive(key, 2), 0, (i64)digits + 1);      // digits + 1: none
-    usize zero_from = (usize)test_text_uniform(random::key_derive(key, 3), 1, (i64)digits + 20); // zeros after
+    if (random::bernoulli_sample(take(stream), (random::Bernoulli){.probability = 0.3})) out[used++] = '-';
+    usize digits = (usize)test_text_uniform(take(stream), 1, 60);
+    usize point = (usize)test_text_uniform(take(stream), 0, (i64)digits + 1);      // digits + 1: none
+    usize zero_from = (usize)test_text_uniform(take(stream), 1, (i64)digits + 20); // zeros after
     for (usize i = 0; i < digits; i++) {
         if (i == point) out[used++] = '.';
-        char digit = (char)('0' + test_text_uniform(random::key_derive(key, 1000 + i), 0, 9));
+        char digit = (char)('0' + test_text_uniform(take(stream), 0, 9));
         out[used++] = i >= zero_from ? '0' : digit;
     }
-    if (random::bernoulli_sample(random::key_derive(key, 4), (random::Bernoulli){.probability = 0.7})) {
-        i64 exponent = test_text_uniform(random::key_derive(key, 5), -60, 50);
+    if (random::bernoulli_sample(take(stream), (random::Bernoulli){.probability = 0.7})) {
+        i64 exponent = test_text_uniform(take(stream), -60, 50);
         used += (usize)__builtin_snprintf(out + used, 16, "e%lld", (i64)exponent);
     }
     out[used] = '\0';
@@ -442,9 +458,10 @@ export void test_text_f32_matches_strtof_on_random_decimals(random::Key key) {
 
 // More digits than any f32 needs, and zeros between: the tail past the 128th digit still decides a tie.
 export void test_text_f32_long_digit_strings(random::Key key) {
+    random::Key *key_stream = &key;
     char decimal[test_text_capacity];
     usize used = 0;
-    u64 bits = random::key_bits(random::key_derive(key, 0), 0) % 0x7f7fffff; // a finite, nonnegative f32
+    u64 bits = random::key_bits(take(key_stream)) % 0x7f7fffff; // a finite, nonnegative f32
     f32 f = test_text_f32_of((u32)bits);
     used += (usize)__builtin_snprintf(decimal, 64, "%.9g", (f64)f);
     char *exponent = c::strchr(decimal, 'e');
@@ -454,11 +471,10 @@ export void test_text_f32_long_digit_strings(random::Key key) {
         used = (usize)(exponent - decimal);
     }
     if (c::strchr(decimal, '.') == nullptr) decimal[used++] = '.';
-    usize zeros = (usize)test_text_uniform(random::key_derive(key, 1), 0, 300);
+    usize zeros = (usize)test_text_uniform(take(key_stream), 0, 300);
     __builtin_memset(decimal + used, '0', zeros);
     used += zeros;
-    decimal[used++] =
-        random::bernoulli_sample(random::key_derive(key, 2), (random::Bernoulli){.probability = 0.5}) ? '1' : '0';
+    decimal[used++] = random::bernoulli_sample(take(key_stream), (random::Bernoulli){.probability = 0.5}) ? '1' : '0';
     __builtin_snprintf(decimal + used, 8, "%s", tail);
     test_text_check_f32(decimal);
 }
@@ -466,7 +482,8 @@ export void test_text_f32_long_digit_strings(random::Key key) {
 // Between two f32 values lies the point halfway; a string that is exactly it rounds to the even f32, one a hair above
 // it up, one a hair below it down. The hair is the neighbouring f64, and then a 1 after hundreds of zeros.
 export void test_text_f32_halfway(random::Key key) {
-    u32 low_bits = (u32)(random::key_bits(random::key_derive(key, 0), 0) % 0x7f7fffff);
+    random::Key *key_stream = &key;
+    u32 low_bits = (u32)(random::key_bits(take(key_stream)) % 0x7f7fffff);
     f32 low = test_text_f32_of(low_bits);
     f32 high = test_text_f32_of(low_bits + 1);
     f64 middle = ((f64)low + (f64)high) / 2; // exact: 25 bits
@@ -487,7 +504,7 @@ export void test_text_f32_halfway(random::Key key) {
         test::check_same_bits(test_text_f32(decimal), low);
         test_text_check_f32(decimal);
     }
-    usize zeros = (usize)test_text_uniform(random::key_derive(key, 1), 0, 300);
+    usize zeros = (usize)test_text_uniform(take(key_stream), 0, 300);
     __builtin_snprintf(decimal, sizeof decimal, "%.320f", middle);
     usize used = c::strlen(decimal);
     __builtin_memset(decimal + used, '0', zeros);
@@ -499,7 +516,8 @@ export void test_text_f32_halfway(random::Key key) {
 
 // What a program writes with %.9g reads back as the same f32, signs of zero included.
 export void test_text_f32_round_trips_nine_digits(random::Key key) {
-    u32 bits = (u32)random::key_bits(key, 0);
+    random::Key *key_stream = &key;
+    u32 bits = (u32)random::key_bits(take(key_stream));
     f32 f = test_text_f32_of(bits);
     if (f != f || f > f32_max || f < -f32_max) return; // infinity and nan have no decimal here
     char decimal[64];
@@ -623,21 +641,21 @@ export void test_text_f64_rejects(void) {
 
 // Random decimals: any digits, a point anywhere, an exponent that reaches subnormals and the overflow.
 static usize test_text_random_decimal_f64(random::Key key, char *out) {
+    random::Key *stream = &key;
     usize used = 0;
-    if (random::bernoulli_sample(random::key_derive(key, 0), (random::Bernoulli){.probability = 0.3}))
-        out[used++] = '-';
-    usize digits = (usize)test_text_uniform(random::key_derive(key, 1), 1, 40);
-    if (random::bernoulli_sample(random::key_derive(key, 6), (random::Bernoulli){.probability = 0.1}))
-        digits = (usize)test_text_uniform(random::key_derive(key, 7), 40, 400); // a long one
-    usize point = (usize)test_text_uniform(random::key_derive(key, 2), 0, (i64)digits + 1);
-    usize zero_from = (usize)test_text_uniform(random::key_derive(key, 3), 1, (i64)digits + 20);
+    if (random::bernoulli_sample(take(stream), (random::Bernoulli){.probability = 0.3})) out[used++] = '-';
+    usize digits = (usize)test_text_uniform(take(stream), 1, 40);
+    if (random::bernoulli_sample(take(stream), (random::Bernoulli){.probability = 0.1}))
+        digits = (usize)test_text_uniform(take(stream), 40, 400); // a long one
+    usize point = (usize)test_text_uniform(take(stream), 0, (i64)digits + 1);
+    usize zero_from = (usize)test_text_uniform(take(stream), 1, (i64)digits + 20);
     for (usize i = 0; i < digits; i++) {
         if (i == point) out[used++] = '.';
-        char digit = (char)('0' + test_text_uniform(random::key_derive(key, 1000 + i), 0, 9));
+        char digit = (char)('0' + test_text_uniform(take(stream), 0, 9));
         out[used++] = i >= zero_from ? '0' : digit;
     }
-    if (random::bernoulli_sample(random::key_derive(key, 4), (random::Bernoulli){.probability = 0.8})) {
-        i64 exponent = test_text_uniform(random::key_derive(key, 5), -340, 320);
+    if (random::bernoulli_sample(take(stream), (random::Bernoulli){.probability = 0.8})) {
+        i64 exponent = test_text_uniform(take(stream), -340, 320);
         used += (usize)__builtin_snprintf(out + used, 16, "e%lld", (i64)exponent);
     }
     out[used] = '\0';
@@ -652,9 +670,10 @@ export void test_text_f64_matches_strtod_on_random_decimals(random::Key key) {
 
 // Short decimals, which a multiply and a divide of exact doubles can answer: the fast path.
 export void test_text_f64_matches_strtod_on_short_decimals(random::Key key) {
+    random::Key *key_stream = &key;
     char decimal[64];
-    i64 mantissa = test_text_uniform(random::key_derive(key, 0), 0, 999999999999999);
-    i64 exponent = test_text_uniform(random::key_derive(key, 1), -30, 30);
+    i64 mantissa = test_text_uniform(take(key_stream), 0, 999999999999999);
+    i64 exponent = test_text_uniform(take(key_stream), -30, 30);
     __builtin_snprintf(decimal, sizeof decimal, "%lldE%lld", (i64)mantissa, (i64)exponent);
     test_text_check_f64(decimal);
 }
@@ -723,11 +742,12 @@ static void test_text_split_f64(u64 bits, u64 *m, i32 *exponent) {
 // Between two f64 values lies the point halfway; a string that is exactly it rounds to the even f64, one a hair above
 // it up, one a hair below it down. The expected answers are computed here, and strtod is checked against the same.
 export void test_text_f64_halfway(random::Key key) {
-    u64 low_bits = random::key_bits(random::key_derive(key, 0), 0) % 0x7fefffffffffffff; // finite, positive
+    random::Key *key_stream = &key;
+    u64 low_bits = random::key_bits(take(key_stream)) % 0x7fefffffffffffff; // finite, positive
     u64 m = 0;
     i32 exponent = 0;
     test_text_split_f64(low_bits, &m, &exponent);
-    usize zeros = (usize)test_text_uniform(random::key_derive(key, 1), 1, 300);
+    usize zeros = (usize)test_text_uniform(take(key_stream), 1, 300);
     char decimal[2800];
     test::note("low bits 0x%016llx", (u64)low_bits);
     u64 middle_winner = (low_bits & 1) == 0 ? low_bits : low_bits + 1;
@@ -760,11 +780,12 @@ export void test_text_f64_overflow_edge(void) {
 
 // More digits than the 800 the parser keeps, with a nonzero digit only at the very end: the tail still decides a tie.
 export void test_text_f64_long_digit_strings(random::Key key) {
-    u64 low_bits = random::key_bits(random::key_derive(key, 0), 0) % 0x7fefffffffffffff;
+    random::Key *key_stream = &key;
+    u64 low_bits = random::key_bits(take(key_stream)) % 0x7fefffffffffffff;
     u64 m = 0;
     i32 exponent = 0;
     test_text_split_f64(low_bits, &m, &exponent);
-    usize zeros = (usize)test_text_uniform(random::key_derive(key, 1), 700, 1500);
+    usize zeros = (usize)test_text_uniform(take(key_stream), 700, 1500);
     char decimal[2800];
     test::note("low bits 0x%016llx, %zu zeros", (u64)low_bits, zeros);
     test_text_halfway_decimal(m, exponent, zeros, 1, decimal); // the midpoint, a 1 at the end of `zeros` zeros
@@ -777,7 +798,8 @@ export void test_text_f64_long_digit_strings(random::Key key) {
 
 // What a program writes with %.17g reads back as the same f64, signs of zero included.
 export void test_text_f64_round_trips_seventeen_digits(random::Key key) {
-    u64 bits = random::key_bits(key, 0);
+    random::Key *key_stream = &key;
+    u64 bits = random::key_bits(take(key_stream));
     f64 d = test_text_f64_of(bits);
     if (d != d || d > f64_max || d < -f64_max) return;
     char decimal[64];
@@ -870,10 +892,10 @@ export void test_text_f64_write_known_values(void) {
 // Every f64 written reads back as the same bits, in the fewest digits: one digit fewer, correctly rounded, would
 // read back as another f64 (strtod and snprintf are the witnesses).
 export void test_text_f64_write_is_shortest_and_round_trips(random::Key key) {
-    u64 bits = random::key_bits(key, 0);
-    if (random::bernoulli_sample(random::key_derive(key, 1),
-                                 (random::Bernoulli){.probability = 0.5})) { // short decimals too
-        i64 thousandths = test_text_uniform(random::key_derive(key, 2), -100000, 100000);
+    random::Key *key_stream = &key;
+    u64 bits = random::key_bits(take(key_stream));
+    if (random::bernoulli_sample(take(key_stream), (random::Bernoulli){.probability = 0.5})) { // short decimals too
+        i64 thousandths = test_text_uniform(take(key_stream), -100000, 100000);
         bits = test_text_bits_of((f64)thousandths / 1000.0);
     }
     f64 d = test_text_f64_of(bits);
@@ -950,7 +972,8 @@ export void test_text_f32_write_known_values(void) {
 
 // Every f32 written reads back as the same bits, in the fewest digits (strtof and snprintf are the witnesses).
 export void test_text_f32_write_is_shortest_and_round_trips(random::Key key) {
-    u32 bits = (u32)random::key_bits(key, 0);
+    random::Key *key_stream = &key;
+    u32 bits = (u32)random::key_bits(take(key_stream));
     f32 value = __builtin_bit_cast(f32, bits);
     if (value != value || value > f32_max || value < -f32_max) return;
     char out[text::f32_capacity + 1];

@@ -1409,8 +1409,12 @@ void run_io(const Test *test, const Options *options, const Command *command) {
         run_key(test, options, command->seed);
     } else {
         random::Key root = random::key_make(seed_root);
-        for (u64 i = 0; i < options->seed_count; i++)
-            run_key(test, options, random::key_bits(root, i));
+        for (u64 i = 0; i < options->seed_count; i++) { // each case's key comes from the root, which moves on
+            random::Key next[2];
+            random::split_n(root, next, 2);
+            root = next[0];
+            run_key(test, options, random::key_bits(next[1]));
+        }
     }
     c::smith_trace_stop = 0;
 }

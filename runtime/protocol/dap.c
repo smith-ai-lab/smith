@@ -51,7 +51,8 @@ bool smith_dap_protocol_message_type_equal([[maybe_unused]] const SmithDapProtoc
 }
 
 void smith_dap_protocol_message_type_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapProtocolMessageType *out) {
-    size_t pick = smith_protocol_pick(smith_key_derive(key, 0), 4);
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t pick = smith_protocol_pick(smith_protocol_take(stream), 4);
     out->known = (SmithDapProtocolMessageTypeKnown)pick;
     out->text = pick < 3 ? smith_text_make(smith_dap_protocol_message_type_names[pick]) : smith_protocol_name(arena, pick);
 }
@@ -91,10 +92,11 @@ bool smith_dap_protocol_message_equal([[maybe_unused]] const SmithDapProtocolMes
 }
 
 void smith_dap_protocol_message_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapProtocolMessage *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapProtocolMessage){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_protocol_message_type_random(arena, smith_key_derive(key, 3), &out->type);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_protocol_message_type_random(arena, smith_protocol_take(stream), &out->type);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_request_known[] = {"seq", "type", "command", "arguments"};
@@ -148,14 +150,15 @@ bool smith_dap_request_equal([[maybe_unused]] const SmithDapRequest *a, [[maybe_
 }
 
 void smith_dap_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_arguments = true;
-        smith_protocol_any_random(arena, smith_key_derive(key, 7), &out->arguments);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &out->arguments);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_event_known[] = {"seq", "type", "event", "body"};
@@ -209,14 +212,15 @@ bool smith_dap_event_equal([[maybe_unused]] const SmithDapEvent *a, [[maybe_unus
 }
 
 void smith_dap_event_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapEvent *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapEvent){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->event);
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->event);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_body = true;
-        smith_protocol_any_random(arena, smith_key_derive(key, 7), &out->body);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &out->body);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_response_message_names[] = {"cancelled", "notStopped"};
@@ -242,7 +246,8 @@ bool smith_dap_response_message_equal([[maybe_unused]] const SmithDapResponseMes
 }
 
 void smith_dap_response_message_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapResponseMessage *out) {
-    size_t pick = smith_protocol_pick(smith_key_derive(key, 0), 3);
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t pick = smith_protocol_pick(smith_protocol_take(stream), 3);
     out->known = (SmithDapResponseMessageKnown)pick;
     out->text = pick < 2 ? smith_text_make(smith_dap_response_message_names[pick]) : smith_protocol_name(arena, pick);
 }
@@ -321,20 +326,21 @@ bool smith_dap_response_equal([[maybe_unused]] const SmithDapResponse *a, [[mayb
 }
 
 void smith_dap_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_body = true;
-        smith_protocol_any_random(arena, smith_key_derive(key, 13), &out->body);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &out->body);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_dap_string_map_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithDapStringMap *out, SmithProtocolError *error) {
@@ -371,12 +377,13 @@ bool smith_dap_string_map_equal([[maybe_unused]] const SmithDapStringMap *a, [[m
 }
 
 void smith_dap_string_map_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapStringMap *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     struct smith_array_const_char_n *keys = smith_protocol_block(arena, sizeof(struct smith_array_const_char_n), alignof(struct smith_array_const_char_n), count);
     struct smith_array_const_char_n *items = smith_protocol_block(arena, sizeof(struct smith_array_const_char_n), alignof(struct smith_array_const_char_n), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
         keys[i] = smith_protocol_name(arena, i);
-        smith_protocol_string_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->keys = keys;
     out->values = items;
@@ -473,30 +480,31 @@ bool smith_dap_message_equal([[maybe_unused]] const SmithDapMessage *a, [[maybe_
 }
 
 void smith_dap_message_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapMessage *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapMessage){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->id);
-    smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->format);
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->id);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->format);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_variables = true;
-        smith_dap_string_map_random(arena, smith_key_derive(key, 5), &out->variables);
+        smith_dap_string_map_random(arena, smith_protocol_take(stream), &out->variables);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_sendTelemetry = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->sendTelemetry);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->sendTelemetry);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_showUser = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 9), &out->showUser);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->showUser);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_url = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 11), &out->url);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->url);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_urlLabel = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 13), &out->urlLabel);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->urlLabel);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_error_response_body_known[] = {"error"};
@@ -533,12 +541,13 @@ bool smith_dap_error_response_body_equal([[maybe_unused]] const SmithDapErrorRes
 }
 
 void smith_dap_error_response_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapErrorResponseBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapErrorResponseBody){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_error = true;
-        smith_dap_message_random(arena, smith_key_derive(key, 1), &out->error);
+        smith_dap_message_random(arena, smith_protocol_take(stream), &out->error);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_error_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -610,17 +619,18 @@ bool smith_dap_error_response_equal([[maybe_unused]] const SmithDapErrorResponse
 }
 
 void smith_dap_error_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapErrorResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapErrorResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    smith_dap_error_response_body_random(arena, smith_key_derive(key, 13), &out->body);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_dap_error_response_body_random(arena, smith_protocol_take(stream), &out->body);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_cancel_arguments_known[] = {"requestId", "progressId"};
@@ -668,16 +678,17 @@ bool smith_dap_cancel_arguments_equal([[maybe_unused]] const SmithDapCancelArgum
 }
 
 void smith_dap_cancel_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapCancelArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapCancelArguments){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_requestId = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->requestId);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->requestId);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_progressId = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->progressId);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->progressId);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_cancel_request_known[] = {"seq", "type", "command", "arguments"};
@@ -730,13 +741,14 @@ bool smith_dap_cancel_request_equal([[maybe_unused]] const SmithDapCancelRequest
 }
 
 void smith_dap_cancel_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapCancelRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapCancelRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_arguments = true;
-        smith_dap_cancel_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
+        smith_dap_cancel_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_cancel_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -813,20 +825,21 @@ bool smith_dap_cancel_response_equal([[maybe_unused]] const SmithDapCancelRespon
 }
 
 void smith_dap_cancel_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapCancelResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapCancelResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_body = true;
-        smith_protocol_any_random(arena, smith_key_derive(key, 13), &out->body);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &out->body);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_initialized_event_known[] = {"seq", "type", "event", "body"};
@@ -879,13 +892,14 @@ bool smith_dap_initialized_event_equal([[maybe_unused]] const SmithDapInitialize
 }
 
 void smith_dap_initialized_event_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapInitializedEvent *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapInitializedEvent){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_body = true;
-        smith_protocol_any_random(arena, smith_key_derive(key, 7), &out->body);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &out->body);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_stopped_event_body_reason_names[] = {"step", "breakpoint", "exception", "pause", "entry", "goto", "function breakpoint", "data breakpoint", "instruction breakpoint"};
@@ -911,7 +925,8 @@ bool smith_dap_stopped_event_body_reason_equal([[maybe_unused]] const SmithDapSt
 }
 
 void smith_dap_stopped_event_body_reason_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapStoppedEventBodyReason *out) {
-    size_t pick = smith_protocol_pick(smith_key_derive(key, 0), 10);
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t pick = smith_protocol_pick(smith_protocol_take(stream), 10);
     out->known = (SmithDapStoppedEventBodyReasonKnown)pick;
     out->text = pick < 9 ? smith_text_make(smith_dap_stopped_event_body_reason_names[pick]) : smith_protocol_name(arena, pick);
 }
@@ -945,10 +960,11 @@ bool smith_dap_integer_list_equal([[maybe_unused]] const SmithDapIntegerList *a,
 }
 
 void smith_dap_integer_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapIntegerList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     int64_t *items = smith_protocol_block(arena, sizeof(int64_t), alignof(int64_t), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_protocol_integer_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -1049,33 +1065,34 @@ bool smith_dap_stopped_event_body_equal([[maybe_unused]] const SmithDapStoppedEv
 }
 
 void smith_dap_stopped_event_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapStoppedEventBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapStoppedEventBody){};
-    smith_dap_stopped_event_body_reason_random(arena, smith_key_derive(key, 1), &out->reason);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_dap_stopped_event_body_reason_random(arena, smith_protocol_take(stream), &out->reason);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_description = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->description);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->description);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_threadId = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->threadId);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->threadId);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_preserveFocusHint = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->preserveFocusHint);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->preserveFocusHint);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_text = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->text);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->text);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_allThreadsStopped = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 11), &out->allThreadsStopped);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->allThreadsStopped);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_hitBreakpointIds = true;
-        smith_dap_integer_list_random(arena, smith_key_derive(key, 13), &out->hitBreakpointIds);
+        smith_dap_integer_list_random(arena, smith_protocol_take(stream), &out->hitBreakpointIds);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_stopped_event_known[] = {"seq", "type", "event", "body"};
@@ -1123,10 +1140,11 @@ bool smith_dap_stopped_event_equal([[maybe_unused]] const SmithDapStoppedEvent *
 }
 
 void smith_dap_stopped_event_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapStoppedEvent *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapStoppedEvent){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_stopped_event_body_random(arena, smith_key_derive(key, 7), &out->body);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_stopped_event_body_random(arena, smith_protocol_take(stream), &out->body);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_continued_event_body_known[] = {"threadId", "allThreadsContinued"};
@@ -1169,13 +1187,14 @@ bool smith_dap_continued_event_body_equal([[maybe_unused]] const SmithDapContinu
 }
 
 void smith_dap_continued_event_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapContinuedEventBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapContinuedEventBody){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->threadId);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->threadId);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_allThreadsContinued = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 3), &out->allThreadsContinued);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->allThreadsContinued);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_continued_event_known[] = {"seq", "type", "event", "body"};
@@ -1223,10 +1242,11 @@ bool smith_dap_continued_event_equal([[maybe_unused]] const SmithDapContinuedEve
 }
 
 void smith_dap_continued_event_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapContinuedEvent *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapContinuedEvent){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_continued_event_body_random(arena, smith_key_derive(key, 7), &out->body);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_continued_event_body_random(arena, smith_protocol_take(stream), &out->body);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_exited_event_body_known[] = {"exitCode"};
@@ -1258,9 +1278,10 @@ bool smith_dap_exited_event_body_equal([[maybe_unused]] const SmithDapExitedEven
 }
 
 void smith_dap_exited_event_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapExitedEventBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapExitedEventBody){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->exitCode);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->exitCode);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_exited_event_known[] = {"seq", "type", "event", "body"};
@@ -1308,10 +1329,11 @@ bool smith_dap_exited_event_equal([[maybe_unused]] const SmithDapExitedEvent *a,
 }
 
 void smith_dap_exited_event_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapExitedEvent *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapExitedEvent){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_exited_event_body_random(arena, smith_key_derive(key, 7), &out->body);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_exited_event_body_random(arena, smith_protocol_take(stream), &out->body);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_terminated_event_body_known[] = {"restart"};
@@ -1348,12 +1370,13 @@ bool smith_dap_terminated_event_body_equal([[maybe_unused]] const SmithDapTermin
 }
 
 void smith_dap_terminated_event_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapTerminatedEventBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapTerminatedEventBody){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_restart = true;
-        smith_protocol_any_random(arena, smith_key_derive(key, 1), &out->restart);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &out->restart);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_terminated_event_known[] = {"seq", "type", "event", "body"};
@@ -1406,13 +1429,14 @@ bool smith_dap_terminated_event_equal([[maybe_unused]] const SmithDapTerminatedE
 }
 
 void smith_dap_terminated_event_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapTerminatedEvent *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapTerminatedEvent){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_body = true;
-        smith_dap_terminated_event_body_random(arena, smith_key_derive(key, 7), &out->body);
+        smith_dap_terminated_event_body_random(arena, smith_protocol_take(stream), &out->body);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_thread_event_body_reason_names[] = {"started", "exited"};
@@ -1438,7 +1462,8 @@ bool smith_dap_thread_event_body_reason_equal([[maybe_unused]] const SmithDapThr
 }
 
 void smith_dap_thread_event_body_reason_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapThreadEventBodyReason *out) {
-    size_t pick = smith_protocol_pick(smith_key_derive(key, 0), 3);
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t pick = smith_protocol_pick(smith_protocol_take(stream), 3);
     out->known = (SmithDapThreadEventBodyReasonKnown)pick;
     out->text = pick < 2 ? smith_text_make(smith_dap_thread_event_body_reason_names[pick]) : smith_protocol_name(arena, pick);
 }
@@ -1478,10 +1503,11 @@ bool smith_dap_thread_event_body_equal([[maybe_unused]] const SmithDapThreadEven
 }
 
 void smith_dap_thread_event_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapThreadEventBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapThreadEventBody){};
-    smith_dap_thread_event_body_reason_random(arena, smith_key_derive(key, 1), &out->reason);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 3), &out->threadId);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_dap_thread_event_body_reason_random(arena, smith_protocol_take(stream), &out->reason);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->threadId);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_thread_event_known[] = {"seq", "type", "event", "body"};
@@ -1529,10 +1555,11 @@ bool smith_dap_thread_event_equal([[maybe_unused]] const SmithDapThreadEvent *a,
 }
 
 void smith_dap_thread_event_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapThreadEvent *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapThreadEvent){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_thread_event_body_random(arena, smith_key_derive(key, 7), &out->body);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_thread_event_body_random(arena, smith_protocol_take(stream), &out->body);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_output_event_body_category_names[] = {"console", "important", "stdout", "stderr", "telemetry"};
@@ -1558,7 +1585,8 @@ bool smith_dap_output_event_body_category_equal([[maybe_unused]] const SmithDapO
 }
 
 void smith_dap_output_event_body_category_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapOutputEventBodyCategory *out) {
-    size_t pick = smith_protocol_pick(smith_key_derive(key, 0), 6);
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t pick = smith_protocol_pick(smith_protocol_take(stream), 6);
     out->known = (SmithDapOutputEventBodyCategoryKnown)pick;
     out->text = pick < 5 ? smith_text_make(smith_dap_output_event_body_category_names[pick]) : smith_protocol_name(arena, pick);
 }
@@ -1582,7 +1610,8 @@ bool smith_dap_output_event_body_group_equal([[maybe_unused]] const SmithDapOutp
 }
 
 void smith_dap_output_event_body_group_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapOutputEventBodyGroup *out) {
-    *out = (SmithDapOutputEventBodyGroup)smith_protocol_pick(key, 3);
+    [[maybe_unused]] SmithKey *stream = &key;
+    *out = (SmithDapOutputEventBodyGroup)smith_protocol_pick(smith_protocol_take(stream), 3);
 }
 
 static const char *const smith_dap_source_presentation_hint_names[] = {"normal", "emphasize", "deemphasize"};
@@ -1604,7 +1633,8 @@ bool smith_dap_source_presentation_hint_equal([[maybe_unused]] const SmithDapSou
 }
 
 void smith_dap_source_presentation_hint_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapSourcePresentationHint *out) {
-    *out = (SmithDapSourcePresentationHint)smith_protocol_pick(key, 3);
+    [[maybe_unused]] SmithKey *stream = &key;
+    *out = (SmithDapSourcePresentationHint)smith_protocol_pick(smith_protocol_take(stream), 3);
 }
 
 static const char *const smith_dap_checksum_algorithm_names[] = {"MD5", "SHA1", "SHA256", "timestamp"};
@@ -1626,7 +1656,8 @@ bool smith_dap_checksum_algorithm_equal([[maybe_unused]] const SmithDapChecksumA
 }
 
 void smith_dap_checksum_algorithm_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapChecksumAlgorithm *out) {
-    *out = (SmithDapChecksumAlgorithm)smith_protocol_pick(key, 4);
+    [[maybe_unused]] SmithKey *stream = &key;
+    *out = (SmithDapChecksumAlgorithm)smith_protocol_pick(smith_protocol_take(stream), 4);
 }
 
 static const char *const smith_dap_checksum_known[] = {"algorithm", "checksum"};
@@ -1664,10 +1695,11 @@ bool smith_dap_checksum_equal([[maybe_unused]] const SmithDapChecksum *a, [[mayb
 }
 
 void smith_dap_checksum_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapChecksum *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapChecksum){};
-    smith_dap_checksum_algorithm_random(arena, smith_key_derive(key, 1), &out->algorithm);
-    smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->checksum);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_dap_checksum_algorithm_random(arena, smith_protocol_take(stream), &out->algorithm);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->checksum);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_dap_checksum_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithDapChecksumList *out, SmithProtocolError *error) {
@@ -1699,10 +1731,11 @@ bool smith_dap_checksum_list_equal([[maybe_unused]] const SmithDapChecksumList *
 }
 
 void smith_dap_checksum_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapChecksumList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithDapChecksum *items = smith_protocol_block(arena, sizeof(SmithDapChecksum), alignof(SmithDapChecksum), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_dap_checksum_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_dap_checksum_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -1819,40 +1852,41 @@ bool smith_dap_source_equal([[maybe_unused]] const SmithDapSource *a, [[maybe_un
 }
 
 void smith_dap_source_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapSource *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapSource){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_name = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->name);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->name);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_path = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->path);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->path);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_sourceReference = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->sourceReference);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->sourceReference);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_presentationHint = true;
-        smith_dap_source_presentation_hint_random(arena, smith_key_derive(key, 7), &out->presentationHint);
+        smith_dap_source_presentation_hint_random(arena, smith_protocol_take(stream), &out->presentationHint);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_origin = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->origin);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->origin);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_sources = true;
-        smith_protocol_any_random(arena, smith_key_derive(key, 11), &out->sources);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &out->sources);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_adapterData = true;
-        smith_protocol_any_random(arena, smith_key_derive(key, 13), &out->adapterData);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &out->adapterData);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 14))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_checksums = true;
-        smith_dap_checksum_list_random(arena, smith_key_derive(key, 15), &out->checksums);
+        smith_dap_checksum_list_random(arena, smith_protocol_take(stream), &out->checksums);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 16), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_output_event_body_known[] = {"category", "output", "group", "variablesReference", "source", "line", "column", "data", "locationReference"};
@@ -1972,41 +2006,42 @@ bool smith_dap_output_event_body_equal([[maybe_unused]] const SmithDapOutputEven
 }
 
 void smith_dap_output_event_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapOutputEventBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapOutputEventBody){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_category = true;
-        smith_dap_output_event_body_category_random(arena, smith_key_derive(key, 1), &out->category);
+        smith_dap_output_event_body_category_random(arena, smith_protocol_take(stream), &out->category);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->output);
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->output);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_group = true;
-        smith_dap_output_event_body_group_random(arena, smith_key_derive(key, 5), &out->group);
+        smith_dap_output_event_body_group_random(arena, smith_protocol_take(stream), &out->group);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_variablesReference = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 7), &out->variablesReference);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->variablesReference);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_source = true;
-        smith_dap_source_random(arena, smith_key_derive(key, 9), &out->source);
+        smith_dap_source_random(arena, smith_protocol_take(stream), &out->source);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_line = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 11), &out->line);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->line);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_column = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 13), &out->column);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->column);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 14))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_data = true;
-        smith_protocol_any_random(arena, smith_key_derive(key, 15), &out->data);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &out->data);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 16))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_locationReference = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 17), &out->locationReference);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->locationReference);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 18), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_output_event_known[] = {"seq", "type", "event", "body"};
@@ -2054,10 +2089,11 @@ bool smith_dap_output_event_equal([[maybe_unused]] const SmithDapOutputEvent *a,
 }
 
 void smith_dap_output_event_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapOutputEvent *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapOutputEvent){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_output_event_body_random(arena, smith_key_derive(key, 7), &out->body);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_output_event_body_random(arena, smith_protocol_take(stream), &out->body);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_breakpoint_event_body_reason_names[] = {"changed", "new", "removed"};
@@ -2083,7 +2119,8 @@ bool smith_dap_breakpoint_event_body_reason_equal([[maybe_unused]] const SmithDa
 }
 
 void smith_dap_breakpoint_event_body_reason_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapBreakpointEventBodyReason *out) {
-    size_t pick = smith_protocol_pick(smith_key_derive(key, 0), 4);
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t pick = smith_protocol_pick(smith_protocol_take(stream), 4);
     out->known = (SmithDapBreakpointEventBodyReasonKnown)pick;
     out->text = pick < 3 ? smith_text_make(smith_dap_breakpoint_event_body_reason_names[pick]) : smith_protocol_name(arena, pick);
 }
@@ -2107,7 +2144,8 @@ bool smith_dap_breakpoint_reason_equal([[maybe_unused]] const SmithDapBreakpoint
 }
 
 void smith_dap_breakpoint_reason_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapBreakpointReason *out) {
-    *out = (SmithDapBreakpointReason)smith_protocol_pick(key, 2);
+    [[maybe_unused]] SmithKey *stream = &key;
+    *out = (SmithDapBreakpointReason)smith_protocol_pick(smith_protocol_take(stream), 2);
 }
 
 static const char *const smith_dap_breakpoint_known[] = {"id", "verified", "message", "source", "line", "column", "endLine", "endColumn", "instructionReference", "offset", "reason"};
@@ -2249,49 +2287,50 @@ bool smith_dap_breakpoint_equal([[maybe_unused]] const SmithDapBreakpoint *a, [[
 }
 
 void smith_dap_breakpoint_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapBreakpoint *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapBreakpoint){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_id = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->id);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->id);
     }
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 3), &out->verified);
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->verified);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->message);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->message);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_source = true;
-        smith_dap_source_random(arena, smith_key_derive(key, 7), &out->source);
+        smith_dap_source_random(arena, smith_protocol_take(stream), &out->source);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_line = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 9), &out->line);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->line);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_column = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 11), &out->column);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->column);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_endLine = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 13), &out->endLine);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->endLine);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 14))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_endColumn = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 15), &out->endColumn);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->endColumn);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 16))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_instructionReference = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 17), &out->instructionReference);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->instructionReference);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 18))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_offset = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 19), &out->offset);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->offset);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 20))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_reason = true;
-        smith_dap_breakpoint_reason_random(arena, smith_key_derive(key, 21), &out->reason);
+        smith_dap_breakpoint_reason_random(arena, smith_protocol_take(stream), &out->reason);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 22), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_breakpoint_event_body_known[] = {"reason", "breakpoint"};
@@ -2329,10 +2368,11 @@ bool smith_dap_breakpoint_event_body_equal([[maybe_unused]] const SmithDapBreakp
 }
 
 void smith_dap_breakpoint_event_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapBreakpointEventBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapBreakpointEventBody){};
-    smith_dap_breakpoint_event_body_reason_random(arena, smith_key_derive(key, 1), &out->reason);
-    smith_dap_breakpoint_random(arena, smith_key_derive(key, 3), &out->breakpoint);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_dap_breakpoint_event_body_reason_random(arena, smith_protocol_take(stream), &out->reason);
+    smith_dap_breakpoint_random(arena, smith_protocol_take(stream), &out->breakpoint);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_breakpoint_event_known[] = {"seq", "type", "event", "body"};
@@ -2380,10 +2420,11 @@ bool smith_dap_breakpoint_event_equal([[maybe_unused]] const SmithDapBreakpointE
 }
 
 void smith_dap_breakpoint_event_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapBreakpointEvent *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapBreakpointEvent){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_breakpoint_event_body_random(arena, smith_key_derive(key, 7), &out->body);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_breakpoint_event_body_random(arena, smith_protocol_take(stream), &out->body);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_module_event_body_reason_names[] = {"new", "changed", "removed"};
@@ -2405,7 +2446,8 @@ bool smith_dap_module_event_body_reason_equal([[maybe_unused]] const SmithDapMod
 }
 
 void smith_dap_module_event_body_reason_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapModuleEventBodyReason *out) {
-    *out = (SmithDapModuleEventBodyReason)smith_protocol_pick(key, 3);
+    [[maybe_unused]] SmithKey *stream = &key;
+    *out = (SmithDapModuleEventBodyReason)smith_protocol_pick(smith_protocol_take(stream), 3);
 }
 
 bool smith_dap_module_id_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithDapModuleId *out, SmithProtocolError *error) {
@@ -2445,14 +2487,15 @@ bool smith_dap_module_id_equal([[maybe_unused]] const SmithDapModuleId *a, [[may
 }
 
 void smith_dap_module_id_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapModuleId *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapModuleId){};
-    out->kind = (SmithDapModuleIdKind)smith_protocol_pick(smith_key_derive(key, 0), 2);
+    out->kind = (SmithDapModuleIdKind)smith_protocol_pick(smith_protocol_take(stream), 2);
     switch (out->kind) {
     case SmithDapModuleIdKind_Integer:
-        smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->as.integer);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->as.integer);
         break;
     case SmithDapModuleIdKind_String:
-        smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->as.string);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->as.string);
         break;
     }
 }
@@ -2580,42 +2623,43 @@ bool smith_dap_module_equal([[maybe_unused]] const SmithDapModule *a, [[maybe_un
 }
 
 void smith_dap_module_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapModule *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapModule){};
-    smith_dap_module_id_random(arena, smith_key_derive(key, 1), &out->id);
-    smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->name);
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    smith_dap_module_id_random(arena, smith_protocol_take(stream), &out->id);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->name);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_path = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->path);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->path);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_isOptimized = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->isOptimized);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->isOptimized);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_isUserCode = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 9), &out->isUserCode);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->isUserCode);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_version = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 11), &out->version);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->version);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_symbolStatus = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 13), &out->symbolStatus);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->symbolStatus);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 14))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_symbolFilePath = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 15), &out->symbolFilePath);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->symbolFilePath);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 16))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_dateTimeStamp = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 17), &out->dateTimeStamp);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->dateTimeStamp);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 18))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_addressRange = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 19), &out->addressRange);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->addressRange);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 20), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_module_event_body_known[] = {"reason", "module"};
@@ -2653,10 +2697,11 @@ bool smith_dap_module_event_body_equal([[maybe_unused]] const SmithDapModuleEven
 }
 
 void smith_dap_module_event_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapModuleEventBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapModuleEventBody){};
-    smith_dap_module_event_body_reason_random(arena, smith_key_derive(key, 1), &out->reason);
-    smith_dap_module_random(arena, smith_key_derive(key, 3), &out->module);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_dap_module_event_body_reason_random(arena, smith_protocol_take(stream), &out->reason);
+    smith_dap_module_random(arena, smith_protocol_take(stream), &out->module);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_module_event_known[] = {"seq", "type", "event", "body"};
@@ -2704,10 +2749,11 @@ bool smith_dap_module_event_equal([[maybe_unused]] const SmithDapModuleEvent *a,
 }
 
 void smith_dap_module_event_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapModuleEvent *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapModuleEvent){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_module_event_body_random(arena, smith_key_derive(key, 7), &out->body);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_module_event_body_random(arena, smith_protocol_take(stream), &out->body);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_loaded_source_event_body_known[] = {"reason", "source"};
@@ -2745,10 +2791,11 @@ bool smith_dap_loaded_source_event_body_equal([[maybe_unused]] const SmithDapLoa
 }
 
 void smith_dap_loaded_source_event_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapLoadedSourceEventBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapLoadedSourceEventBody){};
-    smith_dap_module_event_body_reason_random(arena, smith_key_derive(key, 1), &out->reason);
-    smith_dap_source_random(arena, smith_key_derive(key, 3), &out->source);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_dap_module_event_body_reason_random(arena, smith_protocol_take(stream), &out->reason);
+    smith_dap_source_random(arena, smith_protocol_take(stream), &out->source);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_loaded_source_event_known[] = {"seq", "type", "event", "body"};
@@ -2796,10 +2843,11 @@ bool smith_dap_loaded_source_event_equal([[maybe_unused]] const SmithDapLoadedSo
 }
 
 void smith_dap_loaded_source_event_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapLoadedSourceEvent *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapLoadedSourceEvent){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_loaded_source_event_body_random(arena, smith_key_derive(key, 7), &out->body);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_loaded_source_event_body_random(arena, smith_protocol_take(stream), &out->body);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_process_event_body_start_method_names[] = {"launch", "attach", "attachForSuspendedLaunch"};
@@ -2821,7 +2869,8 @@ bool smith_dap_process_event_body_start_method_equal([[maybe_unused]] const Smit
 }
 
 void smith_dap_process_event_body_start_method_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapProcessEventBodyStartMethod *out) {
-    *out = (SmithDapProcessEventBodyStartMethod)smith_protocol_pick(key, 3);
+    [[maybe_unused]] SmithKey *stream = &key;
+    *out = (SmithDapProcessEventBodyStartMethod)smith_protocol_pick(smith_protocol_take(stream), 3);
 }
 
 static const char *const smith_dap_process_event_body_known[] = {"name", "systemProcessId", "isLocalProcess", "startMethod", "pointerSize"};
@@ -2897,25 +2946,26 @@ bool smith_dap_process_event_body_equal([[maybe_unused]] const SmithDapProcessEv
 }
 
 void smith_dap_process_event_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapProcessEventBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapProcessEventBody){};
-    smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->name);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->name);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_systemProcessId = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 3), &out->systemProcessId);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->systemProcessId);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_isLocalProcess = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 5), &out->isLocalProcess);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->isLocalProcess);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_startMethod = true;
-        smith_dap_process_event_body_start_method_random(arena, smith_key_derive(key, 7), &out->startMethod);
+        smith_dap_process_event_body_start_method_random(arena, smith_protocol_take(stream), &out->startMethod);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_pointerSize = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 9), &out->pointerSize);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->pointerSize);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 10), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_process_event_known[] = {"seq", "type", "event", "body"};
@@ -2963,10 +3013,11 @@ bool smith_dap_process_event_equal([[maybe_unused]] const SmithDapProcessEvent *
 }
 
 void smith_dap_process_event_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapProcessEvent *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapProcessEvent){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_process_event_body_random(arena, smith_key_derive(key, 7), &out->body);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_process_event_body_random(arena, smith_protocol_take(stream), &out->body);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_exception_breakpoints_filter_known[] = {"filter", "label", "description", "default", "supportsCondition", "conditionDescription"};
@@ -3048,26 +3099,27 @@ bool smith_dap_exception_breakpoints_filter_equal([[maybe_unused]] const SmithDa
 }
 
 void smith_dap_exception_breakpoints_filter_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapExceptionBreakpointsFilter *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapExceptionBreakpointsFilter){};
-    smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->filter);
-    smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->label);
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->filter);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->label);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_description = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->description);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->description);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_default_ = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->default_);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->default_);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsCondition = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 9), &out->supportsCondition);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsCondition);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_conditionDescription = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 11), &out->conditionDescription);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->conditionDescription);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 12), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_dap_exception_breakpoints_filter_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithDapExceptionBreakpointsFilterList *out, SmithProtocolError *error) {
@@ -3099,10 +3151,11 @@ bool smith_dap_exception_breakpoints_filter_list_equal([[maybe_unused]] const Sm
 }
 
 void smith_dap_exception_breakpoints_filter_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapExceptionBreakpointsFilterList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithDapExceptionBreakpointsFilter *items = smith_protocol_block(arena, sizeof(SmithDapExceptionBreakpointsFilter), alignof(SmithDapExceptionBreakpointsFilter), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_dap_exception_breakpoints_filter_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_dap_exception_breakpoints_filter_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -3137,10 +3190,11 @@ bool smith_dap_string_list_equal([[maybe_unused]] const SmithDapStringList *a, [
 }
 
 void smith_dap_string_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapStringList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     struct smith_array_const_char_n *items = smith_protocol_block(arena, sizeof(struct smith_array_const_char_n), alignof(struct smith_array_const_char_n), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_protocol_string_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -3165,7 +3219,8 @@ bool smith_dap_column_descriptor_type_equal([[maybe_unused]] const SmithDapColum
 }
 
 void smith_dap_column_descriptor_type_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapColumnDescriptorType *out) {
-    *out = (SmithDapColumnDescriptorType)smith_protocol_pick(key, 4);
+    [[maybe_unused]] SmithKey *stream = &key;
+    *out = (SmithDapColumnDescriptorType)smith_protocol_pick(smith_protocol_take(stream), 4);
 }
 
 static const char *const smith_dap_column_descriptor_known[] = {"attributeName", "label", "format", "type", "width"};
@@ -3236,22 +3291,23 @@ bool smith_dap_column_descriptor_equal([[maybe_unused]] const SmithDapColumnDesc
 }
 
 void smith_dap_column_descriptor_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapColumnDescriptor *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapColumnDescriptor){};
-    smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->attributeName);
-    smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->label);
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->attributeName);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->label);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_format = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->format);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->format);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_type = true;
-        smith_dap_column_descriptor_type_random(arena, smith_key_derive(key, 7), &out->type);
+        smith_dap_column_descriptor_type_random(arena, smith_protocol_take(stream), &out->type);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_width = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 9), &out->width);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->width);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 10), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_dap_column_descriptor_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithDapColumnDescriptorList *out, SmithProtocolError *error) {
@@ -3283,10 +3339,11 @@ bool smith_dap_column_descriptor_list_equal([[maybe_unused]] const SmithDapColum
 }
 
 void smith_dap_column_descriptor_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapColumnDescriptorList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithDapColumnDescriptor *items = smith_protocol_block(arena, sizeof(SmithDapColumnDescriptor), alignof(SmithDapColumnDescriptor), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_dap_column_descriptor_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_dap_column_descriptor_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -3321,10 +3378,11 @@ bool smith_dap_checksum_algorithm_list_equal([[maybe_unused]] const SmithDapChec
 }
 
 void smith_dap_checksum_algorithm_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapChecksumAlgorithmList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithDapChecksumAlgorithm *items = smith_protocol_block(arena, sizeof(SmithDapChecksumAlgorithm), alignof(SmithDapChecksumAlgorithm), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_dap_checksum_algorithm_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_dap_checksum_algorithm_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -3353,7 +3411,8 @@ bool smith_dap_breakpoint_mode_applicability_equal([[maybe_unused]] const SmithD
 }
 
 void smith_dap_breakpoint_mode_applicability_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapBreakpointModeApplicability *out) {
-    size_t pick = smith_protocol_pick(smith_key_derive(key, 0), 5);
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t pick = smith_protocol_pick(smith_protocol_take(stream), 5);
     out->known = (SmithDapBreakpointModeApplicabilityKnown)pick;
     out->text = pick < 4 ? smith_text_make(smith_dap_breakpoint_mode_applicability_names[pick]) : smith_protocol_name(arena, pick);
 }
@@ -3387,10 +3446,11 @@ bool smith_dap_breakpoint_mode_applicability_list_equal([[maybe_unused]] const S
 }
 
 void smith_dap_breakpoint_mode_applicability_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapBreakpointModeApplicabilityList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithDapBreakpointModeApplicability *items = smith_protocol_block(arena, sizeof(SmithDapBreakpointModeApplicability), alignof(SmithDapBreakpointModeApplicability), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_dap_breakpoint_mode_applicability_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_dap_breakpoint_mode_applicability_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -3448,15 +3508,16 @@ bool smith_dap_breakpoint_mode_equal([[maybe_unused]] const SmithDapBreakpointMo
 }
 
 void smith_dap_breakpoint_mode_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapBreakpointMode *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapBreakpointMode){};
-    smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->mode);
-    smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->label);
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->mode);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->label);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_description = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->description);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->description);
     }
-    smith_dap_breakpoint_mode_applicability_list_random(arena, smith_key_derive(key, 7), &out->appliesTo);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_dap_breakpoint_mode_applicability_list_random(arena, smith_protocol_take(stream), &out->appliesTo);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_dap_breakpoint_mode_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithDapBreakpointModeList *out, SmithProtocolError *error) {
@@ -3488,10 +3549,11 @@ bool smith_dap_breakpoint_mode_list_equal([[maybe_unused]] const SmithDapBreakpo
 }
 
 void smith_dap_breakpoint_mode_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapBreakpointModeList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithDapBreakpointMode *items = smith_protocol_block(arena, sizeof(SmithDapBreakpointMode), alignof(SmithDapBreakpointMode), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_dap_breakpoint_mode_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_dap_breakpoint_mode_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -3982,176 +4044,177 @@ bool smith_dap_capabilities_equal([[maybe_unused]] const SmithDapCapabilities *a
 }
 
 void smith_dap_capabilities_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapCapabilities *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapCapabilities){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsConfigurationDoneRequest = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 1), &out->supportsConfigurationDoneRequest);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsConfigurationDoneRequest);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsFunctionBreakpoints = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 3), &out->supportsFunctionBreakpoints);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsFunctionBreakpoints);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsConditionalBreakpoints = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 5), &out->supportsConditionalBreakpoints);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsConditionalBreakpoints);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsHitConditionalBreakpoints = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->supportsHitConditionalBreakpoints);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsHitConditionalBreakpoints);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsEvaluateForHovers = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 9), &out->supportsEvaluateForHovers);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsEvaluateForHovers);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_exceptionBreakpointFilters = true;
-        smith_dap_exception_breakpoints_filter_list_random(arena, smith_key_derive(key, 11), &out->exceptionBreakpointFilters);
+        smith_dap_exception_breakpoints_filter_list_random(arena, smith_protocol_take(stream), &out->exceptionBreakpointFilters);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsStepBack = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 13), &out->supportsStepBack);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsStepBack);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 14))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsSetVariable = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 15), &out->supportsSetVariable);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsSetVariable);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 16))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsRestartFrame = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 17), &out->supportsRestartFrame);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsRestartFrame);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 18))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsGotoTargetsRequest = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 19), &out->supportsGotoTargetsRequest);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsGotoTargetsRequest);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 20))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsStepInTargetsRequest = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 21), &out->supportsStepInTargetsRequest);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsStepInTargetsRequest);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 22))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsCompletionsRequest = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 23), &out->supportsCompletionsRequest);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsCompletionsRequest);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 24))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_completionTriggerCharacters = true;
-        smith_dap_string_list_random(arena, smith_key_derive(key, 25), &out->completionTriggerCharacters);
+        smith_dap_string_list_random(arena, smith_protocol_take(stream), &out->completionTriggerCharacters);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 26))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsModulesRequest = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 27), &out->supportsModulesRequest);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsModulesRequest);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 28))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_additionalModuleColumns = true;
-        smith_dap_column_descriptor_list_random(arena, smith_key_derive(key, 29), &out->additionalModuleColumns);
+        smith_dap_column_descriptor_list_random(arena, smith_protocol_take(stream), &out->additionalModuleColumns);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 30))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportedChecksumAlgorithms = true;
-        smith_dap_checksum_algorithm_list_random(arena, smith_key_derive(key, 31), &out->supportedChecksumAlgorithms);
+        smith_dap_checksum_algorithm_list_random(arena, smith_protocol_take(stream), &out->supportedChecksumAlgorithms);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 32))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsRestartRequest = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 33), &out->supportsRestartRequest);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsRestartRequest);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 34))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsExceptionOptions = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 35), &out->supportsExceptionOptions);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsExceptionOptions);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 36))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsValueFormattingOptions = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 37), &out->supportsValueFormattingOptions);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsValueFormattingOptions);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 38))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsExceptionInfoRequest = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 39), &out->supportsExceptionInfoRequest);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsExceptionInfoRequest);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 40))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportTerminateDebuggee = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 41), &out->supportTerminateDebuggee);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportTerminateDebuggee);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 42))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportSuspendDebuggee = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 43), &out->supportSuspendDebuggee);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportSuspendDebuggee);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 44))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsDelayedStackTraceLoading = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 45), &out->supportsDelayedStackTraceLoading);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsDelayedStackTraceLoading);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 46))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsLoadedSourcesRequest = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 47), &out->supportsLoadedSourcesRequest);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsLoadedSourcesRequest);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 48))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsLogPoints = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 49), &out->supportsLogPoints);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsLogPoints);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 50))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsTerminateThreadsRequest = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 51), &out->supportsTerminateThreadsRequest);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsTerminateThreadsRequest);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 52))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsSetExpression = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 53), &out->supportsSetExpression);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsSetExpression);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 54))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsTerminateRequest = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 55), &out->supportsTerminateRequest);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsTerminateRequest);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 56))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsDataBreakpoints = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 57), &out->supportsDataBreakpoints);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsDataBreakpoints);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 58))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsReadMemoryRequest = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 59), &out->supportsReadMemoryRequest);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsReadMemoryRequest);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 60))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsWriteMemoryRequest = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 61), &out->supportsWriteMemoryRequest);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsWriteMemoryRequest);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 62))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsDisassembleRequest = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 63), &out->supportsDisassembleRequest);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsDisassembleRequest);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 64))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsCancelRequest = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 65), &out->supportsCancelRequest);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsCancelRequest);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 66))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsBreakpointLocationsRequest = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 67), &out->supportsBreakpointLocationsRequest);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsBreakpointLocationsRequest);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 68))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsClipboardContext = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 69), &out->supportsClipboardContext);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsClipboardContext);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 70))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsSteppingGranularity = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 71), &out->supportsSteppingGranularity);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsSteppingGranularity);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 72))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsInstructionBreakpoints = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 73), &out->supportsInstructionBreakpoints);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsInstructionBreakpoints);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 74))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsExceptionFilterOptions = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 75), &out->supportsExceptionFilterOptions);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsExceptionFilterOptions);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 76))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsSingleThreadExecutionRequests = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 77), &out->supportsSingleThreadExecutionRequests);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsSingleThreadExecutionRequests);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 78))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsDataBreakpointBytes = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 79), &out->supportsDataBreakpointBytes);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsDataBreakpointBytes);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 80))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_breakpointModes = true;
-        smith_dap_breakpoint_mode_list_random(arena, smith_key_derive(key, 81), &out->breakpointModes);
+        smith_dap_breakpoint_mode_list_random(arena, smith_protocol_take(stream), &out->breakpointModes);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 82))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsANSIStyling = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 83), &out->supportsANSIStyling);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsANSIStyling);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 84), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_capabilities_event_body_known[] = {"capabilities"};
@@ -4183,9 +4246,10 @@ bool smith_dap_capabilities_event_body_equal([[maybe_unused]] const SmithDapCapa
 }
 
 void smith_dap_capabilities_event_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapCapabilitiesEventBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapCapabilitiesEventBody){};
-    smith_dap_capabilities_random(arena, smith_key_derive(key, 1), &out->capabilities);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_dap_capabilities_random(arena, smith_protocol_take(stream), &out->capabilities);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_capabilities_event_known[] = {"seq", "type", "event", "body"};
@@ -4233,10 +4297,11 @@ bool smith_dap_capabilities_event_equal([[maybe_unused]] const SmithDapCapabilit
 }
 
 void smith_dap_capabilities_event_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapCapabilitiesEvent *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapCapabilitiesEvent){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_capabilities_event_body_random(arena, smith_key_derive(key, 7), &out->body);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_capabilities_event_body_random(arena, smith_protocol_take(stream), &out->body);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_progress_start_event_body_known[] = {"progressId", "title", "requestId", "cancellable", "message", "percentage"};
@@ -4318,26 +4383,27 @@ bool smith_dap_progress_start_event_body_equal([[maybe_unused]] const SmithDapPr
 }
 
 void smith_dap_progress_start_event_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapProgressStartEventBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapProgressStartEventBody){};
-    smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->progressId);
-    smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->title);
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->progressId);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->title);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_requestId = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->requestId);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->requestId);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_cancellable = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->cancellable);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->cancellable);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->message);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->message);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_percentage = true;
-        smith_protocol_number_random(arena, smith_key_derive(key, 11), &out->percentage);
+        smith_protocol_number_random(arena, smith_protocol_take(stream), &out->percentage);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 12), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_progress_start_event_known[] = {"seq", "type", "event", "body"};
@@ -4385,10 +4451,11 @@ bool smith_dap_progress_start_event_equal([[maybe_unused]] const SmithDapProgres
 }
 
 void smith_dap_progress_start_event_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapProgressStartEvent *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapProgressStartEvent){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_progress_start_event_body_random(arena, smith_key_derive(key, 7), &out->body);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_progress_start_event_body_random(arena, smith_protocol_take(stream), &out->body);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_progress_update_event_body_known[] = {"progressId", "message", "percentage"};
@@ -4442,17 +4509,18 @@ bool smith_dap_progress_update_event_body_equal([[maybe_unused]] const SmithDapP
 }
 
 void smith_dap_progress_update_event_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapProgressUpdateEventBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapProgressUpdateEventBody){};
-    smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->progressId);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->progressId);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->message);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->message);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_percentage = true;
-        smith_protocol_number_random(arena, smith_key_derive(key, 5), &out->percentage);
+        smith_protocol_number_random(arena, smith_protocol_take(stream), &out->percentage);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_progress_update_event_known[] = {"seq", "type", "event", "body"};
@@ -4500,10 +4568,11 @@ bool smith_dap_progress_update_event_equal([[maybe_unused]] const SmithDapProgre
 }
 
 void smith_dap_progress_update_event_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapProgressUpdateEvent *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapProgressUpdateEvent){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_progress_update_event_body_random(arena, smith_key_derive(key, 7), &out->body);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_progress_update_event_body_random(arena, smith_protocol_take(stream), &out->body);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_progress_end_event_body_known[] = {"progressId", "message"};
@@ -4546,13 +4615,14 @@ bool smith_dap_progress_end_event_body_equal([[maybe_unused]] const SmithDapProg
 }
 
 void smith_dap_progress_end_event_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapProgressEndEventBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapProgressEndEventBody){};
-    smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->progressId);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->progressId);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->message);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->message);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_progress_end_event_known[] = {"seq", "type", "event", "body"};
@@ -4600,10 +4670,11 @@ bool smith_dap_progress_end_event_equal([[maybe_unused]] const SmithDapProgressE
 }
 
 void smith_dap_progress_end_event_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapProgressEndEvent *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapProgressEndEvent){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_progress_end_event_body_random(arena, smith_key_derive(key, 7), &out->body);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_progress_end_event_body_random(arena, smith_protocol_take(stream), &out->body);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_invalidated_areas_names[] = {"all", "stacks", "threads", "variables"};
@@ -4629,7 +4700,8 @@ bool smith_dap_invalidated_areas_equal([[maybe_unused]] const SmithDapInvalidate
 }
 
 void smith_dap_invalidated_areas_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapInvalidatedAreas *out) {
-    size_t pick = smith_protocol_pick(smith_key_derive(key, 0), 5);
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t pick = smith_protocol_pick(smith_protocol_take(stream), 5);
     out->known = (SmithDapInvalidatedAreasKnown)pick;
     out->text = pick < 4 ? smith_text_make(smith_dap_invalidated_areas_names[pick]) : smith_protocol_name(arena, pick);
 }
@@ -4663,10 +4735,11 @@ bool smith_dap_invalidated_areas_list_equal([[maybe_unused]] const SmithDapInval
 }
 
 void smith_dap_invalidated_areas_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapInvalidatedAreasList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithDapInvalidatedAreas *items = smith_protocol_block(arena, sizeof(SmithDapInvalidatedAreas), alignof(SmithDapInvalidatedAreas), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_dap_invalidated_areas_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_dap_invalidated_areas_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -4728,20 +4801,21 @@ bool smith_dap_invalidated_event_body_equal([[maybe_unused]] const SmithDapInval
 }
 
 void smith_dap_invalidated_event_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapInvalidatedEventBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapInvalidatedEventBody){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_areas = true;
-        smith_dap_invalidated_areas_list_random(arena, smith_key_derive(key, 1), &out->areas);
+        smith_dap_invalidated_areas_list_random(arena, smith_protocol_take(stream), &out->areas);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_threadId = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 3), &out->threadId);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->threadId);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_stackFrameId = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->stackFrameId);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->stackFrameId);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_invalidated_event_known[] = {"seq", "type", "event", "body"};
@@ -4789,10 +4863,11 @@ bool smith_dap_invalidated_event_equal([[maybe_unused]] const SmithDapInvalidate
 }
 
 void smith_dap_invalidated_event_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapInvalidatedEvent *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapInvalidatedEvent){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_invalidated_event_body_random(arena, smith_key_derive(key, 7), &out->body);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_invalidated_event_body_random(arena, smith_protocol_take(stream), &out->body);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_memory_event_body_known[] = {"memoryReference", "offset", "count"};
@@ -4836,11 +4911,12 @@ bool smith_dap_memory_event_body_equal([[maybe_unused]] const SmithDapMemoryEven
 }
 
 void smith_dap_memory_event_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapMemoryEventBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapMemoryEventBody){};
-    smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->memoryReference);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 3), &out->offset);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->count);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->memoryReference);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->offset);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->count);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_memory_event_known[] = {"seq", "type", "event", "body"};
@@ -4888,10 +4964,11 @@ bool smith_dap_memory_event_equal([[maybe_unused]] const SmithDapMemoryEvent *a,
 }
 
 void smith_dap_memory_event_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapMemoryEvent *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapMemoryEvent){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_memory_event_body_random(arena, smith_key_derive(key, 7), &out->body);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_memory_event_body_random(arena, smith_protocol_take(stream), &out->body);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_run_in_terminal_request_arguments_kind_names[] = {"integrated", "external"};
@@ -4913,7 +4990,8 @@ bool smith_dap_run_in_terminal_request_arguments_kind_equal([[maybe_unused]] con
 }
 
 void smith_dap_run_in_terminal_request_arguments_kind_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapRunInTerminalRequestArgumentsKind *out) {
-    *out = (SmithDapRunInTerminalRequestArgumentsKind)smith_protocol_pick(key, 2);
+    [[maybe_unused]] SmithKey *stream = &key;
+    *out = (SmithDapRunInTerminalRequestArgumentsKind)smith_protocol_pick(smith_protocol_take(stream), 2);
 }
 
 bool smith_dap_nullable_string_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithDapNullableString *out, SmithProtocolError *error) {
@@ -4938,9 +5016,10 @@ bool smith_dap_nullable_string_equal([[maybe_unused]] const SmithDapNullableStri
 }
 
 void smith_dap_nullable_string_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapNullableString *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapNullableString){};
-    out->is_null = smith_protocol_coin(smith_key_derive(key, 0));
-    if (!out->is_null) smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->value);
+    out->is_null = smith_protocol_coin(smith_protocol_take(stream));
+    if (!out->is_null) smith_protocol_string_random(arena, smith_protocol_take(stream), &out->value);
 }
 
 bool smith_dap_nullable_string_map_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithDapNullableStringMap *out, SmithProtocolError *error) {
@@ -4977,12 +5056,13 @@ bool smith_dap_nullable_string_map_equal([[maybe_unused]] const SmithDapNullable
 }
 
 void smith_dap_nullable_string_map_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapNullableStringMap *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     struct smith_array_const_char_n *keys = smith_protocol_block(arena, sizeof(struct smith_array_const_char_n), alignof(struct smith_array_const_char_n), count);
     SmithDapNullableString *items = smith_protocol_block(arena, sizeof(SmithDapNullableString), alignof(SmithDapNullableString), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
         keys[i] = smith_protocol_name(arena, i);
-        smith_dap_nullable_string_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_dap_nullable_string_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->keys = keys;
     out->values = items;
@@ -5068,26 +5148,27 @@ bool smith_dap_run_in_terminal_request_arguments_equal([[maybe_unused]] const Sm
 }
 
 void smith_dap_run_in_terminal_request_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapRunInTerminalRequestArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapRunInTerminalRequestArguments){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_kind = true;
-        smith_dap_run_in_terminal_request_arguments_kind_random(arena, smith_key_derive(key, 1), &out->kind);
+        smith_dap_run_in_terminal_request_arguments_kind_random(arena, smith_protocol_take(stream), &out->kind);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_title = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->title);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->title);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->cwd);
-    smith_dap_string_list_random(arena, smith_key_derive(key, 7), &out->args);
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->cwd);
+    smith_dap_string_list_random(arena, smith_protocol_take(stream), &out->args);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_env = true;
-        smith_dap_nullable_string_map_random(arena, smith_key_derive(key, 9), &out->env);
+        smith_dap_nullable_string_map_random(arena, smith_protocol_take(stream), &out->env);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_argsCanBeInterpretedByShell = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 11), &out->argsCanBeInterpretedByShell);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->argsCanBeInterpretedByShell);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 12), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_run_in_terminal_request_known[] = {"seq", "type", "command", "arguments"};
@@ -5135,10 +5216,11 @@ bool smith_dap_run_in_terminal_request_equal([[maybe_unused]] const SmithDapRunI
 }
 
 void smith_dap_run_in_terminal_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapRunInTerminalRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapRunInTerminalRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_run_in_terminal_request_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_run_in_terminal_request_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_run_in_terminal_response_body_known[] = {"processId", "shellProcessId"};
@@ -5186,16 +5268,17 @@ bool smith_dap_run_in_terminal_response_body_equal([[maybe_unused]] const SmithD
 }
 
 void smith_dap_run_in_terminal_response_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapRunInTerminalResponseBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapRunInTerminalResponseBody){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_processId = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->processId);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->processId);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_shellProcessId = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 3), &out->shellProcessId);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->shellProcessId);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_run_in_terminal_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -5267,17 +5350,18 @@ bool smith_dap_run_in_terminal_response_equal([[maybe_unused]] const SmithDapRun
 }
 
 void smith_dap_run_in_terminal_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapRunInTerminalResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapRunInTerminalResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    smith_dap_run_in_terminal_response_body_random(arena, smith_key_derive(key, 13), &out->body);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_dap_run_in_terminal_response_body_random(arena, smith_protocol_take(stream), &out->body);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_start_debugging_request_arguments_output_presentation_names[] = {"separate", "mergeWithParent"};
@@ -5299,7 +5383,8 @@ bool smith_dap_start_debugging_request_arguments_output_presentation_equal([[may
 }
 
 void smith_dap_start_debugging_request_arguments_output_presentation_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapStartDebuggingRequestArgumentsOutputPresentation *out) {
-    *out = (SmithDapStartDebuggingRequestArgumentsOutputPresentation)smith_protocol_pick(key, 2);
+    [[maybe_unused]] SmithKey *stream = &key;
+    *out = (SmithDapStartDebuggingRequestArgumentsOutputPresentation)smith_protocol_pick(smith_protocol_take(stream), 2);
 }
 
 static const char *const smith_dap_start_debugging_request_arguments_request_names[] = {"launch", "attach"};
@@ -5321,7 +5406,8 @@ bool smith_dap_start_debugging_request_arguments_request_equal([[maybe_unused]] 
 }
 
 void smith_dap_start_debugging_request_arguments_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapStartDebuggingRequestArgumentsRequest *out) {
-    *out = (SmithDapStartDebuggingRequestArgumentsRequest)smith_protocol_pick(key, 2);
+    [[maybe_unused]] SmithKey *stream = &key;
+    *out = (SmithDapStartDebuggingRequestArgumentsRequest)smith_protocol_pick(smith_protocol_take(stream), 2);
 }
 
 static const char *const smith_dap_start_debugging_request_arguments_known[] = {"configuration", "outputPresentation", "request"};
@@ -5370,14 +5456,15 @@ bool smith_dap_start_debugging_request_arguments_equal([[maybe_unused]] const Sm
 }
 
 void smith_dap_start_debugging_request_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapStartDebuggingRequestArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapStartDebuggingRequestArguments){};
-    smith_protocol_object_random(arena, smith_key_derive(key, 1), &out->configuration);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_protocol_object_random(arena, smith_protocol_take(stream), &out->configuration);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_outputPresentation = true;
-        smith_dap_start_debugging_request_arguments_output_presentation_random(arena, smith_key_derive(key, 3), &out->outputPresentation);
+        smith_dap_start_debugging_request_arguments_output_presentation_random(arena, smith_protocol_take(stream), &out->outputPresentation);
     }
-    smith_dap_start_debugging_request_arguments_request_random(arena, smith_key_derive(key, 5), &out->request);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_dap_start_debugging_request_arguments_request_random(arena, smith_protocol_take(stream), &out->request);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_start_debugging_request_known[] = {"seq", "type", "command", "arguments"};
@@ -5425,10 +5512,11 @@ bool smith_dap_start_debugging_request_equal([[maybe_unused]] const SmithDapStar
 }
 
 void smith_dap_start_debugging_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapStartDebuggingRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapStartDebuggingRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_start_debugging_request_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_start_debugging_request_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_start_debugging_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -5505,20 +5593,21 @@ bool smith_dap_start_debugging_response_equal([[maybe_unused]] const SmithDapSta
 }
 
 void smith_dap_start_debugging_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapStartDebuggingResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapStartDebuggingResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_body = true;
-        smith_protocol_any_random(arena, smith_key_derive(key, 13), &out->body);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &out->body);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_initialize_request_arguments_path_format_names[] = {"path", "uri"};
@@ -5544,7 +5633,8 @@ bool smith_dap_initialize_request_arguments_path_format_equal([[maybe_unused]] c
 }
 
 void smith_dap_initialize_request_arguments_path_format_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapInitializeRequestArgumentsPathFormat *out) {
-    size_t pick = smith_protocol_pick(smith_key_derive(key, 0), 3);
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t pick = smith_protocol_pick(smith_protocol_take(stream), 3);
     out->known = (SmithDapInitializeRequestArgumentsPathFormatKnown)pick;
     out->text = pick < 2 ? smith_text_make(smith_dap_initialize_request_arguments_path_format_names[pick]) : smith_protocol_name(arena, pick);
 }
@@ -5754,73 +5844,74 @@ bool smith_dap_initialize_request_arguments_equal([[maybe_unused]] const SmithDa
 }
 
 void smith_dap_initialize_request_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapInitializeRequestArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapInitializeRequestArguments){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_clientID = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->clientID);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->clientID);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_clientName = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->clientName);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->clientName);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->adapterID);
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->adapterID);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_locale = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 7), &out->locale);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->locale);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_linesStartAt1 = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 9), &out->linesStartAt1);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->linesStartAt1);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_columnsStartAt1 = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 11), &out->columnsStartAt1);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->columnsStartAt1);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_pathFormat = true;
-        smith_dap_initialize_request_arguments_path_format_random(arena, smith_key_derive(key, 13), &out->pathFormat);
+        smith_dap_initialize_request_arguments_path_format_random(arena, smith_protocol_take(stream), &out->pathFormat);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 14))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsVariableType = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 15), &out->supportsVariableType);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsVariableType);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 16))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsVariablePaging = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 17), &out->supportsVariablePaging);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsVariablePaging);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 18))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsRunInTerminalRequest = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 19), &out->supportsRunInTerminalRequest);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsRunInTerminalRequest);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 20))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsMemoryReferences = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 21), &out->supportsMemoryReferences);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsMemoryReferences);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 22))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsProgressReporting = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 23), &out->supportsProgressReporting);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsProgressReporting);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 24))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsInvalidatedEvent = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 25), &out->supportsInvalidatedEvent);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsInvalidatedEvent);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 26))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsMemoryEvent = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 27), &out->supportsMemoryEvent);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsMemoryEvent);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 28))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsArgsCanBeInterpretedByShell = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 29), &out->supportsArgsCanBeInterpretedByShell);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsArgsCanBeInterpretedByShell);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 30))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsStartDebuggingRequest = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 31), &out->supportsStartDebuggingRequest);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsStartDebuggingRequest);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 32))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_supportsANSIStyling = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 33), &out->supportsANSIStyling);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->supportsANSIStyling);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 34), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_initialize_request_known[] = {"seq", "type", "command", "arguments"};
@@ -5868,10 +5959,11 @@ bool smith_dap_initialize_request_equal([[maybe_unused]] const SmithDapInitializ
 }
 
 void smith_dap_initialize_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapInitializeRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapInitializeRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_initialize_request_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_initialize_request_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_initialize_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -5948,20 +6040,21 @@ bool smith_dap_initialize_response_equal([[maybe_unused]] const SmithDapInitiali
 }
 
 void smith_dap_initialize_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapInitializeResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapInitializeResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_body = true;
-        smith_dap_capabilities_random(arena, smith_key_derive(key, 13), &out->body);
+        smith_dap_capabilities_random(arena, smith_protocol_take(stream), &out->body);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_configuration_done_request_known[] = {"seq", "type", "command", "arguments"};
@@ -6014,13 +6107,14 @@ bool smith_dap_configuration_done_request_equal([[maybe_unused]] const SmithDapC
 }
 
 void smith_dap_configuration_done_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapConfigurationDoneRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapConfigurationDoneRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_arguments = true;
-        smith_protocol_object_random(arena, smith_key_derive(key, 7), &out->arguments);
+        smith_protocol_object_random(arena, smith_protocol_take(stream), &out->arguments);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_configuration_done_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -6097,20 +6191,21 @@ bool smith_dap_configuration_done_response_equal([[maybe_unused]] const SmithDap
 }
 
 void smith_dap_configuration_done_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapConfigurationDoneResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapConfigurationDoneResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_body = true;
-        smith_protocol_any_random(arena, smith_key_derive(key, 13), &out->body);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &out->body);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_launch_request_arguments_known[] = {"noDebug", "__restart"};
@@ -6158,16 +6253,17 @@ bool smith_dap_launch_request_arguments_equal([[maybe_unused]] const SmithDapLau
 }
 
 void smith_dap_launch_request_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapLaunchRequestArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapLaunchRequestArguments){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_noDebug = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 1), &out->noDebug);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->noDebug);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has___restart = true;
-        smith_protocol_any_random(arena, smith_key_derive(key, 3), &out->__restart);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &out->__restart);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_launch_request_known[] = {"seq", "type", "command", "arguments"};
@@ -6215,10 +6311,11 @@ bool smith_dap_launch_request_equal([[maybe_unused]] const SmithDapLaunchRequest
 }
 
 void smith_dap_launch_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapLaunchRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapLaunchRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_launch_request_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_launch_request_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_launch_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -6295,20 +6392,21 @@ bool smith_dap_launch_response_equal([[maybe_unused]] const SmithDapLaunchRespon
 }
 
 void smith_dap_launch_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapLaunchResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapLaunchResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_body = true;
-        smith_protocol_any_random(arena, smith_key_derive(key, 13), &out->body);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &out->body);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_attach_request_arguments_known[] = {"__restart"};
@@ -6345,12 +6443,13 @@ bool smith_dap_attach_request_arguments_equal([[maybe_unused]] const SmithDapAtt
 }
 
 void smith_dap_attach_request_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapAttachRequestArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapAttachRequestArguments){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has___restart = true;
-        smith_protocol_any_random(arena, smith_key_derive(key, 1), &out->__restart);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &out->__restart);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_attach_request_known[] = {"seq", "type", "command", "arguments"};
@@ -6398,10 +6497,11 @@ bool smith_dap_attach_request_equal([[maybe_unused]] const SmithDapAttachRequest
 }
 
 void smith_dap_attach_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapAttachRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapAttachRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_attach_request_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_attach_request_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_attach_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -6478,20 +6578,21 @@ bool smith_dap_attach_response_equal([[maybe_unused]] const SmithDapAttachRespon
 }
 
 void smith_dap_attach_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapAttachResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapAttachResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_body = true;
-        smith_protocol_any_random(arena, smith_key_derive(key, 13), &out->body);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &out->body);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_dap_restart_arguments_arguments_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithDapRestartArgumentsArguments *out, SmithProtocolError *error) {
@@ -6531,14 +6632,15 @@ bool smith_dap_restart_arguments_arguments_equal([[maybe_unused]] const SmithDap
 }
 
 void smith_dap_restart_arguments_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapRestartArgumentsArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapRestartArgumentsArguments){};
-    out->kind = (SmithDapRestartArgumentsArgumentsKind)smith_protocol_pick(smith_key_derive(key, 0), 2);
+    out->kind = (SmithDapRestartArgumentsArgumentsKind)smith_protocol_pick(smith_protocol_take(stream), 2);
     switch (out->kind) {
     case SmithDapRestartArgumentsArgumentsKind_LaunchRequestArguments:
-        smith_dap_launch_request_arguments_random(arena, smith_key_derive(key, 1), &out->as.launch_request_arguments);
+        smith_dap_launch_request_arguments_random(arena, smith_protocol_take(stream), &out->as.launch_request_arguments);
         break;
     case SmithDapRestartArgumentsArgumentsKind_AttachRequestArguments:
-        smith_dap_attach_request_arguments_random(arena, smith_key_derive(key, 1), &out->as.attach_request_arguments);
+        smith_dap_attach_request_arguments_random(arena, smith_protocol_take(stream), &out->as.attach_request_arguments);
         break;
     }
 }
@@ -6577,12 +6679,13 @@ bool smith_dap_restart_arguments_equal([[maybe_unused]] const SmithDapRestartArg
 }
 
 void smith_dap_restart_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapRestartArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapRestartArguments){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_arguments = true;
-        smith_dap_restart_arguments_arguments_random(arena, smith_key_derive(key, 1), &out->arguments);
+        smith_dap_restart_arguments_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_restart_request_known[] = {"seq", "type", "command", "arguments"};
@@ -6635,13 +6738,14 @@ bool smith_dap_restart_request_equal([[maybe_unused]] const SmithDapRestartReque
 }
 
 void smith_dap_restart_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapRestartRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapRestartRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_arguments = true;
-        smith_dap_restart_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
+        smith_dap_restart_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_restart_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -6718,20 +6822,21 @@ bool smith_dap_restart_response_equal([[maybe_unused]] const SmithDapRestartResp
 }
 
 void smith_dap_restart_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapRestartResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapRestartResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_body = true;
-        smith_protocol_any_random(arena, smith_key_derive(key, 13), &out->body);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &out->body);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_disconnect_arguments_known[] = {"restart", "terminateDebuggee", "suspendDebuggee"};
@@ -6790,20 +6895,21 @@ bool smith_dap_disconnect_arguments_equal([[maybe_unused]] const SmithDapDisconn
 }
 
 void smith_dap_disconnect_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapDisconnectArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapDisconnectArguments){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_restart = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 1), &out->restart);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->restart);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_terminateDebuggee = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 3), &out->terminateDebuggee);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->terminateDebuggee);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_suspendDebuggee = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 5), &out->suspendDebuggee);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->suspendDebuggee);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_disconnect_request_known[] = {"seq", "type", "command", "arguments"};
@@ -6856,13 +6962,14 @@ bool smith_dap_disconnect_request_equal([[maybe_unused]] const SmithDapDisconnec
 }
 
 void smith_dap_disconnect_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapDisconnectRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapDisconnectRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_arguments = true;
-        smith_dap_disconnect_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
+        smith_dap_disconnect_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_disconnect_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -6939,20 +7046,21 @@ bool smith_dap_disconnect_response_equal([[maybe_unused]] const SmithDapDisconne
 }
 
 void smith_dap_disconnect_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapDisconnectResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapDisconnectResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_body = true;
-        smith_protocol_any_random(arena, smith_key_derive(key, 13), &out->body);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &out->body);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_terminate_arguments_known[] = {"restart"};
@@ -6989,12 +7097,13 @@ bool smith_dap_terminate_arguments_equal([[maybe_unused]] const SmithDapTerminat
 }
 
 void smith_dap_terminate_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapTerminateArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapTerminateArguments){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_restart = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 1), &out->restart);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->restart);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_terminate_request_known[] = {"seq", "type", "command", "arguments"};
@@ -7047,13 +7156,14 @@ bool smith_dap_terminate_request_equal([[maybe_unused]] const SmithDapTerminateR
 }
 
 void smith_dap_terminate_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapTerminateRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapTerminateRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_arguments = true;
-        smith_dap_terminate_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
+        smith_dap_terminate_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_terminate_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -7130,20 +7240,21 @@ bool smith_dap_terminate_response_equal([[maybe_unused]] const SmithDapTerminate
 }
 
 void smith_dap_terminate_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapTerminateResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapTerminateResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_body = true;
-        smith_protocol_any_random(arena, smith_key_derive(key, 13), &out->body);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &out->body);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_breakpoint_locations_arguments_known[] = {"source", "line", "column", "endLine", "endColumn"};
@@ -7214,22 +7325,23 @@ bool smith_dap_breakpoint_locations_arguments_equal([[maybe_unused]] const Smith
 }
 
 void smith_dap_breakpoint_locations_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapBreakpointLocationsArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapBreakpointLocationsArguments){};
-    smith_dap_source_random(arena, smith_key_derive(key, 1), &out->source);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 3), &out->line);
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    smith_dap_source_random(arena, smith_protocol_take(stream), &out->source);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->line);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_column = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->column);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->column);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_endLine = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 7), &out->endLine);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->endLine);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_endColumn = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 9), &out->endColumn);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->endColumn);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 10), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_breakpoint_locations_request_known[] = {"seq", "type", "command", "arguments"};
@@ -7282,13 +7394,14 @@ bool smith_dap_breakpoint_locations_request_equal([[maybe_unused]] const SmithDa
 }
 
 void smith_dap_breakpoint_locations_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapBreakpointLocationsRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapBreakpointLocationsRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_arguments = true;
-        smith_dap_breakpoint_locations_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
+        smith_dap_breakpoint_locations_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_breakpoint_location_known[] = {"line", "column", "endLine", "endColumn"};
@@ -7353,21 +7466,22 @@ bool smith_dap_breakpoint_location_equal([[maybe_unused]] const SmithDapBreakpoi
 }
 
 void smith_dap_breakpoint_location_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapBreakpointLocation *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapBreakpointLocation){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->line);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->line);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_column = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 3), &out->column);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->column);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_endLine = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->endLine);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->endLine);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_endColumn = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 7), &out->endColumn);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->endColumn);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_dap_breakpoint_location_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithDapBreakpointLocationList *out, SmithProtocolError *error) {
@@ -7399,10 +7513,11 @@ bool smith_dap_breakpoint_location_list_equal([[maybe_unused]] const SmithDapBre
 }
 
 void smith_dap_breakpoint_location_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapBreakpointLocationList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithDapBreakpointLocation *items = smith_protocol_block(arena, sizeof(SmithDapBreakpointLocation), alignof(SmithDapBreakpointLocation), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_dap_breakpoint_location_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_dap_breakpoint_location_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -7437,9 +7552,10 @@ bool smith_dap_breakpoint_locations_response_body_equal([[maybe_unused]] const S
 }
 
 void smith_dap_breakpoint_locations_response_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapBreakpointLocationsResponseBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapBreakpointLocationsResponseBody){};
-    smith_dap_breakpoint_location_list_random(arena, smith_key_derive(key, 1), &out->breakpoints);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_dap_breakpoint_location_list_random(arena, smith_protocol_take(stream), &out->breakpoints);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_breakpoint_locations_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -7511,17 +7627,18 @@ bool smith_dap_breakpoint_locations_response_equal([[maybe_unused]] const SmithD
 }
 
 void smith_dap_breakpoint_locations_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapBreakpointLocationsResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapBreakpointLocationsResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    smith_dap_breakpoint_locations_response_body_random(arena, smith_key_derive(key, 13), &out->body);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_dap_breakpoint_locations_response_body_random(arena, smith_protocol_take(stream), &out->body);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_source_breakpoint_known[] = {"line", "column", "condition", "hitCondition", "logMessage", "mode"};
@@ -7608,29 +7725,30 @@ bool smith_dap_source_breakpoint_equal([[maybe_unused]] const SmithDapSourceBrea
 }
 
 void smith_dap_source_breakpoint_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapSourceBreakpoint *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapSourceBreakpoint){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->line);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->line);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_column = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 3), &out->column);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->column);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_condition = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->condition);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->condition);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_hitCondition = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 7), &out->hitCondition);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->hitCondition);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_logMessage = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->logMessage);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->logMessage);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_mode = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 11), &out->mode);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->mode);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 12), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_dap_source_breakpoint_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithDapSourceBreakpointList *out, SmithProtocolError *error) {
@@ -7662,10 +7780,11 @@ bool smith_dap_source_breakpoint_list_equal([[maybe_unused]] const SmithDapSourc
 }
 
 void smith_dap_source_breakpoint_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapSourceBreakpointList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithDapSourceBreakpoint *items = smith_protocol_block(arena, sizeof(SmithDapSourceBreakpoint), alignof(SmithDapSourceBreakpoint), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_dap_source_breakpoint_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_dap_source_breakpoint_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -7733,21 +7852,22 @@ bool smith_dap_set_breakpoints_arguments_equal([[maybe_unused]] const SmithDapSe
 }
 
 void smith_dap_set_breakpoints_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapSetBreakpointsArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapSetBreakpointsArguments){};
-    smith_dap_source_random(arena, smith_key_derive(key, 1), &out->source);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_dap_source_random(arena, smith_protocol_take(stream), &out->source);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_breakpoints = true;
-        smith_dap_source_breakpoint_list_random(arena, smith_key_derive(key, 3), &out->breakpoints);
+        smith_dap_source_breakpoint_list_random(arena, smith_protocol_take(stream), &out->breakpoints);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_lines = true;
-        smith_dap_integer_list_random(arena, smith_key_derive(key, 5), &out->lines);
+        smith_dap_integer_list_random(arena, smith_protocol_take(stream), &out->lines);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_sourceModified = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->sourceModified);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->sourceModified);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_set_breakpoints_request_known[] = {"seq", "type", "command", "arguments"};
@@ -7795,10 +7915,11 @@ bool smith_dap_set_breakpoints_request_equal([[maybe_unused]] const SmithDapSetB
 }
 
 void smith_dap_set_breakpoints_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapSetBreakpointsRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapSetBreakpointsRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_set_breakpoints_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_set_breakpoints_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_dap_breakpoint_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithDapBreakpointList *out, SmithProtocolError *error) {
@@ -7830,10 +7951,11 @@ bool smith_dap_breakpoint_list_equal([[maybe_unused]] const SmithDapBreakpointLi
 }
 
 void smith_dap_breakpoint_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapBreakpointList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithDapBreakpoint *items = smith_protocol_block(arena, sizeof(SmithDapBreakpoint), alignof(SmithDapBreakpoint), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_dap_breakpoint_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_dap_breakpoint_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -7868,9 +7990,10 @@ bool smith_dap_set_breakpoints_response_body_equal([[maybe_unused]] const SmithD
 }
 
 void smith_dap_set_breakpoints_response_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapSetBreakpointsResponseBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapSetBreakpointsResponseBody){};
-    smith_dap_breakpoint_list_random(arena, smith_key_derive(key, 1), &out->breakpoints);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_dap_breakpoint_list_random(arena, smith_protocol_take(stream), &out->breakpoints);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_set_breakpoints_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -7942,17 +8065,18 @@ bool smith_dap_set_breakpoints_response_equal([[maybe_unused]] const SmithDapSet
 }
 
 void smith_dap_set_breakpoints_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapSetBreakpointsResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapSetBreakpointsResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    smith_dap_set_breakpoints_response_body_random(arena, smith_key_derive(key, 13), &out->body);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_dap_set_breakpoints_response_body_random(arena, smith_protocol_take(stream), &out->body);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_function_breakpoint_known[] = {"name", "condition", "hitCondition"};
@@ -8006,17 +8130,18 @@ bool smith_dap_function_breakpoint_equal([[maybe_unused]] const SmithDapFunction
 }
 
 void smith_dap_function_breakpoint_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapFunctionBreakpoint *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapFunctionBreakpoint){};
-    smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->name);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->name);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_condition = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->condition);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->condition);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_hitCondition = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->hitCondition);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->hitCondition);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_dap_function_breakpoint_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithDapFunctionBreakpointList *out, SmithProtocolError *error) {
@@ -8048,10 +8173,11 @@ bool smith_dap_function_breakpoint_list_equal([[maybe_unused]] const SmithDapFun
 }
 
 void smith_dap_function_breakpoint_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapFunctionBreakpointList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithDapFunctionBreakpoint *items = smith_protocol_block(arena, sizeof(SmithDapFunctionBreakpoint), alignof(SmithDapFunctionBreakpoint), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_dap_function_breakpoint_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_dap_function_breakpoint_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -8086,9 +8212,10 @@ bool smith_dap_set_function_breakpoints_arguments_equal([[maybe_unused]] const S
 }
 
 void smith_dap_set_function_breakpoints_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapSetFunctionBreakpointsArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapSetFunctionBreakpointsArguments){};
-    smith_dap_function_breakpoint_list_random(arena, smith_key_derive(key, 1), &out->breakpoints);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_dap_function_breakpoint_list_random(arena, smith_protocol_take(stream), &out->breakpoints);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_set_function_breakpoints_request_known[] = {"seq", "type", "command", "arguments"};
@@ -8136,10 +8263,11 @@ bool smith_dap_set_function_breakpoints_request_equal([[maybe_unused]] const Smi
 }
 
 void smith_dap_set_function_breakpoints_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapSetFunctionBreakpointsRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapSetFunctionBreakpointsRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_set_function_breakpoints_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_set_function_breakpoints_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_set_function_breakpoints_response_body_known[] = {"breakpoints"};
@@ -8171,9 +8299,10 @@ bool smith_dap_set_function_breakpoints_response_body_equal([[maybe_unused]] con
 }
 
 void smith_dap_set_function_breakpoints_response_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapSetFunctionBreakpointsResponseBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapSetFunctionBreakpointsResponseBody){};
-    smith_dap_breakpoint_list_random(arena, smith_key_derive(key, 1), &out->breakpoints);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_dap_breakpoint_list_random(arena, smith_protocol_take(stream), &out->breakpoints);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_set_function_breakpoints_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -8245,17 +8374,18 @@ bool smith_dap_set_function_breakpoints_response_equal([[maybe_unused]] const Sm
 }
 
 void smith_dap_set_function_breakpoints_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapSetFunctionBreakpointsResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapSetFunctionBreakpointsResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    smith_dap_set_function_breakpoints_response_body_random(arena, smith_key_derive(key, 13), &out->body);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_dap_set_function_breakpoints_response_body_random(arena, smith_protocol_take(stream), &out->body);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_exception_filter_options_known[] = {"filterId", "condition", "mode"};
@@ -8309,17 +8439,18 @@ bool smith_dap_exception_filter_options_equal([[maybe_unused]] const SmithDapExc
 }
 
 void smith_dap_exception_filter_options_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapExceptionFilterOptions *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapExceptionFilterOptions){};
-    smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->filterId);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->filterId);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_condition = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->condition);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->condition);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_mode = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->mode);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->mode);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_dap_exception_filter_options_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithDapExceptionFilterOptionsList *out, SmithProtocolError *error) {
@@ -8351,10 +8482,11 @@ bool smith_dap_exception_filter_options_list_equal([[maybe_unused]] const SmithD
 }
 
 void smith_dap_exception_filter_options_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapExceptionFilterOptionsList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithDapExceptionFilterOptions *items = smith_protocol_block(arena, sizeof(SmithDapExceptionFilterOptions), alignof(SmithDapExceptionFilterOptions), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_dap_exception_filter_options_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_dap_exception_filter_options_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -8400,13 +8532,14 @@ bool smith_dap_exception_path_segment_equal([[maybe_unused]] const SmithDapExcep
 }
 
 void smith_dap_exception_path_segment_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapExceptionPathSegment *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapExceptionPathSegment){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_negate = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 1), &out->negate);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->negate);
     }
-    smith_dap_string_list_random(arena, smith_key_derive(key, 3), &out->names);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_dap_string_list_random(arena, smith_protocol_take(stream), &out->names);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_dap_exception_path_segment_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithDapExceptionPathSegmentList *out, SmithProtocolError *error) {
@@ -8438,10 +8571,11 @@ bool smith_dap_exception_path_segment_list_equal([[maybe_unused]] const SmithDap
 }
 
 void smith_dap_exception_path_segment_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapExceptionPathSegmentList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithDapExceptionPathSegment *items = smith_protocol_block(arena, sizeof(SmithDapExceptionPathSegment), alignof(SmithDapExceptionPathSegment), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_dap_exception_path_segment_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_dap_exception_path_segment_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -8466,7 +8600,8 @@ bool smith_dap_exception_break_mode_equal([[maybe_unused]] const SmithDapExcepti
 }
 
 void smith_dap_exception_break_mode_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapExceptionBreakMode *out) {
-    *out = (SmithDapExceptionBreakMode)smith_protocol_pick(key, 4);
+    [[maybe_unused]] SmithKey *stream = &key;
+    *out = (SmithDapExceptionBreakMode)smith_protocol_pick(smith_protocol_take(stream), 4);
 }
 
 static const char *const smith_dap_exception_options_known[] = {"path", "breakMode"};
@@ -8509,13 +8644,14 @@ bool smith_dap_exception_options_equal([[maybe_unused]] const SmithDapExceptionO
 }
 
 void smith_dap_exception_options_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapExceptionOptions *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapExceptionOptions){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_path = true;
-        smith_dap_exception_path_segment_list_random(arena, smith_key_derive(key, 1), &out->path);
+        smith_dap_exception_path_segment_list_random(arena, smith_protocol_take(stream), &out->path);
     }
-    smith_dap_exception_break_mode_random(arena, smith_key_derive(key, 3), &out->breakMode);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_dap_exception_break_mode_random(arena, smith_protocol_take(stream), &out->breakMode);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_dap_exception_options_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithDapExceptionOptionsList *out, SmithProtocolError *error) {
@@ -8547,10 +8683,11 @@ bool smith_dap_exception_options_list_equal([[maybe_unused]] const SmithDapExcep
 }
 
 void smith_dap_exception_options_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapExceptionOptionsList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithDapExceptionOptions *items = smith_protocol_block(arena, sizeof(SmithDapExceptionOptions), alignof(SmithDapExceptionOptions), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_dap_exception_options_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_dap_exception_options_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -8607,17 +8744,18 @@ bool smith_dap_set_exception_breakpoints_arguments_equal([[maybe_unused]] const 
 }
 
 void smith_dap_set_exception_breakpoints_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapSetExceptionBreakpointsArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapSetExceptionBreakpointsArguments){};
-    smith_dap_string_list_random(arena, smith_key_derive(key, 1), &out->filters);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_dap_string_list_random(arena, smith_protocol_take(stream), &out->filters);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_filterOptions = true;
-        smith_dap_exception_filter_options_list_random(arena, smith_key_derive(key, 3), &out->filterOptions);
+        smith_dap_exception_filter_options_list_random(arena, smith_protocol_take(stream), &out->filterOptions);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_exceptionOptions = true;
-        smith_dap_exception_options_list_random(arena, smith_key_derive(key, 5), &out->exceptionOptions);
+        smith_dap_exception_options_list_random(arena, smith_protocol_take(stream), &out->exceptionOptions);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_set_exception_breakpoints_request_known[] = {"seq", "type", "command", "arguments"};
@@ -8665,10 +8803,11 @@ bool smith_dap_set_exception_breakpoints_request_equal([[maybe_unused]] const Sm
 }
 
 void smith_dap_set_exception_breakpoints_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapSetExceptionBreakpointsRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapSetExceptionBreakpointsRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_set_exception_breakpoints_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_set_exception_breakpoints_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_set_exception_breakpoints_response_body_known[] = {"breakpoints"};
@@ -8705,12 +8844,13 @@ bool smith_dap_set_exception_breakpoints_response_body_equal([[maybe_unused]] co
 }
 
 void smith_dap_set_exception_breakpoints_response_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapSetExceptionBreakpointsResponseBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapSetExceptionBreakpointsResponseBody){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_breakpoints = true;
-        smith_dap_breakpoint_list_random(arena, smith_key_derive(key, 1), &out->breakpoints);
+        smith_dap_breakpoint_list_random(arena, smith_protocol_take(stream), &out->breakpoints);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_set_exception_breakpoints_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -8787,20 +8927,21 @@ bool smith_dap_set_exception_breakpoints_response_equal([[maybe_unused]] const S
 }
 
 void smith_dap_set_exception_breakpoints_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapSetExceptionBreakpointsResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapSetExceptionBreakpointsResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_body = true;
-        smith_dap_set_exception_breakpoints_response_body_random(arena, smith_key_derive(key, 13), &out->body);
+        smith_dap_set_exception_breakpoints_response_body_random(arena, smith_protocol_take(stream), &out->body);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_data_breakpoint_info_arguments_known[] = {"variablesReference", "name", "frameId", "bytes", "asAddress", "mode"};
@@ -8887,29 +9028,30 @@ bool smith_dap_data_breakpoint_info_arguments_equal([[maybe_unused]] const Smith
 }
 
 void smith_dap_data_breakpoint_info_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapDataBreakpointInfoArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapDataBreakpointInfoArguments){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_variablesReference = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->variablesReference);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->variablesReference);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->name);
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->name);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_frameId = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->frameId);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->frameId);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_bytes = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 7), &out->bytes);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->bytes);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_asAddress = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 9), &out->asAddress);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->asAddress);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_mode = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 11), &out->mode);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->mode);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 12), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_data_breakpoint_info_request_known[] = {"seq", "type", "command", "arguments"};
@@ -8957,10 +9099,11 @@ bool smith_dap_data_breakpoint_info_request_equal([[maybe_unused]] const SmithDa
 }
 
 void smith_dap_data_breakpoint_info_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapDataBreakpointInfoRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapDataBreakpointInfoRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_data_breakpoint_info_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_data_breakpoint_info_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_data_breakpoint_access_type_names[] = {"read", "write", "readWrite"};
@@ -8982,7 +9125,8 @@ bool smith_dap_data_breakpoint_access_type_equal([[maybe_unused]] const SmithDap
 }
 
 void smith_dap_data_breakpoint_access_type_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapDataBreakpointAccessType *out) {
-    *out = (SmithDapDataBreakpointAccessType)smith_protocol_pick(key, 3);
+    [[maybe_unused]] SmithKey *stream = &key;
+    *out = (SmithDapDataBreakpointAccessType)smith_protocol_pick(smith_protocol_take(stream), 3);
 }
 
 bool smith_dap_data_breakpoint_access_type_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithDapDataBreakpointAccessTypeList *out, SmithProtocolError *error) {
@@ -9014,10 +9158,11 @@ bool smith_dap_data_breakpoint_access_type_list_equal([[maybe_unused]] const Smi
 }
 
 void smith_dap_data_breakpoint_access_type_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapDataBreakpointAccessTypeList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithDapDataBreakpointAccessType *items = smith_protocol_block(arena, sizeof(SmithDapDataBreakpointAccessType), alignof(SmithDapDataBreakpointAccessType), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_dap_data_breakpoint_access_type_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_dap_data_breakpoint_access_type_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -9080,18 +9225,19 @@ bool smith_dap_data_breakpoint_info_response_body_equal([[maybe_unused]] const S
 }
 
 void smith_dap_data_breakpoint_info_response_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapDataBreakpointInfoResponseBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapDataBreakpointInfoResponseBody){};
-    smith_dap_nullable_string_random(arena, smith_key_derive(key, 1), &out->dataId);
-    smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->description);
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    smith_dap_nullable_string_random(arena, smith_protocol_take(stream), &out->dataId);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->description);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_accessTypes = true;
-        smith_dap_data_breakpoint_access_type_list_random(arena, smith_key_derive(key, 5), &out->accessTypes);
+        smith_dap_data_breakpoint_access_type_list_random(arena, smith_protocol_take(stream), &out->accessTypes);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_canPersist = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->canPersist);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->canPersist);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_data_breakpoint_info_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -9163,17 +9309,18 @@ bool smith_dap_data_breakpoint_info_response_equal([[maybe_unused]] const SmithD
 }
 
 void smith_dap_data_breakpoint_info_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapDataBreakpointInfoResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapDataBreakpointInfoResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    smith_dap_data_breakpoint_info_response_body_random(arena, smith_key_derive(key, 13), &out->body);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_dap_data_breakpoint_info_response_body_random(arena, smith_protocol_take(stream), &out->body);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_data_breakpoint_known[] = {"dataId", "accessType", "condition", "hitCondition"};
@@ -9238,21 +9385,22 @@ bool smith_dap_data_breakpoint_equal([[maybe_unused]] const SmithDapDataBreakpoi
 }
 
 void smith_dap_data_breakpoint_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapDataBreakpoint *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapDataBreakpoint){};
-    smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->dataId);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->dataId);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_accessType = true;
-        smith_dap_data_breakpoint_access_type_random(arena, smith_key_derive(key, 3), &out->accessType);
+        smith_dap_data_breakpoint_access_type_random(arena, smith_protocol_take(stream), &out->accessType);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_condition = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->condition);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->condition);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_hitCondition = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 7), &out->hitCondition);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->hitCondition);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_dap_data_breakpoint_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithDapDataBreakpointList *out, SmithProtocolError *error) {
@@ -9284,10 +9432,11 @@ bool smith_dap_data_breakpoint_list_equal([[maybe_unused]] const SmithDapDataBre
 }
 
 void smith_dap_data_breakpoint_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapDataBreakpointList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithDapDataBreakpoint *items = smith_protocol_block(arena, sizeof(SmithDapDataBreakpoint), alignof(SmithDapDataBreakpoint), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_dap_data_breakpoint_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_dap_data_breakpoint_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -9322,9 +9471,10 @@ bool smith_dap_set_data_breakpoints_arguments_equal([[maybe_unused]] const Smith
 }
 
 void smith_dap_set_data_breakpoints_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapSetDataBreakpointsArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapSetDataBreakpointsArguments){};
-    smith_dap_data_breakpoint_list_random(arena, smith_key_derive(key, 1), &out->breakpoints);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_dap_data_breakpoint_list_random(arena, smith_protocol_take(stream), &out->breakpoints);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_set_data_breakpoints_request_known[] = {"seq", "type", "command", "arguments"};
@@ -9372,10 +9522,11 @@ bool smith_dap_set_data_breakpoints_request_equal([[maybe_unused]] const SmithDa
 }
 
 void smith_dap_set_data_breakpoints_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapSetDataBreakpointsRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapSetDataBreakpointsRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_set_data_breakpoints_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_set_data_breakpoints_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_set_data_breakpoints_response_body_known[] = {"breakpoints"};
@@ -9407,9 +9558,10 @@ bool smith_dap_set_data_breakpoints_response_body_equal([[maybe_unused]] const S
 }
 
 void smith_dap_set_data_breakpoints_response_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapSetDataBreakpointsResponseBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapSetDataBreakpointsResponseBody){};
-    smith_dap_breakpoint_list_random(arena, smith_key_derive(key, 1), &out->breakpoints);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_dap_breakpoint_list_random(arena, smith_protocol_take(stream), &out->breakpoints);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_set_data_breakpoints_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -9481,17 +9633,18 @@ bool smith_dap_set_data_breakpoints_response_equal([[maybe_unused]] const SmithD
 }
 
 void smith_dap_set_data_breakpoints_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapSetDataBreakpointsResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapSetDataBreakpointsResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    smith_dap_set_data_breakpoints_response_body_random(arena, smith_key_derive(key, 13), &out->body);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_dap_set_data_breakpoints_response_body_random(arena, smith_protocol_take(stream), &out->body);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_instruction_breakpoint_known[] = {"instructionReference", "offset", "condition", "hitCondition", "mode"};
@@ -9567,25 +9720,26 @@ bool smith_dap_instruction_breakpoint_equal([[maybe_unused]] const SmithDapInstr
 }
 
 void smith_dap_instruction_breakpoint_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapInstructionBreakpoint *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapInstructionBreakpoint){};
-    smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->instructionReference);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->instructionReference);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_offset = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 3), &out->offset);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->offset);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_condition = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->condition);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->condition);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_hitCondition = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 7), &out->hitCondition);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->hitCondition);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_mode = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->mode);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->mode);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 10), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_dap_instruction_breakpoint_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithDapInstructionBreakpointList *out, SmithProtocolError *error) {
@@ -9617,10 +9771,11 @@ bool smith_dap_instruction_breakpoint_list_equal([[maybe_unused]] const SmithDap
 }
 
 void smith_dap_instruction_breakpoint_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapInstructionBreakpointList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithDapInstructionBreakpoint *items = smith_protocol_block(arena, sizeof(SmithDapInstructionBreakpoint), alignof(SmithDapInstructionBreakpoint), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_dap_instruction_breakpoint_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_dap_instruction_breakpoint_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -9655,9 +9810,10 @@ bool smith_dap_set_instruction_breakpoints_arguments_equal([[maybe_unused]] cons
 }
 
 void smith_dap_set_instruction_breakpoints_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapSetInstructionBreakpointsArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapSetInstructionBreakpointsArguments){};
-    smith_dap_instruction_breakpoint_list_random(arena, smith_key_derive(key, 1), &out->breakpoints);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_dap_instruction_breakpoint_list_random(arena, smith_protocol_take(stream), &out->breakpoints);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_set_instruction_breakpoints_request_known[] = {"seq", "type", "command", "arguments"};
@@ -9705,10 +9861,11 @@ bool smith_dap_set_instruction_breakpoints_request_equal([[maybe_unused]] const 
 }
 
 void smith_dap_set_instruction_breakpoints_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapSetInstructionBreakpointsRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapSetInstructionBreakpointsRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_set_instruction_breakpoints_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_set_instruction_breakpoints_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_set_instruction_breakpoints_response_body_known[] = {"breakpoints"};
@@ -9740,9 +9897,10 @@ bool smith_dap_set_instruction_breakpoints_response_body_equal([[maybe_unused]] 
 }
 
 void smith_dap_set_instruction_breakpoints_response_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapSetInstructionBreakpointsResponseBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapSetInstructionBreakpointsResponseBody){};
-    smith_dap_breakpoint_list_random(arena, smith_key_derive(key, 1), &out->breakpoints);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_dap_breakpoint_list_random(arena, smith_protocol_take(stream), &out->breakpoints);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_set_instruction_breakpoints_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -9814,17 +9972,18 @@ bool smith_dap_set_instruction_breakpoints_response_equal([[maybe_unused]] const
 }
 
 void smith_dap_set_instruction_breakpoints_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapSetInstructionBreakpointsResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapSetInstructionBreakpointsResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    smith_dap_set_instruction_breakpoints_response_body_random(arena, smith_key_derive(key, 13), &out->body);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_dap_set_instruction_breakpoints_response_body_random(arena, smith_protocol_take(stream), &out->body);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_continue_arguments_known[] = {"threadId", "singleThread"};
@@ -9867,13 +10026,14 @@ bool smith_dap_continue_arguments_equal([[maybe_unused]] const SmithDapContinueA
 }
 
 void smith_dap_continue_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapContinueArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapContinueArguments){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->threadId);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->threadId);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_singleThread = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 3), &out->singleThread);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->singleThread);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_continue_request_known[] = {"seq", "type", "command", "arguments"};
@@ -9921,10 +10081,11 @@ bool smith_dap_continue_request_equal([[maybe_unused]] const SmithDapContinueReq
 }
 
 void smith_dap_continue_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapContinueRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapContinueRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_continue_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_continue_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_continue_response_body_known[] = {"allThreadsContinued"};
@@ -9961,12 +10122,13 @@ bool smith_dap_continue_response_body_equal([[maybe_unused]] const SmithDapConti
 }
 
 void smith_dap_continue_response_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapContinueResponseBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapContinueResponseBody){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_allThreadsContinued = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 1), &out->allThreadsContinued);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->allThreadsContinued);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_continue_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -10038,17 +10200,18 @@ bool smith_dap_continue_response_equal([[maybe_unused]] const SmithDapContinueRe
 }
 
 void smith_dap_continue_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapContinueResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapContinueResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    smith_dap_continue_response_body_random(arena, smith_key_derive(key, 13), &out->body);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_dap_continue_response_body_random(arena, smith_protocol_take(stream), &out->body);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_stepping_granularity_names[] = {"statement", "line", "instruction"};
@@ -10070,7 +10233,8 @@ bool smith_dap_stepping_granularity_equal([[maybe_unused]] const SmithDapSteppin
 }
 
 void smith_dap_stepping_granularity_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapSteppingGranularity *out) {
-    *out = (SmithDapSteppingGranularity)smith_protocol_pick(key, 3);
+    [[maybe_unused]] SmithKey *stream = &key;
+    *out = (SmithDapSteppingGranularity)smith_protocol_pick(smith_protocol_take(stream), 3);
 }
 
 static const char *const smith_dap_next_arguments_known[] = {"threadId", "singleThread", "granularity"};
@@ -10124,17 +10288,18 @@ bool smith_dap_next_arguments_equal([[maybe_unused]] const SmithDapNextArguments
 }
 
 void smith_dap_next_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapNextArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapNextArguments){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->threadId);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->threadId);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_singleThread = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 3), &out->singleThread);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->singleThread);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_granularity = true;
-        smith_dap_stepping_granularity_random(arena, smith_key_derive(key, 5), &out->granularity);
+        smith_dap_stepping_granularity_random(arena, smith_protocol_take(stream), &out->granularity);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_next_request_known[] = {"seq", "type", "command", "arguments"};
@@ -10182,10 +10347,11 @@ bool smith_dap_next_request_equal([[maybe_unused]] const SmithDapNextRequest *a,
 }
 
 void smith_dap_next_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapNextRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapNextRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_next_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_next_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_next_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -10262,20 +10428,21 @@ bool smith_dap_next_response_equal([[maybe_unused]] const SmithDapNextResponse *
 }
 
 void smith_dap_next_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapNextResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapNextResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_body = true;
-        smith_protocol_any_random(arena, smith_key_derive(key, 13), &out->body);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &out->body);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_step_in_arguments_known[] = {"threadId", "singleThread", "targetId", "granularity"};
@@ -10340,21 +10507,22 @@ bool smith_dap_step_in_arguments_equal([[maybe_unused]] const SmithDapStepInArgu
 }
 
 void smith_dap_step_in_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapStepInArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapStepInArguments){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->threadId);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->threadId);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_singleThread = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 3), &out->singleThread);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->singleThread);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_targetId = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->targetId);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->targetId);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_granularity = true;
-        smith_dap_stepping_granularity_random(arena, smith_key_derive(key, 7), &out->granularity);
+        smith_dap_stepping_granularity_random(arena, smith_protocol_take(stream), &out->granularity);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_step_in_request_known[] = {"seq", "type", "command", "arguments"};
@@ -10402,10 +10570,11 @@ bool smith_dap_step_in_request_equal([[maybe_unused]] const SmithDapStepInReques
 }
 
 void smith_dap_step_in_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapStepInRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapStepInRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_step_in_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_step_in_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_step_in_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -10482,20 +10651,21 @@ bool smith_dap_step_in_response_equal([[maybe_unused]] const SmithDapStepInRespo
 }
 
 void smith_dap_step_in_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapStepInResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapStepInResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_body = true;
-        smith_protocol_any_random(arena, smith_key_derive(key, 13), &out->body);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &out->body);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_step_out_arguments_known[] = {"threadId", "singleThread", "granularity"};
@@ -10549,17 +10719,18 @@ bool smith_dap_step_out_arguments_equal([[maybe_unused]] const SmithDapStepOutAr
 }
 
 void smith_dap_step_out_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapStepOutArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapStepOutArguments){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->threadId);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->threadId);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_singleThread = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 3), &out->singleThread);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->singleThread);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_granularity = true;
-        smith_dap_stepping_granularity_random(arena, smith_key_derive(key, 5), &out->granularity);
+        smith_dap_stepping_granularity_random(arena, smith_protocol_take(stream), &out->granularity);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_step_out_request_known[] = {"seq", "type", "command", "arguments"};
@@ -10607,10 +10778,11 @@ bool smith_dap_step_out_request_equal([[maybe_unused]] const SmithDapStepOutRequ
 }
 
 void smith_dap_step_out_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapStepOutRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapStepOutRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_step_out_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_step_out_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_step_out_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -10687,20 +10859,21 @@ bool smith_dap_step_out_response_equal([[maybe_unused]] const SmithDapStepOutRes
 }
 
 void smith_dap_step_out_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapStepOutResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapStepOutResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_body = true;
-        smith_protocol_any_random(arena, smith_key_derive(key, 13), &out->body);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &out->body);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_step_back_arguments_known[] = {"threadId", "singleThread", "granularity"};
@@ -10754,17 +10927,18 @@ bool smith_dap_step_back_arguments_equal([[maybe_unused]] const SmithDapStepBack
 }
 
 void smith_dap_step_back_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapStepBackArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapStepBackArguments){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->threadId);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->threadId);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_singleThread = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 3), &out->singleThread);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->singleThread);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_granularity = true;
-        smith_dap_stepping_granularity_random(arena, smith_key_derive(key, 5), &out->granularity);
+        smith_dap_stepping_granularity_random(arena, smith_protocol_take(stream), &out->granularity);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_step_back_request_known[] = {"seq", "type", "command", "arguments"};
@@ -10812,10 +10986,11 @@ bool smith_dap_step_back_request_equal([[maybe_unused]] const SmithDapStepBackRe
 }
 
 void smith_dap_step_back_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapStepBackRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapStepBackRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_step_back_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_step_back_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_step_back_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -10892,20 +11067,21 @@ bool smith_dap_step_back_response_equal([[maybe_unused]] const SmithDapStepBackR
 }
 
 void smith_dap_step_back_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapStepBackResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapStepBackResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_body = true;
-        smith_protocol_any_random(arena, smith_key_derive(key, 13), &out->body);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &out->body);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_reverse_continue_arguments_known[] = {"threadId", "singleThread"};
@@ -10948,13 +11124,14 @@ bool smith_dap_reverse_continue_arguments_equal([[maybe_unused]] const SmithDapR
 }
 
 void smith_dap_reverse_continue_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapReverseContinueArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapReverseContinueArguments){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->threadId);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->threadId);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_singleThread = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 3), &out->singleThread);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->singleThread);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_reverse_continue_request_known[] = {"seq", "type", "command", "arguments"};
@@ -11002,10 +11179,11 @@ bool smith_dap_reverse_continue_request_equal([[maybe_unused]] const SmithDapRev
 }
 
 void smith_dap_reverse_continue_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapReverseContinueRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapReverseContinueRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_reverse_continue_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_reverse_continue_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_reverse_continue_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -11082,20 +11260,21 @@ bool smith_dap_reverse_continue_response_equal([[maybe_unused]] const SmithDapRe
 }
 
 void smith_dap_reverse_continue_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapReverseContinueResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapReverseContinueResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_body = true;
-        smith_protocol_any_random(arena, smith_key_derive(key, 13), &out->body);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &out->body);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_restart_frame_arguments_known[] = {"frameId"};
@@ -11127,9 +11306,10 @@ bool smith_dap_restart_frame_arguments_equal([[maybe_unused]] const SmithDapRest
 }
 
 void smith_dap_restart_frame_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapRestartFrameArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapRestartFrameArguments){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->frameId);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->frameId);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_restart_frame_request_known[] = {"seq", "type", "command", "arguments"};
@@ -11177,10 +11357,11 @@ bool smith_dap_restart_frame_request_equal([[maybe_unused]] const SmithDapRestar
 }
 
 void smith_dap_restart_frame_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapRestartFrameRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapRestartFrameRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_restart_frame_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_restart_frame_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_restart_frame_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -11257,20 +11438,21 @@ bool smith_dap_restart_frame_response_equal([[maybe_unused]] const SmithDapResta
 }
 
 void smith_dap_restart_frame_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapRestartFrameResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapRestartFrameResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_body = true;
-        smith_protocol_any_random(arena, smith_key_derive(key, 13), &out->body);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &out->body);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_goto_arguments_known[] = {"threadId", "targetId"};
@@ -11308,10 +11490,11 @@ bool smith_dap_goto_arguments_equal([[maybe_unused]] const SmithDapGotoArguments
 }
 
 void smith_dap_goto_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapGotoArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapGotoArguments){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->threadId);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 3), &out->targetId);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->threadId);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->targetId);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_goto_request_known[] = {"seq", "type", "command", "arguments"};
@@ -11359,10 +11542,11 @@ bool smith_dap_goto_request_equal([[maybe_unused]] const SmithDapGotoRequest *a,
 }
 
 void smith_dap_goto_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapGotoRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapGotoRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_goto_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_goto_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_goto_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -11439,20 +11623,21 @@ bool smith_dap_goto_response_equal([[maybe_unused]] const SmithDapGotoResponse *
 }
 
 void smith_dap_goto_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapGotoResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapGotoResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_body = true;
-        smith_protocol_any_random(arena, smith_key_derive(key, 13), &out->body);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &out->body);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_pause_arguments_known[] = {"threadId"};
@@ -11484,9 +11669,10 @@ bool smith_dap_pause_arguments_equal([[maybe_unused]] const SmithDapPauseArgumen
 }
 
 void smith_dap_pause_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapPauseArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapPauseArguments){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->threadId);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->threadId);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_pause_request_known[] = {"seq", "type", "command", "arguments"};
@@ -11534,10 +11720,11 @@ bool smith_dap_pause_request_equal([[maybe_unused]] const SmithDapPauseRequest *
 }
 
 void smith_dap_pause_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapPauseRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapPauseRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_pause_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_pause_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_pause_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -11614,20 +11801,21 @@ bool smith_dap_pause_response_equal([[maybe_unused]] const SmithDapPauseResponse
 }
 
 void smith_dap_pause_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapPauseResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapPauseResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_body = true;
-        smith_protocol_any_random(arena, smith_key_derive(key, 13), &out->body);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &out->body);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_stack_frame_format_known[] = {"hex", "parameters", "parameterTypes", "parameterNames", "parameterValues", "line", "module", "includeAll"};
@@ -11741,40 +11929,41 @@ bool smith_dap_stack_frame_format_equal([[maybe_unused]] const SmithDapStackFram
 }
 
 void smith_dap_stack_frame_format_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapStackFrameFormat *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapStackFrameFormat){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_hex = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 1), &out->hex);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->hex);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_parameters = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 3), &out->parameters);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->parameters);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_parameterTypes = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 5), &out->parameterTypes);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->parameterTypes);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_parameterNames = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->parameterNames);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->parameterNames);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_parameterValues = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 9), &out->parameterValues);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->parameterValues);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_line = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 11), &out->line);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->line);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_module = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 13), &out->module);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->module);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 14))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_includeAll = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 15), &out->includeAll);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->includeAll);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 16), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_stack_trace_arguments_known[] = {"threadId", "startFrame", "levels", "format"};
@@ -11839,21 +12028,22 @@ bool smith_dap_stack_trace_arguments_equal([[maybe_unused]] const SmithDapStackT
 }
 
 void smith_dap_stack_trace_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapStackTraceArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapStackTraceArguments){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->threadId);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->threadId);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_startFrame = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 3), &out->startFrame);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->startFrame);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_levels = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->levels);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->levels);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_format = true;
-        smith_dap_stack_frame_format_random(arena, smith_key_derive(key, 7), &out->format);
+        smith_dap_stack_frame_format_random(arena, smith_protocol_take(stream), &out->format);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_stack_trace_request_known[] = {"seq", "type", "command", "arguments"};
@@ -11901,10 +12091,11 @@ bool smith_dap_stack_trace_request_equal([[maybe_unused]] const SmithDapStackTra
 }
 
 void smith_dap_stack_trace_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapStackTraceRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapStackTraceRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_stack_trace_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_stack_trace_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_dap_stack_frame_module_id_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithDapStackFrameModuleId *out, SmithProtocolError *error) {
@@ -11944,14 +12135,15 @@ bool smith_dap_stack_frame_module_id_equal([[maybe_unused]] const SmithDapStackF
 }
 
 void smith_dap_stack_frame_module_id_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapStackFrameModuleId *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapStackFrameModuleId){};
-    out->kind = (SmithDapStackFrameModuleIdKind)smith_protocol_pick(smith_key_derive(key, 0), 2);
+    out->kind = (SmithDapStackFrameModuleIdKind)smith_protocol_pick(smith_protocol_take(stream), 2);
     switch (out->kind) {
     case SmithDapStackFrameModuleIdKind_Integer:
-        smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->as.integer);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->as.integer);
         break;
     case SmithDapStackFrameModuleIdKind_String:
-        smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->as.string);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->as.string);
         break;
     }
 }
@@ -11975,7 +12167,8 @@ bool smith_dap_stack_frame_presentation_hint_equal([[maybe_unused]] const SmithD
 }
 
 void smith_dap_stack_frame_presentation_hint_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapStackFramePresentationHint *out) {
-    *out = (SmithDapStackFramePresentationHint)smith_protocol_pick(key, 3);
+    [[maybe_unused]] SmithKey *stream = &key;
+    *out = (SmithDapStackFramePresentationHint)smith_protocol_pick(smith_protocol_take(stream), 3);
 }
 
 static const char *const smith_dap_stack_frame_known[] = {"id", "name", "source", "line", "column", "endLine", "endColumn", "canRestart", "instructionPointerReference", "moduleId", "presentationHint"};
@@ -12102,40 +12295,41 @@ bool smith_dap_stack_frame_equal([[maybe_unused]] const SmithDapStackFrame *a, [
 }
 
 void smith_dap_stack_frame_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapStackFrame *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapStackFrame){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->id);
-    smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->name);
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->id);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->name);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_source = true;
-        smith_dap_source_random(arena, smith_key_derive(key, 5), &out->source);
+        smith_dap_source_random(arena, smith_protocol_take(stream), &out->source);
     }
-    smith_protocol_integer_random(arena, smith_key_derive(key, 7), &out->line);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 9), &out->column);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->line);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->column);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_endLine = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 11), &out->endLine);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->endLine);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_endColumn = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 13), &out->endColumn);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->endColumn);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 14))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_canRestart = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 15), &out->canRestart);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->canRestart);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 16))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_instructionPointerReference = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 17), &out->instructionPointerReference);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->instructionPointerReference);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 18))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_moduleId = true;
-        smith_dap_stack_frame_module_id_random(arena, smith_key_derive(key, 19), &out->moduleId);
+        smith_dap_stack_frame_module_id_random(arena, smith_protocol_take(stream), &out->moduleId);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 20))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_presentationHint = true;
-        smith_dap_stack_frame_presentation_hint_random(arena, smith_key_derive(key, 21), &out->presentationHint);
+        smith_dap_stack_frame_presentation_hint_random(arena, smith_protocol_take(stream), &out->presentationHint);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 22), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_dap_stack_frame_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithDapStackFrameList *out, SmithProtocolError *error) {
@@ -12167,10 +12361,11 @@ bool smith_dap_stack_frame_list_equal([[maybe_unused]] const SmithDapStackFrameL
 }
 
 void smith_dap_stack_frame_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapStackFrameList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithDapStackFrame *items = smith_protocol_block(arena, sizeof(SmithDapStackFrame), alignof(SmithDapStackFrame), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_dap_stack_frame_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_dap_stack_frame_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -12216,13 +12411,14 @@ bool smith_dap_stack_trace_response_body_equal([[maybe_unused]] const SmithDapSt
 }
 
 void smith_dap_stack_trace_response_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapStackTraceResponseBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapStackTraceResponseBody){};
-    smith_dap_stack_frame_list_random(arena, smith_key_derive(key, 1), &out->stackFrames);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_dap_stack_frame_list_random(arena, smith_protocol_take(stream), &out->stackFrames);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_totalFrames = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 3), &out->totalFrames);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->totalFrames);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_stack_trace_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -12294,17 +12490,18 @@ bool smith_dap_stack_trace_response_equal([[maybe_unused]] const SmithDapStackTr
 }
 
 void smith_dap_stack_trace_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapStackTraceResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapStackTraceResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    smith_dap_stack_trace_response_body_random(arena, smith_key_derive(key, 13), &out->body);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_dap_stack_trace_response_body_random(arena, smith_protocol_take(stream), &out->body);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_scopes_arguments_known[] = {"frameId"};
@@ -12336,9 +12533,10 @@ bool smith_dap_scopes_arguments_equal([[maybe_unused]] const SmithDapScopesArgum
 }
 
 void smith_dap_scopes_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapScopesArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapScopesArguments){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->frameId);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->frameId);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_scopes_request_known[] = {"seq", "type", "command", "arguments"};
@@ -12386,10 +12584,11 @@ bool smith_dap_scopes_request_equal([[maybe_unused]] const SmithDapScopesRequest
 }
 
 void smith_dap_scopes_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapScopesRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapScopesRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_scopes_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_scopes_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_scope_presentation_hint_names[] = {"arguments", "locals", "registers", "returnValue"};
@@ -12415,7 +12614,8 @@ bool smith_dap_scope_presentation_hint_equal([[maybe_unused]] const SmithDapScop
 }
 
 void smith_dap_scope_presentation_hint_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapScopePresentationHint *out) {
-    size_t pick = smith_protocol_pick(smith_key_derive(key, 0), 5);
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t pick = smith_protocol_pick(smith_protocol_take(stream), 5);
     out->known = (SmithDapScopePresentationHintKnown)pick;
     out->text = pick < 4 ? smith_text_make(smith_dap_scope_presentation_hint_names[pick]) : smith_protocol_name(arena, pick);
 }
@@ -12549,43 +12749,44 @@ bool smith_dap_scope_equal([[maybe_unused]] const SmithDapScope *a, [[maybe_unus
 }
 
 void smith_dap_scope_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapScope *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapScope){};
-    smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->name);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->name);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_presentationHint = true;
-        smith_dap_scope_presentation_hint_random(arena, smith_key_derive(key, 3), &out->presentationHint);
+        smith_dap_scope_presentation_hint_random(arena, smith_protocol_take(stream), &out->presentationHint);
     }
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->variablesReference);
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->variablesReference);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_namedVariables = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 7), &out->namedVariables);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->namedVariables);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_indexedVariables = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 9), &out->indexedVariables);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->indexedVariables);
     }
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 11), &out->expensive);
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->expensive);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_source = true;
-        smith_dap_source_random(arena, smith_key_derive(key, 13), &out->source);
+        smith_dap_source_random(arena, smith_protocol_take(stream), &out->source);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 14))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_line = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 15), &out->line);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->line);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 16))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_column = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 17), &out->column);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->column);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 18))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_endLine = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 19), &out->endLine);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->endLine);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 20))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_endColumn = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 21), &out->endColumn);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->endColumn);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 22), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_dap_scope_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithDapScopeList *out, SmithProtocolError *error) {
@@ -12617,10 +12818,11 @@ bool smith_dap_scope_list_equal([[maybe_unused]] const SmithDapScopeList *a, [[m
 }
 
 void smith_dap_scope_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapScopeList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithDapScope *items = smith_protocol_block(arena, sizeof(SmithDapScope), alignof(SmithDapScope), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_dap_scope_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_dap_scope_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -12655,9 +12857,10 @@ bool smith_dap_scopes_response_body_equal([[maybe_unused]] const SmithDapScopesR
 }
 
 void smith_dap_scopes_response_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapScopesResponseBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapScopesResponseBody){};
-    smith_dap_scope_list_random(arena, smith_key_derive(key, 1), &out->scopes);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_dap_scope_list_random(arena, smith_protocol_take(stream), &out->scopes);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_scopes_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -12729,17 +12932,18 @@ bool smith_dap_scopes_response_equal([[maybe_unused]] const SmithDapScopesRespon
 }
 
 void smith_dap_scopes_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapScopesResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapScopesResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    smith_dap_scopes_response_body_random(arena, smith_key_derive(key, 13), &out->body);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_dap_scopes_response_body_random(arena, smith_protocol_take(stream), &out->body);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_variables_arguments_filter_names[] = {"indexed", "named"};
@@ -12761,7 +12965,8 @@ bool smith_dap_variables_arguments_filter_equal([[maybe_unused]] const SmithDapV
 }
 
 void smith_dap_variables_arguments_filter_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapVariablesArgumentsFilter *out) {
-    *out = (SmithDapVariablesArgumentsFilter)smith_protocol_pick(key, 2);
+    [[maybe_unused]] SmithKey *stream = &key;
+    *out = (SmithDapVariablesArgumentsFilter)smith_protocol_pick(smith_protocol_take(stream), 2);
 }
 
 static const char *const smith_dap_value_format_known[] = {"hex"};
@@ -12798,12 +13003,13 @@ bool smith_dap_value_format_equal([[maybe_unused]] const SmithDapValueFormat *a,
 }
 
 void smith_dap_value_format_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapValueFormat *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapValueFormat){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_hex = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 1), &out->hex);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->hex);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_variables_arguments_known[] = {"variablesReference", "filter", "start", "count", "format"};
@@ -12879,25 +13085,26 @@ bool smith_dap_variables_arguments_equal([[maybe_unused]] const SmithDapVariable
 }
 
 void smith_dap_variables_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapVariablesArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapVariablesArguments){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->variablesReference);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->variablesReference);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_filter = true;
-        smith_dap_variables_arguments_filter_random(arena, smith_key_derive(key, 3), &out->filter);
+        smith_dap_variables_arguments_filter_random(arena, smith_protocol_take(stream), &out->filter);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_start = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->start);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->start);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_count = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 7), &out->count);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->count);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_format = true;
-        smith_dap_value_format_random(arena, smith_key_derive(key, 9), &out->format);
+        smith_dap_value_format_random(arena, smith_protocol_take(stream), &out->format);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 10), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_variables_request_known[] = {"seq", "type", "command", "arguments"};
@@ -12945,10 +13152,11 @@ bool smith_dap_variables_request_equal([[maybe_unused]] const SmithDapVariablesR
 }
 
 void smith_dap_variables_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapVariablesRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapVariablesRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_variables_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_variables_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_variable_presentation_hint_kind_names[] = {"property", "method", "class", "data", "event", "baseClass", "innerClass", "interface", "mostDerivedClass", "virtual", "dataBreakpoint"};
@@ -12974,7 +13182,8 @@ bool smith_dap_variable_presentation_hint_kind_equal([[maybe_unused]] const Smit
 }
 
 void smith_dap_variable_presentation_hint_kind_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapVariablePresentationHintKind *out) {
-    size_t pick = smith_protocol_pick(smith_key_derive(key, 0), 12);
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t pick = smith_protocol_pick(smith_protocol_take(stream), 12);
     out->known = (SmithDapVariablePresentationHintKindKnown)pick;
     out->text = pick < 11 ? smith_text_make(smith_dap_variable_presentation_hint_kind_names[pick]) : smith_protocol_name(arena, pick);
 }
@@ -13002,7 +13211,8 @@ bool smith_dap_variable_presentation_hint_attributes_item_equal([[maybe_unused]]
 }
 
 void smith_dap_variable_presentation_hint_attributes_item_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapVariablePresentationHintAttributesItem *out) {
-    size_t pick = smith_protocol_pick(smith_key_derive(key, 0), 9);
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t pick = smith_protocol_pick(smith_protocol_take(stream), 9);
     out->known = (SmithDapVariablePresentationHintAttributesItemKnown)pick;
     out->text = pick < 8 ? smith_text_make(smith_dap_variable_presentation_hint_attributes_item_names[pick]) : smith_protocol_name(arena, pick);
 }
@@ -13036,10 +13246,11 @@ bool smith_dap_variable_presentation_hint_attributes_item_list_equal([[maybe_unu
 }
 
 void smith_dap_variable_presentation_hint_attributes_item_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapVariablePresentationHintAttributesItemList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithDapVariablePresentationHintAttributesItem *items = smith_protocol_block(arena, sizeof(SmithDapVariablePresentationHintAttributesItem), alignof(SmithDapVariablePresentationHintAttributesItem), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_dap_variable_presentation_hint_attributes_item_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_dap_variable_presentation_hint_attributes_item_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -13068,7 +13279,8 @@ bool smith_dap_variable_presentation_hint_visibility_equal([[maybe_unused]] cons
 }
 
 void smith_dap_variable_presentation_hint_visibility_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapVariablePresentationHintVisibility *out) {
-    size_t pick = smith_protocol_pick(smith_key_derive(key, 0), 6);
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t pick = smith_protocol_pick(smith_protocol_take(stream), 6);
     out->known = (SmithDapVariablePresentationHintVisibilityKnown)pick;
     out->text = pick < 5 ? smith_text_make(smith_dap_variable_presentation_hint_visibility_names[pick]) : smith_protocol_name(arena, pick);
 }
@@ -13140,24 +13352,25 @@ bool smith_dap_variable_presentation_hint_equal([[maybe_unused]] const SmithDapV
 }
 
 void smith_dap_variable_presentation_hint_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapVariablePresentationHint *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapVariablePresentationHint){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_kind = true;
-        smith_dap_variable_presentation_hint_kind_random(arena, smith_key_derive(key, 1), &out->kind);
+        smith_dap_variable_presentation_hint_kind_random(arena, smith_protocol_take(stream), &out->kind);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_attributes = true;
-        smith_dap_variable_presentation_hint_attributes_item_list_random(arena, smith_key_derive(key, 3), &out->attributes);
+        smith_dap_variable_presentation_hint_attributes_item_list_random(arena, smith_protocol_take(stream), &out->attributes);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_visibility = true;
-        smith_dap_variable_presentation_hint_visibility_random(arena, smith_key_derive(key, 5), &out->visibility);
+        smith_dap_variable_presentation_hint_visibility_random(arena, smith_protocol_take(stream), &out->visibility);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_lazy = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->lazy);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->lazy);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_variable_known[] = {"name", "value", "type", "presentationHint", "evaluateName", "variablesReference", "namedVariables", "indexedVariables", "memoryReference", "declarationLocationReference", "valueLocationReference"};
@@ -13289,43 +13502,44 @@ bool smith_dap_variable_equal([[maybe_unused]] const SmithDapVariable *a, [[mayb
 }
 
 void smith_dap_variable_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapVariable *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapVariable){};
-    smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->name);
-    smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->value);
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->name);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->value);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_type = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->type);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->type);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_presentationHint = true;
-        smith_dap_variable_presentation_hint_random(arena, smith_key_derive(key, 7), &out->presentationHint);
+        smith_dap_variable_presentation_hint_random(arena, smith_protocol_take(stream), &out->presentationHint);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_evaluateName = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->evaluateName);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->evaluateName);
     }
-    smith_protocol_integer_random(arena, smith_key_derive(key, 11), &out->variablesReference);
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->variablesReference);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_namedVariables = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 13), &out->namedVariables);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->namedVariables);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 14))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_indexedVariables = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 15), &out->indexedVariables);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->indexedVariables);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 16))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_memoryReference = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 17), &out->memoryReference);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->memoryReference);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 18))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_declarationLocationReference = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 19), &out->declarationLocationReference);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->declarationLocationReference);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 20))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_valueLocationReference = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 21), &out->valueLocationReference);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->valueLocationReference);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 22), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_dap_variable_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithDapVariableList *out, SmithProtocolError *error) {
@@ -13357,10 +13571,11 @@ bool smith_dap_variable_list_equal([[maybe_unused]] const SmithDapVariableList *
 }
 
 void smith_dap_variable_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapVariableList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithDapVariable *items = smith_protocol_block(arena, sizeof(SmithDapVariable), alignof(SmithDapVariable), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_dap_variable_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_dap_variable_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -13395,9 +13610,10 @@ bool smith_dap_variables_response_body_equal([[maybe_unused]] const SmithDapVari
 }
 
 void smith_dap_variables_response_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapVariablesResponseBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapVariablesResponseBody){};
-    smith_dap_variable_list_random(arena, smith_key_derive(key, 1), &out->variables);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_dap_variable_list_random(arena, smith_protocol_take(stream), &out->variables);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_variables_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -13469,17 +13685,18 @@ bool smith_dap_variables_response_equal([[maybe_unused]] const SmithDapVariables
 }
 
 void smith_dap_variables_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapVariablesResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapVariablesResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    smith_dap_variables_response_body_random(arena, smith_key_derive(key, 13), &out->body);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_dap_variables_response_body_random(arena, smith_protocol_take(stream), &out->body);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_set_variable_arguments_known[] = {"variablesReference", "name", "value", "format"};
@@ -13534,15 +13751,16 @@ bool smith_dap_set_variable_arguments_equal([[maybe_unused]] const SmithDapSetVa
 }
 
 void smith_dap_set_variable_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapSetVariableArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapSetVariableArguments){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->variablesReference);
-    smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->name);
-    smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->value);
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->variablesReference);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->name);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->value);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_format = true;
-        smith_dap_value_format_random(arena, smith_key_derive(key, 7), &out->format);
+        smith_dap_value_format_random(arena, smith_protocol_take(stream), &out->format);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_set_variable_request_known[] = {"seq", "type", "command", "arguments"};
@@ -13590,10 +13808,11 @@ bool smith_dap_set_variable_request_equal([[maybe_unused]] const SmithDapSetVari
 }
 
 void smith_dap_set_variable_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapSetVariableRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapSetVariableRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_set_variable_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_set_variable_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_set_variable_response_body_known[] = {"value", "type", "variablesReference", "namedVariables", "indexedVariables", "memoryReference", "valueLocationReference"};
@@ -13691,33 +13910,34 @@ bool smith_dap_set_variable_response_body_equal([[maybe_unused]] const SmithDapS
 }
 
 void smith_dap_set_variable_response_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapSetVariableResponseBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapSetVariableResponseBody){};
-    smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->value);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->value);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_type = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->type);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->type);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_variablesReference = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->variablesReference);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->variablesReference);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_namedVariables = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 7), &out->namedVariables);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->namedVariables);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_indexedVariables = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 9), &out->indexedVariables);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->indexedVariables);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_memoryReference = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 11), &out->memoryReference);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->memoryReference);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_valueLocationReference = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 13), &out->valueLocationReference);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->valueLocationReference);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_set_variable_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -13789,17 +14009,18 @@ bool smith_dap_set_variable_response_equal([[maybe_unused]] const SmithDapSetVar
 }
 
 void smith_dap_set_variable_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapSetVariableResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapSetVariableResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    smith_dap_set_variable_response_body_random(arena, smith_key_derive(key, 13), &out->body);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_dap_set_variable_response_body_random(arena, smith_protocol_take(stream), &out->body);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_source_arguments_known[] = {"source", "sourceReference"};
@@ -13842,13 +14063,14 @@ bool smith_dap_source_arguments_equal([[maybe_unused]] const SmithDapSourceArgum
 }
 
 void smith_dap_source_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapSourceArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapSourceArguments){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_source = true;
-        smith_dap_source_random(arena, smith_key_derive(key, 1), &out->source);
+        smith_dap_source_random(arena, smith_protocol_take(stream), &out->source);
     }
-    smith_protocol_integer_random(arena, smith_key_derive(key, 3), &out->sourceReference);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->sourceReference);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_source_request_known[] = {"seq", "type", "command", "arguments"};
@@ -13896,10 +14118,11 @@ bool smith_dap_source_request_equal([[maybe_unused]] const SmithDapSourceRequest
 }
 
 void smith_dap_source_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapSourceRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapSourceRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_source_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_source_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_source_response_body_known[] = {"content", "mimeType"};
@@ -13942,13 +14165,14 @@ bool smith_dap_source_response_body_equal([[maybe_unused]] const SmithDapSourceR
 }
 
 void smith_dap_source_response_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapSourceResponseBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapSourceResponseBody){};
-    smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->content);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->content);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_mimeType = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->mimeType);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->mimeType);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_source_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -14020,17 +14244,18 @@ bool smith_dap_source_response_equal([[maybe_unused]] const SmithDapSourceRespon
 }
 
 void smith_dap_source_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapSourceResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapSourceResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    smith_dap_source_response_body_random(arena, smith_key_derive(key, 13), &out->body);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_dap_source_response_body_random(arena, smith_protocol_take(stream), &out->body);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_threads_request_known[] = {"seq", "type", "command", "arguments"};
@@ -14083,13 +14308,14 @@ bool smith_dap_threads_request_equal([[maybe_unused]] const SmithDapThreadsReque
 }
 
 void smith_dap_threads_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapThreadsRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapThreadsRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_arguments = true;
-        smith_protocol_any_random(arena, smith_key_derive(key, 7), &out->arguments);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &out->arguments);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_thread_known[] = {"id", "name"};
@@ -14127,10 +14353,11 @@ bool smith_dap_thread_equal([[maybe_unused]] const SmithDapThread *a, [[maybe_un
 }
 
 void smith_dap_thread_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapThread *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapThread){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->id);
-    smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->name);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->id);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->name);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_dap_thread_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithDapThreadList *out, SmithProtocolError *error) {
@@ -14162,10 +14389,11 @@ bool smith_dap_thread_list_equal([[maybe_unused]] const SmithDapThreadList *a, [
 }
 
 void smith_dap_thread_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapThreadList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithDapThread *items = smith_protocol_block(arena, sizeof(SmithDapThread), alignof(SmithDapThread), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_dap_thread_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_dap_thread_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -14200,9 +14428,10 @@ bool smith_dap_threads_response_body_equal([[maybe_unused]] const SmithDapThread
 }
 
 void smith_dap_threads_response_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapThreadsResponseBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapThreadsResponseBody){};
-    smith_dap_thread_list_random(arena, smith_key_derive(key, 1), &out->threads);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_dap_thread_list_random(arena, smith_protocol_take(stream), &out->threads);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_threads_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -14274,17 +14503,18 @@ bool smith_dap_threads_response_equal([[maybe_unused]] const SmithDapThreadsResp
 }
 
 void smith_dap_threads_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapThreadsResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapThreadsResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    smith_dap_threads_response_body_random(arena, smith_key_derive(key, 13), &out->body);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_dap_threads_response_body_random(arena, smith_protocol_take(stream), &out->body);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_terminate_threads_arguments_known[] = {"threadIds"};
@@ -14321,12 +14551,13 @@ bool smith_dap_terminate_threads_arguments_equal([[maybe_unused]] const SmithDap
 }
 
 void smith_dap_terminate_threads_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapTerminateThreadsArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapTerminateThreadsArguments){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_threadIds = true;
-        smith_dap_integer_list_random(arena, smith_key_derive(key, 1), &out->threadIds);
+        smith_dap_integer_list_random(arena, smith_protocol_take(stream), &out->threadIds);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_terminate_threads_request_known[] = {"seq", "type", "command", "arguments"};
@@ -14374,10 +14605,11 @@ bool smith_dap_terminate_threads_request_equal([[maybe_unused]] const SmithDapTe
 }
 
 void smith_dap_terminate_threads_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapTerminateThreadsRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapTerminateThreadsRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_terminate_threads_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_terminate_threads_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_terminate_threads_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -14454,20 +14686,21 @@ bool smith_dap_terminate_threads_response_equal([[maybe_unused]] const SmithDapT
 }
 
 void smith_dap_terminate_threads_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapTerminateThreadsResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapTerminateThreadsResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_body = true;
-        smith_protocol_any_random(arena, smith_key_derive(key, 13), &out->body);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &out->body);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_modules_arguments_known[] = {"startModule", "moduleCount"};
@@ -14515,16 +14748,17 @@ bool smith_dap_modules_arguments_equal([[maybe_unused]] const SmithDapModulesArg
 }
 
 void smith_dap_modules_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapModulesArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapModulesArguments){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_startModule = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->startModule);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->startModule);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_moduleCount = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 3), &out->moduleCount);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->moduleCount);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_modules_request_known[] = {"seq", "type", "command", "arguments"};
@@ -14572,10 +14806,11 @@ bool smith_dap_modules_request_equal([[maybe_unused]] const SmithDapModulesReque
 }
 
 void smith_dap_modules_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapModulesRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapModulesRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_modules_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_modules_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_dap_module_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithDapModuleList *out, SmithProtocolError *error) {
@@ -14607,10 +14842,11 @@ bool smith_dap_module_list_equal([[maybe_unused]] const SmithDapModuleList *a, [
 }
 
 void smith_dap_module_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapModuleList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithDapModule *items = smith_protocol_block(arena, sizeof(SmithDapModule), alignof(SmithDapModule), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_dap_module_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_dap_module_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -14656,13 +14892,14 @@ bool smith_dap_modules_response_body_equal([[maybe_unused]] const SmithDapModule
 }
 
 void smith_dap_modules_response_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapModulesResponseBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapModulesResponseBody){};
-    smith_dap_module_list_random(arena, smith_key_derive(key, 1), &out->modules);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_dap_module_list_random(arena, smith_protocol_take(stream), &out->modules);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_totalModules = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 3), &out->totalModules);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->totalModules);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_modules_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -14734,17 +14971,18 @@ bool smith_dap_modules_response_equal([[maybe_unused]] const SmithDapModulesResp
 }
 
 void smith_dap_modules_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapModulesResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapModulesResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    smith_dap_modules_response_body_random(arena, smith_key_derive(key, 13), &out->body);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_dap_modules_response_body_random(arena, smith_protocol_take(stream), &out->body);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_loaded_sources_request_known[] = {"seq", "type", "command", "arguments"};
@@ -14797,13 +15035,14 @@ bool smith_dap_loaded_sources_request_equal([[maybe_unused]] const SmithDapLoade
 }
 
 void smith_dap_loaded_sources_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapLoadedSourcesRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapLoadedSourcesRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_arguments = true;
-        smith_protocol_object_random(arena, smith_key_derive(key, 7), &out->arguments);
+        smith_protocol_object_random(arena, smith_protocol_take(stream), &out->arguments);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_dap_source_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithDapSourceList *out, SmithProtocolError *error) {
@@ -14835,10 +15074,11 @@ bool smith_dap_source_list_equal([[maybe_unused]] const SmithDapSourceList *a, [
 }
 
 void smith_dap_source_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapSourceList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithDapSource *items = smith_protocol_block(arena, sizeof(SmithDapSource), alignof(SmithDapSource), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_dap_source_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_dap_source_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -14873,9 +15113,10 @@ bool smith_dap_loaded_sources_response_body_equal([[maybe_unused]] const SmithDa
 }
 
 void smith_dap_loaded_sources_response_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapLoadedSourcesResponseBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapLoadedSourcesResponseBody){};
-    smith_dap_source_list_random(arena, smith_key_derive(key, 1), &out->sources);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_dap_source_list_random(arena, smith_protocol_take(stream), &out->sources);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_loaded_sources_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -14947,17 +15188,18 @@ bool smith_dap_loaded_sources_response_equal([[maybe_unused]] const SmithDapLoad
 }
 
 void smith_dap_loaded_sources_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapLoadedSourcesResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapLoadedSourcesResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    smith_dap_loaded_sources_response_body_random(arena, smith_key_derive(key, 13), &out->body);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_dap_loaded_sources_response_body_random(arena, smith_protocol_take(stream), &out->body);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_evaluate_arguments_context_names[] = {"watch", "repl", "hover", "clipboard", "variables"};
@@ -14983,7 +15225,8 @@ bool smith_dap_evaluate_arguments_context_equal([[maybe_unused]] const SmithDapE
 }
 
 void smith_dap_evaluate_arguments_context_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapEvaluateArgumentsContext *out) {
-    size_t pick = smith_protocol_pick(smith_key_derive(key, 0), 6);
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t pick = smith_protocol_pick(smith_protocol_take(stream), 6);
     out->known = (SmithDapEvaluateArgumentsContextKnown)pick;
     out->text = pick < 5 ? smith_text_make(smith_dap_evaluate_arguments_context_names[pick]) : smith_protocol_name(arena, pick);
 }
@@ -15083,33 +15326,34 @@ bool smith_dap_evaluate_arguments_equal([[maybe_unused]] const SmithDapEvaluateA
 }
 
 void smith_dap_evaluate_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapEvaluateArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapEvaluateArguments){};
-    smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->expression);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->expression);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_frameId = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 3), &out->frameId);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->frameId);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_line = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->line);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->line);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_column = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 7), &out->column);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->column);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_source = true;
-        smith_dap_source_random(arena, smith_key_derive(key, 9), &out->source);
+        smith_dap_source_random(arena, smith_protocol_take(stream), &out->source);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_context = true;
-        smith_dap_evaluate_arguments_context_random(arena, smith_key_derive(key, 11), &out->context);
+        smith_dap_evaluate_arguments_context_random(arena, smith_protocol_take(stream), &out->context);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_format = true;
-        smith_dap_value_format_random(arena, smith_key_derive(key, 13), &out->format);
+        smith_dap_value_format_random(arena, smith_protocol_take(stream), &out->format);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_evaluate_request_known[] = {"seq", "type", "command", "arguments"};
@@ -15157,10 +15401,11 @@ bool smith_dap_evaluate_request_equal([[maybe_unused]] const SmithDapEvaluateReq
 }
 
 void smith_dap_evaluate_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapEvaluateRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapEvaluateRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_evaluate_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_evaluate_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_evaluate_response_body_known[] = {"result", "type", "presentationHint", "variablesReference", "namedVariables", "indexedVariables", "memoryReference", "valueLocationReference"};
@@ -15264,34 +15509,35 @@ bool smith_dap_evaluate_response_body_equal([[maybe_unused]] const SmithDapEvalu
 }
 
 void smith_dap_evaluate_response_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapEvaluateResponseBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapEvaluateResponseBody){};
-    smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->result);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->result);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_type = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->type);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->type);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_presentationHint = true;
-        smith_dap_variable_presentation_hint_random(arena, smith_key_derive(key, 5), &out->presentationHint);
+        smith_dap_variable_presentation_hint_random(arena, smith_protocol_take(stream), &out->presentationHint);
     }
-    smith_protocol_integer_random(arena, smith_key_derive(key, 7), &out->variablesReference);
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->variablesReference);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_namedVariables = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 9), &out->namedVariables);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->namedVariables);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_indexedVariables = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 11), &out->indexedVariables);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->indexedVariables);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_memoryReference = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 13), &out->memoryReference);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->memoryReference);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 14))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_valueLocationReference = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 15), &out->valueLocationReference);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->valueLocationReference);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 16), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_evaluate_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -15363,17 +15609,18 @@ bool smith_dap_evaluate_response_equal([[maybe_unused]] const SmithDapEvaluateRe
 }
 
 void smith_dap_evaluate_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapEvaluateResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapEvaluateResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    smith_dap_evaluate_response_body_random(arena, smith_key_derive(key, 13), &out->body);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_dap_evaluate_response_body_random(arena, smith_protocol_take(stream), &out->body);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_set_expression_arguments_known[] = {"expression", "value", "frameId", "format"};
@@ -15433,18 +15680,19 @@ bool smith_dap_set_expression_arguments_equal([[maybe_unused]] const SmithDapSet
 }
 
 void smith_dap_set_expression_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapSetExpressionArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapSetExpressionArguments){};
-    smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->expression);
-    smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->value);
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->expression);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->value);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_frameId = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->frameId);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->frameId);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_format = true;
-        smith_dap_value_format_random(arena, smith_key_derive(key, 7), &out->format);
+        smith_dap_value_format_random(arena, smith_protocol_take(stream), &out->format);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_set_expression_request_known[] = {"seq", "type", "command", "arguments"};
@@ -15492,10 +15740,11 @@ bool smith_dap_set_expression_request_equal([[maybe_unused]] const SmithDapSetEx
 }
 
 void smith_dap_set_expression_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapSetExpressionRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapSetExpressionRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_set_expression_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_set_expression_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_set_expression_response_body_known[] = {"value", "type", "presentationHint", "variablesReference", "namedVariables", "indexedVariables", "memoryReference", "valueLocationReference"};
@@ -15604,37 +15853,38 @@ bool smith_dap_set_expression_response_body_equal([[maybe_unused]] const SmithDa
 }
 
 void smith_dap_set_expression_response_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapSetExpressionResponseBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapSetExpressionResponseBody){};
-    smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->value);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->value);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_type = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->type);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->type);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_presentationHint = true;
-        smith_dap_variable_presentation_hint_random(arena, smith_key_derive(key, 5), &out->presentationHint);
+        smith_dap_variable_presentation_hint_random(arena, smith_protocol_take(stream), &out->presentationHint);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_variablesReference = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 7), &out->variablesReference);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->variablesReference);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_namedVariables = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 9), &out->namedVariables);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->namedVariables);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_indexedVariables = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 11), &out->indexedVariables);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->indexedVariables);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_memoryReference = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 13), &out->memoryReference);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->memoryReference);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 14))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_valueLocationReference = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 15), &out->valueLocationReference);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->valueLocationReference);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 16), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_set_expression_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -15706,17 +15956,18 @@ bool smith_dap_set_expression_response_equal([[maybe_unused]] const SmithDapSetE
 }
 
 void smith_dap_set_expression_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapSetExpressionResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapSetExpressionResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    smith_dap_set_expression_response_body_random(arena, smith_key_derive(key, 13), &out->body);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_dap_set_expression_response_body_random(arena, smith_protocol_take(stream), &out->body);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_step_in_targets_arguments_known[] = {"frameId"};
@@ -15748,9 +15999,10 @@ bool smith_dap_step_in_targets_arguments_equal([[maybe_unused]] const SmithDapSt
 }
 
 void smith_dap_step_in_targets_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapStepInTargetsArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapStepInTargetsArguments){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->frameId);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->frameId);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_step_in_targets_request_known[] = {"seq", "type", "command", "arguments"};
@@ -15798,10 +16050,11 @@ bool smith_dap_step_in_targets_request_equal([[maybe_unused]] const SmithDapStep
 }
 
 void smith_dap_step_in_targets_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapStepInTargetsRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapStepInTargetsRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_step_in_targets_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_step_in_targets_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_step_in_target_known[] = {"id", "label", "line", "column", "endLine", "endColumn"};
@@ -15883,26 +16136,27 @@ bool smith_dap_step_in_target_equal([[maybe_unused]] const SmithDapStepInTarget 
 }
 
 void smith_dap_step_in_target_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapStepInTarget *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapStepInTarget){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->id);
-    smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->label);
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->id);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->label);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_line = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->line);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->line);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_column = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 7), &out->column);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->column);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_endLine = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 9), &out->endLine);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->endLine);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_endColumn = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 11), &out->endColumn);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->endColumn);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 12), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_dap_step_in_target_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithDapStepInTargetList *out, SmithProtocolError *error) {
@@ -15934,10 +16188,11 @@ bool smith_dap_step_in_target_list_equal([[maybe_unused]] const SmithDapStepInTa
 }
 
 void smith_dap_step_in_target_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapStepInTargetList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithDapStepInTarget *items = smith_protocol_block(arena, sizeof(SmithDapStepInTarget), alignof(SmithDapStepInTarget), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_dap_step_in_target_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_dap_step_in_target_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -15972,9 +16227,10 @@ bool smith_dap_step_in_targets_response_body_equal([[maybe_unused]] const SmithD
 }
 
 void smith_dap_step_in_targets_response_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapStepInTargetsResponseBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapStepInTargetsResponseBody){};
-    smith_dap_step_in_target_list_random(arena, smith_key_derive(key, 1), &out->targets);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_dap_step_in_target_list_random(arena, smith_protocol_take(stream), &out->targets);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_step_in_targets_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -16046,17 +16302,18 @@ bool smith_dap_step_in_targets_response_equal([[maybe_unused]] const SmithDapSte
 }
 
 void smith_dap_step_in_targets_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapStepInTargetsResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapStepInTargetsResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    smith_dap_step_in_targets_response_body_random(arena, smith_key_derive(key, 13), &out->body);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_dap_step_in_targets_response_body_random(arena, smith_protocol_take(stream), &out->body);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_goto_targets_arguments_known[] = {"source", "line", "column"};
@@ -16105,14 +16362,15 @@ bool smith_dap_goto_targets_arguments_equal([[maybe_unused]] const SmithDapGotoT
 }
 
 void smith_dap_goto_targets_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapGotoTargetsArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapGotoTargetsArguments){};
-    smith_dap_source_random(arena, smith_key_derive(key, 1), &out->source);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 3), &out->line);
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    smith_dap_source_random(arena, smith_protocol_take(stream), &out->source);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->line);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_column = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->column);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->column);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_goto_targets_request_known[] = {"seq", "type", "command", "arguments"};
@@ -16160,10 +16418,11 @@ bool smith_dap_goto_targets_request_equal([[maybe_unused]] const SmithDapGotoTar
 }
 
 void smith_dap_goto_targets_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapGotoTargetsRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapGotoTargetsRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_goto_targets_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_goto_targets_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_goto_target_known[] = {"id", "label", "line", "column", "endLine", "endColumn", "instructionPointerReference"};
@@ -16251,27 +16510,28 @@ bool smith_dap_goto_target_equal([[maybe_unused]] const SmithDapGotoTarget *a, [
 }
 
 void smith_dap_goto_target_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapGotoTarget *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapGotoTarget){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->id);
-    smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->label);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->line);
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->id);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->label);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->line);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_column = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 7), &out->column);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->column);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_endLine = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 9), &out->endLine);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->endLine);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_endColumn = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 11), &out->endColumn);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->endColumn);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_instructionPointerReference = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 13), &out->instructionPointerReference);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->instructionPointerReference);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_dap_goto_target_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithDapGotoTargetList *out, SmithProtocolError *error) {
@@ -16303,10 +16563,11 @@ bool smith_dap_goto_target_list_equal([[maybe_unused]] const SmithDapGotoTargetL
 }
 
 void smith_dap_goto_target_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapGotoTargetList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithDapGotoTarget *items = smith_protocol_block(arena, sizeof(SmithDapGotoTarget), alignof(SmithDapGotoTarget), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_dap_goto_target_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_dap_goto_target_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -16341,9 +16602,10 @@ bool smith_dap_goto_targets_response_body_equal([[maybe_unused]] const SmithDapG
 }
 
 void smith_dap_goto_targets_response_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapGotoTargetsResponseBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapGotoTargetsResponseBody){};
-    smith_dap_goto_target_list_random(arena, smith_key_derive(key, 1), &out->targets);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_dap_goto_target_list_random(arena, smith_protocol_take(stream), &out->targets);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_goto_targets_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -16415,17 +16677,18 @@ bool smith_dap_goto_targets_response_equal([[maybe_unused]] const SmithDapGotoTa
 }
 
 void smith_dap_goto_targets_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapGotoTargetsResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapGotoTargetsResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    smith_dap_goto_targets_response_body_random(arena, smith_key_derive(key, 13), &out->body);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_dap_goto_targets_response_body_random(arena, smith_protocol_take(stream), &out->body);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_completions_arguments_known[] = {"frameId", "text", "column", "line"};
@@ -16485,18 +16748,19 @@ bool smith_dap_completions_arguments_equal([[maybe_unused]] const SmithDapComple
 }
 
 void smith_dap_completions_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapCompletionsArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapCompletionsArguments){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_frameId = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->frameId);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->frameId);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->text);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->column);
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->text);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->column);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_line = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 7), &out->line);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->line);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_completions_request_known[] = {"seq", "type", "command", "arguments"};
@@ -16544,10 +16808,11 @@ bool smith_dap_completions_request_equal([[maybe_unused]] const SmithDapCompleti
 }
 
 void smith_dap_completions_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapCompletionsRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapCompletionsRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_completions_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_completions_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_completion_item_type_names[] = {"method", "function", "constructor", "field", "variable", "class", "interface", "module", "property", "unit", "value", "enum", "keyword", "snippet", "text", "color", "file", "reference", "customcolor"};
@@ -16569,7 +16834,8 @@ bool smith_dap_completion_item_type_equal([[maybe_unused]] const SmithDapComplet
 }
 
 void smith_dap_completion_item_type_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapCompletionItemType *out) {
-    *out = (SmithDapCompletionItemType)smith_protocol_pick(key, 19);
+    [[maybe_unused]] SmithKey *stream = &key;
+    *out = (SmithDapCompletionItemType)smith_protocol_pick(smith_protocol_take(stream), 19);
 }
 
 static const char *const smith_dap_completion_item_known[] = {"label", "text", "sortText", "detail", "type", "start", "length", "selectionStart", "selectionLength"};
@@ -16689,41 +16955,42 @@ bool smith_dap_completion_item_equal([[maybe_unused]] const SmithDapCompletionIt
 }
 
 void smith_dap_completion_item_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapCompletionItem *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapCompletionItem){};
-    smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->label);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->label);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_text = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->text);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->text);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_sortText = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->sortText);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->sortText);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_detail = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 7), &out->detail);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->detail);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_type = true;
-        smith_dap_completion_item_type_random(arena, smith_key_derive(key, 9), &out->type);
+        smith_dap_completion_item_type_random(arena, smith_protocol_take(stream), &out->type);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_start = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 11), &out->start);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->start);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_length = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 13), &out->length);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->length);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 14))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_selectionStart = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 15), &out->selectionStart);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->selectionStart);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 16))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_selectionLength = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 17), &out->selectionLength);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->selectionLength);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 18), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_dap_completion_item_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithDapCompletionItemList *out, SmithProtocolError *error) {
@@ -16755,10 +17022,11 @@ bool smith_dap_completion_item_list_equal([[maybe_unused]] const SmithDapComplet
 }
 
 void smith_dap_completion_item_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapCompletionItemList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithDapCompletionItem *items = smith_protocol_block(arena, sizeof(SmithDapCompletionItem), alignof(SmithDapCompletionItem), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_dap_completion_item_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_dap_completion_item_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -16793,9 +17061,10 @@ bool smith_dap_completions_response_body_equal([[maybe_unused]] const SmithDapCo
 }
 
 void smith_dap_completions_response_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapCompletionsResponseBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapCompletionsResponseBody){};
-    smith_dap_completion_item_list_random(arena, smith_key_derive(key, 1), &out->targets);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_dap_completion_item_list_random(arena, smith_protocol_take(stream), &out->targets);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_completions_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -16867,17 +17136,18 @@ bool smith_dap_completions_response_equal([[maybe_unused]] const SmithDapComplet
 }
 
 void smith_dap_completions_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapCompletionsResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapCompletionsResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    smith_dap_completions_response_body_random(arena, smith_key_derive(key, 13), &out->body);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_dap_completions_response_body_random(arena, smith_protocol_take(stream), &out->body);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_exception_info_arguments_known[] = {"threadId"};
@@ -16909,9 +17179,10 @@ bool smith_dap_exception_info_arguments_equal([[maybe_unused]] const SmithDapExc
 }
 
 void smith_dap_exception_info_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapExceptionInfoArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapExceptionInfoArguments){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->threadId);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->threadId);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_exception_info_request_known[] = {"seq", "type", "command", "arguments"};
@@ -16959,10 +17230,11 @@ bool smith_dap_exception_info_request_equal([[maybe_unused]] const SmithDapExcep
 }
 
 void smith_dap_exception_info_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapExceptionInfoRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapExceptionInfoRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_exception_info_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_exception_info_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_exception_details_known[] = {"message", "typeName", "fullTypeName", "evaluateName", "stackTrace", "innerException"};
@@ -17054,32 +17326,33 @@ bool smith_dap_exception_details_equal([[maybe_unused]] const SmithDapExceptionD
 }
 
 void smith_dap_exception_details_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapExceptionDetails *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapExceptionDetails){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->message);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->message);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_typeName = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->typeName);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->typeName);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_fullTypeName = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->fullTypeName);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->fullTypeName);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_evaluateName = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 7), &out->evaluateName);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->evaluateName);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_stackTrace = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->stackTrace);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->stackTrace);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_innerException = true;
-        smith_protocol_any_random(arena, smith_key_derive(key, 11), &out->innerException);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &out->innerException);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 12), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_exception_info_response_body_known[] = {"exceptionId", "description", "breakMode", "details"};
@@ -17139,18 +17412,19 @@ bool smith_dap_exception_info_response_body_equal([[maybe_unused]] const SmithDa
 }
 
 void smith_dap_exception_info_response_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapExceptionInfoResponseBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapExceptionInfoResponseBody){};
-    smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->exceptionId);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->exceptionId);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_description = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->description);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->description);
     }
-    smith_dap_exception_break_mode_random(arena, smith_key_derive(key, 5), &out->breakMode);
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    smith_dap_exception_break_mode_random(arena, smith_protocol_take(stream), &out->breakMode);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_details = true;
-        smith_dap_exception_details_random(arena, smith_key_derive(key, 7), &out->details);
+        smith_dap_exception_details_random(arena, smith_protocol_take(stream), &out->details);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_exception_info_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -17222,17 +17496,18 @@ bool smith_dap_exception_info_response_equal([[maybe_unused]] const SmithDapExce
 }
 
 void smith_dap_exception_info_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapExceptionInfoResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapExceptionInfoResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    smith_dap_exception_info_response_body_random(arena, smith_key_derive(key, 13), &out->body);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_dap_exception_info_response_body_random(arena, smith_protocol_take(stream), &out->body);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_read_memory_arguments_known[] = {"memoryReference", "offset", "count"};
@@ -17281,14 +17556,15 @@ bool smith_dap_read_memory_arguments_equal([[maybe_unused]] const SmithDapReadMe
 }
 
 void smith_dap_read_memory_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapReadMemoryArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapReadMemoryArguments){};
-    smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->memoryReference);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->memoryReference);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_offset = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 3), &out->offset);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->offset);
     }
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->count);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->count);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_read_memory_request_known[] = {"seq", "type", "command", "arguments"};
@@ -17336,10 +17612,11 @@ bool smith_dap_read_memory_request_equal([[maybe_unused]] const SmithDapReadMemo
 }
 
 void smith_dap_read_memory_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapReadMemoryRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapReadMemoryRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_read_memory_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_read_memory_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_read_memory_response_body_known[] = {"address", "unreadableBytes", "data"};
@@ -17393,17 +17670,18 @@ bool smith_dap_read_memory_response_body_equal([[maybe_unused]] const SmithDapRe
 }
 
 void smith_dap_read_memory_response_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapReadMemoryResponseBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapReadMemoryResponseBody){};
-    smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->address);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->address);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_unreadableBytes = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 3), &out->unreadableBytes);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->unreadableBytes);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_data = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->data);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->data);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_read_memory_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -17480,20 +17758,21 @@ bool smith_dap_read_memory_response_equal([[maybe_unused]] const SmithDapReadMem
 }
 
 void smith_dap_read_memory_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapReadMemoryResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapReadMemoryResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_body = true;
-        smith_dap_read_memory_response_body_random(arena, smith_key_derive(key, 13), &out->body);
+        smith_dap_read_memory_response_body_random(arena, smith_protocol_take(stream), &out->body);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_write_memory_arguments_known[] = {"memoryReference", "offset", "allowPartial", "data"};
@@ -17553,18 +17832,19 @@ bool smith_dap_write_memory_arguments_equal([[maybe_unused]] const SmithDapWrite
 }
 
 void smith_dap_write_memory_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapWriteMemoryArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapWriteMemoryArguments){};
-    smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->memoryReference);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->memoryReference);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_offset = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 3), &out->offset);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->offset);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_allowPartial = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 5), &out->allowPartial);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->allowPartial);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 7), &out->data);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->data);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_write_memory_request_known[] = {"seq", "type", "command", "arguments"};
@@ -17612,10 +17892,11 @@ bool smith_dap_write_memory_request_equal([[maybe_unused]] const SmithDapWriteMe
 }
 
 void smith_dap_write_memory_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapWriteMemoryRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapWriteMemoryRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_write_memory_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_write_memory_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_write_memory_response_body_known[] = {"offset", "bytesWritten"};
@@ -17663,16 +17944,17 @@ bool smith_dap_write_memory_response_body_equal([[maybe_unused]] const SmithDapW
 }
 
 void smith_dap_write_memory_response_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapWriteMemoryResponseBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapWriteMemoryResponseBody){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_offset = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->offset);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->offset);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_bytesWritten = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 3), &out->bytesWritten);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->bytesWritten);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_write_memory_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -17749,20 +18031,21 @@ bool smith_dap_write_memory_response_equal([[maybe_unused]] const SmithDapWriteM
 }
 
 void smith_dap_write_memory_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapWriteMemoryResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapWriteMemoryResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_body = true;
-        smith_dap_write_memory_response_body_random(arena, smith_key_derive(key, 13), &out->body);
+        smith_dap_write_memory_response_body_random(arena, smith_protocol_take(stream), &out->body);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_disassemble_arguments_known[] = {"memoryReference", "offset", "instructionOffset", "instructionCount", "resolveSymbols"};
@@ -17833,22 +18116,23 @@ bool smith_dap_disassemble_arguments_equal([[maybe_unused]] const SmithDapDisass
 }
 
 void smith_dap_disassemble_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapDisassembleArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapDisassembleArguments){};
-    smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->memoryReference);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->memoryReference);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_offset = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 3), &out->offset);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->offset);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_instructionOffset = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->instructionOffset);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->instructionOffset);
     }
-    smith_protocol_integer_random(arena, smith_key_derive(key, 7), &out->instructionCount);
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->instructionCount);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_resolveSymbols = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 9), &out->resolveSymbols);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->resolveSymbols);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 10), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_disassemble_request_known[] = {"seq", "type", "command", "arguments"};
@@ -17896,10 +18180,11 @@ bool smith_dap_disassemble_request_equal([[maybe_unused]] const SmithDapDisassem
 }
 
 void smith_dap_disassemble_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapDisassembleRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapDisassembleRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_disassemble_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_disassemble_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_disassembled_instruction_presentation_hint_names[] = {"normal", "invalid"};
@@ -17921,7 +18206,8 @@ bool smith_dap_disassembled_instruction_presentation_hint_equal([[maybe_unused]]
 }
 
 void smith_dap_disassembled_instruction_presentation_hint_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapDisassembledInstructionPresentationHint *out) {
-    *out = (SmithDapDisassembledInstructionPresentationHint)smith_protocol_pick(key, 2);
+    [[maybe_unused]] SmithKey *stream = &key;
+    *out = (SmithDapDisassembledInstructionPresentationHint)smith_protocol_pick(smith_protocol_take(stream), 2);
 }
 
 static const char *const smith_dap_disassembled_instruction_known[] = {"address", "instructionBytes", "instruction", "symbol", "location", "line", "column", "endLine", "endColumn", "presentationHint"};
@@ -18047,42 +18333,43 @@ bool smith_dap_disassembled_instruction_equal([[maybe_unused]] const SmithDapDis
 }
 
 void smith_dap_disassembled_instruction_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapDisassembledInstruction *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapDisassembledInstruction){};
-    smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->address);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->address);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_instructionBytes = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->instructionBytes);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->instructionBytes);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->instruction);
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->instruction);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_symbol = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 7), &out->symbol);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->symbol);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_location = true;
-        smith_dap_source_random(arena, smith_key_derive(key, 9), &out->location);
+        smith_dap_source_random(arena, smith_protocol_take(stream), &out->location);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_line = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 11), &out->line);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->line);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_column = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 13), &out->column);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->column);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 14))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_endLine = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 15), &out->endLine);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->endLine);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 16))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_endColumn = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 17), &out->endColumn);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->endColumn);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 18))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_presentationHint = true;
-        smith_dap_disassembled_instruction_presentation_hint_random(arena, smith_key_derive(key, 19), &out->presentationHint);
+        smith_dap_disassembled_instruction_presentation_hint_random(arena, smith_protocol_take(stream), &out->presentationHint);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 20), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_dap_disassembled_instruction_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithDapDisassembledInstructionList *out, SmithProtocolError *error) {
@@ -18114,10 +18401,11 @@ bool smith_dap_disassembled_instruction_list_equal([[maybe_unused]] const SmithD
 }
 
 void smith_dap_disassembled_instruction_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapDisassembledInstructionList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithDapDisassembledInstruction *items = smith_protocol_block(arena, sizeof(SmithDapDisassembledInstruction), alignof(SmithDapDisassembledInstruction), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_dap_disassembled_instruction_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_dap_disassembled_instruction_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -18152,9 +18440,10 @@ bool smith_dap_disassemble_response_body_equal([[maybe_unused]] const SmithDapDi
 }
 
 void smith_dap_disassemble_response_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapDisassembleResponseBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapDisassembleResponseBody){};
-    smith_dap_disassembled_instruction_list_random(arena, smith_key_derive(key, 1), &out->instructions);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_dap_disassembled_instruction_list_random(arena, smith_protocol_take(stream), &out->instructions);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_disassemble_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -18231,20 +18520,21 @@ bool smith_dap_disassemble_response_equal([[maybe_unused]] const SmithDapDisasse
 }
 
 void smith_dap_disassemble_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapDisassembleResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapDisassembleResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_body = true;
-        smith_dap_disassemble_response_body_random(arena, smith_key_derive(key, 13), &out->body);
+        smith_dap_disassemble_response_body_random(arena, smith_protocol_take(stream), &out->body);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_locations_arguments_known[] = {"locationReference"};
@@ -18276,9 +18566,10 @@ bool smith_dap_locations_arguments_equal([[maybe_unused]] const SmithDapLocation
 }
 
 void smith_dap_locations_arguments_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapLocationsArguments *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapLocationsArguments){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->locationReference);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->locationReference);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_locations_request_known[] = {"seq", "type", "command", "arguments"};
@@ -18326,10 +18617,11 @@ bool smith_dap_locations_request_equal([[maybe_unused]] const SmithDapLocationsR
 }
 
 void smith_dap_locations_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapLocationsRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapLocationsRequest){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_dap_locations_arguments_random(arena, smith_key_derive(key, 7), &out->arguments);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_dap_locations_arguments_random(arena, smith_protocol_take(stream), &out->arguments);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_locations_response_body_known[] = {"source", "line", "column", "endLine", "endColumn"};
@@ -18400,22 +18692,23 @@ bool smith_dap_locations_response_body_equal([[maybe_unused]] const SmithDapLoca
 }
 
 void smith_dap_locations_response_body_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapLocationsResponseBody *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapLocationsResponseBody){};
-    smith_dap_source_random(arena, smith_key_derive(key, 1), &out->source);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 3), &out->line);
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    smith_dap_source_random(arena, smith_protocol_take(stream), &out->source);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->line);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_column = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->column);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->column);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_endLine = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 7), &out->endLine);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->endLine);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_endColumn = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 9), &out->endColumn);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->endColumn);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 10), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_dap_locations_response_known[] = {"seq", "type", "request_seq", "success", "command", "message", "body"};
@@ -18492,19 +18785,20 @@ bool smith_dap_locations_response_equal([[maybe_unused]] const SmithDapLocations
 }
 
 void smith_dap_locations_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithDapLocationsResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithDapLocationsResponse){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->seq);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 5), &out->request_seq);
-    smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->success);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->command);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->seq);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->request_seq);
+    smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->success);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->command);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_dap_response_message_random(arena, smith_key_derive(key, 11), &out->message);
+        smith_dap_response_message_random(arena, smith_protocol_take(stream), &out->message);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_body = true;
-        smith_dap_locations_response_body_random(arena, smith_key_derive(key, 13), &out->body);
+        smith_dap_locations_response_body_random(arena, smith_protocol_take(stream), &out->body);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 

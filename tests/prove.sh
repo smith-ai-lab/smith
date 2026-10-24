@@ -582,9 +582,10 @@ import smith::random;
 export u64 pick(u64 index) {
     contract::requires(index < 10);
     random::Key key = random::key_make(7);
-    random::Key part = random::key_derive(key, index);
+    random::Key parts[2];
+    random::split_n(key, parts, 2);
     contract::ensures(true);
-    return part.bits;
+    return parts[1].bits + index;
 }
 EOF
     cd "$libs" && capture "$smith" prove -v; cd "$here"

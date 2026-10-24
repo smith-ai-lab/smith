@@ -20,12 +20,13 @@ export typedef struct {
     usize count;
 } Rolls;
 
-// count rolls of a die, each from its own key derived from `key`.
+// count rolls of a die, each from its own key split from `key`.
 export Rolls make(arena::Arena *arena, random::Key key, usize count) {
     Rolls rolls = {.faces = arena::push_slice(arena, u32, count).data, .count = count};
-    for (usize i = 0; i < count; i++) {
-        random::Key roll = random::key_derive(key, i);
-        rolls.faces[i] = (u32)random::uniform_int64_sample(roll, (random::UniformInt64){.low = 1, .high = sides});
+    random::Key keys[:] = arena::push_slice(arena, random::Key, count);
+    random::split(key, keys);
+    for (usize i = 0; i < countof(keys); i++) {
+        rolls.faces[i] = (u32)random::uniform_int64_sample(keys[i], (random::UniformInt64){.low = 1, .high = sides});
     }
     return rolls;
 }

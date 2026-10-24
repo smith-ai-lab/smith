@@ -19,7 +19,7 @@ export void test_area(void) { // `export`: a private function is static, nothing
 }
 
 export void test_area_property(random::Key key) {
-    test::check(random::key_bits(key, 0) == random::key_bits(key, 0));
+    test::check(random::key_unit_double(key) < 1.0);
 }
 ```
 

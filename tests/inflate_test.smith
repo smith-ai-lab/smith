@@ -33,6 +33,14 @@ constexpr usize repeat_period = 30000;
 constexpr usize repeat_size = repeat_period * 10;
 
 // A fixture's bytes, in the arena of the test's io.
+// The next key of a stream: `stream` moves on (the reassignment pattern) and the key returned is for one use.
+static random::Key take(random::Key *stream) {
+    random::Key next[2];
+    random::split_n(*stream, next, 2);
+    *stream = next[0];
+    return next[1];
+}
+
 static const u8 *load(io::Io *io, const char *name, const char *extension, usize *size) {
     char path[128];
     (void)format::to(path, sizeof path, "tests/fixtures/inflate/", name, ".", extension);
@@ -194,15 +202,16 @@ export void test_inflate_checksums_match_known_values(void) {
 // The slicing-by-8 CRC-32 equals the bit-at-a-time one for every length and alignment, and a checksum continued in
 // parts equals one made whole. The Adler-32 the same, over lengths that cross the 5552 bytes of its reduction.
 export void test_prop_inflate_checksums_equal_their_references_and_continue(random::Key key) {
+    random::Key *key_stream = &key;
     arena::Arena arena = test::memory(arena_size);
-    usize size = (usize)between(random::key_derive(key, 0), 0, 20000);
-    usize offset = (usize)between(random::key_derive(key, 1), 0, 7);
+    usize size = (usize)between(take(key_stream), 0, 20000);
+    usize offset = (usize)between(take(key_stream), 0, 7);
     u8 *buffer = arena::push_raw(&arena, size + offset + 1, 1);
     for (usize i = 0; i < size; i++) {
-        buffer[offset + i] = (u8)random::key_bits(random::key_derive(random::key_derive(key, 2), i), 0);
+        buffer[offset + i] = (u8)random::key_bits(take(key_stream));
     }
     const u8 *bytes = buffer + offset;
-    usize cut = (usize)between(random::key_derive(key, 3), 0, (i64)size);
+    usize cut = (usize)between(take(key_stream), 0, (i64)size);
     u32 crc = inflate::crc32(0, bytes, size);
     test::check_equal(crc, crc_by_bits(0, bytes, size));
     test::check_equal(inflate::crc32(inflate::crc32(0, bytes, cut), bytes + cut, size - cut), crc);
@@ -550,22 +559,22 @@ typedef enum {
 // Stored blocks we write ourselves, of random contents, sizes and block sizes, come back through every format, by
 // decode and by stream.
 export void test_prop_inflate_round_trips_stored_blocks(random::Key key) {
+    random::Key *key_stream = &key;
     arena::Arena arena = test::memory(arena_size);
-    bool empty = between(random::key_derive(key, StoreDraw_Empty), 0, 5) == 0;
+    bool empty = between(take(key_stream), 0, 5) == 0;
     // 200,000 bytes with --full, else 70,000: still past the 65,535 a stored block holds, and a third of the time under
     // ASan
-    usize size =
-        empty ? 0 : (usize)between(random::key_derive(key, StoreDraw_Size), 0, test::full() ? 199'999 : 69'999);
-    bool short_blocks =
-        random::bernoulli_sample(random::key_derive(key, StoreDraw_BlockWide), (random::Bernoulli){.probability = 0.5});
-    u32 block = (u32)between(random::key_derive(key, StoreDraw_Block), 1, short_blocks ? 70 : block_max);
+    usize size = empty ? 0 : (usize)between(take(key_stream), 0, test::full() ? 199'999 : 69'999);
+    bool short_blocks = random::bernoulli_sample(take(key_stream), (random::Bernoulli){.probability = 0.5});
+    u32 block = (u32)between(take(key_stream), 1, short_blocks ? 70 : block_max);
     u8 *data = arena::push_raw(&arena, size == 0 ? 1 : size, 1);
-    random::Key byte_keys = random::key_derive(key, StoreDraw_Bytes);
+    random::Key byte_keys = take(key_stream);
+    random::Key *byte_keys_stream = &byte_keys;
     for (usize i = 0; i < size; i++) {
-        random::Key byte = random::key_derive(byte_keys, i);
-        bool narrow = random::bernoulli_sample(random::key_derive(byte, ByteDraw_Narrow),
-                                               (random::Bernoulli){.probability = 0.5});
-        data[i] = (u8)between(random::key_derive(byte, ByteDraw_Value), 0, narrow ? 3 : 255);
+        random::Key byte = take(byte_keys_stream);
+        random::Key *byte_stream = &byte;
+        bool narrow = random::bernoulli_sample(take(byte_stream), (random::Bernoulli){.probability = 0.5});
+        data[i] = (u8)between(take(byte_stream), 0, narrow ? 3 : 255);
     }
     usize capacity = store_bound(size, block);
     u8 *encoded = arena::push_raw(&arena, capacity, 1);
@@ -603,10 +612,11 @@ export void test_inflate_refuses_truncated_input(io::Io *io) {
     arena::Arena *arena = &io->arena;
     u8 *window = arena::push_raw(arena, inflate::window, 1);
     for (usize trial = 0; trial < trials; trial++) {
-        random::Key key = random::key_derive(io->key, trial);
+        random::Key key = take(&io->key);
+        random::Key *key_stream = &key;
         test::note("seed %llu, trial %zu", io->seed, trial);
         arena::Scope scope = arena::scope_begin(arena);
-        const Vector *vector = &vectors[between(random::key_derive(key, CutDraw_Vector), 0, _Countof(vectors) - 1)];
+        const Vector *vector = &vectors[between(take(key_stream), 0, _Countof(vectors) - 1)];
         usize expected_size = 0;
         usize gzip_size = 0;
         usize zlib_size = 0;
@@ -617,13 +627,13 @@ export void test_inflate_refuses_truncated_input(io::Io *io) {
         usize used = 0;
         usize produced = 0;
 
-        usize cut = (usize)between(random::key_derive(key, CutDraw_Gzip), 0, (i64)gzip_size - 1);
+        usize cut = (usize)between(take(key_stream), 0, (i64)gzip_size - 1);
         u8 *part = exact_copy(arena, gzip, cut);
         expect_not(inflate::decode(inflate::Gzip, part, cut, output, expected_size, &used, &produced), inflate::Ok);
         test::check_less_equal(used, cut);
         test::check_less_equal(produced, expected_size);
 
-        cut = (usize)between(random::key_derive(key, CutDraw_Zlib), 0, (i64)zlib_size - 1);
+        cut = (usize)between(take(key_stream), 0, (i64)zlib_size - 1);
         part = exact_copy(arena, zlib, cut);
         expect_not(inflate::decode(inflate::Zlib, part, cut, output, expected_size, &used, &produced), inflate::Ok);
         test::check_less_equal(used, cut);
@@ -631,12 +641,12 @@ export void test_inflate_refuses_truncated_input(io::Io *io) {
         // The raw stream cut inside its blocks (the gzip trailer excluded) is truncated too.
         usize raw_size = gzip_size - 18;
         if (raw_size > 1) {
-            cut = (usize)between(random::key_derive(key, CutDraw_Raw), 0, (i64)raw_size - 2); // never the whole stream
+            cut = (usize)between(take(key_stream), 0, (i64)raw_size - 2); // never the whole stream
             part = exact_copy(arena, gzip + 10, cut);
             expect_not(inflate::decode(inflate::Raw, part, cut, output, expected_size, &used, &produced), inflate::Ok);
         }
 
-        cut = (usize)between(random::key_derive(key, CutDraw_Stream), 0, (i64)gzip_size - 1);
+        cut = (usize)between(take(key_stream), 0, (i64)gzip_size - 1);
         part = exact_copy(arena, gzip, cut);
         Collect sink = make_sink(arena, expected_size);
         u64 streamed = 0;
@@ -652,25 +662,25 @@ export void test_inflate_survives_corrupt_input(io::Io *io) {
     arena::Arena *arena = &io->arena;
     u8 *window = arena::push_raw(arena, inflate::window, 1);
     for (usize trial = 0; trial < trials; trial++) {
-        random::Key key = random::key_derive(io->key, trial);
+        random::Key key = take(&io->key);
+        random::Key *key_stream = &key;
         test::note("seed %llu, trial %zu", io->seed, trial);
         arena::Scope scope = arena::scope_begin(arena);
-        const Vector *vector = &vectors[between(random::key_derive(key, CorruptDraw_Vector), 0, _Countof(vectors) - 1)];
+        const Vector *vector = &vectors[between(take(key_stream), 0, _Countof(vectors) - 1)];
         usize expected_size = 0;
         usize gzip_size = 0;
         (void)load(io, vector->name, "bin", &expected_size);
         const u8 *gzip = load(io, vector->name, "gz", &gzip_size);
         u8 *file = exact_copy(arena, gzip, gzip_size);
-        bool whole = random::bernoulli_sample(random::key_derive(key, CorruptDraw_Whole),
-                                              (random::Bernoulli){.probability = 0.5});
-        usize capacity = whole ? expected_size
-                               : (usize)between(random::key_derive(key, CorruptDraw_Capacity), 0, (i64)expected_size);
+        bool whole = random::bernoulli_sample(take(key_stream), (random::Bernoulli){.probability = 0.5});
+        usize capacity = whole ? expected_size : (usize)between(take(key_stream), 0, (i64)expected_size);
         u8 *output = arena::push_raw(arena, capacity == 0 ? 1 : capacity, 1);
-        u32 flips = (u32)between(random::key_derive(key, CorruptDraw_Flips), 1, 4);
+        u32 flips = (u32)between(take(key_stream), 1, 4);
         for (u32 i = 0; i < flips; i++) {
-            random::Key flip = random::key_derive(random::key_derive(key, CorruptDraw_Flip), i);
-            usize at = (usize)between(random::key_derive(flip, FlipDraw_Position), 0, (i64)gzip_size - 1);
-            file[at] ^= (u8)(1U << (u32)between(random::key_derive(flip, FlipDraw_Bit), 0, 7));
+            random::Key flip = take(key_stream);
+            random::Key *flip_stream = &flip;
+            usize at = (usize)between(take(flip_stream), 0, (i64)gzip_size - 1);
+            file[at] ^= (u8)(1U << (u32)between(take(flip_stream), 0, 7));
         }
         usize used = 0;
         usize produced = 0;
@@ -684,11 +694,12 @@ export void test_inflate_survives_corrupt_input(io::Io *io) {
         test::check_less_equal(used, gzip_size);
         if (status == inflate::Ok) test::check_equal(sink.size, expected_size);
 
-        usize noise_size = (usize)between(random::key_derive(key, CorruptDraw_NoiseSize), 0, 2999);
+        usize noise_size = (usize)between(take(key_stream), 0, 2999);
         u8 *noise = arena::push_raw(arena, noise_size == 0 ? 1 : noise_size, 1);
-        random::Key noise_keys = random::key_derive(key, CorruptDraw_Noise);
+        random::Key noise_keys = take(key_stream);
+        random::Key *noise_keys_stream = &noise_keys;
         for (usize i = 0; i < noise_size; i++) {
-            noise[i] = (u8)random::key_bits(random::key_derive(noise_keys, i), 0);
+            noise[i] = (u8)random::key_bits(take(noise_keys_stream));
         }
         for (u32 f = 0; f < 3; f++) {
             inflate::Format format = f == 0 ? inflate::Raw : f == 1 ? inflate::Zlib : inflate::Gzip;

@@ -1094,15 +1094,24 @@ cat >tests/test_shrink.smith <<'C'
 import smith::random;
 import smith::test;
 
+// The next key of a stream: `stream` moves on and the key returned is for one use.
+static random::Key take(random::Key *stream) {
+    random::Key next[2];
+    random::split_n(*stream, next, 2);
+    *stream = next[0];
+    return next[1];
+}
+
 void test_shrink_int(random::Key key) {
     i64 x = random::uniform_int64_sample(key, (random::UniformInt64){.low = 0, .high = 1000});
     test::check_less(x, 500);
 }
 
 void test_shrink_list(random::Key key) {
-    i64 length = random::uniform_int64_sample(random::key_derive(key, 0), (random::UniformInt64){.low = 0, .high = 8});
+    random::Key *stream = &key;
+    i64 length = random::uniform_int64_sample(take(stream), (random::UniformInt64){.low = 0, .high = 8});
     for (i64 i = 0; i < length; i++) {
-        i64 item = random::uniform_int64_sample(random::key_derive(key, (u64)i + 1), (random::UniformInt64){.low = 0, .high = 100});
+        i64 item = random::uniform_int64_sample(take(stream), (random::UniformInt64){.low = 0, .high = 100});
         test::note("length %lld, item %lld", length, i);
         test::check_less_equal(item, 90);
     }
@@ -1159,7 +1168,9 @@ if part shrink_list; then
 (build/tests $iso --test shrink_list --shrink-seconds 3600 2>&1 | plain | grep -v 'smith-trace \(image\|frame\)' >"$work/shrink-second") &
 wait
 first=$(cat "$work/shrink-first")
-expect_contains "shrink: a list shrinks to one item" "$first" "    note: length 1, item 0"
+# the length shrinks as far as the failing item allows: length = item + 1 (which item fails first depends on the seed)
+note=$(printf '%s' "$first" | sed -n 's/^    note: length \([0-9]*\), item \([0-9]*\)$/\1 \2/p')
+expect "shrink: a list shrinks to its failing item" yes "$(printf '%s' "$note" | awk '{ print ($1 == $2 + 1) ? "yes" : "no" }')"
 expect_contains "shrink: ... of 91" "$first" "    a = 91   (i64)"
 second=$(cat "$work/shrink-second")
 expect "shrink: the same seed gives the same shrunk case" "$first" "$second"
@@ -1193,11 +1204,20 @@ import <unistd.h>;
 import smith::random;
 import smith::test;
 
+// The next key of a stream: `stream` moves on and the key returned is for one use.
+static random::Key take(random::Key *stream) {
+    random::Key next[2];
+    random::split_n(*stream, next, 2);
+    *stream = next[0];
+    return next[1];
+}
+
 void test_a_shrinks_slowly(random::Key key) {
+    random::Key *stream = &key;
     c::usleep(3000); // each of the 1000 runs of shrinking takes this long: several seconds in all
     i64 smallest = 1000000000;
     for (u64 i = 0; i < 200; i++) {
-        i64 v = random::uniform_int64_sample(random::key_derive(key, i), (random::UniformInt64){.low = 0, .high = 1000000000});
+        i64 v = random::uniform_int64_sample(take(stream), (random::UniformInt64){.low = 0, .high = 1000000000});
         if (v < smallest) {
             smallest = v;
         }
@@ -1231,10 +1251,19 @@ cat >tests/test_budget.smith <<'C'
 import smith::random;
 import smith::test;
 
+// The next key of a stream: `stream` moves on and the key returned is for one use.
+static random::Key take(random::Key *stream) {
+    random::Key next[2];
+    random::split_n(*stream, next, 2);
+    *stream = next[0];
+    return next[1];
+}
+
 void test_budget(random::Key key) {
+    random::Key *stream = &key;
     i64 smallest = 1000000000;
     for (u64 i = 0; i < 200; i++) {
-        i64 v = random::uniform_int64_sample(random::key_derive(key, i), (random::UniformInt64){.low = 0, .high = 1000000000});
+        i64 v = random::uniform_int64_sample(take(stream), (random::UniformInt64){.low = 0, .high = 1000000000});
         if (v < smallest) {
             smallest = v;
         }
@@ -2543,7 +2572,8 @@ void test_plain_fails(void) {
 }
 
 void test_plain_property(random::Key key) {
-    test::check_equal(random::key_bits(key, 0), random::key_bits(key, 0));
+    u64 seed = key.bits; // the same seed makes the same key, and a key is one draw
+    test::check_equal(random::key_bits(random::key_make(seed)), random::key_bits(random::key_make(seed)));
 }
 C
     cat >tests/test_c_header.smith <<'C'
@@ -2551,7 +2581,8 @@ import <smith/test.h>;
 
 // The C header of the library imported as a C header: the names under c:: and the C spelling of the key are found too.
 void test_c_header_key(c::SmithKey key) {
-    c::smith_check_equal_u64(c::smith_key_bits(key, 0), c::smith_key_bits(key, 0));
+    u64 seed = key.bits;
+    c::smith_check_equal_u64(c::smith_key_bits(c::smith_key_make(seed)), c::smith_key_bits(c::smith_key_make(seed)));
 }
 C
     cat >tests/geometry/box_test.smith <<'C'
@@ -2577,7 +2608,7 @@ export void test_area_through_a_library(void) {
 }
 
 export void test_area_property(random::Key key) {
-    u64 side = random::key_bits(key, 0) % 1000;
+    u64 side = random::key_bits(key) % 1000;
     u64 area = box::area(side, 1);
     test::check_equal_u64(area, side);
 }

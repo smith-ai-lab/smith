@@ -34,6 +34,14 @@ static typeof(const char[:]) test_json_text(const char *string) {
     return text::make(string);
 }
 
+// The next key of a stream: `stream` moves on (the reassignment pattern) and the key returned is for one use.
+static random::Key take(random::Key *stream) {
+    random::Key next[2];
+    random::split_n(*stream, next, 2);
+    *stream = next[0];
+    return next[1];
+}
+
 static i64 test_json_uniform(random::Key key, i64 low, i64 high) {
     return random::uniform_int64_sample(key, (random::UniformInt64){.low = low, .high = high});
 }
@@ -771,8 +779,9 @@ typedef struct {
 
 // A random code point that is not a surrogate and, optionally, not zero.
 static u32 test_json_code_point(random::Key key) {
-    i64 band = test_json_uniform(random::key_derive(key, 0), 0, 9);
-    random::Key pick = random::key_derive(key, 1);
+    random::Key *key_stream = &key;
+    i64 band = test_json_uniform(take(key_stream), 0, 9);
+    random::Key pick = take(key_stream);
     if (band <= 3) return (u32)test_json_uniform(pick, 0x20, 0x7e);
     if (band == 4) return (u32)test_json_uniform(pick, 1, 0x1f);
     if (band == 5) return (u32)(u8) "\"\\/\x7f"[test_json_uniform(pick, 0, 3)];
@@ -808,22 +817,23 @@ static usize test_json_utf8(u32 code, char *out) {
 }
 
 static void test_json_random_string(random::Key key, TestJsonEvent *event) {
-    usize length = (usize)test_json_uniform(random::key_derive(key, 0), 0, test_json_string_max);
+    random::Key *stream = &key;
+    usize length = (usize)test_json_uniform(take(stream), 0, test_json_string_max);
     event->length = 0;
     for (usize i = 0; i < length; i++) {
-        event->length +=
-            test_json_utf8(test_json_code_point(random::key_derive(key, 1 + i)), event->string + event->length);
+        event->length += test_json_utf8(test_json_code_point(take(stream)), event->string + event->length);
     }
     event->string[event->length] = '\0';
 }
 
 static u64 test_json_random_double_bits(random::Key key) {
-    i64 kind = test_json_uniform(random::key_derive(key, 0), 0, 5);
+    random::Key *key_stream = &key;
+    i64 kind = test_json_uniform(take(key_stream), 0, 5);
     if (kind == 0) { // a short decimal, the common case
-        f64 d = (f64)test_json_uniform(random::key_derive(key, 1), -100000, 100000) / 100.0;
+        f64 d = (f64)test_json_uniform(take(key_stream), -100000, 100000) / 100.0;
         return __builtin_bit_cast(u64, d);
     }
-    u64 bits = random::key_bits(random::key_derive(key, 2), 0);
+    u64 bits = random::key_bits(take(key_stream));
     if (kind == 1) bits &= ~((u64)0x7ff << 52); // subnormal
     f64 d = __builtin_bit_cast(f64, bits);
     if (d != d || d > f64_max || d < -f64_max) bits &= ~((u64)0x400 << 52); // finite: clear an exponent bit
@@ -884,8 +894,10 @@ static void test_json_random_value(c::SmithJsonWriter *writer, TestJsonDocument 
     TestJsonFrame stack[16];
     usize depth = 0;
     bool started = false;
+    random::Key *key_stream = &key;
     for (usize step = 0; document->count + 16 < test_json_events_max; step++) {
-        random::Key here = random::key_derive(key, step);
+        random::Key here = take(key_stream);
+        random::Key *here_stream = &here;
         TestJsonEvent event = {};
         if (started && depth == 0) break;
         if (depth > 0 && stack[depth - 1].remaining == 0) {
@@ -898,31 +910,29 @@ static void test_json_random_value(c::SmithJsonWriter *writer, TestJsonDocument 
             stack[depth - 1].remaining -= 1;
             if (stack[depth - 1].object) {
                 event.token = c::SmithJsonToken_Key;
-                test_json_random_string(random::key_derive(here, 10), &event);
+                test_json_random_string(take(here_stream), &event);
                 test_json_emit(writer, document, &event);
                 event = (TestJsonEvent){};
             }
         }
         started = true;
-        i64 kind = test_json_uniform(random::key_derive(here, 0), 0, 9);
+        i64 kind = test_json_uniform(take(here_stream), 0, 9);
         bool room = depth < depth_max && document->count + 24 < test_json_events_max;
         if (kind <= 1 && room) {
             bool object = kind == 1;
             event.token = object ? c::SmithJsonToken_ObjectBegin : c::SmithJsonToken_ArrayBegin;
-            stack[depth++] = (TestJsonFrame){object, (usize)test_json_uniform(random::key_derive(here, 1), 0, 4)};
+            stack[depth++] = (TestJsonFrame){object, (usize)test_json_uniform(take(here_stream), 0, 4)};
         } else if (kind == 2) {
             event.token = c::SmithJsonToken_String;
-            test_json_random_string(random::key_derive(here, 2), &event);
+            test_json_random_string(take(here_stream), &event);
         } else if (kind == 3) {
-            event.token =
-                (c::SmithJsonToken)(c::SmithJsonToken_True + test_json_uniform(random::key_derive(here, 3), 0, 2));
+            event.token = (c::SmithJsonToken)(c::SmithJsonToken_True + test_json_uniform(take(here_stream), 0, 2));
         } else {
             event.token = c::SmithJsonToken_Number;
-            event.number = (TestJsonNumber)test_json_uniform(random::key_derive(here, 4), 0, 2);
-            u64 bits = random::key_bits(random::key_derive(here, 5), 0);
-            bits >>= random::key_bits(random::key_derive(here, 6), 0) % 64; // every length of integer
-            event.bits =
-                event.number == TestJsonNumber_F64 ? test_json_random_double_bits(random::key_derive(here, 7)) : bits;
+            event.number = (TestJsonNumber)test_json_uniform(take(here_stream), 0, 2);
+            u64 bits = random::key_bits(take(here_stream));
+            bits >>= random::key_bits(take(here_stream)) % 64; // every length of integer
+            event.bits = event.number == TestJsonNumber_F64 ? test_json_random_double_bits(take(here_stream)) : bits;
         }
         test_json_emit(writer, document, &event);
     }
@@ -1035,14 +1045,14 @@ static void test_json_check_tree(const c::SmithJsonValue *root, const TestJsonDo
 }
 
 export void test_json_any_value_written_then_read_is_the_same(random::Key key) {
+    random::Key *key_stream = &key;
     arena::Arena arena = test::memory(1 << 20);
     constexpr usize size = 1 << 16;
     char *buffer = arena::push_slice(&arena, char, size).data;
-    usize indent = (usize)test_json_uniform(random::key_derive(key, 90), 0, 1) * 2;
+    usize indent = (usize)test_json_uniform(take(key_stream), 0, 1) * 2;
     c::SmithJsonWriter writer = c::smith_json_writer_make(buffer, size, indent);
     TestJsonDocument *document = arena::push(&arena, TestJsonDocument);
-    test_json_random_value(&writer, document, random::key_derive(key, 91),
-                           (usize)test_json_uniform(random::key_derive(key, 92), 0, 6));
+    test_json_random_value(&writer, document, take(key_stream), (usize)test_json_uniform(take(key_stream), 0, 6));
     const char output[:] = {};
     test::check(c::smith_json_writer_finish(&writer, &output));
     test_json_check_reader(output, document, &arena);
@@ -1057,15 +1067,15 @@ export void test_json_any_value_written_then_read_is_the_same(random::Key key) {
 }
 
 export void test_json_write_value_puts_a_tree_back_as_it_was_written(random::Key key) {
+    random::Key *key_stream = &key;
     arena::Arena arena = test::memory(1 << 20);
     constexpr usize size = 1 << 16;
     char *first = arena::push_slice(&arena, char, size).data;
     char *second = arena::push_slice(&arena, char, size).data;
-    usize indent = (usize)test_json_uniform(random::key_derive(key, 90), 0, 1) * 2;
+    usize indent = (usize)test_json_uniform(take(key_stream), 0, 1) * 2;
     c::SmithJsonWriter writer = c::smith_json_writer_make(first, size, indent);
     TestJsonDocument *document = arena::push(&arena, TestJsonDocument);
-    test_json_random_value(&writer, document, random::key_derive(key, 91),
-                           (usize)test_json_uniform(random::key_derive(key, 92), 0, 6));
+    test_json_random_value(&writer, document, take(key_stream), (usize)test_json_uniform(take(key_stream), 0, 6));
     const char output[:] = {};
     test::check(c::smith_json_writer_finish(&writer, &output));
     const c::SmithJsonValue *root = nullptr;
@@ -1102,9 +1112,10 @@ export void test_json_write_value_keeps_numbers_and_duplicate_keys(void) {
 }
 
 export void test_json_any_double_round_trips_bit_for_bit(random::Key key) {
-    u64 bits = test_json_random_double_bits(key);
-    if (random::bernoulli_sample(random::key_derive(key, 5), (random::Bernoulli){.probability = 0.5}))
-        bits = random::key_bits(random::key_derive(key, 6), 0);
+    random::Key *key_stream = &key;
+    u64 bits = test_json_random_double_bits(take(key_stream));
+    if (random::bernoulli_sample(take(key_stream), (random::Bernoulli){.probability = 0.5}))
+        bits = random::key_bits(take(key_stream));
     f64 d = __builtin_bit_cast(f64, bits);
     if (d != d || d > f64_max || d < -f64_max) return;
     char buffer[64];
@@ -1122,8 +1133,8 @@ export void test_json_any_double_round_trips_bit_for_bit(random::Key key) {
 }
 
 export void test_json_any_integer_round_trips_exactly(random::Key key) {
-    u64 bits =
-        random::key_bits(random::key_derive(key, 0), 0) >> (random::key_bits(random::key_derive(key, 1), 0) % 64);
+    random::Key *key_stream = &key;
+    u64 bits = random::key_bits(take(key_stream)) >> (random::key_bits(take(key_stream)) % 64);
     char buffer[64];
     c::SmithJsonWriter writer = c::smith_json_writer_make(buffer, sizeof buffer, 0);
     c::smith_json_write_array_begin(&writer);
@@ -1149,18 +1160,20 @@ export void test_json_any_integer_round_trips_exactly(random::Key key) {
 
 // Damages the bytes in place and returns the new length; every byte comes from the key.
 static usize test_json_damage(random::Key key, char *bytes, usize length, usize capacity) {
+    random::Key *stream = &key;
     static const char interesting[] = "[]{},:\"\\ \n-+.eE0123456789tfnu\xff\xc3\xed\xf4\x80";
-    usize edits = (usize)test_json_uniform(random::key_derive(key, 0), 1, 4);
+    usize edits = (usize)test_json_uniform(take(stream), 1, 4);
     for (usize e = 0; e < edits && length > 0; e++) {
-        random::Key edit = random::key_derive(key, 1 + e);
-        usize at = (usize)test_json_uniform(random::key_derive(edit, 0), 0, (i64)length - 1);
-        char byte = interesting[test_json_uniform(random::key_derive(edit, 1), 0, (i64)sizeof interesting - 2)];
-        switch (test_json_uniform(random::key_derive(edit, 2), 0, 5)) {
+        random::Key edit = take(stream);
+        random::Key *edit_stream = &edit;
+        usize at = (usize)test_json_uniform(take(edit_stream), 0, (i64)length - 1);
+        char byte = interesting[test_json_uniform(take(edit_stream), 0, (i64)sizeof interesting - 2)];
+        switch (test_json_uniform(take(edit_stream), 0, 5)) {
         case 0:
             bytes[at] = byte;
             break;
         case 1:
-            bytes[at] = (char)random::key_bits(random::key_derive(edit, 3), 0);
+            bytes[at] = (char)random::key_bits(take(edit_stream));
             break;
         case 2:
             length = at;
@@ -1177,7 +1190,7 @@ static usize test_json_damage(random::Key key, char *bytes, usize length, usize 
             }
             break;
         default:
-            bytes[at] = (char)((u8)bytes[at] ^ (1U << (u32)test_json_uniform(random::key_derive(edit, 4), 0, 7)));
+            bytes[at] = (char)((u8)bytes[at] ^ (1U << (u32)test_json_uniform(take(edit_stream), 0, 7)));
             break;
         }
     }
@@ -1222,18 +1235,19 @@ static void test_json_judge(arena::Arena *arena, const char *bytes, usize length
 }
 
 export void test_json_damaged_documents_never_misbehave(random::Key key) {
+    random::Key *key_stream = &key;
     arena::Arena arena = test::memory(1 << 22);
     c::SmithJsonWriter writer;
     constexpr usize size = 1 << 14;
     char *buffer = arena::push_slice(&arena, char, size).data;
-    writer = c::smith_json_writer_make(buffer, size, (usize)test_json_uniform(random::key_derive(key, 90), 0, 1));
+    writer = c::smith_json_writer_make(buffer, size, (usize)test_json_uniform(take(key_stream), 0, 1));
     TestJsonDocument *document = arena::push(&arena, TestJsonDocument);
-    test_json_random_value(&writer, document, random::key_derive(key, 91), 6);
+    test_json_random_value(&writer, document, take(key_stream), 6);
     const char output[:] = {};
     test::check(c::smith_json_writer_finish(&writer, &output));
     char damaged[1 << 14];
     __builtin_memcpy(damaged, output.data, countof(output));
-    usize length = test_json_damage(random::key_derive(key, 92), damaged, countof(output), sizeof damaged);
+    usize length = test_json_damage(take(key_stream), damaged, countof(output), sizeof damaged);
     test::note("damaged %.*s", (i32)length > 400 ? 400 : (i32)length, damaged);
     test_json_judge(&arena, damaged, length, test_json_wide);
     c::SmithJsonLimits tight = {.depth = 3, .string_length = 6, .count = 12};
@@ -1242,14 +1256,14 @@ export void test_json_damaged_documents_never_misbehave(random::Key key) {
 }
 
 export void test_json_random_bytes_never_misbehave(random::Key key) {
+    random::Key *key_stream = &key;
     arena::Arena arena = test::memory(1 << 20);
-    usize length = (usize)test_json_uniform(random::key_derive(key, 0), 0, 64);
+    usize length = (usize)test_json_uniform(take(key_stream), 0, 64);
     char bytes[64];
     for (usize i = 0; i < length; i++) {
-        bytes[i] = (char)random::key_bits(random::key_derive(key, 1 + i), 0);
-        if (random::bernoulli_sample(random::key_derive(key, 100 + i), (random::Bernoulli){.probability = 0.6}))
-            bytes[i] =
-                "[]{}:,\" 0-1e.tfnu\\"[random::key_bits(random::key_derive(key, 200 + i), 0) % 19]; // mostly structure
+        bytes[i] = (char)random::key_bits(take(key_stream));
+        if (random::bernoulli_sample(take(key_stream), (random::Bernoulli){.probability = 0.6}))
+            bytes[i] = "[]{}:,\" 0-1e.tfnu\\"[random::key_bits(take(key_stream)) % 19]; // mostly structure
     }
     test_json_judge(&arena, bytes, length, test_json_wide);
 }

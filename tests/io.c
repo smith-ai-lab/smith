@@ -362,8 +362,9 @@ static void test_seed(void) {
     SmithIo first = smith_io_make(0, nullptr);
     SmithIo second = smith_io_make(0, nullptr);
     assert(first.seed == 42 && second.seed == 42);
-    assert(smith_key_bits(first.key, 0) == smith_key_bits(smith_key_make(42), 0));
-    assert(first.key.bits == second.key.bits);
+    uint64_t first_bits = first.key.bits;
+    assert(smith_key_bits(smith_key_make(first_bits)) == smith_key_bits(smith_key_make(42)));
+    assert(first_bits == second.key.bits);
     smith_io_close(&first);
     smith_io_close(&second);
     setenv("SMITH_SEED", "0xff", 1);
@@ -594,7 +595,7 @@ static int program_lines(void) {
 
 static int program_seed(void) {
     SmithIo io = smith_io_make(0, nullptr);
-    printf("%llu %llu\n", (unsigned long long)io.seed, (unsigned long long)smith_key_bits(io.key, 0));
+    printf("%llu %llu\n", (unsigned long long)io.seed, (unsigned long long)smith_key_bits(io.key));
     return 0;
 }
 

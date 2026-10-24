@@ -50,7 +50,8 @@ bool smith_mcp_role_equal([[maybe_unused]] const SmithMcpRole *a, [[maybe_unused
 }
 
 void smith_mcp_role_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpRole *out) {
-    *out = (SmithMcpRole)smith_protocol_pick(key, 2);
+    [[maybe_unused]] SmithKey *stream = &key;
+    *out = (SmithMcpRole)smith_protocol_pick(smith_protocol_take(stream), 2);
 }
 
 bool smith_mcp_role_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpRoleList *out, SmithProtocolError *error) {
@@ -82,10 +83,11 @@ bool smith_mcp_role_list_equal([[maybe_unused]] const SmithMcpRoleList *a, [[may
 }
 
 void smith_mcp_role_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpRoleList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithMcpRole *items = smith_protocol_block(arena, sizeof(SmithMcpRole), alignof(SmithMcpRole), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_mcp_role_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_mcp_role_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -147,20 +149,21 @@ bool smith_mcp_annotations_equal([[maybe_unused]] const SmithMcpAnnotations *a, 
 }
 
 void smith_mcp_annotations_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpAnnotations *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpAnnotations){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_audience = true;
-        smith_mcp_role_list_random(arena, smith_key_derive(key, 1), &out->audience);
+        smith_mcp_role_list_random(arena, smith_protocol_take(stream), &out->audience);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_lastModified = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->lastModified);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->lastModified);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_priority = true;
-        smith_protocol_number_random(arena, smith_key_derive(key, 5), &out->priority);
+        smith_protocol_number_random(arena, smith_protocol_take(stream), &out->priority);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_audio_content_known[] = {"_meta", "annotations", "data", "mimeType", "type"};
@@ -225,18 +228,19 @@ bool smith_mcp_audio_content_equal([[maybe_unused]] const SmithMcpAudioContent *
 }
 
 void smith_mcp_audio_content_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpAudioContent *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpAudioContent){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has__meta = true;
-        smith_protocol_object_random(arena, smith_key_derive(key, 1), &out->_meta);
+        smith_protocol_object_random(arena, smith_protocol_take(stream), &out->_meta);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_annotations = true;
-        smith_mcp_annotations_random(arena, smith_key_derive(key, 3), &out->annotations);
+        smith_mcp_annotations_random(arena, smith_protocol_take(stream), &out->annotations);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->data);
-    smith_protocol_string_random(arena, smith_key_derive(key, 7), &out->mimeType);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 10), &out->additionalProperties);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->data);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->mimeType);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_base_metadata_known[] = {"name", "title"};
@@ -279,13 +283,14 @@ bool smith_mcp_base_metadata_equal([[maybe_unused]] const SmithMcpBaseMetadata *
 }
 
 void smith_mcp_base_metadata_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpBaseMetadata *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpBaseMetadata){};
-    smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->name);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->name);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_title = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->title);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->title);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_blob_resource_contents_known[] = {"_meta", "blob", "mimeType", "uri"};
@@ -345,18 +350,19 @@ bool smith_mcp_blob_resource_contents_equal([[maybe_unused]] const SmithMcpBlobR
 }
 
 void smith_mcp_blob_resource_contents_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpBlobResourceContents *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpBlobResourceContents){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has__meta = true;
-        smith_protocol_object_random(arena, smith_key_derive(key, 1), &out->_meta);
+        smith_protocol_object_random(arena, smith_protocol_take(stream), &out->_meta);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->blob);
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->blob);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_mimeType = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->mimeType);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->mimeType);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 7), &out->uri);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->uri);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_boolean_schema_known[] = {"default", "description", "title", "type"};
@@ -420,20 +426,21 @@ bool smith_mcp_boolean_schema_equal([[maybe_unused]] const SmithMcpBooleanSchema
 }
 
 void smith_mcp_boolean_schema_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpBooleanSchema *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpBooleanSchema){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_default_ = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 1), &out->default_);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->default_);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_description = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->description);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->description);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_title = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->title);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->title);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_mcp_string_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpStringList *out, SmithProtocolError *error) {
@@ -465,10 +472,11 @@ bool smith_mcp_string_list_equal([[maybe_unused]] const SmithMcpStringList *a, [
 }
 
 void smith_mcp_string_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpStringList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     struct smith_array_const_char_n *items = smith_protocol_block(arena, sizeof(struct smith_array_const_char_n), alignof(struct smith_array_const_char_n), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_protocol_string_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -493,7 +501,8 @@ bool smith_mcp_icon_theme_equal([[maybe_unused]] const SmithMcpIconTheme *a, [[m
 }
 
 void smith_mcp_icon_theme_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpIconTheme *out) {
-    *out = (SmithMcpIconTheme)smith_protocol_pick(key, 2);
+    [[maybe_unused]] SmithKey *stream = &key;
+    *out = (SmithMcpIconTheme)smith_protocol_pick(smith_protocol_take(stream), 2);
 }
 
 static const char *const smith_mcp_icon_known[] = {"mimeType", "sizes", "src", "theme"};
@@ -558,21 +567,22 @@ bool smith_mcp_icon_equal([[maybe_unused]] const SmithMcpIcon *a, [[maybe_unused
 }
 
 void smith_mcp_icon_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpIcon *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpIcon){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_mimeType = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->mimeType);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->mimeType);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_sizes = true;
-        smith_mcp_string_list_random(arena, smith_key_derive(key, 3), &out->sizes);
+        smith_mcp_string_list_random(arena, smith_protocol_take(stream), &out->sizes);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->src);
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->src);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_theme = true;
-        smith_mcp_icon_theme_random(arena, smith_key_derive(key, 7), &out->theme);
+        smith_mcp_icon_theme_random(arena, smith_protocol_take(stream), &out->theme);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_mcp_icon_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpIconList *out, SmithProtocolError *error) {
@@ -604,10 +614,11 @@ bool smith_mcp_icon_list_equal([[maybe_unused]] const SmithMcpIconList *a, [[may
 }
 
 void smith_mcp_icon_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpIconList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithMcpIcon *items = smith_protocol_block(arena, sizeof(SmithMcpIcon), alignof(SmithMcpIcon), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_mcp_icon_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_mcp_icon_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -692,26 +703,27 @@ bool smith_mcp_implementation_equal([[maybe_unused]] const SmithMcpImplementatio
 }
 
 void smith_mcp_implementation_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpImplementation *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpImplementation){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_description = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->description);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->description);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_icons = true;
-        smith_mcp_icon_list_random(arena, smith_key_derive(key, 3), &out->icons);
+        smith_mcp_icon_list_random(arena, smith_protocol_take(stream), &out->icons);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->name);
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->name);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_title = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 7), &out->title);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->title);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->version);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->version);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_websiteUrl = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 11), &out->websiteUrl);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->websiteUrl);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 12), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_result_meta_object_known[] = {"io.modelcontextprotocol/serverInfo"};
@@ -748,12 +760,13 @@ bool smith_mcp_result_meta_object_equal([[maybe_unused]] const SmithMcpResultMet
 }
 
 void smith_mcp_result_meta_object_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpResultMetaObject *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpResultMetaObject){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_io_modelcontextprotocol_serverInfo = true;
-        smith_mcp_implementation_random(arena, smith_key_derive(key, 1), &out->io_modelcontextprotocol_serverInfo);
+        smith_mcp_implementation_random(arena, smith_protocol_take(stream), &out->io_modelcontextprotocol_serverInfo);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_cacheable_result_cache_scope_names[] = {"private", "public"};
@@ -775,7 +788,8 @@ bool smith_mcp_cacheable_result_cache_scope_equal([[maybe_unused]] const SmithMc
 }
 
 void smith_mcp_cacheable_result_cache_scope_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpCacheableResultCacheScope *out) {
-    *out = (SmithMcpCacheableResultCacheScope)smith_protocol_pick(key, 2);
+    [[maybe_unused]] SmithKey *stream = &key;
+    *out = (SmithMcpCacheableResultCacheScope)smith_protocol_pick(smith_protocol_take(stream), 2);
 }
 
 static const char *const smith_mcp_cacheable_result_known[] = {"_meta", "cacheScope", "resultType", "ttlMs"};
@@ -830,15 +844,16 @@ bool smith_mcp_cacheable_result_equal([[maybe_unused]] const SmithMcpCacheableRe
 }
 
 void smith_mcp_cacheable_result_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpCacheableResult *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpCacheableResult){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has__meta = true;
-        smith_mcp_result_meta_object_random(arena, smith_key_derive(key, 1), &out->_meta);
+        smith_mcp_result_meta_object_random(arena, smith_protocol_take(stream), &out->_meta);
     }
-    smith_mcp_cacheable_result_cache_scope_random(arena, smith_key_derive(key, 3), &out->cacheScope);
-    smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->resultType);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 7), &out->ttlMs);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_mcp_cacheable_result_cache_scope_random(arena, smith_protocol_take(stream), &out->cacheScope);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->resultType);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->ttlMs);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_mcp_request_id_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpRequestId *out, SmithProtocolError *error) {
@@ -878,14 +893,15 @@ bool smith_mcp_request_id_equal([[maybe_unused]] const SmithMcpRequestId *a, [[m
 }
 
 void smith_mcp_request_id_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpRequestId *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpRequestId){};
-    out->kind = (SmithMcpRequestIdKind)smith_protocol_pick(smith_key_derive(key, 0), 2);
+    out->kind = (SmithMcpRequestIdKind)smith_protocol_pick(smith_protocol_take(stream), 2);
     switch (out->kind) {
     case SmithMcpRequestIdKind_String:
-        smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->as.string);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->as.string);
         break;
     case SmithMcpRequestIdKind_Integer:
-        smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->as.integer);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->as.integer);
         break;
     }
 }
@@ -924,12 +940,13 @@ bool smith_mcp_any_map_equal([[maybe_unused]] const SmithMcpAnyMap *a, [[maybe_u
 }
 
 void smith_mcp_any_map_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpAnyMap *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     struct smith_array_const_char_n *keys = smith_protocol_block(arena, sizeof(struct smith_array_const_char_n), alignof(struct smith_array_const_char_n), count);
     SmithProtocolAny *items = smith_protocol_block(arena, sizeof(SmithProtocolAny), alignof(SmithProtocolAny), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
         keys[i] = smith_protocol_name(arena, i);
-        smith_protocol_any_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->keys = keys;
     out->values = items;
@@ -981,16 +998,17 @@ bool smith_mcp_client_capabilities_elicitation_equal([[maybe_unused]] const Smit
 }
 
 void smith_mcp_client_capabilities_elicitation_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpClientCapabilitiesElicitation *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpClientCapabilitiesElicitation){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_form = true;
-        smith_mcp_any_map_random(arena, smith_key_derive(key, 1), &out->form);
+        smith_mcp_any_map_random(arena, smith_protocol_take(stream), &out->form);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_url = true;
-        smith_mcp_any_map_random(arena, smith_key_derive(key, 3), &out->url);
+        smith_mcp_any_map_random(arena, smith_protocol_take(stream), &out->url);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_mcp_any_map_map_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpAnyMapMap *out, SmithProtocolError *error) {
@@ -1027,12 +1045,13 @@ bool smith_mcp_any_map_map_equal([[maybe_unused]] const SmithMcpAnyMapMap *a, [[
 }
 
 void smith_mcp_any_map_map_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpAnyMapMap *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     struct smith_array_const_char_n *keys = smith_protocol_block(arena, sizeof(struct smith_array_const_char_n), alignof(struct smith_array_const_char_n), count);
     SmithMcpAnyMap *items = smith_protocol_block(arena, sizeof(SmithMcpAnyMap), alignof(SmithMcpAnyMap), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
         keys[i] = smith_protocol_name(arena, i);
-        smith_mcp_any_map_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_mcp_any_map_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->keys = keys;
     out->values = items;
@@ -1062,8 +1081,9 @@ bool smith_mcp_client_capabilities_roots_equal([[maybe_unused]] const SmithMcpCl
 }
 
 void smith_mcp_client_capabilities_roots_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpClientCapabilitiesRoots *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpClientCapabilitiesRoots){};
-    smith_protocol_extra_random(arena, smith_key_derive(key, 0), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_client_capabilities_sampling_known[] = {"context", "tools"};
@@ -1111,16 +1131,17 @@ bool smith_mcp_client_capabilities_sampling_equal([[maybe_unused]] const SmithMc
 }
 
 void smith_mcp_client_capabilities_sampling_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpClientCapabilitiesSampling *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpClientCapabilitiesSampling){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_context = true;
-        smith_mcp_any_map_random(arena, smith_key_derive(key, 1), &out->context);
+        smith_mcp_any_map_random(arena, smith_protocol_take(stream), &out->context);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_tools = true;
-        smith_mcp_any_map_random(arena, smith_key_derive(key, 3), &out->tools);
+        smith_mcp_any_map_random(arena, smith_protocol_take(stream), &out->tools);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_client_capabilities_known[] = {"elicitation", "experimental", "extensions", "roots", "sampling"};
@@ -1201,28 +1222,29 @@ bool smith_mcp_client_capabilities_equal([[maybe_unused]] const SmithMcpClientCa
 }
 
 void smith_mcp_client_capabilities_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpClientCapabilities *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpClientCapabilities){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_elicitation = true;
-        smith_mcp_client_capabilities_elicitation_random(arena, smith_key_derive(key, 1), &out->elicitation);
+        smith_mcp_client_capabilities_elicitation_random(arena, smith_protocol_take(stream), &out->elicitation);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_experimental = true;
-        smith_mcp_any_map_map_random(arena, smith_key_derive(key, 3), &out->experimental);
+        smith_mcp_any_map_map_random(arena, smith_protocol_take(stream), &out->experimental);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_extensions = true;
-        smith_mcp_any_map_map_random(arena, smith_key_derive(key, 5), &out->extensions);
+        smith_mcp_any_map_map_random(arena, smith_protocol_take(stream), &out->extensions);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_roots = true;
-        smith_mcp_client_capabilities_roots_random(arena, smith_key_derive(key, 7), &out->roots);
+        smith_mcp_client_capabilities_roots_random(arena, smith_protocol_take(stream), &out->roots);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_sampling = true;
-        smith_mcp_client_capabilities_sampling_random(arena, smith_key_derive(key, 9), &out->sampling);
+        smith_mcp_client_capabilities_sampling_random(arena, smith_protocol_take(stream), &out->sampling);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 10), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_logging_level_names[] = {"alert", "critical", "debug", "emergency", "error", "info", "notice", "warning"};
@@ -1244,7 +1266,8 @@ bool smith_mcp_logging_level_equal([[maybe_unused]] const SmithMcpLoggingLevel *
 }
 
 void smith_mcp_logging_level_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpLoggingLevel *out) {
-    *out = (SmithMcpLoggingLevel)smith_protocol_pick(key, 8);
+    [[maybe_unused]] SmithKey *stream = &key;
+    *out = (SmithMcpLoggingLevel)smith_protocol_pick(smith_protocol_take(stream), 8);
 }
 
 bool smith_mcp_progress_token_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpProgressToken *out, SmithProtocolError *error) {
@@ -1284,14 +1307,15 @@ bool smith_mcp_progress_token_equal([[maybe_unused]] const SmithMcpProgressToken
 }
 
 void smith_mcp_progress_token_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpProgressToken *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpProgressToken){};
-    out->kind = (SmithMcpProgressTokenKind)smith_protocol_pick(smith_key_derive(key, 0), 2);
+    out->kind = (SmithMcpProgressTokenKind)smith_protocol_pick(smith_protocol_take(stream), 2);
     switch (out->kind) {
     case SmithMcpProgressTokenKind_String:
-        smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->as.string);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->as.string);
         break;
     case SmithMcpProgressTokenKind_Integer:
-        smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->as.integer);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->as.integer);
         break;
     }
 }
@@ -1364,22 +1388,23 @@ bool smith_mcp_request_meta_object_equal([[maybe_unused]] const SmithMcpRequestM
 }
 
 void smith_mcp_request_meta_object_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpRequestMetaObject *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpRequestMetaObject){};
-    smith_mcp_client_capabilities_random(arena, smith_key_derive(key, 1), &out->io_modelcontextprotocol_clientCapabilities);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_mcp_client_capabilities_random(arena, smith_protocol_take(stream), &out->io_modelcontextprotocol_clientCapabilities);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_io_modelcontextprotocol_clientInfo = true;
-        smith_mcp_implementation_random(arena, smith_key_derive(key, 3), &out->io_modelcontextprotocol_clientInfo);
+        smith_mcp_implementation_random(arena, smith_protocol_take(stream), &out->io_modelcontextprotocol_clientInfo);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_io_modelcontextprotocol_logLevel = true;
-        smith_mcp_logging_level_random(arena, smith_key_derive(key, 5), &out->io_modelcontextprotocol_logLevel);
+        smith_mcp_logging_level_random(arena, smith_protocol_take(stream), &out->io_modelcontextprotocol_logLevel);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 7), &out->io_modelcontextprotocol_protocolVersion);
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->io_modelcontextprotocol_protocolVersion);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_progressToken = true;
-        smith_mcp_progress_token_random(arena, smith_key_derive(key, 9), &out->progressToken);
+        smith_mcp_progress_token_random(arena, smith_protocol_take(stream), &out->progressToken);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 10), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_text_content_known[] = {"_meta", "annotations", "text", "type"};
@@ -1438,17 +1463,18 @@ bool smith_mcp_text_content_equal([[maybe_unused]] const SmithMcpTextContent *a,
 }
 
 void smith_mcp_text_content_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpTextContent *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpTextContent){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has__meta = true;
-        smith_protocol_object_random(arena, smith_key_derive(key, 1), &out->_meta);
+        smith_protocol_object_random(arena, smith_protocol_take(stream), &out->_meta);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_annotations = true;
-        smith_mcp_annotations_random(arena, smith_key_derive(key, 3), &out->annotations);
+        smith_mcp_annotations_random(arena, smith_protocol_take(stream), &out->annotations);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->text);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->text);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_image_content_known[] = {"_meta", "annotations", "data", "mimeType", "type"};
@@ -1513,18 +1539,19 @@ bool smith_mcp_image_content_equal([[maybe_unused]] const SmithMcpImageContent *
 }
 
 void smith_mcp_image_content_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpImageContent *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpImageContent){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has__meta = true;
-        smith_protocol_object_random(arena, smith_key_derive(key, 1), &out->_meta);
+        smith_protocol_object_random(arena, smith_protocol_take(stream), &out->_meta);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_annotations = true;
-        smith_mcp_annotations_random(arena, smith_key_derive(key, 3), &out->annotations);
+        smith_mcp_annotations_random(arena, smith_protocol_take(stream), &out->annotations);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->data);
-    smith_protocol_string_random(arena, smith_key_derive(key, 7), &out->mimeType);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 10), &out->additionalProperties);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->data);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->mimeType);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_tool_use_content_known[] = {"_meta", "id", "input", "name", "type"};
@@ -1584,15 +1611,16 @@ bool smith_mcp_tool_use_content_equal([[maybe_unused]] const SmithMcpToolUseCont
 }
 
 void smith_mcp_tool_use_content_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpToolUseContent *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpToolUseContent){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has__meta = true;
-        smith_protocol_object_random(arena, smith_key_derive(key, 1), &out->_meta);
+        smith_protocol_object_random(arena, smith_protocol_take(stream), &out->_meta);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->id);
-    smith_protocol_object_random(arena, smith_key_derive(key, 5), &out->input);
-    smith_protocol_string_random(arena, smith_key_derive(key, 7), &out->name);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 10), &out->additionalProperties);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->id);
+    smith_protocol_object_random(arena, smith_protocol_take(stream), &out->input);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->name);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_resource_link_known[] = {"_meta", "annotations", "description", "icons", "mimeType", "name", "size", "title", "type", "uri"};
@@ -1712,38 +1740,39 @@ bool smith_mcp_resource_link_equal([[maybe_unused]] const SmithMcpResourceLink *
 }
 
 void smith_mcp_resource_link_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpResourceLink *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpResourceLink){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has__meta = true;
-        smith_protocol_object_random(arena, smith_key_derive(key, 1), &out->_meta);
+        smith_protocol_object_random(arena, smith_protocol_take(stream), &out->_meta);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_annotations = true;
-        smith_mcp_annotations_random(arena, smith_key_derive(key, 3), &out->annotations);
+        smith_mcp_annotations_random(arena, smith_protocol_take(stream), &out->annotations);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_description = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->description);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->description);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_icons = true;
-        smith_mcp_icon_list_random(arena, smith_key_derive(key, 7), &out->icons);
+        smith_mcp_icon_list_random(arena, smith_protocol_take(stream), &out->icons);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_mimeType = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->mimeType);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->mimeType);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 11), &out->name);
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->name);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_size = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 13), &out->size);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->size);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 14))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_title = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 15), &out->title);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->title);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 19), &out->uri);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 20), &out->additionalProperties);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->uri);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_text_resource_contents_known[] = {"_meta", "mimeType", "text", "uri"};
@@ -1803,18 +1832,19 @@ bool smith_mcp_text_resource_contents_equal([[maybe_unused]] const SmithMcpTextR
 }
 
 void smith_mcp_text_resource_contents_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpTextResourceContents *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpTextResourceContents){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has__meta = true;
-        smith_protocol_object_random(arena, smith_key_derive(key, 1), &out->_meta);
+        smith_protocol_object_random(arena, smith_protocol_take(stream), &out->_meta);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_mimeType = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->mimeType);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->mimeType);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->text);
-    smith_protocol_string_random(arena, smith_key_derive(key, 7), &out->uri);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->text);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->uri);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_mcp_embedded_resource_resource_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpEmbeddedResourceResource *out, SmithProtocolError *error) {
@@ -1854,14 +1884,15 @@ bool smith_mcp_embedded_resource_resource_equal([[maybe_unused]] const SmithMcpE
 }
 
 void smith_mcp_embedded_resource_resource_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpEmbeddedResourceResource *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpEmbeddedResourceResource){};
-    out->kind = (SmithMcpEmbeddedResourceResourceKind)smith_protocol_pick(smith_key_derive(key, 0), 2);
+    out->kind = (SmithMcpEmbeddedResourceResourceKind)smith_protocol_pick(smith_protocol_take(stream), 2);
     switch (out->kind) {
     case SmithMcpEmbeddedResourceResourceKind_TextResourceContents:
-        smith_mcp_text_resource_contents_random(arena, smith_key_derive(key, 1), &out->as.text_resource_contents);
+        smith_mcp_text_resource_contents_random(arena, smith_protocol_take(stream), &out->as.text_resource_contents);
         break;
     case SmithMcpEmbeddedResourceResourceKind_BlobResourceContents:
-        smith_mcp_blob_resource_contents_random(arena, smith_key_derive(key, 1), &out->as.blob_resource_contents);
+        smith_mcp_blob_resource_contents_random(arena, smith_protocol_take(stream), &out->as.blob_resource_contents);
         break;
     }
 }
@@ -1922,17 +1953,18 @@ bool smith_mcp_embedded_resource_equal([[maybe_unused]] const SmithMcpEmbeddedRe
 }
 
 void smith_mcp_embedded_resource_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpEmbeddedResource *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpEmbeddedResource){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has__meta = true;
-        smith_protocol_object_random(arena, smith_key_derive(key, 1), &out->_meta);
+        smith_protocol_object_random(arena, smith_protocol_take(stream), &out->_meta);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_annotations = true;
-        smith_mcp_annotations_random(arena, smith_key_derive(key, 3), &out->annotations);
+        smith_mcp_annotations_random(arena, smith_protocol_take(stream), &out->annotations);
     }
-    smith_mcp_embedded_resource_resource_random(arena, smith_key_derive(key, 5), &out->resource);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_mcp_embedded_resource_resource_random(arena, smith_protocol_take(stream), &out->resource);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_mcp_content_block_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpContentBlock *out, SmithProtocolError *error) {
@@ -2006,23 +2038,24 @@ bool smith_mcp_content_block_equal([[maybe_unused]] const SmithMcpContentBlock *
 }
 
 void smith_mcp_content_block_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpContentBlock *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpContentBlock){};
-    out->kind = (SmithMcpContentBlockKind)smith_protocol_pick(smith_key_derive(key, 0), 5);
+    out->kind = (SmithMcpContentBlockKind)smith_protocol_pick(smith_protocol_take(stream), 5);
     switch (out->kind) {
     case SmithMcpContentBlockKind_TextContent:
-        smith_mcp_text_content_random(arena, smith_key_derive(key, 1), &out->as.text_content);
+        smith_mcp_text_content_random(arena, smith_protocol_take(stream), &out->as.text_content);
         break;
     case SmithMcpContentBlockKind_ImageContent:
-        smith_mcp_image_content_random(arena, smith_key_derive(key, 1), &out->as.image_content);
+        smith_mcp_image_content_random(arena, smith_protocol_take(stream), &out->as.image_content);
         break;
     case SmithMcpContentBlockKind_AudioContent:
-        smith_mcp_audio_content_random(arena, smith_key_derive(key, 1), &out->as.audio_content);
+        smith_mcp_audio_content_random(arena, smith_protocol_take(stream), &out->as.audio_content);
         break;
     case SmithMcpContentBlockKind_ResourceLink:
-        smith_mcp_resource_link_random(arena, smith_key_derive(key, 1), &out->as.resource_link);
+        smith_mcp_resource_link_random(arena, smith_protocol_take(stream), &out->as.resource_link);
         break;
     case SmithMcpContentBlockKind_EmbeddedResource:
-        smith_mcp_embedded_resource_random(arena, smith_key_derive(key, 1), &out->as.embedded_resource);
+        smith_mcp_embedded_resource_random(arena, smith_protocol_take(stream), &out->as.embedded_resource);
         break;
     }
 }
@@ -2056,10 +2089,11 @@ bool smith_mcp_content_block_list_equal([[maybe_unused]] const SmithMcpContentBl
 }
 
 void smith_mcp_content_block_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpContentBlockList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithMcpContentBlock *items = smith_protocol_block(arena, sizeof(SmithMcpContentBlock), alignof(SmithMcpContentBlock), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_mcp_content_block_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_mcp_content_block_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -2138,22 +2172,23 @@ bool smith_mcp_tool_result_content_equal([[maybe_unused]] const SmithMcpToolResu
 }
 
 void smith_mcp_tool_result_content_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpToolResultContent *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpToolResultContent){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has__meta = true;
-        smith_protocol_object_random(arena, smith_key_derive(key, 1), &out->_meta);
+        smith_protocol_object_random(arena, smith_protocol_take(stream), &out->_meta);
     }
-    smith_mcp_content_block_list_random(arena, smith_key_derive(key, 3), &out->content);
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    smith_mcp_content_block_list_random(arena, smith_protocol_take(stream), &out->content);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_isError = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 5), &out->isError);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->isError);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_structuredContent = true;
-        smith_protocol_any_random(arena, smith_key_derive(key, 7), &out->structuredContent);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &out->structuredContent);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->toolUseId);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 12), &out->additionalProperties);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->toolUseId);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_mcp_sampling_message_content_block_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpSamplingMessageContentBlock *out, SmithProtocolError *error) {
@@ -2227,23 +2262,24 @@ bool smith_mcp_sampling_message_content_block_equal([[maybe_unused]] const Smith
 }
 
 void smith_mcp_sampling_message_content_block_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpSamplingMessageContentBlock *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpSamplingMessageContentBlock){};
-    out->kind = (SmithMcpSamplingMessageContentBlockKind)smith_protocol_pick(smith_key_derive(key, 0), 5);
+    out->kind = (SmithMcpSamplingMessageContentBlockKind)smith_protocol_pick(smith_protocol_take(stream), 5);
     switch (out->kind) {
     case SmithMcpSamplingMessageContentBlockKind_TextContent:
-        smith_mcp_text_content_random(arena, smith_key_derive(key, 1), &out->as.text_content);
+        smith_mcp_text_content_random(arena, smith_protocol_take(stream), &out->as.text_content);
         break;
     case SmithMcpSamplingMessageContentBlockKind_ImageContent:
-        smith_mcp_image_content_random(arena, smith_key_derive(key, 1), &out->as.image_content);
+        smith_mcp_image_content_random(arena, smith_protocol_take(stream), &out->as.image_content);
         break;
     case SmithMcpSamplingMessageContentBlockKind_AudioContent:
-        smith_mcp_audio_content_random(arena, smith_key_derive(key, 1), &out->as.audio_content);
+        smith_mcp_audio_content_random(arena, smith_protocol_take(stream), &out->as.audio_content);
         break;
     case SmithMcpSamplingMessageContentBlockKind_ToolUseContent:
-        smith_mcp_tool_use_content_random(arena, smith_key_derive(key, 1), &out->as.tool_use_content);
+        smith_mcp_tool_use_content_random(arena, smith_protocol_take(stream), &out->as.tool_use_content);
         break;
     case SmithMcpSamplingMessageContentBlockKind_ToolResultContent:
-        smith_mcp_tool_result_content_random(arena, smith_key_derive(key, 1), &out->as.tool_result_content);
+        smith_mcp_tool_result_content_random(arena, smith_protocol_take(stream), &out->as.tool_result_content);
         break;
     }
 }
@@ -2277,10 +2313,11 @@ bool smith_mcp_sampling_message_content_block_list_equal([[maybe_unused]] const 
 }
 
 void smith_mcp_sampling_message_content_block_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpSamplingMessageContentBlockList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithMcpSamplingMessageContentBlock *items = smith_protocol_block(arena, sizeof(SmithMcpSamplingMessageContentBlock), alignof(SmithMcpSamplingMessageContentBlock), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_mcp_sampling_message_content_block_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_mcp_sampling_message_content_block_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -2359,26 +2396,27 @@ bool smith_mcp_create_message_result_content_equal([[maybe_unused]] const SmithM
 }
 
 void smith_mcp_create_message_result_content_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpCreateMessageResultContent *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpCreateMessageResultContent){};
-    out->kind = (SmithMcpCreateMessageResultContentKind)smith_protocol_pick(smith_key_derive(key, 0), 6);
+    out->kind = (SmithMcpCreateMessageResultContentKind)smith_protocol_pick(smith_protocol_take(stream), 6);
     switch (out->kind) {
     case SmithMcpCreateMessageResultContentKind_TextContent:
-        smith_mcp_text_content_random(arena, smith_key_derive(key, 1), &out->as.text_content);
+        smith_mcp_text_content_random(arena, smith_protocol_take(stream), &out->as.text_content);
         break;
     case SmithMcpCreateMessageResultContentKind_ImageContent:
-        smith_mcp_image_content_random(arena, smith_key_derive(key, 1), &out->as.image_content);
+        smith_mcp_image_content_random(arena, smith_protocol_take(stream), &out->as.image_content);
         break;
     case SmithMcpCreateMessageResultContentKind_AudioContent:
-        smith_mcp_audio_content_random(arena, smith_key_derive(key, 1), &out->as.audio_content);
+        smith_mcp_audio_content_random(arena, smith_protocol_take(stream), &out->as.audio_content);
         break;
     case SmithMcpCreateMessageResultContentKind_ToolUseContent:
-        smith_mcp_tool_use_content_random(arena, smith_key_derive(key, 1), &out->as.tool_use_content);
+        smith_mcp_tool_use_content_random(arena, smith_protocol_take(stream), &out->as.tool_use_content);
         break;
     case SmithMcpCreateMessageResultContentKind_ToolResultContent:
-        smith_mcp_tool_result_content_random(arena, smith_key_derive(key, 1), &out->as.tool_result_content);
+        smith_mcp_tool_result_content_random(arena, smith_protocol_take(stream), &out->as.tool_result_content);
         break;
     case SmithMcpCreateMessageResultContentKind_SamplingMessageContentBlockList:
-        smith_mcp_sampling_message_content_block_list_random(arena, smith_key_derive(key, 1), &out->as.sampling_message_content_block_list);
+        smith_mcp_sampling_message_content_block_list_random(arena, smith_protocol_take(stream), &out->as.sampling_message_content_block_list);
         break;
     }
 }
@@ -2446,19 +2484,20 @@ bool smith_mcp_create_message_result_equal([[maybe_unused]] const SmithMcpCreate
 }
 
 void smith_mcp_create_message_result_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpCreateMessageResult *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpCreateMessageResult){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has__meta = true;
-        smith_protocol_object_random(arena, smith_key_derive(key, 1), &out->_meta);
+        smith_protocol_object_random(arena, smith_protocol_take(stream), &out->_meta);
     }
-    smith_mcp_create_message_result_content_random(arena, smith_key_derive(key, 3), &out->content);
-    smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->model);
-    smith_mcp_role_random(arena, smith_key_derive(key, 7), &out->role);
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    smith_mcp_create_message_result_content_random(arena, smith_protocol_take(stream), &out->content);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->model);
+    smith_mcp_role_random(arena, smith_protocol_take(stream), &out->role);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_stopReason = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->stopReason);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->stopReason);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 10), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_root_known[] = {"_meta", "name", "uri"};
@@ -2512,17 +2551,18 @@ bool smith_mcp_root_equal([[maybe_unused]] const SmithMcpRoot *a, [[maybe_unused
 }
 
 void smith_mcp_root_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpRoot *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpRoot){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has__meta = true;
-        smith_protocol_object_random(arena, smith_key_derive(key, 1), &out->_meta);
+        smith_protocol_object_random(arena, smith_protocol_take(stream), &out->_meta);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_name = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->name);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->name);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->uri);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->uri);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_mcp_root_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpRootList *out, SmithProtocolError *error) {
@@ -2554,10 +2594,11 @@ bool smith_mcp_root_list_equal([[maybe_unused]] const SmithMcpRootList *a, [[may
 }
 
 void smith_mcp_root_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpRootList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithMcpRoot *items = smith_protocol_block(arena, sizeof(SmithMcpRoot), alignof(SmithMcpRoot), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_mcp_root_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_mcp_root_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -2592,9 +2633,10 @@ bool smith_mcp_list_roots_result_equal([[maybe_unused]] const SmithMcpListRootsR
 }
 
 void smith_mcp_list_roots_result_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpListRootsResult *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpListRootsResult){};
-    smith_mcp_root_list_random(arena, smith_key_derive(key, 1), &out->roots);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_mcp_root_list_random(arena, smith_protocol_take(stream), &out->roots);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_elicit_result_action_names[] = {"accept", "cancel", "decline"};
@@ -2616,7 +2658,8 @@ bool smith_mcp_elicit_result_action_equal([[maybe_unused]] const SmithMcpElicitR
 }
 
 void smith_mcp_elicit_result_action_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpElicitResultAction *out) {
-    *out = (SmithMcpElicitResultAction)smith_protocol_pick(key, 3);
+    [[maybe_unused]] SmithKey *stream = &key;
+    *out = (SmithMcpElicitResultAction)smith_protocol_pick(smith_protocol_take(stream), 3);
 }
 
 bool smith_mcp_elicit_result_content_value2_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpElicitResultContentValue2 *out, SmithProtocolError *error) {
@@ -2665,17 +2708,18 @@ bool smith_mcp_elicit_result_content_value2_equal([[maybe_unused]] const SmithMc
 }
 
 void smith_mcp_elicit_result_content_value2_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpElicitResultContentValue2 *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpElicitResultContentValue2){};
-    out->kind = (SmithMcpElicitResultContentValue2Kind)smith_protocol_pick(smith_key_derive(key, 0), 3);
+    out->kind = (SmithMcpElicitResultContentValue2Kind)smith_protocol_pick(smith_protocol_take(stream), 3);
     switch (out->kind) {
     case SmithMcpElicitResultContentValue2Kind_String:
-        smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->as.string);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->as.string);
         break;
     case SmithMcpElicitResultContentValue2Kind_Integer:
-        smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->as.integer);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->as.integer);
         break;
     case SmithMcpElicitResultContentValue2Kind_Boolean:
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 1), &out->as.boolean);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->as.boolean);
         break;
     }
 }
@@ -2717,14 +2761,15 @@ bool smith_mcp_elicit_result_content_value_equal([[maybe_unused]] const SmithMcp
 }
 
 void smith_mcp_elicit_result_content_value_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpElicitResultContentValue *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpElicitResultContentValue){};
-    out->kind = (SmithMcpElicitResultContentValueKind)smith_protocol_pick(smith_key_derive(key, 0), 2);
+    out->kind = (SmithMcpElicitResultContentValueKind)smith_protocol_pick(smith_protocol_take(stream), 2);
     switch (out->kind) {
     case SmithMcpElicitResultContentValueKind_StringList:
-        smith_mcp_string_list_random(arena, smith_key_derive(key, 1), &out->as.string_list);
+        smith_mcp_string_list_random(arena, smith_protocol_take(stream), &out->as.string_list);
         break;
     case SmithMcpElicitResultContentValueKind_ElicitResultContentValue2:
-        smith_mcp_elicit_result_content_value2_random(arena, smith_key_derive(key, 1), &out->as.elicit_result_content_value2);
+        smith_mcp_elicit_result_content_value2_random(arena, smith_protocol_take(stream), &out->as.elicit_result_content_value2);
         break;
     }
 }
@@ -2763,12 +2808,13 @@ bool smith_mcp_elicit_result_content_value_map_equal([[maybe_unused]] const Smit
 }
 
 void smith_mcp_elicit_result_content_value_map_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpElicitResultContentValueMap *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     struct smith_array_const_char_n *keys = smith_protocol_block(arena, sizeof(struct smith_array_const_char_n), alignof(struct smith_array_const_char_n), count);
     SmithMcpElicitResultContentValue *items = smith_protocol_block(arena, sizeof(SmithMcpElicitResultContentValue), alignof(SmithMcpElicitResultContentValue), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
         keys[i] = smith_protocol_name(arena, i);
-        smith_mcp_elicit_result_content_value_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_mcp_elicit_result_content_value_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->keys = keys;
     out->values = items;
@@ -2815,13 +2861,14 @@ bool smith_mcp_elicit_result_equal([[maybe_unused]] const SmithMcpElicitResult *
 }
 
 void smith_mcp_elicit_result_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpElicitResult *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpElicitResult){};
-    smith_mcp_elicit_result_action_random(arena, smith_key_derive(key, 1), &out->action);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_mcp_elicit_result_action_random(arena, smith_protocol_take(stream), &out->action);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_content = true;
-        smith_mcp_elicit_result_content_value_map_random(arena, smith_key_derive(key, 3), &out->content);
+        smith_mcp_elicit_result_content_value_map_random(arena, smith_protocol_take(stream), &out->content);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_mcp_input_response_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpInputResponse *out, SmithProtocolError *error) {
@@ -2870,17 +2917,18 @@ bool smith_mcp_input_response_equal([[maybe_unused]] const SmithMcpInputResponse
 }
 
 void smith_mcp_input_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpInputResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpInputResponse){};
-    out->kind = (SmithMcpInputResponseKind)smith_protocol_pick(smith_key_derive(key, 0), 3);
+    out->kind = (SmithMcpInputResponseKind)smith_protocol_pick(smith_protocol_take(stream), 3);
     switch (out->kind) {
     case SmithMcpInputResponseKind_CreateMessageResult:
-        smith_mcp_create_message_result_random(arena, smith_key_derive(key, 1), &out->as.create_message_result);
+        smith_mcp_create_message_result_random(arena, smith_protocol_take(stream), &out->as.create_message_result);
         break;
     case SmithMcpInputResponseKind_ListRootsResult:
-        smith_mcp_list_roots_result_random(arena, smith_key_derive(key, 1), &out->as.list_roots_result);
+        smith_mcp_list_roots_result_random(arena, smith_protocol_take(stream), &out->as.list_roots_result);
         break;
     case SmithMcpInputResponseKind_ElicitResult:
-        smith_mcp_elicit_result_random(arena, smith_key_derive(key, 1), &out->as.elicit_result);
+        smith_mcp_elicit_result_random(arena, smith_protocol_take(stream), &out->as.elicit_result);
         break;
     }
 }
@@ -2919,12 +2967,13 @@ bool smith_mcp_input_response_map_equal([[maybe_unused]] const SmithMcpInputResp
 }
 
 void smith_mcp_input_response_map_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpInputResponseMap *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     struct smith_array_const_char_n *keys = smith_protocol_block(arena, sizeof(struct smith_array_const_char_n), alignof(struct smith_array_const_char_n), count);
     SmithMcpInputResponse *items = smith_protocol_block(arena, sizeof(SmithMcpInputResponse), alignof(SmithMcpInputResponse), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
         keys[i] = smith_protocol_name(arena, i);
-        smith_mcp_input_response_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_mcp_input_response_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->keys = keys;
     out->values = items;
@@ -2999,22 +3048,23 @@ bool smith_mcp_call_tool_request_params_equal([[maybe_unused]] const SmithMcpCal
 }
 
 void smith_mcp_call_tool_request_params_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpCallToolRequestParams *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpCallToolRequestParams){};
-    smith_mcp_request_meta_object_random(arena, smith_key_derive(key, 1), &out->_meta);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_mcp_request_meta_object_random(arena, smith_protocol_take(stream), &out->_meta);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_arguments = true;
-        smith_protocol_object_random(arena, smith_key_derive(key, 3), &out->arguments);
+        smith_protocol_object_random(arena, smith_protocol_take(stream), &out->arguments);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_inputResponses = true;
-        smith_mcp_input_response_map_random(arena, smith_key_derive(key, 5), &out->inputResponses);
+        smith_mcp_input_response_map_random(arena, smith_protocol_take(stream), &out->inputResponses);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 7), &out->name);
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->name);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_requestState = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->requestState);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->requestState);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 10), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_call_tool_request_known[] = {"id", "jsonrpc", "method", "params"};
@@ -3062,10 +3112,11 @@ bool smith_mcp_call_tool_request_equal([[maybe_unused]] const SmithMcpCallToolRe
 }
 
 void smith_mcp_call_tool_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpCallToolRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpCallToolRequest){};
-    smith_mcp_request_id_random(arena, smith_key_derive(key, 1), &out->id);
-    smith_mcp_call_tool_request_params_random(arena, smith_key_derive(key, 7), &out->params);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_mcp_request_id_random(arena, smith_protocol_take(stream), &out->id);
+    smith_mcp_call_tool_request_params_random(arena, smith_protocol_take(stream), &out->params);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_call_tool_result_known[] = {"_meta", "content", "isError", "resultType", "structuredContent"};
@@ -3136,22 +3187,23 @@ bool smith_mcp_call_tool_result_equal([[maybe_unused]] const SmithMcpCallToolRes
 }
 
 void smith_mcp_call_tool_result_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpCallToolResult *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpCallToolResult){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has__meta = true;
-        smith_mcp_result_meta_object_random(arena, smith_key_derive(key, 1), &out->_meta);
+        smith_mcp_result_meta_object_random(arena, smith_protocol_take(stream), &out->_meta);
     }
-    smith_mcp_content_block_list_random(arena, smith_key_derive(key, 3), &out->content);
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    smith_mcp_content_block_list_random(arena, smith_protocol_take(stream), &out->content);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_isError = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 5), &out->isError);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->isError);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 7), &out->resultType);
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->resultType);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_structuredContent = true;
-        smith_protocol_any_random(arena, smith_key_derive(key, 9), &out->structuredContent);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &out->structuredContent);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 10), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_create_message_request_params_include_context_names[] = {"allServers", "none", "thisServer"};
@@ -3173,7 +3225,8 @@ bool smith_mcp_create_message_request_params_include_context_equal([[maybe_unuse
 }
 
 void smith_mcp_create_message_request_params_include_context_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpCreateMessageRequestParamsIncludeContext *out) {
-    *out = (SmithMcpCreateMessageRequestParamsIncludeContext)smith_protocol_pick(key, 3);
+    [[maybe_unused]] SmithKey *stream = &key;
+    *out = (SmithMcpCreateMessageRequestParamsIncludeContext)smith_protocol_pick(smith_protocol_take(stream), 3);
 }
 
 bool smith_mcp_sampling_message_content_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpSamplingMessageContent *out, SmithProtocolError *error) {
@@ -3249,26 +3302,27 @@ bool smith_mcp_sampling_message_content_equal([[maybe_unused]] const SmithMcpSam
 }
 
 void smith_mcp_sampling_message_content_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpSamplingMessageContent *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpSamplingMessageContent){};
-    out->kind = (SmithMcpSamplingMessageContentKind)smith_protocol_pick(smith_key_derive(key, 0), 6);
+    out->kind = (SmithMcpSamplingMessageContentKind)smith_protocol_pick(smith_protocol_take(stream), 6);
     switch (out->kind) {
     case SmithMcpSamplingMessageContentKind_TextContent:
-        smith_mcp_text_content_random(arena, smith_key_derive(key, 1), &out->as.text_content);
+        smith_mcp_text_content_random(arena, smith_protocol_take(stream), &out->as.text_content);
         break;
     case SmithMcpSamplingMessageContentKind_ImageContent:
-        smith_mcp_image_content_random(arena, smith_key_derive(key, 1), &out->as.image_content);
+        smith_mcp_image_content_random(arena, smith_protocol_take(stream), &out->as.image_content);
         break;
     case SmithMcpSamplingMessageContentKind_AudioContent:
-        smith_mcp_audio_content_random(arena, smith_key_derive(key, 1), &out->as.audio_content);
+        smith_mcp_audio_content_random(arena, smith_protocol_take(stream), &out->as.audio_content);
         break;
     case SmithMcpSamplingMessageContentKind_ToolUseContent:
-        smith_mcp_tool_use_content_random(arena, smith_key_derive(key, 1), &out->as.tool_use_content);
+        smith_mcp_tool_use_content_random(arena, smith_protocol_take(stream), &out->as.tool_use_content);
         break;
     case SmithMcpSamplingMessageContentKind_ToolResultContent:
-        smith_mcp_tool_result_content_random(arena, smith_key_derive(key, 1), &out->as.tool_result_content);
+        smith_mcp_tool_result_content_random(arena, smith_protocol_take(stream), &out->as.tool_result_content);
         break;
     case SmithMcpSamplingMessageContentKind_SamplingMessageContentBlockList:
-        smith_mcp_sampling_message_content_block_list_random(arena, smith_key_derive(key, 1), &out->as.sampling_message_content_block_list);
+        smith_mcp_sampling_message_content_block_list_random(arena, smith_protocol_take(stream), &out->as.sampling_message_content_block_list);
         break;
     }
 }
@@ -3319,14 +3373,15 @@ bool smith_mcp_sampling_message_equal([[maybe_unused]] const SmithMcpSamplingMes
 }
 
 void smith_mcp_sampling_message_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpSamplingMessage *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpSamplingMessage){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has__meta = true;
-        smith_protocol_object_random(arena, smith_key_derive(key, 1), &out->_meta);
+        smith_protocol_object_random(arena, smith_protocol_take(stream), &out->_meta);
     }
-    smith_mcp_sampling_message_content_random(arena, smith_key_derive(key, 3), &out->content);
-    smith_mcp_role_random(arena, smith_key_derive(key, 5), &out->role);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_mcp_sampling_message_content_random(arena, smith_protocol_take(stream), &out->content);
+    smith_mcp_role_random(arena, smith_protocol_take(stream), &out->role);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_mcp_sampling_message_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpSamplingMessageList *out, SmithProtocolError *error) {
@@ -3358,10 +3413,11 @@ bool smith_mcp_sampling_message_list_equal([[maybe_unused]] const SmithMcpSampli
 }
 
 void smith_mcp_sampling_message_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpSamplingMessageList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithMcpSamplingMessage *items = smith_protocol_block(arena, sizeof(SmithMcpSamplingMessage), alignof(SmithMcpSamplingMessage), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_mcp_sampling_message_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_mcp_sampling_message_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -3401,12 +3457,13 @@ bool smith_mcp_model_hint_equal([[maybe_unused]] const SmithMcpModelHint *a, [[m
 }
 
 void smith_mcp_model_hint_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpModelHint *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpModelHint){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_name = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->name);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->name);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_mcp_model_hint_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpModelHintList *out, SmithProtocolError *error) {
@@ -3438,10 +3495,11 @@ bool smith_mcp_model_hint_list_equal([[maybe_unused]] const SmithMcpModelHintLis
 }
 
 void smith_mcp_model_hint_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpModelHintList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithMcpModelHint *items = smith_protocol_block(arena, sizeof(SmithMcpModelHint), alignof(SmithMcpModelHint), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_mcp_model_hint_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_mcp_model_hint_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -3514,24 +3572,25 @@ bool smith_mcp_model_preferences_equal([[maybe_unused]] const SmithMcpModelPrefe
 }
 
 void smith_mcp_model_preferences_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpModelPreferences *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpModelPreferences){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_costPriority = true;
-        smith_protocol_number_random(arena, smith_key_derive(key, 1), &out->costPriority);
+        smith_protocol_number_random(arena, smith_protocol_take(stream), &out->costPriority);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_hints = true;
-        smith_mcp_model_hint_list_random(arena, smith_key_derive(key, 3), &out->hints);
+        smith_mcp_model_hint_list_random(arena, smith_protocol_take(stream), &out->hints);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_intelligencePriority = true;
-        smith_protocol_number_random(arena, smith_key_derive(key, 5), &out->intelligencePriority);
+        smith_protocol_number_random(arena, smith_protocol_take(stream), &out->intelligencePriority);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_speedPriority = true;
-        smith_protocol_number_random(arena, smith_key_derive(key, 7), &out->speedPriority);
+        smith_protocol_number_random(arena, smith_protocol_take(stream), &out->speedPriority);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_tool_choice_mode_names[] = {"auto", "none", "required"};
@@ -3553,7 +3612,8 @@ bool smith_mcp_tool_choice_mode_equal([[maybe_unused]] const SmithMcpToolChoiceM
 }
 
 void smith_mcp_tool_choice_mode_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpToolChoiceMode *out) {
-    *out = (SmithMcpToolChoiceMode)smith_protocol_pick(key, 3);
+    [[maybe_unused]] SmithKey *stream = &key;
+    *out = (SmithMcpToolChoiceMode)smith_protocol_pick(smith_protocol_take(stream), 3);
 }
 
 static const char *const smith_mcp_tool_choice_known[] = {"mode"};
@@ -3590,12 +3650,13 @@ bool smith_mcp_tool_choice_equal([[maybe_unused]] const SmithMcpToolChoice *a, [
 }
 
 void smith_mcp_tool_choice_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpToolChoice *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpToolChoice){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_mode = true;
-        smith_mcp_tool_choice_mode_random(arena, smith_key_derive(key, 1), &out->mode);
+        smith_mcp_tool_choice_mode_random(arena, smith_protocol_take(stream), &out->mode);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_tool_annotations_known[] = {"destructiveHint", "idempotentHint", "openWorldHint", "readOnlyHint", "title"};
@@ -3676,28 +3737,29 @@ bool smith_mcp_tool_annotations_equal([[maybe_unused]] const SmithMcpToolAnnotat
 }
 
 void smith_mcp_tool_annotations_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpToolAnnotations *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpToolAnnotations){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_destructiveHint = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 1), &out->destructiveHint);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->destructiveHint);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_idempotentHint = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 3), &out->idempotentHint);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->idempotentHint);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_openWorldHint = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 5), &out->openWorldHint);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->openWorldHint);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_readOnlyHint = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->readOnlyHint);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->readOnlyHint);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_title = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->title);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->title);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 10), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_tool_input_schema_known[] = {"$schema", "type"};
@@ -3739,12 +3801,13 @@ bool smith_mcp_tool_input_schema_equal([[maybe_unused]] const SmithMcpToolInputS
 }
 
 void smith_mcp_tool_input_schema_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpToolInputSchema *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpToolInputSchema){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has__schema = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->_schema);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->_schema);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_tool_output_schema_known[] = {"$schema"};
@@ -3781,12 +3844,13 @@ bool smith_mcp_tool_output_schema_equal([[maybe_unused]] const SmithMcpToolOutpu
 }
 
 void smith_mcp_tool_output_schema_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpToolOutputSchema *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpToolOutputSchema){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has__schema = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->_schema);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->_schema);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_tool_known[] = {"_meta", "annotations", "description", "icons", "inputSchema", "name", "outputSchema", "title"};
@@ -3890,34 +3954,35 @@ bool smith_mcp_tool_equal([[maybe_unused]] const SmithMcpTool *a, [[maybe_unused
 }
 
 void smith_mcp_tool_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpTool *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpTool){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has__meta = true;
-        smith_protocol_object_random(arena, smith_key_derive(key, 1), &out->_meta);
+        smith_protocol_object_random(arena, smith_protocol_take(stream), &out->_meta);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_annotations = true;
-        smith_mcp_tool_annotations_random(arena, smith_key_derive(key, 3), &out->annotations);
+        smith_mcp_tool_annotations_random(arena, smith_protocol_take(stream), &out->annotations);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_description = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->description);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->description);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_icons = true;
-        smith_mcp_icon_list_random(arena, smith_key_derive(key, 7), &out->icons);
+        smith_mcp_icon_list_random(arena, smith_protocol_take(stream), &out->icons);
     }
-    smith_mcp_tool_input_schema_random(arena, smith_key_derive(key, 9), &out->inputSchema);
-    smith_protocol_string_random(arena, smith_key_derive(key, 11), &out->name);
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    smith_mcp_tool_input_schema_random(arena, smith_protocol_take(stream), &out->inputSchema);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->name);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_outputSchema = true;
-        smith_mcp_tool_output_schema_random(arena, smith_key_derive(key, 13), &out->outputSchema);
+        smith_mcp_tool_output_schema_random(arena, smith_protocol_take(stream), &out->outputSchema);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 14))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_title = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 15), &out->title);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->title);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 16), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_mcp_tool_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpToolList *out, SmithProtocolError *error) {
@@ -3949,10 +4014,11 @@ bool smith_mcp_tool_list_equal([[maybe_unused]] const SmithMcpToolList *a, [[may
 }
 
 void smith_mcp_tool_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpToolList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithMcpTool *items = smith_protocol_block(arena, sizeof(SmithMcpTool), alignof(SmithMcpTool), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_mcp_tool_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_mcp_tool_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -4081,42 +4147,43 @@ bool smith_mcp_create_message_request_params_equal([[maybe_unused]] const SmithM
 }
 
 void smith_mcp_create_message_request_params_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpCreateMessageRequestParams *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpCreateMessageRequestParams){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_includeContext = true;
-        smith_mcp_create_message_request_params_include_context_random(arena, smith_key_derive(key, 1), &out->includeContext);
+        smith_mcp_create_message_request_params_include_context_random(arena, smith_protocol_take(stream), &out->includeContext);
     }
-    smith_protocol_integer_random(arena, smith_key_derive(key, 3), &out->maxTokens);
-    smith_mcp_sampling_message_list_random(arena, smith_key_derive(key, 5), &out->messages);
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->maxTokens);
+    smith_mcp_sampling_message_list_random(arena, smith_protocol_take(stream), &out->messages);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_metadata = true;
-        smith_mcp_any_map_random(arena, smith_key_derive(key, 7), &out->metadata);
+        smith_mcp_any_map_random(arena, smith_protocol_take(stream), &out->metadata);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_modelPreferences = true;
-        smith_mcp_model_preferences_random(arena, smith_key_derive(key, 9), &out->modelPreferences);
+        smith_mcp_model_preferences_random(arena, smith_protocol_take(stream), &out->modelPreferences);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_stopSequences = true;
-        smith_mcp_string_list_random(arena, smith_key_derive(key, 11), &out->stopSequences);
+        smith_mcp_string_list_random(arena, smith_protocol_take(stream), &out->stopSequences);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_systemPrompt = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 13), &out->systemPrompt);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->systemPrompt);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 14))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_temperature = true;
-        smith_protocol_number_random(arena, smith_key_derive(key, 15), &out->temperature);
+        smith_protocol_number_random(arena, smith_protocol_take(stream), &out->temperature);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 16))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_toolChoice = true;
-        smith_mcp_tool_choice_random(arena, smith_key_derive(key, 17), &out->toolChoice);
+        smith_mcp_tool_choice_random(arena, smith_protocol_take(stream), &out->toolChoice);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 18))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_tools = true;
-        smith_mcp_tool_list_random(arena, smith_key_derive(key, 19), &out->tools);
+        smith_mcp_tool_list_random(arena, smith_protocol_take(stream), &out->tools);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 20), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_create_message_request_known[] = {"method", "params"};
@@ -4153,9 +4220,10 @@ bool smith_mcp_create_message_request_equal([[maybe_unused]] const SmithMcpCreat
 }
 
 void smith_mcp_create_message_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpCreateMessageRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpCreateMessageRequest){};
-    smith_mcp_create_message_request_params_random(arena, smith_key_derive(key, 3), &out->params);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_mcp_create_message_request_params_random(arena, smith_protocol_take(stream), &out->params);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_list_roots_request_params_known[] = {"_meta"};
@@ -4192,12 +4260,13 @@ bool smith_mcp_list_roots_request_params_equal([[maybe_unused]] const SmithMcpLi
 }
 
 void smith_mcp_list_roots_request_params_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpListRootsRequestParams *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpListRootsRequestParams){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has__meta = true;
-        smith_protocol_object_random(arena, smith_key_derive(key, 1), &out->_meta);
+        smith_protocol_object_random(arena, smith_protocol_take(stream), &out->_meta);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_list_roots_request_known[] = {"method", "params"};
@@ -4239,12 +4308,13 @@ bool smith_mcp_list_roots_request_equal([[maybe_unused]] const SmithMcpListRoots
 }
 
 void smith_mcp_list_roots_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpListRootsRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpListRootsRequest){};
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_params = true;
-        smith_mcp_list_roots_request_params_random(arena, smith_key_derive(key, 3), &out->params);
+        smith_mcp_list_roots_request_params_random(arena, smith_protocol_take(stream), &out->params);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_string_schema_format_names[] = {"date", "date-time", "email", "uri"};
@@ -4266,7 +4336,8 @@ bool smith_mcp_string_schema_format_equal([[maybe_unused]] const SmithMcpStringS
 }
 
 void smith_mcp_string_schema_format_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpStringSchemaFormat *out) {
-    *out = (SmithMcpStringSchemaFormat)smith_protocol_pick(key, 4);
+    [[maybe_unused]] SmithKey *stream = &key;
+    *out = (SmithMcpStringSchemaFormat)smith_protocol_pick(smith_protocol_take(stream), 4);
 }
 
 static const char *const smith_mcp_string_schema_known[] = {"default", "description", "format", "maxLength", "minLength", "title", "type"};
@@ -4363,32 +4434,33 @@ bool smith_mcp_string_schema_equal([[maybe_unused]] const SmithMcpStringSchema *
 }
 
 void smith_mcp_string_schema_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpStringSchema *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpStringSchema){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_default_ = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->default_);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->default_);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_description = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->description);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->description);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_format = true;
-        smith_mcp_string_schema_format_random(arena, smith_key_derive(key, 5), &out->format);
+        smith_mcp_string_schema_format_random(arena, smith_protocol_take(stream), &out->format);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_maxLength = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 7), &out->maxLength);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->maxLength);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_minLength = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 9), &out->minLength);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->minLength);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_title = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 11), &out->title);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->title);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_number_schema_type_names[] = {"integer", "number"};
@@ -4410,7 +4482,8 @@ bool smith_mcp_number_schema_type_equal([[maybe_unused]] const SmithMcpNumberSch
 }
 
 void smith_mcp_number_schema_type_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpNumberSchemaType *out) {
-    *out = (SmithMcpNumberSchemaType)smith_protocol_pick(key, 2);
+    [[maybe_unused]] SmithKey *stream = &key;
+    *out = (SmithMcpNumberSchemaType)smith_protocol_pick(smith_protocol_take(stream), 2);
 }
 
 static const char *const smith_mcp_number_schema_known[] = {"default", "description", "maximum", "minimum", "title", "type"};
@@ -4497,29 +4570,30 @@ bool smith_mcp_number_schema_equal([[maybe_unused]] const SmithMcpNumberSchema *
 }
 
 void smith_mcp_number_schema_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpNumberSchema *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpNumberSchema){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_default_ = true;
-        smith_protocol_number_random(arena, smith_key_derive(key, 1), &out->default_);
+        smith_protocol_number_random(arena, smith_protocol_take(stream), &out->default_);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_description = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->description);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->description);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_maximum = true;
-        smith_protocol_number_random(arena, smith_key_derive(key, 5), &out->maximum);
+        smith_protocol_number_random(arena, smith_protocol_take(stream), &out->maximum);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_minimum = true;
-        smith_protocol_number_random(arena, smith_key_derive(key, 7), &out->minimum);
+        smith_protocol_number_random(arena, smith_protocol_take(stream), &out->minimum);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_title = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->title);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->title);
     }
-    smith_mcp_number_schema_type_random(arena, smith_key_derive(key, 11), &out->type);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 12), &out->additionalProperties);
+    smith_mcp_number_schema_type_random(arena, smith_protocol_take(stream), &out->type);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_untitled_single_select_enum_schema_known[] = {"default", "description", "enum", "title", "type"};
@@ -4589,21 +4663,22 @@ bool smith_mcp_untitled_single_select_enum_schema_equal([[maybe_unused]] const S
 }
 
 void smith_mcp_untitled_single_select_enum_schema_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpUntitledSingleSelectEnumSchema *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpUntitledSingleSelectEnumSchema){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_default_ = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->default_);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->default_);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_description = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->description);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->description);
     }
-    smith_mcp_string_list_random(arena, smith_key_derive(key, 5), &out->enum_);
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    smith_mcp_string_list_random(arena, smith_protocol_take(stream), &out->enum_);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_title = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 7), &out->title);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->title);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 10), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_titled_single_select_enum_schema_one_of_item_known[] = {"const", "title"};
@@ -4641,10 +4716,11 @@ bool smith_mcp_titled_single_select_enum_schema_one_of_item_equal([[maybe_unused
 }
 
 void smith_mcp_titled_single_select_enum_schema_one_of_item_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpTitledSingleSelectEnumSchemaOneOfItem *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpTitledSingleSelectEnumSchemaOneOfItem){};
-    smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->const_);
-    smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->title);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->const_);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->title);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_mcp_titled_single_select_enum_schema_one_of_item_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpTitledSingleSelectEnumSchemaOneOfItemList *out, SmithProtocolError *error) {
@@ -4676,10 +4752,11 @@ bool smith_mcp_titled_single_select_enum_schema_one_of_item_list_equal([[maybe_u
 }
 
 void smith_mcp_titled_single_select_enum_schema_one_of_item_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpTitledSingleSelectEnumSchemaOneOfItemList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithMcpTitledSingleSelectEnumSchemaOneOfItem *items = smith_protocol_block(arena, sizeof(SmithMcpTitledSingleSelectEnumSchemaOneOfItem), alignof(SmithMcpTitledSingleSelectEnumSchemaOneOfItem), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_mcp_titled_single_select_enum_schema_one_of_item_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_mcp_titled_single_select_enum_schema_one_of_item_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -4752,21 +4829,22 @@ bool smith_mcp_titled_single_select_enum_schema_equal([[maybe_unused]] const Smi
 }
 
 void smith_mcp_titled_single_select_enum_schema_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpTitledSingleSelectEnumSchema *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpTitledSingleSelectEnumSchema){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_default_ = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->default_);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->default_);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_description = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->description);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->description);
     }
-    smith_mcp_titled_single_select_enum_schema_one_of_item_list_random(arena, smith_key_derive(key, 5), &out->oneOf);
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    smith_mcp_titled_single_select_enum_schema_one_of_item_list_random(arena, smith_protocol_take(stream), &out->oneOf);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_title = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 7), &out->title);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->title);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 10), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_untitled_multi_select_enum_schema_items_known[] = {"enum", "type"};
@@ -4803,9 +4881,10 @@ bool smith_mcp_untitled_multi_select_enum_schema_items_equal([[maybe_unused]] co
 }
 
 void smith_mcp_untitled_multi_select_enum_schema_items_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpUntitledMultiSelectEnumSchemaItems *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpUntitledMultiSelectEnumSchemaItems){};
-    smith_mcp_string_list_random(arena, smith_key_derive(key, 1), &out->enum_);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_mcp_string_list_random(arena, smith_protocol_take(stream), &out->enum_);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_untitled_multi_select_enum_schema_known[] = {"default", "description", "items", "maxItems", "minItems", "title", "type"};
@@ -4897,29 +4976,30 @@ bool smith_mcp_untitled_multi_select_enum_schema_equal([[maybe_unused]] const Sm
 }
 
 void smith_mcp_untitled_multi_select_enum_schema_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpUntitledMultiSelectEnumSchema *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpUntitledMultiSelectEnumSchema){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_default_ = true;
-        smith_mcp_string_list_random(arena, smith_key_derive(key, 1), &out->default_);
+        smith_mcp_string_list_random(arena, smith_protocol_take(stream), &out->default_);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_description = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->description);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->description);
     }
-    smith_mcp_untitled_multi_select_enum_schema_items_random(arena, smith_key_derive(key, 5), &out->items);
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    smith_mcp_untitled_multi_select_enum_schema_items_random(arena, smith_protocol_take(stream), &out->items);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_maxItems = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 7), &out->maxItems);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->maxItems);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_minItems = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 9), &out->minItems);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->minItems);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_title = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 11), &out->title);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->title);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_titled_multi_select_enum_schema_items_any_of_item_known[] = {"const", "title"};
@@ -4957,10 +5037,11 @@ bool smith_mcp_titled_multi_select_enum_schema_items_any_of_item_equal([[maybe_u
 }
 
 void smith_mcp_titled_multi_select_enum_schema_items_any_of_item_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpTitledMultiSelectEnumSchemaItemsAnyOfItem *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpTitledMultiSelectEnumSchemaItemsAnyOfItem){};
-    smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->const_);
-    smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->title);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->const_);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->title);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_mcp_titled_multi_select_enum_schema_items_any_of_item_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpTitledMultiSelectEnumSchemaItemsAnyOfItemList *out, SmithProtocolError *error) {
@@ -4992,10 +5073,11 @@ bool smith_mcp_titled_multi_select_enum_schema_items_any_of_item_list_equal([[ma
 }
 
 void smith_mcp_titled_multi_select_enum_schema_items_any_of_item_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpTitledMultiSelectEnumSchemaItemsAnyOfItemList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithMcpTitledMultiSelectEnumSchemaItemsAnyOfItem *items = smith_protocol_block(arena, sizeof(SmithMcpTitledMultiSelectEnumSchemaItemsAnyOfItem), alignof(SmithMcpTitledMultiSelectEnumSchemaItemsAnyOfItem), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_mcp_titled_multi_select_enum_schema_items_any_of_item_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_mcp_titled_multi_select_enum_schema_items_any_of_item_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -5030,9 +5112,10 @@ bool smith_mcp_titled_multi_select_enum_schema_items_equal([[maybe_unused]] cons
 }
 
 void smith_mcp_titled_multi_select_enum_schema_items_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpTitledMultiSelectEnumSchemaItems *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpTitledMultiSelectEnumSchemaItems){};
-    smith_mcp_titled_multi_select_enum_schema_items_any_of_item_list_random(arena, smith_key_derive(key, 1), &out->anyOf);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_mcp_titled_multi_select_enum_schema_items_any_of_item_list_random(arena, smith_protocol_take(stream), &out->anyOf);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_titled_multi_select_enum_schema_known[] = {"default", "description", "items", "maxItems", "minItems", "title", "type"};
@@ -5124,29 +5207,30 @@ bool smith_mcp_titled_multi_select_enum_schema_equal([[maybe_unused]] const Smit
 }
 
 void smith_mcp_titled_multi_select_enum_schema_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpTitledMultiSelectEnumSchema *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpTitledMultiSelectEnumSchema){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_default_ = true;
-        smith_mcp_string_list_random(arena, smith_key_derive(key, 1), &out->default_);
+        smith_mcp_string_list_random(arena, smith_protocol_take(stream), &out->default_);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_description = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->description);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->description);
     }
-    smith_mcp_titled_multi_select_enum_schema_items_random(arena, smith_key_derive(key, 5), &out->items);
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    smith_mcp_titled_multi_select_enum_schema_items_random(arena, smith_protocol_take(stream), &out->items);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_maxItems = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 7), &out->maxItems);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->maxItems);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_minItems = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 9), &out->minItems);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->minItems);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_title = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 11), &out->title);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->title);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_legacy_titled_enum_schema_known[] = {"default", "description", "enum", "enumNames", "title", "type"};
@@ -5227,25 +5311,26 @@ bool smith_mcp_legacy_titled_enum_schema_equal([[maybe_unused]] const SmithMcpLe
 }
 
 void smith_mcp_legacy_titled_enum_schema_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpLegacyTitledEnumSchema *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpLegacyTitledEnumSchema){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_default_ = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->default_);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->default_);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_description = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->description);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->description);
     }
-    smith_mcp_string_list_random(arena, smith_key_derive(key, 5), &out->enum_);
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    smith_mcp_string_list_random(arena, smith_protocol_take(stream), &out->enum_);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_enumNames = true;
-        smith_mcp_string_list_random(arena, smith_key_derive(key, 7), &out->enumNames);
+        smith_mcp_string_list_random(arena, smith_protocol_take(stream), &out->enumNames);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_title = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->title);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->title);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 12), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_mcp_primitive_schema_definition_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpPrimitiveSchemaDefinition *out, SmithProtocolError *error) {
@@ -5339,32 +5424,33 @@ bool smith_mcp_primitive_schema_definition_equal([[maybe_unused]] const SmithMcp
 }
 
 void smith_mcp_primitive_schema_definition_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpPrimitiveSchemaDefinition *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpPrimitiveSchemaDefinition){};
-    out->kind = (SmithMcpPrimitiveSchemaDefinitionKind)smith_protocol_pick(smith_key_derive(key, 0), 8);
+    out->kind = (SmithMcpPrimitiveSchemaDefinitionKind)smith_protocol_pick(smith_protocol_take(stream), 8);
     switch (out->kind) {
     case SmithMcpPrimitiveSchemaDefinitionKind_StringSchema:
-        smith_mcp_string_schema_random(arena, smith_key_derive(key, 1), &out->as.string_schema);
+        smith_mcp_string_schema_random(arena, smith_protocol_take(stream), &out->as.string_schema);
         break;
     case SmithMcpPrimitiveSchemaDefinitionKind_NumberSchema:
-        smith_mcp_number_schema_random(arena, smith_key_derive(key, 1), &out->as.number_schema);
+        smith_mcp_number_schema_random(arena, smith_protocol_take(stream), &out->as.number_schema);
         break;
     case SmithMcpPrimitiveSchemaDefinitionKind_BooleanSchema:
-        smith_mcp_boolean_schema_random(arena, smith_key_derive(key, 1), &out->as.boolean_schema);
+        smith_mcp_boolean_schema_random(arena, smith_protocol_take(stream), &out->as.boolean_schema);
         break;
     case SmithMcpPrimitiveSchemaDefinitionKind_UntitledSingleSelectEnumSchema:
-        smith_mcp_untitled_single_select_enum_schema_random(arena, smith_key_derive(key, 1), &out->as.untitled_single_select_enum_schema);
+        smith_mcp_untitled_single_select_enum_schema_random(arena, smith_protocol_take(stream), &out->as.untitled_single_select_enum_schema);
         break;
     case SmithMcpPrimitiveSchemaDefinitionKind_TitledSingleSelectEnumSchema:
-        smith_mcp_titled_single_select_enum_schema_random(arena, smith_key_derive(key, 1), &out->as.titled_single_select_enum_schema);
+        smith_mcp_titled_single_select_enum_schema_random(arena, smith_protocol_take(stream), &out->as.titled_single_select_enum_schema);
         break;
     case SmithMcpPrimitiveSchemaDefinitionKind_UntitledMultiSelectEnumSchema:
-        smith_mcp_untitled_multi_select_enum_schema_random(arena, smith_key_derive(key, 1), &out->as.untitled_multi_select_enum_schema);
+        smith_mcp_untitled_multi_select_enum_schema_random(arena, smith_protocol_take(stream), &out->as.untitled_multi_select_enum_schema);
         break;
     case SmithMcpPrimitiveSchemaDefinitionKind_TitledMultiSelectEnumSchema:
-        smith_mcp_titled_multi_select_enum_schema_random(arena, smith_key_derive(key, 1), &out->as.titled_multi_select_enum_schema);
+        smith_mcp_titled_multi_select_enum_schema_random(arena, smith_protocol_take(stream), &out->as.titled_multi_select_enum_schema);
         break;
     case SmithMcpPrimitiveSchemaDefinitionKind_LegacyTitledEnumSchema:
-        smith_mcp_legacy_titled_enum_schema_random(arena, smith_key_derive(key, 1), &out->as.legacy_titled_enum_schema);
+        smith_mcp_legacy_titled_enum_schema_random(arena, smith_protocol_take(stream), &out->as.legacy_titled_enum_schema);
         break;
     }
 }
@@ -5403,12 +5489,13 @@ bool smith_mcp_primitive_schema_definition_map_equal([[maybe_unused]] const Smit
 }
 
 void smith_mcp_primitive_schema_definition_map_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpPrimitiveSchemaDefinitionMap *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     struct smith_array_const_char_n *keys = smith_protocol_block(arena, sizeof(struct smith_array_const_char_n), alignof(struct smith_array_const_char_n), count);
     SmithMcpPrimitiveSchemaDefinition *items = smith_protocol_block(arena, sizeof(SmithMcpPrimitiveSchemaDefinition), alignof(SmithMcpPrimitiveSchemaDefinition), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
         keys[i] = smith_protocol_name(arena, i);
-        smith_mcp_primitive_schema_definition_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_mcp_primitive_schema_definition_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->keys = keys;
     out->values = items;
@@ -5471,17 +5558,18 @@ bool smith_mcp_elicit_request_form_params_requested_schema_equal([[maybe_unused]
 }
 
 void smith_mcp_elicit_request_form_params_requested_schema_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpElicitRequestFormParamsRequestedSchema *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpElicitRequestFormParamsRequestedSchema){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has__schema = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->_schema);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->_schema);
     }
-    smith_mcp_primitive_schema_definition_map_random(arena, smith_key_derive(key, 3), &out->properties);
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    smith_mcp_primitive_schema_definition_map_random(arena, smith_protocol_take(stream), &out->properties);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_required = true;
-        smith_mcp_string_list_random(arena, smith_key_derive(key, 5), &out->required);
+        smith_mcp_string_list_random(arena, smith_protocol_take(stream), &out->required);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_elicit_request_form_params_known[] = {"message", "mode", "requestedSchema"};
@@ -5523,10 +5611,11 @@ bool smith_mcp_elicit_request_form_params_equal([[maybe_unused]] const SmithMcpE
 }
 
 void smith_mcp_elicit_request_form_params_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpElicitRequestFormParams *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpElicitRequestFormParams){};
-    smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->message);
-    smith_mcp_elicit_request_form_params_requested_schema_random(arena, smith_key_derive(key, 5), &out->requestedSchema);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->message);
+    smith_mcp_elicit_request_form_params_requested_schema_random(arena, smith_protocol_take(stream), &out->requestedSchema);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_elicit_request_url_params_known[] = {"message", "mode", "url"};
@@ -5569,10 +5658,11 @@ bool smith_mcp_elicit_request_url_params_equal([[maybe_unused]] const SmithMcpEl
 }
 
 void smith_mcp_elicit_request_url_params_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpElicitRequestURLParams *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpElicitRequestURLParams){};
-    smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->message);
-    smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->url);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->message);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->url);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_mcp_elicit_request_params_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpElicitRequestParams *out, SmithProtocolError *error) {
@@ -5619,14 +5709,15 @@ bool smith_mcp_elicit_request_params_equal([[maybe_unused]] const SmithMcpElicit
 }
 
 void smith_mcp_elicit_request_params_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpElicitRequestParams *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpElicitRequestParams){};
-    out->kind = (SmithMcpElicitRequestParamsKind)smith_protocol_pick(smith_key_derive(key, 0), 2);
+    out->kind = (SmithMcpElicitRequestParamsKind)smith_protocol_pick(smith_protocol_take(stream), 2);
     switch (out->kind) {
     case SmithMcpElicitRequestParamsKind_ElicitRequestFormParams:
-        smith_mcp_elicit_request_form_params_random(arena, smith_key_derive(key, 1), &out->as.elicit_request_form_params);
+        smith_mcp_elicit_request_form_params_random(arena, smith_protocol_take(stream), &out->as.elicit_request_form_params);
         break;
     case SmithMcpElicitRequestParamsKind_ElicitRequestURLParams:
-        smith_mcp_elicit_request_url_params_random(arena, smith_key_derive(key, 1), &out->as.elicit_request_url_params);
+        smith_mcp_elicit_request_url_params_random(arena, smith_protocol_take(stream), &out->as.elicit_request_url_params);
         break;
     }
 }
@@ -5665,9 +5756,10 @@ bool smith_mcp_elicit_request_equal([[maybe_unused]] const SmithMcpElicitRequest
 }
 
 void smith_mcp_elicit_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpElicitRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpElicitRequest){};
-    smith_mcp_elicit_request_params_random(arena, smith_key_derive(key, 3), &out->params);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_mcp_elicit_request_params_random(arena, smith_protocol_take(stream), &out->params);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_mcp_input_request_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpInputRequest *out, SmithProtocolError *error) {
@@ -5723,17 +5815,18 @@ bool smith_mcp_input_request_equal([[maybe_unused]] const SmithMcpInputRequest *
 }
 
 void smith_mcp_input_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpInputRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpInputRequest){};
-    out->kind = (SmithMcpInputRequestKind)smith_protocol_pick(smith_key_derive(key, 0), 3);
+    out->kind = (SmithMcpInputRequestKind)smith_protocol_pick(smith_protocol_take(stream), 3);
     switch (out->kind) {
     case SmithMcpInputRequestKind_CreateMessageRequest:
-        smith_mcp_create_message_request_random(arena, smith_key_derive(key, 1), &out->as.create_message_request);
+        smith_mcp_create_message_request_random(arena, smith_protocol_take(stream), &out->as.create_message_request);
         break;
     case SmithMcpInputRequestKind_ListRootsRequest:
-        smith_mcp_list_roots_request_random(arena, smith_key_derive(key, 1), &out->as.list_roots_request);
+        smith_mcp_list_roots_request_random(arena, smith_protocol_take(stream), &out->as.list_roots_request);
         break;
     case SmithMcpInputRequestKind_ElicitRequest:
-        smith_mcp_elicit_request_random(arena, smith_key_derive(key, 1), &out->as.elicit_request);
+        smith_mcp_elicit_request_random(arena, smith_protocol_take(stream), &out->as.elicit_request);
         break;
     }
 }
@@ -5772,12 +5865,13 @@ bool smith_mcp_input_request_map_equal([[maybe_unused]] const SmithMcpInputReque
 }
 
 void smith_mcp_input_request_map_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpInputRequestMap *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     struct smith_array_const_char_n *keys = smith_protocol_block(arena, sizeof(struct smith_array_const_char_n), alignof(struct smith_array_const_char_n), count);
     SmithMcpInputRequest *items = smith_protocol_block(arena, sizeof(SmithMcpInputRequest), alignof(SmithMcpInputRequest), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
         keys[i] = smith_protocol_name(arena, i);
-        smith_mcp_input_request_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_mcp_input_request_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->keys = keys;
     out->values = items;
@@ -5846,21 +5940,22 @@ bool smith_mcp_input_required_result_equal([[maybe_unused]] const SmithMcpInputR
 }
 
 void smith_mcp_input_required_result_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpInputRequiredResult *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpInputRequiredResult){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has__meta = true;
-        smith_mcp_result_meta_object_random(arena, smith_key_derive(key, 1), &out->_meta);
+        smith_mcp_result_meta_object_random(arena, smith_protocol_take(stream), &out->_meta);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_inputRequests = true;
-        smith_mcp_input_request_map_random(arena, smith_key_derive(key, 3), &out->inputRequests);
+        smith_mcp_input_request_map_random(arena, smith_protocol_take(stream), &out->inputRequests);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_requestState = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->requestState);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->requestState);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 7), &out->resultType);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->resultType);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_mcp_call_tool_result_response_result_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpCallToolResultResponseResult *out, SmithProtocolError *error) {
@@ -5900,14 +5995,15 @@ bool smith_mcp_call_tool_result_response_result_equal([[maybe_unused]] const Smi
 }
 
 void smith_mcp_call_tool_result_response_result_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpCallToolResultResponseResult *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpCallToolResultResponseResult){};
-    out->kind = (SmithMcpCallToolResultResponseResultKind)smith_protocol_pick(smith_key_derive(key, 0), 2);
+    out->kind = (SmithMcpCallToolResultResponseResultKind)smith_protocol_pick(smith_protocol_take(stream), 2);
     switch (out->kind) {
     case SmithMcpCallToolResultResponseResultKind_InputRequiredResult:
-        smith_mcp_input_required_result_random(arena, smith_key_derive(key, 1), &out->as.input_required_result);
+        smith_mcp_input_required_result_random(arena, smith_protocol_take(stream), &out->as.input_required_result);
         break;
     case SmithMcpCallToolResultResponseResultKind_CallToolResult:
-        smith_mcp_call_tool_result_random(arena, smith_key_derive(key, 1), &out->as.call_tool_result);
+        smith_mcp_call_tool_result_random(arena, smith_protocol_take(stream), &out->as.call_tool_result);
         break;
     }
 }
@@ -5952,10 +6048,11 @@ bool smith_mcp_call_tool_result_response_equal([[maybe_unused]] const SmithMcpCa
 }
 
 void smith_mcp_call_tool_result_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpCallToolResultResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpCallToolResultResponse){};
-    smith_mcp_request_id_random(arena, smith_key_derive(key, 1), &out->id);
-    smith_mcp_call_tool_result_response_result_random(arena, smith_key_derive(key, 5), &out->result);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_mcp_request_id_random(arena, smith_protocol_take(stream), &out->id);
+    smith_mcp_call_tool_result_response_result_random(arena, smith_protocol_take(stream), &out->result);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_notification_meta_object_known[] = {"io.modelcontextprotocol/subscriptionId"};
@@ -5992,12 +6089,13 @@ bool smith_mcp_notification_meta_object_equal([[maybe_unused]] const SmithMcpNot
 }
 
 void smith_mcp_notification_meta_object_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpNotificationMetaObject *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpNotificationMetaObject){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_io_modelcontextprotocol_subscriptionId = true;
-        smith_mcp_request_id_random(arena, smith_key_derive(key, 1), &out->io_modelcontextprotocol_subscriptionId);
+        smith_mcp_request_id_random(arena, smith_protocol_take(stream), &out->io_modelcontextprotocol_subscriptionId);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_cancelled_notification_params_known[] = {"_meta", "reason", "requestId"};
@@ -6051,17 +6149,18 @@ bool smith_mcp_cancelled_notification_params_equal([[maybe_unused]] const SmithM
 }
 
 void smith_mcp_cancelled_notification_params_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpCancelledNotificationParams *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpCancelledNotificationParams){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has__meta = true;
-        smith_mcp_notification_meta_object_random(arena, smith_key_derive(key, 1), &out->_meta);
+        smith_mcp_notification_meta_object_random(arena, smith_protocol_take(stream), &out->_meta);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_reason = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->reason);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->reason);
     }
-    smith_mcp_request_id_random(arena, smith_key_derive(key, 5), &out->requestId);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_mcp_request_id_random(arena, smith_protocol_take(stream), &out->requestId);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_cancelled_notification_known[] = {"jsonrpc", "method", "params"};
@@ -6103,9 +6202,10 @@ bool smith_mcp_cancelled_notification_equal([[maybe_unused]] const SmithMcpCance
 }
 
 void smith_mcp_cancelled_notification_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpCancelledNotification *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpCancelledNotification){};
-    smith_mcp_cancelled_notification_params_random(arena, smith_key_derive(key, 5), &out->params);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_mcp_cancelled_notification_params_random(arena, smith_protocol_take(stream), &out->params);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_client_notification_known[] = {"jsonrpc", "method", "params"};
@@ -6147,9 +6247,10 @@ bool smith_mcp_client_notification_equal([[maybe_unused]] const SmithMcpClientNo
 }
 
 void smith_mcp_client_notification_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpClientNotification *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpClientNotification){};
-    smith_mcp_cancelled_notification_params_random(arena, smith_key_derive(key, 5), &out->params);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_mcp_cancelled_notification_params_random(arena, smith_protocol_take(stream), &out->params);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_request_params_known[] = {"_meta"};
@@ -6181,9 +6282,10 @@ bool smith_mcp_request_params_equal([[maybe_unused]] const SmithMcpRequestParams
 }
 
 void smith_mcp_request_params_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpRequestParams *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpRequestParams){};
-    smith_mcp_request_meta_object_random(arena, smith_key_derive(key, 1), &out->_meta);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_mcp_request_meta_object_random(arena, smith_protocol_take(stream), &out->_meta);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_discover_request_known[] = {"id", "jsonrpc", "method", "params"};
@@ -6231,10 +6333,11 @@ bool smith_mcp_discover_request_equal([[maybe_unused]] const SmithMcpDiscoverReq
 }
 
 void smith_mcp_discover_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpDiscoverRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpDiscoverRequest){};
-    smith_mcp_request_id_random(arena, smith_key_derive(key, 1), &out->id);
-    smith_mcp_request_params_random(arena, smith_key_derive(key, 7), &out->params);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_mcp_request_id_random(arena, smith_protocol_take(stream), &out->id);
+    smith_mcp_request_params_random(arena, smith_protocol_take(stream), &out->params);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_paginated_request_params_known[] = {"_meta", "cursor"};
@@ -6277,13 +6380,14 @@ bool smith_mcp_paginated_request_params_equal([[maybe_unused]] const SmithMcpPag
 }
 
 void smith_mcp_paginated_request_params_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpPaginatedRequestParams *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpPaginatedRequestParams){};
-    smith_mcp_request_meta_object_random(arena, smith_key_derive(key, 1), &out->_meta);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_mcp_request_meta_object_random(arena, smith_protocol_take(stream), &out->_meta);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_cursor = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->cursor);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->cursor);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_list_resources_request_known[] = {"id", "jsonrpc", "method", "params"};
@@ -6331,10 +6435,11 @@ bool smith_mcp_list_resources_request_equal([[maybe_unused]] const SmithMcpListR
 }
 
 void smith_mcp_list_resources_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpListResourcesRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpListResourcesRequest){};
-    smith_mcp_request_id_random(arena, smith_key_derive(key, 1), &out->id);
-    smith_mcp_paginated_request_params_random(arena, smith_key_derive(key, 7), &out->params);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_mcp_request_id_random(arena, smith_protocol_take(stream), &out->id);
+    smith_mcp_paginated_request_params_random(arena, smith_protocol_take(stream), &out->params);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_list_resource_templates_request_known[] = {"id", "jsonrpc", "method", "params"};
@@ -6382,10 +6487,11 @@ bool smith_mcp_list_resource_templates_request_equal([[maybe_unused]] const Smit
 }
 
 void smith_mcp_list_resource_templates_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpListResourceTemplatesRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpListResourceTemplatesRequest){};
-    smith_mcp_request_id_random(arena, smith_key_derive(key, 1), &out->id);
-    smith_mcp_paginated_request_params_random(arena, smith_key_derive(key, 7), &out->params);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_mcp_request_id_random(arena, smith_protocol_take(stream), &out->id);
+    smith_mcp_paginated_request_params_random(arena, smith_protocol_take(stream), &out->params);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_read_resource_request_params_known[] = {"_meta", "inputResponses", "requestState", "uri"};
@@ -6445,18 +6551,19 @@ bool smith_mcp_read_resource_request_params_equal([[maybe_unused]] const SmithMc
 }
 
 void smith_mcp_read_resource_request_params_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpReadResourceRequestParams *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpReadResourceRequestParams){};
-    smith_mcp_request_meta_object_random(arena, smith_key_derive(key, 1), &out->_meta);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_mcp_request_meta_object_random(arena, smith_protocol_take(stream), &out->_meta);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_inputResponses = true;
-        smith_mcp_input_response_map_random(arena, smith_key_derive(key, 3), &out->inputResponses);
+        smith_mcp_input_response_map_random(arena, smith_protocol_take(stream), &out->inputResponses);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_requestState = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->requestState);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->requestState);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 7), &out->uri);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->uri);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_read_resource_request_known[] = {"id", "jsonrpc", "method", "params"};
@@ -6504,10 +6611,11 @@ bool smith_mcp_read_resource_request_equal([[maybe_unused]] const SmithMcpReadRe
 }
 
 void smith_mcp_read_resource_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpReadResourceRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpReadResourceRequest){};
-    smith_mcp_request_id_random(arena, smith_key_derive(key, 1), &out->id);
-    smith_mcp_read_resource_request_params_random(arena, smith_key_derive(key, 7), &out->params);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_mcp_request_id_random(arena, smith_protocol_take(stream), &out->id);
+    smith_mcp_read_resource_request_params_random(arena, smith_protocol_take(stream), &out->params);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_subscription_filter_known[] = {"promptsListChanged", "resourceSubscriptions", "resourcesListChanged", "toolsListChanged"};
@@ -6577,24 +6685,25 @@ bool smith_mcp_subscription_filter_equal([[maybe_unused]] const SmithMcpSubscrip
 }
 
 void smith_mcp_subscription_filter_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpSubscriptionFilter *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpSubscriptionFilter){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_promptsListChanged = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 1), &out->promptsListChanged);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->promptsListChanged);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_resourceSubscriptions = true;
-        smith_mcp_string_list_random(arena, smith_key_derive(key, 3), &out->resourceSubscriptions);
+        smith_mcp_string_list_random(arena, smith_protocol_take(stream), &out->resourceSubscriptions);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_resourcesListChanged = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 5), &out->resourcesListChanged);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->resourcesListChanged);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_toolsListChanged = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 7), &out->toolsListChanged);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->toolsListChanged);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_subscriptions_listen_request_params_known[] = {"_meta", "notifications"};
@@ -6632,10 +6741,11 @@ bool smith_mcp_subscriptions_listen_request_params_equal([[maybe_unused]] const 
 }
 
 void smith_mcp_subscriptions_listen_request_params_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpSubscriptionsListenRequestParams *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpSubscriptionsListenRequestParams){};
-    smith_mcp_request_meta_object_random(arena, smith_key_derive(key, 1), &out->_meta);
-    smith_mcp_subscription_filter_random(arena, smith_key_derive(key, 3), &out->notifications);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_mcp_request_meta_object_random(arena, smith_protocol_take(stream), &out->_meta);
+    smith_mcp_subscription_filter_random(arena, smith_protocol_take(stream), &out->notifications);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_subscriptions_listen_request_known[] = {"id", "jsonrpc", "method", "params"};
@@ -6683,10 +6793,11 @@ bool smith_mcp_subscriptions_listen_request_equal([[maybe_unused]] const SmithMc
 }
 
 void smith_mcp_subscriptions_listen_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpSubscriptionsListenRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpSubscriptionsListenRequest){};
-    smith_mcp_request_id_random(arena, smith_key_derive(key, 1), &out->id);
-    smith_mcp_subscriptions_listen_request_params_random(arena, smith_key_derive(key, 7), &out->params);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_mcp_request_id_random(arena, smith_protocol_take(stream), &out->id);
+    smith_mcp_subscriptions_listen_request_params_random(arena, smith_protocol_take(stream), &out->params);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_list_prompts_request_known[] = {"id", "jsonrpc", "method", "params"};
@@ -6734,10 +6845,11 @@ bool smith_mcp_list_prompts_request_equal([[maybe_unused]] const SmithMcpListPro
 }
 
 void smith_mcp_list_prompts_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpListPromptsRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpListPromptsRequest){};
-    smith_mcp_request_id_random(arena, smith_key_derive(key, 1), &out->id);
-    smith_mcp_paginated_request_params_random(arena, smith_key_derive(key, 7), &out->params);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_mcp_request_id_random(arena, smith_protocol_take(stream), &out->id);
+    smith_mcp_paginated_request_params_random(arena, smith_protocol_take(stream), &out->params);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_mcp_string_map_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpStringMap *out, SmithProtocolError *error) {
@@ -6774,12 +6886,13 @@ bool smith_mcp_string_map_equal([[maybe_unused]] const SmithMcpStringMap *a, [[m
 }
 
 void smith_mcp_string_map_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpStringMap *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     struct smith_array_const_char_n *keys = smith_protocol_block(arena, sizeof(struct smith_array_const_char_n), alignof(struct smith_array_const_char_n), count);
     struct smith_array_const_char_n *items = smith_protocol_block(arena, sizeof(struct smith_array_const_char_n), alignof(struct smith_array_const_char_n), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
         keys[i] = smith_protocol_name(arena, i);
-        smith_protocol_string_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->keys = keys;
     out->values = items;
@@ -6854,22 +6967,23 @@ bool smith_mcp_get_prompt_request_params_equal([[maybe_unused]] const SmithMcpGe
 }
 
 void smith_mcp_get_prompt_request_params_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpGetPromptRequestParams *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpGetPromptRequestParams){};
-    smith_mcp_request_meta_object_random(arena, smith_key_derive(key, 1), &out->_meta);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_mcp_request_meta_object_random(arena, smith_protocol_take(stream), &out->_meta);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_arguments = true;
-        smith_mcp_string_map_random(arena, smith_key_derive(key, 3), &out->arguments);
+        smith_mcp_string_map_random(arena, smith_protocol_take(stream), &out->arguments);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_inputResponses = true;
-        smith_mcp_input_response_map_random(arena, smith_key_derive(key, 5), &out->inputResponses);
+        smith_mcp_input_response_map_random(arena, smith_protocol_take(stream), &out->inputResponses);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 7), &out->name);
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->name);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_requestState = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->requestState);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->requestState);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 10), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_get_prompt_request_known[] = {"id", "jsonrpc", "method", "params"};
@@ -6917,10 +7031,11 @@ bool smith_mcp_get_prompt_request_equal([[maybe_unused]] const SmithMcpGetPrompt
 }
 
 void smith_mcp_get_prompt_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpGetPromptRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpGetPromptRequest){};
-    smith_mcp_request_id_random(arena, smith_key_derive(key, 1), &out->id);
-    smith_mcp_get_prompt_request_params_random(arena, smith_key_derive(key, 7), &out->params);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_mcp_request_id_random(arena, smith_protocol_take(stream), &out->id);
+    smith_mcp_get_prompt_request_params_random(arena, smith_protocol_take(stream), &out->params);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_list_tools_request_known[] = {"id", "jsonrpc", "method", "params"};
@@ -6968,10 +7083,11 @@ bool smith_mcp_list_tools_request_equal([[maybe_unused]] const SmithMcpListTools
 }
 
 void smith_mcp_list_tools_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpListToolsRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpListToolsRequest){};
-    smith_mcp_request_id_random(arena, smith_key_derive(key, 1), &out->id);
-    smith_mcp_paginated_request_params_random(arena, smith_key_derive(key, 7), &out->params);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_mcp_request_id_random(arena, smith_protocol_take(stream), &out->id);
+    smith_mcp_paginated_request_params_random(arena, smith_protocol_take(stream), &out->params);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_complete_request_params_argument_known[] = {"name", "value"};
@@ -7009,10 +7125,11 @@ bool smith_mcp_complete_request_params_argument_equal([[maybe_unused]] const Smi
 }
 
 void smith_mcp_complete_request_params_argument_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpCompleteRequestParamsArgument *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpCompleteRequestParamsArgument){};
-    smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->name);
-    smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->value);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->name);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->value);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_complete_request_params_context_known[] = {"arguments"};
@@ -7049,12 +7166,13 @@ bool smith_mcp_complete_request_params_context_equal([[maybe_unused]] const Smit
 }
 
 void smith_mcp_complete_request_params_context_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpCompleteRequestParamsContext *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpCompleteRequestParamsContext){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_arguments = true;
-        smith_mcp_string_map_random(arena, smith_key_derive(key, 1), &out->arguments);
+        smith_mcp_string_map_random(arena, smith_protocol_take(stream), &out->arguments);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_prompt_reference_known[] = {"name", "title", "type"};
@@ -7102,13 +7220,14 @@ bool smith_mcp_prompt_reference_equal([[maybe_unused]] const SmithMcpPromptRefer
 }
 
 void smith_mcp_prompt_reference_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpPromptReference *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpPromptReference){};
-    smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->name);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->name);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_title = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->title);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->title);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_resource_template_reference_known[] = {"type", "uri"};
@@ -7145,9 +7264,10 @@ bool smith_mcp_resource_template_reference_equal([[maybe_unused]] const SmithMcp
 }
 
 void smith_mcp_resource_template_reference_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpResourceTemplateReference *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpResourceTemplateReference){};
-    smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->uri);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->uri);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_mcp_complete_request_params_ref_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpCompleteRequestParamsRef *out, SmithProtocolError *error) {
@@ -7194,14 +7314,15 @@ bool smith_mcp_complete_request_params_ref_equal([[maybe_unused]] const SmithMcp
 }
 
 void smith_mcp_complete_request_params_ref_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpCompleteRequestParamsRef *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpCompleteRequestParamsRef){};
-    out->kind = (SmithMcpCompleteRequestParamsRefKind)smith_protocol_pick(smith_key_derive(key, 0), 2);
+    out->kind = (SmithMcpCompleteRequestParamsRefKind)smith_protocol_pick(smith_protocol_take(stream), 2);
     switch (out->kind) {
     case SmithMcpCompleteRequestParamsRefKind_PromptReference:
-        smith_mcp_prompt_reference_random(arena, smith_key_derive(key, 1), &out->as.prompt_reference);
+        smith_mcp_prompt_reference_random(arena, smith_protocol_take(stream), &out->as.prompt_reference);
         break;
     case SmithMcpCompleteRequestParamsRefKind_ResourceTemplateReference:
-        smith_mcp_resource_template_reference_random(arena, smith_key_derive(key, 1), &out->as.resource_template_reference);
+        smith_mcp_resource_template_reference_random(arena, smith_protocol_take(stream), &out->as.resource_template_reference);
         break;
     }
 }
@@ -7258,15 +7379,16 @@ bool smith_mcp_complete_request_params_equal([[maybe_unused]] const SmithMcpComp
 }
 
 void smith_mcp_complete_request_params_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpCompleteRequestParams *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpCompleteRequestParams){};
-    smith_mcp_request_meta_object_random(arena, smith_key_derive(key, 1), &out->_meta);
-    smith_mcp_complete_request_params_argument_random(arena, smith_key_derive(key, 3), &out->argument);
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    smith_mcp_request_meta_object_random(arena, smith_protocol_take(stream), &out->_meta);
+    smith_mcp_complete_request_params_argument_random(arena, smith_protocol_take(stream), &out->argument);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_context = true;
-        smith_mcp_complete_request_params_context_random(arena, smith_key_derive(key, 5), &out->context);
+        smith_mcp_complete_request_params_context_random(arena, smith_protocol_take(stream), &out->context);
     }
-    smith_mcp_complete_request_params_ref_random(arena, smith_key_derive(key, 7), &out->ref);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_mcp_complete_request_params_ref_random(arena, smith_protocol_take(stream), &out->ref);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_complete_request_known[] = {"id", "jsonrpc", "method", "params"};
@@ -7314,10 +7436,11 @@ bool smith_mcp_complete_request_equal([[maybe_unused]] const SmithMcpCompleteReq
 }
 
 void smith_mcp_complete_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpCompleteRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpCompleteRequest){};
-    smith_mcp_request_id_random(arena, smith_key_derive(key, 1), &out->id);
-    smith_mcp_complete_request_params_random(arena, smith_key_derive(key, 7), &out->params);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_mcp_request_id_random(arena, smith_protocol_take(stream), &out->id);
+    smith_mcp_complete_request_params_random(arena, smith_protocol_take(stream), &out->params);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_mcp_client_request_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpClientRequest *out, SmithProtocolError *error) {
@@ -7436,38 +7559,39 @@ bool smith_mcp_client_request_equal([[maybe_unused]] const SmithMcpClientRequest
 }
 
 void smith_mcp_client_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpClientRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpClientRequest){};
-    out->kind = (SmithMcpClientRequestKind)smith_protocol_pick(smith_key_derive(key, 0), 10);
+    out->kind = (SmithMcpClientRequestKind)smith_protocol_pick(smith_protocol_take(stream), 10);
     switch (out->kind) {
     case SmithMcpClientRequestKind_DiscoverRequest:
-        smith_mcp_discover_request_random(arena, smith_key_derive(key, 1), &out->as.discover_request);
+        smith_mcp_discover_request_random(arena, smith_protocol_take(stream), &out->as.discover_request);
         break;
     case SmithMcpClientRequestKind_ListResourcesRequest:
-        smith_mcp_list_resources_request_random(arena, smith_key_derive(key, 1), &out->as.list_resources_request);
+        smith_mcp_list_resources_request_random(arena, smith_protocol_take(stream), &out->as.list_resources_request);
         break;
     case SmithMcpClientRequestKind_ListResourceTemplatesRequest:
-        smith_mcp_list_resource_templates_request_random(arena, smith_key_derive(key, 1), &out->as.list_resource_templates_request);
+        smith_mcp_list_resource_templates_request_random(arena, smith_protocol_take(stream), &out->as.list_resource_templates_request);
         break;
     case SmithMcpClientRequestKind_ReadResourceRequest:
-        smith_mcp_read_resource_request_random(arena, smith_key_derive(key, 1), &out->as.read_resource_request);
+        smith_mcp_read_resource_request_random(arena, smith_protocol_take(stream), &out->as.read_resource_request);
         break;
     case SmithMcpClientRequestKind_SubscriptionsListenRequest:
-        smith_mcp_subscriptions_listen_request_random(arena, smith_key_derive(key, 1), &out->as.subscriptions_listen_request);
+        smith_mcp_subscriptions_listen_request_random(arena, smith_protocol_take(stream), &out->as.subscriptions_listen_request);
         break;
     case SmithMcpClientRequestKind_ListPromptsRequest:
-        smith_mcp_list_prompts_request_random(arena, smith_key_derive(key, 1), &out->as.list_prompts_request);
+        smith_mcp_list_prompts_request_random(arena, smith_protocol_take(stream), &out->as.list_prompts_request);
         break;
     case SmithMcpClientRequestKind_GetPromptRequest:
-        smith_mcp_get_prompt_request_random(arena, smith_key_derive(key, 1), &out->as.get_prompt_request);
+        smith_mcp_get_prompt_request_random(arena, smith_protocol_take(stream), &out->as.get_prompt_request);
         break;
     case SmithMcpClientRequestKind_ListToolsRequest:
-        smith_mcp_list_tools_request_random(arena, smith_key_derive(key, 1), &out->as.list_tools_request);
+        smith_mcp_list_tools_request_random(arena, smith_protocol_take(stream), &out->as.list_tools_request);
         break;
     case SmithMcpClientRequestKind_CallToolRequest:
-        smith_mcp_call_tool_request_random(arena, smith_key_derive(key, 1), &out->as.call_tool_request);
+        smith_mcp_call_tool_request_random(arena, smith_protocol_take(stream), &out->as.call_tool_request);
         break;
     case SmithMcpClientRequestKind_CompleteRequest:
-        smith_mcp_complete_request_random(arena, smith_key_derive(key, 1), &out->as.complete_request);
+        smith_mcp_complete_request_random(arena, smith_protocol_take(stream), &out->as.complete_request);
         break;
     }
 }
@@ -7512,13 +7636,14 @@ bool smith_mcp_result_equal([[maybe_unused]] const SmithMcpResult *a, [[maybe_un
 }
 
 void smith_mcp_result_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpResult *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpResult){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has__meta = true;
-        smith_mcp_result_meta_object_random(arena, smith_key_derive(key, 1), &out->_meta);
+        smith_mcp_result_meta_object_random(arena, smith_protocol_take(stream), &out->_meta);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->resultType);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->resultType);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_complete_result_completion_known[] = {"hasMore", "total", "values"};
@@ -7572,17 +7697,18 @@ bool smith_mcp_complete_result_completion_equal([[maybe_unused]] const SmithMcpC
 }
 
 void smith_mcp_complete_result_completion_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpCompleteResultCompletion *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpCompleteResultCompletion){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_hasMore = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 1), &out->hasMore);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->hasMore);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_total = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 3), &out->total);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->total);
     }
-    smith_mcp_string_list_random(arena, smith_key_derive(key, 5), &out->values);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_mcp_string_list_random(arena, smith_protocol_take(stream), &out->values);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_complete_result_known[] = {"_meta", "completion", "resultType"};
@@ -7631,14 +7757,15 @@ bool smith_mcp_complete_result_equal([[maybe_unused]] const SmithMcpCompleteResu
 }
 
 void smith_mcp_complete_result_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpCompleteResult *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpCompleteResult){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has__meta = true;
-        smith_mcp_result_meta_object_random(arena, smith_key_derive(key, 1), &out->_meta);
+        smith_mcp_result_meta_object_random(arena, smith_protocol_take(stream), &out->_meta);
     }
-    smith_mcp_complete_result_completion_random(arena, smith_key_derive(key, 3), &out->completion);
-    smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->resultType);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_mcp_complete_result_completion_random(arena, smith_protocol_take(stream), &out->completion);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->resultType);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_complete_result_response_known[] = {"id", "jsonrpc", "result"};
@@ -7681,10 +7808,11 @@ bool smith_mcp_complete_result_response_equal([[maybe_unused]] const SmithMcpCom
 }
 
 void smith_mcp_complete_result_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpCompleteResultResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpCompleteResultResponse){};
-    smith_mcp_request_id_random(arena, smith_key_derive(key, 1), &out->id);
-    smith_mcp_complete_result_random(arena, smith_key_derive(key, 5), &out->result);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_mcp_request_id_random(arena, smith_protocol_take(stream), &out->id);
+    smith_mcp_complete_result_random(arena, smith_protocol_take(stream), &out->result);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_server_capabilities_prompts_known[] = {"listChanged"};
@@ -7721,12 +7849,13 @@ bool smith_mcp_server_capabilities_prompts_equal([[maybe_unused]] const SmithMcp
 }
 
 void smith_mcp_server_capabilities_prompts_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpServerCapabilitiesPrompts *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpServerCapabilitiesPrompts){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_listChanged = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 1), &out->listChanged);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->listChanged);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_server_capabilities_resources_known[] = {"listChanged", "subscribe"};
@@ -7774,16 +7903,17 @@ bool smith_mcp_server_capabilities_resources_equal([[maybe_unused]] const SmithM
 }
 
 void smith_mcp_server_capabilities_resources_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpServerCapabilitiesResources *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpServerCapabilitiesResources){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_listChanged = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 1), &out->listChanged);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->listChanged);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_subscribe = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 3), &out->subscribe);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->subscribe);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_server_capabilities_tools_known[] = {"listChanged"};
@@ -7820,12 +7950,13 @@ bool smith_mcp_server_capabilities_tools_equal([[maybe_unused]] const SmithMcpSe
 }
 
 void smith_mcp_server_capabilities_tools_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpServerCapabilitiesTools *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpServerCapabilitiesTools){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_listChanged = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 1), &out->listChanged);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->listChanged);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_server_capabilities_known[] = {"completions", "experimental", "extensions", "logging", "prompts", "resources", "tools"};
@@ -7928,36 +8059,37 @@ bool smith_mcp_server_capabilities_equal([[maybe_unused]] const SmithMcpServerCa
 }
 
 void smith_mcp_server_capabilities_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpServerCapabilities *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpServerCapabilities){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_completions = true;
-        smith_mcp_any_map_random(arena, smith_key_derive(key, 1), &out->completions);
+        smith_mcp_any_map_random(arena, smith_protocol_take(stream), &out->completions);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_experimental = true;
-        smith_mcp_any_map_map_random(arena, smith_key_derive(key, 3), &out->experimental);
+        smith_mcp_any_map_map_random(arena, smith_protocol_take(stream), &out->experimental);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_extensions = true;
-        smith_mcp_any_map_map_random(arena, smith_key_derive(key, 5), &out->extensions);
+        smith_mcp_any_map_map_random(arena, smith_protocol_take(stream), &out->extensions);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_logging = true;
-        smith_mcp_any_map_random(arena, smith_key_derive(key, 7), &out->logging);
+        smith_mcp_any_map_random(arena, smith_protocol_take(stream), &out->logging);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_prompts = true;
-        smith_mcp_server_capabilities_prompts_random(arena, smith_key_derive(key, 9), &out->prompts);
+        smith_mcp_server_capabilities_prompts_random(arena, smith_protocol_take(stream), &out->prompts);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_resources = true;
-        smith_mcp_server_capabilities_resources_random(arena, smith_key_derive(key, 11), &out->resources);
+        smith_mcp_server_capabilities_resources_random(arena, smith_protocol_take(stream), &out->resources);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_tools = true;
-        smith_mcp_server_capabilities_tools_random(arena, smith_key_derive(key, 13), &out->tools);
+        smith_mcp_server_capabilities_tools_random(arena, smith_protocol_take(stream), &out->tools);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_discover_result_known[] = {"_meta", "cacheScope", "capabilities", "instructions", "resultType", "supportedVersions", "ttlMs"};
@@ -8035,21 +8167,22 @@ bool smith_mcp_discover_result_equal([[maybe_unused]] const SmithMcpDiscoverResu
 }
 
 void smith_mcp_discover_result_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpDiscoverResult *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpDiscoverResult){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has__meta = true;
-        smith_mcp_result_meta_object_random(arena, smith_key_derive(key, 1), &out->_meta);
+        smith_mcp_result_meta_object_random(arena, smith_protocol_take(stream), &out->_meta);
     }
-    smith_mcp_cacheable_result_cache_scope_random(arena, smith_key_derive(key, 3), &out->cacheScope);
-    smith_mcp_server_capabilities_random(arena, smith_key_derive(key, 5), &out->capabilities);
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    smith_mcp_cacheable_result_cache_scope_random(arena, smith_protocol_take(stream), &out->cacheScope);
+    smith_mcp_server_capabilities_random(arena, smith_protocol_take(stream), &out->capabilities);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_instructions = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 7), &out->instructions);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->instructions);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->resultType);
-    smith_mcp_string_list_random(arena, smith_key_derive(key, 11), &out->supportedVersions);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 13), &out->ttlMs);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 14), &out->additionalProperties);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->resultType);
+    smith_mcp_string_list_random(arena, smith_protocol_take(stream), &out->supportedVersions);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->ttlMs);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_discover_result_response_known[] = {"id", "jsonrpc", "result"};
@@ -8092,10 +8225,11 @@ bool smith_mcp_discover_result_response_equal([[maybe_unused]] const SmithMcpDis
 }
 
 void smith_mcp_discover_result_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpDiscoverResultResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpDiscoverResultResponse){};
-    smith_mcp_request_id_random(arena, smith_key_derive(key, 1), &out->id);
-    smith_mcp_discover_result_random(arena, smith_key_derive(key, 5), &out->result);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_mcp_request_id_random(arena, smith_protocol_take(stream), &out->id);
+    smith_mcp_discover_result_random(arena, smith_protocol_take(stream), &out->result);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_mcp_enum_schema_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpEnumSchema *out, SmithProtocolError *error) {
@@ -8162,23 +8296,24 @@ bool smith_mcp_enum_schema_equal([[maybe_unused]] const SmithMcpEnumSchema *a, [
 }
 
 void smith_mcp_enum_schema_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpEnumSchema *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpEnumSchema){};
-    out->kind = (SmithMcpEnumSchemaKind)smith_protocol_pick(smith_key_derive(key, 0), 5);
+    out->kind = (SmithMcpEnumSchemaKind)smith_protocol_pick(smith_protocol_take(stream), 5);
     switch (out->kind) {
     case SmithMcpEnumSchemaKind_UntitledSingleSelectEnumSchema:
-        smith_mcp_untitled_single_select_enum_schema_random(arena, smith_key_derive(key, 1), &out->as.untitled_single_select_enum_schema);
+        smith_mcp_untitled_single_select_enum_schema_random(arena, smith_protocol_take(stream), &out->as.untitled_single_select_enum_schema);
         break;
     case SmithMcpEnumSchemaKind_TitledSingleSelectEnumSchema:
-        smith_mcp_titled_single_select_enum_schema_random(arena, smith_key_derive(key, 1), &out->as.titled_single_select_enum_schema);
+        smith_mcp_titled_single_select_enum_schema_random(arena, smith_protocol_take(stream), &out->as.titled_single_select_enum_schema);
         break;
     case SmithMcpEnumSchemaKind_UntitledMultiSelectEnumSchema:
-        smith_mcp_untitled_multi_select_enum_schema_random(arena, smith_key_derive(key, 1), &out->as.untitled_multi_select_enum_schema);
+        smith_mcp_untitled_multi_select_enum_schema_random(arena, smith_protocol_take(stream), &out->as.untitled_multi_select_enum_schema);
         break;
     case SmithMcpEnumSchemaKind_TitledMultiSelectEnumSchema:
-        smith_mcp_titled_multi_select_enum_schema_random(arena, smith_key_derive(key, 1), &out->as.titled_multi_select_enum_schema);
+        smith_mcp_titled_multi_select_enum_schema_random(arena, smith_protocol_take(stream), &out->as.titled_multi_select_enum_schema);
         break;
     case SmithMcpEnumSchemaKind_LegacyTitledEnumSchema:
-        smith_mcp_legacy_titled_enum_schema_random(arena, smith_key_derive(key, 1), &out->as.legacy_titled_enum_schema);
+        smith_mcp_legacy_titled_enum_schema_random(arena, smith_protocol_take(stream), &out->as.legacy_titled_enum_schema);
         break;
     }
 }
@@ -8229,14 +8364,15 @@ bool smith_mcp_error_equal([[maybe_unused]] const SmithMcpError *a, [[maybe_unus
 }
 
 void smith_mcp_error_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpError *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpError){};
-    smith_protocol_integer_random(arena, smith_key_derive(key, 1), &out->code);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->code);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_data = true;
-        smith_protocol_any_random(arena, smith_key_derive(key, 3), &out->data);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &out->data);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->message);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->message);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_prompt_message_known[] = {"content", "role"};
@@ -8274,10 +8410,11 @@ bool smith_mcp_prompt_message_equal([[maybe_unused]] const SmithMcpPromptMessage
 }
 
 void smith_mcp_prompt_message_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpPromptMessage *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpPromptMessage){};
-    smith_mcp_content_block_random(arena, smith_key_derive(key, 1), &out->content);
-    smith_mcp_role_random(arena, smith_key_derive(key, 3), &out->role);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_mcp_content_block_random(arena, smith_protocol_take(stream), &out->content);
+    smith_mcp_role_random(arena, smith_protocol_take(stream), &out->role);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_mcp_prompt_message_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpPromptMessageList *out, SmithProtocolError *error) {
@@ -8309,10 +8446,11 @@ bool smith_mcp_prompt_message_list_equal([[maybe_unused]] const SmithMcpPromptMe
 }
 
 void smith_mcp_prompt_message_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpPromptMessageList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithMcpPromptMessage *items = smith_protocol_block(arena, sizeof(SmithMcpPromptMessage), alignof(SmithMcpPromptMessage), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_mcp_prompt_message_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_mcp_prompt_message_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -8375,18 +8513,19 @@ bool smith_mcp_get_prompt_result_equal([[maybe_unused]] const SmithMcpGetPromptR
 }
 
 void smith_mcp_get_prompt_result_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpGetPromptResult *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpGetPromptResult){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has__meta = true;
-        smith_mcp_result_meta_object_random(arena, smith_key_derive(key, 1), &out->_meta);
+        smith_mcp_result_meta_object_random(arena, smith_protocol_take(stream), &out->_meta);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_description = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->description);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->description);
     }
-    smith_mcp_prompt_message_list_random(arena, smith_key_derive(key, 5), &out->messages);
-    smith_protocol_string_random(arena, smith_key_derive(key, 7), &out->resultType);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_mcp_prompt_message_list_random(arena, smith_protocol_take(stream), &out->messages);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->resultType);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_mcp_get_prompt_result_response_result_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpGetPromptResultResponseResult *out, SmithProtocolError *error) {
@@ -8426,14 +8565,15 @@ bool smith_mcp_get_prompt_result_response_result_equal([[maybe_unused]] const Sm
 }
 
 void smith_mcp_get_prompt_result_response_result_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpGetPromptResultResponseResult *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpGetPromptResultResponseResult){};
-    out->kind = (SmithMcpGetPromptResultResponseResultKind)smith_protocol_pick(smith_key_derive(key, 0), 2);
+    out->kind = (SmithMcpGetPromptResultResponseResultKind)smith_protocol_pick(smith_protocol_take(stream), 2);
     switch (out->kind) {
     case SmithMcpGetPromptResultResponseResultKind_InputRequiredResult:
-        smith_mcp_input_required_result_random(arena, smith_key_derive(key, 1), &out->as.input_required_result);
+        smith_mcp_input_required_result_random(arena, smith_protocol_take(stream), &out->as.input_required_result);
         break;
     case SmithMcpGetPromptResultResponseResultKind_GetPromptResult:
-        smith_mcp_get_prompt_result_random(arena, smith_key_derive(key, 1), &out->as.get_prompt_result);
+        smith_mcp_get_prompt_result_random(arena, smith_protocol_take(stream), &out->as.get_prompt_result);
         break;
     }
 }
@@ -8478,10 +8618,11 @@ bool smith_mcp_get_prompt_result_response_equal([[maybe_unused]] const SmithMcpG
 }
 
 void smith_mcp_get_prompt_result_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpGetPromptResultResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpGetPromptResultResponse){};
-    smith_mcp_request_id_random(arena, smith_key_derive(key, 1), &out->id);
-    smith_mcp_get_prompt_result_response_result_random(arena, smith_key_derive(key, 5), &out->result);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_mcp_request_id_random(arena, smith_protocol_take(stream), &out->id);
+    smith_mcp_get_prompt_result_response_result_random(arena, smith_protocol_take(stream), &out->result);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_header_mismatch_error_error_known[] = {"code", "data", "message"};
@@ -8529,13 +8670,14 @@ bool smith_mcp_header_mismatch_error_error_equal([[maybe_unused]] const SmithMcp
 }
 
 void smith_mcp_header_mismatch_error_error_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpHeaderMismatchErrorError *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpHeaderMismatchErrorError){};
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_data = true;
-        smith_protocol_any_random(arena, smith_key_derive(key, 3), &out->data);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &out->data);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->message);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->message);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_header_mismatch_error_known[] = {"error", "id", "jsonrpc"};
@@ -8583,13 +8725,14 @@ bool smith_mcp_header_mismatch_error_equal([[maybe_unused]] const SmithMcpHeader
 }
 
 void smith_mcp_header_mismatch_error_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpHeaderMismatchError *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpHeaderMismatchError){};
-    smith_mcp_header_mismatch_error_error_random(arena, smith_key_derive(key, 1), &out->error);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_mcp_header_mismatch_error_error_random(arena, smith_protocol_take(stream), &out->error);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_id = true;
-        smith_mcp_request_id_random(arena, smith_key_derive(key, 3), &out->id);
+        smith_mcp_request_id_random(arena, smith_protocol_take(stream), &out->id);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_icons_known[] = {"icons"};
@@ -8626,12 +8769,13 @@ bool smith_mcp_icons_equal([[maybe_unused]] const SmithMcpIcons *a, [[maybe_unus
 }
 
 void smith_mcp_icons_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpIcons *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpIcons){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_icons = true;
-        smith_mcp_icon_list_random(arena, smith_key_derive(key, 1), &out->icons);
+        smith_mcp_icon_list_random(arena, smith_protocol_take(stream), &out->icons);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_input_response_request_params_known[] = {"_meta", "inputResponses", "requestState"};
@@ -8685,17 +8829,18 @@ bool smith_mcp_input_response_request_params_equal([[maybe_unused]] const SmithM
 }
 
 void smith_mcp_input_response_request_params_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpInputResponseRequestParams *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpInputResponseRequestParams){};
-    smith_mcp_request_meta_object_random(arena, smith_key_derive(key, 1), &out->_meta);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_mcp_request_meta_object_random(arena, smith_protocol_take(stream), &out->_meta);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_inputResponses = true;
-        smith_mcp_input_response_map_random(arena, smith_key_derive(key, 3), &out->inputResponses);
+        smith_mcp_input_response_map_random(arena, smith_protocol_take(stream), &out->inputResponses);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_requestState = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->requestState);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->requestState);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_internal_error_known[] = {"code", "data", "message"};
@@ -8743,13 +8888,14 @@ bool smith_mcp_internal_error_equal([[maybe_unused]] const SmithMcpInternalError
 }
 
 void smith_mcp_internal_error_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpInternalError *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpInternalError){};
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_data = true;
-        smith_protocol_any_random(arena, smith_key_derive(key, 3), &out->data);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &out->data);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->message);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->message);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_invalid_params_error_known[] = {"code", "data", "message"};
@@ -8797,13 +8943,14 @@ bool smith_mcp_invalid_params_error_equal([[maybe_unused]] const SmithMcpInvalid
 }
 
 void smith_mcp_invalid_params_error_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpInvalidParamsError *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpInvalidParamsError){};
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_data = true;
-        smith_protocol_any_random(arena, smith_key_derive(key, 3), &out->data);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &out->data);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->message);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->message);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_invalid_request_error_known[] = {"code", "data", "message"};
@@ -8851,13 +8998,14 @@ bool smith_mcp_invalid_request_error_equal([[maybe_unused]] const SmithMcpInvali
 }
 
 void smith_mcp_invalid_request_error_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpInvalidRequestError *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpInvalidRequestError){};
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_data = true;
-        smith_protocol_any_random(arena, smith_key_derive(key, 3), &out->data);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &out->data);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->message);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->message);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_mcp_any_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpAnyList *out, SmithProtocolError *error) {
@@ -8889,10 +9037,11 @@ bool smith_mcp_any_list_equal([[maybe_unused]] const SmithMcpAnyList *a, [[maybe
 }
 
 void smith_mcp_any_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpAnyList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithProtocolAny *items = smith_protocol_block(arena, sizeof(SmithProtocolAny), alignof(SmithProtocolAny), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_protocol_any_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -8943,13 +9092,14 @@ bool smith_mcp_jsonrpc_error_response_equal([[maybe_unused]] const SmithMcpJSONR
 }
 
 void smith_mcp_jsonrpc_error_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpJSONRPCErrorResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpJSONRPCErrorResponse){};
-    smith_mcp_error_random(arena, smith_key_derive(key, 1), &out->error);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_mcp_error_random(arena, smith_protocol_take(stream), &out->error);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_id = true;
-        smith_mcp_request_id_random(arena, smith_key_derive(key, 3), &out->id);
+        smith_mcp_request_id_random(arena, smith_protocol_take(stream), &out->id);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_jsonrpc_request_known[] = {"id", "jsonrpc", "method", "params"};
@@ -9003,14 +9153,15 @@ bool smith_mcp_jsonrpc_request_equal([[maybe_unused]] const SmithMcpJSONRPCReque
 }
 
 void smith_mcp_jsonrpc_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpJSONRPCRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpJSONRPCRequest){};
-    smith_mcp_request_id_random(arena, smith_key_derive(key, 1), &out->id);
-    smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->method);
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    smith_mcp_request_id_random(arena, smith_protocol_take(stream), &out->id);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->method);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_params = true;
-        smith_protocol_object_random(arena, smith_key_derive(key, 7), &out->params);
+        smith_protocol_object_random(arena, smith_protocol_take(stream), &out->params);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_jsonrpc_notification_known[] = {"jsonrpc", "method", "params"};
@@ -9058,13 +9209,14 @@ bool smith_mcp_jsonrpc_notification_equal([[maybe_unused]] const SmithMcpJSONRPC
 }
 
 void smith_mcp_jsonrpc_notification_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpJSONRPCNotification *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpJSONRPCNotification){};
-    smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->method);
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->method);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_params = true;
-        smith_protocol_object_random(arena, smith_key_derive(key, 5), &out->params);
+        smith_protocol_object_random(arena, smith_protocol_take(stream), &out->params);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_jsonrpc_result_response_known[] = {"id", "jsonrpc", "result"};
@@ -9107,10 +9259,11 @@ bool smith_mcp_jsonrpc_result_response_equal([[maybe_unused]] const SmithMcpJSON
 }
 
 void smith_mcp_jsonrpc_result_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpJSONRPCResultResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpJSONRPCResultResponse){};
-    smith_mcp_request_id_random(arena, smith_key_derive(key, 1), &out->id);
-    smith_mcp_result_random(arena, smith_key_derive(key, 5), &out->result);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_mcp_request_id_random(arena, smith_protocol_take(stream), &out->id);
+    smith_mcp_result_random(arena, smith_protocol_take(stream), &out->result);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_mcp_jsonrpc_message_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpJSONRPCMessage *out, SmithProtocolError *error) {
@@ -9168,20 +9321,21 @@ bool smith_mcp_jsonrpc_message_equal([[maybe_unused]] const SmithMcpJSONRPCMessa
 }
 
 void smith_mcp_jsonrpc_message_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpJSONRPCMessage *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpJSONRPCMessage){};
-    out->kind = (SmithMcpJSONRPCMessageKind)smith_protocol_pick(smith_key_derive(key, 0), 4);
+    out->kind = (SmithMcpJSONRPCMessageKind)smith_protocol_pick(smith_protocol_take(stream), 4);
     switch (out->kind) {
     case SmithMcpJSONRPCMessageKind_JSONRPCRequest:
-        smith_mcp_jsonrpc_request_random(arena, smith_key_derive(key, 1), &out->as.jsonrpc_request);
+        smith_mcp_jsonrpc_request_random(arena, smith_protocol_take(stream), &out->as.jsonrpc_request);
         break;
     case SmithMcpJSONRPCMessageKind_JSONRPCNotification:
-        smith_mcp_jsonrpc_notification_random(arena, smith_key_derive(key, 1), &out->as.jsonrpc_notification);
+        smith_mcp_jsonrpc_notification_random(arena, smith_protocol_take(stream), &out->as.jsonrpc_notification);
         break;
     case SmithMcpJSONRPCMessageKind_JSONRPCResultResponse:
-        smith_mcp_jsonrpc_result_response_random(arena, smith_key_derive(key, 1), &out->as.jsonrpc_result_response);
+        smith_mcp_jsonrpc_result_response_random(arena, smith_protocol_take(stream), &out->as.jsonrpc_result_response);
         break;
     case SmithMcpJSONRPCMessageKind_JSONRPCErrorResponse:
-        smith_mcp_jsonrpc_error_response_random(arena, smith_key_derive(key, 1), &out->as.jsonrpc_error_response);
+        smith_mcp_jsonrpc_error_response_random(arena, smith_protocol_take(stream), &out->as.jsonrpc_error_response);
         break;
     }
 }
@@ -9223,14 +9377,15 @@ bool smith_mcp_jsonrpc_response_equal([[maybe_unused]] const SmithMcpJSONRPCResp
 }
 
 void smith_mcp_jsonrpc_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpJSONRPCResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpJSONRPCResponse){};
-    out->kind = (SmithMcpJSONRPCResponseKind)smith_protocol_pick(smith_key_derive(key, 0), 2);
+    out->kind = (SmithMcpJSONRPCResponseKind)smith_protocol_pick(smith_protocol_take(stream), 2);
     switch (out->kind) {
     case SmithMcpJSONRPCResponseKind_JSONRPCResultResponse:
-        smith_mcp_jsonrpc_result_response_random(arena, smith_key_derive(key, 1), &out->as.jsonrpc_result_response);
+        smith_mcp_jsonrpc_result_response_random(arena, smith_protocol_take(stream), &out->as.jsonrpc_result_response);
         break;
     case SmithMcpJSONRPCResponseKind_JSONRPCErrorResponse:
-        smith_mcp_jsonrpc_error_response_random(arena, smith_key_derive(key, 1), &out->as.jsonrpc_error_response);
+        smith_mcp_jsonrpc_error_response_random(arena, smith_protocol_take(stream), &out->as.jsonrpc_error_response);
         break;
     }
 }
@@ -9297,21 +9452,22 @@ bool smith_mcp_prompt_argument_equal([[maybe_unused]] const SmithMcpPromptArgume
 }
 
 void smith_mcp_prompt_argument_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpPromptArgument *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpPromptArgument){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_description = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->description);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->description);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->name);
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->name);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_required = true;
-        smith_protocol_boolean_random(arena, smith_key_derive(key, 5), &out->required);
+        smith_protocol_boolean_random(arena, smith_protocol_take(stream), &out->required);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_title = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 7), &out->title);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->title);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_mcp_prompt_argument_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpPromptArgumentList *out, SmithProtocolError *error) {
@@ -9343,10 +9499,11 @@ bool smith_mcp_prompt_argument_list_equal([[maybe_unused]] const SmithMcpPromptA
 }
 
 void smith_mcp_prompt_argument_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpPromptArgumentList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithMcpPromptArgument *items = smith_protocol_block(arena, sizeof(SmithMcpPromptArgument), alignof(SmithMcpPromptArgument), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_mcp_prompt_argument_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_mcp_prompt_argument_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -9436,29 +9593,30 @@ bool smith_mcp_prompt_equal([[maybe_unused]] const SmithMcpPrompt *a, [[maybe_un
 }
 
 void smith_mcp_prompt_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpPrompt *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpPrompt){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has__meta = true;
-        smith_protocol_object_random(arena, smith_key_derive(key, 1), &out->_meta);
+        smith_protocol_object_random(arena, smith_protocol_take(stream), &out->_meta);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_arguments = true;
-        smith_mcp_prompt_argument_list_random(arena, smith_key_derive(key, 3), &out->arguments);
+        smith_mcp_prompt_argument_list_random(arena, smith_protocol_take(stream), &out->arguments);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_description = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->description);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->description);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_icons = true;
-        smith_mcp_icon_list_random(arena, smith_key_derive(key, 7), &out->icons);
+        smith_mcp_icon_list_random(arena, smith_protocol_take(stream), &out->icons);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->name);
-    if (smith_protocol_coin(smith_key_derive(key, 10))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->name);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_title = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 11), &out->title);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->title);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 12), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_mcp_prompt_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpPromptList *out, SmithProtocolError *error) {
@@ -9490,10 +9648,11 @@ bool smith_mcp_prompt_list_equal([[maybe_unused]] const SmithMcpPromptList *a, [
 }
 
 void smith_mcp_prompt_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpPromptList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithMcpPrompt *items = smith_protocol_block(arena, sizeof(SmithMcpPrompt), alignof(SmithMcpPrompt), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_mcp_prompt_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_mcp_prompt_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -9568,20 +9727,21 @@ bool smith_mcp_list_prompts_result_equal([[maybe_unused]] const SmithMcpListProm
 }
 
 void smith_mcp_list_prompts_result_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpListPromptsResult *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpListPromptsResult){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has__meta = true;
-        smith_mcp_result_meta_object_random(arena, smith_key_derive(key, 1), &out->_meta);
+        smith_mcp_result_meta_object_random(arena, smith_protocol_take(stream), &out->_meta);
     }
-    smith_mcp_cacheable_result_cache_scope_random(arena, smith_key_derive(key, 3), &out->cacheScope);
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    smith_mcp_cacheable_result_cache_scope_random(arena, smith_protocol_take(stream), &out->cacheScope);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_nextCursor = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->nextCursor);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->nextCursor);
     }
-    smith_mcp_prompt_list_random(arena, smith_key_derive(key, 7), &out->prompts);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->resultType);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 11), &out->ttlMs);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 12), &out->additionalProperties);
+    smith_mcp_prompt_list_random(arena, smith_protocol_take(stream), &out->prompts);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->resultType);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->ttlMs);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_list_prompts_result_response_known[] = {"id", "jsonrpc", "result"};
@@ -9624,10 +9784,11 @@ bool smith_mcp_list_prompts_result_response_equal([[maybe_unused]] const SmithMc
 }
 
 void smith_mcp_list_prompts_result_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpListPromptsResultResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpListPromptsResultResponse){};
-    smith_mcp_request_id_random(arena, smith_key_derive(key, 1), &out->id);
-    smith_mcp_list_prompts_result_random(arena, smith_key_derive(key, 5), &out->result);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_mcp_request_id_random(arena, smith_protocol_take(stream), &out->id);
+    smith_mcp_list_prompts_result_random(arena, smith_protocol_take(stream), &out->result);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_resource_template_known[] = {"_meta", "annotations", "description", "icons", "mimeType", "name", "title", "uriTemplate"};
@@ -9731,34 +9892,35 @@ bool smith_mcp_resource_template_equal([[maybe_unused]] const SmithMcpResourceTe
 }
 
 void smith_mcp_resource_template_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpResourceTemplate *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpResourceTemplate){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has__meta = true;
-        smith_protocol_object_random(arena, smith_key_derive(key, 1), &out->_meta);
+        smith_protocol_object_random(arena, smith_protocol_take(stream), &out->_meta);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_annotations = true;
-        smith_mcp_annotations_random(arena, smith_key_derive(key, 3), &out->annotations);
+        smith_mcp_annotations_random(arena, smith_protocol_take(stream), &out->annotations);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_description = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->description);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->description);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_icons = true;
-        smith_mcp_icon_list_random(arena, smith_key_derive(key, 7), &out->icons);
+        smith_mcp_icon_list_random(arena, smith_protocol_take(stream), &out->icons);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_mimeType = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->mimeType);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->mimeType);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 11), &out->name);
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->name);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_title = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 13), &out->title);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->title);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 15), &out->uriTemplate);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 16), &out->additionalProperties);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->uriTemplate);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_mcp_resource_template_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpResourceTemplateList *out, SmithProtocolError *error) {
@@ -9790,10 +9952,11 @@ bool smith_mcp_resource_template_list_equal([[maybe_unused]] const SmithMcpResou
 }
 
 void smith_mcp_resource_template_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpResourceTemplateList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithMcpResourceTemplate *items = smith_protocol_block(arena, sizeof(SmithMcpResourceTemplate), alignof(SmithMcpResourceTemplate), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_mcp_resource_template_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_mcp_resource_template_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -9868,20 +10031,21 @@ bool smith_mcp_list_resource_templates_result_equal([[maybe_unused]] const Smith
 }
 
 void smith_mcp_list_resource_templates_result_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpListResourceTemplatesResult *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpListResourceTemplatesResult){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has__meta = true;
-        smith_mcp_result_meta_object_random(arena, smith_key_derive(key, 1), &out->_meta);
+        smith_mcp_result_meta_object_random(arena, smith_protocol_take(stream), &out->_meta);
     }
-    smith_mcp_cacheable_result_cache_scope_random(arena, smith_key_derive(key, 3), &out->cacheScope);
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    smith_mcp_cacheable_result_cache_scope_random(arena, smith_protocol_take(stream), &out->cacheScope);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_nextCursor = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->nextCursor);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->nextCursor);
     }
-    smith_mcp_resource_template_list_random(arena, smith_key_derive(key, 7), &out->resourceTemplates);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->resultType);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 11), &out->ttlMs);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 12), &out->additionalProperties);
+    smith_mcp_resource_template_list_random(arena, smith_protocol_take(stream), &out->resourceTemplates);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->resultType);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->ttlMs);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_list_resource_templates_result_response_known[] = {"id", "jsonrpc", "result"};
@@ -9924,10 +10088,11 @@ bool smith_mcp_list_resource_templates_result_response_equal([[maybe_unused]] co
 }
 
 void smith_mcp_list_resource_templates_result_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpListResourceTemplatesResultResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpListResourceTemplatesResultResponse){};
-    smith_mcp_request_id_random(arena, smith_key_derive(key, 1), &out->id);
-    smith_mcp_list_resource_templates_result_random(arena, smith_key_derive(key, 5), &out->result);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_mcp_request_id_random(arena, smith_protocol_take(stream), &out->id);
+    smith_mcp_list_resource_templates_result_random(arena, smith_protocol_take(stream), &out->result);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_resource_known[] = {"_meta", "annotations", "description", "icons", "mimeType", "name", "size", "title", "uri"};
@@ -10042,38 +10207,39 @@ bool smith_mcp_resource_equal([[maybe_unused]] const SmithMcpResource *a, [[mayb
 }
 
 void smith_mcp_resource_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpResource *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpResource){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has__meta = true;
-        smith_protocol_object_random(arena, smith_key_derive(key, 1), &out->_meta);
+        smith_protocol_object_random(arena, smith_protocol_take(stream), &out->_meta);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_annotations = true;
-        smith_mcp_annotations_random(arena, smith_key_derive(key, 3), &out->annotations);
+        smith_mcp_annotations_random(arena, smith_protocol_take(stream), &out->annotations);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_description = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->description);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->description);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_icons = true;
-        smith_mcp_icon_list_random(arena, smith_key_derive(key, 7), &out->icons);
+        smith_mcp_icon_list_random(arena, smith_protocol_take(stream), &out->icons);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_mimeType = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->mimeType);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->mimeType);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 11), &out->name);
-    if (smith_protocol_coin(smith_key_derive(key, 12))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->name);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_size = true;
-        smith_protocol_integer_random(arena, smith_key_derive(key, 13), &out->size);
+        smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->size);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 14))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_title = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 15), &out->title);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->title);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 17), &out->uri);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 18), &out->additionalProperties);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->uri);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_mcp_resource_list_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpResourceList *out, SmithProtocolError *error) {
@@ -10105,10 +10271,11 @@ bool smith_mcp_resource_list_equal([[maybe_unused]] const SmithMcpResourceList *
 }
 
 void smith_mcp_resource_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpResourceList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithMcpResource *items = smith_protocol_block(arena, sizeof(SmithMcpResource), alignof(SmithMcpResource), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_mcp_resource_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_mcp_resource_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -10183,20 +10350,21 @@ bool smith_mcp_list_resources_result_equal([[maybe_unused]] const SmithMcpListRe
 }
 
 void smith_mcp_list_resources_result_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpListResourcesResult *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpListResourcesResult){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has__meta = true;
-        smith_mcp_result_meta_object_random(arena, smith_key_derive(key, 1), &out->_meta);
+        smith_mcp_result_meta_object_random(arena, smith_protocol_take(stream), &out->_meta);
     }
-    smith_mcp_cacheable_result_cache_scope_random(arena, smith_key_derive(key, 3), &out->cacheScope);
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    smith_mcp_cacheable_result_cache_scope_random(arena, smith_protocol_take(stream), &out->cacheScope);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_nextCursor = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->nextCursor);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->nextCursor);
     }
-    smith_mcp_resource_list_random(arena, smith_key_derive(key, 7), &out->resources);
-    smith_protocol_string_random(arena, smith_key_derive(key, 9), &out->resultType);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 11), &out->ttlMs);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 12), &out->additionalProperties);
+    smith_mcp_resource_list_random(arena, smith_protocol_take(stream), &out->resources);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->resultType);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->ttlMs);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_list_resources_result_response_known[] = {"id", "jsonrpc", "result"};
@@ -10239,10 +10407,11 @@ bool smith_mcp_list_resources_result_response_equal([[maybe_unused]] const Smith
 }
 
 void smith_mcp_list_resources_result_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpListResourcesResultResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpListResourcesResultResponse){};
-    smith_mcp_request_id_random(arena, smith_key_derive(key, 1), &out->id);
-    smith_mcp_list_resources_result_random(arena, smith_key_derive(key, 5), &out->result);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_mcp_request_id_random(arena, smith_protocol_take(stream), &out->id);
+    smith_mcp_list_resources_result_random(arena, smith_protocol_take(stream), &out->result);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_list_tools_result_known[] = {"_meta", "cacheScope", "nextCursor", "resultType", "tools", "ttlMs"};
@@ -10314,20 +10483,21 @@ bool smith_mcp_list_tools_result_equal([[maybe_unused]] const SmithMcpListToolsR
 }
 
 void smith_mcp_list_tools_result_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpListToolsResult *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpListToolsResult){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has__meta = true;
-        smith_mcp_result_meta_object_random(arena, smith_key_derive(key, 1), &out->_meta);
+        smith_mcp_result_meta_object_random(arena, smith_protocol_take(stream), &out->_meta);
     }
-    smith_mcp_cacheable_result_cache_scope_random(arena, smith_key_derive(key, 3), &out->cacheScope);
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    smith_mcp_cacheable_result_cache_scope_random(arena, smith_protocol_take(stream), &out->cacheScope);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_nextCursor = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->nextCursor);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->nextCursor);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 7), &out->resultType);
-    smith_mcp_tool_list_random(arena, smith_key_derive(key, 9), &out->tools);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 11), &out->ttlMs);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 12), &out->additionalProperties);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->resultType);
+    smith_mcp_tool_list_random(arena, smith_protocol_take(stream), &out->tools);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->ttlMs);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_list_tools_result_response_known[] = {"id", "jsonrpc", "result"};
@@ -10370,10 +10540,11 @@ bool smith_mcp_list_tools_result_response_equal([[maybe_unused]] const SmithMcpL
 }
 
 void smith_mcp_list_tools_result_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpListToolsResultResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpListToolsResultResponse){};
-    smith_mcp_request_id_random(arena, smith_key_derive(key, 1), &out->id);
-    smith_mcp_list_tools_result_random(arena, smith_key_derive(key, 5), &out->result);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_mcp_request_id_random(arena, smith_protocol_take(stream), &out->id);
+    smith_mcp_list_tools_result_random(arena, smith_protocol_take(stream), &out->result);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_logging_message_notification_params_known[] = {"_meta", "data", "level", "logger"};
@@ -10433,18 +10604,19 @@ bool smith_mcp_logging_message_notification_params_equal([[maybe_unused]] const 
 }
 
 void smith_mcp_logging_message_notification_params_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpLoggingMessageNotificationParams *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpLoggingMessageNotificationParams){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has__meta = true;
-        smith_mcp_notification_meta_object_random(arena, smith_key_derive(key, 1), &out->_meta);
+        smith_mcp_notification_meta_object_random(arena, smith_protocol_take(stream), &out->_meta);
     }
-    smith_protocol_any_random(arena, smith_key_derive(key, 3), &out->data);
-    smith_mcp_logging_level_random(arena, smith_key_derive(key, 5), &out->level);
-    if (smith_protocol_coin(smith_key_derive(key, 6))) {
+    smith_protocol_any_random(arena, smith_protocol_take(stream), &out->data);
+    smith_mcp_logging_level_random(arena, smith_protocol_take(stream), &out->level);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_logger = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 7), &out->logger);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->logger);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_logging_message_notification_known[] = {"jsonrpc", "method", "params"};
@@ -10486,9 +10658,10 @@ bool smith_mcp_logging_message_notification_equal([[maybe_unused]] const SmithMc
 }
 
 void smith_mcp_logging_message_notification_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpLoggingMessageNotification *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpLoggingMessageNotification){};
-    smith_mcp_logging_message_notification_params_random(arena, smith_key_derive(key, 5), &out->params);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_mcp_logging_message_notification_params_random(arena, smith_protocol_take(stream), &out->params);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_method_not_found_error_known[] = {"code", "data", "message"};
@@ -10536,13 +10709,14 @@ bool smith_mcp_method_not_found_error_equal([[maybe_unused]] const SmithMcpMetho
 }
 
 void smith_mcp_method_not_found_error_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpMethodNotFoundError *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpMethodNotFoundError){};
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_data = true;
-        smith_protocol_any_random(arena, smith_key_derive(key, 3), &out->data);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &out->data);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->message);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->message);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_missing_required_client_capability_error_error_data_known[] = {"requiredCapabilities"};
@@ -10574,9 +10748,10 @@ bool smith_mcp_missing_required_client_capability_error_error_data_equal([[maybe
 }
 
 void smith_mcp_missing_required_client_capability_error_error_data_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpMissingRequiredClientCapabilityErrorErrorData *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpMissingRequiredClientCapabilityErrorErrorData){};
-    smith_mcp_client_capabilities_random(arena, smith_key_derive(key, 1), &out->requiredCapabilities);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_mcp_client_capabilities_random(arena, smith_protocol_take(stream), &out->requiredCapabilities);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_missing_required_client_capability_error_error_known[] = {"code", "data", "message"};
@@ -10619,10 +10794,11 @@ bool smith_mcp_missing_required_client_capability_error_error_equal([[maybe_unus
 }
 
 void smith_mcp_missing_required_client_capability_error_error_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpMissingRequiredClientCapabilityErrorError *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpMissingRequiredClientCapabilityErrorError){};
-    smith_mcp_missing_required_client_capability_error_error_data_random(arena, smith_key_derive(key, 3), &out->data);
-    smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->message);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_mcp_missing_required_client_capability_error_error_data_random(arena, smith_protocol_take(stream), &out->data);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->message);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_missing_required_client_capability_error_known[] = {"error", "id", "jsonrpc"};
@@ -10670,13 +10846,14 @@ bool smith_mcp_missing_required_client_capability_error_equal([[maybe_unused]] c
 }
 
 void smith_mcp_missing_required_client_capability_error_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpMissingRequiredClientCapabilityError *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpMissingRequiredClientCapabilityError){};
-    smith_mcp_missing_required_client_capability_error_error_random(arena, smith_key_derive(key, 1), &out->error);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_mcp_missing_required_client_capability_error_error_random(arena, smith_protocol_take(stream), &out->error);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_id = true;
-        smith_mcp_request_id_random(arena, smith_key_derive(key, 3), &out->id);
+        smith_mcp_request_id_random(arena, smith_protocol_take(stream), &out->id);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_mcp_multi_select_enum_schema_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpMultiSelectEnumSchema *out, SmithProtocolError *error) {
@@ -10716,14 +10893,15 @@ bool smith_mcp_multi_select_enum_schema_equal([[maybe_unused]] const SmithMcpMul
 }
 
 void smith_mcp_multi_select_enum_schema_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpMultiSelectEnumSchema *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpMultiSelectEnumSchema){};
-    out->kind = (SmithMcpMultiSelectEnumSchemaKind)smith_protocol_pick(smith_key_derive(key, 0), 2);
+    out->kind = (SmithMcpMultiSelectEnumSchemaKind)smith_protocol_pick(smith_protocol_take(stream), 2);
     switch (out->kind) {
     case SmithMcpMultiSelectEnumSchemaKind_UntitledMultiSelectEnumSchema:
-        smith_mcp_untitled_multi_select_enum_schema_random(arena, smith_key_derive(key, 1), &out->as.untitled_multi_select_enum_schema);
+        smith_mcp_untitled_multi_select_enum_schema_random(arena, smith_protocol_take(stream), &out->as.untitled_multi_select_enum_schema);
         break;
     case SmithMcpMultiSelectEnumSchemaKind_TitledMultiSelectEnumSchema:
-        smith_mcp_titled_multi_select_enum_schema_random(arena, smith_key_derive(key, 1), &out->as.titled_multi_select_enum_schema);
+        smith_mcp_titled_multi_select_enum_schema_random(arena, smith_protocol_take(stream), &out->as.titled_multi_select_enum_schema);
         break;
     }
 }
@@ -10768,13 +10946,14 @@ bool smith_mcp_notification_equal([[maybe_unused]] const SmithMcpNotification *a
 }
 
 void smith_mcp_notification_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpNotification *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpNotification){};
-    smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->method);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->method);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_params = true;
-        smith_protocol_object_random(arena, smith_key_derive(key, 3), &out->params);
+        smith_protocol_object_random(arena, smith_protocol_take(stream), &out->params);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_notification_params_known[] = {"_meta"};
@@ -10811,12 +10990,13 @@ bool smith_mcp_notification_params_equal([[maybe_unused]] const SmithMcpNotifica
 }
 
 void smith_mcp_notification_params_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpNotificationParams *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpNotificationParams){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has__meta = true;
-        smith_mcp_notification_meta_object_random(arena, smith_key_derive(key, 1), &out->_meta);
+        smith_mcp_notification_meta_object_random(arena, smith_protocol_take(stream), &out->_meta);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 2), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_paginated_request_known[] = {"id", "jsonrpc", "method", "params"};
@@ -10865,11 +11045,12 @@ bool smith_mcp_paginated_request_equal([[maybe_unused]] const SmithMcpPaginatedR
 }
 
 void smith_mcp_paginated_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpPaginatedRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpPaginatedRequest){};
-    smith_mcp_request_id_random(arena, smith_key_derive(key, 1), &out->id);
-    smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->method);
-    smith_mcp_paginated_request_params_random(arena, smith_key_derive(key, 7), &out->params);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 8), &out->additionalProperties);
+    smith_mcp_request_id_random(arena, smith_protocol_take(stream), &out->id);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->method);
+    smith_mcp_paginated_request_params_random(arena, smith_protocol_take(stream), &out->params);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_paginated_result_known[] = {"_meta", "nextCursor", "resultType"};
@@ -10923,17 +11104,18 @@ bool smith_mcp_paginated_result_equal([[maybe_unused]] const SmithMcpPaginatedRe
 }
 
 void smith_mcp_paginated_result_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpPaginatedResult *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpPaginatedResult){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has__meta = true;
-        smith_mcp_result_meta_object_random(arena, smith_key_derive(key, 1), &out->_meta);
+        smith_mcp_result_meta_object_random(arena, smith_protocol_take(stream), &out->_meta);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_nextCursor = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->nextCursor);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->nextCursor);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->resultType);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->resultType);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_parse_error_known[] = {"code", "data", "message"};
@@ -10981,13 +11163,14 @@ bool smith_mcp_parse_error_equal([[maybe_unused]] const SmithMcpParseError *a, [
 }
 
 void smith_mcp_parse_error_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpParseError *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpParseError){};
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_data = true;
-        smith_protocol_any_random(arena, smith_key_derive(key, 3), &out->data);
+        smith_protocol_any_random(arena, smith_protocol_take(stream), &out->data);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->message);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->message);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_progress_notification_params_known[] = {"_meta", "message", "progress", "progressToken", "total"};
@@ -11058,22 +11241,23 @@ bool smith_mcp_progress_notification_params_equal([[maybe_unused]] const SmithMc
 }
 
 void smith_mcp_progress_notification_params_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpProgressNotificationParams *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpProgressNotificationParams){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has__meta = true;
-        smith_mcp_notification_meta_object_random(arena, smith_key_derive(key, 1), &out->_meta);
+        smith_mcp_notification_meta_object_random(arena, smith_protocol_take(stream), &out->_meta);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_message = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->message);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->message);
     }
-    smith_protocol_number_random(arena, smith_key_derive(key, 5), &out->progress);
-    smith_mcp_progress_token_random(arena, smith_key_derive(key, 7), &out->progressToken);
-    if (smith_protocol_coin(smith_key_derive(key, 8))) {
+    smith_protocol_number_random(arena, smith_protocol_take(stream), &out->progress);
+    smith_mcp_progress_token_random(arena, smith_protocol_take(stream), &out->progressToken);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_total = true;
-        smith_protocol_number_random(arena, smith_key_derive(key, 9), &out->total);
+        smith_protocol_number_random(arena, smith_protocol_take(stream), &out->total);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 10), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_progress_notification_known[] = {"jsonrpc", "method", "params"};
@@ -11115,9 +11299,10 @@ bool smith_mcp_progress_notification_equal([[maybe_unused]] const SmithMcpProgre
 }
 
 void smith_mcp_progress_notification_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpProgressNotification *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpProgressNotification){};
-    smith_mcp_progress_notification_params_random(arena, smith_key_derive(key, 5), &out->params);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_mcp_progress_notification_params_random(arena, smith_protocol_take(stream), &out->params);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_prompt_list_changed_notification_known[] = {"jsonrpc", "method", "params"};
@@ -11164,12 +11349,13 @@ bool smith_mcp_prompt_list_changed_notification_equal([[maybe_unused]] const Smi
 }
 
 void smith_mcp_prompt_list_changed_notification_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpPromptListChangedNotification *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpPromptListChangedNotification){};
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_params = true;
-        smith_mcp_notification_params_random(arena, smith_key_derive(key, 5), &out->params);
+        smith_mcp_notification_params_random(arena, smith_protocol_take(stream), &out->params);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_mcp_read_resource_result_contents_item_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpReadResourceResultContentsItem *out, SmithProtocolError *error) {
@@ -11209,14 +11395,15 @@ bool smith_mcp_read_resource_result_contents_item_equal([[maybe_unused]] const S
 }
 
 void smith_mcp_read_resource_result_contents_item_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpReadResourceResultContentsItem *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpReadResourceResultContentsItem){};
-    out->kind = (SmithMcpReadResourceResultContentsItemKind)smith_protocol_pick(smith_key_derive(key, 0), 2);
+    out->kind = (SmithMcpReadResourceResultContentsItemKind)smith_protocol_pick(smith_protocol_take(stream), 2);
     switch (out->kind) {
     case SmithMcpReadResourceResultContentsItemKind_TextResourceContents:
-        smith_mcp_text_resource_contents_random(arena, smith_key_derive(key, 1), &out->as.text_resource_contents);
+        smith_mcp_text_resource_contents_random(arena, smith_protocol_take(stream), &out->as.text_resource_contents);
         break;
     case SmithMcpReadResourceResultContentsItemKind_BlobResourceContents:
-        smith_mcp_blob_resource_contents_random(arena, smith_key_derive(key, 1), &out->as.blob_resource_contents);
+        smith_mcp_blob_resource_contents_random(arena, smith_protocol_take(stream), &out->as.blob_resource_contents);
         break;
     }
 }
@@ -11250,10 +11437,11 @@ bool smith_mcp_read_resource_result_contents_item_list_equal([[maybe_unused]] co
 }
 
 void smith_mcp_read_resource_result_contents_item_list_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpReadResourceResultContentsItemList *out) {
-    size_t count = smith_protocol_count(smith_key_derive(key, 0));
+    [[maybe_unused]] SmithKey *stream = &key;
+    size_t count = smith_protocol_count(smith_protocol_take(stream));
     SmithMcpReadResourceResultContentsItem *items = smith_protocol_block(arena, sizeof(SmithMcpReadResourceResultContentsItem), alignof(SmithMcpReadResourceResultContentsItem), count);
     for (size_t i = 0; i < count; i++) { // bounded by the count
-        smith_mcp_read_resource_result_contents_item_random(arena, smith_key_derive(key, i + 1), &items[i]);
+        smith_mcp_read_resource_result_contents_item_random(arena, smith_protocol_take(stream), &items[i]);
     }
     out->items = items;
     out->count = count;
@@ -11317,16 +11505,17 @@ bool smith_mcp_read_resource_result_equal([[maybe_unused]] const SmithMcpReadRes
 }
 
 void smith_mcp_read_resource_result_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpReadResourceResult *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpReadResourceResult){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has__meta = true;
-        smith_mcp_result_meta_object_random(arena, smith_key_derive(key, 1), &out->_meta);
+        smith_mcp_result_meta_object_random(arena, smith_protocol_take(stream), &out->_meta);
     }
-    smith_mcp_cacheable_result_cache_scope_random(arena, smith_key_derive(key, 3), &out->cacheScope);
-    smith_mcp_read_resource_result_contents_item_list_random(arena, smith_key_derive(key, 5), &out->contents);
-    smith_protocol_string_random(arena, smith_key_derive(key, 7), &out->resultType);
-    smith_protocol_integer_random(arena, smith_key_derive(key, 9), &out->ttlMs);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 10), &out->additionalProperties);
+    smith_mcp_cacheable_result_cache_scope_random(arena, smith_protocol_take(stream), &out->cacheScope);
+    smith_mcp_read_resource_result_contents_item_list_random(arena, smith_protocol_take(stream), &out->contents);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->resultType);
+    smith_protocol_integer_random(arena, smith_protocol_take(stream), &out->ttlMs);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_mcp_read_resource_result_response_result_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpReadResourceResultResponseResult *out, SmithProtocolError *error) {
@@ -11366,14 +11555,15 @@ bool smith_mcp_read_resource_result_response_result_equal([[maybe_unused]] const
 }
 
 void smith_mcp_read_resource_result_response_result_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpReadResourceResultResponseResult *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpReadResourceResultResponseResult){};
-    out->kind = (SmithMcpReadResourceResultResponseResultKind)smith_protocol_pick(smith_key_derive(key, 0), 2);
+    out->kind = (SmithMcpReadResourceResultResponseResultKind)smith_protocol_pick(smith_protocol_take(stream), 2);
     switch (out->kind) {
     case SmithMcpReadResourceResultResponseResultKind_InputRequiredResult:
-        smith_mcp_input_required_result_random(arena, smith_key_derive(key, 1), &out->as.input_required_result);
+        smith_mcp_input_required_result_random(arena, smith_protocol_take(stream), &out->as.input_required_result);
         break;
     case SmithMcpReadResourceResultResponseResultKind_ReadResourceResult:
-        smith_mcp_read_resource_result_random(arena, smith_key_derive(key, 1), &out->as.read_resource_result);
+        smith_mcp_read_resource_result_random(arena, smith_protocol_take(stream), &out->as.read_resource_result);
         break;
     }
 }
@@ -11418,10 +11608,11 @@ bool smith_mcp_read_resource_result_response_equal([[maybe_unused]] const SmithM
 }
 
 void smith_mcp_read_resource_result_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpReadResourceResultResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpReadResourceResultResponse){};
-    smith_mcp_request_id_random(arena, smith_key_derive(key, 1), &out->id);
-    smith_mcp_read_resource_result_response_result_random(arena, smith_key_derive(key, 5), &out->result);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_mcp_request_id_random(arena, smith_protocol_take(stream), &out->id);
+    smith_mcp_read_resource_result_response_result_random(arena, smith_protocol_take(stream), &out->result);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_request_known[] = {"method", "params"};
@@ -11464,13 +11655,14 @@ bool smith_mcp_request_equal([[maybe_unused]] const SmithMcpRequest *a, [[maybe_
 }
 
 void smith_mcp_request_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpRequest *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpRequest){};
-    smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->method);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->method);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_params = true;
-        smith_protocol_object_random(arena, smith_key_derive(key, 3), &out->params);
+        smith_protocol_object_random(arena, smith_protocol_take(stream), &out->params);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_resource_contents_known[] = {"_meta", "mimeType", "uri"};
@@ -11524,17 +11716,18 @@ bool smith_mcp_resource_contents_equal([[maybe_unused]] const SmithMcpResourceCo
 }
 
 void smith_mcp_resource_contents_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpResourceContents *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpResourceContents){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has__meta = true;
-        smith_protocol_object_random(arena, smith_key_derive(key, 1), &out->_meta);
+        smith_protocol_object_random(arena, smith_protocol_take(stream), &out->_meta);
     }
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_mimeType = true;
-        smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->mimeType);
+        smith_protocol_string_random(arena, smith_protocol_take(stream), &out->mimeType);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->uri);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->uri);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_resource_list_changed_notification_known[] = {"jsonrpc", "method", "params"};
@@ -11581,12 +11774,13 @@ bool smith_mcp_resource_list_changed_notification_equal([[maybe_unused]] const S
 }
 
 void smith_mcp_resource_list_changed_notification_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpResourceListChangedNotification *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpResourceListChangedNotification){};
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_params = true;
-        smith_mcp_notification_params_random(arena, smith_key_derive(key, 5), &out->params);
+        smith_mcp_notification_params_random(arena, smith_protocol_take(stream), &out->params);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_resource_request_params_known[] = {"_meta", "uri"};
@@ -11624,10 +11818,11 @@ bool smith_mcp_resource_request_params_equal([[maybe_unused]] const SmithMcpReso
 }
 
 void smith_mcp_resource_request_params_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpResourceRequestParams *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpResourceRequestParams){};
-    smith_mcp_request_meta_object_random(arena, smith_key_derive(key, 1), &out->_meta);
-    smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->uri);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_mcp_request_meta_object_random(arena, smith_protocol_take(stream), &out->_meta);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->uri);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_resource_updated_notification_params_known[] = {"_meta", "uri"};
@@ -11670,13 +11865,14 @@ bool smith_mcp_resource_updated_notification_params_equal([[maybe_unused]] const
 }
 
 void smith_mcp_resource_updated_notification_params_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpResourceUpdatedNotificationParams *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpResourceUpdatedNotificationParams){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has__meta = true;
-        smith_mcp_notification_meta_object_random(arena, smith_key_derive(key, 1), &out->_meta);
+        smith_mcp_notification_meta_object_random(arena, smith_protocol_take(stream), &out->_meta);
     }
-    smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->uri);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->uri);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_resource_updated_notification_known[] = {"jsonrpc", "method", "params"};
@@ -11718,9 +11914,10 @@ bool smith_mcp_resource_updated_notification_equal([[maybe_unused]] const SmithM
 }
 
 void smith_mcp_resource_updated_notification_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpResourceUpdatedNotification *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpResourceUpdatedNotification){};
-    smith_mcp_resource_updated_notification_params_random(arena, smith_key_derive(key, 5), &out->params);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_mcp_resource_updated_notification_params_random(arena, smith_protocol_take(stream), &out->params);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_subscriptions_acknowledged_notification_params_known[] = {"_meta", "notifications"};
@@ -11763,13 +11960,14 @@ bool smith_mcp_subscriptions_acknowledged_notification_params_equal([[maybe_unus
 }
 
 void smith_mcp_subscriptions_acknowledged_notification_params_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpSubscriptionsAcknowledgedNotificationParams *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpSubscriptionsAcknowledgedNotificationParams){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has__meta = true;
-        smith_mcp_notification_meta_object_random(arena, smith_key_derive(key, 1), &out->_meta);
+        smith_mcp_notification_meta_object_random(arena, smith_protocol_take(stream), &out->_meta);
     }
-    smith_mcp_subscription_filter_random(arena, smith_key_derive(key, 3), &out->notifications);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_mcp_subscription_filter_random(arena, smith_protocol_take(stream), &out->notifications);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_subscriptions_acknowledged_notification_known[] = {"jsonrpc", "method", "params"};
@@ -11811,9 +12009,10 @@ bool smith_mcp_subscriptions_acknowledged_notification_equal([[maybe_unused]] co
 }
 
 void smith_mcp_subscriptions_acknowledged_notification_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpSubscriptionsAcknowledgedNotification *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpSubscriptionsAcknowledgedNotification){};
-    smith_mcp_subscriptions_acknowledged_notification_params_random(arena, smith_key_derive(key, 5), &out->params);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_mcp_subscriptions_acknowledged_notification_params_random(arena, smith_protocol_take(stream), &out->params);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_tool_list_changed_notification_known[] = {"jsonrpc", "method", "params"};
@@ -11860,12 +12059,13 @@ bool smith_mcp_tool_list_changed_notification_equal([[maybe_unused]] const Smith
 }
 
 void smith_mcp_tool_list_changed_notification_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpToolListChangedNotification *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpToolListChangedNotification){};
-    if (smith_protocol_coin(smith_key_derive(key, 4))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_params = true;
-        smith_mcp_notification_params_random(arena, smith_key_derive(key, 5), &out->params);
+        smith_mcp_notification_params_random(arena, smith_protocol_take(stream), &out->params);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_mcp_server_notification_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpServerNotification *out, SmithProtocolError *error) {
@@ -11966,32 +12166,33 @@ bool smith_mcp_server_notification_equal([[maybe_unused]] const SmithMcpServerNo
 }
 
 void smith_mcp_server_notification_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpServerNotification *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpServerNotification){};
-    out->kind = (SmithMcpServerNotificationKind)smith_protocol_pick(smith_key_derive(key, 0), 8);
+    out->kind = (SmithMcpServerNotificationKind)smith_protocol_pick(smith_protocol_take(stream), 8);
     switch (out->kind) {
     case SmithMcpServerNotificationKind_CancelledNotification:
-        smith_mcp_cancelled_notification_random(arena, smith_key_derive(key, 1), &out->as.cancelled_notification);
+        smith_mcp_cancelled_notification_random(arena, smith_protocol_take(stream), &out->as.cancelled_notification);
         break;
     case SmithMcpServerNotificationKind_ProgressNotification:
-        smith_mcp_progress_notification_random(arena, smith_key_derive(key, 1), &out->as.progress_notification);
+        smith_mcp_progress_notification_random(arena, smith_protocol_take(stream), &out->as.progress_notification);
         break;
     case SmithMcpServerNotificationKind_ResourceListChangedNotification:
-        smith_mcp_resource_list_changed_notification_random(arena, smith_key_derive(key, 1), &out->as.resource_list_changed_notification);
+        smith_mcp_resource_list_changed_notification_random(arena, smith_protocol_take(stream), &out->as.resource_list_changed_notification);
         break;
     case SmithMcpServerNotificationKind_SubscriptionsAcknowledgedNotification:
-        smith_mcp_subscriptions_acknowledged_notification_random(arena, smith_key_derive(key, 1), &out->as.subscriptions_acknowledged_notification);
+        smith_mcp_subscriptions_acknowledged_notification_random(arena, smith_protocol_take(stream), &out->as.subscriptions_acknowledged_notification);
         break;
     case SmithMcpServerNotificationKind_ResourceUpdatedNotification:
-        smith_mcp_resource_updated_notification_random(arena, smith_key_derive(key, 1), &out->as.resource_updated_notification);
+        smith_mcp_resource_updated_notification_random(arena, smith_protocol_take(stream), &out->as.resource_updated_notification);
         break;
     case SmithMcpServerNotificationKind_PromptListChangedNotification:
-        smith_mcp_prompt_list_changed_notification_random(arena, smith_key_derive(key, 1), &out->as.prompt_list_changed_notification);
+        smith_mcp_prompt_list_changed_notification_random(arena, smith_protocol_take(stream), &out->as.prompt_list_changed_notification);
         break;
     case SmithMcpServerNotificationKind_ToolListChangedNotification:
-        smith_mcp_tool_list_changed_notification_random(arena, smith_key_derive(key, 1), &out->as.tool_list_changed_notification);
+        smith_mcp_tool_list_changed_notification_random(arena, smith_protocol_take(stream), &out->as.tool_list_changed_notification);
         break;
     case SmithMcpServerNotificationKind_LoggingMessageNotification:
-        smith_mcp_logging_message_notification_random(arena, smith_key_derive(key, 1), &out->as.logging_message_notification);
+        smith_mcp_logging_message_notification_random(arena, smith_protocol_take(stream), &out->as.logging_message_notification);
         break;
     }
 }
@@ -12036,13 +12237,14 @@ bool smith_mcp_subscriptions_listen_result_meta_object_equal([[maybe_unused]] co
 }
 
 void smith_mcp_subscriptions_listen_result_meta_object_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpSubscriptionsListenResultMetaObject *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpSubscriptionsListenResultMetaObject){};
-    if (smith_protocol_coin(smith_key_derive(key, 0))) {
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_io_modelcontextprotocol_serverInfo = true;
-        smith_mcp_implementation_random(arena, smith_key_derive(key, 1), &out->io_modelcontextprotocol_serverInfo);
+        smith_mcp_implementation_random(arena, smith_protocol_take(stream), &out->io_modelcontextprotocol_serverInfo);
     }
-    smith_mcp_request_id_random(arena, smith_key_derive(key, 3), &out->io_modelcontextprotocol_subscriptionId);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_mcp_request_id_random(arena, smith_protocol_take(stream), &out->io_modelcontextprotocol_subscriptionId);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_subscriptions_listen_result_known[] = {"_meta", "resultType"};
@@ -12080,10 +12282,11 @@ bool smith_mcp_subscriptions_listen_result_equal([[maybe_unused]] const SmithMcp
 }
 
 void smith_mcp_subscriptions_listen_result_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpSubscriptionsListenResult *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpSubscriptionsListenResult){};
-    smith_mcp_subscriptions_listen_result_meta_object_random(arena, smith_key_derive(key, 1), &out->_meta);
-    smith_protocol_string_random(arena, smith_key_derive(key, 3), &out->resultType);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_mcp_subscriptions_listen_result_meta_object_random(arena, smith_protocol_take(stream), &out->_meta);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->resultType);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 bool smith_mcp_server_result_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, SmithMcpServerResult *out, SmithProtocolError *error) {
@@ -12213,44 +12416,45 @@ bool smith_mcp_server_result_equal([[maybe_unused]] const SmithMcpServerResult *
 }
 
 void smith_mcp_server_result_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpServerResult *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpServerResult){};
-    out->kind = (SmithMcpServerResultKind)smith_protocol_pick(smith_key_derive(key, 0), 12);
+    out->kind = (SmithMcpServerResultKind)smith_protocol_pick(smith_protocol_take(stream), 12);
     switch (out->kind) {
     case SmithMcpServerResultKind_Result:
-        smith_mcp_result_random(arena, smith_key_derive(key, 1), &out->as.result);
+        smith_mcp_result_random(arena, smith_protocol_take(stream), &out->as.result);
         break;
     case SmithMcpServerResultKind_InputRequiredResult:
-        smith_mcp_input_required_result_random(arena, smith_key_derive(key, 1), &out->as.input_required_result);
+        smith_mcp_input_required_result_random(arena, smith_protocol_take(stream), &out->as.input_required_result);
         break;
     case SmithMcpServerResultKind_DiscoverResult:
-        smith_mcp_discover_result_random(arena, smith_key_derive(key, 1), &out->as.discover_result);
+        smith_mcp_discover_result_random(arena, smith_protocol_take(stream), &out->as.discover_result);
         break;
     case SmithMcpServerResultKind_ListResourcesResult:
-        smith_mcp_list_resources_result_random(arena, smith_key_derive(key, 1), &out->as.list_resources_result);
+        smith_mcp_list_resources_result_random(arena, smith_protocol_take(stream), &out->as.list_resources_result);
         break;
     case SmithMcpServerResultKind_ListResourceTemplatesResult:
-        smith_mcp_list_resource_templates_result_random(arena, smith_key_derive(key, 1), &out->as.list_resource_templates_result);
+        smith_mcp_list_resource_templates_result_random(arena, smith_protocol_take(stream), &out->as.list_resource_templates_result);
         break;
     case SmithMcpServerResultKind_ReadResourceResult:
-        smith_mcp_read_resource_result_random(arena, smith_key_derive(key, 1), &out->as.read_resource_result);
+        smith_mcp_read_resource_result_random(arena, smith_protocol_take(stream), &out->as.read_resource_result);
         break;
     case SmithMcpServerResultKind_SubscriptionsListenResult:
-        smith_mcp_subscriptions_listen_result_random(arena, smith_key_derive(key, 1), &out->as.subscriptions_listen_result);
+        smith_mcp_subscriptions_listen_result_random(arena, smith_protocol_take(stream), &out->as.subscriptions_listen_result);
         break;
     case SmithMcpServerResultKind_ListPromptsResult:
-        smith_mcp_list_prompts_result_random(arena, smith_key_derive(key, 1), &out->as.list_prompts_result);
+        smith_mcp_list_prompts_result_random(arena, smith_protocol_take(stream), &out->as.list_prompts_result);
         break;
     case SmithMcpServerResultKind_GetPromptResult:
-        smith_mcp_get_prompt_result_random(arena, smith_key_derive(key, 1), &out->as.get_prompt_result);
+        smith_mcp_get_prompt_result_random(arena, smith_protocol_take(stream), &out->as.get_prompt_result);
         break;
     case SmithMcpServerResultKind_ListToolsResult:
-        smith_mcp_list_tools_result_random(arena, smith_key_derive(key, 1), &out->as.list_tools_result);
+        smith_mcp_list_tools_result_random(arena, smith_protocol_take(stream), &out->as.list_tools_result);
         break;
     case SmithMcpServerResultKind_CallToolResult:
-        smith_mcp_call_tool_result_random(arena, smith_key_derive(key, 1), &out->as.call_tool_result);
+        smith_mcp_call_tool_result_random(arena, smith_protocol_take(stream), &out->as.call_tool_result);
         break;
     case SmithMcpServerResultKind_CompleteResult:
-        smith_mcp_complete_result_random(arena, smith_key_derive(key, 1), &out->as.complete_result);
+        smith_mcp_complete_result_random(arena, smith_protocol_take(stream), &out->as.complete_result);
         break;
     }
 }
@@ -12292,14 +12496,15 @@ bool smith_mcp_single_select_enum_schema_equal([[maybe_unused]] const SmithMcpSi
 }
 
 void smith_mcp_single_select_enum_schema_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpSingleSelectEnumSchema *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpSingleSelectEnumSchema){};
-    out->kind = (SmithMcpSingleSelectEnumSchemaKind)smith_protocol_pick(smith_key_derive(key, 0), 2);
+    out->kind = (SmithMcpSingleSelectEnumSchemaKind)smith_protocol_pick(smith_protocol_take(stream), 2);
     switch (out->kind) {
     case SmithMcpSingleSelectEnumSchemaKind_UntitledSingleSelectEnumSchema:
-        smith_mcp_untitled_single_select_enum_schema_random(arena, smith_key_derive(key, 1), &out->as.untitled_single_select_enum_schema);
+        smith_mcp_untitled_single_select_enum_schema_random(arena, smith_protocol_take(stream), &out->as.untitled_single_select_enum_schema);
         break;
     case SmithMcpSingleSelectEnumSchemaKind_TitledSingleSelectEnumSchema:
-        smith_mcp_titled_single_select_enum_schema_random(arena, smith_key_derive(key, 1), &out->as.titled_single_select_enum_schema);
+        smith_mcp_titled_single_select_enum_schema_random(arena, smith_protocol_take(stream), &out->as.titled_single_select_enum_schema);
         break;
     }
 }
@@ -12344,10 +12549,11 @@ bool smith_mcp_subscriptions_listen_result_response_equal([[maybe_unused]] const
 }
 
 void smith_mcp_subscriptions_listen_result_response_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpSubscriptionsListenResultResponse *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpSubscriptionsListenResultResponse){};
-    smith_mcp_request_id_random(arena, smith_key_derive(key, 1), &out->id);
-    smith_mcp_subscriptions_listen_result_random(arena, smith_key_derive(key, 5), &out->result);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_mcp_request_id_random(arena, smith_protocol_take(stream), &out->id);
+    smith_mcp_subscriptions_listen_result_random(arena, smith_protocol_take(stream), &out->result);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_unsupported_protocol_version_error_error_data_known[] = {"requested", "supported"};
@@ -12385,10 +12591,11 @@ bool smith_mcp_unsupported_protocol_version_error_error_data_equal([[maybe_unuse
 }
 
 void smith_mcp_unsupported_protocol_version_error_error_data_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpUnsupportedProtocolVersionErrorErrorData *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpUnsupportedProtocolVersionErrorErrorData){};
-    smith_protocol_string_random(arena, smith_key_derive(key, 1), &out->requested);
-    smith_mcp_string_list_random(arena, smith_key_derive(key, 3), &out->supported);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 4), &out->additionalProperties);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->requested);
+    smith_mcp_string_list_random(arena, smith_protocol_take(stream), &out->supported);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_unsupported_protocol_version_error_error_known[] = {"code", "data", "message"};
@@ -12431,10 +12638,11 @@ bool smith_mcp_unsupported_protocol_version_error_error_equal([[maybe_unused]] c
 }
 
 void smith_mcp_unsupported_protocol_version_error_error_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpUnsupportedProtocolVersionErrorError *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpUnsupportedProtocolVersionErrorError){};
-    smith_mcp_unsupported_protocol_version_error_error_data_random(arena, smith_key_derive(key, 3), &out->data);
-    smith_protocol_string_random(arena, smith_key_derive(key, 5), &out->message);
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_mcp_unsupported_protocol_version_error_error_data_random(arena, smith_protocol_take(stream), &out->data);
+    smith_protocol_string_random(arena, smith_protocol_take(stream), &out->message);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 
 static const char *const smith_mcp_unsupported_protocol_version_error_known[] = {"error", "id", "jsonrpc"};
@@ -12482,12 +12690,13 @@ bool smith_mcp_unsupported_protocol_version_error_equal([[maybe_unused]] const S
 }
 
 void smith_mcp_unsupported_protocol_version_error_random([[maybe_unused]] SmithArena *arena, [[maybe_unused]] SmithKey key, SmithMcpUnsupportedProtocolVersionError *out) {
+    [[maybe_unused]] SmithKey *stream = &key;
     *out = (SmithMcpUnsupportedProtocolVersionError){};
-    smith_mcp_unsupported_protocol_version_error_error_random(arena, smith_key_derive(key, 1), &out->error);
-    if (smith_protocol_coin(smith_key_derive(key, 2))) {
+    smith_mcp_unsupported_protocol_version_error_error_random(arena, smith_protocol_take(stream), &out->error);
+    if (smith_protocol_coin(smith_protocol_take(stream))) {
         out->has_id = true;
-        smith_mcp_request_id_random(arena, smith_key_derive(key, 3), &out->id);
+        smith_mcp_request_id_random(arena, smith_protocol_take(stream), &out->id);
     }
-    smith_protocol_extra_random(arena, smith_key_derive(key, 6), &out->additionalProperties);
+    smith_protocol_extra_random(arena, smith_protocol_take(stream), &out->additionalProperties);
 }
 

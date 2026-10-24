@@ -18,6 +18,14 @@
 // The constants of one run of tests: keys are fixed, so every check is deterministic.
 constexpr uint64_t test_seed = 20260101;
 
+// The next key of a stream: `stream` moves on (the reassignment pattern) and the key returned is for one use.
+static SmithKey test_take(SmithKey *stream) {
+    SmithKey next[2];
+    smith_key_split_n(*stream, next, 2);
+    *stream = next[0];
+    return next[1];
+}
+
 typedef struct {
     alignas(smith_arena_align_max) unsigned char bytes[4096];
 } TestMemory;
@@ -66,10 +74,12 @@ static void test_philox(void) {
 
 // The full range is the word, zigzag decoded (the rest of the uniform integer is in tests/random_test.smith).
 static void test_uniform_int64_full_range_is_zigzag(void) {
-    SmithKey key = smith_key_make(test_seed);
+    SmithKey root = smith_key_make(test_seed);
+    SmithKey *stream = &root;
     for (uint64_t i = 0; i < 10000; i++) {
-        int64_t value = smith_uniform_int64_sample(smith_key_derive(key, i), (SmithUniformInt64){INT64_MIN, INT64_MAX});
-        assert(value == smith_random_zigzag(smith_key_bits(smith_key_derive(key, i), 0)));
+        uint64_t seed = smith_key_bits(test_take(stream)); // two keys of one seed: the draw and its word
+        int64_t value = smith_uniform_int64_sample(smith_key_make(seed), (SmithUniformInt64){INT64_MIN, INT64_MAX});
+        assert(value == smith_random_zigzag(smith_key_bits(smith_key_make(seed))));
     }
 }
 
@@ -119,9 +129,10 @@ static double test_normal_error_double(double *allowed) {
             test_normal_error_one_double(p, &worst, allowed);
         }
     }
-    SmithKey key = smith_key_make(test_seed + 5);
+    SmithKey root = smith_key_make(test_seed + 5);
+    SmithKey *stream = &root;
     for (uint64_t i = 0; i < 200000; i++) {
-        double p = smith_random_normal_u_double(smith_key_derive(key, i));
+        double p = smith_random_normal_u_double(test_take(stream));
         if (p > 0.5) p = 1.0 - p;
         test_normal_error_one_double(p, &worst, allowed);
     }
@@ -131,9 +142,10 @@ static double test_normal_error_double(double *allowed) {
 static double test_normal_error_float(double *allowed) {
     double worst = 0;
     *allowed = 0;
-    SmithKey key = smith_key_make(test_seed + 6);
+    SmithKey root = smith_key_make(test_seed + 6);
+    SmithKey *stream = &root;
     for (uint64_t i = 0; i < 100000; i++) {
-        float p = smith_random_normal_u_float(smith_key_derive(key, i));
+        float p = smith_random_normal_u_float(test_take(stream));
         if (p > 0.5f) p = 1.0f - p;
         test_normal_error_one_float(p, &worst, allowed);
     }
@@ -152,11 +164,12 @@ static void test_normal_cdf_symmetry_reach(void) {
     double allowed = 0;
     assert(test_normal_error_double(&allowed) < 1e-13 && allowed < 1.0);
     assert(test_normal_error_float(&allowed) < 1e-5 && allowed < 1.0);
-    SmithKey key = smith_key_make(test_seed + 7);
+    SmithKey root = smith_key_make(test_seed + 7);
+    SmithKey *stream = &root;
     for (uint64_t i = 0; i < 100000; i++) { // sample(u) and sample(1 - u) are exact negatives
-        double u = smith_random_normal_u_double(smith_key_derive(key, i));
+        double u = smith_random_normal_u_double(test_take(stream));
         assert(smith_random_ppnd16(u) == -smith_random_ppnd16(1.0 - u));
-        float f = smith_random_normal_u_float(smith_key_derive(key, i));
+        float f = smith_random_normal_u_float(test_take(stream));
         assert(smith_random_ppnd7(f) == -smith_random_ppnd7(1.0f - f));
     }
     // The extremes of the grid: the documented reach, and every value finite.
@@ -167,15 +180,13 @@ static void test_normal_cdf_symmetry_reach(void) {
     assert(reach_float < -5.2f && reach_float > -5.4f);
     assert(smith_random_ppnd7(1.0f - 0x1p-24f) == -reach_float);
     for (uint64_t i = 0; i < 100000; i++) {
-        assert(fabs(smith_normal_double_sample(smith_key_derive(key, i), (SmithNormalDouble){0.0, 1.0})) <=
-               -reach_double);
-        assert(fabsf(smith_normal_float_sample(smith_key_derive(key, i), (SmithNormalFloat){0.0f, 1.0f})) <=
-               -reach_float);
+        assert(fabs(smith_normal_double_sample(test_take(stream), (SmithNormalDouble){0.0, 1.0})) <= -reach_double);
+        assert(fabsf(smith_normal_float_sample(test_take(stream), (SmithNormalFloat){0.0f, 1.0f})) <= -reach_float);
     }
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// The pinned values: bits of smith_key_bits for seeds 0, 1 and UINT64_MAX, smith_key_derive, and every distribution
+// The pinned values: bits of smith_key_bits for seeds 0, 1 and UINT64_MAX, smith_key_split, and every distribution
 // for one key (floats as their bits). Run `pins` to print them.
 
 constexpr size_t test_pin_capacity = 128;
@@ -195,43 +206,52 @@ static void test_pin(TestPins *pins, const char *label, uint64_t value) {
 static void test_pin_keys(TestPins *pins) {
     const uint64_t seeds[] = {0, 1, UINT64_MAX};
     for (size_t s = 0; s < 3; s++) {
-        for (uint64_t n = 0; n < 4; n++)
-            test_pin(pins, "bits", smith_key_bits(smith_key_make(seeds[s]), n));
-        for (uint64_t i = 0; i < 3; i++)
-            test_pin(pins, "derive", smith_key_derive(smith_key_make(seeds[s]), i).bits);
+        test_pin(pins, "bits", smith_key_bits(smith_key_make(seeds[s])));
+        SmithKey parts[3];
+        smith_key_split_n(smith_key_make(seeds[s]), parts, 3);
+        for (size_t i = 0; i < 3; i++)
+            test_pin(pins, "split", parts[i].bits);
     }
 }
 
 static void test_pin_distributions(TestPins *pins) {
     static TestMemory memory;
     SmithArena arena = smith_arena_make(memory.bytes, sizeof memory.bytes);
-    SmithKey key = smith_key_make(42);
     const double weights[] = {1.0, 2.0, 3.0, 0.0, 4.0};
     SmithCategorical categorical = smith_categorical_make(&arena, weights, 5);
     for (size_t i = 0; i < 5; i++) {
         test_pin(pins, "categorical probability", smith_random_double_bits(categorical.probability[i]));
         test_pin(pins, "categorical alias", categorical.alias[i]);
     }
-    for (uint64_t i = 0; i < 4; i++) {
-        SmithKey k = smith_key_derive(key, i);
-        test_pin(pins, "unit_float", smith_random_float_bits(smith_key_unit_float(k, 0)));
-        test_pin(pins, "unit_double", smith_random_double_bits(smith_key_unit_double(k, 0)));
+    SmithKey cases[4];
+    smith_key_split_n(smith_key_make(42), cases, 4);
+    for (size_t i = 0; i < 4; i++) {
+        uint64_t word = cases[i].bits; // every draw below is made from a key of this seed
+        test_pin(pins, "unit_float", smith_random_float_bits(smith_key_unit_float(smith_key_make(word))));
+        test_pin(pins, "unit_double", smith_random_double_bits(smith_key_unit_double(smith_key_make(word))));
         test_pin(pins, "uniform_float",
-                 smith_random_float_bits(smith_uniform_float_sample(k, (SmithUniformFloat){-2.0f, 3.0f})));
+                 smith_random_float_bits(
+                     smith_uniform_float_sample(smith_key_make(word), (SmithUniformFloat){-2.0f, 3.0f})));
         test_pin(pins, "uniform_double",
-                 smith_random_double_bits(smith_uniform_double_sample(k, (SmithUniformDouble){-2.0, 3.0})));
-        test_pin(pins, "uniform_int64", (uint64_t)smith_uniform_int64_sample(k, (SmithUniformInt64){-3, 6}));
-        test_pin(pins, "normal_float",
-                 smith_random_float_bits(smith_normal_float_sample(k, (SmithNormalFloat){1.0f, 2.0f})));
-        test_pin(pins, "normal_double",
-                 smith_random_double_bits(smith_normal_double_sample(k, (SmithNormalDouble){1.0, 2.0})));
-        test_pin(pins, "bernoulli", smith_bernoulli_sample(k, (SmithBernoulli){0.3}));
-        test_pin(pins, "categorical", smith_categorical_sample(k, categorical));
-        test_pin(pins, "log_float", smith_random_float_bits(smith_log_float(smith_key_unit_float(k, 1) + 0.25f)));
-        test_pin(pins, "log_double", smith_random_double_bits(smith_log_double(smith_key_unit_double(k, 1) + 0.25)));
+                 smith_random_double_bits(
+                     smith_uniform_double_sample(smith_key_make(word), (SmithUniformDouble){-2.0, 3.0})));
+        test_pin(pins, "uniform_int64",
+                 (uint64_t)smith_uniform_int64_sample(smith_key_make(word), (SmithUniformInt64){-3, 6}));
+        test_pin(
+            pins, "normal_float",
+            smith_random_float_bits(smith_normal_float_sample(smith_key_make(word), (SmithNormalFloat){1.0f, 2.0f})));
+        test_pin(
+            pins, "normal_double",
+            smith_random_double_bits(smith_normal_double_sample(smith_key_make(word), (SmithNormalDouble){1.0, 2.0})));
+        test_pin(pins, "bernoulli", smith_bernoulli_sample(smith_key_make(word), (SmithBernoulli){0.3}));
+        test_pin(pins, "categorical", smith_categorical_sample(smith_key_make(word), categorical));
+        test_pin(pins, "log_float",
+                 smith_random_float_bits(smith_log_float(smith_key_unit_float(smith_key_make(word)) + 0.25f)));
+        test_pin(pins, "log_double",
+                 smith_random_double_bits(smith_log_double(smith_key_unit_double(smith_key_make(word)) + 0.25)));
     }
     size_t order[8];
-    smith_permutation_sample(key, (SmithPermutation){8}, order);
+    smith_permutation_sample(smith_key_make(42), (SmithPermutation){8}, order);
     for (size_t i = 0; i < 8; i++)
         test_pin(pins, "permutation", order[i]);
 }
@@ -253,35 +273,37 @@ static uint64_t test_digest_draws(const SmithRandomTap *tap) {
     const double weights[] = {1.0, 2.0, 3.0, 0.0, 4.0, 0.5, 9.5};
     SmithCategorical categorical = smith_categorical_make(&arena, weights, 7);
     uint64_t digest = 0xcbf29ce484222325ULL;
-    SmithKey key = smith_key_make(test_seed);
-    key.tap = tap;
+    SmithKey root = smith_key_make(test_seed);
+    root.tap = tap;
+    SmithKey *stream = &root;
     for (uint64_t i = 0; i < 100000; i++) {
-        SmithKey k = smith_key_derive(key, i);
-        digest = test_fold(digest, k.bits);
-        digest = test_fold(digest, smith_key_bits(k, i % 7));
-        digest = test_fold(digest, smith_random_float_bits(smith_key_unit_float(k, 1)));
-        digest = test_fold(digest, smith_random_double_bits(smith_key_unit_double(k, 2)));
-        digest =
-            test_fold(digest, smith_random_float_bits(smith_uniform_float_sample(k, (SmithUniformFloat){-7.5f, 1e6f})));
+        SmithKey k[14]; // one key for each draw below
+        smith_key_split_n(test_take(stream), k, 14);
+        digest = test_fold(digest, k[0].bits);
+        digest = test_fold(digest, smith_key_bits(k[1]));
+        digest = test_fold(digest, smith_random_float_bits(smith_key_unit_float(k[2])));
+        digest = test_fold(digest, smith_random_double_bits(smith_key_unit_double(k[3])));
         digest = test_fold(digest,
-                           smith_random_double_bits(smith_uniform_double_sample(k, (SmithUniformDouble){-0.3, 1e-9})));
+                           smith_random_float_bits(smith_uniform_float_sample(k[4], (SmithUniformFloat){-7.5f, 1e6f})));
+        digest = test_fold(
+            digest, smith_random_double_bits(smith_uniform_double_sample(k[5], (SmithUniformDouble){-0.3, 1e-9})));
         digest =
-            test_fold(digest, (uint64_t)smith_uniform_int64_sample(k, (SmithUniformInt64){-1000, 12345678901234LL}));
-        digest = test_fold(digest, (uint64_t)smith_uniform_int64_sample(k, (SmithUniformInt64){INT64_MIN, 1}));
+            test_fold(digest, (uint64_t)smith_uniform_int64_sample(k[6], (SmithUniformInt64){-1000, 12345678901234LL}));
+        digest = test_fold(digest, (uint64_t)smith_uniform_int64_sample(k[7], (SmithUniformInt64){INT64_MIN, 1}));
         digest =
-            test_fold(digest, smith_random_float_bits(smith_normal_float_sample(k, (SmithNormalFloat){3.0f, 0.1f})));
-        digest = test_fold(digest,
-                           smith_random_double_bits(smith_normal_double_sample(k, (SmithNormalDouble){-3.0, 100.0})));
-        digest = test_fold(digest, smith_bernoulli_sample(k, (SmithBernoulli){0.37}));
-        digest = test_fold(digest, smith_categorical_sample(k, categorical));
+            test_fold(digest, smith_random_float_bits(smith_normal_float_sample(k[8], (SmithNormalFloat){3.0f, 0.1f})));
+        digest = test_fold(
+            digest, smith_random_double_bits(smith_normal_double_sample(k[9], (SmithNormalDouble){-3.0, 100.0})));
+        digest = test_fold(digest, smith_bernoulli_sample(k[10], (SmithBernoulli){0.37}));
+        digest = test_fold(digest, smith_categorical_sample(k[11], categorical));
         digest = test_fold(digest, smith_random_float_bits(smith_log_float(
-                                       smith_random_bits_float((uint32_t)smith_key_bits(k, 9) & 0x7fffffffU))));
+                                       smith_random_bits_float((uint32_t)smith_key_bits(k[12]) & 0x7fffffffU))));
         digest = test_fold(digest, smith_random_double_bits(smith_log_double(
-                                       smith_random_bits_double(smith_key_bits(k, 8) & 0x7fffffffffffffffULL))));
+                                       smith_random_bits_double(smith_key_bits(k[13]) & 0x7fffffffffffffffULL))));
     }
     size_t order[37];
     for (uint64_t i = 0; i < 2000; i++) {
-        smith_permutation_sample(smith_key_derive(key, i), (SmithPermutation){37}, order);
+        smith_permutation_sample(test_take(stream), (SmithPermutation){37}, order);
         for (size_t j = 0; j < 37; j++)
             digest = test_fold(digest, order[j]);
     }
@@ -357,29 +379,36 @@ static void test_index_zero_word(void) {
     test_hook_word = 0;
     SmithKey key = smith_key_make(1);
     key.tap = &test_tap_constant;
+    const SmithKey *shared = &key;
     const uint64_t spans[] = {1, 2, 3, 5, 6, 7, 10, 1000, ((uint64_t)1 << 63) + 1, UINT64_MAX};
     for (size_t i = 0; i < sizeof spans / sizeof spans[0]; i++)
-        assert(smith_random_draw_index(key, spans[i]) == 0);
+        assert(smith_random_draw_index(shared, spans[i]) == 0);
+}
+
+// A key of the constant tap, made fresh for each use.
+static SmithKey test_tapped(void) {
+    SmithKey key = smith_key_make(test_seed + 14);
+    key.tap = &test_tap_constant;
+    return key;
 }
 
 // Words 1, 2 and 3 move the values away from the simplest one in the zigzag order (the integers and the unit are in
 // tests/random_test.smith).
 static void test_small_words_zigzag(void) {
-    SmithKey key = smith_key_make(test_seed + 14);
-    key.tap = &test_tap_constant;
     for (uint64_t w = 0; w < 5; w++) {
         test_hook_word = w << 11;
-        double d = smith_uniform_double_sample(key, (SmithUniformDouble){-1.0, 1.0}); // origin at the 2^52 grid point
+        double d = smith_uniform_double_sample(test_tapped(),
+                                               (SmithUniformDouble){-1.0, 1.0}); // origin at the 2^52 grid point
         assert(d == (double)smith_random_zigzag(w) * 0x1p-52 + 0.0);
     }
     for (uint64_t w = 0; w < 5; w++) { // the normal: u just above 0.5, just below, the next above...
         test_hook_word = w << 12;
-        double u = smith_random_normal_u_double(key);
+        double u = smith_random_normal_u_double(test_tapped());
         assert(u == 0.5 + (double)(2 * smith_random_zigzag(w) + 1) * 0x1p-53);
-        assert(smith_normal_double_sample(key, (SmithNormalDouble){0.0, 1.0}) ==
+        assert(smith_normal_double_sample(test_tapped(), (SmithNormalDouble){0.0, 1.0}) ==
                ((w & 1) == 0 ? 1.0 : -1.0) * fabs(smith_random_ppnd16(u)));
         test_hook_word = w << 41;
-        float uf = smith_random_normal_u_float(key);
+        float uf = smith_random_normal_u_float(test_tapped());
         assert(uf == 0.5f + (float)(2 * smith_random_zigzag(w) + 1) * 0x1p-24f);
     }
 }

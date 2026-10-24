@@ -39,12 +39,13 @@ void rolls_print(SmithConsole *console, const Rolls *rolls);
 
 #include <stdalign.h>
 
-// count rolls of a die, each from its own key derived from `key`.
+// count rolls of a die, each from its own key split from `key`.
 Rolls rolls_make(SmithArena *arena, SmithKey key, size_t count) {
     Rolls rolls = {.faces = smith_arena_push_array(arena, sizeof(uint32_t), count, alignof(uint32_t)), .count = count};
+    SmithKey *keys = smith_arena_push_array(arena, sizeof(SmithKey), count, alignof(SmithKey));
+    smith_key_split_n(key, keys, count);
     for (size_t i = 0; i < count; i++) {
-        SmithKey roll = smith_key_derive(key, i);
-        rolls.faces[i] = (uint32_t)smith_uniform_int64_sample(roll, (SmithUniformInt64){.low = 1, .high = ROLLS_SIDES});
+        rolls.faces[i] = (uint32_t)smith_uniform_int64_sample(keys[i], (SmithUniformInt64){.low = 1, .high = ROLLS_SIDES});
     }
     return rolls;
 }
