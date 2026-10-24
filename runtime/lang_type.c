@@ -147,6 +147,15 @@ static const char *smith_lang_ty_standard(const char *name, size_t length) {
     return nullptr;
 }
 
+// Whether the text is the compiler's own name for a sized type (`__INT64_TYPE__`): what a replayed record keeps of
+// `i64`.
+static bool smith_lang_ty_is_standard_macro(const char *name, size_t length) {
+    for (size_t i = 0; i < sizeof smith_lang_sized / sizeof smith_lang_sized[0]; i++) { // 13 entries
+        if (smith_lang_equals(name, length, smith_lang_sized[i].standard)) return true;
+    }
+    return false;
+}
+
 static bool smith_lang_ty_is_basic(const char *name, size_t length) {
     for (size_t i = 0; i < sizeof smith_lang_ty_basic / sizeof smith_lang_ty_basic[0]; i++) { // 18 words
         if (smith_lang_equals(name, length, smith_lang_ty_basic[i])) return true;
@@ -522,7 +531,8 @@ static const char *smith_lang_ty_lowered(const char *text, size_t length, size_t
 
 static bool smith_lang_ty_type_start(const SmithHost *host, const SmithToken *token) {
     if (token->kind != SmithTokenKind_Identifier) return false;
-    if (smith_lang_ty_is_basic(token->text, token->length) || smith_lang_ty_standard(token->text, token->length)) {
+    if (smith_lang_ty_is_basic(token->text, token->length) || smith_lang_ty_standard(token->text, token->length) ||
+        smith_lang_ty_is_standard_macro(token->text, token->length)) {
         return true;
     }
     if (smith_lang_ty_find(token->text, token->length, SmithLangTy_Var) != nullptr) return false;
