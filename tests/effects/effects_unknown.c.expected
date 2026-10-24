@@ -1,0 +1,4 @@
+status 1
+effects_unknown.c:7:12: error: smith-effect: `indirect` is [[smith::pure]], but it has the effects c: indirect -> a call through a function pointer (effects_unknown.c:7)
+effects_unknown.c:11:12: error: smith-effect: `external` is [[smith::pure]], but it has the effects c: external -> run_unknown (effects_unknown.c:11)
+effects_unknown.c:15:12: error: smith-effect: `promise_breaks_pure` is [[smith::pure]], but it has the effects alloc: promise_breaks_pure -> promised (effects_unknown.c:15)

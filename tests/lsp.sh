@@ -818,7 +818,7 @@ typedef enum {
     empty;
 } Shape;
 
-Shape none(void) {
+Shape none() {
     return .nothing;
 }
 SMITH
