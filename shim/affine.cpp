@@ -188,8 +188,30 @@ class Classifier {
             walk(binary->getRHS());
             return true;
         }
+        if (binary->getOpcode() == BO_Assign && writesPart(binary->getLHS())) { // `key.tap = tap;` reads nothing
+            walk(binary->getRHS());
+            return true;
+        }
         reset(binary, binary->getLHS());
         return false;
+    }
+
+    // `v.a.b = ...` or `v.a[0] = ...` where v holds affine values: a write to a part of a variable, which is no use.
+    bool writesPart(const Expr *target) {
+        bool part = false;
+        for (target = target->IgnoreParens();; target = target->IgnoreParens()) {
+            if (const auto *member = dyn_cast<MemberExpr>(target); member != nullptr && !member->isArrow()) {
+                target = member->getBase();
+            } else if (const auto *subscript = dyn_cast<ArraySubscriptExpr>(target);
+                       subscript != nullptr && subscript->getBase()->IgnoreParenImpCasts()->getType()->isArrayType()) {
+                target = subscript->getBase()->IgnoreParenImpCasts();
+            } else {
+                break;
+            }
+            part = true;
+        }
+        const VarDecl *variable = variableOf(target);
+        return part && variable != nullptr && variable->isLocalVarDeclOrParm() && holdsAffine(variable->getType());
     }
 
     // `i = ...`, `i++`: the places indexed by the counter `i` are other elements from here.

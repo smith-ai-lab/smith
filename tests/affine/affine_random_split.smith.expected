@@ -1,0 +1,3 @@
+status 1
+affine_random_split.smith:10:42: error: smith-affine: 'keys[0]' is used again; it was already used at line 9
+affine_random_split.smith:9:42: note: 'keys[0]' was first used here
