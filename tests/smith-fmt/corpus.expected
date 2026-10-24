@@ -7943,8 +7943,9 @@ typedef struct {
 
 typedef enum { red, green } Color;
 typedef int Three[3];
+typedef char *Text;
 
-constexpr type kinds[10] = {i32, u8, f64, Pair, bool, char *, Color, Three, i32, usize};
+constexpr type kinds[10] = {i32, u8, f64, Pair, bool, Text, Color, Three, i32, usize};
 static type to_slice(type T) {
     return T[:];
 }
