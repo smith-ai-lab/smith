@@ -20,7 +20,7 @@ clangd's stdin and stdout; `SMITH_LSP_RAW=1` turns it off) rewrites hover, symbo
 module's exports), signature help and hints. A module's header has a `// smith-names:` line of its exports, which depends
 on them only, so an edit to a body does not rebuild importers. A `c::name` that is no macro stays a plain token in the
 main file (a reinjected one is not in clangd's token buffer, so hover and go-to-definition found nothing there), and
-hover leaves out the `asm("_foo::f")` label of a module's name; an importer still reads a module's types as the header
+hover leaves out the `asm("_foo::f")` label of a module's name; the struct of a run-time array, `struct smith_array_f32_n`, is written `f32[:]` wherever the layer rewrites a name (the element is rewritten too, so `box::Box[:]`); an importer still reads a module's types as the header
 writes them (`int32_t`), since a generated header says the standard C types (`tests/lsp.sh`, [the language](smith-language.md)).
 
 **`smith lint` lints `.smith` files as written** (`shim/tidy.cpp`). clang-tidy builds each file's command with the

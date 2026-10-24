@@ -98,6 +98,19 @@ same bytes with and without the patch. What the hook returns, and what lldb does
 Compiling a `.smith` file with debug info in one command (`smith cc -g a.smith b.smith -o prog`) leaves lldb with no
 objects to read, as it does for C files (`dsymutil` is not run); compile each to a `.o` and link, as `smith build` does.
 
+## Run-time arrays
+
+`T xs[:]` is the struct `smith_array_<element>_n { T *data; usize count[1]; }` ([arrays](smith-language.md)); lldb would
+show a pointer and a one-element array. `shim/lldb_slices.cpp` registers, in lldb's default category, a synthetic
+children provider and a summary for the types matching `smith_array_.+_n`: the elements `[0]`..`[count-1]` (read from
+the data pointer, as lldb's own `std::span` provider does), the summary `count=3` (with the text first for a `char`
+slice) and the type name `i32[:]` taken from the struct's name. They are lldb's internal C++ classes (the installed
+headers `lldb/DataFormatters/*`; `shim/lldb/FormatterBytecode.def`, which the install lacks, is a copy of LLVM's), so no
+Python and no LLVM change; `smith dbg`, `smith dap` and the failed-check reader call `smith_lldb_slice_formatters()`
+after the deferred initializers. `smith mcp` and the editors get them through `smith dap`. Only the one-dimension
+struct is read; the `[:][2]` and `[:][:]` forms of #105 (`count[k]`) need the provider to read `count[0..k)` and the
+fixed dimensions.
+
 ## Reading a failed check
 
 `smith --smith-explain --pid <pid>` (`runtime/explain.c`, `shim/lldb_explain.cpp`) uses lldb's SB API in smith's process
@@ -113,4 +126,4 @@ process running (debugserver detaches when its client goes).
 JSON and reads the replies, through `initialize`, `launch`, `setBreakpoints`, `configurationDone`, `stopped`,
 `stackTrace`, `scopes`, `variables`, `continue` and `terminated`. A smith without lldb, or an account that may not debug,
 skips them. The same script builds a two-module `.smith` program and checks the names as written in `smith dbg` and in
-the DAP session (frames, variable types, a cast, `type lookup`, the other object's view of the type).
+the DAP session (frames, variable types, a cast, `type lookup`, the other object's view of the type), and a `[:]` as its elements and count in both.

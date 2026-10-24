@@ -1,0 +1,27 @@
+module slices;
+
+// Run-time arrays `T xs[:]` and their slices (#82, #106): every form parses as an ordinary declaration or expression.
+export typedef struct {
+    f32 weights[:];
+    char name[:];
+} Layer;
+
+export typedef i32 Numbers[:];
+
+export usize total(i32 xs[:], usize skip) {
+    usize sum = 0;
+    for (usize i = skip; i < countof(xs); i++) {
+        sum += (usize)xs[i];
+    }
+    return sum;
+}
+
+export typeof(i32[:]) middle(i32 xs[:], i32 *p, usize n) {
+    i32 head[:] = xs[:2];
+    i32 tail[:] = xs[2:];
+    i32 mid[:] = xs[1:countof(xs) - 1];
+    i32 view[:] = p[0:n];
+    char word[:] = "abc";
+    bool inside = n > 0 ? true : false;
+    return inside ? head : view;
+}

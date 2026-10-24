@@ -30,7 +30,7 @@ c::strncmp(word, "abc", countof(word));   // a slice is a pointer only as an arg
 - Empty is count 0 with a null pointer. `xs[a:b]` needs `a <= b <= countof(xs)`; `p[a:b]` needs `a <= b` and `p` pointing at `b` elements.
 - Underneath: `struct smith_array_i32_n { int32_t *data; size_t count[1]; }`, defined where used and in a generated header, so C writes `(struct smith_array_i32_n){.data = p, .count = {n}}` to call an export. The array expression of `xs[i]` and `xs[a:b]` runs once, so `get()[i]` calls `get` once.
 - `arena::push_slice(&a, T, n)` is a `T[:]` out of an arena (`smith-arena`); bind it to a `T xs[:]` before indexing it.
-- Not yet: `format` and `check_equal` over slices, `T xs[:][2]`, the prover and the debugger.
+- Not yet: `format` and `check_equal` over slices and `T xs[:][2]`. `smith prove`, the debugger and the editor know `[:]` (`smith-prove`, `smith-debug`, `smith-lsp`).
 
 ## Array parameters: `i32 xs[4]`
 

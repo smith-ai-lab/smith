@@ -35,7 +35,9 @@ std::string written_name(llvm::StringRef name) {
 
 class SliceFrontEnd : public SyntheticChildrenFrontEnd {
   public:
-    explicit SliceFrontEnd(ValueObject &backend) : SyntheticChildrenFrontEnd(backend) { Update(); }
+    explicit SliceFrontEnd(ValueObject &backend) : SyntheticChildrenFrontEnd(backend) {
+        Update();
+    }
 
     llvm::Expected<uint32_t> CalculateNumChildren() override {
         return count > UINT32_MAX ? UINT32_MAX : static_cast<uint32_t>(count);
@@ -61,7 +63,9 @@ class SliceFrontEnd : public SyntheticChildrenFrontEnd {
         return lldb::ChildCacheState::eRefetch;
     }
 
-    bool MightHaveChildren() override { return true; }
+    bool MightHaveChildren() override {
+        return true;
+    }
 
     llvm::Expected<size_t> GetIndexOfChildWithName(ConstString name) override {
         auto index = formatters::ExtractIndexFromString(name.GetCString());
@@ -87,10 +91,18 @@ SyntheticChildrenFrontEnd *make_front_end(CXXSyntheticChildren *, lldb::ValueObj
 
 void put_escaped(Stream &stream, unsigned char byte) {
     switch (byte) {
-    case '"': stream.PutCString("\\\""); break;
-    case '\\': stream.PutCString("\\\\"); break;
-    case '\n': stream.PutCString("\\n"); break;
-    case '\t': stream.PutCString("\\t"); break;
+    case '"':
+        stream.PutCString("\\\"");
+        break;
+    case '\\':
+        stream.PutCString("\\\\");
+        break;
+    case '\n':
+        stream.PutCString("\\n");
+        break;
+    case '\t':
+        stream.PutCString("\\t");
+        break;
     default:
         if (byte >= 32 && byte < 127)
             stream.PutChar(static_cast<char>(byte));

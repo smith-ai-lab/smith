@@ -58,6 +58,14 @@ bool identifierBody(char c) {
     return identifierHead(c) || (c >= '0' && c <= '9');
 }
 
+// `f32[:]` for the lowering's `smith_array_f32_n`, the struct of a run-time array (runtime/lang_slice.c); "" when the
+// word is another.
+std::string writtenSlice(StringRef word, const smith::FileNames &names, Style style) {
+    if (!word.consume_front("smith_array_") || !word.consume_back("_n") || word.empty()) return "";
+    const smith::WrittenName *element = word.contains('_') ? names.find(word) : nullptr;
+    return (element != nullptr ? shown(*element, style) : word.str()) + "[:]";
+}
+
 // The text with the names of the table written in `style`. `moved` gets the old offset of each name changed and the new
 // length less the old.
 std::string rewritten(StringRef text, const smith::FileNames &names, Style style,
@@ -73,6 +81,15 @@ std::string rewritten(StringRef text, const smith::FileNames &names, Style style
         while (end < text.size() && identifierBody(text[end]))
             end += 1;
         StringRef word = text.substr(at, end - at);
+        if (std::string slice = writtenSlice(word, names, style); !slice.empty()) {
+            const StringRef keyword = "struct ";
+            size_t before = out.size() >= keyword.size() && StringRef(out).ends_with(keyword) ? keyword.size() : 0;
+            out.resize(out.size() - before); // `struct smith_array_f32_n` is just `f32[:]`
+            if (moved != nullptr) moved->emplace_back(at, (long)slice.size() - (long)word.size() - (long)before);
+            out += slice;
+            at = end;
+            continue;
+        }
         const smith::WrittenName *name = word.contains('_') ? names.find(word) : nullptr;
         if (name != nullptr) {
             std::string replacement = shown(*name, style);

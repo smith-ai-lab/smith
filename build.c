@@ -265,14 +265,14 @@ static void build_shim(SmithBuild *b, const BuildConfig *config, const char *fol
         .compiler = config->cxx,
         .source = source,
         .output = smith_fmt(b, "%s/%s.o", folder, name),
-        .flags =
-            smith_cat(b,
-                      (const char *[]){"-std=c++17", "-O1", "-g", "-Wall", "-Wextra", "-fno-exceptions", "-fno-rtti",
-                                       "-D__STDC_CONSTANT_MACROS", "-D__STDC_FORMAT_MACROS", "-D__STDC_LIMIT_MACROS",
-                                       "-isystem", smith_fmt(b, "%s/include", config->llvm), "-isystem", "shim/lldb", nullptr},
-                      smith_when(b, config->werror[0] != '\0', (const char *[]){config->werror, nullptr}),
-                      smith_when(b, config->hook, (const char *[]){"-DSMITH_HOOK", nullptr}),
-                      smith_when(b, config->enzyme[0] != '\0', (const char *[]){"-DSMITH_ENZYME", nullptr}), nullptr),
+        .flags = smith_cat(
+            b,
+            (const char *[]){"-std=c++17", "-O1", "-g", "-Wall", "-Wextra", "-fno-exceptions", "-fno-rtti",
+                             "-D__STDC_CONSTANT_MACROS", "-D__STDC_FORMAT_MACROS", "-D__STDC_LIMIT_MACROS", "-isystem",
+                             smith_fmt(b, "%s/include", config->llvm), "-isystem", "shim/lldb", nullptr},
+            smith_when(b, config->werror[0] != '\0', (const char *[]){config->werror, nullptr}),
+            smith_when(b, config->hook, (const char *[]){"-DSMITH_HOOK", nullptr}),
+            smith_when(b, config->enzyme[0] != '\0', (const char *[]){"-DSMITH_ENZYME", nullptr}), nullptr),
     };
     smith_object(b, shim);
 }
@@ -418,7 +418,7 @@ typedef struct {
 static void build_shims(SmithBuild *b, const BuildConfig *config, const char *folder, const char *pack,
                         BuildShims *shims, const SmithObject **list) {
     build_pack_data(b, config, folder, pack, &shims->objects[0]);
-    const char *const sources[] = {"clang", "lld", "format", "tidy",     "clangd",      "symbolize",
+    const char *const sources[] = {"clang", "lld", "format", "tidy",     "clangd",       "symbolize",
                                    "hook",  "lsp", "lldb",   "lldb_dap", "lldb_explain", "lldb_slices"};
     size_t count = 0;
     for (size_t i = 0; i < sizeof sources / sizeof sources[0]; i++) {

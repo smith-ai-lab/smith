@@ -324,6 +324,22 @@ expect "symbols: a module's names, as written, each once" \
     "symbol geometry/box.smith: (anonymous struct) symbol geometry/box.smith: width symbol geometry/box.smith: height symbol geometry/box.smith: Box symbol geometry/box.smith: area symbol geometry/box.smith: twice symbol geometry/box.smith: perimeter" \
     "$(printf '%s\n' "$log" | grep '^symbol geometry/box.smith' | tr '\n' ' ' | sed 's/ $//')"
 
+# A run-time array `T xs[:]` (issue #106) is shown as the source writes it, `f32[:]`, never as the struct the lowering
+# made (`struct smith_array_f32_n`): in the hover of the function, of the parameter and of its use, and in the outline.
+cat >geometry/slices.smith <<'EOF'
+module geometry::slices;
+
+export f32 pick(f32 xs[:], usize i) {
+    return xs[i];
+}
+EOF
+log=$(client open geometry/slices.smith -- hover geometry/slices.smith 3 12 -- hover geometry/slices.smith 3 21 -- \
+    hover geometry/slices.smith 4 12 -- symbols geometry/slices.smith)
+expect_line "slice: the hover of a function shows its slice parameter as f32[:]" "$log" \
+    'hover geometry/slices.smith:3:12: function pick |  | → f32 (aka float) |  | Parameters: |  | - f32[:] xs | - usize i (aka unsigned long) |  | f32 pick(f32[:] xs, usize i)'
+expect_line "slice: the hover of the parameter shows its type as f32[:]" "$log" \
+    'hover geometry/slices.smith:3:21: param xs |  | Type: f32[:] |  | // In pick | f32[:] xs'
+
 # A call to a generic: the compiler sees an instance there, so the layer answers for the lowering: the hover shows the
 # generic as its module wrote it and the instance asked for, and go-to-definition goes to the generic's name.
 log=$(client open genuse.smith pick.smith -- hover genuse.smith 7 26 -- definition genuse.smith 7 26 pick.smith:4:18 -- \
