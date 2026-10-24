@@ -2483,7 +2483,7 @@ int main(void) {
     f64 b[3] = {1, 2, 3};
     struct S s = {.xs = a[0:2], .ys = b[0:3], .fixed = {1, 2, 3}};
     struct R r = {.xs = a[0:1]};
-    c::printf("%zu %zu %zu\n", walk::total(s), walk::total_through(s, &s), walk::named(&r));
+    c::printf("%zu %zu %zu %zu\n", walk::total(s), walk::total_through(s, &s), walk::named(&r), walk::name_lengths(s));
     return 0;
 }
 ==> generic-countof-member/src/walk.smith <==
@@ -2510,6 +2510,16 @@ export usize total_through(auto proto, auto p) {
 
 export usize named(auto p) {
     return countof(p->xs) * 100 + countof(p->fixed) * 10 + countof(p->rows[1]);
+}
+
+// The name of a `Field`: a slice of characters.
+export usize name_lengths(auto x) {
+    usize n = 0;
+    for constexpr (usize i = 0; i < countof(fields(typeof(x))); i++) {
+        constexpr Field f = fields(typeof(x))[i];
+        n += countof(f.name);
+    }
+    return n;
 }
 ==> generic-error-instance/src/main.smith <==
 module main;

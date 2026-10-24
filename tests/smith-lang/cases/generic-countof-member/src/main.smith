@@ -11,6 +11,6 @@ int main(void) {
     f64 b[3] = {1, 2, 3};
     struct S s = {.xs = a[0:2], .ys = b[0:3], .fixed = {1, 2, 3}};
     struct R r = {.xs = a[0:1]};
-    c::printf("%zu %zu %zu\n", walk::total(s), walk::total_through(s, &s), walk::named(&r));
+    c::printf("%zu %zu %zu %zu\n", walk::total(s), walk::total_through(s, &s), walk::named(&r), walk::name_lengths(s));
     return 0;
 }

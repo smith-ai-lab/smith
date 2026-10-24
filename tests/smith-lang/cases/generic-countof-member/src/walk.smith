@@ -22,3 +22,13 @@ export usize total_through(auto proto, auto p) {
 export usize named(auto p) {
     return countof(p->xs) * 100 + countof(p->fixed) * 10 + countof(p->rows[1]);
 }
+
+// The name of a `Field`: a slice of characters.
+export usize name_lengths(auto x) {
+    usize n = 0;
+    for constexpr (usize i = 0; i < countof(fields(typeof(x))); i++) {
+        constexpr Field f = fields(typeof(x))[i];
+        n += countof(f.name);
+    }
+    return n;
+}

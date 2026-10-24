@@ -38,7 +38,7 @@ Point *p = arena::push(&a, Point);                  // the type is the argument 
 ```
 
 - **What a generic is.** A function with a body at file scope in a module, exported or not, `inline` or not (not
-  `static` or `extern`: `export` is what makes it public). Up to 4 `constexpr type` parameters and 32 parameters (a formatter takes its pieces as `auto... args`). It has
+  `static` or `extern`: `export` is what makes it public). Up to 32 parameters, any of them `constexpr type`, `constexpr auto` or `auto` (a formatter takes its pieces as `auto... args`). It has
   no symbol and cannot be named without being called (`&arena::push` is an error); C and C++ see a placeholder
   (`[[clang::unavailable]] void arena_push(void);`), and the module's header carries the record of the generic in a
   `// smith-generic:` comment line, which an importer reads (so a header on the include path, as `smith build` writes,
@@ -50,7 +50,7 @@ Point *p = arena::push(&a, Point);                  // the type is the argument 
   for `f`.
 - **`auto` parameters.** `export void check_equal(auto a, typeof(a) b)` is a generic with no `constexpr type`: the type
   of `a` is the type of its argument, and each distinct canonical type (or list of them, for several `auto`
-  parameters, up to 4 with the `constexpr type`s) is one instance. The compiler types the argument: the lowering gives
+  parameters, up to 32 with the `constexpr type`s) is one instance. The compiler types the argument: the lowering gives
   its tokens to the parser itself, as `__typeof__(<tokens>)` read through Sema's `ParseTypeFromString` (the parser's
   own entry for a type written in a string) in a child scope of the one the parser is in, so any expression works
   (a cast of an index, `((u8 *)block)[n - 1]`, a member of an anonymous union, an operator with a side effect, a
@@ -69,7 +69,7 @@ Point *p = arena::push(&a, Point);                  // the type is the argument 
 - **Function parameters** (issue #69). `constexpr auto f` takes a function known at compile time: the argument is a
   function designator (a function's name, `module::name`, `c::name`), and each distinct function is its own instance, so
   in the instance `f` is that function's name: a call through it is direct, `(void *)f` and `&f` are its address. The
-  parameter is in no generated function, like `constexpr type T`, and counts toward the 4 compile-time parameters. The
+  parameter is in no generated function, like `constexpr type T`, and counts toward the 32 parameters. The
   compiler says what the argument is (the host's `SmithExprType` says whether the expression is a function before it
   decays to a pointer): a function pointer variable, `&f`, a number or an expression is an error at the call that names
   the parameter (``the argument `pointer` of `twice` is not a function: the parameter `f` is `constexpr auto`, ...``).
@@ -167,8 +167,9 @@ Point *p = arena::push(&a, Point);                  // the type is the argument 
   the instances only); it cannot be queued as source, because a function body in the queue is read as the lowering's
   sparse body and loses the `}` that ends it. Limits: the functions a condition calls must be defined in the file that
   instantiates the generic or be exported functions of an import ([body-files](body-files.md), #107) (the instance is compiled there), `typeof(x->[f])` of a bit-field kept in a variable is C's
-  error, a file that defines its own `Field` and also uses `fields(` is a redefinition, `countof(f.name)` is not
-  lowered in a generic's body (use `f.name.count[0]`).
+  error, a file that defines its own `Field` and also uses `fields(` is a redefinition, `countof` of a member is lowered in an
+  instance (below).
+- **What an instance's body may ask about names it declares** (issue #123, `runtime/lang_generic.c`, `lang_fields.c`). The compiler has read nothing of an instance when its body is written, so every question about a name of the body is answered from the generic's own tokens. (1) A generic has up to 32 parameters (`smith_lang_type_params_max`, as many as `smith_lang_call_params_max`). (2) A local or a parameter written as a type and a name (`i32 total = ...;`, `typeof(proto) *p`) is an argument of a generic call: `smith_lang_decl_type` finds its declaration (the nearest one before the use, the parameters of the head after it; a type with `auto`, `static`, `fields(` or a bracket is not read, so that case keeps its old error) and the call's arguments are typed with the name written as a value of the type, `(*(i32 *)0)`, as an `auto` parameter's name always was (`smith_lang_typing_declared`). A call routes its arguments through the typed path (`smith_lang_expression_of_param`) when one holds such a name in an expression, or alone when the callee has an `auto` or `auto...` parameter. `rest[k]` inside an expression is typed by `smith_lang_typing_entry` the same way. A `typeof(*x)` that is a type argument stages its `x` as a value, `(*(T *)0)`. (3) `typeof(x.[f][0])` in a condition is the element of the field's type (`smith_lang_fields_typeof_parts`, `smith_lang_fields_element`: a pointer or array loses a level, a slice's struct gives what its `data` points to). (4) `countof(E)` with a member access in E (`x.[f]`, `p->xs`, `p->rows[1]`) in an instance's body is typed like a call's argument and then written (`smith_lang_countof_begin`, a frame like the call's: a number for an array, `((E).count[0])` for a slice). Corpus: `generic-many-parameters`, `generic-argument-names`, `generic-field-element`, `generic-countof-member`. Limits: a local whose type is `auto` is not read, and the type of a field that is a slice of pointers reads back without its star (the handle of `fields(T)` keeps the base type).
 - **`for constexpr`** (issue #71, skill smith-lang-rest). Smith is C plus compile time. The lowering keeps, for the
   instance being written, the loop variables of the `for constexpr` it is inside, and writes plain C.
   - *Built lists are gone* (issue #101). `auto name = {a, b};` and `name = {name..., x};` made a list of variables

@@ -26,8 +26,7 @@ Net m = autodiff::zeros(&io.arena, net);                     // a struct of net'
 
 - The gradient has the shape of `*x`: a float field is differentiated, an integer, bool or enum field comes back zero, a fixed array of floats is filled, a nested struct is walked, a `[:]` field (one dimension) is a new array of the same length from the arena, and each element of a `[:]` or a fixed array of structs is walked in turn. A pointer field is an error at your call that says to use `[:]`; so is a call `f` does not accept ("too few arguments ... in instance smith::autodiff::gradient(...)").
 - `f` is a function's name (`mod::loss` too), its first parameter a pointer and its result a float; the arguments after it are anything `f` takes (pointers there are read, never differentiated). A pointer to `const` is fine.
-- **`autodiff::map(f, &out, &a, &b, ...)`** sets every float leaf of `out` to `f` of the matching leaves of one to four structs of the same type (`out` may be one of them), walking nested structs, fixed arrays and `[:]` fields (equal lengths, checked); other leaves stay as they are. `f` is an ordinary function of one float per input (a generic cannot be passed); an `f32` leaf converts to `f`'s `f64` parameters and back. SGD, momentum and Adam are each a small function and `map` (`map(moment1, &m, &m, &g)`, `map(adam, &p, &p, &m, &v)`); a number `f` needs besides the leaves (the learning rate, Adam's bias corrections) is a variable of your file.
-- `zeros(&arena, x)` is `x` (by value) with every number zero and every `[:]` a new array of its length.
+- **`autodiff::map(f, &out, &a, &b, ...)`** sets every float leaf of `out` to `f` of the matching leaves of one to four structs of the same type (`out` may be one of them), walking nested structs, fixed arrays and `[:]` fields (equal lengths, checked); other leaves stay as they are. `f` is an ordinary function of one float per input (a generic cannot be passed); an `f32` leaf converts to `f`'s `f64` parameters and back. SGD, momentum and Adam are each a small function and `map` (`map(moment1, &m, &m, &g)`, `map(adam, &p, &p, &m, &v)`); a number `f` needs besides the leaves (the learning rate, Adam's bias corrections) is a variable of your file. `zeros(&arena, x)` is `x` with every number zero and every `[:]` a new array of its length.
 
 The raw calls, which `gradient` is built on and C uses:
 
@@ -53,14 +52,8 @@ f64 gradient_x(f64 x, f64 y) {
 
 // A pointer is dup: the pointer, then its shadow, which receives the derivative (zero it first).
 void loss_gradient(const f64 *p, f64 *dp, usize n) {
-    autodiff::reverse((void *)loss, autodiff::dup, p, dp, autodiff::constant, n);
-}
-
-f64 tangent(f64 x, f64 y) {
-    return autodiff::forward((void *)f, autodiff::dup, x, 1.0, autodiff::dup, y, 0.0); // df in the direction (1, 0)
+    autodiff::reverse((void *)loss, autodiff::dup, p, dp, autodiff::constant, n);   // forward mode: autodiff::forward
 }
 ```
 
-`gradient`, `map` and `zeros` are generic, so C has none of them: from C, the names are Enzyme's own (the header declares them; `smith build` finds the library from the include; [smith-autodiff-c](../smith-autodiff-c/SKILL.md) has the table, and the `enzyme_interleave` form `gradient` uses).
-
-Also in this family: [smith-autodiff-c](../smith-autodiff-c/SKILL.md), [smith-autodiff-build](../smith-autodiff-build/SKILL.md).
+`gradient`, `map` and `zeros` are generic, so C has none of them: from C, the names are Enzyme's own (the header declares them; `smith build` finds the library from the include; [smith-autodiff-c](../smith-autodiff-c/SKILL.md) has the table, and the `enzyme_interleave` form `gradient` uses). Also: [smith-autodiff-c](../smith-autodiff-c/SKILL.md), [smith-autodiff-build](../smith-autodiff-build/SKILL.md).

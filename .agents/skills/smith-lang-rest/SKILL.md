@@ -30,4 +30,4 @@ export void print(auto... args) {                 // a type-checked print: each 
 }
 ```
 
-The debugger shows `rest_1` at the generic's own lines. Only the argument list `rest...` can be forwarded to another generic today (the compiler types the arguments).
+The debugger shows `rest_1` at the generic's own lines. `rest...`, `rest[k]` (alone or in an expression, `twice(rest[k] + 1)`) and locals can be forwarded to another generic; `rest` alone cannot.

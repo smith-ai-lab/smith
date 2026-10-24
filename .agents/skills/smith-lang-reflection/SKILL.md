@@ -49,4 +49,4 @@ f64 sum_floats(constexpr type T, T *x) {
 - Fields are read by the compiler, so the function a condition calls (`is_floating`) must be defined in the file that instantiates the generic (an import's exported functions are visible: the importer defines the ones it mentions, `smith-lang-constexpr`).
 - A local `constexpr Field f = E;` stands for `E` in the conditions of its block; `constexpr Field g = first_float(fields(T)[0], fields(T)[1]);` works the same way. `fields(T)` alone is a `static constexpr Field[N]` (`const Field *all = fields(T);`).
 - `fields(T)[i].name` stays a string literal. `typeof(x->[f])` of a bit-field stored in a variable is C's own error.
-- `countof(f.name)` is not lowered inside a generic's body (use an ordinary function, or `f.name.count[0]`); `constexpr type k = f.type;` (a type value in a body) is not built.
+- `countof(x.[f])`, `countof(p->xs)` and `countof(f.name)` of a slice or fixed-array member are lowered in a generic's body; `typeof(x.[f][0])` is the element of a slice or array field, in a condition (`is_float(typeof(x.[f][0]))`); `constexpr type k = f.type;` (a type value in a body) is not built.

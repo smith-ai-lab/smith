@@ -3361,9 +3361,9 @@ static bool smith_lang_replay_action(SmithLang *lang, const SmithHost *host, Smi
 // A word that cannot begin the type of a declaration: a statement that merely ends like one (`return x;`).
 static bool smith_lang_decl_not_type(const SmithLangGenToken *token) {
     static const char *const words[] = {"return", "else",    "goto",  "case", "break", "continue", "do",
-                                        "sizeof", "default", "while", "if",   "for",   "switch",   "constexpr"};
+                                        "sizeof", "default", "while", "if",   "for",   "switch"};
     if (token->kind != SmithTokenKind_Identifier) return true;
-    for (size_t i = 0; i < sizeof words / sizeof words[0]; i++) { // 14 entries
+    for (size_t i = 0; i < sizeof words / sizeof words[0]; i++) { // 13 entries
         if (smith_lang_gt_is(token, SmithTokenKind_Identifier, words[i])) return true;
     }
     return false;
@@ -3421,7 +3421,8 @@ static bool smith_lang_decl_type(const SmithLangGeneric *generic, uint32_t at, S
             depth += smith_lang_gt_punct(before, ")") ? 1 : 0;
             if (smith_lang_gt_punct(before, "(") && depth-- == 0) break;
         }
-        if (!smith_lang_decl_plausible(stop, k - 1)) continue;
+        if (smith_lang_gt_is(&smith_lang_gt.tokens[stop], SmithTokenKind_Identifier, "constexpr")) stop += 1;
+        if (!smith_lang_decl_plausible(stop, k - 1)) continue; // `constexpr Field f` is a `Field`
         *type = (SmithLangSpan){stop, k - 1};
         return true;
     }
