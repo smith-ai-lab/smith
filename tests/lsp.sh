@@ -4,7 +4,7 @@
 # the server answered). Diagnostics, including the lowering's own, are checked at the lines and columns of the .smith text;
 # so are hover, go-to-definition across modules, symbols and completion; and so is a C file of the same project, which
 # must behave as it always has. A smith without clang inside (the stage0) or without the token hook is skipped.
-# Usage: sh tests/lsp.sh path/to/smith
+# Usage: sh tests/lsp.sh path/to/smith [project|folders]
 set -u
 case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
 here=$(pwd)
@@ -63,6 +63,12 @@ root=$(pwd -P)
 # These projects test the lowering's and the compiler's diagnostics, so smith's default checks (smith-effects reports the
 # printf of its samples) are off here; the editor's checks are tested in the folders below, which have no .clang-tidy.
 printf 'Checks: "-*"\n' >"$work/.clang-tidy"
+part=${2:-all} # project, folders or all: the two halves run as tasks of their own (issue #116)
+if ! smith cc -std=gnu23 "$here/tests/lsp_client.c" -o "$work/lsp_client"; then
+    echo "FAIL  tests/lsp_client.c does not build"
+    exit 1
+fi
+if [ "$part" != folders ]; then
 cat >build.c <<'EOF'
 #include <smith/build.h>
 
@@ -272,10 +278,6 @@ expect "the program runs" "area 6.000000" "$(build/demo 2>&1)"
 expect "compile_commands.json tells clangd the language of a .smith file" 3 \
     "$(grep -c '"-x"' compile_commands.json)"
 
-if ! smith cc -std=gnu23 "$here/tests/lsp_client.c" -o "$work/lsp_client"; then
-    echo "FAIL  tests/lsp_client.c does not build"
-    exit 1
-fi
 client() { "$work/lsp_client" "$(command -v smith)" "$root" "$@" 2>&1; }
 
 # Diagnostics: the three .smith files open together (their lowerings take turns), with nothing wrong in two of them and
@@ -448,6 +450,8 @@ expect_line "c: the error is clang's, at its place" "$log" \
 case $log in *"hover util.c:3:5: function util_twice"*) chover=yes ;; *) chover=no ;; esac
 expect "c: hover" yes "$chover"
 
+fi
+if [ "$part" != project ]; then
 # No project at all: a folder with no build.c and no compile_commands.json, where clangd's fallback command amounts to
 # `clang main.smith`. A .smith file gets what `smith cc` gives it (`-x c`, `-std=gnu2y`: smith_lang_command), so the editor
 # reads it as the CLI does.
@@ -715,6 +719,7 @@ expect "editor: smith-effects reports a raw call in a .smith file, as written, a
     "diag fx.smith:11:5: \`c::puts\` touches the world: take a \`SmithConsole *\` from main's SmithIo and print and read through it (smith_console_print, smith_console_read_line)" \
     "$(printf '%s\n' "$log" | grep '^diag ' | sed 's/ (fix available)$//')"
 
+fi
 echo
 echo "$total language server checks, $failures failed"
 [ "$failures" -eq 0 ]
