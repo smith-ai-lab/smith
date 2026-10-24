@@ -25,7 +25,7 @@ export usize fixed(u8 xs[const :]) {                    // the slice (pointer an
     return countof(xs);
 }
 
-export usize demo(void) {
+export usize demo() {
     u8 raw[4] = {1, 2, 3, 4};
     u8 out[4] = {};
     u8 plain[:] = raw;

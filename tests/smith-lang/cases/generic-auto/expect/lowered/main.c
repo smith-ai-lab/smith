@@ -7,7 +7,7 @@ __INT32_TYPE__ y;
 static double half(double v) {
 return v / 2;
 }
-int main(void) {
+int main() {
 __INT32_TYPE__ a = 3;
 __INT32_TYPE__ b = 8;
 double d = 2.5;

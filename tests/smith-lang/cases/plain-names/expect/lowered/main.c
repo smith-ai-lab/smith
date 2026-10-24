@@ -5,7 +5,7 @@ int y;
 };
 typedef int import;
 import global_value = 7;
-int main(void) {
+int main() {
 struct Point c = {1, 2};
 import value = c.x + c.y;
 int module = value;

@@ -14,7 +14,7 @@ __INT32_TYPE__ counter = 3;
 static __INT32_TYPE__ twice(__INT32_TYPE__ n) {
 return n * 2;
 }
-int main(void) {
+int main() {
 printf("%d\n", twice(21));
 return 0;
 }

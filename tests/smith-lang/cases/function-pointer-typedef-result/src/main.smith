@@ -3,7 +3,7 @@ module main;
 import hook::table as table;
 import <stdio.h>;
 
-i32 main(void) {
+i32 main() {
     table::Plain plain = table::plain();
     c::printf("%llu %llu %llu %llu\n", (unsigned long long)plain(21), (unsigned long long)table::call(plain, 4),
               (unsigned long long)table::chosen_value(5), (unsigned long long)table::hook(8));

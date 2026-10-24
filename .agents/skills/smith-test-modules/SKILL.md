@@ -14,7 +14,7 @@ module geometry::box_test;
 import smith::random;
 import smith::test;
 
-export void test_area(void) { // `export`: a private function is static, nothing can call it
+export void test_area() { // `export`: a private function is static, nothing can call it
     test::check_equal(3 * 2, 6);
 }
 

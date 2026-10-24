@@ -1,7 +1,7 @@
 import twice;
 #include <stdio.h>
 
-int main(void) {
+int main() {
     i32 a = 3;
     i32 b = 2;
     // The same shapes at a call site, in main.

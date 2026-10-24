@@ -1,7 +1,7 @@
 import box;
 #include <stdio.h>
 
-int main(void) {
+int main() {
     printf("%d %d\n", box::bigger(3, 8), box::bigger(30, 8));
     return 0;
 }

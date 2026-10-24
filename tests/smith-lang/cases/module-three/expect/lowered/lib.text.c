@@ -9,6 +9,6 @@ __SIZE_TYPE__ lib_text_length(lib_text_Text text) __asm__("_lib::text::length");
 __SIZE_TYPE__ lib_text_length(lib_text_Text text) {
 return text.length;
 }
-static __SIZE_TYPE__ lib_text_unused_helper(void) {
+static __SIZE_TYPE__ lib_text_unused_helper() {
 return 0;
 }

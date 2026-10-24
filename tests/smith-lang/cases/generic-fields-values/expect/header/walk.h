@@ -12,7 +12,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-void walk_run(void) __asm__("_walk::run");
+void walk_run() __asm__("_walk::run");
 #ifdef __cplusplus
 }
 #endif

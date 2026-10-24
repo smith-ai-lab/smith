@@ -3,7 +3,7 @@ module main;
 import arguments;
 import <stdio.h>;
 
-int main(void) {
+int main() {
     i32 a = arguments::total(1, 2, 3);
     i32 b = arguments::total();
     i32 c = arguments::total((u8)200, (i64)5, 2.5);

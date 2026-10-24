@@ -14,7 +14,7 @@
 #endif
 #include <stdio.h>
 
-static inline __INT32_TYPE__ pick_inl_flavor(void) {
+static inline __INT32_TYPE__ pick_inl_flavor() {
 #if SMITH_TARGET_ADDRESS_SANITIZER
  {
 return 1;
@@ -30,7 +30,7 @@ return 3;
 #endif
 
 }
-void pick_inl_show(void) __asm__("_pick::inl::show");
-void pick_inl_show(void) {
+void pick_inl_show() __asm__("_pick::inl::show");
+void pick_inl_show() {
 printf("flavor %d\n", pick_inl_flavor());
 }

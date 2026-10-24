@@ -9,7 +9,7 @@ void copy(u8 dst[restrict :][:], const u8 src[restrict :][:]) {
     if (countof(dst) > 0 && countof(dst[0]) > 0 && countof(src[0]) > 0) dst[0][0] = src[0][0];
 }
 
-export void apart(void) {
+export void apart() {
     c::smith_ensures(true);
     u8 a[4][2] = {0};
     u8 b[4][2] = {0};
@@ -32,7 +32,7 @@ export void overlapping(u8 m[:][:]) {
     copy(top, middle);
 }
 
-export void same(void) {
+export void same() {
     c::smith_ensures(true);
     u8 a[4][2] = {0};
     copy(a, a);

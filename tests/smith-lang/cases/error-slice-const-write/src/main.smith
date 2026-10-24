@@ -2,7 +2,7 @@ module main;
 
 // Writes through a const element, and the reassignment of a slice that is itself const: C's own errors.
 
-i32 main(void) {
+i32 main() {
     u8 raw[4] = {1, 2, 3, 4};
     const u8 west[:] = raw;
     u8 const east[:] = raw;

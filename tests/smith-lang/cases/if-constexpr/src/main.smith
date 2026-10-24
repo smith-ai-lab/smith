@@ -4,7 +4,7 @@ import <stdio.h>;
 
 constexpr bool fast = target::assertions == false;
 
-int main(void) {
+int main() {
     i32 answer = 0;
     // In a file with no module line the branches flow the same.
     if constexpr (target::os == target::macos) {

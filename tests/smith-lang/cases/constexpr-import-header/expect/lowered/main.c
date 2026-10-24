@@ -9,7 +9,7 @@ void smith_failure(__UINT8_TYPE__ code);
 void smith_failure(__UINT8_TYPE__ code) {
 exit(code);
 }
-int main(void) {
+int main() {
 printf("%d %d\n", main_chosen, shapes_dot(2));
 return 0;
 }

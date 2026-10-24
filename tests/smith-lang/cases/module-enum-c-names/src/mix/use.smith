@@ -3,6 +3,6 @@ module mix::use;
 import mix::modes;
 
 // From Smith the constants are the module's own names, whatever C calls them.
-export i32 both(void) {
+export i32 both() {
     return modes::score(modes::Fast, modes::Low) + modes::score(modes::Slow, modes::High);
 }

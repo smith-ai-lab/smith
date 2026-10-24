@@ -15,7 +15,7 @@ static type twice(type T) {
     return T[:][:];
 }
 
-int main(void) {
+int main() {
     f32 xs[:];
     f32 rows[:][2];
     f32 grid[:][:];

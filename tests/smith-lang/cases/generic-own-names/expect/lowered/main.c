@@ -1,7 +1,7 @@
 #include "smith/tools.h"
 #include <stdio.h>
 
-int main(void) {
+int main() {
 const __INT32_TYPE__ value = 5;
 __INT32_TYPE__ a =smith_call_failed;
 __INT32_TYPE__ b =smith_call_failed;

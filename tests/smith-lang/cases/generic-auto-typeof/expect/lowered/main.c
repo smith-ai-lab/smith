@@ -1,6 +1,6 @@
 #include "num.h"
 #include <stdio.h>
-int main(void) {
+int main() {
 float f = 1.5f;
 __UINT64_TYPE__ w = 5;
 __UINT8_TYPE__ b = 1;

@@ -5,7 +5,7 @@ u32 bad(u32 *p) {
     return (u32)countof(p);
 }
 
-i32 main(void) {
+i32 main() {
     u32 x = 0;
     return (i32)bad(&x);
 }

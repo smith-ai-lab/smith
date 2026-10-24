@@ -6,7 +6,7 @@ typedef struct {
 type kinds[2] = {i32, f32};
 Column table = {"a", u8};
 
-int main(void) {
+int main() {
     type local = i32;
     Column column = {"b", f64};
     constexpr type fine = i32;

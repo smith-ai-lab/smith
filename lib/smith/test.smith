@@ -32,7 +32,7 @@ import <unistd.h>;
 // <smith/test.h>: tests, written once and done well. A test is a plain function in a file build.c names. Its signature
 // says what it may touch:
 //
-//   void test_addition(void) { test::check_equal(2 + 2, 4); }            // pure: it touches nothing
+//   void test_addition() { test::check_equal(2 + 2, 4); }            // pure: it touches nothing
 //   void test_sorted(random::Key key) { ... }                           // a property test: it runs on 100 keys
 //   void test_reads_a_file(io::Io *io) { ... }                      // it may touch the world, in a scratch folder
 //
@@ -114,7 +114,7 @@ import <unistd.h>;
 // no sanitizer report in its output. It is a plain function, called before the code that aborts, which is the last
 // thing the test does:
 //
-//   void test_halve_refuses_odd(void) {
+//   void test_halve_refuses_odd() {
 //       test::expect_abort();
 //       (void)halve(5);
 //   }
@@ -129,7 +129,7 @@ import <unistd.h>;
 // `property` for `test_<name>(random::Key key)` and `with_io` for `test_<name>(io::Io *io)`.
 [[smith::c_name("SmithTest")]] export typedef struct {
     const char *name; // without the test_ prefix
-    void (*plain)(void);
+    void (*plain)();
     void (*property)(random::Key key);
     void (*with_io)(io::Io *io);
 } Test;
@@ -510,16 +510,16 @@ bool hooking;                  // the next process forked draws its words throug
 const random::Tap *active_tap; // the tap this process gives its property tests' keys, or nullptr
 volatile c::sig_atomic_t abort_signal; // --in-process: the signal an expected abort raised
 
-void count_fork(void) {
+void count_fork() {
     if (forks != nullptr) __atomic_fetch_add(forks, 1, __ATOMIC_RELAXED);
 }
 
 // Whether this run asked for the heavy checks at full size (--full). False by default.
-[[smith::c_name("smith_test_full")]] export [[nodiscard]] bool full(void) {
+[[smith::c_name("smith_test_full")]] export [[nodiscard]] bool full() {
     return full_run;
 }
 
-void reset(void) {
+void reset() {
     memory_used = 0;
     shared->note[0] = '\0';
     shared->detail[0] = '\0';
@@ -641,7 +641,7 @@ constexpr u64 explain_stat_skipped = 1;
 constexpr u64 explain_stat_nanoseconds = 2;
 constexpr usize explain_stats = 3;
 
-u64 explain_now_ns(void) {
+u64 explain_now_ns() {
     return c::clock_gettime_nsec_np(clock_monotonic);
 }
 
@@ -729,7 +729,7 @@ void explain_join(const char *text, usize used, u64 ended, i32 status) {
     }
 }
 
-[[gnu::noinline]] void explain_failure(void) {
+[[gnu::noinline]] void explain_failure() {
     if (!explaining || explain_path == nullptr || explained == nullptr) return;
     if (__atomic_fetch_add(explained + explain_stat_explained, 1, __ATOMIC_RELAXED) >= explain_limit) {
         __atomic_fetch_add(explained + explain_stat_skipped, 1, __ATOMIC_RELAXED);
@@ -752,7 +752,7 @@ void explain_join(const char *text, usize used, u64 ended, i32 status) {
 }
 
 // Ends the test with a failed check. In a worker the test unwinds to the worker's loop; a process-per-test child exits.
-[[noreturn]] void stop(void) {
+[[noreturn]] void stop() {
     c::fflush(nullptr);
     if (shared->frame_count == 0) { // a failure that brought its own stack (smith_failure) keeps it
         shared->heading = "check failed";
@@ -763,7 +763,7 @@ void explain_join(const char *text, usize used, u64 ended, i32 status) {
     c::_exit(failure_status);
 }
 
-[[noreturn]] void fail_condition(void) {
+[[noreturn]] void fail_condition() {
     __builtin_snprintf(shared->detail, detail_capacity, "the condition is false\n");
     explain_failure();
     stop();
@@ -1067,7 +1067,7 @@ export void check_same_bits(auto a, typeof(a) b) {
 // --in-process jumps to the runner's loop. The flag and the stack of the call are in the shared block, so they survive
 // the process, and nothing runs in the test after the abort. A check or contract that fails after the call is the abort
 // (on_failure); a plain check that fails is not.
-[[smith::c_name("smith_test_expect_abort")]] export void expect_abort(void) {
+[[smith::c_name("smith_test_expect_abort")]] export void expect_abort() {
     Shared *block = shared;
     if (block->expect_abort) return; // a second call is harmless, and the first is where the test is reported
     block->expect_count = c::smith_trace_capture(block->expect_frames, frames_max);
@@ -1235,7 +1235,7 @@ void on_signal(i32 signal_number, c::siginfo_t *info, void *context) {
     c::_exit(signal_status + signal_number);
 }
 
-void catch_signals(void) {
+void catch_signals() {
     static u8 stack[alternate_stack];
     c::stack_t alternate = {.ss_sp = stack, .ss_size = alternate_stack};
     c::sigaltstack(&alternate, nullptr);
@@ -1345,7 +1345,7 @@ void arm(const Options *options) {
 }
 
 // An idle worker is not on either clock.
-void disarm(void) {
+void disarm() {
     struct c::itimerval off = {};
     c::setitimer(timer_cpu, &off, nullptr);
     c::setitimer(timer_real, &off, nullptr);
@@ -1818,7 +1818,7 @@ void wait_for(const Options *options, usize slot, Run *run) {
 }
 
 // Ends the workers, which are idle: closing a socket ends its worker.
-void stop_workers(void) {
+void stop_workers() {
     for (usize slot = 0; slot <= jobs_max; slot++) {
         Process *process = &processes[slot];
         if (process->pid == 0) continue;

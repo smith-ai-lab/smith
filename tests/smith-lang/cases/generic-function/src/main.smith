@@ -16,7 +16,7 @@ static i32 plus(i32 a, i32 b) {
     return a + b;
 }
 
-int main(void) {
+int main() {
     i32 a = apply::twice(inc, 5);
     i32 b = apply::twice(apply::triple, 2);
     f64 c = apply::twice(half, 10.0);

@@ -1,6 +1,6 @@
 import num;
 
-int main(void) {
+int main() {
     int x = num::id(i32, 1;
     int y = num::id(i32, 2);
     return x + y;

@@ -7,7 +7,7 @@ return (p->a + p->b) * batch->scale;
 static double main_plain(const shape_Params *p) {
 return p->a * 2;
 }
-int main(void) {
+int main() {
 shape_Params p = {1.0, 2.0};
 shape_Batch batch = {3.0};
 shape_Params g =smith_call_failed;

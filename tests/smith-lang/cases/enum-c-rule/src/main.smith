@@ -18,11 +18,11 @@ static int pick(enum Color color) {
     }
 }
 
-static struct Pair make(void) {
+static struct Pair make() {
     return (struct Pair){.first = 4, .second = High};
 }
 
-int main(void) {
+int main() {
     struct Pair p = make();
     Level level = Low;
     printf("%d %d %d %d %d\n", pick(Red), pick(Blue), p.first, p.second, level == Low);

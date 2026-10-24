@@ -18,7 +18,7 @@ T *grab(constexpr type T, usize count, i32 flags) {
 
 export const char *note = "a string with zs[:] in it";
 
-export f64 first(void) {
+export f64 first() {
     Pair *p = grab(Pair, 1, 0);
     p->b = 2.5;
     usize *n = grab(usize, 2, 0);

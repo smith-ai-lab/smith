@@ -1,6 +1,6 @@
 import app::say;
 
-int main(void) {
+int main() {
     say::hello("there");
     return 0;
 }

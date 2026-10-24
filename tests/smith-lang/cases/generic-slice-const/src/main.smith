@@ -12,7 +12,7 @@ static i64 total_of(u8 xs[restrict :]) {
     return stats::total(xs);
 }
 
-i32 main(void) {
+i32 main() {
     char raw[4] = {'a', 'b', 'c', 'd'};
     char plain[:] = raw;
     const char read[:] = plain;

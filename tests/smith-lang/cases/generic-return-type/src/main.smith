@@ -21,7 +21,7 @@ export wide_of(T) widen(constexpr type T, auto x) {
     return x;
 }
 
-int main(void) {
+int main() {
     c::printf("%zu %zu %zu\n", sizeof(from_count(u8)), sizeof(from_count(u8, (u8)1)),
               sizeof(from_count(u8, (u8)1, (u8)2)));
     c::printf("%zu %zu\n", sizeof(widen(u8, (u8)3)), sizeof(widen(f32, 3.0f)));

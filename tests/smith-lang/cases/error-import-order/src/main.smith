@@ -1,4 +1,4 @@
 int before;
 import lib::text;
 
-int main(void) { return before; }
+int main() { return before; }

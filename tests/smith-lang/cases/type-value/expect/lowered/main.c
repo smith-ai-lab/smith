@@ -31,7 +31,7 @@ static_assert(small(__INT32_TYPE__) && small(__UINT8_TYPE__) && !small(double) &
 static_assert(wider(__INT32_TYPE__, double) == double);
 static_assert(wider(__UINT8_TYPE__, __UINT16_TYPE__) == __UINT16_TYPE__);
 static_assert(small(wider(__INT8_TYPE__, __UINT16_TYPE__)) && !small(wider(__INT32_TYPE__, __INT64_TYPE__)));
-int main(void) {
+int main() {
 constexpr type local = wider(__UINT8_TYPE__, __INT64_TYPE__);
 local big = 1;
 big <<= 40;

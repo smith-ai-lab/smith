@@ -20,7 +20,7 @@ static int total(const Item *item, int n) {
     return sum;
 }
 
-int main(void) {
+int main() {
     Item item = {3, 4};
     wide big = 5;                  // the keyword again, once `type` is out of scope
     printf("%d %d %lld\n", scaled(2, 5), total(&item, 2), (long long)big);

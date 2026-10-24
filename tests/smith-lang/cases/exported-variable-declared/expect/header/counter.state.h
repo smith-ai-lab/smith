@@ -23,7 +23,7 @@ extern uint64_t counter_state_chosen;
 
 constexpr uint32_t counter_state_limit = 4;
 
-uint32_t counter_state_sum(void) __asm__("_counter::state::sum");
+uint32_t counter_state_sum() __asm__("_counter::state::sum");
 #ifdef __cplusplus
 }
 #endif

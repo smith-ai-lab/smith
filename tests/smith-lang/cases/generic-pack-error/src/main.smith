@@ -3,7 +3,7 @@ module main;
 import args;
 import last;
 
-int main(void) {
+int main() {
     i64 a = args::runtime_index(1, 2, 3);
     i64 b = args::out_of_range(1, 2);
     i64 c = args::bare(1, 2);

@@ -8,7 +8,7 @@ export i32 twice(struct { i32, f32 } t) {
 }
 
 // `a::Meters` written here and `Meters` in geo::a are one spelling, so these are one type.
-export struct { a::Meters, f32 } mk(void) {
+export struct { a::Meters, f32 } mk() {
     return a::reach2(5.0);
 }
 

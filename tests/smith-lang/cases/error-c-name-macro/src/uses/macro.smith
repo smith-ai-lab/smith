@@ -1,10 +1,10 @@
 module uses::macro;
 import <stdio.h>;
 
-export int end_bad(void) {
+export int end_bad() {
     return EOF;
 }
 
-export int end_ok(void) {
+export int end_ok() {
     return c::EOF;
 }

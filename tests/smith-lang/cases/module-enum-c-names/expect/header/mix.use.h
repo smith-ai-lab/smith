@@ -12,7 +12,7 @@
 extern "C" {
 #endif
 // From Smith the constants are the module's own names, whatever C calls them.
-int32_t mix_use_both(void) __asm__("_mix::use::both");
+int32_t mix_use_both() __asm__("_mix::use::both");
 #ifdef __cplusplus
 }
 #endif

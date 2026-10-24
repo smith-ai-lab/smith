@@ -10,7 +10,7 @@ static i32 early(i32 n) {
     return 0;
 }
 
-static void jump(void) {
+static void jump() {
     {
         defer c::puts("cleanup before the jump");
         goto out;
@@ -19,7 +19,7 @@ out:
     c::puts("after the jump");
 }
 
-i32 main(void) {
+i32 main() {
     {
         defer c::puts("first deferred, runs last");
         defer c::puts("second deferred, runs first");

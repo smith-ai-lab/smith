@@ -16,7 +16,7 @@ typedef struct {
     f64 scale;
 } Mixed;
 
-i32 main(void) {
+i32 main() {
     Pair pair = {1, 2.5f};
     Mixed mixed = {pair, 5, 17, {1, 2, 3}, 0.5};
     reflect::show(Pair, &pair);

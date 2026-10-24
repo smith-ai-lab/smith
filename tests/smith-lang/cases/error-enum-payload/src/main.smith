@@ -21,7 +21,7 @@ static i32 describe(Shape s) {
     }
 }
 
-i32 main(void) {
+i32 main() {
     Shape a = .circle;
     Shape b = .nothing;
     Shape c = .empty;
@@ -29,6 +29,6 @@ i32 main(void) {
     return describe(a) + describe(b) + (i32)(c == .empty) + describe(.empty);
 }
 
-static void nowhere(void) {
+static void nowhere() {
     ready(.empty);
 }

@@ -11,7 +11,7 @@ typedef struct {
 } Column;
 constexpr Column column = {.of = u8, .count = 3};
 
-int main(void) {
+int main() {
     constexpr type t = i32;
     t a = 7;                    // `t x;` declares a variable of the type t holds
     element b = 2.5;            // a file-scope type value

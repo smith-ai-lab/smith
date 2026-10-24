@@ -3,7 +3,7 @@
 import <stdio.h>;
 import smith::text;
 
-i32 main(void) {
+i32 main() {
     const char input[:] = "move 3 4 # go\nturn -90.5\n\nhash 00ff\n";
     const char line[:];
     const char word[:];

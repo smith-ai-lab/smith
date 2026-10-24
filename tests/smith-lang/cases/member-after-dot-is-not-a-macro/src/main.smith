@@ -5,7 +5,7 @@ typedef struct {
     i32 vector_length;
 } Lens;
 
-int main(void) {
+int main() {
     Lens lens = {.vector_length = 3};
     Lens *p = &lens;
     // A member after `.` or `->` is a field, never a use of the macro of the same name.

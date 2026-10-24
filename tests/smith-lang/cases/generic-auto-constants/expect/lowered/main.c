@@ -1,7 +1,7 @@
 #include "pick.h"
 #include "k.h"
 #include <stdio.h>
-int main(void) {
+int main() {
 __UINT32_TYPE__ count = 7;
 __UINT8_TYPE__ small = 1;
 __UINT64_TYPE__ wide = 1;

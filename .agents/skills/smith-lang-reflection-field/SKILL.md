@@ -29,7 +29,7 @@ typedef struct {
     f64 c;
 } Mixed;
 
-export f64 demo(void) {
+export f64 demo() {
     Mixed m = {.a = 1, .b = 2, .c = 3};
     return sum_floats(Mixed, &m);                       // 4
 }

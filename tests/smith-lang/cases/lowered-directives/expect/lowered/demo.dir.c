@@ -34,7 +34,7 @@ __UINT32_TYPE__ demo_dir_pair(__UINT32_TYPE__ a, __UINT32_TYPE__ b) __asm__("_de
 __UINT32_TYPE__ demo_dir_pair(__UINT32_TYPE__ a, __UINT32_TYPE__ b) {
 return PAIR(a, b);
 }
-__SIZE_TYPE__ demo_dir_name_length(void) __asm__("_demo::dir::name_length");
-__SIZE_TYPE__ demo_dir_name_length(void) {
+__SIZE_TYPE__ demo_dir_name_length() __asm__("_demo::dir::name_length");
+__SIZE_TYPE__ demo_dir_name_length() {
 return strlen(demo_dir_machine);
 }

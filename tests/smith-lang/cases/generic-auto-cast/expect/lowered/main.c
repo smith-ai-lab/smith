@@ -1,6 +1,6 @@
 #include "pick.h"
 #include <stdio.h>
-int main(void) {
+int main() {
 __INT32_TYPE__ x = 0;
 __INT32_TYPE__ *p = &x;
 __SIZE_TYPE__ m = (__SIZE_TYPE__)p % 64;

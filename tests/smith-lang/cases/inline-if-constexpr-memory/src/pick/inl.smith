@@ -6,7 +6,7 @@ import <stdio.h>;
 // An exported inline function with an `if constexpr` on the target: the header carries the preprocessor's own question
 // (the facts it needs defined once at the top, the branches between #if, #else and #endif), so a C includer's compiler
 // answers it, as the compiler of a .smith importer does.
-export inline i32 flavor(void) {
+export inline i32 flavor() {
     if constexpr (target::address_sanitizer) {
         return 1;
     } else if constexpr (target::assertions) {
@@ -16,6 +16,6 @@ export inline i32 flavor(void) {
     }
 }
 
-export void show(void) {
+export void show() {
     c::printf("flavor %d\n", flavor());
 }

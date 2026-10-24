@@ -22,7 +22,7 @@ static type wider(type a, type b) {
 
 static_assert(wider(u8, f64) == f64);
 
-i32 main(void) {
+i32 main() {
     i32 n = 13;
     switch (n) {
     case fib(7):

@@ -28,7 +28,7 @@ extern "C" {
 // An exported inline function with an `if constexpr` on the target: the header carries the preprocessor's own question
 // (the facts it needs defined once at the top, the branches between #if, #else and #endif), so a C includer's compiler
 // answers it, as the compiler of a .smith importer does.
-static inline int32_t pick_inl_flavor(void) {
+static inline int32_t pick_inl_flavor() {
 #if SMITH_TARGET_ADDRESS_SANITIZER
 {
 return 1;
@@ -44,7 +44,7 @@ return 3;
 #endif
 }
 
-void pick_inl_show(void) __asm__("_pick::inl::show");
+void pick_inl_show() __asm__("_pick::inl::show");
 #ifdef __cplusplus
 }
 #endif

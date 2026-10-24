@@ -15,7 +15,7 @@ constexpr i32 chosen = shapes::second(shapes::dot(1) - 28);
     c::exit(code);
 }
 
-int main(void) {
+int main() {
     c::printf("%d %d\n", chosen, shapes::dot(2));
     return 0;
 }

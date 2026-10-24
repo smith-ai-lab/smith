@@ -34,7 +34,7 @@ typedef struct shapes_Mark {enum shapes_Mark_tag {shapes_Mark_tag_none, shapes_M
 
 float shapes_area(shapes_Shape s) __asm__("_shapes::area");
 
-shapes_Shape shapes_unit(void) __asm__("_shapes::unit");
+shapes_Shape shapes_unit() __asm__("_shapes::unit");
 
 bool shapes_is_empty(shapes_Shape s) __asm__("_shapes::is_empty");
 #ifdef __cplusplus

@@ -5,11 +5,11 @@ typedef struct { __UINT8_TYPE__ cells[SIDE][depth]; __UINT32_TYPE__ n; } grid_Ty
 struct grid_Nested { struct { __UINT8_TYPE__ x[SIDE * 2]; } in; __UINT8_TYPE__ y[SIDE + 1]; };
 static __UINT8_TYPE__ grid_table[SIDE];
 struct grid_Board { __UINT8_TYPE__ cells[SIDE * SIDE]; __UINT32_TYPE__ n; };
-__SIZE_TYPE__ grid_board_size(void) __asm__("_grid::board_size");
-__SIZE_TYPE__ grid_board_size(void) {
+__SIZE_TYPE__ grid_board_size() __asm__("_grid::board_size");
+__SIZE_TYPE__ grid_board_size() {
 return sizeof(struct grid_Board);
 }
-__SIZE_TYPE__ grid_other_sizes(void) __asm__("_grid::other_sizes");
-__SIZE_TYPE__ grid_other_sizes(void) {
+__SIZE_TYPE__ grid_other_sizes() __asm__("_grid::other_sizes");
+__SIZE_TYPE__ grid_other_sizes() {
 return sizeof(struct grid_Plain) + sizeof(grid_Typed) + sizeof(struct grid_Nested) + sizeof grid_table;
 }

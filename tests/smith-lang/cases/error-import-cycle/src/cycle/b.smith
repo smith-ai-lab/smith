@@ -1,4 +1,4 @@
 module cycle::b;
 import cycle::a;
 
-export int from_b(void) { return 2; }
+export int from_b() { return 2; }

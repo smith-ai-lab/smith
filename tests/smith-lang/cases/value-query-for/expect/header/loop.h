@@ -11,9 +11,9 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-int32_t loop_bytes(void) __asm__("_loop::bytes");
+int32_t loop_bytes() __asm__("_loop::bytes");
 
-int32_t loop_words(void) __asm__("_loop::words");
+int32_t loop_words() __asm__("_loop::words");
 #ifdef __cplusplus
 }
 #endif

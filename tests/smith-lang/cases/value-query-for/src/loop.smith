@@ -15,9 +15,9 @@ i32 total(constexpr type T) {
     return sum;
 }
 
-export i32 bytes(void) {
+export i32 bytes() {
     return total(u8);
 }
-export i32 words(void) {
+export i32 words() {
     return total(u64);
 }

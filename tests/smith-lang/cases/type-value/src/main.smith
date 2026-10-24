@@ -45,7 +45,7 @@ static_assert(wider(i32, f64) == double);
 static_assert(wider(u8, u16) == u16);
 static_assert(small(wider(i8, u16)) && !small(wider(i32, i64)));
 
-int main(void) {
+int main() {
     constexpr type local = wider(u8, i64);
     local big = 1;
     big <<= 40;

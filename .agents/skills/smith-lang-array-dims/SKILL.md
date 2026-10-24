@@ -10,7 +10,7 @@ Each dimension is `[:]` (a size known at run time) or a number, in one contiguou
 ```smith
 module grids;
 
-export f32 demo(void) {
+export f32 demo() {
     f32 raw[4][2] = {{1, 2}, {3, 4}, {5, 6}, {7, 8}};
     f32 pairs[:][2] = raw;          // a fixed f32[4][2] converts: count 4 (a number must match the array's own)
     f32 grid[:][:] = raw;           // counts {4, 2}

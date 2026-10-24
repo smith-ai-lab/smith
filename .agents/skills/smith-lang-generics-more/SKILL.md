@@ -16,7 +16,7 @@ export i32 inc(i32 x) {
     return x + 1;
 }
 
-export i32 seven(void) {
+export i32 seven() {
     return twice(inc, 5);                            // pass the name: not a pointer, not &inc
 }
 ```

@@ -11,7 +11,7 @@ typedef enum : u8 { Small = 3, Large = 200 } Size;
 static __INT32_TYPE__ triple(__INT32_TYPE__ v) {
 return v * 3;
 }
-int main(void) {
+int main() {
 __UINT8_TYPE__ block[16] = {0, 1, 2};
 void *bytes = block;
 __SIZE_TYPE__ size = 16;

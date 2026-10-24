@@ -4,7 +4,7 @@ i32 take(i32 xs[:]) {
     return xs[0];
 }
 
-i32 main(void) {
+i32 main() {
     i32 raw[3] = {1, 2, 3};
     i32 *p = raw;
     return take(p);

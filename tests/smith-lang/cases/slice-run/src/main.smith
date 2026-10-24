@@ -23,19 +23,19 @@ static typeof(i32[:]) inner(i32 xs[:]) {
     return xs[1:countof(xs) - 1];
 }
 
-static typeof(i32[:]) fixed(void) {
+static typeof(i32[:]) fixed() {
     static i32 data[3] = {7, 8, 9};
     return data;
 }
 
 static i32 once_calls = 0;
 
-static typeof(i32[:]) once(void) {
+static typeof(i32[:]) once() {
     once_calls += 1;
     return fixed();
 }
 
-i32 main(void) {
+i32 main() {
     i32 raw[5] = {1, 2, 3, 4, 5};
     i32 all[:] = raw;
     i32 mid[:] = all[1:4];

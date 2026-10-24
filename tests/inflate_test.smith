@@ -190,7 +190,7 @@ static usize store_gzip(const u8 *input, usize size, u32 block, u8 *output) {
 // ---------------------------------------------------------------------------------------------------------------
 // Checksums
 
-export void test_inflate_checksums_match_known_values(void) {
+export void test_inflate_checksums_match_known_values() {
     const u8 wikipedia[] = "Wikipedia";
     test::check_equal(inflate::adler32(1, wikipedia, 9), 0x11e60398U);
     const u8 digits[] = "123456789";
@@ -377,7 +377,7 @@ export void test_inflate_refuses_output_that_is_too_small_or_checksums_that_disa
            inflate::Truncated);
 }
 
-export void test_inflate_refuses_a_stored_block_whose_length_check_is_wrong(void) {
+export void test_inflate_refuses_a_stored_block_whose_length_check_is_wrong() {
     u8 stream[] = {1, 3, 0, 0xfc, 0xff, 'a', 'b', 'c'}; // should be 3, ~3 = 0xfffc
     u8 output[8];
     usize used = 0;
@@ -393,7 +393,7 @@ export void test_inflate_refuses_a_stored_block_whose_length_check_is_wrong(void
            inflate::Corrupt);
 }
 
-export void test_inflate_refuses_a_distance_before_the_start(void) {
+export void test_inflate_refuses_a_distance_before_the_start() {
     // A fixed block: the literal 'a' (0x61, code 0x91), then length 3 (code 257, 7 bits 0000001) at distance 2
     // (code 1, 5 bits 00001), which reaches before the start.
     const u8 stream[] = {0x4b, 0x04, 0x42, 0x00};

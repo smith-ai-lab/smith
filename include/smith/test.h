@@ -40,7 +40,7 @@ extern "C" {
 // `property` for `test_<name>(random::Key key)` and `with_io` for `test_<name>(io::Io *io)`.
 typedef struct {
     const char *name; // without the test_ prefix
-    void (*plain)(void);
+    void (*plain)();
     void (*property)(SmithKey key);
     void (*with_io)(SmithIo *io);
 } SmithTest;
@@ -145,7 +145,7 @@ constexpr SmithTestOp smith_test_op_greater_equal = 5;
 smith_test_value_usize(size_t value); // the runner's: one per job, and one more for shrinking
 
 // Whether this run asked for the heavy checks at full size (--full). False by default.
-[[nodiscard]] bool smith_test_full(void);
+[[nodiscard]] bool smith_test_full();
 
 // This test's memory, capacity bytes, from a block the runner reserved once. It is given back before each test and each
 // key, so a test never frees. Running out stops the test with a message.
@@ -223,7 +223,7 @@ void smith_check_equal_ptr(const volatile void *a, const volatile void *b);
 // --in-process jumps to the runner's loop. The flag and the stack of the call are in the shared block, so they survive
 // the process, and nothing runs in the test after the abort. A check or contract that fails after the call is the abort
 // (on_failure); a plain check that fails is not.
-void smith_test_expect_abort(void); // what the child asked for: the child writes, the runner reads
+void smith_test_expect_abort(); // what the child asked for: the child writes, the runner reads
 
 // The runner: parses the options, chooses the tests, runs them and prints the report. The exit status is 0 when every
 // test passed. main makes the Runner.

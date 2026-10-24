@@ -1,6 +1,6 @@
 module main;
 
-i32 main(void) {
+i32 main() {
     f32 raw[4][2] = {};
     f32 xs[:][2] = raw;
     // a slice within a row is fine; an inner dimension across rows needs strides

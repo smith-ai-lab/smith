@@ -73,7 +73,7 @@ extern "C" {
 //   void smith_contract_ensures(bool condition);
 //   void smith_contract_invariant(bool condition);
 //   void smith_contract_assert(bool condition);
-//   void smith_contract_trusted(void);
+//   void smith_contract_trusted();
 //   void smith_contract_may_write(const void *p, size_t size);
 // A failed check is smith_failure(kind) (<smith/trace.h>): it records the stack and writes `smith-trace begin requires
 // failed` and the frames to standard error, then calls abort(); in a test it fails the test with the same report as a
@@ -94,7 +94,7 @@ extern "C" {
 
 // A marker for `smith prove`, which reads the call in the IR: a trusted function is assumed, not proved. It checks
 // nothing, at run time or anywhere else.
-void smith_contract_trusted(void);
+void smith_contract_trusted();
 
 [[gnu::always_inline, maybe_unused]] static inline void smith_requires(bool condition) {
 #if SMITH_TARGET_STATIC_ANALYZER
@@ -160,7 +160,7 @@ void smith_contract_trusted(void);
 #endif
 }
 
-[[gnu::always_inline, maybe_unused]] static inline void smith_trusted(void) {
+[[gnu::always_inline, maybe_unused]] static inline void smith_trusted() {
 #if SMITH_TARGET_STATIC_ANALYZER
     {
     }

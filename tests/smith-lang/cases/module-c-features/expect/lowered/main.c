@@ -5,7 +5,7 @@
 static int increment(int value) {
 return value + 1;
 }
-int main(void) {
+int main() {
 kit_things_Node last = {.next = nullptr, .value = 3, .mode = 2, .point = {.x = 1, .y = 2}};
 kit_things_Node first = {.next = &last, .value = 4, .mode = 1};
 printf("%d %d\n", OPEN_SUM(&first), kit_things_run(increment, 5));

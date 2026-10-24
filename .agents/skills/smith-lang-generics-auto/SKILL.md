@@ -12,7 +12,7 @@ export bool same(auto a, typeof(a) b) {     // b converts to the type of a, unle
     return a == b;
 }
 
-export bool demo(void) {
+export bool demo() {
     u8 small = 7;
     return same(small, 7)            // 7 fits u8: fine
         && same(1.5f, 1.5f)          // 0.5 and 1.5f are f32; 0.1 is not

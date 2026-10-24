@@ -2,7 +2,7 @@ import geo::a;
 import geo::b;
 import <stdio.h>;
 
-i32 main(void) {
+i32 main() {
     auto p = a::make(2, 3.0f);
     struct { i32, f32 } q = p;
     auto m = b::mk();

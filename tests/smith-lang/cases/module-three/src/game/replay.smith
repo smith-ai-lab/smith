@@ -8,7 +8,7 @@ export u32 counter = 7;
 export typedef struct Handle { i32 fd; } Handle;
 export enum Mode { Fast, Slow };
 
-u32 helper(void) {
+u32 helper() {
     return version + counter;
 }
 

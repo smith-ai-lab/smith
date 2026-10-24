@@ -3,7 +3,7 @@ module main;
 import scale;
 import <stdio.h>;
 
-int main(void) {
+int main() {
     // The instance of `spread` calls these, but the source of an importer cannot name them.
     c::printf("%d\n", scale::clamp_to_base(5));
     scale::Range r = {0, 1};

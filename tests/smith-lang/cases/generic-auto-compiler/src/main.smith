@@ -17,7 +17,7 @@ static i32 triple(i32 v) {
 
 // The compiler types every argument, whatever it is made of: a cast of an index, a member of an anonymous union,
 // the enumerators of a fixed type, an operator with a side effect, a call inside a call, a statement expression.
-int main(void) {
+int main() {
     u8 block[16] = {0, 1, 2};
     void *bytes = block;
     usize size = 16;

@@ -3,7 +3,7 @@ module main;
 import lib;
 import <stdio.h>;
 
-int main(void) {
+int main() {
     c::printf("%u %u\n", lib::cost(3), lib::twice(3));
     return 0;
 }

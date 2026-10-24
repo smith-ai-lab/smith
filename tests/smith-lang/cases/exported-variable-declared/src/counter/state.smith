@@ -9,6 +9,6 @@ export const char *const names[2] = {"low", "high"};
 export constexpr u32 limit = 4;
 u32 hidden = 2;
 
-export u32 sum(void) {
+export u32 sum() {
     return total + spare + limit + hidden;
 }

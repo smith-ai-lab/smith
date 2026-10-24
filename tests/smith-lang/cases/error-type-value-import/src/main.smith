@@ -11,7 +11,7 @@ export shapes::slice_of(T, countof(sizes)) make(constexpr type T, auto... sizes)
     return result;
 }
 
-int main(void) {
+int main() {
     f32 xs[:] = make(f32);
     return 0;
 }

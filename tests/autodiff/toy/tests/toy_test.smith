@@ -6,7 +6,7 @@ import smith::autodiff;
 import smith::test;
 import toy;
 
-export void test_loss_gradient(void) {
+export void test_loss_gradient() {
     f64 p[2] = {1.0, 3.0};
     f64 dp[2] = {};
     autodiff::reverse((void *)toy::loss, autodiff::dup, p, dp, autodiff::constant, (usize)2);
@@ -14,7 +14,7 @@ export void test_loss_gradient(void) {
     test::check_near(dp[1], 12.0, 1e-12);
 }
 
-export void test_gradient(void) {
+export void test_gradient() {
     toy::Params p = {.w = {1.0, 2.0, 3.0}, .b = 0.0};
     toy::Batch batch = {.x = {1.0, 1.0, 1.0}, .scale = 1.0};
     alignas(arena::align_max) u8 memory[256];

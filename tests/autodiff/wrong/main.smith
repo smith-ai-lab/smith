@@ -20,7 +20,7 @@ f64 total(Data *d, f64 scale) {
     return d->v[0] * scale;
 }
 
-i32 main(void) {
+i32 main() {
     Data d = {};
     Pointers ptr = {};
     arena::Arena a = {};

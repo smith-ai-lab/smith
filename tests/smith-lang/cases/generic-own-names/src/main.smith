@@ -3,7 +3,7 @@ module main;
 import smith::tools;
 import <stdio.h>;
 
-int main(void) {
+int main() {
     const i32 value = 5;
     i32 a = tools::shifted(&value);
     i32 b = tools::shifted(&value, 1, 2.5);

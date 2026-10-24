@@ -2,7 +2,7 @@ module counter;
 
 static i32 count = 0;
 
-export i32 next(void) {
+export i32 next() {
     count += 1;
     return count;
 }

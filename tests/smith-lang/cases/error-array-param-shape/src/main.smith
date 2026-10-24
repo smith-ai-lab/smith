@@ -4,7 +4,7 @@ i32 take(i32 xs[2]) {
     return xs[0];
 }
 
-i32 main(void) {
+i32 main() {
     i32 same[2] = {};
     i32 longer[3] = {};
     i32 *pointer = same;

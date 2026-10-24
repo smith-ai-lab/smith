@@ -28,7 +28,7 @@ static_assert(small.ptr[1] == 'y' && small.len == 2);
 static_assert(prefix.ptr[4] == 'o');
 static_assert(length(prefix.ptr) == 11);
 
-i32 main(void) {
+i32 main() {
     static constexpr const i32 *kept = nums;
     c::printf("%c %d %s %d\n", word[0], *kept, small.ptr, length(inside));
     return 0;

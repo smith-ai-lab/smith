@@ -11,7 +11,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-int cond_gate_always_there(void) __asm__("_cond::gate::always_there");
+int cond_gate_always_there() __asm__("_cond::gate::always_there");
 #ifdef __cplusplus
 }
 #endif

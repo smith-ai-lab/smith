@@ -35,7 +35,7 @@ export usize passed(auto xs) {
     return plain_sum(v);
 }
 
-export usize fixed(void) {
+export usize fixed() {
     u8 raw[3] = {7, 8, 9};
     u8 v[:] = raw;
     return plain_sum(v) + countof(v);

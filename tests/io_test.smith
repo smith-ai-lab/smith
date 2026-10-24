@@ -66,7 +66,7 @@ static usize play(io::Console *console, arena::Arena *a, usize turn_max) {
     return turns;
 }
 
-export void test_io_fake_console_ends_at_the_end_of_the_input(void) {
+export void test_io_fake_console_ends_at_the_end_of_the_input() {
     alignas(arena::align_max) static u8 memory[1 << 20];
     io::Io fake = io::make_test(
         (io::Test){.memory = memory, .capacity = sizeof memory, .seed = 7, .input = "A3 B4\nC5 D6\nlast"});
@@ -87,7 +87,7 @@ export void test_io_fake_console_ends_at_the_end_of_the_input(void) {
     test::check_equal(countof(op.data), 0); // everything was consumed
 }
 
-export void test_io_fake_clock_moves_only_when_told(void) {
+export void test_io_fake_clock_moves_only_when_told() {
     alignas(arena::align_max) static u8 memory[1 << 20];
     io::Io fake = io::make_test((io::Test){.memory = memory, .capacity = sizeof memory});
     u64 start = io::clock_now(&fake.clock);
@@ -118,7 +118,7 @@ export void test_io_fake_clock_moves_only_when_told(void) {
     test::check_equal(io::clock_now(&fake.clock), before + 1000);
 }
 
-export void test_io_fake_arguments_seed_and_programs(void) {
+export void test_io_fake_arguments_seed_and_programs() {
     alignas(arena::align_max) static u8 memory[1 << 20];
     const char *const argv[] = {"prog", "--flag", nullptr};
     io::Io fake =
@@ -149,7 +149,7 @@ export void test_io_fake_arguments_seed_and_programs(void) {
     test::check_equal(io::processes_capture_async(&fake.processes, &fake.arena, absent, &capture).code, enoent);
 }
 
-export void test_io_fake_environment_and_cores(void) {
+export void test_io_fake_environment_and_cores() {
     alignas(arena::align_max) static u8 memory[1 << 20];
     const char *const environment[] = {"HOME=/home/test", "EMPTY=", "A=B=C", nullptr};
     io::Io fake =
@@ -166,7 +166,7 @@ export void test_io_fake_environment_and_cores(void) {
     test::check_equal(io::processes_cores(&plain.processes), 1);
 }
 
-export void test_io_fake_printf_and_a_text_longer_than_the_buffer(void) {
+export void test_io_fake_printf_and_a_text_longer_than_the_buffer() {
     alignas(arena::align_max) static u8 memory[1 << 20];
     io::Io fake = io::make_test((io::Test){.memory = memory, .capacity = sizeof memory});
     test::check_equal(io::console_printf(&fake.console, "%s %d %.2f\n", "wins", 7, 0.5).code, 0);
@@ -183,7 +183,7 @@ export void test_io_fake_printf_and_a_text_longer_than_the_buffer(void) {
 
 // ---------------------------------------------------------------- files
 
-export void test_io_fake_files_write_and_read_back(void) {
+export void test_io_fake_files_write_and_read_back() {
     alignas(arena::align_max) static u8 memory[1 << 20];
     io::Io fake = io::make_test((io::Test){.memory = memory, .capacity = sizeof memory});
     const char text[] = "alpha\nbeta\ngamma\n";
@@ -305,7 +305,7 @@ static void check_map_and_remove(io::Files *files, arena::Arena *a, const char *
     test::check_equal(io::files_remove(files, path).code, eperm); // a folder is not removed
 }
 
-export void test_io_fake_tree_appends_lists_maps_and_removes(void) {
+export void test_io_fake_tree_appends_lists_maps_and_removes() {
     alignas(arena::align_max) static u8 memory[1 << 20];
     io::Io fake = io::make_test((io::Test){.memory = memory, .capacity = sizeof memory});
     check_tree(&fake.files, &fake.arena, "tree-fake");
@@ -322,7 +322,7 @@ export void test_io_fake_tree_appends_lists_maps_and_removes(void) {
 }
 
 // Appending many times: the fake grows the file by doubling, not by copying it each time.
-export void test_io_fake_append_many_times(void) {
+export void test_io_fake_append_many_times() {
     alignas(arena::align_max) static u8 memory[1 << 20];
     io::Io fake = io::make_test((io::Test){.memory = memory, .capacity = sizeof memory});
     for (usize i = 0; i < 2000; i++)
@@ -446,7 +446,7 @@ static void check_two_connections(io::Io *io) {
     test::check_equal(io::net_close(&io->net, &second).code, 0);
 }
 
-export void test_io_fake_net_scripted_servers(void) {
+export void test_io_fake_net_scripted_servers() {
     alignas(arena::align_max) static u8 memory[1 << 20];
     io::Io fake = io::make_test((io::Test){.memory = memory, .capacity = sizeof memory});
     check_scripted_net(&fake);
@@ -486,7 +486,7 @@ static usize child_read(io::Io *io, io::Child *child, char *buffer, usize capaci
     return got;
 }
 
-static io::ChildScript dap_script(void) {
+static io::ChildScript dap_script() {
     return (io::ChildScript){.program = "smith-dap",
                              .output = "Content-Length: 2\r\n\r\n{}",
                              .chunk = 8,
@@ -495,7 +495,7 @@ static io::ChildScript dap_script(void) {
 }
 
 // Chunks of output, a read that waits, writes kept, an exit when stdin closes, and EPIPE after an exit.
-export void test_io_fake_child_output_input_and_exit(void) {
+export void test_io_fake_child_output_input_and_exit() {
     alignas(arena::align_max) static u8 memory[1 << 20];
     io::Io fake = io::make_test((io::Test){.memory = memory, .capacity = sizeof memory, .seed = 3});
     test::check_equal(io::test_add_child(&fake, dap_script()).code, 0);
@@ -543,7 +543,7 @@ export void test_io_fake_child_output_input_and_exit(void) {
 }
 
 // Two children of one program take one script each; a third has none. A kill ends the second.
-export void test_io_fake_two_children_of_one_program_and_kill(void) {
+export void test_io_fake_two_children_of_one_program_and_kill() {
     alignas(arena::align_max) static u8 memory[1 << 20];
     io::Io fake = io::make_test((io::Test){.memory = memory, .capacity = sizeof memory, .seed = 3});
     test::check_equal(io::test_add_child(&fake, dap_script()).code, 0);
@@ -575,7 +575,7 @@ export void test_io_fake_two_children_of_one_program_and_kill(void) {
 }
 
 // A program that exited at start: its output can be read, and a write is EPIPE.
-export void test_io_fake_child_that_exited_at_start(void) {
+export void test_io_fake_child_that_exited_at_start() {
     alignas(arena::align_max) static u8 memory[1 << 20];
     io::Io fake = io::make_test((io::Test){.memory = memory, .capacity = sizeof memory, .seed = 3});
     io::ChildScript quick = {.program = "true", .output = "bye\n", .exit_on = io::Start};

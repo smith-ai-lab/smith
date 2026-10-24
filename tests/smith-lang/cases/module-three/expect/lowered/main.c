@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <math.h>
 
-int main(void) {
+int main() {
 game_replay_Handle handle = {.fd = 5};
 game_replay_Replay replay = game_replay_open(&handle, "last.replay");
 float root = sqrtf(16.0f);

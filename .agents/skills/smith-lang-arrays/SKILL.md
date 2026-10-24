@@ -16,7 +16,7 @@ export i32 sum(const i32 xs[:]) {                            // C: i32 sum(const
     return total;
 }
 
-export i32 demo(void) {
+export i32 demo() {
     i32 raw[5] = {1, 2, 3, 4, 5};
     i32 all[:] = raw;               // a fixed array converts: count 5
     i32 mid[:] = all[1:4];          // a view that shares the elements: 2, 3, 4 (xs[:b], xs[a:] too)

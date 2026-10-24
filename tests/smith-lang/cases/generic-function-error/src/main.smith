@@ -10,7 +10,7 @@ static i32 plus(i32 a, i32 b) {
     return a + b;
 }
 
-int main(void) {
+int main() {
     i32 (*pointer)(i32) = inc;
     i32 number = 3;
     // A pointer is known only when the program runs: the parameter takes a function by its name.

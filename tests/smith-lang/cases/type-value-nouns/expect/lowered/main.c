@@ -24,7 +24,7 @@ static_assert(structure(kinds[3]) && !structure(kinds[0]));
 static_assert(array(kinds[7]) && !array(kinds[0]));
 static_assert(slice(sliced) && !slice(kinds[5]));
 static_assert(integer(kinds[0]) == is_integer(kinds[0]) && arithmetic(kinds[2]) == (is_integer(kinds[2]) || is_float(kinds[2])));
-int main(void) {
+int main() {
 printf("%d %d %d %d\n", (int)integer(kinds[0]), (int)arithmetic(kinds[2]), (int)unsigned_integer(kinds[2]),
 (int)signed_integer(kinds[2]));
 __INT32_TYPE__ a = 1;

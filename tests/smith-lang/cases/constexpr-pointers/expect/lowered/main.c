@@ -23,7 +23,7 @@ static_assert(*third == 30);
 static_assert(small.ptr[1] == 'y' && small.len == 2);
 static_assert(prefix.ptr[4] == 'o');
 static_assert(length(prefix.ptr) == 11);
-__INT32_TYPE__ main(void) {
+__INT32_TYPE__ main() {
 static constexpr const __INT32_TYPE__ *kept = nums;
 printf("%c %d %s %d\n", word[0], *kept, small.ptr, length(inside));
 return 0;

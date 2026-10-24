@@ -11,7 +11,7 @@ static f64 plain(const shape::Params *p) {
     return p->a * 2;
 }
 
-int main(void) {
+int main() {
     shape::Params p = {1.0, 2.0};
     shape::Batch batch = {3.0};
     shape::Params g = shape::gradient(loss, &p, &batch);

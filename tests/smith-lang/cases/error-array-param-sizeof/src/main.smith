@@ -4,7 +4,7 @@ usize bytes(i32 xs[2]) {
     return sizeof(xs);
 }
 
-i32 main(void) {
+i32 main() {
     i32 xs[2] = {};
     return (i32)bytes(xs);
 }

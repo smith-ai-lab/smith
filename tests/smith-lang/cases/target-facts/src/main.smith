@@ -2,17 +2,17 @@ import target;
 import <stdio.h>;
 
 // Each fact of the target, against the answer of C's own preprocessor in facts.c (`#if` and the predefined macros).
-extern i32 c_arch(void);
-extern i32 c_os(void);
-extern i32 c_address_sanitizer(void);
-extern i32 c_undefined_sanitizer(void);
-extern i32 c_thread_sanitizer(void);
-extern i32 c_assertions(void);
-extern i32 c_float_radix(void);
-extern i32 c_f32_mantissa_bits(void);
-extern i32 c_f64_mantissa_bits(void);
-extern i32 c_float_eval_method(void);
-extern i32 c_static_analyzer(void);
+extern i32 c_arch();
+extern i32 c_os();
+extern i32 c_address_sanitizer();
+extern i32 c_undefined_sanitizer();
+extern i32 c_thread_sanitizer();
+extern i32 c_assertions();
+extern i32 c_float_radix();
+extern i32 c_f32_mantissa_bits();
+extern i32 c_f64_mantissa_bits();
+extern i32 c_float_eval_method();
+extern i32 c_static_analyzer();
 
 // A fact is a constant expression: a static_assert, an array size, a constexpr initializer.
 static_assert(target::float_radix == 2);
@@ -34,7 +34,7 @@ static i32 check(const char *name, i32 smith, i32 compiler) {
     return 0;
 }
 
-int main(void) {
+int main() {
     i32 bad = 0;
     bad += check("arch", target::arch, c_arch());
     bad += check("os", target::os, c_os());

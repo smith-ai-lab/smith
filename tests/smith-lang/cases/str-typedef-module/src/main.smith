@@ -3,7 +3,7 @@ module main;
 import <stdio.h>;
 import text;
 
-i32 main(void) {
+i32 main() {
     text::str s = "hello world";
     text::str w = text::first_word(s);
     text::str *p = &s;

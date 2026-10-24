@@ -22,7 +22,7 @@ import smith::io;
 import smith::random;
 import smith::test;
 
-export void test_addition(void) {
+export void test_addition() {
     test::check_equal(2 + 2, 4);
     test::check_near(0.1 + 0.2, 0.3, 1e-9);
 }

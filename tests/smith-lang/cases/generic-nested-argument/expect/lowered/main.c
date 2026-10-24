@@ -7,7 +7,7 @@ return x + 1;
 static double main_half(double x) {
 return x / 2;
 }
-int main(void) {
+int main() {
 printf("%d %d %.2f\n",smith_call_failed,smith_call_failed,smith_call_failed);
 return 0;
 }

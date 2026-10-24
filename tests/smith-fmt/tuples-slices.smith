@@ -14,7 +14,7 @@ struct Outer {
     struct { i32, f32 } pair;
     struct { i32, f32 } list[4];
 };
-struct { i32 *, f32 } make2(void);
+struct { i32 *, f32 } make2();
 void slices(i32 xs[:], f32 m[:][2], char s[:]) {
     i32 a = xs[1:2];
     i32 b = xs[:b];

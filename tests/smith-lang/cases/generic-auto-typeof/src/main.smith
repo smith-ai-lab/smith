@@ -1,7 +1,7 @@
 import num;
 #include <stdio.h>
 
-int main(void) {
+int main() {
     f32 f = 1.5f;
     u64 w = 5;
     u8 b = 1;

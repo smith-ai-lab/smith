@@ -10,7 +10,7 @@ module game::replay;
 
 [[smith::c_name("SmithReplay")]] export typedef struct { u64 frames; } Replay;   // C sees SmithReplay
 export constexpr u32 version = 3;                 // constants and globals export too
-export u32 next(void) { return version + 1; }
+export u32 next() { return version + 1; }
 export [[gnu::always_inline, maybe_unused]] inline u64 doubled(u64 n) { return n * 2; }   // body in the header: no symbol
 export u64 checksum(const u8 *data, usize size);  // no body: C or C++ defines game_replay_checksum
 extern char **environ;                            // a foreign C symbol: private, keeps its name

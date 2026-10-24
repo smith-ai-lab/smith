@@ -3,7 +3,7 @@ module main;
 import <stdio.h>;
 import shapes;
 
-int main(void) {
+int main() {
     c::printf("%zu %zu %d %d\n", sizeof(shapes::keep(f64, 1.0)), sizeof(shapes::keep(u8, (u8)1)), shapes::width(f64),
               shapes::width(u8));
     return 0;

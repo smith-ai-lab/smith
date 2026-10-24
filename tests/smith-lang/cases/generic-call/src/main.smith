@@ -6,7 +6,7 @@ typedef struct {
     i32 y;
 } Point;
 
-int main(void) {
+int main() {
     u8 storage[256];
     arena::Arena a = arena::make(storage, sizeof storage);
     Point *p = arena::push(&a, Point);

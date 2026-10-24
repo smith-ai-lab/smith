@@ -7,7 +7,7 @@ typedef struct {
     i32 y;
 } Point;
 
-int main(void) {
+int main() {
     i32 three = num::add(i32, 1, 2);
     Point a = {1, 2};
     Point b = num::add(Point, a, a);

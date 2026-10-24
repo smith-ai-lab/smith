@@ -6,7 +6,7 @@ typedef struct {
     i32 y;
 } Point;
 
-int main(void) {
+int main() {
     f32 f = 1.5f;
     u64 big = 9;
     i32 small = -3;

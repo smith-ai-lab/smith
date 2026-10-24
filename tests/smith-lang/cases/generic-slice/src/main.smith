@@ -17,7 +17,7 @@ static bool slicy(type t) {
     return is_slice(t);
 }
 
-i32 main(void) {
+i32 main() {
     i32 raw[5] = {1, 2, 3, 4, 5};
     i32 xs[:] = raw;
     f32 rows_type[:][2];

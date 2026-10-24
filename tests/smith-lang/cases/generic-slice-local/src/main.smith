@@ -3,7 +3,7 @@ module main;
 import conv;
 import <stdio.h>;
 
-i32 main(void) {
+i32 main() {
     u8 raw[5] = {1, 2, 3, 4, 5};
     u8 xs[:] = raw;
     u8 big[:] = raw;

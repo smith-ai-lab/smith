@@ -39,7 +39,7 @@ static inline i32 clamp_to_base(i32 x) {
     return x > base ? base : x;
 }
 
-export i32 calls(void) {
+export i32 calls() {
     return counter.calls + unused(0) - 1;
 }
 

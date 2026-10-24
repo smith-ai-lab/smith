@@ -1,5 +1,5 @@
 // The tests of @NAME@, run by `smith test`. A test is a function named test_<name>, defined as below, and its signature
-// says what it may touch: `(void)` is pure, `(random::Key key)` is a property test, `(io::Io *io)` gets a real io.
+// says what it may touch: `()` is pure, `(random::Key key)` is a property test, `(io::Io *io)` gets a real io.
 // This file is a module, so each test is exported (the runner calls it from outside) and is listed as
 // primes_test::<name>.
 module primes_test;
@@ -10,28 +10,28 @@ import smith::io;
 import smith::test;
 import <string.h>;
 
-export void test_the_first_five_primes_add_up_to_28(void) {
+export void test_the_first_five_primes_add_up_to_28() {
     test::check_equal(primes::sum(5), 28);
 }
 
-export void test_no_primes_add_up_to_nothing(void) {
+export void test_no_primes_add_up_to_nothing() {
     test::check_equal(primes::sum(0), 0);
 }
 
 // A slice of an array is written `values[from:to]`.
-export void test_total_adds_a_slice(void) {
+export void test_total_adds_a_slice() {
     i32 values[] = {2, 3, 5, 7};
     test::check_equal(primes::total(values[1:3]), 8);
 }
 
 // There are only five primes to add: asking for a sixth breaks the function's contract, which stops the program.
-export void test_six_primes_are_one_too_many(void) {
+export void test_six_primes_are_one_too_many() {
     test::expect_abort();
     (void)primes::sum(6);
 }
 
 // report prints through the console it is given, so a test gives it the fake one and reads what it printed.
-export void test_report_prints_the_sum(void) {
+export void test_report_prints_the_sum() {
     arena::Arena memory = test::memory(1 << 20);
     io::Io io = io::make_test((io::Test){.memory = memory.memory, .capacity = memory.capacity, .seed = 1});
     primes::report(&io.console, 28);

@@ -9,13 +9,13 @@ void copy(u8 dst[restrict :], const u8 src[restrict :]) {
     for (usize i = 0; i < countof(dst) && i < 4; i++) dst[i] = src[i];
 }
 
-export void apart(void) {
+export void apart() {
     c::smith_ensures(true);
     u8 b[8] = {0};
     copy(b[0:4], b[4:8]);
 }
 
-export void apart_arrays(void) {
+export void apart_arrays() {
     c::smith_ensures(true);
     u8 a[4] = {0};
     u8 b[4] = {0};
@@ -28,13 +28,13 @@ export void apart_slices(u8 b[:]) {
     copy(b[0:4], b[4:8]);
 }
 
-export void shifted(void) {
+export void shifted() {
     c::smith_ensures(true);
     u8 b[8] = {0};
     copy(b[1:5], b[0:4]);
 }
 
-export void same(void) {
+export void same() {
     c::smith_ensures(true);
     u8 b[8] = {0};
     copy(b[0:4], b[0:4]);
@@ -71,13 +71,13 @@ void fill(u8 dst[restrict :], u8 *other) {
     dst[0] = *other;
 }
 
-export void pointer_apart(void) {
+export void pointer_apart() {
     c::smith_ensures(true);
     u8 b[8] = {0};
     fill(b[0:4], &b[5]);
 }
 
-export void pointer_inside(void) {
+export void pointer_inside() {
     c::smith_ensures(true);
     u8 b[8] = {0};
     fill(b[0:4], &b[2]);

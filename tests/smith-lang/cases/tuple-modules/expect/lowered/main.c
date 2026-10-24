@@ -2,7 +2,7 @@
 #include "geo/b.h"
 #include <stdio.h>
 
-__INT32_TYPE__ main(void) {
+__INT32_TYPE__ main() {
 auto p = geo_a_make(2, 3.0f);
 struct smith_tuple_i32__f32 { __INT32_TYPE__ _0; float _1; } q = p;
 auto m = geo_b_mk();

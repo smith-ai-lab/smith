@@ -1,6 +1,6 @@
 import target;
 
-int main(void) {
+int main() {
     int n = 3;
     if constexpr (n > 2) {
         return 1;

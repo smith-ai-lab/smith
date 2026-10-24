@@ -17,7 +17,7 @@ Pair braces(i32 a, f32 b) {
     return {a, b};
 }
 
-Nested nest(void) {
+Nested nest() {
     return {1, {2.0f, 3.0f}};
 }
 
@@ -30,7 +30,7 @@ void by_pointer(Pair *p) {
     p->_1 = 0.5f;
 }
 
-i32 main(void) {
+i32 main() {
     struct { i32, f32 } t = {1, 2.0f};
     t[1] = 2.5f;
     Pair p = make(3, 4.5f);

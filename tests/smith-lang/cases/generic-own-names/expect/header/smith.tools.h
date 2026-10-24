@@ -16,7 +16,7 @@ extern "C" {
 #endif
 extern int32_t smith_tools_offset __asm__("_smith::tools::offset");
 
-int32_t smith_tools_pick(void) __asm__("_smith::tools::pick");
+int32_t smith_tools_pick() __asm__("_smith::tools::pick");
 #ifdef __cplusplus
 }
 #endif

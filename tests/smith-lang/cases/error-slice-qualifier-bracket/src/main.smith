@@ -12,6 +12,6 @@ static void unstable(u8 xs[volatile :]) {
 static void rows(f32 m[:][const :]) {
 }
 
-i32 main(void) {
+i32 main() {
     return 0;
 }

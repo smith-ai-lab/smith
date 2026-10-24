@@ -4,7 +4,7 @@ import <stdio.h>;
 
 export i32 offset = 10;
 
-export i32 pick(void) {
+export i32 pick() {
     return tools::offset + 1;
 }
 

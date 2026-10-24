@@ -4,7 +4,7 @@ typedef struct {
 __INT32_TYPE__ x;
 __INT32_TYPE__ y;
 } Point;
-int main(void) {
+int main() {
 float f = 1.5f;
 __UINT64_TYPE__ big = 9;
 __INT32_TYPE__ small = -3;

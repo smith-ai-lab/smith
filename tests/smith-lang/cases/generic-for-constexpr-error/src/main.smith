@@ -2,7 +2,7 @@ module main;
 
 import bad;
 
-int main(void) {
+int main() {
     i32 a = bad::no_step();
     i32 b = bad::no_variable();
     i32 c = bad::clash(1);

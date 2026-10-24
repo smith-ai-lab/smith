@@ -13,7 +13,7 @@ extern "C" {
 #endif
 extern uint32_t cfg_limits_max_users __asm__("_cfg::limits::max_users");
 
-uint32_t cfg_limits_users_allowed(void) __asm__("_cfg::limits::users_allowed");
+uint32_t cfg_limits_users_allowed() __asm__("_cfg::limits::users_allowed");
 #ifdef __cplusplus
 }
 #endif

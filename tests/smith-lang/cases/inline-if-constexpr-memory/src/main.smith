@@ -1,7 +1,7 @@
 import pick::inl;
 import <stdio.h>;
 
-int main(void) {
+int main() {
     inl::show();
     c::printf("same in main: %d\n", inl::flavor());
     return 0;

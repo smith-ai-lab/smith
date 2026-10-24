@@ -1,7 +1,7 @@
 #include <stddef.h>
 #include <stdio.h>
 
-int main(void) {
+int main() {
     printf("%zu %zu %zu %zu\n", sizeof(u8), sizeof(u16), sizeof(u32), sizeof(u64));
     printf("%zu %zu %zu %zu\n", sizeof(i8), sizeof(i16), sizeof(i32), sizeof(i64));
     printf("%zu %zu\n", sizeof(usize), sizeof(isize));

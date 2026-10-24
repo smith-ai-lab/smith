@@ -41,7 +41,7 @@ static f32 rows(f32 m[const :][2]) {
     return row[0] + m[0][1];
 }
 
-i32 main(void) {
+i32 main() {
     u8 raw[6] = {1, 2, 3, 4, 5, 6};
     u8 all[:] = raw;
     const u8 read[:] = all;       // u8[:] to const u8[:] is implicit

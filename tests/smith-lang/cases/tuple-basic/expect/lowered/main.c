@@ -12,7 +12,7 @@ return (struct smith_tuple_i32__f32 { __INT32_TYPE__ _0; float _1; }){a, b};
 Pair braces(__INT32_TYPE__ a, float b) {
 return {a, b};
 }
-Nested nest(void) {
+Nested nest() {
 return {1, {2.0f, 3.0f}};
 }
 __INT32_TYPE__ by_value(struct smith_tuple_i32__f32 { __INT32_TYPE__ _0; float _1; } t) {
@@ -22,7 +22,7 @@ void by_pointer(Pair *p) {
 (*p)[0] += 10;
 p->_1 = 0.5f;
 }
-__INT32_TYPE__ main(void) {
+__INT32_TYPE__ main() {
 struct smith_tuple_i32__f32 { __INT32_TYPE__ _0; float _1; } t = {1, 2.0f};
 t[1] = 2.5f;
 Pair p = make(3, 4.5f);

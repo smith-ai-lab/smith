@@ -2,7 +2,7 @@ module main;
 
 import conv;
 
-i32 main(void) {
+i32 main() {
     u8 raw[2] = {1, 2};
     const u8 read[:] = raw;
     return (i32)(conv::ordinary(read) + conv::generic(read));

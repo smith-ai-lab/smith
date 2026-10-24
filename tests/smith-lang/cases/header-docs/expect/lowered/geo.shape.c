@@ -15,7 +15,7 @@ bool geo_is_origin(geo_shape_Point p);
 bool geo_is_origin(geo_shape_Point p) {
 return geo_shape_norm2(p) == 0;
 }
-static __UINT32_TYPE__ geo_shape_helper(void) {
+static __UINT32_TYPE__ geo_shape_helper() {
 return 7;
 }
-__UINT32_TYPE__ geo_shape_seven(void) __asm__("_geo::shape::seven");
+__UINT32_TYPE__ geo_shape_seven() __asm__("_geo::shape::seven");

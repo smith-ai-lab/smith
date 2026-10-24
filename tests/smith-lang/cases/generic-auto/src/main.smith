@@ -10,7 +10,7 @@ static f64 half(f64 v) {
     return v / 2;
 }
 
-int main(void) {
+int main() {
     i32 a = 3;
     i32 b = 8;
     f64 d = 2.5;

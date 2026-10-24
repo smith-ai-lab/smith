@@ -1,2 +1,2 @@
 import sa;
-int main(void) { return sa::twice(1) + (int)sa::twice(1.5); }
+int main() { return sa::twice(1) + (int)sa::twice(1.5); }

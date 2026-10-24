@@ -18,7 +18,7 @@ static i32 first_word(i32 n) {
     return 0;
 }
 
-i32 main(void) {
+i32 main() {
     {
         defer c::puts("runs last");
         defer { c::puts("runs first"); c::puts("a block works too"); }

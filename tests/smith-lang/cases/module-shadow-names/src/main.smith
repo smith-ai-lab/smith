@@ -2,7 +2,7 @@ import lib::text;
 import lib::gnu;
 import <stdio.h>;
 
-int main(void) {
+int main() {
     text::Text text = text::make("shadow");
     int c = 2;
     [[gnu::unused]] int unused_one = gnu::answer();

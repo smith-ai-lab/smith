@@ -321,7 +321,7 @@ module tuples::pairs;
 
 export typedef struct { i32, f32 } Pair;
 
-export struct { i32, struct { f32, f32 } } nested(void) {
+export struct { i32, struct { f32, f32 } } nested() {
     return {1, {2.0f, 3.0f}};
 }
 
@@ -338,7 +338,7 @@ cat >"$work/p/tuples/user.smith" <<'EOF2'
 module tuples::user;
 import tuples::pairs;
 
-export f32 use(void) {
+export f32 use() {
     auto p = pairs::make(1, 2.0f);
     auto n = pairs::nested();
     return pairs::total(p, &p) + n[1][0];
@@ -661,8 +661,8 @@ typedef struct {
     u32 b;
 } Pair;
 
-[[noreturn]] void stop(void);
-__attribute__((noreturn)) void halt(void);
+[[noreturn]] void stop();
+__attribute__((noreturn)) void halt();
 
 export u32 f(const u8 *p) {
     _Bool flag = p == c::NULL;
@@ -679,8 +679,8 @@ typedef struct {
     u32 b;
 } Pair;
 
-[[noreturn]] void stop(void);
-[[nodiscard]] u32 compute(void);
+[[noreturn]] void stop();
+[[nodiscard]] u32 compute();
 
 export u32 f(const u8 *p) {
     bool flag = p == nullptr;
@@ -694,7 +694,7 @@ cat >"$work/p/idiom/c23.c" <<'EOF2'
 #include <stdbool.h>
 #include <stddef.h>
 
-__attribute__((noreturn)) void halt(void);
+__attribute__((noreturn)) void halt();
 __attribute__((unused, warn_unused_result)) static int compute(void) { return 0; }
 _Noreturn void quit(void);
 
@@ -729,6 +729,72 @@ idiom/c23.c:13:1: error: \`_Static_assert\` is C11's spelling: write \`static_as
 idiom/c23.c:14:1: error: \`_Alignas\` is C11's spelling: write \`alignas\`, a keyword in C23
 idiom/c23.c:15:40: error: \`_Alignof\` is C11's spelling: write \`alignof\`, a keyword in C23"
 expect "smith-c23: the same in a C file" "$expected" "$(idiom_findings <"$work/c23-c.out")"
+
+# `(void)` as a parameter list is C's habit: in C23 `()` is no parameters. A finding with a fix in a module, none in a .c
+# file or a .smith file with no `module` line, and none on a cast or on `sizeof(void)`.
+cat >"$work/p/idiom/void_list.smith" <<'EOF2'
+module idiom::void_list;
+
+typedef void (*Callback)(void);
+u32 plain(void);
+
+u32 plain(void) {
+    u32 x = 1;
+    (void)x;
+    if (x) (void)plain;
+    return (u32)sizeof(void) + x;
+}
+
+export i32 main(void) {
+    return 0;
+}
+EOF2
+cat >"$work/p/idiom/void_list_ok.smith" <<'EOF2'
+module idiom::void_list_ok;
+
+typedef void (*Callback)();
+
+u32 plain() {
+    u32 x = 1;
+    (void)x;
+    return (u32)sizeof(void) + x;
+}
+EOF2
+cat >"$work/p/idiom/void_list_plain.smith" <<'EOF2'
+u32 plain(void) {
+    return 1;
+}
+EOF2
+cat >"$work/p/idiom/void_list.c" <<'EOF2'
+int plain(void) {
+    return 1;
+}
+EOF2
+idiom smith-c23 idiom/void_list.smith >"$work/void.out"
+expected="idiom/void_list.smith:3:26: error: \`(void)\` is C's way to say no parameters: in C23 \`()\` means that, write \`()\`
+idiom/void_list.smith:4:11: error: \`(void)\` is C's way to say no parameters: in C23 \`()\` means that, write \`()\`
+idiom/void_list.smith:6:11: error: \`(void)\` is C's way to say no parameters: in C23 \`()\` means that, write \`()\`
+idiom/void_list.smith:13:17: error: \`(void)\` is C's way to say no parameters: in C23 \`()\` means that, write \`()\`"
+expect "smith-c23: (void) parameter lists in a module, and not a cast or sizeof(void)" "$expected" "$(idiom_findings <"$work/void.out")"
+idiom smith-c23 idiom/void_list_ok.smith idiom/void_list_plain.smith idiom/void_list.c >"$work/void-ok.out"
+expect "smith-c23: () in a module is clean, and (void) in a .c file or a .smith file with no module line is C's own" "" "$(idiom_findings <"$work/void-ok.out")"
+mkdir -p "$work/voidfix/idiom" && cp idiom/void_list.smith "$work/voidfix/idiom/void_list.smith"
+(cd "$work/voidfix" && smith lint --fix --checks="-*,smith-c23" idiom/void_list.smith -- -std=gnu2y $flags -I"$here/include" >/dev/null 2>&1)
+expect "smith-c23: --fix deletes the void of each parameter list, and leaves the casts" "module idiom::void_list;
+
+typedef void (*Callback)();
+u32 plain();
+
+u32 plain() {
+    u32 x = 1;
+    (void)x;
+    if (x) (void)plain;
+    return (u32)sizeof(void) + x;
+}
+
+export i32 main() {
+    return 0;
+}" "$(cat "$work/voidfix/idiom/void_list.smith")"
 
 cat >"$work/p/idiom/consts.smith" <<'EOF2'
 module idiom::consts;

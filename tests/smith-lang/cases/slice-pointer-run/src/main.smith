@@ -32,7 +32,7 @@ static usize rows(const f32 (*m)[:][2]) {
     return countof(*m) * 10 + countof((*m)[0]);
 }
 
-i32 main(void) {
+i32 main() {
     const char s[:] = "a\nbc\nd";
     const char line[:];
     while (take_line(&s, &line)) {

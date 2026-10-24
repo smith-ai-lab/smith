@@ -1,7 +1,7 @@
 import loop;
 #include <stdio.h>
 
-int main(void) {
+int main() {
     printf("%d %d\n", loop::bytes(), loop::words());
     return 0;
 }

@@ -19,7 +19,7 @@ typedef struct {
     i32 a;
 } One;
 
-i32 main(void) {
+i32 main() {
     i32 total = 0;
     total += reflect::count_int(i32);
     total += reflect::count_union(Either);

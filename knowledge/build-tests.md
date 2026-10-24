@@ -18,7 +18,7 @@ call is in the API below, with the exact commands) builds the runner from the pr
 import smith::random;
 import smith::test;
 
-void test_addition(void) {                        // a test: found by name, no registration; pure
+void test_addition() {                        // a test: found by name, no registration; pure
     test::check_equal(2 + 2, 4);
 }
 

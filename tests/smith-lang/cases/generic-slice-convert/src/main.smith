@@ -7,7 +7,7 @@ static usize through_restrict(u8 xs[restrict :]) {
     return conv::call_plain(xs) + conv::call_read(xs) + conv::call_fast(xs) + conv::pass_on(xs);
 }
 
-i32 main(void) {
+i32 main() {
     u8 raw[4] = {1, 2, 3, 4};
     u8 xs[:] = raw;
     const u8 read[:] = xs;

@@ -65,17 +65,17 @@
 #endif
 #include <stdio.h>
 
-extern __INT32_TYPE__ c_arch(void);
-extern __INT32_TYPE__ c_os(void);
-extern __INT32_TYPE__ c_address_sanitizer(void);
-extern __INT32_TYPE__ c_undefined_sanitizer(void);
-extern __INT32_TYPE__ c_thread_sanitizer(void);
-extern __INT32_TYPE__ c_assertions(void);
-extern __INT32_TYPE__ c_float_radix(void);
-extern __INT32_TYPE__ c_f32_mantissa_bits(void);
-extern __INT32_TYPE__ c_f64_mantissa_bits(void);
-extern __INT32_TYPE__ c_float_eval_method(void);
-extern __INT32_TYPE__ c_static_analyzer(void);
+extern __INT32_TYPE__ c_arch();
+extern __INT32_TYPE__ c_os();
+extern __INT32_TYPE__ c_address_sanitizer();
+extern __INT32_TYPE__ c_undefined_sanitizer();
+extern __INT32_TYPE__ c_thread_sanitizer();
+extern __INT32_TYPE__ c_assertions();
+extern __INT32_TYPE__ c_float_radix();
+extern __INT32_TYPE__ c_f32_mantissa_bits();
+extern __INT32_TYPE__ c_f64_mantissa_bits();
+extern __INT32_TYPE__ c_float_eval_method();
+extern __INT32_TYPE__ c_static_analyzer();
 static_assert(SMITH_TARGET_FLOAT_RADIX == 2);
 static_assert(SMITH_TARGET_F32_MANTISSA_BITS == 24 && SMITH_TARGET_F64_MANTISSA_BITS == 53, "f32 and f64 are IEEE");
 static_assert(1 != 2 && 1 != 2);
@@ -92,7 +92,7 @@ return 1;
 printf("%s ok\n", name);
 return 0;
 }
-int main(void) {
+int main() {
 __INT32_TYPE__ bad = 0;
 bad += check("arch", SMITH_TARGET_ARCH, c_arch());
 bad += check("os", SMITH_TARGET_OS, c_os());

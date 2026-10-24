@@ -11,7 +11,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-int32_t size_run(void) __asm__("_size::run");
+int32_t size_run() __asm__("_size::run");
 #ifdef __cplusplus
 }
 #endif

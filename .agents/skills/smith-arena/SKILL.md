@@ -25,7 +25,7 @@ Point *make_line(arena::Arena *a, usize count) {
     return points;
 }
 
-i32 main(void) {
+i32 main() {
     alignas(arena::align_max) static u8 memory[1 << 20]; // aligned, so layouts never depend on addresses
     arena::Arena a = arena::make(memory, sizeof memory);
     Point *origin = arena::push(&a, Point); // zeroed

@@ -32,7 +32,7 @@ export bool is_open(const Window *window) {
 }
 
 // A constructor that may be called only in main.
-export [[nodiscard, clang::annotate("smith::main_only")]] Window make(void) {
+export [[nodiscard, clang::annotate("smith::main_only")]] Window make() {
     return (Window){.handle = nullptr};
 }
 ```

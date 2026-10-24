@@ -3,7 +3,7 @@ module main;
 import hold;
 import <stdio.h>;
 
-i32 main(void) {
+i32 main() {
     i32 x = 5;
     f64 y = 2.5;
     c::printf("%d %g %s\n", *hold::reset(i32, &x), *hold::reset(f64, &y), hold::note);

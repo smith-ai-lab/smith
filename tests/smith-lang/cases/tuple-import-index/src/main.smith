@@ -2,7 +2,7 @@
 import geo::a;
 import <stdio.h>;
 
-i32 main(void) {
+i32 main() {
     auto p = a::make(2, 3.0f);
     p[0] += 1;
     c::printf("%d %f %d\n", p[0], (double)p[1], (i32)countof(p));

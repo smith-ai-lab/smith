@@ -1,6 +1,6 @@
 typedef struct { int count; int total; } names_fields_Stats;
 static int names_fields_count = 10;
-static int names_fields_total(void) {
+static int names_fields_total() {
 return 5;
 }
 int names_fields_combine(names_fields_Stats *stats) __asm__("_names::fields::combine");

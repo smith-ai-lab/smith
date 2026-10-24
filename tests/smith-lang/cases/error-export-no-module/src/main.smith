@@ -1,3 +1,3 @@
-export int helper(void) { return 1; }
+export int helper() { return 1; }
 
-int main(void) { return helper(); }
+int main() { return helper(); }

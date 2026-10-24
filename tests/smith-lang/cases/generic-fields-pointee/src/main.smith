@@ -29,7 +29,7 @@ void show_member(auto p) {
     c::printf("\n");
 }
 
-i32 main(void) {
+i32 main() {
     Outer o = {};
     show_pointee(&o);
     show_member(&o);

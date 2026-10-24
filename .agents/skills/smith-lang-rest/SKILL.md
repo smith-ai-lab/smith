@@ -22,7 +22,7 @@ export f64 sum(auto... args) {                          // any number of argumen
     return total;
 }
 
-export f64 demo(void) {
+export f64 demo() {
     return sum(1, 2.5f, (i64)3);                        // 6.5
 }
 ```

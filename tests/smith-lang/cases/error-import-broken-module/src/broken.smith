@@ -1,4 +1,4 @@
 module broken;
 
-export i32 f(void) { return 1; }
+export i32 f() { return 1; }
 export struct S { i32 first; u8 *char; };

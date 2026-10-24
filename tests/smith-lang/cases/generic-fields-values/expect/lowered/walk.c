@@ -19,8 +19,8 @@ return is_float(f.type);
 static Field walk_first_float(Field a, Field b) {
 return walk_is_floating(a) ? a : b;
 } [ [ clang :: unavailable ( "walk::show is a generic function: call it from a .smith module" ) ] ] void walk_show ( void ) ; [ [ clang :: unavailable ( "walk::total_length is a generic function: call it from a .smith module" ) ] ] void walk_total_length ( void ) ; [ [ clang :: unavailable ( "walk::sum_floats is a generic function: call it from a .smith module" ) ] ] void walk_sum_floats ( void ) ; [ [ clang :: unavailable ( "walk::count_integers is a generic function: call it from a .smith module" ) ] ] void walk_count_integers ( void ) ; [ [ clang :: unavailable ( "walk::float_name is a generic function: call it from a .smith module" ) ] ] void walk_float_name ( void ) ; [ [ clang :: unavailable ( "walk::second_length is a generic function: call it from a .smith module" ) ] ] void walk_second_length ( void ) ;
-void walk_run(void) __asm__("_walk::run");
-void walk_run(void) {
+void walk_run() __asm__("_walk::run");
+void walk_run() {
 walk_Sample s = {1, 2.5f, 3.0, 4};
 walk_Pair p = {7, 1.5f};__extension__({extern void walk_show__Sample(walk_Sample*x)__asm__("_walk::show(walk_Sample)");walk_show__Sample(&s);});__extension__({extern void walk_show__Pair(walk_Pair*x)__asm__("_walk::show(walk_Pair)");walk_show__Pair(&p);});
 printf("%zu %zu\n",__extension__({extern __SIZE_TYPE__ walk_total_length__Sample(void)__asm__("_walk::total_length(walk_Sample)");walk_total_length__Sample();}),__extension__({extern __SIZE_TYPE__ walk_total_length__Pair(void)__asm__("_walk::total_length(walk_Pair)");walk_total_length__Pair();}));
