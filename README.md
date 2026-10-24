@@ -1,269 +1,579 @@
 # smith
 
-smith is a whole C toolchain in one statically linked binary: clang, lld, clang-format, clang-tidy, clangd, lldb and a
-prover, all from one LLVM build. Around it are a modern standard library for C, contracts that `smith prove` proves, and
-`.smith`, which is C with modules and no macros of its own, lowered to C as clang reads it.
+**smith is C minus the footguns, plus compile-time programming.**
 
-A project's build file is `build.c`, a C program that describes the build. smith runs it and runs the result itself.
-There is no make, no ninja and no CMake.
+One binary: compiler, build, tests, proofs, formatter, linter, debugger and editor support, from one LLVM.
 
-## Status
+```smith project=first run prove test
+// stats.smith
+module stats;
 
-smith is private and pre-release. It runs on macOS on Apple silicon only. It has no release, no installer, no package
-manager formula and no Linux or Windows port. The prover, the debugger and the `.smith` language are young. Plans live in
-the [GitHub issues](https://github.com/adam-r-kowalski/smith/issues), and nowhere else. This page describes what smith
-does today.
+import smith::contract;
 
-## Install from source
-
-You need a Mac with Apple silicon, Xcode or the Command Line Tools, and a C23 compiler (`cc`). From a clone:
-
-```sh
-mkdir -p build
-cc -std=gnu23 smith.c -o build/stage0          # the stage0: smith without clang inside
-build/stage0 build llvm                        # builds LLVM 23.1.3, about 9 minutes, once
-build/stage0 build install -DCC=cc             # builds the full smith and installs it
-```
-
-The stage0 runs an external clang. If Homebrew's `llvm` is not installed, set `SMITH_CLANG=/usr/bin/clang`. `build llvm`
-puts its work in `~/.cache/smith/llvm/23.1.3-r4` and survives `smith build clean`.
-
-`build install` runs the tests, then copies three files to `~/.local/bin` (`-DPREFIX=` changes the folder):
-
-- `smith`
-- `smith-cc` and `smith-c++`, links to smith for a Makefile's `CC` or a `compile_commands.json`
-
-Put `~/.local/bin` on your `PATH`. To update, pull and run `smith build install` with the installed smith. If an install
-ever breaks, the commands above rebuild it from the stage0.
-
-On first use smith unpacks clang's builtin headers and runtimes to `~/.local/share/smith`. It never removes that folder.
-
-## A two-minute tour
-
-### A new project
-
-```
-$ smith new hello
-smith new: hello
-  created  main.smith
-  created  primes.smith
-  created  tests/primes_test.smith
-  ...
-smith new: hello: 10 created, 0 kept
-  git: created a repository on main with one commit
-$ cd hello && smith run
-[1/6] smith-cc --smith-header primes.smith -o .smith/include/primes.h
-...
-the first 5 primes add up to 28
-hello from hello
-```
-
-`smith new` writes a starting point you own, in `.smith` (`--language c` writes C): `main.smith`, the module
-`primes.smith` (which `main.smith` and the test import), a test in `tests/`, `.gitignore`, an `AGENTS.md` and a
-`knowledge/` folder, a skill for the project's docs, and `.claude/settings.json`. It builds once and commits on `main`.
-There is no build file and no config file: smith builds by convention, and uses its own style and checks until you dump
-them (`smith fmt --dump-config > .clang-format`, `smith lint --dump-config > .clang-tidy`, `smith build --dump-config`
-for the build file). The project is C2y with strict warnings, and has three builds: `smith build` (debug, with
-AddressSanitizer and UBSan), `smith build release` (optimized, assertions on) and `smith build fast` (assertions off).
-
-### Test, check, format, lint
-
-`smith test` runs the tests in the files under `tests/`, and a new project has some. A test is a plain function; this
-is `tests/primes_test.smith`, a module whose tests are exported:
-
-```c
-module primes_test;
-
-import primes;
-import smith::test;
-
-export void test_the_first_five_primes_add_up_to_28(void) {
-    test::check_equal(primes::sum(5), 28);
+export i32 largest(i32 xs[:]) {
+    contract::requires(countof(xs) > 0 && countof(xs) <= 8);
+    i32 best = xs[0];
+    for (usize i = 1; i < countof(xs); i++)
+        best = xs[i] > best ? xs[i] : best;
+    return best;
 }
-```
 
-A test's signature says what it may touch: `(void)` is pure, `(random::Key key)` is a property test, and `(io::Io *io)`
-gets a real io in a scratch folder of its own.
-
-```
-$ smith test
-[1/11] find the tests
-...
-[11/11] .smith/program --run fffffffffffe6c14 --input build/tests --arg build/tests --description test
-
-slowest:
-      0.02 s  the_first_five_primes_add_up_to_28
-      0.00 s  no_primes_add_up_to_nothing
-      0.00 s  report_prints_the_sum
-      0.00 s  six_primes_are_one_too_many
-
-4 passed, 0 failed in 0.08 s
-```
-
-`smith check` is everything that must pass before a commit: formatting, lint, the docs check and the tests, and whatever
-else the project adds. It prints the tests' result and, last, clang-tidy's progress:
-
-```
-$ smith check
-[1/4] .smith/program --run fffffffffffe6c14 --input build/tests --arg build/tests --description test
-...
-2 passed, 0 failed in 0.08 s
-smith docs: 1 concepts, 0 problems
-[4/4] smith lint --quiet -p . main.smith primes.smith tests/primes_test.smith
-...
-```
-
-`smith fmt` rewrites the sources to `.clang-format`, and `smith lint` runs clang-tidy with `.clang-tidy`. With no
-arguments they run the project's tasks. With arguments they are clang-format and clang-tidy, unchanged:
-`smith fmt -i main.c`.
-
-### Debug, prove, docs
-
-`smith dbg` is lldb, from smith's own LLVM:
-
-```
-$ smith dbg -b -o 'b primes.smith:12' -o run -o 'frame variable' -o kill build/debug/hello
-Breakpoint 1: where = hello`primes::sum + 436 at primes.smith:12:24, address = 0x0000000100000aec
-Process 46027 stopped
-* thread #1, queue = 'com.apple.main-thread', stop reason = breakpoint 1.1
--> 12  	        total += first[i];
-(usize) count = 5
-(const i32[5]) first = ([0] = 2, [1] = 3, [2] = 5, [3] = 7, [4] = 11)
-(i32) total = 0
-(usize) i = 0
-```
-
-`smith dap` is lldb-dap for editors. Debugging needs Developer mode on the Mac; see the
-[smith-debug skill](.agents/skills/smith-debug/SKILL.md).
-
-`smith prove` proves contracts, and until you write a contract there is nothing to prove:
-
-```
-$ smith prove
-smith: prove: nothing to prove: no function with smith_requires, smith_ensures or smith_invariant
-```
-
-A contract is a call, `smith_requires`, `smith_ensures` or `smith_invariant`, that stops
-the program when false, like `assert`:
-
-```c
-#include <smith/contract.h>
-
-int32_t clamp(int32_t x, int32_t low, int32_t high) {
-    smith_requires(low <= high);
-    int32_t result = x < low ? low : x > high ? high : x;
-    smith_ensures(low <= result && result <= high);
+export typeof(x) clamp(auto x, typeof(x) low, typeof(x) high) {
+    contract::requires(low <= high);
+    typeof(x) result = x < low ? low : x > high ? high : x;
+    contract::ensures(low <= result && result <= high);
     return result;
 }
 ```
 
-```
-$ smith prove clamp.c -- -I .smith/include
-1 proved, 0 failed in 0.02 s
-```
-
-The prover checks the LLVM IR with Alive2, Bitwuzla and Z3. It also proves that nothing in the function is undefined
-behaviour. Each function gets about 10 seconds. `smith prove` with no arguments proves every function with a contract; a function at
-the program's edge (io, inline assembly, a library) starts with `smith_trusted();`, which makes its callers use its
-contract and lists it as trusted, never as proved.
-
-`smith docs` checks a project's `AGENTS.md`, `knowledge/` and `.agents/skills/` against one format:
-
-```
-$ smith docs .
-smith docs: 1 concepts, 0 problems
-```
-
-`smith check` runs it for you in a project made by `smith new`.
-
-## `.smith` in one example
-
-```c
-// foo.smith
-module foo;
-
-export u32 twice(u32 x) {
-    return x * 2;
-}
-```
-
-```c
+```smith project=first
 // main.smith
-import <stdio.h>;
-import foo;
+module main;
 
-int main(void) {
-    u32 n = foo::twice(21);
-    c::printf("twice 21 is %u\n", n);
+import smith::format;
+import smith::io;
+import stats;
+
+i32 main(io::Io *io) {
+    i32 raw[] = {-3, 1, 9, 4};
+    i32 readings[:] = raw;
+    i32 top = stats::largest(readings[1:]); // a cut: three elements, shared with raw
+    format::print(&io->console, "largest ", top, ", clamped ", stats::clamp(top, 0, 5), "\n");
     return 0;
 }
 ```
 
-```
-$ smith cc main.smith foo.smith && ./a.out
-twice 21 is 42
-```
-
-- `import <stdio.h>;` includes a header and puts its names under `c::`, so you write `c::printf`. A bare `printf` is an
-  error that says to write `c::printf`.
-- `u32` and the other sized types (`u8` to `u64`, `i8` to `i64`, `usize`, `isize`, `f16`, `f32`, `f64`) are typedefs of
-  the standard types.
-- `module foo;` makes the file a module. `export` makes a declaration public; everything else in the module is private.
-  `foo::twice` reaches a member with `::`.
-
-Plain C in a `.smith` file means what it means in a `.c` file. The full language is in
-[knowledge/smith-language.md](knowledge/smith-language.md).
-
-## Editors
-
-**Neovim 0.12.** This repository is the plugin. It adds the `.smith` file type, tree-sitter highlighting and the `smith`
-language server and debug adapter configs. It enables nothing you did not ask for.
-
-```lua
-vim.pack.add({ "git@github.com:adam-r-kowalski/smith" })
-vim.lsp.enable("smith")
+```sh
+smith run      # builds and runs it: largest 9, clamped 5
+smith prove    # proves every contract for every input: ok
 ```
 
-See [knowledge/neovim.md](knowledge/neovim.md).
-
-**Claude Code.** The plugin brings smith's skills and declares `smith lsp` for C, C++, Objective-C and `.smith` files.
-`smith new` writes a `.claude/settings.json` that enables it. To add it by hand:
-
-```
-/plugin marketplace add adam-r-kowalski/smith
-/plugin install smith@smith
+```output project=first
+largest 9, clamped 5
 ```
 
-Start with the [smith skill](.agents/skills/smith/SKILL.md), the map. `smith` must be on the `PATH` of the shell that
-starts Claude Code.
+## What Smith gives you that C doesn't
 
-**Other editors.** Run `smith lsp` as the language server and `smith dap` as the debug adapter. Do not pass
-`--query-driver` to `smith lsp`. VS Code, Helix, Zed and Emacs settings are in the
-[smith-check](.agents/skills/smith-check/SKILL.md) and [smith-debug](.agents/skills/smith-debug/SKILL.md) skills.
+### Modules, not headers
 
-## The libraries
+```c
+// wheel.h: a header, an include guard, and every name in the program is global
+#ifndef WHEEL_H
+#define WHEEL_H
+unsigned spokes(unsigned turns);
+#endif
+```
 
-They are plain C with standard types, no malloc, and no global state. A project compiles the ones it wants from source
-with its own flags (`smith_library` in `build.c`). A library joins smith when two projects need the same thing.
+```smith
+module wheel;
 
-- [arena](.agents/skills/smith-arena/SKILL.md): memory without malloc.
-- [io](.agents/skills/smith-io/SKILL.md): the one way a program touches the world: console, files, clock, processes, the
-  network. A fake io is there for tests.
-- [test](.agents/skills/smith-test/SKILL.md): `smith::test`, checks that print both values, parallel workers, property tests on keys, tests with an io of their own.
-- [contract](.agents/skills/smith-contract/SKILL.md): `smith_requires`, `smith_ensures`, `smith_invariant` and `smith_assert`.
-- [autodiff](.agents/skills/smith-autodiff/SKILL.md): Enzyme's `reverse` and `forward` derivatives of a function, run when the program is linked.
-- [math](.agents/skills/smith-math/SKILL.md): `is_finite`, `sqrt`, `abs`, and the largest integer, infinity and NaN of a type.
-- [random](.agents/skills/smith-random/SKILL.md): random numbers from keys, so a run can be replayed.
-- [text](.agents/skills/smith-text/SKILL.md): lines, words and numbers in memory.
-- [json](.agents/skills/smith-json/SKILL.md): a pull parser, an arena tree and a bounded writer.
+static u32 twice(u32 n) {
+    return n * 2;
+} // private: no other file can name it
 
-`<smith/http.h>`, a small HTTPS client for downloading a file, and `<smith/trace.h>`, stack traces for failure reports,
-are in `include/smith` and have no skill of their own.
+export u32 spokes(u32 turns) {
+    return twice(turns) + 1;
+} // callers write wheel::spokes(3)
+```
+
+`import wheel;` brings the module in, and C's own headers come in as `import <math.h>;` with their names under `c::`.
+[smith-lang-modules](.agents/skills/smith-lang-modules/SKILL.md), [smith-lang-c-interop](.agents/skills/smith-lang-c-interop/SKILL.md).
+
+### Sized types
+
+```smith
+module pixel;
+
+export u32 pack(u8 r, u8 g, u8 b) {
+    return (u32)r << 16 | (u32)g << 8 | b;
+}
+```
+
+`u8` to `u64`, `i8` to `i64`, `usize`, `isize`, `f16`, `f32` and `f64` need no include.
+[smith-lang-sized-types](.agents/skills/smith-lang-sized-types/SKILL.md).
+
+### Slices: a pointer that knows its length
+
+```c
+#include <stddef.h>
+int sum(const int *xs, size_t n); // the length is a second argument, and nothing checks it
+```
+
+```smith project=slices run
+module main;
+
+import smith::format;
+import smith::io;
+
+i32 sum(const i32 xs[:]) {
+    i32 total = 0;
+    for (usize i = 0; i < countof(xs); i++)
+        total += xs[i]; // xs[i] is checked: a bad index stops with a report
+    return total;
+}
+
+i32 main(io::Io *io) {
+    i32 raw[] = {1, 2, 3, 4, 5};
+    i32 all[:] = raw;
+    format::print(&io->console, "all ", sum(all), ", middle ", sum(all[1:4]), "\n");
+    return 0;
+}
+```
+
+```output project=slices
+all 15, middle 9
+```
+
+A cut `xs[a:b]` is a view of the same elements. `const i32 xs[:]` makes the elements read-only, and `u8 dst[restrict :]`
+is C's `restrict`. A parameter written `i32 xs[4]` keeps its 4, where C throws it away:
+
+```smith
+module shape;
+
+export i32 corner(i32 xs[4]) {
+    return xs[3]; // a call with an array of another size is an error
+}
+```
+
+[smith-lang-arrays](.agents/skills/smith-lang-arrays/SKILL.md),
+[smith-lang-slice-qualifiers](.agents/skills/smith-lang-slice-qualifiers/SKILL.md).
+
+A pointer to a slice lets a function advance the caller's, as a cursor does:
+
+```smith
+module cursor;
+
+export void skip(const char (*text)[:], usize n) {
+    *text = (*text)[n:]; // advances the caller's slice
+}
+```
+
+[smith-lang-slice-pointers](.agents/skills/smith-lang-slice-pointers/SKILL.md).
+
+### No preprocessor
+
+```c
+#define COUNT 4
+#if defined(__aarch64__)
+#define LANES 4
+#else
+#define LANES 2
+#endif
+```
+
+```smith
+module platform;
+
+import target;
+
+constexpr usize count = 4; // `#define count 4` in a .smith file is a lint error
+constexpr usize lanes = target::arch == target::aarch64 ? 4 : 2;
+
+u32 lane_bytes(void) {
+    if constexpr (target::arch == target::aarch64) { // the branch not taken is dropped
+        return 16;
+    } else {
+        return 8;
+    }
+}
+```
+
+[smith-lang-target](.agents/skills/smith-lang-target/SKILL.md).
+
+### Compile-time programming
+
+A function runs in the compiler, and its result is a constant or a table baked into the binary:
+
+```smith
+module tables;
+
+static u32 triangle(u32 n) {
+    return n * (n + 1) / 2;
+}
+constexpr u32 t100 = triangle(100);
+static_assert(t100 == 5050);
+
+struct Table {
+    u32 v[8];
+};
+static struct Table squares(void) {
+    struct Table t = {};
+    for (u32 i = 0; i < 8; i++)
+        t.v[i] = i * i;
+    return t;
+}
+constexpr struct Table table = squares(); // a lookup table, baked into the binary
+```
+
+[smith-lang-constexpr](.agents/skills/smith-lang-constexpr/SKILL.md).
+
+One function prints any struct, read at compile time:
+
+```smith project=reflect run
+module main;
+
+import smith::format;
+import smith::io;
+
+struct Particle {
+    f64 mass;
+    i32 id;
+    f64 charge;
+};
+
+void show(constexpr type T, T *x, io::Console *out) {
+    for constexpr (usize i = 0; i < countof(fields(T)); i++)
+        format::print(out, fields(T)[i].name, " = ", x->[fields(T)[i]], "\n");
+}
+
+i32 main(io::Io *io) {
+    struct Particle p = {1.5, 7, -0.25};
+    show(struct Particle, &p, &io->console);
+    return 0;
+}
+```
+
+```output project=reflect
+mass = 1.5
+id = 7
+charge = -0.25
+```
+
+[smith-lang-reflection](.agents/skills/smith-lang-reflection/SKILL.md).
+
+A pack is the arguments of a call, each with its own type; `if constexpr` picks the code per type, and `twice(args)...` writes one copy per argument:
+
+```smith project=pack run
+// meta.smith
+module meta;
+
+export typeof(x) twice(auto x) {
+    return x + x;
+}
+
+export f64 mean(auto... args) {
+    f64 total = 0;
+    for constexpr (usize i = 0; i < countof(args); i++) {
+        if constexpr (is_integer(typeof(args[i])) || is_float(typeof(args[i]))) {
+            total += (f64)args[i];
+        } else {
+            static_assert(false, "mean: no rule for this type");
+        }
+    }
+    return total / (f64)countof(args);
+}
+
+export f64 total_of_doubles(auto... args) {
+    f64 doubled[] = {(f64)twice(args)...}; // one element per argument
+    f64 total = 0;
+    for (usize i = 0; i < countof(args); i++)
+        total += doubled[i];
+    return total;
+}
+```
+
+```smith project=pack
+// main.smith
+module main;
+
+import meta;
+import smith::format;
+import smith::io;
+
+i32 main(io::Io *io) {
+    format::print(&io->console, meta::mean(1, 2.5f, (i64)3, 3.5), "\n");
+    format::print(&io->console, meta::total_of_doubles(1, 2.5f, (i64)3), "\n");
+    return 0;
+}
+```
+
+```output project=pack
+2.5
+13
+```
+
+A type with no rule is an error at the call that passed it, not a crash at run time:
+
+```smith project=packerror base=pack rejects
+module main;
+
+import meta;
+
+i32 main(void) {
+    return (i32)meta::mean(1, "two");
+}
+```
+
+```output project=packerror
+static assertion failed: mean: no rule for this type
+in instance meta::mean(int, char *), requested from here
+```
+
+[smith-lang-rest](.agents/skills/smith-lang-rest/SKILL.md), [smith-lang-generics](.agents/skills/smith-lang-generics/SKILL.md).
+
+Types are values too, so a function over types runs in the compiler like any other:
+
+```smith
+module widths;
+
+static type wider(type a, type b) {
+    return sizeof(a) >= sizeof(b) ? a : b; // runs in the compiler
+}
+
+constexpr type big = wider(u8, i64);
+static_assert(sizeof(big) == 8);
+```
+
+[smith-lang-type-values](.agents/skills/smith-lang-type-values/SKILL.md).
+
+### Contracts, and a proof that refuses a call
+
+A contract is a call that stops the program when false, and `smith prove` proves it for every input, as the first program
+shows. It also proves what C never checks: here `copy` takes `restrict` slices, and the call in `shift_in_place` hands it
+two that overlap.
+
+```smith project=bytes refuse
+module bytes;
+
+import smith::contract;
+
+export void copy(u8 dst[restrict:], const u8 src[const restrict:]) {
+    contract::requires(countof(dst) >= countof(src) && countof(src) <= 8);
+    for (usize i = 0; i < countof(src); i++)
+        dst[i] = src[i];
+}
+
+export void shift_in_place(u8 buf[:]) {
+    contract::requires(countof(buf) == 5);
+    copy(buf[1:5], buf[0:4]); // refused at this call
+}
+```
+
+```output project=bytes
+FAIL  bytes::shift_in_place
+the call of bytes::copy passes `dst` (restrict) and `src` slices or ranges that may overlap
+```
+
+<!--
+```smith project=bytes
+module main;
+
+import bytes;
+
+i32 main(void) {
+    u8 raw[5] = {1, 2, 3, 4, 5};
+    bytes::shift_in_place(raw);
+    return 0;
+}
+```
+-->
+
+[smith-contract](.agents/skills/smith-contract/SKILL.md), [smith-prove](.agents/skills/smith-prove/SKILL.md).
+
+### Tests whose signature says what they touch
+
+```smith project=first
+// tests/stats_test.smith
+module stats_test;
+
+import smith::random;
+import smith::test;
+import stats;
+
+export void test_clamp_cuts_a_big_value(void) { // (void): pure, it can touch nothing
+    test::check_equal(stats::clamp(9, 0, 5), 5);
+}
+
+export void test_clamp_always_lands_inside(random::Key key) { // a property test: 100 random keys
+    i32 x = (i32)random::uniform_int64_sample(key, (random::UniformInt64){.low = -1000, .high = 1000});
+    i32 result = stats::clamp(x, 0, 5);
+    test::check(0 <= result && result <= 5);
+}
+```
+
+An `(io::Io *io)` test gets a real io in a scratch folder of its own. [smith-test](.agents/skills/smith-test/SKILL.md).
+
+### Capabilities and formatting
+
+A program touches the world only through what `main` passes down, so a function's signature says whether it prints.
+`format` writes its pieces by their types, with no format string to disagree with them.
+
+```smith
+module report;
+
+import smith::format;
+import smith::io;
+
+export void report(io::Console *out, i32 top) {
+    format::print(out, "largest ", top, "\n");
+} // given a console
+export i32 twice(i32 x) {
+    return x * 2;
+} // nothing to print with
+```
+
+[smith-io](.agents/skills/smith-io/SKILL.md), [smith-format](.agents/skills/smith-format/SKILL.md).
+
+### Gradients, no framework
+
+```smith project=gradient run
+module main;
+
+import smith::autodiff;
+import smith::format;
+import smith::io;
+
+struct Line {
+    f64 m;
+    f64 b;
+};
+
+f64 loss(struct Line *line, f64 x, f64 y) {
+    f64 error = line->m * x + line->b - y;
+    return error * error;
+}
+
+i32 main(io::Io *io) {
+    struct Line line = {2, 1};
+    struct Line g = autodiff::gradient(&io->arena, loss, &line, 3.0, 5.0);
+    format::print(&io->console, "d/dm = ", g.m, ", d/db = ", g.b, "\n");
+    return 0;
+}
+```
+
+```output project=gradient
+d/dm = 12, d/db = 4
+```
+
+[smith-autodiff](.agents/skills/smith-autodiff/SKILL.md).
+
+## Port your C project, step by step
+
+Every step is optional and leaves the project building. The project here is a Makefile, `main.c`, `greet.c` and `greet.h`.
+
+<!--
+```make project=port file=Makefile port
+CC ?= cc
+CFLAGS ?= -O2 -Wall
+
+app: main.o greet.o
+	$(CC) $(CFLAGS) -o app main.o greet.o
+
+%.o: %.c greet.h
+	$(CC) $(CFLAGS) -c $< -o $@
+```
+
+```c project=port file=greet.h
+#ifndef GREET_H
+#define GREET_H
+void greet(const char *name);
+#endif
+```
+
+```c project=port file=greet.c
+#include <stdio.h>
+#include "greet.h"
+
+void greet(const char *name) { printf("hello, %s\n", name); }
+```
+
+```c project=port file=main.c
+#include "greet.h"
+
+int main(void) {
+    greet("smith");
+    return 0;
+}
+```
+-->
+
+1. **Compile with smith**, nothing else changes: `CC=smith-cc make`. [smith-adopt](.agents/skills/smith-adopt/SKILL.md)
+2. **Translate the Makefile**: `smith build --dump-config > build.c`, then `smith build`. Read the top of `build.c` for what
+   it could not translate. [smith-adopt-build](.agents/skills/smith-adopt-build/SKILL.md)
+3. **Check**: `smith check` is formatting, lint, the docs check, the tests and the proofs, in one command.
+   [smith-check](.agents/skills/smith-check/SKILL.md)
+4. **Rename one file**: `git mv greet.c greet.smith`. A `.smith` file with no `module` line means what it means in C.
+5. **Make it a module**: `greet.h` and `greet.c` become one file, and callers `import greet;`.
+   [smith-adopt-prove](.agents/skills/smith-adopt-prove/SKILL.md)
+
+```smith project=ported run
+module greet;
+
+import smith::format;
+import smith::io;
+
+export void greet(io::Console *out, const char *name) {
+    format::print(out, "hello, ", name, "\n");
+}
+```
+
+```output project=ported
+hello, smith
+```
+
+<!--
+```smith project=ported
+module main;
+
+import greet;
+import smith::io;
+
+i32 main(io::Io *io) {
+    greet::greet(&io->console, "smith");
+    return 0;
+}
+```
+-->
+
+6. **Then, when each helps**: slices instead of pointer and length, contracts, and `smith prove`. When every file is a
+   `.smith`, delete `build.c`: `main.smith` at the root is built by convention.
+
+## The toolchain
+
+| Verb | What it does | Skill |
+|---|---|---|
+| `smith new` | writes a project: a program, a test and what agents need | [smith-new](.agents/skills/smith-new/SKILL.md) |
+| `smith run`, `smith test` | run the program, or its tests | [smith-run-test](.agents/skills/smith-run-test/SKILL.md) |
+| `smith build` | builds by convention, or runs `build.c` / `build.smith` | [smith-build](.agents/skills/smith-build/SKILL.md) |
+| `smith check` | formatting, lint, docs, tests and proofs before a commit | [smith-check](.agents/skills/smith-check/SKILL.md) |
+| `smith fmt`, `smith lint` | clang-format and clang-tidy, with smith's defaults | [smith-check](.agents/skills/smith-check/SKILL.md) |
+| `smith prove` | proves contracts with Alive2, Bitwuzla and Z3 | [smith-prove](.agents/skills/smith-prove/SKILL.md) |
+| `smith cc`, `smith c++` | clang, in smith's process; `smith-cc` is the link for `CC=` | [smith-cc](.agents/skills/smith-cc/SKILL.md) |
+| `smith dbg`, `smith dap` | lldb, and lldb-dap for editors | [smith-debug](.agents/skills/smith-debug/SKILL.md) |
+| `smith mcp` | the debugger as tools for an agent | [smith-mcp](.agents/skills/smith-mcp/SKILL.md) |
+| `smith lsp` | clangd, for C, C++ and `.smith` | [smith-lsp](.agents/skills/smith-lsp/SKILL.md) |
+| `smith docs` | checks `AGENTS.md`, `knowledge/` and the skills | [smith-docs](.agents/skills/smith-docs/SKILL.md) |
+| `smith fetch`, `smith cache` | packages, by URL and hash, and the caches | [smith-packages](.agents/skills/smith-packages/SKILL.md) |
+
+The libraries are [arena](.agents/skills/smith-arena/SKILL.md), [io](.agents/skills/smith-io/SKILL.md),
+[format](.agents/skills/smith-format/SKILL.md), [text](.agents/skills/smith-text/SKILL.md),
+[json](.agents/skills/smith-json/SKILL.md), [random](.agents/skills/smith-random/SKILL.md),
+[math](.agents/skills/smith-math/SKILL.md), [test](.agents/skills/smith-test/SKILL.md),
+[contract](.agents/skills/smith-contract/SKILL.md) and [autodiff](.agents/skills/smith-autodiff/SKILL.md): no malloc, no
+global state, and a project compiles the ones it uses from source. Start with the [smith skill](.agents/skills/smith/SKILL.md),
+the map.
+
+## Install
+
+smith is private and pre-release, and runs on macOS on Apple silicon only. You need Xcode or the Command Line Tools, `git`
+and `gh` signed in. A clone builds with the release of its newest ancestor commit, which `scripts/stage0.sh` downloads
+(`stage0-<commit>`, checksum checked):
+
+```sh
+git clone git@github.com:adam-r-kowalski/smith && cd smith
+sh scripts/stage0.sh llvm      # builds LLVM 23.1.3 (r6) into ~/.cache/smith/llvm, about 9 minutes, once
+sh scripts/stage0.sh install   # builds the full smith and installs smith, smith-cc and smith-c++ in ~/.local/bin
+```
+
+Put `~/.local/bin` on your `PATH`. To update, pull and run `smith build install`. smith unpacks clang's builtin headers to
+`~/.local/share/smith` on first use and never removes them.
+
+**Editors.** Claude Code: `/plugin marketplace add adam-r-kowalski/smith` then `/plugin install smith@smith` brings the skills
+and `smith lsp`. Neovim 0.12: this repository is the plugin ([knowledge/neovim.md](knowledge/neovim.md)). Any editor: run
+`smith lsp` as the language server and `smith dap` as the debug adapter.
 
 ## Where to read more
 
-- [AGENTS.md](AGENTS.md): the decisions, one line each.
-- [knowledge/](knowledge/index.md): what smith is, one concept per file: [the build file](knowledge/build-file.md),
-  [the language](knowledge/smith-language.md), [Neovim](knowledge/neovim.md) and [the debugger](knowledge/debugger.md).
-- [.agents/skills/](.agents/skills/): short guides to each verb and library.
-- [GitHub issues](https://github.com/adam-r-kowalski/smith/issues): everything planned, and the only place plans live.
+[AGENTS.md](AGENTS.md) holds the decisions, one line each; [knowledge/](knowledge/index.md) what smith is, one concept per
+file; [.agents/skills/](.agents/skills/) how to do each thing; the [GitHub issues](https://github.com/adam-r-kowalski/smith/issues)
+everything planned, and the only place plans live.
