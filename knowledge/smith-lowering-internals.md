@@ -65,6 +65,11 @@ tags: [lowering, internals]
   tokens (`const char *`, a typedef, `struct S`, the sized types' own names, pointers) is asked with `type_query`: its
   canonical spelling (typedefs looked through, the identity of a generic's instance), size, alignment, and whether it
   is an integer, a float, signed, a pointer, a bool, an enum or a record (`SMITH_LANG_ASK='?const char *,?Packet'`).
+  `expr_type` and `value_query` run the parser's own `ParseTypeFromString` from inside the hook, that is inside the
+  parser's `PP.Lex` of the token after one it has just consumed, and that leaves the parser's `PrevTokLocation` at a
+  token of the question: a `}` read at that moment ended its function at the token asked about, and clangd's token
+  buffer found nothing in the next function (hover, references, highlights: issue #133, a `[` of a slice struct's
+  `count[1]` asked as a tuple subscript). So the lowering never asks about a token it made itself (`synthetic`).
   An expression is evaluated with `value_query` (issue #98): the tokens (a generic's `T` and a `for constexpr` variable
   already replaced) are read as `__typeof__(expr)` in the parser's scope, as `expr_type` does, and the expression is
   evaluated in a constant context, so a C function runs as in `constexpr` (the target's `sizeof(long)`, issue #97). The
