@@ -2422,8 +2422,15 @@ static void smith_lang_slice_cover(SmithToken *tokens, size_t count) {
         if (after != nullptr && smith_lang_slice_real(after) &&
             (next == nullptr || after->location + after->length < next->location)) {
             place = after->location + after->length;
-        } else if (next != nullptr) {
+        } else if (next != nullptr) { // the run leads: its first token is at the real token, the rest just before it
             place = next->location > 0 ? next->location - 1 : 0;
+            for (size_t i = at; i < end; i++) {
+                if (!tokens[i].copy && tokens[i].instance == 0 && !tokens[i].foreign) {
+                    tokens[i].location = i == at ? next->location : place;
+                }
+            }
+            at = end;
+            continue;
         } else {
             at = end;
             continue;
