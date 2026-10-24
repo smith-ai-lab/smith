@@ -569,10 +569,52 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
     return program.step;
 }
 
+// The modules of tests/*.smith, for lint: each one's header (.smith/include/<name>.h, which the tests that import
+// `scratch` read) and an object nobody asks for, both made by the smith under test (the one this build links: a test
+// uses a feature at once). They are plain steps that wait for the smith-cc link, so a fresh build folder's first build
+// makes them as its second does. smith_object would put each module's header in the check that every compile of a
+// module waits for, and the libraries' compiles, which that link waits for, would then wait for these headers: a
+// cycle. Returns what lint needs built (smith_needs reads the inputs of a source's compile): the headers and smith-cc.
+static const char *const *build_test_modules(SmithBuild *b, const BuildConfig *config, const char *folder) {
+    const char *smith_cc = smith_fmt(b, "%s/smith-cc", folder);
+    const char *const *flags = build_smith_flags(b, config);
+    const char *const *tests = smith_glob(b, smith_list(b, "tests/*.smith", nullptr));
+    const char *const *needs = smith_list(b, smith_cc, nullptr);
+    for (size_t i = 0; tests[i] != nullptr; i++) {
+        const char *name = smith_replace_extension(b, tests[i] + strlen("tests/"), "");
+        const char *header = smith_fmt(b, ".smith/include/%s.h", name);
+        const char *object = smith_fmt(b, "%s/lint/%zu.o", folder, i);
+        SmithStep write = {
+            .command = smith_cat(b, smith_list(b, smith_cc, "--smith-header", tests[i], "-o", header, nullptr), flags,
+                                 nullptr),
+            .inputs = smith_list(b, tests[i], nullptr),
+            .implicit_inputs = smith_list(b, smith_cc, nullptr),
+            .outputs = smith_list(b, header, nullptr),
+            .description = smith_fmt(b, "header %s", tests[i]),
+            .restat = true, // written only when its bytes change
+        };
+        smith_step(b, &write);
+        SmithStep compile = {
+            .command = smith_cat(b, smith_list(b, smith_cc, nullptr), flags,
+                                 smith_list(b, "-I", ".smith/include", "-c", tests[i], "-o", object, nullptr), nullptr),
+            .inputs = smith_list(b, tests[i], nullptr),
+            .implicit_inputs = smith_list(b, smith_cc, header, nullptr),
+            .outputs = smith_list(b, object, nullptr),
+            .description = smith_fmt(b, "compile %s", tests[i]),
+        };
+        smith_step(b, &compile);
+        smith_compile_command(b, smith_cc, tests[i],
+                              smith_cat(b, flags, smith_list(b, "-I", ".smith/include", nullptr), nullptr));
+        needs = smith_cat(b, needs, write.outputs, nullptr);
+    }
+    return needs;
+}
+
 // The other two C files are not part of the program, but compiling them in a plain build checks that they build, and
 // gives the editor their flags in compile_commands.json. They take the flags lint gives them: the runtime reads
 // <smith/build.h>, and the stub is each stub compiler's source, named by -DNAME.
-static void build_other_objects(SmithBuild *b, const BuildConfig *config, const char *folder) {
+static void build_other_objects(SmithBuild *b, const BuildConfig *config, const char *folder,
+                                const char *const *lint_needs) {
     SmithObject runtime = {
         .compiler = config->cc,
         .source = "runtime/build_runtime.c",
@@ -585,6 +627,7 @@ static void build_other_objects(SmithBuild *b, const BuildConfig *config, const 
         .source = "tests/stub.c",
         .output = smith_fmt(b, "%s/stub.o", folder),
         .flags = smith_cat(b, config->cflags, (const char *[]){"-DNAME=\"stub\"", nullptr}, nullptr),
+        .implicit_inputs = lint_needs, // not read by the compile: `smith lint` builds what a source's compile waits for
     };
     smith_object(b, &stub);
     smith_default(b, smith_cat(b, runtime.step.outputs, stub.step.outputs, nullptr));
@@ -616,21 +659,6 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config, cons
     smith_compile_command(b, config->cc, "lib/smith/test.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/text.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/build.smith", smith_flags);
-    // The units runner's files are built in the project of tests/units (by the smith under test); here they are objects
-    // nobody asks for, so that their modules' headers are written (by the smith under test too) and lint reads them.
-    // (A fresh clone has no such smith yet: its first build leaves them out, since the libraries' compiles wait for
-    // every header and these headers would wait for the smith those compiles make.)
-    const char *const *tests = access(smith_fmt(b, "%s/smith-cc", folder), X_OK) == 0
-                                   ? smith_glob(b, smith_list(b, "tests/*.smith", nullptr))
-                                   : smith_list(b, nullptr);
-    SmithObject units[64] = {};
-    for (size_t i = 0; tests[i] != nullptr && i < _Countof(units); i++) {
-        units[i] = (SmithObject){.compiler = smith_fmt(b, "%s/smith-cc", folder),
-                                 .source = tests[i],
-                                 .output = smith_fmt(b, "%s/lint/%zu.o", folder, i),
-                                 .flags = smith_flags};
-        smith_object(b, &units[i]);
-    }
     // The protocol code's hand-written base and its tests' support; the generated files are not linted.
     smith_compile_command(b, config->cc, "runtime/protocol/protocol.c", flags);
     smith_compile_command(b, config->cc, "tests/protocol/protocol_support.c",
@@ -1131,7 +1159,7 @@ void build(SmithBuild *b) {
         smith_when(b, werror[0] != '\0', (const char *[]){werror, nullptr}), nullptr);
 
     SmithStep smith = build_programs(b, &config, folder);
-    build_other_objects(b, &config, folder);
+    build_other_objects(b, &config, folder, build_test_modules(b, &config, folder));
     build_unbuilt_sources(b, &config, folder);
     build_protocol(b, &config, folder);
     config.binary = smith.outputs[0];
