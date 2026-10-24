@@ -43,6 +43,7 @@ static void smith_lang_hold(SmithLang *lang, const SmithToken *token, SmithLangR
     held->space_before = token->space_before;
     held->expand = token->expand;
     held->synthetic = token->synthetic;
+    held->hoisted = false;
     held->via = token->via;
     held->after_member = context->after_member;
     held->after_tag = context->after_tag;
@@ -386,6 +387,67 @@ static void smith_lang_array_token(SmithLang *lang, const SmithHost *host, const
     }
 }
 
+static bool smith_lang_slice_defined(const SmithLang *lang, const char *tag);
+
+// The end of the braces that open at the held token `open`, or `head_count` when they do not close.
+static size_t smith_lang_head_close_brace(const SmithLang *lang, size_t open) {
+    size_t depth = 0;
+    for (size_t at = open; at < lang->head_count; at++) { // to the matching }
+        const SmithLangHeld *held = &lang->head[at];
+        const char *text = smith_lang_scratch_str(held->text);
+        if (held->kind != SmithTokenKind_Punctuator || held->text.length != 1) continue;
+        depth += text[0] == '{' ? 1 : 0;
+        if (text[0] == '}' && --depth == 0) return at;
+    }
+    return lang->head_count;
+}
+
+// Whether the held tokens at `at` begin the definition of a slice's struct in a parameter list: `struct smith_array_...
+// {`, all made by the lowering.
+static bool smith_lang_head_slice_struct(const SmithLang *lang, size_t at) {
+    if (at + 2 >= lang->head_count || lang->head[at].paren_depth == 0) return false;
+    const SmithLangHeld *keyword = &lang->head[at];
+    const SmithLangHeld *tag = &lang->head[at + 1];
+    const SmithLangHeld *brace = &lang->head[at + 2];
+    const char *name = smith_lang_scratch_str(tag->text);
+    return keyword->synthetic && tag->synthetic && brace->synthetic &&
+           smith_lang_equals(smith_lang_scratch_str(keyword->text), keyword->text.length, "struct") &&
+           tag->text.length > 12 && memcmp(name, "smith_array_", 12) == 0 &&
+           smith_lang_equals(smith_lang_scratch_str(brace->text), brace->text.length, "{");
+}
+
+// An exported function's prototype and its definition both define a slice's struct in their parameter lists: two
+// types that clang's `-fsanitize=function` then mangles through each other until the stack is gone (issue #152; the
+// same text in C crashes clang 23). The code defines each struct once at file scope, before the head, and the
+// parameter names the tag; the header keeps the definition in the prototype.
+static void smith_lang_hoist_slice_structs(SmithLang *lang, const SmithHost *host) {
+    for (size_t at = 0; at < lang->head_count; at++) { // bounded by the head
+        if (!smith_lang_head_slice_struct(lang, at)) continue;
+        size_t close = smith_lang_head_close_brace(lang, at + 2);
+        if (close >= lang->head_count) return;
+        char tag[smith_lang_name_max];
+        snprintf(tag, sizeof tag, "%.*s", (int)lang->head[at + 1].text.length,
+                 smith_lang_scratch_str(lang->head[at + 1].text));
+        bool first = !smith_lang_slice_defined(lang, tag);
+        if (first && lang->slice.tag_count < 32) {
+            snprintf(lang->slice.tags[lang->slice.tag_count++], sizeof lang->slice.tags[0], "%s", tag);
+        }
+        for (size_t i = at; i <= close; i++) { // the definition goes first, and is not written in the head again
+            if (first) {
+                SmithToken token = smith_lang_held_token(lang, &lang->head[i]);
+                token.line_start = i == at;
+                smith_lang_emit_code(lang, host, token);
+            }
+            if (i >= at + 2) lang->head[i].hoisted = true;
+        }
+        if (first) {
+            SmithToken last = smith_lang_held_token(lang, &lang->head[close]);
+            smith_lang_emit_code(lang, host, smith_lang_punct_after(";", &last));
+        }
+        at = close;
+    }
+}
+
 static void smith_lang_emit_head(SmithLang *lang, const SmithHost *host, bool header_too, bool with_static) {
     size_t static_at = with_static ? smith_lang_head_after_attributes(lang) : SIZE_MAX;
     bool function = lang->decl.is_function && !lang->decl.is_typedef;
@@ -398,6 +460,10 @@ static void smith_lang_emit_head(SmithLang *lang, const SmithHost *host, bool he
         if (smith_lang_head_dropped(lang, i)) continue;
         SmithLangHeld *held = &lang->head[i];
         SmithToken now = smith_lang_held_token(lang, held);
+        if (held->hoisted) { // the code names the tag; the header keeps the definition
+            if (header_too) smith_lang_emit_header(lang, now);
+            continue;
+        }
         if (param_bracket) {
             param_bracket = false;
             SmithLangArray size = smith_lang_array_size(&now);
@@ -746,6 +812,7 @@ static void smith_lang_flush_head(SmithLang *lang, const SmithHost *host, const 
         // after it has the tokens of the source.
         lang->emit_synthetic = smith_lang_punct(terminator, "{");
         smith_lang_body_listed_add(lang, is_main);
+        smith_lang_hoist_slice_structs(lang, host);
         smith_lang_emit_head(lang, host, true, false);
         if (!has_c_name) smith_lang_emit_label(lang, host, &like, true);
         smith_lang_emit(lang, host, smith_lang_punct_after(";", &like));

@@ -319,6 +319,7 @@ typedef struct {
     bool expand;
     bool synthetic; // the lowering made it: it has no token of its own in the source (a tuple's tag, fields and
                     // semicolons)
+    bool hoisted;   // part of a slice's struct that the code defines at file scope, before the head
     bool after_member;
     bool after_tag;
     bool typeish;
