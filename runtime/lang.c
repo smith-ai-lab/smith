@@ -358,6 +358,7 @@ typedef struct {
     uint32_t c_name_location;
     bool c_name_used; // a name this declaration introduces took it
     bool generic;     // the head has a `type T` parameter: the declaration is recorded, not compiled
+    bool result_call; // a generic's result type is a call (`slice_of(T, k) name(...)`): its `)` ends the type
     bool linked;      // a private function or variable that has a symbol: an exported generic's instance calls it
 } SmithLangDecl;
 
@@ -433,10 +434,11 @@ struct SmithLang {
     bool call_failed;                                        // a call nested too deep: the outermost is dropped
     bool recording;                                          // a generic's body is being read into smith_lang_gt
     uint32_t recording_generic;                              // its index
-    bool recording_skip;  // its head had an error: the body is read to its end and dropped
-    uint32_t skip_mark;   // where in smith_lang_gt the dropped body begins
-    bool generic_next;    // the declaration about to begin is generic
-    bool generics_loaded; // the generics of the imports are read
+    bool recording_skip;      // its head had an error: the body is read to its end and dropped
+    uint32_t skip_mark;       // where in smith_lang_gt the dropped body begins
+    bool generic_next;        // the declaration about to begin is generic
+    bool generic_result_call; // ... and its result type is a call
+    bool generics_loaded;     // the generics of the imports are read
     SmithLangText generic_modules[smith_lang_generic_modules_max]; // the modules read for their generics
     size_t generic_modules_count;
     bool gen_dump_on; // SMITH_LANG_GENERICS names a file for what the generics write (a test's view of it)

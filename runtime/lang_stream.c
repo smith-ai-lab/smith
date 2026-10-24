@@ -140,6 +140,8 @@ static void smith_lang_reset_declaration(SmithLang *lang) {
     lang->decl.checking = lang->pending_export;
     lang->decl.generic = lang->generic_next; // a generic is not written to the header: no comment or #if goes for it
     lang->generic_next = false;
+    lang->decl.result_call = lang->generic_result_call;
+    lang->generic_result_call = false;
     if (lang->pending_export) {
         lang->decl.c_name = lang->pending_c_name;
         lang->decl.c_name_location = lang->pending_c_name_location;
@@ -171,6 +173,7 @@ static void smith_lang_reset_declaration(SmithLang *lang) {
 static void smith_lang_begin_declaration(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     // A raw run that writes a header keeps the private declarations (not the one that prints the lowering).
     lang->tee = host->previous == nullptr && host->expr_type == nullptr && !lang->dump_enabled;
+    lang->generic_result_call = false;
     lang->generic_next = smith_lang_generic_candidate(lang, host, token) && smith_lang_generic_ahead(lang, host, token);
     SmithToken shown = *token;
     if (smith_lang_io_main_begin(lang, host, token) && !lang->is_module) { // a file's own functions are not static

@@ -830,3 +830,116 @@ static bool smith_lang_generic_for_constexpr(SmithLang *lang, const SmithHost *h
     smith_lang_track(lang, token, false);
     return true;
 }
+
+// ---- A result type computed from the parameters (issue #102)
+// ---------------------------------------------------------------------------------------------
+
+// Whether the head's result type is a call, `slice_of(T, countof(rest)) name(`: an ordinary function over types and
+// numbers that returns `type`, run in the compiler for each instance (one body, the type settled per instance).
+static bool smith_lang_result_call(const SmithLangGeneric *generic) {
+    uint32_t first = smith_lang_generic_skip_attributes(generic);
+    if (first + 3 > generic->name_index) return false;
+    const SmithLangGenToken *callee = smith_lang_cx_token(generic->first + first);
+    static const char *const keywords[] = {"typeof",  "typeof_unqual", "__typeof__", "_Atomic",
+                                           "_BitInt", "alignas",       "_Alignas"};
+    if (callee->kind != SmithTokenKind_Identifier || !smith_lang_gt_punct(callee + 1, "(")) return false;
+    for (size_t i = 0; i < sizeof keywords / sizeof keywords[0]; i++) { // 7 words
+        if (smith_lang_cx_word(callee, keywords[i])) return false;
+    }
+    uint32_t after = smith_lang_cx_skip_group(generic->first + first + 1, generic->first + generic->name_index);
+    return after == generic->first + generic->name_index;
+}
+
+// The result type's call as the compiler is asked about it: the instance's types for `T` (their handles),
+// `countof(rest)` as its number, the rest as it is, separated by \x1f.
+static bool smith_lang_result_text(SmithLangCx *cx, uint32_t first, uint32_t last, char *text, size_t capacity) {
+    size_t used = 0;
+    for (uint32_t at = first; at < last; at++) { // the tokens of the call
+        char piece[1024];
+        SmithLangPackRef args;
+        if (smith_lang_pack_countof_at(cx->replay, at, last, &args)) {
+            snprintf(piece, sizeof piece, "%zu", args.count);
+            at += 3;
+        } else if (smith_lang_cx_token(at)->param != 0 && smith_lang_cx_type_argument(first, last, at)) {
+            uint64_t handle = 0;
+            if (!smith_lang_cx_type_handle(cx, at, &handle)) return false;
+            snprintf(piece, sizeof piece, "%lluULL", (unsigned long long)handle);
+        } else if (!smith_lang_infer_text((SmithLangSpan){at, at + 1}, cx->instance, cx->location, piece,
+                                          sizeof piece)) {
+            return false;
+        }
+        size_t length = strlen(piece);
+        if (used + length + 2 >= capacity) return false;
+        if (used > 0) text[used++] = '\x1f';
+        memcpy(text + used, piece, length + 1);
+        used += length;
+    }
+    return true;
+}
+
+// Asks the compiler for the instance's result type and keeps its spelling in the instance. False, reported at the call
+// that asked for the instance, when the call is not a type or cannot be computed.
+static bool smith_lang_result_ask(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
+                                  SmithLangInstance *instance) {
+    static SmithLangReplay replay;
+    static SmithLangCx cx;
+    static SmithValue nodes[4];
+    static SmithValueQuery query;
+    replay = (SmithLangReplay){.instance = instance, .generic = generic};
+    cx = (SmithLangCx){
+        .lang = lang, .host = host, .instance = instance, .replay = &replay, .location = instance->call_location};
+    uint32_t first = generic->first + smith_lang_generic_skip_attributes(generic);
+    uint32_t last = generic->first + generic->name_index;
+    char tokens[1024];
+    const char *why = nullptr;
+    char call[smith_lang_message_max];
+    snprintf(call, sizeof call, "%.*s", (int)(smith_lang_cx_token(first)->length),
+             smith_lang_gt_str(smith_lang_cx_token(first)));
+    query = (SmithValueQuery){.nodes = nodes, .capacity = 4};
+    if (host->value_query == nullptr) {
+        snprintf(instance->result, sizeof instance->result, "int"); // the raw lowering has no compiler to run it
+        return true;
+    }
+    if (!smith_lang_result_text(&cx, first, last, tokens, sizeof tokens)) {
+        why = "its arguments cannot be written for the compiler";
+    } else if (!host->value_query(host->context, tokens, (uint32_t)strlen(tokens), &query)) {
+        why = query.why != nullptr ? query.why : "the compiler cannot evaluate it";
+    } else {
+        const char *spelling =
+            query.root.kind == SmithValue_Int ? smith_lang_ty_spelling_of(query.root.magnitude) : nullptr;
+        if (spelling == nullptr) {
+            why = "its value is not a type (declare it to return `type`)";
+        } else {
+            snprintf(instance->result, sizeof instance->result, "%s", spelling);
+        }
+    }
+    if (why == nullptr) return true;
+    smith_lang_error(lang, host, instance->call_location,
+                     "the result type `%s(...)` of `%s::%s` for %s is not a type the compiler can compute: %s", call,
+                     smith_lang_str(generic->module), smith_lang_str(generic->member),
+                     smith_lang_str(instance->description), why);
+    return false;
+}
+
+// The instance's result type, written where the head has its call: the tokens of the spelling.
+static void smith_lang_gen_put_result(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
+                                      const SmithLangInstance *instance, uint32_t location, uint32_t instance_id) {
+    SmithLangInstance *kept = &smith_lang_instances[instance - smith_lang_instances];
+    if (kept->result_state == 0) kept->result_state = smith_lang_result_ask(lang, host, generic, kept) ? 1 : 2;
+    const char *spelling = kept->result_state == 1 ? kept->result : "int"; // after an error, the build fails anyway
+    for (size_t at = 0; spelling[at] != 0;) {                              // words, and each other character by itself
+        if (spelling[at] == ' ') {
+            at += 1;
+            continue;
+        }
+        size_t end = at + 1;
+        bool word = isalnum((unsigned char)spelling[at]) || spelling[at] == '_';
+        while (word && (isalnum((unsigned char)spelling[end]) || spelling[end] == '_'))
+            end += 1;
+        char piece[sizeof kept->result];
+        snprintf(piece, sizeof piece, "%.*s", (int)(end - at), spelling + at);
+        smith_lang_gen_put_expanding(lang, host, word ? SmithTokenKind_Identifier : SmithTokenKind_Punctuator, piece,
+                                     location, instance_id, word);
+        at = end;
+    }
+}

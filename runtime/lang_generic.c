@@ -48,7 +48,9 @@ typedef struct {
     SmithLangText description;
     uint32_t call_location;
     uint32_t depth;
-    uint32_t parent; // 1 + the instance whose body asked for it (0: the file's own code)
+    uint32_t parent;      // 1 + the instance whose body asked for it (0: the file's own code)
+    uint8_t result_state; // a computed result type (issue #102): 0 not yet asked, 1 in `result`, 2 failed (reported)
+    char result[160];     // its spelling
 } SmithLangInstance;
 
 static SmithLangInstance smith_lang_instances[smith_lang_instances_max];
@@ -357,6 +359,14 @@ static bool smith_lang_bare_type_used(SmithLang *lang, const SmithHost *host, co
     return false;
 }
 
+// The `)` read ahead at `index` closes the result type's call, `slice_of(T, k) name(`: a name and its `(` follow
+// (a parameter list never has a name after it but an attribute, a group keyword).
+static bool smith_lang_computed_return_follows(SmithLang *lang, const SmithHost *host, size_t index) {
+    const SmithToken *name = smith_lang_peek(lang, host, index + 1, false);
+    return name->kind == SmithTokenKind_Identifier && !smith_lang_group_keyword(name) && !smith_lang_is_word(name) &&
+           smith_lang_punct(smith_lang_peek(lang, host, index + 2, false), "(");
+}
+
 // Reads ahead, to the end of the parameter list of the function the declaration begins with: is there a `type T` in it.
 // The tokens stay queued; nothing is changed.
 static bool smith_lang_generic_ahead(SmithLang *lang, const SmithHost *host, const SmithToken *first) {
@@ -379,7 +389,12 @@ static bool smith_lang_generic_ahead(SmithLang *lang, const SmithHost *host, con
                 depth += 1;
             } else if (c == ')') {
                 depth -= 1;
-                if (depth == 0 && in_params) return false; // the parameter list ended without one
+                if (depth == 0 && in_params && smith_lang_computed_return_follows(lang, host, index)) {
+                    in_params = false; // `slice_of(T, k)` was the result type: the parameter list is next
+                    lang->generic_result_call = true;
+                } else if (depth == 0 && in_params) {
+                    return false; // the parameter list ended without one
+                }
             } else if (depth == 0 && (c == ';' || c == '=' || c == '{' || c == ',')) {
                 return false;
             }
@@ -1575,14 +1590,25 @@ static size_t smith_lang_gen_pack_params(SmithLang *lang, const SmithHost *host,
     return written;
 }
 
+static bool smith_lang_result_call(const SmithLangGeneric *generic);
+static void smith_lang_gen_put_result(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
+                                      const SmithLangInstance *instance, uint32_t location, uint32_t instance_id);
+
 // `R name(P)` for an instance: the head with the type arguments for T, the instance's name, and the parameters that are
 // no `type`. `attributes` keeps the head's own leading attributes (a definition has them, a declaration cannot).
 static void smith_lang_gen_signature(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
                                      const SmithLangInstance *instance, bool attributes, uint32_t location,
                                      uint32_t instance_id) {
     SmithLangGenToken *tokens = &smith_lang_gt.tokens[generic->first];
-    for (uint32_t at = attributes ? 0 : smith_lang_generic_skip_attributes(generic); at < generic->name_index; at++)
+    uint32_t result = smith_lang_generic_skip_attributes(generic);
+    for (uint32_t at = 0; attributes && at < result; at++)
         smith_lang_gen_put_subst(lang, host, generic, instance, &tokens[at], location, instance_id, false);
+    if (smith_lang_result_call(generic)) {
+        smith_lang_gen_put_result(lang, host, generic, instance, location, instance_id);
+    } else {
+        for (uint32_t at = result; at < generic->name_index; at++)
+            smith_lang_gen_put_subst(lang, host, generic, instance, &tokens[at], location, instance_id, false);
+    }
     smith_lang_gen_put(lang, host, SmithTokenKind_Identifier, smith_lang_str(instance->cname), location, instance_id);
     smith_lang_gen_put(lang, host, SmithTokenKind_Punctuator, "(", location, instance_id);
     SmithLangParam params[smith_lang_call_params_max];
