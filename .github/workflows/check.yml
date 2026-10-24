@@ -36,25 +36,40 @@ jobs:
         run: smith build
 
       - name: Full check
+        # no shared lock: CI runs in its own clone and must not queue behind the agents' local checks.
+        # The step ends before the job does, so the log steps below always run.
+        timeout-minutes: 25
+        shell: bash
         run: |
-          set -o pipefail
-          mkdir -p "$RUNNER_TEMP/ci"
+          ci="$RUNNER_TEMP/ci"
+          mkdir -p "$ci"
+          echo "check started at $(date)" | tee "$ci/time.log"
           rc=0
-          lockf /private/tmp/smith-full-check.lock build/Darwin-arm64/smith check >"$RUNNER_TEMP/ci/check.log" 2>&1 || rc=$?
+          # the output is written to the log and to this job's own log as it comes
+          build/Darwin-arm64/smith check 2>&1 | tee "$ci/check.log" || rc=${PIPESTATUS[0]}
+          echo "check ended with status $rc at $(date)" | tee -a "$ci/time.log"
           {
             echo '### smith check'
+            cat "$ci/time.log"
             echo '```'
-            tail -n 40 "$RUNNER_TEMP/ci/check.log"
+            tail -n 40 "$ci/check.log"
             echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          } >>"$GITHUB_STEP_SUMMARY"
           exit $rc
 
-      - name: Upload the log
+      - name: Collect the logs
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/ci"
+          [ -d .smith/log ] && cp -R .smith/log "$RUNNER_TEMP/ci/smith-log" || true
+          ps -axo pid,ppid,stat,time,etime,command | tee "$RUNNER_TEMP/ci/processes.log" | grep -E 'actions-runner|smith|slice' | grep -v grep || true
+
+      - name: Upload the logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: check-log
-          path: ${{ runner.temp }}/ci/check.log
+          path: ${{ runner.temp }}/ci
           if-no-files-found: warn
 
   install:

@@ -50,13 +50,20 @@ static void send_request(const char *command, const char *arguments) {
 }
 
 // The CPU time of the adapter and of what it started (lldb-dap starts debugserver, whose work is the adapter's wait).
-static uint64_t tree_cpu_ns(pid_t pid, int depth) {
-    uint64_t total = cpu_wait_cpu_ns(pid);
-    pid_t children[64];
-    int bytes = proc_listchildpids(pid, children, sizeof children);
-    int count = bytes > 0 ? bytes / (int)sizeof(pid_t) : 0;
-    for (int i = 0; depth > 0 && i < count && i < 64; i++)
-        total += tree_cpu_ns(children[i], depth - 1);
+static uint64_t tree_cpu_ns(pid_t root) {
+    constexpr int tree_max = 256;
+    pid_t queue[tree_max];
+    int count = 1;
+    queue[0] = root;
+    uint64_t total = 0;
+    for (int at = 0; at < count; at++) { // breadth first, over at most tree_max processes
+        total += cpu_wait_cpu_ns(queue[at]);
+        pid_t children[64];
+        int bytes = proc_listchildpids(queue[at], children, sizeof children);
+        int found = bytes > 0 ? bytes / (int)sizeof(pid_t) : 0;
+        for (int i = 0; i < found && i < 64 && count < tree_max; i++)
+            queue[count++] = children[i];
+    }
     return total;
 }
 
@@ -64,7 +71,7 @@ static uint64_t tree_cpu_ns(pid_t pid, int depth) {
 // debugger is blocked, in practice waiting for the Developer Tools permission (60; the test shortens it).
 static int idle_limit_milliseconds(void) {
     const char *seconds = getenv("DAP_CLIENT_IDLE_SECONDS");
-    return seconds != nullptr ? atoi(seconds) * 1000 : 60000;
+    return seconds != nullptr ? (int)strtol(seconds, nullptr, 10) * 1000 : 60000;
 }
 
 // Waits for the adapter's output: ready, spent (30 s of the adapter's own CPU), idle (nobody used CPU for the idle
@@ -75,12 +82,12 @@ static int wait_for_adapter(void) {
     uint64_t began = cpu_wait_wall_ms();
     uint64_t idle_began = began;
     uint64_t adapter_began = cpu_wait_cpu_ns(adapter_pid);
-    uint64_t tree_last = tree_cpu_ns(adapter_pid, 3);
-    while (true) {
+    uint64_t tree_last = tree_cpu_ns(adapter_pid);
+    for (long slice = 0; slice < cpu_wait_slices_max; slice++) {
         struct pollfd poller = {.fd = from_adapter, .events = POLLIN};
         if (poll(&poller, 1, cpu_wait_slice_milliseconds) > 0) return cpu_wait_ready;
         uint64_t now = cpu_wait_wall_ms();
-        uint64_t tree_now = tree_cpu_ns(adapter_pid, 3);
+        uint64_t tree_now = tree_cpu_ns(adapter_pid);
         if (tree_now != tree_last) idle_began = now;
         tree_last = tree_now;
         if ((cpu_wait_cpu_ns(adapter_pid) - adapter_began) / 1000000 >= (uint64_t)wait_milliseconds)
@@ -88,6 +95,7 @@ static int wait_for_adapter(void) {
         if (now - idle_began >= (uint64_t)idle_limit) return wait_idle;
         if (now - began >= (uint64_t)cpu_wait_hang_milliseconds) return cpu_wait_hung;
     }
+    return cpu_wait_hung;
 }
 
 static void read_exactly(char *out, size_t count) {
