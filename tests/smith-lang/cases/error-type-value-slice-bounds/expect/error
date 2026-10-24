@@ -1,0 +1,2 @@
+src/main.smith:11:12: a type is sliced as `T[:]`, with no bounds: it has no elements to pick
+src/main.smith:6:9: a type is sliced as `t[:]`, with no bounds: it has no elements to pick

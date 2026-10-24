@@ -9,7 +9,14 @@
 // asked (integer, float, signed, pointer, bool, enum, record, array), its alignment and its size, so `sizeof(t)` is a
 // shift of the handle and needs no callback into the lowering:
 //
-//   bits 0-15 the index   16-23 the kinds   24-28 log2 of the alignment   29 the type is incomplete   32-63 the size
+//   bits 0-11 the index   12-15 the slice depth   16-23 the kinds   24-28 log2 of the alignment
+//   29 the type is incomplete   32-63 the size
+//
+// A slice type (`t[:]`, issue #107) is not in the table: it is its element's handle with a slice depth, the number of
+// leading run-time dimensions (`f32[:][:]` is `f32` at depth 2, `f32[:][2]` is `f32[2]` at depth 1), and the kinds
+// (a record), the alignment and the size of the struct that the depth makes (a pointer and `depth` counts). So `t[:]`
+// is an expression over the handle that needs no callback into the lowering (`smith_lang_ty_slice_text`), and equals,
+// bit for bit, what `typeof(xs)` of `f32 xs[:]` is (`smith_lang_ty_handle` reads the tag of its struct).
 //
 // The lowering turns a handle back into the type it names, wherever a type is written (`t x;`, `(t)y`, the argument
 // of a generic call), by asking the compiler for the handle's value and reading its index.
@@ -27,6 +34,10 @@ constexpr size_t smith_lang_ty_name_max = 64;
 constexpr size_t smith_lang_ty_frames_max = 64;
 constexpr size_t smith_lang_ty_chain_max = 12;
 constexpr size_t smith_lang_ty_run_max = 12;
+constexpr size_t smith_lang_ty_typeof_max = 40;
+constexpr uint64_t smith_lang_ty_index_mask = 0xFFF;
+constexpr unsigned smith_lang_ty_depth_shift = 12;
+constexpr unsigned smith_lang_ty_depth_max = 8; // the dimensions a slice may have
 
 typedef enum : uint8_t {
     SmithLangTy_Var,       // a variable, parameter or member of a type that is, or holds, a type
@@ -55,6 +66,7 @@ typedef struct {
     bool holds;
     bool is_typedef;
     bool returns_type; // the body of a function that returns a type
+    bool compile_time; // the body of a function that takes or returns a type: it runs in the compiler only
     char tag[smith_lang_ty_name_max];
     char field[smith_lang_ty_name_max];
 } SmithLangTyFrame;
@@ -96,6 +108,7 @@ typedef struct {
     bool protect_next;
     bool call_pending;
     bool return_pending; // a function returning a type was declared: its body's `{` is next
+    bool fn_takes;       // a parameter that is a type was declared in this function's head
     char owner[smith_lang_ty_name_max];
     char ident0[smith_lang_ty_name_max]; // the last identifier outside parentheses
     size_t passthrough;                  // tokens copied into a rewrite, which are not looked at again
@@ -104,8 +117,20 @@ typedef struct {
 static SmithLangTyTable smith_lang_ty_table;
 static SmithLangTy smith_lang_ty;
 
+// What a slice is on this target: a pointer and counts, all one size and alignment (every target smith has; another is
+// an error where it is met).
+typedef struct {
+    bool known;
+    bool supported;
+    uint64_t size;
+    unsigned log2;
+} SmithLangTySliceFacts;
+
+static SmithLangTySliceFacts smith_lang_ty_facts;
+
 static void smith_lang_ty_reset(void) {
     smith_lang_ty_table.count = 0;
+    smith_lang_ty_facts = (SmithLangTySliceFacts){};
     memset(&smith_lang_ty, 0, sizeof smith_lang_ty);
 }
 
@@ -148,6 +173,201 @@ static uint64_t smith_lang_ty_pack(size_t index, const SmithTypeQuery *query) {
            (incomplete << 29) | (size << 32);
 }
 
+// ---- Slice types (issue #107)
+
+static const SmithLangTySliceFacts *smith_lang_ty_slice_facts(const SmithHost *host) {
+    SmithLangTySliceFacts *facts = &smith_lang_ty_facts;
+    if (facts->known) return facts;
+    *facts = (SmithLangTySliceFacts){.known = true, .supported = true, .size = 8, .log2 = 3};
+    if (host->type_query == nullptr) return facts;
+    SmithTypeQuery pointer = {};
+    SmithTypeQuery count = {};
+    if (!host->type_query(host->context, "void *", 6, &pointer) ||
+        !host->type_query(host->context, "__SIZE_TYPE__", 13, &count)) {
+        return facts;
+    }
+    facts->size = pointer.size;
+    facts->log2 = smith_lang_ty_log2(pointer.alignment);
+    facts->supported = pointer.size == count.size && pointer.alignment == pointer.size && count.alignment == count.size;
+    return facts;
+}
+
+// The handle of a slice of `depth` run-time dimensions whose element is the type of `base`: the struct is a record, as
+// big as the pointer and `depth` counts. The same arithmetic is written as tokens by smith_lang_ty_slice_text.
+static uint64_t smith_lang_ty_slice_make(const SmithLangTySliceFacts *facts, uint64_t base, unsigned depth) {
+    uint64_t size = facts->size * (1U + depth);
+    return (base & smith_lang_ty_index_mask) | ((uint64_t)depth << smith_lang_ty_depth_shift) | (64ULL << 16) |
+           ((uint64_t)facts->log2 << 24) | (size << 32);
+}
+
+static unsigned smith_lang_ty_depth_of(uint64_t handle) {
+    return (unsigned)((handle >> smith_lang_ty_depth_shift) & 15U);
+}
+
+// The type of an index: its handle and spelling (a slice's element), or null when the number is no handle of this
+// file. `depth` is the slice depth.
+static const char *smith_lang_ty_split(uint64_t handle, unsigned *depth) {
+    size_t index = (size_t)(handle & smith_lang_ty_index_mask);
+    *depth = smith_lang_ty_depth_of(handle);
+    if (index >= smith_lang_ty_table.count) return nullptr;
+    if (*depth == 0) return smith_lang_ty_table.handle[index] == handle ? smith_lang_ty_table.spelling[index] : nullptr;
+    if (*depth > smith_lang_ty_depth_max || !smith_lang_ty_facts.known) return nullptr;
+    uint64_t made = smith_lang_ty_slice_make(&smith_lang_ty_facts, smith_lang_ty_table.handle[index], *depth);
+    return made == handle ? smith_lang_ty_table.spelling[index] : nullptr;
+}
+
+static size_t smith_lang_ty_spelling_tokens(const char *spelling, const SmithToken *like, SmithToken *out,
+                                            size_t capacity);
+static void smith_lang_ty_spell_add(char *out, size_t capacity, const char *text, size_t length);
+
+// The element and the dimensions of a slice from the spelling of its base type (`float [2][3]`) and the depth.
+static bool smith_lang_ty_slice_pieces(const char *base, unsigned depth, char *element, size_t capacity,
+                                       SmithLangSliceDims *dims) {
+    const char *bracket = strchr(base, '[');
+    size_t length = bracket != nullptr ? (size_t)(bracket - base) : strlen(base);
+    while (length > 0 && base[length - 1] == ' ')
+        length -= 1;
+    if (length == 0 || length >= capacity || depth == 0) return false;
+    memcpy(element, base, length);
+    element[length] = 0;
+    *dims = (SmithLangSliceDims){.count = depth};
+    for (size_t at = 0; at < depth; at++) // the run-time dimensions
+        dims->runtime[at] = true;
+    while (bracket != nullptr && *bracket == '[') { // the fixed ones
+        char *end = nullptr;
+        unsigned long long value = strtoull(bracket + 1, &end, 10);
+        while (end != nullptr && *end == ' ')
+            end += 1;
+        if (end == bracket + 1 || *end != ']' || dims->count >= smith_lang_slice_dims_max) return false;
+        dims->fixed[dims->count++] = value;
+        bracket = end + 1;
+        while (*bracket == ' ')
+            bracket += 1;
+    }
+    return dims->count <= smith_lang_slice_dims_max;
+}
+
+// The tag of the struct a slice handle names, from the pieces above. False when it cannot be named.
+static bool smith_lang_ty_slice_tag(SmithLang *lang, const char *base, unsigned depth, char *tag, size_t capacity,
+                                    SmithToken *elem, size_t *elem_count, size_t elem_capacity,
+                                    SmithLangSliceDims *dims, const SmithToken *like) {
+    char element[smith_lang_ty_spelling_max];
+    if (!smith_lang_ty_slice_pieces(base, depth, element, sizeof element, dims)) return false;
+    *elem_count = smith_lang_ty_spelling_tokens(element, like, elem, elem_capacity);
+    const char *problem = nullptr;
+    uint32_t where = 0;
+    return *elem_count > 0 && smith_lang_slice_tag_of(lang, elem, *elem_count, dims, tag, capacity, &problem, &where);
+}
+
+// The spelling of the type a handle names (a slice is `struct` and its tag). Null when the number is no handle of this
+// file.
+static const char *smith_lang_ty_spelling_of(SmithLang *lang, uint64_t handle) {
+    unsigned depth = 0;
+    const char *base = smith_lang_ty_split(handle, &depth);
+    if (base == nullptr || depth == 0) return base;
+    static char spelling[smith_lang_ty_spelling_max];
+    static SmithToken elem[48];
+    char tag[smith_lang_ty_spelling_max - 8];
+    size_t count = 0;
+    SmithLangSliceDims dims;
+    SmithToken like = {};
+    if (!smith_lang_ty_slice_tag(lang, base, depth, tag, sizeof tag, elem, &count, 48, &dims, &like)) return nullptr;
+    snprintf(spelling, sizeof spelling, "struct %s", tag);
+    return spelling;
+}
+
+// The C spelling of the element a slice's tag names, from the part of the tag before its dimensions (`f32`,
+// `const_char_ptr`, `geometry_Point`, `struct_Node_ptr`). False for what the tag cannot say back (a tuple, a hash).
+static bool smith_lang_ty_stem_spelling(const char *stem, size_t length, char *out, size_t capacity) {
+    char text[smith_lang_ty_spelling_max];
+    if (length == 0 || length >= sizeof text) return false;
+    memcpy(text, stem, length);
+    text[length] = 0;
+    if (length > 2 && strcmp(text + length - 2, "_e") == 0) text[length - 2] = 0;
+    out[0] = 0;
+    char *at = text;
+    static const char *const qualifiers[][2] = {
+        {"const_", "const"}, {"volatile_", "volatile"}, {"restrict_", "restrict"}, {"atomic_", "_Atomic"}};
+    for (bool again = true; again;) { // the qualifiers before the type
+        again = false;
+        for (size_t q = 0; q < 4; q++) { // four qualifiers
+            size_t qlen = strlen(qualifiers[q][0]);
+            if (strncmp(at, qualifiers[q][0], qlen) != 0) continue;
+            smith_lang_ty_spell_add(out, capacity, qualifiers[q][1], strlen(qualifiers[q][1]));
+            at += qlen;
+            again = true;
+        }
+    }
+    char *pointer = strstr(at, "_ptr");
+    while (pointer != nullptr && pointer[4] != 0 && pointer[4] != '_')
+        pointer = strstr(pointer + 1, "_ptr");
+    if (pointer != nullptr) *pointer = 0;
+    if (strncmp(at, "tuple_", 6) == 0 || strstr(at, "_h") != nullptr || at[0] == 0) return false;
+    const char *standard = smith_lang_ty_standard(at, strlen(at));
+    if (strcmp(at, "ldouble") == 0) {
+        smith_lang_ty_spell_add(out, capacity, "long double", 11);
+    } else if (strncmp(at, "struct_", 7) == 0 || strncmp(at, "union_", 6) == 0 || strncmp(at, "enum_", 5) == 0) {
+        char *underscore = strchr(at, '_');
+        *underscore = 0;
+        smith_lang_ty_spell_add(out, capacity, at, strlen(at));
+        smith_lang_ty_spell_add(out, capacity, underscore + 1, strlen(underscore + 1));
+    } else {
+        smith_lang_ty_spell_add(out, capacity, standard != nullptr ? standard : at, strlen(standard ? standard : at));
+    }
+    for (const char *rest = pointer != nullptr ? pointer + 4 : ""; *rest != 0;) { // `_ptr`, then its qualifiers
+        smith_lang_ty_spell_add(out, capacity, "*", 1);
+        if (*rest == '_') rest += 1;
+        for (bool again = true; again;) {
+            again = false;
+            for (size_t q = 0; q < 4; q++) { // four qualifiers
+                size_t qlen = strlen(qualifiers[q][0]) - 1;
+                if (strncmp(rest, qualifiers[q][0], qlen) != 0 || (rest[qlen] != 0 && rest[qlen] != '_')) continue;
+                smith_lang_ty_spell_add(out, capacity, qualifiers[q][1], strlen(qualifiers[q][1]));
+                rest += qlen + (rest[qlen] == '_' ? 1 : 0);
+                again = true;
+            }
+        }
+        if (strncmp(rest, "ptr", 3) == 0) {
+            rest += 3 + (rest[3] == '_' ? 1 : 0);
+        } else if (*rest != 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool smith_lang_ty_handle(SmithLang *lang, const SmithHost *host, const char *spelling, uint32_t location,
+                                 uint64_t *handle);
+
+// The handle of the slice a tag names (what `typeof(xs)` of `f32 xs[:]` is): its element's handle at the depth of its
+// leading run-time dimensions, so it equals `f32[:]` made from the handle of `f32`. False when the tag is no slice of
+// that shape (a mixed `[:][2][:]`, a tuple element): the struct is then its own type.
+static bool smith_lang_ty_from_tag(SmithLang *lang, const SmithHost *host, const char *tag, uint32_t location,
+                                   uint64_t *handle) {
+    SmithLangSliceDims dims;
+    size_t stem = 0;
+    if (!smith_lang_slice_dims_parse(tag, &dims, &stem)) return false;
+    size_t prefix = sizeof smith_lang_slice_prefix - 1;
+    unsigned depth = 0;
+    while (depth < dims.count && dims.runtime[depth])
+        depth += 1;
+    for (size_t at = depth; at < dims.count; at++) { // the rest are fixed
+        if (dims.runtime[at]) return false;
+    }
+    char element[smith_lang_ty_spelling_max];
+    if (depth == 0 || stem <= prefix ||
+        !smith_lang_ty_stem_spelling(tag + prefix, stem - prefix, element, sizeof element))
+        return false;
+    char base[smith_lang_ty_spelling_max];
+    size_t used = (size_t)snprintf(base, sizeof base, "%s", element);
+    for (size_t at = depth; at < dims.count && used + 24 < sizeof base; at++) // the fixed dimensions
+        used += (size_t)snprintf(base + used, sizeof base - used, " [ %llu ]", (unsigned long long)dims.fixed[at]);
+    uint64_t inner = 0;
+    if (!smith_lang_ty_handle(lang, host, base, location, &inner)) return false;
+    *handle = smith_lang_ty_slice_make(smith_lang_ty_slice_facts(host), inner, depth);
+    return true;
+}
+
 // The handle of the type written `spelling` (as the compiler reads it), added to the table when it is new. False after
 // an error.
 static bool smith_lang_ty_handle(SmithLang *lang, const SmithHost *host, const char *spelling, uint32_t location,
@@ -165,6 +385,11 @@ static bool smith_lang_ty_handle(SmithLang *lang, const SmithHost *host, const c
     char canonical[smith_lang_ty_spelling_max];
     snprintf(canonical, sizeof canonical, "%.*s", (int)query.canonical_length, query.canonical);
     SmithLangTyTable *table = &smith_lang_ty_table;
+    static const char slice_tag[] = "struct smith_array_";
+    if (strncmp(canonical, slice_tag, sizeof slice_tag - 1) == 0 &&
+        smith_lang_ty_from_tag(lang, host, canonical + 7, location, handle)) {
+        return true;
+    }
     for (size_t i = 0; i < table->count; i++) { // the types met
         if (strcmp(table->canonical[i], canonical) == 0) {
             *handle = table->handle[i];
@@ -182,13 +407,6 @@ static bool smith_lang_ty_handle(SmithLang *lang, const SmithHost *host, const c
     table->handle[index] = smith_lang_ty_pack(index, &query);
     *handle = table->handle[index];
     return true;
-}
-
-// The spelling of the type a handle names. Null when the number is no handle of this file.
-static const char *smith_lang_ty_spelling_of(uint64_t handle) {
-    size_t index = (size_t)(handle & 0xFFFF);
-    if (index >= smith_lang_ty_table.count || smith_lang_ty_table.handle[index] != handle) return nullptr;
-    return smith_lang_ty_table.spelling[index];
 }
 
 // ---- Names
@@ -227,6 +445,15 @@ static SmithLangTyFrame *smith_lang_ty_top(void) {
 static bool smith_lang_ty_in_struct(void) {
     const SmithLangTyFrame *top = smith_lang_ty_top();
     return top != nullptr && top->is_struct;
+}
+
+// Whether the code is in the body of a function that runs in the compiler (it takes or returns a type): there a `type`
+// local needs no `constexpr`, the function exists only at compile time.
+static bool smith_lang_ty_in_compile_time(void) {
+    for (size_t i = 0; i < smith_lang_ty.frame_count; i++) { // the open braces
+        if (smith_lang_ty.frames[i].compile_time) return true;
+    }
+    return false;
 }
 
 static bool smith_lang_ty_in_returning(void) {
@@ -281,7 +508,38 @@ static bool smith_lang_ty_type_start(const SmithHost *host, const SmithToken *to
 
 // The length of the type that begins with the token being lowered: words, a tag after struct/union/enum, one typedef
 // name, and `*`s. The tokens after the first are peeked. 0 when it is no type.
+static size_t smith_lang_ty_typeof_run(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+    if (!(smith_lang_ident(token, "typeof") || smith_lang_ident(token, "__typeof__")) ||
+        !smith_lang_punct(smith_lang_peek(lang, host, 0, false), "(")) {
+        return 0;
+    }
+    int depth = 0;
+    for (size_t at = 0; at < smith_lang_ty_typeof_max; at++) { // `typeof(x)` is a few tokens
+        const SmithToken *next = smith_lang_peek(lang, host, at, false);
+        if (next->kind == SmithTokenKind_Eof) return 0;
+        depth += smith_lang_punct(next, "(") ? 1 : smith_lang_punct(next, ")") ? -1 : 0;
+        if (depth == 0) return at + 2;
+    }
+    return 0;
+}
+
+// The array suffix, `[2][3]`, after the type of `length` tokens that begin with the token being lowered: the tokens
+// it adds.
+static size_t smith_lang_ty_array_suffix(SmithLang *lang, const SmithHost *host, size_t length) {
+    size_t added = 0;
+    while (length + added + 3 < smith_lang_ty_typeof_max) { // a few dimensions
+        if (!smith_lang_punct(smith_lang_peek(lang, host, length + added - 1, false), "[")) break;
+        const SmithToken *size = smith_lang_peek(lang, host, length + added, false);
+        if (size->kind != SmithTokenKind_Number) break;
+        if (!smith_lang_punct(smith_lang_peek(lang, host, length + added + 1, false), "]")) break;
+        added += 3;
+    }
+    return added;
+}
+
 static size_t smith_lang_ty_run(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+    size_t typeof_length = smith_lang_ty_typeof_run(lang, host, token);
+    if (typeof_length != 0) return typeof_length;
     if (!smith_lang_ty_type_start(host, token)) return 0;
     bool named = !smith_lang_ty_is_basic(token->text, token->length);
     bool tag_next =
@@ -307,7 +565,7 @@ static size_t smith_lang_ty_run(SmithLang *lang, const SmithHost *host, const Sm
         }
         if (!part) break;
     }
-    return length;
+    return length + smith_lang_ty_array_suffix(lang, host, length);
 }
 
 // Appends a token's text to a spelling, mapping a sized name to the compiler's own.
@@ -355,9 +613,21 @@ static bool smith_lang_ty_leaf(SmithLang *lang, const SmithHost *host, const Smi
     if (length == 0 || !smith_lang_ty_leaf_here(lang, host, length)) return false;
     char spelling[smith_lang_ty_spelling_max] = "";
     smith_lang_ty_spell_add(spelling, sizeof spelling, token->text, token->length);
+    bool of_expression = smith_lang_ident(token, "typeof") || smith_lang_ident(token, "__typeof__");
+    const SmithToken *before = token;
     for (size_t at = 1; at < length; at++) { // the rest of the run
         const SmithToken *part = smith_lang_peek(lang, host, at - 1, false);
-        smith_lang_ty_spell_add(spelling, sizeof spelling, part->text, part->length);
+        const char *name = part->text;
+        size_t name_length = part->length;
+        bool member = smith_lang_punct(before, ".") || smith_lang_punct(before, "->") || smith_lang_punct(before, "::");
+        if (of_expression && !member && lang->is_module && part->kind == SmithTokenKind_Identifier &&
+            smith_lang_name_find(lang, part->text, part->length) !=
+                nullptr) { // a name of this module, as it is lowered
+            name = smith_lang_prefixed(lang, part->text, part->length);
+            name_length = strlen(name);
+        }
+        smith_lang_ty_spell_add(spelling, sizeof spelling, name, name_length);
+        before = part;
     }
     uint64_t handle = 0;
     if (!smith_lang_ty_handle(lang, host, spelling, token->location, &handle)) handle = 0;
@@ -433,7 +703,7 @@ static bool smith_lang_ty_chain_value(SmithLang *lang, const SmithHost *host, co
         return false;
     }
     *handle = query.root.kind == SmithValue_Int ? query.root.magnitude : 0;
-    if (smith_lang_ty_spelling_of(*handle) == nullptr) {
+    if (smith_lang_ty_spelling_of(lang, *handle) == nullptr) {
         smith_lang_error(lang, host, location, "`%.*s` is not the value of a type", (int)chain->tokens[0].length,
                          chain->tokens[0].text);
         return false;
@@ -474,6 +744,118 @@ static size_t smith_lang_ty_spelling_tokens(const char *spelling, const SmithTok
     return count;
 }
 
+// ---- `t[:]`: the slice of a type (issue #107)
+
+// The tokens of a pattern: words separated by spaces, `@` the chain (written again each time), each a synthetic token.
+static size_t smith_lang_ty_pattern(SmithToken *out, size_t capacity, const char *pattern,
+                                    const SmithLangTyChain *chain, const SmithToken *like) {
+    size_t used = 0;
+    const char *at = pattern;
+    while (*at != 0 && used + chain->count + 2 < capacity) {
+        while (*at == ' ')
+            at += 1;
+        const char *end = at;
+        while (*end != 0 && *end != ' ')
+            end += 1;
+        size_t length = (size_t)(end - at);
+        if (length == 0) break;
+        if (length == 1 && at[0] == '@') {
+            for (size_t i = 0; i < chain->count; i++) // the chain, as written
+                out[used++] = smith_lang_tuple_made(chain->tokens[i].kind, chain->tokens[i].text,
+                                                    chain->tokens[i].length, like, true);
+        } else {
+            out[used++] = smith_lang_tuple_made(smith_lang_slice_kind(at), at, length, like, true);
+        }
+        at = end;
+    }
+    return used;
+}
+
+// Whether the tokens after a chain, from the queue index `at`, are `[` and then a `:` before the matching `]`; the
+// index of the `]`, or 0.
+static size_t smith_lang_ty_bounds_end(SmithLang *lang, const SmithHost *host, size_t at) {
+    int depth = 0;
+    bool colon = false;
+    for (size_t i = at; i < at + 16; i++) { // a subscript is a few tokens
+        const SmithToken *next = smith_lang_peek(lang, host, i, false);
+        if (next->kind == SmithTokenKind_Eof || smith_lang_punct(next, ";") || smith_lang_punct(next, "?")) return 0;
+        depth += smith_lang_punct(next, "[") || smith_lang_punct(next, "(") ? 1 : 0;
+        depth -= smith_lang_punct(next, "]") || smith_lang_punct(next, ")") ? 1 : 0;
+        colon = colon || (depth == 1 && smith_lang_punct(next, ":"));
+        if (depth == 0) return colon ? i : 0;
+    }
+    return 0;
+}
+
+// `t[:]` and `t[:][:]`, where `t` is a chain that holds a type: the handle of the slice, an expression over the
+// handle (the evaluator needs no callback): the slice depth grows by one for each `[:]`, and the kinds, alignment and
+// size are those of the struct the depth makes (smith_lang_ty_slice_make writes the same number).
+static bool smith_lang_ty_slice_op(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+    SmithLangTyChain chain;
+    if (smith_lang_ty_last_is(0, ".") || smith_lang_ty_last_is(0, "->")) return false;
+    if (!smith_lang_ty_chain(lang, host, token, 0, &chain)) return false;
+    size_t at = chain.count - 1; // the queue index of the token after the chain
+    size_t slices = 0;
+    while (smith_lang_punct(smith_lang_peek(lang, host, at, false), "[") &&
+           smith_lang_punct(smith_lang_peek(lang, host, at + 1, false), ":") &&
+           smith_lang_punct(smith_lang_peek(lang, host, at + 2, false), "]")) {
+        at += 3;
+        slices += 1;
+    }
+    static SmithToken made[3 * smith_lang_ty_chain_max + 48];
+    // Only a `[` right after the chain is read further: a token peeked too far can pull a later statement's question
+    // to the compiler into a batch the parser has not reached.
+    size_t bounds =
+        smith_lang_punct(smith_lang_peek(lang, host, at, false), "[") ? smith_lang_ty_bounds_end(lang, host, at) : 0;
+    if (bounds != 0) { // `t[1:2]`: a type has no elements to pick
+        smith_lang_error(lang, host, token->location,
+                         "a type is sliced as `%.*s[:]`, with no bounds: it has no elements to pick",
+                         (int)token->length, token->text);
+        made[0] = smith_lang_ty_made(SmithTokenKind_Number, "0ULL", token, token->space_before);
+        smith_lang_ty_put(lang, bounds + 1, made, 1);
+        return true;
+    }
+    if (slices == 0) return false;
+    const SmithLangTySliceFacts *facts = smith_lang_ty_slice_facts(host);
+    if (!facts->supported) {
+        smith_lang_error(lang, host, token->location,
+                         "this target's pointer and `usize` differ in size or alignment: a slice type is not built");
+    }
+    char pattern[512];
+    char count[16];
+    char step[40];
+    char base[48];
+    snprintf(count, sizeof count, "%zu", slices);
+    snprintf(step, sizeof step, "%lluULL", (unsigned long long)(4096ULL + (facts->size << 32)));
+    snprintf(base, sizeof base, "%lluULL",
+             (unsigned long long)((64ULL << 16) | ((uint64_t)facts->log2 << 24) | (facts->size << 32)));
+    snprintf(
+        pattern, sizeof pattern,
+        "( ( ( ( ( @ ) >> 12 ) & 15ULL ) + %s ) > %uULL ? 0ULL : ( ( @ ) & 4095ULL ) + ( ( ( ( @ ) >> 12 ) & 15ULL ) "
+        "+ %s ) * %s + %s )",
+        count, smith_lang_ty_depth_max, count, step, base);
+    size_t used = smith_lang_ty_pattern(made, sizeof made / sizeof made[0], pattern, &chain, token);
+    made[0].space_before = token->space_before;
+    smith_lang_ty_put(lang, at, made, used);
+    return true;
+}
+
+// The tokens of the type a handle names, written where a type is: the spelling's, or for a slice its struct (defined
+// there when no earlier declaration at file scope has, as `T xs[:]` does).
+static size_t smith_lang_ty_type_tokens(SmithLang *lang, uint64_t handle, const SmithToken *like, SmithToken *out,
+                                        size_t capacity) {
+    unsigned depth = 0;
+    const char *base = smith_lang_ty_split(handle, &depth);
+    if (base == nullptr) return 0;
+    if (depth == 0) return smith_lang_ty_spelling_tokens(base, like, out, capacity);
+    static SmithToken elem[48];
+    char tag[smith_lang_ty_spelling_max - 8];
+    size_t count = 0;
+    SmithLangSliceDims dims;
+    if (!smith_lang_ty_slice_tag(lang, base, depth, tag, sizeof tag, elem, &count, 48, &dims, like)) return 0;
+    return smith_lang_slice_define(lang, out, 0, capacity, tag, elem, count, &dims, like);
+}
+
 // `t x;`, `(t)y` or the argument of a generic call, where `t` holds a type: the chain becomes the type it names.
 static bool smith_lang_ty_use(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     SmithLangTyChain chain;
@@ -494,8 +876,7 @@ static bool smith_lang_ty_use(SmithLang *lang, const SmithHost *host, const Smit
     static SmithToken made[smith_lang_ty_spelling_max];
     size_t count = 0;
     if (smith_lang_ty_chain_value(lang, host, &chain, &handle)) {
-        count =
-            smith_lang_ty_spelling_tokens(smith_lang_ty_spelling_of(handle), token, made, smith_lang_ty_spelling_max);
+        count = smith_lang_ty_type_tokens(lang, handle, token, made, smith_lang_ty_spelling_max);
     }
     if (count == 0) {
         made[0] = smith_lang_ty_made(SmithTokenKind_Identifier, "int", token, token->space_before);
@@ -619,11 +1000,13 @@ static void smith_lang_ty_declarator(SmithLang *lang, const SmithHost *host, con
         return;
     }
     if (ty->decl_field[0] == 0) smith_lang_ty_copy(ty->decl_field, "type", 4);
+    if (param && ty->paren == 1) ty->fn_takes = true;
     if (smith_lang_ty_add(token->text, token->length, SmithLangTy_Var, (uint32_t)ty->frame_count + (param ? 1U : 0U)) ==
         nullptr) {
         smith_lang_error(lang, host, token->location, "this file has too many names that hold types for the lowering");
     }
-    if (!param && !ty->decl_constexpr) smith_lang_ty_runtime_error(lang, host, token);
+    if (!param && !ty->decl_constexpr && !smith_lang_ty_in_compile_time())
+        smith_lang_ty_runtime_error(lang, host, token);
 }
 
 // A struct that holds a type is a name for a declaration's type.
@@ -703,11 +1086,14 @@ static void smith_lang_ty_open_brace(void) {
     if (ty->frame_count < smith_lang_ty_frames_max) {
         ty->frames[ty->frame_count++] = (SmithLangTyFrame){.is_struct = ty->struct_pending,
                                                            .is_typedef = ty->decl_typedef,
-                                                           .returns_type = ty->return_pending && ty->paren == 0};
+                                                           .returns_type = ty->return_pending && ty->paren == 0,
+                                                           .compile_time = (ty->return_pending || ty->fn_takes) &&
+                                                                           ty->paren == 0 && !ty->struct_pending};
         smith_lang_ty_copy(ty->frames[ty->frame_count - 1].tag, ty->struct_tag, strlen(ty->struct_tag));
     }
     ty->struct_pending = false;
     ty->return_pending = false;
+    ty->fn_takes = false;
     if (ty->region == SmithLangRegion_None) {
         smith_lang_ty_end_declaration(); // a typedef's flag is in the frame now
     } else {
@@ -774,6 +1160,7 @@ static void smith_lang_ty_punctuator(const SmithToken *token) {
         ty->struct_pending = false;
         ty->typedef_holder = false;
         ty->return_pending = false;
+        ty->fn_takes = false;
         ty->protect_next = false;
     } else if (smith_lang_punct(token, ",")) {
         if (ty->paren == 0 && ty->region == SmithLangRegion_Init && ty->region_depth == 0)
@@ -852,6 +1239,7 @@ static bool smith_lang_ty_token(SmithLang *lang, const SmithHost *host, const Sm
         ty->passthrough -= 1;
     } else if (token->kind == SmithTokenKind_Identifier) {
         replaced = smith_lang_ty_member_constexpr(lang, host, token) || smith_lang_ty_specifier(lang, host, token);
+        if (!replaced) replaced = as_value = smith_lang_ty_slice_op(lang, host, token);
         if (!replaced) replaced = as_value = smith_lang_ty_question(lang, host, token);
         if (!replaced) replaced = as_value = smith_lang_ty_use(lang, host, token);
         if (!replaced) replaced = as_value = smith_lang_ty_leaf(lang, host, token);

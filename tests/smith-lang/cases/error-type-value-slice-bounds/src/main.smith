@@ -1,0 +1,18 @@
+module main;
+
+// A type has no elements to pick: `t[:]` is the only subscript it takes.
+static type bad(type T) {
+    type t = T;
+    t = t[1:2];
+    return t;
+}
+
+static type worse(type T) {
+    return T[:3];
+}
+
+int main(void) {
+    constexpr type q = bad(f32);
+    constexpr type r = worse(f32);
+    return 0;
+}

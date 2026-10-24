@@ -1,0 +1,45 @@
+module main;
+
+import <stdio.h>;
+
+// `t[:]` on a type value is the type "slice of t" (the spelling follows `i32 xs[:]`). An ordinary function over `type`
+// builds a slice type with one `[:]` for each size; the result is a real type handle: `==`, `sizeof` and a declaration
+// `t x;` all work.
+static type slice_of(type T, usize k) {
+    type t = T;
+    for (usize i = 0; i < k; i++) t = t[:];
+    return t;
+}
+
+static type twice(type T) {
+    return T[:][:];
+}
+
+int main(void) {
+    f32 xs[:];
+    f32 rows[:][2];
+    f32 grid[:][:];
+    constexpr type one = slice_of(f32, 1);
+    constexpr type two = slice_of(f32, 2);
+    constexpr type of_rows = slice_of(f32[2], 1);
+
+    static_assert(one == typeof(xs));
+    static_assert(two == typeof(grid));
+    static_assert(of_rows == typeof(rows));
+    static_assert(two == twice(f32));
+    static_assert(one != two && one != of_rows);
+    static_assert(sizeof(one) == sizeof(typeof(xs)) && sizeof(two) == sizeof(typeof(grid)));
+    static_assert(is_record(one) && !is_array(one) && !is_integer(one));
+    static_assert(alignof(two) == alignof(typeof(grid)));
+
+    f32 data[6] = {1, 2, 3, 4, 5, 6};
+    of_rows a = {.data = data, .count = {3}};
+    two b = {.data = data, .count = {2, 3}};
+    one c = {.data = data, .count = {6}};
+    rows = a;
+    xs = c;
+    grid = b;
+    c::printf("%f %zu %f %zu %f %zu\n", (double)rows[2][1], countof(rows), (double)grid[1][2], countof(grid[0]),
+              (double)xs[4], countof(xs));
+    return 0;
+}

@@ -24,7 +24,7 @@ static int smith_lang_param_type_of(const SmithLangGeneric *generic, const Smith
 
 static bool smith_lang_ty_handle(SmithLang *lang, const SmithHost *host, const char *spelling, uint32_t location,
                                  uint64_t *handle);
-static const char *smith_lang_ty_spelling_of(uint64_t handle);
+static const char *smith_lang_ty_spelling_of(SmithLang *lang, uint64_t handle);
 
 constexpr size_t smith_lang_fields_pieces_max = 40;
 
@@ -248,7 +248,7 @@ static int smith_lang_fields_group(SmithLang *lang, const SmithHost *host, const
     }
     smith_lang_fields_member(name, ref->info.name, sizeof ref->info.name);
     if (smith_lang_fields_ask(&evaluation, first, last, "type", &query) && query.root.kind == SmithValue_Int) {
-        const char *spelling = smith_lang_ty_spelling_of(query.root.magnitude);
+        const char *spelling = smith_lang_ty_spelling_of(lang, query.root.magnitude);
         if (spelling != nullptr) snprintf(ref->info.type, sizeof ref->info.type, "%s", spelling);
     }
     ref->consumed = last - first;
@@ -894,7 +894,8 @@ static bool smith_lang_fields_valued_type(SmithLangCx *cx, uint32_t first, uint3
     if (!cx->host->value_query(cx->host->context, text, (uint32_t)strlen(text), &query)) {
         return smith_lang_cx_fail(cx, "%s", query.why != nullptr ? query.why : "the compiler cannot evaluate it");
     }
-    const char *known = query.root.kind == SmithValue_Int ? smith_lang_ty_spelling_of(query.root.magnitude) : nullptr;
+    const char *known =
+        query.root.kind == SmithValue_Int ? smith_lang_ty_spelling_of(cx->lang, query.root.magnitude) : nullptr;
     if (known == nullptr) return smith_lang_cx_fail(cx, "the value is not a type");
     snprintf(spelling, capacity, "%s", known);
     return true;

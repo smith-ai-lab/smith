@@ -906,7 +906,7 @@ static bool smith_lang_result_ask(SmithLang *lang, const SmithHost *host, const 
         why = query.why != nullptr ? query.why : "the compiler cannot evaluate it";
     } else {
         const char *spelling =
-            query.root.kind == SmithValue_Int ? smith_lang_ty_spelling_of(query.root.magnitude) : nullptr;
+            query.root.kind == SmithValue_Int ? smith_lang_ty_spelling_of(lang, query.root.magnitude) : nullptr;
         if (spelling == nullptr) {
             why = "its value is not a type (declare it to return `type`)";
         } else {
