@@ -16,7 +16,7 @@ import smith::arena;
 char out[128];
 format::Written w = format::to(out, sizeof out, "move ", dx, " ", dy, " key ", format::hex(key, 16));
 if (!w.fits) { /* cut: out is terminated, w.length is what the whole text needs */ }
-text::Text path = format::push(&arena, folder, "/", name, ".mesh");   // path.begin is terminated too
+char path[:] = format::push(&arena, folder, "/", name, ".mesh");   // path.data is terminated too (not counted)
 usize n = format::length("abc", 12345);                               // 8, writes nothing
 ```
 
@@ -27,7 +27,7 @@ usize n = format::length("abc", 12345);                               // 8, writ
 | `i8`..`i64`, `u8`..`u64`, `usize`, `isize` | decimal digits, `-` for a negative one |
 | `f32`, `f64` | the shortest digits that read back the same (`0.1`, `1e22`), as `text::write_f64`; `inf`, `-inf`, `nan`; a `f32` as its `f64` value |
 | `char *`, `const char *` | the terminated string; null is `(null)` |
-| `text::Text` | its length of characters (`%.*s`); `format::bytes(p, n)` makes one |
+| `char[:]`, `const char[:]` | its count of characters (`%.*s`); `format::bytes(p, n)` makes one from a pointer and a length |
 | `format::hex(x, width)` | lowercase hex, zero-padded to `width` (0 for none, at most 16): `%016llx`, `%02x` |
 | `format::fixed(x, places)` | `places` digits (at most 20) correctly rounded, ties to even, as `%.Nf`; a value of 2^63 or more as with no wrapper |
 | `format::general(x, digits)` | `%.Ng`: `digits` significant digits (1 to 40), exact rounding, fixed or `e` style by the exponent, trailing zeros removed: `0.1`, `1e+22`, `1e-05` |

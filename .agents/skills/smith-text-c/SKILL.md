@@ -5,13 +5,13 @@ description: "smith::text from C (#include <smith/text.h>) and compiling it in b
 
 # text from C
 
-C code is unchanged by the port: `#include <smith/text.h>`, the type `SmithText`, and `smith_text_<name>` for every function (`smith_text_make`, `smith_text_take_line`, `smith_text_parse_f32`, `smith_text_write_u64`...), with the capacities `smith_text_number_capacity` and `smith_text_f64_capacity`. The same loop:
+`#include <smith/text.h>`; text is the generated slice struct, `struct smith_array_const_char_n` for read-only text (`.data`, `.count[0]`; `struct smith_array_char_n` is the writable one, the same with `char *data`), written `{ .data = p, .count = {n} }`; there is no `SmithText`. Every function is `smith_text_<name>` for every function (`smith_text_make`, `smith_text_take_line`, `smith_text_parse_f32`, `smith_text_write_u64`...), with the capacities `smith_text_number_capacity` and `smith_text_f64_capacity`. The same loop:
 
 ```c
 #include <smith/text.h>
 
-SmithText text = {file.data, file.size};          // or smith_text_make("a terminated string")
-SmithText line, word;
+struct smith_array_const_char_n text = {.data = file.data, .count = {file.size}};   // or smith_text_make("a terminated string")
+struct smith_array_const_char_n line, word;
 while (smith_text_take_line(&text, &line)) {
     if (!smith_text_take_word(&line, &word)) continue;
     if (smith_text_is(word, "turn")) {

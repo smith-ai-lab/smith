@@ -54,7 +54,7 @@ module game::replay;                // must match the path: .../game/replay.smit
 import lib::text as tx;             // a smith module, bound to `tx`
 import <string.h>;                  // a C header; its names are reached as c::name
 
-export typedef struct { u64 frames; tx::Text name; } Replay;
+export typedef struct { u64 frames; const char name[:]; } Replay;
 export constexpr u32 version = 3;
 export u32 counter = 7;
 export Replay open(const char *path) { … c::strlen(path) … }

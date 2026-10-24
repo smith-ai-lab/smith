@@ -13,7 +13,7 @@ module game::replay;                 // the path must end in game/replay.smith
 import smith::text as tx;            // binds `tx`; `import smith::text;` binds `text`
 export typedef struct {
     u64 frames;
-    tx::Text name;
+    const char name[:];
 } Replay;
 export constexpr u32 version = 3;
 u32 helper(void) { // private

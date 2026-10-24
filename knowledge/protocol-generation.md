@@ -69,13 +69,13 @@ makes a value from a key. Members keep the schema's names (`threadId`, `request_
 | `allOf` (DAP's requests extend `Request`, which extends `ProtocolMessage`) | the members of every part, base first, flattened; a later part replaces a member of an earlier one (`Request.command` becomes the constant `"launch"`) |
 | a `const`, or an `enum` of one value | no member: the parse requires it, the write puts it, so `type`/`event`/`command`/`method` discriminators cost nothing |
 | members the schema does not list (anything but `additionalProperties: false`) | `SmithProtocolExtra additionalProperties`, the keys and raw values, written back; a launch request's adapter attributes and a tool's input schema survive |
-| `string` / `integer` / `number` / `boolean` | `SmithText` (not copied), `int64_t`, `double`, `bool` |
+| `string` / `integer` / `number` / `boolean` | `struct smith_array_const_char_n` (not copied), `int64_t`, `double`, `bool` |
 | `enum` of strings | a C `enum`; a string outside it is refused |
-| `_enum`, or `anyOf` of an enum and a string (an open enum) | `{ known; SmithText text; }`: `known` is the enum value or `_Other`, `text` the string as written |
+| `_enum`, or `anyOf` of an enum and a string (an open enum) | `{ known; struct smith_array_const_char_n text; }`: `known` is the enum value or `_Other`, `text` the string as written |
 | `anyOf` / `oneOf`, `type: [a, b]` | a tagged union `{ kind; union as; }`. Where every alternative is a struct with a constant string member of one name and a value of its own (`method`, `type`), that member picks the alternative; otherwise the alternatives are tried most specific first (most required members), the ones that take any JSON last |
 | `type: [T, "null"]` | `{ bool is_null; T value; }` |
 | `array` | `{ const T *items; size_t count; }` |
-| `additionalProperties: schema` on an object with no properties | `{ const SmithText *keys; const T *values; size_t count; }` |
+| `additionalProperties: schema` on an object with no properties | `{ const struct smith_array_const_char_n *keys; const T *values; size_t count; }` |
 | `{}`, `true`, `{"type": "object"}`, the list of every JSON type | `SmithProtocolAny`, the `const SmithJsonValue *` tree, so nothing is lost; `nullptr` writes as null. An optional `Any` member counts as present when it is `null` |
 
 - **Nothing recurses.** A reference that closes a cycle (`ExceptionDetails.innerException`, MCP's `JSONValue` made of `JSONValue`s) is cut:

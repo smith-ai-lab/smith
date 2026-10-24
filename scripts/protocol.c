@@ -1661,7 +1661,7 @@ static Sink gen_sink_make(char *storage) {
 
 static struct smith_array_const_char_n gen_read_file(const char *path, char *buffer, size_t capacity) {
     FILE *file = fopen(path, "rb");
-    if (file == nullptr) return (struct smith_array_const_char_n){.data = nullptr, .count = {0}};
+    if (file == nullptr) return (struct smith_array_const_char_n){};
     size_t length = fread(buffer, 1, capacity - 1, file);
     bool whole = feof(file) != 0;
     fclose(file);
