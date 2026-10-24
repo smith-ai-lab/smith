@@ -1,0 +1,53 @@
+module enum_read_unchecked;
+
+typedef struct {
+    f32 radius;
+} Circle;
+typedef struct {
+    f32 w;
+    f32 h;
+} Rect;
+typedef enum { Circle circle; Rect rect; empty; }
+Shape;
+void reset(Shape *p) {
+    Shape none =.empty;
+    *p = none;
+}
+
+f32 bare(Shape s) {
+    return s.circle.radius;
+}
+f32 through_pointer(Shape *p) {
+    return p->circle.radius;
+}
+f32 wrong_variant(Shape s) {
+    if (s ==.rect) return s.circle.radius;
+    return 0;
+}
+f32 else_branch(Shape s) {
+    if (s ==.circle) return 0;
+    return s.circle.radius;
+}
+f32 one_path(Shape s, bool b) {
+    if (b) {
+        if (s !=.circle) return 0;
+    }
+    return s.circle.radius;
+}
+f32 or_branch(Shape s) {
+    if (s ==.circle || s.circle.radius > 1) return 1;
+    return 0;
+}
+void write_without_tag(Shape *p) {
+    p->rect.w = 1;
+}
+f32 loop_changes(Shape s, i32 n) {
+    Shape none =.empty;
+    f32 sum = 0;
+    if (s !=.circle) return 0;
+    for (i32 i = 0; i < n; i++) {
+        sum += s.circle.radius;
+        s = none;
+    }
+    return sum;
+}

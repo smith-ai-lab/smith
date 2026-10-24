@@ -1,0 +1,2 @@
+status 1
+enum_tagged.c:10:12: error: smith-enum: 's.circle' is read where 's' may not be a circle; test 's == .circle' or switch on 's'

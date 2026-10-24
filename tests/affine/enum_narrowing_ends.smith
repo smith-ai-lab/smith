@@ -1,0 +1,62 @@
+module enum_narrowing_ends;
+
+typedef struct {
+    f32 radius;
+} Circle;
+typedef struct {
+    f32 w;
+    f32 h;
+} Rect;
+typedef enum { Circle circle; Rect rect; empty; }
+Shape;
+void reset(Shape *p) {
+    Shape none =.empty;
+    *p = none;
+}
+
+f32 assigned(Shape s) {
+    Shape none =.empty;
+    if (s ==.circle) {
+        s = none;
+        return s.circle.radius;
+    }
+    return 0;
+}
+f32 address_taken(Shape s) {
+    if (s !=.circle) return 0;
+    Shape *p = &s;
+    reset(p);
+    return s.circle.radius;
+}
+f32 call_with_pointer(Shape *p) {
+    if (*p !=.circle) return 0;
+    reset(p);
+    return p->circle.radius;
+}
+f32 pointer_assigned(Shape *p, Shape *q) {
+    if (*p ==.circle) {
+        p = q;
+        return p->circle.radius;
+    }
+    return 0;
+}
+f32 whole_value_through_pointer(Shape *p) {
+    Shape none =.empty;
+    switch (*p) {
+    case.circle:
+        *p = none;
+        return p->circle.radius;
+    case.rect:
+    case.empty:
+        break;
+    }
+    return 0;
+}
+f32 new_variable_each_turn(Shape *list, i32 n) {
+    f32 sum = 0;
+    for (i32 i = 0; i < n; i++) {
+        Shape s = list[i];
+        sum += s.circle.radius;
+    }
+    return sum;
+}

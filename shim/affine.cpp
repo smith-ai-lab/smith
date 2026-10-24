@@ -1,4 +1,5 @@
 // [[smith::affine]]: a value of a type marked with it is used at most once (issue #189, skill smith-lang-affine).
+// The same plugin narrows payload enums (issue #198, below: "Narrowing of a payload enum").
 //
 // Linked into smith and run on every compile, with no flag, by two entries of clang's static registries:
 //   - a ParsedAttrInfo makes `[[smith::affine]]` a known attribute (the compiler, clang-tidy and clangd all read the
@@ -479,6 +480,329 @@ class Flow {
     }
 };
 
+// ---- Narrowing of a payload enum (issue #198, skill smith-lang-enums) ----------------------------------------------
+//
+// A struct with the annotation `smith::enum` is a payload enum as the lowering writes it: a member `tag` of an enum
+// type whose constants are `<struct>_tag_<variant>`, and an anonymous union with one member per variant that has a
+// payload. Reading the member `x.circle` (or `x->circle`) is an error unless on every path the tag was established: by
+// `x.tag == ..._tag_circle` (an if, `&&`, `||`, `!`, a conditional, a loop's condition) or by a `case` of a switch on
+// `x.tag`. The state is the set of places known to hold a variant, joined by intersection; it is a forward dataflow
+// over the same CFG as the affine one. An assignment to the place (or a part of it, or to a pointer it is read
+// through), the address of it, and a call that is given a pointer into it end what is known about it.
+
+constexpr long long derefStep = -2;
+
+bool enumRecord(const RecordDecl *record) {
+    if (record == nullptr) return false;
+    for (const Decl *each : record->redecls())
+        for (const auto *attr : each->specific_attrs<AnnotateAttr>())
+            if (attr->getAnnotation() == "smith::enum") return true;
+    return false;
+}
+
+// The record of the enum a `tag` member belongs to, or null.
+const RecordDecl *tagOwner(const MemberExpr *member) {
+    const auto *field = dyn_cast<FieldDecl>(member->getMemberDecl());
+    if (field == nullptr || field->getName() != "tag" || !enumRecord(field->getParent())) return nullptr;
+    return field->getParent();
+}
+
+// The variant a constant names: `<struct>_tag_<variant>`.
+std::string variantOf(const RecordDecl *record, const EnumConstantDecl *constant) {
+    std::string prefix = record->getName().str() + "_tag_";
+    std::string name = constant->getName().str();
+    return name.rfind(prefix, 0) == 0 ? name.substr(prefix.size()) : name;
+}
+
+bool isAnonymousField(const ValueDecl *decl) {
+    const auto *field = dyn_cast<FieldDecl>(decl);
+    return field != nullptr && field->isAnonymousStructOrUnion();
+}
+
+// The place an expression names: a variable, then members and dereferences. The unnamed union is no step.
+bool placeOf(const Expr *expr, Key &out) {
+    expr = expr->IgnoreParenImpCasts();
+    if (const auto *ref = dyn_cast<DeclRefExpr>(expr)) {
+        const auto *variable = dyn_cast<VarDecl>(ref->getDecl());
+        if (variable == nullptr || !variable->isLocalVarDeclOrParm()) return false;
+        out.first = variable;
+        return true;
+    }
+    if (const auto *member = dyn_cast<MemberExpr>(expr)) {
+        if (!placeOf(member->getBase(), out)) return false;
+        if (member->isArrow()) out.second.push_back({nullptr, derefStep});
+        if (!isAnonymousField(member->getMemberDecl())) out.second.push_back({member->getMemberDecl(), 0});
+        return true;
+    }
+    if (const auto *unary = dyn_cast<UnaryOperator>(expr)) {
+        if (unary->getOpcode() != UO_Deref || !placeOf(unary->getSubExpr(), out)) return false;
+        out.second.push_back({nullptr, derefStep});
+        return true;
+    }
+    return false;
+}
+
+std::string render(const Key &place) {
+    std::string text = place.first->getName().str();
+    for (size_t i = 0; i < place.second.size(); i++) {
+        const Step &step = place.second[i];
+        bool field = step.first != nullptr;
+        if (field) {
+            text += "." + cast<FieldDecl>(static_cast<const Decl *>(step.first))->getName().str();
+        } else if (i + 1 < place.second.size() && place.second[i + 1].first != nullptr) {
+            text += "->" + cast<FieldDecl>(static_cast<const Decl *>(place.second[i + 1].first))->getName().str();
+            i++;
+        } else {
+            text = "*" + text;
+        }
+    }
+    return text;
+}
+
+// `x.tag` or `x->tag`: the place of x (the enum), else false.
+bool tagPlace(const Expr *expr, Key &out) {
+    const auto *member = dyn_cast<MemberExpr>(expr->IgnoreParenImpCasts());
+    if (member == nullptr || tagOwner(member) == nullptr || !placeOf(member->getBase(), out)) return false;
+    if (member->isArrow()) out.second.push_back({nullptr, derefStep});
+    return true;
+}
+
+// The variant a constant of the tag's type names, as `x.tag == K` compares it.
+bool variantConstant(const Expr *tag, const Expr *constant, ASTContext &context, std::string &variant) {
+    const auto *member = cast<MemberExpr>(tag->IgnoreParenImpCasts());
+    const auto *type = member->getType()->getAs<EnumType>();
+    Expr::EvalResult result;
+    if (type == nullptr || constant->isValueDependent() || !constant->EvaluateAsInt(result, context)) return false;
+    for (const EnumConstantDecl *each : type->getDecl()->enumerators())
+        if (llvm::APSInt::isSameValue(each->getInitVal(), result.Val.getInt())) {
+            variant = variantOf(tagOwner(member), each);
+            return true;
+        }
+    return false;
+}
+
+// What `cond` being `wanted` says about a place: `x.tag == K` true, `x.tag != K` false, through `!`.
+bool conditionFact(const Expr *cond, bool wanted, ASTContext &context, Key &place, std::string &variant) {
+    cond = cond->IgnoreParenImpCasts();
+    if (const auto *unary = dyn_cast<UnaryOperator>(cond))
+        return unary->getOpcode() == UO_LNot && conditionFact(unary->getSubExpr(), !wanted, context, place, variant);
+    const auto *binary = dyn_cast<BinaryOperator>(cond);
+    if (binary == nullptr || (binary->getOpcode() != BO_EQ && binary->getOpcode() != BO_NE)) return false;
+    if ((binary->getOpcode() == BO_EQ) != wanted) return false;
+    for (int side = 0; side < 2; side++) {
+        const Expr *tag = side == 0 ? binary->getLHS() : binary->getRHS();
+        const Expr *constant = side == 0 ? binary->getRHS() : binary->getLHS();
+        place = Key();
+        if (tagPlace(tag, place) && variantConstant(tag, constant, context, variant)) return true;
+    }
+    return false;
+}
+
+enum class NarrowAction { Read, Kill };
+
+struct NarrowSite {
+    NarrowAction action;
+    Key place;               // Read: the enum that is read; Kill: the first place that ends
+    std::vector<Key> others; // Kill: more places (a call's pointers)
+    std::string variant;
+    SourceLocation loc;
+};
+
+// The place a write or an address ends: the enum itself when it is its tag.
+bool endedPlace(const Expr *expr, Key &out) {
+    return tagPlace(expr, out) || placeOf(expr, out);
+}
+
+class NarrowClassifier {
+  public:
+    std::map<const Stmt *, NarrowSite> sites;
+    bool poisoned = false;
+    bool interesting = false;
+
+    void walk(const Stmt *stmt) {
+        if (stmt == nullptr) return;
+        if (const auto *expr = dyn_cast<Expr>(stmt))
+            if (expr->containsErrors()) poisoned = true;
+        if (const auto *member = dyn_cast<MemberExpr>(stmt)) read(member);
+        if (const auto *binary = dyn_cast<BinaryOperator>(stmt)) {
+            if (binary->isAssignmentOp()) kill(binary, binary->getLHS());
+        } else if (const auto *unary = dyn_cast<UnaryOperator>(stmt)) {
+            if (unary->isIncrementDecrementOp() || unary->getOpcode() == UO_AddrOf) kill(unary, unary->getSubExpr());
+        } else if (const auto *call = dyn_cast<CallExpr>(stmt)) {
+            calls(call);
+        }
+        for (const Stmt *child : stmt->children())
+            walk(child);
+    }
+
+  private:
+    // `x.circle`: the member of the unnamed union of an enum, read through the unnamed member of x.
+    void read(const MemberExpr *member) {
+        const auto *field = dyn_cast<FieldDecl>(member->getMemberDecl());
+        if (field == nullptr || field->isAnonymousStructOrUnion() || !field->getParent()->isAnonymousStructOrUnion())
+            return;
+        const auto *owner = dyn_cast<RecordDecl>(field->getParent()->getDeclContext());
+        if (!enumRecord(owner)) return;
+        interesting = true;
+        NarrowSite site;
+        site.action = NarrowAction::Read;
+        site.variant = field->getName().str();
+        site.loc = member->getBeginLoc();
+        if (!placeOf(member->getBase(), site.place)) site.place = Key(); // no place: never narrowed
+        sites[member] = site;
+    }
+
+    void kill(const Stmt *node, const Expr *target) {
+        NarrowSite site;
+        site.action = NarrowAction::Kill;
+        if (!endedPlace(target, site.place)) return;
+        sites[node] = site;
+    }
+
+    void calls(const CallExpr *call) {
+        NarrowSite site;
+        site.action = NarrowAction::Kill;
+        for (const Expr *argument : call->arguments()) {
+            Key place;
+            if (!argument->getType()->isPointerType() || !placeOf(argument, place)) continue;
+            if (site.place.first == nullptr)
+                site.place = place;
+            else
+                site.others.push_back(place);
+        }
+        if (site.place.first != nullptr) sites[call] = site;
+    }
+};
+
+using Facts = std::map<Key, std::string>;
+
+class NarrowFlow {
+  public:
+    NarrowFlow(const CFG &cfg, const std::map<const Stmt *, NarrowSite> &sites, ASTContext &context)
+        : cfg(cfg), sites(sites), context(context) {}
+
+    std::vector<const NarrowSite *> findings;
+
+    void run() {
+        size_t count = cfg.getNumBlockIDs();
+        in.assign(count, Facts());
+        reached.assign(count, false);
+        std::deque<const CFGBlock *> work;
+        reached[cfg.getEntry().getBlockID()] = true;
+        work.push_back(&cfg.getEntry());
+        while (!work.empty()) {
+            const CFGBlock *block = work.front();
+            work.pop_front();
+            Facts out = in[block->getBlockID()];
+            transfer(*block, out, false);
+            size_t index = 0;
+            for (const CFGBlock::AdjacentBlock &next : block->succs()) {
+                const CFGBlock *target = next.getReachableBlock();
+                if (target != nullptr) {
+                    Facts along = out;
+                    establish(*block, index, target, along);
+                    if (join(target->getBlockID(), along)) work.push_back(target);
+                }
+                index++;
+            }
+        }
+        for (const CFGBlock *block : cfg) {
+            if (!reached[block->getBlockID()]) continue;
+            Facts state = in[block->getBlockID()];
+            transfer(*block, state, true);
+        }
+    }
+
+  private:
+    const CFG &cfg;
+    const std::map<const Stmt *, NarrowSite> &sites;
+    ASTContext &context;
+    std::vector<Facts> in;
+    std::vector<bool> reached;
+    std::set<const Stmt *> reported;
+
+    // The first arrival copies; the others keep what both agree on.
+    bool join(unsigned id, const Facts &out) {
+        if (!reached[id]) {
+            reached[id] = true;
+            in[id] = out;
+            return true;
+        }
+        bool changed = false;
+        for (auto at = in[id].begin(); at != in[id].end();) {
+            auto other = out.find(at->first);
+            if (other == out.end() || other->second != at->second) {
+                at = in[id].erase(at);
+                changed = true;
+            } else {
+                ++at;
+            }
+        }
+        return changed;
+    }
+
+    // What the edge from `block` to `target` says: the true edge of `x.tag == K`, the `case K:` edge of a switch.
+    void establish(const CFGBlock &block, size_t index, const CFGBlock *target, Facts &state) {
+        Key place;
+        std::string variant;
+        const Stmt *terminator = block.getTerminatorStmt();
+        if (terminator == nullptr) return;
+        if (const auto *selection = dyn_cast<SwitchStmt>(terminator)) {
+            const auto *label = dyn_cast_or_null<CaseStmt>(target->getLabel());
+            if (label == nullptr || label->getRHS() != nullptr || !tagPlace(selection->getCond(), place)) return;
+            if (!variantConstant(selection->getCond(), label->getLHS(), context, variant)) return;
+            state[place] = variant;
+            return;
+        }
+        if (block.succ_size() != 2 || block.empty()) return;
+        std::optional<CFGStmt> last = block.back().getAs<CFGStmt>();
+        const auto *cond = last ? dyn_cast<Expr>(last->getStmt()) : nullptr;
+        if (cond != nullptr && conditionFact(cond, index == 0, context, place, variant)) state[place] = variant;
+    }
+
+    static bool within(const Key &prefix, const Key &key) {
+        return prefix.first == key.first && isPrefix(prefix.second, key.second);
+    }
+
+    static void end(Facts &state, const Key &prefix) {
+        for (auto at = state.begin(); at != state.end();) {
+            if (within(prefix, at->first))
+                at = state.erase(at);
+            else
+                ++at;
+        }
+    }
+
+    void transfer(const CFGBlock &block, Facts &state, bool report) {
+        for (const CFGElement &element : block) {
+            std::optional<CFGStmt> statement = element.getAs<CFGStmt>();
+            if (!statement) continue;
+            const Stmt *stmt = statement->getStmt();
+            if (const auto *declaration = dyn_cast<DeclStmt>(stmt)) {
+                for (const Decl *decl : declaration->decls())
+                    if (const auto *variable = dyn_cast<VarDecl>(decl)) {
+                        Key place;
+                        place.first = variable;
+                        end(state, place);
+                    }
+                continue;
+            }
+            auto found = sites.find(stmt);
+            if (found == sites.end()) continue;
+            const NarrowSite &site = found->second;
+            if (site.action == NarrowAction::Kill) {
+                end(state, site.place);
+                for (const Key &other : site.others)
+                    end(state, other);
+            } else if (report && reported.insert(stmt).second) {
+                auto known = state.find(site.place);
+                if (site.place.first == nullptr || known == state.end() || known->second != site.variant)
+                    findings.push_back(&site);
+            }
+        }
+    }
+};
+
 // ---- The messages --------------------------------------------------------------------------------------------------
 
 const char *const hint = "write the plain loop `for (usize i = 0; i < countof(keys); i++)` and use `keys[i]` once in "
@@ -496,6 +820,22 @@ class Reporter {
                                        "smith-affine: '%0': an element of an array of affine values is used through a "
                                        "constant index or the counter of a plain loop");
         advice = engine.getCustomDiagID(DiagnosticsEngine::Note, "%0");
+        narrow = engine.getCustomDiagID(
+            DiagnosticsEngine::Error,
+            "smith-enum: '%0' is read where '%1' may not be a %2; test '%1 == .%2' or switch on '%1'");
+    }
+
+    void report(const NarrowSite &site) {
+        if (site.place.first == nullptr) {
+            engine.Report(site.loc, narrow) << "the payload" << "the enum" << site.variant;
+            return;
+        }
+        std::string owner = render(site.place);
+        Key through = site.place;
+        bool arrow = !through.second.empty() && through.second.back().first == nullptr;
+        if (arrow) through.second.pop_back();
+        std::string access = arrow ? render(through) + "->" + site.variant : owner + "." + site.variant;
+        engine.Report(site.loc, narrow) << access << owner << site.variant;
     }
 
     void report(const Flow::Finding &finding) {
@@ -518,7 +858,7 @@ class Reporter {
   private:
     ASTContext &context;
     DiagnosticsEngine &engine;
-    unsigned again, first, loop, index, advice;
+    unsigned again, first, loop, index, advice, narrow;
 };
 
 // ---- Every function that has a body
@@ -564,15 +904,27 @@ class Consumer : public ASTConsumer {
         if (body == nullptr) return;
         Classifier classifier(context);
         classifier.walk(body);
-        if (!classifier.interesting || classifier.poisoned) return;
+        NarrowClassifier narrowing;
+        narrowing.walk(body);
+        bool affine = classifier.interesting && !classifier.poisoned;
+        bool narrow = narrowing.interesting && !narrowing.poisoned;
+        if (!affine && !narrow) return;
         CFG::BuildOptions options;
         options.setAllAlwaysAdd();
         std::unique_ptr<CFG> cfg = CFG::buildCFG(function, const_cast<Stmt *>(body), &context, options);
         if (!cfg) return;
-        Flow flow(*cfg, classifier.sites);
-        flow.run();
-        for (const Flow::Finding &finding : flow.findings)
-            reporter.report(finding);
+        if (affine) {
+            Flow flow(*cfg, classifier.sites);
+            flow.run();
+            for (const Flow::Finding &finding : flow.findings)
+                reporter.report(finding);
+        }
+        if (narrow) {
+            NarrowFlow flow(*cfg, narrowing.sites, context);
+            flow.run();
+            for (const NarrowSite *finding : flow.findings)
+                reporter.report(*finding);
+        }
     }
 };
 

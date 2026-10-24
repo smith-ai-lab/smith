@@ -5,6 +5,8 @@
 # the rules (a second use, an unused value, `&key`, a join, an assignment, an element of an array, a member, the plain
 # loop, any other loop or index, a call that fills an array) and the issue's use cases, in C and in `.smith` (and the
 # slices, which are `.smith` only). The editor's case: `smith lsp --check` of one C and one `.smith` file shows the error.
+# The enum_* files are the narrowing of a payload enum (#198): a read of `x.circle` is an error unless every path tested
+# `x == .circle` or switched on x; an assignment, `&x` or a call with the pointer ends it; plain C is left alone.
 # A smith without clang inside (the stage0), or whose clang lacks the token hook, is skipped.
 # Usage: sh tests/affine.sh path/to/smith [--update]
 set -u
@@ -61,6 +63,17 @@ for name in affine_second_use.c affine_second_use.smith; do
     else
         failures=$((failures + 1))
         echo "FAIL  lsp $name: smith lsp --check shows no second use"
+    fi
+done
+
+# The narrowing of a payload enum (#198) shows in the editor too (for C: clangd hangs on a `.smith` payload enum).
+for name in enum_tagged.c; do
+    total=$((total + 1))
+    if smith lsp --check="$here/tests/affine/$name" 2>&1 | grep -q "smith-enum: 's.circle' is read where"; then
+        echo "ok    lsp $name"
+    else
+        failures=$((failures + 1))
+        echo "FAIL  lsp $name: smith lsp --check shows no unnarrowed read"
     fi
 done
 
