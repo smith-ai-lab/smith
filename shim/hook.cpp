@@ -2248,8 +2248,8 @@ class SmithHook final : public TokenHook, public NameSource {
         return false;
     }
 
-    // Whether the code (not its comments or strings) uses `fields(` (a reflection), or the type `Field` without defining
-    // one: a name `Field` that is not the name of a typedef (`} Field;`) nor a member (runtime/lang_fields.c).
+    // Whether the code (not its comments or strings) uses `fields(` (a reflection), or the type `Field` without
+    // defining one: a name `Field` that is not the name of a typedef (`} Field;`) nor a member (runtime/lang_fields.c).
     static bool hasFieldsUse(StringRef text) {
         bool reflects = false;
         bool used = false;

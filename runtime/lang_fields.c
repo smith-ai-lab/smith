@@ -241,8 +241,9 @@ static int smith_lang_fields_group(SmithLang *lang, const SmithHost *host, const
     }
     name[used] = 0;
     if (used == 0 || query.root.kind != SmithValue_Array) {
-        snprintf(ref->message, sizeof ref->message, "the field in `.[...]` has no name: it is not a `Field` made by "
-                                                    "`fields(T)`");
+        snprintf(ref->message, sizeof ref->message,
+                 "the field in `.[...]` has no name: it is not a `Field` made by "
+                 "`fields(T)`");
         return -1;
     }
     smith_lang_fields_member(name, ref->info.name, sizeof ref->info.name);
@@ -433,7 +434,6 @@ typedef struct {
 
 static SmithLangFieldAliases smith_lang_field_aliases;
 
-
 // The name of the maker: written as it is, since the definition is (a module's own functions are prefixed).
 static void smith_lang_fields_maker_name(SmithLang *lang, char *name, size_t capacity) {
     (void)lang;
@@ -469,7 +469,8 @@ static bool smith_lang_fields_make(SmithLangFieldUse *use, const SmithFieldInfo 
 static int smith_lang_fields_use_value(SmithLangFieldUse *use) {
     uint32_t length = smith_lang_fields_call_len(use->at, use->limit);
     if (smith_lang_fields_punct(use->at + length, use->limit, "[")) {
-        int found = smith_lang_field_expr(use->lang, use->host, use->replay, use->at, use->limit, use->place, &use->ref);
+        int found =
+            smith_lang_field_expr(use->lang, use->host, use->replay, use->at, use->limit, use->place, &use->ref);
         use->consumed = use->ref.consumed;
         return found == 1 && !smith_lang_fields_make(use, &use->ref.info) ? -1 : found;
     }
@@ -626,22 +627,34 @@ static void smith_lang_fields_put(SmithLang *lang, const SmithHost *host, const 
     smith_lang_gen_put_expanding(lang, host, kind, text, location, id, strcmp(text, "__SIZE_TYPE__") == 0);
 }
 
-
 // The definition of `Field`, as the lowering leaves it: `struct smith_field { char name[:]; u64 type; }` (a `type` is a
 // 64-bit handle to clang), and `smith_field_make`, the function every `fields(T)[i]` is written as a call of: a
 // compile-time call the parser can evaluate wherever it has read the definition, which the file's first declaration
 // brings. The second list is for a file where the struct of a `char[:]` is already defined.
 static const char *const smith_lang_field_words[] = {
-    "typedef", "struct", "smith_field", "{",   "struct", "smith_array_char_n", "{",   "char", "*",    "data", ";",
-    "__SIZE_TYPE__", "count", "[", "1", "]", ";", "}", "name", ";", "unsigned", "long", "long", "type", ";",
-    "}", "Field", ";"};
+    "typedef", "struct", "smith_field", "{",    "struct", "smith_array_char_n",
+    "{",       "char",   "*",           "data", ";",      "__SIZE_TYPE__",
+    "count",   "[",      "1",           "]",    ";",      "}",
+    "name",    ";",      "unsigned",    "long", "long",   "type",
+    ";",       "}",      "Field",       ";"};
 static const char *const smith_lang_field_words_bare[] = {
-    "typedef", "struct", "smith_field", "{", "struct", "smith_array_char_n", "name", ";", "unsigned", "long", "long",
-    "type", ";", "}", "Field", ";"};
-static const char *const smith_lang_field_maker[] = {
-    "[", "[", "maybe_unused", "]", "]", "static", "inline", "Field", "smith_field_make", "(", "char", "*", "name", ",", "__SIZE_TYPE__", "length", ",",
-    "unsigned", "long", "long", "kind", ")", "{", "return", "(", "Field", ")", "{", "{", "name", ",", "{", "length",
-    "}", "}", ",", "kind", "}", ";", "}"};
+    "typedef", "struct", "smith_field", "{",    "struct", "smith_array_char_n",
+    "name",    ";",      "unsigned",    "long", "long",   "type",
+    ";",       "}",      "Field",       ";"};
+static const char *const smith_lang_field_maker[] = {"[",      "[",     "maybe_unused",
+                                                     "]",      "]",     "static",
+                                                     "inline", "Field", "smith_field_make",
+                                                     "(",      "char",  "*",
+                                                     "name",   ",",     "__SIZE_TYPE__",
+                                                     "length", ",",     "unsigned",
+                                                     "long",   "long",  "kind",
+                                                     ")",      "{",     "return",
+                                                     "(",      "Field", ")",
+                                                     "{",      "{",     "name",
+                                                     ",",      "{",     "length",
+                                                     "}",      "}",     ",",
+                                                     "kind",   "}",     ";",
+                                                     "}"};
 
 // The words of the definition, in one list.
 static size_t smith_lang_field_definition(bool bare, const char *const **words) {
@@ -681,7 +694,7 @@ static void smith_lang_fields_define(SmithLang *lang, const SmithHost *host, con
         const char *word = words[i];
         bool identifier = isalpha((unsigned char)word[0]) || word[0] == '_';
         smith_lang_fields_put(lang, host, generic, location, id,
-                              identifier                          ? SmithTokenKind_Identifier
+                              identifier                        ? SmithTokenKind_Identifier
                               : isdigit((unsigned char)word[0]) ? SmithTokenKind_Number
                                                                 : SmithTokenKind_Punctuator,
                               word);
@@ -695,8 +708,8 @@ static void smith_lang_fields_define(SmithLang *lang, const SmithHost *host, con
 // The array of one type: `static constexpr Field smith_fields_ID_K[N] = {{{"name", {length}}, handle}, ...};`, the
 // name a `char[:]` made of a literal and the type a handle (runtime/lang_type.c).
 static void smith_lang_fields_array(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
-                                    const SmithLangInstance *instance, uint32_t call_at, uint32_t id,
-                                    uint32_t location, size_t k) {
+                                    const SmithLangInstance *instance, uint32_t call_at, uint32_t id, uint32_t location,
+                                    size_t k) {
     SmithFieldInfo first;
     char message[smith_lang_message_max];
     if (!smith_lang_fields_load(host, generic, instance, call_at, location, 0, &first, message, sizeof message)) return;
@@ -719,7 +732,8 @@ static void smith_lang_fields_array(SmithLang *lang, const SmithHost *host, cons
     smith_lang_fields_put(lang, host, generic, location, id, SmithTokenKind_Punctuator, "{");
     for (uint32_t index = 0; index < first.count; index++) { // the fields
         SmithFieldInfo info;
-        if (!smith_lang_fields_load(host, generic, instance, call_at, location, index, &info, message, sizeof message)) {
+        if (!smith_lang_fields_load(host, generic, instance, call_at, location, index, &info, message,
+                                    sizeof message)) {
             break;
         }
         uint64_t handle = 0;
@@ -840,12 +854,12 @@ static void smith_lang_fields_alias(SmithLang *lang, const SmithHost *host, cons
     }
     if (end >= limit || end == at + 4 || smith_lang_field_aliases.count >= 16) return;
     static SmithLangCx evaluation;
-    evaluation = (SmithLangCx){.lang = lang,
-                               .host = host,
-                               .instance = replay->instance,
-                               .replay = replay,
-                               .location = smith_lang_gen_place(host, replay->generic, smith_lang_cx_token(at),
-                                                                replay->location)};
+    evaluation = (SmithLangCx){
+        .lang = lang,
+        .host = host,
+        .instance = replay->instance,
+        .replay = replay,
+        .location = smith_lang_gen_place(host, replay->generic, smith_lang_cx_token(at), replay->location)};
     char text[1024];
     if (!smith_lang_cx_text(&evaluation, at + 4, end, text, sizeof text)) return;
     size_t index = smith_lang_field_aliases.count++;
@@ -854,8 +868,8 @@ static void smith_lang_fields_alias(SmithLang *lang, const SmithHost *host, cons
     snprintf(smith_lang_field_aliases.text[index], sizeof smith_lang_field_aliases.text[index], "%s", text);
 }
 
-// Whether the tokens [first, last) are a `Field`'s member read as a type (`f.type`, `fields(T)[i].type`): they begin with
-// a variable that stands for a `Field`, or with `fields(`.
+// Whether the tokens [first, last) are a `Field`'s member read as a type (`f.type`, `fields(T)[i].type`): they begin
+// with a variable that stands for a `Field`, or with `fields(`.
 static bool smith_lang_fields_valued(uint32_t first, uint32_t last) {
     const SmithLangGenToken *token = smith_lang_cx_token(first);
     if (last <= first + 1 || token->special != SmithLangGen_Plain) return false;

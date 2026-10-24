@@ -125,7 +125,9 @@ class SmithNaming final : public RenamerClangTidyCheck {
     // are `_0`, `_1`, and a slice `T xs[:]` to `smith_array_i32_n` with `data` and `count`: names the lowering made and
     // the program never wrote, so no rule of naming applies to them (nor to `smith_field`, the struct of a `Field`).
     static bool isTuplePart(const NamedDecl *Decl) {
-        auto made = [](StringRef name) { return name.starts_with("smith_tuple_") || name.starts_with("smith_array_") || name == "smith_field"; };
+        auto made = [](StringRef name) {
+            return name.starts_with("smith_tuple_") || name.starts_with("smith_array_") || name == "smith_field";
+        };
         if (const auto *record = dyn_cast<RecordDecl>(Decl)) return made(record->getName());
         if (const auto *field = dyn_cast<FieldDecl>(Decl)) return made(field->getParent()->getName());
         return false;

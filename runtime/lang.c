@@ -381,10 +381,10 @@ struct SmithLang {
     SmithLangSliceState slice;
     bool field_import;  // an import's generics use `fields`: `Field` is defined at this file's first declaration
     bool field_defined; // `Field` (runtime/lang_fields.c) is defined in this file
-    bool slices_seen; // a slice was written in this file, or an import's header has one (runtime/lang_slice.c)
-    bool tuples_seen; // a tuple type was written in this file, or an import's header has one (runtime/lang_tuple.c)
-    bool io_import;   // the file imports smith::io: its `main` may take the io (runtime/lang_head.c)
-    bool io_main;     // `i32 main(io::Io *io)` was read: it is `smith_user_main`, and a `main` is written at the end
+    bool slices_seen;   // a slice was written in this file, or an import's header has one (runtime/lang_slice.c)
+    bool tuples_seen;   // a tuple type was written in this file, or an import's header has one (runtime/lang_tuple.c)
+    bool io_import;     // the file imports smith::io: its `main` may take the io (runtime/lang_head.c)
+    bool io_main;       // `i32 main(io::Io *io)` was read: it is `smith_user_main`, and a `main` is written at the end
     uint32_t io_main_location; // of that function's name
     SmithLangText io_type; // how this file's lowering writes `io::Io` (SmithIo, or the module's name without a header)
     bool io_make_seen;     // `io::make` was written somewhere in the file
