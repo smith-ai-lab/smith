@@ -298,6 +298,21 @@ static void smith_quiet_failure(const char *label, const char *log_path, const c
     fprintf(stderr, "%s: %zu more lines; the full output is in %s\n", label, hidden, log_path);
 }
 
+// The second line of `smith prove` (issue #51): how much of the program has contracts, indented under the first.
+static void smith_quiet_coverage_line(const char *label, const char *coverage) {
+    size_t of = 0, total = 0;
+    const char *at = coverage;
+    if (coverage[0] == '\0' || !smith_quiet_field(&at, &of, " of ") || !smith_quiet_field(&at, &total, " functions"))
+        return;
+    int indent = (int)strlen(label) + 2;
+    if (of < total) {
+        fprintf(stderr, "%*s%zu of %zu functions have contracts; smith prove -v lists the %zu without\n", indent, "",
+                of, total, total - of);
+    } else {
+        fprintf(stderr, "%*s%zu of %zu functions have contracts\n", indent, "", of, total);
+    }
+}
+
 // The smith verb `verb` for a person or an agent: unless it is loud, runs as a child whose output goes to its log and
 // ends with one line (a failure also shows the excerpt and the log's path). Returns -1 when the caller runs it as it
 // is, the child's status otherwise.
@@ -314,9 +329,10 @@ static int smith_quiet_verb(const char *verb, int count, char **args, const char
     char label[32];
     snprintf(label, sizeof label, "smith %s", verb);
     if (status == 0) {
-        char detail[128];
-        smith_quiet_detail(verb, text, size, detail, sizeof detail);
+        char detail[128], coverage[64];
+        smith_quiet_detail(verb, text, size, detail, sizeof detail, coverage, sizeof coverage);
         fprintf(stderr, "%s: ok (%s%s%.1f s)\n", label, detail, detail[0] != '\0' ? ", " : "", wall);
+        smith_quiet_coverage_line(label, coverage);
         return 0;
     }
     fprintf(stderr, "%s: FAILED (status %d, %.1f s)\n", label, status, wall);
@@ -691,7 +707,7 @@ static int smith_prove_project(int count, char **args, const char *self) {
     }
     if (status == 0 && smith_prove_groups_run == 0) {
         printf("smith: prove: nothing to prove: no function with smith_requires, smith_ensures, smith_invariant or "
-               "smith_assert\n");
+               "smith_assert\n0 of 0 functions have contracts\n");
     }
     return status;
 }
@@ -796,10 +812,12 @@ static void smith_check_part(const char *name, int status, SmithCheckClock since
     size_t size = 0;
     const char *text = log != nullptr ? smith_quiet_read(log, &size) : "";
     if (status == 0) {
-        char detail[128];
-        smith_quiet_detail(name, text, size, detail, sizeof detail);
-        fprintf(stderr, "smith check: %s ok%s%s (%.1f s wall, %.1f s cpu)\n", name, detail[0] != '\0' ? ": " : "",
-                detail, wall, cpu);
+        char detail[128], coverage[64];
+        smith_quiet_detail(name, text, size, detail, sizeof detail, coverage, sizeof coverage);
+        char shown[80] = "";
+        if (coverage[0] != '\0') snprintf(shown, sizeof shown, " (%s)", coverage);
+        fprintf(stderr, "smith check: %s ok%s%s%s (%.1f s wall, %.1f s cpu)\n", name, shown,
+                detail[0] != '\0' ? ": " : "", detail, wall, cpu);
         return;
     }
     fprintf(stderr, "smith check: %s FAILED (status %d) (%.1f s wall, %.1f s cpu)\n", name, status, wall, cpu);

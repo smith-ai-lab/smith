@@ -143,7 +143,22 @@ struct Options {
 // ---- shim/prove_ir.cpp ----
 
 // All of the program: the files compiled and linked into one module, with every function numbered.
+struct Without {
+    std::string name; // as the source writes it
+    std::string file;
+    unsigned line = 0;
+};
+
+// How much of the program has a contract of its own (issue #51), counted as the module is read: the project's own
+// defined functions (not smith's libraries, not a generic instance of contract::), and those with a contract of their
+// own or smith_trusted(), which are the proved and the trusted ones.
+struct Coverage {
+    unsigned total = 0, with_contract = 0;
+    std::vector<Without> without; // in the order the files define them
+};
+
 struct Program {
+    Coverage coverage;
     std::unique_ptr<llvm::LLVMContext> context;
     std::unique_ptr<llvm::Module> module;
     std::set<const llvm::Function *> recursive;

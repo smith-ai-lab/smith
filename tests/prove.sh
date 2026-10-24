@@ -548,7 +548,7 @@ expect_contains "trusted: ... with the value the contract allows" "$out" "percen
 expect_contains "trusted: ... and the counts say so" "$out" "3 proved, 1 failed, 2 trusted"
 case $out in *"inline assembly"*) expect "trusted: the body of a trusted function is not read" "no error" "$out" ;; *) expect "trusted: the body of a trusted function is not read" "no error" "no error" ;; esac
 case $out in *"ok    sensor_percent"* | *"ok    announce"*) expect "trusted: a trusted function is never listed as proved" "not proved" "$out" ;; *) expect "trusted: a trusted function is never listed as proved" "not proved" "not proved" ;; esac
-case $out in *"main"* | *"ok    helper"* | *"FAIL  helper"*) expect "default set: main and a function with no contract are not proved" "neither" "$out" ;; *) expect "default set: main and a function with no contract are not proved" "neither" "neither" ;; esac
+case $out in *"ok    main"* | *"FAIL  main"* | *"ok    helper"* | *"FAIL  helper"*) expect "default set: main and a function with no contract are not proved" "neither" "$out" ;; *) expect "default set: main and a function with no contract are not proved" "neither" "neither" ;; esac
 prove --function=branches_on_trusted "$cases/trusted.c"
 expect "trusted: a caller may branch on the result" 0 "$rc"
 prove --function=after_announce "$cases/trusted.c"
@@ -721,6 +721,42 @@ prove "$cases/geometry/pair.smith" --function=geometry::pair::bad
 expect "modifies (smith): a write outside &x is refuted" 1 "$rc"
 prove "$cases/errors/modifies.smith"
 expect_contains "modifies (smith): an argument that is not a pointer is an error naming &x" "$out" "contract::modifies takes &x"
+
+# 18. Coverage (issue #51): how many of the project's functions have a contract of their own, in every form of the
+# output. Nothing fails on a low one.
+prove "$cases/static_harness.c"
+expect_contains "coverage: the count of functions with a contract" "$out" "1 of 2 functions have contracts; smith prove -v lists the 1 without"
+prove -v "$cases/static_harness.c"
+expect_contains "coverage: -v names the functions without, with their file and line" "$out" "without  no_contract  ("
+expect_contains "coverage: ... at the line" "$out" "static_harness.c:19)"
+prove "$work/nothing.c"
+expect_contains "coverage: nothing to prove still counts the functions" "$out" "0 of 1 functions have contracts; smith prove -v lists the 1 without"
+expect "coverage: ... and succeeds" 0 "$rc"
+coverage=$work/coverage
+mkdir "$coverage"
+cat >"$coverage/main.c" <<'SOURCE'
+#include <smith/contract.h>
+int f(int x);
+int h(int x);
+int main(void) { return 0; }
+static int g(int x) { return x; }
+int f(int x) {
+    smith_requires(x < 5);
+    return x;
+}
+int h(int x) { return g(x); }
+SOURCE
+cd "$coverage" && capture "$smith" prove; cd "$here"
+expect_contains "coverage: smith prove says it on a second line" "$out" "1 of 4 functions have contracts; smith prove -v lists the 3 without"
+expect_contains "coverage: ... after the verdict" "$out" "smith prove: ok ("
+cd "$coverage" && capture "$smith" prove -v; cd "$here"
+expect_contains "coverage: smith prove -v lists them by file and line" "$out" "without  h  (main.c:10)"
+expect_contains "coverage: ... main too" "$out" "without  main  (main.c:4)"
+cd "$coverage" && capture "$smith" check; cd "$here"
+expect_contains "coverage: smith check carries it into its prove line" "$out" "smith check: prove ok (1 of 4 functions)"
+printf 'int main(void) { return 0; }\n' >"$coverage/main.c"
+cd "$coverage" && capture "$smith" check; cd "$here"
+expect_contains "coverage: nothing to prove is a success that says 0 of N" "$out" "smith check: prove ok (0 of 1 functions)"
 
 # 17. The cache key is the prover's identity (LLVM's version and a version kept in prove.cpp), never the build time: a
 # rebuild of smith with the same prover keeps the proofs.

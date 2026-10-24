@@ -802,11 +802,27 @@ extern "C" int smith_prove_main(const char *program, const char *resource, int a
             cached += one == 2;
         }
     }
+    // The coverage line: how many of the project's functions have a contract of their own. -v lists the others.
+    auto say_coverage = [&] {
+        const prove::Coverage &coverage = loaded.coverage;
+        unsigned without = coverage.total - coverage.with_contract;
+        std::printf("%u of %u functions have contracts", coverage.with_contract, coverage.total);
+        if (without == 0) {
+            std::printf("\n");
+        } else if (arguments.options.verbose) {
+            std::printf("; the %u without:\n", without);
+            for (const prove::Without &function : coverage.without)
+                std::printf("without  %s  (%s)\n", function.name.c_str(), at(function.file, function.line).c_str());
+        } else {
+            std::printf("; smith prove -v lists the %u without\n", without);
+        }
+    };
     if (proved + failed + trusted == 0) {
         // A project that has written no contract yet has nothing to prove, which is not a failure (a --function that
         // names nothing was refused above).
         std::printf("smith: prove: nothing to prove: no function with smith_requires, smith_ensures, "
                     "smith_invariant or smith_assert\n");
+        say_coverage();
         return 0;
     }
     double seconds = std::chrono::duration<double>(Clock::now() - start).count();
@@ -814,5 +830,6 @@ extern "C" int smith_prove_main(const char *program, const char *resource, int a
     if (trusted > 0) std::printf(", %u trusted", trusted);
     if (cached > 0) std::printf(", %u cached", cached);
     std::printf(" in %.2f s\n", seconds);
+    say_coverage();
     return failed == 0 ? 0 : 1;
 }

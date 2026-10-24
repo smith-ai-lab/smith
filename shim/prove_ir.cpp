@@ -12,6 +12,8 @@
 //   3. loops are unrolled; one that is not is an error.
 //   4. the contract calls, the traps and the failing branch of assert become calls to smith_point(id, condition),
 //      which shim/prove_alive.cpp turns into proof points.
+#include <algorithm>
+#include <tuple>
 #include "prove.hpp"
 
 #include <chrono>
@@ -748,6 +750,7 @@ void mark_library(Module &module) {
 } // namespace
 
 namespace {
+std::string source_name(const Function &function);
 void hide_loop_tests(Function &function); // below, with the loops' own code
 void check_restrict_calls(Module &module);
 } // namespace
@@ -781,12 +784,30 @@ bool program_load(Program &program, const std::vector<std::string> &bitcode, std
     unsigned own = 0, trusted = 0;
     for (const Function &function : module) {
         if (function.isDeclaration()) continue;
+        if (!function.hasFnAttribute("smith.library") && !function.hasFnAttribute("smith.snapshot") &&
+            !function.hasFnAttribute(Attribute::AlwaysInline)) {
+            program.coverage.total++;
+            if (is_unit(function) || is_trusted(function)) {
+                program.coverage.with_contract++;
+            } else {
+                Without without;
+                without.name = source_name(function);
+                if (const DISubprogram *subprogram = function.getSubprogram()) {
+                    without.file = subprogram->getFilename().str();
+                    without.line = subprogram->getLine();
+                }
+                program.coverage.without.push_back(without);
+            }
+        }
         if (is_unit(function)) {
             own++;
         } else if (is_trusted(function) && !function.hasFnAttribute("smith.library")) {
             trusted++;
         }
     }
+    std::stable_sort(
+        program.coverage.without.begin(), program.coverage.without.end(),
+        [](const Without &a, const Without &b) { return std::tie(a.file, a.line) < std::tie(b.file, b.line); });
     unsigned before = instruction_count(module);
     if (program.verbose) {
         std::printf("phase read and link: %.2f s, %u instructions\n", read_seconds, before);

@@ -49,7 +49,7 @@ export u32 count_pairs(u32 squares, u32 *moves) {
 
 - A failed contract is `smith_failure(kind)` (`<smith/trace.h>`): it writes `smith-trace begin requires failed` and the stack to standard error and calls `abort()`, at every optimization level; link the trace library (`smith_library(b, "trace")`; `smith_tests` does it itself). In a test it prints the report of a failed check (the failing line and the call chain), and `smith symbolize` turns a saved log into it. Where and what come from the stack and the source line.
 
-Also in this family: [smith-contract-proof](../smith-contract-proof/SKILL.md) (`modifies`, a loop's invariant, compile time), [smith-contract-c](../smith-contract-c/SKILL.md), [smith-prove](../smith-prove/SKILL.md), [smith-prove-trusted](../smith-prove-trusted/SKILL.md), [smith-prove-cost](../smith-prove-cost/SKILL.md).
+Also in this family: [smith-contract-proof](../smith-contract-proof/SKILL.md) (`modifies`, a loop's invariant, compile time), [smith-contract-c](../smith-contract-c/SKILL.md), [smith-prove](../smith-prove/SKILL.md), [smith-prove-trusted](../smith-prove-trusted/SKILL.md), [smith-prove-cost](../smith-prove-cost/SKILL.md). `smith prove` and `smith check` say how many functions have a contract (`4 of 23 functions`): write the next one from `smith prove -v`.
 
 ## Where an assert goes (the roles stay distinct)
 

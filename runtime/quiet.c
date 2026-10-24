@@ -147,17 +147,27 @@ static bool smith_quiet_field(const char **at, size_t *value, const char *after)
 // What a stage says about itself: `smith test` ends with "smith test: N tasks, ...", and `smith prove` prints "N
 // proved, M failed, K trusted ..." for each group of sources, which add up. Written to `out` (empty when the log says
 // nothing).
-static void smith_quiet_detail(const char *verb, const char *text, size_t size, char *out, size_t capacity) {
+// A prove run also says, for each group, "N of M functions have contracts" (issue #51); the sums go to `coverage` as
+// "N of M functions" (empty when the log has no such line).
+static void smith_quiet_detail(const char *verb, const char *text, size_t size, char *out, size_t capacity,
+                               char *coverage, size_t coverage_capacity) {
     out[0] = '\0';
+    coverage[0] = '\0';
     bool prove = strcmp(verb, "prove") == 0;
+    size_t covered[2] = {};
+    bool covers = false;
     size_t sum[3] = {};
     size_t tasks = 0;
     bool seen = false;
     for (size_t at = 0; at < size; at += smith_quiet_line_length(text, size, at) + 1) { // bounded by the text
         const char *line = text + at;
         size_t one = 0, two = 0, three = 0;
-        if (prove && smith_quiet_field(&line, &one, " proved, ") && smith_quiet_field(&line, &two, " failed, ") &&
-            smith_quiet_field(&line, &three, " trusted")) {
+        if (prove && smith_quiet_field(&line, &one, " of ") && smith_quiet_field(&line, &two, " functions have")) {
+            covered[0] += one;
+            covered[1] += two;
+            covers = true;
+        } else if (prove && smith_quiet_field(&line, &one, " proved, ") &&
+                   smith_quiet_field(&line, &two, " failed, ") && smith_quiet_field(&line, &three, " trusted")) {
             sum[0] += one;
             sum[1] += two;
             sum[2] += three;
@@ -175,6 +185,7 @@ static void smith_quiet_detail(const char *verb, const char *text, size_t size, 
             }
         }
     }
+    if (covers) snprintf(coverage, coverage_capacity, "%zu of %zu functions", covered[0], covered[1]);
     if (!seen) return;
     if (prove) {
         snprintf(out, capacity, "%zu proved, %zu failed, %zu trusted", sum[0], sum[1], sum[2]);
