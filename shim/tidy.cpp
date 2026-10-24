@@ -85,6 +85,9 @@ class SmithNaming final : public RenamerClangTidyCheck {
 
   protected:
     std::optional<FailureInfo> getDeclFailureInfo(const NamedDecl *Decl, const SourceManager &SM) const override {
+        // A name that is not a simple identifier (an Objective-C selector, an operator, a conversion) has no identifier
+        // to ask for, and Objective-C naming is not smith's to enforce: ivars, properties and methods are skipped.
+        if (!Decl->getDeclName().isIdentifier() || isObjC(Decl)) return std::nullopt;
         if (isTuplePart(Decl)) return std::nullopt;
         const smith::WrittenName *written = writtenName(Decl, SM);
         if (written == nullptr || written->member.empty()) return (inner.*reach(DeclFn{}))(Decl, SM);
@@ -124,6 +127,11 @@ class SmithNaming final : public RenamerClangTidyCheck {
     // A tuple `struct { i32, f32 }` is lowered to a struct named for its fields (`smith_tuple_i32__f32`) whose fields
     // are `_0`, `_1`, and a slice `T xs[:]` to `smith_array_i32_n` with `data` and `count`: names the lowering made and
     // the program never wrote, so no rule of naming applies to them (nor to `smith_field`, the struct of a `Field`).
+    static bool isObjC(const NamedDecl *Decl) {
+        return isa<ObjCContainerDecl, ObjCMethodDecl, ObjCIvarDecl, ObjCPropertyDecl, ObjCCompatibleAliasDecl>(Decl) ||
+               isa<ObjCContainerDecl>(Decl->getDeclContext());
+    }
+
     static bool isTuplePart(const NamedDecl *Decl) {
         auto made = [](StringRef name) {
             return name.starts_with("smith_tuple_") || name.starts_with("smith_array_") || name == "smith_field";

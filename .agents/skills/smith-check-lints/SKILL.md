@@ -28,6 +28,8 @@ smith's default `.clang-tidy` lists six more `smith-*` checks (issues #47 and #6
 
 One more is off by default, because it is a style a project chooses (`Checks: smith-designated-init` turns it on): `smith-designated-init` (`.smith`) reports a positional initializer of two or more values for a struct that another file defines (`(text::Text){bytes, length}`, `{"src/base", fast}` for a `build::Folder`), which breaks, or shifts its values, when that struct gains a field. It says to name the fields: ``{.path = "src/base", .fast = fast}``. A struct the file defines itself, a system header's and a one-value initializer are left alone.
 
+The naming check (`readability-identifier-naming`, which judges `.smith` names as written) skips every declaration whose name is not a simple identifier (C++ operators and conversions) and every Objective-C declaration (classes, ivars, properties, methods): Objective-C naming is Apple's, and no smith rule applies to it.
+
 `// NOLINT(smith-c23)` (or `NOLINTBEGIN`/`NOLINTEND`) opts a line out, and deleting a check from `Checks` opts a project out. The C checks read C files and `.smith`, never C++.
 
 Also in this family: [smith-check](../smith-check/SKILL.md).

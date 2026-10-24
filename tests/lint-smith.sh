@@ -788,5 +788,33 @@ expect "the idiom checks are on in smith's defaults, and a clean module passes t
 run idiom/sized.smith >"$work/all-sized.out"
 expect "... and report in a default run" "1" "$(findings <"$work/all-sized.out" | head -n 1 | grep -c 'smith-sized-types')"
 
+# Objective-C: a class with ivars, properties and methods has names that are not simple identifiers (selectors); the
+# naming check skips them (it once asserted "Name is not a simple identifier", issue #115): no crash, no finding.
+cat >objc.m <<'EOF2'
+#import <Foundation/Foundation.h>
+
+@interface Thing : NSObject {
+    int _count;
+    NSString *Mixed_Name;
+}
+@property(nonatomic, assign) int size_of;
+- (void)setCount:(int)count withName:(NSString *)name;
++ (instancetype)Make_Thing;
+@end
+
+@implementation Thing
+- (void)setCount:(int)count withName:(NSString *)name {
+    _count = count;
+    Mixed_Name = name;
+}
++ (instancetype)Make_Thing {
+    return nil;
+}
+@end
+EOF2
+smith lint objc.m >"$work/objc.out" 2>&1
+objc_status=$?
+expect "Objective-C ivars, properties and methods: lint does not crash and reports nothing" "0 0" "$objc_status $(grep -c 'readability-identifier-naming' "$work/objc.out")"
+
 echo "lint-smith: $((total - failures)) of $total passed"
 [ $failures = 0 ]
