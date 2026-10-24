@@ -1398,6 +1398,25 @@ void use(void) {
     struct { f64, f32 } plain = m;
     (void)plain;
 }
+==> error-type-function-pointee/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+// A pointer's pointee is known one level deep: `T **` cannot be walked twice.
+static type twice(type t) {
+    if (is_pointer(t)) return typeof(*(t) nullptr);
+    return t;
+}
+
+int main(void) {
+    constexpr type once = twice(i32 *);
+    constexpr type deep = twice(twice(i32 **));
+    once x = 1;
+    deep y = 2;
+    c::printf("%d %d\n", x, y);
+    return 0;
+}
 ==> error-type-value-import/src/main.smith <==
 module main;
 
@@ -6820,6 +6839,45 @@ i32 main(void) {
     c::printf("%lld %llu %zu %s %d %f\n", f[0], f[1], f[2], h[0], h[1], m[0]);
     return 0;
 }
+==> type-function-pointee/src/leaves.smith <==
+module leaves;
+
+// The type a pointer points to, and a scalar's own: a function over `type` that reads the pointee of a type value in
+// C's own way (issue #143).
+static type leaf_of(type t) {
+    if (is_pointer(t)) return typeof(*(t) nullptr);
+    return t;
+}
+
+export leaf_of(T) first(constexpr type T, T x) {
+    if constexpr (is_pointer(T)) {
+        return *x;
+    } else {
+        return x;
+    }
+}
+==> type-function-pointee/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import leaves;
+
+typedef struct {
+    i32 a;
+    f64 b;
+} Pair;
+
+int main(void) {
+    Pair pair = {3, 2.5};
+    Pair *pointer = &pair;
+    i32 scalar = 7;
+    c::printf("%zu %zu %zu\n", sizeof(leaves::first(Pair *, pointer)), sizeof(leaves::first(i32, scalar)),
+              sizeof(leaves::first(f64 *, &pair.b)));
+    Pair *again = leaves::first(Pair **, &pointer); // one level: the pointee of a pointer to a pointer is a pointer
+    Pair copy = leaves::first(Pair *, pointer);
+    c::printf("%d %g %d %d\n", copy.a, copy.b, leaves::first(i32, scalar), again->a);
+    return 0;
+}
 ==> type-function-private/src/main.smith <==
 module main;
 
@@ -6876,6 +6934,23 @@ export type small_of(type t) {
 
 export small_of(T) convert(constexpr type T, auto x) {
     return x;
+}
+==> type-function-typeof/src/main.smith <==
+module main;
+import <stdio.h>;
+// `typeof(expr)` in a function over `type` is the type of the expression, as it is anywhere (issue #143).
+static type element(type t) {
+    i32 *p = nullptr;
+    if (sizeof(t) > 4) return typeof(*p);
+    return t;
+}
+int main(void) {
+    constexpr type once = element(f64);
+    constexpr type small = element(u8);
+    once x = 1.5;
+    small y = 7;
+    c::printf("%zu %zu\n", sizeof(x), sizeof(y));
+    return 0;
 }
 ==> type-plain-name/src/main.smith <==
 #include <stdio.h>

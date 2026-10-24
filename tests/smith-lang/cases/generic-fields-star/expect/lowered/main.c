@@ -14,5 +14,5 @@ char *words[2] = {"one", "two"};
 main_Table t = {.names = words[0:2], .n = 2};__extension__({extern void main_show__Table(main_Table*x)__asm__("_main::show(main_Table)");main_show__Table(&t);});
 return 0;
 }
-typedef struct smith_field{struct smith_array_char_n{char*data;__SIZE_TYPE__ count[1];}name;unsigned long long type;}Field;[[maybe_unused]]static inline Field smith_field_make(char*name,__SIZE_TYPE__ length,unsigned long long kind){return(Field){{name,{length}},kind};}extern void main_show__Table(main_Table*x)__asm__("_main::show(main_Table)");
+typedef struct smith_field{struct smith_array_char_n{char*data;__SIZE_TYPE__ count[1];}name;unsigned __int128 type;}Field;[[maybe_unused]]static inline Field smith_field_make(char*name,__SIZE_TYPE__ length,unsigned __int128 kind){return(Field){{name,{length}},kind};}extern void main_show__Table(main_Table*x)__asm__("_main::show(main_Table)");
 [[gnu::weak]][[gnu::visibility("hidden")]]void main_show__Table(main_Table*x){}

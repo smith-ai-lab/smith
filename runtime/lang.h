@@ -107,6 +107,8 @@ typedef struct {
     uint64_t alignment;
     const char *canonical; // the type with every typedef looked through; valid until the next question
     uint32_t canonical_length;
+    const char *pointee; // of a pointer: the type it points to, canonical; valid until the next question
+    uint32_t pointee_length;
 } SmithTypeQuery;
 
 // A field of a struct, for `fields(T)`: what the parser says of the type written by a spelling. `status` is Ok when the

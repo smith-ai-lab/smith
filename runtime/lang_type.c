@@ -2,15 +2,18 @@
 // one (`typedef struct { constexpr type t; } Foo;`), an array may, and an ordinary function may take and return one.
 // Included by runtime/lang.c, after runtime/lang_tuple.c.
 //
-// A type is a handle, a 64-bit number the engine (clang's constant evaluator) sees as plain data: in the text given to
-// clang a `type` is an `unsigned long long` and a type written where a value is expected (`i32`, `struct S *`) is its
-// handle as an integer literal. The handle is made of an index into this file's table of the types it has met (two
-// handles are equal exactly when the compiler's canonical spellings are: `u32 == uint32_t`), the questions a type is
-// asked (integer, float, signed, pointer, bool, enum, record, array), its alignment and its size, so `sizeof(t)` is a
-// shift of the handle and needs no callback into the lowering:
+// A type is a handle, a number the engine (clang's constant evaluator) sees as plain data: in the text given to
+// clang a `type` is an `unsigned __int128` (a handle is 128 bits, see smith_lang_ty_pieces) and a type written where a
+// value is expected (`i32`, `struct S *`) is its handle as an integer literal. The handle is made of an index into this
+// file's table of the types it has met (two handles are equal exactly when the compiler's canonical spellings are: `u32
+// == uint32_t`), the questions a type is asked (integer, float, signed, pointer, bool, enum, record, array), its
+// alignment and its size, so `sizeof(t)` is a shift of the handle and needs no callback into the lowering:
 //
 //   bits 0-11 the index   12-15 the slice depth   16-23 the kinds   24-28 log2 of the alignment
-//   29 the type is incomplete   32-63 the size
+//   29 the type is incomplete   32-63 the size   64-127 a pointer's pointee: its bits 0-63 (issue #143)
+//
+// The upper half is a function of the index (the table keeps each pointer's pointee), so the lowering holds only the
+// lower 64 bits as a type's handle and writes the rest where it writes the handle for clang (smith_lang_ty_pieces).
 //
 // A slice type (`t[:]`, issue #107) is not in the table: it is its element's handle with a slice depth, the number of
 // leading run-time dimensions (`f32[:][:]` is `f32` at depth 2, `f32[:][2]` is `f32[2]` at depth 1), and the kinds
@@ -81,6 +84,7 @@ typedef struct {
     char spelling[smith_lang_ty_types_max][smith_lang_ty_spelling_max]; // as the compiler reads it
     char canonical[smith_lang_ty_types_max][smith_lang_ty_spelling_max];
     uint64_t handle[smith_lang_ty_types_max];
+    uint64_t pointee[smith_lang_ty_types_max]; // a pointer's pointee: the handle's upper half, 0 for any other type
     size_t count;
 } SmithLangTyTable;
 
@@ -381,40 +385,101 @@ static bool smith_lang_ty_from_tag(SmithLang *lang, const SmithHost *host, const
     return true;
 }
 
-// The handle of the type written `spelling` (as the compiler reads it), added to the table when it is new. False after
-// an error.
+// The pointer types a type met for the first time stands on: the type, its pointee, the pointee's...
+constexpr size_t smith_lang_ty_levels_max = 8;
+
+typedef struct {
+    char spelling[smith_lang_ty_spelling_max];
+    char canonical[smith_lang_ty_spelling_max];
+    char pointee[smith_lang_ty_spelling_max]; // of a pointer: the spelling of what it points to
+    SmithTypeQuery query;
+} SmithLangTyLevel;
+
+// The index of the table entry of a canonical spelling, or the table's count when there is none.
+static size_t smith_lang_ty_find_canonical(const char *canonical) {
+    const SmithLangTyTable *table = &smith_lang_ty_table;
+    size_t at = 0;
+    while (at < table->count && strcmp(table->canonical[at], canonical) != 0)
+        at += 1;
+    return at;
+}
+
+// Asks the compiler about the type written `spelling` and keeps what it says in `level`. False when it cannot read it.
+static bool smith_lang_ty_level_ask(const SmithHost *host, const char *spelling, SmithLangTyLevel *level) {
+    SmithTypeQuery query = {};
+    if (!host->type_query(host->context, spelling, (uint32_t)strlen(spelling), &query)) return false;
+    snprintf(level->canonical, sizeof level->canonical, "%.*s", (int)query.canonical_length, query.canonical);
+    level->query = query;
+    level->query.canonical = level->canonical;
+    level->pointee[0] = 0;
+    if (query.is_pointer && query.pointee != nullptr) { // the host's buffer is the next question's: keep it
+        snprintf(level->pointee, sizeof level->pointee, "%.*s", (int)query.pointee_length, query.pointee);
+    }
+    level->query.pointee = nullptr;
+    return true;
+}
+
+// Adds an entry to the table for a type; `below` is the handle of its pointee (0 when it has none or it is not known).
+static uint64_t smith_lang_ty_add_entry(const char *spelling, const SmithLangTyLevel *level, uint64_t below) {
+    SmithLangTyTable *table = &smith_lang_ty_table;
+    size_t index = table->count++;
+    // `typeof(*p)` names a local of a function that has ended where the type is written again: its canonical spelling
+    // is the type (an unnamed struct has none to write).
+    bool of_expression = strncmp(spelling, "typeof", 6) == 0 || strncmp(spelling, "__typeof__", 10) == 0;
+    if (of_expression && strstr(level->canonical, "(unnamed") == nullptr &&
+        strstr(level->canonical, "(anonymous") == nullptr) {
+        spelling = level->canonical;
+    }
+    snprintf(table->spelling[index], sizeof table->spelling[index], "%s", spelling);
+    snprintf(table->canonical[index], sizeof table->canonical[index], "%s", level->canonical);
+    table->handle[index] = smith_lang_ty_pack(index, &level->query);
+    table->pointee[index] = level->query.is_pointer ? below : 0;
+    return table->handle[index];
+}
+
 // The handle of the type written `spelling` in the table of the file, whatever its canonical spelling is; the canonical
-// spelling goes to `canonical`.
+// spelling goes to `canonical`. A pointer's handle carries its pointee's (`typeof(*(t)nullptr)` reads it), so the
+// pointee is met first, and its pointee before it, up to smith_lang_ty_levels_max pointers deep.
 static bool smith_lang_ty_entry(SmithLang *lang, const SmithHost *host, const char *spelling, uint32_t location,
                                 uint64_t *handle, char *canonical, size_t canonical_capacity) {
+    static SmithLangTyLevel levels[smith_lang_ty_levels_max];
     if (host->type_query == nullptr) {
         smith_lang_error(lang, host, location,
                          "a type as a value needs smith's compiler to read it; the raw lowering has none");
         return false;
     }
-    SmithTypeQuery query = {};
-    if (!host->type_query(host->context, spelling, (uint32_t)strlen(spelling), &query)) {
-        smith_lang_error(lang, host, location, "the compiler cannot read the type `%s`", spelling);
-        return false;
-    }
-    snprintf(canonical, canonical_capacity, "%.*s", (int)query.canonical_length, query.canonical);
-    SmithLangTyTable *table = &smith_lang_ty_table;
-    for (size_t i = 0; i < table->count; i++) { // the types met
-        if (strcmp(table->canonical[i], canonical) == 0) {
-            *handle = table->handle[i];
+    snprintf(levels[0].spelling, sizeof levels[0].spelling, "%s", spelling);
+    size_t count = 0;
+    uint64_t below = 0;
+    while (count < smith_lang_ty_levels_max) { // the types not met yet, then the first that is
+        SmithLangTyLevel *level = &levels[count];
+        if (!smith_lang_ty_level_ask(host, level->spelling, level)) {
+            if (count > 0) break; // a pointee the compiler cannot read: the pointer's is not known
+            smith_lang_error(lang, host, location, "the compiler cannot read the type `%s`", spelling);
+            return false;
+        }
+        size_t found = smith_lang_ty_find_canonical(level->canonical);
+        if (found < smith_lang_ty_table.count) {
+            below = smith_lang_ty_table.handle[found];
+            if (count > 0) break;
+            snprintf(canonical, canonical_capacity, "%s", level->canonical);
+            *handle = below;
             return true;
         }
+        count += 1;
+        if (level->pointee[0] == 0 || count >= smith_lang_ty_levels_max) break;
+        snprintf(levels[count].spelling, sizeof levels[count].spelling, "%s", level->pointee);
     }
-    if (table->count >= smith_lang_ty_types_max) {
+    if (smith_lang_ty_table.count + count > smith_lang_ty_types_max) {
         smith_lang_error(lang, host, location, "this file uses more than %zu different types as values",
                          smith_lang_ty_types_max);
         return false;
     }
-    size_t index = table->count++;
-    snprintf(table->spelling[index], sizeof table->spelling[index], "%s", spelling);
-    snprintf(table->canonical[index], sizeof table->canonical[index], "%s", canonical);
-    table->handle[index] = smith_lang_ty_pack(index, &query);
-    *handle = table->handle[index];
+    snprintf(canonical, canonical_capacity, "%s", levels[0].canonical);
+    for (size_t at = count; at > 0; at--) { // the innermost first
+        below = smith_lang_ty_add_entry(levels[at - 1].spelling, &levels[at - 1], below);
+    }
+    *handle = below;
     return true;
 }
 
@@ -425,6 +490,64 @@ static bool smith_lang_ty_handle(SmithLang *lang, const SmithHost *host, const c
     static const char slice_tag[] = "struct smith_array_";
     if (strncmp(canonical, slice_tag, sizeof slice_tag - 1) == 0) {
         smith_lang_ty_from_tag(lang, host, canonical + 7, location, handle); // a slice has no entry of its own
+    }
+    return true;
+}
+
+// What an error adds when the value of a type is 0: the pointee of a pointee (the one place a handle is 0).
+static const char *smith_lang_ty_second_level(void) {
+    return ": a pointer's pointee is known one level deep (a type function cannot walk `T **` twice with "
+           "`typeof(*(t)nullptr)`)";
+}
+
+// A handle written for the compiler. The handle a `type` holds is an `unsigned __int128`: the lower half is this file's
+// handle (index, slice depth, kinds, alignment, size) and a pointer's upper half is its pointee's lower half, so
+// `typeof(*(t)nullptr)` is a shift. clang has no 128-bit literal: a handle with no upper half is `123ULL`, a pointer's
+// is `((unsigned __int128)HULL << 64 | LULL)`, in these pieces (words, numbers and punctuation).
+
+// A pointer's pointee (the upper half of its handle), 0 when the handle is not a pointer's or its pointee is not known.
+static uint64_t smith_lang_ty_pointee_of(uint64_t handle) {
+    size_t index = (size_t)(handle & smith_lang_ty_index_mask);
+    if (index >= smith_lang_ty_table.count || smith_lang_ty_table.handle[index] != handle) return 0;
+    return smith_lang_ty_table.pointee[index];
+}
+
+static size_t smith_lang_ty_pieces(uint64_t handle, char pieces[][smith_lang_ty_piece_size]) {
+    uint64_t pointee = smith_lang_ty_pointee_of(handle);
+    if (pointee == 0) {
+        snprintf(pieces[0], smith_lang_ty_piece_size, "%lluULL", (unsigned long long)handle);
+        return 1;
+    }
+    static const char *const first[] = {"(", "(", "unsigned", "__int128", ")"};
+    size_t used = 0;
+    for (size_t i = 0; i < sizeof first / sizeof first[0]; i++) // 5 pieces
+        snprintf(pieces[used++], smith_lang_ty_piece_size, "%s", first[i]);
+    snprintf(pieces[used++], smith_lang_ty_piece_size, "%lluULL", (unsigned long long)pointee);
+    snprintf(pieces[used++], smith_lang_ty_piece_size, "<<");
+    snprintf(pieces[used++], smith_lang_ty_piece_size, "64");
+    snprintf(pieces[used++], smith_lang_ty_piece_size, "|");
+    snprintf(pieces[used++], smith_lang_ty_piece_size, "%lluULL", (unsigned long long)handle);
+    snprintf(pieces[used++], smith_lang_ty_piece_size, ")");
+    return used;
+}
+
+static SmithTokenKind smith_lang_ty_piece_kind(const char *piece) {
+    if (isdigit((unsigned char)piece[0])) return SmithTokenKind_Number;
+    return isalpha((unsigned char)piece[0]) || piece[0] == '_' ? SmithTokenKind_Identifier : SmithTokenKind_Punctuator;
+}
+
+// The handle as text for a value query: its pieces joined by `\x1f`. False when it does not fit.
+static bool smith_lang_ty_literal(uint64_t handle, char *out, size_t capacity) {
+    char pieces[smith_lang_ty_pieces_max][smith_lang_ty_piece_size];
+    size_t count = smith_lang_ty_pieces(handle, pieces);
+    size_t used = 0;
+    out[0] = 0;
+    for (size_t i = 0; i < count; i++) {
+        size_t length = strlen(pieces[i]);
+        if (used + length + 2 >= capacity) return false;
+        if (i > 0) out[used++] = '\x1f';
+        memcpy(out + used, pieces[i], length + 1);
+        used += length;
     }
     return true;
 }
@@ -671,10 +794,13 @@ static bool smith_lang_ty_leaf(SmithLang *lang, const SmithHost *host, const Smi
     }
     uint64_t handle = 0;
     if (!smith_lang_ty_handle(lang, host, spelling, token->location, &handle)) handle = 0;
-    char number[32];
-    snprintf(number, sizeof number, "%lluULL", (unsigned long long)handle);
-    SmithToken made = smith_lang_ty_made(SmithTokenKind_Number, number, token, token->space_before);
-    smith_lang_ty_put(lang, length - 1, &made, 1);
+    char pieces[smith_lang_ty_pieces_max][smith_lang_ty_piece_size];
+    size_t count = smith_lang_ty_pieces(handle, pieces);
+    SmithToken made[smith_lang_ty_pieces_max];
+    for (size_t i = 0; i < count; i++)
+        made[i] = smith_lang_ty_made(smith_lang_ty_piece_kind(pieces[i]), pieces[i], token,
+                                     i == 0 ? token->space_before : true);
+    smith_lang_ty_put(lang, length - 1, made, count);
     return true;
 }
 
@@ -744,8 +870,8 @@ static bool smith_lang_ty_chain_value(SmithLang *lang, const SmithHost *host, co
     }
     *handle = query.root.kind == SmithValue_Int ? query.root.magnitude : 0;
     if (smith_lang_ty_spelling_of(lang, *handle) == nullptr) {
-        smith_lang_error(lang, host, location, "`%.*s` is not the value of a type", (int)chain->tokens[0].length,
-                         chain->tokens[0].text);
+        smith_lang_error(lang, host, location, "`%.*s` is not the value of a type%s", (int)chain->tokens[0].length,
+                         chain->tokens[0].text, *handle == 0 ? smith_lang_ty_second_level() : "");
         return false;
     }
     return true;
@@ -880,6 +1006,38 @@ static bool smith_lang_ty_slice_op(SmithLang *lang, const SmithHost *host, const
     return true;
 }
 
+// `typeof(*(t)nullptr)`, where `t` holds a type (a parameter of a function over `type`, say): C's own way to write the
+// pointee of a pointer type. A pointer's handle carries its pointee's lower half in its upper half, so the pointee is
+// `((t) >> 64)`; a pointee that is a pointer has no pointee of its own (0, which is no type: see
+// smith_lang_ty_chain_value). The run is `typeof ( * ( chain ) nullptr )`, `length` tokens.
+static bool smith_lang_ty_pointee(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+    size_t length = smith_lang_ty_typeof_run(lang, host, token);
+    if (length == 0 || smith_lang_ty.region == SmithLangRegion_None) return false;
+    static const char *const before[] = {"(", "*", "("};
+    if (!smith_lang_ident(token, "typeof") && !smith_lang_ident(token, "__typeof__")) return false;
+    for (size_t i = 0; i < sizeof before / sizeof before[0]; i++) { // 3 tokens
+        if (!smith_lang_punct(smith_lang_peek(lang, host, i, false), before[i])) return false;
+    }
+    SmithLangTyChain chain;
+    if (!smith_lang_ty_chain(lang, host, token, 4, &chain)) return false;
+    if (length != chain.count + 7 || !smith_lang_punct(smith_lang_peek(lang, host, chain.count + 3, false), ")") ||
+        !smith_lang_ident(smith_lang_peek(lang, host, chain.count + 4, false), "nullptr")) {
+        return false;
+    }
+    static SmithToken made[smith_lang_ty_chain_max + 8];
+    size_t used = 0;
+    made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, "(", token, token->space_before);
+    made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, "(", token, false);
+    for (size_t i = 0; i < chain.count; i++) // the chain, as written
+        made[used++] = chain.tokens[i];
+    made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, ")", token, false);
+    made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, ">>", token, true);
+    made[used++] = smith_lang_ty_made(SmithTokenKind_Number, "64", token, true);
+    made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, ")", token, false);
+    if (smith_lang_ty_put(lang, length - 1, made, used)) smith_lang_ty.passthrough = chain.count;
+    return true;
+}
+
 // The tokens of the type a handle names, written where a type is: the spelling's, or for a slice its struct (defined
 // there when no earlier declaration at file scope has, as `T xs[:]` does).
 static size_t smith_lang_ty_type_tokens(SmithLang *lang, uint64_t handle, const SmithToken *like, SmithToken *out,
@@ -959,7 +1117,7 @@ static bool smith_lang_ty_question(SmithLang *lang, const SmithHost *host, const
     SmithLangTyChain chain;
     if (!smith_lang_ty_chain(lang, host, token, 2, &chain)) return false;
     if (!smith_lang_punct(smith_lang_peek(lang, host, chain.count + 1, false), ")")) return false;
-    static SmithToken made[smith_lang_ty_chain_max + 16];
+    static SmithToken made[smith_lang_ty_chain_max + 24];
     size_t used = 0;
     char number[16];
     if (align) {
@@ -975,6 +1133,12 @@ static bool smith_lang_ty_question(SmithLang *lang, const SmithHost *host, const
         made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, "(", token, false);
     }
     if (!size) made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, "(", token, false);
+    if (size) { // the size is the handle's lower half shifted: a pointer's upper half is not in it
+        static const char *const cast[] = {"(", "unsigned", "long", "long", ")"};
+        for (size_t i = 0; i < sizeof cast / sizeof cast[0]; i++) // 5 tokens
+            made[used++] = smith_lang_ty_made(i == 0 || i == 4 ? SmithTokenKind_Punctuator : SmithTokenKind_Identifier,
+                                              cast[i], token, i != 0 && i != 4);
+    }
     made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, "(", token, false);
     for (size_t i = 0; i < chain.count; i++) // the chain, as written
         made[used++] = chain.tokens[i];
@@ -1253,7 +1417,7 @@ static bool smith_lang_ty_member_constexpr(SmithLang *lang, const SmithHost *hos
            smith_lang_ident(smith_lang_peek(lang, host, 0, false), "type");
 }
 
-// `type` where a type is written (a declaration's specifier): an `unsigned long long`, the handle's type.
+// `type` where a type is written (a declaration's specifier): an `unsigned __int128`, the handle's type.
 static bool smith_lang_ty_specifier(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     SmithLangTy *ty = &smith_lang_ty;
     if (!smith_lang_ident(token, "type") || ty->decl_name || !smith_lang_ty_at_start()) return false;
@@ -1265,10 +1429,9 @@ static bool smith_lang_ty_specifier(SmithLang *lang, const SmithHost *host, cons
     if (!smith_lang_ty_is_name_token(next) && !smith_lang_punct(next, "*")) return false;
     SmithToken made[3];
     made[0] = smith_lang_ty_made(SmithTokenKind_Identifier, "unsigned", token, token->space_before);
-    made[1] = smith_lang_ty_made(SmithTokenKind_Identifier, "long", token, true);
-    made[2] = smith_lang_ty_made(SmithTokenKind_Identifier, "long", token, true);
+    made[1] = smith_lang_ty_made(SmithTokenKind_Identifier, "__int128", token, true);
     made[0].line_start = token->line_start;
-    smith_lang_ty_put(lang, 0, made, 3);
+    smith_lang_ty_put(lang, 0, made, 2);
     ty->specifier = true;
     return true;
 }
@@ -1324,6 +1487,7 @@ static bool smith_lang_ty_token(SmithLang *lang, const SmithHost *host, const Sm
         smith_lang_ty_qualified(lang, host, token);
         if (!replaced) replaced = as_value = smith_lang_ty_slice_op(lang, host, token);
         if (!replaced) replaced = as_value = smith_lang_ty_question(lang, host, token);
+        if (!replaced) replaced = as_value = smith_lang_ty_pointee(lang, host, token);
         if (!replaced) replaced = as_value = smith_lang_ty_use(lang, host, token);
         if (!replaced) replaced = as_value = smith_lang_ty_leaf(lang, host, token);
         if (!replaced) smith_lang_ty_plain(token);

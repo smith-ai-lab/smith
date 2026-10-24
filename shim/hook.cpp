@@ -1822,6 +1822,7 @@ class SmithHook final : public TokenHook, public NameSource {
     // A generic's instances are told apart by their types, and its `if constexpr` asks what a type is. The type comes
     // as the tokens the call wrote, lowered (`const geometry_Point *`, `__UINT32_TYPE__`), and the parser reads them.
     std::string queryText;
+    std::string pointeeText; // the pointee a type query names (kept until the next query)
 
     // The type a spelling names (`u32`, `struct Point *`, `int (*)(int)`), read by the parser as a type name in the
     // scope it is in, or a null type when it is not one. Diagnostics are off while it reads.
@@ -1851,6 +1852,11 @@ class SmithHook final : public TokenHook, public NameSource {
         self->queryText = canonical.getAsString(ast.getPrintingPolicy());
         out->canonical = self->queryText.c_str();
         out->canonical_length = self->queryText.size();
+        if (canonical->isPointerType()) { // the pointee, for a pointer's handle (`typeof(*(t)nullptr)`)
+            self->pointeeText = canonical->getPointeeType().getCanonicalType().getAsString(ast.getPrintingPolicy());
+            out->pointee = self->pointeeText.c_str();
+            out->pointee_length = self->pointeeText.size();
+        }
         out->is_bool = canonical->isBooleanType();
         out->is_enum = canonical->isEnumeralType();
         out->is_integer = canonical->isIntegerType() && !out->is_bool && !out->is_enum;
@@ -2034,9 +2040,17 @@ class SmithHook final : public TokenHook, public NameSource {
         type = type.getCanonicalType();
         if (value.isInt()) {
             const llvm::APSInt &number = value.getInt();
-            if (number.getBitWidth() > 64) {
-                why = "an integer wider than 64 bits is not a value smith reads back";
+            if (number.getBitWidth() > 64 && (number.isSigned() || number.getBitWidth() > 128)) {
+                why = "a signed integer, or one wider than 128 bits, is not a value smith reads back";
                 return false;
+            }
+            // An `unsigned __int128` is a type's handle (a pointer's carries its pointee's in the upper half): the
+            // lowering reads the lower half, which holds the index, the slice depth and the facts of the type.
+            if (number.getBitWidth() > 64) {
+                node->kind = SmithValue_Int;
+                node->bits = number.getBitWidth();
+                node->magnitude = number.trunc(64).getZExtValue();
+                return true;
             }
             llvm::APInt wide =
                 number.isSigned() ? number.sext(number.getBitWidth() + 1) : number.zext(number.getBitWidth() + 1);

@@ -723,7 +723,7 @@ static bool smith_lang_cx_text(const SmithLangCx *cx, uint32_t first, uint32_t l
         } else if (smith_lang_cx_token(at)->param != 0 && smith_lang_cx_type_argument(first, last, at)) {
             uint64_t handle = 0;
             if (!smith_lang_cx_type_handle(cx, at, &handle)) return false;
-            snprintf(piece, sizeof piece, "%lluULL", (unsigned long long)handle);
+            if (!smith_lang_ty_literal(handle, piece, sizeof piece)) return false;
         } else if (!smith_lang_infer_text((SmithLangSpan){at, at + 1}, cx->instance, cx->location, piece,
                                           sizeof piece)) {
             return false;
@@ -907,7 +907,7 @@ static bool smith_lang_result_text(SmithLangCx *cx, uint32_t first, uint32_t las
         } else if (smith_lang_cx_token(at)->param != 0 && smith_lang_cx_type_argument(first, last, at)) {
             uint64_t handle = 0;
             if (!smith_lang_cx_type_handle(cx, at, &handle)) return false;
-            snprintf(piece, sizeof piece, "%lluULL", (unsigned long long)handle);
+            if (!smith_lang_ty_literal(handle, piece, sizeof piece)) return false;
         } else if (!smith_lang_infer_text((SmithLangSpan){at, at + 1}, cx->instance, cx->location, piece,
                                           sizeof piece)) {
             return false;
@@ -952,7 +952,10 @@ static bool smith_lang_result_ask(SmithLang *lang, const SmithHost *host, const 
         const char *spelling =
             query.root.kind == SmithValue_Int ? smith_lang_ty_spelling_of(lang, query.root.magnitude) : nullptr;
         if (spelling == nullptr) {
-            why = "its value is not a type (declare it to return `type`)";
+            why = query.root.kind == SmithValue_Int && query.root.magnitude == 0
+                      ? "the pointee of a pointee is not known: a type function reads a pointer's pointee one level "
+                        "deep (`typeof(*(t)nullptr)` of `T **` is a pointer, whose own pointee it cannot read)"
+                      : "its value is not a type (declare it to return `type`)";
         } else {
             snprintf(instance->result, sizeof instance->result, "%s", spelling);
             instance->result_handle = query.root.magnitude;

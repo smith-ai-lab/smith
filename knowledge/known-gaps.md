@@ -21,3 +21,4 @@ tags: [gaps]
 - A slice in an aggregate initializer (`{.items = array}`) is C's brace elision (the pointer set, the count left 0), not a
   conversion; `-Wmissing-braces` reports it, so assign after declaring. `fields(T)`, `format` and `test::check_equal` over
   slices are not built (#82's comment of the lead; #83's `fields`).
+- A type function reads a pointer's pointee one level deep (issue #143): `typeof(*(t)nullptr)` of `T *` is `T`, of `T **` is a `T *` that has no pointee of its own, so it cannot be walked twice (the error says so), and that `T *` is not `==` to a `T *` written out. A type handle is 128 bits and a pointer's upper half holds only its pointee's lower half; a general reader of types (a type-function interpreter in smith) waits for a use case. An `if constexpr` over a type function's type result (`small_of(T) == i64`, `sizeof(small_of(T))`) is not supported either: only a computed result type or a number or bool function works.

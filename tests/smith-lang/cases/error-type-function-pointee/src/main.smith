@@ -1,0 +1,18 @@
+module main;
+
+import <stdio.h>;
+
+// A pointer's pointee is known one level deep: `T **` cannot be walked twice.
+static type twice(type t) {
+    if (is_pointer(t)) return typeof(*(t)nullptr);
+    return t;
+}
+
+int main(void) {
+    constexpr type once = twice(i32 *);
+    constexpr type deep = twice(twice(i32 **));
+    once x = 1;
+    deep y = 2;
+    c::printf("%d %d\n", x, y);
+    return 0;
+}
