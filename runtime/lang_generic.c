@@ -48,9 +48,10 @@ typedef struct {
     SmithLangText description;
     uint32_t call_location;
     uint32_t depth;
-    uint32_t parent;      // 1 + the instance whose body asked for it (0: the file's own code)
-    uint8_t result_state; // a computed result type (issue #102): 0 not yet asked, 1 in `result`, 2 failed (reported)
-    char result[160];     // its spelling
+    uint32_t parent;        // 1 + the instance whose body asked for it (0: the file's own code)
+    uint8_t result_state;   // a computed result type (issue #102): 0 not yet asked, 1 in `result`, 2 failed (reported)
+    char result[160];       // its spelling
+    uint64_t result_handle; // and its type's handle (a slice is written with its struct, runtime/lang_type.c)
 } SmithLangInstance;
 
 static SmithLangInstance smith_lang_instances[smith_lang_instances_max];
@@ -367,12 +368,39 @@ static bool smith_lang_computed_return_follows(SmithLang *lang, const SmithHost 
            smith_lang_punct(smith_lang_peek(lang, host, index + 2, false), "(");
 }
 
+static void smith_lang_emit_pieces(SmithLang *lang, const SmithHost *host, const SmithLangPiece *pieces, size_t count,
+                                   const SmithToken *like, uint32_t instance);
+
+// The parameter list ended at the token read ahead at `index`, with a bare `type` in the result or a parameter: a
+// function that runs in the compiler (issue #107). When it has a body it is `plain`: the header pass records it like a
+// generic (an importer defines it, so a function there can call it at compile time), and the module's own compile
+// writes it as a private function. A prototype is no record.
+static bool smith_lang_plain_ahead(SmithLang *lang, const SmithHost *host, const SmithToken *first, bool over_type,
+                                   size_t index) {
+    if (!over_type || !smith_lang_punct(smith_lang_peek(lang, host, index + 1, false), "{")) return false;
+    if (lang->tee ||
+        host->type_query == nullptr) { // the header pass; the raw lowering writes no `type` for a C compiler
+        lang->generic_plain = true;
+        return true;
+    }
+    lang->pending_export = false; // it exists only at compile time: not a symbol, not a name for C
+    // Unused is no fault of the module's (a function over types that only importers call): `[[maybe_unused]]` first.
+    static const SmithLangPiece unused[] = {{SmithTokenKind_Punctuator, "["},
+                                            {SmithTokenKind_Punctuator, "["},
+                                            {SmithTokenKind_Identifier, "maybe_unused"},
+                                            {SmithTokenKind_Punctuator, "]"},
+                                            {SmithTokenKind_Punctuator, "]"}};
+    smith_lang_emit_pieces(lang, host, unused, sizeof unused / sizeof unused[0], first, 0);
+    return false;
+}
+
 // Reads ahead, to the end of the parameter list of the function the declaration begins with: is there a `type T` in it.
 // The tokens stay queued; nothing is changed.
 static bool smith_lang_generic_ahead(SmithLang *lang, const SmithHost *host, const SmithToken *first) {
     if (!lang->is_module || !host->maybe_generic || lang->broken) return false;
     int depth = 0;
     bool in_params = false;
+    bool over_type = false; // the result or a parameter is a bare `type`: an ordinary function over types (issue #107)
     const SmithToken *before = first;
     const SmithToken *result[8] = {first}; // the identifiers before the parameters: the result type, the name
     size_t result_count = 1;
@@ -380,6 +408,7 @@ static bool smith_lang_generic_ahead(SmithLang *lang, const SmithHost *host, con
         const SmithToken *token = smith_lang_peek(lang, host, index, false);
         if (!in_params && depth == 0 && token->kind == SmithTokenKind_Identifier && result_count < 8) {
             result[result_count++] = token;
+            over_type = over_type || smith_lang_ident(token, "type");
         }
         if (token->kind == SmithTokenKind_Eof) return false;
         if (token->kind == SmithTokenKind_Punctuator && token->length == 1) {
@@ -393,13 +422,17 @@ static bool smith_lang_generic_ahead(SmithLang *lang, const SmithHost *host, con
                     in_params = false; // `slice_of(T, k)` was the result type: the parameter list is next
                     lang->generic_result_call = true;
                 } else if (depth == 0 && in_params) {
-                    return false; // the parameter list ended without one
+                    // The parameter list ended without one: a function over types, with a body, is plain.
+                    return smith_lang_plain_ahead(lang, host, first, over_type, index);
                 }
             } else if (depth == 0 && (c == ';' || c == '=' || c == '{' || c == ',')) {
                 return false;
             }
         }
         // A bare `type t` is a type value (runtime/lang_type.c), a parameter of an ordinary function.
+        bool bare_value = in_params && depth == 1 && (smith_lang_punct(before, "(") || smith_lang_punct(before, ",")) &&
+                          smith_lang_ident(token, "type") && smith_lang_type_parameter_at(lang, host, index);
+        over_type = over_type || bare_value;
         bool bare = (smith_lang_punct(before, "(") || smith_lang_punct(before, ",")) &&
                     smith_lang_ident(token, "type") &&
                     smith_lang_bare_type_used(lang, host, result, result_count, index);
@@ -475,7 +508,7 @@ static const char *smith_lang_generic_scan(SmithLangGeneric *generic) {
     memset(generic->type_kind, 0, sizeof generic->type_kind);
     for (size_t i = 0; i < count; i++) { // the compile-time parameters
         const SmithLangGenToken *first = &smith_lang_gt.tokens[params[i].start];
-        if (smith_lang_param_is_bare_type(&params[i]))
+        if (smith_lang_param_is_bare_type(&params[i]) && !generic->plain)
             return "a type parameter is compile-time: write `constexpr type T`";
         if (params[i].kind == SmithLangSlot_Auto) {
             if (generic->type_count >= smith_lang_type_params_max)
@@ -515,7 +548,7 @@ static const char *smith_lang_generic_scan(SmithLangGeneric *generic) {
         generic->type_position[generic->type_count] = (uint8_t)i;
         generic->type_count += 1;
     }
-    if (generic->type_count == 0)
+    if (generic->type_count == 0 && !generic->plain)
         return "a generic function needs a `constexpr type T`, `constexpr auto f` or `auto` parameter";
     smith_lang_generic_mark_values(generic);
     return nullptr;
@@ -629,7 +662,7 @@ static const char *smith_lang_generic_problem(const SmithLang *lang, const Smith
     if (!smith_lang_punct(terminator, "{")) {
         return "a generic function has a body: the compiler writes it for each type it is called with";
     }
-    if (lang->decl.storage)
+    if (lang->decl.storage && !lang->decl.plain)
         return "a generic function is neither `static` nor `extern`; `export` is what makes it public";
     if (lang->generics_count >= smith_lang_generics_max) return "this file has more generic functions than smith keeps";
     return nullptr;
@@ -670,6 +703,7 @@ static void smith_lang_generic_flush_head(SmithLang *lang, const SmithHost *host
     *generic = (SmithLangGeneric){};
     generic->first = smith_lang_gt.count;
     generic->exported = lang->decl.exported; // before its head is pushed: the names it writes through imports
+    generic->plain = lang->decl.plain;
     if (problem == nullptr) {
         if (!smith_lang_generic_push_head(lang, generic) || !smith_lang_generic_parens(generic)) {
             problem = "a generic is a function with a parameter list after its name";
@@ -740,8 +774,10 @@ static void smith_lang_emit_pieces(SmithLang *lang, const SmithHost *host, const
 static void smith_lang_generic_placeholder(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic) {
     const SmithLangGenToken *name = &smith_lang_gt.tokens[generic->first + generic->name_index];
     char message[smith_lang_name_max * 2];
-    snprintf(message, sizeof message, "\"%s::%s is a generic function: call it from a .smith module\"",
-             smith_lang_str(generic->module), smith_lang_str(generic->member));
+    snprintf(message, sizeof message, "\"%s::%s is %s\"", smith_lang_str(generic->module),
+             smith_lang_str(generic->member),
+             generic->plain ? "a function over `type`: it exists only at compile time"
+                            : "a generic function: call it from a .smith module");
     SmithToken like = smith_lang_synth(SmithTokenKind_Identifier, "", 0, &(SmithToken){});
     like.location = name->location;
     like.line_start = true;
@@ -858,9 +894,9 @@ static size_t smith_lang_generic_serialize(const SmithLangGeneric *generic, char
         used = smith_lang_escape(out, capacity, used, smith_lang_str(words[i]), words[i].length);
         used = smith_lang_append(out, capacity, used, " ");
     }
-    // i: inline, p: private (an exported generic calls it), q: both
+    // i: inline, p: private (an exported generic calls it), q: both; f: a function over `type` (g: a private one)
     const char *kinds = generic->exported ? "-i" : "pq";
-    char kind = kinds[generic->is_inline ? 1 : 0];
+    char kind = generic->plain ? (generic->exported ? 'f' : 'g') : kinds[generic->is_inline ? 1 : 0];
     used = smith_lang_append(out, capacity, used, "%c %u %u %u %u |", kind, generic->name_index, generic->open_index,
                              generic->close_index, generic->body_index);
     for (uint32_t i = 0; i < generic->count; i++) { // the head, then the body
@@ -886,6 +922,20 @@ static size_t smith_lang_generic_lines(const SmithLang *lang, char *out, size_t 
             used = smith_lang_generic_serialize(generic, out, capacity, used);
     }
     return used;
+}
+
+// `// smith-types: slice_of small`: the functions over `type` the header records, which an importer defines (issue
+// #107).
+static size_t smith_lang_types_line(const SmithLang *lang, char *out, size_t capacity, size_t used) {
+    bool any = false;
+    for (size_t i = 0; i < lang->generics_count; i++) { // the module's own
+        const SmithLangGeneric *generic = &smith_lang_generics[i];
+        if (!generic->own || !generic->plain || !(generic->exported || generic->needed)) continue;
+        used =
+            smith_lang_append(out, capacity, used, any ? " %s" : "// smith-types: %s", smith_lang_str(generic->member));
+        any = true;
+    }
+    return any ? smith_lang_append(out, capacity, used, "\n") : used;
 }
 
 typedef struct {
@@ -1011,10 +1061,12 @@ static bool smith_lang_generic_read_tokens(const SmithLangGenericLine *parsed, S
     return generic->count > 0;
 }
 
-static int smith_lang_generic_find(const SmithLang *lang, const char *module, size_t module_length, const char *member,
-                                   size_t member_length) {
+// The generic `member` of `module`; a function over `type` (plain) is no generic to call, unless `plain` asks for it.
+static int smith_lang_generic_find_in(const SmithLang *lang, const char *module, size_t module_length,
+                                      const char *member, size_t member_length, bool plain) {
     for (size_t i = 0; i < lang->generics_count; i++) { // the generics known
         const SmithLangGeneric *generic = &smith_lang_generics[i];
+        if (generic->plain && !plain) continue;
         if (generic->module.length == module_length && generic->member.length == member_length &&
             memcmp(smith_lang_str(generic->module), module, module_length) == 0 &&
             memcmp(smith_lang_str(generic->member), member, member_length) == 0) {
@@ -1022,6 +1074,11 @@ static int smith_lang_generic_find(const SmithLang *lang, const char *module, si
         }
     }
     return -1;
+}
+
+static int smith_lang_generic_find(const SmithLang *lang, const char *module, size_t module_length, const char *member,
+                                   size_t member_length) {
+    return smith_lang_generic_find_in(lang, module, module_length, member, member_length, false);
 }
 
 // Reads the generics a header lists (`// smith-generic:` lines), once for each module.
@@ -1048,7 +1105,8 @@ static void smith_lang_generics_read(SmithLang *lang, const char *text, size_t l
                 generic->lowered = smith_lang_store(lang, words[2], strlen(words[2]));
                 generic->source = smith_lang_store(lang, words[3], strlen(words[3]));
                 generic->is_inline = parsed.words[4][0] == 'i' || parsed.words[4][0] == 'q';
-                generic->hidden = parsed.words[4][0] == 'p' || parsed.words[4][0] == 'q';
+                generic->hidden = parsed.words[4][0] == 'p' || parsed.words[4][0] == 'q' || parsed.words[4][0] == 'g';
+                generic->plain = parsed.words[4][0] == 'f' || parsed.words[4][0] == 'g';
                 generic->name_index = (uint32_t)strtoul(parsed.words[5], nullptr, 10);
                 generic->open_index = (uint32_t)strtoul(parsed.words[6], nullptr, 10);
                 generic->close_index = (uint32_t)strtoul(parsed.words[7], nullptr, 10);
@@ -1056,7 +1114,8 @@ static void smith_lang_generics_read(SmithLang *lang, const char *text, size_t l
                 generic->exported = !generic->hidden;
                 good = smith_lang_generic_scan(generic) == nullptr;
             }
-            if (good && smith_lang_generic_find(lang, words[0], strlen(words[0]), words[1], strlen(words[1])) < 0) {
+            if (good &&
+                smith_lang_generic_find_in(lang, words[0], strlen(words[0]), words[1], strlen(words[1]), true) < 0) {
                 lang->generics_count += 1;
             } else {
                 smith_lang_gt.count = mark;
@@ -1537,6 +1596,14 @@ static void smith_lang_gen_put_subst(SmithLang *lang, const SmithHost *host, con
             return;
         }
         if ((token->flags & smith_lang_gen_flag_slice) != 0) {
+            // In a generic whose result type is computed (`slice_of(T, countof(dims)) push_slice(...)`), the struct
+            // the body names is the result's, whatever its dimensions: the instance's `struct tag` (issue #107).
+            const SmithLangInstance *kept = &smith_lang_instances[instance - smith_lang_instances];
+            if (kept->result_state == 1 && strncmp(kept->result, "struct smith_array_", 19) == 0) {
+                smith_lang_gen_put(lang, host, SmithTokenKind_Identifier, kept->result + 7,
+                                   token->location != UINT32_MAX ? token->location : fallback, instance_id);
+                return;
+            }
             smith_lang_gen_put_slice_tag(lang, host, instance, (unsigned)token->param - 1,
                                          token->location != UINT32_MAX ? token->location : fallback, instance_id);
             return;
@@ -2007,6 +2074,9 @@ static bool smith_lang_infer_stage(const char *written, uint32_t location, uint3
     *count = smith_lang_it.count - *first;
     return *count > 0;
 }
+
+static void smith_lang_callee_name(const SmithLang *lang, const char *module, size_t module_length, const char *member,
+                                   size_t member_length, char *out, size_t capacity);
 
 #include "lang_constexpr.c"
 
@@ -2841,6 +2911,15 @@ static void smith_lang_member_name(const char *module, size_t module_length, con
     out[used + take] = 0;
 }
 
+// The name a call to `module::member` is written by: `m_f`, or the C name an export chose (`[[smith::c_name("m_g")]]`),
+// which the importing file read from the header.
+static void smith_lang_callee_name(const SmithLang *lang, const char *module, size_t module_length, const char *member,
+                                   size_t member_length, char *out, size_t capacity) {
+    smith_lang_member_name(module, module_length, member, member_length, out, capacity);
+    const SmithLangCName *chosen = lang->cnames_count > 0 ? smith_lang_cname_find(lang, out, strlen(out)) : nullptr;
+    if (chosen != nullptr) snprintf(out, capacity, "%s", smith_lang_str(chosen->c_name));
+}
+
 // A call that was kept as a group in a generic's body, now that its types are known: to a generic, it becomes the call
 // of the instance; to anything else it is the plain call it always was.
 // ---- Built lists and `for constexpr`: the statements of a body that are gone or repeat
@@ -3173,7 +3252,7 @@ static void smith_lang_replay_group(SmithLang *lang, const SmithHost *host, Smit
         return;
     }
     char callee[smith_lang_name_max];
-    smith_lang_member_name(text, module_length, colons + 1, member_length, callee, sizeof callee);
+    smith_lang_callee_name(lang, text, module_length, colons + 1, member_length, callee, sizeof callee);
     smith_lang_gen_put(lang, host, SmithTokenKind_Identifier, callee, location, replay->instance_id);
     smith_lang_replay_push(replay, begin + 1, end, 0);
 }
@@ -3547,6 +3626,7 @@ static void smith_lang_generic_unclosed(SmithLang *lang, const SmithHost *host) 
 static bool smith_lang_generic_call_core(SmithLang *lang, const SmithHost *host, const char *module,
                                          size_t module_length, const char *member, size_t member_length,
                                          uint32_t location, int generic_index) {
+    if (generic_index >= 0 && smith_lang_generics[generic_index].plain) generic_index = -1; // an ordinary call
     if (generic_index < 0 && !lang->recording) return false;
     const SmithToken *open = smith_lang_peek(lang, host, 0, false);
     if (!smith_lang_punct(open, "(")) {

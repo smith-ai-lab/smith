@@ -632,6 +632,7 @@ class SmithHook final : public TokenHook, public NameSource {
         host.value_query = &SmithHook::valueQuery;
         host.instance = &SmithHook::instanceBegin;
         host.locate = &SmithHook::locatePlace;
+        host.types_place = &SmithHook::typesPlace;
         host.field = &SmithHook::fieldOf;
         host.type_field = &SmithHook::typeField;
         host.read_header = &SmithHook::readHeader;
@@ -650,6 +651,8 @@ class SmithHook final : public TokenHook, public NameSource {
         host.maybe_slice = hasSlice(SM.getBufferData(MainFile));
         host.maybe_tuple = host.maybe_slice || hasTuple(SM.getBufferData(MainFile));
         host.maybe_field = hasFieldsUse(SM.getBufferData(MainFile));
+        host.import_lines = countImportLines(SM.getBufferData(MainFile));
+        host.type_values = &SmithHook::typeValues;
         host.maybe_type_value = host.maybe_field || hasTypeValue(SM.getBufferData(MainFile));
         host.target_fact = &SmithHook::targetFact;
         host.constant = &SmithHook::constantValue;
@@ -2335,6 +2338,19 @@ class SmithHook final : public TokenHook, public NameSource {
         return false;
     }
 
+    // How many `import` lines the text has: an import's functions over `type` are defined after the last (#107).
+    static uint32_t countImportLines(StringRef text) {
+        uint32_t lines = 0;
+        for (size_t at = text.find("import "); at != StringRef::npos; at = text.find("import ", at + 7)) {
+            if (at == 0 || text[at - 1] == '\n') lines += 1; // an import line begins its line
+        }
+        return lines;
+    }
+
+    static void typeValues(void *context) {
+        static_cast<SmithHook *>(context)->host.maybe_type_value = true;
+    }
+
     // Whether the text has `struct {` and, before the matching `}`, no `;`: a tuple type (comments and strings count).
     static bool hasTuple(StringRef text) {
         for (size_t at = text.find("struct"); at != StringRef::npos; at = text.find("struct", at + 6)) {
@@ -2601,6 +2617,17 @@ class SmithHook final : public TokenHook, public NameSource {
         *text = found->meta.c_str();
         *length = found->meta.size();
         return true;
+    }
+
+    FileID typesFile;
+    // A place that is no file of the program: the start of a buffer of its own (issue #107).
+    static uint32_t typesPlace(void *context) {
+        auto *self = static_cast<SmithHook *>(context);
+        if (!self->typesFile.isValid()) {
+            auto buffer = llvm::MemoryBuffer::getMemBufferCopy(" ", "<smith-types>");
+            self->typesFile = self->SM.createFileID(std::move(buffer), SrcMgr::C_User);
+        }
+        return self->SM.getLocForStartOfFile(self->typesFile).getRawEncoding();
     }
 
     static const char *readProblem(void *context) {

@@ -5355,6 +5355,82 @@ i32 choose(constexpr type T) {
 export i32 run(void) {
     return choose(u8) * 100 + choose(Big) * 10 + choose(f64);
 }
+==> type-value-import/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import shapes;
+
+// The result type is computed by another module's function; the instance is written here.
+export shapes::slice_of(T, countof(sizes)) make(constexpr type T, auto... sizes) {
+    static_assert(countof(sizes) > 0, "make needs a size");
+    struct smith_array_T_n result = {};
+    for constexpr (usize i = 0; i < countof(sizes); i++)
+        result.count[i] = (usize)sizes[i];
+    return result;
+}
+
+// ... and a condition asks it too.
+export i32 describe(constexpr type T) {
+    if constexpr (shapes::small(T)) {
+        return 1;
+    } else {
+        return 2;
+    }
+}
+
+typedef struct {
+    f64 a, b;
+} Pair;
+
+int main(void) {
+    f32 vector[:];
+    f32 grid[:][:];
+    f32 rows[:][2];
+    constexpr type of_vector = shapes::slice_of(f32, 1);
+    constexpr type of_grid = shapes::slice_of(f32, 2);
+    constexpr type of_rows = shapes::slice_of(f32[2], 1);
+    static_assert(of_vector == typeof(vector));
+    static_assert(of_grid == typeof(grid));
+    static_assert(of_rows == typeof(rows));
+    static_assert(shapes::wider(u8, f64) == f64);
+    static_assert(shapes::small(u8) && !shapes::small(Pair));
+    constexpr type chosen = shapes::slice_if_small(i16);
+    static_assert(chosen == typeof(vector) || sizeof(chosen) == 16);
+    grid = make(f32, 3, 4);
+    rows = make(f32[2], 5);
+    c::printf("%zu %zu %zu %d %d\n", countof(grid), countof(grid[0]), countof(rows), describe(u8), describe(Pair));
+    return 0;
+}
+==> type-value-import/src/shapes.smith <==
+module shapes;
+
+// A function over `type` is a compile-time function: an importing module runs it, wherever a type is computed, from the
+// record in this module's header (it has no symbol and no declaration for C).
+static bool is_wide(type t) {
+    return sizeof(t) > 4;
+}
+
+export bool small(type t) {
+    return !is_wide(t);
+}
+
+export type wider(type a, type b) {
+    return sizeof(a) >= sizeof(b) ? a : b;
+}
+
+// `t[:]` once for each size: `slice_of(f32, 2)` is `f32[:][:]`.
+export type slice_of(type element, usize count) {
+    type t = element;
+    for (usize i = 0; i < count; i++)
+        t = t[:];
+    return t;
+}
+
+// A function over types may call another, exported or not.
+export type slice_if_small(type t) {
+    return small(t) ? slice_of(t, 1) : t;
+}
 ==> type-value-slice/src/main.smith <==
 module main;
 

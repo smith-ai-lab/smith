@@ -1,6 +1,4 @@
-static bool size_small(type t) {
-return sizeof(t) <= 4;
-}
+[ [ clang :: unavailable ( "size::small is a function over `type`: it exists only at compile time" ) ] ] void size_small ( void ) ;
 typedef struct { __UINT8_TYPE__ bytes[80]; } size_Big; [ [ clang :: unavailable ( "size::choose is a generic function: call it from a .smith module" ) ] ] void size_choose ( void ) ;
 __INT32_TYPE__ size_run(void) __asm__("_size::run");
 __INT32_TYPE__ size_run(void) {

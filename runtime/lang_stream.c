@@ -139,7 +139,9 @@ static void smith_lang_reset_declaration(SmithLang *lang) {
     lang->decl.exported = lang->pending_export;
     lang->decl.checking = lang->pending_export;
     lang->decl.generic = lang->generic_next; // a generic is not written to the header: no comment or #if goes for it
+    lang->decl.plain = lang->generic_plain;
     lang->generic_next = false;
+    lang->generic_plain = false;
     lang->decl.result_call = lang->generic_result_call;
     lang->generic_result_call = false;
     if (lang->pending_export) {
@@ -174,6 +176,7 @@ static void smith_lang_begin_declaration(SmithLang *lang, const SmithHost *host,
     // A raw run that writes a header keeps the private declarations (not the one that prints the lowering).
     lang->tee = host->previous == nullptr && host->expr_type == nullptr && !lang->dump_enabled;
     lang->generic_result_call = false;
+    lang->generic_plain = false;
     lang->generic_next = smith_lang_generic_candidate(lang, host, token) && smith_lang_generic_ahead(lang, host, token);
     SmithToken shown = *token;
     if (smith_lang_io_main_begin(lang, host, token) && !lang->is_module) { // a file's own functions are not static
@@ -555,6 +558,7 @@ static size_t smith_lang_assemble_meta(const SmithLang *lang, char *out, size_t 
     if (lang->tuples_seen)
         used = smith_lang_append(out, capacity, used, "// smith-tuples\n"); // an importer indexes them
     if (lang->slices_seen) used = smith_lang_append(out, capacity, used, "// smith-slices\n");
+    used = smith_lang_types_line(lang, out, capacity, used);
     used = smith_lang_generic_lines(lang, out, capacity, used);
     used = smith_lang_priv_linked_line(lang, out, capacity, used);
     return smith_lang_priv_hidden_line(lang, out, capacity, used);
@@ -850,7 +854,11 @@ static void smith_lang_dispatch(SmithLang *lang, const SmithHost *host, const Sm
 // What `if constexpr` and the constants it names do with a token (runtime/lang_target.c), then the token's own path.
 static void smith_lang_process(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     bool closes = false;
-    if (host->maybe_type_value && !token->foreign && !lang->recording && !lang->decl.generic &&
+    if (token->replay) { // a function over `type` of an import, defined here: only its type values are lowered
+        if (token->synthetic || !smith_lang_ty_token(lang, host, token)) smith_lang_emit_code(lang, host, *token);
+        return;
+    }
+    if (smith_lang_type_on(lang, host) && !token->foreign && !lang->recording && !lang->decl.generic &&
         smith_lang_ty_token(lang, host, token)) {
         return;
     }

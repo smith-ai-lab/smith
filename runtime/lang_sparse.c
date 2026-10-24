@@ -171,7 +171,7 @@ static void smith_lang_sparse_imports_done(SmithLang *lang, const SmithHost *hos
     host->watch_imports(host->context);
     lang->imports_watched = true;
     host->watch_mode(host->context,
-                     host->maybe_if_constexpr || host->maybe_type_value || smith_lang_tuples_on(lang, host)
+                     host->maybe_if_constexpr || smith_lang_type_on(lang, host) || smith_lang_tuples_on(lang, host)
                          ? SmithWatch_All
                          : SmithWatch_Names);
 }

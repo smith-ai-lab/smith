@@ -252,6 +252,11 @@ static void smith_lang_import_tuples(SmithLang *lang, const SmithHost *host, con
         if (host->watch_mode != nullptr) host->watch_mode(host->context, SmithWatch_All);
     }
     if (memmem(text, length, "// smith-slices", 15) != nullptr) lang->slices_seen = true;
+    if (!lang->type_import && memmem(text, length, "// smith-types:", 15) != nullptr) { // functions over `type` (#107)
+        lang->type_import = true;
+        if (host->type_values != nullptr) host->type_values(host->context);
+        if (host->watch_mode != nullptr) host->watch_mode(host->context, SmithWatch_All);
+    }
     if (memmem(text, length, "// smith-tuples", 15) == nullptr && !lang->slices_seen) return;
     lang->tuples_seen = true;
     if (host->watch_mode != nullptr) host->watch_mode(host->context, SmithWatch_All);
@@ -276,6 +281,9 @@ static bool smith_lang_refuse_c_header(SmithLang *lang, const SmithHost *host, c
                      name->colons, header, header);
     return true;
 }
+
+// runtime/lang_type.c, which comes after this file: the import's functions over `type` are defined here (issue #107)
+static void smith_lang_types_define(SmithLang *lang, const SmithHost *host, uint32_t location);
 
 static void smith_lang_import_smith(SmithLang *lang, const SmithHost *host, const SmithToken *keyword) {
     SmithLangModuleName name = {};
@@ -409,6 +417,9 @@ static void smith_lang_import(SmithLang *lang, const SmithHost *host, const Smit
     } else {
         smith_lang_import_smith(lang, host, keyword);
     }
+    // The last import line: the functions over `type` of the imports are defined after it (runtime/lang_type.c).
+    if (lang->type_import && lang->imports_seen == host->import_lines)
+        smith_lang_types_define(lang, host, keyword->location);
 }
 
 static bool smith_lang_is_module_line(SmithLang *lang, const SmithHost *host, const SmithToken *keyword) {

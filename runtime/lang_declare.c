@@ -548,7 +548,7 @@ static SmithLangAct smith_lang_fast_stream(SmithLang *lang, const SmithHost *hos
 SmithLangAct smith_lang_fast(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     if (lang->broken || token->kind == SmithTokenKind_Eof || token->foreign) return smith_lang_act(SmithLangAct_Slow);
     lang->recent_count = 0;
-    if (host->maybe_type_value && !lang->recording) return smith_lang_act(SmithLangAct_Slow); // runtime/lang_type.c
+    if (smith_lang_type_on(lang, host) && !lang->recording) return smith_lang_act(SmithLangAct_Slow); // lang_type.c
     if (token->kind == SmithTokenKind_Identifier && smith_lang_tuples_on(lang, host) &&
         smith_lang_ident(token, "struct")) {
         return smith_lang_act(SmithLangAct_Slow); // a tuple is read ahead

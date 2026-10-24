@@ -532,7 +532,7 @@ static void smith_lang_enter_body(SmithLang *lang, const SmithHost *host, uint32
         lang->imports_watched = true;
         lang->body_sparse = true;
         host->watch_mode(host->context,
-                         host->maybe_if_constexpr || host->maybe_type_value || smith_lang_tuples_on(lang, host)
+                         host->maybe_if_constexpr || smith_lang_type_on(lang, host) || smith_lang_tuples_on(lang, host)
                              ? SmithWatch_All
                              : SmithWatch_Braces);
     }

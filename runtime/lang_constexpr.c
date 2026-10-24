@@ -151,6 +151,11 @@ static uint32_t smith_lang_cx_statement_end(uint32_t at, uint32_t limit) {
     return UINT32_MAX;
 }
 
+// runtime/lang_type.c, which comes after this file
+static size_t smith_lang_ty_type_tokens(SmithLang *lang, uint64_t handle, const SmithToken *like, SmithToken *out,
+                                        size_t capacity);
+static unsigned smith_lang_ty_depth_of(uint64_t handle);
+
 #include "lang_fields.c"
 
 // ---- Types in a condition ------------------------------------------------------------------------------------------
@@ -559,6 +564,10 @@ static bool smith_lang_cx_operand(SmithLangCx *cx, uint32_t *at, uint32_t last, 
     uint32_t end = token->kind == SmithTokenKind_Identifier && token->special == SmithLangGen_Plain
                        ? smith_lang_cx_primary_end(*at, last)
                        : *at;
+    if (token->special == SmithLangGen_CallBegin) { // `m::f(args)`: a function of an import, defined in this file
+        end = smith_lang_group_end(*at, last);
+        end = end < last ? end + 1 : last;
+    }
     if (end > *at && cx->host->value_query != nullptr) return smith_lang_cx_ask(cx, at, end, value);
     cx->unknown_name = true;
     cx->unknown_at = *at;
@@ -665,6 +674,20 @@ static bool smith_lang_cx_type_argument(uint32_t first, uint32_t last, uint32_t 
 static uint32_t smith_lang_fields_cx_piece(const SmithLangCx *cx, uint32_t at, uint32_t last, char *piece,
                                            size_t capacity);
 
+static void smith_lang_member_name(const char *module, size_t module_length, const char *member, size_t member_length,
+                                   char *out, size_t capacity);
+
+// `m::f` of a call kept as a group (CallBegin ... CallEnd), as the compiler reads it: the name `m_f`, which an import's
+// function over `type` is defined by (issue #107).
+static void smith_lang_cx_callee(const SmithLang *lang, const SmithLangGenToken *token, char *out, size_t capacity) {
+    const char *text = smith_lang_gt_str(token);
+    const char *colons = text + token->length;
+    while (colons > text && !(colons[0] == ':' && colons[-1] == ':'))
+        colons -= 1;
+    size_t module_length = colons > text ? (size_t)(colons - 1 - text) : 0;
+    smith_lang_callee_name(lang, text, module_length, colons + 1, token->length - module_length - 2, out, capacity);
+}
+
 static bool smith_lang_cx_text(const SmithLangCx *cx, uint32_t first, uint32_t last, char *text, size_t capacity) {
     size_t used = 0;
     for (uint32_t at = first; at < last; at++) { // the tokens
@@ -672,7 +695,10 @@ static bool smith_lang_cx_text(const SmithLangCx *cx, uint32_t first, uint32_t l
         int64_t number = 0;
         uint32_t taken = smith_lang_fields_cx_piece(cx, at, last, piece, sizeof piece);
         if (taken == UINT32_MAX) return false;
-        if (taken != 0) { // a `fields(T)[i]`, or a `Field` kept in a variable: its value as an expression
+        if (smith_lang_cx_token(at)->special == SmithLangGen_CallEnd) continue;
+        if (smith_lang_cx_token(at)->special == SmithLangGen_CallBegin) {
+            smith_lang_cx_callee(cx->lang, smith_lang_cx_token(at), piece, sizeof piece);
+        } else if (taken != 0) { // a `fields(T)[i]`, or a `Field` kept in a variable: its value as an expression
             at += taken - 1;
         } else if (cx->replay != nullptr && smith_lang_var_value(cx->replay, at, &number)) {
             snprintf(piece, sizeof piece, "%lld", (long long)number);
@@ -911,6 +937,7 @@ static bool smith_lang_result_ask(SmithLang *lang, const SmithHost *host, const 
             why = "its value is not a type (declare it to return `type`)";
         } else {
             snprintf(instance->result, sizeof instance->result, "%s", spelling);
+            instance->result_handle = query.root.magnitude;
         }
     }
     if (why == nullptr) return true;
@@ -921,13 +948,45 @@ static bool smith_lang_result_ask(SmithLang *lang, const SmithHost *host, const 
     return false;
 }
 
+// A result that is a slice: its struct, defined here unless an earlier declaration at file scope has (the same as
+// `T xs[:]` writes it, so the call's and the instance's types are one). The tokens are written to the parser as they
+// are, so a sized name is the compiler's own.
+static void smith_lang_gen_put_slice_result(SmithLang *lang, const SmithHost *host, const SmithLangInstance *instance,
+                                            uint32_t location, uint32_t instance_id) {
+    static SmithToken tokens[256];
+    SmithToken like = {};
+    like.location = location;
+    size_t count = smith_lang_ty_type_tokens(lang, instance->result_handle, &like, tokens, 256);
+    for (size_t at = 0; at < count; at++) { // the struct's tokens
+        const SmithToken *token = &tokens[at];
+        const char *text = token->text;
+        size_t length = token->length;
+        bool expand = token->expand;
+        for (size_t k = 0;
+             token->kind == SmithTokenKind_Identifier && k < sizeof smith_lang_sized / sizeof smith_lang_sized[0];
+             k++) { // a sized name is written as the lowering writes it
+            if (!smith_lang_equals(token->text, token->length, smith_lang_sized[k].name)) continue;
+            text = smith_lang_sized[k].standard;
+            length = strlen(text);
+            expand = text[0] == '_' && text[1] == '_';
+        }
+        char piece[256];
+        snprintf(piece, sizeof piece, "%.*s", (int)length, text);
+        smith_lang_gen_put_expanding(lang, host, token->kind, piece, location, instance_id, expand);
+    }
+}
+
 // The instance's result type, written where the head has its call: the tokens of the spelling.
 static void smith_lang_gen_put_result(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
                                       const SmithLangInstance *instance, uint32_t location, uint32_t instance_id) {
     SmithLangInstance *kept = &smith_lang_instances[instance - smith_lang_instances];
     if (kept->result_state == 0) kept->result_state = smith_lang_result_ask(lang, host, generic, kept) ? 1 : 2;
     const char *spelling = kept->result_state == 1 ? kept->result : "int"; // after an error, the build fails anyway
-    for (size_t at = 0; spelling[at] != 0;) {                              // words, and each other character by itself
+    if (kept->result_state == 1 && smith_lang_ty_depth_of(kept->result_handle) > 0) {
+        smith_lang_gen_put_slice_result(lang, host, kept, location, instance_id);
+        return;
+    }
+    for (size_t at = 0; spelling[at] != 0;) { // words, and each other character by itself
         if (spelling[at] == ' ') {
             at += 1;
             continue;

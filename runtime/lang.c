@@ -27,7 +27,7 @@ constexpr size_t smith_lang_slots = 131072;    // a power of two, twice the name
 constexpr size_t smith_lang_chars_max = (size_t)1 << 20;
 constexpr size_t smith_lang_scratch_max = (size_t)1 << 18;
 constexpr size_t smith_lang_head_max = 4096;
-constexpr size_t smith_lang_queue_max = 256;
+constexpr size_t smith_lang_queue_max = 1024;
 // What `i32 main(io::Io *io)` is called once lowered (runtime/lang_head.c).
 constexpr char smith_lang_io_main_name[] = "smith_user_main";
 constexpr size_t smith_lang_batch_max = 4096;
@@ -239,6 +239,7 @@ typedef struct {
     bool own;            // the module being lowered defines it (else an import's)
     bool needed;         // own and private: an exported generic calls it, so its record is in the header
     bool hidden;         // an import's private generic (its header holds the record for the instances of exported ones)
+    bool plain;          // no compile-time parameter: an exported function over `type`, whose record importers define
     uint32_t note_first; // own, private: the names its body writes through imports, in SmithLang::priv_notes
     uint32_t note_count;
 } SmithLangGeneric;
@@ -358,6 +359,7 @@ typedef struct {
     uint32_t c_name_location;
     bool c_name_used; // a name this declaration introduces took it
     bool generic;     // the head has a `type T` parameter: the declaration is recorded, not compiled
+    bool plain;       // ... a function over `type` that has no such parameter (issue #107)
     bool result_call; // a generic's result type is a call (`slice_of(T, k) name(...)`): its `)` ends the type
     bool linked;      // a private function or variable that has a symbol: an exported generic's instance calls it
 } SmithLangDecl;
@@ -437,6 +439,8 @@ struct SmithLang {
     bool recording_skip;      // its head had an error: the body is read to its end and dropped
     uint32_t skip_mark;       // where in smith_lang_gt the dropped body begins
     bool generic_next;        // the declaration about to begin is generic
+    bool generic_plain;       // ... a plain one: a function over `type` that is exported (issue #107)
+    bool type_import;         // an import has functions over `type`: their records are defined after the last import
     bool generic_result_call; // ... and its result type is a call
     bool generics_loaded;     // the generics of the imports are read
     SmithLangText generic_modules[smith_lang_generic_modules_max]; // the modules read for their generics
@@ -712,6 +716,13 @@ static const SmithLangSized smith_lang_sized[] = {
 // and `countof(t)` are asked of the compiler (runtime/lang_tuple.c).
 static bool smith_lang_tuples_on(const SmithLang *lang, const SmithHost *host) {
     return lang->tuples_seen || host->maybe_tuple;
+}
+
+// Whether the file has type values (the text has one, or an import has functions over `type`, issue #107): the host
+// offers every token and `runtime/lang_type.c` reads them.
+static bool smith_lang_type_on(const SmithLang *lang, const SmithHost *host) {
+    (void)lang;
+    return host->maybe_type_value;
 }
 
 // ---- Small helpers ----------------------------------------------------------------------------------------------

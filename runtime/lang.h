@@ -58,6 +58,7 @@ typedef struct {
     bool expand;       // emitted: macro-expand it when it re-enters the stream (the X of `c.X`)
     bool synthetic;    // emitted: it has no counterpart in the source (a `static`, a symbol label, a prototype's copy)
     bool copy;         // emitted: part of a copy of a declaration's head (the prototype of a definition), all of it
+    bool replay;       // queued: part of an imported function that runs in the compiler (type values only; issue #107)
     bool tuple_brace;  // emitted: the `{` or `}` of a tuple\'s definition (a head holds it like a parenthesis)
     bool name;         // emitted: the name a declaration introduces
     uint32_t instance; // emitted: the generic instance whose body the token belongs to (0: none)
@@ -235,6 +236,10 @@ typedef struct {
     // it (0: the file's own code), the call that did, how to name it in a note, and the place of the generic's name.
     void (*instance)(void *context, uint32_t id, uint32_t parent, uint32_t call_location, const char *description,
                      uint32_t definition_location);
+    // A host location outside the file being lowered, for the tokens of an import's function over `type` that are
+    // written here when their own place in the module's source cannot be found: no check of the file's own code reads
+    // them.
+    uint32_t (*types_place)(void *context);
     // The host location of a line and column (from 1) of a file, or UINT32_MAX when it cannot say.
     uint32_t (*locate)(void *context, const char *file, uint32_t line, uint32_t column);
     // The value of a fact of the target, from the compiler's preprocessor (`defined(__aarch64__)`,
@@ -277,6 +282,11 @@ typedef struct {
     // Whether the file's text may declare something of type `type` (runtime/lang_type.c): the host then offers every
     // token, because a type value is found by the tokens around a type name.
     bool maybe_type_value;
+    // How many `import` lines the text has (an import's functions over `type` are defined after the last, issue #107).
+    uint32_t import_lines;
+    // An import's header says it has functions over `type` (`// smith-types:`): the host sets maybe_type_value from now
+    // on, as if the text declared a type value. May be null.
+    void (*type_values)(void *context);
     // Whether the file's text uses `fields(` or the `Field` type (runtime/lang_fields.c): `Field` is defined at the
     // file's first declaration. The host also sets maybe_type_value, which offers every token.
     bool maybe_field;

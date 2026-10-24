@@ -322,6 +322,7 @@ static SmithToken smith_lang_synth(SmithTokenKind kind, const char *text, size_t
     made.handle = smith_token_no_handle;
     made.text = text;
     made.length = (uint32_t)length;
+    made.replay = like->replay;
     return made;
 }
 

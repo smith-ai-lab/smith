@@ -478,8 +478,9 @@ static bool smith_lang_ty_is_name_token(const SmithToken *token) {
 static bool smith_lang_ty_at_start(void) {
     const SmithLangTyLast *last = &smith_lang_ty.last[0];
     if (last->text[0] == 0) return true;
-    static const char *const starts[] = {";", "{", "}", "(", ",", "constexpr", "static", "const", "extern", "typedef"};
-    for (size_t i = 0; i < sizeof starts / sizeof starts[0]; i++) { // 10 starts
+    static const char *const starts[] = {";",      "{",     "}",      "(",       ",",      "constexpr",
+                                         "static", "const", "extern", "typedef", "export", "]"};
+    for (size_t i = 0; i < sizeof starts / sizeof starts[0]; i++) { // 12 starts
         if (strcmp(last->text, starts[i]) == 0) return true;
     }
     return false;
@@ -496,14 +497,28 @@ static bool smith_lang_ty_put(SmithLang *lang, size_t consumed, const SmithToken
 
 // ---- Type leaves: a type written where a value is expected
 
+static SmithLang *smith_lang_ty_lang; // the lowering being read, for the names of its module
+
+// A name of this module as the lowering writes it: `Pair` of module `main` is `main_Pair`. The name itself otherwise.
+static const char *smith_lang_ty_lowered(const char *text, size_t length, size_t *lowered_length) {
+    SmithLang *lang = smith_lang_ty_lang;
+    *lowered_length = length;
+    if (lang == nullptr || !lang->is_module || smith_lang_name_find(lang, text, length) == nullptr) return text;
+    const char *prefixed = smith_lang_prefixed(lang, text, length);
+    *lowered_length = strlen(prefixed);
+    return prefixed;
+}
+
 static bool smith_lang_ty_type_start(const SmithHost *host, const SmithToken *token) {
     if (token->kind != SmithTokenKind_Identifier) return false;
     if (smith_lang_ty_is_basic(token->text, token->length) || smith_lang_ty_standard(token->text, token->length)) {
         return true;
     }
     if (smith_lang_ty_find(token->text, token->length, SmithLangTy_Var) != nullptr) return false;
+    size_t length = 0;
+    const char *name = smith_lang_ty_lowered(token->text, token->length, &length);
     return smith_lang_word(token->text, token->length) == SmithLangWord_Other &&
-           host->lookup(host->context, token->text, token->length, SmithLookup_Type).kind == SmithLookup_Type;
+           host->lookup(host->context, name, (uint32_t)length, SmithLookup_Type).kind == SmithLookup_Type;
 }
 
 // The length of the type that begins with the token being lowered: words, a tag after struct/union/enum, one typedef
@@ -612,7 +627,9 @@ static bool smith_lang_ty_leaf(SmithLang *lang, const SmithHost *host, const Smi
     size_t length = smith_lang_ty_run(lang, host, token);
     if (length == 0 || !smith_lang_ty_leaf_here(lang, host, length)) return false;
     char spelling[smith_lang_ty_spelling_max] = "";
-    smith_lang_ty_spell_add(spelling, sizeof spelling, token->text, token->length);
+    size_t first_length = 0;
+    const char *first_name = smith_lang_ty_lowered(token->text, token->length, &first_length);
+    smith_lang_ty_spell_add(spelling, sizeof spelling, first_name, first_length);
     bool of_expression = smith_lang_ident(token, "typeof") || smith_lang_ident(token, "__typeof__");
     const SmithToken *before = token;
     for (size_t at = 1; at < length; at++) { // the rest of the run
@@ -626,6 +643,8 @@ static bool smith_lang_ty_leaf(SmithLang *lang, const SmithHost *host, const Smi
             name = smith_lang_prefixed(lang, part->text, part->length);
             name_length = strlen(name);
         }
+        if (!of_expression && !member && part->kind == SmithTokenKind_Identifier) // a type of this module
+            name = smith_lang_ty_lowered(part->text, part->length, &name_length);
         smith_lang_ty_spell_add(spelling, sizeof spelling, name, name_length);
         before = part;
     }
@@ -1035,7 +1054,9 @@ static bool smith_lang_ty_declaration_before(void) {
 
 static void smith_lang_ty_identifier(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     SmithLangTy *ty = &smith_lang_ty;
-    if (ty->specifier) { // the `type` just rewritten
+    bool outside =
+        ty->paren == 0 && smith_lang_ty_is_name_token(token); // before the early returns: a declarator is one
+    if (ty->specifier) {                                      // the `type` just rewritten
         ty->specifier = false;
         ty->decl_name = true;
         ty->decl_spec_type = true;
@@ -1044,6 +1065,7 @@ static void smith_lang_ty_identifier(SmithLang *lang, const SmithHost *host, con
         return;
     }
     if (ty->decl_name && smith_lang_ty_is_name_token(token)) {
+        if (outside) smith_lang_ty_copy(ty->ident0, token->text, token->length); // the function a head declares
         smith_lang_ty_declarator(lang, host, token);
         return;
     }
@@ -1077,8 +1099,7 @@ static void smith_lang_ty_identifier(SmithLang *lang, const SmithHost *host, con
         ty->region = SmithLangRegion_Return;
         ty->region_depth = 0;
     }
-    if (ty->paren == 0 && smith_lang_ty_is_name_token(token))
-        smith_lang_ty_copy(ty->ident0, token->text, token->length);
+    if (outside) smith_lang_ty_copy(ty->ident0, token->text, token->length);
 }
 
 static void smith_lang_ty_open_brace(void) {
@@ -1179,6 +1200,7 @@ static void smith_lang_ty_punctuator(const SmithToken *token) {
 static void smith_lang_ty_track(SmithLang *lang, const SmithHost *host, const SmithToken *token, bool as_value) {
     SmithLangTy *ty = &smith_lang_ty;
     if (token->kind == SmithTokenKind_Identifier) smith_lang_ty_identifier(lang, host, token);
+    if (as_value) ty->protect_next = false; // a `typeof(x)` that became a number has no parentheses left to protect
     if (token->kind == SmithTokenKind_Punctuator) smith_lang_ty_punctuator(token);
     ty->last[1] = ty->last[0];
     if (as_value) {
@@ -1228,10 +1250,36 @@ static void smith_lang_ty_plain(const SmithToken *token) {
     smith_lang_ty_add("type", 4, SmithLangTy_Plain, (uint32_t)ty->frame_count + (ty->paren == 1 ? 1U : 0U));
 }
 
+// `m::f(` where `f` is a function over types of an import: the arguments of the call are in a region of type values, as
+// those of a call to the file's own. (The lowering reads `m::f` whole, so `f` never reaches the type values alone.)
+static void smith_lang_ty_qualified(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+    SmithLangTy *ty = &smith_lang_ty;
+    if (!lang->type_import) return;
+    const SmithLangBinding *binding = smith_lang_binding_find(lang, token->text, token->length);
+    if (binding == nullptr || binding->is_c) return;
+    bool defines = false; // only an import that has functions over `type` is read ahead
+    for (size_t i = 0; i < lang->generics_count; i++) {
+        const SmithLangGeneric *generic = &smith_lang_generics[i];
+        defines = defines || (generic->plain && !generic->own &&
+                              smith_lang_equals(smith_lang_str(generic->module), generic->module.length,
+                                                smith_lang_str(binding->module)));
+    }
+    if (!defines || !smith_lang_punct(smith_lang_peek(lang, host, 0, false), "::")) return;
+    const SmithToken *member = smith_lang_peek(lang, host, 1, true); // as written: a macro of that name is not it
+    if (member->kind != SmithTokenKind_Identifier ||
+        smith_lang_ty_find(member->text, member->length, SmithLangTy_Func) == nullptr ||
+        !smith_lang_punct(smith_lang_peek(lang, host, 2, false), "(")) {
+        return;
+    }
+    if (ty->region == SmithLangRegion_None && !ty->decl_name && !smith_lang_ty_declaration_before())
+        ty->call_pending = true;
+}
+
 // Called for each token of a file with type values, before the lowering looks at it. True when the token was replaced:
 // the tokens that stand for it are at the front of the queue.
 static bool smith_lang_ty_token(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     SmithLangTy *ty = &smith_lang_ty;
+    smith_lang_ty_lang = lang;
     if (token->synthetic || token->kind == SmithTokenKind_Eof) return false;
     bool replaced = false;
     bool as_value = false;
@@ -1239,6 +1287,7 @@ static bool smith_lang_ty_token(SmithLang *lang, const SmithHost *host, const Sm
         ty->passthrough -= 1;
     } else if (token->kind == SmithTokenKind_Identifier) {
         replaced = smith_lang_ty_member_constexpr(lang, host, token) || smith_lang_ty_specifier(lang, host, token);
+        smith_lang_ty_qualified(lang, host, token);
         if (!replaced) replaced = as_value = smith_lang_ty_slice_op(lang, host, token);
         if (!replaced) replaced = as_value = smith_lang_ty_question(lang, host, token);
         if (!replaced) replaced = as_value = smith_lang_ty_use(lang, host, token);
@@ -1247,6 +1296,105 @@ static bool smith_lang_ty_token(SmithLang *lang, const SmithHost *host, const Sm
     }
     smith_lang_ty_track(lang, host, token, as_value);
     return replaced;
+}
+
+// ---- Functions over `type` of the imports (issue #107)
+
+// An exported function over `type` is recorded in its module's header (a plain generic), and each importer defines it,
+// at its first declaration, as a private function: `slice_of` of smith::arena may be called at compile time from any
+// module. The record is the tokens the exporting module's lowering wrote; they are queued as the source's, marked
+// `replay`: only type values are lowered in them (smith_lang_ty_token), then they go to the parser. A function is at
+// most as long as the queue.
+
+// The tokens of the record of a plain generic, after `[[maybe_unused]] static`. 0 when it does not fit or holds a
+// construct that only a generic's instance can write.
+static size_t smith_lang_plain_tokens(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
+                                      uint32_t fallback, SmithToken *out, size_t capacity) {
+    static const char *const lead[] = {"[", "[", "maybe_unused", "]", "]", "static"};
+    SmithToken like = {};
+    like.location = fallback;
+    like.replay = true;
+    size_t used = 0;
+    bool has_static = false; // a private function's record keeps its `static`
+    for (uint32_t at = 0; at < generic->body_index; at++)
+        has_static = has_static ||
+                     smith_lang_gt_is(&smith_lang_gt.tokens[generic->first + at], SmithTokenKind_Identifier, "static");
+    for (size_t i = 0; i < (has_static ? 5 : sizeof lead / sizeof lead[0]); i++) {
+        bool punct = lead[i][0] == '[' || lead[i][0] == ']';
+        out[used] =
+            smith_lang_ty_made(punct ? SmithTokenKind_Punctuator : SmithTokenKind_Identifier, lead[i], &like, i == 5);
+        out[used].synthetic = false;
+        out[used++].line_start = i == 0;
+    }
+    for (uint32_t at = 0; at < generic->count; at++) {
+        SmithLangGenToken *token = &smith_lang_gt.tokens[generic->first + at];
+        if (used + 2 >= capacity) break;
+        if (token->special == SmithLangGen_IfConstexpr || token->special == SmithLangGen_ForConstexpr) {
+            smith_lang_error(lang, host, fallback,
+                             "`%s::%s` is a function over `type` that an import defines here, and it uses `%s`, which "
+                             "only a generic's instance can write",
+                             smith_lang_str(generic->module), smith_lang_str(generic->member),
+                             token->special == SmithLangGen_IfConstexpr ? "if constexpr" : "for constexpr");
+            return 0;
+        }
+        if (token->special == SmithLangGen_CallEnd) continue;
+        uint32_t place = smith_lang_gen_place(host, generic, token, fallback);
+        if (token->special == SmithLangGen_CallBegin) { // `m::f` is written as the callee `m_f`
+            const char *text = smith_lang_gt_str(token);
+            const char *colons = text + token->length;
+            while (colons > text && !(colons[0] == ':' && colons[-1] == ':'))
+                colons -= 1;
+            size_t module_length = colons > text ? (size_t)(colons - 1 - text) : 0;
+            char callee[smith_lang_name_max];
+            smith_lang_callee_name(lang, text, module_length, colons + 1, token->length - module_length - 2, callee,
+                                   sizeof callee);
+            out[used] = smith_lang_ty_made(SmithTokenKind_Identifier, callee, &like, true);
+            out[used].location = place;
+            out[used++].synthetic = false;
+            continue;
+        }
+        out[used] = smith_lang_gt_token(&smith_lang_gt, token);
+        out[used].location = place;
+        out[used].replay = true;
+        out[used].line_start = (token->flags & smith_lang_gen_flag_line_start) != 0;
+        out[used++].space_before = true;
+    }
+    return used;
+}
+
+// Right after the last `import` line (the host counts them), when it says an import has functions over `type`: their
+// definitions go in front of what follows, before any declaration (a definition between imports would make a later one
+// an import after a declaration). The tokens are queued, not written, since the lowering reads a declaration's tokens
+// as they come; nothing after the line has been read (a token read past it would enter the include after the next, in
+// its middle). Their names are known to the type values (a call to one takes types).
+static void smith_lang_types_define(SmithLang *lang, const SmithHost *host, uint32_t location) {
+    if (host->type_query == nullptr || lang->recording) return;
+    static SmithToken made[smith_lang_queue_max];
+    size_t used = 0;
+    for (size_t i = 0; i < lang->generics_count; i++) { // in the order the modules wrote them
+        const SmithLangGeneric *generic = &smith_lang_generics[i];
+        if (!generic->plain || generic->own) continue;
+        bool bound = false;
+        for (size_t b = 0; b < lang->bindings_count; b++) {
+            const SmithLangBinding *binding = &lang->bindings[b];
+            bound = bound || (!binding->is_c && !binding->missing &&
+                              smith_lang_equals(smith_lang_str(binding->module), binding->module.length,
+                                                smith_lang_str(generic->module)));
+        }
+        if (!bound) continue;
+        smith_lang_ty_add(smith_lang_str(generic->member), generic->member.length, SmithLangTy_Func, 0);
+        uint32_t place = host->types_place != nullptr ? host->types_place(host->context) : location;
+        size_t count =
+            smith_lang_plain_tokens(lang, host, generic, place, made + used, smith_lang_queue_max - used - 2);
+        if (count == 0 || used + count + 2 >= smith_lang_queue_max) {
+            if (count != 0)
+                smith_lang_error(lang, host, location,
+                                 "the functions over `type` of the imports are too long to define");
+            continue;
+        }
+        used += count;
+    }
+    if (used > 0) smith_lang_ty_put(lang, 0, made, used);
 }
 
 // ---- `Field`, the element of `fields(T)` (runtime/lang_fields.c)
