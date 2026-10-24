@@ -72,9 +72,6 @@ struct smith_array_const_char_n {
 // Whether word is exactly the terminated string.
 [[nodiscard]] bool smith_text_is(struct smith_array_const_char_n word, const char *string);
 
-// Whole numbers: decimal digits, with an optional leading - for the signed one, or lowercase hexadecimal digits.
-// Leading zeros of any number are fine. Each returns false for an empty word, a stray character (a +, a space, a
-// capital hex digit) or a value that doesn't fit.
 [[nodiscard]] bool smith_text_parse_u64(struct smith_array_const_char_n word, uint64_t *value);
 
 [[nodiscard]] bool smith_text_parse_i64(struct smith_array_const_char_n word, int64_t *value);
