@@ -1,5 +1,7 @@
-// Tests of <smith/io.h>, run by tests/io.sh in a scratch folder (they write one folder up too): with no argument, the
-// checks below; with an argument, one program that reads the world and prints what it saw:
+// The checks of <smith/io.h> that need the real world, run by tests/io.sh in a scratch folder (they write one folder up
+// too). The fake io's checks (console, clock, programs, children, files in memory, the scripted network) are in
+// tests/io_test.smith, on smith's test runner. With no argument, the checks below; with an argument, one program that
+// reads the world and prints what it saw:
 //   lines   reads stdin to the end with smith_console_read_line and prints "N lines, last=..."
 //   seed    prints the seed and the first draw of the key
 //   memory  prints how much of the arena's reservation counts as resident before and after it is touched
@@ -55,22 +57,6 @@ static Summary summarize(SmithFiles *files, SmithArena *arena, const char *path)
 
 static bool summary_equal(const Summary *a, const Summary *b) {
     return a->lines == b->lines && a->bytes == b->bytes && a->error == b->error && strcmp(a->message, b->message) == 0;
-}
-
-// Checkers' loop: it reads moves until the input ends. The turn bound stops a runaway; the end of the input ends it.
-static size_t play(SmithConsole *console, SmithArena *arena, size_t turn_max) {
-    size_t turns = 0;
-    for (; turns < turn_max; turns++) {
-        SmithRead line = smith_console_read_line(console, arena);
-        if (line.error.code != 0 || line.end) break;
-        SmithError error = smith_console_print(console, "move: ");
-        assert(error.code == 0);
-        error = smith_console_print(console, line.data);
-        assert(error.code == 0);
-        error = smith_console_print(console, "\n");
-        assert(error.code == 0);
-    }
-    return turns;
 }
 
 // ---------------------------------------------------------------- real io
@@ -398,7 +384,7 @@ static void test_memory(void) {
     smith_io_close(&io);
 }
 
-// ---------------------------------------------------------------- the fake io
+// ---------------------------------------------------------------- a real io against a fake
 
 static void test_same_function(SmithIo *real, SmithIo *fake) {
     const char text[] = "alpha\nbeta\ngamma\n";
@@ -416,80 +402,6 @@ static void test_same_function(SmithIo *real, SmithIo *fake) {
     on_disk = summarize(&real->files, &real->arena, "../up.txt");
     in_memory = summarize(&fake->files, &fake->arena, "../up.txt");
     assert(summary_equal(&on_disk, &in_memory) && on_disk.lines == 1 && on_disk.error == 0);
-
-    assert(smith_files_write(&fake->files, "new.txt", "xyz", 3, SmithWrite_Replace).code == 0); // writes land in memory
-    SmithRead back = smith_files_read(&fake->files, &fake->arena, "new.txt");
-    assert(back.size == 3 && strcmp(back.data, "xyz") == 0);
-    assert(smith_files_write(&fake->files, "new.txt", "q", 1, SmithWrite_Replace).code == 0); // and replace
-    assert(smith_files_read(&fake->files, &fake->arena, "new.txt").size == 1);
-}
-
-static void test_fake_console(TestMemory *memory) {
-    SmithIoTest config = {
-        .memory = memory->bytes, .capacity = sizeof memory->bytes, .seed = 7, .input = "A3 B4\nC5 D6\nlast"};
-    SmithIo io = smith_io_make_test(config);
-    // Without the end check this loop would run to its bound; with it, it ends after the three lines the script holds.
-    assert(play(&io.console, &io.arena, 1000) == 3);
-    assert(strcmp(smith_io_test_output(&io), "move: A3 B4\nmove: C5 D6\nmove: last\n") == 0);
-    assert(strcmp(smith_io_test_errors(&io), "") == 0);
-    assert(smith_console_print_error(&io.console, "oops").code == 0);
-    assert(strcmp(smith_io_test_errors(&io), "oops") == 0);
-
-    static TestMemory quiet_memory;
-    SmithIoTest none = {.memory = quiet_memory.bytes, .capacity = sizeof quiet_memory.bytes};
-    SmithIo silent = smith_io_make_test(none);
-    assert(play(&silent.console, &silent.arena, 1000) == 0); // no input: the loop ends at once
-    SmithOp op = {};
-    smith_console_read_async(&io.console, &op, &io.arena, 8);
-    assert(smith_io_run(&io, 0) == 1 && op.end && op.size == 0); // everything was consumed
-}
-
-static void test_fake_clock(TestMemory *memory) {
-    SmithIoTest config = {.memory = memory->bytes, .capacity = sizeof memory->bytes};
-    SmithIo io = smith_io_make_test(config);
-    uint64_t start = smith_clock_now(&io.clock);
-    assert(smith_clock_now(&io.clock) == start); // it moves only when told to
-    assert(smith_clock_wall(&io.clock) == smith_clock_wall(&io.clock));
-    SmithOp timer = {};
-    smith_clock_timeout_async(&io.clock, &timer, 100);
-    assert(smith_io_run(&io, smith_io_forever) == 0 && !timer.done); // the fake never waits
-    smith_clock_advance(&io.clock, 99);
-    assert(smith_io_run(&io, 0) == 0 && !timer.done);
-    smith_clock_advance(&io.clock, 1);
-    assert(smith_clock_now(&io.clock) == start + 100);
-    assert(smith_io_run(&io, 0) == 1 && timer.done && timer.error.code == 0);
-    assert(smith_clock_sleep(&io.clock, 0).code == 0);
-    assert(smith_clock_sleep(&io.clock, 5).code == EDEADLK); // nothing could ever wake it
-    // Given a time to wait, the fake lets that much of its clock pass, and completes what became ready.
-    smith_clock_timeout_async(&io.clock, &timer, 1000);
-    uint64_t before = smith_clock_now(&io.clock);
-    assert(smith_io_run(&io, 999) == 0 && !timer.done && smith_clock_now(&io.clock) == before + 999);
-    assert(smith_io_run(&io, 1) == 1 && timer.done && smith_clock_now(&io.clock) == before + 1000);
-}
-
-static void test_fake_rest(TestMemory *memory) {
-    const char *const argv[] = {"prog", "--flag", nullptr};
-    SmithIoTest config = {
-        .memory = memory->bytes, .capacity = sizeof memory->bytes, .seed = 99, .argv = argv, .argc = 2};
-    SmithIo io = smith_io_make_test(config);
-    assert(io.seed == 99 && io.key.bits == smith_key_make(99).bits);
-    assert(io.args.count == 2 && strcmp(smith_args_get(&io.args, 1), "--flag") == 0);
-    assert(smith_args_get(&io.args, 2) == nullptr);
-    assert(smith_io_test_add_program(&io, "tool", "tool output\n", 5).code == 0);
-    const char *const run[] = {"tool", nullptr};
-    SmithProcessResult result = smith_processes_run(&io.processes, &io.arena, run);
-    assert(result.exit_status == 5 && strcmp(result.output, "tool output\n") == 0);
-    SmithProcess process = {};
-    assert(smith_processes_spawn(&io.processes, run, &process).code == 0);
-    SmithOp wait = {};
-    smith_processes_wait_async(&io.processes, &wait, process);
-    assert(smith_io_run(&io, 0) == 1 && wait.exit_status == 5);
-    const char *const absent[] = {"absent", nullptr};
-    assert(smith_processes_run(&io.processes, &io.arena, absent).error.code == ENOENT);
-    SmithCapture capture = {};
-    assert(smith_processes_capture_async(&io.processes, &io.arena, run, &capture).code == 0);
-    assert(smith_capture_poll(&capture) && capture.exit_status == 5 && strcmp(capture.output, "tool output\n") == 0);
-    assert(smith_processes_capture_async(&io.processes, &io.arena, absent, &capture).code == ENOENT);
 }
 
 // ---------------------------------------------------------------- folders, appends, maps: one function, real and fake
@@ -601,30 +513,7 @@ static void test_real_map_big(SmithIo *io) {
     assert(mapping < ((size_t)1 << 20) && after < ((size_t)2 << 20)); // pages are read when touched, not before
 }
 
-static void test_fake_tree(TestMemory *memory) {
-    SmithIoTest config = {.memory = memory->bytes, .capacity = sizeof memory->bytes};
-    SmithIo io = smith_io_make_test(config);
-    check_tree(&io.files, &io.arena, "tree-fake");
-    check_map_and_remove(&io.files, &io.arena, "tree-fake");
-    // The fake's root is "." and "/": relative paths and absolute ones are all in it.
-    assert(smith_io_test_add_file(&io, "top.txt", "t").code == 0);
-    SmithFileList list = smith_files_list(&io.files, &io.arena, ".");
-    assert(list.error.code == 0 && list.count == 2); // top.txt and tree-fake
-    assert(strcmp(list.entries[0].name, "top.txt") == 0 && strcmp(list.entries[1].name, "tree-fake") == 0);
-    assert(smith_files_info(&io.files, "tree-fake").folder && smith_files_info(&io.files, ".").folder);
-}
-
-// Appending many times: the fake grows the file by doubling, not by copying it each time.
-static void test_fake_append_many(TestMemory *memory) {
-    SmithIoTest config = {.memory = memory->bytes, .capacity = sizeof memory->bytes};
-    SmithIo io = smith_io_make_test(config);
-    for (size_t i = 0; i < 2000; i++)
-        assert(smith_files_write(&io.files, "log.txt", "0123456789\n", 11, SmithWrite_Append).code == 0);
-    SmithRead log = smith_files_read(&io.files, &io.arena, "log.txt");
-    assert(log.error.code == 0 && log.size == 22000);
-}
-
-static void test_environment_and_cores(TestMemory *memory) {
+static void test_real_environment_and_cores(void) {
     setenv("SMITH_IO_TEST_VARIABLE", "from the process", 1);
     SmithIo real = smith_io_make(0, nullptr);
     const char *value = smith_args_env(&real.args, "SMITH_IO_TEST_VARIABLE");
@@ -637,34 +526,6 @@ static void test_environment_and_cores(TestMemory *memory) {
     assert(smith_args_env(&real.args, "SMITH_IO_TEST_VARIABLE") == nullptr);
     assert(smith_processes_cores(&real.processes) >= 1);
     smith_io_close(&real);
-
-    const char *const environment[] = {"HOME=/home/test", "EMPTY=", "A=B=C", nullptr};
-    SmithIoTest config = {
-        .memory = memory->bytes, .capacity = sizeof memory->bytes, .environment = environment, .cores = 12};
-    SmithIo fake = smith_io_make_test(config);
-    assert(strcmp(smith_args_env(&fake.args, "HOME"), "/home/test") == 0);
-    assert(strcmp(smith_args_env(&fake.args, "EMPTY"), "") == 0);
-    assert(strcmp(smith_args_env(&fake.args, "A"), "B=C") == 0);
-    assert(smith_args_env(&fake.args, "HOM") == nullptr && smith_args_env(&fake.args, "PATH") == nullptr);
-    assert(smith_processes_cores(&fake.processes) == 12);
-    SmithIoTest bare = {.memory = memory->bytes, .capacity = sizeof memory->bytes};
-    SmithIo plain = smith_io_make_test(bare);
-    assert(smith_args_env(&plain.args, "HOME") == nullptr); // the fake never asks the process
-    assert(smith_processes_cores(&plain.processes) == 1);
-}
-
-static void test_fake_printf(TestMemory *memory) {
-    SmithIoTest config = {.memory = memory->bytes, .capacity = sizeof memory->bytes};
-    SmithIo io = smith_io_make_test(config);
-    assert(smith_console_printf(&io.console, "%s %d %.2f\n", "wins", 7, 0.5).code == 0);
-    assert(smith_console_eprintf(&io.console, "warning %u\n", 3u).code == 0);
-    assert(strcmp(smith_io_test_output(&io), "wins 7 0.50\n") == 0);
-    assert(strcmp(smith_io_test_errors(&io), "warning 3\n") == 0);
-    char big[5000];
-    memset(big, 'x', sizeof big - 1);
-    big[sizeof big - 1] = 0;
-    SmithError long_text = smith_console_printf(&io.console, "%s", big); // longer than the buffer: nothing is printed
-    assert(long_text.code == EMSGSIZE && strcmp(smith_io_test_output(&io), "wins 7 0.50\n") == 0);
 }
 
 // ---------------------------------------------------------------- programs run by the script
@@ -691,103 +552,6 @@ static int program_seed(void) {
 }
 
 // ---------------------------------------------------------------- net
-
-// Reads from the connection to its end, into the buffer; returns the bytes, or -1 on an error.
-static ptrdiff_t read_all(SmithNet *net, SmithConnection *connection, char *buffer, size_t capacity) {
-    size_t total = 0;
-    for (size_t round = 0; round < test_rounds_max; round++) {
-        SmithRead read = smith_net_receive(net, connection, buffer + total, capacity - total - 1);
-        if (read.error.code != 0) return -1;
-        total += read.size;
-        if (read.end) break;
-    }
-    buffer[total] = 0;
-    return (ptrdiff_t)total;
-}
-
-// What both the fake and a real io with a scripted network must do.
-static void check_scripted_net(SmithIo *io) {
-    assert(smith_io_test_add_server(
-               io,
-               (SmithNetServer){
-                   .host = "a.example", .port = 443, .response = "HELLO WORLD", .response_size = 11, .chunk = 4})
-               .code == 0);
-    SmithConnection connection = {};
-    SmithError error = smith_net_connect(&io->net, &connection, "nowhere.example", 443, true);
-    assert(error.code == ECONNREFUSED && test_contains(error.message, "nowhere.example"));
-    assert(smith_net_close(&io->net, &connection).code == 0);
-
-    error = smith_net_connect(&io->net, &connection, "a.example", 443, true);
-    assert(error.code == 0);
-    assert(smith_net_send(&io->net, &connection, "GET / ", 6).code == 0);
-    assert(smith_net_send(&io->net, &connection, "HTTP/1.1\r\n\r\n", 12).code == 0);
-    assert(strcmp(smith_io_test_request(io, "a.example", 443, 0), "GET / HTTP/1.1\r\n\r\n") == 0);
-    char buffer[64];
-    SmithRead read = smith_net_receive(&io->net, &connection, buffer, sizeof buffer);
-    assert(read.error.code == 0 && read.size == 4 && !read.end && memcmp(buffer, "HELL", 4) == 0); // a chunk at a time
-    assert(read_all(&io->net, &connection, buffer, sizeof buffer) == 7 && strcmp(buffer, "O WORLD") == 0);
-    read = smith_net_receive(&io->net, &connection, buffer, sizeof buffer);
-    assert(read.end && read.size == 0); // the end is stable
-    assert(smith_net_close(&io->net, &connection).code == 0);
-    assert(smith_net_receive(&io->net, &connection, buffer, sizeof buffer).error.code == ECANCELED); // after close
-    assert(smith_io_test_request(io, "a.example", 443, 1) == nullptr);
-
-    // A server serves one connection; the next to the same host is refused, until another is scripted.
-    error = smith_net_connect(&io->net, &connection, "a.example", 443, true);
-    assert(error.code == ECONNREFUSED);
-    assert(smith_net_close(&io->net, &connection).code == 0);
-
-    // A certificate failure is a value with the reason in it.
-    assert(smith_io_test_add_server(io, (SmithNetServer){.host = "bad.example",
-                                                         .port = 443,
-                                                         .tls_failure = "the certificate is not for this host"})
-               .code == 0);
-    error = smith_net_connect(&io->net, &connection, "bad.example", 443, true);
-    assert(error.code == EAUTH && test_contains(error.message, "the certificate is not for this host"));
-    assert(smith_net_close(&io->net, &connection).code == 0);
-
-    // A connection that breaks after some data: the data comes, then the error.
-    assert(smith_io_test_add_server(
-               io,
-               (SmithNetServer){
-                   .host = "reset.example", .port = 8443, .response = "abc", .response_size = 3, .error = ECONNRESET})
-               .code == 0);
-    assert(smith_net_connect(&io->net, &connection, "reset.example", 8443, true).code == 0);
-    assert(read_all(&io->net, &connection, buffer, sizeof buffer) == -1);
-    assert(smith_net_close(&io->net, &connection).code == 0);
-
-    // Two connections wait in one loop.
-    assert(smith_io_test_add_server(
-               io, (SmithNetServer){.host = "p.example", .port = 443, .response = "one", .response_size = 3})
-               .code == 0);
-    assert(smith_io_test_add_server(
-               io, (SmithNetServer){.host = "p.example", .port = 443, .response = "two", .response_size = 3})
-               .code == 0);
-    SmithConnection first = {}, second = {};
-    assert(smith_net_connect(&io->net, &first, "p.example", 443, true).code == 0);
-    assert(smith_net_connect(&io->net, &second, "p.example", 443, true).code == 0);
-    char one[8] = {}, two[8] = {};
-    SmithOp op_one = {}, op_two = {};
-    smith_net_receive_async(&io->net, &op_one, &first, one, 7);
-    smith_net_receive_async(&io->net, &op_two, &second, two, 7);
-    assert(smith_io_run(io, smith_io_forever) == 2 && op_one.done && op_two.done);
-    assert(strcmp(one, "one") == 0 && strcmp(two, "two") == 0);
-    assert(smith_net_close(&io->net, &first).code == 0 && smith_net_close(&io->net, &second).code == 0);
-}
-
-static void test_fake_net(TestMemory *memory) {
-    SmithIoTest config = {.memory = memory->bytes, .capacity = sizeof memory->bytes};
-    SmithIo io = smith_io_make_test(config);
-    check_scripted_net(&io);
-}
-
-static void test_real_scripted_net(void) {
-    SmithIo io = smith_io_make(0, nullptr);
-    check_scripted_net(&io);
-    SmithRead real_file = smith_files_read(&io.files, &io.arena, "hello.txt"); // its files stay real
-    assert(real_file.error.code == 0 || real_file.error.code == ENOENT);
-    smith_io_close(&io);
-}
 
 // A server on the loopback that answers one connection: it reads the request, waits, and sends the reply in two parts.
 typedef struct {
@@ -1092,71 +856,6 @@ static void test_real_children(SmithIo *io) {
     test_real_child_kill_after_wait(io);
 }
 
-// The scripted child: chunks of output, a read that waits, writes kept, an exit when stdin closes, EPIPE after an exit,
-// kill, two children of one program, and a program with no script.
-static void test_fake_children(TestMemory *memory) {
-    SmithIo io =
-        smith_io_make_test((SmithIoTest){.memory = memory->bytes, .capacity = sizeof memory->bytes, .seed = 3});
-    SmithChildScript dap = {.program = "smith-dap",
-                            .output = "Content-Length: 2\r\n\r\n{}",
-                            .chunk = 8,
-                            .exit_on = SmithChildExit_InputClosed,
-                            .status = 7};
-    assert(smith_io_test_add_child(&io, dap).code == 0);
-    assert(smith_io_test_add_child(&io, (SmithChildScript){.program = "smith-dap", .output = "second"}).code == 0);
-    SmithChildScript quick = {.program = "true", .output = "bye\n", .exit_on = SmithChildExit_Start};
-    assert(smith_io_test_add_child(&io, quick).code == 0);
-    const char *const dap_argv[] = {"smith-dap", nullptr};
-    const char *const unknown[] = {"nope", nullptr};
-    const char *const quick_argv[] = {"true", nullptr};
-    SmithChild first = {};
-    SmithChild second = {};
-    SmithChild dead = {};
-    assert(smith_processes_start_piped(&io.processes, unknown, &first).code == ENOENT);
-    assert(smith_processes_start_piped(&io.processes, dap_argv, &first).code == 0);
-    assert(smith_processes_start_piped(&io.processes, dap_argv, &second).code == 0);
-    assert(smith_processes_start_piped(&io.processes, dap_argv, &dead).code == ENOENT); // both scripts are in use
-    assert(smith_processes_start_piped(&io.processes, quick_argv, &dead).code == 0);
-    assert(first.process.id != second.process.id);
-    const char *const pieces[] = {"Content-", "Length: ", "2\r\n\r\n{}"};
-    SmithOp read = {};
-    char buffer[32];
-    for (size_t i = 0; i < 3; i++) { // in pieces of 8
-        smith_child_read_async(&first, &read, buffer, sizeof buffer);
-        assert(smith_io_run(&io, 0) == 1 && read.done && read.error.code == 0);
-        assert(read.size == strlen(pieces[i]) && memcmp(buffer, pieces[i], read.size) == 0);
-    }
-    smith_child_read_async(&first, &read, buffer, sizeof buffer);
-    assert(smith_io_run(&io, 0) == 0 && !read.done); // nothing more, and not over
-    SmithOp write = {};
-    smith_child_write_async(&first, &write, "request", 7);
-    assert(smith_io_run(&io, 0) == 1 && write.done && write.error.code == 0 && write.size == 7);
-    assert(strcmp(smith_io_test_child_input(&io, 0), "request") == 0);
-    SmithOp wait = {};
-    smith_processes_wait_async(&io.processes, &wait, first.process);
-    assert(smith_io_run(&io, 0) == 0 && !wait.done); // alive
-    smith_child_close_input(&first);
-    assert(smith_io_run(&io, 0) == 2 && read.done && read.end && wait.done);
-    assert(wait.exit_status == 7 && wait.signal == 0);
-    smith_child_write_async(&first, &write, "late", 4);
-    assert(smith_io_run(&io, 0) == 1 && write.error.code == EPIPE);
-    smith_child_close(&first);
-
-    smith_child_write_async(&dead, &write, "x", 1); // exited at start
-    assert(smith_io_run(&io, 0) == 1 && write.error.code == EPIPE);
-    assert(test_child_read(&io, &dead, buffer, sizeof buffer, 4) == 4 && memcmp(buffer, "bye\n", 4) == 0);
-    assert(test_child_read(&io, &dead, buffer, sizeof buffer, 1) == 0);
-
-    assert(test_child_read(&io, &second, buffer, sizeof buffer, 6) == 6 && memcmp(buffer, "second", 6) == 0);
-    smith_processes_wait_async(&io.processes, &wait, second.process);
-    smith_child_read_async(&second, &read, buffer, sizeof buffer);
-    assert(smith_io_run(&io, 0) == 0);
-    assert(smith_child_kill(&second, SIGKILL).code == 0);
-    assert(smith_io_run(&io, 0) == 2 && wait.signal == SIGKILL && wait.exit_status == 0 && read.end);
-    assert(smith_child_kill(&second, SIGKILL).code == ESRCH);
-    assert(smith_io_test_child_input(&io, 3) == nullptr);
-}
-
 int main(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "lines") == 0) return program_lines();
     if (argc > 1 && strcmp(argv[1], "seed") == 0) return program_seed();
@@ -1164,7 +863,6 @@ int main(int argc, char **argv) {
         test_memory();
         return 0;
     }
-    static TestMemory fake_memory;
     SmithIo io = smith_io_make(argc, argv);
     assert(io.args.count == (size_t)argc && strcmp(smith_args_get(&io.args, 0), argv[0]) == 0);
     test_real_files(&io);
@@ -1182,20 +880,11 @@ int main(int argc, char **argv) {
     test_real_map_big(&io);
     test_real_net(&io);
     test_real_net_errors(&io);
-    test_real_scripted_net();
     static TestMemory same_memory;
     SmithIoTest config = {.memory = same_memory.bytes, .capacity = sizeof same_memory.bytes};
     SmithIo fake = smith_io_make_test(config);
     test_same_function(&io, &fake);
-    test_fake_console(&fake_memory);
-    test_fake_clock(&fake_memory);
-    test_fake_rest(&fake_memory);
-    test_fake_tree(&fake_memory);
-    test_fake_append_many(&fake_memory);
-    test_environment_and_cores(&fake_memory);
-    test_fake_printf(&fake_memory);
-    test_fake_net(&fake_memory);
-    test_fake_children(&fake_memory);
+    test_real_environment_and_cores();
     test_seed();
     smith_io_close(&io);
     puts("io: all checks passed");
