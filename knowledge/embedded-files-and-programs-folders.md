@@ -14,8 +14,14 @@ and the identity of the compiler and linker. The programs the driver runs (`bin/
 clones of smith itself; it runs `clang` again with `-cc1` for any compile with more than one step) are not in
 it: they are in `$XDG_DATA_HOME/smith/programs/<LC_UUID of the running smith>/`, whose `lib` links to that
 folder's, and the shim passes `-resource-dir` for it. So the installed smith, a dev build and another agent's
-never share or remake each other's links, and a smith without lld has no `ld`. A programs folder idle for 31 days
-is removed when a new one is made (using one touches it once a day); only the runtime folder lives forever.
+never share or remake each other's links, and a smith without lld has no `ld`. When a new programs folder is made, smith removes the folders
+that may go (issue #109; every worktree's build made one, about 220 MB once its binary was deleted): one whose binary
+is gone or was rebuilt in place (the folder's `binary` file records the LC_UUID and path), and one idle for 31 days
+(using one touches it once a day). Never one a running smith holds: every smith that uses its folder takes a shared
+`flock` on `<folder>/.in-use` for its life (children inherit it, the kernel drops it on death; about 11 microseconds), and the
+prune takes the exclusive lock without waiting, removing the folder while it holds it; and never one younger than an
+hour (the gap between a start and its lock). So a long-running `smith lsp` of a deleted worktree keeps its folder, and
+an old folder with no process goes. Only the runtime folder lives forever.
 
 **That folder is outside the caches smith prunes and cleans, and smith never removes it**, because a sanitized
 binary records an absolute `LC_RPATH` to its `lib/clang/23/lib/darwin`: `smith cache clean`, the 31-day pruning and

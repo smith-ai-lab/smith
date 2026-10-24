@@ -28,6 +28,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/clonefile.h>
+#include <sys/file.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -528,8 +529,10 @@ static void smith_resource_unpack(const char *folder) {
 // fallback on a volume that cannot clone. The folder is built beside its place and renamed into it, so one that
 // exists is whole.
 //
-// A folder not used for 31 days is removed when a new one is made (using one touches it once a day), and so is a half
-// built one older than an hour. Only the runtime folder must live forever.
+// When a new one is made, the folders of binaries that are gone are removed (each records its binary, LC_UUID and
+// path, in `binary`), and so is one not used for 31 days (using one touches it once a day) and a half built one older
+// than an hour; never one a running smith holds (a shared lock on `.in-use`, taken by every smith for its life) and
+// never one younger than an hour. Only the runtime folder must live forever.
 constexpr time_t smith_programs_idle_seconds = 31L * 24 * 3600;
 constexpr time_t smith_programs_touch_seconds = 24L * 3600;
 constexpr time_t smith_programs_temporary_seconds = 3600;
@@ -563,7 +566,75 @@ static void smith_programs_folder(const char *runtime, char *programs) {
     SMITH_ASSERT(written > 0 && written < PATH_MAX - 32);
 }
 
-// Removes what the folder `parent` holds that is idle for too long, but `keep`.
+// The LC_UUID of the Mach-O file `path` as hex, from its first 16 KB; false when it is no thin Mach-O with one.
+static bool smith_file_uuid(const char *path, char *out) {
+    int file = open(path, O_RDONLY);
+    if (file < 0) return false;
+    unsigned char buffer[16384];
+    ssize_t count = read(file, buffer, sizeof buffer);
+    close(file);
+    if (count < (ssize_t)sizeof(struct mach_header_64)) return false;
+    const struct mach_header_64 *header = (const struct mach_header_64 *)buffer;
+    if (header->magic != MH_MAGIC_64) return false;
+    size_t at = sizeof *header;
+    for (uint32_t i = 0; i < header->ncmds; i++) { // bounded by the header
+        if (at + sizeof(struct load_command) > (size_t)count) return false;
+        const struct load_command *command = (const struct load_command *)(buffer + at);
+        if (command->cmd == LC_UUID && at + sizeof(struct uuid_command) <= (size_t)count) {
+            const struct uuid_command *uuid = (const struct uuid_command *)command;
+            for (size_t k = 0; k < sizeof uuid->uuid; k++)
+                snprintf(out + 2 * k, 3, "%02x", uuid->uuid[k]);
+            return true;
+        }
+        if (command->cmdsize < sizeof *command) return false;
+        at += command->cmdsize;
+    }
+    return false;
+}
+
+// Whether the binary a programs folder was made for is gone: its `binary` file names the LC_UUID and the path, and
+// the folder is orphaned when that path is missing or holds another build. A folder with no such file (an older
+// smith made it) is not known to be orphaned.
+static bool smith_programs_orphaned(const char *folder) {
+    char record[PATH_MAX];
+    snprintf(record, sizeof record, "%s/binary", folder);
+    FILE *file = fopen(record, "r");
+    if (file == nullptr) return false;
+    char uuid[64] = "";
+    char path[PATH_MAX] = "";
+    bool read_both = fgets(uuid, sizeof uuid, file) != nullptr && fgets(path, sizeof path, file) != nullptr;
+    fclose(file);
+    if (!read_both) return false;
+    uuid[strcspn(uuid, "\n")] = '\0';
+    path[strcspn(path, "\n")] = '\0';
+    struct stat info;
+    if (stat(path, &info) != 0) return true;
+    char found[33];
+    return smith_file_uuid(path, found) && strcmp(found, uuid) != 0;
+}
+
+// Takes the lock a running smith holds on its programs folder (a shared lock on <folder>/.in-use, kept for the
+// life of the process and inherited by its children, which the kernel drops when it dies): `exclusive` is what the
+// pruner takes, without waiting. Returns the descriptor, or -1 when another process holds the folder (or, for the
+// pruner, when there is no such file and nothing to lock). The folder may have been removed between the open and
+// the lock; then the file has no name left and the lock is refused.
+static int smith_programs_lock(const char *folder, bool exclusive) {
+    char path[PATH_MAX];
+    snprintf(path, sizeof path, "%s/.in-use", folder);
+    int file = open(path, exclusive ? O_RDWR : O_RDWR | O_CREAT, 0644);
+    if (file < 0) return -1;
+    struct stat info;
+    if (flock(file, exclusive ? LOCK_EX | LOCK_NB : LOCK_SH) != 0 || fstat(file, &info) != 0 || info.st_nlink == 0) {
+        close(file);
+        return -1;
+    }
+    return file;
+}
+
+// Removes what the folder `parent` holds that may go, but `keep`: a half built folder older than an hour; a folder
+// whose binary is gone, or was rebuilt in place, or one idle for 31 days, when no process holds its lock (the
+// pruner takes it and removes the folder while holding it) and it is older than an hour, which covers a smith that
+// has started and not yet locked it.
 static void smith_programs_prune(const char *parent, const char *keep) {
     DIR *directory = opendir(parent);
     if (directory == nullptr) return;
@@ -575,10 +646,19 @@ static void smith_programs_prune(const char *parent, const char *keep) {
         if (written <= 0 || written >= (int)sizeof path || strcmp(path, keep) == 0) continue;
         struct stat info;
         if (lstat(path, &info) != 0) continue;
-        bool temporary = smith_ends_with(entry->d_name, ".tmp");
         time_t idle = now - info.st_mtime;
-        if (idle > (temporary ? smith_programs_temporary_seconds : smith_programs_idle_seconds))
-            smith_remove_tree(path);
+        if (smith_ends_with(entry->d_name, ".tmp")) {
+            if (idle > smith_programs_temporary_seconds) smith_remove_tree(path);
+            continue;
+        }
+        if (idle <= smith_programs_temporary_seconds) continue;
+        if (idle <= smith_programs_idle_seconds && !smith_programs_orphaned(path)) continue;
+        int lock = smith_programs_lock(path, true);
+        char probe[PATH_MAX];
+        snprintf(probe, sizeof probe, "%s/.in-use", path);
+        if (lock < 0 && access(probe, F_OK) == 0) continue; // a process holds it
+        smith_remove_tree(path);
+        if (lock >= 0) close(lock);
     }
     closedir(directory);
 }
@@ -620,6 +700,12 @@ static void smith_programs_make(const char *runtime, const char *programs, const
     snprintf(target, sizeof target, "%s/lib", runtime);
     snprintf(path, sizeof path, "%s/lib", temporary);
     if (symlink(target, path) != 0) smith_die(smith_exit_usage, "cannot link", path);
+    char uuid[33];
+    smith_self_uuid(uuid, sizeof uuid);
+    snprintf(path, sizeof path, "%s/binary", temporary);
+    FILE *record = fopen(path, "w"); // the binary this folder is for: the pruner removes it when that is gone
+    if (record == nullptr || fprintf(record, "%s\n%s\n", uuid, self) < 0 || fclose(record) != 0)
+        smith_die(smith_exit_usage, "cannot write", path);
     if (rename(temporary, programs) != 0) { // another process of this smith may have won
         bool won = smith_is_folder(programs);
         smith_remove_tree(temporary);
@@ -627,20 +713,28 @@ static void smith_programs_make(const char *runtime, const char *programs, const
     }
 }
 
-// Makes the runtime folder and this smith's programs exist; a second call, or a second process, finds them.
+// Makes the runtime folder and this smith's programs exist; a second call, or a second process, finds them. Then
+// this process takes the folder's shared lock for its life, so no prune removes it from under a running smith (a
+// long-running `smith lsp` of a worktree that is gone). A prune may remove the folder between the two, which the
+// refused lock tells: the folder is made again.
 static void smith_resource_ensure(const char *runtime, const char *programs, const char *self) {
+    static bool locked = false;
     if (!smith_is_folder(runtime)) smith_resource_unpack(runtime);
-    struct stat info;
-    if (stat(programs, &info) == 0 && S_ISDIR(info.st_mode)) {
-        if (time(nullptr) - info.st_mtime > smith_programs_touch_seconds) utimes(programs, nullptr);
-        return;
+    for (int attempt = 0; attempt < 8 && !locked; attempt++) { // a prune racing us, each time a new folder
+        struct stat info;
+        if (stat(programs, &info) == 0 && S_ISDIR(info.st_mode)) {
+            if (time(nullptr) - info.st_mtime > smith_programs_touch_seconds) utimes(programs, nullptr);
+        } else {
+            smith_programs_make(runtime, programs, self);
+            char parent[PATH_MAX];
+            snprintf(parent, sizeof parent, "%s", programs);
+            *strrchr(parent, '/') = '\0';
+            smith_programs_prune(parent, programs);
+            smith_programs_sweep_legacy(runtime);
+        }
+        locked = smith_programs_lock(programs, false) >= 0; // the descriptor stays open, and is inherited
     }
-    smith_programs_make(runtime, programs, self);
-    char parent[PATH_MAX];
-    snprintf(parent, sizeof parent, "%s", programs);
-    *strrchr(parent, '/') = '\0';
-    smith_programs_prune(parent, programs);
-    smith_programs_sweep_legacy(runtime);
+    if (!locked) smith_die(smith_exit_usage, "cannot lock", programs);
 }
 
 // The compiler's resource directory in the runtime folder: lib/clang/<major>, the one folder in lib/clang.

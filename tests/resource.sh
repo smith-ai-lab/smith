@@ -207,6 +207,52 @@ expect "an idle programs folder is removed when a new one is made" no "$(exists 
 expect "so is an old half-made one" no "$(exists "$program_folders/stale.99.tmp")"
 expect "a recent one stays" yes "$(exists "$programs")"
 expect "and the runtime folder" yes "$(exists "$folder")"
+# A programs folder records its binary (LC_UUID and path). When a new one is made, the folder of a binary that is gone
+# is removed, unless a running smith holds its lock (a long-running `smith lsp` of a deleted worktree) or it is younger
+# than an hour; one whose binary exists stays.
+variant() { # name, byte: a copy of smith with another LC_UUID
+    cp "$smith" "$work/$1"
+    perl -0777 -pi -e 's/(\x1b\0\0\0\x18\0\0\0)(.{16})/$1 . ("\x'"$2"'" x 16)/se' "$work/$1"
+    codesign -f -s - "$work/$1" >/dev/null 2>&1
+}
+folder_of() { # a smith: the programs folder it made
+    for f in "$program_folders"/*; do is_copy "$f/bin/ld" "$1" && echo "$f"; done
+}
+two_hours_ago=$(date -v-2H +%Y%m%d%H%M)
+variant smith_d 11
+variant smith_e 22
+"$work/smith_d" cc -fsyntax-only hello.c
+"$work/smith_e" cc -fsyntax-only hello.c
+folder_d=$(folder_of "$work/smith_d")
+folder_e=$(folder_of "$work/smith_e")
+expect "a programs folder records its binary" smith_d "$(sed -n 2p "$folder_d/binary" | sed 's,.*/,,')"
+(sleep 20 | "$work/smith_d" lsp >/dev/null 2>&1) &
+holder=$!
+tries=0
+while [ $tries -lt 100 ] && ! [ -f "$folder_d/.in-use" ]; do sleep 0.1; tries=$((tries + 1)); done
+sleep 1
+rm "$work/smith_d"
+touch -t "$two_hours_ago" "$folder_d" "$folder_e"
+variant smith_f 33
+"$work/smith_f" cc -fsyntax-only hello.c
+expect "a folder whose smith is running stays when its binary is gone" yes "$(exists "$folder_d")"
+expect "and one whose binary exists is never touched" yes "$(exists "$folder_e")"
+kill $holder 2>/dev/null
+wait $holder 2>/dev/null
+for p in $(lsof -t "$folder_d/.in-use" 2>/dev/null); do kill "$p" 2>/dev/null; done
+sleep 1
+touch -t "$two_hours_ago" "$folder_d"
+variant smith_g 44
+"$work/smith_g" cc -fsyntax-only hello.c
+expect "once that smith has died the next prune removes its folder" no "$(exists "$folder_d")"
+expect "and a folder whose binary exists still stays" yes "$(exists "$folder_e")"
+rm "$work/smith_e"
+touch -t "$(date -v-30M +%Y%m%d%H%M)" "$folder_e"
+variant smith_h 55
+"$work/smith_h" cc -fsyntax-only hello.c
+expect "a folder younger than an hour stays even when its binary is gone" yes "$(exists "$folder_e")"
+rm -f "$work"/smith_[d-h]
+
 ln -s "$smith" "$work/smith-c++"
 printf '#include <vector>\n#include <cstdio>\nint main() { std::vector<int> v{1, 2, 3}; std::printf("%%zu\\n", v.size()); }\n' >v.cpp
 capture "$work/smith-c++" v.cpp -o v
