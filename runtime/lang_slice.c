@@ -1824,44 +1824,78 @@ static size_t smith_lang_slice_right(SmithLang *lang, const SmithHost *host, siz
     return count;
 }
 
-// The type a declaration `T name =` gives its variable, when `T` is a slice (a typedef of one, or the struct a
-// `typeof(U[:])` just wrote): its tag. The name is not declared yet, so the type is asked of `( T ) { }`. `declares`
-// says that the tokens before the `=` are a declaration at all.
+// The tokens of a type name that ends at the token `at` back (`T`, `m::T` or `struct T`), in order, as far as the
+// declaration goes; 0 when the token is no type name.
+static size_t smith_lang_slice_type_before(SmithLang *lang, const SmithHost *host, unsigned at, SmithToken *out) {
+    SmithToken last = {};
+    if (!smith_lang_tuple_previous(lang, host, at, &last) || last.kind != SmithTokenKind_Identifier ||
+        smith_lang_word(last.text, last.length) != SmithLangWord_Other) {
+        return 0;
+    }
+    if (last.location == lang->slice.qualified_at && lang->slice.qualified[0] != 0) { // `m::T`: its resolved name
+        last = smith_lang_tuple_made(SmithTokenKind_Identifier, lang->slice.qualified, strlen(lang->slice.qualified),
+                                     &last, false);
+    }
+    SmithToken before = {};
+    smith_lang_tuple_previous(lang, host, at + 1, &before);
+    size_t count = 0;
+    if (before.kind == SmithTokenKind_Identifier &&
+        (smith_lang_ident(&before, "struct") || smith_lang_ident(&before, "union") ||
+         smith_lang_ident(&before, "enum"))) {
+        out[count++] = before;
+    }
+    out[count++] = last;
+    return count;
+}
+
+// The type a declaration `T name =` or `T *name =` gives its variable, when `T` is a slice (a typedef of one, or the
+// struct a `typeof(U[:])` just wrote): its tag, with a star before it for the pointer. The name is not declared yet,
+// so the type is asked of `( T ) { }` (`( T * ) 0`). `declares` says that the tokens before the `=` are a declaration.
 static bool smith_lang_slice_declared(SmithLang *lang, const SmithHost *host, char *tag, size_t capacity,
                                       bool *declares) {
     SmithToken name = {};
-    SmithToken type = {};
+    SmithToken star = {};
     if (!smith_lang_tuple_previous(lang, host, 1, &name) || name.kind != SmithTokenKind_Identifier ||
         smith_lang_word(name.text, name.length) != SmithLangWord_Other ||
-        !smith_lang_tuple_previous(lang, host, 2, &type)) {
+        !smith_lang_tuple_previous(lang, host, 2, &star)) {
         return false;
     }
-    if (smith_lang_punct(&type, "}") && lang->slice.typeof_tag[0] != 0) {
+    if (smith_lang_punct(&star, "}") && lang->slice.typeof_tag[0] != 0) {
         *declares = true;
         snprintf(tag, capacity, "%s", lang->slice.typeof_tag);
         return true;
     }
-    if (type.kind != SmithTokenKind_Identifier || smith_lang_word(type.text, type.length) != SmithLangWord_Other) {
-        return false;
-    }
-    SmithToken kind = {};
-    bool tagged =
-        smith_lang_tuple_previous(lang, host, 3, &kind) && kind.kind == SmithTokenKind_Identifier &&
-        (smith_lang_ident(&kind, "struct") || smith_lang_ident(&kind, "union") || smith_lang_ident(&kind, "enum"));
-    SmithToken tokens[6];
+    bool pointer = smith_lang_punct(&star, "*");
+    SmithToken tokens[9];
     size_t count = 0;
-    tokens[count++] = smith_lang_tuple_made(SmithTokenKind_Punctuator, "(", 1, &type, true);
-    if (tagged) tokens[count++] = kind;
-    tokens[count++] = type;
-    tokens[count++] = smith_lang_tuple_made(SmithTokenKind_Punctuator, ")", 1, &type, true);
-    tokens[count++] = smith_lang_tuple_made(SmithTokenKind_Punctuator, "{", 1, &type, true);
-    tokens[count++] = smith_lang_tuple_made(SmithTokenKind_Punctuator, "}", 1, &type, true);
+    tokens[count++] = smith_lang_tuple_made(SmithTokenKind_Punctuator, "(", 1, &name, true);
+    size_t words = smith_lang_slice_type_before(lang, host, pointer ? 3 : 2, tokens + count);
+    if (words == 0) return false;
+    count += words;
+    if (pointer) tokens[count++] = star;
+    tokens[count++] = smith_lang_tuple_made(SmithTokenKind_Punctuator, ")", 1, &name, true);
+    if (pointer) {
+        tokens[count++] = smith_lang_tuple_made(SmithTokenKind_Number, "0", 1, &name, true);
+    } else {
+        tokens[count++] = smith_lang_tuple_made(SmithTokenKind_Punctuator, "{", 1, &name, true);
+        tokens[count++] = smith_lang_tuple_made(SmithTokenKind_Punctuator, "}", 1, &name, true);
+    }
     char text[smith_lang_slice_text_max];
     if (!smith_lang_slice_text(lang, tokens, count, text, sizeof text)) return false;
-    SmithLangSliceType found = {};
     *declares = true;
-    if (!smith_lang_slice_type(host, text, &found) || found.kind != SmithLangSlice_Slice) return false;
-    snprintf(tag, capacity, "%s", found.tag);
+    SmithExprType found = {};
+    if (pointer) {
+        const char *canonical = found.canonical;
+        if (!host->expr_type(host->context, text, (uint32_t)strlen(text), &found) ||
+            strncmp(canonical, "struct smith_array_", 19) != 0 || strchr(canonical, '*') != strrchr(canonical, '*')) {
+            return false;
+        }
+        snprintf(tag, capacity, "*%.*s", (int)strcspn(canonical + 7, " "), canonical + 7);
+        return true;
+    }
+    SmithLangSliceType type = {};
+    if (!smith_lang_slice_type(host, text, &type) || type.kind != SmithLangSlice_Slice) return false;
+    snprintf(tag, capacity, "%s", type.tag);
     return true;
 }
 

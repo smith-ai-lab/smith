@@ -438,8 +438,8 @@ static void smith_lang_note_io_use(SmithLang *lang, const SmithToken *member, si
 // `name::member` where name is an import binding. The member is read unexpanded: for `c::X` it is a macro to expand
 // then, and for a module it is part of a name, so it must not be expanded at all. Anything else with that name (a
 // variable called io, say) is just a name, and so is `gnu` in [[gnu::unused]].
-static bool smith_lang_namespace(SmithLang *lang, const SmithHost *host, const SmithToken *name,
-                                 const SmithLangBinding *binding, SmithToken *result) {
+static bool smith_lang_namespace_read(SmithLang *lang, const SmithHost *host, const SmithToken *name,
+                                      const SmithLangBinding *binding, SmithToken *result) {
     if (smith_lang_in_attribute(lang)) return false;
     const SmithToken *colons = smith_lang_peek(lang, host, 0, false);
     if (!smith_lang_punct(colons, "::")) return false;
@@ -507,6 +507,17 @@ static bool smith_lang_namespace(SmithLang *lang, const SmithHost *host, const S
         smith_lang_written_access(lang, binding, total, taken.text, taken.length);
     }
     return true;
+}
+
+// smith_lang_namespace_read, remembering the name it made: a declaration `m::T x = ...` is typed from it at its `=`.
+static bool smith_lang_namespace(SmithLang *lang, const SmithHost *host, const SmithToken *name,
+                                 const SmithLangBinding *binding, SmithToken *result) {
+    bool read = smith_lang_namespace_read(lang, host, name, binding, result);
+    if (read && !lang->namespace_done && result->length < sizeof lang->slice.qualified) {
+        snprintf(lang->slice.qualified, sizeof lang->slice.qualified, "%.*s", (int)result->length, result->text);
+        lang->slice.qualified_at = name->location;
+    }
+    return read;
 }
 
 // ---- One identifier
