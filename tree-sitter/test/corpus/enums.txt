@@ -97,3 +97,32 @@ void f(Shape s) {
             (variant_expression
               (identifier))
             (break_statement)))))))
+
+==================
+a type function that returns an enum
+==================
+
+type option(type T) {
+    return enum { T some; none; };
+}
+
+---
+
+(translation_unit
+  (function_definition
+    (type_identifier)
+    (function_declarator
+      (identifier)
+      (parameter_list
+        (parameter_declaration
+          (type_identifier)
+          (identifier))))
+    (compound_statement
+      (return_statement
+        (enum_specifier
+          (payload_variant_list
+            (field_declaration
+              (type_identifier)
+              (field_identifier))
+            (payload_variant
+              (identifier))))))))

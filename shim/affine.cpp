@@ -509,11 +509,18 @@ const RecordDecl *tagOwner(const MemberExpr *member) {
 
 // The variant a constant names: `<name>_tag_<variant>`, for the struct `smith_enum_<name>`.
 std::string variantOf(const RecordDecl *record, const EnumConstantDecl *constant) {
-    llvm::StringRef tag = record->getName();
-    tag.consume_front("smith_enum_");
-    std::string prefix = tag.str() + "_tag_";
+    // A module's enum is `smith_enum_<name>` with the constants `<name>_tag_<variant>`; a type function's
+    // (`option(usize)`) is `smith_enum_<function>_<arguments>` with the constants
+    // `smith_enum_<function>_<arguments>_tag_<variant>`.
     std::string name = constant->getName().str();
-    return name.rfind(prefix, 0) == 0 ? name.substr(prefix.size()) : name;
+    llvm::StringRef whole = record->getName();
+    llvm::StringRef stripped = whole;
+    stripped.consume_front("smith_enum_");
+    for (llvm::StringRef each : {stripped, whole}) {
+        std::string prefix = each.str() + "_tag_";
+        if (name.rfind(prefix, 0) == 0) return name.substr(prefix.size());
+    }
+    return name;
 }
 
 bool isAnonymousField(const ValueDecl *decl) {

@@ -392,6 +392,9 @@ static const char *smith_lang_prefixed(SmithLang *lang, const char *name, size_t
         }
     }
     size_t prefix = strlen(lang->prefix);
+    if (length > 11 && memcmp(name, "smith_enum_", 11) == 0 && length < sizeof lang->tmp) {
+        prefix = 0; // the struct of a type function's enum and its tags are the lowering's, no names of the module's
+    }
     if (prefix + length + 1 > sizeof lang->tmp) {
         lang->broken = true;
         lang->tmp_length = 0;

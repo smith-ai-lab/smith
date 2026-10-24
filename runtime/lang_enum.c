@@ -74,7 +74,11 @@ static size_t smith_lang_enum_build(SmithLang *lang, const SmithHost *host, cons
     // The struct's tag is `smith_enum_<module>_<Name>`, which a debugger matches (`smith dbg` shows the active
     // variant); the typedef name the program and C callers use stays `<module>_<Name>`.
     const char *prefixed = smith_lang_prefixed(lang, name->text, name->length);
-    snprintf(text, sizeof text, "smith_enum_%s", prefixed);
+    if (name->length > 11 && memcmp(name->text, "smith_enum_", 11) == 0) { // a type function's enum: already the tag
+        snprintf(text, sizeof text, "%.*s", (int)name->length, name->text);
+    } else {
+        snprintf(text, sizeof text, "smith_enum_%s", prefixed);
+    }
     made[used++] = smith_lang_tuple_made(SmithTokenKind_Identifier, text, strlen(text), token, true);
     made[used++] = smith_lang_tuple_made(SmithTokenKind_Punctuator, "{", 1, token, true);
     made[used++] = smith_lang_tuple_made(SmithTokenKind_Identifier, "enum", 4, token, false);
@@ -172,10 +176,15 @@ static bool smith_lang_enum_type(const SmithHost *host, const char *canonical, S
     }
     const char *named = canonical + 7;
     if (strncmp(named, "smith_enum_", 11) != 0) return false; // the tag the lowering gives a payload enum
-    snprintf(out->name, sizeof out->name, "%s", named + 11);
     snprintf(out->type, sizeof out->type, "%s", canonical);
     char tag[smith_lang_enum_name_max + 8];
+    // A module's payload enum is `smith_enum_<name>` with the tag enum `<name>_tag`; a type function's is
+    // `smith_enum_<function>_<arguments>` with `smith_enum_<function>_<arguments>_tag`.
+    snprintf(out->name, sizeof out->name, "%s", named + 11);
     int length = snprintf(tag, sizeof tag, "%s_tag", out->name);
+    if (host->lookup(host->context, tag, (uint32_t)length, SmithLookup_Tag).kind == SmithLookup_Tag) return true;
+    snprintf(out->name, sizeof out->name, "%s", named);
+    length = snprintf(tag, sizeof tag, "%s_tag", out->name);
     return host->lookup(host->context, tag, (uint32_t)length, SmithLookup_Tag).kind == SmithLookup_Tag;
 }
 
@@ -474,9 +483,477 @@ static SmithLangEnumSwitch smith_lang_enum_switches[smith_lang_enum_switch_max];
 static size_t smith_lang_enum_switch_count;
 static uint32_t smith_lang_enum_braces; // `{` minus `}` of the tokens seen in slice mode
 
+static void smith_lang_enum_shapes_reset(void);
+
 static void smith_lang_enum_reset(void) {
     smith_lang_enum_switch_count = 0;
     smith_lang_enum_braces = 0;
+    smith_lang_enum_shapes_reset();
+}
+
+// ---- A type function that returns an enum (issue #198, PR 3b)
+//
+// `type option(type T) { return enum { T some; none; }; }` is read by the lowering, never run: its body is the shape of
+// the enum (the tokens between the braces, with the parameters in them), recorded here, and the declaration is dropped.
+// A use, `option(usize)`, is `struct smith_enum_option_usize`: the name follows the tuples' (`smith_lang_tuple_spell`
+// of the arguments, cut and hashed when long). The struct is defined, as `smith_lang_enum_build` writes a payload enum,
+// at the first declaration that names it (before its first token), in the scope that declaration is in; a use where no
+// definition is in scope is an error naming the fix. The limits are the implementation's, and an error says so.
+
+constexpr size_t smith_lang_eshape_max = 16;
+constexpr size_t smith_lang_eshape_params_max = 4;
+constexpr size_t smith_lang_eshape_tokens_max = 96;
+constexpr size_t smith_lang_eshape_defined_max = 48;
+constexpr size_t smith_lang_eshape_scan_max = 160;
+
+typedef struct {
+    char name[64];
+    size_t param_count;
+    char params[smith_lang_eshape_params_max][48];
+    SmithToken tokens[smith_lang_eshape_tokens_max]; // between the braces of the enum
+    size_t token_count;
+} SmithLangEnumShape;
+
+typedef struct {
+    char tag[smith_lang_tuple_name_max];
+    uint32_t depth; // the brace depth of the definition: it ends with that block
+} SmithLangEnumDefined;
+
+static SmithLangEnumShape smith_lang_eshapes[smith_lang_eshape_max];
+static size_t smith_lang_eshape_count;
+static char smith_lang_eshape_pool[8192];
+static size_t smith_lang_eshape_pool_used;
+static SmithLangEnumDefined smith_lang_edefined[smith_lang_eshape_defined_max];
+static size_t smith_lang_edefined_count;
+static uint32_t smith_lang_eshape_depth; // `{` minus `}` of the source's tokens
+static bool smith_lang_eshape_start;     // the next token begins a statement or a declaration
+
+// The tables are static like the lowering's, and a module's interface read in the middle of a file
+// (smith_lang_keep_aside) would end with its own in them: they are set aside and put back with the lowering's.
+static SmithLangEnumShape smith_lang_saved_eshapes[smith_lang_eshape_max];
+static size_t smith_lang_saved_eshape_count;
+static char smith_lang_saved_eshape_pool[sizeof smith_lang_eshape_pool];
+static size_t smith_lang_saved_eshape_pool_used;
+static SmithLangEnumDefined smith_lang_saved_edefined[smith_lang_eshape_defined_max];
+static size_t smith_lang_saved_edefined_count;
+static uint32_t smith_lang_saved_eshape_depth;
+static bool smith_lang_saved_eshape_start;
+static SmithLangEnumSwitch smith_lang_saved_enum_switches[smith_lang_enum_switch_max];
+static size_t smith_lang_saved_enum_switch_count;
+static uint32_t smith_lang_saved_enum_braces;
+
+static void smith_lang_enum_aside(bool save) {
+    if (save) {
+        memcpy(smith_lang_saved_eshapes, smith_lang_eshapes, sizeof smith_lang_eshapes);
+        memcpy(smith_lang_saved_eshape_pool, smith_lang_eshape_pool, sizeof smith_lang_eshape_pool);
+        memcpy(smith_lang_saved_edefined, smith_lang_edefined, sizeof smith_lang_edefined);
+        memcpy(smith_lang_saved_enum_switches, smith_lang_enum_switches, sizeof smith_lang_enum_switches);
+        smith_lang_saved_eshape_count = smith_lang_eshape_count;
+        smith_lang_saved_eshape_pool_used = smith_lang_eshape_pool_used;
+        smith_lang_saved_edefined_count = smith_lang_edefined_count;
+        smith_lang_saved_eshape_depth = smith_lang_eshape_depth;
+        smith_lang_saved_eshape_start = smith_lang_eshape_start;
+        smith_lang_saved_enum_switch_count = smith_lang_enum_switch_count;
+        smith_lang_saved_enum_braces = smith_lang_enum_braces;
+    } else {
+        memcpy(smith_lang_eshapes, smith_lang_saved_eshapes, sizeof smith_lang_eshapes);
+        memcpy(smith_lang_eshape_pool, smith_lang_saved_eshape_pool, sizeof smith_lang_eshape_pool);
+        memcpy(smith_lang_edefined, smith_lang_saved_edefined, sizeof smith_lang_edefined);
+        memcpy(smith_lang_enum_switches, smith_lang_saved_enum_switches, sizeof smith_lang_enum_switches);
+        smith_lang_eshape_count = smith_lang_saved_eshape_count;
+        smith_lang_eshape_pool_used = smith_lang_saved_eshape_pool_used;
+        smith_lang_edefined_count = smith_lang_saved_edefined_count;
+        smith_lang_eshape_depth = smith_lang_saved_eshape_depth;
+        smith_lang_eshape_start = smith_lang_saved_eshape_start;
+        smith_lang_enum_switch_count = smith_lang_saved_enum_switch_count;
+        smith_lang_enum_braces = smith_lang_saved_enum_braces;
+    }
+}
+
+static void smith_lang_enum_shapes_reset(void) {
+    smith_lang_eshape_count = 0;
+    smith_lang_eshape_pool_used = 0;
+    smith_lang_edefined_count = 0;
+    smith_lang_eshape_depth = 0;
+    smith_lang_eshape_start = true;
+}
+
+static const char *smith_lang_eshape_keep(const char *text, size_t length) {
+    if (smith_lang_eshape_pool_used + length + 1 > sizeof smith_lang_eshape_pool) return nullptr;
+    char *at = smith_lang_eshape_pool + smith_lang_eshape_pool_used;
+    memcpy(at, text, length);
+    at[length] = 0;
+    smith_lang_eshape_pool_used += length + 1;
+    return at;
+}
+
+// The token `index` places after the one being lowered (0 is the one itself).
+static const SmithToken *smith_lang_eshape_at(SmithLang *lang, const SmithHost *host, const SmithToken *first,
+                                              size_t index) {
+    return index == 0 ? first : smith_lang_peek(lang, host, index - 1, false);
+}
+
+static const SmithLangEnumShape *smith_lang_eshape_find(const SmithToken *token) {
+    if (token->kind != SmithTokenKind_Identifier) return nullptr;
+    for (size_t i = 0; i < smith_lang_eshape_count; i++) { // at most 16
+        if (smith_lang_equals(token->text, token->length, smith_lang_eshapes[i].name)) return &smith_lang_eshapes[i];
+    }
+    return nullptr;
+}
+
+constexpr char smith_lang_eshape_gap[] = "a type function that returns an enum must be exactly `return enum {...};` "
+                                         "with only `type` parameters for now (known gap)";
+
+// The index of the `)` that closes the `(` at `open`, within the scan limit, or 0.
+static size_t smith_lang_eshape_close(SmithLang *lang, const SmithHost *host, const SmithToken *first, size_t open,
+                                      const char *left, const char *right) {
+    int depth = 0;
+    for (size_t at = open; at < smith_lang_eshape_scan_max * 4 && at < smith_lang_queue_max - 2; at++) {
+        const SmithToken *token = smith_lang_eshape_at(lang, host, first, at);
+        if (token->kind == SmithTokenKind_Eof || token->foreign) return 0;
+        depth += smith_lang_punct(token, left);
+        depth -= smith_lang_punct(token, right);
+        if (depth == 0) return at;
+    }
+    return 0;
+}
+
+// Another body that returns an enum somewhere (`if (...) return enum {...};`) is the known gap, said here instead of by
+// the compiler's "cannot read the type `enum`" three errors later: the function is dropped. False for any other
+// function.
+static bool smith_lang_eshape_other(SmithLang *lang, const SmithHost *host, const SmithToken *token,
+                                    const SmithToken *name, size_t right) {
+    size_t end = smith_lang_eshape_close(lang, host, token, right + 1, "{", "}");
+    for (size_t at = right + 3; end != 0 && at < end; at++) {
+        if (smith_lang_ident(smith_lang_eshape_at(lang, host, token, at), "enum") &&
+            smith_lang_ident(smith_lang_eshape_at(lang, host, token, at - 1), "return")) {
+            smith_lang_error(lang, host, name->location, "%s", smith_lang_eshape_gap);
+            smith_lang_eshape_start = true;
+            static SmithToken nothing[1];
+            return smith_lang_tuple_replace(lang, end, nothing, 0);
+        }
+    }
+    return false;
+}
+
+// At `type` where a declaration begins: `type f(type T, ...) { return enum { ... }; }` is recorded and dropped. False
+// for any other function (the type values read it), true when this one was consumed (or reported).
+static bool smith_lang_eshape_declare(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+    const SmithToken *name = smith_lang_eshape_at(lang, host, token, 1);
+    if (name->kind != SmithTokenKind_Identifier || !smith_lang_punct(smith_lang_eshape_at(lang, host, token, 2), "(")) {
+        return false;
+    }
+    size_t right = smith_lang_eshape_close(lang, host, token, 2, "(", ")");
+    if (right == 0 || !smith_lang_punct(smith_lang_eshape_at(lang, host, token, right + 1), "{")) return false;
+    if (!smith_lang_ident(smith_lang_eshape_at(lang, host, token, right + 2), "return") ||
+        !smith_lang_ident(smith_lang_eshape_at(lang, host, token, right + 3), "enum") ||
+        !smith_lang_punct(smith_lang_eshape_at(lang, host, token, right + 4), "{")) {
+        return smith_lang_eshape_other(lang, host, token, name, right);
+    }
+    size_t open = right + 4;
+    size_t close = smith_lang_eshape_close(lang, host, token, open, "{", "}");
+    size_t count = close + 2; // tokens after `type`, through the function's `}`
+    if (close == 0 || !smith_lang_punct(smith_lang_eshape_at(lang, host, token, close + 1), ";") ||
+        !smith_lang_punct(smith_lang_eshape_at(lang, host, token, close + 2), "}") || count >= smith_lang_queue_max) {
+        smith_lang_error(lang, host, name->location, "%s", smith_lang_eshape_gap);
+        return false;
+    }
+    SmithLangEnumShape *shape = &smith_lang_eshapes[smith_lang_eshape_count];
+    memset(shape, 0, sizeof *shape);
+    snprintf(shape->name, sizeof shape->name, "%.*s", (int)name->length, name->text);
+    for (size_t at = 3; at < right; at += 3) { // `type T` then `,` or `)`
+        const SmithToken *word = smith_lang_eshape_at(lang, host, token, at);
+        const SmithToken *param = smith_lang_eshape_at(lang, host, token, at + 1);
+        const SmithToken *after = smith_lang_eshape_at(lang, host, token, at + 2);
+        bool good = smith_lang_ident(word, "type") && param->kind == SmithTokenKind_Identifier &&
+                    (at + 2 == right ? smith_lang_punct(after, ")") : smith_lang_punct(after, ",")) &&
+                    shape->param_count < smith_lang_eshape_params_max;
+        if (!good) {
+            smith_lang_error(lang, host, word->location, "%s", smith_lang_eshape_gap);
+            smith_lang_eshape_start = true;
+            static SmithToken nothing[1]; // the function is dropped, so that nothing else is said of it
+            return smith_lang_tuple_replace(lang, count, nothing, 0);
+        }
+        snprintf(shape->params[shape->param_count++], sizeof shape->params[0], "%.*s", (int)param->length, param->text);
+    }
+    if (smith_lang_eshape_count >= smith_lang_eshape_max || close - open - 1 > smith_lang_eshape_tokens_max) {
+        smith_lang_error(lang, host, name->location, "this type function is too long, or there are too many of them");
+        return false;
+    }
+    for (size_t at = open + 1; at < close; at++) { // the variants, with their text kept
+        SmithToken copy = *smith_lang_eshape_at(lang, host, token, at);
+        copy.text = smith_lang_eshape_keep(copy.text, copy.length);
+        copy.handle = smith_token_no_handle; // the host's pool of tokens is not kept from one token to the next
+        if (copy.text == nullptr) {
+            smith_lang_error(lang, host, name->location, "this type function is too long");
+            return false;
+        }
+        shape->tokens[shape->token_count++] = copy;
+    }
+    smith_lang_eshape_count += 1;
+    lang->tuples_seen = true;
+    lang->slices_seen = true;
+    lang->enums_seen = true;
+    static SmithToken none[1];
+    smith_lang_eshape_start = true; // what follows is a declaration
+    return smith_lang_tuple_replace(lang, count, none, 0);
+}
+
+// The arguments of the call whose `(` is at `open`: each a run of tokens, `args` holding all of them, the index of the
+// `)` in `close`. False (an error said) when the call is not one of types the shape takes.
+typedef struct {
+    SmithToken tokens[smith_lang_eshape_tokens_max];
+    size_t begin[smith_lang_eshape_params_max]; // each argument's tokens, [begin, end), commas apart
+    size_t end[smith_lang_eshape_params_max];
+    size_t count;
+    size_t close;
+} SmithLangEnumCall;
+
+static bool smith_lang_eshape_call(SmithLang *lang, const SmithHost *host, const SmithToken *first, size_t open,
+                                   const SmithLangEnumShape *shape, SmithLangEnumCall *call, bool report) {
+    call->count = 0;
+    call->close = smith_lang_eshape_close(lang, host, first, open, "(", ")");
+    const SmithToken *name = smith_lang_eshape_at(lang, host, first, open - 1);
+    if (call->close == 0 || call->close - open - 1 > smith_lang_eshape_tokens_max) {
+        if (report) {
+            smith_lang_error(lang, host, name->location, "the arguments of `%s` are too long, or never end",
+                             shape->name);
+        }
+        return false;
+    }
+    size_t argument = 0;
+    int depth = 0;
+    call->begin[0] = 0;
+    for (size_t at = open + 1; at < call->close; at++) {
+        const SmithToken *token = smith_lang_eshape_at(lang, host, first, at);
+        depth += smith_lang_punct(token, "(") || smith_lang_punct(token, "[");
+        depth -= smith_lang_punct(token, ")") || smith_lang_punct(token, "]");
+        bool comma = depth == 0 && smith_lang_punct(token, ",");
+        if (comma && argument + 1 >= shape->param_count) {
+            argument += 1; // one more than the function takes: said below
+            break;
+        }
+        if (comma) call->end[argument] = call->count;
+        call->tokens[call->count] = *token;
+        call->tokens[call->count].text = smith_lang_tuple_keep(token->text, token->length); // the host reuses its own
+        call->tokens[call->count].handle = smith_token_no_handle;
+        call->count += 1;
+        if (comma) call->begin[++argument] = call->count;
+    }
+    if (argument < shape->param_count) call->end[argument] = call->count;
+    if (argument + 1 != shape->param_count) {
+        if (report)
+            smith_lang_error(
+                lang, host, name->location,
+                "`%s` takes %zu type argument%s: the arguments of a type function that returns an enum are "
+                "written types for now (known gap)",
+                shape->name, shape->param_count, shape->param_count == 1 ? "" : "s");
+        return false;
+    }
+    return true;
+}
+
+static bool smith_lang_eshape_defined(const char *tag) {
+    for (size_t i = 0; i < smith_lang_edefined_count; i++) { // at most 48
+        if (strcmp(smith_lang_edefined[i].tag, tag) == 0) return true;
+    }
+    return false;
+}
+
+// The struct's name for a call: `smith_enum_<function>_<arguments' spelling>`, cut and hashed when long.
+static bool smith_lang_eshape_tag(SmithLang *lang, const SmithHost *host, const SmithLangEnumShape *shape,
+                                  const SmithLangEnumCall *call, char *tag, size_t capacity, bool report) {
+    char spelled[smith_lang_tuple_name_max];
+    const char *problem = nullptr;
+    uint32_t where = 0;
+    if (!smith_lang_tuple_spell(lang, call->tokens, 0, call->count, spelled, sizeof spelled, &problem, &where)) {
+        if (report)
+            smith_lang_error(
+                lang, host, where,
+                "an argument of `%s` must be a type name, with stars and qualifiers, for now (known gap): %s",
+                shape->name, problem);
+        return false;
+    }
+    char joined[smith_lang_tuple_name_max];
+    snprintf(joined, sizeof joined, "%s_%s", shape->name, spelled);
+    char hashed[smith_lang_tuple_name_max];
+    smith_lang_tuple_tag(joined, hashed, sizeof hashed);
+    snprintf(tag, capacity, "smith_enum_%s", hashed + sizeof smith_lang_tuple_prefix - 1);
+    return true;
+}
+
+// The definition of the struct of one call, ready for the queue (`struct tag {...} __attribute__(...);`).
+static size_t smith_lang_eshape_define(SmithLang *lang, const SmithHost *host, const SmithToken *like,
+                                       const SmithLangEnumShape *shape, const SmithLangEnumCall *call, const char *tag,
+                                       SmithToken *made, size_t capacity) {
+    static SmithToken span[smith_lang_queue_max];
+    size_t used = 0;
+    span[used++] = smith_lang_tuple_made(SmithTokenKind_Identifier, "enum", 4, like, false);
+    span[used++] = smith_lang_tuple_made(SmithTokenKind_Punctuator, "{", 1, like, true);
+    for (size_t at = 0; at < shape->token_count; at++) {
+        const SmithToken *token = &shape->tokens[at];
+        size_t param = shape->param_count;
+        for (size_t p = 0; p < shape->param_count; p++) {
+            if (smith_lang_equals(token->text, token->length, shape->params[p])) param = p;
+        }
+        if (param == shape->param_count) {
+            if (used + 3 >= smith_lang_queue_max) return 0;
+            span[used] = *token;
+            span[used].synthetic = true;
+            span[used++].copy = true;
+            continue;
+        }
+        for (size_t i = call->begin[param]; i < call->end[param]; i++) { // the argument's tokens
+            if (used + 3 >= smith_lang_queue_max) return 0;
+            span[used] = call->tokens[i];
+            span[used].synthetic = true;
+            span[used++].copy = true;
+        }
+    }
+    size_t close = used;
+    span[used++] = smith_lang_tuple_made(SmithTokenKind_Punctuator, "}", 1, like, true);
+    SmithToken name = smith_lang_tuple_made(SmithTokenKind_Identifier, tag, strlen(tag), like, true);
+    size_t count = smith_lang_enum_build(lang, host, like, span, 1, close, &name, made, capacity - 2);
+    if (count == 0) return 0;
+    made[count++] = smith_lang_tuple_made(SmithTokenKind_Punctuator, ";", 1, like, false);
+    return count;
+}
+
+static void smith_lang_eshape_note_defined(const char *tag) {
+    if (smith_lang_edefined_count >= smith_lang_eshape_defined_max) return;
+    SmithLangEnumDefined *entry = &smith_lang_edefined[smith_lang_edefined_count++];
+    snprintf(entry->tag, sizeof entry->tag, "%s", tag);
+    entry->depth = smith_lang_eshape_depth;
+}
+
+// A use of a shape at `at` (a name and a `(`), not a member: its shape, else null.
+static const SmithLangEnumShape *smith_lang_eshape_use(SmithLang *lang, const SmithHost *host, const SmithToken *first,
+                                                       size_t at, const SmithToken *before) {
+    const SmithToken *name = smith_lang_eshape_at(lang, host, first, at);
+    const SmithLangEnumShape *shape = smith_lang_eshape_find(name);
+    if (shape == nullptr || !smith_lang_punct(smith_lang_eshape_at(lang, host, first, at + 1), "(")) return nullptr;
+    if (before != nullptr && (smith_lang_punct(before, ".") || smith_lang_punct(before, "->") ||
+                              smith_lang_punct(before, "::") || smith_lang_ident(before, "struct"))) {
+        return nullptr;
+    }
+    return shape;
+}
+
+// At the first token of a declaration or statement: the structs its enum type functions' calls name that no scope
+// defines are defined in front of it. True when the queue was changed (the token is queued again, after them).
+static bool smith_lang_eshape_define_ahead(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+    static SmithToken made[smith_lang_queue_max];
+    size_t used = 0;
+    int depth = 0;
+    const SmithToken *before =
+        lang->prev_member ? &(SmithToken){.kind = SmithTokenKind_Punctuator, .text = ".", .length = 1} : nullptr;
+    for (size_t at = 0; at < smith_lang_eshape_scan_max; at++) {
+        const SmithToken *each = smith_lang_eshape_at(lang, host, token, at);
+        if (each->kind == SmithTokenKind_Eof || each->foreign) break;
+        depth += smith_lang_punct(each, "(") || smith_lang_punct(each, "[");
+        depth -= smith_lang_punct(each, ")") || smith_lang_punct(each, "]");
+        if (depth <= 0 && (smith_lang_punct(each, ";") || smith_lang_punct(each, "{") || smith_lang_punct(each, "}"))) {
+            break; // the end of the head or the statement, or of the block it is in
+        }
+        const SmithLangEnumShape *shape = smith_lang_eshape_use(lang, host, token, at, before);
+        before = each;
+        if (shape == nullptr) continue;
+        SmithLangEnumCall call;
+        char tag[smith_lang_tuple_name_max];
+        if (!smith_lang_eshape_call(lang, host, token, at + 1, shape, &call, false) ||
+            !smith_lang_eshape_tag(lang, host, shape, &call, tag, sizeof tag, false)) {
+            return false; // said where the call is replaced
+        }
+        if (smith_lang_ident(token, "export")) {
+            smith_lang_error(lang, host, each->location,
+                             "an exported declaration cannot name `%s(...)` yet: its struct is not in the module's "
+                             "header (known gap); name a typedef of it in a non-exported declaration",
+                             shape->name);
+            return false;
+        }
+        at += call.close - at;
+        if (smith_lang_eshape_defined(tag) || smith_lang_eshape_depth > 0) continue; // a body names it, or errs there
+        size_t added = smith_lang_eshape_define(lang, host, token, shape, &call, tag, made + used,
+                                                smith_lang_queue_max - used - 2);
+        if (added == 0) {
+            smith_lang_error(lang, host, each->location, "this enum type is too long to define");
+            return false;
+        }
+        used += added;
+        smith_lang_eshape_note_defined(tag);
+    }
+    if (used == 0 || used + 1 >= smith_lang_queue_max) return false;
+    made[used] = *token;
+    return smith_lang_tuple_replace(lang, 0, made, used + 1);
+}
+
+// A token of a file that has type functions returning enums, before any other reading of it: the declaration of one,
+// the definitions a declaration needs and a use (`option(usize)` is `struct smith_enum_option_usize`). True when the
+// token was consumed.
+static bool smith_lang_enum_function(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+    bool start = smith_lang_eshape_start;
+    smith_lang_eshape_start = false;
+    if (token->kind == SmithTokenKind_Punctuator && token->length == 1) {
+        char c = token->text[0];
+        smith_lang_eshape_start = c == ';' || c == '{' || c == '}';
+        if (!token->synthetic && c == '{') smith_lang_eshape_depth += 1;
+        if (!token->synthetic && c == '}') {
+            if (smith_lang_eshape_depth > 0) smith_lang_eshape_depth -= 1;
+            size_t kept = 0;
+            for (size_t i = 0; i < smith_lang_edefined_count; i++) { // a definition ends with its block
+                if (smith_lang_edefined[i].depth <= smith_lang_eshape_depth)
+                    smith_lang_edefined[kept++] = smith_lang_edefined[i];
+            }
+            smith_lang_edefined_count = kept;
+        }
+    }
+    if (token->foreign || lang->in_attribute || !lang->is_module || token->synthetic) return false;
+    if (lang->recording) {
+        const SmithLangEnumShape *inside =
+            lang->prev_member ? nullptr : smith_lang_eshape_use(lang, host, token, 0, nullptr);
+        if (inside != nullptr) {
+            smith_lang_error(lang, host, token->location, "`%s(...)` cannot be used inside a generic yet (known gap)",
+                             inside->name);
+        }
+        return false;
+    }
+    if (start && smith_lang_eshape_depth == 0 && smith_lang_ident(token, "type") &&
+        smith_lang_eshape_declare(lang, host, token)) {
+        return true;
+    }
+    if (smith_lang_eshape_count == 0) return false;
+    if (start && smith_lang_eshape_define_ahead(lang, host, token)) return true;
+    const SmithLangEnumShape *shape =
+        lang->prev_member ? nullptr : smith_lang_eshape_use(lang, host, token, 0, nullptr);
+    if (shape == nullptr) return false;
+    SmithLangEnumCall call;
+    char tag[smith_lang_tuple_name_max];
+    SmithToken made[2];
+    if (!smith_lang_eshape_call(lang, host, token, 1, shape, &call, true) ||
+        !smith_lang_eshape_tag(lang, host, shape, &call, tag, sizeof tag, true)) {
+        size_t close = smith_lang_eshape_close(lang, host, token, 1, "(", ")");
+        if (close == 0) return false;
+        made[0] = smith_lang_tuple_made(SmithTokenKind_Identifier, "int", 3, token, token->space_before); // so that the
+        return smith_lang_tuple_replace(lang, close, made, 1); // declaration still reads, and says no more
+    }
+    if (!smith_lang_eshape_defined(tag)) {
+        char written[smith_lang_tuple_name_max];
+        size_t used = (size_t)snprintf(written, sizeof written, "%s(", shape->name);
+        for (size_t i = 0; i < call.count && used + 48 < sizeof written; i++)
+            used += (size_t)snprintf(written + used, sizeof written - used, "%s%.*s",
+                                     i > 0 && !smith_lang_punct(&call.tokens[i], ",") ? " " : "",
+                                     (int)call.tokens[i].length, call.tokens[i].text);
+        snprintf(written + used, sizeof written - used, ")");
+        smith_lang_error(lang, host, token->location,
+                         "`%s` is first named inside a function (or where no declaration begins), and the struct it "
+                         "stands for cannot be defined there yet (known gap): name it first at file scope, in a "
+                         "declaration, for example `typedef %s Name;`",
+                         written, written);
+    }
+    made[0] = smith_lang_tuple_made(SmithTokenKind_Identifier, "struct", 6, token, token->space_before);
+    made[1] = smith_lang_tuple_made(SmithTokenKind_Identifier, smith_lang_tuple_keep(tag, strlen(tag)), strlen(tag),
+                                    token, true);
+    return smith_lang_tuple_replace(lang, call.close, made, 2);
 }
 
 // `_Pragma ( "text" )` as tokens, after `used` (the text is a string literal's spelling, quotes included).

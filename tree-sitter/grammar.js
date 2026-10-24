@@ -72,7 +72,8 @@ module.exports = grammar(C, {
     ),
 
     // return {a, b}; in a function that returns a tuple
-    return_statement: ($, original) => choice(original, seq('return', $.initializer_list, ';')),
+    return_statement: ($, original) =>
+      choice(original, seq('return', $.initializer_list, ';'), seq('return', $.enum_specifier, ';')),
 
     // Apple blocks: ^(int x) { ... }
     block_expression: $ => prec(1, seq('^', optional(field('type', $.type_specifier)), optional($.parameter_list), $.compound_statement)),

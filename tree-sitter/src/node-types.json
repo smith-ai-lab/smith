@@ -3946,6 +3946,10 @@
           "named": true
         },
         {
+          "type": "enum_specifier",
+          "named": true
+        },
+        {
           "type": "expression",
           "named": true
         },
