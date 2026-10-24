@@ -7,6 +7,8 @@ set -u
 case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
 here=$(cd "$(dirname "$0")/.." && pwd)
 script=$here/scripts/release.sh
+# the package is xz of a 235 MB program: level 6 is 56 s of CPU, level 1 is 9 s, and the test is not about the ratio (#116)
+export RELEASE_XZ_LEVEL=1
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
 failures=0

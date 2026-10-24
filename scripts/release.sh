@@ -40,7 +40,7 @@ package() {
     cp "$smith" "$stage/bin/smith"
     ln -s smith "$stage/bin/smith-cc"
     ln -s smith "$stage/bin/smith-c++"
-    tar -C "$stage" -cJf "$out/$name" bin
+    tar --options "xz:compression-level=${RELEASE_XZ_LEVEL:-6}" -C "$stage" -cJf "$out/$name" bin
     rm -rf "$stage"
     (cd "$out" && shasum -a 256 "$name" >"$name.sha256")
 }
