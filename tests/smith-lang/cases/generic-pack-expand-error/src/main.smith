@@ -1,0 +1,7 @@
+module main;
+
+import bad;
+
+int main(void) {
+    return bad::no_pack(1) + bad::only_index(1) + bad::whole(1) + bad::nested(1, 2);
+}

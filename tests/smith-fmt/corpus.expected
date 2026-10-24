@@ -3677,6 +3677,140 @@ int main(void) {
     i64 ok3 = args::guarded(1, 2, 3);
     return (int)(a + b + c + (i64)d + ok1 + ok2 + ok3);
 }
+==> generic-pack-expand-error/src/bad.smith <==
+module bad;
+
+static i32 sq(i32 x) {
+    return x * x;
+}
+
+static i32 plus(i32 a, i32 b) {
+    return a + b;
+}
+
+// A pattern that names no pack expands nothing.
+export i32 no_pack(auto... rest) {
+    i32 x = 3;
+    return plus(sq(x)..., 1);
+}
+
+// `rest[0]` and `countof(rest)` are not the pack itself.
+export i32 only_index(auto... rest) {
+    return plus(sq(rest[0])..., 1);
+}
+
+// The pack outside an expansion is the tuple, not passed whole.
+export i32 whole(auto... rest) {
+    return plus(sq(rest), 1);
+}
+
+// Expansions do not nest.
+export i32 nested(auto... rest) {
+    return plus(plus(rest...)..., 1);
+}
+==> generic-pack-expand-error/src/main.smith <==
+module main;
+
+import bad;
+
+int main(void) {
+    return bad::no_pack(1) + bad::only_index(1) + bad::whole(1) + bad::nested(1, 2);
+}
+==> generic-pack-expand/src/expand.smith <==
+module expand;
+
+static i32 sq(i32 x) {
+    return x * x;
+}
+
+static i32 plus(i32 a, i32 b) {
+    return a + b;
+}
+
+// The sum of the `count` numbers after it, so that a call's arguments can be any number.
+static i32 vsum(i32 count, ...) {
+    __builtin_va_list list;
+    __builtin_va_start(list, count);
+    i32 sum = 0;
+    for (i32 i = 0; i < count; i++)
+        sum = sum * 10 + __builtin_va_arg(list, i32);
+    __builtin_va_end(list);
+    return sum;
+}
+
+// A pattern that names the pack is written once for each element: `plus(rest, off)...` is `plus(rest_0, off),
+// plus(rest_1, off), ...`.
+export i32 shifted(i32 off, auto... rest) {
+    return vsum((i32)countof(rest), plus(rest, off)...);
+}
+
+// An expansion among other arguments: before it, after it, and both.
+export i32 around(auto... rest) {
+    return vsum(2 + (i32)countof(rest), 1, sq(rest)..., 3);
+}
+
+// An empty pack takes the comma before it, or after it when it comes first.
+export i32 rest_empty(auto... rest) {
+    i32 first = vsum(1 + (i32)countof(rest), 7, sq(rest)...);
+    i32 last = vsum(1 + (i32)countof(rest), sq(rest)..., 8);
+    i32 only = vsum((i32)countof(rest), sq(rest)...);
+    return first * 10000 + last * 100 + only;
+}
+
+// A braced initializer, the pack named several times in the pattern, and the bare `rest...` as it was.
+export i32 table(auto... rest) {
+    i32 xs[] = {sq(rest)..., 0};
+    i32 ys[] = {plus(rest, sq(rest))..., 1, rest...};
+    i32 sum = 0;
+    constexpr usize nx = sizeof xs / sizeof xs[0];
+    constexpr usize ny = sizeof ys / sizeof ys[0];
+    for (usize i = 0; i < nx; i++)
+        sum += xs[i];
+    for (usize i = 0; i < ny; i++)
+        sum += ys[i];
+    return sum * 1000 + (i32)nx * 10 + (i32)ny;
+}
+
+export i32 first_of(auto x) {
+    return (i32)x;
+}
+
+// A call to a generic in the pattern.
+export i32 over_generic(auto... rest) {
+    return vsum((i32)countof(rest), expand::first_of(rest)...);
+}
+
+export typedef struct {
+    i32 a;
+    i32 b;
+} Pair;
+
+// A field of each argument, by a Field value: `rest->[f]...` is `rest_0->a, rest_1->a, ...`.
+export i32 fields_of(constexpr type T, auto... rest) {
+    i32 sum = 0;
+    for constexpr (usize i = 0; i < 2; i++) {
+        constexpr Field f = fields(T)[i];
+        sum = sum * 1000 + vsum((i32)countof(rest), rest->[f]...);
+    }
+    return sum;
+}
+==> generic-pack-expand/src/main.smith <==
+module main;
+
+import expand;
+import <stdio.h>;
+
+int main(void) {
+    c::printf("%d %d\n", expand::shifted(10, 1, 2, 3), expand::shifted(10));
+    c::printf("%d %d %d\n", expand::around(), expand::around(2), expand::around((u8)3, 5));
+    c::printf("%d %d\n", expand::rest_empty(), expand::rest_empty(2, 3));
+    c::printf("%d %d\n", expand::table(), expand::table(1, 2));
+    c::printf("%d %d\n", expand::over_generic(1, (u8)2, 3), expand::over_generic());
+    expand::Pair p = {1, 2};
+    expand::Pair q = {3, 4};
+    c::printf("%d\n", expand::fields_of(expand::Pair, &p, &q));
+    return 0;
+}
 ==> generic-pack/src/args.smith <==
 module args;
 
