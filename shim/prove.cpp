@@ -43,7 +43,7 @@ namespace {
 using Clock = std::chrono::steady_clock;
 
 // Bump when a change to the prover can change what a function proves or how it fails.
-#define SMITH_PROVER_VERSION "7"
+#define SMITH_PROVER_VERSION "8"
 
 // The checks of UBSan that become explicit branches to a trap in the IR. null, alignment and object-size are left to
 // Alive2's memory model, which treats an invalid access as undefined behaviour itself; pointer-overflow, bool and enum
@@ -272,6 +272,9 @@ void print_finding(const prove::Unit &unit, const prove::Finding &finding) {
             break;
         case prove::Kind::Assert:
             std::printf("  %s: assert(%s) may fail\n", at(point.file, point.line).c_str(), point.text.c_str());
+            break;
+        case prove::Kind::Write:
+            std::printf("  %s: %s\n", at(point.file, point.line).c_str(), point.text.c_str());
             break;
         default:
             std::printf("  %s: undefined behaviour: %s\n", at(point.file, point.line).c_str(), point.text.c_str());

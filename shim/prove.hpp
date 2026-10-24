@@ -25,6 +25,7 @@ enum class Kind {
     Trap,      // an undefined behaviour that UBSan checks, which traps in this build
     Abort,     // abort() or __builtin_trap() is never reached
     Premise,   // this function's smith_requires: assumed, and the inputs that break it are not the function's concern
+    Write,     // a write of a function with a smith_modifies is inside the ranges it names
 };
 
 // Where a proof point came from, to print it like a test failure.

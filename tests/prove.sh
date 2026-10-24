@@ -666,6 +666,41 @@ expect "memcpy_chk: it is memcpy, so the copied value is read back" 0 "$rc"
 prove "$cases/memcpy_chk.c" --function=too_long
 expect "memcpy_chk: a length past the destination is refuted" 1 "$rc"
 
+# 16e. smith_modifies (issue #54): the ranges a function writes; its callers keep everything else it knew.
+prove "$cases/modifies.c" --function=push_a
+expect "modifies: a function that writes only what it names proves" 0 "$rc"
+prove "$cases/modifies.c" --function=keeps_the_rest
+expect "modifies: a caller relying on fields the callee never named proves" 0 "$rc"
+prove "$cases/modifies.c" --function=relies_on_a_named_field
+expect "modifies: ... but not on one it named" 1 "$rc"
+prove "$cases/modifies.c" --function=writes_outside
+expect "modifies: a write outside the ranges is refuted" 1 "$rc"
+expect_contains "modifies: ... at its line" "$out" "modifies.c:47: the function writes here, outside the ranges its smith_modifies names"
+prove "$cases/modifies.c" --function=names_too_little
+expect "modifies: a callee's range the caller did not name is refuted" 1 "$rc"
+prove "$cases/modifies.c" --function=total
+expect "modifies: no range at all, and the function writes only locals, proves" 0 "$rc"
+prove "$cases/modifies.c" --function=writes_though_empty
+expect "modifies: no range at all, and a write, is refuted" 1 "$rc"
+prove "$cases/modifies.c" --function=after_nothing
+expect "modifies: after a call that names nothing, everything is as it was" 0 "$rc"
+prove "$cases/modifies.c" --function=fill
+expect "modifies: a pointer and a size name a range" 0 "$rc"
+prove "$cases/modifies.c" --function=fill_then
+expect "modifies: ... and a caller keeps what is outside it" 0 "$rc"
+prove "$cases/modifies.c" --function=fill_too_far
+expect "modifies: a write one element past the range is refuted" 1 "$rc"
+prove "$cases/geometry/pair.smith" --function=geometry::pair::push
+expect "modifies (smith): contract::modifies(&x) proves the write set" 0 "$rc"
+prove "$cases/geometry/pair.smith" --function=geometry::pair::keeps_second
+expect "modifies (smith): a caller keeps the other list" 0 "$rc"
+prove "$cases/geometry/pair.smith" --function=geometry::pair::read_only
+expect "modifies (smith): contract::modifies() writes nothing" 0 "$rc"
+prove "$cases/geometry/pair.smith" --function=geometry::pair::bad
+expect "modifies (smith): a write outside &x is refuted" 1 "$rc"
+prove "$cases/errors/modifies.smith"
+expect_contains "modifies (smith): an argument that is not a pointer is an error naming &x" "$out" "contract::modifies takes &x"
+
 # 17. The cache key is the prover's identity (LLVM's version and a version kept in prove.cpp), never the build time: a
 # rebuild of smith with the same prover keeps the proofs.
 if grep -q '__DATE__\|__TIME__' "$here/shim/prove.cpp"; then

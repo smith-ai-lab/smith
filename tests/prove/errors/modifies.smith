@@ -1,0 +1,8 @@
+// contract::modifies takes &x only: a value is an error that names the form.
+module errors::modifies;
+import smith::contract;
+
+export void f(i32 *p) {
+    contract::modifies(5);
+    *p = 1;
+}

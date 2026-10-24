@@ -43,4 +43,9 @@ if (!condition) smith_failure(SmithFailure_Assert);
 }
 void smith_contract_trusted(void);
 void smith_contract_trusted(void) {}
+void smith_contract_may_write(const void *p, __SIZE_TYPE__ size);
+void smith_contract_may_write(const void *p, __SIZE_TYPE__ size) {
+(void)p;
+(void)size;
+}
 // NOLINTEND

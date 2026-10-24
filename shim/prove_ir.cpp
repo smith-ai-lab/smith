@@ -66,7 +66,7 @@ namespace {
 
 // ---- names the macros and clang use ----
 
-enum class Contract { None, Requires, Ensures, Invariant, Assert, Trusted };
+enum class Contract { None, Requires, Ensures, Invariant, Assert, Trusted, Modifies };
 
 Contract contract_of(const Instruction *instruction) {
     auto *call = dyn_cast_or_null<CallBase>(instruction);
@@ -77,12 +77,14 @@ Contract contract_of(const Instruction *instruction) {
     if (name == "smith_contract_invariant") return Contract::Invariant;
     if (name == "smith_contract_assert") return Contract::Assert;
     if (name == "smith_contract_trusted") return Contract::Trusted;
+    if (name == "smith_contract_may_write") return Contract::Modifies;
     return Contract::None;
 }
 
 bool contract_name(StringRef name) {
     return name == "smith_contract_requires" || name == "smith_contract_ensures" ||
-           name == "smith_contract_invariant" || name == "smith_contract_assert" || name == "smith_contract_trusted";
+           name == "smith_contract_invariant" || name == "smith_contract_assert" || name == "smith_contract_trusted" ||
+           name == "smith_contract_may_write";
 }
 
 // The function a call names, even when the call uses another type than the function declares (an Objective-C message
@@ -230,7 +232,8 @@ bool is_unit(const Function &function) {
 
 // A function with an smith_ensures, or a trusted one, is used through its contract; any other is part of its caller.
 bool is_modular(const Function &function) {
-    return !function.isDeclaration() && (has_own_contract(function, Contract::Ensures) || is_trusted(function));
+    return !function.isDeclaration() && (has_own_contract(function, Contract::Ensures) ||
+                                         has_own_contract(function, Contract::Modifies) || is_trusted(function));
 }
 
 // ---- passes ----
@@ -799,6 +802,8 @@ bool program_load(Program &program, const std::vector<std::string> &bitcode, std
         }
     }
     for (Function &function : module) { // a contract reads its condition and nothing else
+        // The marker of a range has an empty body, which LLVM would find to return and touch nothing, and delete the calls.
+        if (function.getName() == "smith_contract_may_write" && !function.isDeclaration()) function.deleteBody();
         if (contract_name(function.getName())) {
             function.setMemoryEffects(MemoryEffects::none());
             function.addFnAttr(Attribute::NoUnwind);
@@ -1221,7 +1226,9 @@ Slices build_slices(Function &callee) {
     SmallVector<Instruction *, 4> ensures_roots;
     for (Instruction &instruction : instructions(callee)) {
         if (owner_id(instruction) != function_id(callee)) continue;
-        if (contract_of(&instruction) == Contract::Requires) requires_roots.push_back(&instruction);
+        // A range the function may write is read by a caller before the call, as its smith_requires is.
+        if (contract_of(&instruction) == Contract::Requires || contract_of(&instruction) == Contract::Modifies)
+            requires_roots.push_back(&instruction);
         if (contract_of(&instruction) == Contract::Ensures) ensures_roots.push_back(&instruction);
     }
     std::string name = callee.getName().str();
@@ -1323,6 +1330,15 @@ struct UnitContext {
     // The copies of read-only parameters that calls are given (see pass_copies_of_readonly), one for each parameter and
     // size when nothing in the function writes the parameter's object.
     std::map<std::pair<const Value *, uint64_t>, AllocaInst *> shared_copies;
+    // smith_modifies (issue #54): the ranges this function names (pointer, size) and the writes to prove inside them.
+    bool framed = false;
+    std::vector<std::pair<Value *, Value *>> ranges;
+    struct Write {
+        WeakTrackingVH at; // the instruction that writes, or the call
+        Value *address;
+        Value *size; // an i64
+    };
+    std::vector<Write> writes;
 
     void fail(const Instruction *at, std::string what, std::string fix) {
         auto failure = std::make_unique<Unprovable>();
@@ -1552,6 +1568,179 @@ void assume_returned_pointer(CallBase &call, const Function &callee) {
                      MDNode::get(context, {})); // what it points to holds values, as a parameter's
 }
 
+
+// ---- smith_modifies (issue #54) ----
+
+using Range = std::pair<Value *, Value *>; // a pointer and a size in bytes (an i64)
+
+// The ranges a callee names: its smith_modifies calls, inlined before the call with its smith_requires. They are read
+// and removed. Returns whether it names any (the call with no range, `modifies()`, names the empty one).
+bool take_ranges(UnitContext &context, int call_site, std::vector<Range> &ranges) {
+    SmallVector<CallBase *, 4> found;
+    for (Instruction &instruction : instructions(context.function)) {
+        MDNode *site = instruction.getMetadata("smith.callsite");
+        if (contract_of(&instruction) == Contract::Modifies && site != nullptr &&
+            static_cast<int>(id_of(site)) == call_site)
+            found.push_back(cast<CallBase>(&instruction));
+    }
+    for (CallBase *call : found) {
+        auto *size = dyn_cast<ConstantInt>(call->getArgOperand(1));
+        if (size == nullptr || !size->isZero()) ranges.emplace_back(call->getArgOperand(0), call->getArgOperand(1));
+        call->eraseFromParent();
+    }
+    return !found.empty();
+}
+
+// What a call may write of the object `argument` points to, the objects it was given and may change, saved before the call.
+struct Saved {
+    Value *argument;
+    AllocaInst *copy;
+    uint64_t bytes;
+    Align align;
+};
+
+bool may_write_pointee(const Function &callee, unsigned index) {
+    return !callee.hasParamAttribute(index, Attribute::ReadOnly) &&
+           !callee.hasParamAttribute(index, Attribute::ReadNone) && callee.getParamDereferenceableBytes(index) != 0;
+}
+
+// Alive2 lets a call change the whole object a pointer it was given points into (its memory model has blocks), so the
+// region that is saved is the pointer's object as far as its size is known: an object of the function, a global, or a
+// parameter with the bytes it is `dereferenceable` for. Otherwise the callee's own window at the pointer.
+bool object_region(UnitContext &context, Value *pointer, uint64_t window, Value *&base, uint64_t &bytes, Align &align) {
+    const DataLayout &layout = context.module.getDataLayout();
+    Value *object = const_cast<Value *>(getUnderlyingObject(pointer));
+    bytes = 0;
+    if (auto *local = dyn_cast<AllocaInst>(object)) {
+        std::optional<TypeSize> size = local->getAllocationSize(layout);
+        if (size && !size->isScalable()) bytes = size->getFixedValue();
+        align = local->getAlign();
+    } else if (auto *global = dyn_cast<GlobalVariable>(object)) {
+        if (!global->isConstant() && global->getValueType()->isSized()) {
+            bytes = layout.getTypeAllocSize(global->getValueType()).getFixedValue();
+            align = global->getAlign().valueOrOne();
+        }
+    } else if (auto *argument = dyn_cast<Argument>(object)) {
+        bytes = argument->getDereferenceableBytes();
+        align = argument->getParamAlign().valueOrOne();
+    }
+    if (bytes != 0) {
+        base = object;
+        return true;
+    }
+    base = pointer;
+    bytes = window;
+    align = Align(1);
+    return bytes != 0;
+}
+
+void save_objects(UnitContext &context, CallBase &call, Function &callee, IRBuilder<> &entry,
+                  const SmallPtrSetImpl<const Value *> &readonly, std::vector<Saved> &saved) {
+    for (unsigned i = 0; i < call.arg_size() && i < callee.arg_size(); i++) {
+        Value *pointer = call.getArgOperand(i);
+        if (!pointer->getType()->isPointerTy() || readonly.contains(pointer) || !may_write_pointee(callee, i)) continue;
+        Value *base = nullptr;
+        uint64_t bytes = 0;
+        Align align(1);
+        if (!object_region(context, pointer, callee.getParamDereferenceableBytes(i), base, bytes, align)) continue;
+        if (std::any_of(saved.begin(), saved.end(), [&](const Saved &other) { return other.argument == base; })) continue;
+        auto *copy = entry.CreateAlloca(ArrayType::get(Type::getInt8Ty(context.function.getContext()), bytes));
+        copy->setAlignment(align);
+        copy_object(&call, call.getDebugLoc(), copy, base, bytes, align);
+        saved.push_back({base, copy, bytes, align});
+    }
+}
+
+// After the call (and the havoc of its locals): what the callee did not say it writes is what it was. A byte inside a
+// range keeps what the call left; every other byte of an object the call was given is restored from the copy.
+Instruction *restore_objects(UnitContext &context, CallBase &call, Instruction *last, ArrayRef<Range> ranges,
+                             const std::vector<Saved> &saved) {
+    const DataLayout &layout = context.module.getDataLayout();
+    LLVMContext &llvm_context = context.module.getContext();
+    Type *i64 = Type::getInt64Ty(llvm_context);
+    for (const Saved &object : saved) {
+        // a range at a constant place in the object, or not (then every byte asks)
+        std::vector<std::pair<int64_t, uint64_t>> constant;
+        bool fixed = true;
+        APInt base_offset(64, 0);
+        const Value *base = object.argument->stripAndAccumulateConstantOffsets(layout, base_offset, true);
+        for (const Range &range : ranges) {
+            APInt offset(64, 0);
+            const Value *where = range.first->stripAndAccumulateConstantOffsets(layout, offset, true);
+            auto *size = dyn_cast<ConstantInt>(range.second);
+            if (where != base || size == nullptr) {
+                fixed = false;
+                break;
+            }
+            constant.emplace_back((offset - base_offset).getSExtValue(), size->getZExtValue());
+        }
+        IRBuilder<> builder(last->getNextNode());
+        builder.SetCurrentDebugLocation(call.getDebugLoc());
+        auto mark = [&](Value *store) {
+            if (auto *instruction = dyn_cast<Instruction>(store))
+                instruction->setMetadata("smith.frame_ok", MDNode::get(llvm_context, {}));
+            if (auto *instruction = dyn_cast<Instruction>(store)) last = instruction;
+        };
+        if (fixed) {
+            std::vector<bool> inside(object.bytes, false);
+            for (auto [offset, size] : constant) {
+                for (uint64_t k = 0; k < size; k++) {
+                    int64_t at = offset + static_cast<int64_t>(k);
+                    if (at >= 0 && static_cast<uint64_t>(at) < object.bytes) inside[static_cast<size_t>(at)] = true;
+                }
+            }
+            for (uint64_t offset = 0; offset < object.bytes;) {
+                uint64_t width = std::min<uint64_t>(object.align.value(), 8);
+                while (width > 1 && (offset % width != 0 || offset + width > object.bytes ||
+                                     std::any_of(inside.begin() + static_cast<ptrdiff_t>(offset),
+                                                 inside.begin() + static_cast<ptrdiff_t>(offset + width),
+                                                 [&](bool value) { return value != inside[offset]; })))
+                    width /= 2;
+                if (!inside[offset]) {
+                    Type *type = builder.getIntNTy(static_cast<unsigned>(width * 8));
+                    Align here = commonAlignment(object.align, offset);
+                    Value *from = builder.CreateConstInBoundsGEP1_64(builder.getInt8Ty(), object.copy, offset);
+                    Value *to = builder.CreateConstInBoundsGEP1_64(builder.getInt8Ty(), object.argument, offset);
+                    mark(builder.CreateAlignedStore(builder.CreateAlignedLoad(type, from, here), to, here));
+                }
+                offset += width;
+            }
+        } else {
+            for (uint64_t offset = 0; offset < object.bytes; offset++) {
+                Value *from = builder.CreateConstInBoundsGEP1_64(builder.getInt8Ty(), object.copy, offset);
+                Value *to = builder.CreateConstInBoundsGEP1_64(builder.getInt8Ty(), object.argument, offset);
+                Value *address = builder.CreatePtrToInt(to, i64);
+                Value *in = builder.getFalse();
+                for (const Range &range : ranges) {
+                    Value *distance = builder.CreateSub(address, builder.CreatePtrToInt(range.first, i64));
+                    in = builder.CreateOr(in, builder.CreateICmpULT(distance, range.second));
+                }
+                Value *kept = builder.CreateAlignedLoad(builder.getInt8Ty(), to, Align(1));
+                Value *old = builder.CreateAlignedLoad(builder.getInt8Ty(), from, Align(1));
+                mark(builder.CreateAlignedStore(builder.CreateSelect(in, kept, old), to, Align(1)));
+            }
+        }
+    }
+    return last;
+}
+
+// What `call` may write, for the check of a function that has a smith_modifies of its own (see instrument_writes).
+void note_call_writes(UnitContext &context, CallBase &call, Function &callee, bool names_ranges,
+                      ArrayRef<Range> ranges) {
+    LLVMContext &llvm_context = context.module.getContext();
+    Type *i64 = Type::getInt64Ty(llvm_context);
+    if (names_ranges) {
+        for (const Range &range : ranges)
+            context.writes.push_back({&call, range.first, range.second});
+        return;
+    }
+    for (unsigned i = 0; i < call.arg_size() && i < callee.arg_size(); i++) {
+        if (!call.getArgOperand(i)->getType()->isPointerTy() || !may_write_pointee(callee, i)) continue;
+        context.writes.push_back(
+            {&call, call.getArgOperand(i), ConstantInt::get(i64, callee.getParamDereferenceableBytes(i))});
+    }
+}
+
 // Replaces a call of `callee` by its contract: the slices inlined around the call.
 bool apply_contract(UnitContext &context, CallBase &call, Function &callee) {
     auto cached = context.slices.find(&callee);
@@ -1612,11 +1801,21 @@ bool apply_contract(UnitContext &context, CallBase &call, Function &callee) {
         requires_call->setDebugLoc(call.getDebugLoc());
         if (!inline_slice(context, *requires_call, call_site)) return false;
     }
+    std::vector<Range> ranges;
+    bool names_ranges = take_ranges(context, call_site, ranges);
+    std::vector<Saved> saved;
+    if (names_ranges) save_objects(context, call, callee, entry, copies, saved);
+    if (context.framed) note_call_writes(context, call, callee, names_ranges, ranges);
+    if (slices.ensures_slice == nullptr && names_ranges) {
+        Instruction *after = havoc_locals(context, call, callee, &call, copies);
+        restore_objects(context, call, after, ranges, saved);
+    }
     if (slices.ensures_slice != nullptr) {
         SmallVector<Value *, 8> with_result(arguments.begin(), arguments.end());
         if (slices.has_result) with_result.push_back(&call);
         with_result.append(olds.begin(), olds.end());
         Instruction *after = havoc_locals(context, call, callee, &call, copies);
+        if (names_ranges) after = restore_objects(context, call, after, ranges, saved);
         auto *ensures_call =
             CallInst::Create(slices.ensures_slice, with_result, "", after->getNextNode()->getIterator());
         ensures_call->setDebugLoc(call.getDebugLoc());
@@ -1647,9 +1846,98 @@ void lower_memcpy_chk(Function &function) {
 }
 
 // Every call in the function is inlined, replaced by its contract, or an Unprovable.
+
+// The check of a function with a smith_modifies of its own (issue #54): each write it makes lands inside one of the
+// ranges it names, or in an object of its own. A proof point `smith.write_check(condition)` before the write says so,
+// and the report names the write's line. A call of a callee is a write of what the callee names (or, with no
+// smith_modifies there, of every object it may write through the pointers it was given); the restore after such a call
+// is the prover's own and is not a write.
+void instrument_writes(UnitContext &context) {
+    Function &function = context.function;
+    const DataLayout &layout = context.module.getDataLayout();
+    LLVMContext &llvm_context = context.module.getContext();
+    Type *i64 = Type::getInt64Ty(llvm_context);
+    for (Instruction &instruction : instructions(function)) {
+        if (instruction.getMetadata("smith.frame_ok") != nullptr) continue;
+        auto add = [&](Value *address, Value *size) {
+            if (isa<AllocaInst>(getUnderlyingObject(address))) return; // an object of the function's own
+            context.writes.push_back({&instruction, address, size});
+        };
+        if (auto *store = dyn_cast<StoreInst>(&instruction)) {
+            add(store->getPointerOperand(),
+                ConstantInt::get(i64, layout.getTypeStoreSize(store->getValueOperand()->getType()).getFixedValue()));
+        } else if (auto *memory = dyn_cast<MemIntrinsic>(&instruction)) {
+            add(memory->getRawDest(), memory->getLength()->getType() == i64
+                                          ? memory->getLength()
+                                          : IRBuilder<>(memory).CreateZExtOrTrunc(memory->getLength(), i64));
+        } else if (auto *rmw = dyn_cast<AtomicRMWInst>(&instruction)) {
+            add(rmw->getPointerOperand(),
+                ConstantInt::get(i64, layout.getTypeStoreSize(rmw->getValOperand()->getType()).getFixedValue()));
+        } else if (auto *exchange = dyn_cast<AtomicCmpXchgInst>(&instruction)) {
+            add(exchange->getPointerOperand(),
+                ConstantInt::get(i64, layout.getTypeStoreSize(exchange->getNewValOperand()->getType()).getFixedValue()));
+        } else if (auto *call = dyn_cast<CallBase>(&instruction)) {
+            Function *callee = direct_callee(call);
+            if (callee == nullptr || callee->isIntrinsic() || contract_of(call) != Contract::None ||
+                callee->getName() == "smith_point" || callee->getName() == "smith.opaque" ||
+                callee->getName() == "smith.write_check" || callee->hasFnAttribute(Attribute::NoReturn) ||
+                callee->onlyReadsMemory() || is_modular(*callee))
+                continue;
+            StringRef name = callee->getName();
+            if ((name == "memcpy" || name == "memmove" || name == "memset") && call->arg_size() == 3) {
+                add(call->getArgOperand(0), call->getArgOperand(2));
+                continue;
+            }
+            for (unsigned i = 0; i < call->arg_size() && i < callee->arg_size(); i++) {
+                if (!call->getArgOperand(i)->getType()->isPointerTy() || !may_write_pointee(*callee, i)) continue;
+                add(call->getArgOperand(i), ConstantInt::get(i64, callee->getParamDereferenceableBytes(i)));
+            }
+        }
+    }
+    DominatorTree dominators(function);
+    FunctionCallee check = context.module.getOrInsertFunction(
+        "smith.write_check", FunctionType::get(Type::getVoidTy(llvm_context), {Type::getInt1Ty(llvm_context)}, false));
+    if (auto *declaration = dyn_cast<Function>(check.getCallee())) {
+        declaration->setDoesNotAccessMemory();
+        declaration->setDoesNotThrow(); // not willreturn: the clean-up would delete a call that does nothing and returns
+    }
+    for (UnitContext::Write &write : context.writes) {
+        auto *at = dyn_cast_or_null<Instruction>(write.at);
+        if (at == nullptr) continue;
+        IRBuilder<> builder(at);
+        builder.SetCurrentDebugLocation(at->getDebugLoc());
+        Value *inside = builder.getFalse();
+        Value *address = builder.CreatePtrToInt(write.address, i64);
+        for (const auto &[low, size] : context.ranges) {
+            for (Value *value : {low, size}) {
+                auto *definition = dyn_cast<Instruction>(value);
+                if (definition != nullptr && !dominators.dominates(definition, at)) {
+                    context.fail(at,
+                                 "smith_modifies names a range after the function's first write",
+                                 "put every smith_modifies at the start of the function, after its smith_requires");
+                    return;
+                }
+            }
+            Value *fits = builder.CreateAnd(
+                builder.CreateICmpUGE(size, write.size),
+                builder.CreateICmpULE(builder.CreateSub(address, builder.CreatePtrToInt(low, i64)),
+                                      builder.CreateSub(size, write.size)));
+            inside = builder.CreateOr(inside, fits);
+        }
+        builder.CreateCall(check, {inside});
+    }
+}
+
 bool resolve_calls(UnitContext &context) {
     Function &function = context.function;
     lower_memcpy_chk(function);
+    for (Instruction &instruction : instructions(function)) {
+        if (contract_of(&instruction) != Contract::Modifies || owner_id(instruction) != function_id(function)) continue;
+        context.framed = true;
+        auto *size = dyn_cast<ConstantInt>(instruction.getOperand(1));
+        if (size == nullptr || !size->isZero())
+            context.ranges.emplace_back(instruction.getOperand(0), instruction.getOperand(1));
+    }
     for (;;) {
         CallBase *target = nullptr;
         for (Instruction &instruction : instructions(function)) {
@@ -1716,7 +2004,10 @@ bool resolve_calls(UnitContext &context) {
                              "define " + name.str() + " in a file given to smith prove, or give it a contract"));
             return false;
         }
-        if (target == nullptr) return true;
+        if (target == nullptr) {
+            if (context.framed) instrument_writes(context);
+            return context.unprovable == nullptr;
+        }
         Function *callee = direct_callee(target);
         if (is_modular(*callee)) {
             if (!apply_contract(context, *target, *callee)) return false;
@@ -1752,6 +2043,16 @@ class Normalizer {
         for (Instruction *instruction : calls) {
             Contract kind = contract_of(instruction);
             bool own = kind != Contract::None && owner_id(*instruction) == function_id(context.function);
+            if (kind == Contract::Modifies) { // read by instrument_writes, and by a caller's slice
+                instruction->eraseFromParent();
+                continue;
+            }
+            if (auto *call = dyn_cast<CallBase>(instruction);
+                call != nullptr && call->getCalledFunction() != nullptr &&
+                call->getCalledFunction()->getName() == "smith.write_check") {
+                point(instruction, Kind::Write, instruction->getOperand(0), true);
+                continue;
+            }
             if ((kind == Contract::Requires && own) || (kind == Contract::Ensures && !own)) {
                 point(instruction, Kind::Premise, instruction->getOperand(0), true);
             } else if (kind != Contract::None) {
@@ -1785,6 +2086,7 @@ class Normalizer {
             instruction.setMetadata("smith.callsite", nullptr);
             instruction.setMetadata("smith.owner", nullptr);
             instruction.setMetadata("smith.induction", nullptr);
+            instruction.setMetadata("smith.frame_ok", nullptr);
         }
         return true;
     }
@@ -1833,6 +2135,8 @@ class Normalizer {
             info.file = string_of(base->getArgOperand(1));
             if (auto *line = dyn_cast<ConstantInt>(base->getArgOperand(2)))
                 info.line = static_cast<unsigned>(line->getZExtValue());
+        } else if (kind == Kind::Write) {
+            info.text = "the function writes here, outside the ranges its smith_modifies names";
         } else if (kind == Kind::Trap) {
             auto *number = cast<ConstantInt>(base->getArgOperand(0));
             uint64_t index = number->getZExtValue();
@@ -2269,7 +2573,9 @@ bool is_bookkeeping(const Instruction &instruction) {
     if (contract_of(&instruction) != Contract::None) return true;
     auto *call = dyn_cast<CallBase>(&instruction);
     if (call == nullptr || call->getCalledFunction() == nullptr) return false;
-    if (call->getCalledFunction()->getName() == "smith_loop") return true;
+    if (call->getCalledFunction()->getName() == "smith_loop" ||
+        call->getCalledFunction()->getName() == "smith.write_check")
+        return true;
     switch (call->getCalledFunction()->getIntrinsicID()) {
     case Intrinsic::assume:
     case Intrinsic::lifetime_start:
@@ -2900,7 +3206,7 @@ Prepared program_prepare(Program &program, const std::string &name, const Option
     std::set<std::string> recursive;
     for (const Function *function : program.recursive)
         recursive.insert(function->getName().str());
-    UnitContext context{*prepared.module, function, prepared.unit, recursive, {}, nullptr, 0, {}};
+    UnitContext context{*prepared.module, function, prepared.unit, recursive, {}, nullptr, 0, {}, false, {}, {}};
     auto finish = [&]() {
         prepared.unprovable = std::move(context.unprovable);
         return std::move(prepared);
@@ -2990,6 +3296,8 @@ const char *kind_name(Kind kind) {
         return "abort or trap, proved not reached";
     case Kind::Premise:
         return "smith_requires, assumed";
+    case Kind::Write:
+        return "a write inside the ranges smith_modifies names, proved";
     }
     return "";
 }
