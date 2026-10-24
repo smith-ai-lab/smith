@@ -74,43 +74,49 @@ static bool added_every_legal_step(const Board *board, const MoveList *list, uin
          (!step_is_legal(board, row, col, -1) || added_that_step(list, old, board, row, col, -1));
 }
 
+// The append the move generator does four times: the move goes at the end of the list. It has a contract, so that the
+// proof of get_valid_diagonals uses what it promises (the length grew by one, the move is at the old end, nothing else
+// was written) and not its stores to a symbolic place of a 100-move buffer, which every query of the proof paid for.
+static void push_move(MoveList *list, Move move) {
+  smith_requires(list->len < max_moves);
+  smith_modifies(&list->len, sizeof list->len);
+  smith_modifies(&list->buf[list->len], sizeof list->buf[0]);
+  const uint8_t end = list->len;
+  list->buf[end] = move;
+  list->len = end + 1;
+  smith_ensures(list->len == end + 1);
+  smith_ensures(list->buf[end].from.row == move.from.row && list->buf[end].from.col == move.from.col &&
+                list->buf[end].to.row == move.to.row && list->buf[end].to.col == move.to.col);
+}
+
 void get_valid_diagonals(Moves *restrict moves, const Board *restrict board, uint8_t row, uint8_t col) {
   smith_requires(row < rows && col < cols);
   smith_requires(moves->diagonals.len + 2 <= max_moves);
   smith_requires(board->turn == P1 || board->turn == P2);
   const uint8_t old = moves->diagonals.len;
+  bool found = false;
+  Pos to = {};
   switch (board->turn) {
     case P1:
       if (row < 7 && col < 7 && board->cells[row+1][col+1] == DARK_EMPTY) {
-        assert(moves->diagonals.len < max_moves);
-        moves->diagonals.buf[moves->diagonals.len++] = (Move){
-          .from = { .row = row, .col = col },
-          .to = { .row = row+1, .col = col + 1 }
-        };
+        found = true;
+        to = (Pos){ .row = row+1, .col = col + 1 };
       } else if (row < 7 && col > 1 && board->cells[row+1][col-1] == DARK_EMPTY) {
-        assert(moves->diagonals.len < max_moves);
-        moves->diagonals.buf[moves->diagonals.len++] = (Move){
-          .from = { .row = row, .col = col },
-          .to = { .row = row+1, .col = col - 1 }
-        };
+        found = true;
+        to = (Pos){ .row = row+1, .col = col - 1 };
       }
       break;
     case P2:
       if (row > 1 && col < 7 && board->cells[row-1][col+1] == DARK_EMPTY) {
-        assert(moves->diagonals.len < max_moves);
-        moves->diagonals.buf[moves->diagonals.len++] = (Move){
-          .from = { .row = row, .col = col },
-          .to = { .row = row - 1, .col = col + 1 }
-        };
+        found = true;
+        to = (Pos){ .row = row - 1, .col = col + 1 };
       } else if (row > 1 && col > 1 && board->cells[row-1][col-1] == DARK_EMPTY) {
-        assert(moves->diagonals.len < max_moves);
-        moves->diagonals.buf[moves->diagonals.len++] = (Move){
-          .from = { .row = row, .col = col },
-          .to = { .row = row - 1, .col = col - 1 }
-        };
+        found = true;
+        to = (Pos){ .row = row - 1, .col = col - 1 };
       }
       break;
   }
+  if (found) push_move(&moves->diagonals, (Move){ .from = { .row = row, .col = col }, .to = to });
   smith_ensures(moves->diagonals.len <= old + 2);
   smith_ensures(added_only_legal_steps(board, &moves->diagonals, old, row, col));
   smith_ensures(added_every_legal_step(board, &moves->diagonals, old, row, col));
