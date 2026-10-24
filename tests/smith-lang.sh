@@ -2,6 +2,7 @@
 # The corpus of the .smith language (tests/smith-lang/cases), run through the smith given, which must have clang inside
 # with the token hook (a stage0 has no compiler to lower for). Usage:
 #   sh tests/smith-lang.sh path/to/smith [case ...]       run the corpus, or only the named cases
+#   sh tests/smith-lang.sh path/to/smith K/N              shard K of N (0 based): every Nth case from the Kth
 #   UPDATE=1 sh tests/smith-lang.sh path/to/smith         write what each case produced as its expectation (read the diff)
 #
 # A case is a folder:
@@ -185,11 +186,18 @@ run_case() { # name
     fi
 }
 
-if [ $# -gt 0 ]; then
-    names="$*"
-else
-    names=$(ls "$corpus")
-fi
+case ${1:-} in
+[0-9]*/[0-9]*) # K/N: every Nth case from the Kth, so that the corpus runs as tasks side by side (issue #116)
+    names=$(ls "$corpus" | awk -v want="${1%/*}" -v count="${1#*/}" '(NR - 1) % count == want')
+    ;;
+*)
+    if [ $# -gt 0 ]; then
+        names="$*"
+    else
+        names=$(ls "$corpus")
+    fi
+    ;;
+esac
 for name in $names; do
     run_case "$name"
 done
