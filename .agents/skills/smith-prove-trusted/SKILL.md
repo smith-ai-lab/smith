@@ -26,4 +26,4 @@ In `.smith` it is `contract::trusted();` (with `import smith::contract;`), the s
 - A trusted function with no contract at all marks the edge and promises nothing (a function that prints). Its result, if it has one, is an arbitrary value.
 - Mark the smallest function that touches the edge, give it the `smith_ensures` its callers rely on (an index below a count, a result in a range), and prove everything else. The trusted contract is a claim you check by reading and testing; the report keeps the list in front of you.
 
-Also in this family: [smith-contract](../smith-contract/SKILL.md), [smith-contract-c](../smith-contract-c/SKILL.md), [smith-prove](../smith-prove/SKILL.md), [smith-prove-cost](../smith-prove-cost/SKILL.md).
+Also in this family: [smith-contract](../smith-contract/SKILL.md), [smith-contract-c](../smith-contract-c/SKILL.md), [smith-contract-proof](../smith-contract-proof/SKILL.md), [smith-prove](../smith-prove/SKILL.md), [smith-prove-cost](../smith-prove-cost/SKILL.md).

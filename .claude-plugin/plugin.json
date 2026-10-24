@@ -42,6 +42,7 @@
     "./.agents/skills/smith-check-lints/",
     "./.agents/skills/smith-contract/",
     "./.agents/skills/smith-contract-c/",
+    "./.agents/skills/smith-contract-proof/",
     "./.agents/skills/smith-debug/",
     "./.agents/skills/smith-docs/",
     "./.agents/skills/smith-docs-check/",
