@@ -254,7 +254,7 @@ if (grow->data != nullptr && grow->capacity - grow->size > extra) return;
 __SIZE_TYPE__ wanted = grow->capacity * 2;
 if (wanted < grow->size + extra + 1) wanted = grow->size + extra + 1;
 if (wanted < 256) wanted = 256;
-__UINT8_TYPE__ *bigger =__extension__({extern __UINT8_TYPE__*smith_arena_push_array_type__u8(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(__UINT8_TYPE__)");smith_arena_push_array_type__u8(grow->arena,wanted);});
+__UINT8_TYPE__ *bigger = smith_arena_push_array(grow->arena, sizeof(__UINT8_TYPE__), wanted, alignof(__UINT8_TYPE__));
 if (grow->size > 0) __builtin_memcpy(bigger, grow->data, grow->size);
 grow->data = bigger;
 grow->capacity = wanted;
@@ -303,7 +303,7 @@ static SmithError smith_io_fake_read_file(smith_io_Fake *fake, SmithArena *arena
 smith_io_FakeFile *file = smith_io_fake_find(fake, path);
 if (file == nullptr) return smith_error_make(smith_io_enoent, "open", path);
 if (file->folder) return smith_error_make(smith_io_eisdir, "read", path);
-__UINT8_TYPE__ *copy =__extension__({extern __UINT8_TYPE__*smith_arena_push_array_type__u8(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(__UINT8_TYPE__)");smith_arena_push_array_type__u8(arena,file->size+1);});
+__UINT8_TYPE__ *copy = smith_arena_push_array(arena, sizeof(__UINT8_TYPE__), file->size + 1, alignof(__UINT8_TYPE__));
 if (file->size > 0) __builtin_memcpy(copy, file->data, file->size);
 result->data = (const char *)copy;
 result->size = file->size;
@@ -315,7 +315,7 @@ if (file != nullptr) return file;
 if (fake->file_count == smith_io_fake_files_max) return nullptr;
 file = &fake->files[fake->file_count++];
 *file = (smith_io_FakeFile){};
-char *name =__extension__({extern char*smith_arena_push_array_type__char(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(char)");smith_arena_push_array_type__char(&fake->storage,strlen(path)+1);});
+char *name = smith_arena_push_array(&fake->storage, sizeof(char), strlen(path) + 1, alignof(char));
 __builtin_memcpy(name, path, strlen(path));
 file->path = name;
 return file;
@@ -323,7 +323,7 @@ return file;
 static SmithError smith_io_fake_write_file(smith_io_Fake *fake, const char *path, const void *data, __SIZE_TYPE__ size) {
 smith_io_FakeFile *file = smith_io_fake_entry(fake, path);
 if (file == nullptr) return smith_error_make(smith_io_enospc, "create", path);
-file->data =__extension__({extern __UINT8_TYPE__*smith_arena_push_array_type__u8(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(__UINT8_TYPE__)");smith_arena_push_array_type__u8(&fake->storage,size+1);});
+file->data = smith_arena_push_array(&fake->storage, sizeof(__UINT8_TYPE__), size + 1, alignof(__UINT8_TYPE__));
 if (size > 0) __builtin_memcpy(file->data, data, size);
 file->size = size;
 file->capacity = size + 1;
@@ -336,7 +336,7 @@ if (file == nullptr) return smith_error_make(smith_io_enospc, "create", path);
 if (file->folder) return smith_error_make(smith_io_eisdir, "open", path);
 if (file->data == nullptr || file->size + size + 1 > file->capacity) {
 __SIZE_TYPE__ wanted = file->capacity * 2 > file->size + size + 1 ? file->capacity * 2 : file->size + size + 1;
-__UINT8_TYPE__ *bigger =__extension__({extern __UINT8_TYPE__*smith_arena_push_array_type__u8(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(__UINT8_TYPE__)");smith_arena_push_array_type__u8(&fake->storage,wanted);});
+__UINT8_TYPE__ *bigger = smith_arena_push_array(&fake->storage, sizeof(__UINT8_TYPE__), wanted, alignof(__UINT8_TYPE__));
 if (file->size > 0) __builtin_memcpy(bigger, file->data, file->size);
 file->data = bigger;
 file->capacity = wanted;
@@ -424,7 +424,7 @@ for (; at < list->count; at++) {
 if (strncmp(entries[at].name, rest, name_length) == 0 && entries[at].name[name_length] == 0) break;
 }
 if (at == list->count) {
-char *name =__extension__({extern char*smith_arena_push_array_type__char(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(char)");smith_arena_push_array_type__char(arena,name_length+1);});
+char *name = smith_arena_push_array(arena, sizeof(char), name_length + 1, alignof(char));
 __builtin_memcpy(name, rest, name_length);
 entries[list->count++].name = name;
 }
@@ -438,7 +438,7 @@ list.error = smith_error_make(smith_io_enoent, "open", folder);
 return list;
 }
 __SIZE_TYPE__ length = smith_io_fake_folder_length(folder);
-SmithFileEntry *entries =__extension__({extern SmithFileEntry*smith_arena_push_array_type__FileEntry(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(SmithFileEntry)");smith_arena_push_array_type__FileEntry(arena,smith_io_fake_files_max+1);});
+SmithFileEntry *entries = smith_arena_push_array(arena, sizeof(SmithFileEntry), smith_io_fake_files_max + 1, alignof(SmithFileEntry));
 for (__SIZE_TYPE__ i = 0; i < fake->file_count; i++) {
 const smith_io_FakeFile *file = &fake->files[i];
 if (length > 0 && !(strncmp(file->path, folder, length) == 0 && file->path[length] == '/')) continue;
@@ -597,7 +597,7 @@ return info;
 }
 static SmithFileEntry *smith_io_real_entries_grow(SmithArena *arena, SmithFileEntry *entries, __SIZE_TYPE__ count, __SIZE_TYPE__ *capacity) {
 __SIZE_TYPE__ wanted = *capacity == 0 ? 64 : *capacity * 2;
-SmithFileEntry *bigger =__extension__({extern SmithFileEntry*smith_arena_push_array_type__FileEntry(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(SmithFileEntry)");smith_arena_push_array_type__FileEntry(arena,wanted);});
+SmithFileEntry *bigger = smith_arena_push_array(arena, sizeof(SmithFileEntry), wanted, alignof(SmithFileEntry));
 if (count > 0) __builtin_memcpy(bigger, entries, count * sizeof *entries);
 *capacity = wanted;
 return bigger;
@@ -620,7 +620,7 @@ struct stat status = {};
 bool known = fstatat(dirfd(directory), item->d_name, &status, 0) == 0;
 bool is_folder = known && smith_io_mode_is(status.st_mode, smith_io_mode_folder);
 __SIZE_TYPE__ length = strlen(item->d_name);
-char *name =__extension__({extern char*smith_arena_push_array_type__char(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(char)");smith_arena_push_array_type__char(arena,length+1);});
+char *name = smith_arena_push_array(arena, sizeof(char), length + 1, alignof(char));
 __builtin_memcpy(name, item->d_name, length);
 entries[list.count++] = (SmithFileEntry){
 .name = name,
@@ -1197,7 +1197,7 @@ smith_io_op_start(op, console->loop, SmithOpKind_ConsoleRead);
 op->internal.console = console;
 op->internal.arena = arena;
 op->internal.descriptor = smith_io_stdin_fd;
-op->internal.destination =__extension__({extern __UINT8_TYPE__*smith_arena_push_array_type__u8(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(__UINT8_TYPE__)");smith_arena_push_array_type__u8(arena,max+1);});
+op->internal.destination = smith_arena_push_array(arena, sizeof(__UINT8_TYPE__), max + 1, alignof(__UINT8_TYPE__));
 op->internal.capacity = max;
 smith_io_loop_submit(console->loop, op);
 }
@@ -1603,10 +1603,10 @@ return result;
 }
 result.exit_status = program->status;
 result.output_size = strlen(program->output);
-char *copy =__extension__({extern char*smith_arena_push_array_type__char(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(char)");smith_arena_push_array_type__char(arena,result.output_size+1);});
+char *copy = smith_arena_push_array(arena, sizeof(char), result.output_size + 1, alignof(char));
 __builtin_memcpy(copy, program->output, result.output_size);
 result.output = copy;
-result.errors =__extension__({extern char*smith_arena_push_array_type__char(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(char)");smith_arena_push_array_type__char(arena,1);});
+result.errors = smith_arena_push_array(arena, sizeof(char), 1, alignof(char));
 return result;
 }
 static bool smith_io_net_symbol(void *library, const char *name, void *destination) {
@@ -1916,13 +1916,13 @@ if (loop->servers == nullptr) loop->servers =__extension__({extern smith_io_Fake
 smith_io_FakeNet *net = loop->servers;
 if (net->count == smith_io_fake_servers_max) return smith_error_make(smith_io_enospc, "script", server.host);
 smith_io_FakeServer *entry = &net->servers[net->count++];
-char *host =__extension__({extern char*smith_arena_push_array_type__char(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(char)");smith_arena_push_array_type__char(&io->arena,strlen(server.host)+1);});
+char *host = smith_arena_push_array(&io->arena, sizeof(char), strlen(server.host) + 1, alignof(char));
 __builtin_memcpy(host, server.host, strlen(server.host));
-__UINT8_TYPE__ *response =__extension__({extern __UINT8_TYPE__*smith_arena_push_array_type__u8(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(__UINT8_TYPE__)");smith_arena_push_array_type__u8(&io->arena,server.response_size+1);});
+__UINT8_TYPE__ *response = smith_arena_push_array(&io->arena, sizeof(__UINT8_TYPE__), server.response_size + 1, alignof(__UINT8_TYPE__));
 if (server.response_size > 0) __builtin_memcpy(response, server.response, server.response_size);
 char *tls_failure = nullptr;
 if (server.tls_failure != nullptr) {
-tls_failure =__extension__({extern char*smith_arena_push_array_type__char(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(char)");smith_arena_push_array_type__char(&io->arena,strlen(server.tls_failure)+1);});
+tls_failure = smith_arena_push_array(&io->arena, sizeof(char), strlen(server.tls_failure) + 1, alignof(char));
 __builtin_memcpy(tls_failure, server.tls_failure, strlen(server.tls_failure));
 }
 *entry = (smith_io_FakeServer){.host = host,
@@ -1933,7 +1933,7 @@ __builtin_memcpy(tls_failure, server.tls_failure, strlen(server.tls_failure));
 .error = server.error,
 .tls_failure = tls_failure,
 .stall = server.stall,
-.request =__extension__({extern char*smith_arena_push_array_type__char(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(char)");smith_arena_push_array_type__char(&io->arena,smith_io_request_max+1);})};
+.request = smith_arena_push_array(&io->arena, sizeof(char), smith_io_request_max + 1, alignof(char))};
 return (SmithError){};
 }
 [[clang::annotate("smith::edge")]] [[nodiscard]] const char *
@@ -1966,7 +1966,7 @@ const smith_io_FakeProgram *program = smith_io_fake_program(fake, argv[0], &capt
 if (program == nullptr) return smith_error_make(smith_io_enoent, "run", argv[0]);
 capture->exit_status = program->status;
 capture->output_size = strlen(program->output);
-char *copy =__extension__({extern char*smith_arena_push_array_type__char(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(char)");smith_arena_push_array_type__char(arena,capture->output_size+1);});
+char *copy = smith_arena_push_array(arena, sizeof(char), capture->output_size + 1, alignof(char));
 __builtin_memcpy(copy, program->output, capture->output_size + 1);
 capture->output = copy;
 capture->done = true;
@@ -2079,8 +2079,8 @@ SmithLoop *loop =__extension__({extern SmithLoop*smith_arena_push_type__Loop(Smi
 loop->queue = -1;
 if (fake) {
 loop->fake =__extension__({extern smith_io_Fake*smith_arena_push_type__Fake(SmithArena*arena)__asm__("_smith::arena::push(smith_io_Fake)");smith_arena_push_type__Fake(arena);});
-loop->fake->output =__extension__({extern char*smith_arena_push_array_type__char(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(char)");smith_arena_push_array_type__char(arena,smith_io_fake_capture_size);});
-loop->fake->errors =__extension__({extern char*smith_arena_push_array_type__char(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(char)");smith_arena_push_array_type__char(arena,smith_io_fake_capture_size);});
+loop->fake->output = smith_arena_push_array(arena, sizeof(char), smith_io_fake_capture_size, alignof(char));
+loop->fake->errors = smith_arena_push_array(arena, sizeof(char), smith_io_fake_capture_size, alignof(char));
 __SIZE_TYPE__ storage = (arena->capacity - arena->used) / 4 / smith_arena_align_max * smith_arena_align_max;
 loop->fake->storage = smith_arena_make(smith_arena_push(arena, storage, smith_arena_align_max), storage);
 } else {
@@ -2155,11 +2155,11 @@ io.key = smith_key_make(test.seed);
 smith_io_Fake *fake = io.loop->fake;
 if (test.input != nullptr) {
 fake->input_size = strlen(test.input);
-char *copy =__extension__({extern char*smith_arena_push_array_type__char(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(char)");smith_arena_push_array_type__char(&io.arena,fake->input_size+1);});
+char *copy = smith_arena_push_array(&io.arena, sizeof(char), fake->input_size + 1, alignof(char));
 __builtin_memcpy(copy, test.input, fake->input_size);
 fake->input = copy;
 }
-const char **values =__extension__({extern const char**smith_arena_push_array_type__const_char_P(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(const char *)");smith_arena_push_array_type__const_char_P(&io.arena,test.argc+1);});
+const char **values = smith_arena_push_array(&io.arena, sizeof(const char *), test.argc + 1, alignof(const char *));
 for (__SIZE_TYPE__ i = 0; i < test.argc; i++) {
 smith_io_check(test.argv != nullptr);
 values[i] = test.argv[i];
@@ -2167,7 +2167,7 @@ values[i] = test.argv[i];
 __SIZE_TYPE__ entries = 0;
 for (; test.environment != nullptr && test.environment[entries] != nullptr; entries++) {
 }
-const char **variables =__extension__({extern const char**smith_arena_push_array_type__const_char_P(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(const char *)");smith_arena_push_array_type__const_char_P(&io.arena,entries+1);});
+const char **variables = smith_arena_push_array(&io.arena, sizeof(const char *), entries + 1, alignof(const char *));
 for (__SIZE_TYPE__ i = 0; i < entries; i++)
 variables[i] = test.environment[i];
 fake->cores = test.cores > 0 ? test.cores : 1;
@@ -2187,9 +2187,9 @@ smith_io_test_add_program(SmithIo *io, const char *program, const char *output, 
 smith_io_Fake *fake = smith_io_fake_of(io->loop);
 if (fake->program_count == smith_io_fake_programs_max) return smith_error_make(smith_io_enospc, "script", program);
 smith_io_FakeProgram *entry = &fake->programs[fake->program_count++];
-char *name =__extension__({extern char*smith_arena_push_array_type__char(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(char)");smith_arena_push_array_type__char(&fake->storage,strlen(program)+1);});
+char *name = smith_arena_push_array(&fake->storage, sizeof(char), strlen(program) + 1, alignof(char));
 __builtin_memcpy(name, program, strlen(program));
-char *text =__extension__({extern char*smith_arena_push_array_type__char(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(char)");smith_arena_push_array_type__char(&fake->storage,strlen(output)+1);});
+char *text = smith_arena_push_array(&fake->storage, sizeof(char), strlen(output) + 1, alignof(char));
 __builtin_memcpy(text, output, strlen(output));
 *entry = (smith_io_FakeProgram){.program = name, .output = text, .status = status};
 return (SmithError){};
@@ -2204,9 +2204,9 @@ smith_requires(script.program != nullptr);
 if (fake->child_count == smith_io_fake_children_max) return smith_error_make(smith_io_enospc, "script", script.program);
 smith_io_FakeChild *entry = &fake->children[fake->child_count++];
 __SIZE_TYPE__ output_size = script.output != nullptr ? strlen(script.output) : 0;
-char *name =__extension__({extern char*smith_arena_push_array_type__char(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(char)");smith_arena_push_array_type__char(&fake->storage,strlen(script.program)+1);});
+char *name = smith_arena_push_array(&fake->storage, sizeof(char), strlen(script.program) + 1, alignof(char));
 __builtin_memcpy(name, script.program, strlen(script.program));
-__UINT8_TYPE__ *output =__extension__({extern __UINT8_TYPE__*smith_arena_push_array_type__u8(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(__UINT8_TYPE__)");smith_arena_push_array_type__u8(&fake->storage,output_size+1);});
+__UINT8_TYPE__ *output = smith_arena_push_array(&fake->storage, sizeof(__UINT8_TYPE__), output_size + 1, alignof(__UINT8_TYPE__));
 if (output_size > 0) __builtin_memcpy(output, script.output, output_size);
 *entry = (smith_io_FakeChild){.program = name,
 .output = output,
@@ -2214,7 +2214,7 @@ if (output_size > 0) __builtin_memcpy(output, script.output, output_size);
 .chunk = script.chunk,
 .exit_on = script.exit_on,
 .status = script.status,
-.input =__extension__({extern __UINT8_TYPE__*smith_arena_push_array_type__u8(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(__UINT8_TYPE__)");smith_arena_push_array_type__u8(&fake->storage,smith_io_child_input_max+1);})};
+.input = smith_arena_push_array(&fake->storage, sizeof(__UINT8_TYPE__), smith_io_child_input_max + 1, alignof(__UINT8_TYPE__))};
 return (SmithError){};
 }
 [[clang::annotate("smith::edge")]] [[nodiscard]] const char *
@@ -2237,12 +2237,6 @@ smith_io_test_errors(const SmithIo *io);
 smith_io_test_errors(const SmithIo *io) {
 return smith_io_fake_of(io->loop)->errors;
 }
-extern __UINT8_TYPE__*smith_arena_push_array_type__u8(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(__UINT8_TYPE__)");
-[[gnu::weak]][[gnu::visibility("hidden")]][[nodiscard]]__UINT8_TYPE__*smith_arena_push_array_type__u8(SmithArena*arena,__SIZE_TYPE__ count){return(__UINT8_TYPE__*)smith_arena_push_array(arena,sizeof(__UINT8_TYPE__),count,alignof(__UINT8_TYPE__));}
-extern char*smith_arena_push_array_type__char(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(char)");
-[[gnu::weak]][[gnu::visibility("hidden")]][[nodiscard]]char*smith_arena_push_array_type__char(SmithArena*arena,__SIZE_TYPE__ count){return(char*)smith_arena_push_array(arena,sizeof(char),count,alignof(char));}
-extern SmithFileEntry*smith_arena_push_array_type__FileEntry(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(SmithFileEntry)");
-[[gnu::weak]][[gnu::visibility("hidden")]][[nodiscard]]SmithFileEntry*smith_arena_push_array_type__FileEntry(SmithArena*arena,__SIZE_TYPE__ count){return(SmithFileEntry*)smith_arena_push_array(arena,sizeof(SmithFileEntry),count,alignof(SmithFileEntry));}
 extern __UINT64_TYPE__ smith_math_max__u64(void)__asm__("_smith::math::max(__UINT64_TYPE__)");
 [[gnu::weak]][[gnu::visibility("hidden")]][[gnu::always_inline]]__UINT64_TYPE__ smith_math_max__u64(void){static_assert((__UINT64_TYPE__)-1>0,"math::max: the type is unsigned");return(__UINT64_TYPE__)-1;}
 extern __UINT32_TYPE__ smith_math_max__u32(void)__asm__("_smith::math::max(__UINT32_TYPE__)");
@@ -2253,6 +2247,4 @@ extern SmithLoop*smith_arena_push_type__Loop(SmithArena*arena)__asm__("_smith::a
 [[gnu::weak]][[gnu::visibility("hidden")]][[nodiscard]]SmithLoop*smith_arena_push_type__Loop(SmithArena*arena){return(SmithLoop*)smith_arena_push(arena,sizeof(SmithLoop),alignof(SmithLoop));}
 extern smith_io_Fake*smith_arena_push_type__Fake(SmithArena*arena)__asm__("_smith::arena::push(smith_io_Fake)");
 [[gnu::weak]][[gnu::visibility("hidden")]][[nodiscard]]smith_io_Fake*smith_arena_push_type__Fake(SmithArena*arena){return(smith_io_Fake*)smith_arena_push(arena,sizeof(smith_io_Fake),alignof(smith_io_Fake));}
-extern const char**smith_arena_push_array_type__const_char_P(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(const char *)");
-[[gnu::weak]][[gnu::visibility("hidden")]][[nodiscard]]const char**smith_arena_push_array_type__const_char_P(SmithArena*arena,__SIZE_TYPE__ count){return(const char**)smith_arena_push_array(arena,sizeof(const char*),count,alignof(const char*));}
 // NOLINTEND

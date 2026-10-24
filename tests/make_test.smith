@@ -31,7 +31,7 @@ static scratch::Project project(io::Io *io, const char *fixture) {
 
 // main.c prints R1 .. R<count> (strings, or "unset"), which the Makefile gives as -DRn='"value"'.
 static void printer(const scratch::Project *p, i32 count) {
-    char *text = arena::push_array(&p->io->arena, char, 65536);
+    char *text = arena::push_slice(&p->io->arena, char, 65536).data;
     usize used = (usize)__builtin_snprintf(text, 65536, "#include <stdio.h>\n");
     for (i32 i = 1; i <= count; i++)
         used +=

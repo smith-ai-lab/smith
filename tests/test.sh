@@ -417,7 +417,7 @@ void test_abort_assert(void) {
 void test_abort_arena(void) {
     arena::Arena memory = test::memory(128);
     test::expect_abort();
-    (void)arena::push_array(&memory, u8, 1000);
+    (void)arena::push_slice(&memory, u8, 1000).data;
 }
 
 void test_abort_abort(void) {
@@ -959,12 +959,12 @@ void test_expressions_pass(void) {
 
 void test_memory_passes(void) {
     arena::Arena memory = test::memory(1 << 12);
-    i32 *items = arena::push_array(&memory, i32, 10);
+    i32 *items = arena::push_slice(&memory, i32, 10).data;
     for (i32 i = 0; i < 10; i++) {
         items[i] = i * i;
     }
     test::check_equal(items[9], 81);
-    f64 *halves = arena::push_array(&memory, f64, 4);
+    f64 *halves = arena::push_slice(&memory, f64, 4).data;
     halves[3] = 1.5;
     test::check_near(halves[3], 1.5, 0.0);
 }
@@ -972,7 +972,7 @@ void test_memory_passes(void) {
 void test_memory_stops(void) {
     arena::Arena memory = test::memory(256);
     test::expect_abort();
-    (void)arena::push_array(&memory, f64, 100);
+    (void)arena::push_slice(&memory, f64, 100).data;
 }
 C
 capture "$smith" build
@@ -1713,7 +1713,7 @@ static void *fresh_base;
 void test_fresh_1_sets(void) {
     test::note("note from 1");
     arena::Arena memory = test::memory(4096);
-    u8 *bytes = arena::push_array(&memory, u8, 100);
+    u8 *bytes = arena::push_slice(&memory, u8, 100).data;
     fresh_base = bytes;
     for (usize i = 0; i < 100; i++) {
         bytes[i] = 0xAB;
@@ -1722,7 +1722,7 @@ void test_fresh_1_sets(void) {
 
 void test_fresh_2_sees(void) {
     arena::Arena memory = test::memory(4096);
-    u8 *bytes = arena::push_array(&memory, u8, 100);
+    u8 *bytes = arena::push_slice(&memory, u8, 100).data;
     if (fresh_base != nullptr) {
         test::check_equal((void *)bytes, fresh_base); // given back: the same memory
     }

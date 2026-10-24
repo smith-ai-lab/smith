@@ -561,15 +561,15 @@ smith_assert(__builtin_isfinite(weights[i]) && weights[i] >= 0.0);
 sum += weights[i];
 }
 smith_assert(__builtin_isfinite(sum) && sum > 0.0);
-double *probability =__extension__({extern double*smith_arena_push_array_type__f64(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(double)");smith_arena_push_array_type__f64(arena,count);});
-__SIZE_TYPE__ *alias =__extension__({extern __SIZE_TYPE__*smith_arena_push_array_type__usize(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(__SIZE_TYPE__)");smith_arena_push_array_type__usize(arena,count);});
+double *probability = smith_arena_push_array(arena, sizeof(double), count, alignof(double));
+__SIZE_TYPE__ *alias = smith_arena_push_array(arena, sizeof(__SIZE_TYPE__), count, alignof(__SIZE_TYPE__));
 for (__SIZE_TYPE__ i = 0; i < count; i++) {
 probability[i] = weights[i] * (double)count / sum;
 alias[i] = i;
 }
 SmithArenaScope scope = smith_arena_scope_begin(arena);
-__SIZE_TYPE__ *small =__extension__({extern __SIZE_TYPE__*smith_arena_push_array_type__usize(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(__SIZE_TYPE__)");smith_arena_push_array_type__usize(arena,count);});
-__SIZE_TYPE__ *large =__extension__({extern __SIZE_TYPE__*smith_arena_push_array_type__usize(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(__SIZE_TYPE__)");smith_arena_push_array_type__usize(arena,count);});
+__SIZE_TYPE__ *small = smith_arena_push_array(arena, sizeof(__SIZE_TYPE__), count, alignof(__SIZE_TYPE__));
+__SIZE_TYPE__ *large = smith_arena_push_array(arena, sizeof(__SIZE_TYPE__), count, alignof(__SIZE_TYPE__));
 smith_random_alias_build(probability, alias, small, large, count);
 smith_arena_scope_end(scope);
 return (SmithCategorical){.probability = probability, .alias = alias, .count = count};
@@ -607,8 +607,4 @@ extern float smith_math_infinity__f32(void)__asm__("_smith::math::infinity(float
 [[gnu::weak]][[gnu::visibility("hidden")]][[gnu::always_inline]]float smith_math_infinity__f32(void){return(float)__builtin_inf();}
 extern float smith_math_nan__f32(void)__asm__("_smith::math::nan(float)");
 [[gnu::weak]][[gnu::visibility("hidden")]][[gnu::always_inline]]float smith_math_nan__f32(void){return(float)__builtin_nan("");}
-extern double*smith_arena_push_array_type__f64(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(double)");
-[[gnu::weak]][[gnu::visibility("hidden")]][[nodiscard]]double*smith_arena_push_array_type__f64(SmithArena*arena,__SIZE_TYPE__ count){return(double*)smith_arena_push_array(arena,sizeof(double),count,alignof(double));}
-extern __SIZE_TYPE__*smith_arena_push_array_type__usize(SmithArena*arena,__SIZE_TYPE__ count)__asm__("_smith::arena::push_array(__SIZE_TYPE__)");
-[[gnu::weak]][[gnu::visibility("hidden")]][[nodiscard]]__SIZE_TYPE__*smith_arena_push_array_type__usize(SmithArena*arena,__SIZE_TYPE__ count){return(__SIZE_TYPE__*)smith_arena_push_array(arena,sizeof(__SIZE_TYPE__),count,alignof(__SIZE_TYPE__));}
 // NOLINTEND

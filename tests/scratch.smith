@@ -188,7 +188,7 @@ export void expect_count(const char *name, usize expected, usize actual) {
 export const char *capture(const Project *p, const char *command) {
     const char *out = sh(p, command).out;
     usize length = trimmed(out);
-    char *copy = arena::push_array(&p->io->arena, char, length + 1);
+    char *copy = arena::push_slice(&p->io->arena, char, length + 1).data;
     __builtin_memcpy(copy, out, length);
     return copy;
 }

@@ -699,7 +699,8 @@ export usize length(auto... args) {
 // The arguments as text pushed on the arena, with a terminator after it that Text's length does not count.
 export text::Text push(arena::Arena *arena, auto... args) {
     usize characters = length(args...);
-    char *memory = arena::push_array(arena, char, characters + 1);
+    char *memory =
+        arena::push_array_raw(arena, sizeof(char), characters + 1, alignof(char)); // a generic's local has no type yet
     Written written = to(memory, characters + 1, args...);
     return (text::Text){memory, written.length};
 }

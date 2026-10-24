@@ -181,7 +181,7 @@ if "$smith" lsp --version >/dev/null 2>&1; then
     expect "project: clangd reports no errors in main.c" 0 "$errors"
 fi
 
-# 4b. A .smith file uses the library with types as arguments: arena::push(&a, Point) and arena::push_array(&a, i32, n),
+# 4b. A .smith file uses the library with types as arguments: arena::push(&a, Point) and arena::push_slice(&a, i32, n).data,
 # beside the C file of 4 (one header, one object). A count that overflows is refused with the C message.
 cat >build.c <<'C'
 #include <smith/build.h>
@@ -217,15 +217,15 @@ i32 main(i32 argc, char **argv) {
     arena::Arena a = arena::make(memory, sizeof memory);
     Point *point = arena::push(&a, Point);
     point->id = 3;
-    Point *points = arena::push_array(&a, Point, 4);
+    Point *points = arena::push_slice(&a, Point, 4).data;
     points[3].id = 9;
-    i32 *ints = arena::push_array(&a, i32, 10);
+    i32 *ints = arena::push_slice(&a, i32, 10).data;
     ints[9] = 5;
     c::printf("%d %d %d zeroed %d, %zu used\n", point->id, points[3].id, ints[9], (i32)(points[0].weight == 0 && ints[0] == 0),
               a.used);
     if (argc > 1) {
         usize count = c::strtoull(argv[1], nullptr, 10);
-        Point *too_many = arena::push_array(&a, Point, count);
+        Point *too_many = arena::push_slice(&a, Point, count).data;
         c::printf("not reached %p\n", (void *)too_many);
     }
     return 0;

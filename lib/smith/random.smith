@@ -779,15 +779,15 @@ categorical_make(arena::Arena *arena, const f64 *weights, usize count) {
         sum += weights[i];
     }
     contract::assert(__builtin_isfinite(sum) && sum > 0.0);
-    f64 *probability = arena::push_array(arena, f64, count);
-    usize *alias = arena::push_array(arena, usize, count);
+    f64 *probability = arena::push_array_raw(arena, sizeof(f64), count, alignof(f64));
+    usize *alias = arena::push_array_raw(arena, sizeof(usize), count, alignof(usize));
     for (usize i = 0; i < count; i++) {
         probability[i] = weights[i] * (f64)count / sum;
         alias[i] = i;
     }
     arena::Scope scope = arena::scope_begin(arena);
-    usize *small = arena::push_array(arena, usize, count);
-    usize *large = arena::push_array(arena, usize, count);
+    usize *small = arena::push_array_raw(arena, sizeof(usize), count, alignof(usize));
+    usize *large = arena::push_array_raw(arena, sizeof(usize), count, alignof(usize));
     alias_build(probability, alias, small, large, count);
     arena::scope_end(scope);
     return (Categorical){.probability = probability, .alias = alias, .count = count};

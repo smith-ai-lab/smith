@@ -43,20 +43,21 @@ export void test_arena_pushes_are_aligned(void) {
     }
 }
 
-export void test_arena_typed_and_array_pushes(void) {
+export void test_arena_typed_and_slice_pushes(void) {
     static Memory memory;
     arena::Arena a = arena::make(memory.bytes, sizeof memory.bytes);
     Record *record = arena::push(&a, Record);
     test::check_equal(record->count, 0);
     test::check_equal(record->value, 0.0);
-    Record *records = arena::push_array(&a, Record, 10);
+    Record records[:] = arena::push_slice(&a, Record, 10);
+    test::check_equal(countof(records), 10);
     for (usize i = 0; i < 10; i++) {
         test::check_equal(records[i].count, 0);
         records[i].count = (i32)i; // all ten are writable
     }
-    test::check_equal((usize)records & (alignof(Record) - 1), 0);
-    u8 *none = arena::push_array(&a, u8, 0); // an empty array is a valid push
-    test::check_condition(none != nullptr);
+    test::check_equal((usize)&records[0] & (alignof(Record) - 1), 0);
+    u8 none[:] = arena::push_slice(&a, u8, 0); // an empty slice is a valid push
+    test::check_equal(countof(none), 0);
 }
 
 export void test_arena_typed_pushes_keep_every_alignment(void) {
@@ -69,8 +70,8 @@ export void test_arena_typed_pushes_keep_every_alignment(void) {
     test::check_equal((usize)record & (alignof(Record) - 1), 0);
     test::check_equal(record->count, 0);
     test::check_equal(record->value, 0.0);
-    Record *records = arena::push_array(&a, Record, 5);
-    test::check_equal((usize)records & (alignof(Record) - 1), 0);
+    Record records[:] = arena::push_slice(&a, Record, 5);
+    test::check_equal((usize)&records[0] & (alignof(Record) - 1), 0);
     for (usize i = 0; i < 5; i++) {
         test::check_equal(records[i].count, 0);
         test::check_equal(records[i].value, 0.0);
@@ -158,16 +159,16 @@ export void test_arena_carve_makes_separate_arenas(void) {
     test::check_condition(second.memory >= first.memory + 1000);
     test::check_condition(after >= second.memory + 2000);
     test::check_condition(parent.used >= 3010);
-    u8 *a = arena::push_array(&first, u8, 900);
-    u8 *b = arena::push_array(&second, u8, 1900);
-    __builtin_memset(a, 1, 900);
-    __builtin_memset(b, 2, 1900);
+    u8 a[:] = arena::push_slice(&first, u8, 900);
+    u8 b[:] = arena::push_slice(&second, u8, 1900);
+    __builtin_memset(&a[0], 1, 900);
+    __builtin_memset(&b[0], 2, 1900);
     after[9] = 3;
     arena::reset(&first); // a reset gives back its own memory only
     test::check_equal(b[1899], 2);
     test::check_equal(after[9], 3);
-    u8 *again = arena::push_array(&first, u8, 900);
-    test::check_equal(again, a);
+    u8 again[:] = arena::push_slice(&first, u8, 900);
+    test::check_equal(&again[0], &a[0]);
     test::check_equal(again[0], 0); // zeroed again
 }
 
@@ -196,4 +197,39 @@ export void test_arena_push_slice_is_a_zeroed_slice_of_the_arena(void) {
     test::check_condition(a.used > before);
     arena::scope_end(scope);
     test::check_equal(a.used, before); // the slice's memory is given back with the scope
+}
+
+export void test_arena_push_slice_with_a_size_for_each_dimension(void) {
+    static Memory memory;
+    __builtin_memset(memory.bytes, 0xAA, sizeof memory.bytes);
+    arena::Arena a = arena::make(memory.bytes, sizeof memory.bytes);
+    f32 vector[:] = arena::push_slice(&a, f32, 5);
+    f32 matrix[:][:] = arena::push_slice(&a, f32, 3, 4);
+    f32 rows[:][2] = arena::push_slice(&a, f32[2], 3);
+    f32 cube[:][:][:] = arena::push_slice(&a, f32, 2, 3, 4);
+    test::check_equal(countof(vector), 5);
+    test::check_equal(countof(matrix), 3);
+    test::check_equal(countof(matrix[0]), 4);
+    test::check_equal(countof(rows), 3);
+    test::check_equal(countof(rows[0]), 2);
+    test::check_equal(countof(cube), 2);
+    test::check_equal(countof(cube[1]), 3);
+    test::check_equal(countof(cube[1][2]), 4);
+    for (usize i = 0; i < countof(matrix); i++) {
+        for (usize j = 0; j < countof(matrix[i]); j++) {
+            test::check_equal(matrix[i][j], 0.0f); // zeroed, though the arena's memory was not
+            matrix[i][j] = (f32)(i * 10 + j);
+        }
+    }
+    test::check_equal(matrix[2][3], 23.0f);
+    rows[2][1] = 7;
+    cube[1][2][3] = 9;
+    test::check_equal(rows[2][1], 7.0f);
+    test::check_equal(cube[1][2][3], 9.0f);
+    test::check_equal(cube[0][0][0], 0.0f); // one contiguous block, row-major: no write reached its neighbors
+    // The type of the result is slice_of(T, countof(dims)), computed by an ordinary function over types.
+    constexpr bool types_match = arena::slice_of(f32, 2) == typeof(matrix) &&arena::slice_of(f32[2], 1) ==
+                                 typeof(rows) &&arena::slice_of(f32, 3) == typeof(cube) &&arena::slice_of(f32, 0) ==
+                                 f32;
+    test::check_condition(types_match);
 }
