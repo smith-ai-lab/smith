@@ -803,6 +803,29 @@ expect "editor: smith-effects reports a raw call in a .smith file, as written, a
     "diag fx.smith:11:5: \`c::puts\` touches the world: take a \`SmithConsole *\` from main's SmithIo and print and read through it (smith_console_print, smith_console_read_line)" \
     "$(printf '%s\n' "$log" | grep '^diag ' | sed 's/ (fix available)$//')"
 
+# A payload enum (issue #198): clangd's token buffer must account for every token the lowering writes for it, or it spins
+# forever building the buffer (#205). The file is read, and an error of the dot rule is reported where it was written.
+mkdir -p editor-enum
+cat >editor-enum/shapes.smith <<'SMITH'
+module shapes;
+
+typedef struct {
+    f32 radius;
+} Circle;
+
+typedef enum {
+    Circle circle;
+    empty;
+} Shape;
+
+Shape none(void) {
+    return .nothing;
+}
+SMITH
+log=$(client_in "$(cd editor-enum && pwd -P)" open shapes.smith)
+expect_line "editor: a file with a payload enum is read, and the dot rule's error is at the written place" "$log" \
+    "diag shapes.smith:13:12: \`Shape\` has no variant \`nothing\`"
+
 fi
 echo
 echo "$total language server checks, $failures failed"

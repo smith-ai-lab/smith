@@ -71,7 +71,8 @@ static size_t smith_lang_enum_build(SmithLang *lang, const SmithHost *host, cons
     size_t used = 0;
     bool payload = false;
     made[used++] = smith_lang_tuple_made(SmithTokenKind_Identifier, "struct", 6, token, token->space_before);
-    made[used] = *name;
+    made[used] = *name; // the source's own name token is the end of the declaration: this one stands for none
+    made[used].synthetic = true;
     made[used++].space_before = true;
     made[used++] = smith_lang_tuple_made(SmithTokenKind_Punctuator, "{", 1, token, true);
     made[used++] = smith_lang_tuple_made(SmithTokenKind_Identifier, "enum", 4, token, false);
@@ -100,15 +101,19 @@ static size_t smith_lang_enum_build(SmithLang *lang, const SmithHost *host, cons
         for (size_t at = 0; at < variants.count; at++) { // each variant that carries something
             size_t length = variants.ends[at] - variants.starts[at];
             if (length < 2 || used + length + 2 >= capacity) continue;
-            for (size_t i = variants.starts[at]; i < variants.ends[at]; i++)
-                made[used++] = span[i];
+            for (size_t i = variants.starts[at]; i < variants.ends[at]; i++) {
+                made[used] = span[i]; // moved after the tag's tokens: its place is out of order, so it is a copy
+                made[used].synthetic = true;
+                made[used++].copy = true;
+            }
             made[used - length].space_before = true;
             made[used++] = smith_lang_tuple_made(SmithTokenKind_Punctuator, ";", 1, token, false);
         }
         made[used++] = smith_lang_tuple_made(SmithTokenKind_Punctuator, "}", 1, token, true);
         made[used++] = smith_lang_tuple_made(SmithTokenKind_Punctuator, ";", 1, token, false);
     }
-    made[used++] = span[close];
+    made[used] = span[close]; // the attribute that follows is placed before it in the source
+    made[used++].synthetic = true;
     static const char *const attribute[] = {"__attribute__",   "(", "(", "annotate", "(",
                                             "\"smith::enum\"", ")", ")", ")"};
     for (size_t at = 0; at < sizeof attribute / sizeof attribute[0]; at++) { // the plugin knows the struct by it

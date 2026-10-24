@@ -323,6 +323,8 @@ static SmithToken smith_lang_synth(SmithTokenKind kind, const char *text, size_t
     made.text = text;
     made.length = (uint32_t)length;
     made.replay = like->replay;
+    made.synthetic = like->synthetic; // a rename of what the lowering wrote is still no token of the source
+    made.copy = like->copy;
     return made;
 }
 
