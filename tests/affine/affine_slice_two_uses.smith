@@ -1,0 +1,15 @@
+module affine_slice_two_uses;
+
+export [[smith::affine]] typedef struct { u64 bits; } Key;
+export typedef struct { Key key; u64 n; } Holder;
+export u64 draw(Key key) { return key.bits; }
+export void split(Key key, Key keys[3]) { (void)key; (void)keys; }
+export void split_all(Key key, Key keys[:]) { (void)key; (void)keys; }
+export u64 take(Key *key) { return key->bits; }
+
+u64 plain(Key key, Key keys[:]) {
+    split_all(key, keys);
+    u64 total = 0;
+    for (usize i = 0; i < countof(keys); i++) total += draw(keys[i]) + draw(keys[i]);
+    return total;
+}

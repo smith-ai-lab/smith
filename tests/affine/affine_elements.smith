@@ -1,0 +1,17 @@
+module affine_elements;
+
+export [[smith::affine]] typedef struct { u64 bits; } Key;
+export typedef struct { Key key; u64 n; } Holder;
+export u64 draw(Key key) { return key.bits; }
+export void split(Key key, Key keys[3]) { (void)key; (void)keys; }
+export void split_all(Key key, Key keys[:]) { (void)key; (void)keys; }
+export u64 take(Key *key) { return key->bits; }
+
+u64 elements(Key key) {
+    Key keys[3];
+    split(key, keys);
+    u64 a = draw(keys[0]);
+    u64 b = draw(keys[1]);
+    u64 c = draw(keys[0]);
+    return a + b + c;
+}

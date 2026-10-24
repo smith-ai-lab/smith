@@ -1,0 +1,3 @@
+status 1
+affine_loop_counter_changed.c:12:23: error: smith-affine: 'keys[...]': an element of an array of affine values is used through a constant index or the counter of a plain loop
+affine_loop_counter_changed.c:12:23: note: write the plain loop `for (usize i = 0; i < countof(keys); i++)` and use `keys[i]` once in its body, or reassign the value in the loop (`key = next[0];`)

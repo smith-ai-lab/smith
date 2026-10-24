@@ -1,0 +1,13 @@
+module affine_slice_bad_index;
+
+export [[smith::affine]] typedef struct { u64 bits; } Key;
+export typedef struct { Key key; u64 n; } Holder;
+export u64 draw(Key key) { return key.bits; }
+export void split(Key key, Key keys[3]) { (void)key; (void)keys; }
+export void split_all(Key key, Key keys[:]) { (void)key; (void)keys; }
+export u64 take(Key *key) { return key->bits; }
+
+u64 bad(Key key, Key keys[:], usize j) {
+    split_all(key, keys);
+    return draw(keys[j]);
+}
