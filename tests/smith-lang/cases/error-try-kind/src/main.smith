@@ -1,0 +1,24 @@
+module main;
+
+// A function returns the same kind as the call it `try`s: a result for a result, an option for an option (issue #211).
+static result(i32, i32) step(i32 n) {
+    return {.ok = n};
+}
+
+static option(i32) pick(i32 n) {
+    return {.some = n};
+}
+
+static result(i32, i32) wrong_option(void) {
+    i32 a = try pick(1);
+    return {.ok = a};
+}
+
+static option(i32) wrong_result(void) {
+    i32 a = try step(1);
+    return {.some = a};
+}
+
+i32 main() {
+    return wrong_option() == .ok && wrong_result() == .some ? 0 : 1;
+}

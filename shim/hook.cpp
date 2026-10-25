@@ -664,7 +664,8 @@ class SmithHook final : public TokenHook, public NameSource {
         host.maybe_slice = hasSlice(SM.getBufferData(MainFile)) || hasStr(SM.getBufferData(MainFile));
         host.maybe_shape = hasShapeCall(SM.getBufferData(MainFile));
         host.maybe_tuple = host.maybe_slice || hasTuple(SM.getBufferData(MainFile)) ||
-                           hasPayloadEnum(SM.getBufferData(MainFile)) || host.maybe_shape;
+                           hasPayloadEnum(SM.getBufferData(MainFile)) || host.maybe_shape ||
+                           hasTryWord(SM.getBufferData(MainFile));
         host.maybe_field = hasFieldsUse(SM.getBufferData(MainFile));
         host.import_lines = countImportLines(SM.getBufferData(MainFile));
         host.type_values = &SmithHook::typeValues;
@@ -2679,6 +2680,17 @@ class SmithHook final : public TokenHook, public NameSource {
                 if (depth == 1 && text[close] == ';') return true;
                 if (depth == 0) break;
             }
+        }
+        return false;
+    }
+
+    // Whether the text has `errdefer` or `try` as a word (runtime/lang_try.c needs every token of a body).
+    static bool hasTryWord(StringRef text) {
+        if (text.contains("errdefer")) return true;
+        for (size_t at = text.find("try"); at != StringRef::npos; at = text.find("try", at + 3)) {
+            bool before = at == 0 || !isAsciiIdentifierContinue(text[at - 1]);
+            bool after = at + 3 < text.size() && !isAsciiIdentifierContinue(text[at + 3]);
+            if (before && after) return true;
         }
         return false;
     }

@@ -1531,6 +1531,7 @@ static bool smith_lang_eshape_rewrite(SmithLang *lang, const SmithHost *host, co
                          written, written);
     }
     made[0] = smith_lang_tuple_made(SmithTokenKind_Identifier, "struct", 6, token, token->space_before);
+    made[0].line_start = token->line_start; // a statement that begins with it is at the start of its line
     made[1] = smith_lang_tuple_made(SmithTokenKind_Identifier, smith_lang_tuple_keep(tag, strlen(tag)), strlen(tag),
                                     token, true);
     return smith_lang_tuple_replace(lang, call.close, made, 2);

@@ -165,6 +165,10 @@ export void test_a_defer_name_prints_the_same_as_c(io::Io *io) {
     behave(io, "defer_name");
 }
 
+export void test_try_and_errdefer_names_print_the_same_as_c(io::Io *io) {
+    behave(io, "try_name");
+}
+
 export void test_the_languages_words_as_names_print_the_same_as_c(io::Io *io) {
     behave(io, "names");
 }

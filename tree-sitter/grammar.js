@@ -73,7 +73,14 @@ module.exports = grammar(C, {
 
     // return {a, b}; in a function that returns a tuple
     return_statement: ($, original) =>
-      choice(original, seq('return', $.initializer_list, ';'), seq('return', $.enum_specifier, ';')),
+      choice(original, seq('return', $.initializer_list, ';'), seq('return', $.enum_specifier, ';'),
+        seq('return', $.try_expression, ';')),
+
+    // int x = try f(); and x = try f();
+    init_declarator: ($, original) =>
+      choice(original, seq(field('declarator', $._declarator), '=', field('value', $.try_expression))),
+    assignment_expression: ($, original) => choice(original, prec.right(C.PREC.ASSIGNMENT, seq(
+      field('left', $._assignment_left_expression), field('operator', '='), field('right', $.try_expression)))),
 
     // Apple blocks: ^(int x) { ... }
     block_expression: $ => prec(1, seq('^', optional(field('type', $.type_specifier)), optional($.parameter_list), $.compound_statement)),
@@ -126,6 +133,10 @@ module.exports = grammar(C, {
       field('name', choice($.identifier, alias(choice(...sized), $.identifier))),
       optional(seq('=', field('value', $.expression))),
     ),
+
+    // `try f()` in a module: the failure of a result or an option returns from the function (issue #211). A keyword
+    // where an expression begins; `int try = 1;` in a file with no module line is still a declaration.
+    try_expression: $ => prec.dynamic(2, prec.right(20, seq(alias(token(prec(1, /try/)), 'try'), $.call_expression))),
 
     // `.empty`: a variant of an enum with payloads, in the type the context gives (`Shape s = .empty;`, `case .empty:`)
     variant_expression: $ => prec.dynamic(-1, seq('.', field('name', $.identifier))),
@@ -193,7 +204,10 @@ module.exports = grammar(C, {
     // defer c::close(fd); and defer { ... } in a module (C2y's defer TS). The keyword is a token of its own at the start
     // of a statement only: `int defer = 1;` in a file with no module line is still a declaration.
     defer_statement: $ => seq(alias(token(prec(1, /defer/)), 'defer'), $.statement),
-    _non_case_statement: ($, original) => choice(original, prec.dynamic(2, $.defer_statement)),
+    _non_case_statement: ($, original) => choice(original, prec.dynamic(2, $.defer_statement), prec.dynamic(2, $.errdefer_statement)),
+
+    // errdefer mem::free(b); runs like defer, but only when the function fails (issue #211)
+    errdefer_statement: $ => seq(alias(token(prec(1, /errdefer/)), 'errdefer'), $.statement),
 
     // auto args = {a, b}; makes a list (C23 leaves `auto x = {...}` invalid, so a declaration cannot read it)
     list_declaration: $ => seq('auto', field('name', $.identifier), '=', field('value', $.initializer_list), ';'),
@@ -210,7 +224,8 @@ module.exports = grammar(C, {
 
     // args = {args..., x}; assigns a list (auto args = {...} is a declaration, which C already reads)
     list_assignment: $ => seq(field('left', $.identifier), '=', field('right', $.initializer_list)),
-    expression_statement: ($, original) => choice(original, prec.dynamic(2, seq($.list_assignment, ';'))),
+    expression_statement: ($, original) => choice(original, prec.dynamic(2, seq($.list_assignment, ';')),
+      prec.dynamic(2, seq($.try_expression, ';'))),
     // if constexpr (T == const c::V2 *): a condition that compares a type parameter with a type that is no expression.
     constexpr_condition: $ => seq(
       '(',

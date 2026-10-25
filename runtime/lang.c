@@ -386,7 +386,35 @@ typedef struct {
     SmithLangText text; // the raw lowering's `#if` text of the initializer
 } SmithLangConstant;
 
+// `try` and `errdefer` (runtime/lang_try.c): the flags of the open `errdefer`s and the statement being rewritten.
+typedef struct {
+    bool on;            // a `try` or `errdefer` was seen
+    bool after_return;  // the token before is a `return` this lowering rewrote
+    bool just_returned; // the same, for the token being lowered
+    uint32_t next_id;
+    uint32_t flag_count;
+    struct {
+        uint32_t id;
+        uint32_t depth; // the brace depth of the block the `errdefer` is in
+    } flags[16];
+    bool ret_open; // a `return` is being read, to its `;`
+    int32_t ret_parens;
+    uint32_t ret_start; // the brace depth it began at
+    uint32_t ret_id;
+    int ret_kind;
+    bool try_open; // a `try` is being read, to its `;`
+    int32_t try_parens;
+    uint32_t try_start;
+    uint32_t try_id;
+    uint32_t try_location;
+    int try_kind;
+    bool try_wrap;  // after `return`: the value is the function's own result
+    char type[256]; // the function's return type
+    char ret_type[256];
+} SmithLangTry;
+
 struct SmithLang {
+    SmithLangTry tr;
     bool broken;
     bool advance_skip; // the token just lowered took its matching bracket with it: no call counts it
                        // (runtime/lang_tuple.c)
@@ -848,6 +876,9 @@ static const char *smith_lang_str(SmithLangText text) {
 
 // Tuples: `struct { i32, f32 }`, `t[0]`, `countof(t)`.
 #include "lang_tuple.c"
+
+// `try` and `errdefer` for `result` and `option`.
+#include "lang_try.c"
 
 // Run-time arrays: `T xs[:]`, `xs[i]`, `xs[a:b]`.
 #include "lang_slice.c"

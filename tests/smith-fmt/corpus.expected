@@ -1347,6 +1347,83 @@ i32 main(void) {
     }
     return 0;
 }
+==> errdefer-run/src/main.smith <==
+module main;
+import <stdio.h>;
+
+// `errdefer` runs like `defer`, but only when the function returns its failing variant: from a `try`, from a
+// written `return {.error = e};` and from `return r;` where `r` holds an error (issue #211).
+static result(i32, i32) step(i32 n) {
+    if (n < 0) return {.error = n};
+    return {.ok = n};
+}
+
+static option(i32) pick(i32 n) {
+    if (n < 0) return .none;
+    return {.some = n};
+}
+
+static result(i32, i32) chain(i32 a, i32 b) {
+    defer c::puts("  defer");
+    errdefer c::puts("  errdefer 1");
+    i32 x = try step(a);
+    errdefer c::printf("  errdefer 2 (x=%d)\n", x);
+    i32 y = try step(b);
+    return {.ok = x + y};
+}
+
+static result(i32, i32) by_hand(i32 n) {
+    errdefer c::puts("  hand errdefer");
+    if (n == 0) return {.error = 100};
+    result(i32, i32) r = step(n);
+    return r;
+}
+
+static option(i32) options(i32 a) {
+    errdefer c::puts("  option errdefer");
+    i32 v = try pick(a);
+    return {.some = v * 2};
+}
+
+static result(i32, i32) block_scope(i32 a) {
+    {
+        errdefer c::puts("  inner block errdefer");
+        i32 v = try step(a);
+        c::printf("  inner ok %d\n", v);
+    }
+    errdefer c::puts("  after the block");
+    return {.ok = 1};
+}
+
+static void show(const char *what, result(i32, i32) r) {
+    c::puts(what);
+    switch (r) {
+    case .ok:
+        c::printf("ok %d\n", r.ok);
+        break;
+    case .error:
+        c::printf("error %d\n", r.error);
+        break;
+    }
+}
+
+i32 main() {
+    show("chain ok", chain(1, 2));
+    show("chain, first fails", chain(-1, 2));
+    show("chain, second fails", chain(1, -2));
+    show("by hand, written error", by_hand(0));
+    show("by hand, ok", by_hand(5));
+    show("by hand, return r", by_hand(-5));
+    c::puts("option ok");
+    option(i32) good = options(3);
+    c::printf("%d\n", good == .some ? good.some : -1);
+    c::puts("option fails");
+    option(i32) bad = options(-3);
+    c::printf("%d\n", bad == .none);
+    show("block ok", block_scope(2));
+    show("block fails", block_scope(-2));
+    return 0;
+}
 ==> error-array-param-index/src/main.smith <==
 module main;
 
@@ -1805,6 +1882,19 @@ static opt(usize, usize) two(void);
 void use(void) {
     opt(usize) a = .none;
     (void)a;
+}
+==> error-errdefer-plain/src/main.smith <==
+module main;
+import <stdio.h>;
+
+// `errdefer` needs a function that returns a result or an option: nothing else marks failure (issue #211).
+static i32 plain(void) {
+    errdefer c::puts("never");
+    return 0;
+}
+
+i32 main() {
+    return plain();
 }
 ==> error-export-no-module/src/main.smith <==
 export int helper() {
@@ -2572,6 +2662,84 @@ import target;
 export constexpr i32 wide = target::f32_mantissa_bits;
 i32 oops = target::nothing;
 i32 module_name = target;
+==> error-try-error-type/src/main.smith <==
+module main;
+
+// `try` returns the error as it is, so the function's error type is the call's; a change is written out (issue #211).
+static result(i32, i32) step(i32 n) {
+    return {.ok = n};
+}
+
+static result(i32, i64) other_error(void) {
+    i32 a = try step(1);
+    return {.ok = a};
+}
+
+i32 main() {
+    return other_error() == .ok ? 0 : 1;
+}
+==> error-try-expression/src/main.smith <==
+module main;
+
+// `try` inside a larger expression is an error: the order of evaluation would be unclear when it fails (issue #211).
+static result(i32, i32) step(i32 n) {
+    return {.ok = n};
+}
+
+static i32 twice(i32 n) {
+    return n * 2;
+}
+
+static result(i32, i32) call(void) {
+    i32 a = twice(try step(1));
+    i32 b = 1 + try step(2);
+    return {.ok = a + b};
+}
+
+i32 main() {
+    return call() == .ok ? 0 : 1;
+}
+==> error-try-kind/src/main.smith <==
+module main;
+
+// A function returns the same kind as the call it `try`s: a result for a result, an option for an option (issue #211).
+static result(i32, i32) step(i32 n) {
+    return {.ok = n};
+}
+
+static option(i32) pick(i32 n) {
+    return {.some = n};
+}
+
+static result(i32, i32) wrong_option(void) {
+    i32 a = try pick(1);
+    return {.ok = a};
+}
+
+static option(i32) wrong_result(void) {
+    i32 a = try step(1);
+    return {.some = a};
+}
+
+i32 main() {
+    return wrong_option() == .ok && wrong_result() == .some ? 0 : 1;
+}
+==> error-try-plain-function/src/main.smith <==
+module main;
+
+// `try` needs a function that returns a result or an option (issue #211).
+static result(i32, i32) step(i32 n) {
+    return {.ok = n};
+}
+
+static i32 plain(void) {
+    i32 a = try step(1);
+    return a;
+}
+
+i32 main() {
+    return plain();
+}
 ==> error-tuple-empty/src/main.smith <==
 struct {
 } nothing;
@@ -8529,6 +8697,71 @@ int main() {
     bad += check("static_analyzer", target::static_analyzer, c_static_analyzer());
     bad += check("constexpr copies", arch_copy + sanitized, c_arch() + c_address_sanitizer());
     return bad;
+}
+==> try-run/src/main.smith <==
+module main;
+import <stdio.h>;
+
+// `try` returns the failure of a result or an option at once and gives the success value otherwise (issue #211). It
+// is a declaration's initializer, an assignment, a statement of its own, or after `return`; the `defer`s already set
+// run on the way out.
+static result(i32, i32) step(i32 n) {
+    if (n < 0) return {.error = n};
+    return {.ok = n};
+}
+
+static option(i32) pick(i32 n) {
+    if (n < 0) return .none;
+    return {.some = n};
+}
+
+static result(i32, i32) declared(i32 a, i32 b) {
+    defer c::puts("  declared leaves");
+    i32 x = try step(a);
+    defer c::puts("  second defer");
+    i32 y = try step(b);
+    return {.ok = x + y};
+}
+
+static result(i32, i32) assigned(i32 a) {
+    i32 x = 0;
+    x = try step(a);
+    try step(a - 1);
+    return {.ok = x};
+}
+
+static result(i32, i32) returned(i32 a) {
+    return try step(a);
+}
+
+static option(i32) options(i32 a) {
+    i32 v = try pick(a);
+    return {.some = v * 2};
+}
+
+static void show(result(i32, i32) r) {
+    switch (r) {
+    case .ok:
+        c::printf("ok %d\n", r.ok);
+        break;
+    case .error:
+        c::printf("error %d\n", r.error);
+        break;
+    }
+}
+
+i32 main() {
+    show(declared(1, 2));
+    show(declared(-1, 2));
+    show(declared(1, -2));
+    show(assigned(5));
+    show(assigned(0));
+    show(returned(4));
+    show(returned(-4));
+    option(i32) good = options(3);
+    option(i32) bad = options(-3);
+    c::printf("%d %d\n", good == .some ? good.some : -1, bad == .none);
+    return 0;
 }
 ==> tuple-basic/src/main.smith <==
 // Tuples: a struct whose fields have no names. Its identity is its shape.

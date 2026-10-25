@@ -11,7 +11,8 @@ return otherwise;
 static double main_or_zero(main_MaybeF m) {
 if (m == .some) return m.some;
 return 0;
-}struct smith_enum_maybe_i32 {enum smith_enum_maybe_i32_tag {smith_enum_maybe_i32_tag_some, smith_enum_maybe_i32_tag_none } tag; union { __INT32_TYPE__ some; }; } __attribute__((annotate("smith::enum")));static struct smith_enum_maybe_i32 main_twice(__INT32_TYPE__ x) {
+}struct smith_enum_maybe_i32 {enum smith_enum_maybe_i32_tag {smith_enum_maybe_i32_tag_some, smith_enum_maybe_i32_tag_none } tag; union { __INT32_TYPE__ some; }; } __attribute__((annotate("smith::enum")));
+static struct smith_enum_maybe_i32 main_twice(__INT32_TYPE__ x) {
 return {.some = x * 2};
 }
 __INT32_TYPE__ main(void) {

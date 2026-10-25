@@ -388,6 +388,14 @@ export void test_defer_run(io::Io *io) {
     corpus_case(io, "defer-run");
 }
 
+export void test_try_run(io::Io *io) {
+    corpus_case(io, "try-run");
+}
+
+export void test_errdefer_run(io::Io *io) {
+    corpus_case(io, "errdefer-run");
+}
+
 export void test_enum_builtin_option_result(io::Io *io) {
     corpus_case(io, "enum-builtin-option-result");
 }
@@ -498,6 +506,26 @@ export void test_error_countof_pointer(io::Io *io) {
 
 export void test_error_defer_name(io::Io *io) {
     corpus_case(io, "error-defer-name");
+}
+
+export void test_error_try_expression(io::Io *io) {
+    corpus_case(io, "error-try-expression");
+}
+
+export void test_error_try_kind(io::Io *io) {
+    corpus_case(io, "error-try-kind");
+}
+
+export void test_error_try_error_type(io::Io *io) {
+    corpus_case(io, "error-try-error-type");
+}
+
+export void test_error_try_plain_function(io::Io *io) {
+    corpus_case(io, "error-try-plain-function");
+}
+
+export void test_error_errdefer_plain(io::Io *io) {
+    corpus_case(io, "error-errdefer-plain");
 }
 
 export void test_error_enum_generic_dot(io::Io *io) {

@@ -1,0 +1,31 @@
+  defer
+chain ok
+ok 3
+  errdefer 1
+  defer
+chain, first fails
+error -1
+  errdefer 2 (x=1)
+  errdefer 1
+  defer
+chain, second fails
+error -2
+  hand errdefer
+by hand, written error
+error 100
+by hand, ok
+ok 5
+  hand errdefer
+by hand, return r
+error -5
+option ok
+6
+option fails
+  option errdefer
+1
+  inner ok 2
+block ok
+ok 1
+  inner block errdefer
+block fails
+error -2
