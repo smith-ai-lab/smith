@@ -1,0 +1,18 @@
+module geom::vec;
+
+export typedef struct {
+    f32 x;
+    f32 y;
+} Vec;
+
+export f32 dot(Vec a, Vec b) {
+    return a.x * b.x + a.y * b.y;
+}
+
+export typeof(a) larger(auto a, typeof(a) b) {
+    return a > b ? a : b;
+}
+
+[[smith::c_name("geom_vec_squared")]] export f32 length2(Vec a) {
+    return a.x * a.x;
+}

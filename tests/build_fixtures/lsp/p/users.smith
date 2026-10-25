@@ -1,0 +1,6 @@
+module users;
+import m;
+
+export i32 f(i32 xs[:]) {
+    return m::b(xs);
+}

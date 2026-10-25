@@ -1,0 +1,26 @@
+module genuse;
+import pick;
+
+export int f() {
+    i32 a = 3;
+    i32 b = 8;
+    i32 first = pick::larger(a, b);
+    f64 second = pick::larger(1.5, 2.5);
+    return first + (int)second;
+}
+
+static i32 inc(i32 x) {
+    return x + 1;
+}
+
+export int g() {
+    return pick::apply_twice(inc, 4);
+}
+
+export usize h() {
+    return pick::count_args(1, 2.5, 3);
+}
+
+export i32 k() {
+    return pick::gathered(5, 6);
+}

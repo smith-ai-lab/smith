@@ -1,0 +1,12 @@
+module geometry::dims;
+
+struct smith_array_restrict_u8_n { unsigned char * __restrict data; unsigned long count[1]; };
+struct smith_array_const_char_n { const char *data; unsigned long count[1]; };
+
+export f32 rows(f32 m[:][2], usize i) {
+    return m[i][0];
+}
+
+export usize tags(const struct smith_array_restrict_u8_n a, struct smith_array_const_char_n b) {
+    return a.count[0] + b.count[0];
+}

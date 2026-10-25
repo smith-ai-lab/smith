@@ -1,0 +1,144 @@
+// Tests of the tree-sitter grammar for .smith (issue #24, tree-sitter/; from tests/tree_sitter.sh), without the
+// tree-sitter CLI or Node: the committed parser tree-sitter/src/parser.c is compiled by smith, with the tree-sitter
+// runtime pinned by hash, into tests/tree_sitter.c, which
+//   - runs the corpus tests of tree-sitter/test/corpus (one per construct),
+//   - parses the .smith samples of tests/tree_sitter_cases, and the language corpus (tests/smith-lang/cases), with no
+//     ERROR or MISSING node (and the ones that are wrong on purpose with one),
+//   - parses every .c and .h file of smith (the C++ of shim/ and the generated parser excepted) the same way.
+// The runtime is fetched into the shared test cache, so that it is downloaded once; the tests do nothing when it is not
+// available (no network).
+module tree_sitter_test;
+
+import smith::format;
+import smith::io;
+import smith::test;
+import scratch;
+
+// The tree-sitter runtime, pinned by the hash of its archive (v0.27.1, which reads parsers of ABI 15, the one
+// tree-sitter/src/parser.c is generated with).
+constexpr char runtime_url[] = "https://github.com/tree-sitter/tree-sitter/archive/refs/tags/v0.27.1.tar.gz";
+constexpr char runtime_hash[] = "sha256:982cd3d4d9eb7be18c243240a622423fd2e4ecb4bec2cd98832c2f3fa1f0f333";
+
+// The driver, the runtime and the parser, compiled by smith into ../driver. False when the runtime is not available.
+static bool make_driver(io::Io *io, scratch::Project *p) {
+    *p = scratch::project(io, "ts", nullptr);
+    scratch::Run fetched = scratch::sh(p, format::push(&io->arena, "smith fetch ", runtime_url, " 2>&1").data);
+    if (!scratch::contains(fetched.out, runtime_hash)) {
+        return false;
+    }
+    const char *runtime =
+        format::push(
+            &io->arena,
+            scratch::capture(
+                p,
+                format::push(&io->arena, "smith fetch ", runtime_url, " 2>&1 | sed -n 's/^smith: .* is in //p'").data),
+            "/lib")
+            .data;
+    const char *driver = format::push(&io->arena, "smith cc -std=gnu23 -O1 -g -Wall -Wextra -Wpedantic -Werror -I ",
+                                      runtime, "/include -c \"$SMITH_REPO/tests/tree_sitter.c\" -o driver.o")
+                             .data;
+    const char *library =
+        format::push(&io->arena, "smith cc -std=gnu11 -O2 -w -D_POSIX_C_SOURCE=200112L -D_DEFAULT_SOURCE -I ", runtime,
+                     "/include -I ", runtime, "/src -c ", runtime, "/src/lib.c -o runtime.o")
+            .data;
+    scratch::Run run = scratch::sh(p, driver);
+    scratch::expect_status("the driver compiles under -Werror", 0, &run);
+    run = scratch::sh(p, library);
+    scratch::expect_status("the tree-sitter runtime compiles", 0, &run);
+    run = scratch::sh(p, "smith cc -std=gnu11 -O1 -w -I \"$SMITH_REPO/tree-sitter/src\" -c "
+                         "\"$SMITH_REPO/tree-sitter/src/parser.c\" -o parser.o");
+    scratch::expect_status("the committed parser.c compiles", 0, &run);
+    run = scratch::sh(p, "smith cc driver.o runtime.o parser.o -o driver");
+    scratch::expect_status("the driver links", 0, &run);
+    return run.status == 0;
+}
+
+// The output of the driver is `ok ...` lines, and nothing else when every file parses as it should.
+static void expect_only_ok(const char *name, const scratch::Project *p, const char *command) {
+    scratch::expect_text(name, "", scratch::capture(p, command));
+}
+
+// The corpus: one test per construct, and the count of the tests in the files, so that none is skipped.
+static void check_corpus(const scratch::Project *p) {
+    scratch::expect_text(
+        "corpus: every test parses to its tree",
+        scratch::capture(p,
+                         "echo \"$(cat \"$SMITH_REPO\"/tree-sitter/test/corpus/*.txt | grep -c '^=\\{3,\\}$') / 2\" | "
+                         "awk -F' / ' '{ print $1 / 2 \" corpus tests, 0 failed\" }'"),
+        scratch::capture(p, "./driver --corpus \"$SMITH_REPO\"/tree-sitter/test/corpus/*.txt | tail -1"));
+}
+
+// The samples of tests/tree_sitter_cases: each parses without an ERROR or MISSING node, but error-*.smith.
+static void check_samples(const scratch::Project *p) {
+    expect_only_ok(
+        "samples: the .smith files parse with no ERROR or MISSING node", p,
+        "./driver $(ls \"$SMITH_REPO\"/tests/tree_sitter_cases/*.smith | grep -v '/error-') | grep -v '^ok'");
+    scratch::expect_text("samples: the files are found", "yes",
+                         scratch::capture(p, "[ $(ls \"$SMITH_REPO\"/tests/tree_sitter_cases/*.smith | grep -vc "
+                                             "'/error-') -gt 0 ] && echo yes"));
+}
+
+static void check_wrong_on_purpose(const scratch::Project *p) {
+    expect_only_ok("samples: text that is wrong on purpose has an ERROR or MISSING node", p,
+                   "./driver --expect-error \"$SMITH_REPO\"/tests/tree_sitter_cases/error-*.smith | grep -v '^ok'");
+}
+
+// The language corpus. Its error cases are wrong in what the modules mean, not in their text, so they parse (`module
+// ;` is C: an empty declaration of a type called module); only the import with no semicolon, and a keyword where a
+// field's name goes after `short` (error-keyword-module), are expected to fail. The grammar is tree-sitter-c's, which
+// has neither C23's `auto` as a type nor C2y's `_Countof`: the three cases that use them are left out until the grammar
+// learns them.
+constexpr char lang_files[] =
+    "lang=${SMITH_LANG_CASES:-$SMITH_REPO/tests/smith-lang/cases}; "
+    "bad='/error-import-eof/src/main\\.smith$|/error-tuple-field/src/main\\.smith$|"
+    "/error-keyword-module/src/shapes\\.smith$|/generic-call-unclosed/src/main\\.smith$|"
+    "/generic-call-unclosed-statement/src/main\\.smith$|/generic-list-semicolon-error/src/bad\\.smith$|"
+    "/generic-list-syntax-error/src/bad\\.smith$'; "
+    "gap='/session-two-modules/src/main\\.smith$|/session-missing-module/src/main\\.smith$|"
+    "/std-default-c2y/src/main\\.smith$'; "
+    "find \"$lang\" -name '*.smith' | sort >lang.txt; grep -E \"$bad\" lang.txt >lang-bad.txt; "
+    "grep -v -E \"$bad|$gap\" lang.txt >lang-good.txt; ";
+
+static void check_language_corpus(const scratch::Project *p) {
+    scratch::Run listed = scratch::sh(p, lang_files);
+    scratch::expect_status("smith-lang: the files are listed", 0, &listed);
+    expect_only_ok("smith-lang: the .smith files of the language corpus parse with no ERROR or MISSING node", p,
+                   "xargs ./driver <lang-good.txt | grep -v '^ok'");
+    expect_only_ok("smith-lang: the case wrong in its text has an ERROR or MISSING node", p,
+                   "xargs ./driver --expect-error <lang-bad.txt | grep -v '^ok'");
+}
+
+// The corpus, the samples and the language corpus, with one driver.
+export void test_tree_sitter_the_grammar_parses_its_corpus_and_samples(io::Io *io) {
+    scratch::Project p;
+    if (!make_driver(io, &p)) {
+        return;
+    }
+    check_corpus(&p);
+    check_samples(&p);
+    check_wrong_on_purpose(&p);
+    check_language_corpus(&p);
+}
+
+// smith's own C: plain C stays C (the expected outputs of the language corpus are generated and not always C), with
+// the C23 and clang spellings smith uses.
+constexpr char own_c_files[] =
+    "w=$PWD; cd \"$SMITH_REPO\" && find . \\( -path ./build -o -path ./shim -o -path ./tree-sitter -o -path ./.git -o "
+    "-path ./.smith -o -path ./.cache -o -path ./.claude -o -path ./tests/build_fixtures -o -path "
+    "'./tests/smith-lang/cases/*/expect' \\) -prune -o \\( -name '*.c' -o -name '*.h' \\) -print | sort | "
+    "while read -r file; do head -n 2 \"$file\" | grep -q '^// Generated by smith' || echo \"$file\"; done "
+    ">\"$w/c-files.txt\"; cd \"$w\"";
+
+export void test_tree_sitter_smiths_own_c_parses_without_error_nodes(io::Io *io) {
+    scratch::Project p;
+    if (!make_driver(io, &p)) {
+        return;
+    }
+    scratch::Run listed = scratch::sh(&p, own_c_files);
+    scratch::expect_status("smith's own C: the files are listed", 0, &listed);
+    scratch::expect_text("smith's own C: there are files", "yes",
+                         scratch::capture(&p, "[ $(wc -l <c-files.txt) -gt 0 ] && echo yes"));
+    // The paths are relative to the repository, where the driver is run.
+    expect_only_ok("smith's own C: the .c and .h files parse with no ERROR or MISSING node", &p,
+                   "(cd \"$SMITH_REPO\" && xargs \"$OLDPWD/driver\" <\"$OLDPWD/c-files.txt\") | grep -v '^ok'");
+}

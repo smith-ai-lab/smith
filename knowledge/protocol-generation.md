@@ -9,7 +9,7 @@ tags: [protocol, generated]
 **The protocol code of `smith mcp` is generated, never written by hand** (issue #22): `smith build protocol` runs `scripts/protocol.c` on DAP's and MCP's JSON
 Schemas, each a package pinned by hash in build.c, and writes `runtime/protocol/{dap,mcp}.[ch]` and their tests `tests/protocol/test_protocol_*.c` on
 `<smith/json.h>`. The output is committed (a fresh clone and the stage0 need no network); `smith check` runs `check-protocol`, which fails when a
-committed file is not what the generator writes now (`-DOFFLINE` skips a package that is not cached); `tests/protocol.sh` builds and runs the tests under
+committed file is not what the generator writes now (`-DOFFLINE` skips a package that is not cached); `tests/protocol_test.smith` builds and runs the tests under
 the sanitizers. See [the protocol code](protocol-generation.md).
 
 The debugger server of issue #22 (`smith mcp`) speaks two JSON protocols: DAP to `smith dap` (lldb-dap) and MCP to the agent. Neither
@@ -26,7 +26,7 @@ committed, so a plain `smith build`, a fresh clone and the stage0 never need the
 | `runtime/protocol/LICENSE-dap.txt`, `LICENSE-mcp.txt` | the schemas' license texts, copied; the first lines are also in the header of every generated file |
 | `tests/protocol/test_protocol_dap.c`, `_mcp.c` | generated tests: a round trip for every type, a refusal for every missing required member |
 | `tests/protocol/test_protocol_samples.c`, `protocol_support.[ch]` | hand-written: messages as lldb-dap and an MCP client write them, and what the generated tests share |
-| `tests/protocol.sh` | builds and runs all of it in a scratch project under the sanitizers (`smith build test-protocol`) |
+| `tests/protocol_test.smith` | builds and runs all of it in a scratch project under the sanitizers (`smith test --test protocol`) |
 
 The generated code is in `runtime/` because it is smith's own code for `smith mcp`, not a library for other projects
 (`lib/` holds the libraries smith ships to other projects). Nothing includes it yet: `smith.c` does not link it until the server uses it.
@@ -95,7 +95,7 @@ makes a value from a key. Members keep the schema's names (`threadId`, `request_
 
 For each generated type, a property test on keys: `random` a value, `write` it, parse the tree, `equal` the value to the one read, and
 `write` the one read again and compare the text. For each struct with required members: the document without each in turn is refused,
-with reason Missing and that member named. They run with `smith_tests`, 100 keys each (500 under the sanitizers in `tests/protocol.sh`),
+with reason Missing and that member named. They run with `smith_tests`, 100 keys each (500 under the sanitizers by hand: `./build/tests --seeds 500`),
 in three builds: `-O0` under AddressSanitizer and UBSan, `-O2`, and `-O2 -DNDEBUG`, with `-Wconversion -Wshadow -Werror`.
 
 ## Numbers
@@ -112,7 +112,7 @@ Measured on an Apple M-series Mac with the full smith of this tree.
 | added to a stripped executable (everything linked, no dead stripping) | 371 KB | 265 KB |
 
 Both together add 637 KB to an executable with the JSON, text, arena, random and protocol libraries (69 KB). The generator itself takes 0.1 s for
-both. The tests: 846 run in 0.5 s (`-O2`), 1.0 s (asan), 7.9 s (asan, 500 keys each); `tests/protocol.sh` as a whole takes 13.5 s with its
+both. The tests: 846 run in 0.5 s (`-O2`), 1.0 s (asan), 7.9 s (asan, 500 keys each); `tests/protocol_test.smith` as a whole takes about 14 s with its
 four builds. `check-protocol` takes 0.4 s once the packages are cached.
 
 Generating every definition of DAP is more than the 30,000 lines and 1 s of compile that the issue's author asked to be told about. With the

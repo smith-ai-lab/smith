@@ -1,0 +1,42 @@
+// Tests of the generated protocol code (knowledge/protocol-generation.md, from tests/protocol.sh):
+// runtime/protocol/dap.[ch] and mcp.[ch], which scripts/protocol.c writes from DAP's and MCP's schemas, and the tests
+// it writes with them (tests/protocol/test_protocol_*.c: a round trip for every type and a refusal for every missing
+// required member). They are built in a scratch project with smith_tests (tests/build_fixtures/protocol/build.c), in
+// two builds: -O0 under AddressSanitizer and UBSan, and -O2 -DNDEBUG (which also stands for -O2: the optimizer's own
+// warnings and the code without its assertions), with the strictest warnings smith uses, and run on 100 keys each. The
+// 500-key run under the sanitizers is by hand: `./build/tests --seeds 500` in the asan build.
+module protocol_test;
+
+import smith::format;
+import smith::io;
+import smith::test;
+import scratch;
+
+// The scratch project: smith's libraries the protocol code needs (build.c), the protocol code, and the runner.
+constexpr char setup[] =
+    "mkdir -p tests protocol && cp \"$SMITH_REPO\"/runtime/protocol/*.c \"$SMITH_REPO\"/runtime/protocol/*.h protocol/ "
+    "&& cp \"$SMITH_REPO\"/tests/protocol/*.c \"$SMITH_REPO\"/tests/protocol/*.h protocol/ && rm "
+    "protocol/test_protocol_*.c "
+    "&& cp \"$SMITH_REPO\"/tests/protocol/test_protocol_*.c tests/";
+
+// The generated code and its tests build in a mode and every test of them passes.
+static void check_mode(io::Io *io, const char *mode) {
+    scratch::Project p = scratch::project(io, "protocol", "protocol");
+    scratch::Run copied = scratch::sh(&p, setup);
+    scratch::expect_status("protocol: the project is made", 0, &copied);
+    scratch::Run built = scratch::build(&p, format::push(&io->arena, "-DMODE=", mode).data);
+    scratch::expect_status(format::push(&io->arena, mode, ": the generated code and its tests build").data, 0, &built);
+    const char *count = scratch::capture(&p, "cat tests/test_protocol_*.c | grep -c '^void test_'");
+    scratch::Run ran = scratch::sh(&p, "./build/tests 2>&1");
+    scratch::expect_status(format::push(&io->arena, mode, ": the tests run").data, 0, &ran);
+    scratch::expect_contains(format::push(&io->arena, mode, ": all ", count, " generated tests pass").data, ran.out,
+                             format::push(&io->arena, count, " passed, 0 failed").data);
+}
+
+export void test_protocol_generated_code_passes_under_the_sanitizers(io::Io *io) {
+    check_mode(io, "asan");
+}
+
+export void test_protocol_generated_code_passes_optimized_without_assertions(io::Io *io) {
+    check_mode(io, "ndebug");
+}

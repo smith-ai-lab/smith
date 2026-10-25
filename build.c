@@ -776,17 +776,13 @@ static const BuildTestScript build_test_scripts[] = {
     {"defer", "defer", nullptr, 0},
     {"effects", "effects", nullptr, 0},
     {"handlers", "handlers", nullptr, 0},
-    {"lsp-folders", "lsp", "folders", 1},
-    {"lsp-project", "lsp", "project", 1},
     {"mcp-fake-asan", "mcp", "fake-asan", 0},
     {"mcp-fake-fast", "mcp", "fake-fast", 0},
     {"mcp-fake-ndebug", "mcp", "fake-ndebug", 0},
     {"mcp-real", "mcp", "real", 1},
     {"neovim", "neovim", nullptr, 0},
-    {"protocol", "protocol", nullptr, 0},
     {"prove", "prove", nullptr, 1},
     {"prove-sound", "prove_sound", nullptr, 1},
-    {"tree_sitter", "tree_sitter", nullptr, 0},
 };
 // clang-format on
 

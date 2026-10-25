@@ -1,0 +1,14 @@
+module shapes;
+
+typedef struct {
+    f32 radius;
+} Circle;
+
+typedef enum {
+    Circle circle;
+    empty;
+} Shape;
+
+Shape none() {
+    return .nothing;
+}

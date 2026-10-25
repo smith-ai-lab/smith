@@ -1,0 +1,6 @@
+module qualified;
+import foo;
+
+i32 g() {
+    return foo::;
+}

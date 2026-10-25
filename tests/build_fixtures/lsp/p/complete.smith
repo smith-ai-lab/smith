@@ -1,0 +1,6 @@
+module complete;
+import geometry::box;
+
+int f() {
+    geometry_box_ar
+}

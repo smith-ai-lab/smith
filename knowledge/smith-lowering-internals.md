@@ -118,7 +118,7 @@ tags: [lowering, internals]
   plain name in the main file, at its place, in the parser's tokens that clangd's token buffer records (a name pushed
   back as a reinjection is not recorded, and a hover, a definition or a reference at it found no node, so
   go-to-definition fell back to the index by name and named every declaration of it, the SDK's and libc++'s `using`);
-  a macro (`c::EOF`) is expanded from a stream of its own and clangd finds it as a macro. `tests/lsp.sh` drives a real
+  a macro (`c::EOF`) is expanded from a stream of its own and clangd finds it as a macro. `tests/lsp_test.smith` drives a real
   session.
 - **Routing**: `smith cc x.smith` runs clang as `-std=gnu2y -x c x.smith`; the extension turns the hook on. A command
   that says `-x c` itself keeps it and gets the standard (`-x c++` or another language is left alone). A smith whose clang
