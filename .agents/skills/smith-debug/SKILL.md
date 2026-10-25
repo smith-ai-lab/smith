@@ -9,6 +9,14 @@ This skill ships in the smith plugin, from `.agents/skills/smith-debug/SKILL.md`
 
 `smith dbg` is lldb's own command line and `smith dap` is `lldb-dap`'s own main, both from the LLVM linked into smith (23.1.3), with the arguments unchanged. A stage0 smith runs an external one instead (`$SMITH_LLDB`, `$SMITH_LLDB_DAP`). Build the program with `-g -O0` (`smith new` projects have a debug build). Details: [knowledge/debugger.md](../../../knowledge/debugger.md).
 
+## smith dbg --crash and --at: what an agent runs first
+
+One command, one answer: the program's state at a crash or a line, with no edit and no rebuild.
+- `smith dbg --crash [--frames N] PROG [ARGS...]` runs PROG under lldb. If it stops (a signal, a sanitizer report, `abort`, a failed contract or check) it prints the stop reason, then up to N frames (default 8) from the first that is the program's own (not smith's machinery, the system's or a sanitizer runtime): `path:line: function` as written (`geometry::box::area`), the source line, and its arguments and locals as `@ name = value` (one level of a struct, slices and payload enums as `smith dbg` shows them). The exit status is 128 plus the signal, else 1. A program that exits: its output as it was, `exited N`, and N as the status.
+- `smith dbg --at FILE:LINE [--count N] [--frames N] PROG [ARGS...]` stops at the line, prints the same block for the first N hits (default 1), then ends the program, status 0. It is print debugging without the edit.
+- The program's stdout and stderr pass through unchanged; smith's lines go to stderr and each starts `smith dbg:` or `@`, so `2>&1 | grep -E '^(smith dbg:|@)'` isolates them. Build with `-g -O0` (the `debug` build).
+- When the machine will not debug, one line says why (`smith dbg: not debugged: ...`) and the program runs plainly. A program that forks needs its one-process option (below); `smith test --debug` does not exist.
+
 ## smith dbg: a person at a terminal
 
 - Interactive: `smith dbg build/debug/app -- arg1 arg2`; then `b main.c:42`, `run`, `bt`, `frame variable`, `p expr`, `n`, `s`, `c`, `q`.

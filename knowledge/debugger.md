@@ -136,6 +136,18 @@ needs what `smith dbg` needs (the permissions above) and degrades to a note when
 the attach, the frame's symbols and the reads take 0.13 to 0.16 s; a debugger killed in the middle of its attach left the
 process running (debugserver detaches when its client goes).
 
+## `smith dbg --crash` and `--at`
+
+`smith dbg --crash PROG` and `smith dbg --at FILE:LINE PROG` (issue #249) are routed by `smith_tool_launch` to
+`smith_crash_main` in `runtime/explain.c`, which is built on the code of the failed check: the same frame rule
+(`smith_explain_failing`, started at the innermost frame instead of the machinery's), the same formatters
+(`shim/lldb_explain.cpp`'s `format`) and the same `@ name = value` lines (`smith_explain_print`, to stderr). The program is
+started by smith (`posix_spawn`, suspended) with its standard streams as they are, and lldb attaches and continues it:
+lldb's own launch gives the program a terminal of its own and merges its output. A stop's thread is the first with a stop
+reason; a signal or Mach exception gives the status 128 plus the signal, an exit its own status. Frames of a sanitizer's
+runtime (compiler-rt) are not shown: the report the program printed is the answer there. Where it cannot attach, one line
+and the program runs with `execvp`. Tests: `tests/dbg_crash.sh`.
+
 ## Tests
 
 `tests/dap.sh` runs `smith dbg -b` on a small program and `tests/dap_client.c`, a DAP client that writes the requests as
