@@ -41,7 +41,6 @@ extern char **environ;
 
 #include "scripts/pack.h"
 
-#include <compression.h>
 #include <dirent.h>
 #include <ftw.h>
 #include <inttypes.h>
@@ -391,8 +390,16 @@ static int smith_route_metal(int count, char **args, bool which, const char *sel
 // `smith cache clean` and after the 31 days. A new LLVM or other contents make a new folder; the old one stays, for the
 // programs that were built against it.
 // The pack is smith_clang_resource (runtime/pack_data.c).
+// The platform's identity of an executable, its clone, a file's time, a process's state and
+// the resource pack's codec
+// (knowledge/platform-layer.md).
+#ifdef __APPLE__
+#include "runtime/platform_macos.c"
+#else
+#include "runtime/platform_linux.c"
+#endif
+
 static unsigned char smith_resource_chunk[smith_pack_chunk_max];
-static unsigned char smith_resource_scratch[1U << 22]; // for libcompression: LZFSE needs a fraction of it
 
 static SmithPackHeader smith_resource_header(void) {
     SmithPackHeader header;
@@ -469,9 +476,7 @@ static size_t smith_resource_write(const char *root, size_t offset) {
     if (file.stored == file.size) {
         memcpy(smith_resource_chunk, data, file.size);
     } else {
-        SMITH_ASSERT(compression_decode_scratch_buffer_size(COMPRESSION_LZFSE) <= sizeof smith_resource_scratch);
-        size_t got = compression_decode_buffer(smith_resource_chunk, sizeof smith_resource_chunk, data, file.stored,
-                                               smith_resource_scratch, COMPRESSION_LZFSE);
+        size_t got = smith_platform_decompress(smith_resource_chunk, sizeof smith_resource_chunk, data, file.stored);
         SMITH_ASSERT(got == file.size);
     }
     smith_make_folders(path, false);
@@ -534,14 +539,6 @@ static void smith_resource_unpack(const char *folder) {
 constexpr time_t smith_programs_idle_seconds = 31L * 24 * 3600;
 constexpr time_t smith_programs_touch_seconds = 24L * 3600;
 constexpr time_t smith_programs_temporary_seconds = 3600;
-
-// The platform's identity of an executable, its clone, a file's time and a process's state
-// (knowledge/platform-layer.md).
-#ifdef __APPLE__
-#include "runtime/platform_macos.c"
-#else
-#include "runtime/platform_linux.c"
-#endif
 
 // <data>/smith/programs/<uuid>, from the runtime folder <data>/smith/clang/<name>.
 static void smith_programs_folder(const char *runtime, char *programs) {

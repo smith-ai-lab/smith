@@ -7,6 +7,8 @@
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/LLVMDriver.h"
 
+#include "platform.h"
+
 #include <cstdlib>
 #include <cstring>
 #include <string>
@@ -57,7 +59,8 @@ extern "C" int smith_clang_main(const char *program, int argc, char **argv, bool
         arguments.push_back(const_cast<char *>("-resource-dir"));
         arguments.push_back(const_cast<char *>(resource));
     }
-    if (!cc1 && lld) arguments.push_back(const_cast<char *>("-mlinker-version=1115.7.3"));
+    if (!cc1 && lld && smith_platform_linker_version != nullptr)
+        arguments.push_back(const_cast<char *>(smith_platform_linker_version));
     // The frame sizes of a compile to an object, for the program's worst-case stack (#207): `-fstack-usage` writes a
     // `.su` that the effects plugin reads and removes (shim/effects_infer.cpp). With `-c` it is beside the object
     // (`SMITH_STACK_USAGE_ADDED=1`: the plugin looks there); one command that compiles and links names every `.su`

@@ -33,7 +33,6 @@
 // program, the build program's manifest): only their headers are seen here.
 #include <smith/inflate.h>
 
-#ifdef __APPLE__
 #include <smith/arena.h>
 #include <smith/contract.h>
 #include <smith/io.h>
@@ -44,20 +43,6 @@
 #else
 #include "../lib/http.c"
 #include "../lib/trace.c"
-#endif
-#else
-// No HTTPS client yet (io is macOS only): the download fails with a message, and these stand in for io's type.
-typedef struct {
-    int unused;
-} SmithIo;
-static SmithIo smith_io_make(int argc, char **argv) {
-    (void)argc;
-    (void)argv;
-    return (SmithIo){};
-}
-static void smith_io_close(SmithIo *io) {
-    (void)io;
-}
 #endif
 
 constexpr size_t smith_sha256_hex_size = 65;   // 64 digits and the terminator
@@ -236,7 +221,6 @@ static void smith_package_remove(const char *path) {
 
 #include "untar.c"
 
-#ifdef __APPLE__
 // The only place a package is downloaded: smith's HTTP client, https only (and file:// for tests), also after a
 // redirect. The body goes to the destination as it arrives. A failure's message is the client's, naming the URL.
 static bool smith_package_download(SmithIo *io, const char *url, const char *destination, SmithPackageError *error) {
@@ -245,13 +229,6 @@ static bool smith_package_download(SmithIo *io, const char *url, const char *des
     if (result.error.code == 0) return true;
     return smith_package_fail(error, "cannot download %s\n  %s", url, result.error.message);
 }
-#else
-static bool smith_package_download(SmithIo *io, const char *url, const char *destination, SmithPackageError *error) {
-    (void)io;
-    (void)destination;
-    return smith_package_fail(error, "cannot download %s: smith has no HTTPS client on this platform yet", url);
-}
-#endif
 
 typedef enum {
     SmithCache_Modules,

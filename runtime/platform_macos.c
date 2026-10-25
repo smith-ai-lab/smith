@@ -1,6 +1,7 @@
 // What smith does differently on macOS, one function each; runtime/platform_linux.c has the same functions for Linux
 // and knowledge/platform-layer.md the table of what differs. smith.c includes exactly one of the two, after
 // smith_die, and the files it includes after that (the executor, the symbolizer, explain) call these by name.
+#include <compression.h>
 #include <libproc.h>
 #include <mach-o/dyld.h>
 #include <mach-o/loader.h>
@@ -71,4 +72,12 @@ static struct timespec smith_platform_mtime(const struct stat *info) {
     struct proc_bsdshortinfo info = {};
     if (proc_pidinfo((int)pid, PROC_PIDT_SHORTBSDINFO, 0, &info, sizeof info) != (int)sizeof info) return -1;
     return info.pbsi_status == smith_platform_stopped ? 1 : 0;
+}
+
+static unsigned char smith_platform_scratch[1U << 22]; // for libcompression: LZFSE needs a fraction of it
+
+// Decompresses a file of the resource pack (scripts/pack.c compresses with LZFSE) into out; returns its size.
+static size_t smith_platform_decompress(unsigned char *out, size_t capacity, const unsigned char *in, size_t size) {
+    SMITH_ASSERT(compression_decode_scratch_buffer_size(COMPRESSION_LZFSE) <= sizeof smith_platform_scratch);
+    return compression_decode_buffer(out, capacity, in, size, smith_platform_scratch, COMPRESSION_LZFSE);
 }

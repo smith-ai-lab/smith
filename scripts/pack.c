@@ -5,7 +5,9 @@
 // files are accepted. The order is the list's, so a sorted list makes the same pack every time.
 #include "pack.h"
 
+#ifdef __APPLE__
 #include <compression.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -28,7 +30,9 @@ typedef struct {
 
 static unsigned char pack_raw[smith_pack_chunk_max];
 static unsigned char pack_packed[smith_pack_chunk_max];
+#ifdef __APPLE__
 static unsigned char pack_scratch[1U << 22];
+#endif
 
 static uint64_t pack_hash_update(uint64_t hash, const void *data, size_t size) {
     const unsigned char *bytes = data;
@@ -43,10 +47,15 @@ static void pack_write(Pack *pack, const void *data, size_t size) {
 }
 
 // Compresses the `size` bytes in pack_raw into pack_packed and returns the stored size; the bytes as they are when
-// they do not shrink.
+// they do not shrink. Linux has no libcompression and stores every file as it is (issue #305), which smith.c reads
+// the same way.
 static uint32_t pack_compress(size_t size) {
+#ifdef __APPLE__
     PACK_ASSERT(compression_encode_scratch_buffer_size(COMPRESSION_LZFSE) <= sizeof pack_scratch);
     size_t stored = compression_encode_buffer(pack_packed, size - 1, pack_raw, size, pack_scratch, COMPRESSION_LZFSE);
+#else
+    size_t stored = 0;
+#endif
     if (stored == 0) {
         memcpy(pack_packed, pack_raw, size);
         return (uint32_t)size;

@@ -12,8 +12,7 @@
 #include "llvm/Support/SHA256.h"
 #include "llvm/Support/raw_ostream.h"
 
-#include <mach-o/getsect.h>
-#include <mach-o/ldsyms.h>
+#include "platform.h"
 
 #include <array>
 #include <chrono>
@@ -714,9 +713,9 @@ int prove_in_child(prove::Program &loaded, const std::string &name, const std::s
 // thousand, and every smith process would pay for them) into __DATA,__smith_prove. `smith prove` is the one command
 // that needs them.
 static void run_deferred_initializers() {
-    unsigned long size = 0;
-    auto *table = reinterpret_cast<void (**)()>(getsectiondata(&_mh_execute_header, "__DATA", "__smith_prove", &size));
-    for (size_t i = 0; table != nullptr && i < size / sizeof(void (*)()); i++)
+    size_t count = 0;
+    void (**table)() = smith_platform_section("__smith_prove", &count);
+    for (size_t i = 0; i < count; i++)
         table[i]();
 }
 

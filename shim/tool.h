@@ -1,5 +1,5 @@
-// What the shims of clang-format, clang-tidy and clangd (format.cpp, tidy.cpp, clangd.cpp) share. macOS only: it reads
-// a Mach-O section through the executable's own header.
+// What the shims of clang-format, clang-tidy and clangd (format.cpp, tidy.cpp, clangd.cpp) share. The section of
+// deferred initializers is read through the platform layer (shim/platform.h).
 //
 // 1. Static initializers. The tools declare their flags as global llvm::cl::opt objects, which LLVM aborts on when two
 //    register the same flag, so scripts/defer_init.c moved each tool's initializers out of the section dyld runs at
@@ -19,8 +19,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 
-#include <mach-o/getsect.h>
-#include <mach-o/ldsyms.h>
+#include "platform.h"
 
 #include <cstddef>
 #include <string>
@@ -40,9 +39,9 @@ inline const char *smith_tool_program = nullptr; // argv[0] of the tool that is 
 // Starts the tool run as `program`: its resource directory, then its initializers from the section `name`.
 inline void smith_tool_start(const char *name, const char *program) {
     smith_tool_program = program;
-    unsigned long size = 0;
-    auto *table = reinterpret_cast<void (**)()>(getsectiondata(&_mh_execute_header, "__DATA", name, &size));
-    for (size_t i = 0; table != nullptr && i < size / sizeof(void (*)()); i++)
+    size_t count = 0;
+    void (**table)() = smith_platform_section(name, &count);
+    for (size_t i = 0; i < count; i++)
         table[i]();
 }
 
