@@ -1,0 +1,23 @@
+module main;
+
+import target;
+
+i32 count = 3;
+
+if constexpr (count > 2) {
+    i32 big(void) {
+        return 1;
+    }
+}
+
+if constexpr (true) {
+    i32 small(void) {
+        return 0;
+    }
+
+    import <stdio.h>;
+}
+
+i32 main(void) {
+    return 0;
+}

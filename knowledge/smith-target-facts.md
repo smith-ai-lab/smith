@@ -61,6 +61,18 @@ is compiled for.
   an inline-asm constraint of another architecture. The branch taken is an ordinary block (it keeps its scope). Anything
   else in a condition is an error at the offending name: ``in `if constexpr`: `n` is not a constant: ...``. The
   `else` of a branch taken is dropped without being evaluated.
+- **At file scope, around declarations** (issue #335, owner: "if constexpr at filescope is definitely the answer"): in
+  a module, `if constexpr` / `else if constexpr` / `else` may stand between declarations and around any of them,
+  imports, functions, globals, types and exports. The branch taken is at file scope: its braces are dropped
+  (`SmithLangIfFrame.file_scope`, runtime/lang_target.c) and open no scope. The branch not taken is dropped unread, so
+  its imports' headers are never loaded. A compile is offered the `if` and every token of the branch only in a file
+  whose text has `if constexpr` (`smith_lang_fast`). Imports keep their order: a branch of only imports may sit among
+  the import lines, and the hook counts an indented `import` line as one (`countImportLines`), the lowering counting a
+  dropped branch's as seen, so the last import is still where the imports' type functions and bodies are used. The raw
+  lowering writes `#if`/`#elif`/`#else`/`#endif` with the braces dropped, and the module's header gets the same
+  directives around its exports (with the `SMITH_TARGET_*` definitions), so a C includer's preprocessor chooses as
+  the module's compile did. An `if` at file scope is invalid C, so no file without a `module` line changes meaning.
+  clang-format reads `import <a/b.h>;` inside a branch as code (`<a / b.h>`) until its patch learns the form (#305).
 - **Files that contain `if constexpr`** are offered every token of a function body by the compiler (a keyword is not an
   identifier, which is all a sparse host is offered), so such a file lowers a little slower; others are not changed.
 - **Limits:** a `target::` fact in the `if constexpr` condition of a *generic* works in a compile (it is a literal in the

@@ -1,0 +1,2 @@
+src/main.smith:18:5: imports come before any declaration
+src/main.smith:7:15: in `if constexpr`: `count` is not a constant: an `if constexpr` condition is made of `target::` facts, `constexpr` constants and literals

@@ -1,0 +1,43 @@
+// A file-scope `if constexpr` around declarations (issue #335): the branch taken is at file scope, its braces open no
+// scope, and the branch not taken is never read, so it may name what does not exist here.
+module shape;
+
+import target;
+
+constexpr bool wide = true;
+
+if constexpr (wide) {
+    constexpr i32 columns = 80;
+
+    export i32 width(void) {
+        return columns;
+    }
+} else {
+    export i32 width(void) {
+        return undeclared_function();
+    }
+}
+
+if constexpr (target::os == target::macos || target::os == target::linux) {
+    export i32 platform(void) {
+        return 1;
+    }
+} else if constexpr (target::arch == target::aarch64) {
+    export i32 platform(void) {
+        return 2;
+    }
+} else {
+    export i32 platform(void) {
+        return undeclared_function();
+    }
+}
+
+// A function's own `if constexpr` still keeps its braces.
+export i32 both(void) {
+    i32 sum = 0;
+    if constexpr (wide) {
+        i32 extra = 1;
+        sum = width() + extra;
+    }
+    return sum + platform();
+}

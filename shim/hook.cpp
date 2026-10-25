@@ -2609,7 +2609,10 @@ class SmithHook final : public TokenHook, public NameSource {
     static uint32_t countImportLines(StringRef text) {
         uint32_t lines = 0;
         for (size_t at = text.find("import "); at != StringRef::npos; at = text.find("import ", at + 7)) {
-            if (at == 0 || text[at - 1] == '\n') lines += 1; // an import line begins its line
+            size_t start = at; // an import line begins its line, perhaps indented in a file-scope `if constexpr`
+            while (start > 0 && (text[start - 1] == ' ' || text[start - 1] == '\t'))
+                start -= 1;
+            if (start == 0 || text[start - 1] == '\n') lines += 1;
         }
         return lines;
     }

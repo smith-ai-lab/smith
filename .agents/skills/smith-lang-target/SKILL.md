@@ -38,6 +38,7 @@ The facts: `arch` (`aarch64`, `x86_64`), `os` (`macos`, `linux`), `address_sanit
 
 - The condition of `if constexpr` is `target::` facts, `constexpr` constants (the file's or the function's) and literals, with C's operators; branches are blocks (`else if constexpr (...) { }` continues a chain). The branch not taken is never parsed: no diagnostics and no hover in it.
 - Facts cannot be in an exported declaration, but the body of an exported `inline` function may ask them: the header gets the `#if` (`smith::contract` does).
+- At file scope, `if constexpr` chooses declarations and imports for the target (`smith-lang-if-constexpr`).
 - `smith cc --smith-lower` has no preprocessor, so it writes the `SMITH_TARGET_ARCH` macros and `#if`/`#else`/`#endif` for the branches: the preprocessor is only in generated output.
 - In a generic, `if constexpr` also reads types (`smith-lang-generics`).
 

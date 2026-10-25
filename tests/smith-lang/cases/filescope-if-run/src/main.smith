@@ -1,0 +1,7 @@
+import shape;
+import <stdio.h>;
+
+int main(void) {
+    c::printf("%d %d %d\n", shape::width(), shape::platform(), shape::both());
+    return 0;
+}
