@@ -10,14 +10,18 @@ This skill ships in the smith plugin, from `.agents/skills/smith-result/SKILL.md
 `result` is in scope in every module with no import; `smith::result` (`lib/smith/result.smith`, readable source, its header what the compiler reads) defines the one type function, `result(type T, type E)`: an enum with a payload (`smith-lang-enums`), `ok` carrying the `T` and `error` carrying the `E`, which is the caller's own type (a code, an enum, a struct): there is no default error type. `result(f64, i32)` written anywhere is one type. A module cannot declare its own `result` (an error names the built-in).
 
 ```smith
+module quotient;
+
+import <stdio.h>;
+
 typedef result(f64, i32) Quotient;   // name it at file scope once
 
-Quotient divide(f64 a, f64 b) {
+export Quotient divide(f64 a, f64 b) {
     if (b == 0) return {.error = 7};
     return {.ok = a / b};
 }
 
-void show(Quotient q) {
+export void show(Quotient q) {
     switch (q) {
     case .ok: c::printf("%g\n", q.ok); break;
     case .error: c::printf("error %d\n", q.error); break;
