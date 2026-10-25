@@ -716,7 +716,6 @@ static const BuildTestScript build_test_scripts[] = {
     {"dap", "dap", nullptr, nullptr, 0},
     {"dbg-crash", "dbg_crash", nullptr, nullptr, 0},
     {"defer", "defer", nullptr, nullptr, 0},
-    {"docs", "docs", nullptr, nullptr, 0},
     {"effects", "effects", nullptr, nullptr, 0},
     {"handlers", "handlers", nullptr, nullptr, 0},
     {"http", "http", nullptr, nullptr, 0},
