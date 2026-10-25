@@ -288,9 +288,12 @@ export void test_runner_workers_in_process_smith_dbg_stops_at_a_breakpoint_insid
     if (scratch::sh(&p, "smith dbg --version").status != 0) return;
     usize line = runner::line_of(&p, "tests/test_inproc.smith", "test::check_equal(answer, 42);");
     const char *command =
-        format::push(&io->arena, "smith dbg -b -o \"b test_inproc.smith:", line,
-                     "\" -o run -o 'frame variable answer' -o kill -- build/tests --test inproc_local "
-                     "--in-process 2>&1")
+        format::push(
+            &io->arena,
+            "smith dbg -b -o 'settings set plugin.process.gdb-remote.packet-timeout 600' -o \"b test_inproc.smith:",
+            line,
+            "\" -o run -o 'frame variable answer' -o kill -- build/tests --test inproc_local "
+            "--in-process 2>&1")
             .data;
     scratch::Run run = scratch::sh(&p, command);
     scratch::expect_contains("in-process: smith dbg stops at a breakpoint inside a test", run.out,

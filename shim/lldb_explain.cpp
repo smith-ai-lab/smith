@@ -143,6 +143,8 @@ bool start_debugger(const char *self, char *problem, size_t capacity) {
         return false;
     }
     debugger.SetAsync(false);
+    // lldb's packet timeout is 5 s of wall time: a loaded machine answers later and the attach fails. A generous one.
+    debugger.HandleCommand("settings set plugin.process.gdb-remote.packet-timeout 600");
     if (FILE *quiet = std::fopen("/dev/null", "w")) {
         debugger.SetOutputFileHandle(quiet, true);
         debugger.SetErrorFileHandle(quiet, false);
