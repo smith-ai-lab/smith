@@ -39,11 +39,14 @@ static const char *text_of(const char *data) {
 // The cache of the commands ($3) is the project's own when it has one; else it is shared by every test of the run and
 // of the runs before it (keyed by content, so what is cached is what a cold cache would make: the SDK's Clang modules,
 // above all, which each project would build again): $SMITH_TEST_CACHE/xdg, else ~/.cache/smith-tests/xdg, never the
-// real one. A command with no shell feature in it is run in place of the shell that starts it.
+// real one. The data folder (the embedded files and the programs) is the test's own, in its scratch folder and removed
+// with it: a smith that another test removes or rebuilds can never prune the programs this test runs.
+// A command with no shell feature in it is run in place of the shell that starts it.
 constexpr char run_script[] =
     "unset SMITH_ACCOUNT_FILE; repo=${SMITH_REPO:-$PWD}; cd \"$0\" || exit 97; "
     "cache=$3; [ -n \"$cache\" ] || cache=${SMITH_TEST_CACHE:-$HOME/.cache/smith-tests}/xdg; "
-    "mkdir -p \"$cache\"; export PATH=\"$2:$PATH\" XDG_CACHE_HOME=\"$cache\" SMITH_REPO=\"$repo\" "
+    "data=${2%/*}/data; mkdir -p \"$cache\"; "
+    "export PATH=\"$2:$PATH\" XDG_CACHE_HOME=\"$cache\" XDG_DATA_HOME=\"$data\" SMITH_REPO=\"$repo\" "
     "SMITH_TEST_CACHE=\"${SMITH_TEST_CACHE:-$HOME/.cache/smith-tests}\"; "
     "case $1 in *[!A-Za-z0-9_./:=@%+,\\ -]*) eval \"$1\" ;; *) exec $1 ;; esac";
 constexpr char setup_script[] =

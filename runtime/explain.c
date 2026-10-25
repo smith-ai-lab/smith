@@ -367,19 +367,25 @@ static void smith_explain_arm(void) {
 // Detach does not always leave the test running: under load the SIGSTOP of the attach is still pending when the
 // debugger lets go, and the test stays stopped for ever (measured: 5 to 16 of 40 tests started at once, every one cured
 // by a SIGCONT). So this process continues the test until it has been seen running for a moment.
-constexpr int smith_explain_resume_rounds = 400;
-constexpr int smith_explain_resume_settled = 10;
+constexpr unsigned long long smith_explain_resume_ceiling_ns = 60'000'000'000; // wall: a test that never runs
+constexpr unsigned long long smith_explain_resume_settled_ns = 1'000'000'000;  // wall: how long it is seen running
 
+constexpr unsigned long smith_explain_resume_rounds_max = 12000; // the ceiling over the sleep of a round
+
+// The time is wall time on purpose: it is how long the kernel may take to deliver the attach's pending SIGSTOP, which
+// a loaded machine stretches (a count of rounds ended the wait while the stop was still to come).
 static void smith_explain_resume(long pid) {
-    int settled = 0;
-    for (int round = 0; round < smith_explain_resume_rounds && settled < smith_explain_resume_settled; round++) {
+    unsigned long long began = clock_gettime_nsec_np(CLOCK_MONOTONIC);
+    unsigned long long settled_since = began;
+    for (unsigned long round = 0; round < smith_explain_resume_rounds_max; round++) { // a round sleeps 5 ms or more
+        unsigned long long now = clock_gettime_nsec_np(CLOCK_MONOTONIC);
+        if (now - began >= smith_explain_resume_ceiling_ns) return;
+        if (now - settled_since >= smith_explain_resume_settled_ns) return;
         int stopped = smith_platform_process_stopped(pid);
         if (stopped < 0) return;
         if (stopped == 1) {
             kill((pid_t)pid, SIGCONT);
-            settled = 0;
-        } else {
-            settled++;
+            settled_since = clock_gettime_nsec_np(CLOCK_MONOTONIC);
         }
         usleep(5000);
     }
