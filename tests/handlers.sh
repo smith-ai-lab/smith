@@ -45,6 +45,21 @@ failures=$((failures + $(grep -c '^FAIL' out.txt)))
 grep -v '^ok  ' out.txt
 expect "the program passes, from itself, a linked library and a dlopened one" 0 $status
 ./t_handlers bench
+# arena::allocator: an arena set as the allocator serves the C allocator functions.
+"$smith" cc $flags -c "$here/lib/smith/arena.smith" -o arena.o 2>cc.err
+expect "the arena library builds" 0 $?
+"$smith" cc $flags -c "$here/lib/smith/contract.smith" -o contract.o 2>>cc.err
+expect "the contract library builds" 0 $?
+cat cc.err
+"$smith" cc $flags "$here/tests/handlers/arena.c" arena.o contract.o "$here/lib/trace.c" libsmith_handlers.dylib -o t_arena 2>cc.err
+expect "the arena allocator test builds" 0 $?
+cat cc.err
+./t_arena >arena.txt 2>&1
+status=$?
+total=$((total + $(grep -c '^ok  ' arena.txt)))
+failures=$((failures + $(grep -c '^FAIL' arena.txt)))
+grep -v '^ok  ' arena.txt
+expect "the arena allocator test passes" 0 $status
 # The files and console handlers: fakes set on the thread are reached by read, write, open, close, syscall, the stdio
 # functions and fopen, fdopen and freopen; with none set they are libc's. At -O0 and -O2.
 for optimize in -O0 -O2; do

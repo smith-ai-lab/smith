@@ -43,4 +43,7 @@ Add `-I .smith/include` to the project's own compiles too, and put `arena` in th
 
 A push past the capacity is a failure like a failed contract (`smith_failure_format` of `<smith/trace.h>`, so the arena links the trace library, which `smith_program` and `smith_tests` bring with it): it writes `smith-trace begin arena out of capacity`, the line `smith-trace detail push of N bytes (align A) with U of C bytes used` and the stack to stderr, and calls `abort()`, in every build, `NDEBUG` included; `smith symbolize` turns it into the failing line and the call chain. It is not an assertion: it is the one check that must survive a fast build, so memory is never corrupted silently. The fix is a bigger block or less pushed, not a retry. Under AddressSanitizer, each push starts on an 8-byte granule with a poisoned gap after it, and the 64 KiB past the cursor is poisoned (lazily, so a 64 GiB arena costs no shadow until it is used), so a write just outside a push is caught.
 
+## The arena as the allocator of a thread
+`SmithArenaAllocator a = smith_arena_allocator(&arena);` then `SmithAllocator *previous = smith_handlers_set_allocator(&a.base);` (`<smith/handlers.h>`): until it is set back, malloc, calloc, realloc and free in the thread, in any library, are served from the arena. A request that does not fit is `NULL`, as malloc's. `free` of the arena's last block gives it back; any other waits for a reset. Set the previous allocator back before the arena is reset or goes away.
+
 Also in this family: [smith-arena](../smith-arena/SKILL.md).

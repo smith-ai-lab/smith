@@ -8,6 +8,7 @@ import smith::contract;
 import smith::math;
 import target;
 import <sanitizer/asan_interface.h>; // the poisoning calls; ASAN_POISON_MEMORY_REGION is one of them
+import <smith/handlers.h>;           // SmithAllocator: arena::allocator
 import <smith/trace.h>;              // smith_failure: the stop below is the report a failed contract writes
 import <stdint.h>;
 
@@ -262,4 +263,82 @@ export type slice_of(type element, usize count) {
     scope.arena->scopes -= 1;
     scope.arena->used = scope.used;
     if (sanitized) poison_unused(scope.arena);
+}
+
+// The arena as an allocator (include/smith/handlers.h): what malloc, calloc, realloc and free reach while it is set
+// with smith_handlers_set_allocator, `defer`-restored. Every block has a 32-byte header before it (its size, the cursor
+// after it and the header's own size), and starts at the larger of 16 and the requested alignment (at most align_max).
+// A request that does not fit is null, as malloc's, never the stop of a push. free of the arena's last block gives it
+// back (with no scope open); any other free does nothing until a reset. realloc of a block that grows copies it.
+// The allocator is a struct that starts with the SmithAllocator (handlers.h's own convention: the callbacks get it as
+// `self`), followed by the arena it allocates from.
+[[smith::c_name("SmithArenaAllocator")]] export typedef struct {
+    c::SmithAllocator base;
+    Arena *arena;
+} ArenaAllocator;
+
+typedef struct {
+    usize size;
+    usize after;  // the arena's cursor once the block was pushed: the block is the last when it still is
+    usize header; // bytes from the start of the block's memory to the block, a multiple of its alignment
+    usize reserved;
+} Block;
+
+void *allocator_alloc(c::SmithAllocator *self, usize size, usize align) {
+    contract::trusted(); // the header is written into memory the arena just handed out
+    Arena *arena = ((ArenaAllocator *)self)->arena;
+    if (align < 16) align = 16;
+    if (!align_valid(align)) return nullptr;
+    usize header = align > sizeof(Block) ? align : sizeof(Block);
+    usize padding = 0;
+    if (size > math::max(usize) - header || !measure(arena, header + size, align, &padding)) return nullptr;
+    u8 *start = push_raw(arena, header + size, align);
+    Block *block = (Block *)(start + header - sizeof(Block));
+    block->size = size;
+    block->after = arena->used;
+    block->header = header;
+    return start + header;
+}
+
+bool allocator_owns(c::SmithAllocator *self, const void *block) {
+    const Arena *arena = ((ArenaAllocator *)self)->arena;
+    return (const u8 *)block >= arena->memory && (const u8 *)block < arena->memory + arena->capacity;
+}
+
+usize allocator_size([[maybe_unused]] c::SmithAllocator *self, const void *block) {
+    contract::trusted();
+    return ((const Block *)((const u8 *)block - sizeof(Block)))->size;
+}
+
+void allocator_free(c::SmithAllocator *self, void *block) {
+    contract::trusted();
+    Arena *arena = ((ArenaAllocator *)self)->arena;
+    if (block == nullptr || !allocator_owns(self, block)) return;
+    Block *header = (Block *)((u8 *)block - sizeof(Block));
+    if (arena->used != header->after || arena->scopes != 0) return;
+    arena->used = (usize)((u8 *)block - header->header - arena->memory);
+    if (sanitized) poison_unused(arena);
+}
+
+void *allocator_realloc(c::SmithAllocator *self, void *block, usize size, usize align) {
+    contract::trusted();
+    if (block == nullptr) return allocator_alloc(self, size, align);
+    usize old = allocator_size(self, block);
+    if (size <= old) return block;
+    void *result = allocator_alloc(self, size, align);
+    if (result == nullptr) return nullptr;
+    __builtin_memcpy(result, block, old);
+    allocator_free(self, block);
+    return result;
+}
+
+// An allocator over the arena, for smith_handlers_set_allocator(&allocator.base); the arena must outlive it and the
+// allocator must not move while it is set.
+[[smith::c_name("smith_arena_allocator")]] export [[nodiscard]] ArenaAllocator allocator(Arena *arena) {
+    return (ArenaAllocator){.base = {.alloc = allocator_alloc,
+                                     .realloc = allocator_realloc,
+                                     .free = allocator_free,
+                                     .owns = allocator_owns,
+                                     .size = allocator_size},
+                            .arena = arena};
 }

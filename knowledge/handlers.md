@@ -59,6 +59,14 @@ prebuilt library's and one loaded with `dlopen`. Owner (2026-10-24): "always int
 - **A thread-local is read in a function of its own**, after the counter and `ready` checks: unoptimized code computes its
   address at the function's start, and dyld calls `close` before the image's thread-local storage exists.
 
+- **The arena as an allocator (step C1):** `arena::allocator(&a)` (C: `smith_arena_allocator`) returns an `ArenaAllocator`
+  whose `.base` is the `SmithAllocator` to pass to `smith_handlers_set_allocator`; the arena must outlive it and the value
+  must not move while set. Every block has a 32-byte header (size, the cursor after it, the header size), starts 16-aligned
+  (or at the request, up to 64), a request that does not fit is null as malloc's (never the stop of a push), `owns` is a
+  range check, `free` of the last block gives it back (no scope open), `realloc` of a growing block copies. The struct is
+  a container with the `SmithAllocator` first, not a `ctx` field, because a field added to handlers.h waits for a smith
+  release (the lag rule: arena is built into smith).
+
 The steps (issue #239): the allocator family and its tests (`tests/handlers.sh`); linking it into every program (this
 step, B1); `read`, `write`, `open`, `close`, `syscall` and stdio with their handlers (B2); `smith::mem` and arena's
 allocator; `checked`, `failing` and the profiles.
