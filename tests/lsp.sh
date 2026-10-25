@@ -376,7 +376,7 @@ EOF
 log=$(client open geometry/slices.smith -- hover geometry/slices.smith 3 12 -- hover geometry/slices.smith 3 21 -- \
     hover geometry/slices.smith 4 12 -- symbols geometry/slices.smith)
 expect_line "slice: the hover of a function shows its slice parameter as f32[:]" "$log" \
-    'hover geometry/slices.smith:3:12: function pick |  | → f32 (aka float) |  | Parameters: |  | - f32[:] xs | - usize i (aka unsigned long) |  | pure |  | f32 pick(f32[:] xs, usize i)'
+    'hover geometry/slices.smith:3:12: function pick |  | → f32 (aka float) |  | Parameters: |  | - f32[:] xs | - usize i (aka unsigned long) |  | effects: fails |  | f32 pick(f32[:] xs, usize i)'
 expect_line "slice: the hover of the parameter shows its type as f32[:]" "$log" \
     'hover geometry/slices.smith:3:21: param xs |  | Type: f32[:] |  | // In pick | f32[:] xs'
 
@@ -431,12 +431,12 @@ EOF
 log=$(client open geometry/dims.smith -- hover geometry/dims.smith 6 12 -- hover geometry/dims.smith 10 14 -- \
     symbols geometry/dims.smith)
 expect_line "dims: the hover of a function shows an f32[:][2] parameter as written" "$log" \
-    'hover geometry/dims.smith:6:12: function rows |  | → f32 (aka float) |  | Parameters: |  | - f32[:][2] m | - usize i (aka unsigned long) |  | pure |  | f32 rows(f32[:][2] m, usize i)'
+    'hover geometry/dims.smith:6:12: function rows |  | → f32 (aka float) |  | Parameters: |  | - f32[:][2] m | - usize i (aka unsigned long) |  | effects: fails |  | f32 rows(f32[:][2] m, usize i)'
 expect_line "dims: the hover shows the tags of qualified slices as written" "$log" \
     'hover geometry/dims.smith:10:14: function tags |  | → usize (aka unsigned long) |  | Parameters: |  | - u8[const restrict :] a | - const char[:] b |  | pure |  | usize tags(u8[const restrict :] a, const char[:] b)'
 log=$(client open geometry/grid.smith -- hover geometry/grid.smith 3 12)
 expect_line "dims: the hover of a function shows an f32[:][:] parameter as written" "$log" \
-    'hover geometry/grid.smith:3:12: function grid |  | → f32 (aka float) |  | Parameters: |  | - f32[:][:] g | - usize i (aka unsigned long) |  | pure |  | f32 grid(f32[:][:] g, usize i)'
+    'hover geometry/grid.smith:3:12: function grid |  | → f32 (aka float) |  | Parameters: |  | - f32[:][:] g | - usize i (aka unsigned long) |  | effects: fails |  | f32 grid(f32[:][:] g, usize i)'
 
 # A slice element in a generic call's argument: the editor answers (it used to loop in the token collector, issue #264).
 log=$(client open sliced.smith pick.smith -- hover sliced.smith 5 24)
