@@ -9,6 +9,7 @@ import smith::arena;
 import smith::io;
 import smith::test;
 import scratch;
+import <string.h>;
 
 // The environment make and smith are compared in.
 constexpr char clean[] = "unset CC CXX MAKEFLAGS MFLAGS; ";
@@ -99,16 +100,239 @@ static void same_output(const scratch::Project *p, const char *name, const char 
     scratch::expect_text(label, scratch::read(p, "make.out"), scratch::read(p, "smith.out"));
 }
 
+// The compile and link commands of a build, each with the compiler called CC (or CXX) and the dependency flags out, as
+// the shell reads them (quotes removed), one per line, sorted, without duplicates: what tests/build_fixtures/
+// same_commands.sh (sed, eval and sort -u) made of `make -n -B` and of `smith build -t commands`.
+constexpr usize no_match = (usize)-1;
+constexpr usize command_capacity = 8192;
+constexpr usize command_count = 512;
+
+typedef struct {
+    char *lines[command_count];
+    usize count;
+} Commands;
+
+static usize find_text(const char *text, const char *needle) {
+    const char *at = c::strstr(text, needle);
+    return at != nullptr ? (usize)(at - text) : no_match;
+}
+
+// Replaces text[from:to] with `replacement`.
+static void cut(char *text, usize from, usize to, const char *replacement) {
+    usize length = c::strlen(replacement);
+    c::memmove(text + from + length, text + to, c::strlen(text + to) + 1);
+    c::memcpy(text + from, replacement, length);
+}
+
+static usize word_end(const char *text, usize from) {
+    usize end = from;
+    while (text[end] != '\0' && text[end] != ' ')
+        end++;
+    return end;
+}
+
+static bool one_of(const char *word, const char *names[4]) {
+    for (usize i = 0; i < 4; i++)
+        if (c::strcmp(word, names[i]) == 0) return true;
+    return false;
+}
+
+// `^([^ ]*/)?(smith-cc|cc|clang|gcc) ` is CC and the same for the C++ compilers CXX.
+static void name_the_compiler(char *line) {
+    usize end = word_end(line, 0);
+    if (line[end] != ' ' || end >= 256) return;
+    usize start = end;
+    while (start > 0 && line[start - 1] != '/')
+        start--;
+    char word[256];
+    c::memcpy(word, line + start, end - start);
+    word[end - start] = '\0';
+    const char *c_compilers[4] = {"smith-cc", "cc", "clang", "gcc"};
+    const char *cxx_compilers[4] = {"smith-c++", "c++", "g++", "clang++"};
+    if (one_of(word, c_compilers))
+        cut(line, 0, end, "CC");
+    else if (one_of(word, cxx_compilers))
+        cut(line, 0, end, "CXX");
+}
+
+// ` -MMD -MF <file>.d `, ` -MMD ` and ` -MP ` become a space (the first of each), and runs of spaces one.
+static void drop_dependency_flags(char *line) {
+    usize at = find_text(line, " -MMD -MF ");
+    if (at != no_match) {
+        usize end = word_end(line, at + 10);
+        if (end >= at + 12 && line[end] == ' ' && c::strncmp(line + end - 2, ".d", 2) == 0) cut(line, at, end + 1, " ");
+    }
+    at = find_text(line, " -MMD ");
+    if (at != no_match) cut(line, at, at + 6, " ");
+    at = find_text(line, " -MP ");
+    if (at != no_match) cut(line, at, at + 5, " ");
+    for (usize i = 0; line[i] != '\0'; i++)
+        while (line[i] == ' ' && line[i + 1] == ' ')
+            cut(line, i, i + 1, "");
+}
+
+// Copies the text up to the closing quote (the opening one is passed) into the words, as the shell does: nothing is
+// special inside single quotes, and inside double quotes a backslash before $, `, " or a backslash is one. False when
+// the quote is not closed.
+static bool copy_quoted(const char *line, usize *at, char quote, char *words, usize *used, usize capacity) {
+    while (line[*at] != quote) {
+        if (line[*at] == '\0' || *used + 2 >= capacity) return false;
+        if (quote == '"' && line[*at] == '\\' && line[*at + 1] != '\0' && c::strchr("$`\"\\", line[*at + 1]) != nullptr)
+            (*at)++;
+        words[(*used)++] = line[(*at)++];
+    }
+    (*at)++;
+    return true;
+}
+
+// The words of the line as `eval "set -- $line"` gives them (single and double quotes and backslashes), joined by one
+// space. False when a quote is not closed, which the shell refuses.
+static bool unquote(const char *line, char *words, usize capacity) {
+    usize used = 0;
+    usize i = 0;
+    while (line[i] != '\0') {
+        while (line[i] == ' ')
+            i++;
+        if (line[i] == '\0') break;
+        if (used > 0) words[used++] = ' ';
+        while (line[i] != '\0' && line[i] != ' ') {
+            char ch = line[i++];
+            bool quoted = ch == '\'' || ch == '"';
+            if (quoted && !copy_quoted(line, &i, ch, words, &used, capacity)) return false;
+            if (ch == '\\' && line[i] == '\0') return false;
+            if (!quoted) words[used++] = ch == '\\' ? line[i++] : ch;
+            if (used + 2 >= capacity) return false;
+        }
+    }
+    words[used] = '\0';
+    return true;
+}
+
+static bool ordered_before(const char *a, const char *b) {
+    return c::strcmp(a, b) < 0;
+}
+
+// Adds a line to the sorted list unless it is in it already.
+static void add_command(Commands *commands, char *line) {
+    usize at = 0;
+    while (at < commands->count && ordered_before(commands->lines[at], line))
+        at++;
+    if (at < commands->count && c::strcmp(commands->lines[at], line) == 0) {
+        return;
+    }
+    test::check_less(commands->count, command_count);
+    for (usize i = commands->count; i > at; i--)
+        commands->lines[i] = commands->lines[i - 1];
+    commands->lines[at] = line;
+    commands->count++;
+}
+
+// The canonical commands of the text of a build: only the lines of the compiler.
+static void canonical(io::Io *io, const char *text, Commands *commands) {
+    *commands = (Commands){};
+    usize start = 0;
+    while (text[start] != '\0') {
+        usize end = start;
+        while (text[end] != '\0' && text[end] != '\n')
+            end++;
+        if (end - start < command_capacity) {
+            char *line = arena::push_slice(&io->arena, char, command_capacity).data;
+            c::memcpy(line, text + start, end - start);
+            line[end - start] = '\0';
+            name_the_compiler(line);
+            drop_dependency_flags(line);
+            if (c::strncmp(line, "CC ", 3) == 0 || c::strncmp(line, "CXX ", 4) == 0) {
+                char *words = arena::push_slice(&io->arena, char, command_capacity).data;
+                add_command(commands, unquote(line, words, command_capacity) ? words : line);
+            }
+        }
+        start = text[end] == '\n' ? end + 1 : end;
+    }
+}
+
+// Removes ` -L<dir> -lsmith_handlers` (and ` -Wl,-rpath,@executable_path` after it) and ` -L<dir>/lib/darwin` from a
+// line.
+static void drop_handlers_link(char *line) {
+    usize at = find_text(line, " -lsmith_handlers");
+    if (at != no_match) {
+        usize start = at;
+        while (start > 0 && line[start - 1] != ' ')
+            start--;
+        usize end = at + 17;
+        if (c::strncmp(line + end, " -Wl,-rpath,@executable_path", 28) == 0) end += 28;
+        if (start > 1 && line[start] == '-' && line[start + 1] == 'L') cut(line, start - 1, end, "");
+    }
+    at = find_text(line, "/lib/darwin");
+    if (at != no_match) {
+        usize start = at;
+        while (start > 0 && line[start - 1] != ' ')
+            start--;
+        if (start > 1 && line[start] == '-' && line[start + 1] == 'L') cut(line, start - 1, at + 11, "");
+    }
+}
+
+// smith's link also builds and links the handlers runtime (a dylib beside the program), which make's does not: the step
+// and its three arguments are taken out.
+static void drop_handlers(Commands *commands) {
+    usize kept = 0;
+    for (usize i = 0; i < commands->count; i++) {
+        if (c::strstr(commands->lines[i], " -dynamiclib ") != nullptr) continue;
+        drop_handlers_link(commands->lines[i]);
+        usize at = find_text(commands->lines[i], " -lclang_rt.asan_osx_dynamic");
+        if (at != no_match) cut(commands->lines[i], at, at + 28, "");
+        commands->lines[kept++] = commands->lines[i];
+    }
+    commands->count = kept;
+}
+
+static const char *joined(io::Io *io, const Commands *commands) {
+    char *text = arena::push_slice(&io->arena, char, command_capacity * 8).data;
+    usize used = 0;
+    for (usize i = 0; i < commands->count; i++) {
+        usize length = c::strlen(commands->lines[i]);
+        test::check_less(used + length + 2, command_capacity * 8);
+        c::memcpy(text + used, commands->lines[i], length);
+        text[used + length] = '\n';
+        used += length + 1;
+    }
+    text[used] = '\0';
+    return text;
+}
+
+// The commands of `smith build -t commands`: a line `sh .smith/command/<file>` stands for the commands in the file.
+static const char *expand_commands(const scratch::Project *p, const char *raw) {
+    char *text = arena::push_slice(&p->io->arena, char, command_capacity * 8).data;
+    usize used = 0;
+    usize start = 0;
+    while (raw[start] != '\0') {
+        usize end = start;
+        while (raw[end] != '\0' && raw[end] != '\n')
+            end++;
+        char line[1024];
+        usize length = end - start < sizeof line - 1 ? end - start : sizeof line - 1;
+        c::memcpy(line, raw + start, length);
+        line[length] = '\0';
+        const char *shown = c::strncmp(line, "sh .smith/command/", 18) == 0 ? scratch::read(p, line + 3) : line;
+        used += (usize)__builtin_snprintf(text + used, command_capacity * 8 - used, "%s\n", shown);
+        start = raw[end] == '\n' ? end + 1 : end;
+    }
+    return text;
+}
+
 // Compares the compile and link commands of `make -n -B` with the translation's for the targets.
 static void same_commands(const scratch::Project *p, const char *name, const char *targets) {
     char command[512];
     char label[256];
-    __builtin_snprintf(command, sizeof command, "sh \"$SMITH_REPO/tests/build_fixtures/same_commands.sh\" %s", targets);
-    (void)run(p, command);
+    Commands made;
+    Commands smith;
+    canonical(p->io, run(p, "make -n -B 2>/dev/null").out, &made);
+    __builtin_snprintf(command, sizeof command, "smith build -t commands %s 2>/dev/null", targets);
+    canonical(p->io, expand_commands(p, run(p, command).out), &smith);
+    drop_handlers(&smith);
     __builtin_snprintf(label, sizeof label, "%s: the same compile and link commands as make", name);
-    scratch::expect_text(label, scratch::read(p, "make.cmds"), scratch::read(p, "smith.cmds"));
+    scratch::expect_text(label, joined(p->io, &made), joined(p->io, &smith));
     __builtin_snprintf(label, sizeof label, "%s: and some", name);
-    scratch::expect_contains(label, scratch::read(p, "smith.cmds"), "CC");
+    scratch::expect_contains(label, joined(p->io, &smith), "CC");
 }
 
 // 1. Variables: their flavors, expansion, += and ?=, substitution references, ${X}, override.

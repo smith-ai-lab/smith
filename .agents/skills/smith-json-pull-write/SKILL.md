@@ -46,6 +46,6 @@ The first mistake is kept and the rest do nothing, so check once, at the end. No
 
 `smith_json_write_value(&w, tree)` writes a whole tree from `smith_json_parse` back as one value (strings escaped again, numbers as they were written, members in order, duplicate keys kept). It is how a protocol keeps a field it does not look inside: store the `const SmithJsonValue *`, write it back later.
 
-It refuses what RFC 8259 does, plus a lone surrogate escape and a byte order mark (JSONTestSuite: all `y_` accepted, all `n_` refused, the 35 `i_` listed in `tests/json_test.smith`). In build.c: `smith_library(b, "json")` with `arena` and `text`; `tests/json.sh` has a worked one.
+It refuses what RFC 8259 does, plus a lone surrogate escape and a byte order mark (JSONTestSuite: all `y_` accepted, all `n_` refused, the 35 `i_` listed in `tests/json_test.smith`). In build.c: `smith_library(b, "json")` with `arena` and `text`; `tests/build_fixtures/library_units/build.c` has a worked one.
 
 Also in this family: [smith-json](../smith-json/SKILL.md).

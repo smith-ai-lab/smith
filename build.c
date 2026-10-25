@@ -726,7 +726,7 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config, cons
     const char *const *sources = smith_glob(b, smith_list(b, "lib/*.c", "tests/*.c", "scripts/defer_init.c", nullptr));
     for (size_t i = 0; sources[i] != nullptr; i++) {
         // stub.c is built (build_other_objects) with its -D, tree_sitter.c is the grammar's, and random.c includes the
-        // raw lowering of random.smith, which tests/random.sh writes when it runs
+        // raw lowering of random.smith, which tests/random_c_test.smith writes when it runs
         if (strcmp(sources[i], "tests/stub.c") == 0 || strcmp(sources[i], "tests/tree_sitter.c") == 0 ||
             strcmp(sources[i], "tests/random.c") == 0)
             continue;
@@ -769,7 +769,6 @@ typedef struct {
 
 // clang-format off
 static const BuildTestScript build_test_scripts[] = {
-    {"arena", "arena", nullptr, 0},
     {"autodiff", "autodiff", nullptr, 1},
     {"contract", "contract", nullptr, 0},
     {"dap", "dap", nullptr, 0},
@@ -777,10 +776,6 @@ static const BuildTestScript build_test_scripts[] = {
     {"defer", "defer", nullptr, 0},
     {"effects", "effects", nullptr, 0},
     {"handlers", "handlers", nullptr, 0},
-    {"http", "http", nullptr, 0},
-    {"inflate", "inflate", nullptr, 0},
-    {"io", "io", nullptr, 0},
-    {"json", "json", nullptr, 0},
     {"lsp-folders", "lsp", "folders", 1},
     {"lsp-project", "lsp", "project", 1},
     {"mcp-fake-asan", "mcp", "fake-asan", 0},
@@ -791,8 +786,6 @@ static const BuildTestScript build_test_scripts[] = {
     {"protocol", "protocol", nullptr, 0},
     {"prove", "prove", nullptr, 1},
     {"prove-sound", "prove_sound", nullptr, 1},
-    {"random", "random", nullptr, 0},
-    {"text", "text", nullptr, 0},
     {"tree_sitter", "tree_sitter", nullptr, 0},
 };
 // clang-format on
@@ -853,12 +846,7 @@ static const char *const *build_test(SmithBuild *b, const BuildConfig *config, c
                                             smith_fmt(b, "tests/%s.sh", row->script), binary, nullptr),
                                  smith_when(b, row->mode != nullptr, smith_list(b, row->mode, nullptr)), nullptr),
             .description = smith_fmt(b, "tests/%s.sh %s", row->script, mode),
-            .inputs = (const char *[]){binary,
-                                       units[0] != '\0' &&
-                                               (strcmp(row->script, "json") == 0 || strcmp(row->script, "inflate") == 0)
-                                           ? "units-build"
-                                           : nullptr,
-                                       nullptr},
+            .inputs = (const char *[]){binary, nullptr},
             .test = true,
         };
         smith_task(b, names[i], &step);
@@ -868,8 +856,14 @@ static const char *const *build_test(SmithBuild *b, const BuildConfig *config, c
         smith_cat(b, names, smith_when(b, units[0] != '\0', smith_list(b, "test-units", nullptr)), nullptr);
     // Every float through the parser, against strtof: minutes on all cores, so it is not part of `test`.
     SmithStep exhaustive = {
-        .command = (const char *[]){"sh", "-c", "env CC=\"$0\" sh tests/text.sh \"$1\" exhaustive", config->cc, binary,
-                                    nullptr},
+        .command =
+            (const char *[]){"sh", "-c",
+                             "work=$(mktemp -d); trap 'rm -rf \"$work\"' EXIT; export XDG_CACHE_HOME=$work/xdg-cache; "
+                             "\"$0\" cc -std=gnu23 -O2 -Wall -Wextra -Werror -I include tests/text_exhaustive.c "
+                             "lib/smith/text.smith -pthread -o \"$work/exhaustive\" || exit 1; start=$(date +%s); "
+                             "\"$work/exhaustive\"; status=$?; "
+                             "echo \"exhaustive: exit $status in $(($(date +%s) - start)) s\"; exit $status",
+                             binary, nullptr},
         .inputs = (const char *[]){binary, nullptr},
     };
     smith_task(b, "text-exhaustive", &exhaustive);

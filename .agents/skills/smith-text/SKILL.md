@@ -38,6 +38,6 @@ A file read into memory is `const char text[:] = ((const char *)data)[0:size];`,
 
 ## Replays must round-trip
 
-Whatever the writers produce, the parsers read back exactly: every u64, i64 and hex value, including 0, the maximum, the minimum and leading zeros, and every finite float written with 9 significant digits (`%.9g`), signs of zero included. `tests/text.sh` checks it with property tests on keys, and `smith build text-exhaustive` parses all 2^32 float patterns, in two formats each, against `strtof`, and 2^24 sampled double patterns against `strtod`, on all cores.
+Whatever the writers produce, the parsers read back exactly: every u64, i64 and hex value, including 0, the maximum, the minimum and leading zeros, and every finite float written with 9 significant digits (`%.9g`), signs of zero included. `lib/smith/text_test.smith` checks it with property tests on keys, and `smith build text-exhaustive` parses all 2^32 float patterns, in two formats each, against `strtof`, and 2^24 sampled double patterns against `strtod`, on all cores.
 
 Also in this family: [smith-text-numbers](../smith-text-numbers/SKILL.md), [smith-text-c](../smith-text-c/SKILL.md).
