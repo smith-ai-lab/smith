@@ -61,6 +61,11 @@ static bool smith_platform_clone(const char *from, const char *to) {
     return clonefile(from, to, 0) == 0 || link(from, to) == 0 || symlink(from, to) == 0;
 }
 
+// The monotonic clock in nanoseconds.
+[[maybe_unused]] static unsigned long long smith_platform_monotonic_ns(void) {
+    return clock_gettime_nsec_np(CLOCK_MONOTONIC);
+}
+
 // When the file was last changed.
 static struct timespec smith_platform_mtime(const struct stat *info) {
     return info->st_mtimespec;
