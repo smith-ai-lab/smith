@@ -550,6 +550,153 @@ expect_line "c: the error is clang's, at its place" "$log" \
 case $log in *"hover util.c:3:5: function util_twice"*) chover=yes ;; *) chover=no ;; esac
 expect "c: hover" yes "$chover"
 
+# Queries from the shell (issue #248): `smith lsp def|refs|hover|diag|symbols` and `smith lsp -`, answered from the same
+# server and index as the editor, one `path:line:col: kind: text` line for each fact. A project of two modules, an alias,
+# a generic, a C file that calls a module by its C name, and a C-only folder.
+mkdir -p "$work/q/geom" "$work/qc"
+cd "$work/q" || exit 1
+cat >build.c <<'EOF'
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    const char *const flags[] = {"-std=gnu2y", "-Wall", "-Wextra", "-I", ".smith/include", nullptr};
+    SmithObject vec = {.compiler = "smith-cc", .source = "geom/vec.smith", .output = "build/vec.o", .flags = flags};
+    SmithObject user = {.compiler = "smith-cc", .source = "user.smith", .output = "build/user.o", .flags = flags};
+    SmithObject c_object = {.compiler = "smith-cc", .source = "c_use.c", .output = "build/c_use.o", .flags = flags};
+    smith_object(b, &vec);
+    smith_object(b, &user);
+    smith_object(b, &c_object);
+    SmithProgram program = {.linker = "smith-cc", .output = "build/demo", .objects = (const SmithObject *[]){&vec, &user, &c_object, nullptr}};
+    smith_program(b, &program);
+    smith_default(b, program.step.outputs);
+    smith_compile_commands(b, "compile_commands.json");
+}
+EOF
+cat >geom/vec.smith <<'EOF'
+module geom::vec;
+
+export typedef struct {
+    f32 x;
+    f32 y;
+} Vec;
+
+export f32 dot(Vec a, Vec b) {
+    return a.x * b.x + a.y * b.y;
+}
+
+export typeof(a) larger(auto a, typeof(a) b) {
+    return a > b ? a : b;
+}
+
+[[smith::c_name("geom_vec_squared")]] export f32 length2(Vec a) {
+    return a.x * a.x;
+}
+EOF
+cat >user.smith <<'EOF'
+module user;
+
+import geom::vec as v;
+import geom::vec;
+
+export f32 length_squared(v::Vec a) {
+    auto n = v::dot(a, a);
+    return n;
+}
+
+export f32 biggest(vec::Vec a, vec::Vec b) {
+    return vec::larger(vec::dot(a, a), vec::dot(b, b));
+}
+
+export f32 squared(vec::Vec a) {
+    return vec::length2(a);
+}
+EOF
+cat >c_use.c <<'EOF'
+#include "geom/vec.h"
+
+float c_use(geom_vec_Vec a) {
+    return geom_vec_dot(a, a);
+}
+
+int main(void) {
+    return 0;
+}
+EOF
+if ! smith build >build.log 2>&1; then
+    echo "FAIL  query: the scratch project does not build"
+    head -5 build.log
+    failures=$((failures + 1))
+fi
+query() { # arguments of `smith lsp`; the answer, the paths relative to the folder
+    smith lsp "$@" 2>/dev/null
+}
+expect "query: the first query waits for the index and says so on stderr (never an answer from an unfinished index)" \
+    "smith lsp: bringing the index up to date" "$(smith lsp def vec::dot 2>&1 >/dev/null | head -n 1)"
+expect "query def: a module's function, as written, with its declaration" \
+    "geom/vec.smith:8:12: function: geom::vec::dot: export f32 dot(Vec a, Vec b) {" "$(query def vec::dot)"
+expect "query def: a bare name is every module's, and each line says which" \
+    "geom/vec.smith:8:12: function: geom::vec::dot: export f32 dot(Vec a, Vec b) {" "$(query def dot)"
+expect "query def: a C name" "geom/vec.smith:8:12: function: geom_vec_dot: export f32 dot(Vec a, Vec b) {" \
+    "$(query def geom_vec_dot)"
+expect "query refs: every spelling (an alias, the module's own name, the C name in a C file) of a function" \
+    "c_use.c:4:12: ref: return geom_vec_dot(a, a);
+geom/vec.smith:8:12: ref: export f32 dot(Vec a, Vec b) {
+user.smith:7:17: ref: auto n = v::dot(a, a);
+user.smith:12:29: ref: return vec::larger(vec::dot(a, a), vec::dot(b, b));
+user.smith:12:45: ref: return vec::larger(vec::dot(a, a), vec::dot(b, b));" "$(query refs vec::dot)"
+expect "query refs: a call of a generic is a reference to the generic" \
+    "user.smith:12:17: ref: return vec::larger(vec::dot(a, a), vec::dot(b, b));" "$(query refs vec::larger)"
+# A function with a C name is in the index under it: the written name finds it all the same (issue #248, the review).
+expect "query refs: a function with a c_name, asked by its written name" \
+    "geom/vec.smith:16:50: ref: [[smith::c_name(\"geom_vec_squared\")]] export f32 length2(Vec a) {
+user.smith:16:17: ref: return vec::length2(a);" "$(query refs vec::length2)"
+hover=$(query hover user.smith:7:10)
+case $hover in *"user.smith:7:10: hover: "*"float"*) hover=yes ;; *) hover=no ;; esac
+expect "query hover: the type of an auto local, as written" yes "$hover"
+expect "query symbols: the outline of a module" \
+    "geom/vec.smith:3:16: class: (anonymous struct)
+geom/vec.smith:4:5: field: x
+geom/vec.smith:5:5: field: y
+geom/vec.smith:3:8: class: Vec
+geom/vec.smith:8:8: function: dot
+geom/vec.smith:12:18: function: larger
+geom/vec.smith:16:46: function: length2" "$(query symbols geom/vec.smith)"
+expect "query diag: no error, no output" "" "$(query diag user.smith)"
+smith lsp diag user.smith >/dev/null 2>&1
+expect "query diag: and exit status 0" 0 $?
+cp user.smith user.smith.keep
+printf 'void f(void) { printf("x"); }\n' >>user.smith
+diag=$(query diag user.smith)
+case $diag in *"user.smith:18:16: error: "*"printf"*) diag=yes ;; *) diag=no ;; esac
+expect "query diag: an edit made outside the editor is an error at its place" yes "$diag"
+smith lsp diag user.smith >/dev/null 2>&1
+expect "query diag: and exit status 1" 1 $?
+cp user.smith.keep user.smith
+expect "query batch: queries one a line from the standard input, answered in order" \
+    "geom/vec.smith:8:12: function: geom::vec::dot: export f32 dot(Vec a, Vec b) {
+user.smith:12:17: ref: return vec::larger(vec::dot(a, a), vec::dot(b, b));" \
+    "$(printf 'def vec::dot\nrefs vec::larger\n' | smith lsp - 2>/dev/null)"
+cd "$work/qc" || exit 1
+cat >c_only.c <<'EOF'
+int twice(int x) {
+    return x * 2;
+}
+
+int four(void) {
+    return twice(2) + twice(2);
+}
+EOF
+printf '[{"directory": "%s", "file": "c_only.c", "command": "cc -c c_only.c"}]\n' "$(pwd -P)" >compile_commands.json
+expect "query C-only: def, refs and symbols of C names" \
+    "c_only.c:1:5: function: twice: int twice(int x) {
+c_only.c:1:5: ref: int twice(int x) {
+c_only.c:6:12: ref: return twice(2) + twice(2);
+c_only.c:6:23: ref: return twice(2) + twice(2);
+c_only.c:1:1: function: twice
+c_only.c:5:1: function: four" \
+    "$(printf 'def twice\nrefs twice\nsymbols c_only.c\n' | smith lsp - 2>/dev/null)"
+cd "$work/p" || exit 1
+
 fi
 if [ "$part" != project ]; then
 # No project at all: a folder with no build.c and no compile_commands.json, where clangd's fallback command amounts to
