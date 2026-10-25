@@ -1,4 +1,4 @@
-// The white-box checks of <smith/random.h>, run by tests/random.sh; the rest of random's checks are in
+// The white-box checks of <smith/random.h>, run by tests/random_c_test.smith; the rest of random's checks are in
 // lib/smith/random_test.smith, on smith's test runner, through the exported API. It includes lib/random.c to reach the
 // static generator and the normal's inverse CDF. With no argument it runs the checks. With an argument it runs one
 // mode:
@@ -6,7 +6,7 @@
 //   pins     print the pinned values as C source, for updating them in lib/smith/random_test.smith on purpose
 //   assert   a normal with a deviation of 0, which must abort
 //   stats    print the measured worst errors
-#include "random_lowered.c" // `smith cc --smith-lower lib/smith/random.smith`, written by tests/random.sh
+#include "random_lowered.c" // `smith cc --smith-lower lib/smith/random.smith`, written by tests/random_c_test.smith
 
 #include <assert.h>
 #include <float.h>
