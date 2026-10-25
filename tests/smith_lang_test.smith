@@ -162,8 +162,9 @@ static void build_others(const Case *kase, Built *built) {
     bool has_main =
         scratch::exists(p, "src/main.smith") || scratch::exists(p, "src/main.c") || scratch::exists(p, "src/main.cpp");
     if (built->status != 0 || !has_main) return;
+    // -lm: glibc keeps libm apart; macOS's is in libSystem, which links anyway
     scratch::Run linked = scratch::sh(
-        p, format::push(&io->arena, "smith ", linker, built->objects, " -o out/program 2>>out/stderr").data);
+        p, format::push(&io->arena, "smith ", linker, built->objects, " -lm -o out/program 2>>out/stderr").data);
     if (linked.status != 0) {
         built->status = 1;
         return;
