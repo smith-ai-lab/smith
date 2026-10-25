@@ -1,0 +1,20 @@
+#!/bin/sh
+# A stub gh that keeps its "releases" in the folder $GH_DIR and logs each call to $GH_LOG.
+echo "gh $*" >>"$GH_LOG"
+case "$1 $2" in
+"release view") [ -d "$GH_DIR/$3" ] ;;
+"release create")
+    tag=$3
+    mkdir -p "$GH_DIR/$tag"
+    shift 3
+    while [ $# -gt 0 ]; do case $1 in --*) shift 2 ;; *) cp "$1" "$GH_DIR/$tag/"; shift ;; esac; done
+    ;;
+"release list") for d in "$GH_DIR"/*; do [ -d "$d" ] && printf '{"tagName":"%s","createdAt":"2026-10-01T00:00:00Z"}\n' "${d##*/}"; done ;;
+"release download")
+    tag=$3
+    shift 3
+    while [ $# -gt 0 ]; do case $1 in --dir) dir=$2; shift 2 ;; --pattern) pat="$pat $2"; shift 2 ;; *) shift ;; esac; done
+    for p in $pat; do cp "$GH_DIR/$tag/$p" "$dir/"; done
+    ;;
+"release delete") rm -rf "$GH_DIR/$3" ;;
+esac
