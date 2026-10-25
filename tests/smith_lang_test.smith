@@ -412,6 +412,10 @@ export void test_enum_type_function(io::Io *io) {
     corpus_case(io, "enum-type-function");
 }
 
+export void test_enum_type_function_generic(io::Io *io) {
+    corpus_case(io, "enum-type-function-generic");
+}
+
 export void test_enum_type_function_module(io::Io *io) {
     corpus_case(io, "enum-type-function-module");
 }
@@ -494,6 +498,14 @@ export void test_error_enum_payload(io::Io *io) {
 
 export void test_error_enum_type_function(io::Io *io) {
     corpus_case(io, "error-enum-type-function");
+}
+
+export void test_error_enum_type_function_export(io::Io *io) {
+    corpus_case(io, "error-enum-type-function-export");
+}
+
+export void test_error_enum_type_function_generic(io::Io *io) {
+    corpus_case(io, "error-enum-type-function-generic");
 }
 
 export void test_error_export_no_module(io::Io *io) {
