@@ -34,7 +34,7 @@ constexpr size_t smith_sym_inline_max = 8;
 constexpr size_t smith_sym_line_max = 4096;
 constexpr size_t smith_sym_notes_max = 4;
 constexpr size_t smith_sym_chain_max = 32;
-constexpr size_t smith_sym_details_max = 8;
+constexpr size_t smith_sym_details_max = 48; // a golden file's diff is 40 lines and its frame
 constexpr size_t smith_sym_values_max = 16;
 constexpr size_t smith_sym_arguments_max = 4;
 constexpr int smith_sym_exit_unavailable = 3;
@@ -446,8 +446,9 @@ static size_t smith_sym_arguments(const char *source, char arguments[smith_sym_a
 }
 
 // A value line `label = value   (type)` split in place: the label, the value and the type's text. False for any other
-// line.
+// line, and for a line of a diff (test::golden's), which starts with a space, `+`, `-` or `@`.
 static bool smith_sym_value_line(char *line, char **label, char **value, char **type) {
+    if (line[0] == ' ' || line[0] == '+' || line[0] == '-' || line[0] == '@') return false;
     char *equals = strstr(line, " = ");
     char *parenthesis = strrchr(line, '(');
     if (equals == nullptr || parenthesis == nullptr || parenthesis < equals) return false;

@@ -1,0 +1,73 @@
+// test::golden (lib/smith/test.smith, issue #292): the fixture tests/build_fixtures/golden has a test file whose
+// goldens pass, differ, are too long to show, are missing, or are empty. Each test here is its own project.
+module golden_test;
+
+import smith::io;
+import smith::test;
+import scratch;
+
+export void test_golden_a_text_equal_to_its_file_passes(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "golden");
+    scratch::Run run = scratch::sh(&p, "env SMITH_OUTPUT=full smith test --test sample_test::matches");
+    scratch::expect_status("golden: a match passes", 0, &run);
+    scratch::expect_contains("golden: and the run says so", run.out, "1 passed, 0 failed");
+}
+
+export void test_golden_an_empty_text_equals_an_empty_file(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "golden");
+    scratch::Run run = scratch::sh(&p, "env SMITH_OUTPUT=full smith test --test empty_file_and_text");
+    scratch::expect_status("golden: empty and empty", 0, &run);
+}
+
+export void test_golden_a_mismatch_fails_with_the_diff(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "golden");
+    scratch::Run run = scratch::sh(&p, "env SMITH_OUTPUT=full smith test --test sample_test::differs");
+    scratch::expect_failure("golden: a mismatch fails", &run);
+    scratch::expect_contains("golden: the expected file is on the left", run.out,
+                             "--- expected/differs.txt (expected)");
+    scratch::expect_contains("golden: the actual text on the right", run.out, "+++ expected/differs.txt (actual)");
+    scratch::expect_contains("golden: the first hunk", run.out, "@@ -1,5 +1,5 @@");
+    scratch::expect_contains("golden: a removed line", run.out, "-two");
+    scratch::expect_contains("golden: an added line", run.out, "+TWO");
+    scratch::expect_contains("golden: the second hunk", run.out, "@@ -8,3 +8,4 @@");
+    scratch::expect_contains("golden: an added line at the end", run.out, "+ELEVEN");
+    scratch::expect_contains("golden: three lines of context after a change", run.out, "five");
+    scratch::expect_lacks("golden: and no more than three", run.out, " six");
+    scratch::expect_contains("golden: the last line says how to accept", run.out, "run smith test --update to accept");
+    scratch::expect_text("golden: the file is untouched", "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten",
+                         scratch::read(&p, "expected/differs.txt"));
+}
+
+export void test_golden_a_long_diff_stops_at_forty_lines(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "golden");
+    scratch::Run run = scratch::sh(&p, "env SMITH_OUTPUT=full smith test --test sample_test::long");
+    scratch::expect_failure("golden: a long diff fails", &run);
+    scratch::expect_contains("golden: it shows the lines up to the limit", run.out, "-old 39");
+    scratch::expect_lacks("golden: and not the next", run.out, "-old 40");
+    scratch::expect_contains("golden: then counts the rest", run.out, "... 81 more lines");
+    scratch::expect_contains("golden: and still ends with the way to accept", run.out,
+                             "run smith test --update to accept");
+}
+
+export void test_golden_a_missing_file_fails_and_is_not_made(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "golden");
+    scratch::Run run = scratch::sh(&p, "env SMITH_OUTPUT=full smith test --test sample_test::missing");
+    scratch::expect_failure("golden: a missing file fails", &run);
+    scratch::expect_contains("golden: the message names the file and the way to write it", run.out,
+                             "no file expected/made/new.txt; run smith test --update to write it");
+    test::check(!scratch::exists(&p, "expected/made/new.txt"));
+}
+
+export void test_golden_update_writes_the_files_and_passes(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "golden");
+    scratch::Run run = scratch::sh(&p, "env SMITH_OUTPUT=full smith test --update");
+    scratch::expect_status("golden: --update passes", 0, &run);
+    scratch::expect_contains("golden: it lists a file it made", run.out, "wrote expected/made/new.txt");
+    scratch::expect_contains("golden: and one it changed", run.out, "wrote expected/differs.txt");
+    scratch::expect_lacks("golden: but not one that was right", run.out, "wrote expected/matches.txt");
+    scratch::expect_text("golden: the new file", "fresh", scratch::read(&p, "expected/made/new.txt"));
+    scratch::expect_contains("golden: the changed file", scratch::read(&p, "expected/differs.txt"), "TWO");
+    scratch::Run again = scratch::sh(&p, "env SMITH_OUTPUT=full smith test");
+    scratch::expect_status("golden: and the next plain run passes", 0, &again);
+    scratch::expect_lacks("golden: and writes nothing", again.out, "wrote ");
+}
