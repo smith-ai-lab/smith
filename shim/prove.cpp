@@ -710,7 +710,7 @@ int prove_in_child(prove::Program &loaded, const std::string &name, const std::s
 
 } // namespace
 
-// Z3's static initializers, which scripts/prove-libs.sh moved out of the section dyld runs at load (there are ten
+// Z3's static initializers, which `build_z3_defer` in build.c moved out of the section dyld runs at load (there are ten
 // thousand, and every smith process would pay for them) into __DATA,__smith_prove. `smith prove` is the one command
 // that needs them.
 static void run_deferred_initializers() {

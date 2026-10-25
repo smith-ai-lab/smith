@@ -22,8 +22,8 @@
 LLD_HAS_DRIVER(macho)
 
 #ifdef SMITH_ENZYME
-// Enzyme (automatic differentiation of LLVM IR, scripts/enzyme.sh) is linked into smith and runs inside the LTO
-// pipeline of this link. lld's LTO config has no hook for a PassBuilder, only `--load-pass-plugin=<file>`, which
+// Enzyme (automatic differentiation of LLVM IR, build_enzyme_make in build.c) is linked into smith and runs inside the
+// LTO pipeline of this link. lld's LTO config has no hook for a PassBuilder, only `--load-pass-plugin=<file>`, which
 // dlopens the file and asks it for llvmGetPassPluginInfo. The file is smith itself: dlopen of an executable's own path
 // answers its handle, and Enzyme's llvmGetPassPluginInfo is exported from it (build.c, -exported_symbol; the pointer
 // below keeps it from being stripped). Nothing is loaded from disk, and a link with no bitcode never reads the option.

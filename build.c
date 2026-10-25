@@ -12,8 +12,15 @@
 // -DPREFIX=...), release (CI only), llvm and clean.
 #include <smith/build.h>
 
+#include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
+#include <spawn.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 // Everything the targets share.
@@ -28,11 +35,11 @@ typedef struct {
     const char *llvm_id; // the identity of that clang (scripts/llvm.sh): its version and a hash of what is linked
     const char *cxx;     // compiles the shims
     bool lldb;           // the install has lldb (scripts/llvm.sh, the lldb step): smith has `smith dbg` and `smith dap`
-    const char *prove;   // the folder with Z3 and Alive2 beside the LLVM install (scripts/prove-libs.sh), else ""
+    const char *prove;   // the folder with Z3 and Alive2 beside the LLVM install (build_prove_libs_make), else ""
     bool linkable;       // the install has what smith links (else the default target stops and says `smith build llvm`)
     bool hook;           // the install has the token hook (patches/clang-token-hook.patch): smith compiles .smith files
     const char
-        *enzyme; // the folder with libEnzymeStatic-23.a (scripts/enzyme.sh): smith differentiates at link time, else ""
+        *enzyme; // the folder with libEnzymeStatic-23.a (build_enzyme_make): smith differentiates at link time, else ""
 } BuildConfig;
 
 // A make variable set with ?=: -DNAME=value, else the environment, else the fallback.
@@ -209,7 +216,7 @@ static const char *const *build_lldb_libraries(SmithBuild *b, const BuildConfig 
                      nullptr);
 }
 
-// Enzyme (scripts/enzyme.sh), before LLVM's libraries: shim/lld.cpp registers it with the linker's LTO pipeline.
+// Enzyme (build_enzyme_make), before LLVM's libraries: shim/lld.cpp registers it with the linker's LTO pipeline.
 static const char *const *build_enzyme_libraries(SmithBuild *b, const BuildConfig *config) {
     if (config->enzyme[0] == '\0') return smith_list(b, nullptr);
     return smith_list(b, smith_fmt(b, "%s/lib/libEnzymeStatic-23.a", config->enzyme), nullptr);
@@ -236,7 +243,7 @@ static void build_shim(SmithBuild *b, const BuildConfig *config, const char *fol
 }
 
 // The prover (`smith prove`): shim/prove*.cpp, which need RTTI and exceptions for Alive2, and the libraries they link
-// before LLVM's: Alive2's (scripts/prove-libs.sh builds them beside the LLVM install, which has RTTI and exceptions on)
+// before LLVM's: Alive2's (build_prove_libs_make builds them beside the LLVM install, which has RTTI and exceptions on)
 // and Z3. Alive2's namespace smt is renamed, because Z3's own smt::context has the same name and
 // the linker would merge the two.
 typedef struct {
@@ -288,7 +295,7 @@ static void build_prover(SmithBuild *b, const BuildConfig *config, const char *f
         libraries = smith_cat(
             b, libraries, smith_list(b, smith_fmt(b, "%s/lib/lib%s.a", config->prove, solver[i]), nullptr), nullptr);
     }
-    // GMP and MPFR are Bitwuzla's: built static beside the rest (scripts/bitwuzla.sh).
+    // GMP and MPFR are Bitwuzla's: built static beside the rest (build_bitwuzla_make).
     prover->libraries = smith_cat(b, libraries,
                                   smith_list(b, smith_fmt(b, "%s/lib/libz3.a", config->prove),
                                              smith_fmt(b, "%s/lib/libmpfr.a", config->prove),
@@ -946,7 +953,7 @@ static const char *build_llvm_folder(SmithBuild *b) {
 }
 
 // Enzyme beside the LLVM configurations, keyed by its version and the configuration it was built against, so that
-// building it leaves the LLVM install alone (scripts/enzyme.sh).
+// building it leaves the LLVM install alone (build_enzyme_make).
 static const char *build_enzyme_folder(SmithBuild *b) {
     const char *cache = smith_env(b, "XDG_CACHE_HOME", smith_fmt(b, "%s/.cache", smith_env(b, "HOME", "")));
     return smith_fmt(b, "%s/smith/enzyme/0.0.303-%s", cache, smith_env(b, "SMITH_LLVM_NAME", "23.1.3-r10"));
@@ -966,9 +973,573 @@ static const char *build_python_package(SmithBuild *b) {
                            .hash = "sha256:235f3d5b182a171f6564ee98ef2812cfb2da8a73c4a37fca1937b25702f94880"});
 }
 
-// Z3 and Alive2's libraries, built beside the LLVM (scripts/prove-libs.sh): both pinned by hash. Alive2 is the last
-// commit before it moved to LLVM APIs that 23.1.3 does not have (its August 2026 commits to TargetLibraryInfo's
-// getLibFunc and to nofree attributes), so it is the newest that builds against LLVM 23.1.3.
+// ---- The scripts that were shell (#291): each is a function that runs as a step or a task, with no shell. The
+// programs run through build_spawn, which is smith_run_program with a folder to run in, a log for a noisy build and the
+// environment to add.
+extern char **environ;
+
+typedef struct {
+    const char *const *argv;
+    const char *const *environment; // NAME=value entries, replacing a variable of the same name
+    const char *folder;             // run here
+    const char *log;                // stdout and stderr go here; on a failure its last lines are printed
+    int32_t tail;                   // how many
+    bool stdout_only;               // only stdout goes to the log
+    bool append;                    // the log is not truncated first
+} BuildSpawn;
+
+constexpr size_t build_environment_max = 2048;
+
+static const char *const *build_merged_environment(const char *const *extra) {
+    static const char *merged[build_environment_max];
+    size_t extra_count = 0;
+    while (extra != nullptr && extra[extra_count] != nullptr)
+        extra_count++;
+    size_t count = 0;
+    for (char *const *entry = environ; *entry != nullptr; entry++) {
+        bool replaced = false;
+        for (size_t i = 0; i < extra_count; i++)
+            replaced = replaced || strncmp(*entry, extra[i], strcspn(extra[i], "=") + 1) == 0;
+        if (replaced) continue;
+        if (count + extra_count + 1 >= build_environment_max) {
+            fputs("smith: the environment is too large\n", stderr);
+            exit(1);
+        }
+        merged[count++] = *entry;
+    }
+    for (size_t i = 0; i < extra_count; i++)
+        merged[count++] = extra[i];
+    merged[count] = nullptr;
+    return merged;
+}
+
+// The last `lines` lines of a log, at most its last 16 KiB.
+static void build_print_tail(const char *path, int32_t lines) {
+    static char text[16384];
+    FILE *file = fopen(path, "rb");
+    if (file == nullptr) return;
+    fseek(file, 0, SEEK_END);
+    long size = ftell(file);
+    long start = size > (long)sizeof text - 1 ? size - ((long)sizeof text - 1) : 0;
+    fseek(file, start, SEEK_SET);
+    size_t used = fread(text, 1, sizeof text - 1, file);
+    fclose(file);
+    text[used] = '\0';
+    const char *from = text + used;
+    if (used > 0 && from[-1] == '\n') from--;
+    int32_t seen = 0;
+    while (from > text && seen < lines) {
+        from--;
+        seen += *from == '\n' ? 1 : 0;
+    }
+    if (*from == '\n') from++;
+    fputs(from, stderr);
+}
+
+static int build_wait(pid_t pid) {
+    int status = 0;
+    while (waitpid(pid, &status, 0) < 0) {
+        if (errno != EINTR) return 127;
+    }
+    if (WIFEXITED(status)) return WEXITSTATUS(status);
+    return WIFSIGNALED(status) ? 128 + WTERMSIG(status) : 127;
+}
+
+// 0 for success; the program's status otherwise, 127 when it cannot start.
+static int build_spawn(const BuildSpawn *spawn) {
+    fflush(stdout);
+    fflush(stderr);
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    if (spawn->log != nullptr) {
+        int flags = O_WRONLY | O_CREAT | (spawn->append ? O_APPEND : O_TRUNC);
+        posix_spawn_file_actions_addopen(&actions, 1, spawn->log, flags, 0644);
+        if (!spawn->stdout_only) posix_spawn_file_actions_adddup2(&actions, 1, 2);
+    }
+    pid_t pid = 0;
+    // The child starts in the folder this process is in for the moment of the spawn (this process runs one step and has
+    // no other thread), so no deprecated or newer spawn extension is needed.
+    char home[PATH_MAX];
+    bool moved = spawn->folder != nullptr && getcwd(home, sizeof home) != nullptr && chdir(spawn->folder) == 0;
+    int error = spawn->folder != nullptr && !moved
+                    ? ENOENT
+                    : posix_spawnp(&pid, spawn->argv[0], &actions, nullptr, (char *const *)spawn->argv,
+                                   (char *const *)build_merged_environment(spawn->environment));
+    if (moved && chdir(home) != 0) error = error != 0 ? error : EIO;
+    posix_spawn_file_actions_destroy(&actions);
+    int status = error != 0 ? 127 : build_wait(pid);
+    if (error != 0) fprintf(stderr, "smith: cannot run %s: %s\n", spawn->argv[0], strerror(error));
+    if (status != 0 && spawn->log != nullptr && spawn->tail > 0) build_print_tail(spawn->log, spawn->tail);
+    return status;
+}
+
+static int build_exec(const char *const *argv) {
+    return build_spawn(&(BuildSpawn){.argv = argv});
+}
+
+static int build_remove(SmithBuild *b, const char *path) {
+    return build_exec(smith_list(b, "/bin/rm", "-rf", path, nullptr));
+}
+
+static int build_make_folder(SmithBuild *b, const char *path) {
+    return build_exec(smith_list(b, "/bin/mkdir", "-p", path, nullptr));
+}
+
+// A copy of a source tree (a package is never written to) that the build may write to: `cp -R from/. to/`.
+static int build_copy_tree(SmithBuild *b, const char *from, const char *to) {
+    int status =
+        build_exec(smith_list(b, "/bin/cp", "-R", smith_fmt(b, "%s/.", from), smith_fmt(b, "%s/", to), nullptr));
+    return status != 0 ? status : build_exec(smith_list(b, "/bin/chmod", "-R", "u+w", to, nullptr));
+}
+
+static int build_write_text(const char *path, const char *text, mode_t mode) {
+    FILE *file = fopen(path, "w");
+    if (file == nullptr) return 1;
+    bool written = fputs(text, file) >= 0;
+    bool closed = fclose(file) == 0;
+    return written && closed && chmod(path, mode) == 0 ? 0 : 1;
+}
+
+// Replaces `path` by `from` in one step, so no reader sees half a file.
+static int build_publish(SmithBuild *b, const char *from, const char *path) {
+    int status = build_exec(smith_list(b, "/bin/cp", from, smith_fmt(b, "%s.part", path), nullptr));
+    return status != 0 ? status : (rename(smith_fmt(b, "%s.part", path), path) != 0 ? 1 : 0);
+}
+
+static const char *build_parent(SmithBuild *b, const char *path) {
+    const char *slash = strrchr(path, '/');
+    return slash == nullptr ? "." : smith_fmt(b, "%.*s", (int)(slash - path), path);
+}
+
+static const char *build_base(const char *path) {
+    const char *slash = strrchr(path, '/');
+    return slash == nullptr ? path : slash + 1;
+}
+
+static const char *build_sdk(SmithRun *run) {
+    const char *const *lines = smith_run_lines(run, (const char *[]){"xcrun", "--show-sdk-path", nullptr});
+    return lines == nullptr || lines[0] == nullptr ? "" : lines[0];
+}
+
+// Ninja from its pinned source, for the builds that `smith build llvm` runs (LLVM's CMake, Z3, Alive2 and Bitwuzla's
+// Meson all want one), so that nothing comes from Homebrew: $out, made once. Ninja builds itself with Python and the
+// system's C++ compiler, in a copy of the source.
+static int build_ninja_bootstrap(SmithBuild *b, const char *src, const char *python, const char *work,
+                                 const char *out) {
+    int status = build_copy_tree(b, src, work);
+    if (status != 0) return status;
+    status = build_make_folder(b, build_parent(b, out));
+    if (status != 0) return status;
+    status = build_spawn(&(BuildSpawn){
+        .argv = smith_list(b, smith_fmt(b, "%s/bin/python3", python), "-I", "configure.py", "--bootstrap", nullptr),
+        .environment = smith_list(b, "CXX=/usr/bin/clang++", nullptr),
+        .folder = work,
+        .log = "/dev/null",
+        .stdout_only = true});
+    return status != 0 ? status : build_publish(b, smith_fmt(b, "%s/ninja", work), out);
+}
+
+static int build_ninja_make(SmithRun *run, const char *src, const char *python, const char *out) {
+    if (access(out, X_OK) == 0) return 0;
+    char work[1024];
+    snprintf(work, sizeof work, "%s/ninja.XXXXXX", smith_env(run->b, "TMPDIR", "/tmp"));
+    if (mkdtemp(work) == nullptr) return 1;
+    int status = build_ninja_bootstrap(run->b, src, python, work, out);
+    build_remove(run->b, work);
+    return status;
+}
+
+// Enzyme (reverse and forward mode automatic differentiation of LLVM IR), static, against the LLVM install: its
+// library into `out`/lib, a folder of its own keyed by the version and the LLVM configuration, so building it never
+// touches the LLVM install that other smiths link. Run again with nothing changed, cmake and ninja find nothing to do.
+//   -DENZYME_RUNPASS makes the static library hook the optimization pipelines (without it nothing runs Enzyme);
+//   ENZYME_CLANG=OFF: no clang plugin, smith runs Enzyme at link time (shim/lld.cpp);
+//   patches/enzyme/*.patch go into a copy of the package, as the LLVM patches do.
+typedef struct {
+    const char *source;
+    const char *cmake; // the package with CMake.app
+    const char *llvm;  // the install
+    const char *ninja;
+    const char *out;
+} BuildEnzyme;
+
+static int build_enzyme_patched(SmithBuild *b, const char *source, const char *work) {
+    const char *patched = smith_fmt(b, "%s/.patched", work);
+    if (access(patched, F_OK) == 0) return 0;
+    const char *copy = smith_fmt(b, "%s/src", work);
+    int status = build_remove(b, copy);
+    status = status != 0 ? status : build_make_folder(b, copy);
+    status = status != 0 ? status : build_copy_tree(b, source, copy);
+    const char *const *patches = smith_glob(b, smith_list(b, "patches/enzyme/*.patch", nullptr));
+    for (size_t i = 0; status == 0 && patches[i] != nullptr; i++)
+        status = build_exec(smith_list(b, "patch", "-p1", "-s", "-d", copy, "-i", patches[i], nullptr));
+    return status != 0 ? status : build_write_text(patched, "", 0644);
+}
+
+static int build_enzyme_make(SmithRun *run, const BuildEnzyme *enzyme) {
+    SmithBuild *b = run->b;
+    const char *name = build_base(build_parent(b, enzyme->llvm));
+    const char *work = smith_fmt(b, "%s/build-%s", build_parent(b, enzyme->out), build_base(enzyme->out));
+    const char *sdk = build_sdk(run);
+    const char *const environment[] = {smith_fmt(b, "SDKROOT=%s", sdk), nullptr};
+    int status = build_make_folder(b, smith_fmt(b, "%s/lib", enzyme->out));
+    status = status != 0 ? status : build_make_folder(b, work);
+    status = status != 0 ? status : build_enzyme_patched(b, enzyme->source, work);
+    if (status != 0) return status;
+    const char *const configure[] = {smith_fmt(b, "%s/CMake.app/Contents/bin/cmake", enzyme->cmake),
+                                     "-G",
+                                     "Ninja",
+                                     "-S",
+                                     smith_fmt(b, "%s/src/enzyme", work),
+                                     "-B",
+                                     smith_fmt(b, "%s/build", work),
+                                     "-DCMAKE_BUILD_TYPE=Release",
+                                     "-DCMAKE_IGNORE_PREFIX_PATH=/opt/homebrew;/usr/local",
+                                     smith_fmt(b, "-DCMAKE_MAKE_PROGRAM=%s", enzyme->ninja),
+                                     "-DCMAKE_C_COMPILER=/usr/bin/clang",
+                                     "-DCMAKE_CXX_COMPILER=/usr/bin/clang++",
+                                     smith_fmt(b, "-DCMAKE_OSX_SYSROOT=%s", sdk),
+                                     smith_fmt(b, "-DLLVM_DIR=%s/lib/cmake/llvm", enzyme->llvm),
+                                     smith_fmt(b, "-DClang_DIR=%s/lib/cmake/clang", enzyme->llvm),
+                                     "-DENZYME_STATIC_LIB=ON",
+                                     "-DENZYME_CLANG=OFF",
+                                     "-DLLVM_EXTERNAL_LIT=/nonexistent",
+                                     "-DCMAKE_CXX_FLAGS=-DENZYME_RUNPASS",
+                                     nullptr};
+    status = build_spawn(&(BuildSpawn){.argv = configure, .environment = environment});
+    if (status != 0) return status;
+    const char *const compile[] = {"/usr/bin/nice",   enzyme->ninja, "-C", smith_fmt(b, "%s/build", work),
+                                   "EnzymeStatic-23", nullptr};
+    status = build_spawn(&(BuildSpawn){.argv = compile, .environment = environment});
+    const char *library = smith_fmt(b, "%s/lib/libEnzymeStatic-23.a", enzyme->out);
+    status =
+        status != 0 ? status : build_publish(b, smith_fmt(b, "%s/build/Enzyme/libEnzymeStatic-23.a", work), library);
+    return status != 0 ? status
+                       : build_write_text(smith_fmt(b, "%s/lib/smith-enzyme.id", enzyme->out),
+                                          smith_fmt(b, "enzyme-0.0.303 llvm-%s\n", name), 0644);
+}
+
+// What `smith prove` links beside LLVM: Z3 and the libraries of Alive2 that hold LLVM IR's semantics (ir, smt, util,
+// tools and llvm_util; not its translation-validation plugin or its executables), both static, into
+// <LLVM folder>/prove/{lib,include}. Alive2 is built against the LLVM install (RTTI and exceptions on).
+typedef struct {
+    const char *cmake; // the cmake binary
+    const char *python;
+    const char *ninja;
+    const char *llvm; // the install
+    const char *cache;
+    const char *out;
+    const char *sdk;
+} BuildProve;
+
+static int build_z3_compile(SmithBuild *b, const BuildProve *prove, const char *z3) {
+    const char *const configure[] = {prove->cmake,
+                                     "-G",
+                                     "Ninja",
+                                     "-S",
+                                     z3,
+                                     "-B",
+                                     smith_fmt(b, "%s/z3-build", prove->cache),
+                                     "-DCMAKE_BUILD_TYPE=Release",
+                                     "-DCMAKE_IGNORE_PREFIX_PATH=/opt/homebrew;/usr/local",
+                                     smith_fmt(b, "-DCMAKE_INSTALL_PREFIX=%s", prove->out),
+                                     smith_fmt(b, "-DCMAKE_MAKE_PROGRAM=%s", prove->ninja),
+                                     "-DCMAKE_C_COMPILER=/usr/bin/clang",
+                                     "-DCMAKE_CXX_COMPILER=/usr/bin/clang++",
+                                     smith_fmt(b, "-DCMAKE_OSX_SYSROOT=%s", prove->sdk),
+                                     smith_fmt(b, "-DPython3_EXECUTABLE=%s/bin/python3", prove->python),
+                                     "-DZ3_BUILD_LIBZ3_SHARED=OFF",
+                                     "-DZ3_BUILD_EXECUTABLE=OFF",
+                                     "-DZ3_BUILD_TEST_EXECUTABLES=OFF",
+                                     "-DZ3_INCLUDE_GIT_HASH=OFF",
+                                     "-DZ3_INCLUDE_GIT_DESCRIBE=OFF",
+                                     "-DZ3_ENABLE_EXAMPLE_TARGETS=OFF",
+                                     "-DZ3_BUILD_PYTHON_BINDINGS=OFF",
+                                     "-DZ3_BUILD_JAVA_BINDINGS=OFF",
+                                     "-DZ3_BUILD_DOTNET_BINDINGS=OFF",
+                                     nullptr};
+    int status = build_exec(configure);
+    const char *const install[] = {"/usr/bin/nice", prove->ninja, "-C", smith_fmt(b, "%s/z3-build", prove->cache),
+                                   "install",       nullptr};
+    return status != 0 ? status : build_exec(install);
+}
+
+// Z3's static initializers. libz3.a has about ten thousand, which dyld would run in every smith process at load (the
+// prover is in all of them). They are moved to __DATA,__smith_prove (scripts/defer_init.c, as for the tools in
+// scripts/llvm.sh), and shim/prove.cpp runs them when `smith prove` does. The archive is rebuilt from the objects of
+// Z3's build, in the order Z3's own archive step used.
+static int build_z3_objects(SmithRun *run, const BuildProve *prove, const char *deferred) {
+    SmithBuild *b = run->b;
+    // ninja's output is one line of more than a megabyte, so it goes to a file and not to a pipe.
+    const char *listing = smith_fmt(b, "%s/commands.txt", deferred);
+    int listed =
+        build_spawn(&(BuildSpawn){.argv = smith_list(b, prove->ninja, "-C", smith_fmt(b, "%s/z3-build", prove->cache),
+                                                     "-t", "commands", "libz3.a", nullptr),
+                                  .log = listing,
+                                  .stdout_only = true});
+    if (listed != 0) return listed;
+    const char *const *commands = smith_lines(b, listing);
+    if (commands == nullptr || commands[0] == nullptr) return 1;
+    size_t last = 0;
+    while (commands[last + 1] != nullptr)
+        last++;
+    char *line = (char *)commands[last]; // the arena copy: strtok_r cuts it into words
+    int count = 0;
+    char *state = nullptr;
+    for (char *word = strtok_r(line, " ", &state); word != nullptr; word = strtok_r(nullptr, " ", &state)) {
+        size_t length = strlen(word);
+        if (length < 2 || strcmp(word + length - 2, ".o") != 0) continue;
+        count++;
+        int status =
+            build_spawn(&(BuildSpawn){.argv = smith_list(b, smith_fmt(b, "%s/tools/defer_init", prove->cache),
+                                                         smith_fmt(b, "%s/z3-build/%s", prove->cache, word),
+                                                         smith_fmt(b, "%s/%05d.o", deferred, count), "prove", nullptr),
+                                      .log = "/dev/null",
+                                      .stdout_only = true});
+        if (status != 0) return status;
+    }
+    return 0;
+}
+
+static int build_z3_defer(SmithRun *run, const BuildProve *prove) {
+    SmithBuild *b = run->b;
+    const char *deferred = smith_fmt(b, "%s/z3-deferred", prove->cache);
+    int status = build_exec(smith_list(b, "/usr/bin/clang", "-std=gnu23", "-O1", "-Wall", "-Wextra", "-Werror",
+                                       "scripts/defer_init.c", "-o", smith_fmt(b, "%s/tools/defer_init", prove->cache),
+                                       nullptr));
+    status = status != 0 ? status : build_remove(b, deferred);
+    status = status != 0 ? status : build_make_folder(b, deferred);
+    status = status != 0 ? status : build_z3_objects(run, prove, deferred);
+    const char *library = smith_fmt(b, "%s/lib/libz3.a", prove->out);
+    status = status != 0 ? status : build_remove(b, library);
+    const char *const *archive =
+        smith_cat(b, smith_list(b, "/usr/bin/ar", "rcs", library, nullptr),
+                  smith_glob(b, smith_list(b, smith_fmt(b, "%s/*.o", deferred), nullptr)), nullptr);
+    return status != 0 ? status : build_exec(archive);
+}
+
+static int build_alive2_compile(SmithBuild *b, const BuildProve *prove, const char *alive2) {
+    const char *git = smith_fmt(b, "%s/tools/git", prove->cache);
+    // Alive2 finds its version with git, which a package has none of: a stand-in that names the pin. re2c only builds
+    // its own `alive` tool, which is not built here.
+    if (build_write_text(git, "#!/bin/sh\necho smith-pinned\n", 0755) != 0) return 1;
+    const char *const configure[] = {prove->cmake,
+                                     "-G",
+                                     "Ninja",
+                                     "-S",
+                                     alive2,
+                                     "-B",
+                                     smith_fmt(b, "%s/alive2-build", prove->cache),
+                                     "-DCMAKE_BUILD_TYPE=Release",
+                                     "-DCMAKE_IGNORE_PREFIX_PATH=/opt/homebrew;/usr/local",
+                                     smith_fmt(b, "-DCMAKE_MAKE_PROGRAM=%s", prove->ninja),
+                                     "-DCMAKE_C_COMPILER=/usr/bin/clang",
+                                     "-DCMAKE_CXX_COMPILER=/usr/bin/clang++",
+                                     smith_fmt(b, "-DCMAKE_OSX_SYSROOT=%s", prove->sdk),
+                                     "-DCMAKE_CXX_FLAGS=-Wno-error -Dsmt=alive2_smt",
+                                     smith_fmt(b, "-DGIT_EXECUTABLE=%s", git),
+                                     "-DRE2C=/usr/bin/true",
+                                     "-DBUILD_LLVM_UTILS=1",
+                                     smith_fmt(b, "-DLLVM_DIR=%s/lib/cmake/llvm", prove->llvm),
+                                     smith_fmt(b, "-DZ3_INCLUDE_DIR=%s/include", prove->out),
+                                     smith_fmt(b, "-DZ3_LIBRARIES=%s/lib/libz3.a", prove->out),
+                                     nullptr};
+    int status = build_exec(configure);
+    const char *const compile[] = {
+        "/usr/bin/nice", prove->ninja, "-C",   smith_fmt(b, "%s/alive2-build", prove->cache), "ir", "smt", "tools",
+        "util",          "llvm_util",  nullptr};
+    return status != 0 ? status : build_exec(compile);
+}
+
+// The libraries and the headers Alive2's own headers include, by the paths they use (ir/state.h, smt/expr.h, ...), with
+// the generated version header.
+static int build_alive2_install(SmithBuild *b, const BuildProve *prove, const char *alive2) {
+    const char *const folders[] = {"ir", "smt", "tools", "util", "llvm_util"};
+    const char *headers = smith_fmt(b, "%s/include/alive2", prove->out);
+    int status = build_remove(b, headers);
+    status = status != 0 ? status : build_make_folder(b, headers);
+    for (size_t i = 0; status == 0 && i < sizeof folders / sizeof folders[0]; i++) {
+        const char *folder = folders[i];
+        status = build_exec(smith_list(b, "/bin/cp", smith_fmt(b, "%s/alive2-build/lib%s.a", prove->cache, folder),
+                                       smith_fmt(b, "%s/lib/libalive2_%s.a", prove->out, folder), nullptr));
+        status = status != 0 ? status : build_make_folder(b, smith_fmt(b, "%s/%s", headers, folder));
+        const char *const *files = smith_glob(b, smith_list(b, smith_fmt(b, "%s/%s/*.h", alive2, folder),
+                                                            smith_fmt(b, "%s/%s/*.inc", alive2, folder), nullptr));
+        if (status == 0 && files[0] != nullptr)
+            status = build_exec(smith_cat(b, smith_list(b, "/bin/cp", nullptr), files,
+                                          smith_list(b, smith_fmt(b, "%s/%s/", headers, folder), nullptr), nullptr));
+    }
+    return status != 0
+               ? status
+               : build_exec(smith_list(b, "/bin/cp", smith_fmt(b, "%s/alive2-build/version_gen.h", prove->cache),
+                                       smith_fmt(b, "%s/", headers), nullptr));
+}
+
+static int build_prove_libs_make(SmithRun *run, const char *z3, const char *alive2, const BuildProve *prove) {
+    SmithBuild *b = run->b;
+    int status = build_make_folder(b, smith_fmt(b, "%s/lib", prove->out));
+    status = status != 0 ? status : build_make_folder(b, smith_fmt(b, "%s/include", prove->out));
+    status = status != 0 ? status : build_make_folder(b, smith_fmt(b, "%s/tools", prove->cache));
+    status = status != 0 ? status : build_z3_compile(b, prove, z3);
+    status = status != 0 ? status : build_z3_defer(run, prove);
+    status = status != 0 ? status : build_alive2_compile(b, prove, alive2);
+    return status != 0 ? status : build_alive2_install(b, prove, alive2);
+}
+
+// Bitwuzla (the SMT solver `smith prove` asks first; Z3 only finds the model of a counterexample) and what it needs,
+// all static, beside Z3 and Alive2's libraries: <LLVM folder>/prove/{lib,include}. Nothing comes from Homebrew, and
+// nothing from the network:
+//   - GMP and MPFR are built with their own configure and the system's make, into the output;
+//   - Meson would fetch CaDiCaL and symfpu by the hashes and revisions its wrap files pin; the same two archives are
+//     packages here (CaDiCaL by the wrap's own hash, symfpu's by the revision's archive) and go where the wraps'
+//     downloads would, with the wraps' overlays (subprojects/packagefiles);
+//   - Bitwuzla's Meson looks GMP and MPFR up with pkg-config, which is not part of macOS: in the copy of the source it
+//   is
+//     told where the static libraries are instead.
+typedef struct {
+    const char *bitwuzla, *meson, *python, *ninja, *gmp, *mpfr, *cadical, *symfpu;
+    const char *cache, *out;
+    const char *const *environment; // macOS's own tools, our ninja and python
+} BuildBitwuzla;
+
+// `./configure && make && make install` in a copy of the package, logged to <name>-build.log.
+static int build_autotools(SmithBuild *b, const BuildBitwuzla *bz, const char *name, const char *package,
+                           const char *const *configure_flags) {
+    const char *folder = smith_fmt(b, "%s/%s-build", bz->cache, name);
+    int status = build_remove(b, folder);
+    status = status != 0 ? status : build_exec(smith_list(b, "/bin/cp", "-R", package, folder, nullptr));
+    status = status != 0 ? status : build_exec(smith_list(b, "/bin/chmod", "-R", "u+w", folder, nullptr));
+    if (status != 0) return status;
+    const char *log = smith_fmt(b, "%s/%s-build.log", bz->cache, name);
+    const char *jobs = smith_fmt(b, "-j%s", smith_capture(b, smith_list(b, "sysctl", "-n", "hw.ncpu", nullptr)));
+    const char *const *commands[] = {
+        smith_cat(b, smith_list(b, "./configure", smith_fmt(b, "--prefix=%s", bz->out), nullptr), configure_flags,
+                  nullptr),
+        smith_list(b, "make", jobs, nullptr), smith_list(b, "make", "install", nullptr)};
+    for (size_t i = 0; status == 0 && i < 3; i++) {
+        status = build_spawn(&(BuildSpawn){.argv = commands[i],
+                                           .environment = bz->environment,
+                                           .folder = folder,
+                                           .log = log,
+                                           .tail = 30,
+                                           .append = i > 0});
+    }
+    return status;
+}
+
+// GMP and MPFR, in copies of their sources (a package is never written to). MPFR is built against the GMP just made.
+static int build_bitwuzla_numbers(SmithBuild *b, const BuildBitwuzla *bz) {
+    if (access(smith_fmt(b, "%s/lib/libmpfr.a", bz->out), F_OK) == 0) return 0;
+    int status = build_autotools(b, bz, "gmp", bz->gmp,
+                                 smith_list(b, "--disable-shared", "--enable-static", "--enable-cxx", nullptr));
+    return status != 0 ? status
+                       : build_autotools(b, bz, "mpfr", bz->mpfr,
+                                         smith_list(b, smith_fmt(b, "--with-gmp=%s", bz->out), "--disable-shared",
+                                                    "--enable-static", nullptr));
+}
+
+// Meson writes its subprojects into the source tree: build from a copy, with the two subprojects in place.
+static int build_bitwuzla_source(SmithBuild *b, const BuildBitwuzla *bz, const char *source) {
+    const char *subprojects = smith_fmt(b, "%s/subprojects", source);
+    const char *cadical = smith_fmt(b, "%s/cadical-rel-2.1.2", subprojects);
+    const char *symfpu = smith_fmt(b, "%s/symfpu", subprojects);
+    int status = build_remove(b, source);
+    status = status != 0 ? status : build_remove(b, smith_fmt(b, "%s/bitwuzla-build", bz->cache));
+    status = status != 0 ? status : build_exec(smith_list(b, "/bin/cp", "-R", bz->bitwuzla, source, nullptr));
+    status = status != 0 ? status : build_exec(smith_list(b, "/bin/chmod", "-R", "u+w", source, nullptr));
+    status = status != 0 ? status : build_exec(smith_list(b, "/bin/cp", "-R", bz->cadical, cadical, nullptr));
+    status = status != 0 ? status : build_copy_tree(b, smith_fmt(b, "%s/packagefiles/cadical", subprojects), cadical);
+    status = status != 0 ? status : build_exec(smith_list(b, "/bin/cp", "-R", bz->symfpu, symfpu, nullptr));
+    status = status != 0 ? status : build_copy_tree(b, smith_fmt(b, "%s/packagefiles/symfpu", subprojects), symfpu);
+    return status != 0 ? status : build_exec(smith_list(b, "/bin/chmod", "-R", "u+w", subprojects, nullptr));
+}
+
+// GMP and MPFR by find_library, in the one place Bitwuzla looks them up.
+static int build_bitwuzla_find_library(SmithBuild *b, const BuildBitwuzla *bz, const char *source) {
+    const char *meson_build = smith_fmt(b, "%s/src/meson.build", source);
+    const char *program =
+        "s|gmp_dep = dependency\\(.gmp.,.*?static: build_static\\)\\nmpfr_dep = dependency\\(.mpfr.,.*?static: "
+        "build_static\\)|gmp_dep = cpp_compiler.find_library(\\x27gmp\\x27, dirs: [\\x27$ENV{LIBDIR}\\x27], static: "
+        "true)\\nmpfr_dep = cpp_compiler.find_library(\\x27mpfr\\x27, dirs: [\\x27$ENV{LIBDIR}\\x27], static: "
+        "true)|s";
+    const char *const environment[] = {smith_fmt(b, "LIBDIR=%s/lib", bz->out), nullptr};
+    int status =
+        build_spawn(&(BuildSpawn){.argv = smith_list(b, "/usr/bin/perl", "-0pi", "-e", program, meson_build, nullptr),
+                                  .environment = environment});
+    if (status != 0) return status;
+    for (const char *const *line = smith_lines(b, meson_build); *line != nullptr; line++) {
+        if (strstr(*line, "find_library('gmp'") != nullptr) return 0;
+    }
+    fputs("bitwuzla: Bitwuzla's src/meson.build changed in a way this function does not know\n", stderr);
+    return 1;
+}
+
+// Only the libraries: the solver's own program is not wanted.
+static int build_bitwuzla_libraries(SmithBuild *b, const BuildBitwuzla *bz, const char *source,
+                                    const char *build_folder) {
+    const char *const libraries[] = {"subprojects/cadical-rel-2.1.2/src/libcadical.a",
+                                     "src/libbzlautil.a",
+                                     "src/lib/libbzlarng.a",
+                                     "src/lib/libbitwuzlabv.a",
+                                     "src/lib/libbitwuzlabb.a",
+                                     "src/lib/libbitwuzlals.a",
+                                     "src/libbitwuzla.a"};
+    const char *const compile[] = {"/usr/bin/nice", bz->ninja,    "-C",         build_folder,
+                                   libraries[0],    libraries[1], libraries[2], libraries[3],
+                                   libraries[4],    libraries[5], libraries[6], nullptr};
+    int status = build_spawn(&(BuildSpawn){.argv = compile,
+                                           .environment = bz->environment,
+                                           .log = smith_fmt(b, "%s/bitwuzla-build.log", bz->cache),
+                                           .tail = 40});
+    for (size_t i = 0; status == 0 && i < sizeof libraries / sizeof libraries[0]; i++) {
+        status = build_exec(smith_list(b, "/bin/cp", smith_fmt(b, "%s/%s", build_folder, libraries[i]),
+                                       smith_fmt(b, "%s/lib/", bz->out), nullptr));
+    }
+    const char *headers = smith_fmt(b, "%s/include/bitwuzla", bz->out);
+    status = status != 0 ? status : build_make_folder(b, headers);
+    return status != 0 ? status : build_copy_tree(b, smith_fmt(b, "%s/include/bitwuzla", source), headers);
+}
+
+static int build_bitwuzla_make(SmithRun *run, BuildBitwuzla *bz) {
+    SmithBuild *b = run->b;
+    const char *sdk = build_sdk(run);
+    bz->environment =
+        smith_list(b, smith_fmt(b, "SDKROOT=%s", sdk),
+                   smith_fmt(b, "PATH=%s:%s/bin:/usr/bin:/bin:/usr/sbin:/sbin", build_parent(b, bz->ninja), bz->python),
+                   "CC=/usr/bin/clang", "CXX=/usr/bin/clang++", nullptr);
+    int status = build_make_folder(b, smith_fmt(b, "%s/lib", bz->out));
+    status = status != 0 ? status : build_make_folder(b, smith_fmt(b, "%s/include", bz->out));
+    status = status != 0 ? status : build_bitwuzla_numbers(b, bz);
+    const char *source = smith_fmt(b, "%s/bitwuzla-src", bz->cache);
+    status = status != 0 ? status : build_bitwuzla_source(b, bz, source);
+    status = status != 0 ? status : build_bitwuzla_find_library(b, bz, source);
+    if (status != 0) return status;
+    const char *build_folder = smith_fmt(b, "%s/bitwuzla-build", bz->cache);
+    const char *setup_log = smith_fmt(b, "%s/bitwuzla-setup.log", bz->cache);
+    const char *const setup[] = {smith_fmt(b, "%s/bin/python3", bz->python),
+                                 "-I",
+                                 smith_fmt(b, "%s/meson.py", bz->meson),
+                                 "setup",
+                                 build_folder,
+                                 source,
+                                 "--buildtype=release",
+                                 "--default-library=static",
+                                 smith_fmt(b, "--prefix=%s", bz->out),
+                                 "--wrap-mode=nodownload",
+                                 smith_fmt(b, "-Dc_args=-I%s/include", bz->out),
+                                 smith_fmt(b, "-Dcpp_args=-I%s/include", bz->out),
+                                 "-Dtesting=disabled",
+                                 "-Dunit_testing=disabled",
+                                 "-Dpython=false",
+                                 "-Ddocs=false",
+                                 nullptr};
+    status = build_spawn(&(BuildSpawn){.argv = setup, .environment = bz->environment, .log = setup_log, .tail = 30});
+    return status != 0 ? status : build_bitwuzla_libraries(b, bz, source, build_folder);
+}
+
+// The packages the prover's libraries are built from, pinned by hash. Alive2 is the last commit before it moved to LLVM
+// APIs that 23.1.3 does not have (its August 2026 commits to TargetLibraryInfo's getLibFunc and to nofree attributes),
+// so it is the newest that builds against LLVM 23.1.3.
 static int build_prove_libs_run(SmithRun *run, const char *ninja) {
     SmithBuild *b = run->b;
     const char *z3 = smith_package(
@@ -978,14 +1549,20 @@ static int build_prove_libs_run(SmithRun *run, const char *ninja) {
         b, &(SmithPackage){.url = "https://github.com/AliveToolkit/alive2/archive/"
                                   "01a5ec45c8152995755f7331827407a9de19f262.tar.gz",
                            .hash = "sha256:ea6d0ad5869a4c863ca537c65fe22e2f1198a5a1b2fc51d3a96b8020cf78cc13"});
-    const char *install = smith_fmt(b, "%s/install", build_llvm_folder(b));
-    const char *const argv[] = {
-        "sh",   "scripts/prove-libs.sh", z3, alive2, build_cmake_package(b), build_python_package(b), install, ninja,
-        nullptr};
-    return smith_run_program(run, argv, nullptr);
+    const char *cache = build_llvm_folder(b);
+    BuildProve prove = {
+        .cmake = smith_fmt(b, "%s/CMake.app/Contents/bin/cmake", build_cmake_package(b)),
+        .python = build_python_package(b),
+        .ninja = ninja,
+        .llvm = smith_fmt(b, "%s/install", cache),
+        .cache = cache,
+        .out = smith_fmt(b, "%s/prove", cache),
+        .sdk = build_sdk(run),
+    };
+    return build_prove_libs_make(run, z3, alive2, &prove);
 }
 
-// Bitwuzla decides the queries (scripts/bitwuzla.sh), with its own dependencies: GMP and MPFR, CaDiCaL and symfpu
+// Bitwuzla decides the queries (build_bitwuzla_make), with its own dependencies: GMP and MPFR, CaDiCaL and symfpu
 // (which Meson would fetch itself), and Meson to build it. All pinned by hash, all built static, none from Homebrew.
 static int build_bitwuzla_run(SmithRun *run, const char *ninja) {
     SmithBuild *b = run->b;
@@ -1008,23 +1585,33 @@ static int build_bitwuzla_run(SmithRun *run, const char *ninja) {
         b, &(SmithPackage){.url = "https://github.com/martin-cs/symfpu/archive/"
                                   "40bdec00e99f8ea1b96c3dac0a05eed11c541639.tar.gz",
                            .hash = "sha256:ba17877fbf0c851e113fddaab225152f1c0b2044429396b56b2f113832e36ce5"});
-    const char *const argv[] = {
-        "sh",   "scripts/bitwuzla.sh", bitwuzla, meson, build_python_package(b), ninja, gmp, mpfr, cadical, symfpu,
-        nullptr};
-    return smith_run_program(run, argv, nullptr);
+    const char *cache = build_llvm_folder(b);
+    BuildBitwuzla bitwuzla_build = {.bitwuzla = bitwuzla,
+                                    .meson = meson,
+                                    .python = build_python_package(b),
+                                    .ninja = ninja,
+                                    .gmp = gmp,
+                                    .mpfr = mpfr,
+                                    .cadical = cadical,
+                                    .symfpu = symfpu,
+                                    .cache = cache,
+                                    .out = smith_fmt(b, "%s/prove", cache)};
+    return build_bitwuzla_make(run, &bitwuzla_build);
 }
 
 // Enzyme v0.0.303 (Apache-2.0 with the LLVM exception), pinned by hash and built static beside the LLVM install by
-// scripts/enzyme.sh, with patches/enzyme/*.patch applied to a copy.
+// build_enzyme_make, with patches/enzyme/*.patch applied to a copy.
 static int build_enzyme_run(SmithRun *run, const char *ninja) {
     SmithBuild *b = run->b;
     const char *enzyme = smith_package(
         b, &(SmithPackage){.url = "https://github.com/EnzymeAD/Enzyme/archive/refs/tags/v0.0.303.tar.gz",
                            .hash = "sha256:0ca3114d008e524cd3b13152bbc172794b20af643d1628161655373eba4554de"});
-    const char *const argv[] = {
-        "sh",  "scripts/enzyme.sh",    enzyme, build_cmake_package(b), smith_fmt(b, "%s/install", build_llvm_folder(b)),
-        ninja, build_enzyme_folder(b), nullptr};
-    return smith_run_program(run, argv, nullptr);
+    BuildEnzyme build = {.source = enzyme,
+                         .cmake = build_cmake_package(b),
+                         .llvm = smith_fmt(b, "%s/install", build_llvm_folder(b)),
+                         .ninja = ninja,
+                         .out = build_enzyme_folder(b)};
+    return build_enzyme_make(run, &build);
 }
 
 // `smith build enzyme`: only Enzyme, for an LLVM that is already built (`smith build llvm` runs it last too).
@@ -1052,8 +1639,7 @@ static int build_llvm_run(SmithRun *run) {
     const char *folder = build_llvm_folder(b);
     const char *ninja = smith_fmt(b, "%s/tools/ninja", folder);
     const char *stamp = smith_fmt(b, "%s.llvm", run->outputs[0]);
-    const char *const make_ninja[] = {"sh", "scripts/ninja.sh", ninja_source, build_python_package(b), ninja, nullptr};
-    int status = smith_run_program(run, make_ninja, nullptr);
+    int status = build_ninja_make(run, ninja_source, build_python_package(b), ninja);
     if (status != 0) return status;
     const char *const make_llvm[] = {
         "sh", "scripts/llvm.sh", source, build_cmake_package(b), build_python_package(b), stamp, ninja, nullptr};
@@ -1073,13 +1659,11 @@ static void build_llvm(SmithBuild *b) {
     SmithStep llvm = {
         .run = build_llvm_run,
         .description = "building LLVM 23.1.3 and the prover's libraries (static, from source)",
-        .inputs =
-            (const char *[]){"scripts/llvm.sh", "scripts/defer_init.c", "scripts/ninja.sh", "scripts/prove-libs.sh",
-                             "scripts/bitwuzla.sh", "scripts/enzyme.sh", "patches/enzyme/quiet-caching-call.patch",
-                             "patches/clang-token-hook.patch", "patches/clang-debug-name.patch",
-                             "patches/clang-format-smith.patch", "patches/smith-editor-defaults.patch",
-                             "patches/smith-format-source-extension.patch", "patches/smith-command-hook.patch",
-                             "patches/compiler-rt-xnu-fast-mmap.patch", nullptr},
+        .inputs = (const char *[]){"scripts/llvm.sh", "scripts/defer_init.c", "patches/enzyme/quiet-caching-call.patch",
+                                   "patches/clang-token-hook.patch", "patches/clang-debug-name.patch",
+                                   "patches/clang-format-smith.patch", "patches/smith-editor-defaults.patch",
+                                   "patches/smith-format-source-extension.patch", "patches/smith-command-hook.patch",
+                                   "patches/compiler-rt-xnu-fast-mmap.patch", nullptr},
         .outputs = (const char *[]){"build/llvm.stamp", nullptr},
     };
     smith_step(b, &llvm);
@@ -1087,11 +1671,83 @@ static void build_llvm(SmithBuild *b) {
     SmithStep enzyme = {
         .run = build_enzyme_only,
         .description = "building Enzyme (static, against the LLVM install)",
-        .inputs = (const char *[]){"scripts/enzyme.sh", "patches/enzyme/quiet-caching-call.patch", nullptr},
+        .inputs = (const char *[]){"patches/enzyme/quiet-caching-call.patch", nullptr},
         .outputs = (const char *[]){"build/enzyme.stamp", nullptr},
     };
     smith_step(b, &enzyme);
     smith_alias(b, "enzyme", enzyme.outputs);
+}
+
+// `smith build friction -Dsince=2026-10-24` (AGENTS.md, How to work): the friction sections of merged pull requests,
+// for the lead's review across PRs. Each pull request's body ends with `## Friction`; this prints that section of every
+// PR merged since a date, newest first, each under its PR's number and title.
+static int build_friction(SmithRun *run) {
+    const char *since = run->args[0];
+    if (since[0] == '\0') {
+        fputs("usage: smith build friction -Dsince=YYYY-MM-DD\n", stderr);
+        return 2;
+    }
+    const char *filter = ".[] | select(.body | test(\"(?m)^## Friction\")) | \"#\\(.number) \\(.title)\\n\\(.body | "
+                         "split(\"## Friction\")[1] | split(\"\\n## \")[0] | ltrimstr(\"\\n\"))\\n\"";
+    return build_exec(smith_list(run->b, "gh", "pr", "list", "--state", "merged", "--limit", "200", "--search",
+                                 smith_fmt(run->b, "merged:>=%s", since), "--json", "number,title,body", "--jq", filter,
+                                 nullptr));
+}
+
+// `smith build tree-sitter [-Dcorpus]`: regenerates tree-sitter/src/parser.c (a developer step: users never need the
+// tree-sitter CLI or Node, the plugin compiles the committed parser.c). Everything is pinned and fetched by
+// smith_package: the tree-sitter CLI by version and the sha256 of its release (a .gz of one file), tree-sitter-c by
+// version and the sha256 of its source archive. -Dcorpus runs the grammar's corpus tests too. The CLI is kept in
+// $XDG_CACHE_HOME/smith/tools (else ~/.cache/smith/tools). ABI 15 is what Neovim 0.12 loads.
+static const char *build_tree_sitter_cli(SmithBuild *b) {
+    const char *cache = smith_env(b, "XDG_CACHE_HOME", smith_fmt(b, "%s/.cache", smith_env(b, "HOME", "")));
+    const char *tools = smith_fmt(b, "%s/smith/tools", cache);
+    const char *cli = smith_fmt(b, "%s/tree-sitter-0.27.1", tools);
+    if (access(cli, X_OK) == 0) return cli;
+    const char *source = smith_package(
+        b, &(SmithPackage){.url = "https://github.com/tree-sitter/tree-sitter/releases/download/v0.27.1/"
+                                  "tree-sitter-macos-arm64.gz",
+                           .hash = "sha256:46cb97d9a2c52c94e22d9a76c2f1116156b8b61f98360e2a9cce05fcb197cd4d"});
+    if (build_make_folder(b, tools) != 0) return nullptr;
+    if (build_publish(b, smith_fmt(b, "%s/tree-sitter-macos-arm64", source), cli) != 0) return nullptr;
+    return build_exec(smith_list(b, "/bin/chmod", "+x", cli, nullptr)) == 0 ? cli : nullptr;
+}
+
+static int build_tree_sitter(SmithRun *run) {
+    SmithBuild *b = run->b;
+    const char *cli = build_tree_sitter_cli(b);
+    if (cli == nullptr) return 1;
+    const char *c_source = smith_package(
+        b, &(SmithPackage){.url = "https://github.com/tree-sitter/tree-sitter-c/archive/refs/tags/v0.24.2.tar.gz",
+                           .hash = "sha256:2eeb4db31f8fa0865e45488503d13403923bcb485a1bdb637abff8c42dd97364"});
+    const char *vendor = "tree-sitter/.vendor/tree-sitter-c";
+    int status = build_remove(b, vendor);
+    status = status != 0 ? status : build_make_folder(b, vendor);
+    status = status != 0 ? status
+                         : build_exec(smith_list(b, "/bin/cp", smith_fmt(b, "%s/grammar.js", c_source),
+                                                 smith_fmt(b, "%s/", vendor), nullptr));
+    status = status != 0 ? status
+                         : build_spawn(&(BuildSpawn){.argv = smith_list(b, cli, "generate", "--abi", "15", nullptr),
+                                                     .folder = "tree-sitter"});
+    if (status == 0 && strcmp(run->args[0], "corpus") == 0)
+        status = build_spawn(&(BuildSpawn){.argv = smith_list(b, cli, "test", nullptr), .folder = "tree-sitter"});
+    return status;
+}
+
+static void build_developer_tasks(SmithBuild *b) {
+    SmithStep friction = {
+        .run = build_friction,
+        .args =
+            smith_list(b, smith_option_value(b, "since", "", "friction: the first merge date, YYYY-MM-DD"), nullptr),
+    };
+    smith_task(b, "friction", &friction);
+    SmithStep tree_sitter = {
+        .run = build_tree_sitter,
+        .args = smith_list(
+            b, smith_option(b, "corpus", "tree-sitter: run the grammar's corpus tests too") ? "corpus" : "no", nullptr),
+        .description = "regenerating tree-sitter/src/parser.c",
+    };
+    smith_task(b, "tree-sitter", &tree_sitter);
 }
 
 // Whether the LLVM install has the token hook (patches/clang-token-hook.patch), which `smith build llvm` applies: an
@@ -1124,7 +1780,7 @@ static const char *build_llvm_install(SmithBuild *b) {
                           "the LLVM install smith links clang from");
 }
 
-// Z3 and Alive2 built beside the LLVM install (scripts/prove-libs.sh puts them in ../prove of the install); "" when
+// Z3 and Alive2 built beside the LLVM install (build_prove_libs_make puts them in ../prove of the install); "" when
 // there are none, and the smith has no `smith prove`.
 static const char *build_prove_folder(SmithBuild *b, const char *llvm) {
     const char *folder = smith_fmt(b, "%s/../prove", llvm);
@@ -1134,7 +1790,7 @@ static const char *build_prove_folder(SmithBuild *b, const char *llvm) {
     return linkable ? folder : "";
 }
 
-// Enzyme's static library, built beside the LLVM install (scripts/enzyme.sh); "" when there is none, and the smith
+// Enzyme's static library, built beside the LLVM install (build_enzyme_make); "" when there is none, and the smith
 // cannot differentiate.
 static const char *build_enzyme_install(SmithBuild *b) {
     const char *folder = build_enzyme_folder(b);
@@ -1178,6 +1834,7 @@ void build(SmithBuild *b) {
     build_install(b, &config, config.binary, tested);
     build_release(b, config.binary);
     build_llvm(b);
+    build_developer_tasks(b);
     SmithStep clean = {.command = (const char *[]){"rm", "-rf", "build", nullptr}};
     smith_task(b, "clean", &clean);
     // clangd reads this: the exact command of each compile, and build.c's own.

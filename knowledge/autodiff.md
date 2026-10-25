@@ -8,7 +8,7 @@ tags: [autodiff, enzyme]
 
 **Enzyme (automatic differentiation of LLVM IR) is linked into smith's lld, and `smith::autodiff` is its interface**
 (skill smith-autodiff). Enzyme v0.0.303 (Apache-2.0 with the LLVM exception, pinned by hash in build.c) is built static by
-`smith build llvm` (`scripts/enzyme.sh`, after the prover's libraries; `smith build enzyme` alone) into its own folder
+`smith build llvm` (`build_enzyme_make` in `build.c`, after the prover's libraries; `smith build enzyme` alone) into its own folder
 `~/.cache/smith/enzyme/<version>-<LLVM configuration>/`, never inside an LLVM install, so building it changes no
 configuration; `patches/enzyme/*.patch` go into a copy of its package (one: Enzyme printed `caching call` to stderr
 unconditionally). The full smith links `libEnzymeStatic-23.a`, built with `-DENZYME_RUNPASS` (else it hooks no
