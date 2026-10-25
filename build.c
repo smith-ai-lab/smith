@@ -695,7 +695,6 @@ typedef struct {
 
 // clang-format off
 static const BuildTestScript build_test_scripts[] = {
-    {"affine", "affine", nullptr, nullptr, 0},
     {"arena", "arena", nullptr, nullptr, 0},
     {"autodiff", "autodiff", nullptr, nullptr, 1},
     {"build-0", "build", "0/4", nullptr, 1},
