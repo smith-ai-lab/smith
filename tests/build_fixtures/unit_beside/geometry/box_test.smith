@@ -1,0 +1,8 @@
+module geometry::box_test;
+
+import geometry::box;
+import smith::test;
+
+export void test_a_box_has_the_area_of_its_sides() {
+    test::check_equal(box::area(2, 3), 6);
+}

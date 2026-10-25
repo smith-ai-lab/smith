@@ -1,0 +1,9 @@
+module geometry::box;
+
+static i32 scale(i32 side) {
+    return side;
+}
+
+export i32 area(i32 width, i32 height) {
+    return scale(width) * scale(height);
+}
