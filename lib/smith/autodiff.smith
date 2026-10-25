@@ -33,6 +33,7 @@ module smith::autodiff;
 
 import smith::arena;
 import smith::contract;
+import smith::effects;
 
 // The type of one argument's leaf: what a pointer points to, the type itself for anything else (a number `map` passes
 // through). A type function (it runs in the compiler), used as the result type of `map_at`. Written before the markers:
@@ -116,6 +117,7 @@ export typeof(v) zeros(arena::Arena *a, auto v) {
 // differentiated. A call `f` does not accept is an error at the call. A generic function: only .smith calls it (C
 // writes `__enzyme_autodiff` with `enzyme_interleave`).
 export typeof(*x) gradient(arena::Arena *a, constexpr auto f, auto x, auto... rest) {
+    static_assert(effects::within(f, effects::alloc), "gradient: f may only allocate");
     (void)sizeof(f(x, rest...));
     typeof_unqual(*x) dx = zeros(a, *x);
     if constexpr (countof(rest) == 0) {
