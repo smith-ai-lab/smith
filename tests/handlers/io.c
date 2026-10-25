@@ -108,7 +108,7 @@ static void test_console_output(void) {
     SmithConsoleHandler *previous = smith_handlers_set_console(&fake.console);
     write(1, "w;", 2);
     printf("p%d;", 7);
-    fputs("s;", stdout);
+    puts("s;");
     putchar('c');
     fputs(";f;", stdout);
     fwrite("fw;", 1, 3, stdout);
@@ -118,8 +118,8 @@ static void test_console_output(void) {
     syscall(SYS_write, 1, "sy;", 3);
     fflush(stdout);
     smith_handlers_set_console(previous);
-    check("console: write, printf, putchar, fputs, fwrite, dprintf and syscall reach stdout, in order",
-          strcmp(fake.out, "w;p7;s;c;f;fw;d;sy;") == 0);
+    check("console: write, printf, puts, putchar, fputs, fwrite, dprintf and syscall reach stdout, in order",
+          strcmp(fake.out, "w;p7;s;\nc;f;fw;d;sy;") == 0);
     check("console: fprintf and fputc on stderr reach it", strcmp(fake.err, "e9;x") == 0);
 }
 

@@ -71,6 +71,19 @@ for profile in debug release; do
     expect "$profile: the runtime is a dylib beside the program" 1 "$(otool -L "build/$profile/project" | grep -c '@rpath/libsmith_handlers.dylib')"
     expect "$profile: the program does not contain the runtime" 0 "$(nm -U "build/$profile/project" | grep -c smith_handlers)"
 done
+# A console handler also catches puts, with ASan's start-up check about puts off (the build writes __asan_default_options).
+mkdir "$work/console" && cp "$here/tests/handlers/console.c" "$work/console/main.c"
+cd "$work/console" || exit 1
+for profile in debug release; do
+    if [ "$profile" = debug ]; then target=build; else target="build release"; fi
+    "$smith" $target >build.log 2>&1
+    expect "$profile: the console project builds" 0 $?
+    expect "$profile: printf, puts and fputs reach the console handler" "ok captured=[x
+y
+z
+]" "$(./build/$profile/console 2>&1)"
+done
+cd "$work/project" || exit 1
 asan=$(otool -L build/debug/project | grep -n 'asan\|handlers' | cut -d: -f1 | tr '\n' ' ')
 expect "debug: ASan is linked before the runtime (after the line that names the program)" "2 3 " "$asan"
 cd "$work" || exit 1
