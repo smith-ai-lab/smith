@@ -1,0 +1,73 @@
+// The module cache shared by every project, from tests/cache.sh sections 5 and 6 (issue #292): SDK modules built
+// once, and two worktrees with different headers at the same relative path that do not collide. Every case has a cache
+// of its own (scratch::own_cache), so the real ~/.cache/smith is never touched. The functions of
+// tests/build_fixtures/cache_modules/prelude count the cache's modules.
+module cache_modules_test;
+
+import smith::format;
+import smith::io;
+import smith::test;
+import scratch;
+
+static scratch::Project modules_project(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "cache_modules");
+    scratch::own_cache(&p);
+    return p;
+}
+
+static const char *text(const scratch::Project *p, const char *body) {
+    return scratch::capture(p, format::push(&p->io->arena, ". ./prelude; ", body).data);
+}
+
+// Builds a folder beside the project and says what its program prints.
+static void builds_and_runs(const scratch::Project *p, const char *folder, const char *name, const char *output) {
+    scratch::Run built = scratch::sh(p, format::push(&p->io->arena, "cd ../", folder, " && smith build").data);
+    scratch::expect_status(name, 0, &built);
+    scratch::expect_text(name, output,
+                         scratch::capture(p, format::push(&p->io->arena, "cd ../", folder, " && ./build/app").data));
+}
+
+export void test_cache_modules_the_second_clone_does_not_rebuild_the_sdk_modules(io::Io *io) {
+    scratch::Project p = modules_project(io);
+    scratch::Run cloned = scratch::sh(&p, "cp -R . ../two");
+    scratch::expect_status("the clone of the project", 0, &cloned);
+    scratch::Run first = scratch::build(&p, "");
+    scratch::expect_status("modules: the first project builds with a cold cache", 0, &first);
+    scratch::expect_text("modules: the first project builds with a cold cache (it runs)", "7",
+                         scratch::capture(&p, "./build/app"));
+    scratch::expect_text("modules: the cache is the shared one and holds modules", "yes",
+                         text(&p, "[ \"$(count_modules)\" -gt 0 ] && echo yes || echo no"));
+    scratch::Run listed = scratch::sh(&p, "smith cache");
+    scratch::expect_contains("modules: smith cache counts its entries", listed.out,
+                             format::push(&io->arena, "modules: ", p.cache, "/smith/modules").data);
+    const char *before = text(&p, "sdk_signature");
+    builds_and_runs(&p, "two", "modules: the second clone builds", "7");
+    scratch::expect_text("modules: clang keeps its pruning timestamp in the shared cache", "yes",
+                         text(&p, "exists \"$modules/modules.timestamp\""));
+    scratch::expect_text("modules: the second clone's cold build did not rebuild the SDK modules (names and times "
+                         "unchanged)",
+                         before, text(&p, "sdk_signature"));
+}
+
+export void test_cache_modules_worktrees_with_different_headers_do_not_collide(io::Io *io) {
+    scratch::Project p = modules_project(io);
+    scratch::Run cloned = scratch::sh(&p, "cp -R . ../two && cp -R . ../three");
+    scratch::expect_status("the clones of the project", 0, &cloned);
+    scratch::Run first = scratch::build(&p, "");
+    scratch::expect_status("the first project builds", 0, &first);
+    scratch::Run changed =
+        scratch::sh(&p, "cd ../three && printf '#include \"inc/v.h\"\\nint value(void) { return 9; }\\n' >value.c && "
+                        "printf '#pragma once\\nint value(void);\\nint extra(void);\\n' >inc/v.h && "
+                        "printf '#include \"inc/v.h\"\\nint extra(void) { return 1; }\\n' >extra.c");
+    scratch::expect_status("the worktree with another header", 0, &changed);
+    scratch::Run third = scratch::sh(&p, "cd ../three && smith build");
+    scratch::expect_status("modules: a worktree with a different inc/v.h builds", 0, &third);
+    scratch::expect_text("modules: and runs its own code", "9", scratch::capture(&p, "cd ../three && ./build/app"));
+    scratch::Run again = scratch::build(&p, "");
+    scratch::expect_status("modules: the first still builds after it", 0, &again);
+    scratch::expect_text("modules: and still runs its own code", "7", scratch::capture(&p, "./build/app"));
+    scratch::Run second = scratch::sh(&p, "cd ../two && rm -rf build && smith build");
+    scratch::expect_status("modules: a clean build of the second still works", 0, &second);
+    scratch::expect_text("modules: a clean build of the second still works (it runs)", "7",
+                         scratch::capture(&p, "cd ../two && ./build/app"));
+}
