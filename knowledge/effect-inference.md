@@ -18,12 +18,13 @@ diagnostic it has no id for). Skill `smith-lang-effects`.
   `console`...), a declaration with an attribute and no body has the attribute's set (a promise), any other is `c`, as is a
   call through a function pointer, inline assembly and an Objective-C message. Writing a global or a function-local
   static is `globals`. Crashing (`abort`, a trap, a failed check, a slice index out of range) is no effect.
-- **Annotations are ceilings.** `[[smith::pure]]` is the empty set; `[[smith::alloc]]`, `[[smith::files]]`... are one
-  attribute for each effect and a function's set is their union; `__attribute__((smith_effects("alloc", "net")))` takes
-  the names as strings. The C23 spelling `[[smith::effects(alloc)]]` cannot carry arguments: clang's parser reads the
-  arguments of a scoped C23 attribute only when its `hasAttribute` knows it without the plugins (checked in
-  `ParseCXX11AttributeArgs`), so the handler of a plugin's attribute sees none. The declared set, not the inferred one, is
-  what a caller sees.
+- **Annotations are ceilings.** `[[smith::pure]]` is the empty set and `[[smith::effects(alloc, net)]]` lists what the
+  function may do (the same spelling in C, in a module and on a declaration with no source, where it is a promise). It
+  reaches the plugin's handler with its arguments through LLVM's `patches/clang-plugin-attr-args.patch` (r9): clang's
+  parser read the arguments of a scoped C23 attribute only for an attribute it knew without the plugins, and a bare
+  identifier after the first as an expression. Still accepted and not taught: one attribute for each effect
+  (`[[smith::alloc, smith::files]]`) and `__attribute__((smith_effects("alloc", "net")))`; tests/effects/effects_internal.c.
+  The declared set, not the inferred one, is what a caller sees.
 - **The error** is at the first call that adds an effect beyond the ceiling and names the chain, `bad -> log_it (log.c:12) ->
   printf`; it is reported wherever a function carries an attribute (module, `.smith` without a module line, C) and in
   the editor.

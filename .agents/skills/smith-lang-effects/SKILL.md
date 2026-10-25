@@ -1,6 +1,6 @@
 ---
 name: smith-lang-effects
-description: "Effects in .smith modules and C: what a function does to the world (alloc, files, net, console, clock, process, env, entropy, globals, c) is inferred from its body and its callees, [[smith::pure]] promises nothing at all, and a call that breaks the promise is a compile error that names the chain. Load when marking a function [[smith::pure]], or on 'smith-effect:' or 'is [[smith::pure]], but it has the effects'."
+description: "Effects in .smith modules and C: what a function does to the world (alloc, files, net, console, clock, process, env, entropy, globals, c) is inferred from its body and its callees, [[smith::pure]] promises nothing at all, [[smith::effects(alloc, net)]] is a ceiling, and a call that breaks the promise is a compile error that names the chain. Load when marking a function [[smith::pure]] or [[smith::effects(...)]], or on 'smith-effect:', 'is [[smith::pure]], but it has the effects' or 'is limited to'."
 ---
 
 # Effects
@@ -16,7 +16,11 @@ export [[smith::pure]] i32 length(const char *text) {   // strlen touches nothin
     return (i32)c::strlen(text);
 }
 
-export void *grab(u32 size) {                           // no attribute: inferred (it allocates)
+export [[smith::effects(alloc)]] void *grab(u32 size) { // may allocate, and nothing else
+    return c::malloc(size);
+}
+
+export void *plain(u32 size) {                          // no attribute: inferred (it allocates)
     return c::malloc(size);
 }
 
@@ -25,7 +29,7 @@ i32 main() {
 }
 ```
 
-A function with no attribute is inferred and never an error. `[[smith::pure]]` says it does nothing at all; a call that brings in an effect is an error at the call, with the chain:
+A function with no attribute is inferred and never an error. `[[smith::pure]]` says it does nothing at all, `[[smith::effects(alloc, net)]]` that it may do those and nothing else; a call that brings in an effect past the promise is an error at the call, with the chain:
 
 ```text
 stats.smith:9:5: error: smith-effect: `bad` is [[smith::pure]], but it has the effects console: bad -> log_it (stats.smith:9) -> printf (stats.smith:6)
@@ -36,8 +40,8 @@ stats.smith:9:5: error: smith-effect: `bad` is [[smith::pure]], but it has the e
 - **The effects**: `alloc` (malloc, free, mmap), `files`, `net`, `console`, `clock` (time, sleep), `process` (fork, exit, threads), `env` (getenv, uname), `entropy` (arc4random), `globals` (writing a global or a function-local `static`) and `c` (unchecked C). Allocation is an effect. **Crashing is not**: `abort`, a trap, a failed contract and a slice index out of range, so a function that indexes a slice can be pure.
 - **Across files**: each compile leaves a summary of its object (in a project under `.smith/effects/`, otherwise `main.o.fx` beside it) and the link of objects that have one (`smith-cc a.o b.o`, so `smith build` too) checks the calls that cross files, in C and in modules: an unannotated function of another file is inferred, and a function no file defines is `c`. A call to a function declared in your project with no body in the file adds nothing at compile time and is judged at the link; an error found only then names the chain through the files and stops the link.
 - **What a body reaches**: the calls of the file and the headers it includes, followed to a function of libc or libSystem (a table of smith's gives each its effects) or to a call the file cannot see into: a call through a function pointer, inline assembly and an Objective-C message are `c`, and so is a function declared in a system header that the table does not know.
-- **The promise is what a caller sees**, not the inferred set. Recursion is no effect here.
-- **Where it is checked**: in the compile of a file, whenever a function carries the attribute (in a module, in a `.smith` file with no `module` line and in C), and in the editor.
-- **Not yet** (issue #207): a ceiling that allows some effects, `[[smith::effects(alloc, net)]]`, and the same on a declaration with no source as a promise; recursion and stack size; hover; `effects::within`.
+- **The promise is what a caller sees**, not the inferred set. Recursion is no effect here. On a declaration with no source (a prebuilt library's header) the same attribute is a promise smith trusts: `[[smith::effects(alloc, net)]] int curl_perform(void *handle);`.
+- **Where it is checked**: in the compile of a file, whenever a function carries an attribute (in a module, in a `.smith` file with no `module` line and in C), and in the editor.
+- **Not yet** (issue #207): recursion and stack size; hover; `effects::within`.
 
 Overview: `smith-lang`. Reference: [knowledge/effects-check.md](../../../knowledge/effects-check.md).
