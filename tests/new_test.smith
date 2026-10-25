@@ -20,13 +20,14 @@ constexpr char git_environment[] =
 // (built, committed): it is made once for each smith under test, in the tests' cache, so the tests that only need a
 // project to work on do not each make one. The tests of `smith new` itself run it.
 constexpr char generate_function[] =
-    "generate() { name=$1; shift; key=$(stat -f %m-%z \"$SMITH_SELF\"); t=$SMITH_TEST_CACHE/new-$key/$name; "
+    "generate() { name=$1; shift; key=$(stat -c %Y-%s \"$SMITH_SELF\" 2>/dev/null || stat -f %m-%z \"$SMITH_SELF\"); "
+    "t=$SMITH_TEST_CACHE/new-$key/$name; "
     "if [ ! -d \"$t\" ]; then find \"$SMITH_TEST_CACHE\" -maxdepth 1 -name 'new-*' -mtime +1 -exec rm -rf {} + "
     "2>/dev/null; "
     "tmp=$SMITH_TEST_CACHE/new-$key.$$; mkdir -p \"$tmp\" && (cd \"$tmp\" && smith new \"$@\" \"$name\" >/dev/null "
     "2>&1) && "
     "mkdir -p \"$SMITH_TEST_CACHE/new-$key\" && { [ -d \"$t\" ] || mv \"$tmp/$name\" \"$t\"; }; rm -rf \"$tmp\"; fi; "
-    "cp -Rpc \"$t\" \"./$name\"; }; ";
+    "{ cp -Rpc \"$t\" \"./$name\" 2>/dev/null || cp -Rp \"$t\" \"./$name\"; }; }; ";
 
 static scratch::Run run(const scratch::Project *p, const char *command) {
     char text[8192];

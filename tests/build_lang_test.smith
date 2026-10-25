@@ -53,7 +53,8 @@ export void test_build_lang_a_project_of_three_modules_and_a_c_file(io::Io *io) 
                                          ".smith/imports.stamp' && echo yes")
                              .out);
 
-    const char *header_time_command = "stat -f %m .smith/include/lib/text.h";
+    const char *header_time_command =
+        "stat -c %Y .smith/include/lib/text.h 2>/dev/null || stat -f %m .smith/include/lib/text.h";
     const char *header_time = scratch::sh(&p, header_time_command).out;
     scratch::sleep(&p, 1000);
     (void)scratch::sh(&p, "printf '\\nusize other_helper(void) {\\n    return 5;\\n}\\n' >>src/lib/text.smith");
@@ -127,8 +128,9 @@ export void test_build_lang_the_helpers_are_under_the_compiler(io::Io *io) {
     (void)scratch::sh(&p, "smith cc --smith-header src/lib/text.smith -o header.h; cp header.h header.copy; touch -t "
                           "200001010000 header.h");
     (void)scratch::sh(&p, "smith cc --smith-header src/lib/text.smith -o header.h");
-    scratch::expect_text("modules: an unchanged header is not written again", "200001010000",
-                         scratch::sh(&p, "stat -f %Sm -t %Y%m%d%H%M header.h").out);
+    scratch::expect_text(
+        "modules: an unchanged header is not written again", "200001010000",
+        scratch::sh(&p, "date -r header.h +%Y%m%d%H%M 2>/dev/null || stat -f %Sm -t %Y%m%d%H%M header.h").out);
     scratch::Run gone = scratch::sh(&p, "smith --smith-header src/lib/text.smith -o header.h");
     scratch::expect_failure("modules: the top-level --smith-header is gone", &gone);
     scratch::expect_contains("modules: with the way to run it", gone.err, "smith cc --smith-header");
