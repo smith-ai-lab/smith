@@ -236,7 +236,7 @@ int main(void) {
 EOF
 printf '#pragma once\nint util_twice(int x);\n' >util.h
 printf '#include "util.h"\n\nint util_twice(int x) {\n    return x * 2;\n}\n' >util.c
-cat >tests/test_util.c <<'EOF'
+cat >tests/util_test.c <<'EOF'
 #include "util.h"
 
 #include <smith/test.h>
