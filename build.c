@@ -2,8 +2,8 @@
 //
 // smith is built by its previous release (knowledge/smith-bootstrap.md): smith.c is C23 and its libraries are .smith
 // modules, compiled by the smith that runs this build (`smith-cc`, the default CC), so a smith with the token hook and
-// the LLVM of `smith build llvm` is needed. A fresh clone with no smith builds and runs scripts/stage0.smith, which downloads the
-// newest release of an ancestor commit and runs its `smith build`.
+// the LLVM of `smith build llvm` is needed. A fresh clone with no smith builds and runs scripts/stage0.smith, which
+// downloads the newest release of an ancestor commit and runs its `smith build`.
 //
 // The verbs (smith test, smith check, smith fmt, smith lint, smith docs, smith prove, smith run) mean the same here as
 // in every project and read what this file declares: the tests below are the tests, the compiles are what lint and

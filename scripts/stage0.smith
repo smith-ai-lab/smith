@@ -1,13 +1,14 @@
 // Builds smith in a clone that has no smith (issue #112, #293, knowledge/smith-bootstrap.md): smith is built by its
 // previous release. This file has no `module` line, so it is plain C23 and Apple's clang builds it:
-//   mkdir -p .smith && clang -std=c23 -x c scripts/stage0.smith -o .smith/stage0-tool && .smith/stage0-tool [arguments of smith build]
+//   mkdir -p .smith && clang -std=c23 -x c scripts/stage0.smith -o .smith/stage0-tool && .smith/stage0-tool [arguments
+//   of smith build]
 //   1. finds the release `stage0-<commit>` of the newest ancestor commit of HEAD that has one (git tags, walking
 //      `git rev-list HEAD`, after fetching the tags);
 //   2. downloads it with `gh release download` (the repository is private; gh is signed in as it is to clone), checks
 //      its SHA-256 (CommonCrypto) and unpacks it with tar into .smith/stage0/;
 //   3. runs .smith/stage0/bin/smith build, with that bin/ first on PATH so that its smith-cc is the CC of the build.
-// It needs git, gh, tar, the network, and `~/.cache/smith/llvm` (`smith build llvm`, about 9 minutes once). With a smith
-// installed, `smith build` does all of this already. SMITH_STAGE0_RELEASE=<tag> names the release to use.
+// It needs git, gh, tar, the network, and `~/.cache/smith/llvm` (`smith build llvm`, about 9 minutes once). With a
+// smith installed, `smith build` does all of this already. SMITH_STAGE0_RELEASE=<tag> names the release to use.
 #include <CommonCrypto/CommonDigest.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -22,9 +23,9 @@
 
 extern char **environ;
 
-constexpr size_t output_max = 1 << 22;  // the output of one child that is read: the tags or the history of a repository
+constexpr size_t output_max = 1 << 22; // the output of one child that is read: the tags or the history of a repository
 constexpr size_t path_max = PATH_MAX;
-constexpr size_t hex_length = 64;       // a SHA-256 in hex
+constexpr size_t hex_length = 64; // a SHA-256 in hex
 constexpr size_t block = 1 << 16;
 static char output[output_max + 1];
 
@@ -89,7 +90,8 @@ static const char *find_release(char *tag, size_t capacity) {
         snprintf(tag, capacity, "%s", named);
         return tag;
     }
-    if (!succeeds((const char *[]){"git", "fetch", "--quiet", "--tags", "--prune", "--prune-tags", "origin", nullptr})) {
+    if (!succeeds(
+            (const char *[]){"git", "fetch", "--quiet", "--tags", "--prune", "--prune-tags", "origin", nullptr})) {
         fputs("stage0: cannot fetch the tags; using the ones here\n", stderr);
     }
     const char *shallow = run((const char *[]){"git", "rev-parse", "--is-shallow-repository", nullptr}, true, true);
@@ -141,7 +143,8 @@ static bool file_digest(const char *path, char hex[hex_length + 1]) {
     fclose(file);
     unsigned char digest[CC_SHA256_DIGEST_LENGTH];
     CC_SHA256_Final(digest, &context);
-    for (size_t i = 0; i < sizeof digest; i++) snprintf(hex + 2 * i, 3, "%02x", digest[i]);
+    for (size_t i = 0; i < sizeof digest; i++)
+        snprintf(hex + 2 * i, 3, "%02x", digest[i]);
     return true;
 }
 
@@ -153,10 +156,11 @@ static void fetch(const char *tag, const char *folder, const char *name) {
     snprintf(tarball, sizeof tarball, "%s/%s", folder, name);
     char sums_path[path_max];
     snprintf(sums_path, sizeof sums_path, "%s/%s", folder, sums);
-    if (!succeeds((const char *[]){"rm", "-rf", folder, nullptr}) || !succeeds((const char *[]){"mkdir", "-p", folder, nullptr}))
+    if (!succeeds((const char *[]){"rm", "-rf", folder, nullptr}) ||
+        !succeeds((const char *[]){"mkdir", "-p", folder, nullptr}))
         die("cannot make", folder);
-    if (!succeeds((const char *[]){"gh", "release", "download", tag, "--pattern", name, "--pattern", sums, "--dir", folder,
-                                   "--clobber", nullptr})) {
+    if (!succeeds((const char *[]){"gh", "release", "download", tag, "--pattern", name, "--pattern", sums, "--dir",
+                                   folder, "--clobber", nullptr})) {
         die("cannot get", tag);
     }
     char expected[256];
@@ -181,7 +185,8 @@ int main(int argc, char **argv) {
     if (uname(&system) != 0) die("cannot tell the system", nullptr);
     char name[128];
     snprintf(name, sizeof name, "smith-%s-%s.tar.xz", system.sysname, system.machine);
-    for (char *c = name; *c != '\0'; c++) *c = (char)((*c >= 'A' && *c <= 'Z') ? *c + ('a' - 'A') : *c);
+    for (char *c = name; *c != '\0'; c++)
+        *c = (char)((*c >= 'A' && *c <= 'Z') ? *c + ('a' - 'A') : *c);
 
     char tag[128];
     find_release(tag, sizeof tag);
@@ -208,11 +213,13 @@ int main(int argc, char **argv) {
     const char *old_path = getenv("PATH");
     snprintf(path, sizeof path, "%s/%s/bin:%s", root, folder, old_path != nullptr ? old_path : "/usr/bin:/bin");
     setenv("PATH", path, 1);
+    fflush(stdout); // before the child writes beside it
     if (!run((const char *[]){program, "version", nullptr}, false, false)) die("the release does not run:", program);
     char *build[argc + 2];
     build[0] = program;
     build[1] = (char *)"build";
-    for (int i = 1; i < argc; i++) build[i + 1] = argv[i];
+    for (int i = 1; i < argc; i++)
+        build[i + 1] = argv[i];
     build[argc + 1] = nullptr;
     fflush(stdout);
     execv(program, build);
