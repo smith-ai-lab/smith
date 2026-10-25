@@ -48,4 +48,4 @@ for (usize i = 0; i < count; i++) {
 - **The same bits on every platform.** The library has its own logarithm (`random::log_float`, `random::log_double`; fdlibm's algorithm, within 1 ulp), uses only `math::sqrt` (exactly rounded by IEEE), builds with `-ffp-contract=off` (which `smith build` adds for the library; `.smith/lib/smith/random.flags`) and refuses `-ffast-math`. Tests give the same digest across optimization levels, sanitizers and `-ffp-contract=fast`; GPUs and other compilers are not tested.
 - `float` and `double` are asserted to be IEEE binary32 and binary64 when the library is compiled.
 
-Also in this family: [smith-random-distributions](../smith-random-distributions/SKILL.md), [smith-random-own](../smith-random-own/SKILL.md), [smith-random-c](../smith-random-c/SKILL.md).
+Moving from key_derive: [smith-random-split](../smith-random-split/SKILL.md). Also in this family: [smith-random-distributions](../smith-random-distributions/SKILL.md), [smith-random-own](../smith-random-own/SKILL.md), [smith-random-c](../smith-random-c/SKILL.md).

@@ -121,6 +121,7 @@
     "./.agents/skills/smith-random-c/",
     "./.agents/skills/smith-random-distributions/",
     "./.agents/skills/smith-random-own/",
+    "./.agents/skills/smith-random-split/",
     "./.agents/skills/smith-run-test/",
     "./.agents/skills/smith-test/",
     "./.agents/skills/smith-test-c/",
