@@ -7,6 +7,12 @@
 #include "lldb/API/LLDB.h"
 
 #include <cstdio>
+#include <signal.h>
+#include <spawn.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+extern char **environ;
 #include <cstring>
 #include <string>
 
@@ -124,7 +130,10 @@ std::string format(lldb::SBValue value, int depth) {
 
 } // namespace
 
-extern "C" bool smith_explain_attach(long pid, const char *self, char *problem, size_t capacity) {
+namespace {
+
+// Starts lldb in this process, with its own output silenced: the answer is the lines this process prints.
+bool start_debugger(const char *self, char *problem, size_t capacity) {
     smith_tool_start("__smith_lldb", self);
     smith_lldb_slice_formatters();
     lldb::SBDebugger::Initialize();
@@ -134,10 +143,17 @@ extern "C" bool smith_explain_attach(long pid, const char *self, char *problem, 
         return false;
     }
     debugger.SetAsync(false);
-    if (FILE *quiet = std::fopen("/dev/null", "w")) { // the answer is the lines this process prints, nothing lldb says
+    if (FILE *quiet = std::fopen("/dev/null", "w")) {
         debugger.SetOutputFileHandle(quiet, true);
         debugger.SetErrorFileHandle(quiet, false);
     }
+    return true;
+}
+
+} // namespace
+
+extern "C" bool smith_explain_attach(long pid, const char *self, char *problem, size_t capacity) {
+    if (!start_debugger(self, problem, capacity)) return false;
     lldb::SBTarget target = debugger.CreateTarget("");
     lldb::SBAttachInfo info(static_cast<lldb::pid_t>(pid));
     lldb::SBError error;
@@ -207,4 +223,126 @@ extern "C" SmithExplainState smith_explain_read(size_t frame_index, const char *
 
 extern "C" void smith_explain_detach(void) {
     if (process.IsValid()) process.Detach();
+}
+
+extern "C" size_t smith_explain_variables(size_t frame_index, SmithExplainVariable *out, size_t capacity) {
+    lldb::SBFrame frame = thread.GetFrameAtIndex(static_cast<uint32_t>(frame_index));
+    lldb::SBValueList list = frame.GetVariables(true, true, false, true);
+    size_t used = 0;
+    for (uint32_t i = 0; i < list.GetSize() && used < capacity; i++) {
+        lldb::SBValue value = list.GetValueAtIndex(i);
+        const char *name = value.GetName();
+        if (name == nullptr || std::strncmp(name, "smith_", 6) == 0 || std::strncmp(name, "__", 2) == 0) continue;
+        std::snprintf(out[used].label, sizeof out[used].label, "%s", name);
+        put(out[used].value, sizeof out[used].value, format(value, 2));
+        used += 1;
+    }
+    return used;
+}
+
+namespace {
+
+lldb::SBTarget run_target;
+lldb::SBBreakpoint run_breakpoint;
+pid_t child = 0;
+
+// The signal a Mach exception stands for, as a shell would see the program die of it.
+int signal_of_exception(const char *description) {
+    struct Row {
+        const char *name;
+        int signal;
+    };
+    static const Row rows[] = {{"EXC_BAD_ACCESS", 11},
+                               {"EXC_BAD_INSTRUCTION", 4},
+                               {"EXC_ARITHMETIC", 8},
+                               {"EXC_BREAKPOINT", 5},
+                               {"EXC_CRASH", 6}};
+    for (const Row &row : rows)
+        if (std::strstr(description, row.name) != nullptr) return row.signal;
+    return 0;
+}
+
+// The thread that stopped the program: the first with a reason.
+lldb::SBThread stopped_thread() {
+    uint32_t count = process.GetNumThreads();
+    for (uint32_t i = 0; i < count; i++) {
+        lldb::SBThread candidate = process.GetThreadAtIndex(i);
+        lldb::StopReason reason = candidate.GetStopReason();
+        if (reason != lldb::eStopReasonNone && reason != lldb::eStopReasonInvalid) return candidate;
+    }
+    return process.GetThreadAtIndex(0);
+}
+
+void describe(SmithCrashStop *stop) {
+    stop->state = SmithCrash_Exited;
+    stop->status = 0;
+    stop->at_breakpoint = false;
+    stop->reason[0] = '\0';
+    lldb::StateType state = process.GetState();
+    if (state != lldb::eStateStopped && state != lldb::eStateCrashed) {
+        stop->status = state == lldb::eStateExited ? process.GetExitStatus() : 1;
+        return;
+    }
+    stop->state = SmithCrash_Stopped;
+    thread = stopped_thread();
+    lldb::StopReason reason = thread.GetStopReason();
+    thread.GetStopDescription(stop->reason, sizeof stop->reason);
+    stop->at_breakpoint = reason == lldb::eStopReasonBreakpoint;
+    int number = 0;
+    if (reason == lldb::eStopReasonSignal) number = static_cast<int>(thread.GetStopReasonDataAtIndex(0));
+    if (reason == lldb::eStopReasonException) number = signal_of_exception(stop->reason);
+    stop->status = number > 0 ? 128 + number : 1;
+}
+
+} // namespace
+
+extern "C" bool smith_crash_start(const char *self, const char *const *args, const char *at_file, unsigned at_line,
+                                  SmithCrashStop *stop, char *problem, size_t capacity) {
+    if (!start_debugger(self, problem, capacity)) return false;
+    lldb::SBError error;
+    run_target = debugger.CreateTarget(args[0], nullptr, nullptr, true, error);
+    if (!error.Success() || !run_target.IsValid()) {
+        std::snprintf(problem, capacity, "%s", error.GetCString() != nullptr ? error.GetCString() : "no such program");
+        return false;
+    }
+    if (at_file[0] != '\0') run_breakpoint = run_target.BreakpointCreateByLocation(at_file, at_line);
+    // The program is started suspended by this process, with its standard streams as they are, and lldb attaches:
+    // lldb's own launch gives the program a terminal of its own and merges its output.
+    pid_t pid = 0;
+    posix_spawnattr_t attributes;
+    posix_spawnattr_init(&attributes);
+    posix_spawnattr_setflags(&attributes, POSIX_SPAWN_START_SUSPENDED);
+    int spawned = posix_spawn(&pid, args[0], nullptr, &attributes, const_cast<char *const *>(args), environ);
+    posix_spawnattr_destroy(&attributes);
+    if (spawned != 0) {
+        std::snprintf(problem, capacity, "cannot run %s: %s", args[0], std::strerror(spawned));
+        return false;
+    }
+    child = pid;
+    lldb::SBAttachInfo info(static_cast<lldb::pid_t>(pid));
+    process = run_target.Attach(info, error);
+    if (error.Success()) kill(pid, SIGCONT);
+    if (!error.Success() || !process.IsValid()) {
+        kill(pid, SIGKILL);
+        waitpid(pid, nullptr, 0);
+        std::snprintf(problem, capacity, "%s", error.GetCString() != nullptr ? error.GetCString() : "launch failed");
+        return false;
+    }
+    process.Continue();
+    describe(stop);
+    return true;
+}
+
+extern "C" size_t smith_crash_locations(void) {
+    return run_breakpoint.IsValid() ? run_breakpoint.GetNumLocations() : 0;
+}
+
+extern "C" void smith_crash_continue(SmithCrashStop *stop) {
+    process.Continue();
+    describe(stop);
+}
+
+extern "C" void smith_crash_kill(void) {
+    if (process.IsValid()) process.Kill();
+    if (child > 0) waitpid(child, nullptr, WNOHANG);
 }

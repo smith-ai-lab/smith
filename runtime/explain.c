@@ -56,12 +56,39 @@ SmithExplainState smith_explain_read(size_t frame, const char *path, char *out, 
 }
 
 void smith_explain_detach(void) {}
+
+size_t smith_explain_variables(size_t frame, SmithExplainVariable *out, size_t capacity) {
+    (void)frame;
+    (void)out;
+    (void)capacity;
+    return 0;
+}
+
+bool smith_crash_start(const char *self, const char *const *args, const char *at_file, unsigned at_line,
+                       SmithCrashStop *stop, char *problem, size_t capacity) {
+    (void)self;
+    (void)args;
+    (void)at_file;
+    (void)at_line;
+    (void)stop;
+    snprintf(problem, capacity, "this smith has no debugger");
+    return false;
+}
+
+size_t smith_crash_locations(void) {
+    return 0;
+}
+
+void smith_crash_continue(SmithCrashStop *stop) {
+    (void)stop;
+}
+
+void smith_crash_kill(void) {}
 #endif
 
-typedef struct {
-    char label[smith_explain_name_max];
-    char value[smith_explain_value_max];
-} SmithExplainValue;
+typedef SmithExplainVariable SmithExplainValue;
+static_assert(sizeof((SmithExplainValue){}.label) == smith_explain_name_max, "the header's sizes are these");
+static_assert(sizeof((SmithExplainValue){}.value) == smith_explain_value_max, "the header's sizes are these");
 
 static bool smith_explain_ident_start(char c) {
     return isalpha((unsigned char)c) != 0 || c == '_';
@@ -256,27 +283,38 @@ static size_t smith_explain_read_all(size_t frame, const char *source, SmithExpl
 
 // The first frame that is not smith's check machinery and has a line: the one `smith symbolize` reports. The frames
 // inside the machinery (the runner waiting for this process, a sanitizer's wrapper of poll) are not looked at: the
-// search starts at the first frame of the machinery.
-static bool smith_explain_failing(const SmithExplainFrame *frames, size_t count, size_t *index) {
+// search starts at the first frame of the machinery. A crash (from_machinery false) starts at the innermost frame.
+// A frame of a sanitizer's runtime (compiler-rt): the report is what it shows, the frames are the program's own.
+static bool smith_explain_runtime(const SmithExplainFrame *frame) {
+    const char *name = frame->function;
+    while (*name == ':' || *name == '_')
+        name += 1;
+    static const char *const prefixes[] = {"asan", "sanitizer", "ubsan", "tsan", "msan", "interception"};
+    for (size_t i = 0; i < sizeof prefixes / sizeof prefixes[0]; i++)
+        if (strncmp(name, prefixes[i], strlen(prefixes[i])) == 0) return true;
+    return strstr(frame->file, "/compiler-rt/") != nullptr;
+}
+
+static bool smith_explain_failing(const SmithExplainFrame *frames, size_t count, bool from_machinery, size_t *index) {
     size_t first = 0;
-    while (first < count && !smith_sym_machinery(frames[first].function))
+    while (from_machinery && first < count && !smith_sym_machinery(frames[first].function))
         first += 1;
     if (first == count) first = 0;
     for (size_t i = first; i < count; i++) {
         if (frames[i].file[0] == '\0' || smith_sym_machinery(frames[i].function)) continue;
-        if (smith_sym_system_path(frames[i].file)) continue;
+        if (smith_sym_system_path(frames[i].file) || smith_explain_runtime(&frames[i])) continue;
         *index = i;
         return true;
     }
     return false;
 }
 
-static void smith_explain_print(const SmithExplainValue *values, size_t count) {
+static void smith_explain_print(FILE *out, const SmithExplainValue *values, size_t count) {
     size_t width = 0;
     for (size_t i = 0; i < count; i++)
         if (strlen(values[i].label) > width) width = strlen(values[i].label);
     for (size_t i = 0; i < count; i++)
-        printf("@ %-*s = %s\n", (int)width, values[i].label, values[i].value);
+        fprintf(out, "@ %-*s = %s\n", (int)width, values[i].label, values[i].value);
 }
 
 static int smith_explain_run(long pid, const char *self) {
@@ -291,7 +329,7 @@ static int smith_explain_run(long pid, const char *self) {
     size_t count = smith_explain_frames(frames, smith_explain_frames_max);
     size_t index = 0;
     char source[1024];
-    if (!smith_explain_failing(frames, count, &index) ||
+    if (!smith_explain_failing(frames, count, true, &index) ||
         !smith_sym_source(frames[index].file, frames[index].line, source, sizeof source)) {
         printf("@! values not shown: no source line for the failing frame\n");
         smith_explain_detach();
@@ -300,7 +338,7 @@ static int smith_explain_run(long pid, const char *self) {
     SmithExplainValue values[smith_explain_values_max];
     size_t kept = smith_explain_read_all(index, source, values);
     smith_explain_detach();
-    smith_explain_print(values, kept);
+    smith_explain_print(stdout, values, kept);
     if (kept == 0) printf("@! values not shown: no variable of the line could be read\n");
     return 0;
 }
@@ -361,6 +399,136 @@ static int smith_explain_main(int argc, char **argv, const char *self) {
     smith_explain_arm();
     int status = smith_explain_run(pid, self);
     smith_explain_resume(pid);
+    fflush(stdout);
+    return status;
+}
+
+// ---- `smith dbg --crash PROG [ARGS...]` and `smith dbg --at FILE:LINE PROG [ARGS...]`
+//
+// A program run under lldb that stops at a crash (a signal, a sanitizer's report, abort, a failed contract or check) or
+// at a line, and its state printed as a failed check's is: the frames from the first that is not smith's or the
+// system's machinery, each as `path:line: function`, its source line and its arguments and locals as `@ name = value`,
+// with the frame rules (smith_explain_failing) and the formatters (shim/lldb_explain.cpp) of the failed check. The
+// program's own standard input, output and error are as they are; smith's lines go to standard error, each starting
+// `smith dbg:` or `@`.
+
+constexpr long smith_crash_frames_default = 8;
+constexpr long smith_crash_frames_limit = 64;
+constexpr size_t smith_crash_values_max = 24;
+
+typedef struct {
+    const char *at_file; // "" for --crash
+    unsigned at_line;
+    long count; // the hits of --at to show
+    long frames;
+    const char *const *program; // PROG and its arguments, ending with nullptr
+} SmithCrashOptions;
+
+static long smith_crash_number(const char *text) {
+    char *end = nullptr;
+    long number = strtol(text, &end, 10);
+    if (*text == '\0' || *end != '\0' || number < 1 || number > smith_crash_frames_limit * 1024)
+        smith_die(smith_exit_usage, "a number from 1 is expected after the option, not", text);
+    return number;
+}
+
+static void smith_crash_at(const char *spec, SmithCrashOptions *options) {
+    const char *colon = strrchr(spec, ':');
+    if (colon == nullptr || colon == spec) smith_die(smith_exit_usage, "--at takes FILE:LINE, not", spec);
+    static char file[PATH_MAX];
+    snprintf(file, sizeof file, "%.*s", (int)(colon - spec), spec);
+    options->at_file = file;
+    options->at_line = (unsigned)smith_crash_number(colon + 1);
+}
+
+// argv is what follows `smith dbg`: --crash or --at FILE:LINE, then the options, then the program and its arguments.
+static SmithCrashOptions smith_crash_parse(int argc, char **argv) {
+    SmithCrashOptions options = {.at_file = "", .count = 1, .frames = smith_crash_frames_default};
+    int i = 0;
+    for (; i < argc; i++) { // the options come before the program
+        if (strcmp(argv[i], "--crash") == 0) continue;
+        if (strcmp(argv[i], "--at") == 0 && i + 1 < argc) {
+            smith_crash_at(argv[++i], &options);
+        } else if (strcmp(argv[i], "--count") == 0 && i + 1 < argc) {
+            options.count = smith_crash_number(argv[++i]);
+        } else if (strcmp(argv[i], "--frames") == 0 && i + 1 < argc) {
+            options.frames = smith_crash_number(argv[++i]);
+        } else {
+            if (strcmp(argv[i], "--") == 0) i += 1;
+            break;
+        }
+    }
+    if (i >= argc) smith_die(smith_exit_usage, "usage: smith dbg --crash [--frames N] PROG [ARGS...]", nullptr);
+    options.program = (const char *const *)argv + i;
+    return options;
+}
+
+// The frames of the stop that are the program's own: the first that is not machinery and has a line, and the next ones
+// with a line, up to the limit.
+static void smith_crash_frames(const SmithCrashOptions *options) {
+    static SmithExplainFrame frames[smith_explain_frames_max];
+    size_t count = smith_explain_frames(frames, smith_explain_frames_max);
+    size_t index = 0;
+    if (!smith_explain_failing(frames, count, false, &index)) {
+        fprintf(stderr, "smith dbg: no frame of the program has a source line (is it built with -g?)\n");
+        return;
+    }
+    long shown = 0;
+    for (size_t i = index; i < count && shown < options->frames; i++) {
+        char source[1024];
+        if (frames[i].file[0] == '\0' || smith_sym_machinery(frames[i].function)) continue;
+        if (smith_sym_system_path(frames[i].file) || smith_explain_runtime(&frames[i])) continue;
+        fprintf(stderr, "smith dbg: %s:%u: %s\n", smith_sym_short(frames[i].file), frames[i].line, frames[i].function);
+        if (smith_sym_source(frames[i].file, frames[i].line, source, sizeof source))
+            fprintf(stderr, "smith dbg:   %s\n", source);
+        SmithExplainValue values[smith_crash_values_max];
+        smith_explain_print(stderr, values, smith_explain_variables(i, values, smith_crash_values_max));
+        shown += 1;
+    }
+}
+
+// The program could not be debugged: say why in one line, then run it as it is so its output is still seen.
+[[noreturn]] static void smith_crash_plain(const SmithCrashOptions *options, char *problem) {
+    char *sentence = strstr(problem, ". "); // lldb says a paragraph; the first sentence is the reason
+    if (sentence != nullptr) *sentence = '\0';
+    fprintf(stderr, "smith dbg: not debugged: %s (see the smith-debug skill); running it plainly\n", problem);
+    fflush(stderr);
+    execvp(options->program[0], (char *const *)options->program);
+    smith_die(smith_exit_missing, "cannot run", options->program[0]);
+}
+
+// Runs to each stop in turn: --at shows its hits and ends the program, --crash shows the first stop that is not a hit.
+static int smith_crash_run(const SmithCrashOptions *options, const char *self) {
+    char problem[512];
+    SmithCrashStop stop;
+    if (!smith_crash_start(self, options->program, options->at_file, options->at_line, &stop, problem, sizeof problem))
+        smith_crash_plain(options, problem);
+    if (options->at_file[0] != '\0' && smith_crash_locations() == 0)
+        fprintf(stderr, "smith dbg: no code at %s:%u (is the program built with -g?)\n", options->at_file,
+                options->at_line);
+    long hits = 0;
+    while (stop.state == SmithCrash_Stopped) {
+        if (stop.at_breakpoint) {
+            hits += 1;
+            fprintf(stderr, "smith dbg: at %s:%u, hit %ld\n", options->at_file, options->at_line, hits);
+        } else {
+            fprintf(stderr, "smith dbg: stopped: %s\n", stop.reason);
+        }
+        smith_crash_frames(options);
+        if (!stop.at_breakpoint || hits >= options->count) break;
+        smith_crash_continue(&stop);
+    }
+    int status = stop.at_breakpoint ? 0 : stop.status;
+    if (stop.state == SmithCrash_Exited)
+        fprintf(stderr, "smith dbg: exited %d%s\n", stop.status, hits > 0 ? " before the next hit" : "");
+    smith_crash_kill();
+    return status;
+}
+
+static int smith_crash_main(int argc, char **argv, const char *self) {
+    SmithCrashOptions options = smith_crash_parse(argc, argv);
+    if (getcwd(smith_sym_directory, sizeof smith_sym_directory) == nullptr) smith_sym_directory[0] = '\0';
+    int status = smith_crash_run(&options, self);
     fflush(stdout);
     return status;
 }

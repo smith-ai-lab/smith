@@ -2794,6 +2794,9 @@ static int smith_tool_launch(const SmithTool *tool, int argc, char **argv, const
     smith_sdk_environment(self); // clangd, and clang-tidy's compiles, find the SDK as the compiler does
     if (strcmp(tool->command, "dbg") == 0 || strcmp(tool->command, "dap") == 0) smith_debugserver_environment();
 #endif
+    bool crash = strcmp(tool->command, "dbg") == 0 && argc >= 3 &&
+                 (strcmp(argv[2], "--crash") == 0 || strcmp(argv[2], "--at") == 0);
+    if (crash) return smith_crash_main(argc - 2, argv + 2, self); // runtime/explain.c, on the code of a failed check
     const char *override = getenv(tool->override);
     bool debugger = strcmp(tool->command, "dbg") == 0 || strcmp(tool->command, "dap") == 0;
     if ((override == nullptr || *override == '\0') && (!debugger || smith_has_lldb)) {
