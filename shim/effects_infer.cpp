@@ -43,6 +43,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include "effects_table.h"
+#include "names.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -461,7 +462,20 @@ class Analysis {
         size_t path = symbol.find("::");
         if (path != std::string::npos && symbol.find('#') == std::string::npos)
             return symbol.substr(symbol[0] == '_' ? 1 : 0);
-        return function->getNameAsString();
+        std::string name = function->getNameAsString();
+        return writtenName(name);
+    }
+
+    // The name as a `.smith` file writes it (`bad`, not the `main_bad` the lowering made), when the lowering's table of
+    // the file is there: every tool shows the names as written, the link's error included, so the summary carries it.
+    std::string writtenName(const std::string &lowered) {
+        const SourceManager &sm = context.getSourceManager();
+        auto mainFile = sm.getFileEntryRefForID(sm.getMainFileID());
+        if (!mainFile) return lowered;
+        std::shared_ptr<const smith::FileNames> table = smith::namesOf(mainFile->getName().str());
+        if (table == nullptr) return lowered;
+        const smith::WrittenName *found = table->find(lowered);
+        return found == nullptr || found->written.empty() ? lowered : found->written;
     }
 
     bool inMain(const FunctionDecl *function) {
