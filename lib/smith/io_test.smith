@@ -1,6 +1,7 @@
 // Tests of smith::io on the fake io (files in memory, a scripted console, clock, programs, children and network), in
-// smith's own test library. What needs the real world stays in tests/io.c, run by tests/io.sh: real files, processes,
-// the terminal, the loopback, the clock, SMITH_SEED, the lazily committed reservation and the console of a pipe.
+// smith's own test library. What needs the real world stays in tests/io.c, run by tests/io_c_test.smith: real files,
+// processes, the terminal, the loopback, the clock, SMITH_SEED, the lazily committed reservation and the console of a
+// pipe.
 module smith::io_test;
 
 import smith::arena;
