@@ -305,7 +305,8 @@ if [ -n "$stack" ] && awk -F'\t' '$1 == "fx::lib::deep" && $2 + 0 > 256 && $3 ~ 
     echo "ok    stack: a module's function has its frame and its callee's in the build's .stack"
 else
     failures=$((failures + 1)); echo "FAIL  stack: module: ${stack:-no .stack} $(tail -n 5 "$work/sm/log")"
-||||||| parent of 91e10abf (test(effects): the fix-it of an effects error, applied, compiles; skill (Part of #246))
+fi
+
 # The fix-it of an effects error: applied (clang's -fixit), the file compiles.
 mkdir "$work/fix"
 cp "$here/tests/effects/effects_ceiling.c" "$work/fix/c.c"
