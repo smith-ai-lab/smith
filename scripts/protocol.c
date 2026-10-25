@@ -1698,7 +1698,7 @@ static char gen_license_storage[1 << 20];
 static char gen_schema_storage[gen_input_capacity];
 
 static void gen_prepare(Generator *g, const char *name, struct smith_array_const_char_n schema) {
-    g->arena = smith_arena_make(gen_memory, sizeof gen_memory);
+    g->arena = smith_arena_fixed(gen_memory, sizeof gen_memory);
     g->schema = name;
     char upper[32];
     GEN_ASSERT(strlen(name) < sizeof upper && name[0] != '\0');

@@ -2741,7 +2741,7 @@ Loop *loop_make(arena::Arena *arena, bool fake) {
         loop->fake->output = arena::push_array_raw(arena, sizeof(char), fake_capture_size, alignof(char));
         loop->fake->errors = arena::push_array_raw(arena, sizeof(char), fake_capture_size, alignof(char));
         usize storage = (arena->capacity - arena->used) / 4 / arena::align_max * arena::align_max;
-        loop->fake->storage = arena::make(arena::push_raw(arena, storage, arena::align_max), storage);
+        loop->fake->storage = arena::fixed(arena::push_raw(arena, storage, arena::align_max), storage);
     } else {
         loop->queue = c::kqueue();
         if (loop->queue < 0) stop("kqueue failed");
@@ -2792,7 +2792,7 @@ u64 seed_read() {
     void *memory = c::mmap(nullptr, reservation, protect_both, map_reservation, -1, 0);
     if (memory == (void *)-1)
         stop("cannot reserve memory for the arena"); // NOLINT(performance-no-int-to-ptr): MAP_FAILED
-    Io io = {.arena = arena::make(memory, reservation)};
+    Io io = {.arena = arena::fixed(memory, reservation)};
     io.loop = loop_make(&io.arena, false);
     io.loop->memory = memory;
     io.loop->memory_size = reservation;
@@ -2818,7 +2818,7 @@ u64 seed_read() {
 make_test(Test test) {
     contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
     contract::requires(test.memory != nullptr && test.capacity > 0);
-    Io io = {.arena = arena::make(test.memory, test.capacity)};
+    Io io = {.arena = arena::fixed(test.memory, test.capacity)};
     io.loop = loop_make(&io.arena, true);
     io.seed = test.seed;
     io.key = random::key_make(test.seed);

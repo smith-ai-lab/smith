@@ -39,7 +39,7 @@ static SmithArena test_big_arena(void) {
     void *memory =
         mmap(nullptr, test_reservation, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
     assert(memory != MAP_FAILED);
-    return smith_arena_make(memory, test_reservation);
+    return smith_arena_fixed(memory, test_reservation);
 }
 
 static int test_big(void) {
@@ -93,7 +93,7 @@ int main(int argc, char **argv) {
     }
     if (argc > 1 && strcmp(argv[1], "carvestop") == 0) {
         static TestMemory memory;
-        SmithArena parent = smith_arena_make(memory.bytes, 1024);
+        SmithArena parent = smith_arena_fixed(memory.bytes, 1024);
         SmithArena child = smith_arena_carve(&parent, 2048);
         printf("not reached %zu\n", child.capacity);
         return 0;
@@ -107,7 +107,7 @@ int main(int argc, char **argv) {
     }
     if (argc > 1 && strcmp(argv[1], "stale") == 0) {
         static TestMemory memory;
-        SmithArena arena = smith_arena_make(memory.bytes, sizeof memory.bytes);
+        SmithArena arena = smith_arena_fixed(memory.bytes, sizeof memory.bytes);
         volatile unsigned char *bytes = smith_arena_push(&arena, 10, 1);
         smith_arena_reset(&arena);
         printf("not reached %d\n", bytes[0]);
@@ -115,7 +115,7 @@ int main(int argc, char **argv) {
     }
     if (argc > 1 && strcmp(argv[1], "stop") == 0) {
         static TestMemory memory;
-        SmithArena arena = smith_arena_make(memory.bytes, 128);
+        SmithArena arena = smith_arena_fixed(memory.bytes, 128);
         unsigned char *first = smith_arena_push(&arena, 100, 1);
         unsigned char *second = smith_arena_push(&arena, 100, 1); // does not fit: stops
         printf("not reached %p %p\n", (void *)first, (void *)second);
@@ -123,7 +123,7 @@ int main(int argc, char **argv) {
     }
     if (argc > 1 && strcmp(argv[1], "oob") == 0) {
         static TestMemory memory;
-        SmithArena arena = smith_arena_make(memory.bytes, sizeof memory.bytes);
+        SmithArena arena = smith_arena_fixed(memory.bytes, sizeof memory.bytes);
         volatile unsigned char *bytes = smith_arena_push(&arena, 10, 1);
         bytes[10] = 1; // one past the push
         printf("not reached\n");

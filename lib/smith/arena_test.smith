@@ -21,7 +21,7 @@ typedef struct {
 export void test_arena_pushes_are_zeroed() {
     static Memory memory;
     __builtin_memset(memory.bytes, 0xAA, sizeof memory.bytes);
-    arena::Arena a = arena::make(memory.bytes, sizeof memory.bytes);
+    arena::Arena a = arena::fixed(memory.bytes, sizeof memory.bytes);
     u8 *bytes = arena::push_raw(&a, 100, 1);
     for (usize i = 0; i < 100; i++)
         test::check_equal(bytes[i], 0);
@@ -34,7 +34,7 @@ export void test_arena_pushes_are_zeroed() {
 
 export void test_arena_pushes_are_aligned() {
     static Memory memory;
-    arena::Arena a = arena::make(memory.bytes, sizeof memory.bytes);
+    arena::Arena a = arena::fixed(memory.bytes, sizeof memory.bytes);
     for (usize align = 1; align <= arena::align_max; align *= 2) {
         u8 *odd = arena::push_raw(&a, 1, 1); // knock the cursor off every alignment
         test::check_condition(odd != nullptr);
@@ -45,7 +45,7 @@ export void test_arena_pushes_are_aligned() {
 
 export void test_arena_typed_and_slice_pushes() {
     static Memory memory;
-    arena::Arena a = arena::make(memory.bytes, sizeof memory.bytes);
+    arena::Arena a = arena::fixed(memory.bytes, sizeof memory.bytes);
     Record *record = arena::push(&a, Record);
     test::check_equal(record->count, 0);
     test::check_equal(record->value, 0.0);
@@ -63,7 +63,7 @@ export void test_arena_typed_and_slice_pushes() {
 export void test_arena_typed_pushes_keep_every_alignment() {
     static Memory memory;
     __builtin_memset(memory.bytes, 0xAA, sizeof memory.bytes);
-    arena::Arena a = arena::make(memory.bytes, sizeof memory.bytes);
+    arena::Arena a = arena::fixed(memory.bytes, sizeof memory.bytes);
     u8 *odd = arena::push(&a, u8);
     test::check_condition(odd != nullptr);
     Record *record = arena::push(&a, Record);
@@ -83,7 +83,7 @@ export void test_arena_typed_pushes_keep_every_alignment() {
 
 export void test_arena_fits_asks_without_pushing() {
     static Memory memory;
-    arena::Arena a = arena::make(memory.bytes, 128);
+    arena::Arena a = arena::fixed(memory.bytes, 128);
     test::check_condition(arena::fits(&a, 128, 1));
     test::check_condition(!arena::fits(&a, 129, 1));
     test::check_condition(!arena::fits(&a, math::max(usize), 1)); // no overflow in the sum
@@ -101,7 +101,7 @@ export void test_arena_fits_asks_without_pushing() {
 
 export void test_arena_reset_and_scopes_give_memory_back() {
     static Memory memory;
-    arena::Arena a = arena::make(memory.bytes, sizeof memory.bytes);
+    arena::Arena a = arena::fixed(memory.bytes, sizeof memory.bytes);
     u8 *base = arena::push_raw(&a, 10, 1);
     test::check_condition(base != nullptr);
     usize base_used = a.used;
@@ -129,8 +129,8 @@ export void test_arena_reset_and_scopes_give_memory_back() {
 export void test_arena_layout_is_deterministic() {
     static Memory first_memory;
     static Memory second_memory;
-    arena::Arena first = arena::make(first_memory.bytes, sizeof first_memory.bytes);
-    arena::Arena second = arena::make(second_memory.bytes, sizeof second_memory.bytes);
+    arena::Arena first = arena::fixed(first_memory.bytes, sizeof first_memory.bytes);
+    arena::Arena second = arena::fixed(second_memory.bytes, sizeof second_memory.bytes);
     const usize sizes[] = {1, 7, 64, 3, 100, 8};
     const usize aligns[] = {1, 4, 64, 2, 16, 8};
     for (usize i = 0; i < _Countof(sizes); i++) {
@@ -144,7 +144,7 @@ export void test_arena_layout_is_deterministic() {
 // Carved arenas are separate, aligned, laid out after what the parent used, and the parent goes on after them.
 export void test_arena_carve_makes_separate_arenas() {
     static Memory memory;
-    arena::Arena parent = arena::make(memory.bytes, sizeof memory.bytes);
+    arena::Arena parent = arena::fixed(memory.bytes, sizeof memory.bytes);
     u8 *before = arena::push_raw(&parent, 10, 1);
     arena::Arena first = arena::carve(&parent, 1000);
     arena::Arena second = arena::carve(&parent, 2000);
@@ -175,7 +175,7 @@ export void test_arena_carve_makes_separate_arenas() {
 export void test_arena_push_slice_is_a_zeroed_slice_of_the_arena() {
     static Memory memory;
     __builtin_memset(memory.bytes, 0xAA, sizeof memory.bytes);
-    arena::Arena a = arena::make(memory.bytes, sizeof memory.bytes);
+    arena::Arena a = arena::fixed(memory.bytes, sizeof memory.bytes);
     Record records[:] = arena::push_slice(&a, Record, 6);
     test::check_equal(countof(records), 6);
     test::check_equal((usize)&records[0] & (alignof(Record) - 1), 0);
@@ -202,7 +202,7 @@ export void test_arena_push_slice_is_a_zeroed_slice_of_the_arena() {
 export void test_arena_push_slice_with_a_size_for_each_dimension() {
     static Memory memory;
     __builtin_memset(memory.bytes, 0xAA, sizeof memory.bytes);
-    arena::Arena a = arena::make(memory.bytes, sizeof memory.bytes);
+    arena::Arena a = arena::fixed(memory.bytes, sizeof memory.bytes);
     f32 vector[:] = arena::push_slice(&a, f32, 5);
     f32 matrix[:][:] = arena::push_slice(&a, f32, 3, 4);
     f32 rows[:][2] = arena::push_slice(&a, f32[2], 3);

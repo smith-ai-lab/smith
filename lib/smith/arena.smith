@@ -16,7 +16,7 @@ import <sys/mman.h>; // mmap and munmap: the operating system as the default bac
 // <smith/arena.h>: a block of memory with a cursor, for programs that do not call malloc. Nothing is freed on its own;
 // a reset frees everything, and a scope frees what was pushed since it began.
 //
-// Two kinds (owner, 2026-10-25). A fixed arena (arena::fixed, or arena::make) is over memory the caller gives and never
+// Two kinds (owner, 2026-10-25). A fixed arena (arena::fixed) is over memory the caller gives and never
 // grows: a push that does not fit is a checked failure naming the budget. A growing arena (arena::growing) takes
 // another chunk from its backing allocator (the operating system by default) when the current one is full, so a push
 // never fails; the chunks are kept across scopes and resets (a second pass over the same work reuses them), `grown` is
@@ -149,11 +149,6 @@ bool measure(const Arena *arena, usize size, usize align, usize *padding) {
     contract::requires(((usize)memory & (align_max - 1)) == 0);
     contract::requires(capacity > 0);
     return (Arena){.memory = memory, .capacity = capacity}; // nothing is poisoned until the first push
-}
-
-// The same as arena::fixed, the name the arena had before it could grow.
-[[smith::c_name("smith_arena_make")]] export [[nodiscard]] Arena make(void *memory, usize capacity) {
-    return fixed(memory, capacity);
 }
 
 // A chunk's header, a multiple of align_max so the memory after it is aligned as an arena's must be. A chunk is one
@@ -459,7 +454,7 @@ export type slice_of(type element, usize count) {
                                              (parent->touched < parent->used ? parent->touched : parent->used) - start);
         if (parent->touched < parent->used) parent->touched = parent->used;
     }
-    return make(memory, capacity);
+    return fixed(memory, capacity);
 }
 
 // Frees everything. Requires that no scope is open. A growing arena keeps the chunks it grew, so the next pass over the
