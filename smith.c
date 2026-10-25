@@ -2092,8 +2092,8 @@ static constexpr unsigned char smith_new_primes_h[] = {
 static constexpr unsigned char smith_new_primes_c[] = {
 #embed "templates/new/primes.c"
 };
-static constexpr unsigned char smith_new_test_primes_c[] = {
-#embed "templates/new/test_primes.c"
+static constexpr unsigned char smith_new_primes_test_c[] = {
+#embed "templates/new/primes_test.c"
 };
 static constexpr unsigned char smith_new_gitignore[] = {
 #embed "templates/new/gitignore"
@@ -2150,11 +2150,11 @@ typedef struct {
 static const SmithNewFile smith_new_files[] = {
     SMITH_NEW_ONLY("main.smith", smith_new_main_smith, SmithNewLanguage_Smith, false),
     SMITH_NEW_ONLY("primes.smith", smith_new_primes_smith, SmithNewLanguage_Smith, false),
-    SMITH_NEW_ONLY("tests/primes_test.smith", smith_new_primes_test_smith, SmithNewLanguage_Smith, false),
+    SMITH_NEW_ONLY("primes_test.smith", smith_new_primes_test_smith, SmithNewLanguage_Smith, false),
     SMITH_NEW_ONLY("main.c", smith_new_main_c, SmithNewLanguage_C, false),
     SMITH_NEW_ONLY("primes.h", smith_new_primes_h, SmithNewLanguage_C, false),
     SMITH_NEW_ONLY("primes.c", smith_new_primes_c, SmithNewLanguage_C, false),
-    SMITH_NEW_ONLY("tests/test_primes.c", smith_new_test_primes_c, SmithNewLanguage_C, false),
+    SMITH_NEW_ONLY("primes_test.c", smith_new_primes_test_c, SmithNewLanguage_C, false),
     SMITH_NEW_FILE(".gitignore", smith_new_gitignore, false, false, false),
     SMITH_NEW_FILE(".claude/settings.json", smith_new_claude_settings, false, false, false),
     SMITH_NEW_FILE("AGENTS.md", smith_new_agents, true, false, false),

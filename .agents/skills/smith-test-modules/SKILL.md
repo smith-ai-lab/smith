@@ -5,7 +5,7 @@ description: "Tests in modules: a test file is `module x_test;` with exported te
 
 # Tests in modules
 
-Name the `.smith` files in `.sources` (`smith_glob(b, smith_list(b, "tests/test_*.smith", "tests/**/*_test.smith", nullptr))`). The same lines are tests:
+Name the `.smith` files in `.sources` (`smith_glob(b, smith_list(b, "**/*_test.smith", nullptr))`). The same lines are tests:
 
 ```smith
 // tests/geometry/box_test.smith

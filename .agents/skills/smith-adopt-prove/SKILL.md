@@ -27,7 +27,7 @@ A `.smith` file is C: renaming `x.c` to `x.smith` changes nothing about what it 
 2. A file with its own header becomes a module: `src/util.c` + `util.h` become `src/util.smith` starting `module util;`, functions you want others to call marked `export`, and `import util;` in the callers (`util::clamp(...)`, C names as `c::printf` after `import <stdio.h>;`). Remove the header. Callers still in C include the generated `.smith/include/util.h` (add `-I .smith/include` to their flags and the header to their `.implicit_inputs`). Load `smith-lang`, then `smith-lang-modules`, `smith-lang-c-interop` and `smith-lang-sized-types`; use `smith-lang-generics` where a function must work for several types or takes a type; `smith-idiom` says which of these a port needs.
 3. `smith build` writes each module's header first and compiles after; a stale or cyclic import is reported before any compile (`smith: import cycle: a::x -> a::y -> a::x`).
 4. `smith prove` with no arguments proves the `.smith` modules of the project too, as well as its C (the README's first program); to prove one module, `smith prove -v src/util.smith -- -I .smith/include`. Both name functions as written (`util::clamp`).
-5. Tests in `.smith` are `tests/test_x.smith` files (load `smith-test`, ".smith tests"). The editor, formatter, linter and debugger all read `.smith` as written.
+5. Tests in `.smith` are `x_test.smith` files beside `x.smith` (load `smith-test`, ".smith tests"). The editor, formatter, linter and debugger all read `.smith` as written.
 
 When every `.c` is a `.smith`, the project can drop the explicit sources and build by convention: `main.smith` at the root, modules found by `import`, and `smith build --dump-config` no longer needs a Makefile (load `smith-build-levels`).
 

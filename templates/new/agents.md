@@ -8,7 +8,7 @@ Start every change with the [@KEBAB@-docs](.agents/skills/@KEBAB@-docs/SKILL.md)
 you commit: it checks the formatting, the lint and these documents (`smith docs`).
 
 - **There is no build file and no config file.** smith builds by convention: `main.smith` or `main.c` at the root is the
-  program, named for the folder; what it imports or includes is compiled with it; the files under `tests/` are the tests.
+  program, named for the folder; what it imports or includes is compiled with it; a `*_test.smith` (`*_test.c`) beside the module it tests is its tests; integration tests, if any, go in `tests/`.
   `smith build` is the debug profile (sanitizers on), `smith build release` keeps assertions on, `smith build fast`
   turns them off. `smith fmt` and `smith lint` use smith's own style and checks.
 - **Effects come through parameters from `main`.** `main` makes the io, `io::Io io = io::make(argc, argv)` in `.smith`

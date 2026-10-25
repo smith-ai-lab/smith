@@ -9,7 +9,7 @@ description: "smith new [--language smith|c] [<name>]: starting a project with a
 
 | `--language smith` (default) | `--language c` |
 | --- | --- |
-| `main.smith` (`module main;`), `primes.smith` (a module; no header), `tests/primes_test.smith` | `main.c`, `primes.c`, `primes.h`, `tests/test_primes.c` |
+| `main.smith` (`module main;`), `primes.smith` (a module; no header), `primes_test.smith` | `main.c`, `primes.c`, `primes.h`, `primes_test.c` |
 
 Both also get:
 

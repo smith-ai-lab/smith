@@ -80,17 +80,17 @@ static const char *named(const char *format, const char *a, const char *b) {
 
 constexpr char smith_files[] =
     ".agents/skills/hello-docs/SKILL.md .claude/settings.json .claude/skills .gitignore AGENTS.md knowledge/index.md "
-    "knowledge/program.md main.smith primes.smith tests/primes_test.smith";
+    "knowledge/program.md main.smith primes.smith primes_test.smith";
 constexpr char c_files[] =
     ".agents/skills/hellc-docs/SKILL.md .claude/settings.json .claude/skills .gitignore AGENTS.md knowledge/index.md "
-    "knowledge/program.md main.c primes.c primes.h tests/test_primes.c";
+    "knowledge/program.md main.c primes.c primes.h primes_test.c";
 
 // 1. smith new hello: a .smith project, the default.
 export void test_new_hello_a_smith_project_is_written_and_committed(io::Io *io) {
     scratch::Project p = fresh(io);
     scratch::Run created = run(&p, "smith new hello");
     scratch::expect_status("new hello: exits 0", 0, &created);
-    const char *files[] = {"main.smith",         "primes.smith",          "tests/primes_test.smith",
+    const char *files[] = {"main.smith",         "primes.smith",          "primes_test.smith",
                            ".gitignore",         ".claude/settings.json", "AGENTS.md",
                            "knowledge/index.md", "knowledge/program.md",  ".agents/skills/hello-docs/SKILL.md"};
     for (usize i = 0; i < _Countof(files); i++) {
@@ -214,7 +214,7 @@ static void prove_the_template(const scratch::Project *p, const char *dir, const
 // The verbs on a new project, in `dir`. Everything here ends with the files as they began, in git.
 static void verbs_on_a_new_project(const scratch::Project *p, const char *dir, const char *label, bool smith_language) {
     const char *main_file = smith_language ? "main.smith" : "main.c";
-    const char *test_file = smith_language ? "tests/primes_test.smith" : "tests/test_primes.c";
+    const char *test_file = smith_language ? "primes_test.smith" : "primes_test.c";
     const char *primes_file = smith_language ? "primes.smith" : "primes.c";
     char both[16384];
     in_folder(p, dir, "cp %s %s.orig", main_file, main_file, "");
@@ -356,7 +356,7 @@ export void test_new_language_c_a_c_project_is_written_and_committed(io::Io *io)
     const char *files[] = {"main.c",
                            "primes.c",
                            "primes.h",
-                           "tests/test_primes.c",
+                           "primes_test.c",
                            ".gitignore",
                            ".claude/settings.json",
                            "AGENTS.md",
@@ -462,7 +462,7 @@ export void test_new_assert_false_stops_debug_and_release_in_c(io::Io *io) {
 export void test_new_the_libraries_build_under_the_conventions_flags(io::Io *io) {
     scratch::Project p = fresh(io);
     generated(&p,
-              "generate hellc --language c && mkdir libs && cp -R hellc/primes.c hellc/primes.h hellc/tests libs/ && "
+              "generate hellc --language c && mkdir libs && cp -R hellc/primes.c hellc/primes.h hellc/primes_test.c libs/ && "
               "cp \"$SMITH_REPO/tests/build_fixtures/new_libs/main.c\" libs/main.c");
     scratch::Run built = run_in(&p, "libs", "smith build && smith build release fast");
     scratch::expect_status("libraries: the three build under the conventions' flags", 0, &built);

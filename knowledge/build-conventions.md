@@ -52,7 +52,7 @@ void build(SmithBuild *b) {
   project that compiles the library through `smith_library` with its own flags still gets them. A needed library
   is the object the project made of that source (any `smith_object` of it), else one compiled with the flags and
   compiler of the library that needs it, as `<folder of its object>/<name>.o`.
-- **Tests:** every `.smith` file and every `test_*.c` below `tests/`, built with the debug flags, and every other `.c`
+- **Tests:** every `*_test.smith` and `*_test.c` below the root (a unit test beside the module it tests, an integration test in `tests/`), built with the debug flags, and every other `.c`
   directly in `tests/` is a helper, compiled and linked into the runner. The code under test is what the tests and the
   helpers include or import (and the libraries they use), compiled once in the debug profile: an object a program made
   of the same source with the same flags is the same object. No test file means no task.
@@ -163,7 +163,7 @@ Call it after `smith_app`. Expands to:
 
 ```c
 smith_tests(b, &(SmithTests){
-    .sources = smith_glob(b, {"<folder>/**/*.smith", "<folder>/**/test_*.c"}),
+    .sources = smith_glob(b, {"**/*_test.smith", "**/*_test.c"}),
     .objects = what the sources and the helpers (the other .c directly in the folder) include or import, and the
                libraries they use, each compiled with the debug flags as build/debug/<source>.o,
     .flags = flags(debug), .inputs = .inputs, .link_flags = <the debug link flag> + defaults + .link_flags});
