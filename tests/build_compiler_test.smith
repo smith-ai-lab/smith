@@ -13,20 +13,21 @@ import scratch;
 export void test_build_a_change_of_compiler_rebuilds_every_object(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", "compiler_change");
     (void)scratch::build(&p, "");
-    scratch::expect_count("compiler change: the first build runs the compiler on both sources and the linker", 3,
+    // two compiles, the link of the program and the link of the handlers runtime beside it
+    scratch::expect_count("compiler change: the first build runs the compiler on both sources and links twice", 4,
                           scratch::lines(&p, "runs"));
     scratch::Run again = scratch::build(&p, "");
     scratch::expect_contains("compiler change: a build with the same compiler does nothing", again.out,
                              "no work to do");
-    scratch::expect_count("compiler change: and ran nothing", 3, scratch::lines(&p, "runs"));
+    scratch::expect_count("compiler change: and ran nothing", 4, scratch::lines(&p, "runs"));
     (void)scratch::build(&p, "-DCOMPILER=bin/cc2");
-    scratch::expect_count("compiler change: another compiler rebuilds both objects and links again", 6,
+    scratch::expect_count("compiler change: another compiler rebuilds both objects and links again", 7,
                           scratch::lines(&p, "runs"));
     scratch::expect_text("compiler change: the object is the new compiler's", "cc2", scratch::read(&p, "build/a.o"));
     scratch::Run second = scratch::build(&p, "-DCOMPILER=bin/cc2");
     scratch::expect_contains("compiler change: the new compiler's build does nothing too", second.out, "no work to do");
     (void)scratch::build(&p, "-DCOMPILER=bin/cc1");
-    scratch::expect_count("compiler change: going back rebuilds as well", 9, scratch::lines(&p, "runs"));
+    scratch::expect_count("compiler change: going back rebuilds as well", 10, scratch::lines(&p, "runs"));
     scratch::expect_text("compiler change: the object is the old compiler's again", "cc1",
                          scratch::read(&p, "build/a.o"));
     // The same compiler replaced by another file: a new version.
@@ -35,7 +36,7 @@ export void test_build_a_change_of_compiler_rebuilds_every_object(io::Io *io) {
                    "echo cc1-new >\"$out\"\necho \"$0\" >>runs\n");
     (void)scratch::sh(&p, "chmod +x bin/cc1.new && mv bin/cc1.new bin/cc1");
     (void)scratch::build(&p, "");
-    scratch::expect_count("compiler change: the same path with another compiler in it rebuilds both objects", 12,
+    scratch::expect_count("compiler change: the same path with another compiler in it rebuilds both objects", 13,
                           scratch::lines(&p, "runs"));
     scratch::expect_text("compiler change: and the objects are the new one's", "cc1-new",
                          scratch::read(&p, "build/a.o"));

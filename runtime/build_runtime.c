@@ -2020,6 +2020,78 @@ static size_t smith_program_needs(SmithBuild *b, const SmithObject **linked, siz
     return used;
 }
 
+#ifdef __APPLE__
+// The handlers runtime (issue #239, lib/handlers.c): a dylib, built beside each program's folder, that every program
+// links
+// (`-lsmith_handlers`, found at run time through `@executable_path`), so that malloc and its family reach the handler
+// of the calling thread, in every profile. In a program built with ASan the sanitizer's runtime is linked first, so
+// that the dylib's interposition sits ahead of ASan's and a call with no handler reaches ASan's allocator.
+constexpr size_t smith_handlers_folders_max = 64;
+static const char *smith_handlers_made[smith_handlers_folders_max];
+static size_t smith_handlers_made_count;
+
+static bool smith_flags_have(const char *const *flags, const char *needle) {
+    for (size_t i = 0; flags != nullptr && flags[i] != nullptr; i++) { // bounded by the flags
+        if (strstr(flags[i], needle) != nullptr) return true;
+    }
+    return false;
+}
+
+// The step that links the dylib into `folder` (once for each folder), and the arguments a program of that folder adds
+// to its link line.
+static const char *const *smith_handlers_link(SmithBuild *b, const SmithProgram *program, const char *folder) {
+    const char *dylib = smith_text("%s/libsmith_handlers.dylib", folder);
+    bool made = false;
+    for (size_t i = 0; i < smith_handlers_made_count; i++) // bounded by the folders
+        made = made || strcmp(smith_handlers_made[i], folder) == 0;
+    if (!made) {
+        if (smith_handlers_made_count >= smith_handlers_folders_max)
+            smith_too_many("program folders", smith_handlers_folders_max);
+        smith_handlers_made[smith_handlers_made_count++] = smith_copy_string(folder);
+        const char *source = smith_library(b, "handlers");
+        const char *const flags[] = {"-std=gnu23",
+                                     "-O2",
+                                     "-fPIC",
+                                     "-dynamiclib",
+                                     "-I",
+                                     ".smith/include",
+                                     "-install_name",
+                                     "@rpath/libsmith_handlers.dylib",
+                                     nullptr};
+        const char *const tail[] = {source, "-o", dylib, nullptr};
+        SmithStep step = {
+            .command =
+                smith_cat(b, smith_one(smith_copy_string(program->linker)), smith_copy_list(flags), tail, nullptr),
+            .inputs = smith_one(source),
+            .implicit_inputs = smith_cat(b, smith_one(smith_compiler_file(program->linker)),
+                                         smith_one(".smith/include/smith/handlers.h"), nullptr),
+            .outputs = smith_one(dylib),
+            .description = smith_text("link %s", dylib),
+        };
+        smith_step(b, &step);
+    }
+    const char *const *address = nullptr;
+    if (smith_flags_have(program->flags, "-fsanitize=") && smith_flags_have(program->flags, "address")) {
+        const char *resource = smith_capture(b, (const char *[]){program->linker, "-print-resource-dir", nullptr});
+        address = smith_list(b, smith_text("-L%.*s/lib/darwin", (int)strcspn(resource, "\n"), resource),
+                             "-lclang_rt.asan_osx_dynamic", nullptr);
+    }
+    // the link of a sanitized program already has the rpath @executable_path (a second one is a warning)
+    return smith_cat(
+        b, address != nullptr ? address : smith_list(b, nullptr),
+        smith_list(b, smith_text("-L%s", folder), "-lsmith_handlers", nullptr),
+        address != nullptr ? smith_list(b, nullptr) : smith_list(b, "-Wl,-rpath,@executable_path", nullptr), nullptr);
+}
+#endif
+
+// smith's own link is the one program that is not linked with the handlers runtime: its clones (clang, ld) run from the
+// programs folder, which has no dylib beside them. Named by the file (`.../smith`), until SmithProgram has a field for
+// it (the lag rule: build.c is built by the previous release, whose header has none).
+static bool smith_is_smith_itself(const char *output) {
+    const char *slash = strrchr(output, '/');
+    return strcmp(slash != nullptr ? slash + 1 : output, "smith") == 0;
+}
+
 void smith_program(SmithBuild *b, SmithProgram *program) {
     SMITH_ASSERT(b != nullptr && program != nullptr);
     smith_require_program("smith_program", "linker", program->linker);
@@ -2057,12 +2129,22 @@ void smith_program(SmithBuild *b, SmithProgram *program) {
         if (summary != nullptr) summaries[summarized++] = summary;
     }
     summaries[summarized] = nullptr;
+    const char *const *handlers = smith_list(b, nullptr);
+    const char *const *handlers_files = smith_list(b, nullptr);
+#ifdef __APPLE__
+    const char *slash = strrchr(copy.output, '/');
+    const char *folder = slash != nullptr ? smith_text("%.*s", (int)(slash - copy.output), copy.output) : ".";
+    if (!smith_is_smith_itself(copy.output)) {
+        handlers = smith_handlers_link(b, &copy, folder);
+        handlers_files = smith_one(smith_text("%s/libsmith_handlers.dylib", folder));
+    }
+#endif
     copy.step = (SmithStep){
-        .command = smith_cat(b, smith_one(copy.linker), copy.flags, (const char *const *)outputs, copy.libraries, tail,
-                             nullptr),
+        .command = smith_cat(b, smith_one(copy.linker), copy.flags, (const char *const *)outputs, copy.libraries,
+                             handlers, tail, nullptr),
         .inputs = (const char *const *)outputs,
         .implicit_inputs = smith_cat(b, smith_library_files(copy.libraries),
-                                     smith_one(smith_compiler_file(copy.linker)), summaries, nullptr),
+                                     smith_one(smith_compiler_file(copy.linker)), summaries, handlers_files, nullptr),
         .outputs = smith_one(copy.output),
         .description = smith_text("link %s", copy.output),
     };
@@ -2822,7 +2904,11 @@ static bool smith_app_plain_name(const char *name, size_t length) {
 // A library of smith's, by name, to compile and link. `test` is left out: smith_tests compiles it. A name that is no
 // library is ignored (the compile says what it cannot find).
 static void smith_app_library(const char *name, size_t length) {
-    if (!smith_app_plain_name(name, length) || (length == 4 && memcmp(name, "test", 4) == 0)) return;
+    // test is the runner's, and handlers is a dylib every program links (smith_handlers_link), not an object
+    if (!smith_app_plain_name(name, length) || (length == 4 && memcmp(name, "test", 4) == 0) ||
+        (length == 8 && memcmp(name, "handlers", 8) == 0)) {
+        return;
+    }
     char *copy = smith_alloc(length + 1);
     memcpy(copy, name, length);
     copy[length] = '\0';

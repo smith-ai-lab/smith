@@ -459,6 +459,8 @@ static const char *const build_smith_inputs[] = {
     "lib/smith/text.smith",
     "include/smith/json.h",
     "lib/json.c",
+    "include/smith/handlers.h",
+    "lib/handlers.c",
     "include/smith/http.h",
     "lib/http.c",
     "include/smith/test.h",
