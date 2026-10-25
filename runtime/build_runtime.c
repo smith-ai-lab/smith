@@ -1810,8 +1810,8 @@ static const char *const *smith_header_pass_flags(SmithBuild *b, const SmithObje
 // writes it and `smith cc` reads it at the link: in a project (a `.smith` folder in the working folder) it is
 // `.smith/effects/<the object's absolute path, `%` for `/`>.fx`, out of the build folders, otherwise `<object>.fx`
 // beside the object. False when the path does not fit. The same rule is in smith.c (`smith_effects_summary_path`, which
-// the plugin and the link use): a compile and the build must agree on the place, and tests/effects_infer_test.smith checks that
-// they do.
+// the plugin and the link use): a compile and the build must agree on the place, and tests/effects_infer_test.smith
+// checks that they do.
 static bool smith_effects_path(const char *object, char *out, size_t capacity) {
     char absolute[PATH_MAX];
     while (strncmp(object, "./", 2) == 0)
