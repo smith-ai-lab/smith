@@ -619,8 +619,8 @@ struct Loop {
 // ---------------------------------------------------------------- errors
 
 // A check that stays in every build: this library is the edge, which a proof never reads, and trusted, a check's body
-// is not read either. The assert writes the failure report (the call's line and the stack) in a build with assertions;
-// the trap after it stops one without them (`fast`).
+// is not read either. The assert writes the failure report (the call's line and the stack);
+// the trap after it is a second stop.
 void check(bool holds) {
     contract::trusted();
     contract::check_assert(

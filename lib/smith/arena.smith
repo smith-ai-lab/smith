@@ -111,7 +111,7 @@ bool measure(const Arena *arena, usize size, usize align, usize *padding) {
     return *padding <= room && size <= room - *padding;
 }
 
-// A push that cannot be served stops here in every build, so a build with NDEBUG never writes past the memory.
+// A push that cannot be served stops here in every build, as every check does.
 [[noreturn]] void stop(const Arena *arena, usize size, usize align) {
     c::smith_failure_format(c::SmithFailure_Capacity, "push of %zu bytes (align %zu) with %zu of %zu bytes used", size,
                             align, arena->used, arena->capacity);
@@ -126,7 +126,7 @@ bool measure(const Arena *arena, usize size, usize align, usize *padding) {
 
 // Zeroed memory for size bytes at align (a power of two, at most align_max). Running out of capacity stops the program
 // with a message naming the request and the capacity, in every build: it is a single comparison, and without it a
-// build with NDEBUG would write past the memory.
+// push would write past the memory.
 [[smith::c_name("smith_arena_push")]] export [[nodiscard]] void *push_raw(Arena *arena, usize size, usize align) {
     contract::trusted(); // it writes the memory it hands out, whose extent a proof does not know
     contract::requires(arena->used <= arena->capacity);

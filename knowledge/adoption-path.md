@@ -20,8 +20,8 @@ default; the defaults that exist apply only where a project has no file and runs
 - **From a new project (convention):**
   1. **Follow the conventions and write no files.** There is no build file and no config file: `smith build`, `run`,
      `test`, `fmt`, `lint`, `prove` and `check` do the right thing (C2y with `-std=gnu2y`, for `_Countof`; strict
-     warnings; three profiles: debug with sanitizers, release with assertions on and ThinLTO, fast without assertions and
-     with ThinLTO; no unity builds, since Clang modules and their cache parse a header once and ThinLTO inlines across files).
+     warnings; three profiles: debug with sanitizers, release with ThinLTO, fast with `-DNDEBUG` and ThinLTO (every profile keeps
+     the contracts and bounds checks); no unity builds, since Clang modules and their cache parse a header once and ThinLTO inlines across files).
   2. **Generate the file you want to change.** `--dump-config` makes the implicit explicit: `smith fmt --dump-config
      > .clang-format`, `smith lint --dump-config > .clang-tidy`, `smith build --dump-config` for the build file.
   3. **Replace the high-level calls with low-level ones,** a piece at a time. A real project needs no more than the

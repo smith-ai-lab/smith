@@ -4,19 +4,12 @@
 // smith-imports:
 // smith-names: check_requires=smith_contract_requires check_ensures=smith_contract_ensures check_invariant=smith_contract_invariant check_assert=smith_contract_assert check_trusted=smith_contract_trusted requires=smith_requires ensures=smith_ensures invariant=smith_invariant assert=smith_assert trusted=smith_trusted check_modifies=smith_contract_may_write modifies_range=smith_modifies modifies
 // smith-bodies: check_requires check_ensures check_invariant check_assert check_trusted check_modifies
-// smith-generic: smith::contract modifies_slice smith_contract_modifies_slice lib/smith/contract.smith q 1 2 5 6 | iw@159:8=void iw@159:13=smith_contract_modifies_slice p@159:27=( iP1@159:28=auto iw@159:33=xs p@159:35=) pw@159:37={ iw@160:5=smith_modifies p@160:19=( i@160:20=countof p@160:27=( i@160:28=xs p@160:30=) pw@160:32=? pw@160:34=& i@160:35=xs p@160:37=[ n@160:38=0 p@160:39=] pw@160:41=: iw@160:43=nullptr p@160:50=, iw@160:52=countof p@160:59=( i@160:60=xs p@160:62=) pw@160:64=* iw@160:66=sizeof p@160:72=( i@160:73=xs p@160:75=[ n@160:76=0 p@160:77=] p@160:78=) p@160:79=) p@160:80=; p@161:1=}
-// smith-generic: smith::contract modifies smith_contract_modifies lib/smith/contract.smith i 1 2 6 7 | iw@163:15=void iw@163:20=smith_contract_modifies p@163:28=( i@163:29=auto p@163:33=... iP1w@163:37=rest p@163:41=) pw@163:43={ iw@164:5=smith_modifies p@164:19=( i@164:20=nullptr p@164:27=, nw@164:29=0 p@164:30=) p@164:31=; Y@165:5=for pw@165:19=( ix@165:20=__SIZE_TYPE__ iw@165:26=i pw@165:28== nw@165:30=0 p@165:31=; iw@165:33=i pw@165:35=< iw@165:37=countof p@165:44=( iP1@165:45=rest p@165:49=) p@165:50=; iw@165:52=i p@165:53=++ p@165:55=) pw@165:57={ X@166:9=if pw@166:22=( i@166:23=is_pointer p@166:33=( i@166:34=typeof p@166:40=( iP1@166:41=rest p@166:45=[ i@166:46=i p@166:47=] p@166:48=) p@166:49=) p@166:50=) pw@166:52={ iw@167:13=smith_modifies p@167:27=( iP1@167:28=rest p@167:32=[ i@167:33=i p@167:34=] p@167:35=, iw@167:37=sizeof p@167:43=( p@167:44=* iP1@167:45=rest p@167:49=[ i@167:50=i p@167:51=] p@167:52=) p@167:53=) p@167:54=; pw@168:9=} iw@168:11=else X@168:16=if pw@168:29=( i@168:30=is_slice p@168:38=( i@168:39=typeof p@168:45=( iP1@168:46=rest p@168:50=[ i@168:51=i p@168:52=] p@168:53=) p@168:54=) p@168:55=) pw@168:57={ B@169:13=smith::contract::modifies_slice p@169:27=( iP1@169:28=rest p@169:32=[ i@169:33=i p@169:34=] p@169:35=) E@169:13= p@169:36=; pw@170:9=} iw@170:11=else pw@170:16={ iw@171:13=static_assert p@171:26=( i@171:27=false p@171:32=, sw@172:27="contract::modifies%20takes%20&x%20(a%20pointer%20to%20one%20object)%20or%20a%20slice%20xs,%20p[a:b]%20(a%20range)" p@172:114=) p@172:115=; pw@173:9=} pw@174:5=} p@175:1=}
+// smith-generic: smith::contract modifies_slice smith_contract_modifies_slice lib/smith/contract.smith q 1 2 5 6 | iw@146:8=void iw@146:13=smith_contract_modifies_slice p@146:27=( iP1@146:28=auto iw@146:33=xs p@146:35=) pw@146:37={ iw@147:5=smith_modifies p@147:19=( i@147:20=countof p@147:27=( i@147:28=xs p@147:30=) pw@147:32=? pw@147:34=& i@147:35=xs p@147:37=[ n@147:38=0 p@147:39=] pw@147:41=: iw@147:43=nullptr p@147:50=, iw@147:52=countof p@147:59=( i@147:60=xs p@147:62=) pw@147:64=* iw@147:66=sizeof p@147:72=( i@147:73=xs p@147:75=[ n@147:76=0 p@147:77=] p@147:78=) p@147:79=) p@147:80=; p@148:1=}
+// smith-generic: smith::contract modifies smith_contract_modifies lib/smith/contract.smith i 1 2 6 7 | iw@150:15=void iw@150:20=smith_contract_modifies p@150:28=( i@150:29=auto p@150:33=... iP1w@150:37=rest p@150:41=) pw@150:43={ iw@151:5=smith_modifies p@151:19=( i@151:20=nullptr p@151:27=, nw@151:29=0 p@151:30=) p@151:31=; Y@152:5=for pw@152:19=( ix@152:20=__SIZE_TYPE__ iw@152:26=i pw@152:28== nw@152:30=0 p@152:31=; iw@152:33=i pw@152:35=< iw@152:37=countof p@152:44=( iP1@152:45=rest p@152:49=) p@152:50=; iw@152:52=i p@152:53=++ p@152:55=) pw@152:57={ X@153:9=if pw@153:22=( i@153:23=is_pointer p@153:33=( i@153:34=typeof p@153:40=( iP1@153:41=rest p@153:45=[ i@153:46=i p@153:47=] p@153:48=) p@153:49=) p@153:50=) pw@153:52={ iw@154:13=smith_modifies p@154:27=( iP1@154:28=rest p@154:32=[ i@154:33=i p@154:34=] p@154:35=, iw@154:37=sizeof p@154:43=( p@154:44=* iP1@154:45=rest p@154:49=[ i@154:50=i p@154:51=] p@154:52=) p@154:53=) p@154:54=; pw@155:9=} iw@155:11=else X@155:16=if pw@155:29=( i@155:30=is_slice p@155:38=( i@155:39=typeof p@155:45=( iP1@155:46=rest p@155:50=[ i@155:51=i p@155:52=] p@155:53=) p@155:54=) p@155:55=) pw@155:57={ B@156:13=smith::contract::modifies_slice p@156:27=( iP1@156:28=rest p@156:32=[ i@156:33=i p@156:34=] p@156:35=) E@156:13= p@156:36=; pw@157:9=} iw@157:11=else pw@157:16={ iw@158:13=static_assert p@158:26=( i@158:27=false p@158:32=, sw@159:27="contract::modifies%20takes%20&x%20(a%20pointer%20to%20one%20object)%20or%20a%20slice%20xs,%20p[a:b]%20(a%20range)" p@159:114=) p@159:115=; pw@160:9=} pw@161:5=} p@162:1=}
 // clang-format on
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
-#ifndef SMITH_TARGET_ASSERTIONS
-#ifdef NDEBUG
-#define SMITH_TARGET_ASSERTIONS 0
-#else
-#define SMITH_TARGET_ASSERTIONS 1
-#endif
-#endif
 #ifndef SMITH_TARGET_STATIC_ANALYZER
 #ifdef __clang_analyzer__
 #define SMITH_TARGET_STATIC_ANALYZER 1
@@ -62,11 +55,10 @@ extern "C" {
 //                         the function writes nothing outside its locals. A function with no modifies may write
 //                         whatever its pointer parameters reach. C: smith_modifies(p, size), one call for each range.
 //
-// A condition must be free of side effects: it is evaluated by the check, and not at all when assertions are off
-// (target::assertions, which NDEBUG turns off; the fast profile does).
+// Checks run in every build: debug, release and fast, NDEBUG or not (owner, 2026-10-25). Only `smith prove` removes
+// one. A condition must be free of side effects: the check evaluates it.
 //
-// They are functions of the header that always inline, with an empty body when assertions are off, so the optimizer
-// removes the arguments they leave unused. With assertions on each is one call of a function of the library (build.c:
+// They are functions of the header that always inline. Each is one call of a function of the library (build.c:
 // smith_library(b, "contract")), at every optimization level, since that function is external and the optimizer cannot
 // see into it, which is how `smith prove` finds the contracts in the IR without a flag:
 //   void smith_contract_requires(bool condition);
@@ -101,13 +93,9 @@ void smith_contract_trusted();
     {
         __builtin_assume(condition);
     }
-#elif SMITH_TARGET_ASSERTIONS
-    {
-        smith_contract_requires(condition);
-    }
 #else
     {
-        (void)condition;
+        smith_contract_requires(condition);
     }
 #endif
 }
@@ -117,13 +105,9 @@ void smith_contract_trusted();
     {
         __builtin_assume(condition);
     }
-#elif SMITH_TARGET_ASSERTIONS
-    {
-        smith_contract_ensures(condition);
-    }
 #else
     {
-        (void)condition;
+        smith_contract_ensures(condition);
     }
 #endif
 }
@@ -133,13 +117,9 @@ void smith_contract_trusted();
     {
         __builtin_assume(condition);
     }
-#elif SMITH_TARGET_ASSERTIONS
-    {
-        smith_contract_invariant(condition);
-    }
 #else
     {
-        (void)condition;
+        smith_contract_invariant(condition);
     }
 #endif
 }
@@ -149,22 +129,15 @@ void smith_contract_trusted();
     {
         __builtin_assume(condition);
     }
-#elif SMITH_TARGET_ASSERTIONS
-    {
-        smith_contract_assert(condition);
-    }
 #else
     {
-        (void)condition;
+        smith_contract_assert(condition);
     }
 #endif
 }
 
 [[gnu::always_inline, maybe_unused]] static inline void smith_trusted() {
-#if SMITH_TARGET_STATIC_ANALYZER
-    {
-    }
-#elif SMITH_TARGET_ASSERTIONS
+#if !SMITH_TARGET_STATIC_ANALYZER
     {
         smith_contract_trusted();
     }
@@ -181,14 +154,9 @@ void smith_contract_may_write(const void *p, size_t size);
         (void)p;
         (void)size;
     }
-#elif SMITH_TARGET_ASSERTIONS
-    {
-        smith_contract_may_write(p, size);
-    }
 #else
     {
-        (void)p;
-        (void)size;
+        smith_contract_may_write(p, size);
     }
 #endif
 }

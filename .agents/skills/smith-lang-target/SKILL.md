@@ -32,7 +32,7 @@ bool poisons_memory() {
 }
 ```
 
-The facts: `arch` (`aarch64`, `x86_64`), `os` (`macos`, `linux`), `address_sanitizer`, `undefined_sanitizer`, `thread_sanitizer`, `assertions` (true unless `NDEBUG`), `float_radix`, `f32_mantissa_bits`, `f64_mantissa_bits`, `float_eval_method`, `static_analyzer` (true only while clang-tidy's analyzer runs).
+The facts: `arch` (`aarch64`, `x86_64`), `os` (`macos`, `linux`), `address_sanitizer`, `undefined_sanitizer`, `thread_sanitizer`, `assertions` (true unless `NDEBUG`; smith's own checks ignore it), `float_radix`, `f32_mantissa_bits`, `f64_mantissa_bits`, `float_eval_method`, `static_analyzer` (true only while clang-tidy's analyzer runs).
 
 ## Rules
 

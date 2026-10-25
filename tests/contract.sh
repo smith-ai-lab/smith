@@ -137,14 +137,15 @@ $cc $flags -O2 "$work/clamp.c" "$here/lib/smith/contract.smith" "$here/lib/trace
 capture "$work/clamp_fast" 5 3 1
 expect "optimized: a false smith_requires still aborts" 134 "$rc"
 
-# 3. NDEBUG compiles the checks away: no call, no evaluation, no unused-variable warning for an old value.
+# 3. NDEBUG changes nothing: a check runs in every build (#326); only a proof removes one.
 capture $cc $flags -DNDEBUG -c "$work/clamp.c" -o "$work/clamp_ndebug.o"
-expect "NDEBUG: -Wall -Wextra -Werror compile, though old is used only in a contract" 0 "$rc"
+expect "NDEBUG: -Wall -Wextra -Werror compile" 0 "$rc"
 undefined=$(nm -u "$work/clamp_ndebug.o" | grep -c smith_contract_)
-expect "NDEBUG: the object calls no contract function" 0 "$undefined"
-$cc $flags -DNDEBUG "$work/clamp.c" -o "$work/clamp_ndebug" || exit 1
+expect "NDEBUG: the object still calls the contract functions" 3 "$undefined"
+$cc $flags -DNDEBUG "$work/clamp.c" "$here/lib/smith/contract.smith" "$here/lib/trace.c" -o "$work/clamp_ndebug" || exit 1
 capture "$work/clamp_ndebug" 5 3 1
-expect "NDEBUG: a false contract is not checked" "0 1 2" "$rc $out"
+expect "NDEBUG: a false smith_requires aborts, as in debug" 134 "$rc"
+expect_contains "NDEBUG: ... with the same report" "$err" "smith-trace begin requires failed"
 cat >"$work/effect.c" <<'C'
 #include <smith/contract.h>
 
@@ -160,9 +161,7 @@ int32_t checked(int32_t x) {
 C
 $cc $flags -DNDEBUG -O2 -c "$work/effect.c" -o "$work/effect.o" || exit 1
 undefined=$(nm -u "$work/effect.o" | grep -c smith_contract_)
-expect "NDEBUG: the optimized object calls no contract function" 0 "$undefined"
-$cc $flags -DNDEBUG -S -emit-llvm -O2 "$work/effect.c" -o "$work/effect.ll" || exit 1
-expect "NDEBUG: the optimizer leaves nothing of the arguments" 0 "$(grep -c 'icmp' "$work/effect.ll")"
+expect "NDEBUG: the optimized object still calls the contract functions" 3 "$undefined"
 
 # 4. In the IR, with no flag: a call per contract that smith prove finds by name, at -O0 and optimized.
 for level in -O0 -O2; do
@@ -174,7 +173,7 @@ for level in -O0 -O2; do
 done
 $cc $flags -DNDEBUG -S -emit-llvm "$work/clamp.c" -o "$work/clamp.ll" || exit 1
 calls=$(grep -c 'call void @smith_contract_' "$work/clamp.ll")
-expect "IR NDEBUG: no contract call" 0 "$calls"
+expect "IR NDEBUG: the contract calls stay" 3 "$calls"
 
 # 5. The library alone compiles as C23 and C2y.
 for std in gnu23 gnu2y; do

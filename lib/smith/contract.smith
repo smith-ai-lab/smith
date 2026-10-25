@@ -42,11 +42,10 @@ import <smith/trace.h>;
 //                         the function writes nothing outside its locals. A function with no modifies may write
 //                         whatever its pointer parameters reach. C: smith_modifies(p, size), one call for each range.
 //
-// A condition must be free of side effects: it is evaluated by the check, and not at all when assertions are off
-// (target::assertions, which NDEBUG turns off; the fast profile does).
+// Checks run in every build: debug, release and fast, NDEBUG or not (owner, 2026-10-25). Only `smith prove` removes
+// one. A condition must be free of side effects: the check evaluates it.
 //
-// They are functions of the header that always inline, with an empty body when assertions are off, so the optimizer
-// removes the arguments they leave unused. With assertions on each is one call of a function of the library (build.c:
+// They are functions of the header that always inline. Each is one call of a function of the library (build.c:
 // smith_library(b, "contract")), at every optimization level, since that function is external and the optimizer cannot
 // see into it, which is how `smith prove` finds the contracts in the IR without a flag:
 //   void smith_contract_requires(bool condition);
@@ -91,46 +90,37 @@ check_assert(bool condition) {
 [[smith::c_name("smith_requires")]] export [[gnu::always_inline, maybe_unused]] inline void requires(bool condition) {
     if constexpr (target::static_analyzer) {
         __builtin_assume(condition);
-    } else if constexpr (target::assertions) {
-        check_requires(condition);
     } else {
-        (void)condition;
+        check_requires(condition);
     }
 }
 
 [[smith::c_name("smith_ensures")]] export [[gnu::always_inline, maybe_unused]] inline void ensures(bool condition) {
     if constexpr (target::static_analyzer) {
         __builtin_assume(condition);
-    } else if constexpr (target::assertions) {
-        check_ensures(condition);
     } else {
-        (void)condition;
+        check_ensures(condition);
     }
 }
 
 [[smith::c_name("smith_invariant")]] export [[gnu::always_inline, maybe_unused]] inline void invariant(bool condition) {
     if constexpr (target::static_analyzer) {
         __builtin_assume(condition);
-    } else if constexpr (target::assertions) {
-        check_invariant(condition);
     } else {
-        (void)condition;
+        check_invariant(condition);
     }
 }
 
 [[smith::c_name("smith_assert")]] export [[gnu::always_inline, maybe_unused]] inline void assert(bool condition) {
     if constexpr (target::static_analyzer) {
         __builtin_assume(condition);
-    } else if constexpr (target::assertions) {
-        check_assert(condition);
     } else {
-        (void)condition;
+        check_assert(condition);
     }
 }
 
 [[smith::c_name("smith_trusted")]] export [[gnu::always_inline, maybe_unused]] inline void trusted() {
-    if constexpr (target::static_analyzer) {
-    } else if constexpr (target::assertions) {
+    if constexpr (!target::static_analyzer) {
         check_trusted();
     }
 }
@@ -147,11 +137,8 @@ modifies_range(const void *p, usize size) {
     if constexpr (target::static_analyzer) {
         (void)p;
         (void)size;
-    } else if constexpr (target::assertions) {
-        check_modifies(p, size);
     } else {
-        (void)p;
-        (void)size;
+        check_modifies(p, size);
     }
 }
 
