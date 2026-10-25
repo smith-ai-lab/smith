@@ -1547,6 +1547,22 @@ export static int hidden() {
 ==> error-export-two-names/src/two.smith <==
 module two;
 export int a, b;
+==> error-fields-enum-member/src/main.smith <==
+module main;
+
+typedef enum {
+    Red,
+    Green,
+} Color;
+
+i32 first(constexpr type T, T *x) {
+    return x->[fields(T)[0]];
+}
+
+i32 main() {
+    Color c = Red;
+    return first(Color, &c);
+}
 ==> error-generic-concept-local/src/main.smith <==
 typedef struct {
     int a;
@@ -3705,6 +3721,85 @@ export i32 describe(auto x) {
         }
     }
     return total;
+}
+==> generic-fields-doc/src/docs.smith <==
+module docs;
+
+import <stdio.h>;
+
+/// Settings of the server.
+/// Read once at start.
+export typedef struct {
+    /// Port to listen on.
+    u16 port;
+    u16 backlog; // a plain comment is no doc comment
+    /* neither is this */
+    u8 flag;
+    /** a
+     * b */
+    i32 level;
+    /// Say "hi" \ then
+    ///   indented
+    i32 quote;
+} Options;
+
+/** The pair. */
+typedef struct {
+    i32 a;
+} Pair;
+
+typedef struct {
+    i32 undocumented;
+} Plain;
+
+export void show(constexpr type T) {
+    c::printf("[%s]\n", doc(T));
+    for constexpr (usize i = 0; i < countof(fields(T)); i++) {
+        c::printf("%s: [%s]\n", fields(T)[i].name, fields(T)[i].doc);
+    }
+}
+
+void value(constexpr type T) {
+    for constexpr (usize i = 0; i < countof(fields(T)); i++) {
+        constexpr Field f = fields(T)[i];
+        c::printf("%.*s=[%.*s] %zu\n", (i32)countof(f.name), f.name.data, (i32)countof(f.doc), f.doc.data,
+                  countof(f.doc));
+    }
+}
+
+/// How loud.
+export typedef enum {
+    /// Quiet.
+    Low,
+    High, // no doc
+    /** Very loud. */
+    Max,
+} Volume;
+
+// The variants of an enum with payloads are listed too; their docs are not read yet.
+export typedef enum {
+    f32 round;
+    none;
+    plain;
+} Shape;
+
+export void run() {
+    show(Volume);
+    show(Shape);
+    show(Options);
+    show(Pair);
+    show(Plain);
+    value(Options);
+}
+==> generic-fields-doc/src/main.smith <==
+module main;
+
+import docs;
+
+i32 main() {
+    docs::run();
+    docs::show(docs::Options); // the struct and its comments come from the module's header
+    return 0;
 }
 ==> generic-fields-error/src/main.smith <==
 module main;

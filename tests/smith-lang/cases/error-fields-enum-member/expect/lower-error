@@ -1,0 +1,1 @@
+src/main.smith:9:13: `fields(T)` needs the compiler to read the struct: a raw lowering (`smith cc --smith-lower`) cannot write it

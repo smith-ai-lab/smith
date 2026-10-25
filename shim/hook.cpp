@@ -7,8 +7,10 @@
 #include "names.h"
 
 #include "clang/AST/ASTContext.h"
+#include "clang/AST/Attr.h"
 #include "clang/AST/DeclBase.h"
 #include "clang/AST/Expr.h"
+#include "clang/AST/RawCommentList.h"
 #include "clang/AST/StmtVisitor.h"
 #include "clang/Basic/CharInfo.h"
 #include "clang/Basic/Diagnostic.h"
@@ -2319,6 +2321,133 @@ class SmithHook final : public TokenHook, public NameSource {
         return false;
     }
 
+    // The doc comment of a declaration (`///` lines or a `/** */` block directly above it), the markers stripped:
+    // each line loses its marker and one space after it, trailing white space goes, the lines are joined with a
+    // newline and the whole is trimmed. Empty when there is none; false when it does not fit `capacity`.
+    // Whether nothing but white space (and the word `export`, which the lowering drops) lies between the comment and
+    // the declaration. Clang attaches a comment to every declaration up to the next `;` or `}`, so the constants of
+    // an enum would all get the first one's comment.
+    static bool directlyAbove(const SourceManager &sources, const RawComment *comment, const Decl *decl) {
+        SourceLocation from = comment->getSourceRange().getEnd();
+        bool member = isa<FieldDecl>(decl) || isa<EnumConstantDecl>(decl);
+        SourceLocation to = member ? decl->getLocation() : decl->getBeginLoc();
+        if (from.isInvalid() || to.isInvalid() || !from.isFileID() || !to.isFileID()) return false;
+        if (sources.getFileID(from) != sources.getFileID(to) || sources.getFileOffset(to) < sources.getFileOffset(from))
+            return false;
+        bool invalid = false;
+        StringRef buffer = sources.getBufferData(sources.getFileID(from), &invalid);
+        if (invalid) return false;
+        StringRef between = buffer.slice(sources.getFileOffset(from), sources.getFileOffset(to)).trim();
+        if (member) return between.find_first_of(";{},#@/") == StringRef::npos; // the member's own type may come first
+        return between.empty() || between == "export";
+    }
+
+    static bool docOf(Sema &sema, const Decl *decl, char *out, size_t capacity) {
+        out[0] = 0;
+        if (decl == nullptr) return true;
+        ASTContext &context = sema.getASTContext();
+        const RawComment *comment = context.getRawCommentForAnyRedecl(decl);
+        if (comment == nullptr || comment->isTrailingComment()) return true;
+        const SourceManager &sources = context.getSourceManager();
+        if (!directlyAbove(sources, comment, decl)) return true;
+        StringRef raw = comment->getRawText(sources);
+        bool block = raw.starts_with("/**") && !raw.starts_with("/**/");
+        if (!block && !raw.starts_with("///")) return true; // `//!`, `/*!` and plain comments are not ours
+        std::string text;
+        if (block) {
+            raw = raw.drop_front(3);
+            if (raw.ends_with("*/")) raw = raw.drop_back(2);
+        }
+        SmallVector<StringRef, 8> lines;
+        raw.split(lines, '\n');
+        for (size_t i = 0; i < lines.size(); i++) {
+            StringRef line = lines[i].rtrim("\r \t");
+            if (block) {
+                StringRef lead = line.ltrim(" \t");
+                if (i > 0 && lead.starts_with("*")) line = lead.drop_front(1);
+            } else {
+                line = line.ltrim(" \t");
+                while (line.starts_with("/")) // `///` and a longer run of slashes
+                    line = line.drop_front(1);
+            }
+            if (line.starts_with(" ")) line = line.drop_front(1);
+            if (i > 0) text += '\n';
+            text += line.rtrim(" \t").str();
+        }
+        StringRef trimmed = StringRef(text).trim(" \t\n");
+        if (trimmed.size() + 1 > capacity) return false;
+        memcpy(out, trimmed.data(), trimmed.size());
+        out[trimmed.size()] = 0;
+        return true;
+    }
+
+    // The enum whose constants `fields` lists: a plain enum, or the tag enum of a payload enum's struct (annotated
+    // `smith::enum`, runtime/lang_enum.c), whose variants are the tag's constants.
+    // The name of an enum's constant as the source writes it: C's is prefixed by the module (`docs_Low`) or, for an
+    // enum with a C name, by the type (`Volume_Low`). The module's prefix is what the constant shares with the type's
+    // own (prefixed) name, up to a `_`.
+    static std::string sourceName(const std::string &constant, const std::string &type) {
+        if (StringRef(constant).starts_with(type + "_")) return constant.substr(type.size() + 1);
+        size_t same = 0;
+        while (same < constant.size() && same < type.size() && constant[same] == type[same])
+            same += 1;
+        size_t cut = constant.rfind('_', same == 0 ? 0 : same - 1);
+        return cut == std::string::npos || cut + 1 >= constant.size() ? constant : constant.substr(cut + 1);
+    }
+
+    static const EnumDecl *enumOf(QualType type, const RecordDecl *record) {
+        if (const auto *plain = type.getCanonicalType()->getAs<EnumType>()) return plain->getDecl()->getDefinition();
+        if (record == nullptr || record->getDefinition() == nullptr) return nullptr;
+        const auto *annotation = record->getDefinition()->getAttr<AnnotateAttr>();
+        if (annotation == nullptr || annotation->getAnnotation() != "smith::enum") return nullptr;
+        for (const FieldDecl *field : record->getDefinition()->fields()) {
+            if (field->getName() == "tag") {
+                if (const auto *tag = field->getType().getCanonicalType()->getAs<EnumType>())
+                    return tag->getDecl()->getDefinition();
+            }
+        }
+        return nullptr;
+    }
+
+    // The constants of an enum as `fields`: the name (a payload enum's without the tag enum's prefix), the enum's own
+    // spelling as the type and the doc comment above the constant, or above the variant's member in the payload union.
+    static bool enumFields(Sema &sema, QualType type, const EnumDecl *constants, const RecordDecl *record,
+                           uint32_t index, SmithFieldInfo *out) {
+        out->is_enum = true;
+        out->has_slice = false;
+        const Decl *owners[4] = {nullptr, record != nullptr ? record->getDefinition() : nullptr, constants,
+                                 constants->getTypedefNameForAnonDecl()};
+        if (const auto *spelled = type->getAs<TypedefType>()) owners[0] = spelled->getDecl();
+        for (const Decl *owner : owners) {
+            out->type_doc_overflow = !docOf(sema, owner, out->type_doc, sizeof out->type_doc);
+            if (out->type_doc[0] != 0 || out->type_doc_overflow) break;
+        }
+        std::string prefix = record != nullptr ? constants->getNameAsString() + "_" : std::string();
+        for (const EnumConstantDecl *constant : constants->enumerators()) {
+            if (out->count++ != index) continue;
+            std::string name = constant->getNameAsString();
+            if (StringRef(name).starts_with(prefix)) name = name.substr(prefix.size());
+            if (record == nullptr) name = sourceName(name, type.getAsString(sema.getASTContext().getPrintingPolicy()));
+            snprintf(out->name, sizeof out->name, "%s", name.c_str());
+            snprintf(out->type, sizeof out->type, "%s",
+                     type.getAsString(sema.getASTContext().getPrintingPolicy()).c_str());
+            // a payload enum's tag constants are written by the lowering, at the enum's own place: their comment is
+            // the enum's, so a variant's doc is the one above its member of the union
+            out->doc[0] = 0;
+            out->doc_overflow = record == nullptr && !docOf(sema, constant, out->doc, sizeof out->doc);
+            if (record == nullptr || record->getDefinition() == nullptr) continue;
+            for (const FieldDecl *field : record->getDefinition()->fields()) { // the variant's member in the union
+                const auto *inner = field->getType()->getAsRecordDecl();
+                if (inner == nullptr || !inner->isUnion()) continue;
+                for (const FieldDecl *member : inner->fields()) {
+                    if (member->getName() == name) out->doc_overflow = !docOf(sema, member, out->doc, sizeof out->doc);
+                }
+            }
+        }
+        out->status = SmithFields_Ok;
+        return true;
+    }
+
     static bool typeField(void *context, const char *spelling, uint32_t length, uint32_t index, SmithFieldInfo *out) {
         auto *self = static_cast<SmithHook *>(context);
         *out = SmithFieldInfo{};
@@ -2329,6 +2458,8 @@ class SmithHook final : public TokenHook, public NameSource {
             return true;
         }
         const RecordDecl *record = type.getCanonicalType()->getAsRecordDecl();
+        if (const EnumDecl *constants = enumOf(type, record))
+            return enumFields(*self->sema, type, constants, record, index, out);
         if (record == nullptr) {
             out->status = SmithFields_NotRecord;
             return true;
@@ -2342,6 +2473,15 @@ class SmithHook final : public TokenHook, public NameSource {
             return true;
         }
         out->has_slice = holdsSlice(record->getDefinition());
+        {
+            const Decl *owners[3] = {nullptr, record->getDefinition(),
+                                     record->getDefinition()->getTypedefNameForAnonDecl()};
+            if (const auto *spelled = type->getAs<TypedefType>()) owners[0] = spelled->getDecl();
+            for (const Decl *owner : owners) {
+                out->type_doc_overflow = !docOf(*self->sema, owner, out->type_doc, sizeof out->type_doc);
+                if (out->type_doc[0] != 0 || out->type_doc_overflow) break;
+            }
+        }
         for (const FieldDecl *field : record->getDefinition()->fields()) {
             if (field->isAnonymousStructOrUnion()) {
                 out->status = SmithFields_Anonymous;
@@ -2352,6 +2492,7 @@ class SmithHook final : public TokenHook, public NameSource {
             snprintf(out->name, sizeof out->name, "%s", field->getName().str().c_str());
             snprintf(out->type, sizeof out->type, "%s",
                      field->getType().getAsString(self->sema->getASTContext().getPrintingPolicy()).c_str());
+            out->doc_overflow = !docOf(*self->sema, field, out->doc, sizeof out->doc);
             out->bit_field = field->isBitField();
             out->tuple = record->getName().starts_with("smith_tuple");
         }

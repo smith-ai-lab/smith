@@ -128,9 +128,14 @@ typedef struct {
     uint32_t count;
     bool bit_field;
     bool has_slice; // the struct holds a run-time array, however deep (anonymous members, arrays and structs inside)
+    bool is_enum;   // the type is an enum: its "fields" are the constants (names and docs; no members to read)
     bool tuple;     // the struct is a tuple: its members are `_0`, `_1`, and `fields` names them "0", "1"
     char name[128];
     char type[256];
+    char doc[1024]; // the field's doc comment (`///` or `/** */` above it), markers stripped; empty when it has none
+    char type_doc[1024]; // the same for the struct itself (`doc(T)`)
+    bool doc_overflow;   // the field's doc comment is longer than `doc` holds
+    bool type_doc_overflow;
 } SmithFieldInfo;
 
 // The type of an expression, for a generic whose type is not written at the call (`test::check_equal(a, b)`).

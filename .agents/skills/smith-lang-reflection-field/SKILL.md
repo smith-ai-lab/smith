@@ -5,7 +5,7 @@ description: "`fields(T)[i]` as a `Field` value in .smith: `constexpr Field f = 
 
 # `fields(T)` is an array of `Field`
 
-`Field` is `struct { char name[:]; u64 type; }` (a `type` is a handle: `is_float(f.type)`, `f.type == f32`), defined once per file when its text has `fields(` or `Field`, or it imports a generic that reflects. `fields(T)[i]` is an ordinary value: store it, pass it to a function (which runs in the compiler), return it, compare its parts.
+`Field` is `struct { char name[:]; u64 type; char doc[:]; }` (a `type` is a handle: `is_float(f.type)`, `f.type == f32`), defined once per file when its text has `fields(` or `Field`, or it imports a generic that reflects. `fields(T)[i]` is an ordinary value: store it, pass it to a function (which runs in the compiler), return it, compare its parts.
 
 ```smith
 module fieldvals;
@@ -40,7 +40,7 @@ export f64 demo() {
 ## Rules
 
 - Fields are read by the compiler, so the function a condition calls must be defined in the file that instantiates the generic (an import's exported functions are visible: `smith-lang-constexpr`).
-- A local `constexpr Field f = E;` stands for `E` in the conditions of its block; `constexpr Field g = first_float(fields(T)[0], fields(T)[1]);` works the same way. `fields(T)` alone is a `static constexpr Field[N]` (`const Field *all = fields(T);`). `f.name` in an ordinary function is a slice (`f.name.data`, `countof(f.name)`); `fields(T)[i].name` stays a string literal.
+- A local `constexpr Field f = E;` stands for `E` in the conditions of its block; `constexpr Field g = first_float(fields(T)[0], fields(T)[1]);` works the same way. `fields(T)` alone is a `static constexpr Field[N]` (`const Field *all = fields(T);`). `f.name` in an ordinary function is a slice (`f.name.data`, `countof(f.name)`); `fields(T)[i].name` and `.doc` stay string literals (`f.doc` is a slice, empty when the field has no doc comment: `countof(f.doc) == 0`; a condition (`if constexpr`) reads `f.doc` as empty).
 - **Slice and array members**: `countof(x.[f])`, `countof(p->xs)` and `countof(f.name)` are lowered in a generic's body; `typeof(x.[f][0])` is the element, in a condition (`is_float(typeof(x.[f][0]))`; a slice of pointers keeps its star: `char *names[:]` has `typeof(x.[f][0]) == char *`); `x.[f][i]`, `x->[f][i][j]` and `x.[f][a:b]` read an element or a cut as a value, checked like `x.name[i]` (the object is a name or a chain, `o->bag.[f][0]`). A slice of more dimensions needs every index (an error says so); `T xs[:]` locals in an instance stay raw (pass a cut to a function).
 - `typeof(*p)` and `typeof(p->f)` of an `auto p` are types in a condition too. `constexpr type k = f.type;` in a body is not built. `typeof(x->[f])` of a bit-field stored in a variable is C's own error.
 

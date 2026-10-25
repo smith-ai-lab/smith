@@ -155,6 +155,17 @@ Point *p = arena::push(&a, Point);                  // the type is the argument 
   holds a call: the parameters are written as `(*(T *)0)` for the compiler to type (a local of the body, a runtime loop
   variable, cannot be named there). The grammar (`tree-sitter/grammar.js`) reads `x.[e]` and `x->[e]`; clang-format
   needs nothing. `[:]` fields are #82's.
+  **Doc comments** (issue #287): `fields(T)[i].doc` and `doc(T)` are string literals like `.name`, written by
+  `smith_lang_fields_use_name` / `smith_lang_fields_use_doc` (`doc ( T )` has `fields`'s shape, `smith_lang_fields_doc_len`;
+  the hook's `hasFieldsUse` also looks for `doc(`). No comment reaches the lowering (the compiler's lexer keeps them, the
+  token hook offers none): the host reads the parser's own doc comment, `SmithHost.type_field` fills `doc` and
+  `type_doc` of `SmithFieldInfo` from clang's `RawComment` (`hook.cpp` `docOf`: `///` or `/**` only, no trailing
+  comment, and `directlyAbove`, because clang attaches one comment to every later enumerator up to the next `;`), so a
+  module's header keeps them (it already copies comments) and an instance elsewhere reads them. A long text is cut into
+  adjacent string literals (one token holds 255 bytes). `Field` gains a `doc` slice (the maker takes it last). `fields`
+  of an enum lists its constants (`SmithFieldInfo.is_enum`; the module's prefix of C's `docs_Low` is cut by
+  `sourceName`); a payload enum's variants are its tag constants, whose docs would be the lowering's (made tokens), so
+  they are empty for now.
   **`fields(T)` is an array of `Field`** (issue #100, ticket 5 of #95). `Field` is `struct smith_field { char name[:];
   unsigned __int128 type; }` (a type value is a handle, `runtime/lang_type.c`), `typedef`ed `Field` and defined with the
   `static inline Field smith_field_make(char *name, size_t length, unsigned long long kind)` that builds one, raw (the
