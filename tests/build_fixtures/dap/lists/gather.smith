@@ -1,0 +1,9 @@
+module gather;
+
+export i32 sum_with_marker(auto... rest) {
+    i32 total = 100;
+    for constexpr (usize i = 0; i < countof(rest); i++) {
+        total += (i32)rest[i];
+    }
+    return total;
+}

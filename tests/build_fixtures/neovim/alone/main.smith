@@ -1,0 +1,7 @@
+// one error, the undefined name
+module main;
+
+i32 main() {
+  (void)42;
+  return zzz;
+}

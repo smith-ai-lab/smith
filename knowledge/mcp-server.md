@@ -8,7 +8,7 @@ tags: [mcp, debugger]
 
 **`smith mcp` is the debugger as an MCP server over stdio** (issue #22; `runtime/mcp*.c`, [smith mcp](mcp-server.md), skill smith-debug): eleven tools
 (`launch`, `breakpoint`, `continue`, the steps, `pause`, `stack`, `variables`, `evaluate`, `stop`) over `smith dap` children, on `<smith/io.h>` and the
-generated protocol types, no malloc. Only the full smith has it (`-DSMITH_MCP`); the smith plugin declares it (`mcpServers`). `tests/mcp.sh` runs it on the
+generated protocol types, no malloc. Only the full smith has it (`-DSMITH_MCP`); the smith plugin declares it (`mcpServers`). `tests/mcp_test.smith` runs it on the
 fake io and end to end.
 
 `smith mcp` is a Model Context Protocol server over stdio that gives an agent a debugger (issue #22). It holds debug
@@ -65,7 +65,7 @@ events), `mcp_show.c` (what a stop, a stack and variables look like), `mcp_tools
 
 ## The tools
 
-Results are text for an agent to read. Examples from the tests (`tests/mcp.sh`), on a C program:
+Results are text for an agent to read. Examples from the tests (`tests/mcp_test.smith`), on a C program:
 
 | Tool | Arguments | A result |
 |---|---|---|
@@ -94,10 +94,10 @@ A tool that is not given what it needs, or has no session, is a result with `isE
 
 ## Tests
 
-`tests/mcp_fake.c` runs the server on the fake io (162 checks, built three ways by `tests/mcp.sh`): a scripted client on
+`tests/mcp_fake.c` runs the server on the fake io (162 checks, built three ways by `tests/mcp_test.smith`): a scripted client on
 the console and a scripted `smith dap` child (`smith_io_test_add_child`), whose frames answer the requests the server
 sends, numbered from 1. It covers the versions, the refusals, every tool, a whole session, a test launched by name, an
-adapter that exits at once or refuses, and timeouts on the fake clock. `tests/mcp.sh` also drives the real `smith mcp`,
+adapter that exits at once or refuses, and timeouts on the fake clock. `tests/mcp_test.smith` also drives the real `smith mcp`,
 a real adapter and real programs, on a C program, a `.smith` module and a smith project's test, and checks that no
-program outlives the server. It is the tasks `test-mcp-real` and `test-mcp-fake-*`; a smith without lldb or an account that may not debug skips the
+program outlives the server. They are the tests `test_mcp_*`; a smith without lldb or an account that may not debug skips the
 second half.

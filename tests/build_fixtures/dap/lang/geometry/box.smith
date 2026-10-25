@@ -1,0 +1,6 @@
+module geometry::box;
+export typedef struct { f32 w; f32 h; } Box;
+export f32 area(Box b) {
+  f32 r = b.w * b.h;
+  return r;
+}

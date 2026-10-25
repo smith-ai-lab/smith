@@ -1,4 +1,4 @@
--- The tests of the Neovim plugin (tests/neovim.sh runs each of these in a headless Neovim of its own, after
+-- The tests of the Neovim plugin (tests/neovim_test.smith runs each of these in a headless Neovim of its own, after
 -- `runtime plugin/smith.lua`, as a user's startup would). SMITH_NVIM_TEST names the test, SMITH_REPO is the checkout and
 -- SMITH_PROJECT a scratch project with a build.c and a main.c. A test returns when it passes and calls error otherwise.
 local test = os.getenv("SMITH_NVIM_TEST")

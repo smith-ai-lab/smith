@@ -1,0 +1,327 @@
+// Tests of `smith mcp` (issue #22, knowledge/mcp-server.md; from tests/mcp.sh), in two halves.
+//
+// 1. The server on the fake io (tests/mcp_fake.c, a fixture program): a scripted client on the console and a scripted
+//    `smith dap` child, in one process, built in three ways (-O0 under AddressSanitizer and UBSan, -O2, and -O2
+//    -DNDEBUG). This half needs only a C compiler and runs for the stage0 too.
+// 2. The server as `smith mcp`, a real adapter and real programs (the folders of tests/build_fixtures/mcp), driven by
+//    lines on its standard input: a C program, a .smith program (its names as written), and a test of a project
+//    launched by its name. It launches processes under a debugger, so it needs a smith with lldb inside and the
+//    Developer Tools permission (knowledge/debugger.md); without them these tests do nothing.
+module mcp_test;
+
+import smith::format;
+import smith::io;
+import smith::test;
+import scratch;
+
+static scratch::Project folder(const scratch::Project *root, const char *name) {
+    scratch::Project f = *root;
+    f.dir = format::push(&root->io->arena, root->dir, "/", name).data;
+    return f;
+}
+
+// --- the server on the fake io ---------------------------------------------------------------------------------------
+
+constexpr char fake_sources[] =
+    "\"$SMITH_REPO/tests/mcp_fake.c\" \"$SMITH_REPO/lib/smith/text.smith\" \"$SMITH_REPO/lib/smith/arena.smith\" "
+    "\"$SMITH_REPO/lib/smith/contract.smith\" \"$SMITH_REPO/lib/smith/io.smith\" "
+    "\"$SMITH_REPO/lib/smith/random.smith\"";
+
+static void check_fake(io::Io *io, const char *mode, const char *flags) {
+    scratch::Project p = scratch::project(io, "fake", nullptr);
+    scratch::Run built = scratch::sh(
+        &p, format::push(&io->arena, "smith cc -std=gnu23 -g -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror ",
+                         flags, " -I \"$SMITH_REPO/include\" ", fake_sources, " -o mcp_fake 2>build.log")
+                .data);
+    if (built.status != 0) {
+        test::note("%s", scratch::read(&p, "build.log"));
+    }
+    scratch::expect_status(format::push(&io->arena, "fake io, ", mode, ": tests/mcp_fake.c builds").data, 0, &built);
+    scratch::Run ran = scratch::sh(&p, "./mcp_fake 2>&1");
+    scratch::expect_status(format::push(&io->arena, "fake io, ", mode, ": the fake io's checks pass").data, 0, &ran);
+    scratch::expect_contains(format::push(&io->arena, "fake io, ", mode, ": the last line").data, ran.out,
+                             " checks, 0 failed");
+}
+
+export void test_mcp_fake_io_under_the_sanitizers(io::Io *io) {
+    check_fake(io, "asan", "-O0 -fsanitize=address,undefined -fno-sanitize-recover=all");
+}
+
+export void test_mcp_fake_io_optimized(io::Io *io) {
+    check_fake(io, "fast", "-O2");
+}
+
+export void test_mcp_fake_io_optimized_without_assertions(io::Io *io) {
+    check_fake(io, "ndebug", "-O2 -DNDEBUG");
+}
+
+// --- the stage0 -----------------------------------------------------------------------------------------------------
+
+constexpr char clang_inside[] =
+    "[ \"$(smith cc --smith-which -c a.c | head -n 1 | cut -d ' ' -f 1,2)\" = 'clang in-process' ]";
+
+export void test_mcp_the_stage0_says_smith_mcp_needs_the_full_smith(io::Io *io) {
+    scratch::Project p = scratch::project(io, "stage0", nullptr);
+    if (scratch::sh(&p, clang_inside).status == 0) {
+        return;
+    }
+    scratch::Run run = scratch::sh(&p, "smith mcp </dev/null 2>&1");
+    scratch::expect_contains("the stage0 says smith mcp needs the full smith", run.out, "mcp needs the full smith");
+    scratch::expect_failure("the stage0 exits with a failure", &run);
+}
+
+// --- the connection, with the real binary
+// -----------------------------------------------------------------------------
+
+export void test_mcp_the_connection_discover_initialize_and_tools(io::Io *io) {
+    scratch::Project root = scratch::project(io, "mcp", "mcp");
+    if (scratch::sh(&root, clang_inside).status != 0) {
+        return;
+    }
+    scratch::Run run = scratch::sh(&root, "smith mcp <hello.jsonl >hello.out 2>hello.err");
+    scratch::expect_status("smith mcp exits 0 when its input ends", 0, &run);
+    scratch::expect_text("smith mcp writes nothing to stderr", "", scratch::read(&root, "hello.err"));
+    scratch::expect_text("every line of stdout is a JSON message", "0",
+                         scratch::capture(&root, "grep -vc '^{\"' hello.out"));
+    scratch::expect_text("three answers for three requests", "3",
+                         scratch::capture(&root, "wc -l <hello.out | tr -d ' '"));
+    scratch::expect_contains("server/discover supports 2026-07-28",
+                             scratch::capture(&root, "grep '^{\"id\":1,' hello.out"),
+                             "\"supportedVersions\":[\"2026-07-28\"]");
+    scratch::expect_contains("initialize gives the version asked",
+                             scratch::capture(&root, "grep '^{\"id\":2,' hello.out"),
+                             "\"protocolVersion\":\"2025-11-25\"");
+    const char *tools = scratch::capture(&root, "grep '^{\"id\":3,' hello.out");
+    const char *names[11] = {"launch", "breakpoint", "continue",  "step_over", "step_in", "step_out",
+                             "pause",  "stack",      "variables", "evaluate",  "stop"};
+    for (usize i = 0; i < 11; i++) {
+        scratch::expect_contains(format::push(&io->arena, "tools/list has ", names[i]).data, tools,
+                                 format::push(&io->arena, "\"name\":\"", names[i], "\"").data);
+    }
+}
+
+// --- can this account debug?
+// ------------------------------------------------------------------------------------------
+
+// The fixture, with the C program built. False when this smith has no clang or lldb inside, or the account may not
+// debug.
+static bool make(io::Io *io, scratch::Project *root) {
+    *root = scratch::project(io, "mcp", "mcp");
+    if (scratch::sh(root, clang_inside).status != 0 ||
+        scratch::sh(root, "smith dbg --version >/dev/null 2>&1").status != 0) {
+        return false;
+    }
+    scratch::Project c = folder(root, "c");
+    scratch::Run built = scratch::sh(&c, "smith cc -g -O0 prog.c -o prog");
+    scratch::expect_status("prog.c builds", 0, &built);
+    const char *probe = scratch::sh(&c, "smith dbg -b -o 'b prog.c:10' -o run -o 'frame variable sum' prog 2>&1").out;
+    return !scratch::contains(probe, "Developer Tools") && !scratch::contains(probe, "not allowed") &&
+           !scratch::contains(probe, "timed out") && !scratch::contains(probe, "unable to attach");
+}
+
+// One line of calls: a request of the tool `tool` with the JSON `arguments`, as id `id`.
+static const char *call(io::Io *io, const char *jsonl, const char *id, const char *tool, const char *arguments) {
+    return format::push(&io->arena, jsonl, "{\"jsonrpc\":\"2.0\",\"id\":", id,
+                        ",\"method\":\"tools/call\",\"params\":{\"name\":\"", tool, "\",\"arguments\":", arguments,
+                        "}}\n")
+        .data;
+}
+
+// Writes the calls, runs `smith mcp` on them and leaves the text of each answer in r<id>.txt (for the ids 1 to
+// `count`).
+static scratch::Run serve(io::Io *io, const scratch::Project *p, const char *calls, const char *count) {
+    scratch::write(p, "in.jsonl", calls);
+    scratch::Run run = scratch::sh(p, "smith mcp <in.jsonl >out.jsonl 2>err.txt");
+    scratch::Run replies = scratch::sh(p, format::push(&io->arena, ". ../reply; i=1; while [ $i -le ", count,
+                                                       " ]; do reply out.jsonl $i >r$i.txt; i=$((i + 1)); done")
+                                              .data);
+    scratch::expect_status("the answers are read", 0, &replies);
+    return run;
+}
+
+static const char *answer(const scratch::Project *p, const char *id) {
+    return scratch::read(p, format::push(&p->io->arena, "r", id, ".txt").data);
+}
+
+// --- a C program
+// ------------------------------------------------------------------------------------------------------
+
+export void test_mcp_a_c_program_session(io::Io *io) {
+    scratch::Project root;
+    if (!make(io, &root)) {
+        return;
+    }
+    scratch::Project p = folder(&root, "c");
+    const char *calls = "";
+    calls =
+        call(io, calls, "1", "launch", "{\"program\":\"prog\",\"breakpoints\":[{\"file\":\"prog.c\",\"line\":10}]}");
+    calls = call(io, calls, "2", "stack", "{}");
+    calls = call(io, calls, "3", "variables", "{\"frame\":1,\"depth\":2}");
+    calls = call(io, calls, "4", "evaluate", "{\"expression\":\"p.x + p.y\"}");
+    calls = call(io, calls, "5", "evaluate", "{\"expression\":\"sum = 9\"}");
+    calls = call(io, calls, "6", "breakpoint", "{\"file\":\"prog.c\",\"line\":17,\"condition\":\"r == 7\"}");
+    calls = call(io, calls, "7", "step_out", "{}");
+    calls = call(io, calls, "8", "step_over", "{}");
+    calls = call(io, calls, "9", "continue", "{}");
+    calls = call(io, calls, "10", "stack", "{}");
+    calls = call(io, calls, "11", "continue", "{}");
+    calls = call(io, calls, "12", "continue", "{}");
+    calls = call(io, calls, "13", "stop", "{}");
+    calls = call(io, calls, "14", "stack", "{}");
+    serve(io, &p, calls, "14");
+    scratch::expect_text("a C session: nothing on stderr", "", scratch::read(&p, "err.txt"));
+    scratch::expect_text("a C session: every line of stdout is a JSON message", "0",
+                         scratch::capture(&p, "grep -vc '^{\"' out.jsonl"));
+    scratch::expect_text(
+        "launch runs to the breakpoint",
+        "session s1: DIR/c/prog\nbreakpoint 1: prog.c:10 (verified)\nstopped: breakpoint (breakpoint 1)\n"
+        "  #0 add prog.c:10\n  > 10:     return sum;",
+        answer(&p, "1"));
+    scratch::expect_contains("stack has the caller", answer(&p, "2"), "#0 add prog.c:10\n#1 main prog.c:15");
+    scratch::expect_text("variables of the caller's frame, with the struct opened",
+                         "frame #1, scope locals\np (Point)\n  x = 3 (int)\n  y = 4 (int)\nr = 1 (int)",
+                         scratch::capture(&p, "sed 's/^r = [0-9-]* (int)/r = 1 (int)/' r3.txt"));
+    scratch::expect_text("evaluate reads", "p.x + p.y = 7 (int)", answer(&p, "4"));
+    scratch::expect_contains("an assignment is refused", answer(&p, "5"),
+                             "refused: the expression may change the program");
+    scratch::expect_text("a conditional breakpoint", "breakpoint 2: prog.c:17 if r == 7 (verified)", answer(&p, "6"));
+    scratch::expect_text("step_out returns to the caller's line",
+                         "stopped: step\n  #0 main prog.c:15\n  > 15:     int r = add(p);", answer(&p, "7"));
+    scratch::expect_contains("step_over moves to the next line", answer(&p, "8"), "stopped: step\n  #0 main prog.c:16");
+    scratch::expect_contains("continue runs to the breakpoint, with the program's output", answer(&p, "9"),
+                             "[stdout]\n7\nstopped: breakpoint (breakpoint 2)\n  #0 main prog.c:17");
+    scratch::expect_contains("the stack at the second breakpoint", answer(&p, "10"), "#0 main prog.c:17");
+    scratch::expect_contains("continue ends the program", answer(&p, "11"), "exited: the program exited with code 0");
+    scratch::expect_contains("a continue after the end", answer(&p, "12"), "the program has exited");
+    scratch::expect_text("stop", "session s1 stopped (the program had exited with code 0)", answer(&p, "13"));
+    scratch::expect_text("the session is gone", "no debug session: call launch first", answer(&p, "14"));
+}
+
+// A client that goes away while the program is stopped takes the program with it.
+export void test_mcp_a_client_that_goes_away_takes_the_program_with_it(io::Io *io) {
+    scratch::Project root;
+    if (!make(io, &root)) {
+        return;
+    }
+    scratch::Project p = folder(&root, "c");
+    scratch::Run built = scratch::sh(&p, "smith cc -g -O0 spin.c -o spin");
+    scratch::expect_status("spin.c builds", 0, &built);
+    const char *calls =
+        call(io, "", "1", "launch", "{\"program\":\"spin\",\"breakpoints\":[{\"file\":\"spin.c\",\"line\":9}]}");
+    serve(io, &p, calls, "1");
+    scratch::expect_contains("a launch stopped before sleep", answer(&p, "1"), "stopped: breakpoint");
+    // The server ends the program when the input ends: wait for that (order, not a number of seconds), well inside
+    // the 60 s the program sleeps. Not killed here: the program is no child of this test, so its pid may already be
+    // another process's; it ends by itself when its sleep does.
+    scratch::expect_text(
+        "the program is gone when the client's input ends", "gone",
+        scratch::capture(&p, "pid=$(cat spin.pid 2>/dev/null || echo 0); i=0; while [ $i -lt 500 ] && "
+                             "kill -0 \"$pid\" 2>/dev/null; do sleep 0.1; i=$((i + 1)); done; "
+                             "if kill -0 \"$pid\" 2>/dev/null; then echo still running; else echo gone; fi"));
+}
+
+// --- a .smith program (names as written)
+// ---------------------------------------------------------------------------------
+
+export void test_mcp_a_smith_program_session_has_names_as_written(io::Io *io) {
+    scratch::Project root;
+    if (!make(io, &root) ||
+        scratch::sh(&root, "smith cc --smith-which -x c 2>/dev/null | grep -q 'token-hook yes'").status != 0) {
+        return;
+    }
+    scratch::Project p = folder(&root, "lang");
+    scratch::Run built = scratch::sh(
+        &p,
+        "mkdir -p include && smith cc --smith-header geometry/box.smith -o include/box.h && smith cc -g -O0 -I include "
+        "-c geometry/box.smith -o box.o && smith cc -g -O0 -I include -c main.smith -o main.o && smith cc -g box.o "
+        "main.o -o lang");
+    scratch::expect_status("the .smith program builds", 0, &built);
+    const char *calls = "";
+    calls = call(io, calls, "1", "launch",
+                 "{\"program\":\"lang\",\"breakpoints\":[{\"file\":\"geometry/box.smith\",\"line\":4}]}");
+    calls = call(io, calls, "2", "stack", "{}");
+    calls = call(io, calls, "3", "variables", "{\"depth\":1}");
+    calls = call(io, calls, "4", "evaluate", "{\"expression\":\"b.w * b.h\"}");
+    calls = call(io, calls, "5", "continue", "{}");
+    serve(io, &p, calls, "5");
+    scratch::expect_text("a .smith session: nothing on stderr", "", scratch::read(&p, "err.txt"));
+    scratch::expect_text(
+        "launch stops in the module's function, named as written",
+        "session s1: DIR/lang/lang\nbreakpoint 1: geometry/box.smith:4 (verified)\nstopped: breakpoint "
+        "(breakpoint 1)\n  #0 geometry::box::area geometry/box.smith:4\n  > 4:   f32 r = b.w * b.h;",
+        answer(&p, "1"));
+    scratch::expect_contains("the stack goes through main.smith", answer(&p, "2"), "#1 main main.smith:5");
+    scratch::expect_text("the type is named as written",
+                         "frame #0, scope locals\nb (geometry::box::Box)\n  w = 2 (f32)\n  h = 3 (f32)\nr = 0 (f32)",
+                         scratch::capture(&p, "sed 's/^r = [0-9.e-]* (f32)/r = 0 (f32)/' r3.txt"));
+    scratch::expect_text("evaluate in a module", "b.w * b.h = 6 (f32)", answer(&p, "4"));
+    scratch::expect_lacks("the C spelling does not show in the results", scratch::read(&p, "out.jsonl"),
+                          "geometry_box");
+}
+
+// --- a test of a project, launched by its name
+// ------------------------------------------------------------------------
+
+constexpr char build_project[] = "env CC=smith-cc CXX=smith-c++ smith build >build.log 2>&1";
+
+static const char *project_calls(io::Io *io) {
+    const char *calls = "";
+    calls = call(io, calls, "1", "launch",
+                 "{\"test\":\"twice_doubles\",\"breakpoints\":[{\"file\":\"tests/test_a.c\",\"line\":5}]}");
+    calls = call(io, calls, "2", "variables", "{}");
+    calls = call(io, calls, "3", "stack", "{\"levels\":2}");
+    calls = call(io, calls, "4", "step_out", "{}");
+    calls = call(io, calls, "5", "continue", "{}");
+    return call(io, calls, "6", "launch", "{\"test\":\"twice_doubles\",\"runner\":\"build/nonesuch\"}");
+}
+
+export void test_mcp_a_test_of_a_project_launched_by_its_name(io::Io *io) {
+    scratch::Project root;
+    if (!make(io, &root)) {
+        return;
+    }
+    scratch::Project p = folder(&root, "project");
+    scratch::Run built = scratch::sh(&p, build_project);
+    if (built.status != 0) {
+        test::note("%s", scratch::read(&p, "build.log"));
+    }
+    scratch::expect_status("the scratch project builds", 0, &built);
+    serve(io, &p, project_calls(io), "6");
+    scratch::expect_text("a test session: nothing on stderr", "", scratch::read(&p, "err.txt"));
+    scratch::expect_text(
+        "launch by the name of a test stops in the test",
+        "session s1: DIR/project/build/tests --test twice_doubles --in-process\nbreakpoint 1: "
+        "tests/test_a.c:5 (verified)\nstopped: breakpoint (breakpoint 1)\n  #0 twice tests/test_a.c:5\n  "
+        "> 5:     return doubled;",
+        answer(&p, "1"));
+    scratch::expect_text("the test's variables", "frame #0, scope locals\nx = 21 (int)\ndoubled = 42 (int)",
+                         answer(&p, "2"));
+    scratch::expect_contains("the stack of the test", answer(&p, "3"),
+                             "#0 twice tests/test_a.c:5\n#1 test_twice_doubles tests/test_a.c:9");
+    scratch::expect_contains("step_out returns to the test", answer(&p, "4"), "#0 test_twice_doubles tests/test_a.c:9");
+    scratch::expect_contains("the test passes", answer(&p, "5"), "1 passed, 0 failed");
+    scratch::expect_contains("the program ends with code 0", answer(&p, "5"), "exited: the program exited with code 0");
+    scratch::expect_contains("a runner that is not there", answer(&p, "6"), "build/nonesuch is not a file");
+    scratch::expect_text("build.info names the runner", "runner\tbuild/tests",
+                         scratch::capture(&p, "grep \"^runner$(printf '\\t')\" .smith/build.info"));
+}
+
+// The runner is the one build.info names, wherever it is: moved, with the line changed, no guess finds it.
+export void test_mcp_the_runner_build_info_names_is_launched(io::Io *io) {
+    scratch::Project root;
+    if (!make(io, &root)) {
+        return;
+    }
+    scratch::Project p = folder(&root, "project");
+    scratch::Run built = scratch::sh(&p, build_project);
+    scratch::expect_status("the scratch project builds", 0, &built);
+    scratch::Run moved = scratch::sh(
+        &p, "mv build/tests build/runner-elsewhere && sed \"s|^runner$(printf '\\t').*|runner$(printf "
+            "'\\t')build/runner-elsewhere|\" .smith/build.info >build.info.new && mv build.info.new .smith/build.info");
+    scratch::expect_status("the runner is moved", 0, &moved);
+    const char *calls = call(io, "", "1", "launch",
+                             "{\"test\":\"twice_doubles\",\"breakpoints\":[{\"file\":\"tests/test_a.c\",\"line\":5}]}");
+    serve(io, &p, calls, "1");
+    scratch::expect_contains("the runner build.info names is launched", answer(&p, "1"),
+                             "DIR/project/build/runner-elsewhere --test twice_doubles --in-process");
+}

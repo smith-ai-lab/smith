@@ -1,0 +1,7 @@
+# reply FILE ID: the text of the tool result that answers the id in FILE, with its escapes undone and the folder of the
+# fixture as DIR. Sourced by the shell commands of tests/mcp_test.smith.
+work=$(cd .. && pwd)
+reply() {
+    grep "^{\"id\":$2," "$1" | sed 's/.*"text":"//; s/","type":"text".*//; s/\\"/"/g' | sed "s|$work|DIR|g" |
+        while IFS= read -r line; do printf '%b\n' "$line"; done
+}

@@ -1,0 +1,5 @@
+module lmain;
+import gather;
+int main() {
+    return gather::sum_with_marker(1, 2) - 103;
+}
