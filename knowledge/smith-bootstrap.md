@@ -31,7 +31,7 @@ no build with one `cc` command and no stage0 without clang inside any more.
 `arena`, `contract`, `random`, `inflate`, `text`, `trace`) can use a language feature once the feature is on main, because
 a release of that commit exists then and builds the next commits. A branch cannot use, in that code, the feature it is
 adding itself: the release that builds it does not have it. Tests and libraries that are not linked into smith (`format`,
-`math`, `autodiff`, `test`, `tests/*.smith`) use a feature at once, since the smith under test compiles them. A change that
+`math`, `autodiff`, `test`, `*_test.smith`) use a feature at once, since the smith under test compiles them. A change that
 needs the feature in smith's own code lands in two steps: the feature, then, after its release, the use.
 The same holds for the build API: `build.c` is compiled by the release smith with the `<smith/build.h>` that release embeds.
 

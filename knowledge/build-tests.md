@@ -14,7 +14,7 @@ call is in the API below, with the exact commands) builds the runner from the pr
 `.smith` module.
 
 ```smith
-// tests/test_random.smith
+// random_test.smith, beside random.smith
 import smith::random;
 import smith::test;
 
@@ -29,10 +29,18 @@ void test_uniform_stays_in_range(random::Key key) { // a property test: runs on 
 }
 ```
 
+**Where tests live (issue #294).** A unit test sits beside the module it tests, `<module>_test.smith` (`lib/smith/arena.smith`
+has `lib/smith/arena_test.smith`, `module smith::arena_test;`; a C project has `<name>_test.c`), and the convention finds any
+`*_test.smith` and `*_test.c` below the root, never linking one into a program. A test module is an ordinary module with
+no special access: it sees only the module's exports, a private function is tested through the exports that use it, and
+contracts and `smith prove` check the inside (a helper that needs tests of its own is its own module). `tests/` holds the
+integration tests, the ones that start the built program or work on whole projects, with their fixtures and helpers; the same
+name rule finds them there. `smith new` writes `primes_test.smith` beside `primes.smith` and no `tests/` folder.
+
 ```c
 // build.c
 SmithTests tests = {
-    .sources = smith_glob(b, smith_list(b, "tests/test_*.smith", "tests/test_*.c", nullptr)),
+    .sources = smith_glob(b, smith_list(b, "**/*_test.smith", "**/*_test.c", nullptr)),
     .objects = (const SmithObject *[]){&code_under_test, nullptr},
     .flags = flags,                                  // for the test files and smith's test library
     .link_flags = link_flags,

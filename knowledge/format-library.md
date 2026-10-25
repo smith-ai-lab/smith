@@ -18,6 +18,6 @@ tags: [libraries, format, generics]
 - *C gets the writer.* The generics cannot be called from C, so `<smith/format.h>` also exports what `to` is made of (`smith_format_make`, `put_*`, `finish`), which are plain functions; C keeps `snprintf` for the rest.
 - *Not linked into smith*: it is a generic module that only `.smith` programs call, so it may use a feature as soon as the smith under test has it.
 
-The cap on one call is the generic parameter limit (`smith_lang_call_params_max`, 32). Tests: `tests/format_test.smith` (units runner). Skill: smith-format.
+The cap on one call is the generic parameter limit (`smith_lang_call_params_max`, 32). Tests: `lib/smith/format_test.smith` (units runner). Skill: smith-format.
 
 macOS's printf leaves a trailing zero after a `%g` tie that rounds down (`%.2g` of 10500 is `1.0e+04`); the standard says to remove it, and `format::general` does (the tests compare against libc with those zeros removed).

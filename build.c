@@ -573,19 +573,23 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
     return program.step;
 }
 
-// The modules of tests/*.smith, for lint: each one's header (.smith/include/<name>.h, which the tests that import
-// `scratch` read) and an object nobody asks for, both made by the smith under test (the one this build links: a test
-// uses a feature at once). They are plain steps that wait for the smith-cc link, so a fresh build folder's first build
-// makes them as its second does. smith_object would put each module's header in the check that every compile of a
-// module waits for, and the libraries' compiles, which that link waits for, would then wait for these headers: a
-// cycle. Returns what lint needs built (smith_needs reads the inputs of a source's compile): the headers and smith-cc.
+// The modules of tests/*.smith and the *_test.smith beside the libraries in lib/, for lint: each one's header
+// (.smith/include/<name>.h, which the tests that import `scratch` read) and an object nobody asks for, both made by the
+// smith under test (the one this build links: a test uses a feature at once). They are plain steps that wait for the
+// smith-cc link, so a fresh build folder's first build makes them as its second does. smith_object would put each
+// module's header in the check that every compile of a module waits for, and the libraries' compiles, which that link
+// waits for, would then wait for these headers: a cycle. Returns what lint needs built (smith_needs reads the inputs of
+// a source's compile): the headers and smith-cc.
 static const char *const *build_test_modules(SmithBuild *b, const BuildConfig *config, const char *folder) {
     const char *smith_cc = smith_fmt(b, "%s/smith-cc", folder);
     const char *const *flags = build_smith_flags(b, config);
-    const char *const *tests = smith_glob(b, smith_list(b, "tests/*.smith", nullptr));
+    const char *const *tests =
+        smith_glob(b, smith_list(b, "tests/*.smith", "lib/*_test.smith", "lib/smith/*_test.smith", nullptr));
     const char *const *needs = smith_list(b, smith_cc, nullptr);
     for (size_t i = 0; tests[i] != nullptr; i++) {
-        const char *name = smith_replace_extension(b, tests[i] + strlen("tests/"), "");
+        const char *root_less =
+            tests[i] + strlen(strncmp(tests[i], "tests/", strlen("tests/")) == 0 ? "tests/" : "lib/");
+        const char *name = smith_replace_extension(b, root_less, "");
         const char *header = smith_fmt(b, ".smith/include/%s.h", name);
         const char *object = smith_fmt(b, "%s/lint/%zu.o", folder, i);
         SmithStep write = {

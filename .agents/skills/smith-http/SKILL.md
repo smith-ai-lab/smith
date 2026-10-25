@@ -43,4 +43,4 @@ A body with no length ends when the server closes the connection, which cannot b
 
 ## Testing
 
-`tests/http_test.smith` runs the same checks on the fake io (files in memory, a scripted network: `io::make_test`, `smith-io-fake`) and on the runner's real io with the same scripted network; the fake's clock passes by `clock_advance`, so the idle timeout needs no wait.
+`lib/http_test.smith` runs the same checks on the fake io (files in memory, a scripted network: `io::make_test`, `smith-io-fake`) and on the runner's real io with the same scripted network; the fake's clock passes by `clock_advance`, so the idle timeout needs no wait.
