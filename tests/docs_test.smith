@@ -1,0 +1,369 @@
+// Tests for `smith docs`: every rule on the small repositories of tests/docs/fixtures (each breaks one rule; its
+// expect.txt is the exact output, stderr then stdout, and the check exits 1 exactly when there are problems), the
+// depfile, the options, the verb in a folder, and the types an index declares. They need no compiler except for the
+// tests of a build.c. A folder added to tests/docs/fixtures needs a test here: `test_every_fixture_has_a_test` says
+// which.
+module docs_test;
+
+import smith::format;
+import smith::io;
+import smith::test;
+import <string.h>;
+import scratch;
+
+static typeof(const char[:]) slice_of(const char *text) {
+    return text[0:c::strlen(text)];
+}
+
+// A scratch folder holding a copy of the fixtures (the links in them stay links).
+static scratch::Project fixtures(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Run run = scratch::sh(&p, "cp -R \"$SMITH_REPO/tests/docs/fixtures/.\" .");
+    scratch::expect_status("the fixtures are copied", 0, &run);
+    return p;
+}
+
+// --- 1. the fixtures: checked, and the output compared whole ---------------------------------------------------------
+
+static void fixture_case(io::Io *io, const char *name) {
+    scratch::Project p = fixtures(io);
+    scratch::Run run =
+        scratch::sh(&p, format::push(&io->arena, "args=; [ -f ", name, "/args ] && args=$(cat ", name,
+                                     "/args); smith docs $args ", name, " >actual 2>&1; echo $? >status; cat actual")
+                            .data);
+    test::golden(io, slice_of(format::push(&io->arena, "tests/docs/fixtures/", name, "/expect.txt").data),
+                 slice_of(run.out));
+    // The check exits 1 exactly when there are problems.
+    const char *want =
+        scratch::capture(&p, format::push(&io->arena, "case $(tail -n 1 ", name,
+                                          "/expect.txt) in *\" 0 problems\") echo 0 ;; *) echo 1 ;; esac")
+                                 .data);
+    scratch::expect_text(format::push(&io->arena, "fixture ", name, ": exit status").data, want,
+                         scratch::capture(&p, "cat status"));
+}
+
+export void test_every_fixture_has_a_test(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Run run = scratch::sh(&p, "cd \"$SMITH_REPO/tests/docs/fixtures\" && for f in *; do "
+                                       "grep -q \"fixture_case(io, \\\"$f\\\")\" ../../docs_test.smith || echo \"$f\"; "
+                                       "done");
+    scratch::expect_text("folders of tests/docs/fixtures with no test", "", run.out);
+}
+
+// --- 2. the depfile names every file read or found, once, escaped as a compiler's -MF writes it ---------------------
+
+export void test_docs_depfile_the_documents_the_skills_and_what_the_links_point_at(io::Io *io) {
+    scratch::Project p = fixtures(io);
+    scratch::Run run = scratch::sh(&p, "smith docs --depfile pass.d --target docs.stamp $(cat pass/args) pass "
+                                       ">/dev/null 2>&1; cat pass.d");
+    test::golden(io, "tests/docs/fixtures/pass/expect.d", slice_of(run.out));
+}
+
+export void test_docs_depfile_is_written_when_there_are_problems_too(io::Io *io) {
+    scratch::Project p = fixtures(io);
+    (void)scratch::sh(&p, "smith docs --depfile bad.d --target docs.stamp $(cat links/args 2>/dev/null) links");
+    scratch::expect_text("depfile: written when there are problems too", "yes",
+                         scratch::capture(&p, "[ -f bad.d ] && echo yes || echo no"));
+}
+
+export void test_docs_depfile_a_links_target_that_is_not_there_is_not_named(io::Io *io) {
+    scratch::Project p = fixtures(io);
+    (void)scratch::sh(&p, "smith docs --depfile bad.d --target docs.stamp $(cat links/args 2>/dev/null) links");
+    scratch::expect_text("depfile: a link's target that is not there is not named", "0",
+                         scratch::capture(&p, "grep -c 'gone.md' bad.d"));
+}
+
+// --- 3. the options ------------------------------------------------------------------------------------------------
+
+export void test_docs_options_a_depfile_needs_a_target(io::Io *io) {
+    scratch::Project p = fixtures(io);
+    scratch::Run run = scratch::sh(&p, "smith docs --depfile x.d pass");
+    scratch::expect_status("options: a depfile needs a target", 2, &run);
+}
+
+export void test_docs_options_a_target_needs_a_depfile(io::Io *io) {
+    scratch::Project p = fixtures(io);
+    scratch::Run run = scratch::sh(&p, "smith docs --target stamp pass");
+    scratch::expect_status("options: a target needs a depfile", 2, &run);
+}
+
+export void test_docs_options_type_needs_a_name(io::Io *io) {
+    scratch::Project p = fixtures(io);
+    scratch::Run run = scratch::sh(&p, "smith docs --type");
+    scratch::expect_status("options: --type needs a name", 2, &run);
+}
+
+export void test_docs_options_require_needs_a_field(io::Io *io) {
+    scratch::Project p = fixtures(io);
+    scratch::Run run = scratch::sh(&p, "smith docs --require dataset pass");
+    scratch::expect_status("options: --require needs a field", 2, &run);
+}
+
+export void test_docs_options_require_says_what_it_takes(io::Io *io) {
+    scratch::Project p = fixtures(io);
+    scratch::Run run = scratch::sh(&p, "smith docs --require dataset pass");
+    scratch::expect_contains("options: --require says what it takes", run.err, "--require takes <type>:<field>");
+}
+
+export void test_docs_options_require_needs_a_field_after_the_colon(io::Io *io) {
+    scratch::Project p = fixtures(io);
+    scratch::Run run = scratch::sh(&p, "smith docs --require dataset: pass");
+    scratch::expect_status("options: --require needs a field after the colon", 2, &run);
+}
+
+export void test_docs_options_require_needs_a_value_after_the_equals(io::Io *io) {
+    scratch::Project p = fixtures(io);
+    scratch::Run run = scratch::sh(&p, "smith docs --require dataset:field= pass");
+    scratch::expect_status("options: --require needs a value after the equals", 2, &run);
+}
+
+export void test_docs_options_an_unknown_option_is_a_usage_error(io::Io *io) {
+    scratch::Project p = fixtures(io);
+    scratch::Run run = scratch::sh(&p, "smith docs --bogus pass");
+    scratch::expect_status("options: an unknown option is a usage error", 2, &run);
+}
+
+export void test_docs_options_two_roots_are_a_usage_error(io::Io *io) {
+    scratch::Project p = fixtures(io);
+    scratch::Run run = scratch::sh(&p, "smith docs pass links");
+    scratch::expect_status("options: two roots are a usage error", 2, &run);
+}
+
+export void test_docs_options_an_absolute_root_with_options_after_it(io::Io *io) {
+    scratch::Project p = fixtures(io);
+    scratch::Run run = scratch::sh(&p, "smith docs \"$PWD/pass\" --type contract --type dataset");
+    scratch::expect_status("options: an absolute root, options after it", 0, &run);
+}
+
+export void test_docs_options_type_replaces_the_default_types(io::Io *io) {
+    scratch::Project p = fixtures(io);
+    scratch::Run run = scratch::sh(&p, "smith docs --type contract pass");
+    scratch::expect_contains("options: --type replaces the default types", run.err,
+                             "knowledge/data.md: type 'dataset' is not one of contract");
+}
+
+export void test_docs_options_a_value_list_accepts_a_value_in_it(io::Io *io) {
+    scratch::Project p = fixtures(io);
+    scratch::Run run =
+        scratch::sh(&p, "smith docs --type contract --type dataset --require dataset:license_class=research-only pass");
+    scratch::expect_status("options: a value list accepts a value in it", 0, &run);
+}
+
+export void test_docs_options_a_value_list_rejects_a_value_outside_it(io::Io *io) {
+    scratch::Project p = fixtures(io);
+    scratch::Run run = scratch::sh(
+        &p, "smith docs --type contract --type dataset --require dataset:license_class=commercial-ok,unknown pass");
+    scratch::expect_contains("options: a value list rejects a value outside it", run.err,
+                             "knowledge/data.md: type 'dataset' needs license_class: commercial-ok, unknown");
+}
+
+// --- 4. the verb: with no arguments it checks the current folder, with the types and required fields that
+// knowledge/index.md declares in its frontmatter, and the defaults when it declares none ------------------------------
+
+export void test_docs_no_arguments_checks_the_current_folder(io::Io *io) {
+    scratch::Project p = fixtures(io);
+    scratch::Run run = scratch::sh(&p, "cd pass && smith docs");
+    scratch::expect_contains("no arguments: checks the current folder", run.out, "smith docs: 2 concepts");
+}
+
+export void test_docs_no_arguments_the_default_types_apply(io::Io *io) {
+    scratch::Project p = fixtures(io);
+    scratch::Run run = scratch::sh(&p, "cd pass && smith docs");
+    scratch::expect_contains("no arguments: the default types apply", run.err,
+                             "type 'dataset' is not one of convention, architecture");
+}
+
+export void test_docs_no_arguments_problems_exit_1(io::Io *io) {
+    scratch::Project p = fixtures(io);
+    scratch::Run run = scratch::sh(&p, "cd links && smith docs");
+    scratch::expect_status("no arguments: problems exit 1", 1, &run);
+}
+
+// The project's docs are in the nearest folder at or above the current one that has an AGENTS.md, stopping at the git
+// root: a build.c in a subfolder (virtual-cell/learner) checks its repository's docs.
+static scratch::Run in_subfolder(const scratch::Project *p) {
+    return scratch::sh(p, "mkdir -p repo/sub/deep && cp -R declared/. repo/ && mkdir repo/.git && "
+                          "cd repo/sub/deep && smith docs");
+}
+
+export void test_docs_subfolder_the_docs_of_the_folder_above_are_the_projects(io::Io *io) {
+    scratch::Project p = fixtures(io);
+    scratch::Run run = in_subfolder(&p);
+    scratch::expect_status("subfolder: the docs of the folder above are the project's", 0, &run);
+}
+
+export void test_docs_subfolder_its_concepts_are_found(io::Io *io) {
+    scratch::Project p = fixtures(io);
+    scratch::Run run = in_subfolder(&p);
+    scratch::expect_contains("subfolder: ... its concepts are found", run.out, "smith docs: 2 concepts, 0 problems");
+}
+
+export void test_docs_subfolder_the_search_stops_at_the_git_root(io::Io *io) {
+    scratch::Project p = fixtures(io);
+    scratch::Run run = scratch::sh(&p, "mkdir -p stray/inner && cp -R declared/. stray/ && "
+                                       "mkdir stray/inner/.git stray/inner/sub && cd stray/inner/sub && smith docs");
+    scratch::expect_contains("subfolder: the search stops at the git root", run.out, "smith docs: 0 concepts");
+}
+
+export void test_docs_declared_types_the_indexs_types_and_requirements_are_the_projects(io::Io *io) {
+    scratch::Project p = fixtures(io);
+    scratch::Run run = scratch::sh(&p, "cd declared && smith docs");
+    scratch::expect_status("declared types: the index's types and requirements are the project's", 0, &run);
+}
+
+export void test_docs_declared_types_type_replaces_the_indexs_types(io::Io *io) {
+    scratch::Project p = fixtures(io);
+    scratch::Run run = scratch::sh(&p, "cd declared && smith docs --type dataset");
+    scratch::expect_contains("declared types: --type replaces the index's types", run.err,
+                             "type 'contract' is not one of dataset");
+}
+
+export void test_docs_declared_types_require_replaces_the_indexs_requirements(io::Io *io) {
+    scratch::Project p = fixtures(io);
+    scratch::Run run =
+        scratch::sh(&p, "cd declared && smith docs --type contract --type dataset --require contract:owner");
+    scratch::expect_contains("declared types: --require replaces the index's requirements", run.err,
+                             "type 'contract' needs owner");
+}
+
+// A build.c changes nothing: the verb is the check whatever the build declares, and it needs no task.
+constexpr char other_build[] = "#include <smith/build.h>\n"
+                               "\n"
+                               "void build(SmithBuild *b) {\n"
+                               "    SmithStep other = {.command = smith_list(b, \"true\", nullptr)};\n"
+                               "    smith_task(b, \"other\", &other);\n"
+                               "    smith_default(b, other.outputs);\n"
+                               "}\n";
+
+static scratch::Project with_build_file(io::Io *io) {
+    scratch::Project p = fixtures(io);
+    scratch::Run run = scratch::sh(&p, "mkdir verb && cp -R declared/. verb/");
+    scratch::expect_status("verb: made", 0, &run);
+    scratch::write(&p, "verb/build.c", other_build);
+    return p;
+}
+
+export void test_docs_build_c_without_a_docs_task_the_verb_checks(io::Io *io) {
+    scratch::Project p = with_build_file(io);
+    scratch::Run run = scratch::sh(&p, "cd verb && smith docs");
+    scratch::expect_status("build.c without a docs task: the verb checks", 0, &run);
+}
+
+export void test_docs_build_c_without_a_docs_task_the_check_ran(io::Io *io) {
+    scratch::Project p = with_build_file(io);
+    scratch::Run run = scratch::sh(&p, "cd verb && smith docs");
+    scratch::expect_contains("build.c without a docs task: the check ran", run.out,
+                             "smith docs: 2 concepts, 0 problems");
+}
+
+static scratch::Run with_a_poem(const scratch::Project *p) {
+    scratch::write(p, "verb/knowledge/poem.md", "---\ntype: poem\ntitle: Poem\ndescription: A poem.\n---\n");
+    return scratch::sh(p, "cd verb && smith docs");
+}
+
+export void test_docs_build_c_a_problem_is_the_verbs_failure(io::Io *io) {
+    scratch::Project p = with_build_file(io);
+    scratch::Run run = with_a_poem(&p);
+    scratch::expect_status("build.c: a problem is the verb's failure", 1, &run);
+}
+
+export void test_docs_build_c_the_problem_is_reported(io::Io *io) {
+    scratch::Project p = with_build_file(io);
+    scratch::Run run = with_a_poem(&p);
+    scratch::expect_contains("build.c: the problem is reported", run.err,
+                             "knowledge/poem.md: type 'poem' is not one of contract, dataset");
+}
+
+export void test_docs_smith_build_docs_is_refused_it_is_a_verb(io::Io *io) {
+    scratch::Project p = with_build_file(io);
+    scratch::Run run = scratch::sh(&p, "cd verb && smith build docs");
+    scratch::expect_status("smith build docs: refused, it is a verb", 2, &run);
+}
+
+export void test_docs_smith_build_docs_points_at_the_verb(io::Io *io) {
+    scratch::Project p = with_build_file(io);
+    scratch::Run run = scratch::sh(&p, "cd verb && smith build docs");
+    scratch::expect_contains("smith build docs: points at the verb", run.err, "smith docs");
+}
+
+// --- the fixtures, one test each -----------------------------------------------------------------------------------
+
+export void test_docs_fixture_claude_folder(io::Io *io) {
+    fixture_case(io, "claude-folder");
+}
+
+export void test_docs_fixture_claude_missing(io::Io *io) {
+    fixture_case(io, "claude-missing");
+}
+
+export void test_docs_fixture_claude_wrong(io::Io *io) {
+    fixture_case(io, "claude-wrong");
+}
+
+export void test_docs_fixture_conflicts(io::Io *io) {
+    fixture_case(io, "conflicts");
+}
+
+export void test_docs_fixture_declared_bad(io::Io *io) {
+    fixture_case(io, "declared-bad");
+}
+
+export void test_docs_fixture_declared(io::Io *io) {
+    fixture_case(io, "declared");
+}
+
+export void test_docs_fixture_default_types(io::Io *io) {
+    fixture_case(io, "default-types");
+}
+
+export void test_docs_fixture_frontmatter(io::Io *io) {
+    fixture_case(io, "frontmatter");
+}
+
+export void test_docs_fixture_index(io::Io *io) {
+    fixture_case(io, "index");
+}
+
+export void test_docs_fixture_knowledge_skill(io::Io *io) {
+    fixture_case(io, "knowledge-skill");
+}
+
+export void test_docs_fixture_links(io::Io *io) {
+    fixture_case(io, "links");
+}
+
+export void test_docs_fixture_no_index(io::Io *io) {
+    fixture_case(io, "no-index");
+}
+
+export void test_docs_fixture_nothing(io::Io *io) {
+    fixture_case(io, "nothing");
+}
+
+export void test_docs_fixture_okf_empty(io::Io *io) {
+    fixture_case(io, "okf-empty");
+}
+
+export void test_docs_fixture_okf(io::Io *io) {
+    fixture_case(io, "okf");
+}
+
+export void test_docs_fixture_pass(io::Io *io) {
+    fixture_case(io, "pass");
+}
+
+export void test_docs_fixture_plugin_pass(io::Io *io) {
+    fixture_case(io, "plugin-pass");
+}
+
+export void test_docs_fixture_plugin_wrong(io::Io *io) {
+    fixture_case(io, "plugin-wrong");
+}
+
+export void test_docs_fixture_require(io::Io *io) {
+    fixture_case(io, "require");
+}
+
+export void test_docs_fixture_skills(io::Io *io) {
+    fixture_case(io, "skills");
+}
