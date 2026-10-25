@@ -1,6 +1,6 @@
 // Calls the file cannot see into: a function pointer (`c`, every effect), a declaration of the project with no body and
 // no attribute (another file may define it: nothing is said here, the link of the program says, see
-// tests/effects_infer.sh), and one with an attribute (a promise smith trusts).
+// tests/effects_infer_test.smith), and one with an attribute (a promise smith trusts).
 int run_unknown(int);
 [[smith::effects(alloc)]] void *promised(unsigned);
 
