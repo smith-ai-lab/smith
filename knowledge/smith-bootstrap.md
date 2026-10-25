@@ -11,9 +11,10 @@ one the release job published for an earlier commit ([release](release.md)). The
 replaced the committed C lowering in `bootstrap/`): "We want to be able to write Smith in idiomatic Smith, including all of
 Smith's libraries", and "Getting rid of a second copy to maintain".
 
-**A clone with no smith** runs `scripts/stage0.sh`. It fetches the tags, walks `git rev-list HEAD` for the first commit that
-has a release `stage0-<commit>`, downloads it with `scripts/release.sh fetch` (`gh release download`, SHA-256 checked, the
-repository is private and `gh` is signed in as it is to clone), unpacks it into `.smith/stage0/` and runs
+**A clone with no smith** builds and runs `scripts/stage0.smith`: a `.smith` file with no `module` line is plain C23 (the C
+rule), so Apple's clang builds it (`mkdir -p .smith && clang -std=c23 -x c scripts/stage0.smith -o .smith/stage0-tool &&
+.smith/stage0-tool [arguments of smith build]`) and the bootstrap needs no shell. It fetches the tags, walks `git rev-list HEAD` for the first commit that
+has a release `stage0-<commit>`, downloads it (`gh release download`, a child process; the repository is private and `gh` is signed in as it is to clone), checks the SHA-256 (CommonCrypto), unpacks it with `tar` into `.smith/stage0/` and runs
 `.smith/stage0/bin/smith build` with that `bin/` first on `PATH`, so its `smith-cc` is the `CC` of the build. Nothing in
 the repository records which release to use. `~/.cache/smith/llvm` (`smith build llvm`, about 9 minutes once) must be there
 already; `smith build` says so when it is not (the default target stops, `llvm` and `clean` still work).

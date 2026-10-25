@@ -1,0 +1,220 @@
+// Builds smith in a clone that has no smith (issue #112, #293, knowledge/smith-bootstrap.md): smith is built by its
+// previous release. This file has no `module` line, so it is plain C23 and Apple's clang builds it:
+//   mkdir -p .smith && clang -std=c23 -x c scripts/stage0.smith -o .smith/stage0-tool && .smith/stage0-tool [arguments of smith build]
+//   1. finds the release `stage0-<commit>` of the newest ancestor commit of HEAD that has one (git tags, walking
+//      `git rev-list HEAD`, after fetching the tags);
+//   2. downloads it with `gh release download` (the repository is private; gh is signed in as it is to clone), checks
+//      its SHA-256 (CommonCrypto) and unpacks it with tar into .smith/stage0/;
+//   3. runs .smith/stage0/bin/smith build, with that bin/ first on PATH so that its smith-cc is the CC of the build.
+// It needs git, gh, tar, the network, and `~/.cache/smith/llvm` (`smith build llvm`, about 9 minutes once). With a smith
+// installed, `smith build` does all of this already. SMITH_STAGE0_RELEASE=<tag> names the release to use.
+#include <CommonCrypto/CommonDigest.h>
+#include <fcntl.h>
+#include <limits.h>
+#include <spawn.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/utsname.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+extern char **environ;
+
+constexpr size_t output_max = 1 << 22;  // the output of one child that is read: the tags or the history of a repository
+constexpr size_t path_max = PATH_MAX;
+constexpr size_t hex_length = 64;       // a SHA-256 in hex
+constexpr size_t block = 1 << 16;
+static char output[output_max + 1];
+
+[[noreturn]] static void die(const char *message, const char *detail) {
+    fprintf(stderr, "stage0: %s%s%s\n", message, detail != nullptr ? " " : "", detail != nullptr ? detail : "");
+    exit(1);
+}
+
+// Runs a program (found on PATH) and waits for it. With capture, its standard output is read into `output` and
+// returned (nullptr for a program that failed); without, it shares ours and the result is "" for success.
+static const char *run(const char *const *argv, bool capture, bool quiet) {
+    int pipes[2] = {-1, -1};
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    if (capture) {
+        if (pipe(pipes) != 0) die("cannot make a pipe", nullptr);
+        posix_spawn_file_actions_adddup2(&actions, pipes[1], 1);
+        posix_spawn_file_actions_addclose(&actions, pipes[0]);
+    }
+    if (quiet) posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0);
+    pid_t child = 0;
+    int started = posix_spawnp(&child, argv[0], &actions, nullptr, (char *const *)argv, environ);
+    posix_spawn_file_actions_destroy(&actions);
+    size_t used = 0;
+    if (capture) {
+        close(pipes[1]);
+        for (ssize_t got = 1; started == 0 && got > 0 && used < output_max;) { // bounded by the size of the buffer
+            got = read(pipes[0], output + used, output_max - used);
+            if (got > 0) used += (size_t)got;
+        }
+        close(pipes[0]);
+    }
+    output[used] = '\0';
+    int status = 0;
+    if (started != 0 || waitpid(child, &status, 0) < 0) return nullptr;
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) return nullptr;
+    return capture ? output : "";
+}
+
+static bool succeeds(const char *const *argv) {
+    return run(argv, false, true) != nullptr;
+}
+
+// Whether `line` is one of the lines of `text`.
+static bool has_line(const char *text, const char *line) {
+    size_t length = strlen(line);
+    for (const char *at = text; *at != '\0';) { // each pass moves past one line
+        const char *end = strchr(at, '\n');
+        size_t size = end != nullptr ? (size_t)(end - at) : strlen(at);
+        if (size == length && strncmp(at, line, length) == 0) return true;
+        if (end == nullptr) break;
+        at = end + 1;
+    }
+    return false;
+}
+
+// The newest ancestor of HEAD with a release: the tags name commits, so the first commit of `git rev-list HEAD` that a
+// tag names is the one. A shallow clone has no history to walk, so it is made whole first.
+static const char *find_release(char *tag, size_t capacity) {
+    const char *named = getenv("SMITH_STAGE0_RELEASE");
+    if (named != nullptr && *named != '\0') {
+        snprintf(tag, capacity, "%s", named);
+        return tag;
+    }
+    if (!succeeds((const char *[]){"git", "fetch", "--quiet", "--tags", "--prune", "--prune-tags", "origin", nullptr})) {
+        fputs("stage0: cannot fetch the tags; using the ones here\n", stderr);
+    }
+    const char *shallow = run((const char *[]){"git", "rev-parse", "--is-shallow-repository", nullptr}, true, true);
+    if (shallow != nullptr && strncmp(shallow, "true", 4) == 0 &&
+        !succeeds((const char *[]){"git", "fetch", "--quiet", "--unshallow", "origin", nullptr})) {
+        die("cannot fetch the history of a shallow clone", nullptr);
+    }
+    static char tags[output_max + 1];
+    const char *listed = run((const char *[]){"git", "tag", "--list", "stage0-*", nullptr}, true, true);
+    snprintf(tags, sizeof tags, "%s", listed != nullptr ? listed : "");
+    const char *history = run((const char *[]){"git", "rev-list", "HEAD", nullptr}, true, true);
+    if (history == nullptr) die("cannot read the history of HEAD", nullptr);
+    for (const char *at = history; *at != '\0';) { // each pass moves past one commit
+        const char *end = strchr(at, '\n');
+        size_t size = end != nullptr ? (size_t)(end - at) : strlen(at);
+        char candidate[128];
+        snprintf(candidate, sizeof candidate, "stage0-%.*s", (int)size, at);
+        if (has_line(tags, candidate)) {
+            snprintf(tag, capacity, "%s", candidate);
+            return tag;
+        }
+        if (end == nullptr) break;
+        at = end + 1;
+    }
+    die("no ancestor of HEAD has a release (stage0-<commit>): is the clone behind main? git pull, or ask for a release",
+        nullptr);
+}
+
+static bool read_file(const char *path, char *into, size_t capacity) {
+    FILE *file = fopen(path, "rb");
+    if (file == nullptr) return false;
+    size_t got = fread(into, 1, capacity - 1, file);
+    into[got] = '\0';
+    fclose(file);
+    return true;
+}
+
+// The SHA-256 of a file, as 64 lowercase hex digits.
+static bool file_digest(const char *path, char hex[hex_length + 1]) {
+    FILE *file = fopen(path, "rb");
+    if (file == nullptr) return false;
+    CC_SHA256_CTX context;
+    CC_SHA256_Init(&context);
+    static unsigned char buffer[block];
+    for (size_t got = 1; got > 0;) { // each pass reads one block until the end
+        got = fread(buffer, 1, sizeof buffer, file);
+        if (got > 0) CC_SHA256_Update(&context, buffer, (CC_LONG)got);
+    }
+    fclose(file);
+    unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256_Final(digest, &context);
+    for (size_t i = 0; i < sizeof digest; i++) snprintf(hex + 2 * i, 3, "%02x", digest[i]);
+    return true;
+}
+
+// Downloads the release into the folder, checks the tarball against its .sha256 and unpacks it.
+static void fetch(const char *tag, const char *folder, const char *name) {
+    char sums[path_max];
+    char tarball[path_max];
+    snprintf(sums, sizeof sums, "%s.sha256", name);
+    snprintf(tarball, sizeof tarball, "%s/%s", folder, name);
+    char sums_path[path_max];
+    snprintf(sums_path, sizeof sums_path, "%s/%s", folder, sums);
+    if (!succeeds((const char *[]){"rm", "-rf", folder, nullptr}) || !succeeds((const char *[]){"mkdir", "-p", folder, nullptr}))
+        die("cannot make", folder);
+    if (!succeeds((const char *[]){"gh", "release", "download", tag, "--pattern", name, "--pattern", sums, "--dir", folder,
+                                   "--clobber", nullptr})) {
+        die("cannot get", tag);
+    }
+    char expected[256];
+    char actual[hex_length + 1];
+    if (!read_file(sums_path, expected, sizeof expected) || strlen(expected) < hex_length ||
+        !file_digest(tarball, actual) || strncmp(expected, actual, hex_length) != 0) {
+        fprintf(stderr, "stage0: the checksum of %s does not match\n", tag);
+        die("cannot get", tag);
+    }
+    if (!succeeds((const char *[]){"tar", "-C", folder, "-xJf", tarball, nullptr})) die("cannot unpack", tarball);
+}
+
+int main(int argc, char **argv) {
+    // The repository: the program runs from its root, or from a folder inside it.
+    const char *top = run((const char *[]){"git", "rev-parse", "--show-toplevel", nullptr}, true, true);
+    if (top == nullptr) die("this is not a git clone", nullptr);
+    char root[path_max];
+    snprintf(root, sizeof root, "%s", top);
+    root[strcspn(root, "\n")] = '\0';
+    if (chdir(root) != 0) die("cannot enter", root);
+    struct utsname system;
+    if (uname(&system) != 0) die("cannot tell the system", nullptr);
+    char name[128];
+    snprintf(name, sizeof name, "smith-%s-%s.tar.xz", system.sysname, system.machine);
+    for (char *c = name; *c != '\0'; c++) *c = (char)((*c >= 'A' && *c <= 'Z') ? *c + ('a' - 'A') : *c);
+
+    char tag[128];
+    find_release(tag, sizeof tag);
+    const char *folder = ".smith/stage0";
+    char recorded[128] = "";
+    char tag_file[path_max];
+    char program[path_max];
+    snprintf(tag_file, sizeof tag_file, "%s/tag", folder);
+    snprintf(program, sizeof program, "%s/bin/smith", folder);
+    (void)read_file(tag_file, recorded, sizeof recorded);
+    recorded[strcspn(recorded, "\n")] = '\0';
+    if (strcmp(recorded, tag) == 0 && access(program, X_OK) == 0) {
+        printf("stage0: %s is already in %s\n", tag, folder);
+    } else {
+        printf("stage0: downloading %s\n", tag);
+        fflush(stdout);
+        fetch(tag, folder, name);
+        FILE *file = fopen(tag_file, "wb");
+        if (file == nullptr) die("cannot write", tag_file);
+        fprintf(file, "%s\n", tag);
+        fclose(file);
+    }
+    char path[path_max * 2];
+    const char *old_path = getenv("PATH");
+    snprintf(path, sizeof path, "%s/%s/bin:%s", root, folder, old_path != nullptr ? old_path : "/usr/bin:/bin");
+    setenv("PATH", path, 1);
+    if (!run((const char *[]){program, "version", nullptr}, false, false)) die("the release does not run:", program);
+    char *build[argc + 2];
+    build[0] = program;
+    build[1] = (char *)"build";
+    for (int i = 1; i < argc; i++) build[i + 1] = argv[i];
+    build[argc + 1] = nullptr;
+    fflush(stdout);
+    execv(program, build);
+    die("cannot run", program);
+}

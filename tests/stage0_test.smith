@@ -1,0 +1,124 @@
+// scripts/stage0.smith (issue #112, #293) with no network: scratch git repositories and a stand-in `gh` that keeps its
+// "releases" in a folder, each one made by scripts/release.sh package from a stand-in smith. Never touches a real
+// repository. The tool is built the way the README builds it, with the system's clang.
+module stage0_test;
+
+import smith::io;
+import smith::test;
+import scratch;
+
+// The folder of the repository (the project's) holds: bin/gh and fake-smith (built from the fixture), the tool, an
+// origin, and `repo`: a copy of the two scripts, five commits, a release for the second and a release for a commit that
+// is no ancestor of HEAD (a branch); HEAD is two commits past the second. Releases are only in $GH_DIR; a tag is
+// pushed for those named by `tags`.
+constexpr const char *setup =
+    "set -e; mkdir bin gh; "
+    "clang -std=c23 -x c gh.c -o bin/gh; clang -std=c23 -x c smith.c -o fake-smith; "
+    "clang -std=c23 -x c \"$SMITH_REPO/scripts/stage0.smith\" -o stage0-tool; "
+    "git init -q --bare origin.git; git init -q -b main repo; cd repo; "
+    "git config user.email t@t; git config user.name t; git remote add origin ../origin.git; "
+    "mkdir scripts; cp \"$SMITH_REPO/scripts/release.sh\" scripts/; git add scripts; git commit -qm zero; "
+    "echo 1 > f; git add f; git commit -qm one; echo 2 > f; git commit -qam two; second=$(git rev-parse HEAD); "
+    "git checkout -q -b side; echo side > g; git add g; git commit -qm side; side=$(git rev-parse HEAD); "
+    "git checkout -q main; echo 3 > f; git commit -qam three; echo 4 > f; git commit -qam four; "
+    "for c in $second $side; do sh scripts/release.sh package ../fake-smith ../gh/stage0-$c; git tag stage0-$c $c; done; "
+    "git push -q origin main side --tags; echo $second > ../second";
+
+static scratch::Project repository(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "stage0");
+    scratch::Run made = scratch::sh(&p, setup);
+    scratch::expect_status("stage0: the scratch repository is made", 0, &made);
+    return p;
+}
+
+// Runs the tool in the repository with the stand-in gh first on PATH.
+static scratch::Run tool(const scratch::Project *p, const char *arguments, const char *environment) {
+    char command[1024];
+    __builtin_snprintf(command, sizeof command,
+                       "cd repo && %s PATH=\"$PWD/../bin:$PATH\" GH_LOG=\"$PWD/../gh.log\" GH_DIR=\"$PWD/../gh\" "
+                       "STAGE0_OUT=\"$PWD/../build.out\" ../stage0-tool %s",
+                       environment, arguments);
+    return scratch::sh(p, command);
+}
+
+static const char *second(const scratch::Project *p) {
+    return scratch::capture(p, "cat second");
+}
+
+static const char *line(const char *text, usize number) {
+    static char buffer[256];
+    usize at = 0;
+    for (usize n = 1; n < number && text[at] != '\0'; at++) {
+        if (text[at] == '\n') n += 1;
+    }
+    usize size = 0;
+    while (text[at + size] != '\0' && text[at + size] != '\n' && size < sizeof buffer - 1) size += 1;
+    __builtin_memcpy(buffer, text + at, size);
+    buffer[size] = '\0';
+    return buffer;
+}
+
+// The release of the newest ancestor is used (not the side branch's), the arguments reach `smith build`, the smith-cc
+// found first is the release's own, and a second run downloads nothing.
+export void test_stage0_picks_the_newest_ancestor_and_runs_its_smith(io::Io *io) {
+    scratch::Project p = repository(io);
+    scratch::Run run = tool(&p, "-DX=1", "");
+    scratch::expect_status("stage0: the first run passes", 0, &run);
+    char expected[160];
+    __builtin_snprintf(expected, sizeof expected, "stage0: downloading stage0-%s", second(&p));
+    scratch::expect_text("stage0: the newest ancestor's release", expected, line(run.out, 1));
+    scratch::expect_text("stage0: the release runs", "fake smith", line(run.out, 2));
+    scratch::expect_text("stage0: the arguments reach smith build", "build -DX=1", line(scratch::read(&p, "build.out"), 1));
+    scratch::expect_text("stage0: and its smith-cc is first on PATH", scratch::capture(&p, "cd repo && echo \"$(pwd -P)/.smith/stage0/bin/smith-cc\""),
+                         line(scratch::read(&p, "build.out"), 2));
+    scratch::expect_text("stage0: one download", "1", scratch::capture(&p, "grep -c 'release download' gh.log"));
+    scratch::Run again = tool(&p, "", "");
+    __builtin_snprintf(expected, sizeof expected, "stage0: stage0-%s is already in .smith/stage0", second(&p));
+    scratch::expect_text("stage0: a second run finds the release unpacked", expected, line(again.out, 1));
+    scratch::expect_text("stage0: and downloads nothing", "1", scratch::capture(&p, "grep -c 'release download' gh.log"));
+}
+
+// A newer ancestor with a release wins.
+export void test_stage0_a_newer_release_wins(io::Io *io) {
+    scratch::Project p = repository(io);
+    scratch::Run first = tool(&p, "", "");
+    scratch::expect_status("stage0: the first run passes", 0, &first);
+    scratch::Run made = scratch::sh(&p, "cd repo && third=$(git rev-parse HEAD~1) && sh scripts/release.sh package ../fake-smith ../gh/stage0-$third && "
+                                        "git tag stage0-$third $third && git push -q origin --tags && echo $third > ../third");
+    scratch::expect_status("stage0: a newer release is made", 0, &made);
+    scratch::Run run = tool(&p, "", "");
+    char expected[160];
+    __builtin_snprintf(expected, sizeof expected, "stage0: downloading stage0-%s", scratch::capture(&p, "cat third"));
+    scratch::expect_text("stage0: the newer release is downloaded", expected, line(run.out, 1));
+}
+
+// A checksum that does not match stops it.
+export void test_stage0_a_wrong_checksum_stops(io::Io *io) {
+    scratch::Project p = repository(io);
+    (void)scratch::sh(&p, "echo corrupt >> gh/stage0-$(cat second)/smith-darwin-arm64.tar.xz");
+    scratch::Run run = tool(&p, "", "");
+    scratch::expect_failure("stage0: a corrupt release stops", &run);
+    scratch::expect_contains("stage0: and says the checksum", run.err, "the checksum of stage0-");
+    char expected[160];
+    __builtin_snprintf(expected, sizeof expected, "stage0: cannot get stage0-%s", second(&p));
+    scratch::expect_text("stage0: and that it cannot get the release", expected, line(run.err, 2));
+}
+
+// No ancestor has a release.
+export void test_stage0_no_release_says_so(io::Io *io) {
+    scratch::Project p = repository(io);
+    (void)scratch::sh(&p, "cd repo && git tag -d stage0-$(cat ../second) >/dev/null && git push -q origin :refs/tags/stage0-$(cat ../second)");
+    scratch::Run run = tool(&p, "", "");
+    scratch::expect_failure("stage0: no release stops", &run);
+    scratch::expect_contains("stage0: and says why", run.err, "no ancestor of HEAD has a release");
+}
+
+// SMITH_STAGE0_RELEASE names the release.
+export void test_stage0_a_named_release_is_used(io::Io *io) {
+    scratch::Project p = repository(io);
+    scratch::Run run = tool(&p, "", "SMITH_STAGE0_RELEASE=stage0-$(cat ../second)");
+    char expected[160];
+    __builtin_snprintf(expected, sizeof expected, "stage0: downloading stage0-%s", second(&p));
+    scratch::expect_text("stage0: the named release", expected, line(run.out, 1));
+    scratch::expect_text("stage0: no tag was fetched for it", "0", scratch::capture(&p, "grep -c 'fetch' gh.log || true"));
+}
