@@ -1,0 +1,261 @@
+// smith's own archive extraction (runtime/gzip.c on lib/smith/inflate.smith, runtime/xz.c, runtime/untar.c), the part
+// of `smith_package` that used to run tar: the formats it reads, from tests/untar.sh sections 1 and 2 (issue #292).
+// Archives are made with the system's tar and gzip and with tests/xz.py (the shell functions of
+// tests/build_fixtures/untar/prelude), and read back by `smith fetch` into a cache of the case's own, so the real
+// ~/.cache/smith is never touched. Each must extract to the same tree, modes and bytes as its source folder.
+module untar_formats_test;
+
+import smith::arena;
+import smith::format;
+import smith::io;
+import smith::test;
+import scratch;
+import <string.h>;
+
+static scratch::Project untar_project(io::Io *io) {
+    return scratch::project(io, "p", "untar");
+}
+
+static scratch::Run run(const scratch::Project *p, const char *body) {
+    return scratch::sh(p, format::push(&p->io->arena, ". ./prelude; ", body).data);
+}
+
+static const char *text(const scratch::Project *p, const char *body) {
+    return scratch::capture(p, format::push(&p->io->arena, ". ./prelude; ", body).data);
+}
+
+// A setup command that must succeed.
+static void setup(const scratch::Project *p, const char *body) {
+    scratch::Run made = run(p, body);
+    scratch::expect_status("the setup of the case", 0, &made);
+}
+
+static const char *join(const scratch::Project *p, const char *a, const char *b) {
+    return format::push(&p->io->arena, a, b).data;
+}
+
+// Fetches an archive (a path in the project) into a cache of its own; the package folder is in *package, or
+// "/nonexistent" when it failed.
+static scratch::Run fetch(const scratch::Project *p, const char *cache, const char *archive, const char **package) {
+    scratch::Run fetched = run(p, format::push(&p->io->arena, "XDG_CACHE_HOME=\"$PWD/cache-", cache,
+                                               "\" smith fetch \"file://$PWD/", archive, "\"")
+                                      .data);
+    *package = "/nonexistent";
+    const char *start = fetched.status == 0 ? c::strstr(fetched.out, "\"sha256:") : nullptr;
+    if (start != nullptr) {
+        char *hash = arena::push_slice(&p->io->arena, char, 65).data;
+        __builtin_memcpy(hash, start + 8, 64);
+        hash[64] = '\0';
+        *package = format::push(&p->io->arena, p->dir, "/cache-", cache, "/smith/packages/", hash).data;
+    }
+    return fetched;
+}
+
+// An archive that must extract to the same tree as the source folder.
+static void same(const scratch::Project *p, const char *name, const char *cache, const char *archive,
+                 const char *folder) {
+    const char *package = nullptr;
+    scratch::Run fetched = fetch(p, cache, archive, &package);
+    scratch::expect_status(join(p, name, ": extracts"), 0, &fetched);
+    scratch::expect_text(join(p, name, ": the same tree, modes and bytes"),
+                         text(p, format::push(&p->io->arena, "listing \"", folder, "\"").data),
+                         text(p, format::push(&p->io->arena, "listing \"", package, "\" 2>/dev/null").data));
+}
+
+// 1. The source tree and each format of its archive.
+export void test_untar_tar_ustar(io::Io *io) {
+    scratch::Project p = untar_project(io);
+    setup(&p, "make_a_tar");
+    same(&p, "tar (ustar)", "a", "arc/a.tar", "src/pkg-1.0");
+}
+
+export void test_untar_tar_pax(io::Io *io) {
+    scratch::Project p = untar_project(io);
+    setup(&p, "make_src; (cd src && tar --format pax -cf \"$arc/pax.tar\" pkg-1.0)");
+    same(&p, "tar (pax)", "a", "arc/pax.tar", "src/pkg-1.0");
+}
+
+export void test_untar_tar_gnu(io::Io *io) {
+    scratch::Project p = untar_project(io);
+    setup(&p, "make_src; (cd src && tar --format gnutar -cf \"$arc/gnu.tar\" pkg-1.0)");
+    same(&p, "tar (gnu)", "a", "arc/gnu.tar", "src/pkg-1.0");
+}
+
+export void test_untar_tar_gz(io::Io *io) {
+    scratch::Project p = untar_project(io);
+    setup(&p, "make_a_tar; gzip -c \"$arc/a.tar\" >\"$arc/a.tar.gz\"");
+    same(&p, "tar.gz", "a", "arc/a.tar.gz", "src/pkg-1.0");
+}
+
+export void test_untar_tar_gz_gzip_1(io::Io *io) {
+    scratch::Project p = untar_project(io);
+    setup(&p, "make_a_tar; gzip -1 -c \"$arc/a.tar\" >\"$arc/fast.tar.gz\"");
+    same(&p, "tar.gz (gzip -1)", "a", "arc/fast.tar.gz", "src/pkg-1.0");
+}
+
+export void test_untar_tar_gz_gzip_9(io::Io *io) {
+    scratch::Project p = untar_project(io);
+    setup(&p, "make_a_tar; gzip -9 -c \"$arc/a.tar\" >\"$arc/best.tar.gz\"");
+    same(&p, "tar.gz (gzip -9)", "a", "arc/best.tar.gz", "src/pkg-1.0");
+}
+
+export void test_untar_tgz_with_the_file_name_in_its_header(io::Io *io) {
+    scratch::Project p = untar_project(io);
+    setup(&p, "make_a_tar; cp \"$arc/a.tar\" \"$arc/named.tar\" && gzip -c \"$arc/named.tar\" >\"$arc/named.tgz\"");
+    same(&p, "tgz with the file name in its header", "a", "arc/named.tgz", "src/pkg-1.0");
+}
+
+export void test_untar_tar_xz_crc64(io::Io *io) {
+    scratch::Project p = untar_project(io);
+    setup(&p, "make_a_tar; xz -c \"$arc/a.tar\" >\"$arc/a.tar.xz\"");
+    same(&p, "tar.xz (CRC-64)", "a", "arc/a.tar.xz", "src/pkg-1.0");
+}
+
+export void test_untar_tar_xz_crc32(io::Io *io) {
+    scratch::Project p = untar_project(io);
+    setup(&p, "make_a_tar; xz --check=crc32 -c \"$arc/a.tar\" >\"$arc/crc32.tar.xz\"");
+    same(&p, "tar.xz (CRC-32)", "a", "arc/crc32.tar.xz", "src/pkg-1.0");
+}
+
+export void test_untar_tar_xz_explicit_crc64(io::Io *io) {
+    scratch::Project p = untar_project(io);
+    setup(&p, "make_a_tar; xz --check=crc64 -c \"$arc/a.tar\" >\"$arc/crc64.tar.xz\"");
+    same(&p, "tar.xz (explicit CRC-64)", "a", "arc/crc64.tar.xz", "src/pkg-1.0");
+}
+
+export void test_untar_tar_xz_sha256(io::Io *io) {
+    scratch::Project p = untar_project(io);
+    setup(&p, "make_a_tar; xz --check=sha256 -c \"$arc/a.tar\" >\"$arc/sha256.tar.xz\"");
+    same(&p, "tar.xz (SHA-256)", "a", "arc/sha256.tar.xz", "src/pkg-1.0");
+}
+
+export void test_untar_tar_xz_no_check(io::Io *io) {
+    scratch::Project p = untar_project(io);
+    setup(&p, "make_a_tar; xz --check=none -c \"$arc/a.tar\" >\"$arc/none.tar.xz\"");
+    same(&p, "tar.xz (no check)", "a", "arc/none.tar.xz", "src/pkg-1.0");
+}
+
+export void test_untar_tar_xz_many_blocks(io::Io *io) {
+    scratch::Project p = untar_project(io);
+    setup(&p, "make_a_tar; xz -T2 --block-size=8192 -c \"$arc/a.tar\" >\"$arc/blocks.tar.xz\"");
+    same(&p, "tar.xz (many blocks)", "a", "arc/blocks.tar.xz", "src/pkg-1.0");
+}
+
+// Members and streams one after the other: cat a.gz b.gz, and xz streams with the padding xz allows between them.
+constexpr char split_a_tar[] =
+    "make_a_tar; head -c 40960 \"$arc/a.tar\" >\"$arc/first\"; tail -c +40961 \"$arc/a.tar\" >\"$arc/second\"; ";
+
+export void test_untar_tar_gz_of_two_members(io::Io *io) {
+    scratch::Project p = untar_project(io);
+    setup(&p, join(&p, split_a_tar,
+                   "gzip -c \"$arc/first\" >\"$arc/two.tar.gz\" && "
+                   "gzip -c \"$arc/second\" >>\"$arc/two.tar.gz\""));
+    same(&p, "tar.gz of two members", "a", "arc/two.tar.gz", "src/pkg-1.0");
+}
+
+export void test_untar_tar_xz_of_two_streams_with_padding(io::Io *io) {
+    scratch::Project p = untar_project(io);
+    setup(&p, join(&p, split_a_tar,
+                   "xz -c \"$arc/first\" >\"$arc/two.tar.xz\" && printf '\\0\\0\\0\\0' >>\"$arc/two.tar.xz\" "
+                   "&& xz -c \"$arc/second\" >>\"$arc/two.tar.xz\""));
+    same(&p, "tar.xz of two streams with padding", "a", "arc/two.tar.xz", "src/pkg-1.0");
+}
+
+export void test_untar_tar_gz_with_zero_padding_after_it(io::Io *io) {
+    scratch::Project p = untar_project(io);
+    setup(&p, "make_a_tar; gzip -c \"$arc/a.tar\" >\"$arc/a.tar.gz\"; cp \"$arc/a.tar.gz\" \"$arc/padded.tar.gz\" && "
+              "printf '\\0\\0\\0\\0\\0\\0\\0' >>\"$arc/padded.tar.gz\"");
+    same(&p, "tar.gz with zero padding after it", "a", "arc/padded.tar.gz", "src/pkg-1.0");
+}
+
+export void test_untar_tar_xz_with_zero_padding_after_it(io::Io *io) {
+    scratch::Project p = untar_project(io);
+    setup(&p, "make_a_tar; xz -c \"$arc/a.tar\" >\"$arc/a.tar.xz\"; cp \"$arc/a.tar.xz\" \"$arc/padded.tar.xz\" && "
+              "printf '\\0\\0\\0\\0\\0\\0\\0\\0' >>\"$arc/padded.tar.xz\"");
+    same(&p, "tar.xz with zero padding after it", "a", "arc/padded.tar.xz", "src/pkg-1.0");
+}
+
+// Data that does not compress is stored: gzip's stored blocks, and LZMA2's uncompressed chunks.
+export void test_untar_tar_gz_of_random_data_stored_blocks(io::Io *io) {
+    scratch::Project p = untar_project(io);
+    setup(&p, "make_rand; gzip -c \"$arc/rand.tar\" >\"$arc/rand.tar.gz\"");
+    same(&p, "tar.gz of random data (stored blocks)", "a", "arc/rand.tar.gz", "rand/pkg-1.0");
+}
+
+export void test_untar_tar_xz_of_random_data_uncompressed_chunks(io::Io *io) {
+    scratch::Project p = untar_project(io);
+    setup(&p, "make_rand; xz -c \"$arc/rand.tar\" >\"$arc/rand.tar.xz\"");
+    same(&p, "tar.xz of random data (uncompressed chunks)", "a", "arc/rand.tar.xz", "rand/pkg-1.0");
+}
+
+// File times are kept, to the second.
+export void test_untar_a_file_keeps_its_modification_time(io::Io *io) {
+    scratch::Project p = untar_project(io);
+    setup(&p, "make_a_tar; gzip -c \"$arc/a.tar\" >\"$arc/a.tar.gz\"");
+    const char *package = nullptr;
+    scratch::Run fetched = fetch(&p, "a", "arc/a.tar.gz", &package);
+    scratch::expect_status("times: the archive extracts", 0, &fetched);
+    scratch::expect_text("times: a file keeps its modification time", text(&p, "stat -f %m src/pkg-1.0/hello.txt"),
+                         text(&p, join(&p, "stat -f %m ", join(&p, package, "/hello.txt"))));
+}
+
+// Several top-level entries: the package is the extraction folder, as it was with tar.
+export void test_untar_several_top_level_folders_are_kept_under_their_names(io::Io *io) {
+    scratch::Project p = untar_project(io);
+    setup(&p, "mkdir -p multi/one multi/two && echo 1 >multi/one/a && echo 2 >multi/two/b && "
+              "(cd multi && tar -czf \"$arc/multi.tar.gz\" one two)");
+    const char *package = nullptr;
+    scratch::Run fetched = fetch(&p, "a", "arc/multi.tar.gz", &package);
+    scratch::expect_status("several top-level folders: the archive extracts", 0, &fetched);
+    scratch::expect_text("several top-level folders: the first is kept under its name", "1",
+                         text(&p, join(&p, "cat 2>/dev/null ", join(&p, package, "/one/a"))));
+    scratch::expect_text("several top-level folders: so is the second", "2",
+                         text(&p, join(&p, "cat 2>/dev/null ", join(&p, package, "/two/b"))));
+}
+
+// 2. Long names: a ustar name split over its prefix and name fields, a pax path, a GNU long name, and non-ASCII names.
+constexpr char make_long[] =
+    "d=pkg-1.0/$(printf 'a%.0s' $(seq 80))/$(printf 'b%.0s' $(seq 80))/$(printf 'c%.0s' $(seq 80)); "
+    "mkdir -p \"long/$d\" long/pkg-1.0/ü; echo deep >\"long/$d/file.txt\"; echo accent >long/pkg-1.0/ü/é.txt; ";
+
+export void test_untar_long_names_pax(io::Io *io) {
+    scratch::Project p = untar_project(io);
+    setup(&p, join(&p, make_long, "(cd long && tar --format pax -cf \"$arc/long-pax.tar\" pkg-1.0)"));
+    same(&p, "long names (pax)", "a", "arc/long-pax.tar", "long/pkg-1.0");
+}
+
+export void test_untar_long_names_gnu(io::Io *io) {
+    scratch::Project p = untar_project(io);
+    setup(&p, join(&p, make_long, "(cd long && tar --format gnutar -cf \"$arc/long-gnu.tar\" pkg-1.0)"));
+    same(&p, "long names (gnu)", "a", "arc/long-gnu.tar", "long/pkg-1.0");
+}
+
+export void test_untar_long_names_pax_gzip(io::Io *io) {
+    scratch::Project p = untar_project(io);
+    setup(&p, join(&p, make_long,
+                   "(cd long && tar --format pax -cf \"$arc/long-pax.tar\" pkg-1.0) && "
+                   "gzip -c \"$arc/long-pax.tar\" >\"$arc/long-pax.tar.gz\""));
+    same(&p, "long names (pax, gzip)", "a", "arc/long-pax.tar.gz", "long/pkg-1.0");
+}
+
+export void test_untar_long_names_gnu_xz(io::Io *io) {
+    scratch::Project p = untar_project(io);
+    setup(&p, join(&p, make_long,
+                   "(cd long && tar --format gnutar -cf \"$arc/long-gnu.tar\" pkg-1.0) && "
+                   "xz -c \"$arc/long-gnu.tar\" >\"$arc/long-gnu.tar.xz\""));
+    same(&p, "long names (gnu, xz)", "a", "arc/long-gnu.tar.xz", "long/pkg-1.0");
+}
+
+export void test_untar_long_names_ustar_prefix_field(io::Io *io) {
+    scratch::Project p = untar_project(io);
+    setup(&p, "p90=$(printf 'p%.0s' $(seq 90)); q90=$(printf 'q%.0s' $(seq 90)); "
+              "mkdir -p \"prefix/top/$p90/$q90\" && echo prefixed >\"prefix/top/$p90/$q90/file\" && "
+              "(cd prefix && tar --format ustar -cf \"$arc/prefix.tar\" top)");
+    const char *package = nullptr;
+    scratch::Run fetched = fetch(&p, "a", "arc/prefix.tar", &package);
+    scratch::expect_status("long names (ustar prefix field): the archive extracts", 0, &fetched);
+    scratch::expect_text(
+        "long names (ustar prefix field)", "prefixed",
+        text(&p, join(&p, "p90=$(printf 'p%.0s' $(seq 90)); q90=$(printf 'q%.0s' $(seq 90)); cat 2>/dev/null ",
+                      join(&p, package, "/$p90/$q90/file"))));
+}

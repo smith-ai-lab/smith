@@ -1,0 +1,100 @@
+# Sourced by the archive tests (tests/untar_*_test.smith): $PWD is the project, where the archives are made.
+# The xz archives are made by tests/xz.py, which writes the container and lets Python's lzma module compress the blocks
+# (macOS has no xz, and Homebrew's is not relied on).
+here=$SMITH_REPO
+xz() { "${PYTHON:-/usr/bin/python3}" -I "$here/tests/xz.py" "$@"; }
+export COPYFILE_DISABLE=1 # macOS tar would add AppleDouble ._ entries for extended attributes
+work=$PWD
+src=$PWD/src
+arc=$PWD/arc
+mkdir -p "$arc"
+
+# The files of a tree: type, permission bits and size, then the bytes by checksum. Equal listings are equal trees.
+listing() {
+    (cd "$1" && find . -type f -exec sh -c 'for f; do printf "%s %s %s " "$(stat -f "%Sp %z" "$f")" "$f" "$(shasum -a 256 <"$f" | cut -c1-16)"; echo; done' sh {} + | sort
+        find . -type l -exec sh -c 'for f; do echo "link $f -> $(readlink "$f")"; done' sh {} + | sort
+        find . -type d | sort)
+}
+
+# The source tree: modes, an empty file, a big compressible file, a random file, relative symlinks.
+make_src() {
+    mkdir -p "$src/pkg-1.0/bin" "$src/pkg-1.0/lib/deep" "$src/pkg-1.0/empty-folder"
+    printf 'hello package\n' >"$src/pkg-1.0/hello.txt"
+    printf '#!/bin/sh\necho tool ran\n' >"$src/pkg-1.0/bin/tool"
+    chmod 755 "$src/pkg-1.0/bin/tool"
+    : >"$src/pkg-1.0/empty"
+    printf 'private\n' >"$src/pkg-1.0/lib/secret"
+    chmod 640 "$src/pkg-1.0/lib/secret"
+    printf 'read only\n' >"$src/pkg-1.0/lib/readonly"
+    chmod 444 "$src/pkg-1.0/lib/readonly"
+    awk 'BEGIN { for (i = 0; i < 2000; i++) printf "line %d of text that repeats and compresses well\n", i % 17 }' >"$src/pkg-1.0/lib/text.txt"
+    head -c 3000 /dev/urandom >"$src/pkg-1.0/lib/deep/random.bin"
+    ln -s ../hello.txt "$src/pkg-1.0/lib/hello-link"
+    ln -s lib "$src/pkg-1.0/libs"
+    ln -s ../../hello.txt "$src/pkg-1.0/lib/deep/up-two"
+}
+
+# The source tree and its plain tar, a.tar (ustar).
+make_a_tar() {
+    make_src
+    (cd "$src" && tar --format ustar -cf "$arc/a.tar" pkg-1.0)
+}
+
+# A tree of 200000 random bytes and its tar, rand.tar.
+make_rand() {
+    mkdir -p "$PWD/rand/pkg-1.0"
+    head -c 200000 /dev/urandom >"$PWD/rand/pkg-1.0/random.bin"
+    (cd "$PWD/rand" && tar -cf "$arc/rand.tar" pkg-1.0)
+}
+
+# The hostile tree, from which tar -P and -s write the names it would normally refuse.
+hostile_tree() {
+    h=$PWD/hostile
+    mkdir -p "$h/pkg-1.0" "$PWD/target"
+    echo hi >"$h/pkg-1.0/a.txt"
+    ln -s ../../outside "$h/pkg-1.0/escape"
+    ln -s /etc/passwd "$h/pkg-1.0/absolute"
+    ln -s . "$h/pkg-1.0/self"
+    ln -s a/../b "$h/pkg-1.0/dotdot"
+    ln -s ../../../../../x "$h/pkg-1.0/far"
+    mkfifo "$h/pkg-1.0/fifo"
+    ln -s ../../../../.. "$h/pkg-1.0/to-root"
+}
+
+# Changes the byte at an offset (negative counts from the end) of a file into a copy, so that only a check can notice.
+flip() { # file, offset, output
+    size=$(wc -c <"$1" | tr -d ' ')
+    at=$2
+    [ "$at" -lt 0 ] && at=$((size + at))
+    cp "$1" "$3"
+    byte=$(dd if="$1" bs=1 skip="$at" count=1 2>/dev/null | od -An -tu1 | tr -d ' ')
+    printf "$(printf '\\%03o' $(((byte + 1) % 256)))" | dd of="$3" bs=1 seek="$at" conv=notrunc 2>/dev/null
+}
+
+# tests/untar.c under AddressSanitizer and UndefinedBehaviorSanitizer, as ./untar.
+build_untar() {
+    smith cc -std=gnu23 -g -O1 -fsanitize=address,undefined -fno-sanitize-recover=undefined -Wall -Wextra -Werror \
+        -Wno-unused-function -I "$here/include" "$here/tests/untar.c" "$here/lib/smith/arena.smith" \
+        "$here/lib/smith/contract.smith" "$here/lib/smith/inflate.smith" "$here/lib/smith/io.smith" \
+        "$here/lib/smith/random.smith" -o "$PWD/untar"
+}
+
+# Smaller seeds, so that every prefix is quick: a few files and a short random one, in seeds/.
+make_seeds() {
+    mkdir -p "$PWD/seed/pkg-1.0/lib" "$PWD/seeds"
+    printf 'hello\n' >"$PWD/seed/pkg-1.0/hello.txt"
+    awk 'BEGIN { for (i = 0; i < 400; i++) printf "line %d of text that repeats\n", i % 7 }' >"$PWD/seed/pkg-1.0/lib/text.txt"
+    head -c 1500 /dev/urandom >"$PWD/seed/pkg-1.0/lib/random.bin"
+    ln -s ../hello.txt "$PWD/seed/pkg-1.0/lib/link"
+    (cd "$PWD/seed" && tar --format pax -cf "$work/seeds/seed.tar" pkg-1.0)
+    gzip -c "$PWD/seeds/seed.tar" >"$PWD/seeds/seed.tar.gz"
+    head -c 3000 /dev/urandom | gzip -c >"$PWD/seeds/single.gz"
+    xz --check=crc64 -c "$PWD/seeds/seed.tar" >"$PWD/seeds/seed.tar.xz"
+    xz --check=sha256 -c "$PWD/seeds/seed.tar" >"$PWD/seeds/sha256.tar.xz"
+    mkdir -p "$PWD/scratch" "$PWD/untar-out"
+}
+
+# Every prefix of a plain tar is extracted with the sanitizers on, which takes most of the time, so by default every 5th
+# is, with all the ones near a block boundary and in the first two blocks; UNTAR_FULL=1 tries every one (issue #31).
+prefix_step=5
+[ -z "${UNTAR_FULL:-}" ] || prefix_step=1
