@@ -11,7 +11,7 @@
 #     told where the static libraries are instead.
 set -eu
 bitwuzla=$1 meson=$2 python=$3 ninja=$4 gmp=$5 mpfr=$6 cadical=$7 symfpu=$8
-cache=${XDG_CACHE_HOME:-$HOME/.cache}/smith/llvm/${SMITH_LLVM_NAME:-23.1.3-r8}
+cache=${XDG_CACHE_HOME:-$HOME/.cache}/smith/llvm/${SMITH_LLVM_NAME:-23.1.3-r9}
 out=$cache/prove
 export SDKROOT=$(xcrun --show-sdk-path)
 mkdir -p "$out/lib" "$out/include"
