@@ -58,7 +58,7 @@ done
 # The editor: clangd shows the same error, for C and for `.smith`.
 for name in affine_second_use.c affine_second_use.smith; do
     total=$((total + 1))
-    if smith lsp --check="$here/tests/affine/$name" 2>&1 | grep -q "smith-affine: 'key' is used again"; then
+    if timeout -s KILL 120 smith lsp --check="$here/tests/affine/$name" 2>&1 | grep -q "smith-affine: 'key' is used again"; then
         echo "ok    lsp $name"
     else
         failures=$((failures + 1))
@@ -69,7 +69,7 @@ done
 # The narrowing of a payload enum (#198) shows in the editor too (for C: clangd hangs on a `.smith` payload enum).
 for name in enum_tagged.c; do
     total=$((total + 1))
-    if smith lsp --check="$here/tests/affine/$name" 2>&1 | grep -q "smith-enum: 's.circle' is read where"; then
+    if timeout -s KILL 120 smith lsp --check="$here/tests/affine/$name" 2>&1 | grep -q "smith-enum: 's.circle' is read where"; then
         echo "ok    lsp $name"
     else
         failures=$((failures + 1))

@@ -42,7 +42,7 @@ constexpr int lsp_wait_milliseconds =
     60000; // of the server's CPU time, for a reply (wall time is only the 10 minute backstop)
 constexpr int lsp_quiet_milliseconds = 600; // wall time on purpose: a settle. A server idle this long has said all it
                                             // will about a file; CPU time it spends restarts the count
-constexpr int lsp_retry_limit = 2400;       // attempts 250 ms apart: ten minutes of wall time, the backstop for a hang
+constexpr int lsp_retry_limit = 100; // attempts 250 ms apart: a server that is idle and still wrong fails in 25 s
 constexpr int lsp_retry_cpu_milliseconds = 10000; // of the server's CPU time (indexing) the retries wait for
 
 static int lsp_to_server = -1;
@@ -62,7 +62,7 @@ typedef struct {
 static LspFile lsp_files[lsp_slot_count];
 static size_t lsp_file_count;
 
-static void lsp_fail(const char *what, const char *detail) {
+[[noreturn]] static void lsp_fail(const char *what, const char *detail) {
     fprintf(stderr, "lsp_client: %s%s%s\n", what, detail[0] != '\0' ? ": " : "", detail);
     exit(1);
 }
@@ -328,13 +328,28 @@ static void lsp_first_location(char *out, size_t capacity) {
     snprintf(out, capacity, "%.*s:%d:%d", (int)(end - uri), uri, line, column);
 }
 
+// The retries ended without the answer: say what was waited for and what came, and stop the test (a regression must not
+// look like a hang).
+[[noreturn]] static void lsp_fail_waiting(const char *file, const char *line, const char *column, const char *expected,
+                                          const char *last) {
+    char what[1024];
+    snprintf(what, sizeof what,
+             "gave up waiting for the definition of %s:%s:%s to end in '%s'; the last answer was '%s'", file, line,
+             column, expected, last);
+    lsp_fail(what, "");
+}
+
 static void lsp_command_definition(const char *file, const char *line, const char *column, const char *expected) {
     char params[1024];
     char where[1024];
     lsp_position_params(params, sizeof params, file, line, column, "");
     uint64_t cpu_began = cpu_wait_cpu_ns(lsp_server_pid);
+    where[0] = '\0';
     for (int attempt = 0; attempt < lsp_retry_limit; attempt++) {
-        if ((cpu_wait_cpu_ns(lsp_server_pid) - cpu_began) / 1000000 >= (uint64_t)lsp_retry_cpu_milliseconds) break;
+        if ((cpu_wait_cpu_ns(lsp_server_pid) - cpu_began) / 1000000 >= (uint64_t)lsp_retry_cpu_milliseconds) {
+            if (expected != nullptr) lsp_fail_waiting(file, line, column, expected, where);
+            break;
+        }
         lsp_request("textDocument/definition", params);
         lsp_first_location(where, sizeof where);
         size_t have = strlen(where);
@@ -342,6 +357,7 @@ static void lsp_command_definition(const char *file, const char *line, const cha
         if (expected == nullptr || (have >= want && strcmp(where + have - want, expected) == 0)) break;
         struct timespec pause = {.tv_sec = 0, .tv_nsec = 250000000};
         nanosleep(&pause, nullptr);
+        if (attempt + 1 == lsp_retry_limit) lsp_fail_waiting(file, line, column, expected, where);
     }
     printf("definition %s:%s:%s -> %s\n", file, line, column, where);
 }
