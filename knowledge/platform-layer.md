@@ -40,6 +40,7 @@ includes:
 On Linux `smith.c` also defines `_GNU_SOURCE` before its first include, because glibc hides `nftw`'s `FTW_PHYS` and
 `wait4` from plain C23 and macOS does not.
 
-What still differs and has no Linux side yet is listed in issue #305's spike report: the LLVM build's post-install
-steps, the link of smith itself, the symbolizer, the prover's process accounting, `smith::io`, and lldb's
-debugserver.
+lldb's debug server differs too: macOS's lldb runs the system's debugserver, which Apple signs; on Linux smith is
+lldb-server itself, a clone in the programs folder ([debugger](debugger.md)). The LLVM build's post-install steps are
+`scripts/llvm_linux.smith` and smith's own link is `build.c`'s `BuildPlatform` table. What still has no Linux side is
+listed in issue #305: the symbolizer, the prover's process accounting and `smith::io`.

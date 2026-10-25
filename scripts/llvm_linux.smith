@@ -287,7 +287,7 @@ static void make_tools(void) {
     archive(path("%s/libsmithtools.a", lib, ""), path("%s/out/*.o", work, ""));
 }
 
-// Step 3, lldb (scripts/llvm.sh says why): libsmithlldb.a holds the SB API's objects and the two mains renamed, and
+// Step 3, lldb (scripts/llvm.sh says why): libsmithlldb.a holds the SB API's objects and the three mains renamed, and
 // lldb's static archives are copied into the install, all with their initializers deferred to __smith_lldb.
 static void make_lldb(void) {
     char lldb[path_max];
@@ -304,6 +304,17 @@ static void make_lldb(void) {
     run((const char *[]){tool("llvm-objcopy"), "--redefine-sym", "main=smith_lldb_dap_tool_main",
                          path("%s/tools/lldb-dap/tool/CMakeFiles/lldb-dap.dir/lldb-dap.cpp.o", lldb, ""),
                          path("%s/objects/lldb-dap.o", work, ""), nullptr});
+    // lldb-server, which lldb starts to debug a process on Linux: smith runs it as a clone named lldb-server.
+    char server[path_max];
+    join(server, "%s/tools/lldb-server/CMakeFiles/lldb-server.dir", lldb, "");
+    run((const char *[]){tool("llvm-objcopy"), "--redefine-sym", "main=smith_lldb_server_tool_main",
+                         path("%s/lldb-server.cpp.o", server, ""), path("%s/objects/lldb-server.o", work, ""),
+                         nullptr});
+    static const char *const server_objects[] = {"LLDBServerUtilities", "lldb-gdbserver", "lldb-platform",
+                                                 "SystemInitializerLLGS"};
+    for (size_t i = 0; i < sizeof server_objects / sizeof server_objects[0]; i++)
+        run((const char *[]){"cp", path("%s/%s.cpp.o", server, server_objects[i]),
+                             path("%s/objects/server_%s.o", work, server_objects[i]), nullptr});
     glob_t api = {};
     glob(path("%s/source/API/CMakeFiles/liblldb.dir/*.o", lldb, ""), 0, nullptr, &api);
     for (size_t i = 0; i < api.gl_pathc; i++)

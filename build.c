@@ -55,6 +55,7 @@ struct BuildPlatform {
     const char *const *system_libraries; // last: the C++ library and the platform's own
     const char *const *pack_libraries;   // scripts/pack.c's (libcompression on macOS)
     const char *pack_runtime;            // the files of the LLVM install, besides clang's headers, that are packed
+    bool lldb_server; // smith is lldb-server too (shim/lldb_server.cpp): macOS's lldb runs the system's debugserver
 };
 
 static const BuildPlatform build_platform_macos = {
@@ -83,6 +84,7 @@ static const BuildPlatform build_platform_linux = {
                                               "-lpthread", "-ldl", "-lrt", nullptr},
     .pack_libraries = (const char *const[]){nullptr},
     .pack_runtime = "lib/clang/*/lib/*-linux-gnu/*",
+    .lldb_server = true,
 };
 
 // Whether this build runs on Linux (issue #305): smith build llvm has its own recipe there (scripts/llvm_linux.smith)
@@ -439,22 +441,24 @@ static SmithObject build_commit_object(SmithBuild *b, const BuildConfig *config,
 // Everything smith links beside smith.c when clang is inside: the packed data, the shims of the compiler, the linker
 // and the tools, and the prover when its libraries are there. `list` gets pointers to them, ended by nullptr.
 typedef struct {
-    SmithObject objects[15];
+    SmithObject objects[16];
     BuildProver prove;
 } BuildShims;
 
 static void build_shims(SmithBuild *b, const BuildConfig *config, const char *folder, const char *pack,
                         BuildShims *shims, const SmithObject **list) {
     build_pack_data(b, config, folder, pack, &shims->objects[0]);
-    const char *const sources[] = {"clang",        "lld",         "format", "tidy",         "clangd",
-                                   "symbolize",    "hook",        "lsp",    "lldb",         "lldb_dap",
-                                   "lldb_explain", "lldb_slices", "affine", "effects_infer"};
+    const char *const sources[] = {"clang",        "lld",         "format", "tidy",          "clangd",
+                                   "symbolize",    "hook",        "lsp",    "lldb",          "lldb_dap",
+                                   "lldb_explain", "lldb_slices", "affine", "effects_infer", "lldb_server"};
     size_t count = 0;
     for (size_t i = 0; i < sizeof sources / sizeof sources[0]; i++) {
         bool is_hook = strcmp(sources[i], "hook") == 0 || strcmp(sources[i], "lsp") == 0 ||
                        strcmp(sources[i], "affine") == 0 || strcmp(sources[i], "effects_infer") == 0;
         bool is_lldb = strncmp(sources[i], "lldb", 4) == 0;
-        if ((is_hook && !config->hook) || (is_lldb && !config->lldb)) continue;
+        bool is_server = strcmp(sources[i], "lldb_server") == 0;
+        if ((is_hook && !config->hook) || (is_lldb && !config->lldb) || (is_server && !config->platform->lldb_server))
+            continue;
         build_shim(b, config, folder, smith_fmt(b, "shim/%s.cpp", sources[i]), smith_fmt(b, "%s_shim", sources[i]),
                    &shims->objects[count + 1]);
         count += 1;
