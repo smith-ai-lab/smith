@@ -45,6 +45,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <cstring>
 #include <functional>
 #include <map>
 #include <memory>
@@ -202,6 +203,7 @@ struct Node {
     uint32_t inferred = 0;
     uint32_t declared = 0;
     bool annotated = false;
+    bool grows = false; // a variable-length array or alloca: the frame is not one size
     std::string symbol;
 };
 
@@ -269,7 +271,17 @@ class Collector {
     void visit(const Stmt *statement) {
         if (const auto *attributed = dyn_cast<AttributedStmt>(statement)) {
             noteTail(attributed);
+        } else if (const auto *declarations = dyn_cast<DeclStmt>(statement)) {
+            for (const Decl *decl : declarations->decls()) {
+                if (const auto *var = dyn_cast<VarDecl>(decl))
+                    node.grows = node.grows || var->getType()->isVariablyModifiedType();
+            }
         } else if (const auto *call = dyn_cast<CallExpr>(statement)) {
+            if (const FunctionDecl *callee = call->getDirectCallee()) {
+                llvm::StringRef called = callee->getName();
+                node.grows = node.grows || called == "alloca" || called == "__builtin_alloca" ||
+                             called == "__builtin_alloca_with_align";
+            }
             onCall(call);
         } else if (isa<ObjCMessageExpr>(statement)) {
             leaf(statement->getBeginLoc(), C, "an Objective-C message");
@@ -616,7 +628,9 @@ class Analysis {
     // smith asked for it. An object compiled without it has no `S` lines, and the program's stack is then unknown.
     std::string frames() {
         std::string base = output.substr(0, output.size() - 2);
-        auto buffer = llvm::MemoryBuffer::getFile(base + ".su");
+        const char *asked = getenv("SMITH_STACK_USAGE_ADDED"); // "1": beside the object; else the file the driver chose
+        std::string file = asked != nullptr && asked[0] != '\0' && std::strcmp(asked, "1") != 0 ? asked : base + ".su";
+        auto buffer = llvm::MemoryBuffer::getFile(file);
         if (!buffer) return "";
         std::map<std::string, std::pair<std::string, std::string>> sizes;
         llvm::SmallVector<llvm::StringRef, 64> lines;
@@ -637,10 +651,12 @@ class Analysis {
                 }
             }
             if (colon == 0) continue;
-            sizes[head.substr(colon).str()] = {field[1].str(), field[2].str()};
+            std::string key = head.substr(colon).str();
+            if (!key.empty() && key[0] == '\x01') key.erase(0, 1); // an asm label's marker
+            sizes[key] = {field[1].str(), field[2].str()};
         }
         if (ownSizes) {
-            std::error_code ignored = llvm::sys::fs::remove(base + ".su");
+            std::error_code ignored = llvm::sys::fs::remove(file);
             (void)ignored;
         }
         std::string text;
@@ -650,8 +666,12 @@ class Analysis {
                 node.symbol.substr(node.symbol.find('#') == std::string::npos ? 0 : node.symbol.find('#') + 1);
             auto found = sizes.find(name);
             if (found == sizes.end() && !name.empty() && name[0] == '_') found = sizes.find(name.substr(1));
+            if (found == sizes.end()) found = sizes.find("_" + name); // a module's export, named by its asm label
             if (found == sizes.end()) continue;
-            text += "S\t" + node.symbol + "\t" + found->second.first + "\t" + found->second.second + "\n";
+            // The backend calls a frame `dynamic` for more than a run-time size (a sanitizer's realigned arrays), so
+            // the kind is what the body says.
+            text +=
+                "S\t" + node.symbol + "\t" + found->second.first + "\t" + (node.grows ? "dynamic" : "static") + "\n";
         }
         if (text.empty()) return "";
         return text + "H\t" + flags + "\n";
@@ -873,9 +893,10 @@ class Program {
     // The worst-case stack of every function with a frame, written to `path` (skill smith-lang-effects): its own frame
     // plus the deepest of its callees, over the merged call graph. A tail call that closes a cycle leaves it no
     // deeper; any other cycle, and a frame that grows at run time, make it `unbounded`. A call into code with no
-    // source (a leaf with effects, a pointer call, a function no summary defines) is not measured: the function adds
-    // `slack` bytes for it and the row names what it calls. Nothing is written when no object had frame sizes.
-    void writeStack(const std::string &path, long slack) {
+    // source (a leaf with effects, a pointer call, a function no summary defines) is not measured: the row says
+    // `at least N + unknown (calls: printf, qsort)`, and what to do with an unknown is the task runtime's to decide
+    // (#241). Nothing is written when no object had frame sizes.
+    void writeStack(const std::string &path) {
         bool any = false;
         for (const auto &entry : functions)
             any = any || entry.second.frame >= 0;
@@ -911,21 +932,19 @@ class Program {
         text += "# build:";
         for (const std::string &build : builds)
             text += " [" + build + "]";
-        text +=
-            "\n# slack: " + std::to_string(slack) + " bytes for the calls of code with no source (SMITH_STACK_SLACK)\n";
-        text += "# columns: function, worst bytes (or unbounded), bytes without slack, calls of code with no source, "
+        text += "\n# columns: function, stack (bytes; `at least N + unknown (calls: ...)` when it calls code with no "
+                "source), "
                 "deepest path\n";
         for (const auto &entry : functions) {
             if (entry.second.frame < 0 || depths.count(entry.first) == 0) continue;
             const Depth &depth = depths[entry.first];
             std::string outside;
             for (const std::string &name : depth.outside)
-                outside += (outside.empty() ? "" : ",") + name;
-            text += entry.second.name + "\t" +
-                    (depth.unbounded ? std::string("unbounded")
-                                     : std::to_string(depth.bytes + (depth.outside.empty() ? 0 : slack))) +
-                    "\t" + std::to_string(depth.bytes) + "\t" + (outside.empty() ? "-" : outside) + "\t" + depth.path +
-                    "\n";
+                outside += (outside.empty() ? "" : ", ") + name;
+            std::string stack = std::to_string(depth.bytes);
+            if (!outside.empty()) stack = "at least " + stack + " + unknown (calls: " + outside + ")";
+            if (depth.unbounded) stack = "unbounded";
+            text += entry.second.name + "\t" + stack + "\t" + depth.path + "\n";
         }
         std::string temporary = path + ".part" + std::to_string(getpid());
         std::error_code error;
@@ -1056,10 +1075,7 @@ extern "C" int smith_effects_check(int count, char **files, const char *stack) {
     if (!any) return 0;
     if (program.check() > 0) return 1;
     if (stack != nullptr) {
-        const char *text = getenv("SMITH_STACK_SLACK");
-        long slack = 65536;
-        if (text != nullptr && *text != '\0') slack = std::strtol(text, nullptr, 10);
-        program.writeStack(stack, slack);
+        program.writeStack(stack);
     }
     return 0;
 }
