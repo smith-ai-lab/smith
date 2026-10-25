@@ -268,8 +268,9 @@ class Collector {
   public:
     using Symbols = std::function<std::string(const FunctionDecl *)>;
 
-    Collector(Node &node, const SourceManager &sm, Symbols symbols, Symbols names)
-        : node(node), sm(sm), symbols(std::move(symbols)), names(std::move(names)) {}
+    Collector(Node &node, const SourceManager &sm, Symbols symbols, Symbols names,
+              std::vector<const StaticAssertDecl *> &asserts)
+        : node(node), sm(sm), symbols(std::move(symbols)), names(std::move(names)), asserts(asserts) {}
 
     void walk(const Stmt *body) {
         std::vector<const Stmt *> work{body};
@@ -287,7 +288,8 @@ class Collector {
     Node &node;
     const SourceManager &sm;
     Symbols symbols;
-    Symbols names;                    // how a function is shown in a chain
+    Symbols names;                                  // how a function is shown in a chain
+    std::vector<const StaticAssertDecl *> &asserts; // the static_asserts of the body, for effects::within
     std::set<const CallExpr *> tails; // the calls of `[[clang::musttail]] return` statements, met before the calls
 
     // The call a `[[clang::musttail]] return f(...);` makes, remembered: an attributed statement is visited before its
@@ -306,6 +308,7 @@ class Collector {
             noteTail(attributed);
         } else if (const auto *declarations = dyn_cast<DeclStmt>(statement)) {
             for (const Decl *decl : declarations->decls()) {
+                if (const auto *assertion = dyn_cast<StaticAssertDecl>(decl)) asserts.push_back(assertion);
                 if (const auto *var = dyn_cast<VarDecl>(decl))
                     node.grows = node.grows || var->getType()->isVariablyModifiedType();
             }
@@ -430,7 +433,8 @@ void editorWritten(const std::string &source) {
 }
 
 struct EditorViolation {
-    std::string name, place, kind, extra, chain;
+    std::string name, place, kind, extra, chain, message;
+    int ordinal;
 };
 struct EditorHover {
     std::string symbol;
@@ -448,6 +452,12 @@ class Analysis {
         bad =
             engine.getCustomDiagID(DiagnosticsEngine::Error, "smith-effect: `%0` is %1, but it has the effects %2: %3");
         note = engine.getCustomDiagID(DiagnosticsEngine::Note, "%0");
+        assertion = engine.getCustomDiagID(
+            DiagnosticsEngine::Error,
+            "smith-effect: static assertion failed: %0: `%1` has the effects %2 beyond the allowed ones: %3");
+        misuse = engine.getCustomDiagID(DiagnosticsEngine::Error,
+                                        "smith-effect: effects::within takes the name of a function and a constant set "
+                                        "of effects, as `effects::within(f, effects::alloc)`");
         recursion = engine.getCustomDiagID(
             DiagnosticsEngine::Error, "smith-effect: recursion in a module: %0 (write a loop; a call that ends the "
                                       "function can be `[[clang::musttail]] return f(...);`)");
@@ -461,6 +471,7 @@ class Analysis {
             if (node.annotated && inMain(node.function)) check(node);
         }
         if (isModule()) checkRecursion();
+        checkAssertions();
         attachHover();
         writeSummary();
         if (syntaxOnly && output.empty() && getenv("SMITH_EFFECTS_OBJECT") == nullptr) checkInEditor();
@@ -469,7 +480,7 @@ class Analysis {
   private:
     ASTContext &context;
     DiagnosticsEngine &engine;
-    unsigned bad, note, recursion;
+    unsigned bad, note, recursion, assertion, misuse;
     ASTNameGenerator generator;
     bool syntaxOnly;       // a parse that only reads the file (the editor's, not the preamble's)
     std::string output;    // the object file being written: the summary goes beside it, `<object>.fx`
@@ -477,6 +488,16 @@ class Analysis {
     std::string flags;     // what the frame sizes are for: `opt=0 sanitize=address,undefined`
     std::map<const FunctionDecl *, Node> nodes;
     std::vector<const FunctionDecl *> order;
+    std::vector<const StaticAssertDecl *> asserts;
+
+    // A `static_assert(effects::within(f, mask), "...")` of the file whose set cannot be judged here: `f` has no body
+    // in this unit and is the project's, so the program's check judges it (a `W` line of the summary).
+    struct Deferred {
+        std::string target, name, message;
+        uint32_t mask;
+        SourceLocation loc;
+    };
+    std::vector<Deferred> deferred;
 
     // The linkage name a call to the function is known by in another file (the asm label of a module's export
     // included); a function with internal linkage is only this file's, so its name carries the file's.
@@ -533,9 +554,11 @@ class Analysis {
                 node.symbol = symbolOf(function);
                 Collector(
                     node, context.getSourceManager(), [this](const FunctionDecl *f) { return symbolOf(f); },
-                    [this](const FunctionDecl *f) { return shownName(f); })
+                    [this](const FunctionDecl *f) { return shownName(f); }, asserts)
                     .walk(function->getBody());
                 order.push_back(function);
+            } else if (const auto *assertion = dyn_cast<StaticAssertDecl>(decl)) {
+                asserts.push_back(assertion);
             } else if (const auto *linkage = dyn_cast<LinkageSpecDecl>(decl)) {
                 collect(linkage);
             }
@@ -702,6 +725,86 @@ class Analysis {
         return text;
     }
 
+    // `static_assert(effects::within(f, mask), "...")` (skill smith-lang-effects): the lowering and the compiler read
+    // the call as true (the function takes any arguments and says yes); the effects of `f` exist only now, so the
+    // assertion is judged here. A function of this unit is judged at once, a system function by the table, one
+    // with an attribute by it, and a project function with no body here by the program's check (a `W` line).
+    void checkAssertions() {
+        for (const StaticAssertDecl *decl : asserts) {
+            std::vector<const Expr *> work{decl->getAssertExpr()};
+            while (!work.empty()) {
+                const Expr *expr = work.back()->IgnoreParenImpCasts();
+                work.pop_back();
+                const auto *call = dyn_cast<CallExpr>(expr);
+                const FunctionDecl *callee = call == nullptr ? nullptr : call->getDirectCallee();
+                if (callee != nullptr && shownName(callee) == "smith::effects::within") {
+                    judgeWithin(decl, call);
+                    continue;
+                }
+                for (const Stmt *child : expr->children()) {
+                    if (const auto *sub = dyn_cast_or_null<Expr>(child)) work.push_back(sub);
+                }
+            }
+        }
+    }
+
+    void judgeWithin(const StaticAssertDecl *decl, const CallExpr *call) {
+        const Expr *first = call->getNumArgs() == 2 ? call->getArg(0)->IgnoreParenImpCasts() : nullptr;
+        if (const auto *address = dyn_cast_or_null<UnaryOperator>(first)) {
+            if (address->getOpcode() == UO_AddrOf) first = address->getSubExpr()->IgnoreParenImpCasts();
+        }
+        const auto *reference = dyn_cast_or_null<DeclRefExpr>(first);
+        const FunctionDecl *target = reference == nullptr ? nullptr : dyn_cast<FunctionDecl>(reference->getDecl());
+        Expr::EvalResult mask;
+        if (target == nullptr || !call->getArg(1)->EvaluateAsInt(mask, context)) {
+            engine.Report(call->getBeginLoc(), misuse);
+            return;
+        }
+        uint32_t allowed = static_cast<uint32_t>(mask.Val.getInt().getZExtValue());
+        std::string message;
+        if (const auto *text = dyn_cast_or_null<StringLiteral>(decl->getMessage())) message = text->getString().str();
+        SourceLocation loc = decl->getBeginLoc();
+        const FunctionDecl *definition = target->getDefinition();
+        auto found = definition == nullptr ? nodes.end() : nodes.find(definition);
+        uint32_t set = 0;
+        std::string chainText;
+        if (found != nodes.end()) {
+            const Node &node = found->second;
+            set = node.annotated ? node.declared : node.inferred;
+            uint32_t extra = set & ~allowed;
+            if (extra == 0) return;
+            chainText = shownName(node.function);
+            if (node.annotated) {
+                chainText += " (declared " + describe(node.declared) + ")";
+            } else {
+                for (const Name &name : names) {
+                    if ((extra & name.bit) == 0 || witness(node, name.bit) == nullptr) continue;
+                    chainText = chain(node, name.bit);
+                    break;
+                }
+            }
+        } else {
+            std::string name = target->getNameAsString();
+            bool builtin = llvm::StringRef(name).starts_with("__builtin_") || target->getBuiltinID() != 0;
+            if (declaredSet(target, set) || lookup(name, set)) {
+                chainText = shownName(target) + " (declared or known to the table)";
+            } else if (!builtin && !context.getSourceManager().isInSystemHeader(target->getLocation())) {
+                std::string clean = message;
+                for (char &c : clean) {
+                    if (c == '\t' || c == '\n') c = ' ';
+                }
+                deferred.push_back({symbolOf(target), shownName(target), clean, allowed, loc});
+                return;
+            } else {
+                set = builtin ? None : C;
+                chainText = shownName(target) + " (no source)";
+            }
+        }
+        uint32_t extra = set & ~allowed;
+        if (extra == 0) return;
+        engine.Report(loc, assertion) << message << shownName(target) << describe(extra) << chainText;
+    }
+
     void check(const Node &node) {
         uint32_t extra = node.inferred & ~node.declared;
         if (extra == 0) return;
@@ -846,6 +949,10 @@ class Analysis {
             }
         }
         text += frames(); // the sizes of the frames, when the compile wrote them
+        for (const Deferred &w : deferred) {
+            text += "W\t" + w.target + "\t" + std::to_string(w.mask) + "\t" + place(w.loc) + "\t" + w.message + "\t" +
+                    w.name + "\n";
+        }
         return text;
     }
 
@@ -1045,6 +1152,13 @@ struct Function {
     std::vector<Edit> edges;
 };
 
+// A `W` line: `effects::within(target, mask)` in a static_assert whose target the file could not judge.
+struct Assertion {
+    std::string label, target, place, message, name;
+    uint32_t mask = 0;
+    int ordinal = 0; // among the W lines of its summary, in order
+};
+
 class Program {
   public:
     bool read(const char *path) {
@@ -1072,6 +1186,20 @@ class Program {
                 Function &function = functions[field[1].str()];
                 field[2].getAsInteger(10, function.frame);
                 function.dynamic = field[3] != "static";
+                continue;
+            }
+            if (field.size() >= 6 && field[0] == "W") {
+                Assertion w;
+                w.label = path;
+                w.target = field[1].str();
+                uint64_t mask = 0;
+                field[2].getAsInteger(10, mask);
+                w.mask = static_cast<uint32_t>(mask);
+                w.place = field[3].str();
+                w.message = field[4].str();
+                w.name = field[5].str();
+                w.ordinal = ordinals[path]++;
+                assertions.push_back(w);
                 continue;
             }
             if (field.size() < 5) continue;
@@ -1107,7 +1235,8 @@ class Program {
 
     // What the link and the editor report: a function whose ceiling is passed only through another file.
     struct Violation {
-        std::string symbol, name, place, kind, extra, chain;
+        std::string symbol, name, place, kind, extra, chain, message;
+        int ordinal = -1; // the W line of an assertion, among its summary's
     };
 
     // The violations (solved again with the calls that cross files); `only` limits them to the functions one summary
@@ -1136,7 +1265,24 @@ class Program {
             }
             if (first == nullptr) continue;
             std::string kind = declared == 0 ? "[[smith::pure]]" : "limited to " + describe(declared);
-            found.push_back({entry.first, function.name, first->place, kind, describe(extra), chain(entry.first, bit)});
+            found.push_back(
+                {entry.first, function.name, first->place, kind, describe(extra), chain(entry.first, bit), "", -1});
+        }
+        for (const Assertion &w : assertions) { // the static_asserts of effects::within that wait for the program
+            if (!only.empty() && w.label != only) continue;
+            uint32_t extra = visible(w.target) & ~w.mask;
+            if (extra == 0) continue;
+            std::string text = w.name + " (no source)";
+            for (const Name &name : names) {
+                auto defined = functions.find(w.target);
+                if ((extra & name.bit) == 0 || defined == functions.end() ||
+                    witness(defined->second, name.bit) == nullptr)
+                    continue;
+                text = defined->second.declared >= 0 ? w.name + " (declared " + describe(defined->second.declared) + ")"
+                                                     : chain(w.target, name.bit);
+                break;
+            }
+            found.push_back({w.target, w.name, w.place, "assertion", describe(extra), text, w.message, w.ordinal});
         }
         return found;
     }
@@ -1145,6 +1291,14 @@ class Program {
     int check() {
         int errors = 0;
         for (const Violation &violation : violations()) {
+            if (violation.kind == "assertion") {
+                llvm::errs() << violation.place
+                             << ": error: smith-effect: static assertion failed: " << violation.message << ": `"
+                             << violation.name << "` has the effects " << violation.extra
+                             << " beyond the allowed ones: " << violation.chain << "\n";
+                errors++;
+                continue;
+            }
             llvm::errs() << violation.place << ": error: smith-effect: `" << violation.name << "` is " << violation.kind
                          << ", but it has the effects " << violation.extra << ": " << violation.chain << "\n";
             errors++;
@@ -1258,6 +1412,8 @@ class Program {
     bool lenient = false;
     std::map<std::string, Function> functions;
     std::map<std::string, std::string> owners;
+    std::vector<Assertion> assertions;
+    std::map<std::string, int> ordinals;
     std::vector<std::string> builds;
     std::set<std::string> cyclic; // functions with a call that closes a cycle and is no tail call
     std::set<const Edit *> backs; // the calls that close a cycle
@@ -1368,7 +1524,8 @@ std::vector<EditorViolation> editorCheck(const std::string &label, const std::st
     }
     std::vector<EditorViolation> result;
     for (const auto &violation : program.violations(label))
-        result.push_back({violation.name, violation.place, violation.kind, violation.extra, violation.chain});
+        result.push_back({violation.name, violation.place, violation.kind, violation.extra, violation.chain,
+                          violation.message, violation.ordinal});
     program.hovers(label, hovers);
     return result;
 }
