@@ -45,6 +45,6 @@ Each rule says what enforces it today. "Review" means nothing checks it: you and
 
 ## Examples in skills are compiled
 
-Every ` ```smith ` block in the plugin's skills is a complete file that `tests/skills.sh` compiles with the smith under test (`smith build test-skills`). A block that is only part of a file is marked ` ```smith fragment ` and skipped; use it sparingly. C is ` ```c `. A block that must fail (an error message's cause) is ` ```text `. `smith-docs` has nothing to do with this; it checks structure and links.
+Every ` ```smith ` block in the plugin's skills is a complete file that `tests/skills_test.smith` compiles with the smith under test (`smith test --test skills_test`, a test for each skill). A block that is only part of a file is marked ` ```smith fragment ` and skipped; use it sparingly. C is ` ```c `. A block that must fail (an error message's cause) is ` ```text `. `smith-docs` has nothing to do with this; it checks structure and links.
 
 Also in this family: [smith-idiom-before](../smith-idiom-before/SKILL.md), [smith-idiom-after](../smith-idiom-after/SKILL.md), [smith-idiom-port](../smith-idiom-port/SKILL.md).
