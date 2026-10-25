@@ -449,6 +449,10 @@ export void test_skill_smith_modules_cache(io::Io *io) {
     skill_case(io, "smith-modules-cache");
 }
 
+export void test_skill_smith_option(io::Io *io) {
+    skill_case(io, "smith-option");
+}
+
 export void test_skill_smith_packages(io::Io *io) {
     skill_case(io, "smith-packages");
 }
@@ -495,6 +499,10 @@ export void test_skill_smith_random_own(io::Io *io) {
 
 export void test_skill_smith_random_split(io::Io *io) {
     skill_case(io, "smith-random-split");
+}
+
+export void test_skill_smith_result(io::Io *io) {
+    skill_case(io, "smith-result");
 }
 
 export void test_skill_smith_test(io::Io *io) {
