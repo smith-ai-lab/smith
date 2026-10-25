@@ -13,6 +13,7 @@ import smith::inflate;
 import smith::io;
 import smith::random;
 import smith::test;
+import <stdint.h>;
 
 constexpr usize arena_size = (usize)8 << 20; // 8 MiB
 
@@ -614,7 +615,7 @@ export void test_inflate_refuses_truncated_input(io::Io *io) {
     for (usize trial = 0; trial < trials; trial++) {
         random::Key key = take(&io->key);
         random::Key *key_stream = &key;
-        test::note("seed %llu, trial %zu", io->seed, trial);
+        test::note("seed %ju, trial %zu", (c::uintmax_t)io->seed, trial);
         arena::Scope scope = arena::scope_begin(arena);
         const Vector *vector = &vectors[between(take(key_stream), 0, _Countof(vectors) - 1)];
         usize expected_size = 0;
@@ -664,7 +665,7 @@ export void test_inflate_survives_corrupt_input(io::Io *io) {
     for (usize trial = 0; trial < trials; trial++) {
         random::Key key = take(&io->key);
         random::Key *key_stream = &key;
-        test::note("seed %llu, trial %zu", io->seed, trial);
+        test::note("seed %ju, trial %zu", (c::uintmax_t)io->seed, trial);
         arena::Scope scope = arena::scope_begin(arena);
         const Vector *vector = &vectors[between(take(key_stream), 0, _Countof(vectors) - 1)];
         usize expected_size = 0;

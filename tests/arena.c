@@ -16,7 +16,11 @@
 #include <string.h>
 #include <sys/mman.h>
 
+#ifdef __APPLE__
 #include <mach/mach.h>
+#else
+#include <unistd.h>
+#endif
 
 constexpr size_t test_capacity = 4096;
 
@@ -24,6 +28,7 @@ typedef struct {
     alignas(smith_arena_align_max) unsigned char bytes[test_capacity];
 } TestMemory;
 
+#ifdef __APPLE__
 static size_t test_resident(void) {
     mach_task_basic_info_data_t info = {};
     mach_msg_type_number_t count = MACH_TASK_BASIC_INFO_COUNT;
@@ -32,6 +37,20 @@ static size_t test_resident(void) {
     (void)result;
     return info.resident_size;
 }
+#else
+// The second number of /proc/self/statm is the resident pages.
+static size_t test_resident(void) {
+    FILE *file = fopen("/proc/self/statm", "r");
+    assert(file != nullptr);
+    size_t size = 0;
+    size_t pages = 0;
+    int read = fscanf(file, "%zu %zu", &size, &pages);
+    assert(read == 2);
+    (void)read;
+    fclose(file);
+    return pages * (size_t)sysconf(_SC_PAGESIZE);
+}
+#endif
 
 constexpr size_t test_reservation = (size_t)64 << 30;
 

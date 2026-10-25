@@ -11,6 +11,7 @@ import smith::random;
 import smith::test;
 import smith::text;
 import scratch;
+import <stdint.h>;
 
 constexpr usize capacity = 256;
 constexpr i64 i64_max = 9223372036854775807;
@@ -123,7 +124,8 @@ export void test_format_integers_at_their_limits() {
     usize i = (usize)u64_max;
     isize j = (isize)i64_max;
     (void)format::to(out, sizeof out, a, " ", b, " ", c, " ", d, " ", e, " ", f, " ", g, " ", h, " ", i, " ", j);
-    __builtin_snprintf(expected, sizeof expected, "%d %d %d %lld %u %u %u %llu %zu %zd", a, b, c, d, e, f, g, h, i, j);
+    __builtin_snprintf(expected, sizeof expected, "%d %d %d %jd %u %u %u %ju %zu %zd", a, b, c, (c::intmax_t)d, e, f, g,
+                       (c::uintmax_t)h, i, j);
     test::check(is(out, expected));
     (void)format::to(out, sizeof out, (i8)0, (u64)0, (i64)-1, (i64)i64_max);
     test::check(is(out, "00-19223372036854775807"));
@@ -136,7 +138,7 @@ export void test_format_signed_matches_libc(random::Key key) {
     i64 value = (i64)test_format_draw(take(key_stream));
     if ((random::key_bits(take(key_stream)) & 1) != 0) value = -value;
     (void)format::to(out, sizeof out, value);
-    __builtin_snprintf(expected, sizeof expected, "%lld", value);
+    __builtin_snprintf(expected, sizeof expected, "%jd", (c::intmax_t)value);
     test::check(is(out, expected));
 }
 
@@ -145,7 +147,8 @@ export void test_format_unsigned_matches_libc(random::Key key) {
     char expected[capacity];
     u64 value = test_format_draw(key);
     (void)format::to(out, sizeof out, value, "/", (u32)value, "/", (u16)value, "/", (u8)value);
-    __builtin_snprintf(expected, sizeof expected, "%llu/%u/%u/%u", value, (u32)value, (u16)value, (u8)value);
+    __builtin_snprintf(expected, sizeof expected, "%ju/%u/%u/%u", (c::uintmax_t)value, (u32)value, (u16)value,
+                       (u8)value);
     test::check(is(out, expected));
 }
 
@@ -157,7 +160,7 @@ export void test_format_hex_matches_libc(random::Key key) {
     u32 width = (u32)(random::key_bits(take(key_stream)) % 20); // past 16 stops at 16
     (void)format::to(out, sizeof out, format::hex(value, width));
     u32 libc_width = width < 16 ? width : 16;
-    __builtin_snprintf(expected, sizeof expected, "%0*llx", (i32)libc_width, value);
+    __builtin_snprintf(expected, sizeof expected, "%0*jx", (i32)libc_width, (c::uintmax_t)value);
     test::check(is(out, expected));
 }
 
@@ -352,7 +355,7 @@ export void test_format_callers() {
     (void)format::to(out, sizeof out, format::bytes(line, length));
     test::check(is(out, expected));
     u64 key = 0x0123456789abcdefULL;
-    __builtin_snprintf(expected, sizeof expected, "%016llx", key);
+    __builtin_snprintf(expected, sizeof expected, "%016jx", (c::uintmax_t)key);
     (void)format::to(out, sizeof out, format::hex(key, 16));
     test::check(is(out, expected));
     f64 ratio = 12.0 / 7.0;
@@ -521,9 +524,9 @@ export void test_format_padding_matches_libc(random::Key key) {
     f64 value = (f64)(random::key_bits(take(key_stream)) % 2000000) / 1000.0 - 1000.0;
     const char *words[] = {"", "a", "knight", "a longer name than most"};
     const char *word = words[random::key_bits(take(key_stream)) % 4];
-    __builtin_snprintf(expected, sizeof expected, "[%*lld|%-*lld|%*llu|%*s|%-*s|%*.2f|%*.0f|%*g]", (i32)width, number,
-                       (i32)width, number, (i32)width, unsigned_number, (i32)width, word, (i32)width, word, (i32)width,
-                       value, (i32)width, value, (i32)width, value);
+    __builtin_snprintf(expected, sizeof expected, "[%*jd|%-*jd|%*ju|%*s|%-*s|%*.2f|%*.0f|%*g]", (i32)width,
+                       (c::intmax_t)number, (i32)width, (c::intmax_t)number, (i32)width, (c::uintmax_t)unsigned_number,
+                       (i32)width, word, (i32)width, word, (i32)width, value, (i32)width, value, (i32)width, value);
     (void)format::to(out, sizeof out, "[", format::pad(number, width), "|", format::left(number, width), "|",
                      format::pad(unsigned_number, width), "|", format::pad(word, width), "|", format::left(word, width),
                      "|", format::pad(format::fixed(value, 2), width), "|", format::pad(format::fixed(value, 0), width),
