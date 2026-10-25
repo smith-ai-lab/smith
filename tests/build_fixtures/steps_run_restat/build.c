@@ -3,7 +3,9 @@
 #include <string.h>
 
 static int first_word(SmithRun *run) {
-    const char *const *lines = smith_lines(run->b, run->inputs[0]);
+    smith_build_Lines read_lines = smith_lines(run->b, run->inputs[0]);
+    if (read_lines.tag != smith_enum_result_const_char_ptr_const_ptr__SmithLinesError_tag_ok) return 1;
+    const char *const *lines = read_lines.ok;
     smith_write(run->b, run->outputs[0], smith_fmt(run->b, "%s\n", lines[0]));
     return 0;
 }

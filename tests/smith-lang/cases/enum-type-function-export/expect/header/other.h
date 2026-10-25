@@ -15,7 +15,7 @@
 extern "C" {
 #endif
 #ifndef SMITH_ENUM_smith_enum_maybe_usize
-#define SMITH_ENUM_smith_enum_maybe_usize
+#define SMITH_ENUM_smith_enum_maybe_usize // NOLINT(readability-identifier-naming)
 struct smith_enum_maybe_usize { enum smith_enum_maybe_usize_tag { smith_enum_maybe_usize_tag_some, smith_enum_maybe_usize_tag_none } tag; union { size_t some; }; } __attribute__((annotate("smith::enum")));
 #endif
 

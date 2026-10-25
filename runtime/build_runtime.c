@@ -1228,7 +1228,12 @@ const char *smith_library(SmithBuild *b, const char *name) {
     smith_fail("smith_library: unknown library \"%s\"; known: %s", name, smith_join(b, names, ", "));
 }
 
-const char *smith_package(SmithBuild *b, const SmithPackage *package) {
+static smith_build_PackageResult smith_package_failed(SmithPackageKind kind, const char *message) {
+    return (smith_build_PackageResult){.tag = smith_enum_result_const_char_ptr__SmithPackageError_tag_error,
+                                       .error = {.kind = kind, .message = smith_copy_string(message)}};
+}
+
+smith_build_PackageResult smith_package(SmithBuild *b, const SmithPackage *package) {
     SMITH_ASSERT(b != nullptr);
     smith_context = nullptr;
     if (package == nullptr || package->url == nullptr || package->url[0] == '\0') {
@@ -1239,19 +1244,23 @@ const char *smith_package(SmithBuild *b, const SmithPackage *package) {
     bool offline = smith_option(b, "OFFLINE", "a package missing from the cache is an error instead of a fetch");
     char folder[PATH_MAX];
     char hash[smith_package_hash_size];
-    SmithPackageError error;
+    SmithPackageFault error;
     // A package already in the cache is only looked up; a fetch prints a line first, since a download can be slow.
     if (smith_package_ensure(nullptr, package->url, package->hash, true, folder, hash, &error)) {
-        return smith_copy_string(folder);
+        return (smith_build_PackageResult){.tag = smith_enum_result_const_char_ptr__SmithPackageError_tag_ok,
+                                           .ok = smith_copy_string(folder)};
     }
-    if (offline) smith_fail("smith_package: %s", error.text);
+    if (offline) return smith_package_failed(SmithPackageKind_Offline, error.text);
     fprintf(stderr, "smith: fetching %s\n", package->url);
     fflush(stderr);
     SmithIo io = smith_io_make(0, nullptr);
     bool fetched = smith_package_ensure(&io, package->url, package->hash, false, folder, hash, &error);
     smith_io_close(&io);
-    if (!fetched) smith_fail("smith_package: %s", error.text);
-    return smith_copy_string(folder);
+    if (!fetched) {
+        return smith_package_failed(error.wrong_hash ? SmithPackageKind_Hash : SmithPackageKind_Fetch, error.text);
+    }
+    return (smith_build_PackageResult){.tag = smith_enum_result_const_char_ptr__SmithPackageError_tag_ok,
+                                       .ok = smith_copy_string(folder)};
 }
 
 const char *const *smith_when(SmithBuild *b, bool condition, const char *const *items) {
@@ -1433,7 +1442,7 @@ void smith_modules(SmithBuild *b, const SmithModules *modules) {
     if (smith_count(textual) > smith_entries_max) smith_too_many("textual headers", smith_entries_max);
     smith_modules_check_overlap(folders, count);
     char cache[PATH_MAX];
-    SmithPackageError error;
+    SmithPackageFault error;
     if (!smith_cache_folder(SmithCache_Modules, cache, &error)) smith_fail("smith_modules: %s", error.text);
     const char **flags = smith_new_list(count + 5);
     flags[0] = "-fmodules";
@@ -1500,6 +1509,7 @@ static const char *const *smith_lang_flags(SmithBuild *b, const char *source) {
 }
 
 static size_t smith_read_file(const char *path, char **text);
+static const char *const *smith_lines_required(SmithBuild *b, const char *path);
 static const char *const *smith_split_lines(char *text, size_t size);
 
 // The flags a library of smith's declares (the registry in smith.c writes them beside its source, one a line, as
@@ -1716,7 +1726,7 @@ static int smith_lang_check(SmithRun *run) {
     size_t count = smith_count(run->inputs);
     SmithLangNode *nodes = smith_alloc((count + 1) * sizeof *nodes);
     for (size_t i = 0; i < count; i++) {
-        const char *const *lines = smith_lines(run->b, run->inputs[i]);
+        const char *const *lines = smith_lines_required(run->b, run->inputs[i]);
         const char *name = smith_lang_header_line(lines, "// smith-module: ");
         const char *imports = smith_lang_header_line(lines, "// smith-imports:");
         if (name == nullptr || imports == nullptr) {
@@ -2591,7 +2601,7 @@ static bool smith_tests_is_smith(const char *path) {
 static bool smith_tests_find(SmithRun *run, SmithTestFound *found, size_t *count) {
     *count = 0;
     for (size_t i = 0; run->inputs[i] != nullptr; i++) { // bounded by smith_copy_list
-        const char *const *lines = smith_lines(run->b, run->inputs[i]);
+        const char *const *lines = smith_lines_required(run->b, run->inputs[i]);
         bool in_smith = smith_tests_is_smith(run->inputs[i]);
         const char *module = nullptr;
         const char *key_type = nullptr;
@@ -3742,13 +3752,27 @@ static const char *const *smith_split_lines(char *text, size_t size) {
     return list;
 }
 
-const char *const *smith_lines(SmithBuild *b, const char *path) {
+smith_build_Lines smith_lines(SmithBuild *b, const char *path) {
     SMITH_ASSERT(b != nullptr);
     smith_context = nullptr;
     if (path == nullptr) smith_fail("smith_lines needs a path");
+    struct stat info;
+    if (stat(path, &info) != 0 || !S_ISREG(info.st_mode)) {
+        return (smith_build_Lines){.tag = smith_enum_result_const_char_ptr_const_ptr__SmithLinesError_tag_error,
+                                   .error = SmithLinesError_Missing};
+    }
     char *text = nullptr;
     size_t size = smith_read_file(path, &text);
-    return smith_split_lines(text, size);
+    return (smith_build_Lines){.tag = smith_enum_result_const_char_ptr_const_ptr__SmithLinesError_tag_ok,
+                               .ok = smith_split_lines(text, size)};
+}
+
+// The lines of a file the build runtime needs: a missing file fails the build, as it does for a build file's own
+// mistake.
+static const char *const *smith_lines_required(SmithBuild *b, const char *path) {
+    smith_build_Lines lines = smith_lines(b, path);
+    if (lines.tag == smith_enum_result_const_char_ptr_const_ptr__SmithLinesError_tag_ok) return lines.ok;
+    smith_fail("cannot read %s; if a step makes it, read it inside smith_defer", path);
 }
 
 // Runs a program with its stdout captured and its stderr passed through. The result is its exit status, 128 plus the

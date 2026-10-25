@@ -119,7 +119,7 @@ typedef struct {
 typedef struct {
     SmithArchiveSink sink;
     void *context;
-    SmithPackageError *error;
+    SmithPackageFault *error;
     SmithDictionary dictionary;
     SmithLzma lzma;
     unsigned check; // the stream's check type
@@ -699,7 +699,7 @@ static bool smith_xz_decode_streams(SmithXz *xz, const uint8_t *in, size_t size)
 }
 
 static bool smith_xz_decode(const uint8_t *in, size_t size, SmithArchiveSink sink, void *context,
-                            SmithPackageError *error) {
+                            SmithPackageFault *error) {
     smith_crc64_init();
     static SmithXz xz;
     xz = (SmithXz){.sink = sink, .context = context, .error = error};

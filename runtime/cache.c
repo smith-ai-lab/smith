@@ -23,7 +23,7 @@ static time_t smith_cache_walk_newest;
 
 // <base>/lock: smith build holds it shared for as long as the build runs, `smith cache clean` takes it exclusively.
 static bool smith_cache_lock_path(char *out) {
-    SmithPackageError error;
+    SmithPackageFault error;
     char base[PATH_MAX];
     if (!smith_cache_base(base, &error)) return false;
     int written = snprintf(out, PATH_MAX, "%s/lock", base);
@@ -36,7 +36,7 @@ static bool smith_cache_lock_path(char *out) {
 // simply holds nothing (and then has no cache a clean could remove).
 static void smith_cache_hold(void) {
     char lock[PATH_MAX];
-    SmithPackageError error;
+    SmithPackageFault error;
     char base[PATH_MAX];
     if (!smith_cache_lock_path(lock) || !smith_cache_base(base, &error) || !smith_package_make_folders(base)) return;
     int fd = open(lock, O_RDWR | O_CREAT, 0666);
@@ -110,7 +110,7 @@ static size_t smith_cache_scan(SmithCacheKind kind, const char *folder, size_t *
 
 static void smith_cache_show_one(SmithCacheKind kind, bool verbose) {
     char folder[PATH_MAX];
-    SmithPackageError error;
+    SmithPackageFault error;
     if (!smith_cache_folder(kind, folder, &error)) smith_die(smith_exit_usage, "cache:", error.text);
     size_t kept = 0;
     size_t total = smith_cache_scan(kind, folder, &kept);
@@ -154,7 +154,7 @@ static void smith_cache_exclude_builds(void) {
 
 static void smith_cache_clean_one(SmithCacheKind kind) {
     char folder[PATH_MAX];
-    SmithPackageError error;
+    SmithPackageFault error;
     if (!smith_cache_folder(kind, folder, &error)) smith_die(smith_exit_usage, "cache:", error.text);
     size_t kept = 0;
     size_t total = smith_cache_scan(kind, folder, &kept);

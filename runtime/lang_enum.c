@@ -1267,8 +1267,10 @@ static size_t smith_lang_eshape_words(SmithLang *lang, const SmithToken *tokens,
 // that define the same struct (`option(usize)` in two modules) are included together: one type.
 static bool smith_lang_eshape_header_text(SmithLang *lang, const SmithLangEnumShape *shape,
                                           const SmithLangEnumCall *call, const char *tag, char *out, size_t capacity) {
-    size_t used = (size_t)snprintf(
-        out, capacity, "#ifndef SMITH_ENUM_%s\n#define SMITH_ENUM_%s\nstruct %s { enum %s_tag {", tag, tag, tag, tag);
+    size_t used = (size_t)snprintf(out, capacity,
+                                   "#ifndef SMITH_ENUM_%s\n#define SMITH_ENUM_%s // "
+                                   "NOLINT(readability-identifier-naming)\nstruct %s { enum %s_tag {",
+                                   tag, tag, tag, tag);
     SmithToken variant[smith_lang_eshape_tokens_max + smith_lang_eshape_params_max * smith_lang_eshape_tokens_max];
     char members[2048] = "";
     size_t counted = 0;

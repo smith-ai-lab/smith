@@ -15,13 +15,13 @@
 extern "C" {
 #endif
 #ifndef SMITH_ENUM_smith_enum_option_usize
-#define SMITH_ENUM_smith_enum_option_usize
+#define SMITH_ENUM_smith_enum_option_usize // NOLINT(readability-identifier-naming)
 struct smith_enum_option_usize { enum smith_enum_option_usize_tag { smith_enum_option_usize_tag_some, smith_enum_option_usize_tag_none } tag; union { size_t some; }; } __attribute__((annotate("smith::enum")));
 #endif
 
 struct smith_enum_option_usize parser_position(const char *text, char wanted) __asm__("_parser::position");
 #ifndef SMITH_ENUM_smith_enum_result_f64__i32
-#define SMITH_ENUM_smith_enum_result_f64__i32
+#define SMITH_ENUM_smith_enum_result_f64__i32 // NOLINT(readability-identifier-naming)
 struct smith_enum_result_f64__i32 { enum smith_enum_result_f64__i32_tag { smith_enum_result_f64__i32_tag_ok, smith_enum_result_f64__i32_tag_error } tag; union { double ok; int32_t error; }; } __attribute__((annotate("smith::enum")));
 #endif
 

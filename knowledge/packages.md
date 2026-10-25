@@ -15,11 +15,12 @@ A package is an archive named in build.c by a URL and the SHA-256 of its bytes, 
 version solving and no lock file: the hash is the lock, so the same hash always gives the same bytes.
 
 ```c
-const char *cmake = smith_package(b, &(SmithPackage){
+smith_build_PackageResult cmake_package = smith_package(b, &(SmithPackage){
     .url = "https://github.com/Kitware/CMake/releases/download/v4.1.2/cmake-4.1.2-macos-universal.tar.gz",
     .hash = "sha256:...", // `smith fetch <url>` prints this line
 });
-// cmake is "<cache>/smith/packages/<hex>"; bin/cmake is under it
+// cmake_package.ok is "<cache>/smith/packages/<hex>"; bin/cmake is under it. A fetch that fails or a wrong hash is
+// .error (kind Fetch, Hash or Offline, and a message); a missing .url or .hash fails the build.
 ```
 
 - **Cache:** `$XDG_CACHE_HOME/smith/packages/<hex>/`, or `~/.cache/smith/packages/<hex>/`, keyed by the archive's hash.

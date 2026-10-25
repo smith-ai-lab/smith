@@ -38,7 +38,7 @@ typedef enum {
 } SmithUntarPhase;
 
 typedef struct {
-    SmithPackageError *error;
+    SmithPackageFault *error;
     int root; // the extraction folder
     SmithUntarPhase phase;
     uint64_t offset;        // bytes fed so far, for messages
@@ -774,7 +774,7 @@ static bool smith_gzip_content_feed(void *context, const uint8_t *data, size_t s
 }
 
 static bool smith_gzip_content(SmithUntar *untar, const char *name, const uint8_t *data, size_t size,
-                               SmithPackageError *error) {
+                               SmithPackageFault *error) {
     SmithGzipContent content = {.untar = untar, .name = name, .file = -1};
     bool ok = smith_gzip_decode(data, size, smith_gzip_content_feed, &content, error);
     ok = ok && (content.decided || smith_gzip_content_decide(&content));
@@ -786,7 +786,7 @@ static bool smith_gzip_content(SmithUntar *untar, const char *name, const uint8_
 }
 
 static bool smith_archive_decode(SmithUntar *untar, const char *name, const uint8_t *data, size_t size,
-                                 SmithPackageError *error) {
+                                 SmithPackageFault *error) {
     const char *refused = nullptr;
     SmithArchiveFormat format = smith_archive_format(data, size, &refused);
     if (format == SmithArchive_Tar) return smith_untar_feed(untar, data, size) && smith_untar_finish(untar);
@@ -802,7 +802,7 @@ static bool smith_archive_decode(SmithUntar *untar, const char *name, const uint
 // Extracts the archive file into the existing folder. `extracted` says what the caller must check afterwards. `name`
 // is the file a gzip of one file (not a tar) becomes.
 static bool smith_package_extract(const char *archive, const char *name, const char *folder, SmithExtracted *extracted,
-                                  SmithPackageError *error) {
+                                  SmithPackageFault *error) {
     int fd = open(archive, O_RDONLY | O_CLOEXEC);
     struct stat info;
     if (fd < 0 || fstat(fd, &info) != 0) {

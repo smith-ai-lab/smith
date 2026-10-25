@@ -2048,7 +2048,7 @@ static int smith_fetch_main(int count, char **args) {
     if (count != 1) smith_die(smith_exit_usage, "usage: smith fetch <url>", nullptr);
     char folder[PATH_MAX];
     char hash[smith_package_hash_size];
-    SmithPackageError error;
+    SmithPackageFault error;
     SmithIo io = smith_io_make(0, nullptr);
     bool fetched = smith_package_ensure(&io, args[0], nullptr, false, folder, hash, &error);
     smith_io_close(&io);

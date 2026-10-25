@@ -14,12 +14,16 @@ static int fail_unnamed(SmithRun *run) {
 
 // list.txt names the file to read; the step does not list that file as an input.
 static int learn(SmithRun *run) {
-    const char *const *lines = smith_lines(run->b, run->inputs[0]);
+    smith_build_Lines read_lines = smith_lines(run->b, run->inputs[0]);
+    if (read_lines.tag != smith_enum_result_const_char_ptr_const_ptr__SmithLinesError_tag_ok) return 1;
+    const char *const *lines = read_lines.ok;
     smith_run_depend(run, lines[0]);
     FILE *log = fopen("learn.log", "a");
     fputs("ran\n", log);
     fclose(log);
-    const char *const *data = smith_lines(run->b, lines[0]);
+    smith_build_Lines read_data = smith_lines(run->b, lines[0]);
+    if (read_data.tag != smith_enum_result_const_char_ptr_const_ptr__SmithLinesError_tag_ok) return 1;
+    const char *const *data = read_data.ok;
     smith_write(run->b, run->outputs[0], smith_fmt(run->b, "%s\n", data[0]));
     return 0;
 }
