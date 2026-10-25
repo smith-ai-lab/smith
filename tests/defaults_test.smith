@@ -1,0 +1,274 @@
+// smith's defaults where a project has no config file (issue #43, part 1). `smith fmt` and `smith lint` use smith's own
+// .clang-format and .clang-tidy (templates/defaults, embedded) for a file the tool would find no config for, looked up
+// as the tools do (the file's folder and each above it); a project's file replaces them whole, an explicit --style or
+// --config wins, and --dump-config prints the effective one, so `smith fmt --dump-config > .clang-format` makes smith's
+// the project's. Each test is a scratch tree outside any project, with a data folder of its own where it matters.
+module defaults_test;
+
+import smith::io;
+import smith::test;
+import scratch;
+
+constexpr char c_file[] = "int main(void) {\nif (1) {\nreturn 0;\n}\n}\n";
+constexpr char smith_second_line[] = "    if (1) {";
+constexpr char llvm_second_line[] = "  if (1) {";
+constexpr char eight_second_line[] = "        if (1) {";
+constexpr char llvm_two[] = "BasedOnStyle: LLVM\nIndentWidth: 2\n";
+
+// A project with a.c written and an XDG_DATA_HOME of its own.
+static scratch::Project bare(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::write(&p, "a.c", c_file);
+    return p;
+}
+
+// The second line of `smith fmt` on a.c, as the command says.
+static const char *second_line(const scratch::Project *p, const char *command) {
+    return scratch::capture(p, command);
+}
+
+// --- fmt ------------------------------------------------------------------------------------------------------------
+
+export void test_defaults_fmt_smiths_default_has_an_indent_of_4(io::Io *io) {
+    scratch::Project p = bare(io);
+    scratch::expect_text(
+        "fmt: smith's default has an indent of 4", "4",
+        scratch::capture(&p, "sed -n 's/^IndentWidth: *//p' \"$SMITH_REPO/templates/defaults/clang-format\""));
+}
+
+export void test_defaults_fmt_no_style_file_formats_in_smiths_style(io::Io *io) {
+    scratch::Project p = bare(io);
+    scratch::expect_text("fmt: no style file, a file is formatted in smith's style", smith_second_line,
+                         second_line(&p, "smith fmt --assume-filename=a.c <a.c | sed -n 2p"));
+}
+
+export void test_defaults_fmt_a_file_in_a_folder_below_is_formatted_in_smiths_style(io::Io *io) {
+    scratch::Project p = bare(io);
+    scratch::expect_text(
+        "fmt: ... and a file in a folder below", smith_second_line,
+        second_line(&p, "mkdir sub && cp a.c sub/b.c && smith fmt --assume-filename=sub/b.c <sub/b.c | sed -n 2p"));
+}
+
+export void test_defaults_fmt_standard_input_with_assume_filename(io::Io *io) {
+    scratch::Project p = bare(io);
+    scratch::expect_text("fmt: ... and standard input with --assume-filename", smith_second_line,
+                         second_line(&p, "smith fmt --assume-filename=x.c <a.c | sed -n 2p"));
+}
+
+export void test_defaults_fmt_dump_config_prints_smiths_style(io::Io *io) {
+    scratch::Project p = bare(io);
+    scratch::expect_text(
+        "fmt: --dump-config prints smith's style",
+        scratch::capture(&p, "sed -n 's/^IndentWidth: *//p' \"$SMITH_REPO/templates/defaults/clang-format\""),
+        scratch::capture(&p, "smith fmt --dump-config | sed -n 's/^IndentWidth: *//p'"));
+}
+
+export void test_defaults_fmt_the_dumped_config_round_trips_as_the_projects_own(io::Io *io) {
+    scratch::Project p = bare(io);
+    scratch::expect_text("fmt: ... which round-trips as the project's own",
+                         scratch::capture(&p, "smith fmt --assume-filename=a.c <a.c"),
+                         scratch::capture(&p, "smith fmt --dump-config >dumped.yaml && cp dumped.yaml .clang-format && "
+                                              "smith fmt --assume-filename=a.c <a.c"));
+}
+
+// A project with its own style: IndentWidth 2, a file in a folder below it.
+static scratch::Project own(io::Io *io) {
+    scratch::Project p = bare(io);
+    scratch::write(&p, ".clang-format", llvm_two);
+    scratch::Run run = scratch::sh(&p, "mkdir sub && cp a.c sub/b.c");
+    scratch::expect_status("own: made", 0, &run);
+    return p;
+}
+
+export void test_defaults_fmt_a_projects_clang_format_wins(io::Io *io) {
+    scratch::Project p = own(io);
+    scratch::expect_text("fmt: a project's .clang-format wins", llvm_second_line,
+                         second_line(&p, "smith fmt --assume-filename=a.c <a.c | sed -n 2p"));
+}
+
+export void test_defaults_fmt_a_projects_style_reaches_a_file_in_a_folder_below(io::Io *io) {
+    scratch::Project p = own(io);
+    scratch::expect_text("fmt: ... for a file in a folder below it", llvm_second_line,
+                         second_line(&p, "smith fmt --assume-filename=sub/b.c <sub/b.c | sed -n 2p"));
+}
+
+export void test_defaults_fmt_a_projects_style_reaches_standard_input(io::Io *io) {
+    scratch::Project p = own(io);
+    scratch::expect_text("fmt: ... for standard input", llvm_second_line,
+                         second_line(&p, "smith fmt --assume-filename=x.c <a.c | sed -n 2p"));
+}
+
+export void test_defaults_fmt_dump_config_prints_the_projects_style(io::Io *io) {
+    scratch::Project p = own(io);
+    scratch::expect_text("fmt: --dump-config prints the project's style", "2",
+                         scratch::capture(&p, "smith fmt --dump-config | sed -n 's/^IndentWidth: *//p'"));
+}
+
+export void test_defaults_fmt_an_explicit_style_wins_over_a_project_file(io::Io *io) {
+    scratch::Project p = own(io);
+    scratch::expect_text("fmt: an explicit --style wins over a project file", eight_second_line,
+                         second_line(&p, "smith fmt --style='{BasedOnStyle: LLVM, IndentWidth: 8}' "
+                                         "--assume-filename=a.c <a.c | sed -n 2p"));
+}
+
+export void test_defaults_fmt_underscore_clang_format_is_found_too(io::Io *io) {
+    scratch::Project p = own(io);
+    scratch::expect_text("fmt: _clang-format is found too", llvm_second_line,
+                         second_line(&p, "mv .clang-format _clang-format && "
+                                         "smith fmt --assume-filename=a.c <a.c | sed -n 2p"));
+}
+
+export void test_defaults_fmt_an_explicit_style_wins_over_smiths(io::Io *io) {
+    scratch::Project p = bare(io);
+    scratch::expect_text("fmt: an explicit --style wins over smith's", eight_second_line,
+                         second_line(&p, "smith fmt --style='{BasedOnStyle: LLVM, IndentWidth: 8}' "
+                                         "--assume-filename=a.c <a.c | sed -n 2p"));
+}
+
+export void test_defaults_fmt_assume_filename_looks_the_style_up_from_that_name(io::Io *io) {
+    scratch::Project p = bare(io);
+    scratch::expect_text(
+        "fmt: --assume-filename looks the style up from that name", llvm_second_line,
+        second_line(&p, "mkdir own && printf 'BasedOnStyle: LLVM\\nIndentWidth: 2\\n' >own/.clang-format && "
+                        "smith fmt --assume-filename=\"$PWD/own/x.c\" <a.c | sed -n 2p"));
+}
+
+// One command naming files with and without a project style.
+static scratch::Project mixed(io::Io *io) {
+    scratch::Project p = bare(io);
+    scratch::Run run = scratch::sh(&p, "cp a.c none.c && mkdir styled && cp a.c styled/two.c && "
+                                       "printf 'BasedOnStyle: LLVM\\nIndentWidth: 2\\n' >styled/.clang-format");
+    scratch::expect_status("mixed: made", 0, &run);
+    return p;
+}
+
+export void test_defaults_fmt_files_with_and_without_a_style_together_smiths_for_the_one(io::Io *io) {
+    scratch::Project p = mixed(io);
+    scratch::expect_text("fmt: files with and without a style, together: smith's for the one", smith_second_line,
+                         second_line(&p, "smith fmt -i none.c styled/two.c && sed -n 2p none.c"));
+}
+
+export void test_defaults_fmt_files_with_and_without_a_style_together_the_projects_for_the_other(io::Io *io) {
+    scratch::Project p = mixed(io);
+    scratch::expect_text("fmt: ... the project's for the other", llvm_second_line,
+                         second_line(&p, "smith fmt -i none.c styled/two.c && sed -n 2p styled/two.c"));
+}
+
+// A named file is rewritten, as with -i, and never printed; a mode option keeps clang-format's meaning.
+export void test_defaults_fmt_a_named_file_prints_nothing(io::Io *io) {
+    scratch::Project p = bare(io);
+    scratch::expect_text("fmt: a named file prints nothing", "",
+                         scratch::capture(&p, "cp a.c named.c && smith fmt named.c"));
+}
+
+export void test_defaults_fmt_a_named_file_is_rewritten_in_place(io::Io *io) {
+    scratch::Project p = bare(io);
+    scratch::expect_text("fmt: ... and is rewritten in place", smith_second_line,
+                         second_line(&p, "cp a.c named.c && smith fmt named.c >/dev/null && sed -n 2p named.c"));
+}
+
+export void test_defaults_fmt_dry_run_leaves_the_file_as_it_was(io::Io *io) {
+    scratch::Project p = bare(io);
+    scratch::expect_text(
+        "fmt: --dry-run leaves the file as it was", scratch::capture(&p, "cat a.c"),
+        scratch::capture(&p, "cp a.c named.c && (smith fmt --dry-run named.c >/dev/null 2>&1; cat named.c)"));
+}
+
+// The project verb, in a tree with no style file: it formats with smith's.
+export void test_defaults_fmt_the_project_verb_with_no_style_file_formats_in_smiths(io::Io *io) {
+    scratch::Project p = bare(io);
+    scratch::expect_text("fmt: the project verb with no style file formats in smith's", smith_second_line,
+                         second_line(&p, "git init -q . 2>/dev/null; git add a.c 2>/dev/null; "
+                                         "smith fmt >/dev/null 2>&1; sed -n 2p a.c"));
+}
+
+// --- lint -----------------------------------------------------------------------------------------------------------
+
+constexpr char bad_name[] = "int BadName(void) {\n    return 0;\n}\n";
+
+static scratch::Project tidy(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::write(&p, "a.c", bad_name);
+    scratch::Run run = scratch::sh(&p, "mkdir sub && cp a.c sub/b.c");
+    scratch::expect_status("tidy: made", 0, &run);
+    return p;
+}
+
+export void test_defaults_lint_no_clang_tidy_smiths_rules_find_a_bad_name(io::Io *io) {
+    scratch::Project p = tidy(io);
+    scratch::Run run = scratch::sh(&p, "smith lint --quiet a.c -- -std=gnu2y 2>&1");
+    scratch::expect_contains("lint: no .clang-tidy, smith's rules find a bad name", run.out, "BadName");
+}
+
+export void test_defaults_lint_a_finding_fails(io::Io *io) {
+    scratch::Project p = tidy(io);
+    scratch::Run run = scratch::sh(&p, "smith lint --quiet a.c -- -std=gnu2y >/dev/null 2>&1");
+    scratch::expect_status("lint: ... and fail", 1, &run);
+}
+
+export void test_defaults_lint_a_finding_in_a_folder_below_fails_too(io::Io *io) {
+    scratch::Project p = tidy(io);
+    scratch::Run run = scratch::sh(&p, "smith lint --quiet sub/b.c -- -std=gnu2y >/dev/null 2>&1");
+    scratch::expect_status("lint: ... in a folder below too", 1, &run);
+}
+
+export void test_defaults_lint_dump_config_prints_smiths_config(io::Io *io) {
+    scratch::Project p = tidy(io);
+    scratch::expect_text(
+        "lint: --dump-config prints smith's config",
+        scratch::capture(&p, "sed -n 's/^HeaderFilterRegex: //p' \"$SMITH_REPO/templates/defaults/clang-tidy\""),
+        scratch::capture(&p, "smith lint --dump-config | sed -n 's/^HeaderFilterRegex: //p'"));
+}
+
+export void test_defaults_lint_an_explicit_config_wins_over_smiths(io::Io *io) {
+    scratch::Project p = tidy(io);
+    scratch::Run run = scratch::sh(
+        &p, "smith lint --quiet --config='{Checks: \"-*,misc-no-recursion\"}' a.c -- -std=gnu2y >/dev/null 2>&1");
+    scratch::expect_status("lint: an explicit --config wins over smith's", 0, &run);
+}
+
+export void test_defaults_lint_an_explicit_config_file_wins_over_smiths(io::Io *io) {
+    scratch::Project p = tidy(io);
+    scratch::write(&p, "cf.yaml", "Checks: \"-*,misc-no-recursion\"\n");
+    scratch::Run run = scratch::sh(&p, "smith lint --quiet --config-file=cf.yaml a.c -- -std=gnu2y >/dev/null 2>&1");
+    scratch::expect_status("lint: an explicit --config-file wins over smith's", 0, &run);
+}
+
+export void test_defaults_lint_a_projects_clang_tidy_wins_whole(io::Io *io) {
+    scratch::Project p = tidy(io);
+    scratch::write(&p, ".clang-tidy", "Checks: \"-*,misc-no-recursion\"\n");
+    scratch::Run run = scratch::sh(&p, "smith lint --quiet a.c -- -std=gnu2y >/dev/null 2>&1");
+    scratch::expect_status("lint: a project's .clang-tidy wins, whole", 0, &run);
+}
+
+export void test_defaults_lint_dump_config_prints_the_projects_config(io::Io *io) {
+    scratch::Project p = tidy(io);
+    scratch::write(&p, ".clang-tidy", "Checks: \"-*,misc-no-recursion\"\n");
+    scratch::expect_text("lint: --dump-config prints the project's config", "1",
+                         scratch::capture(&p, "smith lint --dump-config | grep -c \"^Checks:.*misc-no-recursion\""));
+}
+
+// First runs in parallel: the defaults are written through a unique temporary name, so none fails with "cannot write".
+static scratch::Project parallel(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Run run = scratch::sh(
+        &p, "for n in 1 2 3 4 5 6 7 8; do printf 'int f%s(int x) {\\n    return x;\\n}\\n' \"$n\" >\"f$n.c\"; done; "
+            "pids=\"\"; for n in 1 2 3 4 5 6 7 8; do "
+            "XDG_DATA_HOME=\"$PWD/fresh-data\" smith lint --quiet \"f$n.c\" -- -std=gnu2y >\"out$n\" 2>&1 & "
+            "pids=\"$pids $!\"; done; bad=0; for pid in $pids; do wait \"$pid\" || bad=$((bad + 1)); done; "
+            "echo \"$bad\" >bad");
+    scratch::expect_status("parallel: ran", 0, &run);
+    return p;
+}
+
+export void test_defaults_lint_eight_first_runs_at_once_on_an_empty_data_folder_all_succeed(io::Io *io) {
+    scratch::Project p = parallel(io);
+    scratch::expect_text("lint: eight first runs at once on an empty data folder all succeed", "0",
+                         scratch::capture(&p, "cat bad"));
+}
+
+export void test_defaults_lint_eight_first_runs_at_once_none_says_it_cannot_write(io::Io *io) {
+    scratch::Project p = parallel(io);
+    scratch::expect_text("lint: ... and none says it cannot write", "0",
+                         scratch::capture(&p, "cat out? | grep -c 'cannot write'"));
+}
