@@ -1,4 +1,5 @@
 import <assert.h>;
+import <stdint.h>;
 import smith::random;
 import smith::test;
 
@@ -54,6 +55,6 @@ void test_ordering_fails(void) {
 
 void test_prop_function(random::Key key) {
     i64 x = random::uniform_int64_sample(key, (random::UniformInt64){.low = 0, .high = 1000});
-    test::note("x = %lld", x);
+    test::note("x = %jd", (c::intmax_t)x);
     test::check(x < 500);
 }

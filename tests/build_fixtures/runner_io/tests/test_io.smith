@@ -1,3 +1,4 @@
+import <stdint.h>;
 import <stdio.h>;
 import <stdlib.h>;
 import <string.h>;
@@ -56,7 +57,7 @@ void test_io_fails(c::SmithIo *io) {
 
 void test_io_seed(c::SmithIo *io) {
     char text[128];
-    c::snprintf(text, sizeof text, "%llu %llu", io->seed, io->key.bits);
+    c::snprintf(text, sizeof text, "%ju %ju", (c::uintmax_t)io->seed, (c::uintmax_t)io->key.bits);
     probe("seed", text);
     test::check_equal(io->key.bits, io->seed);
 }

@@ -1,3 +1,4 @@
+import <stdint.h>;
 import smith::random;
 import smith::test;
 
@@ -19,7 +20,7 @@ void test_shrink_list(random::Key key) {
     i64 length = random::uniform_int64_sample(take(stream), (random::UniformInt64){.low = 0, .high = 8});
     for (i64 i = 0; i < length; i++) {
         i64 item = random::uniform_int64_sample(take(stream), (random::UniformInt64){.low = 0, .high = 100});
-        test::note("length %lld, item %lld", length, i);
+        test::note("length %jd, item %jd", (c::intmax_t)length, (c::intmax_t)i);
         test::check_less_equal(item, 90);
     }
 }
