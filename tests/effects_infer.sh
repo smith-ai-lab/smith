@@ -305,6 +305,20 @@ if [ -n "$stack" ] && awk -F'\t' '$1 == "fx::lib::deep" && $2 + 0 > 256 && $3 ~ 
     echo "ok    stack: a module's function has its frame and its callee's in the build's .stack"
 else
     failures=$((failures + 1)); echo "FAIL  stack: module: ${stack:-no .stack} $(tail -n 5 "$work/sm/log")"
+||||||| parent of 91e10abf (test(effects): the fix-it of an effects error, applied, compiles; skill (Part of #246))
+# The fix-it of an effects error: applied (clang's -fixit), the file compiles.
+mkdir "$work/fix"
+cp "$here/tests/effects/effects_ceiling.c" "$work/fix/c.c"
+printf '[[smith::pure]] int twice(int x) { return x * 2; }\n[[smith::pure]] int noisy(int x) { puts("x"); return x; }\n' >"$work/fix/p.c"
+total=$((total + 1))
+if (cd "$work/fix" && for f in c.c p.c; do
+    smith cc -std=gnu2y -I "$here/include" -include stdio.h -Xclang -fixit -fsyntax-only "$f" >/dev/null 2>&1
+    smith cc -std=gnu2y -I "$here/include" -include stdio.h -fsyntax-only "$f" || exit 1
+done) >"$work/fix/log" 2>&1 && grep -q 'smith::effects(files)' "$work/fix/c.c" && grep -q 'smith::effects(console)' "$work/fix/p.c"; then
+    echo "ok    fix-it: the attribute it writes makes the ceiling and the pure function compile"
+else
+    failures=$((failures + 1))
+    echo "FAIL  fix-it: $(cat "$work/fix/log")"
 fi
 
 echo "$((total - failures)) of $total passed"
