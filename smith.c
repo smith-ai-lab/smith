@@ -2656,6 +2656,37 @@ static void smith_defaults_read(bool fmt, int argc, char **argv) {
     }
 }
 
+// The extensions of the files `smith fmt` formats: clang-format reads any other file as C and corrupts it (a shell
+// script rewritten as C was the case that made this a rule).
+static const char *const smith_fmt_extensions[] = {".c",   ".h",   ".m",  ".mm",    ".cpp",   ".cc",
+                                                   ".cxx", ".hpp", ".hh", ".smith", ".metal", nullptr};
+
+static bool smith_fmt_formats(const char *file) {
+    const char *dot = strrchr(file, '.');
+    const char *slash = strrchr(file, '/');
+    if (dot == nullptr || (slash != nullptr && dot < slash)) return false;
+    for (size_t i = 0; smith_fmt_extensions[i] != nullptr; i++)
+        if (strcmp(dot, smith_fmt_extensions[i]) == 0) return true;
+    return false;
+}
+
+// A file named on the command line that is not C, with no --assume-filename to say what it is: an error that names the
+// file and the extensions, and nothing is written. Standard input ("-") and a name that is no file are clang-format's.
+static void smith_fmt_refuse_non_c(const SmithDefaultsScan *scan, char **args) {
+    if (scan->assumed != nullptr) return;
+    for (int k = 0; k < scan->count; k++) {
+        const char *file = args[scan->files[k]];
+        struct stat info;
+        if (strcmp(file, "-") == 0 || smith_fmt_formats(file) || stat(file, &info) != 0 || !S_ISREG(info.st_mode))
+            continue;
+        fprintf(stderr, "smith: fmt: %s is not a C file, and nothing was written; smith fmt formats", file);
+        for (size_t i = 0; smith_fmt_extensions[i] != nullptr; i++)
+            fprintf(stderr, " %s", smith_fmt_extensions[i]);
+        fprintf(stderr, " (--assume-filename=x.c formats it as that)\n");
+        exit(smith_exit_usage);
+    }
+}
+
 static char *smith_defaults_argv[smith_defaults_args_max];
 static char smith_defaults_option[PATH_MAX + 32];
 
@@ -2678,6 +2709,7 @@ static int smith_defaults_apply(const SmithTool *tool, int *argc, char ***argv, 
     if (count > smith_defaults_args_max - 8) return -1;
     smith_defaults_read(fmt, count, args);
     SmithDefaultsScan *scan = &smith_defaults_scan;
+    if (fmt) smith_fmt_refuse_non_c(scan, args);
     if (scan->explicit_option || scan->missing_count == 0) return -1;
     char path[PATH_MAX];
     if (fmt)

@@ -181,5 +181,21 @@ export u32 f(x::T *p) {
     return c::EOF;
 }" "$(cat "$project/src/a/b.smith")"
 
+# --- a file that is not C is refused, and not written (#254) --------------------------------------------------------
+printf '#!/bin/sh\n[ -n "$x" ] && echo hi\n' >"$work/script.sh"
+cp "$work/script.sh" "$work/script.keep"
+"$smith" fmt "$work/script.sh" >"$work/refuse.out" 2>&1
+status=$?
+expect "smith fmt refuses a shell script: status 2" 2 "$status"
+expect "smith fmt refuses a shell script: nothing is written" "$(cat "$work/script.keep")" "$(cat "$work/script.sh")"
+total=$((total + 1))
+case $(cat "$work/refuse.out") in
+*"script.sh is not a C file"*".smith"*) echo "ok    the refusal names the file and the extensions" ;;
+*) fail "the refusal names the file and the extensions: $(cat "$work/refuse.out")" ;;
+esac
+cp "$work/script.sh" "$work/script.c"
+"$smith" fmt --assume-filename=x.c "$work/script.sh" >/dev/null 2>&1
+expect "smith fmt --assume-filename names the language, so it formats the file as that" 0 "$?"
+
 echo "smith-fmt: $((total - failures)) of $total passed"
 [ $failures = 0 ]
