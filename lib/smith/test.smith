@@ -40,9 +40,9 @@ import <unistd.h>;
 // and `void test_<name>(SmithIo *io) {` by name (`random::Key` and `io::Io` in a `.smith` file), and the runner,
 // which is this module's main, runs them in parallel, with failures printed with both values and their types. `smith
 // test` runs it; its arguments are the runner's options: --test <substring>, --seed <n>, --seeds <n>, --jobs <n>,
-// --shrink 0|1, --shuffle <seed>, --isolate, --in-process and --full (knowledge/build-tests.md). A failed check or
-// contract shows the variables of its line when smith started the runner with --explain <smith> (below); --no-explain
-// turns it off.
+// --shrink 0|1, --shuffle <seed>, --isolate, --in-process, --full and --update (knowledge/build-tests.md). A failed
+// check or contract shows the variables of its line when smith started the runner with --explain <smith> (below);
+// --no-explain turns it off.
 //
 // A property test is run on --seeds keys; the key comes from the run's seed, so a failure prints the seed that replays
 // it. A test that takes an io gets a real one made by the runner for that test alone: its key is made from the run's
@@ -498,7 +498,13 @@ u32 *workers_to_kill; // SMITH_TEST_KILL_WORKERS=n: the next n commands kill the
 u8 *memory_block;
 usize memory_used; // a multiple of arena::align_max
 bool full_run;     // the runner was given --full; set before any test forks, so every child sees it
-bool worker;       // this process is a worker: a failed check unwinds to its loop
+bool update_run;   // the runner was given --update: test::golden writes its file and passes
+io::Io (*golden_make_io)(i32 argc, char **argv); // the runner's make_io, which gives test::golden the files effect
+i32 golden_argc;
+char **golden_argv;
+u8 *golden_log;     // shared by every process: the files --update wrote, each path ended by a zero byte
+usize *golden_used; // the bytes of golden_log in use, shared likewise
+bool worker;        // this process is a worker: a failed check unwinds to its loop
 c::sigjmp_buf loop_jump;
 bool in_process;               // --in-process: the runner is its own worker, and an expected abort jumps to its loop
 u64 *forks;                    // the forks of the whole run, counted in memory every process shares
@@ -1075,6 +1081,297 @@ export void check_same_bits(auto a, typeof(a) b) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// Golden files.
+
+constexpr usize golden_lines = 40;  // the diff shows this many lines, then says how many more there are
+constexpr usize golden_width = 90;  // and cuts a longer line
+constexpr usize golden_context = 3; // lines of context around a change
+constexpr usize golden_cells_max =
+    4U << 20;                         // the table of the longest common subsequence; a larger change is shown whole
+constexpr usize golden_reserve = 192; // the end of the detail, which a long diff never takes
+constexpr usize golden_log_capacity = 1U << 20;
+
+typedef struct {
+    const char *at;
+    usize length;
+} Row;
+
+// One line of the script that turns the expected text into the actual one: ' ' both have it, '-' only the expected,
+// '+' only the actual.
+typedef struct {
+    char kind;
+    usize old_row;
+    usize new_row;
+} Edit;
+
+// What the failure shows: the diff, as many lines as fit, and the count of the others.
+typedef struct {
+    char text[detail_capacity];
+    usize used;
+    usize shown;
+    usize total;
+} Diff;
+
+bool same_row(Row a, Row b) {
+    return a.length == b.length && (a.length == 0 || c::memcmp(a.at, b.at, a.length) == 0);
+}
+
+usize count_rows(const char *text, usize size) {
+    usize rows = 0;
+    for (usize i = 0; i < size; i++)
+        rows += text[i] == '\n' ? 1U : 0U;
+    return rows + (size > 0 && text[size - 1] != '\n' ? 1U : 0U);
+}
+
+void split_rows(const char *text, usize size, Row *rows) {
+    usize begin = 0;
+    usize count = 0;
+    for (usize i = 0; i < size; i++) {
+        if (text[i] != '\n') continue;
+        rows[count] = (Row){.at = text + begin, .length = i - begin};
+        count += 1;
+        begin = i + 1;
+    }
+    if (begin < size) rows[count] = (Row){.at = text + begin, .length = size - begin};
+}
+
+void add_edit(Edit *edits, usize *count, char kind, usize old_row, usize new_row) {
+    edits[*count] = (Edit){.kind = kind, .old_row = old_row, .new_row = new_row};
+    *count += 1;
+}
+
+// The script between the two texts, whose first `head` and last `tail` lines are the same: the lines left are
+// compared through the table of the longest common subsequence (nullptr: they are shown as removed and added).
+usize make_edits(const Row *old_rows, usize old_count, const Row *new_rows, usize new_count, usize head, usize tail,
+                 u32 *table, Edit *edits) {
+    usize n = old_count - head - tail;
+    usize m = new_count - head - tail;
+    usize width = m + 1;
+    usize count = 0;
+    for (usize i = 0; i < head; i++)
+        add_edit(edits, &count, ' ', i, i);
+    if (table != nullptr) {
+        for (usize j = 0; j <= m; j++)
+            table[n * width + j] = 0;
+        for (usize i = n; i-- > 0;) {
+            table[i * width + m] = 0;
+            for (usize j = m; j-- > 0;) {
+                u32 down = table[(i + 1) * width + j];
+                u32 right = table[i * width + j + 1];
+                table[i * width + j] = same_row(old_rows[head + i], new_rows[head + j])
+                                           ? table[(i + 1) * width + j + 1] + 1
+                                           : (down > right ? down : right);
+            }
+        }
+    }
+    usize i = 0;
+    usize j = 0;
+    while (table != nullptr && i < n && j < m) {
+        if (same_row(old_rows[head + i], new_rows[head + j])) {
+            add_edit(edits, &count, ' ', head + i, head + j);
+            i += 1;
+            j += 1;
+        } else if (table[(i + 1) * width + j] >= table[i * width + j + 1]) {
+            add_edit(edits, &count, '-', head + i, 0);
+            i += 1;
+        } else {
+            add_edit(edits, &count, '+', 0, head + j);
+            j += 1;
+        }
+    }
+    for (; i < n; i++)
+        add_edit(edits, &count, '-', head + i, 0);
+    for (; j < m; j++)
+        add_edit(edits, &count, '+', 0, head + j);
+    for (usize k = 0; k < tail; k++)
+        add_edit(edits, &count, ' ', old_count - tail + k, new_count - tail + k);
+    return count;
+}
+
+// One line of the diff, with its mark (none for a hunk's heading), cut at golden_width.
+void diff_line(Diff *diff, char mark, const char *at, usize length) {
+    diff->total += 1;
+    if (diff->shown >= golden_lines) return;
+    usize room = detail_capacity - golden_reserve - diff->used;
+    i32 cut = (i32)(length < golden_width ? length : golden_width);
+    i32 written = mark != '\0' ? __builtin_snprintf(diff->text + diff->used, room, "%c%.*s\n", mark, cut, at)
+                               : __builtin_snprintf(diff->text + diff->used, room, "%.*s\n", cut, at);
+    if (written <= 0 || (usize)written >= room) return;
+    diff->used += (usize)written;
+    diff->shown += 1;
+}
+
+// A hunk: the edits from begin up to stop, with its heading.
+void diff_hunk(Diff *diff, const Edit *edits, usize begin, usize stop, const Row *old_rows, const Row *new_rows) {
+    usize old_start = 1;
+    usize new_start = 1;
+    for (usize k = 0; k < begin; k++) {
+        old_start += edits[k].kind != '+' ? 1U : 0U;
+        new_start += edits[k].kind != '-' ? 1U : 0U;
+    }
+    usize old_length = 0;
+    usize new_length = 0;
+    for (usize k = begin; k < stop; k++) {
+        old_length += edits[k].kind != '+' ? 1U : 0U;
+        new_length += edits[k].kind != '-' ? 1U : 0U;
+    }
+    char heading[96];
+    __builtin_snprintf(heading, sizeof heading, "@@ -%zu,%zu +%zu,%zu @@", old_start, old_length, new_start,
+                       new_length);
+    diff_line(diff, '\0', heading, c::strlen(heading));
+    for (usize k = begin; k < stop; k++) {
+        Row row = edits[k].kind == '+' ? new_rows[edits[k].new_row] : old_rows[edits[k].old_row];
+        diff_line(diff, edits[k].kind, row.at, row.length);
+    }
+}
+
+// The hunks of a script: each change with golden_context lines around it, changes close together in one.
+void diff_render(Diff *diff, const Edit *edits, usize count, const Row *old_rows, const Row *new_rows) {
+    usize at = 0;
+    while (at < count) {
+        usize first = at;
+        while (first < count && edits[first].kind == ' ')
+            first++;
+        if (first == count) return;
+        usize begin = first - at >= golden_context ? first - golden_context : at;
+        usize last = first; // one past the last change of the hunk
+        usize scan = first;
+        while (scan < count) {
+            if (edits[scan].kind != ' ') {
+                scan += 1;
+                last = scan;
+                continue;
+            }
+            usize run_end = scan;
+            while (run_end < count && edits[run_end].kind == ' ')
+                run_end++;
+            if (run_end == count || run_end - scan > 2 * golden_context) break;
+            scan = run_end;
+        }
+        usize stop = last + golden_context < count ? last + golden_context : count;
+        diff_hunk(diff, edits, begin, stop, old_rows, new_rows);
+        at = stop;
+    }
+}
+
+// The bytes of the file in the test's memory (a zero after them), or nullptr when it cannot be read. The files effect
+// is a real io made for the call from the runner's make_io, as run_io makes a test's.
+const char *golden_read(const char *path, usize *size) {
+    io::Io io = golden_make_io(golden_argc, golden_argv);
+    io::Read file = io::files_read(&io.files, &io.arena, path);
+    const char *result = nullptr;
+    if (file.error.code == 0) {
+        arena::Arena memory_arena = memory(countof(file.data) + 1);
+        char *buffer = arena::push_slice(&memory_arena, char, countof(file.data) + 1).data;
+        if (countof(file.data) > 0) __builtin_memcpy(buffer, file.data.data, countof(file.data));
+        *size = countof(file.data);
+        result = buffer;
+    }
+    io::close(&io);
+    return result;
+}
+
+// The file written whole, its folders made. False when it cannot be.
+bool golden_write(const char *path, const char *text, usize size) {
+    char folder[path_capacity];
+    __builtin_snprintf(folder, sizeof folder, "%s", path);
+    char *slash = c::strrchr(folder, '/');
+    io::Io io = golden_make_io(golden_argc, golden_argv);
+    bool made = true;
+    if (slash != nullptr && slash != folder) {
+        *slash = '\0';
+        made = io::files_make_folder(&io.files, folder).code == 0;
+    }
+    const u8 *bytes = (const u8 *)text;
+    made = made && io::files_write(&io.files, path, bytes[0:size], io::Replace).code == 0;
+    io::close(&io);
+    return made;
+}
+
+[[noreturn]] void golden_fail(const char *format, const char *path) {
+    __builtin_snprintf(shared->detail, detail_capacity, format, path); // NOLINT(clang-diagnostic-format-nonliteral)
+    stop();
+}
+
+// Makes the diff of expected against actual, expected on the left, and fails the test with it.
+[[noreturn]] void golden_differ(const char *path, const char *expected, usize expected_size, const char *actual,
+                                usize actual_size) {
+    usize old_count = count_rows(expected, expected_size);
+    usize new_count = count_rows(actual, actual_size);
+    arena::Arena rows_arena = memory((old_count + new_count + 2) * sizeof(Row) +
+                                     (old_count + new_count + 1) * sizeof(Edit) + sizeof(Diff) + 4096);
+    Row *old_rows = arena::push_slice(&rows_arena, Row, old_count + 1).data;
+    Row *new_rows = arena::push_slice(&rows_arena, Row, new_count + 1).data;
+    Edit *edits = arena::push_slice(&rows_arena, Edit, old_count + new_count + 1).data;
+    split_rows(expected, expected_size, old_rows);
+    split_rows(actual, actual_size, new_rows);
+    usize head = 0;
+    while (head < old_count && head < new_count && same_row(old_rows[head], new_rows[head]))
+        head++;
+    usize tail = 0;
+    while (tail < old_count - head && tail < new_count - head &&
+           same_row(old_rows[old_count - 1 - tail], new_rows[new_count - 1 - tail]))
+        tail++;
+    usize cells = (old_count - head - tail + 1) * (new_count - head - tail + 1);
+    u32 *cells_table = nullptr;
+    if (cells <= golden_cells_max) {
+        arena::Arena table_arena = memory(cells * sizeof(u32) + 4096);
+        cells_table = arena::push_slice(&table_arena, u32, cells).data;
+    }
+    usize count = make_edits(old_rows, old_count, new_rows, new_count, head, tail, cells_table, edits);
+    Diff *diff = arena::push_slice(&rows_arena, Diff, 1).data;
+    diff_render(diff, edits, count, old_rows, new_rows);
+    if (diff->total == 0) diff_line(diff, '\0', "(the lines are the same; the final newline differs)", 52);
+    diff->text[diff->used] = '\0';
+    char more[48] = "";
+    if (diff->total > diff->shown)
+        __builtin_snprintf(more, sizeof more, "... %zu more lines\n", diff->total - diff->shown);
+    __builtin_snprintf(shared->detail, detail_capacity,
+                       "--- %s (expected)\n+++ %s (actual)\n%s%srun smith test --update to accept\n", path, path,
+                       diff->text, more);
+    stop();
+}
+
+// Records a file --update wrote, for the runner to list.
+void golden_note(const char *path) {
+    if (golden_log == nullptr) return;
+    usize length = c::strlen(path) + 1;
+    usize at = __atomic_fetch_add(golden_used, length, __ATOMIC_RELAXED);
+    if (at + length <= golden_log_capacity) __builtin_memcpy(golden_log + at, path, length);
+}
+
+// Whether this run is `smith test --update`: every test::golden writes its file and passes.
+export [[nodiscard]] bool updating() {
+    return update_run;
+}
+
+// The text `actual` must be the file at `path` (relative to the project root, which is the working directory of the
+// tests), byte for byte. A mismatch fails the test with a unified diff, the expected file on the left (3 lines of
+// context, 40 lines at most, then how many more); a missing file fails it too, and is never made on its own. Under
+// `smith test --update` the file is written when it differs (its folders made) and the test passes; the runner lists
+// the files it wrote. The file is read and written with the files effect, and the test needs no io for it.
+export void golden(const char path[:], const char actual[:]) {
+    char file[path_capacity];
+    if (countof(path) == 0 || countof(path) >= path_capacity)
+        golden_fail("%s", "the golden path is empty or too long\n");
+    __builtin_memcpy(file, path.data, countof(path));
+    file[countof(path)] = '\0';
+    usize size = 0;
+    const char *expected = golden_read(file, &size);
+    usize actual_size = countof(actual);
+    const char *actual_text = actual_size > 0 ? actual.data : "";
+    if (expected != nullptr && size == actual_size && (size == 0 || c::memcmp(expected, actual_text, size) == 0))
+        return;
+    if (update_run) {
+        if (!golden_write(file, actual_text, actual_size)) golden_fail("cannot write %s\n", file);
+        golden_note(file);
+        return;
+    }
+    if (expected == nullptr) golden_fail("no file %s; run smith test --update to write it\n", file);
+    golden_differ(file, expected, size, actual_text, actual_size);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 // The runner.
 
 typedef struct {
@@ -1089,6 +1386,7 @@ typedef struct {
     bool shrink;
     u32 shrink_seconds; // the time shrinking one failure may take
     bool full;
+    bool update; // --update: test::golden writes its file
     bool list;
     bool verbose;
     bool color;
@@ -1886,7 +2184,7 @@ void print_reason(const Options *options, const Run *run) {
 void print_detail(const Options *options, const Run *run) {
     for (const char *at = run->detail; *at != '\0';) { // a value read from the frame is "@ name = value": no marker
         usize length = c::strcspn(at, "\n");
-        usize marker = at[0] == '@' ? (at[1] == '!' ? 3 : 2) : 0;
+        usize marker = at[0] == '@' && at[1] == ' ' ? 2 : (at[0] == '@' && at[1] == '!' && at[2] == ' ' ? 3 : 0);
         say(options, "    %.*s\n", (i32)(length - marker), at + marker);
         at += length + (at[length] == '\n' ? 1 : 0);
     }
@@ -2410,6 +2708,8 @@ bool parse_options(i32 argc, char **argv, Options *options) {
             options->verbose = true;
         } else if (c::strcmp(flag, "--full") == 0) {
             options->full = true;
+        } else if (c::strcmp(flag, "--update") == 0) {
+            options->update = true;
         } else if (c::strcmp(flag, "--isolate") == 0) {
             options->isolate = true;
         } else if (c::strcmp(flag, "--in-process") == 0) {
@@ -2501,6 +2801,25 @@ void say_explained(const Options *options) {
             (f64)explained[explain_stat_nanoseconds] * 1e-9);
 }
 
+// What test::golden needs, made before any test forks: --update, the runner and the log of the files it wrote.
+void golden_begin(const Options *options) {
+    update_run = options->update;
+    golden_make_io = options->runner->make_io;
+    golden_argc = options->runner->argc;
+    golden_argv = options->runner->argv;
+    golden_log = (u8 *)map_bytes(golden_log_capacity, map_shared);
+    golden_used = (usize *)map_bytes(sizeof(usize), map_shared);
+}
+
+// The files --update wrote, which test::golden recorded as it went.
+void say_written(const Options *options) {
+    usize used = *golden_used < golden_log_capacity ? *golden_used : golden_log_capacity;
+    for (usize at = 0; at < used;) {
+        say(options, "wrote %s\n", (const char *)golden_log + at);
+        at += c::strlen((const char *)golden_log + at) + 1;
+    }
+}
+
 // The runner: parses the options, chooses the tests, runs them and prints the report. The exit status is 0 when every
 // test passed. main makes the Runner.
 [[smith::c_name("smith_test_run")]] export i32 run_tests(Runner *runner) {
@@ -2527,7 +2846,7 @@ void say_explained(const Options *options) {
                  "usage: %s [--test <substring>] [--seed <n>] [--seeds <1 to %llu>] [--jobs <1 to %zu>] "
                  "[--timeout <cpu seconds>] [--wall-timeout <seconds>] [--shrink 0|1] [--shrink-seconds <seconds>] "
                  "[--shuffle <seed>] [--isolate] "
-                 "[--in-process] [--full] [--list] [--verbose] [--stats] [--trace] [--color] "
+                 "[--in-process] [--full] [--update] [--list] [--verbose] [--stats] [--trace] [--color] "
                  "[--explain <smith>] [--explain-max <n>] [--no-explain]\n",
                  runner->argv[0], seeds_max, jobs_max);
         return usage_status;
@@ -2540,6 +2859,7 @@ void say_explained(const Options *options) {
         options.wall_timeout = options.timeout == 0 ? 0 : wall_default; // a blocked test spends no CPU time
     f64 start = seconds(&options);
     full_run = options.full;
+    golden_begin(&options);
     raise_files(options.jobs);
     c::signal(sig_pipe, (void (*)(i32))1); // a worker that died while idle is a failed write, not the end of the runner
     forks = (u64 *)map_bytes((1) * sizeof(u64), map_shared);
@@ -2566,6 +2886,7 @@ void say_explained(const Options *options) {
     for (usize i = 0; i < plan->count; i++)
         failed += plan->runs[i].outcome.end != End_Passed ? 1 : 0;
     print_slowest(plan);
+    say_written(&options);
     say(&options, "\n%zu passed, %zu failed in %.2f s\n", plan->count - failed, failed, seconds(&options) - start);
     say_explained(&options);
     if (options.stats) say(&options, "forks: %llu\n", *forks);

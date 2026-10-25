@@ -1,0 +1,29 @@
+module sample_test;
+
+import smith::test;
+
+export void test_matches() {
+    test::golden("expected/matches.txt", "alpha\nbeta\n");
+}
+
+// Two changes far apart in ten lines: one hunk each side of the unchanged middle.
+export void test_differs() {
+    test::golden("expected/differs.txt", "one\nTWO\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\nELEVEN\n");
+}
+
+// Every line of sixty differs: the diff is longer than the limit.
+export void test_long() {
+    char text[1024] = "";
+    usize used = 0;
+    for (usize i = 1; i <= 60; i++)
+        used += (usize)__builtin_snprintf(text + used, sizeof text - used, "new %zu\n", i);
+    test::golden("expected/long.txt", text[0:used]);
+}
+
+export void test_missing() {
+    test::golden("expected/made/new.txt", "fresh\n");
+}
+
+export void test_empty_file_and_text() {
+    test::golden("expected/empty.txt", "");
+}
