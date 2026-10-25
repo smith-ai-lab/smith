@@ -1,0 +1,37 @@
+[How loud.]
+Low: [Quiet.]
+High: []
+Max: [Very loud.]
+[]
+round: []
+none: []
+plain: []
+[Settings of the server.
+Read once at start.]
+port: [Port to listen on.]
+backlog: []
+flag: []
+level: [a
+b]
+quote: [Say "hi" \ then
+  indented]
+[The pair.]
+a: []
+[]
+undocumented: []
+port=[Port to listen on.] 18
+backlog=[] 0
+flag=[] 0
+level=[a
+b] 3
+quote=[Say "hi" \ then
+  indented] 26
+[Settings of the server.
+Read once at start.]
+port: [Port to listen on.]
+backlog: []
+flag: []
+level: [a
+b]
+quote: [Say "hi" \ then
+  indented]

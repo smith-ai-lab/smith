@@ -1,0 +1,2 @@
+src/main.smith:9:13: `Red` is a constant of an enum, not a member: `.[...]` reads the members of a struct
+src/main.smith:9:13: member reference base type 'Color' is not a structure or union

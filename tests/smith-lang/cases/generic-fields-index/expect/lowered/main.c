@@ -29,7 +29,7 @@ main_Outer o = {a};
 printf("first %g\n",__extension__({extern double main_first__Bag(main_Outer*o)__asm__("_main::first(main_Bag)");main_first__Bag(&o);}));
 return 0;
 }
-typedef struct smith_field{struct smith_array_char_n{char*data;__SIZE_TYPE__ count[1];}name;unsigned __int128 type;}Field;[[maybe_unused]]static inline Field smith_field_make(char*name,__SIZE_TYPE__ length,unsigned __int128 kind){return(Field){{name,{length}},kind};}extern void main_show__Bag(main_Bag*x,main_Bag y)__asm__("_main::show(main_Bag)");
+typedef struct smith_field{struct smith_array_char_n{char*data;__SIZE_TYPE__ count[1];}name;unsigned __int128 type;struct smith_array_char_n doc;}Field;[[maybe_unused]]static inline Field smith_field_make(char*name,__SIZE_TYPE__ length,unsigned __int128 kind,char*doc,__SIZE_TYPE__ doc_length){return(Field){{name,{length}},kind,{doc,{doc_length}}};}extern void main_show__Bag(main_Bag*x,main_Bag y)__asm__("_main::show(main_Bag)");
 [[gnu::weak]][[gnu::visibility("hidden")]]void main_show__Bag(main_Bag*x,main_Bag y){}
 extern double main_first__Bag(main_Outer*o)__asm__("_main::first(main_Bag)");
 [[gnu::weak]][[gnu::visibility("hidden")]]double main_first__Bag(main_Outer*o){constexpr Field f=smith_call_failed;return o->bag.smith_call_failed[0]+o->bag.smith_call_failed[smith_call_failed-1];}

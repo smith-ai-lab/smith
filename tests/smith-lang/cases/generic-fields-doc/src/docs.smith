@@ -1,0 +1,67 @@
+module docs;
+
+import <stdio.h>;
+
+/// Settings of the server.
+/// Read once at start.
+export typedef struct {
+    /// Port to listen on.
+    u16 port;
+    u16 backlog; // a plain comment is no doc comment
+    /* neither is this */
+    u8 flag;
+    /** a
+     * b */
+    i32 level;
+    /// Say "hi" \ then
+    ///   indented
+    i32 quote;
+} Options;
+
+/** The pair. */
+typedef struct {
+    i32 a;
+} Pair;
+
+typedef struct {
+    i32 undocumented;
+} Plain;
+
+export void show(constexpr type T) {
+    c::printf("[%s]\n", doc(T));
+    for constexpr (usize i = 0; i < countof(fields(T)); i++) {
+        c::printf("%s: [%s]\n", fields(T)[i].name, fields(T)[i].doc);
+    }
+}
+
+void value(constexpr type T) {
+    for constexpr (usize i = 0; i < countof(fields(T)); i++) {
+        constexpr Field f = fields(T)[i];
+        c::printf("%.*s=[%.*s] %zu\n", (i32)countof(f.name), f.name.data, (i32)countof(f.doc), f.doc.data, countof(f.doc));
+    }
+}
+
+/// How loud.
+export typedef enum {
+    /// Quiet.
+    Low,
+    High, // no doc
+    /** Very loud. */
+    Max,
+} Volume;
+
+// The variants of an enum with payloads are listed too; their docs are not read yet.
+export typedef enum {
+    f32 round;
+    none;
+    plain;
+} Shape;
+
+export void run() {
+    show(Volume);
+    show(Shape);
+    show(Options);
+    show(Pair);
+    show(Plain);
+    value(Options);
+}

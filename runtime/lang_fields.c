@@ -60,10 +60,10 @@ static bool smith_lang_fields_punct(uint32_t at, uint32_t limit, const char *tex
 // How many tokens `fields ( T )` at `at` takes (T a type parameter of the generic), or `fields ( typeof ( x ) )` (x
 // an expression of a struct's type: `x` (a parameter whose type is a type of the instance: `auto x`, `T x`), `*p`,
 // `p->f`): 4, the length of the whole call, or 0 when it is neither.
-static uint32_t smith_lang_fields_call_len(uint32_t at, uint32_t limit) {
+static uint32_t smith_lang_fields_call_len_of(uint32_t at, uint32_t limit, const char *word) {
     if (at + 3 >= limit) return 0;
     const SmithLangGenToken *name = smith_lang_cx_token(at);
-    if (!smith_lang_cx_word(name, "fields") || name->special != SmithLangGen_Plain || name->param != 0 ||
+    if (!smith_lang_cx_word(name, word) || name->special != SmithLangGen_Plain || name->param != 0 ||
         !smith_lang_fields_punct(at + 1, limit, "(")) {
         return 0;
     }
@@ -75,6 +75,15 @@ static uint32_t smith_lang_fields_call_len(uint32_t at, uint32_t limit) {
     if (!smith_lang_cx_word(type, "typeof") || !smith_lang_fields_punct(at + 3, limit, "(")) return 0;
     uint32_t after = smith_lang_cx_skip_group(at + 3, limit); // `typeof ( E )`: E any expression of a struct's type
     return after != UINT32_MAX && after > at + 5 && smith_lang_fields_punct(after, limit, ")") ? after + 1 - at : 0;
+}
+
+static uint32_t smith_lang_fields_call_len(uint32_t at, uint32_t limit) {
+    return smith_lang_fields_call_len_of(at, limit, "fields");
+}
+
+// `doc ( T )` or `doc ( typeof ( E ) )`: the doc comment of the struct (issue #287); the same shape as `fields`.
+static uint32_t smith_lang_fields_doc_len(uint32_t at, uint32_t limit) {
+    return smith_lang_fields_call_len_of(at, limit, "doc");
 }
 
 // Whether the tokens at `at` are `fields ( T ) [`: a field.
@@ -152,16 +161,17 @@ static bool smith_lang_fields_load(const SmithHost *host, const SmithLangGeneric
     uint32_t mark[2] = {smith_lang_it.count, smith_lang_it.text_used};
     uint32_t first = 0;
     uint32_t count = 0;
-    bool lone = of_value && smith_lang_fields_call_len(call_at, UINT32_MAX) == 7; // `typeof(x)`
+    uint32_t call_len = smith_lang_fields_call_len(call_at, UINT32_MAX);
+    if (call_len == 0) call_len = smith_lang_fields_doc_len(call_at, UINT32_MAX);
+    bool lone = of_value && call_len == 7; // `typeof(x)`
     int own = lone ? smith_lang_param_type_of(generic, instance, (SmithLangSpan){type_at, type_at + 1}) : -1;
     if (lone && own < 0) {
         snprintf(message, capacity, "`fields(typeof(%s))`: `%s` is not a parameter of this generic whose type is known",
                  smith_lang_gt_str(smith_lang_cx_token(type_at)), smith_lang_gt_str(smith_lang_cx_token(type_at)));
         return false;
     }
-    uint32_t value_end =
-        of_value ? call_at + smith_lang_fields_call_len(call_at, UINT32_MAX) - 2 : 0; // the `)` of typeof
-    if (of_value && own < 0 && value_end > type_at + 1) { // `typeof(*p)`, `typeof(p->f)`: the expression's type
+    uint32_t value_end = of_value ? call_at + call_len - 2 : 0; // the `)` of typeof
+    if (of_value && own < 0 && value_end > type_at + 1) {       // `typeof(*p)`, `typeof(p->f)`: the expression's type
         if (!smith_lang_fields_stage_expression(call_at + 2, value_end, instance, location, &first, &count)) {
             snprintf(message, capacity, "`fields(typeof(...))`: this expression is too long");
             return false;
@@ -273,7 +283,14 @@ static int smith_lang_fields_group(SmithLang *lang, const SmithHost *host, const
     uint32_t length = smith_lang_fields_call_len(first, last);
     if (length != 0 && smith_lang_fields_field_at(first, last) &&
         smith_lang_cx_skip_group(first + length, last) == last) {
-        return smith_lang_field_expr(lang, host, replay, first, last, place, ref);
+        int found = smith_lang_field_expr(lang, host, replay, first, last, place, ref);
+        if (found == 1 && ref->info.is_enum) {
+            snprintf(ref->message, sizeof ref->message,
+                     "`%s` is a constant of an enum, not a member: `.[...]` reads the members of a struct",
+                     ref->info.name);
+            return -1;
+        }
+        return found;
     }
     static SmithLangCx evaluation;
     evaluation =
@@ -442,12 +459,58 @@ static void smith_lang_fields_piece(SmithLangFieldPieces *pieces, SmithTokenKind
     pieces->count += 1;
 }
 
+// A doc comment as string literals (adjacent literals are one string, so a long text is cut into pieces that fit a
+// token): the `"..."` pieces, then false when nothing fits. `length` is the byte count of the text.
+static void smith_lang_fields_doc_pieces(SmithLangFieldPieces *pieces, const char *doc) {
+    constexpr size_t chunk = 60;
+    size_t length = strlen(doc);
+    size_t at = 0;
+    do {
+        char text[smith_lang_name_max];
+        size_t used = 0;
+        text[used++] = '"';
+        for (size_t n = 0; at < length && n < chunk; n++, at++) {
+            unsigned char c = (unsigned char)doc[at];
+            if (c == '\n') {
+                text[used++] = '\\';
+                text[used++] = 'n';
+            } else if (c == '\t') {
+                text[used++] = '\\';
+                text[used++] = 't';
+            } else if (c == '"' || c == '\\') {
+                text[used++] = '\\';
+                text[used++] = (char)c;
+            } else if (c < 0x20) {
+                used += (size_t)snprintf(text + used, 5, "\\%03o", c);
+            } else {
+                text[used++] = (char)c;
+            }
+        }
+        text[used++] = '"';
+        text[used] = 0;
+        smith_lang_fields_piece(pieces, SmithTokenKind_String, text);
+    } while (at < length);
+}
+
+// The documentation of a field or a struct, or an error when it does not fit.
+static bool smith_lang_fields_doc_fits(const SmithFieldInfo *info, bool of_type, char *message, size_t capacity) {
+    if (!(of_type ? info->type_doc_overflow : info->doc_overflow)) return true;
+    if (of_type) {
+        snprintf(message, capacity, "the doc comment of the struct is longer than %zu bytes", sizeof info->doc - 1);
+    } else {
+        snprintf(message, capacity, "the doc comment of the field `%s` is longer than %zu bytes", info->name,
+                 sizeof info->doc - 1);
+    }
+    return false;
+}
+
 // Whether the tokens at `at` begin a use of `fields`: the cheap check that nothing needs evaluating for.
 static bool smith_lang_fields_begins(const SmithLangReplay *replay, uint32_t at, uint32_t limit) {
     if (replay->generic == nullptr || replay->instance == nullptr) return false;
     const SmithLangGenToken *token = smith_lang_cx_token(at);
     if (token->special != SmithLangGen_Plain) return false;
     if (smith_lang_fields_countof_at(at, limit) || smith_lang_fields_call_len(at, limit) != 0) return true;
+    if (smith_lang_fields_doc_len(at, limit) != 0) return true;
     if (smith_lang_fields_typeof_end(at, limit) != 0) return true;
     bool member = smith_lang_fields_punct(at, limit, ".") || smith_lang_fields_punct(at, limit, "->");
     if (member && smith_lang_fields_punct(at + 1, limit, "[")) return true;
@@ -567,6 +630,12 @@ static bool smith_lang_fields_make(SmithLangFieldUse *use, const SmithFieldInfo 
     size_t handle_count = smith_lang_ty_pieces(handle, handle_pieces);
     for (size_t i = 0; i < handle_count; i++)
         smith_lang_fields_piece(use->pieces, smith_lang_ty_piece_kind(handle_pieces[i]), handle_pieces[i]);
+    if (!smith_lang_fields_doc_fits(info, false, use->ref.message, sizeof use->ref.message)) return false;
+    smith_lang_fields_piece(use->pieces, SmithTokenKind_Punctuator, ",");
+    smith_lang_fields_doc_pieces(use->pieces, info->doc);
+    smith_lang_fields_piece(use->pieces, SmithTokenKind_Punctuator, ",");
+    snprintf(text, sizeof text, "%zu", strlen(info->doc));
+    smith_lang_fields_piece(use->pieces, SmithTokenKind_Number, text);
     smith_lang_fields_piece(use->pieces, SmithTokenKind_Punctuator, ")");
     return true;
 }
@@ -600,20 +669,41 @@ static int smith_lang_fields_use_value(SmithLangFieldUse *use) {
     return -1;
 }
 
-// `fields(T)[i].name`: the name as a string literal; `fields(T)` and `fields(T)[i]` otherwise: the value.
+// `doc(T)`: the struct's doc comment as a string literal.
+static int smith_lang_fields_use_doc(SmithLangFieldUse *use) {
+    use->consumed = smith_lang_fields_doc_len(use->at, use->limit);
+    SmithFieldInfo info;
+    if (!smith_lang_fields_load(use->host, use->replay->generic, use->replay->instance, use->at, use->place, 0, &info,
+                                use->ref.message, sizeof use->ref.message) ||
+        !smith_lang_fields_doc_fits(&info, true, use->ref.message, sizeof use->ref.message)) {
+        return -1;
+    }
+    smith_lang_fields_doc_pieces(use->pieces, info.type_doc);
+    return 1;
+}
+
+// `fields(T)[i].name`, `.doc`: the name or the doc comment as a string literal; `fields(T)` and `fields(T)[i]`
+// otherwise: the value.
 static int smith_lang_fields_use_name(SmithLangFieldUse *use) {
     uint32_t length = smith_lang_fields_call_len(use->at, use->limit);
     uint32_t after = smith_lang_fields_punct(use->at + length, use->limit, "[")
                          ? smith_lang_cx_skip_group(use->at + length, use->limit)
                          : UINT32_MAX;
+    bool doc = after != UINT32_MAX && smith_lang_fields_punct(after, use->limit, ".") &&
+               smith_lang_cx_word(smith_lang_cx_token(after + 1), "doc");
     if (after == UINT32_MAX || !smith_lang_fields_punct(after, use->limit, ".") ||
-        !smith_lang_cx_word(smith_lang_cx_token(after + 1), "name")) {
+        !(doc || smith_lang_cx_word(smith_lang_cx_token(after + 1), "name"))) {
         return smith_lang_fields_use_value(use);
     }
     int found = smith_lang_field_expr(use->lang, use->host, use->replay, use->at, use->limit, use->place, &use->ref);
     use->consumed = use->ref.consumed;
     if (found != 1) return found;
     use->consumed += 2;
+    if (doc) {
+        if (!smith_lang_fields_doc_fits(&use->ref.info, false, use->ref.message, sizeof use->ref.message)) return -1;
+        smith_lang_fields_doc_pieces(use->pieces, use->ref.info.doc);
+        return 1;
+    }
     char text[smith_lang_name_max];
     snprintf(text, sizeof text, "\"%s\"", use->ref.info.tuple ? use->ref.info.name + 1 : use->ref.info.name);
     smith_lang_fields_piece(use->pieces, SmithTokenKind_String, text);
@@ -672,6 +762,8 @@ static int smith_lang_fields_use(SmithLang *lang, const SmithHost *host, const S
         found = smith_lang_fields_use_typeof(&use);
     else if (smith_lang_fields_countof_at(at, limit))
         found = smith_lang_fields_use_countof(&use);
+    else if (smith_lang_fields_doc_len(at, limit) != 0)
+        found = smith_lang_fields_use_doc(&use);
     else if (smith_lang_fields_call_len(at, limit) != 0)
         found = smith_lang_fields_use_name(&use);
     else
@@ -845,7 +937,8 @@ static int smith_lang_fields_value_use(uint32_t at, uint32_t len, uint32_t first
     if (!smith_lang_fields_punct(at + len, limit, "[")) return 2;
     uint32_t after = smith_lang_cx_skip_group(at + len, limit);
     bool name = after != UINT32_MAX && smith_lang_fields_punct(after, limit, ".") &&
-                smith_lang_cx_word(smith_lang_cx_token(after + 1), "name");
+                (smith_lang_cx_word(smith_lang_cx_token(after + 1), "name") ||
+                 smith_lang_cx_word(smith_lang_cx_token(after + 1), "doc"));
     return name ? 0 : 1;
 }
 
@@ -859,35 +952,114 @@ static void smith_lang_fields_put(SmithLang *lang, const SmithHost *host, const 
 // (a `type` is a 128-bit handle to clang), and `smith_field_make`, the function every `fields(T)[i]` is written as a
 // call of: a compile-time call the parser can evaluate wherever it has read the definition, which the file's first
 // declaration brings. The second list is for a file where the struct of a `char[:]` is already defined.
-static const char *const smith_lang_field_words[] = {"typedef",  "struct", "smith_field",
-                                                     "{",        "struct", "smith_array_char_n",
-                                                     "{",        "char",   "*",
-                                                     "data",     ";",      "__SIZE_TYPE__",
-                                                     "count",    "[",      "1",
-                                                     "]",        ";",      "}",
-                                                     "name",     ";",      "unsigned",
-                                                     "__int128", "type",   ";",
-                                                     "}",        "Field",  ";"};
-static const char *const smith_lang_field_words_bare[] = {
-    "typedef", "struct", "smith_field", "{",     "struct", "smith_array_char_n", "name", ";", "unsigned", "__int128",
-    "type",    ";",      "}",           "Field", ";"};
-static const char *const smith_lang_field_maker[] = {"[",        "[",      "maybe_unused",
-                                                     "]",        "]",      "static",
-                                                     "inline",   "Field",  "smith_field_make",
-                                                     "(",        "char",   "*",
-                                                     "name",     ",",      "__SIZE_TYPE__",
-                                                     "length",   ",",      "unsigned",
-                                                     "__int128", "kind",   ")",
-                                                     "{",        "return", "(",
-                                                     "Field",    ")",      "{",
-                                                     "{",        "name",   ",",
-                                                     "{",        "length", "}",
-                                                     "}",        ",",      "kind",
-                                                     "}",        ";",      "}"};
+static const char *const smith_lang_field_words[] = {"typedef",
+                                                     "struct",
+                                                     "smith_field",
+                                                     "{",
+                                                     "struct",
+                                                     "smith_array_char_n",
+                                                     "{",
+                                                     "char",
+                                                     "*",
+                                                     "data",
+                                                     ";",
+                                                     "__SIZE_TYPE__",
+                                                     "count",
+                                                     "[",
+                                                     "1",
+                                                     "]",
+                                                     ";",
+                                                     "}",
+                                                     "name",
+                                                     ";",
+                                                     "unsigned",
+                                                     "__int128",
+                                                     "type",
+                                                     ";",
+                                                     "struct",
+                                                     "smith_array_char_n",
+                                                     "doc",
+                                                     ";",
+                                                     "}",
+                                                     "Field",
+                                                     ";"};
+static const char *const smith_lang_field_words_bare[] = {"typedef",
+                                                          "struct",
+                                                          "smith_field",
+                                                          "{",
+                                                          "struct",
+                                                          "smith_array_char_n",
+                                                          "name",
+                                                          ";",
+                                                          "unsigned",
+                                                          "__int128",
+                                                          "type",
+                                                          ";",
+                                                          "struct",
+                                                          "smith_array_char_n",
+                                                          "doc",
+                                                          ";",
+                                                          "}",
+                                                          "Field",
+                                                          ";"};
+static const char *const smith_lang_field_maker[] = {"[",
+                                                     "[",
+                                                     "maybe_unused",
+                                                     "]",
+                                                     "]",
+                                                     "static",
+                                                     "inline",
+                                                     "Field",
+                                                     "smith_field_make",
+                                                     "(",
+                                                     "char",
+                                                     "*",
+                                                     "name",
+                                                     ",",
+                                                     "__SIZE_TYPE__",
+                                                     "length",
+                                                     ",",
+                                                     "unsigned",
+                                                     "__int128",
+                                                     "kind",
+                                                     ",",
+                                                     "char",
+                                                     "*",
+                                                     "doc",
+                                                     ",",
+                                                     "__SIZE_TYPE__",
+                                                     "doc_length",
+                                                     ")",
+                                                     "{",
+                                                     "return",
+                                                     "(",
+                                                     "Field",
+                                                     ")",
+                                                     "{",
+                                                     "{",
+                                                     "name",
+                                                     ",",
+                                                     "{",
+                                                     "length",
+                                                     "}",
+                                                     "}",
+                                                     ",",
+                                                     "kind",
+                                                     ",",
+                                                     "{",
+                                                     "doc",
+                                                     ",",
+                                                     "{",
+                                                     "doc_length",
+                                                     "}",
+                                                     "}",
+                                                     "}",
+                                                     ";",
+                                                     "}"};
 
 // The words of the definition, in one list.
 static size_t smith_lang_field_definition(bool bare, const char *const **words) {
-    static const char *combined[128];
+    static const char *combined[160];
     size_t used = 0;
     size_t count = bare ? sizeof smith_lang_field_words_bare / sizeof smith_lang_field_words_bare[0]
                         : sizeof smith_lang_field_words / sizeof smith_lang_field_words[0];
@@ -984,6 +1156,19 @@ static void smith_lang_fields_array(SmithLang *lang, const SmithHost *host, cons
         for (size_t i = 0; i < handle_count; i++)
             smith_lang_fields_put(lang, host, generic, location, id, smith_lang_ty_piece_kind(handle_pieces[i]),
                                   handle_pieces[i]);
+        smith_lang_fields_put(lang, host, generic, location, id, SmithTokenKind_Punctuator, ",");
+        SmithLangFieldPieces doc;
+        doc.count = 0;
+        smith_lang_fields_doc_pieces(&doc, info.doc);
+        smith_lang_fields_put(lang, host, generic, location, id, SmithTokenKind_Punctuator, "{");
+        for (size_t i = 0; i < doc.count; i++)
+            smith_lang_fields_put(lang, host, generic, location, id, doc.kind[i], doc.text[i]);
+        smith_lang_fields_put(lang, host, generic, location, id, SmithTokenKind_Punctuator, ",");
+        smith_lang_fields_put(lang, host, generic, location, id, SmithTokenKind_Punctuator, "{");
+        snprintf(text, sizeof text, "%zu", strlen(info.doc));
+        smith_lang_fields_put(lang, host, generic, location, id, SmithTokenKind_Number, text);
+        smith_lang_fields_put(lang, host, generic, location, id, SmithTokenKind_Punctuator, "}");
+        smith_lang_fields_put(lang, host, generic, location, id, SmithTokenKind_Punctuator, "}");
         smith_lang_fields_put(lang, host, generic, location, id, SmithTokenKind_Punctuator, "}");
         smith_lang_fields_put(lang, host, generic, location, id, SmithTokenKind_Punctuator, ",");
     }
@@ -1061,7 +1246,10 @@ static uint32_t smith_lang_fields_cx_piece(const SmithLangCx *cx, uint32_t at, u
     smith_lang_fields_maker_name(cx->lang, maker, sizeof maker);
     char literal[smith_lang_ty_pieces_max * smith_lang_ty_piece_size];
     if (!smith_lang_ty_literal(handle, literal, sizeof literal)) return UINT32_MAX;
-    snprintf(piece, capacity, "%s\x1f(\x1f\"%s\"\x1f,\x1f%zu\x1f,\x1f%s\x1f)", maker, name, strlen(name), literal);
+    snprintf(piece, capacity,
+             "%s\x1f(\x1f\"%s\"\x1f,\x1f%zu\x1f,\x1f%s\x1f,\x1f\"\"\x1f,\x1f"
+             "0\x1f)",
+             maker, name, strlen(name), literal);
     return after - at;
 }
 
