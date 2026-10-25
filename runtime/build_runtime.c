@@ -2,6 +2,10 @@
 // the result writes .smith/build.ninja. Strings and lists live in a static arena (no malloc); the manifest is
 // written only when its bytes change, so ninja's view of it changes only when the build does. See
 // knowledge/build-file.md.
+#ifdef __linux__
+// What glibc hides from C23 and macOS does not: nftw's FTW_PHYS, dladdr (knowledge/platform-layer.md).
+#define _GNU_SOURCE
+#endif
 #include <smith/build.h>
 
 #include <dirent.h>
@@ -2110,8 +2114,9 @@ static const char *const *smith_handlers_link(SmithBuild *b, const SmithProgram 
 
 // smith's own link is the one program that is not linked with the handlers runtime: its clones (clang, ld) run from the
 // programs folder, which has no dylib beside them. Named by the file (`.../smith`), until SmithProgram has a field for
-// it (the lag rule: build.c is built by the previous release, whose header has none).
-static bool smith_is_smith_itself(const char *output) {
+// it (the lag rule: build.c is built by the previous release, whose header has none). Only macOS links the handlers
+// runtime yet (issue #305), so Linux does not call it.
+[[maybe_unused]] static bool smith_is_smith_itself(const char *output) {
     const char *slash = strrchr(output, '/');
     return strcmp(slash != nullptr ? slash + 1 : output, "smith") == 0;
 }
@@ -2283,8 +2288,9 @@ void smith_compile_commands(SmithBuild *b, const char *path) {
     if (smith_compile_commands_called) smith_fail("smith_compile_commands is called twice");
     smith_compile_commands_called = true;
     smith_check_write_path(path);
-    FILE *counter = fopen("/dev/null", "w");
-    if (counter == nullptr) smith_fail("cannot open /dev/null");
+    // A real file, not /dev/null: Linux's /dev/null always answers ftell with 0 (it seeks to 0), macOS's counts.
+    FILE *counter = tmpfile();
+    if (counter == nullptr) smith_fail("cannot make a temporary file to measure %s", path);
     smith_put_compile_commands(counter, b, false);
     long size = ftell(counter);
     fclose(counter);
