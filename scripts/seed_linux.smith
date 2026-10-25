@@ -1,0 +1,371 @@
+// Builds the first smith on a Linux machine from source, with no smith and no release: the seed of issue #305's Linux
+// release chain, and its way back when the chain breaks (knowledge/smith-bootstrap.md). Everyday Linux clones get a
+// release from scripts/stage0.smith instead, which runs this only when no release has a Linux build. This file has no
+// `module` line, so it is plain C23 (with POSIX's setenv, hence gnu23) and the system's C compiler builds it (clang 19
+// or later, GCC 13 or later):
+//   mkdir -p .smith && cc -std=gnu23 -x c scripts/seed_linux.smith -o .smith/seed-tool && .smith/seed-tool [arguments
+//   of smith build]
+// It needs a C and C++ compiler, cmake, ninja, python3, curl, tar, xz, patch and git, the network, and about 2 hours
+// and 15 GB the first time (LLVM). The stages, each in .smith/seed/:
+//   1. LLVM 23.1.3, pinned by SHA-256, built by scripts/llvm_linux.smith into the package cache (as `smith build
+//      llvm` does), unless that install is there already;
+//   2. stage A: smith.c, its shims and that LLVM, linked with weak stand-ins for the six libraries, which are .smith
+//      and need a smith to compile. Stage A has clang and the token hook, so it compiles .smith; any call into a
+//      stand-in stops it with a message;
+//   3. the six libraries, compiled by stage A;
+//   4. stage B: the same link with the libraries, a whole smith, which then runs `smith build` with the arguments
+//      given, as stage0's release would.
+#include <errno.h>
+#include <glob.h>
+#include <spawn.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+#include "sha256.h"
+
+extern char **environ;
+
+constexpr size_t path_max = 4096;      // PATH_MAX of Linux, which strict C23 does not define
+constexpr size_t arguments_max = 2048; // one command: a link names every archive of the LLVM install
+constexpr size_t text_max = 1 << 20;   // a header's first lines, or the identity
+
+static const char llvm_url[] =
+    "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.3/llvm-project-23.1.3.src.tar.xz";
+static const char llvm_sha256[] = "c44186a7762ed28954be72e5ff6df9808e0779d4f1bf014ecc4e7e211d31ee34";
+static const char *const libraries[] = {"arena", "contract", "inflate", "io", "random", "text"}; // build.c's list
+static const char *const shims[] = {"clang",        "lld",         "format", "tidy",         "clangd",
+                                    "symbolize",    "hook",        "lsp",    "lldb",         "lldb_dap",
+                                    "lldb_explain", "lldb_slices", "affine", "effects_infer"};
+static const char *const cflags[] = {"-std=gnu23", "-O1", "-g", "-Wall", "-Wextra", "-Wpedantic"};
+
+static char cwd[path_max];      // the repository's root, where this runs
+static char llvm[path_max];     // the LLVM install: <cache>/smith/llvm/<name>/install
+static char identity[text_max]; // its smith-clang.id, one line
+
+[[noreturn]] static void die(const char *message, const char *detail) {
+    fprintf(stderr, "seed: %s%s%s\n", message, detail != nullptr ? " " : "", detail != nullptr ? detail : "");
+    exit(1);
+}
+
+// Runs a program (found on PATH) and waits; true when it exits 0. `in` is a file for its standard input, or nullptr.
+static bool run_from(const char *const *argv, const char *in) {
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    if (in != nullptr) posix_spawn_file_actions_addopen(&actions, 0, in, 0, 0);
+    pid_t child = 0;
+    int started = posix_spawnp(&child, argv[0], &actions, nullptr, (char *const *)argv, environ);
+    posix_spawn_file_actions_destroy(&actions);
+    if (started != 0) return false;
+    int status = 0;
+    while (waitpid(child, &status, 0) < 0) { // only a signal interrupts the wait
+        if (errno != EINTR) return false;
+    }
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
+static void run(const char *const *argv) {
+    if (!run_from(argv, nullptr)) die("failed:", argv[0]);
+}
+
+static void join(char *out, const char *format, const char *a, const char *b) {
+    int written = snprintf(out, path_max, format, a, b);
+    if (written < 0 || (size_t)written >= path_max) die("a path is too long:", a);
+}
+
+// A path for one call: it lives until 16 more are made.
+static const char *path(const char *format, const char *a, const char *b) {
+    static char paths[16][path_max];
+    static size_t next = 0;
+    char *out = paths[next++ % 16];
+    join(out, format, a, b);
+    return out;
+}
+
+static bool exists(const char *file) {
+    struct stat info;
+    return stat(file, &info) == 0;
+}
+
+// A list of arguments built up for one command.
+typedef struct {
+    const char *items[arguments_max];
+    size_t count;
+} Args;
+
+static void add(Args *args, const char *item) {
+    if (args->count + 2 > arguments_max) die("a command is too long at", item);
+    args->items[args->count++] = item;
+    args->items[args->count] = nullptr;
+}
+
+static void add_all(Args *args, const char *const *items, size_t count) {
+    for (size_t i = 0; i < count; i++)
+        add(args, items[i]);
+}
+
+// Copies of glob's results that outlive the glob.
+static void add_glob(Args *args, const char *pattern) {
+    static char kept[arguments_max][path_max];
+    static size_t used = 0;
+    glob_t found = {};
+    glob(pattern, 0, nullptr, &found);
+    for (size_t i = 0; i < found.gl_pathc; i++) {
+        if (used == arguments_max) die("too many files for", pattern);
+        snprintf(kept[used], path_max, "%s", found.gl_pathv[i]);
+        add(args, kept[used++]);
+    }
+    globfree(&found);
+}
+
+static bool read_text(const char *file, char *into, size_t capacity) {
+    FILE *in = fopen(file, "rb");
+    if (in == nullptr) return false;
+    size_t got = fread(into, 1, capacity - 1, in);
+    into[got] = '\0';
+    fclose(in);
+    return true;
+}
+
+// Stage 1: the LLVM install, built by scripts/llvm_linux.smith from the pinned source unless it is there.
+static void build_llvm(const char *cc) {
+    const char *cache = getenv("XDG_CACHE_HOME");
+    const char *home = getenv("HOME");
+    const char *name = getenv("SMITH_LLVM_NAME");
+    if (name == nullptr || *name == '\0') name = "23.1.3-r10";
+    if (cache != nullptr && *cache == '/') {
+        join(llvm, "%s/smith/llvm/%s/install", cache, name);
+    } else if (home != nullptr && *home == '/') {
+        join(llvm, "%s/.cache/smith/llvm/%s/install", home, name);
+    } else {
+        die("no cache folder: set XDG_CACHE_HOME or HOME", nullptr);
+    }
+    if (!exists(path("%s/lib/smith-clang.id", llvm, ""))) {
+        const char *tarball = ".smith/seed/llvm-project-23.1.3.src.tar.xz";
+        char digest[65] = "";
+        if (!sha256_file(tarball, digest) || strcmp(digest, llvm_sha256) != 0) {
+            printf("seed: downloading %s\n", llvm_url);
+            fflush(stdout);
+            run((const char *[]){"curl", "-fsSL", "-o", tarball, llvm_url, nullptr});
+            if (!sha256_file(tarball, digest) || strcmp(digest, llvm_sha256) != 0) die("wrong SHA-256:", tarball);
+        }
+        run((const char *[]){"rm", "-rf", ".smith/seed/llvm-src", nullptr});
+        run((const char *[]){"mkdir", "-p", ".smith/seed/llvm-src", nullptr});
+        run((const char *[]){"tar", "-xJf", tarball, "-C", ".smith/seed/llvm-src", "--strip-components=1", nullptr});
+        run((const char *[]){cc, "-std=c23", "-O1", "-x", "c", "scripts/llvm_linux.smith", "-o",
+                             ".smith/seed/llvm_linux", nullptr});
+        run((const char *[]){".smith/seed/llvm_linux", ".smith/seed/llvm-src", "", "", ".smith/seed/llvm.stamp", "",
+                             nullptr});
+    }
+    if (!read_text(path("%s/lib/smith-clang.id", llvm, ""), identity, sizeof identity)) die("no identity in", llvm);
+    identity[strcspn(identity, "\n")] = '\0';
+}
+
+// Compiles one source into .smith/seed/<stage>/<name>.o with `compiler` and the flags given.
+static const char *compile(const char *compiler, const char *source, const char *stage, const char *name,
+                           const Args *flags) {
+    static char outputs[64][path_max];
+    static size_t used = 0;
+    if (used == 64) die("too many objects", nullptr);
+    char *output = outputs[used++];
+    join(output, ".smith/seed/%s/%s.o", stage, name);
+    Args args = {};
+    add(&args, compiler);
+    add_all(&args, flags->items, flags->count);
+    add(&args, "-c");
+    add(&args, source);
+    add(&args, "-o");
+    add(&args, output);
+    run(args.items);
+    return output;
+}
+
+// smith.c's flags, as build.c gives them (and the libraries the same, so that `smith prove` finds their bodies).
+static void smith_flags(Args *flags) {
+    static char id_flag[text_max + 32];
+    snprintf(id_flag, sizeof id_flag, "-DSMITH_CLANG_ID=\"%s\"", identity);
+    add_all(flags, cflags, sizeof cflags / sizeof cflags[0]);
+    static const char *const more[] = {"-I",          "include",      "-DSMITH_COMMIT_LINKED", "-DSMITH_IN_PROCESS",
+                                       "-DSMITH_MCP", "-DSMITH_LLDB", "-DSMITH_HOOK"};
+    add_all(flags, more, sizeof more / sizeof more[0]);
+    add(flags, id_flag);
+}
+
+// The objects every stage links: the packed resource directory, the commit, smith.c and the shims.
+static void compile_smith(Args *objects) {
+    const char *clang = path("%s/bin/clang", llvm, "");
+    Args base = {};
+    add_all(&base, cflags, sizeof cflags / sizeof cflags[0]);
+    run((const char *[]){clang, "-std=gnu23", "-O1", "scripts/pack.c", "-o", ".smith/seed/a/pack", nullptr});
+    char script[path_max];
+    join(script,
+         "cd \"$0\" && (find lib/clang/*/include lib/clang/*/share -type f; ls lib/clang/*/lib/*-linux-gnu/*) "
+         "| LC_ALL=C sort | \"$1\" \"$2\"",
+         "", "");
+    char pack_tool[path_max];
+    char pack[path_max];
+    join(pack_tool, "%s/.smith/seed/a/pack", cwd, "");
+    join(pack, "%s/.smith/seed/a/clang-resource.pack", cwd, "");
+    run((const char *[]){"sh", "-c", script, llvm, pack_tool, pack, nullptr});
+    Args data = base;
+    static char resource[path_max];
+    join(resource, "-DSMITH_CLANG_RESOURCE=\"%s\"", pack, "");
+    add(&data, resource);
+    add(objects, compile(clang, "runtime/pack_data.c", "a", "pack_data", &data));
+    add(objects, compile(clang, "runtime/commit.c", "a", "commit", &base));
+    Args flags = {};
+    smith_flags(&flags);
+    add(objects, compile(clang, "smith.c", "a", "smith", &flags));
+    static const char *const cxx[] = {"-std=c++17",
+                                      "-O1",
+                                      "-g",
+                                      "-fno-exceptions",
+                                      "-fno-rtti",
+                                      "-D__STDC_CONSTANT_MACROS",
+                                      "-D__STDC_FORMAT_MACROS",
+                                      "-D__STDC_LIMIT_MACROS",
+                                      "-DSMITH_HOOK",
+                                      "-isystem",
+                                      "shim/lldb",
+                                      "-isystem"};
+    Args shim_flags = {};
+    add_all(&shim_flags, cxx, sizeof cxx / sizeof cxx[0]);
+    static char include[path_max];
+    join(include, "%s/include", llvm, "");
+    add(&shim_flags, include);
+    for (size_t i = 0; i < sizeof shims / sizeof shims[0]; i++) {
+        add(objects, compile(path("%s/bin/clang++", llvm, ""), path("shim/%s.cpp", shims[i], ""), "a",
+                             path("%s_shim", shims[i], ""), &shim_flags));
+    }
+}
+
+// Stand-ins for the libraries' functions, for stage A: each name a library's header says has a body (its
+// `smith-bodies` line, by the C name its `smith-names` line gives it), a weak function that stops with a message.
+static void write_stand_ins(FILE *out, const char *library) {
+    static char header[text_max];
+    if (!read_text(path("include/smith/%s.h", library, ""), header, sizeof header))
+        die("cannot read the header of", library);
+    const char *names = strstr(header, "// smith-names: ");
+    const char *bodies = strstr(header, "// smith-bodies: ");
+    if (names == nullptr || bodies == nullptr) return;
+    names += strlen("// smith-names: ");
+    bodies += strlen("// smith-bodies: ");
+    size_t names_length = strcspn(names, "\n");
+    for (const char *body = bodies; *body != '\n' && *body != '\0';) { // each pass moves past one name
+        size_t length = strcspn(body, " \n");
+        for (const char *at = names; at < names + names_length;) { // each pass moves past one name=c_name
+            size_t pair = strcspn(at, " \n");
+            const char *equals = memchr(at, '=', pair);
+            if (equals != nullptr && (size_t)(equals - at) == length && memcmp(at, body, length) == 0) {
+                int c_length = (int)(pair - (size_t)(equals + 1 - at));
+                fprintf(out, "[[gnu::weak]] void %.*s(void) { seed_stop(\"%.*s\"); }\n", c_length, equals + 1, c_length,
+                        equals + 1);
+            }
+            at += pair;
+            if (*at != ' ') break;
+            at++;
+        }
+        body += length + (body[length] == ' ' ? 1 : 0);
+    }
+}
+
+static const char *compile_stand_ins(void) {
+    FILE *out = fopen(".smith/seed/a/stand_ins.c", "w");
+    if (out == nullptr) die("cannot write", ".smith/seed/a/stand_ins.c");
+    fputs("#include <stdio.h>\n#include <stdlib.h>\n[[noreturn]] static void seed_stop(const char *name) {\n"
+          "    fprintf(stderr, \"smith (seed stage A): %s is in a library this smith does not have yet\\n\", name);\n"
+          "    abort();\n}\n",
+          out);
+    for (size_t i = 0; i < sizeof libraries / sizeof libraries[0]; i++)
+        write_stand_ins(out, libraries[i]);
+    if (fclose(out) != 0) die("cannot write", ".smith/seed/a/stand_ins.c");
+    Args base = {};
+    add_all(&base, cflags, sizeof cflags / sizeof cflags[0]);
+    return compile(path("%s/bin/clang", llvm, ""), ".smith/seed/a/stand_ins.c", "a", "stand_ins", &base);
+}
+
+// Links smith from the objects given and the LLVM install, as build.c does on Linux (its BuildPlatform for Linux).
+static void link_smith(const Args *objects, const char *output) {
+    static char clang[path_max];
+    static char tools[path_max];
+    join(clang, "%s/bin/clang", llvm, "");
+    join(tools, "%s/lib/libsmithtools.a", llvm, "");
+    Args args = {};
+    add(&args, clang);
+    add(&args, "-fuse-ld=lld");
+    add(&args, "-o");
+    add(&args, output);
+    add_all(&args, objects->items, objects->count);
+    static const char *const flags[] = {"-Wl,--gc-sections", "-Wl,--build-id=md5", "-Wl,--whole-archive"};
+    add_all(&args, flags, sizeof flags / sizeof flags[0]);
+    add(&args, tools);
+    add(&args, "-Wl,--no-whole-archive");
+    add(&args, "-Wl,--start-group");
+    add_glob(&args, path("%s/lib/libclang[A-Z]*.a", llvm, ""));
+    add_glob(&args, path("%s/lib/libLLVM*.a", llvm, ""));
+    static const char *const more[] = {"libclangdSupport.a", "libclangdRemoteIndex.a", "libclangmain.a", "liblldELF.a",
+                                       "liblldCommon.a"};
+    for (size_t i = 0; i < sizeof more / sizeof more[0]; i++)
+        add_glob(&args, path("%s/lib/%s", llvm, more[i]));
+    add_glob(&args, path("%s/lib/liblldb[A-Z]*.a", llvm, ""));
+    add_glob(&args, path("%s/lib/libsmithlldb.a", llvm, ""));
+    static const char *const system[] = {"-Wl,--end-group", "-Wl,-Bstatic", "-lstdc++", "-Wl,-Bdynamic", "-lm",
+                                         "-lpthread",       "-ldl",         "-lrt"};
+    add_all(&args, system, sizeof system / sizeof system[0]);
+    run(args.items);
+}
+
+// The folder bin/ of a stage: smith, and the links smith-cc and smith-c++ that act as `smith cc` and `smith c++`.
+static void make_bin(const char *folder, const char *smith) {
+    run((const char *[]){"mkdir", "-p", folder, nullptr});
+    run((const char *[]){"cp", smith, path("%s/smith", folder, ""), nullptr});
+    run((const char *[]){"ln", "-sf", "smith", path("%s/smith-cc", folder, ""), nullptr});
+    run((const char *[]){"ln", "-sf", "smith", path("%s/smith-c++", folder, ""), nullptr});
+}
+
+int main(int argc, char **argv) {
+    const char *cc = getenv("CC") != nullptr && *getenv("CC") != '\0' ? getenv("CC") : "cc";
+    if (getcwd(cwd, sizeof cwd) == nullptr) die("cannot tell the current folder", nullptr);
+    if (!exists("scripts/seed_linux.smith")) die("run this from the root of a clone of smith", nullptr);
+    run((const char *[]){"mkdir", "-p", ".smith/seed/a", ".smith/seed/b", nullptr});
+    FILE *ignore = fopen(".smith/.gitignore", "w"); // as smith writes it: nothing in .smith/ is committed
+    if (ignore == nullptr || fputs("*\n", ignore) < 0 || fclose(ignore) != 0) die("cannot write", ".smith/.gitignore");
+    build_llvm(cc);
+    printf("seed: stage A with %s\n", identity);
+    fflush(stdout);
+    Args objects = {};
+    compile_smith(&objects);
+    Args stage_a = objects;
+    add(&stage_a, compile_stand_ins());
+    link_smith(&stage_a, ".smith/seed/a/smith");
+    make_bin(".smith/seed/a/bin", ".smith/seed/a/smith");
+    printf("seed: the libraries, compiled by stage A\n");
+    fflush(stdout);
+    Args flags = {};
+    smith_flags(&flags);
+    Args stage_b = objects;
+    for (size_t i = 0; i < sizeof libraries / sizeof libraries[0]; i++) {
+        add(&stage_b, compile(".smith/seed/a/bin/smith-cc", path("lib/smith/%s.smith", libraries[i], ""), "b",
+                              libraries[i], &flags));
+    }
+    link_smith(&stage_b, ".smith/seed/b/smith");
+    make_bin(".smith/seed/b/bin", ".smith/seed/b/smith");
+    printf("seed: stage B is .smith/seed/b/bin/smith; running its smith build\n");
+    char search[path_max * 2];
+    const char *old_path = getenv("PATH");
+    snprintf(search, sizeof search, "%s/.smith/seed/b/bin:%s", cwd, old_path != nullptr ? old_path : "/usr/bin:/bin");
+    setenv("PATH", search, 1);
+    unsetenv("CC"); // the compiler of the seed is not the build's: that is smith-cc, from stage B's bin/
+    char *build[argc + 2];
+    build[0] = (char *)".smith/seed/b/bin/smith";
+    build[1] = (char *)"build";
+    for (int i = 1; i < argc; i++)
+        build[i + 1] = argv[i];
+    build[argc + 1] = nullptr;
+    fflush(stdout);
+    execv(build[0], build);
+    die("cannot run", build[0]);
+}
