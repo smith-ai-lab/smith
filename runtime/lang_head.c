@@ -227,11 +227,10 @@ static bool smith_lang_head_punct(SmithLang *lang, const SmithToken *token) {
 // ---- Writing the head out
 // ------------------------------------------------------------------------------------------------
 
-#ifdef __APPLE__
+// A module's symbol is `_` and its path (`_smith::test::order`) on every platform: Mach-O's own spelling of a C name,
+// and on Linux the same, so that a header written on one platform (include/smith/*.h, generated on macOS) names the
+// symbols a compile on the other defines (issue #305).
 constexpr char smith_lang_symbol_underscore[] = "_";
-#else
-constexpr char smith_lang_symbol_underscore[] = "";
-#endif
 
 static SmithToken smith_lang_punct_after(const char *text, const SmithToken *like) {
     SmithToken made = smith_lang_synth(SmithTokenKind_Punctuator, text, strlen(text), like);
