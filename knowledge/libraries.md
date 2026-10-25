@@ -1,14 +1,15 @@
 ---
 type: convention
 title: smith's libraries are a modern standard library for C
-description: A library joins when two projects need it, does one thing, uses standard types, defines no macros, and is compiled from source by the project through smith_library.
+description: smith is batteries included, so a project needs no third-party library; each library does one thing, uses standard types, defines no macros, and is compiled from source by the project through smith_library.
 tags: [libraries, stdlib]
 ---
 # smith's libraries are a modern standard library for C
 
-**smith's libraries are a modern standard library for C, holding only what is proven.**
-- **Joining:** a library joins when two projects need the same thing (game's trigonometry and random's logarithm make
-  `<smith/math.h>`), never on speculation. So there are no vectors or tensors until a second project needs one.
+**smith is batteries included** (owner, 2026-10-25): its standard library covers what programs commonly reach for
+(data formats and serialization, ML, windows and input, the GPU, HTTP), so a project never needs a third-party library.
+- **Joining:** a library joins when programs commonly need it. Its first user is usually a real project (the game or
+  the learner), whose code it replaces; its design comes from that use, and its tests cover it.
 
 **What one looks like:**
 - It does one thing and is named for it, so there is no "base" or "utils".

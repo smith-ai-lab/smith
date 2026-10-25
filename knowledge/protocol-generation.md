@@ -29,7 +29,7 @@ committed, so a plain `smith build`, a fresh clone and the stage0 never need the
 | `tests/protocol.sh` | builds and runs all of it in a scratch project under the sanitizers (`smith build test-protocol`) |
 
 The generated code is in `runtime/` because it is smith's own code for `smith mcp`, not a library for other projects
-(a library joins `lib/` when two projects need it). Nothing includes it yet: `smith.c` does not link it until the server uses it.
+(`lib/` holds the libraries smith ships to other projects). Nothing includes it yet: `smith.c` does not link it until the server uses it.
 
 ## The schemas
 
