@@ -72,7 +72,7 @@ export void test_mem_alloc_without_an_allocator_set_is_the_systems_and_never_nul
 }
 
 // The tests of an option sit in functions with no generic call: a `== .some` after a call to a generic in the same
-// function does not find the option's type (smith issue filed with this change).
+// function does not find the option's type (smith issue #353).
 MaybeRecord try_record() {
     return mem::try_alloc(Record);
 }
