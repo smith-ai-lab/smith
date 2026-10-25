@@ -59,6 +59,16 @@ export void test_build_a_thin_lto_compile_settles(io::Io *io) {
     scratch::expect_contains("lto: the second run has no work", second.out, "no work to do");
 }
 
+// A manifest that never settles stops after its tries and says what was out of date, so the cause is not a guess: here
+// the step that should make `list` does not (#271).
+export void test_build_defer_an_unsettled_manifest_names_what_is_out_of_date(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "defer_unsettled");
+    scratch::Run run = scratch::build(&p, "");
+    scratch::expect_contains("unsettled: the build stops", run.err, "is still out of date after");
+    scratch::expect_contains("unsettled: and names the output that does not exist", run.err,
+                             "output list doesn't exist");
+}
+
 // The regeneration rule's command, run without SMITH_EFFECTS and SMITH_SELF (as ninja or a hand run would), writes
 // the manifest `smith build` wrote, byte for byte: the decision is an argument of the program, not the environment.
 export void test_build_defer_the_regeneration_writes_the_same_manifest_without_the_environment(io::Io *io) {
