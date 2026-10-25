@@ -47,27 +47,32 @@ namespace clang::tidy::smith_effects {
 // complete.
 
 // Headers whose every function is pure: it computes from its arguments and memory the caller passed, and reads or
-// writes nothing else. (macOS's SDK puts some of them behind `secure/_string.h` and `_ctype.h`.)
+// writes nothing else. (macOS's SDK puts some of them behind `secure/_string.h` and `_ctype.h`, glibc behind `bits/`.)
 constexpr std::string_view pure_headers[] = {
     "string.h",    // memcpy, memmove, memset, memcmp, strlen, strcmp...: bytes in memory
     "_string.h",   // the SDK's checked versions of the same (secure/_string.h)
     "strings.h",   // bzero, bcopy, ffs: the same
     "math.h",      // sqrt, sin, pow...: arithmetic (errno is a result, not a world)
-    "ctype.h",     // isalpha, toupper...: a character's class
-    "_ctype.h",    // the SDK's implementation of ctype.h
-    "stdint.h",    // integer types and constants
-    "stddef.h",    // offsetof and sizes
-    "float.h",     // constants
-    "limits.h",    // constants
-    "stdbit.h",    // bit counts and rotations
-    "stdckdint.h", // checked integer arithmetic
-    "inttypes.h",  // strtoimax, imaxabs, imaxdiv: arithmetic and parsing of a string in memory
-    "tgmath.h",    // math.h's functions by type
-    "complex.h",   // arithmetic
-    "stdarg.h",    // reading the arguments of a variadic function
-    "stdbool.h",   // constants
-    "stdalign.h",  // constants
-    "stdnoreturn.h", "iso646.h",
+    "mathcalls.h", // glibc declares math.h's functions here (bits/mathcalls.h), and in the next two
+    "mathcalls-narrow.h",
+    "mathcalls-helper-functions.h",
+    "string_fortified.h", // glibc's checked versions of string.h's (bits/string_fortified.h)
+    "ctype.h",            // isalpha, toupper...: a character's class
+    "_ctype.h",           // the SDK's implementation of ctype.h
+    "stdint.h",           // integer types and constants
+    "stddef.h",           // offsetof and sizes
+    "float.h",            // constants
+    "limits.h",           // constants
+    "stdbit.h",           // bit counts and rotations
+    "stdckdint.h",        // checked integer arithmetic
+    "inttypes.h",         // strtoimax, imaxabs, imaxdiv: arithmetic and parsing of a string in memory
+    "tgmath.h",           // math.h's functions by type
+    "complex.h",          // arithmetic
+    "stdarg.h",           // reading the arguments of a variadic function
+    "stdbool.h",          // constants
+    "stdalign.h",         // constants
+    "stdnoreturn.h",
+    "iso646.h",
 };
 
 // Functions of other headers that are pure.
