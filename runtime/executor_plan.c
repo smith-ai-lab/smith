@@ -57,13 +57,30 @@ static void smith_plan_explain(const SmithExec *exec, const char *format, ...) {
     va_end(arguments);
 }
 
+// The reason an output is out of date: remembered when it is the first of this plan (the error of a manifest that is
+// never settled names it), and shown by -d explain.
+static void smith_plan_reason(SmithExec *exec, const char *format, ...) __attribute__((format(printf, 2, 3)));
+static void smith_plan_reason(SmithExec *exec, const char *format, ...) {
+    va_list arguments;
+    va_start(arguments, format);
+    if (exec->first_reason[0] == '\0') vsnprintf(exec->first_reason, sizeof exec->first_reason, format, arguments);
+    va_end(arguments);
+    va_start(arguments, format);
+    if (exec->options.explain) {
+        fputs("smith explain: ", stderr);
+        vfprintf(stderr, format, arguments);
+        fputc('\n', stderr);
+    }
+    va_end(arguments);
+}
+
 // Whether the output of an edge is out of date, given the newest of the edge's inputs that are not order-only.
 static bool smith_plan_output_dirty(SmithExec *exec, const SmithEdge *edge, uint32_t recent, uint32_t output) {
     const SmithNode *node = &exec->graph.nodes[output];
     const SmithNode *newest = recent != smith_plan_none ? &exec->graph.nodes[recent] : nullptr;
     if (edge->phony) return smith_plan_input_count(edge) == 0 && node->mtime == 0;
     if (node->mtime == 0) {
-        smith_plan_explain(exec, "output %s doesn't exist", node->path);
+        smith_plan_reason(exec, "output %s doesn't exist", node->path);
         return true;
     }
     const SmithLogEntry *entry = smith_state_log_find(exec, node->path);
@@ -71,24 +88,24 @@ static bool smith_plan_output_dirty(SmithExec *exec, const SmithEdge *edge, uint
         // A restat step that found its output unchanged recorded the newest input's time instead of its own.
         int64_t mtime = edge->restat && entry != nullptr ? entry->mtime : node->mtime;
         if (mtime < newest->mtime) {
-            smith_plan_explain(exec, "output %s older than most recent input %s (%lld vs %lld)", node->path,
-                               newest->path, (long long)mtime, (long long)newest->mtime);
+            smith_plan_reason(exec, "output %s older than most recent input %s (%lld vs %lld)", node->path,
+                              newest->path, (long long)mtime, (long long)newest->mtime);
             return true;
         }
     }
     if (entry != nullptr) {
         if (!edge->generator && entry->hash != edge->command_hash) {
-            smith_plan_explain(exec, "command line changed for %s", node->path);
+            smith_plan_reason(exec, "command line changed for %s", node->path);
             return true;
         }
         if (newest != nullptr && entry->mtime < newest->mtime) {
-            smith_plan_explain(exec, "recorded time of %s (%lld) is older than most recent input %s (%lld)", node->path,
-                               (long long)entry->mtime, newest->path, (long long)newest->mtime);
+            smith_plan_reason(exec, "recorded time of %s (%lld) is older than most recent input %s (%lld)", node->path,
+                              (long long)entry->mtime, newest->path, (long long)newest->mtime);
             return true;
         }
     }
     if (entry == nullptr && !edge->generator)
-        smith_plan_explain(exec, "command line not found in log for %s", node->path);
+        smith_plan_reason(exec, "command line not found in log for %s", node->path);
     return entry == nullptr && !edge->generator;
 }
 
@@ -106,8 +123,8 @@ static void smith_plan_load_deps(SmithExec *exec, SmithEdge *edge) {
     const SmithNode *first = &graph->nodes[smith_plan_output(exec, edge, 0)];
     const SmithDepsEntry *entry = smith_state_deps_find(exec, first->path);
     if (entry == nullptr || first->mtime > entry->mtime) {
-        smith_plan_explain(exec, entry == nullptr ? "deps for %s are missing" : "stored deps info out of date for %s",
-                           first->path);
+        smith_plan_reason(exec, entry == nullptr ? "deps for %s are missing" : "stored deps info out of date for %s",
+                          first->path);
         edge->deps_missing = true;
         return;
     }

@@ -262,7 +262,8 @@ struct SmithExec {
     SmithGraph graph;
     SmithState state;
     SmithPrinter printer;
-    char *scratch; // smith_exec_text_max bytes for evaluating one value
+    char *scratch;          // smith_exec_text_max bytes for evaluating one value
+    char first_reason[256]; // why the first output of the last plan was out of date (empty: none was)
     // The plan of the build that is running.
     uint32_t *ready; // edges whose inputs are done and whose command must run, in no order
     size_t ready_count;
@@ -393,11 +394,13 @@ static int smith_exec_run(SmithIo *io, const char *manifest, const SmithExecOpti
         if (!exec->state.ready) smith_state_open(exec);
         if (options->tool != nullptr) return smith_tool_run(exec);
         uint32_t node = smith_run_manifest_node(exec);
+        exec->first_reason[0] = '\0';
         if (node == UINT32_MAX || !smith_plan_build(exec, &node, 1)) break;
         int status = smith_run_plan(exec);
         if (status != 0 || options->dry_run) return status;
         if (reload == smith_exec_reloads_max)
-            smith_exec_fail("%s is still out of date after %zu tries", manifest, reload);
+            smith_exec_fail("%s is still out of date after %zu tries; the first thing out of date in the last one: %s",
+                            manifest, reload, exec->first_reason[0] != '\0' ? exec->first_reason : "(none recorded)");
     }
     size_t room = exec->graph.node_count + exec->graph.default_count + options->target_count + 1;
     uint32_t *targets = smith_exec_push(exec, room * sizeof(uint32_t), alignof(uint32_t));
