@@ -1,0 +1,266 @@
+// What build.c can say about text and names, ported from tests/build.sh sections 9d to 9j, 9o3, 9o5 and 9p: a command
+// word with newlines, smith_write, smith_capture_or, task and alias names, an option read again in a smith_defer
+// callback, smith_glob with several patterns and with **, smith_join and smith_list, and an option only a callback
+// reads. Each fixture is tests/build_fixtures/steps_<name>/build.c.
+module build_steps_text_test;
+
+import smith::io;
+import smith::test;
+import scratch;
+
+// The last line of a text without its trailing newlines, as `echo "$out" | tail -n 1` gives it.
+static const char *last_line(const char *text) {
+    static char line[512];
+    usize end = 0;
+    while (text[end] != '\0')
+        end++;
+    while (end > 0 && text[end - 1] == '\n')
+        end--;
+    usize start = end;
+    while (start > 0 && text[start - 1] != '\n')
+        start--;
+    usize length = end - start < sizeof line - 1 ? end - start : sizeof line - 1;
+    __builtin_memcpy(line, text + start, length);
+    line[length] = '\0';
+    return line;
+}
+
+static const char *present(const scratch::Project *p, const char *name) {
+    return scratch::exists(p, name) ? "present" : "absent";
+}
+
+export void test_build_steps_a_command_word_with_newlines_runs_from_a_file(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "steps_newline");
+    scratch::write(&p, "input", "a\n");
+    scratch::Run first = scratch::build(&p, "");
+    scratch::expect_status("newline: a multi-line sh -c script with positional arguments runs", 0, &first);
+    scratch::expect_text("newline: a multi-line sh -c script with positional arguments runs", "yes",
+                         scratch::capture(&p, "cat result"));
+    scratch::expect_count("newline: a multi-line sh -c script with positional arguments runs", 1,
+                          scratch::lines(&p, "runs"));
+    scratch::expect_contains("newline: the edge runs a file with sh", scratch::read(&p, ".smith/build.ninja"),
+                             "cmd = sh .smith/command/");
+    scratch::expect_text("newline: the command is one file with a 16 digit name", "1",
+                         scratch::capture(&p, "ls .smith/command | grep -c '^[0-9a-f]\\{16\\}$'"));
+    (void)scratch::sh(&p, "touch -t 200001010000 $(ls .smith/command/* | head -n 1); touch marker");
+    scratch::Run second = scratch::build(&p, "");
+    scratch::expect_text("newline: a second build changes nothing and keeps the file", "smith: no work to do.",
+                         last_line(second.out));
+    scratch::expect_text("newline: a second build changes nothing and keeps the file", "0",
+                         scratch::capture(&p, "find .smith/command/* -newer marker | wc -l | tr -d ' '"));
+    (void)scratch::sh(&p, "sed 's/echo yes/echo YES/' build.c >build.tmp && mv build.tmp build.c");
+    scratch::Run edited = scratch::build(&p, "");
+    scratch::expect_status("newline: editing the script reruns the step", 0, &edited);
+    scratch::expect_text("newline: editing the script reruns the step", "YES", scratch::capture(&p, "cat result"));
+    scratch::expect_count("newline: editing the script reruns the step", 2, scratch::lines(&p, "runs"));
+    scratch::expect_text("newline: and writes a new command file", "2",
+                         scratch::capture(&p, "ls .smith/command | grep -c '^[0-9a-f]\\{16\\}$'"));
+}
+
+export void test_build_steps_a_newline_in_a_description_is_an_error(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "steps_newline_description");
+    scratch::Run run = scratch::build(&p, "");
+    scratch::expect_status("newline: a newline in a description is still an error", 2, &run);
+    scratch::expect_contains("newline: the description message", run.err, "holds a newline");
+}
+
+export void test_build_steps_smith_write_makes_the_file_and_leaves_an_equal_one_alone(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "steps_write");
+    scratch::Run first = scratch::build(&p, "");
+    scratch::expect_status("write: the bytes, in a folder smith made", 0, &first);
+    scratch::expect_text("write: the bytes, in a folder smith made", "one",
+                         scratch::capture(&p, "cat gen/deep/list.txt"));
+    scratch::expect_count("write: the bytes, in a folder smith made", 1, scratch::lines(&p, "copies"));
+    (void)scratch::sh(&p, "touch -t 200001010000 gen/deep/list.txt; touch marker");
+    scratch::Run same = scratch::build(&p, "-Dtext=one");
+    scratch::expect_status("write: the same text keeps the mtime and reruns nothing", 0, &same);
+    scratch::expect_text("write: the same text keeps the mtime and reruns nothing", "0",
+                         scratch::capture(&p, "find gen/deep/list.txt -newer marker | wc -l | tr -d ' '"));
+    scratch::expect_count("write: the same text keeps the mtime and reruns nothing", 1, scratch::lines(&p, "copies"));
+    scratch::Run changed = scratch::build(&p, "-Dtext=two");
+    scratch::expect_status("write: a new text rewrites it and reruns the step", 0, &changed);
+    scratch::expect_text("write: a new text rewrites it and reruns the step", "two",
+                         scratch::capture(&p, "cat copy.txt"));
+    scratch::expect_count("write: a new text rewrites it and reruns the step", 2, scratch::lines(&p, "copies"));
+    scratch::expect_text("write: no temporary file is left", "0", scratch::capture(&p, "ls gen/deep | grep -c tmp"));
+    (void)scratch::build(&p, "-t clean");
+    scratch::expect_text("write: -t clean leaves it", "present", present(&p, "gen/deep/list.txt"));
+    scratch::expect_text("write: -t clean leaves it", "absent", present(&p, "copy.txt"));
+}
+
+static void refuses_the_write_path(io::Io *io, const char *path) {
+    scratch::Project p = scratch::project(io, "p", "steps_write_paths");
+    char arguments[128];
+    __builtin_snprintf(arguments, sizeof arguments, "-Dpath=%s", path);
+    scratch::Run run = scratch::build(&p, arguments);
+    char name[128];
+    __builtin_snprintf(name, sizeof name, "write: '%s' is refused", path);
+    scratch::expect_status(name, 2, &run);
+    scratch::expect_contains(name, run.err, "smith: build.c: smith_write");
+}
+
+export void test_build_steps_smith_write_refuses_an_absolute_path(io::Io *io) {
+    refuses_the_write_path(io, "/abs.txt");
+}
+
+export void test_build_steps_smith_write_refuses_a_path_going_up(io::Io *io) {
+    refuses_the_write_path(io, "../up.txt");
+}
+
+export void test_build_steps_smith_write_refuses_dotdot_in_the_middle(io::Io *io) {
+    refuses_the_write_path(io, "a/../b.txt");
+}
+
+export void test_build_steps_smith_write_refuses_dot_smith(io::Io *io) {
+    refuses_the_write_path(io, ".smith/x.txt");
+}
+
+export void test_build_steps_smith_write_refuses_dot_smith_after_dot_slash(io::Io *io) {
+    refuses_the_write_path(io, "./.smith/x.txt");
+}
+
+export void test_build_steps_smith_write_refuses_a_folder(io::Io *io) {
+    refuses_the_write_path(io, "dir/");
+}
+
+export void test_build_steps_smith_write_accepts_dot_slash_folder_file(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "steps_write_paths");
+    scratch::Run run = scratch::build(&p, "-Dpath=./fine/ok.txt");
+    scratch::expect_status("write: ./folder/file is accepted", 0, &run);
+    scratch::expect_text("write: ./folder/file is accepted", "x", scratch::capture(&p, "cat fine/ok.txt"));
+}
+
+export void test_build_steps_capture_or_gives_the_fallback_for_a_failing_program(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "steps_capture_or");
+    scratch::Run run = scratch::build(&p, "");
+    scratch::expect_status("capture_or: failed, missing, working, noisy, killed and a nullptr fallback", 0, &run);
+    scratch::expect_text("capture_or: failed, missing, working, noisy, killed and a nullptr fallback",
+                         "fb1|fb2|hi|fb4|fb5|null", scratch::capture(&p, "cat result"));
+    scratch::expect_text("capture_or: stderr goes to /dev/null", "", run.err);
+}
+
+export void test_build_steps_capture_of_a_failing_program_is_still_an_error(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "steps_capture_fail");
+    scratch::Run run = scratch::build(&p, "");
+    scratch::expect_status("capture: a failing program is still an error", 2, &run);
+}
+
+static void refuses_the_task_name(io::Io *io, const char *argument, const char *name) {
+    scratch::Project p = scratch::project(io, "p", "steps_names");
+    scratch::Run run = scratch::build(&p, argument);
+    char text[128];
+    __builtin_snprintf(text, sizeof text, "names: '%s' is refused", name);
+    scratch::expect_status(text, 2, &run);
+    char needle[128];
+    __builtin_snprintf(needle, sizeof needle, "name '%s'", name);
+    scratch::expect_contains(text, run.err, needle);
+}
+
+export void test_build_steps_a_task_or_alias_name_may_hold_slashes(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "steps_names");
+    (void)scratch::build(&p, "check/src/a.c");
+    scratch::Run group = scratch::build(&p, "group/all");
+    scratch::expect_status("names: a task named after a file runs, and so does an alias with a '/'", 0, &group);
+    scratch::expect_count("names: a task named after a file runs, and so does an alias with a '/'", 2,
+                          scratch::lines(&p, "log"));
+}
+
+export void test_build_steps_a_name_with_a_leading_slash_is_refused(io::Io *io) {
+    refuses_the_task_name(io, "-Dname=/x", "/x");
+}
+
+export void test_build_steps_a_name_with_a_leading_dash_is_refused(io::Io *io) {
+    refuses_the_task_name(io, "-Dname=-x", "-x");
+}
+
+export void test_build_steps_a_name_with_a_trailing_slash_is_refused(io::Io *io) {
+    refuses_the_task_name(io, "-Dname=x/", "x/");
+}
+
+export void test_build_steps_a_name_with_dotdot_is_refused(io::Io *io) {
+    refuses_the_task_name(io, "-Dname=a/../b", "a/../b");
+}
+
+export void test_build_steps_a_name_with_a_double_slash_is_refused(io::Io *io) {
+    refuses_the_task_name(io, "-Dname=a//b", "a//b");
+}
+
+export void test_build_steps_a_name_with_a_leading_dot_slash_is_refused(io::Io *io) {
+    refuses_the_task_name(io, "-Dname=./a", "./a");
+}
+
+export void test_build_steps_a_name_with_a_space_is_refused(io::Io *io) {
+    refuses_the_task_name(io, "-Dname='a b'", "a b");
+}
+
+export void test_build_steps_a_name_with_a_colon_is_refused(io::Io *io) {
+    refuses_the_task_name(io, "-Dname=a:b", "a:b");
+}
+
+export void test_build_steps_a_defer_callback_reads_the_options_build_read(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "steps_option_again");
+    scratch::write(&p, "source", "s\n");
+    scratch::Run loud = scratch::build(&p, "-Dname=Ada -Dloud");
+    scratch::expect_status("option again: a callback reads the values build() read", 0, &loud);
+    scratch::expect_text("option again: a callback reads the values build() read", "Ada loud",
+                         scratch::capture(&p, "cat greeting"));
+    scratch::Run fallback = scratch::build(&p, "");
+    scratch::expect_status("option again: and the fallback", 0, &fallback);
+    scratch::expect_text("option again: and the fallback", "world quiet", scratch::capture(&p, "cat greeting"));
+    scratch::Run bad = scratch::sh(&p, "env SMITH_TEST_BAD=1 smith build");
+    scratch::expect_status("option again: the other kind is an error", 2, &bad);
+    scratch::expect_contains("option again: the message", bad.err,
+                             "option 'name' is declared as a value and read as a flag");
+}
+
+export void test_build_steps_smith_glob_takes_several_patterns_sorted_each_name_once(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "steps_glob_several");
+    (void)scratch::sh(&p, "mkdir src other && echo a >src/a.txt && echo b >src/b.txt && echo c >other/c.md");
+    scratch::Run run = scratch::build(&p, "");
+    scratch::expect_status("glob: the union is sorted with each name once", 0, &run);
+    scratch::expect_text("glob: the union is sorted with each name once", "other/c.md src/a.txt src/b.txt",
+                         scratch::capture(&p, "tr '\\n' ' ' <joined | sed 's| *$||'"));
+}
+
+export void test_build_steps_smith_join_and_smith_list_build_text_and_lists(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "steps_join_list");
+    scratch::Run run = scratch::build(&p, "");
+    scratch::expect_status("join, list: build.c runs", 0, &run);
+    scratch::expect_text("join: empty, one, several, empty separator, newline, mapped",
+                         "[][solo][one, two words, $three][onetwo words$three][kept\nalive]\n"
+                         "[#include \"one\"\n#include \"two words\"\n#include \"$three\"\n]",
+                         scratch::capture(&p, "cat join.txt"));
+    scratch::expect_text("list: empty, one, three; kept past its block and returned", "1 1 1 $three",
+                         scratch::capture(&p, "cat list.txt"));
+}
+
+export void test_build_steps_double_star_in_smith_glob(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "steps_glob_star");
+    (void)scratch::sh(&p, "mkdir -p src/x/y/z src/.hid/deep other && echo >src/a.c && echo >src/x/b.c && "
+                          "echo >src/x/y/z/d.c && echo >src/x/y/c.c && echo >src/.hid/h.c && echo >src/.hid/h.h && "
+                          "echo >src/x/y/e.h && echo >other/a.c");
+    scratch::Run run = scratch::build(&p, "");
+    scratch::expect_status("glob **: build.c runs", 0, &run);
+    scratch::expect_text("glob **: zero, one, two and three folders deep; the hidden folder is skipped",
+                         "src/a.c\nsrc/x/b.c\nsrc/x/y/c.c\nsrc/x/y/z/d.c", scratch::capture(&p, "cat deep.txt"));
+    scratch::expect_text("glob **: *.h skips the hidden folder", "src/x/y/e.h", scratch::capture(&p, "cat hidden.txt"));
+    scratch::expect_text("glob **: sorted, with no duplicates when patterns overlap",
+                         "src/a.c\nsrc/x/b.c\nsrc/x/y/c.c\nsrc/x/y/z/d.c", scratch::capture(&p, "cat overlap.txt"));
+    scratch::expect_text("glob **: a component that starts with . matches hidden entries", "src/.hid/h.c\nsrc/.hid/h.h",
+                         scratch::capture(&p, "cat dot.txt"));
+    scratch::expect_text("glob: other components go through fnmatch", "other/a.c\nsrc/a.c\nsrc/x/y/c.c",
+                         scratch::capture(&p, "cat star.txt"));
+}
+
+// An option that only a smith_defer callback reads: stage 1 cannot know it yet, stage 2 checks it.
+export void test_build_steps_an_option_only_a_defer_callback_reads_is_checked_after_it_ran(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "steps_defer_option");
+    scratch::write(&p, "source", "x\n");
+    scratch::Run late = scratch::build(&p, "-Dsuffix=late");
+    scratch::expect_status("defer option: read only in the callback, on a fresh tree", 0, &late);
+    scratch::expect_text("defer option: read only in the callback, on a fresh tree", "late",
+                         scratch::capture(&p, "cat out"));
+    scratch::Run typo = scratch::build(&p, "-Dsufix=typo");
+    scratch::expect_status("defer option: a misspelt one still fails once the callback ran", 2, &typo);
+    scratch::expect_contains("defer option: the message names it", typo.err, "unknown option -Dsufix");
+}
