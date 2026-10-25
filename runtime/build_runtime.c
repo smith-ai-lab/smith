@@ -101,6 +101,10 @@ static size_t smith_defer_count;
 static const char *smith_option_args[smith_options_max]; // the -D arguments of this call, as given
 static size_t smith_option_arg_count;
 static bool smith_regenerating;
+// The smith whose compiles write effect summaries, from the program's `--effects=` argument (nullptr: none do). It
+// is an argument, not the environment, so a regeneration run by ninja or by hand writes the same manifest.
+static const char *smith_effects_self;
+static const char *smith_effects_argument; // the whole argument, repeated in the regeneration rule
 static char smith_capture_buffer[smith_capture_max + 1];
 static char smith_compare_a[smith_chunk];
 static char smith_compare_b[smith_chunk];
@@ -1841,7 +1845,7 @@ static bool smith_effects_path(const char *object, char *out, size_t capacity) {
 // SMITH_SELF once links are followed. A stand-in named smith-cc, or a copy of smith, writes no summary the build could
 // count on.
 static bool smith_compiler_is_this_smith(const char *compiler) {
-    const char *self = getenv("SMITH_SELF");
+    const char *self = smith_effects_self;
     char wanted[PATH_MAX];
     if (self == nullptr || realpath(self, wanted) == nullptr) return false;
     char candidate[PATH_MAX];
@@ -1865,8 +1869,7 @@ static bool smith_compiler_is_this_smith(const char *compiler) {
 }
 
 static const char *smith_effects_summary(const char *compiler, const char *source, const char *object) {
-    const char *on = getenv("SMITH_EFFECTS");
-    if (on == nullptr || strcmp(on, "yes") != 0 || !smith_compiler_is_this_smith(compiler)) return nullptr;
+    if (smith_effects_self == nullptr || !smith_compiler_is_this_smith(compiler)) return nullptr;
     if (!smith_ends_with(source, ".c") && !smith_ends_with(source, ".smith")) return nullptr;
     char path[PATH_MAX];
     return smith_effects_path(object, path, sizeof path) ? smith_copy_string(path) : nullptr;
@@ -4129,7 +4132,8 @@ static void smith_put_entry(FILE *out, const SmithEntry *entry) {
 }
 
 static void smith_put_regenerate_rule(FILE *out) {
-    fputs("rule smith_regenerate\n  command = .smith/program --regenerate .smith/build.ninja", out);
+    fputs("rule smith_regenerate\n  command = .smith/program --regenerate .smith/build.ninja ", out);
+    smith_put_quoted(out, smith_effects_argument, true);
     for (size_t i = 0; i < smith_option_arg_count; i++) {
         fputc(' ', out);
         smith_put_quoted(out, smith_option_args[i], true);
@@ -4306,7 +4310,11 @@ int main(int argc, char **argv) {
     smith_regenerating = strcmp(argv[1], "--regenerate") == 0;
     int first = smith_regenerating ? 2 : 1; // the manifest comes next, then -D arguments
     SMITH_ASSERT(argc > first && argv[first] != nullptr);
-    smith_parse_options(argc - first - 1, argv + first + 1);
+    int options = first + 1;
+    SMITH_ASSERT(argv[options] != nullptr && strncmp(argv[options], "--effects=", 10) == 0);
+    smith_effects_argument = argv[options];
+    smith_effects_self = strcmp(argv[options] + 10, "no") == 0 ? nullptr : argv[options] + 10;
+    smith_parse_options(argc - options - 1, argv + options + 1);
     SmithBuild b = smith_make_build();
     build(&b);
     smith_context = nullptr;
