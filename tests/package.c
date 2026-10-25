@@ -2,6 +2,11 @@
 // real io whose network is scripted stands in for the internet, so the cache, the files and tar are all real.
 // Usage: package-test <archive.tar.gz> <scratch folder>
 
+#ifdef __linux__
+// runtime/package.c, included below, needs what glibc hides from C23 (nftw's FTW_PHYS), as in smith.c.
+// NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming): glibc's name for it
+#define _GNU_SOURCE
+#endif
 #include <assert.h>
 #include <stdio.h>
 
