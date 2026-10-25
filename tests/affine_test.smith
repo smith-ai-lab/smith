@@ -1,0 +1,244 @@
+// `[[smith::affine]]` (shim/affine.cpp; skill smith-lang-affine): a value of an affine type is used at most once, a
+// compile error at the second use naming the first. Each tests/affine/*.c and *.smith is compiled with `smith cc -c`
+// and what it prints (the status, then each error and note, the path left off) is the golden file beside it,
+// `<file>.expected`: the rules (a second use, an unused value, `&key`, a join, an assignment, an element of an array, a
+// member, the plain loop, any other loop or index, a call that fills an array) and the issue's use cases, in C and in
+// `.smith` (and the slices, which are `.smith` only). The editor's case: `smith lsp --check` of one C and one `.smith`
+// file shows the error. The enum_* files are the narrowing of a payload enum (#198): a read of `x.circle` is an error
+// unless every path tested `x == .circle` or switched on x; an assignment, `&x` or a call with the pointer ends it;
+// plain C is left alone. A file added to tests/affine needs a test here: `test_every_file_has_a_test` says which.
+module affine_test;
+
+import smith::format;
+import smith::io;
+import smith::test;
+import <string.h>;
+import scratch;
+
+static typeof(const char[:]) slice_of(const char *text) {
+    return text[0:c::strlen(text)];
+}
+
+// What a compile of the file prints, as tests/affine/<file>.expected holds it.
+static void affine_case(io::Io *io, const char *file) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    const char *command =
+        format::push(&io->arena,
+                     "cd \"$SMITH_REPO/tests/affine\" && { smith cc -std=gnu2y -I \"$SMITH_REPO/include\" -c ", file,
+                     " -o /dev/null >\"$TMPDIR/out\" 2>&1; echo \"status $?\"; grep -E '^[^ ]+:[0-9]+:[0-9]+: "
+                     "(error|note|warning):' \"$TMPDIR/out\"; }")
+            .data;
+    scratch::Run run = scratch::sh(&p, command);
+    test::golden(slice_of(format::push(&io->arena, "tests/affine/", file, ".expected").data), slice_of(run.out));
+}
+
+// The editor: clangd shows the error, for C and for `.smith`.
+static void affine_editor(io::Io *io, const char *file, const char *message) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Run run =
+        scratch::sh(&p, format::push(&io->arena, "timeout -s KILL 120 smith lsp --check=\"$SMITH_REPO/tests/affine/",
+                                     file, "\" 2>&1")
+                            .data);
+    scratch::expect_contains(file, run.out, message);
+}
+
+export void test_every_file_has_a_test(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Run run = scratch::sh(&p, "cd \"$SMITH_REPO/tests/affine\" && for f in *.c *.smith; do grep -q "
+                                       "\"affine_case(io, \\\"$f\\\")\" ../affine_test.smith || echo \"$f\"; done");
+    scratch::expect_text("files of tests/affine with no test", "", run.out);
+}
+
+export void test_lsp_second_use_c(io::Io *io) {
+    affine_editor(io, "affine_second_use.c", "smith-affine: 'key' is used again");
+}
+
+export void test_lsp_second_use_smith(io::Io *io) {
+    affine_editor(io, "affine_second_use.smith", "smith-affine: 'key' is used again");
+}
+
+// The narrowing of a payload enum (#198) shows in the editor too, for C and for `.smith` (clangd hung on the latter
+// until #227).
+export void test_lsp_enum_tagged_c(io::Io *io) {
+    affine_editor(io, "enum_tagged.c", "smith-enum: 's.circle' is read where");
+}
+
+export void test_lsp_enum_read_unchecked_smith(io::Io *io) {
+    affine_editor(io, "enum_read_unchecked.smith", "smith-enum: 's.circle' is read where");
+}
+
+export void test_affine_address_of_c(io::Io *io) {
+    affine_case(io, "affine_address_of.c");
+}
+
+export void test_affine_address_of_smith(io::Io *io) {
+    affine_case(io, "affine_address_of.smith");
+}
+
+export void test_affine_assign_fresh_c(io::Io *io) {
+    affine_case(io, "affine_assign_fresh.c");
+}
+
+export void test_affine_assign_fresh_smith(io::Io *io) {
+    affine_case(io, "affine_assign_fresh.smith");
+}
+
+export void test_affine_bad_index_c(io::Io *io) {
+    affine_case(io, "affine_bad_index.c");
+}
+
+export void test_affine_bad_index_smith(io::Io *io) {
+    affine_case(io, "affine_bad_index.smith");
+}
+
+export void test_affine_branch_join_c(io::Io *io) {
+    affine_case(io, "affine_branch_join.c");
+}
+
+export void test_affine_branch_join_smith(io::Io *io) {
+    affine_case(io, "affine_branch_join.smith");
+}
+
+export void test_affine_defer_smith(io::Io *io) {
+    affine_case(io, "affine_defer.smith");
+}
+
+export void test_affine_elements_c(io::Io *io) {
+    affine_case(io, "affine_elements.c");
+}
+
+export void test_affine_elements_smith(io::Io *io) {
+    affine_case(io, "affine_elements.smith");
+}
+
+export void test_affine_issue_reassign_c(io::Io *io) {
+    affine_case(io, "affine_issue_reassign.c");
+}
+
+export void test_affine_issue_reassign_smith(io::Io *io) {
+    affine_case(io, "affine_issue_reassign.smith");
+}
+
+export void test_affine_loop_counter_changed_c(io::Io *io) {
+    affine_case(io, "affine_loop_counter_changed.c");
+}
+
+export void test_affine_loop_counter_changed_smith(io::Io *io) {
+    affine_case(io, "affine_loop_counter_changed.smith");
+}
+
+export void test_affine_loop_outer_c(io::Io *io) {
+    affine_case(io, "affine_loop_outer.c");
+}
+
+export void test_affine_loop_outer_smith(io::Io *io) {
+    affine_case(io, "affine_loop_outer.smith");
+}
+
+export void test_affine_member_c(io::Io *io) {
+    affine_case(io, "affine_member.c");
+}
+
+export void test_affine_member_smith(io::Io *io) {
+    affine_case(io, "affine_member.smith");
+}
+
+export void test_affine_member_write_c(io::Io *io) {
+    affine_case(io, "affine_member_write.c");
+}
+
+export void test_affine_member_write_smith(io::Io *io) {
+    affine_case(io, "affine_member_write.smith");
+}
+
+export void test_affine_plain_loop_c(io::Io *io) {
+    affine_case(io, "affine_plain_loop.c");
+}
+
+export void test_affine_plain_loop_smith(io::Io *io) {
+    affine_case(io, "affine_plain_loop.smith");
+}
+
+export void test_affine_plain_loop_two_uses_c(io::Io *io) {
+    affine_case(io, "affine_plain_loop_two_uses.c");
+}
+
+export void test_affine_plain_loop_two_uses_smith(io::Io *io) {
+    affine_case(io, "affine_plain_loop_two_uses.smith");
+}
+
+export void test_affine_random_c_c(io::Io *io) {
+    affine_case(io, "affine_random_c.c");
+}
+
+export void test_affine_random_misuse_smith(io::Io *io) {
+    affine_case(io, "affine_random_misuse.smith");
+}
+
+export void test_affine_random_plain_loop_smith(io::Io *io) {
+    affine_case(io, "affine_random_plain_loop.smith");
+}
+
+export void test_affine_random_split_smith(io::Io *io) {
+    affine_case(io, "affine_random_split.smith");
+}
+
+export void test_affine_second_use_c(io::Io *io) {
+    affine_case(io, "affine_second_use.c");
+}
+
+export void test_affine_second_use_smith(io::Io *io) {
+    affine_case(io, "affine_second_use.smith");
+}
+
+export void test_affine_slice_bad_index_smith(io::Io *io) {
+    affine_case(io, "affine_slice_bad_index.smith");
+}
+
+export void test_affine_slice_elements_smith(io::Io *io) {
+    affine_case(io, "affine_slice_elements.smith");
+}
+
+export void test_affine_slice_loop_smith(io::Io *io) {
+    affine_case(io, "affine_slice_loop.smith");
+}
+
+export void test_affine_slice_two_uses_smith(io::Io *io) {
+    affine_case(io, "affine_slice_two_uses.smith");
+}
+
+export void test_affine_split_fills_c(io::Io *io) {
+    affine_case(io, "affine_split_fills.c");
+}
+
+export void test_affine_split_fills_smith(io::Io *io) {
+    affine_case(io, "affine_split_fills.smith");
+}
+
+export void test_affine_unused_ok_c(io::Io *io) {
+    affine_case(io, "affine_unused_ok.c");
+}
+
+export void test_affine_unused_ok_smith(io::Io *io) {
+    affine_case(io, "affine_unused_ok.smith");
+}
+
+export void test_enum_narrowed_smith(io::Io *io) {
+    affine_case(io, "enum_narrowed.smith");
+}
+
+export void test_enum_narrowing_ends_smith(io::Io *io) {
+    affine_case(io, "enum_narrowing_ends.smith");
+}
+
+export void test_enum_plain_c_c(io::Io *io) {
+    affine_case(io, "enum_plain_c.c");
+}
+
+export void test_enum_read_unchecked_smith(io::Io *io) {
+    affine_case(io, "enum_read_unchecked.smith");
+}
+
+export void test_enum_tagged_c(io::Io *io) {
+    affine_case(io, "enum_tagged.c");
+}
