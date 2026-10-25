@@ -33,7 +33,7 @@ one check with `SmithNaming` (it holds the final real check, whose private decis
 instantiation) which gives the declaration its member name from the lowering's table for the one question. Sound
 because the table is the lowering's own, never underscores guessed; the rename is undone before anything else reads
 it; a `.c` file's names are never in the table. Other checks see the AST as it is, so one that compares a name's
-spelling still sees the lowered one. `smith lsp` registers the same module (clangd makes its built-in checks from the same registry), without `presentThrough` (its findings go through the lsp layer), so the editor judges names as written too (`tests/lint-smith.sh`, `tests/lsp.sh`, [the language](smith-language.md)).
+spelling still sees the lowered one. `smith lsp` registers the same module (clangd makes its built-in checks from the same registry), without `presentThrough` (its findings go through the lsp layer), so the editor judges names as written too (`tests/lint_smith_test.smith`, `tests/lsp.sh`, [the language](smith-language.md)).
 
 `smith fmt` formats a `.smith` file as C (clang-format 23 with `patches/clang-format-smith.patch`, about 100 lines): C's keywords
 only (so a C name such as `throw` is a name, not C++'s keyword), `::` one token, and `module ...;` and `import ...;` lines at
@@ -64,7 +64,7 @@ from `patches/clang-debug-name.patch` and the table above; see knowledge/debugge
 `smith lint x.smith` (clang-tidy 23 of smith's LLVM, in process) reads a `.smith` file as `smith cc` does and reports as
 the source is written: the same hook, the same rule for the command, and the table of names above. `smith lint` with no
 arguments lints what the project's `lint` task lists; what follows is what clang-tidy does with a `.smith` file it is
-given (`tests/lint-smith.sh`).
+given (`tests/lint_smith_test.smith`).
 
 - **The command.** clang-tidy builds the command of each file with clang's driver, not with `clang::createInvocation`, so
   `getStripPluginsAdjuster`, the last adjuster clang-tidy appends, asks `clang::CommandHook`
@@ -103,7 +103,7 @@ given (`tests/lint-smith.sh`).
   defined: the lowering's own test, so `c::memset` and `c::snprintf` are macros in a fortified SDK. A `.c` file is left
   alone. A line that must keep one says `// NOLINT(smith-preprocessor)`; the corpus of `tests/smith-lang` and
   `tests/smith_lang_c_test.smith` compile `.smith` files with the preprocessor on purpose and are not linted (they are not among
-  the build's compiles). `tests/lint-smith.sh` tests it.
+  the build's compiles). `tests/lint_smith_test.smith` tests it.
 - **`smith-module`** (issue #60; `shim/idiom.h`): a `.smith` file whose text has no `module` line (the raw lexer; comments are skipped) is reported at its first byte with the line its path implies, from the folder the check runs in (the project's root), `tests/` being a root of its own. The compiler never refuses such a file.
 - **The idiom checks** (issue #47; `shim/idiom.h`, registered in the same module, on in the default `.clang-tidy`).
   `smith-sized-types` and `smith-module-library` read the `.smith` file's text with the raw lexer (a typedef's name is
@@ -113,7 +113,7 @@ given (`tests/lint-smith.sh`).
   `main`; a file-scope `const` of arithmetic, enum, or an array or record of them with a constant initializer, which a
   float, a pointer and a C object with external linkage are not), and `smith-c23` reads tokens (`NULL`, `_Bool`,
   `_Noreturn`, `<stdbool.h>`, `__attribute__((noreturn))`...) in every user file and the AST for `{0}`. The C checks
-  skip C++. `tests/lint-smith.sh` has a passing and a failing file for each.
+  skip C++. `tests/lint_smith_test.smith` has a passing and a failing file for each.
 - **`smith-effects`** (`shim/effects.h`, registered in the same module) is a check of smith's own: a raw call into a
   system header is reported at the `c::` where the source wrote it, with the callee as written (`c::fopen`), a main-only
   constructor is named as the module writes it, and the rules about capabilities (a type marked
