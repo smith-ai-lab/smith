@@ -399,5 +399,32 @@ else
     echo "FAIL  within, modules: '$actual'"
 fi
 
+# Promises: `smith check` lists what smith trusts and does not check, from the `P` lines of the summaries a build left
+# (an effects attribute on a declaration with no source, a function that calls smith_trusted()), a header's once.
+mkdir "$work/promises"
+cat >"$work/promises/lib.h" <<'EOF2'
+[[smith::effects(alloc, net)]] int curl_perform(void *handle);
+[[smith::pure]] int twice(int);
+EOF2
+cat >"$work/promises/main.c" <<'EOF2'
+#include <smith/contract.h>
+#include "lib.h"
+static int edge(int x) { smith_trusted(); return x; }
+int main(void) { return edge(0); }
+EOF2
+total=$((total + 1))
+actual=$(cd "$work/promises" && smith build >/dev/null 2>&1; smith check -v 2>&1 | grep -E '^smith check: (promises|  )')
+expected="smith check: promises: 3
+smith check:   ./lib.h:1 curl_perform
+smith check:   ./lib.h:2 twice
+smith check:   main.c:3 edge"
+if [ "$expected" = "$actual" ]; then
+    echo "ok    promises: smith check -v lists two declared promises and a trusted function"
+else
+    failures=$((failures + 1))
+    echo "FAIL  promises"
+    printf '%s\n' "$expected" >"$work/expected" && printf '%s\n' "$actual" >"$work/actual" && diff "$work/expected" "$work/actual"
+fi
+
 echo "$((total - failures)) of $total passed"
 [ "$failures" -eq 0 ]

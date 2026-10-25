@@ -9,6 +9,7 @@
 //   check  fmt, docs, lint, test and prove, each reported, the exit status 1 if any failed
 // What a verb needs from build.c it reads from .smith/build.info, which every run of build.c writes
 // (knowledge/verbs.md). Included by smith.c.
+#include <ftw.h>
 constexpr size_t smith_verb_args_max = 16384;
 constexpr size_t smith_verbs_files_max = 16384;
 constexpr size_t smith_verbs_names_max = 16U << 20;
@@ -876,6 +877,67 @@ static void smith_check_run(const char *self, const char *verb, const SmithVerbA
     smith_check_part(verb, status, since, failed, failed_count, loud ? nullptr : log);
 }
 
+// ---- promises
+
+// What smith trusts and does not check: the `P` lines of the effects summaries under `.smith/effects/` (an effects
+// attribute on a declaration with no source; a function that calls `smith_trusted()`). A header's promise is in the
+// summary of every file that includes it, so one is listed once, by place and name.
+constexpr size_t smith_promises_max = 1024;
+constexpr size_t smith_promise_text = 192;
+static char smith_promise_list[smith_promises_max][smith_promise_text];
+static size_t smith_promise_count;
+
+static void smith_promise_add(const char *place, const char *name) {
+    char entry[smith_promise_text];
+    if (strstr(place, "/.smith/") != nullptr || strncmp(place, ".smith/", 7) == 0)
+        return;                             // smith's own generated files
+    const char *last = strrchr(place, ':'); // the column goes: `file:line:column`
+    int width = last != nullptr ? (int)(last - place) : (int)strlen(place);
+    snprintf(entry, sizeof entry, "%.*s %s", width, place, name);
+    for (size_t i = 0; i < smith_promise_count; i++) {
+        if (strcmp(smith_promise_list[i], entry) == 0) return;
+    }
+    if (smith_promise_count < smith_promises_max) strcpy(smith_promise_list[smith_promise_count++], entry);
+}
+
+static void smith_promise_read(const char *path) {
+    FILE *file = fopen(path, "r");
+    if (file == nullptr) return;
+    char line[2048];
+    while (fgets(line, sizeof line, file) != nullptr) { // bounded by the file
+        char *field[5] = {};
+        size_t found = 0;
+        for (char *c = line; found < 5 && c != nullptr;) { // P, kind, symbol, place, name
+            field[found++] = c;
+            c = strchr(c, '\t');
+            if (c != nullptr) *c++ = '\0';
+        }
+        if (found == 5 && strcmp(field[0], "P") == 0) {
+            field[4][strcspn(field[4], "\n")] = '\0';
+            smith_promise_add(field[3], field[4]);
+        }
+    }
+    fclose(file);
+}
+
+static int smith_promise_visit(const char *path, const struct stat *info, int type, struct FTW *where) {
+    (void)info;
+    (void)where;
+    size_t length = strlen(path);
+    if (type == FTW_F && length > 3 && strcmp(path + length - 3, ".fx") == 0) smith_promise_read(path);
+    return 0;
+}
+
+// `smith check: promises: N`, and with -v each one (`file:line name`). Nothing when the project has none.
+static void smith_check_promises(bool list) {
+    smith_promise_count = 0;
+    nftw(".smith/effects", smith_promise_visit, 16, FTW_PHYS);
+    if (smith_promise_count == 0) return;
+    fprintf(stderr, "smith check: promises: %zu%s\n", smith_promise_count, list ? "" : " (smith check -v lists them)");
+    for (size_t i = 0; list && i < smith_promise_count; i++)
+        fprintf(stderr, "smith check:   %s\n", smith_promise_list[i]);
+}
+
 // `smith check`: formatting (clang-format's dry run), the docs, lint, the tests and the proofs, in that order, cheapest
 // first. A part that fails does not stop the rest: every part is reported, and the exit status is 1 if any failed.
 static int smith_check_project(int count, char **args, const char *self) {
@@ -904,6 +966,7 @@ static int smith_check_project(int count, char **args, const char *self) {
             fprintf(stderr, "smith check: this smith has no prover, so prove is skipped\n");
         }
     }
+    smith_check_promises(every_task);
     if (failed_count == 0) {
         fprintf(stderr, "smith check: ok\n");
         return 0;
