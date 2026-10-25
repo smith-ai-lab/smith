@@ -692,110 +692,47 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config, cons
 // (XDG_CACHE_HOME, and XDG_DATA_HOME where it starts compilers), and the one folder they may share, where a smith
 // writes the clang files and its programs on first use, is written by rename. `run` is the routing tests with stub
 // compilers (no clang or Xcode needed); the others use real ninja, clang and git. A script that takes long is several
-// rows, one per shard (tests/test.sh takes "isolate" and a list of its parts). Add a script by adding a row, in order.
+// rows, one per shard. Add a script by adding a row, in order.
 // `prove` starts with the others: a proof's budget is CPU time (counted as on 8 idle cores), so what else runs changes
 // how long it takes, never whether it passes.
 typedef struct {
     const char *task;
     const char *script;
     const char *mode;  // the script's second argument, or nullptr
-    const char *shard; // its third (a list of parts of the script), or nullptr
     int phase;         // 0 is a short task, 1 a long one (all start at once)
 } BuildTestScript;
 
 // clang-format off
 static const BuildTestScript build_test_scripts[] = {
-    {"arena", "arena", nullptr, nullptr, 0},
-    {"autodiff", "autodiff", nullptr, nullptr, 1},
-    {"contract", "contract", nullptr, nullptr, 0},
-    {"dap", "dap", nullptr, nullptr, 0},
-    {"dbg-crash", "dbg_crash", nullptr, nullptr, 0},
-    {"defer", "defer", nullptr, nullptr, 0},
-    {"effects", "effects", nullptr, nullptr, 0},
-    {"handlers", "handlers", nullptr, nullptr, 0},
-    {"http", "http", nullptr, nullptr, 0},
-    {"inflate", "inflate", nullptr, nullptr, 0},
-    {"io", "io", nullptr, nullptr, 0},
-    {"json", "json", nullptr, nullptr, 0},
-    {"lsp-folders", "lsp", "folders", nullptr, 1},
-    {"lsp-project", "lsp", "project", nullptr, 1},
-    {"mcp-fake-asan", "mcp", "fake-asan", nullptr, 0},
-    {"mcp-fake-fast", "mcp", "fake-fast", nullptr, 0},
-    {"mcp-fake-ndebug", "mcp", "fake-ndebug", nullptr, 0},
-    {"mcp-real", "mcp", "real", nullptr, 1},
-    {"neovim", "neovim", nullptr, nullptr, 0},
-    {"protocol", "protocol", nullptr, nullptr, 0},
-    {"prove", "prove", nullptr, nullptr, 1},
-    {"prove-sound", "prove_sound", nullptr, nullptr, 1},
-    {"random", "random", nullptr, nullptr, 0},
-    {"main", "test", "main", nullptr, 1},
-    {"reports", "test", "reports,misc,explain,lang", nullptr, 1},
-    {"rest", "test", "alongside,workers,flags,budget,shrink_int,shrink_list,shrink_normal,inprocess", nullptr, 1},
-    {"isolate-main", "test", "isolate", "main", 1},
-    {"isolate-reports", "test", "isolate", "misc,reports,lang", 1},
-    {"isolate-rest", "test", "isolate", "workers,flags,inprocess,explain", 1},
-    {"isolate-shrink-int", "test", "isolate", "shrink_int,alongside,budget", 1},
-    {"isolate-shrink-list", "test", "isolate", "shrink_list", 1},
-    {"isolate-shrink-normal", "test", "isolate", "shrink_normal", 1},
-    {"text", "text", nullptr, nullptr, 0},
-    {"tree_sitter", "tree_sitter", nullptr, nullptr, 0},
+    {"arena", "arena", nullptr, 0},
+    {"autodiff", "autodiff", nullptr, 1},
+    {"contract", "contract", nullptr, 0},
+    {"dap", "dap", nullptr, 0},
+    {"dbg-crash", "dbg_crash", nullptr, 0},
+    {"defer", "defer", nullptr, 0},
+    {"effects", "effects", nullptr, 0},
+    {"handlers", "handlers", nullptr, 0},
+    {"http", "http", nullptr, 0},
+    {"inflate", "inflate", nullptr, 0},
+    {"io", "io", nullptr, 0},
+    {"json", "json", nullptr, 0},
+    {"lsp-folders", "lsp", "folders", 1},
+    {"lsp-project", "lsp", "project", 1},
+    {"mcp-fake-asan", "mcp", "fake-asan", 0},
+    {"mcp-fake-fast", "mcp", "fake-fast", 0},
+    {"mcp-fake-ndebug", "mcp", "fake-ndebug", 0},
+    {"mcp-real", "mcp", "real", 1},
+    {"neovim", "neovim", nullptr, 0},
+    {"protocol", "protocol", nullptr, 0},
+    {"prove", "prove", nullptr, 1},
+    {"prove-sound", "prove_sound", nullptr, 1},
+    {"random", "random", nullptr, 0},
+    {"text", "text", nullptr, 0},
+    {"tree_sitter", "tree_sitter", nullptr, 0},
 };
 // clang-format on
 
 constexpr size_t build_test_script_count = sizeof build_test_scripts / sizeof build_test_scripts[0];
-
-// Stops the build with a message.
-static void build_stop(SmithBuild *b, const char *message) {
-    (void)smith_capture(b, (const char *[]){"sh", "-c", "echo \"build.c: $0\" >&2; exit 1", message, nullptr});
-}
-
-// Whether the list, its names split by `separator`, holds the name.
-static bool build_list_has(SmithBuild *b, const char *list, char separator, const char *name) {
-    return strstr(smith_fmt(b, "%c%s%c", separator, list, separator),
-                  smith_fmt(b, "%c%s%c", separator, name, separator)) != nullptr;
-}
-
-// The parts of tests/test.sh and the shards of build_test_scripts must be the same set: a part in no `isolate` row
-// would never run under --isolate, and a name in a row that is no part would run nothing, silently.
-static const char *build_test_parts_of(const BuildTestScript *row) {
-    if (strcmp(row->script, "test") != 0) return nullptr;
-    return row->mode != nullptr && strcmp(row->mode, "isolate") == 0 ? row->shard : row->mode;
-}
-
-// Whether a row of tests/test.sh, plain (isolate false) or under --isolate, runs the part.
-static bool build_part_runs(SmithBuild *b, const char *part, bool isolate) {
-    for (size_t row = 0; row < build_test_script_count; row++) {
-        const BuildTestScript *script = &build_test_scripts[row];
-        const char *list = build_test_parts_of(script);
-        bool is_isolate = script->mode != nullptr && strcmp(script->mode, "isolate") == 0;
-        if (list != nullptr && is_isolate == isolate && build_list_has(b, list, ',', part)) return true;
-    }
-    return false;
-}
-
-static void build_check_test_parts(SmithBuild *b) {
-    const char *parts = smith_capture(b, (const char *[]){"sh", "tests/test.sh", "--parts", nullptr});
-    for (const char *name = parts; *name != '\0';) {
-        size_t length = strcspn(name, "\n");
-        const char *part = smith_fmt(b, "%.*s", (int)length, name);
-        if (!build_part_runs(b, part, true))
-            build_stop(b, smith_fmt(b, "part '%s' of tests/test.sh is in no isolate row of build_test_scripts", part));
-        if (!build_part_runs(b, part, false))
-            build_stop(b, smith_fmt(b, "part '%s' of tests/test.sh is in no plain row of build_test_scripts", part));
-        name += length + (name[length] == '\n' ? 1 : 0);
-    }
-    for (size_t row = 0; row < build_test_script_count; row++) {
-        const BuildTestScript *script = &build_test_scripts[row];
-        for (const char *name = build_test_parts_of(script); name != nullptr && *name != '\0';) {
-            size_t length = strcspn(name, ",");
-            const char *part = smith_fmt(b, "%.*s", (int)length, name);
-            if (!build_list_has(b, parts, '\n', part))
-                build_stop(
-                    b, smith_fmt(b, "task test-%s names '%s', which is no part of tests/test.sh", script->task, part));
-            name += length + (name[length] == ',' ? 1 : 0);
-        }
-    }
-}
 
 // smith's own tests of behavior, in `.smith` on its test runner (issue #31): every `*_test.smith` (beside the library
 // it tests in `lib/`, or in `tests/`) linked into one runner, built once under AddressSanitizer and UBSan, whose
@@ -837,7 +774,6 @@ static const char *build_units(SmithBuild *b, const char *binary, const char *fo
 // scripts read the full output of the smith under test, so `smith build install` (which sets nothing) runs the same
 // tests as `smith check`. The quiet form is tested with the variable unset (tests/run_routing_test.smith).
 static const char *const *build_test(SmithBuild *b, const BuildConfig *config, const char *binary, const char *folder) {
-    build_check_test_parts(b);
     const char *units = config->hook ? build_units(b, binary, folder) : "";
     const char *names[build_test_script_count + 1];
     for (size_t i = 0; i < build_test_script_count; i++)
@@ -851,9 +787,8 @@ static const char *const *build_test(SmithBuild *b, const BuildConfig *config, c
                                             smith_fmt(b, "UNITS=%s", units), "SMITH_OUTPUT=full", "sh",
                                             smith_fmt(b, "tests/%s.sh", row->script), binary, nullptr),
                                  smith_when(b, row->mode != nullptr, smith_list(b, row->mode, nullptr)),
-                                 smith_when(b, row->shard != nullptr, smith_list(b, row->shard, nullptr)), nullptr),
-            .description =
-                smith_fmt(b, "tests/%s.sh %s %s", row->script, mode, row->shard != nullptr ? row->shard : ""),
+                                 nullptr),
+            .description = smith_fmt(b, "tests/%s.sh %s", row->script, mode),
             .inputs = (const char *[]){binary,
                                        units[0] != '\0' &&
                                                (strcmp(row->script, "json") == 0 || strcmp(row->script, "inflate") == 0)
