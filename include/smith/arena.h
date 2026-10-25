@@ -65,7 +65,7 @@ typedef struct {
 
 // Zeroed memory for size bytes at align (a power of two, at most align_max). Running out of capacity stops the program
 // with a message naming the request and the capacity, in every build: it is a single comparison, and without it a
-// build with NDEBUG would write past the memory.
+// push would write past the memory.
 [[nodiscard]] void *smith_arena_push(SmithArena *arena, size_t size, size_t align);
 
 // count items of size bytes.

@@ -35,11 +35,11 @@ SmithObject contract = {
 smith_object(b, &contract);
 ```
 
-Add `-I .smith/include` to the project's own compiles and put `contract` in the program's `.objects`. With `-DNDEBUG` no object references the library, so linking it is harmless. The tests need none of this: `smith_tests` compiles and links the contract library into the runner itself (unless `.objects` already has yours), so a test of code that makes contracts links with nothing added. Only the program's own link needs it.
+Add `-I .smith/include` to the project's own compiles and put `contract` in the program's `.objects`. Every build, `-DNDEBUG` included, calls the library, so the program must link it. The tests need none of this: `smith_tests` compiles and links the contract library into the runner itself (unless `.objects` already has yours), so a test of code that makes contracts links with nothing added. Only the program's own link needs it.
 
 Also in this family: [smith-contract](../smith-contract/SKILL.md), [smith-prove](../smith-prove/SKILL.md), [smith-prove-trusted](../smith-prove-trusted/SKILL.md), [smith-prove-cost](../smith-prove-cost/SKILL.md).
 
 ## At run time, more
 - **The static analyzer takes a contract as an assumption.** clang-tidy's `clang-analyzer-*` (`smith lint`) defines `__clang_analyzer__` (`target::static_analyzer`), and there each of the four is `__builtin_assume(condition)`, in every build, `NDEBUG` or not; so `smith_requires(index < N)` stops `clang-analyzer-security.ArrayBound` from reporting that index, as `assert` does, and an index nothing bounds is still reported. A compile, `smith prove` and the checks never see this branch.
-- The four are `always_inline` functions the header carries (the module's `export inline`; its `if constexpr` on `target::` is written as the `#if` a C includer's compiler answers), empty when assertions are off. Otherwise each calls an external function of the library (`smith_contract_requires`, `_ensures`, `_invariant`, `_assert`) that the optimizer cannot see into; the call stays in the IR at `-O0` and optimized, and is how `smith prove` finds the contracts without a flag.
-- **The library is compiled from source with the project's flags**, so `target::assertions` there is the project's: in the fast profile the library's functions are empty, as the header's inline ones are.
+- The four are `always_inline` functions the header carries (the module's `export inline`; its `if constexpr` on `target::` is written as the `#if` a C includer's compiler answers). Each calls an external function of the library (`smith_contract_requires`, `_ensures`, `_invariant`, `_assert`) that the optimizer cannot see into; the call stays in the IR at `-O0` and optimized, and is how `smith prove` finds the contracts without a flag.
+- **The library is compiled from source with the project's flags**, and its checks fail in every profile, as the header's inline ones do.

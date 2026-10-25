@@ -57,7 +57,7 @@ export constexpr usize f32_capacity = 24;
 // A check that stays in every build and is no contract the prover reads: the bignum arithmetic and the float text of
 // this module cost the prover far more than they are worth, so a proof of a caller assumes the check held. Trusted, its
 // body is never read, so the assert is a run-time check: it writes the failure report (the line of the call and the
-// stack) in a build with assertions, and the trap after it stops a build without them (`fast`), as it always did.
+// stack) in every build.
 void check(bool holds) {
     contract::trusted();
     contract::assert(holds);

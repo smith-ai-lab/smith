@@ -5,7 +5,7 @@
 
 // A check that stays in every build: an invariant of this file, not a contract a proof of a caller should read.
 // Trusted, its body is never read, so the assert is a run-time check that writes the failure report (the call's line
-// and the stack) in a build with assertions; the trap after it stops one without them.
+// and the stack) in every build.
 static void smith_json_check(bool holds) {
     smith_trusted();
     smith_assert(holds);

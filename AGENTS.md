@@ -14,6 +14,7 @@ A C toolchain and a modern standard library for C, written in C. Each fact has o
 - `smith fmt`, `lint` and `lsp` are clang-format, clang-tidy and clangd from that LLVM, with smith's defaults only where a project has no file, and no `--query-driver` for the editor. [format-lint-and-editor-tools](knowledge/format-lint-and-editor-tools.md)
 - `smith dbg` and `smith dap` are lldb and lldb-dap from the same LLVM, with the system's debugserver, no Python and no curses. [debugger](knowledge/debugger.md)
 - Contracts are calls read by `smith prove` (Alive2, Bitwuzla, Z3), not a clang plugin and not `-fbounds-safety`; the boundary is `smith_trusted()` and there is no list. [contracts](knowledge/contracts.md), [prover](knowledge/prover.md)
+- Checks run in every build; only a proof removes one (owner, 2026-10-25). [contracts](knowledge/contracts.md)
 - A proof is fast or it is written wrong, and fast is CPU time (about 10 s on 8 idle cores). [proof-budget](knowledge/proof-budget.md)
 - Enzyme is linked into smith's lld; an autodiff program links with full LTO, and debug has ASan and no UBSan. [autodiff](knowledge/autodiff.md)
 

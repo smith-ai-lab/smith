@@ -43,7 +43,7 @@ export u32 count_pairs(u32 squares, u32 *moves) {
 
 - An old value is a `const` local saved at the top: `const u8 old = moves->len;` (for what a function leaves alone, `modifies`, smith-contract-proof). The result is the variable about to be returned.
 - A spec is ordinary C: a pure helper function, called inside a contract, with loops of constant bounds.
-- **A condition must be free of side effects.** The call evaluates it, and when assertions are off (`target::assertions`, which `-DNDEBUG` turns off: the fast profile) nothing else happens: the body is empty.
+- **A condition must be free of side effects.** The call evaluates it, in every build: debug, release and fast check alike, `-DNDEBUG` or not. Only `smith prove` removes a check (a proved one costs nothing); to pay less at run time, prove more.
 
 ## At run time
 

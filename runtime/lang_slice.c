@@ -927,23 +927,12 @@ static bool smith_lang_slice_text(SmithLang *lang, const SmithToken *tokens, siz
 
 // ---- The check an index or a slice makes
 
-static bool smith_lang_slice_assertions(const SmithHost *host) {
-    int64_t value = 1;
-    if (host->target_fact != nullptr && host->target_fact(host->context, SmithTarget_Assertions, &value)) {
-        return value != 0;
-    }
-    return true;
-}
-
-// The statement that fails the program unless `condition` holds (nothing where assertions are off): smith_failure
+// The statement that fails the program unless `condition` holds (in every build): smith_failure
 // (<smith/trace.h>) with the kind of an assert, 4, as `contract::assert` fails, so the report is the same and its line
 // is the line of the index. The function is declared here, so that the file needs no import; the build links it with
 // the trace library.
 static void smith_lang_slice_check(const SmithHost *host, const char *condition, char *out, size_t capacity) {
-    if (!smith_lang_slice_assertions(host)) {
-        out[0] = 0;
-        return;
-    }
+    (void)host;
     snprintf(out, capacity, "extern void smith_failure ( unsigned char ) ; if ( ! ( %s ) ) smith_failure ( 4 ) ;",
              condition);
 }
