@@ -864,7 +864,29 @@ static const char *build_enzyme_folder(SmithBuild *b) {
     return smith_fmt(b, "%s/smith/enzyme/0.0.303-%s", cache, smith_env(b, "SMITH_LLVM_NAME", "23.1.3-r10"));
 }
 
+// Whether this build runs on Linux (issue #305): smith build llvm has its own recipe there (scripts/llvm_linux.smith)
+// and its own packages; everything else is macOS's.
+static bool build_is_linux(SmithBuild *b) {
+    return strcmp(b->os, "Linux") == 0;
+}
+
+static bool build_is_arm(SmithBuild *b) {
+    return strcmp(b->arch, "arm64") == 0 || strcmp(b->arch, "aarch64") == 0;
+}
+
 static const char *build_cmake_package(SmithBuild *b) {
+    if (build_is_linux(b) && build_is_arm(b)) {
+        return smith_package(
+            b, &(SmithPackage){
+                   .url = "https://github.com/Kitware/CMake/releases/download/v4.4.4/cmake-4.4.4-linux-aarch64.tar.gz",
+                   .hash = "sha256:a1b6cc63636a0e55c63257cf3315a8a5f129e42fade25db1afea4ff8ab06f25e"});
+    }
+    if (build_is_linux(b)) {
+        return smith_package(
+            b, &(SmithPackage){
+                   .url = "https://github.com/Kitware/CMake/releases/download/v4.4.4/cmake-4.4.4-linux-x86_64.tar.gz",
+                   .hash = "sha256:e5bb807f7728cb60cd8b27ebc97a2edb469b68655f21e844a600c3575b76f5bb"});
+    }
     return smith_package(
         b, &(SmithPackage){
                .url = "https://github.com/Kitware/CMake/releases/download/v4.4.4/cmake-4.4.4-macos-universal.tar.gz",
@@ -872,6 +894,18 @@ static const char *build_cmake_package(SmithBuild *b) {
 }
 
 static const char *build_python_package(SmithBuild *b) {
+    if (build_is_linux(b) && build_is_arm(b)) {
+        return smith_package(
+            b, &(SmithPackage){.url = "https://github.com/astral-sh/python-build-standalone/releases/download/20261020/"
+                                      "cpython-3.13.16%2B20261020-aarch64-unknown-linux-gnu-install_only.tar.gz",
+                               .hash = "sha256:908e16f2083b59cc1eea70b8afb7995acae3f524b2e26409beae01392e07561b"});
+    }
+    if (build_is_linux(b)) {
+        return smith_package(
+            b, &(SmithPackage){.url = "https://github.com/astral-sh/python-build-standalone/releases/download/20261020/"
+                                      "cpython-3.13.16%2B20261020-x86_64-unknown-linux-gnu-install_only.tar.gz",
+                               .hash = "sha256:0ad293ecda8ea93a28e4a6b5e9cc20ae74be15aafed75be04418b8f82bd0d0da"});
+    }
     return smith_package(
         b, &(SmithPackage){.url = "https://github.com/astral-sh/python-build-standalone/releases/download/20261020/"
                                   "cpython-3.13.16%2B20261020-aarch64-apple-darwin-install_only.tar.gz",
@@ -1527,6 +1561,29 @@ static int build_enzyme_only(SmithRun *run) {
     return smith_run_program(run, done, nullptr);
 }
 
+// On Linux (issue #305): the same LLVM, built by scripts/llvm_linux.smith (a program, compiled here with the smith
+// that runs this build), which takes scripts/llvm.sh's arguments with the programs themselves. The prover's libraries
+// and Enzyme are not built on Linux yet.
+static int build_llvm_run_linux(SmithRun *run, const char *source, const char *ninja, const char *stamp) {
+    SmithBuild *b = run->b;
+    const char *tool = smith_fmt(b, "%s.tool", run->outputs[0]);
+    const char *const compile[] = {smith_env(b, "CC", "smith-cc"), "-std=c23", "-O1", "-x",   "c",
+                                   "scripts/llvm_linux.smith",     "-o",       tool,  nullptr};
+    int status = smith_run_program(run, compile, nullptr);
+    if (status != 0) return status;
+    const char *const make_llvm[] = {tool,
+                                     source,
+                                     smith_fmt(b, "%s/bin/cmake", build_cmake_package(b)),
+                                     smith_fmt(b, "%s/bin/python3", build_python_package(b)),
+                                     stamp,
+                                     ninja,
+                                     nullptr};
+    status = smith_run_program(run, make_llvm, nullptr);
+    if (status != 0) return status;
+    const char *const done[] = {"cp", stamp, run->outputs[0], nullptr};
+    return smith_run_program(run, done, nullptr);
+}
+
 // The pinned LLVM (`smith build llvm`): the sources, CMake and Python by hash, built once into the package cache by
 // scripts/llvm.sh, and then the prover's libraries beside it (Ninja, Z3, Alive2, Bitwuzla and its dependencies). A .run
 // step, so the packages are fetched only when this target runs, not on every smith build.
@@ -1546,6 +1603,7 @@ static int build_llvm_run(SmithRun *run) {
     const char *stamp = smith_fmt(b, "%s.llvm", run->outputs[0]);
     int status = build_ninja_make(run, ninja_source, build_python_package(b), ninja);
     if (status != 0) return status;
+    if (build_is_linux(b)) return build_llvm_run_linux(run, source, ninja, stamp);
     const char *const make_llvm[] = {
         "sh", "scripts/llvm.sh", source, build_cmake_package(b), build_python_package(b), stamp, ninja, nullptr};
     status = smith_run_program(run, make_llvm, nullptr);
@@ -1564,11 +1622,15 @@ static void build_llvm(SmithBuild *b) {
     SmithStep llvm = {
         .run = build_llvm_run,
         .description = "building LLVM 23.1.3 and the prover's libraries (static, from source)",
-        .inputs = (const char *[]){"scripts/llvm.sh", "scripts/defer_init.c", "patches/enzyme/quiet-caching-call.patch",
-                                   "patches/clang-token-hook.patch", "patches/clang-debug-name.patch",
-                                   "patches/clang-format-smith.patch", "patches/smith-editor-defaults.patch",
-                                   "patches/smith-format-source-extension.patch", "patches/smith-command-hook.patch",
-                                   "patches/compiler-rt-xnu-fast-mmap.patch", nullptr},
+        .inputs = smith_cat(
+            b,
+            (const char *[]){"scripts/llvm.sh", "scripts/defer_init.c", "patches/enzyme/quiet-caching-call.patch",
+                             "patches/clang-token-hook.patch", "patches/clang-debug-name.patch",
+                             "patches/clang-format-smith.patch", "patches/smith-editor-defaults.patch",
+                             "patches/smith-format-source-extension.patch", "patches/smith-command-hook.patch",
+                             "patches/compiler-rt-xnu-fast-mmap.patch", nullptr},
+            smith_when(b, build_is_linux(b), (const char *[]){"scripts/llvm_linux.smith", "scripts/sha256.h", nullptr}),
+            nullptr),
         .outputs = (const char *[]){"build/llvm.stamp", nullptr},
     };
     smith_step(b, &llvm);

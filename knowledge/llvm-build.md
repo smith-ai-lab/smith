@@ -12,3 +12,13 @@ tags: [llvm, build]
 build never run it. It also keeps clang's own main, with cc1, cc1as and cc1gen-reproducer, as `libclangmain.a` in the
 install, and the mains of clang-format, clang-tidy and clangd (patched copies, see `shim/tool.h`) as `libsmithtools.a`,
 which smith links. The configuration `23.1.3-r10` is built from these patches: `patches/clang-constexpr-c.patch` (C function bodies in the constant evaluator for `.smith`, #97) and clang-format's tuple and slice forms (`patches/clang-format-smith.patch`, #96, #82); r6 adds the compile-time failure annotations, the evaluator under `-fmodules` and constexpr pointers into literals (#103); r7 adds `patches/clang-constexpr-fold.patch` (a call the evaluator ran is no GNU folding: no `-Wgnu-folding-constant`, #166) and clang-format's `[const :]` spacing (#130); r8 adds `patches/smith-lang-format-enum.patch` (payload enums laid out like structs, the dot rule's spacing, #215); r9 adds `patches/clang-plugin-attr-args.patch` (the parser reads the arguments of a plugin's scoped C23 attribute, identifiers included: `ParsedAttrInfo::HasVariadicIdentifierArg`, #207); r10 adds `patches/clangd-plugin-hover.patch` (clangd's `HoverProviderRegistry`: a plugin in smith's process registers a `HoverProvider` and adds a section to the hover of a declaration, and clangd knows nothing of what it says, #263). Its clang needs `SDKROOT` (it does not ask xcrun), and it cannot compile for x86_64.
+
+**On Linux** (issue #305) the same `smith build llvm` runs `scripts/llvm_linux.smith`, a module-less `.smith` program (plain
+C23, so the seed can build it with the system's compiler before there is a smith), with Linux's pinned CMake and Python
+and the same patches and folder. It builds for the host's target (X86 or AArch64), with lld as the host linker and no
+SDK, libedit or system debugserver, and does `scripts/llvm.sh`'s post-install steps for ELF: `libclangmain.a`,
+`libsmithtools.a` and lldb's archives with each object's `.init_array` renamed by `llvm-objcopy --rename-section` to
+`__smith_<tool>` (no `defer_init`: `shim/platform_linux.h` runs the section from the linker's `__start_`/`__stop_`
+symbols), and archives rewritten whole, since `liblldbHost.a` has two members named `Host.cpp.o`. The identity is
+`llvm-23.1.3-linux <hash>`, hashed by `scripts/sha256.h`. On a 4-core machine the first build takes about 2 hours and
+12 GB. The prover's libraries and Enzyme are not built on Linux yet.
