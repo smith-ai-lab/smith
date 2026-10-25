@@ -82,7 +82,19 @@ for profile in debug release; do
 y
 z
 ]" "$(./build/$profile/console 2>&1)"
+    if [ "$profile" = release ]; then
+        expect "release: the optimizer turned the printf of a literal into puts (no printf is imported)" 0 "$(nm -u build/release/console | grep -c '_printf')"
+    fi
 done
+# ASan, with the handlers linked and its puts check off, still reports an overflow, a use after free and a puts that reads
+# past a string (our puts reaches ASan's interceptor, not libc's).
+mkdir "$work/bad" && cp "$here/tests/handlers/asan.c" "$work/bad/main.c"
+cd "$work/bad" || exit 1
+"$smith" build >build.log 2>&1
+expect "the ASan project builds" 0 $?
+expect "debug: a write past a malloc'd block is a heap-buffer-overflow" "heap-buffer-overflow" "$(./build/debug/bad 2>&1 | grep -m1 -o 'heap-buffer-overflow')"
+expect "debug: a read after free is a heap-use-after-free" "heap-use-after-free" "$(./build/debug/bad one 2>&1 | grep -m1 -o 'heap-use-after-free')"
+expect "debug: puts of an unterminated string is a heap-buffer-overflow read" "heap-buffer-overflow" "$(./build/debug/bad one two 2>&1 | grep -m1 -o 'heap-buffer-overflow')"
 cd "$work/project" || exit 1
 asan=$(otool -L build/debug/project | grep -n 'asan\|handlers' | cut -d: -f1 | tr '\n' ' ')
 expect "debug: ASan is linked before the runtime (after the line that names the program)" "2 3 " "$asan"
