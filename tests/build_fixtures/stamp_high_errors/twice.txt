@@ -1,0 +1,7 @@
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    smith_compile_commands(b, "one.json");
+    smith_compile_commands(b, "two.json");
+    smith_default(b, (const char *[]){nullptr});
+}

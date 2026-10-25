@@ -1,0 +1,122 @@
+// Clang modules in `smith build`, from tests/build.sh sections 11d to 11g: isolation (a header that only worked after
+// another include fails, a textual header works), sanitized and plain builds with caches of their own, the errors of
+// smith_modules, and every header of smith's libraries importing alone and together.
+module build_isolation_test;
+
+import smith::format;
+import smith::io;
+import smith::test;
+import scratch;
+
+// 11d. Modules: isolation. A header that only worked after another include fails, and a textual header works.
+export void test_build_isolation_a_header_that_needed_an_earlier_include_fails(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "modules_isolation");
+    scratch::Run run = scratch::build(&p, "");
+    scratch::expect_failure("modules: a header that needed an earlier include fails", &run);
+    scratch::expect_contains("modules: clang says which module and which line", run.out, "unknown type name 'size_t'");
+    scratch::expect_contains("modules: and that it was building the module", run.out,
+                             "While building module 'inc_needs_stddef'");
+}
+
+export void test_build_isolation_a_header_included_twice_must_be_marked_textual(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "modules_isolation");
+    scratch::Run twice = scratch::build(&p, "-DSOURCE=twice.c");
+    scratch::expect_failure("modules: a header included twice with different macros, not marked, fails to be a module",
+                            &twice);
+    scratch::Run textual = scratch::build(&p, "-DSOURCE=twice.c -DTEXTUAL=inc/twice.h");
+    scratch::expect_status("modules: marked textual, it builds", 0, &textual);
+    scratch::expect_contains("modules: the textual header is in a module that only names it",
+                             scratch::read(&p, ".smith/modules/inc.modulemap"), "textual header");
+    scratch::Run nothere = scratch::build(&p, "-DSOURCE=twice.c -DTEXTUAL=inc/nothere.h");
+    scratch::expect_failure("modules: a textual header no folder holds is an error", &nothere);
+    scratch::expect_contains("modules: the error names it", nothere.err, "inc/nothere.h");
+}
+
+// 11e. Modules: sanitized and plain builds keep their own modules, and a Metal file never gets the flags.
+export void test_build_isolation_sanitized_and_plain_builds_keep_their_own_modules(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "modules_sanitized");
+    scratch::own_cache(&p);
+    scratch::Run run = scratch::build(&p, "");
+    scratch::expect_status("modules: a plain and a sanitized object build", 0, &run);
+    scratch::Run app = scratch::sh(&p, "./build/app");
+    scratch::expect_status("modules: the program runs", 0, &app);
+    scratch::expect_text(
+        "modules: the two builds have caches of their own", "ok",
+        scratch::capture(&p, format::push(&io->arena, "n=$(find ", p.cache,
+                                          "/smith/modules -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' '); "
+                                          "[ \"$n\" -ge 2 ] && echo ok || echo \"$n\"")
+                                 .data));
+}
+
+export void test_build_isolation_the_compile_commands_carry_the_module_flags_but_not_for_metal(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "modules_sanitized");
+    scratch::own_cache(&p);
+    scratch::Run run = scratch::build(&p, "");
+    test::check_equal(run.status, 0);
+    scratch::Run compdb = scratch::build(&p, "-t compdb");
+    scratch::expect_contains("modules: ninja's compile commands carry the flags", compdb.out, "-fmodules");
+    scratch::expect_text("modules: compile_commands.json has the module flags the build uses", "ok",
+                         scratch::capture(&p, "grep -q -e '-fmodules-cache-path=.*smith/modules' "
+                                              "compile_commands.json 2>/dev/null && echo ok || echo none"));
+    scratch::expect_text("modules: the .metal compile has no module flags", "ok",
+                         scratch::capture(&p, "smith build -t compdb | grep 'k.metal' | head -1 | grep -q -e "
+                                              "-fmodules && echo none || echo ok"));
+}
+
+// 11f. Modules: errors.
+export void test_build_isolation_smith_modules_after_smith_object_is_an_error(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "modules_errors");
+    test::check_equal(scratch::sh(&p, "cp after_object.txt build.c").status, 0);
+    scratch::Run run = scratch::build(&p, "");
+    scratch::expect_failure("modules: after smith_object is an error", &run);
+    scratch::expect_contains("modules: the message", run.err, "smith_modules is called after smith_object");
+}
+
+static void refuses_the_folders(io::Io *io, scratch::Project *p, const char *folders) {
+    char text[512];
+    char name[256];
+    (void)format::to(text, sizeof text,
+                     "#include <smith/build.h>\n\nvoid build(SmithBuild *b) {\n"
+                     "    smith_modules(b, &(SmithModules){.folders = (const char *[]){",
+                     folders, ", nullptr}});\n    smith_default(b, smith_list(b, nullptr));\n}\n");
+    scratch::write(p, "build.c", text);
+    scratch::Run run = scratch::build(p, "");
+    (void)format::to(name, sizeof name, "modules: the folders ", folders, " are refused");
+    scratch::expect_failure(name, &run);
+    (void)format::to(name, sizeof name, "modules: ", folders, ": the message starts smith: build.c: smith_modules");
+    scratch::expect_contains(name, run.err, "smith: build.c: smith_modules");
+    (void)io;
+}
+
+export void test_build_isolation_smith_modules_refuses_bad_folders(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "modules_errors");
+    refuses_the_folders(io, &p, "\"inc\", \"inc/sub\"");
+    refuses_the_folders(io, &p, "\"nothing\"");
+    refuses_the_folders(io, &p, "\".\"");
+    refuses_the_folders(io, &p, "\"../inc\"");
+}
+
+// 11g. Modules: every header of smith's own libraries imports alone and together (io includes the arena and random).
+export void test_build_isolation_smith_headers_import_alone_and_together(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "modules_headers");
+    scratch::Run run = scratch::build(&p, "-v");
+    scratch::expect_status("modules: smith's headers import alone and together", 0, &run);
+    scratch::expect_contains("modules: the smith map is used", run.out,
+                             "-fmodule-map-file=.smith/modules/smith.modulemap");
+    scratch::expect_contains("modules: the library map has io", scratch::read(&p, ".smith/modules/smith.modulemap"),
+                             "module smith_io {");
+}
+
+export void test_build_isolation_clangd_reports_no_errors_in_a_file_that_imports_smiths_headers(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "modules_headers");
+    scratch::Run run = scratch::build(&p, "-v");
+    test::check_equal(run.status, 0);
+    // compile_commands.json carries the module flags, and smith lsp (clangd, no --query-driver) builds the modules.
+    scratch::expect_contains("modules: compile_commands.json names the smith map",
+                             scratch::read(&p, "compile_commands.json"), "smith.modulemap");
+    // The sample is not what smith-effects tests; its checks are off.
+    scratch::write(&p, ".clang-tidy", "Checks: \"-*\"\n");
+    scratch::expect_text("modules: clangd reports no errors in a file that imports smith's headers", "",
+                         scratch::capture(&p, "smith lsp --check=\"$(pwd -P)/all_of_them.c\" 2>&1 >/dev/null | "
+                                              "grep -v 'tweak:' | grep 'E\\[' ; true"));
+}

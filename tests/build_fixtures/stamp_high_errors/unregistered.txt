@@ -1,0 +1,10 @@
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    SmithObject o = {.compiler = "cc", .source = "a.c", .output = "a.o"};
+    smith_object(b, &o);
+    SmithObject copy = o;
+    SmithProgram p = {.linker = "cc", .output = "a", .objects = (const SmithObject *[]){&copy, nullptr}};
+    smith_program(b, &p);
+    smith_default(b, p.step.outputs);
+}

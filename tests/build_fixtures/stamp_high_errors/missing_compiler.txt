@@ -1,0 +1,7 @@
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    SmithObject o = {.source = "a.c", .output = "a.o"};
+    smith_object(b, &o);
+    smith_default(b, o.step.outputs);
+}

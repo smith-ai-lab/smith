@@ -1,0 +1,129 @@
+// Steps that check and run, from tests/build.sh sections 9p (.stamp: a syntax check whose result is that it passed), 9r
+// (smith_run_combined) and 9s (a failed .run step names itself; what a .run step read reruns it).
+module build_stamps_run_test;
+
+import smith::io;
+import smith::test;
+import scratch;
+
+static const char *yes_no(bool value) {
+    return value ? "yes" : "no";
+}
+
+static const char *status_and_stamp(const scratch::Project *p, const scratch::Run *run) {
+    static char text[64];
+    __builtin_snprintf(text, sizeof text, "%d %s", run->status, yes_no(scratch::exists(p, "build/check/a.stamp")));
+    return text;
+}
+
+// Builds and expects the check to have run (its description is printed), then again and expects nothing to rerun.
+static void reruns_then_settles(const scratch::Project *p, const char *what, const char *then, const char *arguments) {
+    scratch::Run ran = scratch::build(p, arguments);
+    scratch::expect_contains(what, ran.out, "check a");
+    scratch::Run settled = scratch::build(p, arguments);
+    scratch::expect_contains(then, settled.out, "no work to do");
+}
+
+// 9p. .stamp: a syntax check whose result is that it passed, with a depfile that names the stamp.
+export void test_build_stamp_a_passing_check_leaves_its_stamp_and_settles(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "stamp_check");
+    scratch::Run first = scratch::build(&p, "");
+    scratch::expect_text("stamp: the check passes and leaves its stamp", "0 yes", status_and_stamp(&p, &first));
+    scratch::expect_contains("stamp: it ran", first.out, "check a");
+    scratch::Run second = scratch::build(&p, "");
+    scratch::expect_contains("stamp: unchanged, nothing reruns", second.out, "no work to do");
+}
+
+export void test_build_stamp_a_changed_source_or_header_reruns_the_check(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "stamp_check");
+    (void)scratch::build(&p, "");
+    (void)scratch::sh(&p, "printf '\\n' >>a.c");
+    reruns_then_settles(&p, "stamp: a changed source reruns", "stamp: then it settles", "");
+    (void)scratch::sh(&p, "printf '#define H 2\\n' >h.h");
+    reruns_then_settles(&p, "stamp: a changed header reruns", "stamp: then it settles again", "");
+}
+
+export void test_build_stamp_changed_flags_rerun_the_check(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "stamp_check");
+    (void)scratch::build(&p, "");
+    scratch::Run changed = scratch::build(&p, "-DW=-Wextra");
+    scratch::expect_contains("stamp: changed flags rerun", changed.out, "check a");
+    scratch::Run same = scratch::build(&p, "-DW=-Wextra");
+    scratch::expect_contains("stamp: the same flags settle", same.out, "no work to do");
+}
+
+export void test_build_stamp_a_failing_check_fails_the_build_and_leaves_no_stamp(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "stamp_check");
+    (void)scratch::build(&p, "-DW=-Wextra");
+    scratch::write(&p, "a.c", "int a(void) { return ; }\n");
+    (void)scratch::sh(&p, "rm -f build/check/a.stamp");
+    scratch::Run failed = scratch::build(&p, "-DW=-Wextra");
+    scratch::expect_failure("stamp: a failing check fails the build", &failed);
+    scratch::expect_text("stamp: its failure leaves no stamp", "no",
+                         yes_no(scratch::exists(&p, "build/check/a.stamp")));
+    scratch::Run again = scratch::build(&p, "-DW=-Wextra");
+    scratch::expect_failure("stamp: it fails again, so it reran", &again);
+    scratch::write(&p, "a.c", "int a(void) { return 0; }\n");
+    scratch::Run fixed = scratch::build(&p, "-DW=-Wextra");
+    scratch::expect_text("stamp: fixed, it passes and stamps", "0 yes", status_and_stamp(&p, &fixed));
+}
+
+// 9r. smith_run_combined: stdout and stderr in one stream, in order; statuses as smith_run_status gives.
+export void test_build_run_combined_keeps_the_order_of_both_streams_and_the_statuses(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "run_combined");
+    scratch::Run run = scratch::build(&p, "");
+    scratch::expect_status("run_combined: the probe step succeeds", 0, &run);
+    scratch::expect_text("run_combined: lines in the order written, and the statuses",
+                         "sh 4 [o1] [e1] [o2] [e2] [o3]\n"
+                         "killed 137 before\n"
+                         "missing 127 lines null\n"
+                         "true 0\n"
+                         "status 4 137",
+                         scratch::read(&p, "combined.txt"));
+}
+
+// 9s. A failed .run step names itself; what a .run step read reruns it.
+export void test_build_depend_what_a_run_step_read_reruns_it(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "run_step");
+    scratch::Run first = scratch::build(&p, "");
+    char text[128];
+    __builtin_snprintf(text, sizeof text, "%d %s %zu", first.status,
+                       scratch::capture(&p, "cat learned.out 2>/dev/null"), scratch::lines(&p, "learn.log"));
+    scratch::expect_text("depend: the step ran and read the learned file", "0 one 1", text);
+    scratch::Run settled = scratch::build(&p, "");
+    scratch::expect_contains("depend: nothing changed, nothing reruns", settled.out, "no work to do");
+    scratch::write(&p, "data file.txt", "two\n");
+    (void)scratch::build(&p, "");
+    __builtin_snprintf(text, sizeof text, "%s %zu", scratch::capture(&p, "cat learned.out"),
+                       scratch::lines(&p, "learn.log"));
+    scratch::expect_text("depend: a change to the learned file reruns the step", "two 2", text);
+    (void)scratch::build(&p, "");
+    scratch::expect_count("depend: and then it settles", 2, scratch::lines(&p, "learn.log"));
+    scratch::write(&p, "list.txt", "data file.txt\n\n");
+    (void)scratch::build(&p, "");
+    scratch::expect_count("depend: a change to the input list reruns it too", 3, scratch::lines(&p, "learn.log"));
+}
+
+export void test_build_name_a_failed_run_step_names_itself(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "run_step");
+    scratch::Run named = scratch::build(&p, "named");
+    scratch::expect_failure("name: a failing .run step fails", &named);
+    char both[4096];
+    __builtin_snprintf(both, sizeof both, "%s%s", named.out, named.err);
+    scratch::expect_contains("name: it prints its description and status", both,
+                             "smith: check the widget: failed (status 3)");
+    scratch::expect_contains("name: its own message still shows", both, "the program's own message");
+    scratch::Run unnamed = scratch::build(&p, "unnamed");
+    __builtin_snprintf(both, sizeof both, "%s%s", unnamed.out, unnamed.err);
+    scratch::expect_contains("name: with no description it names the first output", both,
+                             "smith: unnamed.out: failed (status 5)");
+}
+
+export void test_build_depend_recording_a_path_without_a_depfile_fails(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "run_step");
+    scratch::Run orphan = scratch::build(&p, "orphan");
+    scratch::expect_failure("depend: recording a path without a .depfile fails", &orphan);
+    char both[4096];
+    __builtin_snprintf(both, sizeof both, "%s%s", orphan.out, orphan.err);
+    scratch::expect_contains("depend: the message says why", both, "smith_run_depend: this step has no .depfile");
+}

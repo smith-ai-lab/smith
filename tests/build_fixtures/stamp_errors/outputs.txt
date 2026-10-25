@@ -1,0 +1,7 @@
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    SmithStep step = {.command = (const char *[]){"true", nullptr}, .stamp = "s", .outputs = (const char *[]){"o", nullptr}};
+    smith_step(b, &step);
+    smith_default(b, step.outputs);
+}

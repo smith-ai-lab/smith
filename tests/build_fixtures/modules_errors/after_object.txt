@@ -1,0 +1,7 @@
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    SmithObject o = {.compiler = "cc", .source = "a.c", .output = "build/a.o"};
+    smith_object(b, &o);
+    smith_modules(b, &(SmithModules){.folders = (const char *[]){"inc", nullptr}});
+}
