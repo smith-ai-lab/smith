@@ -1,0 +1,7 @@
+module main;
+import <stdio.h>;
+
+int main() {
+    c::printf("hi\n");
+    return 0;
+}
