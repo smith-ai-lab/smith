@@ -23,9 +23,23 @@ after that calls the functions by name. In `.smith` code the platform is `target
 | `smith_platform_clone`: a program of the programs folder | `clonefile`, else a hard link, else a symbolic link | `ioctl(FICLONE)` (btrfs, XFS), else a hard link, else a symbolic link |
 | `smith_platform_mtime`: a file's time (the executor, the symbolizer) | `st_mtimespec` | `st_mtim` |
 | `smith_platform_process_stopped`: whether a test that `smith --smith-explain` read is still stopped | `proc_pidinfo` | the state letter in `/proc/<pid>/stat` |
+| `smith_platform_decompress`: a file of clang's resource pack | LZFSE (libcompression; `scripts/pack.c` compresses) | nothing: the pack is stored uncompressed (`scripts/pack.c` keeps every file as it is) |
+
+The C++ shims have the same split in `shim/platform_macos.h` and `shim/platform_linux.h`, which `shim/platform.h`
+includes:
+
+| Function | macOS | Linux |
+|---|---|---|
+| `smith_platform_section`: the deferred initializers of a tool (`shim/tool.h`, `shim/prove.cpp`) | `getsectiondata` on `__DATA,__smith_<tool>` | the linker's `__start___smith_<tool>` and `__stop___smith_<tool>`, of the section `.init_array` was renamed to |
+| `smith_platform_self_path`: the running executable | `_NSGetExecutablePath` | `/proc/self/exe` |
+| `smith_platform_lld_link`: `ld` in smith's process (`shim/lld.cpp`) | `lld::macho::link`, as `ld64.lld` | `lld::elf::link`, as `ld.lld` |
+| `smith_platform_linker_version`: what the driver is told of its ld (`shim/clang.cpp`) | `-mlinker-version=1115.7.3` | nothing (the flag is Darwin's) |
+| `smith_platform_spawn_chdir` (`shim/lsp.cpp`) | `posix_spawn_file_actions_addchdir` | `posix_spawn_file_actions_addchdir_np` |
+| `smith_platform_spawn_suspended`: a program a debugger attaches to (`shim/lldb_explain.cpp`) | `POSIX_SPAWN_START_SUSPENDED` | a child that stops itself with SIGSTOP before it runs the program |
 
 On Linux `smith.c` also defines `_GNU_SOURCE` before its first include, because glibc hides `nftw`'s `FTW_PHYS` and
 `wait4` from plain C23 and macOS does not.
 
-What still differs and has no Linux side yet is listed in issue #305's spike report: the resource pack's codec, the
-in-process linker, the deferred initializers, the symbolizer, `smith::io`, and lldb.
+What still differs and has no Linux side yet is listed in issue #305's spike report: the LLVM build's post-install
+steps, the link of smith itself, the symbolizer, the prover's process accounting, `smith::io`, and lldb's
+debugserver.

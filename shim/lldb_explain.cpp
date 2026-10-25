@@ -309,11 +309,7 @@ extern "C" bool smith_crash_start(const char *self, const char *const *args, con
     // The program is started suspended by this process, with its standard streams as they are, and lldb attaches:
     // lldb's own launch gives the program a terminal of its own and merges its output.
     pid_t pid = 0;
-    posix_spawnattr_t attributes;
-    posix_spawnattr_init(&attributes);
-    posix_spawnattr_setflags(&attributes, POSIX_SPAWN_START_SUSPENDED);
-    int spawned = posix_spawn(&pid, args[0], nullptr, &attributes, const_cast<char *const *>(args), environ);
-    posix_spawnattr_destroy(&attributes);
+    int spawned = smith_platform_spawn_suspended(&pid, args[0], const_cast<char *const *>(args), environ);
     if (spawned != 0) {
         std::snprintf(problem, capacity, "cannot run %s: %s", args[0], std::strerror(spawned));
         return false;

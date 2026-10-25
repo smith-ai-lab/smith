@@ -11,6 +11,7 @@
 // The editor's own words are never rewritten: positions, ranges and the text of the documents are clangd's and the
 // editor's, and are not names. A message that is not an answer to one of those requests passes as the bytes it came in.
 #include "names.h"
+#include "platform.h"
 
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/JSON.h"
@@ -27,7 +28,6 @@
 #include <fcntl.h>
 #include <fstream>
 #include <iostream>
-#include <mach-o/dyld.h>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -741,8 +741,7 @@ class Editor {
     // summary it is. Runs in the project's folder and waits.
     static void summarize(const std::string &directory, const std::string &object, std::vector<std::string> arguments) {
         char self[4096];
-        uint32_t size = sizeof self;
-        if (_NSGetExecutablePath(self, &size) != 0) return;
+        if (!smith_platform_self_path(self, sizeof self)) return;
         std::vector<std::string> kept;
         for (size_t i = 0; i < arguments.size(); i++) {
             const std::string &argument = arguments[i];
@@ -769,7 +768,7 @@ class Editor {
         posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0);
         posix_spawn_file_actions_addopen(&actions, 1, "/dev/null", O_WRONLY, 0);
         posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0);
-        posix_spawn_file_actions_addchdir(&actions, directory.c_str());
+        smith_platform_spawn_chdir(&actions, directory.c_str());
         pid_t child = 0;
         if (posix_spawn(&child, self, &actions, nullptr, argv.data(), environment.data()) == 0) {
             setpriority(PRIO_PROCESS, (id_t)child, 10);
