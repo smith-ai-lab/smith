@@ -37,24 +37,23 @@ In a program the arena is `io.arena` (`smith-io`), made in `main` and passed dow
 
 - `arena::push(&a, T)` (a `T *`) and `arena::push_slice(&a, T, sizes...)` (a slice, with a size for each `[:]` of the result: `Point line[:] = arena::push_slice(&a, Point, 10);`, `f32 grid[:][:] = arena::push_slice(&a, f32, rows, cols);`, `f32 rows[:][2] = arena::push_slice(&a, f32[2], count);`, zeroed, one contiguous block, `countof(line)` is 10; bind it before indexing it; its type is `arena::slice_of(T, countof(sizes))`; `.data` is the pointer for a C function) are the calls to write. There is no `arena::push_array`. Never `arena::push_raw(&a, sizeof(T), alignof(T))`: that is the C API in `.smith`.
 - The module's names: `arena::make`, `fits`, `push`, `push_slice`, `slice_of`, `push_raw` (`smith_arena_push`), `push_array_raw` (`smith_arena_push_array`), `carve`, `reset`, `scope_begin`, `scope_end`, the types `arena::Arena` and `arena::Scope` (`SmithArena`, `SmithArenaScope`) and `arena::align_max`. A `.smith` project needs a smith with clang inside to compile the library. `arena::fits(&a, size, align)` asks whether a push would fit; `align` of the raw calls is a power of two, at most `arena::align_max` (64). A function that needs memory takes an arena, never mallocs.
-- A scope gives back what a stretch of work pushed, and scopes end in reverse order of beginning:
+- A scope gives back what a stretch of work pushed, and scopes end in reverse order of beginning. End it with `defer` right after it begins, so every return gives the memory back (`smith-lang-defer`):
 
 ```smith
+module scratch;
 import smith::arena;
 
-usize scratch_sum(arena::Arena *a, usize count) {
+export usize scratch_sum(arena::Arena *a, usize count) {
     arena::Scope scope = arena::scope_begin(a);
+    defer arena::scope_end(scope); // items is given back on every return
     usize items[:] = arena::push_slice(a, usize, count);
     usize sum = 0;
     for (usize i = 0; i < count; i++) {
         items[i] = i;
         sum += items[i];
     }
-    arena::scope_end(scope); // items is given back
     return sum;
 }
 ```
 
-`arena::reset(&a)` is allowed only with no scope open; both are `assert`s.
-
-Also in this family: [smith-arena-c](../smith-arena-c/SKILL.md).
+`arena::reset(&a)` is allowed only with no scope open; both are `assert`s. Also in this family: [smith-arena-c](../smith-arena-c/SKILL.md).
