@@ -547,6 +547,10 @@ static SmithLangAct smith_lang_fast_stream(SmithLang *lang, const SmithHost *hos
 // or Slow: not decided here, send it to smith_lang_feed.
 SmithLangAct smith_lang_fast(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     if (lang->body_enabled) return smith_lang_act(SmithLangAct_Slow); // every token is written, for the body file
+    // `option(` and `result(` are in scope in every module with no import: a file that writes one is read token by
+    // token (runtime/lang_enum.c), as a file with a tuple is, because the fast path cannot see a use in the middle
+    // of a declaration.
+    if (host->maybe_shape && lang->is_module) return smith_lang_act(SmithLangAct_Slow);
     if (lang->broken || token->kind == SmithTokenKind_Eof || token->foreign) return smith_lang_act(SmithLangAct_Slow);
     lang->recent_count = 0;
     if (smith_lang_type_on(lang, host) && !lang->recording) return smith_lang_act(SmithLangAct_Slow); // lang_type.c
