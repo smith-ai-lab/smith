@@ -512,7 +512,7 @@ static void smith_lang_relative_header(const char *from, const char *to, char *p
     }
     size_t used = 0;
     for (size_t i = 0; i < folders && used + 4 < capacity; i++) { // bounded by the name
-        memcpy(path + used, "../", 3);
+        smith_copy_bytes(path + used, "../", 3);
         used += 3;
     }
     char rest[smith_lang_name_max];

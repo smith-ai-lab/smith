@@ -136,7 +136,7 @@ void smith_protocol_string_random(SmithArena *arena, SmithKey key, struct smith_
         const char *piece =
             smith_protocol_pieces[smith_protocol_pick(smith_protocol_take(stream), smith_protocol_piece_count)];
         size_t piece_length = strlen(piece);
-        memcpy(bytes + length, piece, piece_length);
+        memcpy(bytes + length, piece, piece_length + 1); // with its terminator: the buffer has room for the last
         length += piece_length;
     }
     *out = (struct smith_array_const_char_n){.data = bytes, .count = {length}};

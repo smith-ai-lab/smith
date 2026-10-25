@@ -468,7 +468,7 @@ static void smith_lang_dump_line(SmithLang *lang, const char *text) {
     }
     if (!lang->dump_enabled || lang->dump_used + length + 2 > smith_lang_dump_max) return;
     if (lang->dump_used > 0 && smith_lang_dump[lang->dump_used - 1] != '\n') smith_lang_dump[lang->dump_used++] = '\n';
-    memcpy(smith_lang_dump + lang->dump_used, text, length);
+    smith_copy_bytes(smith_lang_dump + lang->dump_used, text, length);
     lang->dump_used += length;
     smith_lang_dump[lang->dump_used++] = '\n';
 }

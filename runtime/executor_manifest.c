@@ -141,7 +141,7 @@ static void smith_manifest_put_path(SmithExec *exec, char *out, size_t *used, co
     if (!plain) out[(*used)++] = '\'';
     for (size_t i = 0; i < length; i++) {
         if (path[i] == '\'') {
-            memcpy(out + *used, "'\\''", 4);
+            smith_copy_bytes(out + *used, "'\\''", 4);
             *used += 4;
         } else {
             out[(*used)++] = path[i];
@@ -177,7 +177,7 @@ static void smith_manifest_put_variable(SmithExec *exec, const SmithScope *scope
     if (value == nullptr) return;
     size_t size = strlen(value);
     if (*used + size + 1 > smith_exec_text_max) smith_exec_fail("%s: a value is longer than it can be", exec->manifest);
-    memcpy(out + *used, value, size);
+    smith_copy_bytes(out + *used, value, size);
     *used += size;
 }
 

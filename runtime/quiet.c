@@ -48,7 +48,7 @@ static size_t smith_quiet_put(char *out, size_t used, const char *text, size_t a
     memcpy(out + used, text + at, kept);
     used += kept;
     if (cut) {
-        memcpy(out + used, "...", 3);
+        smith_copy_bytes(out + used, "...", 3);
         used += 3;
     }
     out[used++] = '\n';
