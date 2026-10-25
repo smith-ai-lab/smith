@@ -31,14 +31,6 @@ static scratch::Run crash(const scratch::Project *p, io::Io *io, const char *arg
     return scratch::sh(p, format::push(&io->arena, "smith dbg ", arguments, " >out.txt 2>err.txt").data);
 }
 
-// Whether the debugger could not attach this time: smith dbg then says why in one line and runs the program plainly.
-// The probe in make() passed, but an attach can still be refused under load (debugserver, the system's policy), and no
-// wait or time limit of the test can make it succeed; there is nothing to check then, as when the account may not
-// debug.
-static bool not_debugged(const scratch::Project *p) {
-    return scratch::contains(scratch::read(p, "err.txt"), "smith dbg: not debugged:");
-}
-
 // 1. A C program that writes past an array: ASan's report as the program printed it, then the frames with their values.
 export void test_dbg_crash_asan_report_then_frames(io::Io *io) {
     scratch::Project p;
@@ -46,9 +38,6 @@ export void test_dbg_crash_asan_report_then_frames(io::Io *io) {
         return;
     }
     scratch::Run run = crash(&p, io, "--crash ./prog_asan h");
-    if (not_debugged(&p)) {
-        return;
-    }
     const char *err = scratch::read(&p, "err.txt");
     scratch::expect_status("asan: the status is 1", 1, &run);
     scratch::expect_contains("asan: the report is the program's own", err,
@@ -67,9 +56,6 @@ export void test_dbg_crash_signal(io::Io *io) {
         return;
     }
     scratch::Run run = crash(&p, io, "--crash ./prog n");
-    if (not_debugged(&p)) {
-        return;
-    }
     const char *err = scratch::read(&p, "err.txt");
     scratch::expect_status("signal: the status is 128 + SIGSEGV", 139, &run);
     scratch::expect_contains("signal: the stop reason", err, "smith dbg: stopped: EXC_BAD_ACCESS");
@@ -87,9 +73,6 @@ export void test_dbg_crash_abort_and_frames(io::Io *io) {
         return;
     }
     scratch::Run run = crash(&p, io, "--crash --frames 1 ./prog a");
-    if (not_debugged(&p)) {
-        return;
-    }
     scratch::expect_status("abort: the status is 128 + SIGABRT", 134, &run);
     scratch::expect_contains("abort: the stop reason", scratch::read(&p, "err.txt"),
                              "smith dbg: stopped: signal SIGABRT");
@@ -104,9 +87,6 @@ export void test_dbg_crash_a_program_that_exits(io::Io *io) {
         return;
     }
     scratch::Run run = crash(&p, io, "--crash ./prog e");
-    if (not_debugged(&p)) {
-        return;
-    }
     scratch::expect_status("exit: the status is the program's", 7, &run);
     scratch::expect_contains("exit: the program's output", scratch::read(&p, "out.txt"), "out");
     scratch::expect_contains("exit: exited 7", scratch::read(&p, "err.txt"), "smith dbg: exited 7");
@@ -119,9 +99,6 @@ export void test_dbg_at_the_locals_at_a_line(io::Io *io) {
         return;
     }
     scratch::Run run = crash(&p, io, "--at prog.c:11 --count 2 ./prog");
-    if (not_debugged(&p)) {
-        return;
-    }
     const char *err = scratch::read(&p, "err.txt");
     scratch::expect_status("at: the status is 0", 0, &run);
     scratch::expect_text("at: two hits", "2", scratch::capture(&p, "grep -c 'smith dbg: at prog.c:11, hit' err.txt"));
@@ -152,9 +129,6 @@ export void test_dbg_crash_a_slice_out_of_range_in_smith(io::Io *io) {
         return;
     }
     scratch::Run run = scratch::sh(&p, "cd w/app && smith dbg --crash build/debug/app x >out.txt 2>err.txt");
-    if (scratch::contains(scratch::read(&p, "w/app/err.txt"), "smith dbg: not debugged:")) {
-        return;
-    }
     const char *err = scratch::read(&p, "w/app/err.txt");
     scratch::expect_status("smith slice: the status is 128 + SIGABRT", 134, &run);
     scratch::expect_contains("smith slice: the frame as written", err, "smith dbg: main.smith:6: main::total");
@@ -169,9 +143,6 @@ export void test_dbg_crash_a_failed_contract_in_smith(io::Io *io) {
         return;
     }
     scratch::sh(&p, "cd w/app && smith dbg --crash build/debug/app x y >out.txt 2>err.txt");
-    if (scratch::contains(scratch::read(&p, "w/app/err.txt"), "smith dbg: not debugged:")) {
-        return;
-    }
     const char *err = scratch::read(&p, "w/app/err.txt");
     scratch::expect_contains("contract: the failing call's frame", err, "smith dbg: main.smith:11: main::positive");
     scratch::expect_contains("contract: its argument", err, "@ n = -1");
@@ -184,9 +155,6 @@ export void test_dbg_crash_a_smith_program_that_exits(io::Io *io) {
         return;
     }
     scratch::sh(&p, "cd w/app && smith dbg --crash build/debug/app >out.txt 2>err.txt");
-    if (scratch::contains(scratch::read(&p, "w/app/err.txt"), "smith dbg: not debugged:")) {
-        return;
-    }
     scratch::expect_contains("smith: a program that exits", scratch::read(&p, "w/app/err.txt"), "smith dbg: exited");
 }
 
