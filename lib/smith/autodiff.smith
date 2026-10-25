@@ -117,7 +117,7 @@ export typeof(v) zeros(arena::Arena *a, auto v) {
 // differentiated. A call `f` does not accept is an error at the call. A generic function: only .smith calls it (C
 // writes `__enzyme_autodiff` with `enzyme_interleave`).
 export typeof(*x) gradient(arena::Arena *a, constexpr auto f, auto x, auto... rest) {
-    static_assert(effects::within(f, effects::alloc), "gradient: f may only allocate");
+    static_assert(effects::within(f, effects::alloc | effects::fails), "gradient: f may only allocate or fail");
     (void)sizeof(f(x, rest...));
     typeof_unqual(*x) dx = zeros(a, *x);
     if constexpr (countof(rest) == 0) {

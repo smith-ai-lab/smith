@@ -10,7 +10,8 @@
 // far as the compiler's reading goes, and smith's effect check judges it afterwards: a function with an effect beyond
 // the set is an error that shows the assertion's message, the effects and the chain of calls that brought them in
 // (`loss -> log_it (log.c:12) -> printf (log.c:5)`), at the assertion, with the note of the call that asked for it. A
-// function with no source and no attribute has every effect (`c`), so `within` rejects it. Crashing is no effect.
+// function with no source and no attribute has every effect (`c`), so `within` rejects it. Failing is an effect
+// (`fails`): `within(f, effects::none)` also rejects a function with a checked index.
 //
 // The function must be written in a `static_assert`, where smith reads it; anywhere else it is true and checks nothing.
 module smith::effects;
@@ -37,6 +38,9 @@ export constexpr u32 entropy = 128;
 export constexpr u32 globals = 256;
 // <smith/effects.h>: unchecked C, code with no source and no attribute.
 export constexpr u32 c = 512;
+// <smith/effects.h>: a failure point, a checked index or slice, a contract or an assert, `abort` or a trap, or a call
+// to a function that has one. A proved check is not one.
+export constexpr u32 fails = 1024;
 
 // <smith/effects.h>: whether the function `f` has no effect beyond `set`. Written in a `static_assert` (see above).
 export inline bool within(...) {
@@ -47,5 +51,5 @@ export inline bool within(...) {
 // the project that compiles the module.
 [[maybe_unused]] u32 everything() {
     (void)within(none, none);
-    return none | alloc | files | net | console | clock | process | env | entropy | globals | c;
+    return none | alloc | files | net | console | clock | process | env | entropy | globals | c | fails;
 }
