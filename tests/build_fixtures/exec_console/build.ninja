@@ -1,0 +1,6 @@
+rule step
+  command = $cmd
+  pool = console
+build ask: step
+  cmd = read line; echo "got $$line" > answer; echo "terminal: $$line"
+default ask

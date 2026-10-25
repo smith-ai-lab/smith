@@ -1,0 +1,6 @@
+builddir = .smith
+rule step
+  command = $cmd
+build out: step in
+  cmd = echo ran >> runs; cp in out
+default out

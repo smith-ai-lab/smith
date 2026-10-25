@@ -1,0 +1,7 @@
+rule step
+  command = $cmd
+build slow: step
+  cmd = echo partial > slow; echo started >> started; sleep NAP
+build slow2: step
+  cmd = echo started >> started; sleep NAP
+default slow slow2

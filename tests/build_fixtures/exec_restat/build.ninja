@@ -1,0 +1,10 @@
+rule step
+  command = $cmd
+build gen: step seed
+  cmd = echo gen >> gen.log; head -n 1 seed > gen.new; (cmp -s gen.new gen && rm gen.new) || mv gen.new gen
+  restat = 1
+build use: step gen
+  cmd = echo use >> use.log; cp gen use
+build last: step use
+  cmd = echo last >> last.log; cp use last
+default last

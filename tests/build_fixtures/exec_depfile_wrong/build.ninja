@@ -1,0 +1,7 @@
+rule cc
+  command = $cmd
+  depfile = $out.d
+  deps = gcc
+build obj: cc src
+  cmd = echo ran >> runs; cp src obj; echo "wrong: src" > obj.d
+default obj

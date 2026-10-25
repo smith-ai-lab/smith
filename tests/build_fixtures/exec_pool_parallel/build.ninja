@@ -1,0 +1,12 @@
+pool one
+  depth = 1
+rule step
+  command = $cmd
+rule single
+  command = $cmd
+  pool = one
+build a: step
+  cmd = echo a1; while [ ! -e b.done ]; do sleep 0.05; done; echo a2; echo a3 >&2
+build b: step
+  cmd = echo b1; echo b2; touch b.done
+default a b

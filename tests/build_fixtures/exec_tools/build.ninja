@@ -1,0 +1,18 @@
+builddir = .smith
+rule step
+  command = $cmd
+rule cc
+  command = $cmd
+  depfile = $out.d
+  deps = gcc
+rule regen
+  command = $cmd
+  generator = 1
+build build.ninja: regen
+  cmd = true
+build dir/one.o: cc one.c
+  cmd = cp one.c dir/one.o; echo "dir/one.o: one.c" > dir/one.o.d
+build app: step dir/one.o
+  cmd = cp dir/one.o app
+build all: phony app
+default all
