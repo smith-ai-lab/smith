@@ -236,7 +236,8 @@ struct Node {
     uint32_t inferred = 0;
     uint32_t declared = 0;
     bool annotated = false;
-    bool grows = false; // a variable-length array or alloca: the frame is not one size
+    bool grows = false;   // a variable-length array or alloca: the frame is not one size
+    bool trusted = false; // the body calls smith_trusted(): a promise the prover and this check do not examine
     std::string symbol;
 };
 
@@ -336,6 +337,7 @@ class Collector {
             leaf(call->getBeginLoc(), C, "a call through a function pointer");
             return;
         }
+        if (callee->getName() == "smith_trusted") node.trusted = true;
         if (const FunctionDecl *definition = callee->getDefinition()) {
             Edge edge;
             edge.callee = definition;
@@ -499,6 +501,16 @@ class Analysis {
     };
     std::vector<Deferred> deferred;
 
+    // A promise smith trusts and does not check (a `P` line of the summary, listed by `smith check`): an effects
+    // attribute on a declaration with no source, or a function that calls `smith_trusted()`.
+    struct Promise {
+        char kind; // e an effects promise, t a trusted function
+        std::string symbol, name;
+        SourceLocation loc;
+    };
+    std::vector<Promise> promises;
+    std::set<std::string> promised; // one line a function, however many declarations it has
+
     // The linkage name a call to the function is known by in another file (the asm label of a module's export
     // included); a function with internal linkage is only this file's, so its name carries the file's.
     std::string symbolOf(const FunctionDecl *function) {
@@ -541,13 +553,33 @@ class Analysis {
         return sm.isWrittenInMainFile(sm.getExpansionLoc(function->getLocation()));
     }
 
+    void notePromise(const FunctionDecl *function) {
+        const SourceManager &sm = context.getSourceManager();
+        if (function->isInvalidDecl() || function->isTemplated() || sm.isInSystemHeader(function->getLocation()))
+            return;
+        auto node = nodes.find(function);
+        if (!promised.insert(symbolOf(function)).second) return;
+        if (node != nodes.end()) {
+            if (node->second.trusted)
+                promises.push_back({'t', node->second.symbol, shownName(function), function->getLocation()});
+            return;
+        }
+        uint32_t set = 0;
+        if (function->doesThisDeclarationHaveABody() || function->getDefinition() != nullptr ||
+            !declaredSet(function, set))
+            return;
+        promises.push_back({'e', symbolOf(function), shownName(function), function->getLocation()});
+    }
+
     void collect(const DeclContext *scope) {
         for (const Decl *decl : scope->decls()) {
             if (decl->isImplicit()) continue;
             if (const auto *function = dyn_cast<FunctionDecl>(decl)) {
                 if (!function->doesThisDeclarationHaveABody() || function->isInvalidDecl() ||
-                    function->isDependentContext() || function->isTemplated())
+                    function->isDependentContext() || function->isTemplated()) {
+                    notePromise(function);
                     continue;
+                }
                 Node &node = nodes[function];
                 node.function = function;
                 node.annotated = declaredSet(function, node.declared);
@@ -557,6 +589,7 @@ class Analysis {
                     [this](const FunctionDecl *f) { return shownName(f); }, asserts)
                     .walk(function->getBody());
                 order.push_back(function);
+                notePromise(function);
             } else if (const auto *assertion = dyn_cast<StaticAssertDecl>(decl)) {
                 asserts.push_back(assertion);
             } else if (const auto *linkage = dyn_cast<LinkageSpecDecl>(decl)) {
@@ -947,6 +980,10 @@ class Analysis {
                             "\t" + (edge.tail ? "1" : "0") + "\n";
                 }
             }
+        }
+        for (const Promise &promise : promises) {
+            text += "P\t" + std::string(1, promise.kind) + "\t" + promise.symbol + "\t" + place(promise.loc) + "\t" +
+                    promise.name + "\n";
         }
         text += frames(); // the sizes of the frames, when the compile wrote them
         for (const Deferred &w : deferred) {
