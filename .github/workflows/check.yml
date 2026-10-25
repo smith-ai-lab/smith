@@ -94,9 +94,22 @@ jobs:
           # the output is written to the log and to this job's own log as it comes
           build/Darwin-arm64/smith check 2>&1 | tee "$ci/check.log" || rc=${PIPESTATUS[0]}
           echo "check ended with status $rc at $(date)" | tee -a "$ci/time.log"
+          # the job log truncates a long failure; the failing tasks and cases, named last, need no artifact
+          if [ "$rc" -ne 0 ]; then
+            {
+              echo '--- what failed ---'
+              { cat "$ci/check.log"; find .smith/log -name '*.log' -exec cat {} + 2>/dev/null; } |
+                grep -E '^FAILED:|^FAIL ' | sort -u | head -n 60
+            } | tee "$ci/failed.log"
+          fi
           {
             echo '### smith check'
             cat "$ci/time.log"
+            if [ -s "$ci/failed.log" ]; then
+              echo '```'
+              cat "$ci/failed.log"
+              echo '```'
+            fi
             echo '```'
             tail -n 40 "$ci/check.log"
             echo '```'
