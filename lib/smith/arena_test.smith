@@ -308,8 +308,8 @@ export void test_arena_growing_from_a_backing_allocator() {
     test::check_condition(parent.used >= chunk_first); // the first chunk is the backing's
     usize before = parent.used;
     fill_blocks(&a, 40, 7);
-    test::check_condition(parent.used > before);        // and so is the next
-    test::check_condition(arena::fits(&a, 1 << 30, 8)); // a growing arena always asks the backing
+    test::check_condition(parent.used > before);         // and so is the next
+    test::check_condition(!arena::fits(&a, 1 << 30, 8)); // fits asks about the current chunk only
     arena::release(&a);
     test::check_equal(a.grown, 0);
 }

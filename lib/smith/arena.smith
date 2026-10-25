@@ -386,12 +386,13 @@ try_push_array_raw(Arena *arena, usize size, usize count, usize align) {
     return try_push_raw(arena, size * count, align);
 }
 
-// Whether a push of size at align would fit; a growing arena always can (try_push_raw says whether the backing agrees).
+// Whether a push of size at align would fit in the arena's current block; a growing arena takes a chunk when it does
+// not (try_push_raw says whether the backing agrees).
 [[smith::c_name("smith_arena_fits")]] export [[nodiscard]] bool fits(const Arena *arena, usize size, usize align) {
     contract::requires(arena->used <= arena->capacity);
     contract::requires(align_valid(align));
     usize padding = 0;
-    return arena->growing || measure(arena, size, align, &padding);
+    return measure(arena, size, align, &padding);
 }
 
 // A zeroed T, the size and the alignment of the type. For .smith; C passes sizeof and alignof to smith_arena_push.
@@ -457,14 +458,19 @@ export type slice_of(type element, usize count) {
     return fixed(memory, capacity);
 }
 
+// Back to the first chunk of a growing arena.
+void leave_to_first(Arena *arena) {
+    contract::trusted(); // the chunks are a list a proof does not know
+    while (arena->chunk->previous != nullptr)
+        chunk_leave(arena);
+}
+
 // Frees everything. Requires that no scope is open. A growing arena keeps the chunks it grew, so the next pass over the
 // same work takes none.
 [[smith::c_name("smith_arena_reset")]] export void reset(Arena *arena) {
-    contract::trusted(); // the chunks are leaves of a list a proof does not know
     contract::requires(arena->used <= arena->capacity);
     contract::requires(arena->scopes == 0); // a scope still open would restore a cursor past the reset
-    while (arena->chunk != nullptr && arena->chunk->previous != nullptr)
-        chunk_leave(arena);
+    if (arena->chunk != nullptr) leave_to_first(arena);
     arena->used = 0;
     if (sanitized) poison_unused(arena);
 }

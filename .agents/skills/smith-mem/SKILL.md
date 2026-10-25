@@ -8,10 +8,16 @@ description: "Using smith::mem (import smith::mem; mem::alloc, alloc_slice, try_
 `mem::alloc(T)` is a zeroed `T *` from the allocator of the calling thread: the system's by default, an arena or a fake after `mem::set_allocator`. It is never null: a refusal (the OS out of memory, a fixed arena's budget) is a checked failure naming the size, which aborts for now (with tasks, #324, it fails the task and unwinds through `defer`). Code that can do something about a refusal calls `mem::try_alloc`, which returns an `option`. `malloc` keeps C's contract (null when refused).
 
 ```smith
+module scratch;
 import smith::arena;
 import smith::mem;
 
-typedef option(i32 *) MaybeInt; // an option type is named at file scope before a body uses it
+export typedef option(i32 *) MaybeInt; // an option type is named at file scope before a body uses it
+
+export i32 or_zero(MaybeInt maybe) { // read an option in a function with no generic call (#353)
+    if (maybe == .some) return *maybe.some;
+    return 0;
+}
 
 export void fill(arena::Arena *a) {
     arena::ArenaAllocator allocator = arena::allocator(a);        // an arena as an allocator
@@ -20,8 +26,7 @@ export void fill(arena::Arena *a) {
     i32 *one = mem::alloc(i32);                                   // zeroed, from the arena
     f32 grid[:][:] = mem::alloc_slice(f32, 3, 4);                 // one block, row-major
     MaybeInt maybe = mem::try_alloc(i32);                         // .some = p, or .none when refused
-    if (maybe == .some) *maybe.some = 1;
-    *one = 2;
+    *one = or_zero(maybe) + 2;
     mem::free(one); // the arena takes back its last block only; any other waits for a reset
 }
 ```
