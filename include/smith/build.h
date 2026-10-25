@@ -418,18 +418,18 @@ typedef struct {
 
 void smith_app(SmithBuild *b, SmithApp *app);
 
-// The tests of a folder, built with the debug flags and run by `smith test`: every .smith module and every test_*.c
-// file below the folder (tests are found by build::tests's rules), and every other .c file directly in the folder, a
-// helper that is linked into the runner. Call it after build::app. The code under test is what the tests and helpers
+// The tests of a project, built with the debug flags and run by `smith test`: every *_test.smith and *_test.c file below
+// the root (beside the module it tests, or in the folder for integration tests), and every other .c file directly in
+// the folder, a helper that is linked into the runner. Call it after build::app. The code under test is what the tests and helpers
 // reach by include or import, compiled once in the debug profile with the flags of the programs. Expands to
-//   build::tests(b, &(build::Tests){.sources = build::glob(b, {"<folder>/**/*.smith", "<folder>/**/test_*.c"}),
+//   build::tests(b, &(build::Tests){.sources = build::glob(b, {"**/*_test.smith", "**/*_test.c"}),
 //                                .objects = what the sources and helpers reach, and the helpers (compiled with
 //                                flags(debug)), .flags = flags(debug), .inputs = .inputs,
 //                                .link_flags = [-fsanitize=address,undefined] + build::defaults .link_flags +
 //                                .link_flags});
 // With no test file there is no task, and `smith test` says so.
 typedef struct {
-    const char *folder;            // by default "tests"
+    const char *folder;            // the helpers of the tests (.c files directly in it), by default "tests"
     const char *const *inputs;     // files the tests read when they run, such as compiled shaders; built first
     const char *const *link_flags; // added to the runner's link, such as -framework Metal
     SmithStep step;                // set: the task test

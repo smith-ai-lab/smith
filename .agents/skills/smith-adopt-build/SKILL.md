@@ -26,11 +26,11 @@ smith build -t commands build/app             # the compile and link commands, t
 
 ## 4. Tests
 
-Write `tests/test_<name>.c` files with `void test_<name>(void) {` (and `void test_x(SmithKey key)` for a property test), then in build.c, after the objects of the code under test:
+Write `<name>_test.c` files beside the code they test with `void test_<name>(void) {` (and `void test_x(SmithKey key)` for a property test), then in build.c, after the objects of the code under test:
 
 ```c
 smith_tests(b, &(SmithTests){
-    .sources = smith_glob(b, smith_list(b, "tests/test_*.c", nullptr)),
+    .sources = smith_glob(b, smith_list(b, "**/*_test.c", nullptr)),
     .objects = (const SmithObject *[]){&object_util, nullptr},   // the code under test, without main's object
     .flags = flags,                                              // the project's flags + -I .smith/include
 });

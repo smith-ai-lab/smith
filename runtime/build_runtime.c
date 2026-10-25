@@ -3612,9 +3612,9 @@ void smith_app_tests(SmithBuild *b, SmithAppTests *tests) {
     copy.folder = smith_copy_string(tests->folder != nullptr ? tests->folder : "tests");
     copy.inputs = smith_copy_list(tests->inputs);
     copy.link_flags = smith_copy_list(tests->link_flags);
-    // The .smith modules and the test_*.c files below the folder, sorted.
-    const char *const *files = smith_glob(
-        b, smith_list(b, smith_text("%s/**/*.smith", copy.folder), smith_text("%s/**/test_*.c", copy.folder), nullptr));
+    // A test module is any *_test.smith or *_test.c below the project's root, beside the module it tests or in the
+    // folder of integration tests, sorted; the other .smith modules there are reached by their imports.
+    const char *const *files = smith_glob(b, smith_list(b, "**/*_test.smith", "**/*_test.c", nullptr));
     if (smith_count(files) == 0) {
         *tests = copy;
         return; // no tests, no task: `smith test` says so
