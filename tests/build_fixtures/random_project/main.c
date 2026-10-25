@@ -18,7 +18,7 @@ int main(void) {
         mean += exponential_sample(many[i], 2.0) / 1000.0;
     float x = smith_normal_float_sample(parts[1], (SmithNormalFloat){.mean = 0, .deviation = 1});
     alignas(smith_arena_align_max) static unsigned char memory[1024];
-    SmithArena arena = smith_arena_make(memory, sizeof memory);
+    SmithArena arena = smith_arena_fixed(memory, sizeof memory);
     SmithCategorical categorical = smith_categorical_make(&arena, (const double[]){1, 1, 2}, 3);
     printf("mean %.1f, normal %d, index %zu\n", mean, x > -6.0f && x < 6.0f, smith_categorical_sample(parts[2], categorical) < 3 ? (size_t)1 : (size_t)0);
     return 0;
