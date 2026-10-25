@@ -1,0 +1,8 @@
+module other;
+
+import opt;
+
+// A second importer of the exported type function: its `opt::option(usize)` is the struct the others have.
+export opt::option(usize) pick(usize v) {
+    return {.some = v};
+}

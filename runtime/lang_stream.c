@@ -568,6 +568,7 @@ static size_t smith_lang_assemble_meta(const SmithLang *lang, char *out, size_t 
                                  smith_lang_str(lang->body_names[i]));
     if (lang->body_names_count > 0) used = smith_lang_append(out, capacity, used, "\n");
     used = smith_lang_generic_lines(lang, out, capacity, used);
+    used = smith_lang_eshape_lines(lang, out, capacity, used);
     used = smith_lang_priv_linked_line(lang, out, capacity, used);
     return smith_lang_priv_hidden_line(lang, out, capacity, used);
 }

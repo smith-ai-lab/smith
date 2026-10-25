@@ -245,8 +245,13 @@ static bool smith_lang_import_reflects(const char *text, uint32_t length) {
 
 // A module whose exports use tuples says so in its header (`// smith-tuples`): this file indexes the tuples it gets, so
 // the host offers it every token.
-static void smith_lang_import_tuples(SmithLang *lang, const SmithHost *host, const char *text, uint32_t length) {
+static void smith_lang_eshape_import(const char *text, uint32_t length, const char *bind, size_t bind_length);
+
+static void smith_lang_import_tuples(SmithLang *lang, const SmithHost *host, const char *text, uint32_t length,
+                                     const char *bind, size_t bind_length) {
     if (text == nullptr) return;
+    if (memmem(text, length, "// smith-eshape: ", 17) != nullptr)
+        smith_lang_eshape_import(text, length, bind, bind_length);
     if (!lang->field_import && smith_lang_import_reflects(text, length)) { // a generic that keeps a field (#100)
         lang->field_import = true;
         if (host->watch_mode != nullptr) host->watch_mode(host->context, SmithWatch_All);
@@ -270,7 +275,7 @@ static bool smith_lang_refuse_c_header(SmithLang *lang, const SmithHost *host, c
                                        uint32_t length) {
     if (text == nullptr || length == 0) return false;
     if (memmem(text, length, "// smith-module:", 16) != nullptr) { // a module's header
-        smith_lang_import_tuples(lang, host, text, length);
+        smith_lang_import_tuples(lang, host, text, length, bind, bind_length);
         return false;
     }
     SmithLangBinding *failed = smith_lang_binding_find(lang, bind, bind_length);
