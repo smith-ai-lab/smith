@@ -1,0 +1,431 @@
+// Builds smith's pinned LLVM on Linux, static, from source: what scripts/llvm.sh does on macOS, for ELF (issue #305).
+// This file has no `module` line, so it is plain C23: the seed (scripts/stage0.smith on a machine with no smith) builds
+// it with the system's C compiler, and `smith build llvm` with smith. It runs from the repository's root:
+//   llvm_linux <llvm source> <cmake> <python> <stamp> <ninja>
+// the same arguments as scripts/llvm.sh, with <cmake> and <python> the programs themselves and <ninja> the ninja to
+// run (an empty argument is the one on PATH). The work lives in the package cache, $CACHE/smith/llvm/<name>/{src,
+// build,install}, which `smith build clean` never touches; run again with nothing changed, cmake and ninja find nothing
+// to do. The steps:
+//   1. the patches (patches/*.patch) go into a copy of the sources, as in scripts/llvm.sh: a patch that changed is
+//      taken out with those after it, and only the files they touch change, so the rebuild is incremental;
+//   2. CMake and ninja build and install LLVM, clang, clang-tools-extra, lld, lldb and compiler-rt, with the host's
+//      target (X86 or AArch64), RTTI and exceptions on (Alive2 needs them), static libraries only;
+//   3. what smith links that LLVM does not install: libclangmain.a (clang's main as a library), libsmithtools.a
+//      (clang-format's, clang-tidy's and clangd's mains, their static initializers moved out of .init_array into
+//      __smith_<tool>, which shim/platform_linux.h runs when the tool runs) and lldb's static archives (the same for
+//      __smith_lldb);
+//   4. the identity, lib/smith-clang.id: "llvm-23.1.3-linux " and the SHA-256 of what smith links.
+#include <errno.h>
+#include <fcntl.h>
+#include <glob.h>
+#include <spawn.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/utsname.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+#include "sha256.h"
+
+extern char **environ;
+
+constexpr size_t path_max = 4096;     // PATH_MAX of Linux, which strict C23 does not define
+constexpr size_t arguments_max = 256; // a command: cmake's options, or the objects of one archive
+constexpr size_t file_max = 1 << 20;  // a patch, read whole to compare it
+
+// The folder in the package cache; SMITH_LLVM_NAME builds into another (as in scripts/llvm.sh and build.c).
+static char cache[path_max];
+static char tools[path_max]; // cache/install/bin, where llvm-ar and llvm-objcopy are once LLVM is installed
+
+[[noreturn]] static void die(const char *message, const char *detail) {
+    fprintf(stderr, "llvm_linux: %s%s%s\n", message, detail != nullptr ? " " : "", detail != nullptr ? detail : "");
+    exit(1);
+}
+
+// Runs a program (found on PATH) and waits; true when it exits 0. `out` is a descriptor for its standard output, or -1
+// to share ours.
+static bool run_to(const char *const *argv, int out) {
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    if (out >= 0) posix_spawn_file_actions_adddup2(&actions, out, 1);
+    pid_t child = 0;
+    int started = posix_spawnp(&child, argv[0], &actions, nullptr, (char *const *)argv, environ);
+    posix_spawn_file_actions_destroy(&actions);
+    if (started != 0) return false;
+    int status = 0;
+    while (waitpid(child, &status, 0) < 0) { // only a signal interrupts the wait
+        if (errno != EINTR) return false;
+    }
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
+static void run(const char *const *argv) {
+    if (!run_to(argv, -1)) die("failed:", argv[0]);
+}
+
+static void join(char *out, const char *format, const char *a, const char *b) {
+    int written = snprintf(out, path_max, format, a, b);
+    if (written < 0 || (size_t)written >= path_max) die("a path is too long:", a);
+}
+
+// A path for one call: the result lives until 16 more are made, so a path that is kept is join()ed into a buffer of
+// its own.
+static const char *path(const char *format, const char *a, const char *b) {
+    static char paths[16][path_max];
+    static size_t next = 0;
+    char *out = paths[next++ % 16];
+    join(out, format, a, b);
+    return out;
+}
+
+static const char *tool(const char *name) {
+    return path("%s/%s", tools, name);
+}
+
+static bool same_file(const char *a, const char *b) {
+    static char left[file_max];
+    static char right[file_max];
+    FILE *first = fopen(a, "rb");
+    FILE *second = fopen(b, "rb");
+    size_t got_left = first != nullptr ? fread(left, 1, sizeof left, first) : 0;
+    size_t got_right = second != nullptr ? fread(right, 1, sizeof right, second) : 0;
+    bool same = first != nullptr && second != nullptr && got_left == got_right && memcmp(left, right, got_left) == 0;
+    if (first != nullptr) fclose(first);
+    if (second != nullptr) fclose(second);
+    return same;
+}
+
+static const char *base_name(const char *file) {
+    const char *slash = strrchr(file, '/');
+    return slash != nullptr ? slash + 1 : file;
+}
+
+// Step 1. A fresh copy of the sources when there is none, then out with every applied patch from the first that
+// differs from patches/ (last first), then in with every patch not applied.
+static void apply_patches(const char *source) {
+    char src[path_max];
+    join(src, "%s/src", cache, "");
+    char applied[path_max];
+    join(applied, "%s/src/.patches", cache, "");
+    struct stat info;
+    if (stat(applied, &info) != 0) {
+        run((const char *[]){"rm", "-rf", src, nullptr});
+        run((const char *[]){"mkdir", "-p", src, nullptr});
+        run((const char *[]){"cp", "-R", path("%s/.", source, ""), src, nullptr});
+        run((const char *[]){"chmod", "-R", "u+w", src, nullptr});
+        run((const char *[]){"mkdir", "-p", applied, nullptr});
+    }
+    glob_t done = {};
+    glob(path("%s/*.patch", applied, ""), 0, nullptr, &done);
+    size_t first_stale = done.gl_pathc;
+    for (size_t i = 0; i < done.gl_pathc && first_stale == done.gl_pathc; i++) {
+        if (!same_file(done.gl_pathv[i], path("patches/%s", base_name(done.gl_pathv[i]), ""))) first_stale = i;
+    }
+    for (size_t i = done.gl_pathc; i > first_stale; i--) { // last first
+        run((const char *[]){"patch", "-R", "-p1", "-s", "-d", src, "-i", done.gl_pathv[i - 1], nullptr});
+        run((const char *[]){"rm", done.gl_pathv[i - 1], nullptr});
+    }
+    globfree(&done);
+    glob_t wanted = {};
+    glob("patches/*.patch", 0, nullptr, &wanted);
+    for (size_t i = 0; i < wanted.gl_pathc; i++) {
+        const char *record = path("%s/%s", applied, base_name(wanted.gl_pathv[i]));
+        if (stat(record, &info) == 0) continue;
+        run((const char *[]){"patch", "-p1", "-s", "-d", src, "-i", wanted.gl_pathv[i], nullptr});
+        run((const char *[]){"cp", wanted.gl_pathv[i], record, nullptr});
+    }
+    globfree(&wanted);
+}
+
+// The LLVM target of the machine this runs on.
+static const char *host_target(void) {
+    struct utsname system;
+    if (uname(&system) != 0) die("cannot tell the machine", nullptr);
+    if (strcmp(system.machine, "x86_64") == 0) return "X86";
+    if (strcmp(system.machine, "aarch64") == 0) return "AArch64";
+    die("no LLVM target for this machine:", system.machine);
+}
+
+// Step 2: scripts/llvm.sh's configuration, with the host's target and nothing of macOS's (no SDK, no system
+// debugserver, no libedit). Release, no assertions, static libraries only; off what would link a library from outside
+// the C library (zlib, zstd, libxml2, z3, libedit, terminfo, ffi, curl), and for build time only tests, benchmarks,
+// examples, docs, bindings and the compiler-rt parts smith does not use. lld links LLVM itself.
+static void configure_and_build(const char *cmake, const char *python, const char *ninja) {
+    const char *argv[arguments_max] = {cmake,
+                                       "-G",
+                                       "Ninja",
+                                       "-S",
+                                       path("%s/src/llvm", cache, ""),
+                                       "-B",
+                                       path("%s/build", cache, ""),
+                                       "-DCMAKE_BUILD_TYPE=Release",
+                                       path("-DCMAKE_INSTALL_PREFIX=%s/install", cache, ""),
+                                       path("-DCMAKE_MAKE_PROGRAM=%s", ninja, ""),
+                                       path("-DPython3_EXECUTABLE=%s", python, ""),
+                                       "-DLLVM_USE_LINKER=lld",
+                                       "-DLLVM_PARALLEL_LINK_JOBS=2",
+                                       "-DLLVM_ENABLE_PROJECTS=clang;clang-tools-extra;lld;lldb",
+                                       "-DLLVM_ENABLE_RUNTIMES=compiler-rt",
+                                       path("-DLLVM_TARGETS_TO_BUILD=%s", host_target(), ""),
+                                       "-DLLVM_ENABLE_ASSERTIONS=OFF",
+                                       "-DLLVM_ENABLE_RTTI=ON",
+                                       "-DLLVM_ENABLE_EH=ON",
+                                       "-DBUILD_SHARED_LIBS=OFF",
+                                       "-DLLVM_BUILD_LLVM_DYLIB=OFF",
+                                       "-DLLVM_LINK_LLVM_DYLIB=OFF",
+                                       "-DCLANG_LINK_CLANG_DYLIB=OFF",
+                                       "-DLLVM_ENABLE_ZLIB=OFF",
+                                       "-DLLVM_ENABLE_ZSTD=OFF",
+                                       "-DLLVM_ENABLE_LIBXML2=OFF",
+                                       "-DLLVM_ENABLE_Z3_SOLVER=OFF",
+                                       "-DLLVM_ENABLE_LIBEDIT=OFF",
+                                       "-DLLVM_ENABLE_TERMINFO=OFF",
+                                       "-DLLVM_ENABLE_FFI=OFF",
+                                       "-DLLVM_ENABLE_CURL=OFF",
+                                       "-DLLVM_INCLUDE_TESTS=OFF",
+                                       "-DLLVM_INCLUDE_BENCHMARKS=OFF",
+                                       "-DLLVM_INCLUDE_EXAMPLES=OFF",
+                                       "-DLLVM_INCLUDE_DOCS=OFF",
+                                       "-DLLVM_ENABLE_BINDINGS=OFF",
+                                       "-DCLANG_INCLUDE_TESTS=OFF",
+                                       "-DCOMPILER_RT_INCLUDE_TESTS=OFF",
+                                       "-DCOMPILER_RT_BUILD_LIBFUZZER=OFF",
+                                       "-DCOMPILER_RT_BUILD_MEMPROF=OFF",
+                                       "-DCOMPILER_RT_BUILD_XRAY=OFF",
+                                       "-DCOMPILER_RT_BUILD_ORC=OFF",
+                                       "-DCOMPILER_RT_BUILD_CTX_PROFILE=OFF",
+                                       "-DLLDB_ENABLE_PYTHON=OFF",
+                                       "-DLLDB_ENABLE_LUA=OFF",
+                                       "-DLLDB_ENABLE_CURSES=OFF",
+                                       "-DLLDB_ENABLE_LZMA=OFF",
+                                       "-DLLDB_ENABLE_LIBXML2=OFF",
+                                       "-DLLDB_ENABLE_TREESITTER=OFF",
+                                       "-DLLDB_ENABLE_LIBEDIT=OFF",
+                                       "-DLLDB_INCLUDE_TESTS=OFF",
+                                       nullptr};
+    run(argv);
+    run((const char *[]){"nice", ninja, "-C", path("%s/build", cache, ""), "install", nullptr});
+}
+
+// An object or an archive with its static initializers moved out of .init_array into __smith_<name>, as plain data
+// that the linker keeps when its __start_ symbol is named. An archive is rewritten whole: its members may share a
+// name (liblldbHost.a has two Host.cpp.o), which extracting them would lose.
+static void defer(const char *in, const char *out, const char *name) {
+    const char *section = path(".init_array=__smith_%s,alloc,load,data,contents", name, "");
+    run((const char *[]){tool("llvm-objcopy"), "--rename-section", section, in, out, nullptr});
+}
+
+static void archive(const char *out, const char *pattern) {
+    glob_t found = {};
+    glob(pattern, 0, nullptr, &found);
+    if (found.gl_pathc == 0 || found.gl_pathc + 4 > arguments_max) die("no objects, or too many, in", pattern);
+    const char *argv[arguments_max] = {tool("llvm-ar"), "rcs", out};
+    for (size_t i = 0; i < found.gl_pathc; i++)
+        argv[3 + i] = found.gl_pathv[i];
+    argv[3 + found.gl_pathc] = nullptr;
+    unlink(out);
+    run(argv);
+    globfree(&found);
+}
+
+static void extract(const char *archive_path, const char *folder, const char *member) {
+    run((const char *[]){"mkdir", "-p", folder, nullptr});
+    const char *output = path("--output=%s", folder, "");
+    if (member == nullptr) {
+        run((const char *[]){tool("llvm-ar"), "x", output, archive_path, nullptr});
+    } else {
+        run((const char *[]){tool("llvm-ar"), "x", output, archive_path, member, nullptr});
+    }
+}
+
+// clang::GetResourcesPath(char const *, void *) and smith_resource_path(char const *, void *) (shim/tool.h), both
+// returning a std::string of libstdc++, whose ABI tag is in the names.
+static const char get_resources[] = "_ZN5clang16GetResourcesPathB5cxx11EPKcPv";
+static const char smith_resources[] = "_Z19smith_resource_pathB5cxx11PKcPv";
+
+// Step 3, the tools (scripts/llvm.sh says why each is done): clang-format's main renamed, clang-tidy's and clangd's
+// mains and clangd's tweaks with their initializers deferred, and the two calls that find the resource directory by
+// the executable's path redirected to smith_resource_path.
+static void make_tools(void) {
+    char build[path_max];
+    join(build, "%s/build", cache, "");
+    char lib[path_max];
+    join(lib, "%s/install/lib", cache, "");
+    char work[path_max];
+    join(work, "%s/build/smith-tools", cache, "");
+    run((const char *[]){"rm", "-rf", work, nullptr});
+    run((const char *[]){"mkdir", "-p", path("%s/out", work, ""), nullptr});
+    const char *format =
+        path("%s/tools/clang/tools/clang-format/CMakeFiles/clang-format.dir/ClangFormat.cpp.o", build, "");
+    run((const char *[]){tool("llvm-objcopy"), "--redefine-sym", "main=smith_clang_format_main", format,
+                         path("%s/format.o", work, ""), nullptr});
+    defer(path("%s/format.o", work, ""), path("%s/out/ClangFormat.o", work, ""), "fmt");
+    extract(path("%s/libclangTidyMain.a", lib, ""), path("%s/tidy", work, ""), nullptr);
+    defer(path("%s/tidy/ClangTidyMain.cpp.o", work, ""), path("%s/out/ClangTidyMain.o", work, ""), "tidy");
+    extract(path("%s/libclangdMain.a", lib, ""), path("%s/clangd", work, ""), nullptr);
+    defer(path("%s/clangd/ClangdMain.cpp.o", work, ""), path("%s/out/ClangdMain.o", work, ""), "lsp");
+    defer(path("%s/clangd/Check.cpp.o", work, ""), path("%s/out/Check.o", work, ""), "lsp");
+    extract(path("%s/libclangDaemonTweaks.a", lib, ""), path("%s/tweaks", work, ""), nullptr);
+    glob_t tweaks = {};
+    glob(path("%s/tweaks/*.o", work, ""), 0, nullptr, &tweaks);
+    for (size_t i = 0; i < tweaks.gl_pathc; i++)
+        defer(tweaks.gl_pathv[i], path("%s/out/tweak_%s", work, base_name(tweaks.gl_pathv[i])), "lsp");
+    globfree(&tweaks);
+    char redirect[path_max];
+    join(redirect, "%s=%s", get_resources, smith_resources);
+    extract(path("%s/libclangDaemon.a", lib, ""), path("%s/daemon", work, ""), "CompileCommands.cpp.o");
+    extract(path("%s/libclangTooling.a", lib, ""), path("%s/tooling", work, ""), "Tooling.cpp.o");
+    run((const char *[]){tool("llvm-objcopy"), "--redefine-sym", redirect,
+                         path("%s/daemon/CompileCommands.cpp.o", work, ""), path("%s/out/CompileCommands.o", work, ""),
+                         nullptr});
+    run((const char *[]){tool("llvm-objcopy"), "--redefine-sym", redirect, path("%s/tooling/Tooling.cpp.o", work, ""),
+                         path("%s/out/Tooling.o", work, ""), nullptr});
+    archive(path("%s/libsmithtools.a", lib, ""), path("%s/out/*.o", work, ""));
+}
+
+// Step 3, lldb (scripts/llvm.sh says why): libsmithlldb.a holds the SB API's objects and the two mains renamed, and
+// lldb's static archives are copied into the install, all with their initializers deferred to __smith_lldb.
+static void make_lldb(void) {
+    char lldb[path_max];
+    join(lldb, "%s/build/tools/lldb", cache, "");
+    char work[path_max];
+    join(work, "%s/build/smith-lldb", cache, "");
+    run((const char *[]){"rm", "-rf", work, nullptr});
+    run((const char *[]){"mkdir", "-p", path("%s/objects", work, ""), path("%s/deferred", work, ""), nullptr});
+    run((const char *[]){tool("llvm-objcopy"), "--redefine-sym", "main=smith_lldb_driver_main",
+                         path("%s/tools/driver/CMakeFiles/lldb.dir/Driver.cpp.o", lldb, ""),
+                         path("%s/objects/Driver.o", work, ""), nullptr});
+    run((const char *[]){"cp", path("%s/tools/driver/CMakeFiles/lldb.dir/Platform.cpp.o", lldb, ""),
+                         path("%s/objects/Platform.o", work, ""), nullptr});
+    run((const char *[]){tool("llvm-objcopy"), "--redefine-sym", "main=smith_lldb_dap_tool_main",
+                         path("%s/tools/lldb-dap/tool/CMakeFiles/lldb-dap.dir/lldb-dap.cpp.o", lldb, ""),
+                         path("%s/objects/lldb-dap.o", work, ""), nullptr});
+    glob_t api = {};
+    glob(path("%s/source/API/CMakeFiles/liblldb.dir/*.o", lldb, ""), 0, nullptr, &api);
+    for (size_t i = 0; i < api.gl_pathc; i++)
+        run((const char *[]){"cp", api.gl_pathv[i], path("%s/objects/api_%s", work, base_name(api.gl_pathv[i])),
+                             nullptr});
+    globfree(&api);
+    glob_t objects = {};
+    glob(path("%s/objects/*.o", work, ""), 0, nullptr, &objects);
+    for (size_t i = 0; i < objects.gl_pathc; i++)
+        defer(objects.gl_pathv[i], path("%s/deferred/%s", work, base_name(objects.gl_pathv[i])), "lldb");
+    globfree(&objects);
+    archive(path("%s/install/lib/libsmithlldb.a", cache, ""), path("%s/deferred/*.o", work, ""));
+    glob_t archives = {};
+    glob(path("%s/build/lib/liblldb[A-Z]*.a", cache, ""), 0, nullptr, &archives);
+    for (size_t i = 0; i < archives.gl_pathc; i++)
+        defer(archives.gl_pathv[i], path("%s/install/lib/%s", cache, base_name(archives.gl_pathv[i])), "lldb");
+    globfree(&archives);
+}
+
+// clang's main as a library: driver.cpp's objects without clang-driver.cpp's main (scripts/llvm.sh).
+static void make_clang_main(void) {
+    char objects[path_max];
+    join(objects, "%s/build/tools/clang/tools/driver/CMakeFiles/clang.dir", cache, "");
+    char out[path_max];
+    join(out, "%s/install/lib/libclangmain.a", cache, "");
+    unlink(out);
+    run((const char *[]){tool("llvm-ar"), "rcs", out, path("%s/driver.cpp.o", objects, ""),
+                         path("%s/cc1_main.cpp.o", objects, ""), path("%s/cc1as_main.cpp.o", objects, ""),
+                         path("%s/cc1gen_reproducer_main.cpp.o", objects, ""), nullptr});
+}
+
+// Adds to the hash the standard output of a program (llvm-ar p: an archive's members, never its bytes, which ninja's
+// install rewrites with the time) or, with a nullptr program, a file.
+static void hash_output(Sha256 *sha, const char *const *argv) {
+    static uint8_t buffer[1 << 16];
+    int pipes[2];
+    if (pipe(pipes) != 0) die("cannot make a pipe", nullptr);
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    posix_spawn_file_actions_adddup2(&actions, pipes[1], 1);
+    posix_spawn_file_actions_addclose(&actions, pipes[0]);
+    pid_t child = 0;
+    int started = posix_spawnp(&child, argv[0], &actions, nullptr, (char *const *)argv, environ);
+    posix_spawn_file_actions_destroy(&actions);
+    close(pipes[1]);
+    if (started != 0) die("cannot run", argv[0]);
+    for (ssize_t got = 1; got > 0;) { // each pass reads what the child wrote, until it closes
+        got = read(pipes[0], buffer, sizeof buffer);
+        if (got > 0) sha256_update(sha, buffer, (size_t)got);
+    }
+    close(pipes[0]);
+    int status = 0;
+    if (waitpid(child, &status, 0) < 0 || !WIFEXITED(status) || WEXITSTATUS(status) != 0) die("failed:", argv[1]);
+}
+
+static void hash_glob(Sha256 *sha, const char *pattern, bool archives) {
+    glob_t found = {};
+    glob(pattern, 0, nullptr, &found);
+    for (size_t i = 0; i < found.gl_pathc; i++) {
+        if (archives) {
+            hash_output(sha, (const char *[]){tool("llvm-ar"), "p", found.gl_pathv[i], nullptr});
+        } else {
+            hash_output(sha, (const char *[]){"cat", found.gl_pathv[i], nullptr});
+        }
+    }
+    globfree(&found);
+}
+
+// Step 4, the identity, written last (scripts/llvm.sh says what it is for): the version and a hash of the archives
+// smith links (clang's, LLVM's, lld's and clangd's, by their members) and of the objects made here.
+static void write_identity(const char *stamp) {
+    Sha256 sha;
+    sha256_init(&sha);
+    char lib[path_max];
+    join(lib, "%s/install/lib", cache, "");
+    hash_glob(&sha, path("%s/libclang[A-Z]*.a", lib, ""), true);
+    hash_glob(&sha, path("%s/libLLVM*.a", lib, ""), true);
+    hash_glob(&sha, path("%s/liblldELF.a", lib, ""), true);
+    hash_glob(&sha, path("%s/liblldCommon.a", lib, ""), true);
+    hash_glob(&sha, path("%s/libclangd[A-Z]*.a", lib, ""), true);
+    hash_glob(&sha, path("%s/liblldb[A-Z]*.a", lib, ""), true);
+    hash_glob(&sha, path("%s/libclangmain.a", lib, ""), true);
+    hash_glob(&sha, path("%s/build/smith-tools/out/*.o", cache, ""), false);
+    hash_glob(&sha, path("%s/build/smith-lldb/deferred/*.o", cache, ""), false);
+    char hex[65];
+    sha256_final(&sha, hex);
+    FILE *id = fopen(path("%s/smith-clang.id", lib, ""), "w");
+    if (id == nullptr || fprintf(id, "llvm-23.1.3-linux %s\n", hex) < 0 || fclose(id) != 0) die("cannot write", lib);
+    FILE *out = fopen(stamp, "w");
+    if (out == nullptr || fprintf(out, "%s/install\n", cache) < 0 || fclose(out) != 0) die("cannot write", stamp);
+    printf("llvm_linux: llvm-23.1.3-linux %s in %s/install\n", hex, cache);
+}
+
+static void find_cache(void) {
+    const char *xdg = getenv("XDG_CACHE_HOME");
+    const char *home = getenv("HOME");
+    const char *name = getenv("SMITH_LLVM_NAME");
+    if (name == nullptr || *name == '\0') name = "23.1.3-r10";
+    if (xdg != nullptr && *xdg == '/') {
+        snprintf(cache, sizeof cache, "%s/smith/llvm/%s", xdg, name);
+    } else if (home != nullptr && *home == '/') {
+        snprintf(cache, sizeof cache, "%s/.cache/smith/llvm/%s", home, name);
+    } else {
+        die("no cache folder: set XDG_CACHE_HOME or HOME", nullptr);
+    }
+    snprintf(tools, sizeof tools, "%s/install/bin", cache);
+}
+
+int main(int argc, char **argv) {
+    if (argc != 6) die("usage: llvm_linux <llvm source> <cmake> <python> <stamp> <ninja>", nullptr);
+    const char *cmake = argv[2][0] != '\0' ? argv[2] : "cmake";
+    const char *python = argv[3][0] != '\0' ? argv[3] : "python3";
+    const char *ninja = argv[5][0] != '\0' ? argv[5] : "ninja";
+    find_cache();
+    char stamp_folder[path_max];
+    snprintf(stamp_folder, sizeof stamp_folder, "%s", argv[4]);
+    char *slash = strrchr(stamp_folder, '/');
+    if (slash != nullptr) *slash = '\0';
+    run((const char *[]){"mkdir", "-p", cache, slash != nullptr ? stamp_folder : ".", nullptr});
+    apply_patches(argv[1]);
+    configure_and_build(cmake, python, ninja);
+    make_clang_main();
+    make_tools();
+    make_lldb();
+    write_identity(argv[4]);
+    return 0;
+}
