@@ -805,18 +805,19 @@ static void build_check_test_parts(SmithBuild *b) {
     }
 }
 
-// smith's own tests of behavior, in `.smith` on its test runner (issue #31): every `tests/*.smith` linked into one
-// runner, built once under AddressSanitizer and UBSan, whose workers run the tests in process, one per core, where a
-// script starts smith for each case. It is a project of its own (tests/units/build.c, in `<folder>/units-project`,
-// whose `tests` is a link to ours) built and run by the smith under test, so the libraries and headers it compiles
-// against are that smith's, whatever smith runs this build.c: adding a library needs no two-step install. `units-build`
-// builds the runner (scripts that use it wait for that), `test-units` runs it with `smith test`. Needs a smith that
-// compiles
+// smith's own tests of behavior, in `.smith` on its test runner (issue #31): every `*_test.smith` (beside the library
+// it tests in `lib/`, or in `tests/`) linked into one runner, built once under AddressSanitizer and UBSan, whose
+// workers run the tests in process, one per core, where a script starts smith for each case. It is a project of its own
+// (tests/units/build.c, in `<folder>/units-project`, whose `tests` and `lib` are links to ours) built and run by the
+// smith under test, so the libraries and headers it compiles against are that smith's, whatever smith runs this
+// build.c: adding a library needs no two-step install. `units-build` builds the runner (scripts that use it wait for
+// that), `test-units` runs it with `smith test`. Needs a smith that compiles
 // `.smith` (the stage0 has none). A test that needs a build or a process of its own (a stop, a sanitizer's catch) stays
 // in its script. Returns the runner's path.
 static const char *build_units(SmithBuild *b, const char *binary, const char *folder) {
     static const char setup[] =
-        "repo=$PWD; p=$1/units-project; mkdir -p \"$p\" && ln -sfn \"$repo/tests\" \"$p/tests\" && "
+        "repo=$PWD; p=$1/units-project; mkdir -p \"$p\" && ln -sfn \"$repo/tests\" \"$p/tests\" && ln -sfn "
+        "\"$repo/lib\" \"$p/lib\" && "
         "{ cmp -s tests/units/build.c \"$p/build.c\" || cp tests/units/build.c \"$p/build.c\"; } && cd \"$p\" && ";
     const char *self = smith_fmt(b, "$repo/%s", binary);
     const char *environment =

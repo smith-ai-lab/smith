@@ -1,7 +1,7 @@
 #!/bin/sh
 # Tests of <smith/contract.h>, with real clang and ninja. Usage: sh tests/contract.sh path/to/smith
 # The macros' run-time behaviour (the message, the stop, NDEBUG), the calls they leave in the IR for `smith prove` to
-# find, and the library built by a project with smith_library. tests/contract_test.smith runs under smith's own test library.
+# find, and the library built by a project with smith_library. lib/smith/contract_test.smith runs under smith's own test library.
 set -u
 case $1 in /*) smith=$1 ;; *) smith=$(pwd)/$1 ;; esac
 here=$(cd "$(dirname "$0")/.." && pwd)
@@ -185,8 +185,8 @@ done
 # 6. A project gets the library with smith_library, and its tests run under smith's own test library.
 mkdir -p "$work/bin" && ln -s "$smith" "$work/bin/smith" && ln -s "$smith" "$work/bin/smith-cc" && ln -s "$smith" "$work/bin/smith-c++"
 PATH="$work/bin:$PATH"
-mkdir -p "$work/project/tests" && cd "$work/project" || exit 1
-cp "$here/tests/contract_test.smith" tests/contract_test.smith
+mkdir -p "$work/project/smith" && cd "$work/project" || exit 1
+cp "$here/lib/smith/contract_test.smith" smith/contract_test.smith
 cat >build.c <<'C'
 #include <smith/build.h>
 
@@ -202,7 +202,7 @@ void build(SmithBuild *b) {
         smith_object(b, &objects[i]);
     }
     SmithTests tests = {
-        .sources = smith_list(b, "tests/contract_test.smith", nullptr),
+        .sources = smith_list(b, "smith/contract_test.smith", nullptr),
         .objects = (const SmithObject *[]){&objects[0], &objects[1], &objects[2], nullptr},
         .flags = flags,
         .link_flags = smith_list(b, "-fsanitize=address,undefined", nullptr),
@@ -216,7 +216,7 @@ capture smith build
 expect "project: the tests build with smith_library" 0 "$rc"
 capture ./build/tests
 summary=$(printf '%s\n' "$out" | grep ' passed, ' | sed 's/ in [0-9.]* s$//')
-count=$(grep -c '^export void test_' "$here/tests/contract_test.smith")
+count=$(grep -c '^export void test_' "$here/lib/smith/contract_test.smith")
 expect "project: all $count tests pass" "$count passed, 0 failed" "$summary"
 expect "project: the header is written" yes "$([ -f .smith/include/smith/contract.h ] && echo yes)"
 

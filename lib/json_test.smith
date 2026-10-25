@@ -1,5 +1,5 @@
 // Tests of <smith/json.h>, in smith's own test library; tests/json.sh builds them in a scratch project as
-// tests/json_test.smith. The checks are: known tokens, trees, errors with their offsets and reasons, and the writer's
+// lib/json_test.smith. The checks are: known tokens, trees, errors with their offsets and reasons, and the writer's
 // exact text; property tests on keys (any document written then read gives the same events, and every f64 and
 // integer comes back exactly); fuzzing (damaged documents never crash, hang or read outside the input, and the pull
 // parser and the tree agree on which are valid); and JSONTestSuite's cases when tests/json.sh gives their folder.

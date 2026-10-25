@@ -1,6 +1,6 @@
 #!/bin/sh
 # <smith/http.h>'s library compiled under the warnings of a new project. Usage: sh tests/http.sh path/to/smith
-# The behavior (a scripted network, the fake io and a real one, no internet) is tested by tests/http_test.smith.
+# The behavior (a scripted network, the fake io and a real one, no internet) is tested by lib/http_test.smith.
 set -u
 here=$(cd "$(dirname "$0")/.." && pwd)
 cc=${CC:-cc}

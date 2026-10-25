@@ -52,7 +52,7 @@ hook=yes
 if ! "$smith" cc --smith-which -x c 2>/dev/null | grep -q "token-hook yes"; then hook=no; fi
 module="$here/lib/smith/arena.smith"
 
-# 1. The programs of the modes below, plain and under AddressSanitizer (the checks of behavior are tests/arena_test.smith).
+# 1. The programs of the modes below, plain and under AddressSanitizer (the checks of behavior are lib/smith/arena_test.smith).
 $cc $flags "$here/tests/arena.c" "$here/lib/smith/arena.smith" "$here/lib/smith/contract.smith" "$here/lib/trace.c" -o "$work/plain" || exit 1
 $cc $flags -g -fsanitize=address,undefined "$here/tests/arena.c" "$here/lib/smith/arena.smith" "$here/lib/smith/contract.smith" "$here/lib/trace.c" -o "$work/asan" || exit 1
 

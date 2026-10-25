@@ -1,6 +1,6 @@
 #!/bin/sh
 # Tests of <smith/json.h>, with real clang and ninja. Usage: sh tests/json.sh path/to/smith
-# The checks are tests/json_test.smith. Under AddressSanitizer and UBSan they run in the `test-units` runner of build.c
+# The checks are lib/json_test.smith. Under AddressSanitizer and UBSan they run in the `test-units` runner of build.c
 # (issue #31; $UNITS names it); here they are built as a scratch project's test file with smith_tests (smith's own test
 # library), in two builds: -O2, and -O2 -DNDEBUG. JSONTestSuite is fetched as a package
 # pinned by hash (into $SMITH_JSON_SUITE_CACHE, else ~/.cache/smith-tests, so that it is downloaded once; with no
@@ -58,9 +58,9 @@ else
     echo "      conformance is skipped"
 fi
 
-# The scratch project: smith's json library and what it needs, and the runner built from tests/json_test.smith.
-mkdir -p "$work/project/tests" && cd "$work/project" || exit 1
-cp "$here/tests/json_test.smith" tests/json_test.smith
+# The scratch project: smith's json library and what it needs, and the runner built from lib/json_test.smith.
+mkdir -p "$work/project" && cd "$work/project" || exit 1
+cp "$here/lib/json_test.smith" json_test.smith
 cat >build.c <<'C'
 #include <smith/build.h>
 
@@ -82,7 +82,7 @@ void build(SmithBuild *b) {
         smith_object(b, &objects[i]);
     }
     SmithTests tests = {
-        .sources = smith_list(b, "tests/json_test.smith", nullptr),
+        .sources = smith_list(b, "json_test.smith", nullptr),
         .objects = (const SmithObject *[]){&objects[0], &objects[1], &objects[2], &objects[3], nullptr},
         .flags = flags,
         .link_flags = smith_when(b, sanitize, smith_list(b, "-fsanitize=address,undefined", nullptr)),
@@ -92,7 +92,7 @@ void build(SmithBuild *b) {
 }
 C
 
-count=$(grep -c '^export void test_' "$here/tests/json_test.smith")
+count=$(grep -c '^export void test_' "$here/lib/json_test.smith")
 for mode in fast ndebug; do
     capture smith build -DMODE=$mode
     expect "$mode: the tests build" 0 "$rc"
