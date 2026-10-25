@@ -1,5 +1,5 @@
-// Every float, through <smith/text.h>'s parser: run by `sh tests/text.sh smith exhaustive` (smith build
-// text-exhaustive). For each of the 2^32 bit patterns that is a finite float, the float is formatted twice, as %.9g
+// Every float, through <smith/text.h>'s parser: run by `smith build text-exhaustive`.
+// For each of the 2^32 bit patterns that is a finite float, the float is formatted twice, as %.9g
 // (the shortest that round-trips, which the fast path handles) and as %.17e (18 digits, which only the exact path
 // handles), and each text is parsed back. The parser must give strtof's float, in the C locale (this program never sets
 // a locale), and for %.9g the original float, bit for bit. Threads split the patterns by stride. Prints the counts;

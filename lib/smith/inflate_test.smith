@@ -1,8 +1,8 @@
-// Tests of <smith/inflate.h>, in smith's own test library; tests/inflate.sh builds them in a scratch project as
-// lib/smith/inflate_test.smith. Fixed vectors made once outside the repository (the system's gzip command, Python's
-// zlib for the zlib and raw forms) cover stored, fixed and dynamic Huffman blocks, matches that wrap the 32 KiB window,
-// and a gzip header with every optional field, each with the bytes it must decode to; stored blocks written here
-// round-trip through every format and through decode and stream; truncated, damaged and random input fails with a
+// Tests of <smith/inflate.h>, in smith's own test library; tests/library_modes_test.smith builds them in a scratch
+// project as lib/smith/inflate_test.smith. Fixed vectors made once outside the repository (the system's gzip command,
+// Python's zlib for the zlib and raw forms) cover stored, fixed and dynamic Huffman blocks, matches that wrap the 32
+// KiB window, and a gzip header with every optional field, each with the bytes it must decode to; stored blocks written
+// here round-trip through every format and through decode and stream; truncated, damaged and random input fails with a
 // status and never reads or writes outside its buffers (the buffers are exact-size arena pushes, which the sanitizer
 // poisons around). The vectors are read from tests/fixtures/inflate through the io of the tests that take one.
 module smith::inflate_test;
