@@ -779,7 +779,7 @@ static int smith_argdumper(int argc, char **argv) {
 }
 
 #ifdef SMITH_HOOK
-int smith_effects_check(int count, char **files); // shim/effects_infer.cpp
+int smith_effects_check(int count, char **files, const char *stack); // shim/effects_infer.cpp
 
 // The effect summary of an object: where the compile that makes the object writes it (the plugin) and where the link
 // reads it. In a project (a `.smith` folder in the working folder) it is `.smith/effects/<the object's absolute path,
@@ -832,6 +832,7 @@ static int smith_check_effects(int count, char **args) {
     char *files[smith_effects_files_max];
     const char *objects[smith_effects_files_max];
     size_t found = 0;
+    const char *program = "a.out";
     for (int i = 0; i < count; i++) {
         if (strcmp(args[i], "-c") == 0 || strcmp(args[i], "-E") == 0 || strcmp(args[i], "-S") == 0 ||
             strcmp(args[i], "-fsyntax-only") == 0 || strcmp(args[i], "-###") == 0) {
@@ -839,6 +840,7 @@ static int smith_check_effects(int count, char **args) {
         }
         if (strcmp(args[i], "-o") == 0 && i + 1 < count) {
             i++; // the output is no input
+            program = args[i];
             continue;
         }
         if (args[i][0] == '-' || !smith_ends_with(args[i], ".o") || found >= smith_effects_files_max) continue;
@@ -848,7 +850,10 @@ static int smith_check_effects(int count, char **args) {
         found += 1;
     }
     if (found == 0) return -1;
-    int status = smith_effects_check((int)found, files);
+    char stack[PATH_MAX]; // the worst-case stack of the program's functions, beside it: `<program>.stack`
+    int written = snprintf(stack, sizeof stack, "%s.stack", program);
+    int status =
+        smith_effects_check((int)found, files, written > 0 && (size_t)written < sizeof stack ? stack : nullptr);
     for (size_t i = 0; i < found; i++) { // the summary of a temporary object goes with it
         if (smith_in_temp_folder(objects[i])) unlink(files[i]);
     }
@@ -3009,7 +3014,7 @@ static int smith_compile_main(int argc, char **argv, int at, bool plus, const ch
         return smith_lang_main(argc - first - 1, argv + first + 1, false);
 #ifdef SMITH_HOOK
     if (first < argc && strcmp(argv[first], "--smith-effects") == 0)
-        return smith_effects_check(argc - first - 1, argv + first + 1);
+        return smith_effects_check(argc - first - 1, argv + first + 1, nullptr);
 #endif
     bool which = first < argc && strcmp(argv[first], "--smith-which") == 0;
     if (which) first++;

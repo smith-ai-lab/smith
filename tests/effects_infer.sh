@@ -209,5 +209,71 @@ else
     echo "FAIL  C build: after removing the summaries: $actual"
 fi
 
+# The worst-case stack: `<program>.stack` beside a program linked from objects that have summaries, the frames from the
+# backend (the numbers `-fstack-usage` gives), summed along the deepest call, a recursion unbounded, a tail call cycle
+# not, a call of code with no source with the slack added.
+mkdir "$work/sk"
+cat >"$work/sk/a.c" <<'EOF2'
+#include <stdio.h>
+int g(int *);
+static int h(int x) { int a[100]; for (int i = 0; i < 100; i++) a[i] = x + i; return g(a); }
+int f(int x) { return h(x) + 1; }
+int rec(int n) { return n ? rec(n - 1) + 1 : 0; }
+int even(int n);
+int odd(int n) { if (n == 0) return 0; [[clang::musttail]] return even(n - 1); }
+int even(int n) { if (n == 0) return 1; [[clang::musttail]] return odd(n - 1); }
+int main(void) { printf("%d\n", f(1) + even(4)); return rec(3); }
+EOF2
+echo 'int g(int *p) { return p[3]; }' >"$work/sk/b.c"
+(
+    cd "$work/sk" || exit 1
+    smith cc -c a.c -o a.o && smith cc -c b.c -o b.o && smith cc -fstack-usage -c a.c -o ref_a.o && smith cc -fstack-usage -c b.c -o ref_b.o &&
+        smith cc a.o b.o -o p
+) >"$work/sk/log" 2>&1
+frame() { awk -F'\t' -v n="$2" '{ split($1, p, ":"); if (p[length(p)] == n) print $2 }' "$work/sk/$1.su"; }
+want=$(($(frame ref_a f) + $(frame ref_a h) + $(frame ref_b g)))
+row() { awk -F'\t' -v n="$1" '$1 == n { print $2 " " $3 " " $4 }' "$work/sk/p.stack"; }
+total=$((total + 1))
+if [ "$(row f)" = "$want $want -" ]; then
+    echo "ok    stack: f -> h -> g is the sum of the three frames the backend gave ($want)"
+else
+    failures=$((failures + 1))
+    echo "FAIL  stack: f is '$(row f)', wanted $want ($(cat "$work/sk/log"))"
+fi
+total=$((total + 1))
+case $(row rec) in
+unbounded*) echo "ok    stack: recursion is unbounded" ;;
+*) failures=$((failures + 1)); echo "FAIL  stack: rec is '$(row rec)'" ;;
+esac
+total=$((total + 1))
+case $(row even) in
+unbounded* | "") failures=$((failures + 1)); echo "FAIL  stack: a cycle of tail calls is '$(row even)'" ;;
+*) echo "ok    stack: a cycle of musttail calls is bounded" ;;
+esac
+total=$((total + 1))
+if [ "$(row main)" = "unbounded $(($(frame ref_a main) + $(frame ref_a f) + $(frame ref_a h) + $(frame ref_b g))) printf" ]; then
+    echo "ok    stack: main names printf as a call of code with no source"
+else
+    failures=$((failures + 1))
+    echo "FAIL  stack: main is '$(row main)'"
+fi
+total=$((total + 1))
+sed -i.bak 's/^int rec.*$//; s/return rec(3)/return 0/' "$work/sk/a.c" && rm "$work/sk/a.c.bak"
+if (cd "$work/sk" && smith cc -c a.c -o a.o && SMITH_STACK_SLACK=1000 smith cc a.o b.o -o p) >"$work/sk/log" 2>&1 &&
+    [ "$(row main | cut -d' ' -f1)" = "$(($(row main | cut -d' ' -f2) + 1000))" ]; then
+    echo "ok    stack: SMITH_STACK_SLACK sets the bytes added for the call of printf"
+else
+    failures=$((failures + 1))
+    echo "FAIL  stack: slack: '$(row main)' $(cat "$work/sk/log")"
+fi
+rm -f "$work/sk/p.stack"
+total=$((total + 1))
+if (cd "$work/sk" && smith cc a.c b.c -o p2) >"$work/sk/log" 2>&1 && [ ! -e "$work/sk/p2.stack" ] && [ ! -e "$work/sk/p2.su" ]; then
+    echo "ok    stack: one command that compiles and links writes no .stack"
+else
+    failures=$((failures + 1))
+    echo "FAIL  stack: compile and link in one command: $(cat "$work/sk/log")"
+fi
+
 echo "$((total - failures)) of $total passed"
 [ "$failures" -eq 0 ]
