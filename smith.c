@@ -1139,6 +1139,15 @@ static constexpr unsigned char smith_format_header[] = {
 static constexpr unsigned char smith_format_source[] = {
 #embed "lib/smith/format.smith"
 };
+// The headers of smith::option and smith::result (lib/smith/option.smith, result.smith): the lowering reads the shapes
+// of `option` and `result`, which are in scope in every module, from their `// smith-eshape:` lines
+// (runtime/lang_enum.c).
+static constexpr unsigned char smith_option_header[] = {
+#embed "include/smith/option.h"
+};
+static constexpr unsigned char smith_result_header[] = {
+#embed "include/smith/result.h"
+};
 static constexpr unsigned char smith_math_header[] = {
 #embed "include/smith/math.h"
 };

@@ -4,16 +4,16 @@ import <stdio.h>;
 import first;
 import second;
 
-type option(type T) {
+type maybe(type T) {
     return enum {
         T some;
         none;
     };
 }
 
-// `option(usize)` from `first`, from `second` and the importer's own is one type: a value of one is a value of the
+// `maybe(usize)` from `first`, from `second` and the importer's own is one type: a value of one is a value of the
 // others.
-static usize or_zero(option(usize) o) {
+static usize or_zero(maybe(usize) o) {
     if (o == .some) return o.some;
     return 0;
 }
@@ -21,9 +21,9 @@ static usize or_zero(option(usize) o) {
 i32 main(void) {
     u8 raw[5] = {1, 2, 3, 4, 5};
     u8 bytes[:] = raw;
-    option(usize) a = first::head(7);
-    option(usize) b = second::last(1);
-    option(usize) c = second::position(bytes, 4);
+    maybe(usize) a = first::head(7);
+    maybe(usize) b = second::last(1);
+    maybe(usize) c = second::position(bytes, 4);
     c::printf("%zu %zu %zu %zu\n", or_zero(a), or_zero(b), or_zero(c), or_zero(first::head(0)));
     return 0;
 }

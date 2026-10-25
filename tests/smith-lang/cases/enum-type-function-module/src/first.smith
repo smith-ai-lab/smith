@@ -1,16 +1,16 @@
 module first;
 
-// `option(usize)` written in a module and exported: its struct is in the module's header, guarded, so that the other
+// `maybe(usize)` written in a module and exported: its struct is in the module's header, guarded, so that the other
 // module that writes it, and the importer that writes it too, share one type.
 
-type option(type T) {
+type maybe(type T) {
     return enum {
         T some;
         none;
     };
 }
 
-export option(usize) head(usize v) {
+export maybe(usize) head(usize v) {
     if (v == 0) return .none;
     return {.some = v};
 }

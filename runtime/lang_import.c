@@ -246,12 +246,14 @@ static bool smith_lang_import_reflects(const char *text, uint32_t length) {
 // A module whose exports use tuples says so in its header (`// smith-tuples`): this file indexes the tuples it gets, so
 // the host offers it every token.
 static void smith_lang_eshape_import(const char *text, uint32_t length, const char *bind, size_t bind_length);
+static void smith_lang_eshape_builtins(SmithLang *lang);
 
 static void smith_lang_import_tuples(SmithLang *lang, const SmithHost *host, const char *text, uint32_t length,
                                      const char *bind, size_t bind_length) {
     if (text == nullptr) return;
     if (memmem(text, length, "// smith-eshape: ", 17) != nullptr)
         smith_lang_eshape_import(text, length, bind, bind_length);
+    if (memmem(text, length, "// smith-enums", 14) != nullptr) smith_lang_eshape_builtins(lang);
     if (!lang->field_import && smith_lang_import_reflects(text, length)) { // a generic that keeps a field (#100)
         lang->field_import = true;
         if (host->watch_mode != nullptr) host->watch_mode(host->context, SmithWatch_All);

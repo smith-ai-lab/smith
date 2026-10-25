@@ -671,6 +671,76 @@ i32 main() {
     jump();
     return 0;
 }
+==> enum-builtin-option-result/src/finder.smith <==
+module finder;
+
+export option(usize) find(const char *text, char wanted) {
+    for (usize i = 0; text[i] != 0; i++)
+        if (text[i] == wanted) return {.some = i};
+    return .none;
+}
+==> enum-builtin-option-result/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import finder;
+import parser;
+
+// `option` and `result` are in scope in every module, with no import; every module's `option(usize)` is one type.
+
+typedef option(usize) Index;
+typedef result(f64, i32) Quotient;
+
+// A generic may write them with its own types.
+option(T) first(constexpr type T, T *xs, usize n) {
+    if (n == 0) return .none;
+    return {.some = xs[0]};
+}
+
+static usize or_else(Index at, usize otherwise) {
+    if (at == .some) return at.some;
+    return otherwise;
+}
+
+i32 main(void) {
+    usize xs[2] = {7, 8};
+    Index a = finder::find("key=value", '=');
+    Index b = parser::position("a,b", ',');
+    Index c = first(usize, xs, 2);
+    Quotient good = parser::divide(6, 3);
+    Quotient bad = parser::divide(1, 0);
+    c::printf("%zu %zu %zu\n", or_else(a, 99), or_else(b, 99), or_else(c, 99));
+    switch (good) {
+    case .ok:
+        c::printf("ok %g\n", good.ok);
+        break;
+    case .error:
+        c::printf("error %d\n", good.error);
+        break;
+    }
+    switch (bad) {
+    case .ok:
+        c::printf("ok\n");
+        break;
+    case .error:
+        c::printf("error %d\n", bad.error);
+        break;
+    }
+    return 0;
+}
+==> enum-builtin-option-result/src/parser.smith <==
+module parser;
+
+export option(usize) position(const char *text, char wanted) {
+    for (usize i = 0; text[i] != 0; i++)
+        if (text[i] == wanted) return {.some = i};
+    return .none;
+}
+
+export result(f64, i32) divide(f64 a, f64 b) {
+    if (b == 0) return {.error = 7};
+    return {.ok = a / b};
+}
 ==> enum-c-rule/src/main.smith <==
 // No `module` line: plain C enums mean what they mean in C. A `;` in the braces is what makes an enum one with
 // payloads.
@@ -982,8 +1052,8 @@ import <stdio.h>;
 import opt;
 import other;
 
-typedef opt::option(usize) Maybe;
-typedef opt::option(f64) MaybeF;
+typedef opt::maybe(usize) Maybe;
+typedef opt::maybe(f64) MaybeF;
 
 static usize or_else(Maybe m, usize otherwise) {
     if (m == .some) return m.some;
@@ -995,7 +1065,7 @@ static f64 or_zero(MaybeF m) {
     return 0;
 }
 
-opt::option(i32) twice(i32 x) {
+opt::maybe(i32) twice(i32 x) {
     return {.some = x * 2};
 }
 
@@ -1013,21 +1083,21 @@ i32 main(void) {
 ==> enum-type-function-export/src/opt.smith <==
 module opt;
 
-export type option(type T) {
+export type maybe(type T) {
     return enum {
         T some;
         none;
     };
 }
 
-typedef option(usize) Index;
+typedef maybe(usize) Index;
 
-export option(T) first(constexpr type T, T *xs, usize n) {
+export maybe(T) first(constexpr type T, T *xs, usize n) {
     if (n == 0) return .none;
     return {.some = xs[0]};
 }
 
-export option(usize) find(const char *text, char wanted) {
+export maybe(usize) find(const char *text, char wanted) {
     for (usize i = 0; text[i] != 0; i++)
         if (text[i] == wanted) return {.some = i};
     return .none;
@@ -1037,8 +1107,8 @@ module other;
 
 import opt;
 
-// A second importer of the exported type function: its `opt::option(usize)` is the struct the others have.
-export opt::option(usize) pick(usize v) {
+// A second importer of the exported type function: its `opt::maybe(usize)` is the struct the others have.
+export opt::maybe(usize) pick(usize v) {
     return {.some = v};
 }
 ==> enum-type-function-generic/src/main.smith <==
@@ -1046,29 +1116,29 @@ module main;
 
 import <stdio.h>;
 
-type option(type T) {
+type maybe(type T) {
     return enum {
         T some;
         none;
     };
 }
 
-typedef option(usize) Maybe;
-typedef option(f64) MaybeF;
+typedef maybe(usize) Maybe;
+typedef maybe(f64) MaybeF;
 
-// A type function used with a generic's own parameters: each instance writes the struct a written `option(usize)` is.
-option(T) first(constexpr type T, T *xs, usize n) {
+// A type function used with a generic's own parameters: each instance writes the struct a written `maybe(usize)` is.
+maybe(T) first(constexpr type T, T *xs, usize n) {
     if (n == 0) return .none;
     return {.some = xs[0]};
 }
 
-option(typeof(x)) wrap(auto x) {
-    option(typeof(x)) out = {.some = x};
+maybe(typeof(x)) wrap(auto x) {
+    maybe(typeof(x)) out = {.some = x};
     return out;
 }
 
-option(T) pass(constexpr type T, option(T) o) {
-    option(T) copy = o;
+maybe(T) pass(constexpr type T, maybe(T) o) {
+    maybe(T) copy = o;
     return copy;
 }
 
@@ -1094,17 +1164,17 @@ i32 main(void) {
 ==> enum-type-function-module/src/first.smith <==
 module first;
 
-// `option(usize)` written in a module and exported: its struct is in the module's header, guarded, so that the other
+// `maybe(usize)` written in a module and exported: its struct is in the module's header, guarded, so that the other
 // module that writes it, and the importer that writes it too, share one type.
 
-type option(type T) {
+type maybe(type T) {
     return enum {
         T some;
         none;
     };
 }
 
-export option(usize) head(usize v) {
+export maybe(usize) head(usize v) {
     if (v == 0) return .none;
     return {.some = v};
 }
@@ -1115,16 +1185,16 @@ import <stdio.h>;
 import first;
 import second;
 
-type option(type T) {
+type maybe(type T) {
     return enum {
         T some;
         none;
     };
 }
 
-// `option(usize)` from `first`, from `second` and the importer's own is one type: a value of one is a value of the
+// `maybe(usize)` from `first`, from `second` and the importer's own is one type: a value of one is a value of the
 // others.
-static usize or_zero(option(usize) o) {
+static usize or_zero(maybe(usize) o) {
     if (o == .some) return o.some;
     return 0;
 }
@@ -1132,31 +1202,31 @@ static usize or_zero(option(usize) o) {
 i32 main(void) {
     u8 raw[5] = {1, 2, 3, 4, 5};
     u8 bytes[:] = raw;
-    option(usize) a = first::head(7);
-    option(usize) b = second::last(1);
-    option(usize) c = second::position(bytes, 4);
+    maybe(usize) a = first::head(7);
+    maybe(usize) b = second::last(1);
+    maybe(usize) c = second::position(bytes, 4);
     c::printf("%zu %zu %zu %zu\n", or_zero(a), or_zero(b), or_zero(c), or_zero(first::head(0)));
     return 0;
 }
 ==> enum-type-function-module/src/second.smith <==
 module second;
 
-type option(type T) {
+type maybe(type T) {
     return enum {
         T some;
         none;
     };
 }
 
-// A generic whose result is `option(usize)`: the instance is written in the importer, against the struct the header
+// A generic whose outcome is `maybe(usize)`: the instance is written in the importer, against the struct the header
 // defines.
-export option(usize) position(auto xs, auto v) {
+export maybe(usize) position(auto xs, auto v) {
     for (usize i = 0; i < countof(xs); i++)
         if (xs[i] == v) return {.some = i};
     return .none;
 }
 
-export option(usize) last(usize v) {
+export maybe(usize) last(usize v) {
     if (v < 2) return .none;
     return {.some = v - 1};
 }
@@ -1165,65 +1235,65 @@ module main;
 
 import <stdio.h>;
 
-// A type function that returns an enum (issue #198): `option(usize)` is one struct for every use, defined at the first
+// A type function that returns an enum (issue #198): `maybe(usize)` is one struct for every use, defined at the first
 // declaration that names it.
 
 typedef struct {
     f32 radius;
 } Circle;
 
-type option(type T) {
+type maybe(type T) {
     return enum {
         T some;
         none;
     };
 }
 
-type result(type T, type E) {
+type outcome(type T, type E) {
     return enum {
         T ok;
         E error;
     };
 }
 
-static option(usize) find(const char *text, char wanted) {
+static maybe(usize) find(const char *text, char wanted) {
     for (usize i = 0; text[i] != 0; i++)
         if (text[i] == wanted) return {.some = i};
     return .none;
 }
 
-static option(usize) again(usize v) {
-    option(usize) x = {.some = v};
+static maybe(usize) again(usize v) {
+    maybe(usize) x = {.some = v};
     return x;
 }
 
-static result(Circle, i32) make(bool good) {
+static outcome(Circle, i32) make(bool good) {
     if (good) return {.ok = {.radius = 2}};
     return {.error = 7};
 }
 
-typedef option(Circle *) MaybeCircle;
+typedef maybe(Circle *) MaybeCircle;
 
 static f32 radius_of(MaybeCircle c) {
     if (c == .some) return c.some->radius;
     return -1;
 }
 
-static usize unwrap(option(usize) o, usize otherwise) {
+static usize unwrap(maybe(usize) o, usize otherwise) {
     if (o == .some) return o.some;
     return otherwise;
 }
 
 i32 main(void) {
-    option(usize) at = find("key=value", '=');
-    option(usize) missing = find("none", '=');
-    result(Circle, i32) good = make(true);
-    result(Circle, i32) bad = make(false);
+    maybe(usize) at = find("key=value", '=');
+    maybe(usize) missing = find("none", '=');
+    outcome(Circle, i32) good = make(true);
+    outcome(Circle, i32) bad = make(false);
     c::printf("%zu %zu\n", unwrap(at, 99), unwrap(missing, 99));
     c::printf("%zu\n", unwrap(again(5), 0));
     Circle unit = {.radius = 3};
-    MaybeCircle maybe = {.some = &unit};
-    c::printf("%.0f %.0f\n", (double)radius_of(maybe), (double)radius_of(.none));
+    MaybeCircle held = {.some = &unit};
+    c::printf("%.0f %.0f\n", (double)radius_of(held), (double)radius_of(.none));
     switch (good) {
     case .ok:
         c::printf("ok %.0f\n", (double)good.ok.radius);
@@ -1536,6 +1606,28 @@ i32 main() {
     i32 defer = 1;
     return defer - 1;
 }
+==> error-enum-builtin-redeclare/src/main.smith <==
+module main;
+
+// `option` and `result` are built in: a module cannot declare its own.
+
+type option(type T) {
+    return enum {
+        T some;
+        none;
+    };
+}
+
+type result(type T, type E) {
+    return enum {
+        T ok;
+        E error;
+    };
+}
+
+i32 main(void) {
+    return 0;
+}
 ==> error-enum-generic-dot/src/main.smith <==
 module main;
 
@@ -1607,35 +1699,35 @@ i32 main(void) {
 ==> error-enum-type-function-export/src/opt.smith <==
 module opt;
 
-type option(type T) {
+type maybe(type T) {
     return enum {
         T some;
         none;
     };
 }
 
-export option(T) first(constexpr type T, T *xs, usize n) {
+export maybe(T) first(constexpr type T, T *xs, usize n) {
     if (n == 0) return .none;
     return {.some = xs[0]};
 }
 ==> error-enum-type-function-generic/src/main.smith <==
 module main;
 
-type option(type T) {
+type maybe(type T) {
     return enum {
         T some;
         none;
     };
 }
 
-option(T) first(constexpr type T, T *xs, usize n) {
+maybe(T) first(constexpr type T, T *xs, usize n) {
     if (n == 0) return .none;
     return {.some = xs[0]};
 }
 
 i32 main(void) {
     usize xs[1] = {1};
-    // the struct of `option(usize)` is named nowhere at file scope before this call
+    // the struct of `maybe(usize)` is named nowhere at file scope before this call
     first(usize, xs, 1);
     return 0;
 }

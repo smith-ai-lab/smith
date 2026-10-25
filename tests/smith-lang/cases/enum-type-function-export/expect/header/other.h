@@ -14,12 +14,12 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#ifndef SMITH_ENUM_smith_enum_option_usize
-#define SMITH_ENUM_smith_enum_option_usize
-struct smith_enum_option_usize { enum smith_enum_option_usize_tag { smith_enum_option_usize_tag_some, smith_enum_option_usize_tag_none } tag; union { size_t some; }; } __attribute__((annotate("smith::enum")));
+#ifndef SMITH_ENUM_smith_enum_maybe_usize
+#define SMITH_ENUM_smith_enum_maybe_usize
+struct smith_enum_maybe_usize { enum smith_enum_maybe_usize_tag { smith_enum_maybe_usize_tag_some, smith_enum_maybe_usize_tag_none } tag; union { size_t some; }; } __attribute__((annotate("smith::enum")));
 #endif
 
-struct smith_enum_option_usize other_pick(size_t v) __asm__("_other::pick");
+struct smith_enum_maybe_usize other_pick(size_t v) __asm__("_other::pick");
 #ifdef __cplusplus
 }
 #endif

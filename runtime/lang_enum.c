@@ -597,6 +597,7 @@ typedef struct {
     size_t token_count;
     char module[64]; // the import's name that an importer writes before it (`opt::option(...)`); empty: this file's own
     bool exported;   // `export type option(...)`: the header carries the shape
+    bool builtin;    // `option` and `result`: in scope in every module, from the library's own headers
 } SmithLangEnumShape;
 
 typedef struct {
@@ -616,6 +617,8 @@ static bool smith_lang_eshape_start;     // the next token begins a statement or
 
 // The tables are static like the lowering's, and a module's interface read in the middle of a file
 // (smith_lang_keep_aside) would end with its own in them: they are set aside and put back with the lowering's.
+static bool smith_lang_eshape_builtins_done; // `option` and `result` were put in scope for this file
+static bool smith_lang_saved_builtins_done;
 static SmithLangEnumShape smith_lang_saved_eshapes[smith_lang_eshape_max];
 static size_t smith_lang_saved_eshape_count;
 static char smith_lang_saved_eshape_pool[sizeof smith_lang_eshape_pool];
@@ -635,6 +638,7 @@ static void smith_lang_enum_aside(bool save) {
         memcpy(smith_lang_saved_edefined, smith_lang_edefined, sizeof smith_lang_edefined);
         memcpy(smith_lang_saved_enum_switches, smith_lang_enum_switches, sizeof smith_lang_enum_switches);
         smith_lang_saved_eshape_count = smith_lang_eshape_count;
+        smith_lang_saved_builtins_done = smith_lang_eshape_builtins_done;
         smith_lang_saved_eshape_pool_used = smith_lang_eshape_pool_used;
         smith_lang_saved_edefined_count = smith_lang_edefined_count;
         smith_lang_saved_eshape_depth = smith_lang_eshape_depth;
@@ -647,6 +651,7 @@ static void smith_lang_enum_aside(bool save) {
         memcpy(smith_lang_edefined, smith_lang_saved_edefined, sizeof smith_lang_edefined);
         memcpy(smith_lang_enum_switches, smith_lang_saved_enum_switches, sizeof smith_lang_enum_switches);
         smith_lang_eshape_count = smith_lang_saved_eshape_count;
+        smith_lang_eshape_builtins_done = smith_lang_saved_builtins_done;
         smith_lang_eshape_pool_used = smith_lang_saved_eshape_pool_used;
         smith_lang_edefined_count = smith_lang_saved_edefined_count;
         smith_lang_eshape_depth = smith_lang_saved_eshape_depth;
@@ -657,6 +662,7 @@ static void smith_lang_enum_aside(bool save) {
 }
 
 static void smith_lang_enum_shapes_reset(void) {
+    smith_lang_eshape_builtins_done = false;
     smith_lang_eshape_count = 0;
     smith_lang_eshape_pool_used = 0;
     smith_lang_edefined_count = 0;
@@ -746,6 +752,20 @@ static void smith_lang_enum_generic_dot(SmithLang *lang, const SmithHost *host, 
 
 // At `type` where a declaration begins: `type f(type T, ...) { return enum { ... }; }` is recorded and dropped. False
 // for any other function (the type values read it), true when this one was consumed (or reported).
+// A module that declares `option` or `result` (the library's own two are the exceptions): an error naming the built-in.
+static bool smith_lang_eshape_builtin_clash(SmithLang *lang, const SmithHost *host, const SmithToken *name) {
+    bool library = strcmp(lang->module, "smith::option") == 0 || strcmp(lang->module, "smith::result") == 0;
+    if (library || !(smith_lang_equals(name->text, name->length, "option") ||
+                     smith_lang_equals(name->text, name->length, "result"))) {
+        return false;
+    }
+    smith_lang_error(lang, host, name->location,
+                     "`%.*s` is a built-in type function (smith::%.*s), in scope in every module: a module cannot "
+                     "declare its own; pick another name",
+                     (int)name->length, name->text, (int)name->length, name->text);
+    return true;
+}
+
 static bool smith_lang_eshape_declare(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     const SmithToken *name = smith_lang_eshape_at(lang, host, token, 1);
     if (name->kind != SmithTokenKind_Identifier || !smith_lang_punct(smith_lang_eshape_at(lang, host, token, 2), "(")) {
@@ -765,6 +785,11 @@ static bool smith_lang_eshape_declare(SmithLang *lang, const SmithHost *host, co
         !smith_lang_punct(smith_lang_eshape_at(lang, host, token, close + 2), "}") || count >= smith_lang_queue_max) {
         smith_lang_error(lang, host, name->location, "%s", smith_lang_eshape_gap);
         return false;
+    }
+    if (smith_lang_eshape_builtin_clash(lang, host, name)) {
+        smith_lang_eshape_start = true;
+        static SmithToken nothing[1]; // the function is dropped, so that nothing else is said of it
+        return smith_lang_tuple_replace(lang, count, nothing, 0);
     }
     SmithLangEnumShape *shape = &smith_lang_eshapes[smith_lang_eshape_count];
     memset(shape, 0, sizeof *shape);
@@ -1359,10 +1384,34 @@ static void smith_lang_eshape_import(const char *text, uint32_t length, const ch
     }
 }
 
+// `option` and `result` are in scope in every module, with no import: their shapes are the ones the library modules
+// `smith::option` and `smith::result` (lib/smith/option.smith, result.smith) export, read from their headers.
+static void smith_lang_eshape_builtins(SmithLang *lang) {
+    if (smith_lang_eshape_builtins_done || !lang->is_module) return;
+    smith_lang_eshape_builtins_done = true;
+    size_t before = smith_lang_eshape_count;
+    smith_lang_eshape_import((const char *)smith_option_header, sizeof smith_option_header, "", 0);
+    smith_lang_eshape_import((const char *)smith_result_header, sizeof smith_result_header, "", 0);
+    for (size_t i = before; i < smith_lang_eshape_count; i++) {
+        smith_lang_eshapes[i].builtin = true;
+        smith_lang_eshapes[i].exported = false; // the library's header is not this module's to write
+    }
+}
+
 // Whether the token names a type function that returns an enum.
 static bool smith_lang_eshape_named(const SmithToken *name) {
     return smith_lang_eshape_count > 0 && name->kind == SmithTokenKind_Identifier &&
            smith_lang_eshape_find(name) != nullptr;
+}
+
+// Whether the token before a name is a type, so that the name is a declarator (`bool option(...)`, `T *option`): a
+// shape is written where a type is, after a keyword (`typedef`, `static`, `return`), `export`, `(`, `,` or nothing.
+static bool smith_lang_eshape_declares(const SmithToken *before) {
+    if (before == nullptr) return false;
+    if (smith_lang_punct(before, "*")) return true;
+    return before->kind == SmithTokenKind_Identifier && !smith_lang_ident(before, "export") &&
+           (smith_lang_word(before->text, before->length) == SmithLangWord_Other ||
+            smith_lang_word(before->text, before->length) == SmithLangWord_TypeKeyword);
 }
 
 // A use of a shape at `at`: `name (` of this file's own, or `module :: name (` of an import's exported one (not a
@@ -1375,9 +1424,15 @@ static const SmithLangEnumShape *smith_lang_eshape_use(SmithLang *lang, const Sm
         return nullptr;
     }
     const SmithLangEnumShape *shape = smith_lang_eshape_find(name);
+    if (shape != nullptr && smith_lang_eshape_declares(before)) return nullptr; // `bool option(`: a function's name
     if (shape != nullptr && shape->module[0] == 0 &&
         smith_lang_punct(smith_lang_eshape_at(lang, host, first, at + 1), "(")) {
         *open = at + 1;
+        if (shape->builtin) { // the file uses a type function of the language: its header says it has enums
+            lang->tuples_seen = true;
+            lang->slices_seen = true;
+            lang->enums_seen = true;
+        }
         return shape;
     }
     if (name->kind != SmithTokenKind_Identifier || smith_lang_eshape_count == 0 ||
@@ -1448,10 +1503,45 @@ static bool smith_lang_eshape_define_ahead(SmithLang *lang, const SmithHost *hos
     return smith_lang_tuple_replace(lang, 0, made, used + 1);
 }
 
+// The use of a shape at `token`: `option ( usize )` is written `struct smith_enum_option_usize`.
+static bool smith_lang_eshape_rewrite(SmithLang *lang, const SmithHost *host, const SmithToken *token,
+                                      const SmithLangEnumShape *shape, size_t open) {
+    SmithLangEnumCall call;
+    char tag[smith_lang_tuple_name_max];
+    SmithToken made[2];
+    if (!smith_lang_eshape_call(lang, host, token, open, shape, &call, true) ||
+        !smith_lang_eshape_tag(lang, host, shape, &call, tag, sizeof tag, true)) {
+        size_t close = smith_lang_eshape_close(lang, host, token, open, "(", ")");
+        if (close == 0) return false;
+        made[0] = smith_lang_tuple_made(SmithTokenKind_Identifier, "int", 3, token, token->space_before); // so that the
+        return smith_lang_tuple_replace(lang, close, made, 1); // declaration still reads, and says no more
+    }
+    if (!smith_lang_eshape_defined(host, tag)) {
+        char written[smith_lang_tuple_name_max];
+        size_t used = (size_t)snprintf(written, sizeof written, "%s(", shape->name);
+        for (size_t i = 0; i < call.count && used + 48 < sizeof written; i++)
+            used += (size_t)snprintf(written + used, sizeof written - used, "%s%.*s",
+                                     i > 0 && !smith_lang_punct(&call.tokens[i], ",") ? " " : "",
+                                     (int)call.tokens[i].length, call.tokens[i].text);
+        snprintf(written + used, sizeof written - used, ")");
+        smith_lang_error(lang, host, token->location,
+                         "`%s` is first named inside a function (or where no declaration begins), and the struct it "
+                         "stands for cannot be defined there yet (known gap): name it first at file scope, in a "
+                         "declaration, for example `typedef %s Name;`",
+                         written, written);
+    }
+    made[0] = smith_lang_tuple_made(SmithTokenKind_Identifier, "struct", 6, token, token->space_before);
+    made[1] = smith_lang_tuple_made(SmithTokenKind_Identifier, smith_lang_tuple_keep(tag, strlen(tag)), strlen(tag),
+                                    token, true);
+    return smith_lang_tuple_replace(lang, call.close, made, 2);
+}
+
 // A token of a file that has type functions returning enums, before any other reading of it: the declaration of one,
 // the definitions a declaration needs and a use (`option(usize)` is `struct smith_enum_option_usize`). True when the
 // token was consumed.
 static bool smith_lang_enum_function(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+    if ((host->maybe_shape || host->expr_type == nullptr) && !smith_lang_eshape_builtins_done)
+        smith_lang_eshape_builtins(lang); // the raw passes have no text to ask
     bool start = smith_lang_eshape_start;
     smith_lang_eshape_start_now = start;
     smith_lang_eshape_start = start && token->kind == SmithTokenKind_Identifier && smith_lang_ident(token, "export");
@@ -1481,9 +1571,11 @@ static bool smith_lang_enum_function(SmithLang *lang, const SmithHost *host, con
     if (!recording && start && smith_lang_eshape_define_ahead(lang, host, token)) return true;
     size_t open = 0;
     const SmithLangEnumShape *shape =
-        lang->prev_member ? nullptr : smith_lang_eshape_use(lang, host, token, 0, nullptr, &open);
+        lang->prev_member || lang->typeish ? nullptr : smith_lang_eshape_use(lang, host, token, 0, nullptr, &open);
+    // (`lang->typeish`: the tokens before end a type, so the name is a declarator: `bool option(...)`)
     if (shape != nullptr && smith_lang_eshape_dependent(lang, host, token, open)) {
-        if ((lang->decl.exported || lang->pending_export) && !shape->exported && shape->module[0] == 0) {
+        if ((lang->decl.exported || lang->pending_export) && !shape->exported && !shape->builtin &&
+            shape->module[0] == 0) {
             smith_lang_error(lang, host, token->location,
                              "an exported generic cannot name `%s(...)` of a generic's own types unless the type "
                              "function is exported too: write `export type %s(...)`; an importer has no shape for it",
@@ -1492,34 +1584,7 @@ static bool smith_lang_enum_function(SmithLang *lang, const SmithHost *host, con
         return false;
     }
     if (shape == nullptr) return false;
-    SmithLangEnumCall call;
-    char tag[smith_lang_tuple_name_max];
-    SmithToken made[2];
-    if (!smith_lang_eshape_call(lang, host, token, open, shape, &call, true) ||
-        !smith_lang_eshape_tag(lang, host, shape, &call, tag, sizeof tag, true)) {
-        size_t close = smith_lang_eshape_close(lang, host, token, open, "(", ")");
-        if (close == 0) return false;
-        made[0] = smith_lang_tuple_made(SmithTokenKind_Identifier, "int", 3, token, token->space_before); // so that the
-        return smith_lang_tuple_replace(lang, close, made, 1); // declaration still reads, and says no more
-    }
-    if (!smith_lang_eshape_defined(host, tag)) {
-        char written[smith_lang_tuple_name_max];
-        size_t used = (size_t)snprintf(written, sizeof written, "%s(", shape->name);
-        for (size_t i = 0; i < call.count && used + 48 < sizeof written; i++)
-            used += (size_t)snprintf(written + used, sizeof written - used, "%s%.*s",
-                                     i > 0 && !smith_lang_punct(&call.tokens[i], ",") ? " " : "",
-                                     (int)call.tokens[i].length, call.tokens[i].text);
-        snprintf(written + used, sizeof written - used, ")");
-        smith_lang_error(lang, host, token->location,
-                         "`%s` is first named inside a function (or where no declaration begins), and the struct it "
-                         "stands for cannot be defined there yet (known gap): name it first at file scope, in a "
-                         "declaration, for example `typedef %s Name;`",
-                         written, written);
-    }
-    made[0] = smith_lang_tuple_made(SmithTokenKind_Identifier, "struct", 6, token, token->space_before);
-    made[1] = smith_lang_tuple_made(SmithTokenKind_Identifier, smith_lang_tuple_keep(tag, strlen(tag)), strlen(tag),
-                                    token, true);
-    return smith_lang_tuple_replace(lang, call.close, made, 2);
+    return smith_lang_eshape_rewrite(lang, host, token, shape, open);
 }
 
 // `_Pragma ( "text" )` as tokens, after `used` (the text is a string literal's spelling, quotes included).

@@ -4,8 +4,8 @@ import <stdio.h>;
 import opt;
 import other;
 
-typedef opt::option(usize) Maybe;
-typedef opt::option(f64) MaybeF;
+typedef opt::maybe(usize) Maybe;
+typedef opt::maybe(f64) MaybeF;
 
 static usize or_else(Maybe m, usize otherwise) {
     if (m == .some) return m.some;
@@ -17,7 +17,7 @@ static f64 or_zero(MaybeF m) {
     return 0;
 }
 
-opt::option(i32) twice(i32 x) {
+opt::maybe(i32) twice(i32 x) {
     return {.some = x * 2};
 }
 

@@ -7,8 +7,8 @@
 // smith-slices
 // smith-enums
 // smith-bodies: find
-// smith-generic: opt first opt_first src/opt.smith - 4 5 16 17 | iw@12:8=option p@12:14=( iP1@12:15=T p@12:16=) iw@12:18=opt_first p@12:23=( i@12:24=constexpr iw@12:34=type iP1w@12:39=T p@12:40=, iP1w@12:42=T pw@12:44=* i@12:45=xs p@12:47=, ixw@12:49=__SIZE_TYPE__ iw@12:55=n p@12:56=) pw@12:58={ iw@13:5=if pw@13:8=( i@13:9=n pw@13:11=== nw@13:14=0 p@13:15=) iw@13:17=return pw@13:24=. i@13:25=none p@13:29=; iw@14:5=return pw@14:12={ p@14:13=. i@14:14=some pw@14:19== iw@14:21=xs p@14:23=[ n@14:24=0 p@14:25=] p@14:26=} p@14:27=; p@15:1=}
-// smith-eshape: option(T) { T some ; none ; }
+// smith-generic: opt first opt_first src/opt.smith - 4 5 16 17 | iw@12:8=maybe p@12:13=( iP1@12:14=T p@12:15=) iw@12:17=opt_first p@12:22=( i@12:23=constexpr iw@12:33=type iP1w@12:38=T p@12:39=, iP1w@12:41=T pw@12:43=* i@12:44=xs p@12:46=, ixw@12:48=__SIZE_TYPE__ iw@12:54=n p@12:55=) pw@12:57={ iw@13:5=if pw@13:8=( i@13:9=n pw@13:11=== nw@13:14=0 p@13:15=) iw@13:17=return pw@13:24=. i@13:25=none p@13:29=; iw@14:5=return pw@14:12={ p@14:13=. i@14:14=some pw@14:19== iw@14:21=xs p@14:23=[ n@14:24=0 p@14:25=] p@14:26=} p@14:27=; p@15:1=}
+// smith-eshape: maybe(T) { T some ; none ; }
 // clang-format on
 #pragma once
 #include <stddef.h>
@@ -16,12 +16,12 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#ifndef SMITH_ENUM_smith_enum_option_usize
-#define SMITH_ENUM_smith_enum_option_usize
-struct smith_enum_option_usize { enum smith_enum_option_usize_tag { smith_enum_option_usize_tag_some, smith_enum_option_usize_tag_none } tag; union { size_t some; }; } __attribute__((annotate("smith::enum")));
+#ifndef SMITH_ENUM_smith_enum_maybe_usize
+#define SMITH_ENUM_smith_enum_maybe_usize
+struct smith_enum_maybe_usize { enum smith_enum_maybe_usize_tag { smith_enum_maybe_usize_tag_some, smith_enum_maybe_usize_tag_none } tag; union { size_t some; }; } __attribute__((annotate("smith::enum")));
 #endif
 
-struct smith_enum_option_usize opt_find(const char *text, char wanted) __asm__("_opt::find");
+struct smith_enum_maybe_usize opt_find(const char *text, char wanted) __asm__("_opt::find");
 #ifdef __cplusplus
 }
 #endif
