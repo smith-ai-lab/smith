@@ -1,6 +1,7 @@
 .agents/skills/bare/SKILL.md: no frontmatter
 .agents/skills/empty/SKILL.md: missing
+.agents/skills/long/SKILL.md: 61 lines; a skill stays under 60: split it or shorten it
 .agents/skills/nameless/SKILL.md: name None does not match its folder
 .agents/skills/quiet/SKILL.md: frontmatter lacks description
 .agents/skills/wrong/SKILL.md: name 'other' does not match its folder
-smith docs: 0 concepts, 5 problems
+smith docs: 0 concepts, 6 problems
