@@ -1037,6 +1037,21 @@ expect_line "effects: a.c shows the error through b.c, with the chain" "$log" \
 expect "effects: after b.c is saved without the print, a.c has no diagnostics again" 1 \
     "$(printf '%s\n' "$log" | grep -c '^diag a.c')"
 
+# Hover on a call into another file shows what the summaries say of the callee (the same solve that judged the file), with
+# only a.c open: it does not depend on b.c having been parsed first in the session.
+cat >"$fx/b.c" <<'EOF2'
+#include <stdio.h>
+#include "lib.h"
+int noisy(int x) {
+    printf("%d\n", x);
+    return x;
+}
+EOF2
+(cd "$fx" && smith cc -std=gnu2y -c b.c -o b.o) >/dev/null 2>&1
+log=$(client_in "$fx" open a.c -- hover a.c 2 41)
+expect_line "effects: hover on a call into b.c shows the callee's effects, with b.c closed" "$log" \
+    "hover a.c:2:41: function noisy |  | → int |  | Parameters: |  | - int x |  | effects: console |  | int noisy(int x)"
+
 fi
 echo
 echo "$total language server checks, $failures failed"
