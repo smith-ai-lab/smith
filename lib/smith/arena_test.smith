@@ -233,3 +233,121 @@ export void test_arena_push_slice_with_a_size_for_each_dimension() {
                                  f32;
     test::check_condition(types_match);
 }
+
+// A growing arena: the chunks come from a backing, the pushes never fail and the chunks outlive the scopes and resets.
+constexpr usize chunk_first = 16 << 10;
+
+// Pushes `count` blocks of 1000 bytes, each written with `fill`, and checks they arrived zeroed.
+void fill_blocks(arena::Arena *a, usize count, u8 fill) {
+    for (usize i = 0; i < count; i++) {
+        u8 *block = arena::push_array_raw(a, 1, 1000, 1);
+        test::check_condition(block != nullptr);
+        for (usize j = 0; j < 1000; j += 97)
+            test::check_equal(block[j], 0); // zeroed, though a chunk reused after a reset held `fill`
+        __builtin_memset(block, fill, 1000);
+    }
+}
+
+export void test_arena_growing_takes_chunks_and_keeps_them_across_a_reset() {
+    arena::Arena a = arena::growing(chunk_first, nullptr);
+    defer arena::release(&a);
+    usize first = a.capacity;
+    test::check_condition(first >= chunk_first);
+    test::check_equal(a.grown, 0);
+    fill_blocks(&a, 40, 0xAB); // 40 KB: more than the first chunk
+    test::check_condition(a.grown > 0);
+    usize grown = a.grown;
+    arena::reset(&a);
+    test::check_equal(a.capacity, first); // back in the first chunk
+    test::check_equal(a.used, 0);
+    fill_blocks(&a, 40, 0xCD);         // the same work again
+    test::check_equal(a.grown, grown); // took no chunk: the grown ones were kept
+}
+
+export void test_arena_growing_scopes_end_across_chunks() {
+    arena::Arena a = arena::growing(chunk_first, nullptr);
+    defer arena::release(&a);
+    fill_blocks(&a, 3, 1);
+    usize used = a.used;
+    u8 *memory = a.memory;
+    arena::Scope scope = arena::scope_begin(&a);
+    fill_blocks(&a, 60, 2); // two or more chunks inside the scope
+    test::check_condition(a.memory != memory);
+    usize grown = a.grown;
+    arena::scope_end(scope);
+    test::check_equal(a.memory, memory); // the cursor is back where it began, in the chunk it began in
+    test::check_equal(a.used, used);
+    test::check_equal(a.grown, grown); // and the chunks are kept
+    arena::Scope again = arena::scope_begin(&a);
+    fill_blocks(&a, 60, 3);
+    arena::scope_end(again);
+    test::check_equal(a.grown, grown); // the second time through takes none
+}
+
+export void test_arena_growing_serves_a_push_bigger_than_a_chunk() {
+    arena::Arena a = arena::growing(chunk_first, nullptr);
+    defer arena::release(&a);
+    u8 big[:] = arena::push_slice(&a, u8, 5 * chunk_first);
+    test::check_equal(countof(big), 5 * chunk_first);
+    test::check_equal(big[5 * chunk_first - 1], 0);
+    big[5 * chunk_first - 1] = 1;          // all of it is writable
+    test::check_equal(a.memory[0] | 1, 1); // a push after it lands in a chunk of its own, not past the end
+    u8 *small = arena::push(&a, u8);
+    test::check_equal(*small, 0);
+}
+
+typedef struct {
+    alignas(arena::align_max) u8 bytes[128 << 10];
+} Parent;
+
+export void test_arena_growing_from_a_backing_allocator() {
+    static Parent memory;
+    arena::Arena parent = arena::fixed(memory.bytes, sizeof memory.bytes);
+    arena::ArenaAllocator backing = arena::allocator(&parent);
+    arena::Arena a = arena::growing(chunk_first, &backing.base);
+    test::check_condition(parent.used >= chunk_first); // the first chunk is the backing's
+    usize before = parent.used;
+    fill_blocks(&a, 40, 7);
+    test::check_condition(parent.used > before);        // and so is the next
+    test::check_condition(arena::fits(&a, 1 << 30, 8)); // a growing arena always asks the backing
+    arena::release(&a);
+    test::check_equal(a.grown, 0);
+}
+
+export void test_arena_try_push_is_null_where_a_push_would_fail() {
+    static Memory memory;
+    arena::Arena fixed = arena::fixed(memory.bytes, sizeof memory.bytes);
+    u8 *fits = arena::try_push_raw(&fixed, 100, 8);
+    test::check_condition(fits != nullptr);
+    usize used = fixed.used;
+    test::check_condition(arena::try_push_raw(&fixed, 2 * capacity, 8) == nullptr); // a fixed arena never grows
+    test::check_condition(arena::try_push_array_raw(&fixed, 8, math::max(usize), 8) == nullptr); // an overflow too
+    test::check_equal(fixed.used, used); // a refusal pushes nothing
+    test::check_condition(!arena::fits(&fixed, 2 * capacity, 8));
+
+    static Parent parent_memory;
+    arena::Arena parent = arena::fixed(parent_memory.bytes, 40 << 10);
+    arena::ArenaAllocator backing = arena::allocator(&parent);
+    arena::Arena growing = arena::growing(chunk_first, &backing.base);
+    test::check_condition(arena::try_push_raw(&growing, 8 * chunk_first, 8) == nullptr); // the backing is out of memory
+    test::check_condition(arena::try_push_raw(&growing, 100, 8) != nullptr);             // and the arena still works
+}
+
+export void test_arena_allocator_serves_a_growing_arena() {
+    arena::Arena a = arena::growing(chunk_first, nullptr);
+    defer arena::release(&a);
+    arena::ArenaAllocator allocator = arena::allocator(&a);
+    typeof(allocator.base) *base = &allocator.base;
+    void *blocks[16] = {};
+    for (usize i = 0; i < 16; i++) {
+        blocks[i] = base->alloc(base, 3000, 16); // 48 KB: three chunks
+        test::check_condition(blocks[i] != nullptr);
+    }
+    test::check_condition(a.grown > 0);
+    for (usize i = 0; i < 16; i++)
+        test::check_condition(base->owns(base, blocks[i])); // a block of an earlier chunk is still the arena's
+    i32 outside = 0;
+    test::check_condition(!base->owns(base, &outside));
+    for (usize i = 0; i < 16; i++)
+        base->free(base, blocks[i]); // only the last of the current chunk goes back; none touches another chunk's
+}
