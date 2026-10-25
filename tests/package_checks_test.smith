@@ -1,0 +1,54 @@
+// Package downloads on a scripted network, from tests/package.sh (issue #292): redirects, a cross-scheme redirect
+// refused, 404, a truncated body, a broken connection, a wrong hash, a TLS failure and a killed fetch's leftovers.
+// tests/package.c holds the checks; the cache and tar are real, the network is io's scripted one. It is compiled with
+// smith's cc against the repository ($SMITH_REPO) and run on a tar.gz made here, once at -O0 under ASan and UBSan, once
+// at -O2.
+module package_checks_test;
+
+import smith::format;
+import smith::io;
+import smith::test;
+import scratch;
+
+// runtime/package.c sees the libraries through their headers; the modules are linked.
+constexpr char compile_prefix[] =
+    "smith cc -std=gnu23 -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wmissing-prototypes "
+    "-Wstrict-prototypes -Wvla -Werror -Wno-unused-function -I \"$SMITH_REPO/include\" ";
+constexpr char libraries[] =
+    " \"$SMITH_REPO/lib/smith/arena.smith\" \"$SMITH_REPO/lib/smith/contract.smith\" "
+    "\"$SMITH_REPO/lib/smith/inflate.smith\" \"$SMITH_REPO/lib/smith/io.smith\" \"$SMITH_REPO/lib/smith/random.smith\"";
+
+static scratch::Project package_project(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Run made = scratch::sh(
+        &p, "mkdir -p src/pkg-1.0/bin scratch bin && printf 'hello package\\n' >src/pkg-1.0/hello.txt && "
+            "printf '#!/bin/sh\\necho tool ran\\n' >src/pkg-1.0/bin/tool && chmod +x src/pkg-1.0/bin/tool && "
+            "(cd src && tar -czf ../pkg.tar.gz pkg-1.0)");
+    scratch::expect_status("the package is made", 0, &made);
+    return p;
+}
+
+// Compiles tests/package.c with the flags, and runs it on the archive in a scratch folder of its own.
+static scratch::Run compile_and_run(const scratch::Project *p, const char *flags, const char *program) {
+    scratch::Run compiled = scratch::sh(p, format::push(&p->io->arena, compile_prefix, flags,
+                                                        " \"$SMITH_REPO/tests/package.c\"", libraries, " -o ", program)
+                                               .data);
+    scratch::expect_status("tests/package.c compiles", 0, &compiled);
+    return scratch::sh(
+        p, format::push(&p->io->arena, "cd scratch && ../", program, " \"$PWD/../pkg.tar.gz\" \"$PWD\"").data);
+}
+
+export void test_package_checks_pass_at_o0_under_asan_and_ubsan(io::Io *io) {
+    scratch::Project p = package_project(io);
+    scratch::Run run = compile_and_run(&p, "-O0 -g -fsanitize=address,undefined", "bin/asan");
+    scratch::expect_text("checks: pass at -O0 under ASan and UBSan", "0 package: all checks passed",
+                         format::push(&io->arena, run.status == 0 ? "0 " : "1 ", run.out).data);
+    scratch::expect_text("checks: ... and nothing was printed to stderr", "", run.err);
+}
+
+export void test_package_checks_pass_at_o2(io::Io *io) {
+    scratch::Project p = package_project(io);
+    scratch::Run run = compile_and_run(&p, "-O2", "bin/fast");
+    scratch::expect_text("checks: pass at -O2", "0 package: all checks passed",
+                         format::push(&io->arena, run.status == 0 ? "0 " : "1 ", run.out).data);
+}
