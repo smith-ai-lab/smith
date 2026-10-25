@@ -2038,6 +2038,13 @@ static size_t smith_program_needs(SmithBuild *b, const SmithObject **linked, siz
     return used;
 }
 
+static bool smith_flags_have(const char *const *flags, const char *needle) {
+    for (size_t i = 0; flags != nullptr && flags[i] != nullptr; i++) { // bounded by the flags
+        if (strstr(flags[i], needle) != nullptr) return true;
+    }
+    return false;
+}
+
 #ifdef __APPLE__
 // The handlers runtime (issue #239, lib/handlers.c): a dylib, built beside each program's folder, that every program
 // links
@@ -2047,13 +2054,6 @@ static size_t smith_program_needs(SmithBuild *b, const SmithObject **linked, siz
 constexpr size_t smith_handlers_folders_max = 64;
 static const char *smith_handlers_made[smith_handlers_folders_max];
 static size_t smith_handlers_made_count;
-
-static bool smith_flags_have(const char *const *flags, const char *needle) {
-    for (size_t i = 0; flags != nullptr && flags[i] != nullptr; i++) { // bounded by the flags
-        if (strstr(flags[i], needle) != nullptr) return true;
-    }
-    return false;
-}
 
 // AddressSanitizer checks at start-up that dlsym("puts") lands in its own runtime ("interceptors not installed"), which
 // the runtime's puts tuple makes false; the check is `verify_interceptors`, off by default here through a weak
@@ -2121,15 +2121,97 @@ static const char *const *smith_handlers_link(SmithBuild *b, const SmithProgram 
         smith_list(b, smith_text("-L%s", folder), "-lsmith_handlers", nullptr),
         address != nullptr ? smith_list(b, nullptr) : smith_list(b, "-Wl,-rpath,@executable_path", nullptr), nullptr);
 }
+#else
+// On Linux (issue #305) the handlers runtime is an object linked into each program (an ELF program's own definitions
+// of malloc, write... win over a shared library's; lib/handlers.c), compiled once for each folder of programs with the
+// program's compiler. AddressSanitizer exits with status 1 after a report where macOS's aborts (abort_on_error is
+// Darwin's default), so the test runner, a failure's report and the debugger, which read a report as a stop by
+// SIGABRT, would see an exit: a weak __asan_default_options in an object of each sanitized program gives Linux the
+// same (the program's own, strong, wins).
+constexpr size_t smith_handlers_folders_max = 64;
+static const char *smith_handlers_made[smith_handlers_folders_max];
+static bool smith_handlers_made_asan[smith_handlers_folders_max];
+static size_t smith_handlers_made_count;
+
+static void smith_handlers_object(SmithBuild *b, const SmithProgram *program, const char *object) {
+    const char *source = smith_library(b, "handlers");
+    const char *const flags[] = {"-std=gnu23", "-O2", "-fPIC", "-I", ".smith/include", "-c", nullptr};
+    const char *const tail[] = {source, "-o", object, nullptr};
+    SmithStep step = {
+        .command = smith_cat(b, smith_one(smith_copy_string(program->linker)), smith_copy_list(flags), tail, nullptr),
+        .inputs = smith_one(source),
+        .implicit_inputs = smith_cat(b, smith_one(smith_compiler_file(program->linker)),
+                                     smith_one(".smith/include/smith/handlers.h"), nullptr),
+        .outputs = smith_one(object),
+        .description = smith_text("compile %s", object),
+    };
+    smith_step(b, &step);
+}
+
+static void smith_asan_abort_options(SmithBuild *b, const SmithProgram *program, const char *object) {
+    const char *script =
+        "printf '%s\\n' 'const char *__asan_default_options(void);' "
+        "'__attribute__((weak)) const char *__asan_default_options(void) { return \"abort_on_error=1\"; }' "
+        "| \"$0\" -x c - -c -o \"$1\"";
+    SmithStep step = {
+        .command = smith_list(b, "sh", "-c", script, smith_copy_string(program->linker), object, nullptr),
+        .implicit_inputs = smith_one(smith_compiler_file(program->linker)),
+        .outputs = smith_one(object),
+        .description = smith_text("compile %s", object),
+    };
+    smith_step(b, &step);
+}
+
+// The objects a program of `folder` links: the handlers, and the options of AddressSanitizer when it is sanitized.
+// Each is made once for the folder.
+static const char *const *smith_handlers_link(SmithBuild *b, const SmithProgram *program, const char *folder) {
+    bool sanitized = smith_flags_have(program->flags, "-fsanitize=") && smith_flags_have(program->flags, "address");
+    const char *handlers = smith_text("%s/smith_handlers.o", folder);
+    const char *options = smith_text("%s/smith_asan_options.o", folder);
+    size_t at = 0;
+    while (at < smith_handlers_made_count && strcmp(smith_handlers_made[at], folder) != 0) // bounded by the count
+        at += 1;
+    if (at == smith_handlers_made_count) {
+        if (smith_handlers_made_count >= smith_handlers_folders_max)
+            smith_too_many("program folders", smith_handlers_folders_max);
+        smith_handlers_made[smith_handlers_made_count++] = smith_copy_string(folder);
+        smith_handlers_object(b, program, handlers);
+    }
+    if (sanitized && !smith_handlers_made_asan[at]) {
+        smith_handlers_made_asan[at] = true;
+        smith_asan_abort_options(b, program, options);
+    }
+    return sanitized ? smith_list(b, handlers, options, nullptr) : smith_one(handlers);
+}
 #endif
 
 // smith's own link is the one program that is not linked with the handlers runtime: its clones (clang, ld) run from the
 // programs folder, which has no dylib beside them. Named by the file (`.../smith`), until SmithProgram has a field for
-// it (the lag rule: build.c is built by the previous release, whose header has none). Only macOS links the handlers
-// runtime yet (issue #305), so Linux does not call it.
-[[maybe_unused]] static bool smith_is_smith_itself(const char *output) {
+// it (the lag rule: build.c is built by the previous release, whose header has none). On Linux, where the runtime is
+// an object, smith leaves it out the same way.
+static bool smith_is_smith_itself(const char *output) {
     const char *slash = strrchr(output, '/');
     return strcmp(slash != nullptr ? slash + 1 : output, "smith") == 0;
+}
+
+// The arguments that link the handlers runtime into `program` (none for smith itself), and in *files the files the
+// link waits for: on macOS the dylib of its folder (and ASan's options), on Linux the objects themselves.
+static const char *const *smith_program_handlers(SmithBuild *b, const SmithProgram *program,
+                                                 const char *const **files) {
+    *files = smith_list(b, nullptr);
+    if (smith_is_smith_itself(program->output)) return smith_list(b, nullptr);
+    const char *slash = strrchr(program->output, '/');
+    const char *folder = slash != nullptr ? smith_text("%.*s", (int)(slash - program->output), program->output) : ".";
+    const char *const *handlers = smith_handlers_link(b, program, folder);
+#ifdef __APPLE__
+    *files = smith_flags_have(program->flags, "address") && smith_flags_have(program->flags, "-fsanitize=")
+                 ? smith_list(b, smith_text("%s/libsmith_handlers.dylib", folder),
+                              smith_text("%s/smith_asan_options.o", folder), nullptr)
+                 : smith_one(smith_text("%s/libsmith_handlers.dylib", folder));
+#else
+    *files = handlers;
+#endif
+    return handlers;
 }
 
 void smith_program(SmithBuild *b, SmithProgram *program) {
@@ -2169,19 +2251,8 @@ void smith_program(SmithBuild *b, SmithProgram *program) {
         if (summary != nullptr) summaries[summarized++] = summary;
     }
     summaries[summarized] = nullptr;
-    const char *const *handlers = smith_list(b, nullptr);
-    const char *const *handlers_files = smith_list(b, nullptr);
-#ifdef __APPLE__
-    const char *slash = strrchr(copy.output, '/');
-    const char *folder = slash != nullptr ? smith_text("%.*s", (int)(slash - copy.output), copy.output) : ".";
-    if (!smith_is_smith_itself(copy.output)) {
-        handlers = smith_handlers_link(b, &copy, folder);
-        handlers_files = smith_flags_have(copy.flags, "address") && smith_flags_have(copy.flags, "-fsanitize=")
-                             ? smith_list(b, smith_text("%s/libsmith_handlers.dylib", folder),
-                                          smith_text("%s/smith_asan_options.o", folder), nullptr)
-                             : smith_one(smith_text("%s/libsmith_handlers.dylib", folder));
-    }
-#endif
+    const char *const *handlers_files = nullptr;
+    const char *const *handlers = smith_program_handlers(b, &copy, &handlers_files);
     copy.step = (SmithStep){
         .command = smith_cat(b, smith_one(copy.linker), copy.flags, (const char *const *)outputs, copy.libraries,
                              handlers, tail, nullptr),

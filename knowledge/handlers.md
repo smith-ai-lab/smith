@@ -1,7 +1,7 @@
 ---
 type: architecture
 title: The handlers runtime
-description: One dylib every smith program links whose __interpose tuples send malloc and its family to the allocator of the calling thread; no handler is libc's; built in steps (issue #239).
+description: One runtime every smith program links (a dylib with __interpose tuples on macOS, an object defining the functions on Linux) that sends malloc and its family to the allocator of the calling thread; no handler is libc's; built in steps (issue #239).
 tags: [handlers, interposition, allocator]
 ---
 # The handlers runtime
@@ -37,6 +37,17 @@ prebuilt library's and one loaded with `dlopen`. Owner (2026-10-24): "always int
 - **smith itself is the exception** (its link is named `.../smith`, `smith_is_smith_itself`): its clones, `bin/clang` and
   `bin/ld`, run from the programs folder, which has no dylib beside them. A field of `SmithProgram` replaces the name once a
   release's header has it (the lag rule).
+- **Linux (issue #305)** has no interpose tuples, but an ELF program's own definitions win over a shared library's: the
+  runtime is an object, `<folder>/smith_handlers.o` (one step per folder, never sanitized), linked into every program
+  but smith, and `lib/handlers.c`'s Linux half defines `malloc`, `write`, `fwrite`... themselves. Each calls the next
+  definition: ASan's `___interceptor_<name>` (its `malloc` and the rest are weak aliases of those) when the program is
+  sanitized, else glibc's, `__libc_malloc` and its family for memory and `dlsym(RTLD_NEXT)` for the rest, so nothing in
+  the file calls a function it defines. Streams are `fopencookie`'s; `getchar`, `putchar`, `vprintf` and `getline`,
+  which glibc's `<stdio.h>` makes extern inline when optimized, are defined under those names by asm labels, and
+  `getdelim`/`__getdelim` (an optimized `getline`) are the stream's too. `malloc_usable_size` stands for `malloc_size`;
+  there are no zones. A sanitized program also links a weak `__asan_default_options` of `abort_on_error=1`, so a report
+  stops with SIGABRT as on macOS. Known gap: a program built with `_FORTIFY_SOURCE` calls `__printf_chk` and its kind,
+  which the runtime does not define.
 - **An optimizer knows malloc**: it may drop or fold a malloc/free pair, so a handler is seen only through calls it cannot
   see through (`tests/handlers/project.c` keeps its pointers in `volatile`).
 
