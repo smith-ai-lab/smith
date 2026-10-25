@@ -37,7 +37,7 @@ export void test_the_corpus_formats_to_its_expected_file(io::Io *io) {
             "LC_ALL=C sort); "
             "do echo \"==> ${file#tests/smith-lang/cases/} <==\"; smith fmt --style=\"file:$SMITH_REPO/.clang-format\" "
             "--assume-filename=\"$TMPDIR/case.smith\" < \"$file\" 2>&1; done");
-    test::golden("tests/smith-fmt/corpus.expected", slice_of(run.out));
+    test::golden(io, "tests/smith-fmt/corpus.expected", slice_of(run.out));
 }
 
 // --- tuple types and slice declarators stay as written (#96, #82) ----------------------------------------------------
@@ -47,7 +47,7 @@ export void test_tuple_types_and_slice_declarators_stay_as_written(io::Io *io) {
     scratch::Run run =
         scratch::sh(&p, "cd \"$SMITH_REPO\" && smith fmt --style=\"file:$SMITH_REPO/.clang-format\" "
                         "--assume-filename=\"$TMPDIR/case.smith\" < tests/smith-fmt/tuples-slices.smith 2>&1");
-    test::golden("tests/smith-fmt/tuples-slices.smith", slice_of(run.out));
+    test::golden(io, "tests/smith-fmt/tuples-slices.smith", slice_of(run.out));
 }
 
 // --- the same as C -------------------------------------------------------------------------------------------------
@@ -197,7 +197,7 @@ export void test_a_payload_enum_and_the_dot_rule_are_kept_as_written(io::Io *io)
     scratch::Project p = scratch::project(io, "p", nullptr);
     scratch::Run run = scratch::sh(&p, "cd \"$SMITH_REPO\" && smith fmt --assume-filename=\"$SMITH_REPO/x.smith\" "
                                        "< tests/smith-fmt/payload_enum.smith 2>&1");
-    test::golden("tests/smith-fmt/payload_enum.smith", slice_of(run.out));
+    test::golden(io, "tests/smith-fmt/payload_enum.smith", slice_of(run.out));
 }
 
 // --- `smith fmt` with no arguments
