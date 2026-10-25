@@ -1,0 +1,13 @@
+module main;
+
+import count;
+
+typedef struct {
+    i32 a;
+    f32 b;
+} Pair;
+
+i32 main() {
+    count::show(Pair);
+    return (i32)count::count_of(Pair) - 2;
+}
