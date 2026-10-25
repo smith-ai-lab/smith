@@ -265,7 +265,14 @@ import <stdio.h>;
 // A call of an ordinary C function where C requires a constant builds under -Wpedantic -Werror: folding it is no GNU
 // extension in a .smith file (issue #166).
 static i32 fib(i32 n) {
-    return n < 2 ? n : fib(n - 1) + fib(n - 2);
+    i32 a = 0;
+    i32 b = 1;
+    for (i32 i = 0; i < n; i++) { // a loop: a module has no recursion
+        i32 next = a + b;
+        a = b;
+        b = next;
+    }
+    return a;
 }
 
 static_assert(fib(10) == 55);
@@ -440,7 +447,14 @@ static i32 sum(Pair p) {
 }
 
 export i32 fib(i32 n) {
-    return n < 2 ? twice(n) / 2 : fib(n - 1) + fib(n - 2);
+    i32 a = 0;
+    i32 b = 1;
+    for (i32 i = 0; i < n; i++) { // a loop: a module has no recursion
+        i32 next = twice(a + b) / 2;
+        a = b;
+        b = next;
+    }
+    return twice(a) / 2;
 }
 
 export i32 combine(i32 a, i32 b) {

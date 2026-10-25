@@ -1,7 +1,14 @@
 #include <stdio.h>
 
 static __INT32_TYPE__ main_fib(__INT32_TYPE__ n) {
-return n < 2 ? n : main_fib(n - 1) + main_fib(n - 2);
+__INT32_TYPE__ a = 0;
+__INT32_TYPE__ b = 1;
+for (__INT32_TYPE__ i = 0; i < n; i++) {
+__INT32_TYPE__ next = a + b;
+a = b;
+b = next;
+}
+return a;
 }
 static_assert(main_fib(10) == 55);
 enum { main_Fib7 = main_fib(7) };
