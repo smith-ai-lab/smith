@@ -1,7 +1,7 @@
-// Tests of smith::format, in smith's own test library (the units runner links every tests/*.smith). The C library's
+// Tests of smith::format, in smith's own test library (the units runner links every *_test.smith). The C library's
 // snprintf in the C locale is the reference for integers, hexadecimal and fixed places (this program never sets a
 // locale); the shortest float text is checked by reading it back with smith::text and against known strings.
-module format_test;
+module smith::format_test;
 
 import smith::arena;
 import smith::format;

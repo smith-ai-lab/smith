@@ -1,7 +1,7 @@
 // The checks of <smith/io.h> that need the real world, run by tests/io.sh in a scratch folder (they write one folder up
 // too). The fake io's checks (console, clock, programs, children, files in memory, the scripted network) are in
-// tests/io_test.smith, on smith's test runner. With no argument, the checks below; with an argument, one program that
-// reads the world and prints what it saw:
+// lib/smith/io_test.smith, on smith's test runner. With no argument, the checks below; with an argument, one program
+// that reads the world and prints what it saw:
 //   lines   reads stdin to the end with smith_console_read_line and prints "N lines, last=..."
 //   seed    prints the seed and the first draw of the key
 //   memory  prints how much of the arena's reservation counts as resident before and after it is touched
@@ -197,7 +197,7 @@ static void test_real_wait_several(SmithIo *io) {
         (void)smith_io_run(io, smith_io_forever);
     assert(waits[2].done && waits[2].signal == SIGKILL && waits[2].error.code == 0);
     // A poll with nothing pending does not wait; the poll that waits for a pending timer is checked on the fake clock
-    // (tests/io_test.smith), where no machine load can make the timer fire before the poll.
+    // (lib/smith/io_test.smith), where no machine load can make the timer fire before the poll.
     assert(smith_io_run(io, 0) == 0);
     SmithOp idle = {};
     smith_clock_timeout_async(&io->clock, &idle, 10 * test_millisecond);

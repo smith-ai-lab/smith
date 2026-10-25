@@ -2,7 +2,7 @@
 // (a property test: 100 keys, a failure prints the seed that replays it). What reaches the module's private functions
 // (Philox's known answers, the zigzag and the index order, the inverse CDF, the digest across build configurations, the
 // refusals) stays in tests/random.c, run by tests/random.sh.
-module random_test;
+module smith::random_test;
 
 import smith::arena;
 import smith::random;

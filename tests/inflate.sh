@@ -1,6 +1,6 @@
 #!/bin/sh
 # Tests of <smith/inflate.h> (lib/smith/inflate.smith), with real clang. Usage: sh tests/inflate.sh path/to/smith
-# The checks are tests/inflate_test.smith. Under AddressSanitizer and UBSan they run in the `test-units` runner of
+# The checks are lib/smith/inflate_test.smith. Under AddressSanitizer and UBSan they run in the `test-units` runner of
 # build.c (issue #31; $UNITS names it); here they are built as a scratch project's test file with smith_tests (smith's
 # own test library), with the fixtures of tests/fixtures/inflate, in two builds: -O2, and -O2 -DNDEBUG. The heavy runs
 # are by hand on the units runner: `--full --seeds 1000 --test test_prop_inflate_round_trips_stored_blocks` and the same
@@ -39,8 +39,8 @@ expect() { # name, expected, actual
 mkdir "$work/bin" && ln -s "$smith" "$work/bin/smith" && ln -s "$smith" "$work/bin/smith-cc" && ln -s "$smith" "$work/bin/smith-c++"
 PATH="$work/bin:$PATH"
 
-mkdir -p "$work/project/tests" && cd "$work/project" || exit 1
-cp "$here/tests/inflate_test.smith" tests/inflate_test.smith
+mkdir -p "$work/project/tests" "$work/project/smith" && cd "$work/project" || exit 1
+cp "$here/lib/smith/inflate_test.smith" smith/inflate_test.smith
 cp -R "$here/tests/fixtures" tests/fixtures
 cat >build.c <<'C'
 #include <smith/build.h>
@@ -63,7 +63,7 @@ void build(SmithBuild *b) {
         smith_object(b, &objects[i]);
     }
     SmithTests tests = {
-        .sources = smith_list(b, "tests/inflate_test.smith", nullptr),
+        .sources = smith_list(b, "smith/inflate_test.smith", nullptr),
         .objects = (const SmithObject *[]){&objects[0], &objects[1], &objects[2], nullptr},
         .flags = flags,
         .link_flags = smith_when(b, sanitize, smith_list(b, "-fsanitize=address,undefined", nullptr)),
@@ -73,7 +73,7 @@ void build(SmithBuild *b) {
 }
 C
 
-count=$(grep -c '^export void test_' "$here/tests/inflate_test.smith")
+count=$(grep -c '^export void test_' "$here/lib/smith/inflate_test.smith")
 for mode in fast ndebug; do
     capture smith build -DMODE=$mode
     expect "$mode: the tests build" 0 "$rc"

@@ -1,7 +1,8 @@
-// The units runner of smith's own tests (issue #31): every tests/*.smith linked into one runner, built once under
-// AddressSanitizer and UBSan. build.c of the repository builds this as a project of its own, with the smith under test,
-// so that the libraries it links and their headers come from that smith and not from the one that runs the repository's
-// build.c (an older smith would not know a library added since). `tests` there is a link to the repository's.
+// The units runner of smith's own tests (issue #31): every *_test.smith (beside the library it tests in lib/, or
+// integration tests in tests/) linked into one runner, built once under AddressSanitizer and UBSan. build.c of the
+// repository builds this as a project of its own, with the smith under test, so that the libraries it links and their
+// headers come from that smith and not from the one that runs the repository's build.c (an older smith would not know a
+// library added since). `tests` and `lib` there are links to the repository's.
 #include <smith/build.h>
 #include <stdlib.h>
 
@@ -32,7 +33,8 @@ void build(SmithBuild *b) {
     smith_object(b, &http);
     SmithTests tests = {
         .objects = (const SmithObject *[]){&http, nullptr},
-        .sources = smith_glob(b, smith_list(b, "tests/*.smith", nullptr)),
+        .sources = smith_glob(b, smith_list(b, "lib/smith/*_test.smith", "lib/*_test.smith", "tests/*_test.smith",
+                                            "tests/scratch.smith", nullptr)),
         .flags = flags,
         .link_flags = smith_list(b, "-fsanitize=address,undefined", nullptr),
     };

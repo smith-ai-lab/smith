@@ -1,7 +1,7 @@
 // Tests of smith::arena, in smith's own test library; build.c's `test-units` runner links them with the module. What
 // must stop or be caught by a sanitizer (a push past the capacity, a write just past a push, a stale read, the lazy
 // poison of a 64 GiB reservation) needs a process of its own in a build of its own, and stays in tests/arena.c.
-module arena_test;
+module smith::arena_test;
 
 import smith::arena;
 import smith::math;

@@ -1,6 +1,6 @@
 #!/bin/sh
 # Tests of <smith/text.h>, with real clang and ninja. Usage: sh tests/text.sh path/to/smith [exhaustive]
-# The checks are tests/text_test.smith. Under AddressSanitizer and UBSan they run in the `test-units` runner of build.c
+# The checks are lib/smith/text_test.smith. Under AddressSanitizer and UBSan they run in the `test-units` runner of build.c
 # (issue #31); here they are built as a scratch project's test file with smith_tests (smith's own test library), in two
 # builds: -O2, and -O2 -DNDEBUG. With "exhaustive" it instead parses every
 # finite float, 2^32 patterns on all cores, against strtof: a few minutes, so it is not part of `smith test`.
@@ -54,9 +54,9 @@ if [ "${2:-}" = exhaustive ]; then
     exit "$status"
 fi
 
-# The scratch project: smith's text library, and the runner built from tests/text_test.smith.
-mkdir -p "$work/project/tests" && cd "$work/project" || exit 1
-cp "$here/tests/text_test.smith" tests/text_test.smith
+# The scratch project: smith's text library, and the runner built from lib/smith/text_test.smith.
+mkdir -p "$work/project/smith" && cd "$work/project" || exit 1
+cp "$here/lib/smith/text_test.smith" smith/text_test.smith
 cat >build.c <<'C'
 #include <smith/build.h>
 
@@ -78,7 +78,7 @@ void build(SmithBuild *b) {
         smith_object(b, &objects[i]);
     }
     SmithTests tests = {
-        .sources = smith_list(b, "tests/text_test.smith", nullptr),
+        .sources = smith_list(b, "smith/text_test.smith", nullptr),
         .objects = (const SmithObject *[]){&objects[0], &objects[1], &objects[2], nullptr},
         .flags = flags,
         .link_flags = smith_when(b, sanitize, smith_list(b, "-fsanitize=address,undefined", nullptr)),
@@ -88,7 +88,7 @@ void build(SmithBuild *b) {
 }
 C
 
-count=$(grep -c '^export void test_' "$here/tests/text_test.smith")
+count=$(grep -c '^export void test_' "$here/lib/smith/text_test.smith")
 for mode in fast ndebug; do
     capture smith build -DMODE=$mode
     expect "$mode: the tests build" 0 "$rc"

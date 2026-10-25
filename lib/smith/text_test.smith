@@ -1,7 +1,8 @@
 // Tests of smith::text, in smith's own test library; tests/text.sh builds them in a scratch project as
-// tests/text_test.smith. strtof in the C locale is the reference for the f32 parser (this program never sets a locale),
-// and the halfway cases are also checked against what they must round to, so the reference is not the only witness.
-module text_test;
+// lib/smith/text_test.smith. strtof in the C locale is the reference for the f32 parser (this program never sets a
+// locale), and the halfway cases are also checked against what they must round to, so the reference is not the only
+// witness.
+module smith::text_test;
 
 import smith::math;
 import smith::random;

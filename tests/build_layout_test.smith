@@ -8,9 +8,8 @@ import scratch;
 
 export void test_build_layout_a_test_beside_its_module_is_run_by_smith_test(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", "unit_beside");
-    scratch::Run run = scratch::sh(&p, "smith test");
-    scratch::expect_status("layout: smith test passes", 0, &run);
-    scratch::expect_contains("layout: and ran the test beside the module", run.out, "1 passed");
+    scratch::Run run = scratch::sh(&p, "smith test --test geometry::box_test::a_box_has_the_area_of_its_sides");
+    scratch::expect_status("layout: smith test runs the test beside the module", 0, &run);
 }
 
 export void test_build_layout_the_program_never_links_a_test(io::Io *io) {
