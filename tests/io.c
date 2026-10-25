@@ -1,6 +1,6 @@
-// The checks of <smith/io.h> that need the real world, run by tests/io.sh in a scratch folder (they write one folder up
-// too). The fake io's checks (console, clock, programs, children, files in memory, the scripted network) are in
-// lib/smith/io_test.smith, on smith's test runner. With no argument, the checks below; with an argument, one program
+// The checks of <smith/io.h> that need the real world, run by tests/io_c_test.smith in a scratch folder (they write one
+// folder up too). The fake io's checks (console, clock, programs, children, files in memory, the scripted network) are
+// in lib/smith/io_test.smith, on smith's test runner. With no argument, the checks below; with an argument, one program
 // that reads the world and prints what it saw:
 //   lines   reads stdin to the end with smith_console_read_line and prints "N lines, last=..."
 //   seed    prints the seed and the first draw of the key

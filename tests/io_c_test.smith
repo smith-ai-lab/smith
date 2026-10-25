@@ -1,0 +1,213 @@
+// <smith/io.h> from C, from tests/io.sh (issue #292): the program tests/io.c compiled under AddressSanitizer and UBSan
+// and at -O2 and run in the modes it takes (all checks, the lazily committed reservation, SMITH_SEED, the console on
+// pipes and files), the module compiled under a new project's warnings, and a project that gets io with smith_library
+// (tests/build_fixtures/io_project). The behavior of the library is lib/smith/io_test.smith.
+module io_c_test;
+
+import smith::format;
+import smith::io;
+import smith::test;
+import scratch;
+import <string.h>;
+
+constexpr char warn[] = "-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wmissing-prototypes "
+                        "-Wstrict-prototypes -Wvla -Werror";
+constexpr char game[] = "-Wdouble-promotion -Wundef -Wpointer-arith -Wcast-qual -Wformat=2 "
+                        "-Wmissing-variable-declarations -Wcomma -Wunreachable-code";
+constexpr char sources[] = "\"$SMITH_REPO/tests/io.c\" \"$SMITH_REPO/lib/smith/io.smith\" "
+                           "\"$SMITH_REPO/lib/smith/arena.smith\" \"$SMITH_REPO/lib/smith/random.smith\" "
+                           "\"$SMITH_REPO/lib/smith/contract.smith\" \"$SMITH_REPO/lib/trace.c\"";
+
+// Compiles tests/io.c into `name` in the project: "asan" (-O0, sanitized) or "fast" (-O2).
+static void compile(const scratch::Project *p, const char *name) {
+    const char *extra = c::strcmp(name, "asan") == 0 ? "-O0 -g -fsanitize=address,undefined" : "-O2";
+    scratch::Run built = scratch::sh(p, format::push(&p->io->arena, "smith cc -std=gnu23 ", warn,
+                                                     " -I \"$SMITH_REPO/include\" ", extra, " ", sources, " -o ", name)
+                                            .data);
+    scratch::expect_status(format::push(&p->io->arena, "the ", name, " program builds").data, 0, &built);
+}
+
+static scratch::Project io_program(io::Io *io, const char *name) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    compile(&p, name);
+    return p;
+}
+
+static void expect_different(const char *name, const char *a, const char *b) {
+    if (scratch::same(a, b)) {
+        test::note("%s: expected different texts, both are: %s", name, a);
+    }
+    test::check_condition(!scratch::same(a, b));
+}
+
+export void test_io_c_checks_pass_at_o0_under_asan_and_ubsan(io::Io *io) {
+    scratch::Project p = io_program(io, "asan");
+    scratch::Run checked = scratch::sh(&p, "./asan");
+    scratch::expect_status("checks: pass at -O0 under ASan and UBSan", 0, &checked);
+    scratch::expect_text("checks: pass at -O0 under ASan and UBSan (the report)", "io: all checks passed", checked.out);
+    scratch::expect_text("checks: ... and nothing was printed to stderr", "", checked.err);
+}
+
+export void test_io_c_checks_pass_at_o2(io::Io *io) {
+    scratch::Project p = io_program(io, "fast");
+    scratch::Run checked = scratch::sh(&p, "./fast");
+    scratch::expect_status("checks: pass at -O2", 0, &checked);
+    scratch::expect_text("checks: pass at -O2 (the report)", "io: all checks passed", checked.out);
+    scratch::expect_text("checks: ... and nothing was printed to stderr", "", checked.err);
+}
+
+static void module_compiles(io::Io *io, const char *standard, const char *name, const char *flags) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Run built = scratch::sh(&p, format::push(&io->arena, "smith cc -std=", standard, " ", warn, " ", flags,
+                                                      " -I \"$SMITH_REPO/include\" -c "
+                                                      "\"$SMITH_REPO/lib/smith/io.smith\" -o io.o")
+                                             .data);
+    scratch::expect_status(name, 0, &built);
+}
+
+export void test_io_c_module_compiles_as_c23(io::Io *io) {
+    module_compiles(io, "gnu23", "library: the module compiles as -std=gnu23 with the new project's warnings", "");
+}
+
+export void test_io_c_module_compiles_as_c23_under_the_extra_warnings(io::Io *io) {
+    module_compiles(io, "gnu23", "library: ... and under the extra warnings game and learner add", game);
+}
+
+export void test_io_c_module_compiles_as_c2y(io::Io *io) {
+    module_compiles(io, "gnu2y", "library: the module compiles as -std=gnu2y with the new project's warnings", "");
+}
+
+export void test_io_c_module_compiles_as_c2y_under_the_extra_warnings(io::Io *io) {
+    module_compiles(io, "gnu2y", "library: ... and under the extra warnings game and learner add", game);
+}
+
+export void test_io_c_module_compiles_with_ndebug(io::Io *io) {
+    module_compiles(io, "gnu23", "library: the module compiles with NDEBUG and the same warnings", "-O2 -DNDEBUG");
+}
+
+export void test_io_c_memory_reserves_64_gib_and_commits_what_is_touched(io::Io *io) {
+    scratch::Project p = io_program(io, "fast");
+    scratch::Run memory = scratch::sh(&p, "./fast memory");
+    scratch::expect_status("memory: reserves 64 GiB", 0, &memory);
+    scratch::expect_contains("memory: ... which is address space only", memory.out, "reserved 65536 MiB");
+    scratch::expect_contains("memory: ... touched memory is resident", memory.out, "+256 MiB after touching 256 MiB");
+}
+
+export void test_io_c_memory_under_asan_poisons_lazily(io::Io *io) {
+    scratch::Project p = io_program(io, "asan");
+    scratch::Run memory = scratch::sh(&p, "./asan memory");
+    scratch::expect_status("memory: the same under AddressSanitizer, which poisons lazily", 0, &memory);
+    scratch::expect_contains("memory: ... and the reservation is the same 64 GiB", memory.out, "reserved 65536 MiB");
+}
+
+export void test_io_c_seed_the_same_seed_gives_the_same_key(io::Io *io) {
+    scratch::Project p = io_program(io, "fast");
+    scratch::Run first = scratch::sh(&p, "env SMITH_SEED=42 ./fast seed");
+    scratch::Run second = scratch::sh(&p, "env SMITH_SEED=42 ./fast seed");
+    scratch::expect_text("seed: the same SMITH_SEED gives the same key", first.out, second.out);
+    scratch::expect_contains("seed: ... and the seed is the one given", first.out, "42 ");
+}
+
+export void test_io_c_seed_another_seed_gives_another_key(io::Io *io) {
+    scratch::Project p = io_program(io, "fast");
+    scratch::Run first = scratch::sh(&p, "env SMITH_SEED=42 ./fast seed");
+    scratch::Run other = scratch::sh(&p, "env SMITH_SEED=43 ./fast seed");
+    expect_different("seed: another SMITH_SEED gives another key", first.out, other.out);
+}
+
+export void test_io_c_seed_without_it_each_run_has_its_own_key(io::Io *io) {
+    scratch::Project p = io_program(io, "fast");
+    scratch::Run first = scratch::sh(&p, "env -u SMITH_SEED ./fast seed");
+    scratch::Run second = scratch::sh(&p, "env -u SMITH_SEED ./fast seed");
+    expect_different("seed: without SMITH_SEED each run has its own key", first.out, second.out);
+}
+
+export void test_io_c_seed_that_is_no_number_stops_the_program(io::Io *io) {
+    scratch::Project p = io_program(io, "fast");
+    scratch::Run banana = scratch::sh(&p, "env SMITH_SEED=banana ./fast seed");
+    scratch::expect_status("seed: a SMITH_SEED that is no number stops the program", 134, &banana);
+    scratch::expect_contains("seed: ... saying so", banana.err, "SMITH_SEED is not a number");
+}
+
+// The output of `./fast lines` (or asan) fed by a shell pipeline or redirection.
+static void lines(io::Io *io, const char *name, const char *program, const char *command, const char *expected) {
+    scratch::Project p = io_program(io, program);
+    scratch::Run result = scratch::sh(&p, command);
+    scratch::expect_status(name, 0, &result);
+    scratch::expect_text(name, expected, result.out);
+}
+
+export void test_io_c_console_a_pipe_ending_without_a_newline(io::Io *io) {
+    lines(io, "console: a pipe ending without a newline", "fast", "printf 'a\\nb\\nlast' | ./fast lines",
+          "3 lines, last=last");
+}
+
+export void test_io_c_console_a_pipe_ending_with_a_newline(io::Io *io) {
+    lines(io, "console: a pipe ending with a newline", "fast", "printf 'a\\nb\\n' | ./fast lines", "2 lines, last=b");
+}
+
+export void test_io_c_console_an_empty_input_ends_at_once(io::Io *io) {
+    lines(io, "console: an empty input ends at once", "fast", "./fast lines </dev/null", "0 lines, last=");
+}
+
+export void test_io_c_console_a_line_longer_than_the_buffer(io::Io *io) {
+    scratch::Project p = io_program(io, "fast");
+    const char *line = scratch::capture(&p, "head -c 100000 /dev/zero | tr '\\0' x");
+    scratch::Run result = scratch::sh(&p, "head -c 100000 /dev/zero | tr '\\0' x | ./fast lines");
+    scratch::expect_status("console: a line longer than the buffer", 0, &result);
+    scratch::expect_text("console: a line longer than the buffer (the line)",
+                         format::push(&io->arena, "1 lines, last=", line).data, result.out);
+}
+
+// The same loop ends when stdin is a regular file, which kqueue never reports readable at its end, however it is fed.
+// The lines program stops itself with SIGALRM after 600 s of wall time, so a hang is a failure (status 142).
+export void test_io_c_console_a_regular_file_with_lines_ends(io::Io *io) {
+    lines(io, "console: a regular file with lines ends", "fast",
+          "printf 'a\\nb\\nlast' >lines.txt; ./fast lines <lines.txt", "3 lines, last=last");
+}
+
+export void test_io_c_console_a_regular_file_ends_under_asan_too(io::Io *io) {
+    lines(io, "console: ... under ASan too", "asan", "printf 'a\\nb\\nlast' >lines.txt; ./asan lines <lines.txt",
+          "3 lines, last=last");
+}
+
+export void test_io_c_console_an_empty_regular_file_ends(io::Io *io) {
+    lines(io, "console: an empty regular file ends", "fast", ": >empty.txt; ./fast lines <empty.txt", "0 lines, last=");
+}
+
+export void test_io_c_console_dev_null_ends(io::Io *io) {
+    lines(io, "console: /dev/null ends", "fast", "./fast lines </dev/null", "0 lines, last=");
+}
+
+export void test_io_c_console_a_pipe_ends(io::Io *io) {
+    lines(io, "console: a pipe ends", "fast", "printf 'a\\nb\\nlast' | ./fast lines", "3 lines, last=last");
+}
+
+export void test_io_c_console_a_pipe_closed_early_ends_with_the_lines_it_had(io::Io *io) {
+    lines(io, "console: a pipe closed early ends with the lines it had", "fast",
+          "(printf 'a\\nb\\n'; exit 0) | ./fast lines", "2 lines, last=b");
+}
+
+export void test_io_c_project_gets_io_with_smith_library(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "io_project");
+    scratch::Run built = scratch::build(&p, "");
+    scratch::expect_status("project: the build succeeds", 0, &built);
+    scratch::expect_text("project: the header is written", "yes",
+                         scratch::capture(&p, "[ -f .smith/include/smith/io.h ] && echo yes"));
+    scratch::expect_text("project: the source is written", "yes",
+                         scratch::capture(&p, "[ -f .smith/lib/smith/io.smith ] && echo yes"));
+    scratch::Run program = scratch::sh(&p, "./build/app");
+    scratch::expect_status("project: the program runs", 0, &program);
+    scratch::expect_text("project: the program runs (it prints)", "write 0, words 4, seed 1", program.out);
+}
+
+export void test_io_c_project_clangd_reports_no_errors_in_main(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "io_project");
+    scratch::Run built = scratch::build(&p, "");
+    scratch::expect_status("the build succeeds", 0, &built);
+    if (scratch::sh(&p, "smith lsp --version").status != 0) return;
+    // The sample prints with printf; this tests the build flags the editor gets, not smith-effects.
+    scratch::write(&p, ".clang-tidy", "Checks: \"-*\"\n");
+    scratch::expect_text("project: clangd reports no errors in main.c", "0",
+                         scratch::capture(&p, "smith lsp --check=main.c 2>&1 | grep -c 'E\\[' || true"));
+}
