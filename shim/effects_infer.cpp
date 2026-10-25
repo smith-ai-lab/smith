@@ -610,12 +610,26 @@ class Analysis {
         { // the diagnostic is emitted when the builder goes, before the note
             auto report = engine.Report(first->loc, bad);
             report << node.function->getName() << kind << describe(extra) << chain(node, bit);
-            // The fix: one more attribute on the function with the effects beyond its declared ones. A function's
-            // declared set is the union of its attributes' sets, so this also fits a function that has a ceiling or
-            // `[[smith::pure]]`.
-            SourceLocation start = node.function->getBeginLoc();
-            if (start.isValid() && !start.isMacroID() && !node.function->isImplicit()) {
-                report << FixItHint::CreateInsertion(start, "[[smith::effects(" + describe(extra) + ")]] ");
+            // The fix: the function gets the whole set it needs, declared and inferred. With no attribute one is
+            // written
+            // before it; with `[[smith::effects(...)]]`, `[[smith::pure]]` or an effect's own attribute that one is
+            // replaced (never a second one added).
+            std::string whole = describe(node.declared | node.inferred);
+            const SourceManager &sm = context.getSourceManager();
+            const AnnotateAttr *own = nullptr;
+            for (const auto *attribute : node.function->specific_attrs<AnnotateAttr>()) {
+                if (own == nullptr && attribute->getAnnotation().starts_with(prefix)) own = attribute;
+            }
+            if (own != nullptr) {
+                SourceRange range = own->getRange();
+                if (range.isValid() && !range.getBegin().isMacroID() && sm.isWrittenInMainFile(range.getBegin())) {
+                    report << FixItHint::CreateReplacement(CharSourceRange::getTokenRange(range),
+                                                           "smith::effects(" + whole + ")");
+                }
+            } else {
+                SourceLocation start = node.function->getBeginLoc();
+                if (start.isValid() && !start.isMacroID() && !node.function->isImplicit())
+                    report << FixItHint::CreateInsertion(start, "[[smith::effects(" + whole + ")]] ");
             }
         }
         if ((extra & (extra - 1)) != 0)
