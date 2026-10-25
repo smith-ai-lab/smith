@@ -1,0 +1,86 @@
+diff -ru a/clang/include/clang/Basic/ParsedAttrInfo.h b/clang/include/clang/Basic/ParsedAttrInfo.h
+--- a/clang/include/clang/Basic/ParsedAttrInfo.h	2026-10-24 15:12:51
++++ b/clang/include/clang/Basic/ParsedAttrInfo.h	2026-10-24 15:12:51
+@@ -64,6 +64,11 @@
+   /// True if this attribute is supported by #pragma clang attribute.
+   LLVM_PREFERRED_TYPE(bool)
+   unsigned IsSupportedByPragmaAttribute : 1;
++  /// smith: True if the arguments are identifiers or expressions in any order
++  /// (a plugin's `[[smith::effects(alloc, net)]]`): the parser reads an
++  /// identifier as one, as it does for the attributes of the tablegen lists.
++  LLVM_PREFERRED_TYPE(bool)
++  unsigned HasVariadicIdentifierArg : 1;
+   /// The syntaxes supported by this attribute and how they're spelled.
+   struct Spelling {
+     AttributeCommonInfo::Syntax Syntax;
+@@ -78,7 +83,8 @@
+                                AttributeCommonInfo::NoSemaHandlerAttribute)
+       : AttrKind(AttrKind), NumArgs(0), OptArgs(0), NumArgMembers(0),
+         HasCustomParsing(0), AcceptsExprPack(0), IsTargetSpecific(0), IsType(0),
+-        IsStmt(0), IsKnownToGCC(0), IsSupportedByPragmaAttribute(0) {}
++        IsStmt(0), IsKnownToGCC(0), IsSupportedByPragmaAttribute(0),
++        HasVariadicIdentifierArg(0) {}
+ 
+   constexpr ParsedAttrInfo(AttributeCommonInfo::Kind AttrKind, unsigned NumArgs,
+                            unsigned OptArgs, unsigned NumArgMembers,
+@@ -93,7 +99,8 @@
+         AcceptsExprPack(AcceptsExprPack), IsTargetSpecific(IsTargetSpecific),
+         IsType(IsType), IsStmt(IsStmt), IsKnownToGCC(IsKnownToGCC),
+         IsSupportedByPragmaAttribute(IsSupportedByPragmaAttribute),
+-        Spellings(Spellings), ArgNames(ArgNames) {}
++        HasVariadicIdentifierArg(0), Spellings(Spellings),
++        ArgNames(ArgNames) {}
+ 
+ public:
+   virtual ~ParsedAttrInfo() = default;
+diff -ru a/clang/lib/Basic/Attributes.cpp b/clang/lib/Basic/Attributes.cpp
+--- a/clang/lib/Basic/Attributes.cpp	2026-10-24 15:12:51
++++ b/clang/lib/Basic/Attributes.cpp	2026-10-24 15:12:51
+@@ -71,9 +71,19 @@
+ 
+   if (CheckPlugins) {
+     // Check if any plugin provides this attribute.
+-    for (auto &Ptr : getAttributePluginInstances())
++    // smith: a plugin's spelling is its full name, `smith::effects`, so a
++    // scoped attribute is asked by scope and name together: the parser reads
++    // the arguments of an attribute only when it knows the attribute here.
++    std::string Scoped;
++    if (!ScopeName.empty() && (Syntax == AttributeCommonInfo::AS_CXX11 ||
++                               Syntax == AttributeCommonInfo::AS_C23))
++      Scoped = (ScopeName + "::" + Name).str();
++    for (auto &Ptr : getAttributePluginInstances()) {
+       if (Ptr->hasSpelling(Syntax, Name))
+         return 1;
++      if (!Scoped.empty() && Ptr->hasSpelling(Syntax, Scoped))
++        return 1;
++    }
+   }
+ 
+   return 0;
+diff -ru a/clang/lib/Parse/ParseDecl.cpp b/clang/lib/Parse/ParseDecl.cpp
+--- a/clang/lib/Parse/ParseDecl.cpp
++++ b/clang/lib/Parse/ParseDecl.cpp
+@@ -317,10 +317,21 @@
+                                               ParsedAttr::Syntax Syntax,
+                                               IdentifierInfo *ScopeName) {
+ #define CLANG_ATTR_VARIADIC_IDENTIFIER_ARG_LIST
+-  return llvm::StringSwitch<bool>(normalizeAttrName(II.getName()))
++  bool Known = llvm::StringSwitch<bool>(normalizeAttrName(II.getName()))
+ #include "clang/Parse/AttrParserStringSwitches.inc"
+-      .Default(false);
++                   .Default(false);
+ #undef CLANG_ATTR_VARIADIC_IDENTIFIER_ARG_LIST
++  if (Known)
++    return true;
++  // smith: a plugin's attribute that takes identifiers (`[[smith::effects(alloc,
++  // net)]]`), by its scope and name.
++  if (ScopeName == nullptr)
++    return false;
++  std::string Scoped = (ScopeName->getName() + "::" + II.getName()).str();
++  for (auto &Ptr : getAttributePluginInstances())
++    if (Ptr->HasVariadicIdentifierArg && Ptr->hasSpelling(Syntax, Scoped))
++      return true;
++  return false;
+ }
+ 
+ /// Determine whether the given attribute treats kw_this as an identifier.
