@@ -4108,22 +4108,81 @@ static bool smith_lang_replay_shape(SmithLang *lang, const SmithHost *host, Smit
     return took != 0;
 }
 
+// A frame that is a punctuator or words to write. True when it was one.
+static bool smith_lang_replay_written(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                      SmithLangFrame *frame) {
+    if (frame->literal != 0) {
+        char text[2] = {frame->literal, 0};
+        uint32_t frame_place = frame->place;
+        replay->count -= 1;
+        smith_lang_gen_put(lang, host, SmithTokenKind_Punctuator, text,
+                           frame_place != 0 ? frame_place : replay->location, replay->instance_id);
+        return true;
+    }
+    if (frame->words[0] == 0) return false;
+    smith_lang_replay_words(lang, host, replay, frame);
+    return true;
+}
+
+// The token at the frame's position when it starts a group, an `if constexpr` or a `for constexpr`. True when it did.
+static bool smith_lang_replay_special(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                      SmithLangFrame *frame, const SmithLangGenToken *token) {
+    if (token->special == SmithLangGen_CallBegin) {
+        smith_lang_replay_group(lang, host, replay, frame->pos);
+    } else if (token->special == SmithLangGen_IfConstexpr) {
+        smith_lang_replay_if(lang, host, replay, frame);
+    } else if (token->special == SmithLangGen_ForConstexpr) {
+        smith_lang_replay_for(lang, host, replay, frame);
+    } else {
+        return false;
+    }
+    return true;
+}
+
+// The replays of what an instance's body writes differently from the generic's tokens. True when one took the frame.
+static bool smith_lang_replay_rewritten(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                        SmithLangFrame *frame) {
+    return smith_lang_fields_replay(lang, host, replay, frame) || smith_lang_slice_replay(lang, host, replay, frame) ||
+           smith_lang_try_replay(lang, host, replay, frame) || smith_lang_enum_replay(lang, host, replay, frame) ||
+           smith_lang_replay_shape(lang, host, replay, frame) || smith_lang_list_gone(lang, host, replay, frame);
+}
+
+// The argument list at the frame's position (`rest...`, `rest[i]`, `countof(rest)`). True when it took tokens.
+static bool smith_lang_replay_list(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                   SmithLangFrame *frame) {
+    SmithLangPackUse use = smith_lang_pack_use(lang, host, replay, frame->pos, frame->end);
+    if (use.kind == SmithLangPack_None && smith_lang_pack_comma_before_empty(replay, frame->pos, frame->end, true)) {
+        frame->pos += 1; // the comma before an empty `rest...` goes with it
+        return true;
+    }
+    if (use.kind == SmithLangPack_None) return false;
+    bool empty = use.kind == SmithLangPack_Expand && use.args.count == 0;
+    if (empty) use.consumed += smith_lang_pack_comma_after_empty(frame->pos, frame->begin, frame->end, use.consumed);
+    smith_lang_pack_write(lang, host, replay, &use);
+    frame->pos += use.consumed;
+    return true;
+}
+
+// One token of the generic, written with the instance's types for T.
+static void smith_lang_replay_plain(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                    SmithLangGenToken *token) {
+    if (token->special != SmithLangGen_Plain) return;
+    if (smith_lang_gt_punct(token, "{")) replay->braces += 1;
+    if (smith_lang_gt_punct(token, "}") && replay->braces > 0) replay->braces -= 1;
+    uint32_t place = smith_lang_gen_place(host, replay->generic, token, replay->location);
+    if (replay->generic != nullptr && smith_lang_has_pack(replay->generic)) {
+        smith_lang_pack_clash(lang, host, replay, token, place);
+    }
+    if (replay->typing && smith_lang_typing_param(lang, host, replay, token, place)) return;
+    smith_lang_gen_put_subst(lang, host, replay->generic, replay->instance, token, replay->location,
+                             replay->instance_id, replay->instance_id == 0);
+}
+
 // Writes the tokens the replay holds, in order. A group becomes its call; a token that names T becomes the type.
 static void smith_lang_replay_run(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay) {
     for (size_t step = 0; replay->count > 0 && step < smith_lang_replay_steps_max; step++) { // bounded
         SmithLangFrame *frame = &replay->frames[replay->count - 1];
-        if (frame->literal != 0) {
-            char text[2] = {frame->literal, 0};
-            uint32_t frame_place = frame->place;
-            replay->count -= 1;
-            smith_lang_gen_put(lang, host, SmithTokenKind_Punctuator, text,
-                               frame_place != 0 ? frame_place : replay->location, replay->instance_id);
-            continue;
-        }
-        if (frame->words[0] != 0) {
-            smith_lang_replay_words(lang, host, replay, frame);
-            continue;
-        }
+        if (smith_lang_replay_written(lang, host, replay, frame)) continue;
         if (frame->action != SmithLangFrame_Tokens && smith_lang_replay_action(lang, host, replay, frame)) continue;
         if (frame->pos >= frame->end) {
             replay->count -= 1;
@@ -4131,57 +4190,11 @@ static void smith_lang_replay_run(SmithLang *lang, const SmithHost *host, SmithL
         }
         if (replay->instance != nullptr && smith_lang_replay_pattern(lang, host, replay, frame)) continue;
         SmithLangGenToken *token = &smith_lang_gt.tokens[frame->pos];
-        if (token->special == SmithLangGen_CallBegin) {
-            smith_lang_replay_group(lang, host, replay, frame->pos);
-            continue;
-        }
-        if (token->special == SmithLangGen_IfConstexpr) {
-            smith_lang_replay_if(lang, host, replay, frame);
-            continue;
-        }
-        if (token->special == SmithLangGen_ForConstexpr) {
-            smith_lang_replay_for(lang, host, replay, frame);
-            continue;
-        }
-        if (smith_lang_fields_replay(lang, host, replay, frame)) continue;
-        if (smith_lang_slice_replay(lang, host, replay, frame)) continue;
-        if (smith_lang_try_replay(lang, host, replay, frame)) continue;
-        if (smith_lang_enum_replay(lang, host, replay, frame)) continue;
-        if (smith_lang_replay_shape(lang, host, replay, frame)) continue;
-        if (smith_lang_list_gone(lang, host, replay, frame)) continue;
-        SmithLangPackUse use = smith_lang_pack_use(lang, host, replay, frame->pos, frame->end);
-        if (use.kind == SmithLangPack_None &&
-            smith_lang_pack_comma_before_empty(replay, frame->pos, frame->end, true)) {
-            frame->pos += 1; // the comma before an empty `rest...` goes with it
-            continue;
-        }
-        if (use.kind != SmithLangPack_None) {
-            bool empty = use.kind == SmithLangPack_Expand && use.args.count == 0;
-            if (empty)
-                use.consumed += smith_lang_pack_comma_after_empty(frame->pos, frame->begin, frame->end, use.consumed);
-            smith_lang_pack_write(lang, host, replay, &use);
-            frame->pos += use.consumed;
-            continue;
-        }
+        if (smith_lang_replay_special(lang, host, replay, frame, token)) continue;
+        if (smith_lang_replay_rewritten(lang, host, replay, frame)) continue;
+        if (smith_lang_replay_list(lang, host, replay, frame)) continue;
         frame->pos += 1;
-        if (token->special == SmithLangGen_Plain && smith_lang_gt_punct(token, "{")) replay->braces += 1;
-        if (token->special == SmithLangGen_Plain && smith_lang_gt_punct(token, "}") && replay->braces > 0) {
-            replay->braces -= 1;
-        }
-        if (token->special == SmithLangGen_Plain && replay->generic != nullptr &&
-            smith_lang_has_pack(replay->generic)) {
-            smith_lang_pack_clash(lang, host, replay, token,
-                                  smith_lang_gen_place(host, replay->generic, token, replay->location));
-        }
-        if (token->special == SmithLangGen_Plain && replay->typing &&
-            smith_lang_typing_param(lang, host, replay, token,
-                                    smith_lang_gen_place(host, replay->generic, token, replay->location))) {
-            continue;
-        }
-        if (token->special == SmithLangGen_Plain) {
-            smith_lang_gen_put_subst(lang, host, replay->generic, replay->instance, token, replay->location,
-                                     replay->instance_id, replay->instance_id == 0);
-        }
+        smith_lang_replay_plain(lang, host, replay, token);
     }
 }
 
