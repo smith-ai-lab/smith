@@ -46,5 +46,6 @@ export inline bool within(...) {
 // Every set, so that the compiler sees each constant used: a constant a module exports and does not use is a warning in the
 // project that compiles the module.
 [[maybe_unused]] u32 everything() {
+    (void)within(none, none);
     return none | alloc | files | net | console | clock | process | env | entropy | globals | c;
 }
