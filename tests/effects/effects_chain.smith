@@ -17,11 +17,11 @@ export [[smith::pure]] i32 bad(const char *text) {
     return 0;
 }
 
-export [[smith::alloc]] void *grab(u32 size) {
+export [[smith::effects(alloc)]] void *grab(u32 size) {
     return c::malloc(size);
 }
 
-export [[smith::alloc]] i32 too_much(const char *path) {
+export [[smith::effects(alloc)]] i32 too_much(const char *path) {
     return c::fopen(path, "r") != nullptr;
 }
 

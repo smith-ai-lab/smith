@@ -2,7 +2,7 @@
 // no attribute (another file may define it: nothing is said here, the link of the program says, see
 // tests/effects_infer.sh), and one with an attribute (a promise smith trusts).
 int run_unknown(int);
-[[smith::alloc]] void *promised(unsigned);
+[[smith::effects(alloc)]] void *promised(unsigned);
 
 [[smith::pure]] int indirect(int (*callback)(void)) {
     return callback();
@@ -16,6 +16,6 @@ int run_unknown(int);
     return promised(size);
 }
 
-[[smith::alloc]] void *promise_fits(unsigned size) {
+[[smith::effects(alloc)]] void *promise_fits(unsigned size) {
     return promised(size);
 }

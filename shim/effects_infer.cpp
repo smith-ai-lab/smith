@@ -327,8 +327,8 @@ class Analysis {
     void run() {
         collect(context.getTranslationUnitDecl());
         solve();
-        for (auto &entry : nodes) {
-            Node &node = entry.second;
+        for (const FunctionDecl *function : order) { // source order: the map's order is the pointers'
+            Node &node = nodes[function];
             if (node.annotated && inMain(node.function)) check(node);
         }
         writeSummary();
@@ -485,8 +485,8 @@ class Analysis {
     void writeSummary() {
         if (output.empty()) return;
         std::string text;
-        for (auto &entry : nodes) {
-            const Node &node = entry.second;
+        for (const FunctionDecl *function : order) { // source order, so the same source writes the same summary
+            const Node &node = nodes[function];
             text += "F\t" + node.symbol + "\t" + (node.annotated ? std::to_string(node.declared) : "-1") + "\t" +
                     std::to_string(node.inferred) + "\t" + place(node.function->getLocation()) + "\t" +
                     shownName(node.function) + "\n";
