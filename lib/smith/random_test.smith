@@ -1,7 +1,7 @@
 // Tests of smith::random through its exported API, in smith's own test library. The statistical checks take a key
 // (a property test: 100 keys, a failure prints the seed that replays it). What reaches the module's private functions
 // (Philox's known answers, the zigzag and the index order, the inverse CDF, the digest across build configurations, the
-// refusals) stays in tests/random.c, run by tests/random.sh.
+// refusals) stays in tests/random.c, run by tests/random_c_test.smith.
 module smith::random_test;
 
 import smith::arena;
