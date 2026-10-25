@@ -2,7 +2,7 @@
 //
 // smith is built by its previous release (knowledge/smith-bootstrap.md): smith.c is C23 and its libraries are .smith
 // modules, compiled by the smith that runs this build (`smith-cc`, the default CC), so a smith with the token hook and
-// the LLVM of `smith build llvm` is needed. A fresh clone with no smith runs scripts/stage0.sh, which downloads the
+// the LLVM of `smith build llvm` is needed. A fresh clone with no smith builds and runs scripts/stage0.smith, which downloads the
 // newest release of an ancestor commit and runs its `smith build`.
 //
 // The verbs (smith test, smith check, smith fmt, smith lint, smith docs, smith prove, smith run) mean the same here as
@@ -735,7 +735,6 @@ static const BuildTestScript build_test_scripts[] = {
     {"smith-lang-1", "smith-lang", "1/3", nullptr, 1},
     {"smith-lang-2", "smith-lang", "2/3", nullptr, 1},
     {"smith-lang-c", "smith-lang-c", nullptr, nullptr, 0},
-    {"stage0", "stage0", nullptr, nullptr, 0},
     {"main", "test", "main", nullptr, 1},
     {"reports", "test", "reports,misc,explain,lang", nullptr, 1},
     {"rest", "test", "alongside,workers,flags,budget,shrink_int,shrink_list,shrink_normal,inprocess", nullptr, 1},

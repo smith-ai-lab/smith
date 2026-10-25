@@ -1,6 +1,6 @@
 ---
 name: smith-dev-build
-description: "Building smith itself: from the previous release (scripts/stage0.sh in a clone with no smith), smith build, check, install and recovery, clean, the lag rule for smith's own code, and the route check before and after a refactor. Load before building, installing or recovering smith."
+description: "Building smith itself: from the previous release (scripts/stage0.smith in a clone with no smith), smith build, check, install and recovery, clean, the lag rule for smith's own code, and the route check before and after a refactor. Load before building, installing or recovering smith."
 ---
 
 # smith-dev-build
@@ -13,7 +13,7 @@ smith builds itself with its own `build.c`, **with the smith before it**: the in
 Code compiled into smith itself (`smith.c`, `runtime/`, `build.c`, those libraries and `lib/trace.c`) can use a language feature or build API call only once it is on main, because the smith that builds your branch is a release of an earlier commit. A branch cannot use, in that code, the feature it adds itself: add the feature, merge it, and use it in the next change. A new library API follows the same rule; `lib/smith/format`, `math`, `autodiff`, `test` and `tests/*.smith` are built by the smith under test and use a feature at once. If a build fails on syntax the branch just added, that is the rule.
 
 ## From a clone with no smith
-`sh scripts/stage0.sh` (needs `git`, `gh` signed in, the network): finds the release `stage0-<commit>` of the newest ancestor of HEAD, downloads and checks it into `.smith/stage0/`, and runs its `smith build` with its `bin/` first on `PATH`; pass `smith build` arguments after it (`sh scripts/stage0.sh install`). It needs LLVM built already: `.smith/stage0/bin/smith build llvm` (about 9 minutes once, into `~/.cache/smith/llvm/23.1.3-r9`). Without it the default target stops and says so; `llvm`, `enzyme` and `clean` still run. `tests/stage0.sh` tests the script with a stub `gh`. A clone older than the retained releases pulls main first; `SMITH_STAGE0_RELEASE=<tag>` picks a release.
+`mkdir -p .smith && clang -std=c23 -x c scripts/stage0.smith -o .smith/stage0-tool && .smith/stage0-tool` (plain C23, no shell; needs `git`, `gh` signed in, `tar`, the network): finds the release `stage0-<commit>` of the newest ancestor of HEAD, downloads and checks it into `.smith/stage0/`, and runs its `smith build` with its `bin/` first on `PATH`; pass `smith build` arguments after it (`.smith/stage0-tool install`). It needs LLVM built already: `.smith/stage0/bin/smith build llvm` (about 9 minutes once, into `~/.cache/smith/llvm/23.1.3-r9`). Without it the default target stops and says so; `llvm`, `enzyme` and `clean` still run. `tests/stage0_test.smith` tests the tool with a stand-in `gh`. A clone older than the retained releases pulls main first; `SMITH_STAGE0_RELEASE=<tag>` picks a release.
 
 ## Build, test, install
 - `smith build` builds `build/<OS>-<arch>/smith` and the `smith-cc` and `smith-c++` links. `CC` is `smith-cc` from `PATH`; `-DCC=<path>/smith-cc` names another smith (an external clang cannot compile the libraries). If the installed smith is broken, use the recovery line below.
