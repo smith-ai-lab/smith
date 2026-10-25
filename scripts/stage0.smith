@@ -5,11 +5,13 @@
 //   1. finds the release `stage0-<commit>` of the newest ancestor commit of HEAD that has one (git tags, walking
 //      `git rev-list HEAD`, after fetching the tags);
 //   2. downloads it with `gh release download` (the repository is private; gh is signed in as it is to clone), checks
-//      its SHA-256 (CommonCrypto) and unpacks it with tar into .smith/stage0/;
+//      its SHA-256 (scripts/sha256.h) and unpacks it with tar into .smith/stage0/;
 //   3. runs .smith/stage0/bin/smith build, with that bin/ first on PATH so that its smith-cc is the CC of the build.
 // It needs git, gh, tar, the network, and `~/.cache/smith/llvm` (`smith build llvm`, about 9 minutes once). With a
 // smith installed, `smith build` does all of this already. SMITH_STAGE0_RELEASE=<tag> names the release to use.
-#include <CommonCrypto/CommonDigest.h>
+// On Linux, when no release can be had (none has a Linux build yet, or the download fails), it builds smith from
+// source instead: scripts/seed_linux.smith, the seed of the Linux release chain (issue #305), which needs about two
+// hours the first time. SMITH_STAGE0_SEED=1 asks for the seed directly.
 #include <fcntl.h>
 #include <limits.h>
 #include <spawn.h>
@@ -21,16 +23,22 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "sha256.h"
+
 extern char **environ;
 
 constexpr size_t output_max = 1 << 22; // the output of one child that is read: the tags or the history of a repository
 constexpr size_t path_max = PATH_MAX;
 constexpr size_t hex_length = 64; // a SHA-256 in hex
-constexpr size_t block = 1 << 16;
 static char output[output_max + 1];
+static bool seed_on_failure;  // Linux, before a release is in hand: a failure builds smith from source instead
+static char **seed_arguments; // this program's arguments, the arguments of smith build
+
+[[noreturn]] static void seed(void);
 
 [[noreturn]] static void die(const char *message, const char *detail) {
     fprintf(stderr, "stage0: %s%s%s\n", message, detail != nullptr ? " " : "", detail != nullptr ? detail : "");
+    if (seed_on_failure) seed();
     exit(1);
 }
 
@@ -129,23 +137,9 @@ static bool read_file(const char *path, char *into, size_t capacity) {
     return true;
 }
 
-// The SHA-256 of a file, as 64 lowercase hex digits.
+// The SHA-256 of a file, as 64 lowercase hex digits (scripts/sha256.h, the same on every platform).
 static bool file_digest(const char *path, char hex[hex_length + 1]) {
-    FILE *file = fopen(path, "rb");
-    if (file == nullptr) return false;
-    CC_SHA256_CTX context;
-    CC_SHA256_Init(&context);
-    static unsigned char buffer[block];
-    for (size_t got = 1; got > 0;) { // each pass reads one block until the end
-        got = fread(buffer, 1, sizeof buffer, file);
-        if (got > 0) CC_SHA256_Update(&context, buffer, (CC_LONG)got);
-    }
-    fclose(file);
-    unsigned char digest[CC_SHA256_DIGEST_LENGTH];
-    CC_SHA256_Final(digest, &context);
-    for (size_t i = 0; i < sizeof digest; i++)
-        snprintf(hex + 2 * i, 3, "%02x", digest[i]);
-    return true;
+    return sha256_file(path, hex);
 }
 
 // Downloads the release into the folder, checks the tarball against its .sha256 and unpacks it.
@@ -173,6 +167,22 @@ static void fetch(const char *tag, const char *folder, const char *name) {
     if (!succeeds((const char *[]){"tar", "-C", folder, "-xJf", tarball, nullptr})) die("cannot unpack", tarball);
 }
 
+// Builds scripts/seed_linux.smith with the system's C compiler ($CC, else cc) and runs it in this process's place.
+[[noreturn]] static void seed(void) {
+    seed_on_failure = false;
+    fputs("stage0: no Linux release to use: building smith from source (scripts/seed_linux.smith)\n", stderr);
+    const char *cc = getenv("CC") != nullptr && *getenv("CC") != '\0' ? getenv("CC") : "cc";
+    if (!run((const char *[]){cc, "-std=gnu2x", "-O1", "-x", "c", "scripts/seed_linux.smith", "-o", ".smith/seed-tool",
+                              nullptr},
+             false, false)) {
+        die("cannot compile scripts/seed_linux.smith with", cc);
+    }
+    seed_arguments[0] = (char *)".smith/seed-tool";
+    fflush(stdout);
+    execv(seed_arguments[0], seed_arguments);
+    die("cannot run", seed_arguments[0]);
+}
+
 int main(int argc, char **argv) {
     // The repository: the program runs from its root, or from a folder inside it.
     const char *top = run((const char *[]){"git", "rev-parse", "--show-toplevel", nullptr}, true, true);
@@ -183,6 +193,10 @@ int main(int argc, char **argv) {
     if (chdir(root) != 0) die("cannot enter", root);
     struct utsname system;
     if (uname(&system) != 0) die("cannot tell the system", nullptr);
+    seed_arguments = argv;
+    seed_on_failure = strcmp(system.sysname, "Linux") == 0;
+    const char *wanted = getenv("SMITH_STAGE0_SEED");
+    if (seed_on_failure && wanted != nullptr && strcmp(wanted, "1") == 0) seed();
     char name[128];
     snprintf(name, sizeof name, "smith-%s-%s.tar.xz", system.sysname, system.machine);
     for (char *c = name; *c != '\0'; c++)
@@ -209,6 +223,7 @@ int main(int argc, char **argv) {
         fprintf(file, "%s\n", tag);
         fclose(file);
     }
+    seed_on_failure = false; // the release is here: a failure from now on is its own
     char path[path_max * 2];
     const char *old_path = getenv("PATH");
     snprintf(path, sizeof path, "%s/%s/bin:%s", root, folder, old_path != nullptr ? old_path : "/usr/bin:/bin");
