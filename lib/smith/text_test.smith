@@ -8,6 +8,7 @@ import smith::math;
 import smith::random;
 import smith::test;
 import smith::text;
+import <stdint.h>;
 import <stdio.h>;
 import <stdlib.h>;
 import <string.h>;
@@ -445,7 +446,7 @@ static usize test_text_random_decimal(random::Key key, char *out) {
     }
     if (random::bernoulli_sample(take(stream), (random::Bernoulli){.probability = 0.7})) {
         i64 exponent = test_text_uniform(take(stream), -60, 50);
-        used += (usize)__builtin_snprintf(out + used, 16, "e%lld", (i64)exponent);
+        used += (usize)__builtin_snprintf(out + used, 16, "e%jd", (c::intmax_t)exponent);
     }
     out[used] = '\0';
     return used;
@@ -657,7 +658,7 @@ static usize test_text_random_decimal_f64(random::Key key, char *out) {
     }
     if (random::bernoulli_sample(take(stream), (random::Bernoulli){.probability = 0.8})) {
         i64 exponent = test_text_uniform(take(stream), -340, 320);
-        used += (usize)__builtin_snprintf(out + used, 16, "e%lld", (i64)exponent);
+        used += (usize)__builtin_snprintf(out + used, 16, "e%jd", (c::intmax_t)exponent);
     }
     out[used] = '\0';
     return used;
@@ -675,7 +676,7 @@ export void test_text_f64_matches_strtod_on_short_decimals(random::Key key) {
     char decimal[64];
     i64 mantissa = test_text_uniform(take(key_stream), 0, 999999999999999);
     i64 exponent = test_text_uniform(take(key_stream), -30, 30);
-    __builtin_snprintf(decimal, sizeof decimal, "%lldE%lld", (i64)mantissa, (i64)exponent);
+    __builtin_snprintf(decimal, sizeof decimal, "%jdE%jd", (c::intmax_t)mantissa, (c::intmax_t)exponent);
     test_text_check_f64(decimal);
 }
 
@@ -750,7 +751,7 @@ export void test_text_f64_halfway(random::Key key) {
     test_text_split_f64(low_bits, &m, &exponent);
     usize zeros = (usize)test_text_uniform(take(key_stream), 1, 300);
     char decimal[2800];
-    test::note("low bits 0x%016llx", (u64)low_bits);
+    test::note("low bits 0x%016jx", (c::uintmax_t)low_bits);
     u64 middle_winner = (low_bits & 1) == 0 ? low_bits : low_bits + 1;
     test_text_halfway_decimal(m, exponent, 0, 0, decimal);
     test::check_same_bits(test_text_f64(decimal), test_text_f64_of(middle_winner));
@@ -788,7 +789,7 @@ export void test_text_f64_long_digit_strings(random::Key key) {
     test_text_split_f64(low_bits, &m, &exponent);
     usize zeros = (usize)test_text_uniform(take(key_stream), 700, 1500);
     char decimal[2800];
-    test::note("low bits 0x%016llx, %zu zeros", (u64)low_bits, zeros);
+    test::note("low bits 0x%016jx, %zu zeros", (c::uintmax_t)low_bits, zeros);
     test_text_halfway_decimal(m, exponent, zeros, 1, decimal); // the midpoint, a 1 at the end of `zeros` zeros
     test_text_check_f64(decimal);
     test::check_same_bits(test_text_f64(decimal), test_text_f64_of(low_bits + 1));
