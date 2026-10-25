@@ -961,6 +961,75 @@ i32 main() {
     c::printf("%d %d\n", t == .full, flip(t) == .empty);
     return 0;
 }
+==> enum-type-function-module/src/first.smith <==
+module first;
+
+// `option(usize)` written in a module and exported: its struct is in the module's header, guarded, so that the other
+// module that writes it, and the importer that writes it too, share one type.
+
+type option(type T) {
+    return enum {
+        T some;
+        none;
+    };
+}
+
+export option(usize) head(usize v) {
+    if (v == 0) return .none;
+    return {.some = v};
+}
+==> enum-type-function-module/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import first;
+import second;
+
+type option(type T) {
+    return enum {
+        T some;
+        none;
+    };
+}
+
+// `option(usize)` from `first`, from `second` and the importer's own is one type: a value of one is a value of the
+// others.
+static usize or_zero(option(usize) o) {
+    if (o == .some) return o.some;
+    return 0;
+}
+
+i32 main(void) {
+    u8 raw[5] = {1, 2, 3, 4, 5};
+    u8 bytes[:] = raw;
+    option(usize) a = first::head(7);
+    option(usize) b = second::last(1);
+    option(usize) c = second::position(bytes, 4);
+    c::printf("%zu %zu %zu %zu\n", or_zero(a), or_zero(b), or_zero(c), or_zero(first::head(0)));
+    return 0;
+}
+==> enum-type-function-module/src/second.smith <==
+module second;
+
+type option(type T) {
+    return enum {
+        T some;
+        none;
+    };
+}
+
+// A generic whose result is `option(usize)`: the instance is written in the importer, against the struct the header
+// defines.
+export option(usize) position(auto xs, auto v) {
+    for (usize i = 0; i < countof(xs); i++)
+        if (xs[i] == v) return {.some = i};
+    return .none;
+}
+
+export option(usize) last(usize v) {
+    if (v < 2) return .none;
+    return {.some = v - 1};
+}
 ==> enum-type-function/src/main.smith <==
 module main;
 

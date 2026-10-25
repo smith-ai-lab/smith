@@ -1,0 +1,21 @@
+module second;
+
+type option(type T) {
+    return enum {
+        T some;
+        none;
+    };
+}
+
+// A generic whose result is `option(usize)`: the instance is written in the importer, against the struct the header
+// defines.
+export option(usize) position(auto xs, auto v) {
+    for (usize i = 0; i < countof(xs); i++)
+        if (xs[i] == v) return {.some = i};
+    return .none;
+}
+
+export option(usize) last(usize v) {
+    if (v < 2) return .none;
+    return {.some = v - 1};
+}
