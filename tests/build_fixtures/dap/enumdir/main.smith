@@ -1,0 +1,18 @@
+module main;
+
+export typedef struct {
+    f64 r;
+} Circle;
+
+export typedef enum {
+    Circle circle;
+    f64 square;
+    empty;
+} Shape;
+
+i32 main() {
+    Shape a = {.circle = {2}};
+    Shape b = .empty;
+    Shape c = {.square = 3};
+    return (a == .empty ? 1 : 0) + (b == .empty ? 0 : 1) + (c == .empty ? 1 : 0);
+}

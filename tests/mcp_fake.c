@@ -1,9 +1,9 @@
 // Tests of `smith mcp` on the fake io (issue #22): a scripted client on the console and a scripted `smith dap` child,
 // so that the whole server runs in one process, with no debugger, no clock and no network. The server is runtime/mcp.c
 // included here as smith.c includes it, with the libraries and the protocol code it stands on (the text module is
-// linked, as in smith: tests/mcp.sh compiles lib/smith/text.smith with this file, and the other libraries too);
-// tests/mcp.sh builds this file under the sanitizers and runs it. The real thing, a real adapter and a real program, is
-// tests/mcp.sh's other half.
+// linked, as in smith: tests/mcp_test.smith compiles lib/smith/text.smith with this file, and the other libraries too);
+// tests/mcp_test.smith builds this file under the sanitizers and runs it. The real thing, a real adapter and a real
+// program, is tests/mcp_test.smith's other half.
 //
 // A case is the lines the client sends (`input`), the frames the adapter writes (`dap`, with the requests the server
 // sends numbered from 1, so a frame answers the request of that number), and files. The server's output is one JSON

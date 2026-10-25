@@ -194,7 +194,7 @@ smith_io_make(argc, argv)`, calls `smith_user_main(&io)`, runs `smith_io_close(&
 by looking ahead from the `i32` that begins a file-scope declaration (`i32`, `main`, `(`, the binding, `::`, `Io`, `*`,
 a name, `)`), in a file with a `module` line or none and in `--smith-lower`; the queued `main` is renamed, so the rest
 of the lowering sees a private function. The C `main` has the location of the name you wrote (the debugger shows
-it at your `main`'s line), the table of names says `smith_user_main` is written `main`, the debug info names it `main` (the debug-name hook of `shim/hook.cpp`, with a module line or none, `tests/dap.sh`), and `io::make` anywhere in the
+it at your `main`'s line), the table of names says `smith_user_main` is written `main`, the debug info names it `main` (the debug-name hook of `shim/hook.cpp`, with a module line or none, `tests/dap_test.smith`), and `io::make` anywhere in the
 file is the error "main already has the io". The C forms (`i32 main(i32 argc, char **argv)` in a module, `char *argv[]` too in a file with no `module` line, and `int main(void)`) lower
 as they always did, and `.c` files are never rewritten. Tests: the cases `main-io*` and `error-main-io-make`.
 

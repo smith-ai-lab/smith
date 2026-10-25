@@ -131,7 +131,7 @@ name; the `tag` enum and its constants keep `<module>_<Name>_tag...`). The same 
 union (garbage, and once a summary parse error) and the raw tag are hidden: `(main::Shape) a = circle { circle = (r = 2) }`,
 `b = empty {}`. The canonical type is matched (the typedef name says nothing), in C++ with no Python and no LLVM change. The
 affine plugin reads the struct's constants as `<name>_tag_<variant>` with `smith_enum_` taken off the tag
-(`variantOf`, shim/affine.cpp). Tests: `tests/dap.sh`.
+(`variantOf`, shim/affine.cpp). Tests: `tests/dap_test.smith`.
 
 ## Reading a failed check
 
@@ -152,12 +152,12 @@ started by smith (`posix_spawn`, suspended) with its standard streams as they ar
 lldb's own launch gives the program a terminal of its own and merges its output. A stop's thread is the first with a stop
 reason; a signal or Mach exception gives the status 128 plus the signal, an exit its own status. Frames of a sanitizer's
 runtime (compiler-rt) are not shown: the report the program printed is the answer there. Where it cannot attach, one line
-and the program runs with `execvp`. Tests: `tests/dbg_crash.sh`.
+and the program runs with `execvp`. Tests: `tests/dbg_crash_test.smith`.
 
 ## Tests
 
-`tests/dap.sh` runs `smith dbg -b` on a small program and `tests/dap_client.c`, a DAP client that writes the requests as
+`tests/dap_test.smith` runs `smith dbg -b` on a small program and `tests/dap_client.c`, a DAP client that writes the requests as
 JSON and reads the replies, through `initialize`, `launch`, `setBreakpoints`, `configurationDone`, `stopped`,
 `stackTrace`, `scopes`, `variables`, `continue` and `terminated`. A smith without lldb, or an account that may not debug,
-skips them. The same script builds a two-module `.smith` program and checks the names as written in `smith dbg` and in
+skips them. The same file builds a two-module `.smith` program and checks the names as written in `smith dbg` and in
 the DAP session (frames, variable types, a cast, `type lookup`, the other object's view of the type), and a `[:]` as its elements and count in both.

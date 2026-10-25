@@ -1,0 +1,6 @@
+module pick;
+
+export typeof(a) larger(auto a, typeof(a) b) {
+    typeof(a) result = a > b ? a : b;
+    return result;
+}

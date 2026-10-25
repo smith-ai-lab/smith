@@ -129,7 +129,7 @@ fetches tree-sitter-c with `smith_package` (pinned by hash), and generates at AB
 
 ## Tests
 
-`smith test` runs `tests/tree_sitter_test.smith` and `tests/neovim.sh`.
+`smith test` runs `tests/tree_sitter_test.smith` and `tests/neovim_test.smith`.
 
 - `tests/tree_sitter_test.smith`: the corpus of `tree-sitter/test/corpus` (one test per construct, run by `tests/tree_sitter.c`
   without the CLI), the samples in `tests/tree_sitter_cases`, the #11 corpus (`tests/smith-lang/cases`, when it exists;
@@ -141,7 +141,7 @@ fetches tree-sitter-c with `smith_package` (pinned by hash), and generates at AB
   all with the names as written; a C file unchanged; and with no
   `compile_commands.json`: one file, two modules found by their source, a hand-written database without `-x c`, and a
   command borrowed from a `.c` entry).
-- `tests/neovim.sh`: headless Neovim, a process per test of `tests/neovim.lua`, in a scratch home (skipped with a message
+- `tests/neovim_test.smith`: headless Neovim, a process per test of `tests/neovim.lua`, in a scratch home (skipped with a message
   when `nvim` is absent): the file type, the compiled parser, the highlights, plain C, the LSP config and attaching to a C
   file and to a `.smith` buffer of a scratch project (with a clang error at its column) and of a folder with no
   project files at all, `.h` files (beside a `.c`, a `.cpp`, a `.m`, by the build's compiles, outside a project, with `g:c_syntax_for_h`), the DAP adapter and its one configuration (against a stand-in `dap` module: exactly one per file type; called in a

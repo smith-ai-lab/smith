@@ -1,6 +1,6 @@
-// A small Debug Adapter Protocol client for tests/dap.sh: it starts `smith dap`, writes the requests of a debugging
-// session as hand-written JSON on its standard input, reads the replies and events from its standard output, and
-// prints every message it sends (">") and receives ("<") so that the log is a transcript.
+// A small Debug Adapter Protocol client for tests/dap_test.smith: it starts `smith dap`, writes the requests of a
+// debugging session as hand-written JSON on its standard input, reads the replies and events from its standard output,
+// and prints every message it sends (">") and receives ("<") so that the log is a transcript.
 //
 // Usage: dap_client <smith> <program> <source file> <line> <variable> <value> [<argument of the program> ...]
 // The session: initialize, launch <program>, setBreakpoints at <line> of <source file>, configurationDone, the
