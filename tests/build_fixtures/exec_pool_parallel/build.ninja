@@ -6,7 +6,7 @@ rule single
   command = $cmd
   pool = one
 build a: step
-  cmd = echo a1; while [ ! -e b.done ]; do sleep 0.05; done; echo a2; echo a3 >&2
+  cmd = echo a1; touch a.up; n=0; while [ ! -e b.up ]; do n=$$((n + 1)); [ $$n -gt 1200 ] && exit 1; sleep 0.05; done; echo a2; echo a3 >&2
 build b: step
-  cmd = echo b1; echo b2; touch b.done
+  cmd = echo b1; touch b.up; n=0; while [ ! -e a.up ]; do n=$$((n + 1)); [ $$n -gt 1200 ] && exit 1; sleep 0.05; done; echo b2
 default a b
