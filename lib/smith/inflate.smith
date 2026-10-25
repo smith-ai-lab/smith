@@ -4,6 +4,8 @@
 // `inflate::Status` is `SmithInflateStatus`, `inflate::Ok` is `SmithInflateStatus_Ok`.
 module smith::inflate;
 
+import smith::contract;
+
 // <smith/inflate.h>: decompresses a DEFLATE stream, raw, in a zlib wrapper (an Adler-32 trailer) or in a gzip member
 // (a header with its optional fields, a CRC-32 and a length). The input is in memory, the whole of it. Nothing is
 // allocated and no library function but memcpy and memset is called: the output goes to a buffer you give, or to a
@@ -321,6 +323,7 @@ u64 load64(const u8 *p) {
 
 // The CRC-32 of data (gzip's and xz's, polynomial 0xEDB88320), continuing from `crc` (0 to start), by slicing-by-8.
 [[smith::c_name("smith_inflate_crc32")]] export [[nodiscard]] u32 crc32(u32 crc, const u8 *data, usize size) {
+    contract::requires(data != nullptr || size == 0);
     u32 value = ~crc;
     usize left = size;
     while (left >= 8) {
@@ -340,6 +343,7 @@ u64 load64(const u8 *p) {
 
 // The Adler-32 of data (zlib's), continuing from `adler` (1 to start).
 [[smith::c_name("smith_inflate_adler32")]] export [[nodiscard]] u32 adler32(u32 adler, const u8 *data, usize size) {
+    contract::requires(data != nullptr || size == 0);
     constexpr u32 modulus = 65521;
     constexpr usize chunk = 5552; // the most bytes whose sums fit in 32 bits before the reduction
     u32 low = adler & 0xFFFFU;
@@ -831,9 +835,13 @@ Status run(State *s, const u8 *input, usize size, usize *used, u64 *produced) {
 
 // Decodes the stream at the start of input into output (capacity bytes, all of the output), and sets `used` to the
 // bytes of input the stream took and `size` to the bytes written. A stream that decodes to more than capacity bytes is
-// Overflow, with the first capacity bytes written.
+// Overflow, with the first capacity bytes written. A null input with a size, a null output with a capacity or a null
+// `used` or `size` is a bug and stops the program with the report of a failed contract.
 [[smith::c_name("smith_inflate_decode")]] export [[nodiscard]] Status
 decode(Format format, const u8 *input, usize input_size, u8 *output, usize capacity, usize *used, usize *size) {
+    contract::requires(input != nullptr || input_size == 0);
+    contract::requires(output != nullptr || capacity == 0);
+    contract::requires(used != nullptr && size != nullptr);
     State state = {.out = output, .capacity = capacity, .format = format};
     u64 produced = 0;
     Status status = run(&state, input, input_size, used, &produced);
@@ -843,9 +851,13 @@ decode(Format format, const u8 *input, usize input_size, u8 *output, usize capac
 
 // Decodes the stream at the start of input, giving the output to `sink` in pieces of up to inflate::window bytes, in
 // order. `buffer` is inflate::window bytes of memory, which the decoder uses as its window: a match reaches back into
-// it. `size` is set to the bytes produced.
+// it. `size` is set to the bytes produced. A null buffer, sink, `used` or `size` is a bug and stops the program.
 [[smith::c_name("smith_inflate_stream")]] export [[nodiscard]] Status
 stream(Format format, const u8 *input, usize input_size, u8 *buffer, Sink sink, void *context, usize *used, u64 *size) {
+    contract::requires(input != nullptr || input_size == 0);
+    contract::requires(buffer != nullptr);
+    contract::requires(sink != nullptr);
+    contract::requires(used != nullptr && size != nullptr);
     State state = {.out = buffer, .capacity = window, .sink = sink, .context = context, .format = format};
     return run(&state, input, input_size, used, size);
 }

@@ -20,6 +20,8 @@ tags: [libraries, stdlib]
   stack.
 - Its names are typed as `<math.h>` names them, with no `_Generic`.
 
+- **Errors follow one line** (owner, 2026-10-25, #327): what the caller can handle locally is a value (`option`, `result`, a status: bad input, a limit, a full buffer, a missing file); misuse and exhaustion panic with a report (a wrong call, an arena or a buffer the library may not outgrow). `json` and `inflate` follow it; the others are being moved.
+
 **How a project uses one:** it compiles the library from source with its own flags (`smith_library`).
 
 **C or `.smith`, one registry:** a library is its header (`include/smith/<name>.h`) and its source, `lib/<name>.c`

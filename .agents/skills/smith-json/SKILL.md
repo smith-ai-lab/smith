@@ -34,7 +34,7 @@ usize total_items(const c::SmithJsonValue *list) {
 
 - A value has `kind`, `offset`, `key`, `text` (a decoded string, or a number as written), `count`, `items` and `span`.
 - The input must outlive the tree. A string with no escape is a slice of it; one with escapes is decoded into the arena.
-- A tree that does not fit is `OutOfMemory`, and the arena is left as it was.
+- A tree the arena cannot hold panics: the push stops the program with the arena's report (there is no `OutOfMemory` reason). A bad document, or one over a limit, is the `false` and `error`.
 
 ## From C
 

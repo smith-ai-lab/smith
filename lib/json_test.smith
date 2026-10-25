@@ -505,7 +505,8 @@ export void test_json_tree_does_not_touch_the_arena_on_failure() {
     test::check(root == nullptr);
 }
 
-export void test_json_tree_that_does_not_fit_is_an_error() {
+export void test_json_tree_that_does_not_fit_stops_with_the_arena_report() {
+    test::expect_abort();
     alignas(arena::align_max) u8 memory[1024];
     arena::Arena arena = arena::fixed(memory, sizeof memory);
     char big[2048];
@@ -518,10 +519,7 @@ export void test_json_tree_that_does_not_fit_is_an_error() {
     big[used - 1] = ']';
     const c::SmithJsonValue *root = nullptr;
     c::SmithJsonError error = {};
-    test::check(!c::smith_json_parse(&arena, big[0:used], test_json_wide, &root, &error));
-    test::check(error.reason == c::SmithJsonReason_OutOfMemory);
-    test::check_equal(arena.used, 0);
-    test::check(c::smith_json_parse(&arena, test_json_text("[1,2,3]"), test_json_wide, &root, &error)); // still usable
+    (void)c::smith_json_parse(&arena, big[0:used], test_json_wide, &root, &error);
 }
 
 export void test_json_a_large_array_keeps_its_order() {
@@ -649,23 +647,27 @@ export void test_json_writer_numbers() {
         &writer, "[18446744073709551615,-9223372036854775808,9223372036854775807,-0,0.1,1e300,5e-324]"));
 }
 
-export void test_json_writer_refuses_nan_and_infinity() {
-    f64 values[] = {__builtin_inf(), -__builtin_inf(), __builtin_nan("")};
-    for (usize i = 0; i < _Countof values; i++) {
-        char buffer[64];
-        c::SmithJsonWriter writer = c::smith_json_writer_make(buffer, sizeof buffer, 0);
-        c::smith_json_write_array_begin(&writer);
-        c::smith_json_write_f64(&writer, values[i]);
-        test::check(writer.error.reason == c::SmithJsonReason_NotFinite);
-        c::smith_json_write_f64(&writer, 1.0);
-        c::smith_json_write_array_end(&writer);
-        const char output[:] = {};
-        test::check(!c::smith_json_writer_finish(&writer, &output));
-        test::check(writer.error.reason == c::SmithJsonReason_NotFinite); // the first mistake is kept
-    }
+static void test_json_write_not_finite(f64 value) {
+    char buffer[64];
+    c::SmithJsonWriter writer = c::smith_json_writer_make(buffer, sizeof buffer, 0);
+    c::smith_json_write_array_begin(&writer);
+    test::expect_abort();
+    c::smith_json_write_f64(&writer, value);
 }
 
-static c::SmithJsonError test_json_misuse(i32 which) {
+export void test_json_writer_stops_on_infinity() {
+    test_json_write_not_finite(__builtin_inf());
+}
+
+export void test_json_writer_stops_on_negative_infinity() {
+    test_json_write_not_finite(-__builtin_inf());
+}
+
+export void test_json_writer_stops_on_nan() {
+    test_json_write_not_finite(__builtin_nan(""));
+}
+
+static void test_json_misuse(i32 which) {
     char buffer[64];
     c::SmithJsonWriter writer = c::smith_json_writer_make(buffer, sizeof buffer, 0);
     const char output[:] = {};
@@ -708,16 +710,57 @@ static c::SmithJsonError test_json_misuse(i32 which) {
     default:
         break; // 9: nothing written
     }
-    test::check(!c::smith_json_writer_finish(&writer, &output));
-    return writer.error;
+    (void)c::smith_json_writer_finish(&writer, &output);
 }
 
-export void test_json_writer_refuses_misplaced_calls() {
-    for (i32 which = 0; which < 10; which++) {
-        test::note("case %d", which);
-        c::SmithJsonError error = test_json_misuse(which);
-        test::check(error.reason == c::SmithJsonReason_Misplaced);
-    }
+export void test_json_writer_stops_on_a_key_outside_an_object() {
+    test::expect_abort();
+    test_json_misuse(0);
+}
+
+export void test_json_writer_stops_on_an_end_that_closes_nothing() {
+    test::expect_abort();
+    test_json_misuse(1);
+}
+
+export void test_json_writer_stops_on_the_wrong_end() {
+    test::expect_abort();
+    test_json_misuse(2);
+}
+
+export void test_json_writer_stops_on_a_value_for_a_key() {
+    test::expect_abort();
+    test_json_misuse(3);
+}
+
+export void test_json_writer_stops_on_an_end_after_a_key() {
+    test::expect_abort();
+    test_json_misuse(4);
+}
+
+export void test_json_writer_stops_on_two_documents() {
+    test::expect_abort();
+    test_json_misuse(5);
+}
+
+export void test_json_writer_stops_on_a_key_in_an_array() {
+    test::expect_abort();
+    test_json_misuse(6);
+}
+
+export void test_json_writer_stops_on_two_keys_in_a_row() {
+    test::expect_abort();
+    test_json_misuse(7);
+}
+
+export void test_json_writer_stops_on_an_unfinished_document() {
+    test::expect_abort();
+    test_json_misuse(8);
+}
+
+export void test_json_writer_stops_on_nothing_written() {
+    test::expect_abort();
+    test_json_misuse(9);
 }
 
 export void test_json_writer_full_buffer() {

@@ -15,12 +15,12 @@
 //   if (!smith_json_parse(&arena, input, limits, &root, &error)) { ...error.offset, smith_json_reason_text(...) }
 //
 // Both refuse what RFC 8259 refuses, and a few things it permits that no UTF-8 text can hold: a lone surrogate escape,
-// and a byte order mark. Failures are values: a byte offset and a reason, never an exit. Strings are decoded
+// and a byte order mark. A bad document is a value: a byte offset and a reason, never an exit. Strings are decoded
 // (escapes, surrogate pairs) and their UTF-8 validated; a string needing no decoding is a slice of the input. A
 // number is kept as its text, and read with smith_text_parse_i64, _u64 or _f64 on it, which refuse what does not fit.
 //
 // The writer puts values into a buffer, handling commas, escaping, nesting and an optional indent, and fails (once,
-// stickily) rather than write invalid JSON.
+// stickily) on data it cannot write, and stops on a call that cannot be right.
 #pragma once
 
 #include "arena.h"
@@ -52,9 +52,6 @@ typedef enum {
     SmithJsonReason_TooDeep,
     SmithJsonReason_StringTooLong,
     SmithJsonReason_TooMany,
-    SmithJsonReason_OutOfMemory, // the arena cannot hold the tree
-    SmithJsonReason_NotFinite,   // the writer was given infinity or nan
-    SmithJsonReason_Misplaced,   // the writer was given a value, key or end where it cannot go
     SmithJsonReason_Full,        // the writer's buffer is full
 } SmithJsonReason;
 
@@ -145,8 +142,9 @@ struct SmithJsonValue {
 };
 
 // Parses a whole document into the arena. The input must outlive the tree (strings without escapes and numbers point
-// into it); the tree lives as long as the arena. Returns false, and writes only *error, for a document that is invalid,
-// over a limit, or too big for the arena (the arena is then unchanged). Duplicate keys are kept.
+// into it); the tree lives as long as the arena. Returns false, and writes only *error, for a document that is invalid
+// or over a limit. A tree the arena cannot hold stops the program with the arena's report (its push), as any push does.
+// Duplicate keys are kept.
 [[nodiscard]] bool smith_json_parse(SmithArena *arena, struct smith_array_const_char_n input, SmithJsonLimits limits,
                                     const SmithJsonValue **root, SmithJsonError *error);
 
@@ -172,8 +170,10 @@ typedef struct {
 // output has no spaces at all.
 [[nodiscard]] SmithJsonWriter smith_json_writer_make(char *buffer, size_t capacity, size_t indent);
 
-// Each call adds one value (or a key, or an end). The first mistake (a value where a key is due, an end that closes
-// nothing, a string that is not UTF-8, a full buffer) is kept in writer.error and every later call does nothing.
+// Each call adds one value (or a key, or an end). A call that cannot be right (a value where a key is due, an end
+// that closes nothing, infinity or nan, finishing an incomplete document) is a bug and stops the program with a report.
+// The first failure of the data (a string that is not UTF-8, a full buffer) is kept in writer.error and every later call
+// does nothing.
 void smith_json_write_object_begin(SmithJsonWriter *writer);
 void smith_json_write_object_end(SmithJsonWriter *writer);
 void smith_json_write_array_begin(SmithJsonWriter *writer);
