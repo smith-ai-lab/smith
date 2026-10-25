@@ -1,0 +1,239 @@
+// `smith fmt` on .smith files (issue #25): clang-format reads a .smith file as C, with `::` paths and the `module` and
+// `import` lines at file scope (patches/clang-format-smith.patch). The tests:
+//   - the .smith files of the #11 corpus (tests/smith-lang/cases/*/src) format to tests/smith-fmt/corpus.expected;
+//   - every .c file of smith, and of the test beds when they are there (game, learner, checkers; read, never written),
+//     formats identically as itself and as a .smith file (the text goes to standard input, --assume-filename names it);
+//   - the cases of the issue: a C name that is a C++ keyword (`throw`) and a statement that starts with a type named
+//     `import`, and `import <sys/wait.h>;`, `import a::b as x;`, `module a::b;` kept whole.
+module smith_fmt_test;
+
+import smith::arena;
+import smith::format;
+import smith::io;
+import smith::test;
+import <string.h>;
+import scratch;
+
+static typeof(const char[:]) slice_of(const char *text) {
+    return text[0:c::strlen(text)];
+}
+
+// The text of `smith fmt` for this input read as a file of this name, in the style of this repository's folder.
+static const char *formatted(const scratch::Project *p, const char *name, const char *input) {
+    scratch::write(p, "input.txt", input);
+    const char *command =
+        format::push(&p->io->arena, "smith fmt --assume-filename=\"$SMITH_REPO/", name, "\" < input.txt 2>&1").data;
+    return scratch::sh(p, command).out;
+}
+
+// --- the corpus ----------------------------------------------------------------------------------------------------
+
+// The cases are in .clang-format-ignore (they are inputs written as the case needs them), so the text is formatted
+// under another name, in the style of this folder.
+export void test_the_corpus_formats_to_its_expected_file(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Run run = scratch::sh(
+        &p, "cd \"$SMITH_REPO\" && for file in $(find tests/smith-lang/cases -name '*.smith' -path '*/src/*' | "
+            "LC_ALL=C sort); "
+            "do echo \"==> ${file#tests/smith-lang/cases/} <==\"; smith fmt --style=\"file:$SMITH_REPO/.clang-format\" "
+            "--assume-filename=\"$TMPDIR/case.smith\" < \"$file\" 2>&1; done");
+    test::golden("tests/smith-fmt/corpus.expected", slice_of(run.out));
+}
+
+// --- tuple types and slice declarators stay as written (#96, #82) ----------------------------------------------------
+
+export void test_tuple_types_and_slice_declarators_stay_as_written(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Run run =
+        scratch::sh(&p, "cd \"$SMITH_REPO\" && smith fmt --style=\"file:$SMITH_REPO/.clang-format\" "
+                        "--assume-filename=\"$TMPDIR/case.smith\" < tests/smith-fmt/tuples-slices.smith 2>&1");
+    test::golden("tests/smith-fmt/tuples-slices.smith", slice_of(run.out));
+}
+
+// --- the same as C -------------------------------------------------------------------------------------------------
+
+// The next line of text, copied (a zero ends it), or nullptr at the end. `*at` moves past it.
+static const char *next_line(io::Io *io, const char **at) {
+    if (**at == '\0') return nullptr;
+    const char *end = c::strchr(*at, '\n');
+    usize length = end != nullptr ? (usize)(end - *at) : c::strlen(*at);
+    char *copy = arena::push_slice(&io->arena, char, length + 1).data;
+    __builtin_memcpy(copy, *at, length);
+    *at += length + (end != nullptr ? 1 : 0);
+    return copy;
+}
+
+// Every .c file of a root that its .clang-format-ignore does not name (clang-format skips such a file under its own
+// name, not under the .smith one, so it is not compared) formats the same as itself and as a .smith file: the number
+// of files compared, the first that differs noted.
+static usize same_as_c(io::Io *io, const char *root) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    if (scratch::sh(&p, format::push(&io->arena, "[ -d \"", root, "\" ]").data).status != 0) return 0; // not there
+    const char *listing =
+        scratch::sh(
+            &p,
+            format::push(
+                &io->arena, "set -f; find \"", root,
+                "\" -name '*.c' -not -path '*/.smith/*' -not -path '*/build/*' "
+                "-not -path \"",
+                root,
+                "/.claude/*\" -not -path '*/.git/*' -not -path '*/node_modules/*' "
+                "-not -path '*/tree-sitter/src/*' -not -path '*/expect/*' $(awk '!/^#/ && NF { gsub(/\\*\\*/, \"*\"); "
+                "print \"-not -path \" root \"/\" $0 }' root=\"",
+                root, "\" \"", root, "/.clang-format-ignore\" 2>/dev/null) | LC_ALL=C sort")
+                .data)
+            .out;
+    usize same = 0;
+    usize different = 0;
+    for (const char *file = next_line(io, &listing); file != nullptr; file = next_line(io, &listing)) {
+        const char *command_c =
+            format::push(&io->arena, "smith fmt --assume-filename=\"", file, "\" < \"", file, "\" 2>&1").data;
+        const char *command_smith =
+            format::push(&io->arena, "f='", file, "'; smith fmt --assume-filename=\"${f%.c}.smith\" < \"$f\" 2>&1")
+                .data;
+        const char *text_c = scratch::sh(&p, command_c).out;
+        const char *text_smith = scratch::sh(&p, command_smith).out;
+        if (c::strcmp(text_c, text_smith) == 0) {
+            same += 1;
+        } else {
+            different += 1;
+            test::note("differs as .smith: %s", file);
+        }
+    }
+    test::check_equal(different, (usize)0);
+    return same;
+}
+
+export void test_the_c_files_of_smith_format_the_same_as_c_and_as_smith(io::Io *io) {
+    usize same = same_as_c(io, io::args_env(&io->args, "SMITH_REPO"));
+    // smith's own files among those checked: in an agent's worktree, under .claude/worktrees, they are not skipped
+    test::check_greater(same, (usize)20);
+}
+
+export void test_the_c_files_of_game_format_the_same_as_c_and_as_smith(io::Io *io) {
+    (void)same_as_c(io, format::push(&io->arena, io::args_env(&io->args, "HOME"), "/Documents/game").data);
+}
+
+export void test_the_c_files_of_learner_format_the_same_as_c_and_as_smith(io::Io *io) {
+    (void)same_as_c(io,
+                    format::push(&io->arena, io::args_env(&io->args, "HOME"), "/Documents/virtual-cell/learner").data);
+}
+
+export void test_the_c_files_of_checkers_format_the_same_as_c_and_as_smith(io::Io *io) {
+    (void)same_as_c(io, format::push(&io->arena, io::args_env(&io->args, "HOME"), "/Documents/checkers").data);
+}
+
+// --- the cases of the issue ----------------------------------------------------------------------------------------
+
+export void test_a_c_name_that_is_a_cpp_keyword_stays_c(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::expect_text("a C name that is a C++ keyword stays C",
+                         "u32 f(u32 throw, u32 reach) {\n    return throw * reach;\n}",
+                         formatted(&p, "x.smith", "u32 f(u32 throw, u32 reach) {\nreturn throw*reach;\n}\n"));
+}
+
+export void test_a_statement_that_starts_with_a_type_named_import_is_indented(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::expect_text("a statement that starts with a type named import is indented",
+                         "u32 f(void) {\n    import value = c.x + c.y;\n    return 1;\n}",
+                         formatted(&p, "x.smith", "u32 f(void) {\nimport value = c.x + c.y;\nreturn 1;\n}\n"));
+}
+
+export void test_import_of_a_header_is_kept_whole(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::expect_text("import <h> is kept whole", "import <sys/wait.h>;",
+                         formatted(&p, "x.smith", "import   <sys/wait.h> ;\n"));
+}
+
+export void test_module_and_import_lines_are_kept(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::expect_text(
+        "module and import lines", "module a::b;\nimport a::b as x;\nimport lib::text;\nimport \"local.h\";",
+        formatted(&p, "x.smith", "module   a::b ;\nimport a::b  as x;\nimport lib::text ;\nimport  \"local.h\" ;\n"));
+}
+
+export void test_paths_with_double_colons_are_kept(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::expect_text(
+        "paths with ::", "x::Pair make(x::T *p) {\n    struct x::Pair q = {1, 2};\n    return c::EOF + x::open(p);\n}",
+        formatted(&p, "x.smith", "x::Pair make(x::T*p){\nstruct x::Pair q={1,2};\nreturn c::EOF+x::open(p);}\n"));
+}
+
+export void test_export_lines_are_laid_out(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::expect_text(
+        "export lines", "export u32 counter = 7;\nexport u64 checksum(const u8 *data, usize size);",
+        formatted(&p, "x.smith", "export   u32 counter=7;\nexport u64 checksum(const u8*data,usize size);\n"));
+}
+
+export void test_a_name_import_or_module_in_a_function_is_a_name(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::expect_text("a name import or module in a function is a name",
+                         "void f(void) {\n    module value;\n    import *p;\n}",
+                         formatted(&p, "x.smith", "void f(void){\nmodule value;\nimport*p;\n}\n"));
+}
+
+export void test_c_files_still_read_import_as_a_name(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::expect_text(".c files still read import as a name",
+                         "u32 f(void) {\n    import value = 1;\n    return value;\n}",
+                         formatted(&p, "x.c", "u32 f(void) {\nimport value = 1;\nreturn value;\n}\n"));
+}
+
+// A file's own header sorts first (patches/smith-format-source-extension.patch): `#include "foo.h"` in foo.smith, as in
+// foo.c.
+export void test_a_smith_files_own_header_sorts_first_as_in_a_c_file(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    const char *input = "#include <stdlib.h>\n#include \"foo.h\"\n";
+    scratch::expect_text("a .smith file's own header sorts first, as in a .c file",
+                         "#include \"foo.h\"\n#include <stdlib.h>", formatted(&p, "foo.smith", input));
+    scratch::expect_text("... and the same in the .c file", formatted(&p, "foo.smith", input),
+                         formatted(&p, "foo.c", input));
+}
+
+// A payload enum is laid out like a struct, and a variant in the dot rule (`case .v:`, `== .v`, `return .v;`) has an
+// operand's spacing (issue #215, patches/smith-lang-format-enum.patch, LLVM r8): the file is already as fmt writes it.
+export void test_a_payload_enum_and_the_dot_rule_are_kept_as_written(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Run run = scratch::sh(&p, "cd \"$SMITH_REPO\" && smith fmt --assume-filename=\"$SMITH_REPO/x.smith\" "
+                                       "< tests/smith-fmt/payload_enum.smith 2>&1");
+    test::golden("tests/smith-fmt/payload_enum.smith", slice_of(run.out));
+}
+
+// --- `smith fmt` with no arguments
+// --------------------------------------------------------------------------------------
+
+// In a git project `smith fmt` formats every .smith file git sees (no build.c lists them).
+export void test_smith_fmt_with_no_arguments_formats_the_projects_smith_files(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Run made =
+        scratch::sh(&p, "mkdir -p src/a && cp \"$SMITH_REPO/templates/defaults/clang-format\" .clang-format "
+                        "&& git init -q");
+    scratch::expect_status("a project", 0, &made);
+    scratch::write(&p, "src/a/b.smith",
+                   "module   a::b ;\nimport <sys/wait.h> ;\nexport u32 f(x::T*p){\nimport value=1;\nreturn c::EOF;}\n");
+    scratch::Run checked = scratch::sh(&p, "smith fmt --dry-run --Werror src/a/b.smith");
+    scratch::expect_failure("the project's .smith file is reported unformatted by clang-format", &checked);
+    scratch::Run run = scratch::sh(&p, "smith fmt");
+    scratch::expect_status("smith fmt with no arguments", 0, &run);
+    scratch::expect_text(
+        "smith fmt with no arguments formats the project's .smith files",
+        "module a::b;\nimport <sys/wait.h>;\nexport u32 f(x::T *p) {\n    import value = 1;\n    return c::EOF;\n}",
+        scratch::read(&p, "src/a/b.smith"));
+}
+
+// --- a file that is not C is refused, and not written (#254) --------------------------------------------------------
+
+export void test_smith_fmt_refuses_a_file_that_is_not_c_and_does_not_write_it(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    const char *script = "#!/bin/sh\n[ -n \"$x\" ] && echo hi\n";
+    scratch::write(&p, "script.sh", script);
+    scratch::Run refused = scratch::sh(&p, "smith fmt script.sh 2>&1");
+    scratch::expect_status("smith fmt refuses a shell script: status 2", 2, &refused);
+    scratch::expect_text("smith fmt refuses a shell script: nothing is written", script,
+                         scratch::read(&p, "script.sh"));
+    scratch::expect_contains("the refusal names the file", refused.out, "script.sh is not a C file");
+    scratch::expect_contains("the refusal names the extensions", refused.out, ".smith");
+    scratch::Run named = scratch::sh(&p, "smith fmt --assume-filename=x.c script.sh");
+    scratch::expect_status("smith fmt --assume-filename names the language, so it formats the file as that", 0, &named);
+}
