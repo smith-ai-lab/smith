@@ -778,6 +778,84 @@ static int smith_argdumper(int argc, char **argv) {
     return 0;
 }
 
+#ifdef SMITH_HOOK
+int smith_effects_check(int count, char **files); // shim/effects_infer.cpp
+
+// The effect summary of an object: where the compile that makes the object writes it (the plugin) and where the link
+// reads it. In a project (a `.smith` folder in the working folder) it is `.smith/effects/<the object's absolute path,
+// `%` for `/`>.fx`, out of the build folders, otherwise `<object>.fx` beside the object. runtime/build_runtime.c has
+// the same rule (`smith_effects_path`) for the outputs a build declares; tests/effects_infer.sh checks that they agree.
+bool smith_effects_summary_path(const char *object, char *out, size_t capacity) {
+    char absolute[PATH_MAX];
+    while (strncmp(object, "./", 2) == 0)
+        object += 2;
+    int written = 0;
+    if (object[0] == '/') {
+        written = snprintf(absolute, sizeof absolute, "%s", object);
+    } else {
+        char folder[PATH_MAX];
+        if (getcwd(folder, sizeof folder) == nullptr) return false;
+        written = snprintf(absolute, sizeof absolute, "%s/%s", folder, object);
+    }
+    if (written <= 0 || (size_t)written >= sizeof absolute) return false;
+    struct stat info = {};
+    if (stat(".smith", &info) != 0 || !S_ISDIR(info.st_mode)) {
+        written = snprintf(out, capacity, "%s.fx", object);
+        return written > 0 && (size_t)written < capacity;
+    }
+    for (char *c = absolute; *c != '\0'; c++) {
+        if (*c == '/') *c = '%';
+    }
+    written = snprintf(out, capacity, ".smith/effects/%s.fx", absolute);
+    return written > 0 && (size_t)written < capacity;
+}
+
+constexpr size_t smith_effects_files_max = 128;
+
+// Whether a path is in the folder of temporary files (the objects clang makes for `smith cc a.c b.c -o p` are there,
+// with their summaries beside them, and are removed after the link).
+static bool smith_in_temp_folder(const char *path) {
+    const char *temp = getenv("TMPDIR");
+    if (temp != nullptr && *temp != '\0' && strncmp(path, temp, strlen(temp)) == 0) return true;
+    return strncmp(path, "/var/folders/", 13) == 0 || strncmp(path, "/private/var/folders/", 21) == 0 ||
+           strncmp(path, "/tmp/", 5) == 0 || strncmp(path, "/private/tmp/", 13) == 0;
+}
+
+// A link of objects (a command with `.o` inputs and no -c, -E, -S or -fsyntax-only): when some of them have an effect
+// summary (written by the compile, `smith_effects_summary_path` says where), the program's check runs before the link
+// and its errors stop
+// it (skill smith-lang-effects). It runs in the compiler's command when the objects are named, and in the linker the
+// driver starts (`smith cc a.c b.c -o p` makes its objects in the temporary folder); the first leaves
+// SMITH_EFFECTS_CHECKED for the second. Returns the status to exit with, or -1 for a command that is no such link.
+static int smith_check_effects(int count, char **args) {
+    static char paths[smith_effects_files_max][PATH_MAX];
+    char *files[smith_effects_files_max];
+    const char *objects[smith_effects_files_max];
+    size_t found = 0;
+    for (int i = 0; i < count; i++) {
+        if (strcmp(args[i], "-c") == 0 || strcmp(args[i], "-E") == 0 || strcmp(args[i], "-S") == 0 ||
+            strcmp(args[i], "-fsyntax-only") == 0 || strcmp(args[i], "-###") == 0) {
+            return -1;
+        }
+        if (strcmp(args[i], "-o") == 0 && i + 1 < count) {
+            i++; // the output is no input
+            continue;
+        }
+        if (args[i][0] == '-' || !smith_ends_with(args[i], ".o") || found >= smith_effects_files_max) continue;
+        if (!smith_effects_summary_path(args[i], paths[found], PATH_MAX) || access(paths[found], R_OK) != 0) continue;
+        files[found] = paths[found];
+        objects[found] = args[i];
+        found += 1;
+    }
+    if (found == 0) return -1;
+    int status = smith_effects_check((int)found, files);
+    for (size_t i = 0; i < found; i++) { // the summary of a temporary object goes with it
+        if (smith_in_temp_folder(objects[i])) unlink(files[i]);
+    }
+    return status;
+}
+#endif
+
 static int smith_route_linker(int argc, char **argv) {
     const char *override = getenv("SMITH_LINKER");
     if (smith_has_linker_override()) {
@@ -785,6 +863,12 @@ static int smith_route_linker(int argc, char **argv) {
         execv(override, argv);
         smith_die(smith_exit_missing, "cannot run the linker named by SMITH_LINKER", override);
     }
+#ifdef SMITH_HOOK
+    if (getenv("SMITH_EFFECTS_CHECKED") == nullptr) {
+        int status = smith_check_effects(argc - 1, argv + 1);
+        if (status > 0) return status;
+    }
+#endif
     return smith_lld_main(argc, argv);
 }
 
@@ -1881,6 +1965,14 @@ static int smith_build_main(int count, char **args, const char *self, const char
     setenv("SMITH_ENZYME", smith_can_differentiate() ? "yes" : "no",
            1);                     // whether smith::autodiff programs can be built
     setenv("SMITH_SELF", self, 1); // the build program finds smith here: `smith symbolize` for the tests' failures
+#ifdef SMITH_HOOK
+    // Whether a compile writes an effect summary (the plugin runs in smith's own clang, not in an external one): the
+    // build declares it an output of the compile only then.
+    const char *external = getenv("SMITH_CLANG");
+    setenv("SMITH_EFFECTS", external == nullptr || *external == '\0' ? "yes" : "no", 1);
+#else
+    setenv("SMITH_EFFECTS", "no", 1);
+#endif
     const char *forced = getenv("SMITH_NINJA");
     bool use_ninja = forced != nullptr && *forced != '\0';
     char ninja[PATH_MAX] = "";
@@ -2894,10 +2986,21 @@ static int smith_compile_main(int argc, char **argv, int at, bool plus, const ch
         return smith_lang_main(argc - first - 1, argv + first + 1, true);
     if (first < argc && strcmp(argv[first], "--smith-lower") == 0)
         return smith_lang_main(argc - first - 1, argv + first + 1, false);
+#ifdef SMITH_HOOK
+    if (first < argc && strcmp(argv[first], "--smith-effects") == 0)
+        return smith_effects_check(argc - first - 1, argv + first + 1);
+#endif
     bool which = first < argc && strcmp(argv[first], "--smith-which") == 0;
     if (which) first++;
     int count = argc - first;
     char **args = argv + first;
+#ifdef SMITH_HOOK
+    if (!which) {
+        int status = smith_check_effects(count, args);
+        if (status > 0) return status;
+        if (status == 0) setenv("SMITH_EFFECTS_CHECKED", "1", 1); // the linker the driver starts need not run it again
+    }
+#endif
     switch (smith_classify(count, args)) {
     case SmithRoute_Mixed:
         smith_die(
