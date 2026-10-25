@@ -89,6 +89,38 @@ static const BuildPlatform build_platform_linux = {
 
 // Whether this build runs on Linux (issue #305): smith build llvm has its own recipe there (scripts/llvm_linux.smith)
 // and its own packages; everything else is macOS's.
+// Transitional (the lag rule, skill smith-dev-build): this file is compiled by the smith that builds it, whose
+// <smith/build.h> still has the old shapes (`smith_package` returns the path, `smith_lines` the lines), and later by a
+// smith whose header has the results (`smith_build_PackageResult`, `smith_build_Lines`). The two helpers below read
+// either through the value's bytes: a plain pointer is the old shape; a result is its tag (0 is `ok`) then, at the
+// size of a pointer, the payload (`.ok`, or `.error` whose message is the second word of a PackageError). Replace them
+// with the typed code once a release of main has the results, and delete this block.
+static const void *build_unwrap(SmithBuild *b, const void *value, size_t size, const char *what, const char *name) {
+    (void)b;
+    const char *bytes = value;
+    if (size == sizeof(void *)) return *(const void *const *)bytes;
+    if (*(const int *)bytes != 0) {
+        const char *message =
+            size > 2 * sizeof(void *) ? *(const char *const *)(bytes + 2 * sizeof(void *)) : "missing";
+        fprintf(stderr, "smith: %s %s: %s\n", what, name, message);
+        exit(2);
+    }
+    return *(const void *const *)(bytes + sizeof(void *));
+}
+
+// The path of a package, or the build fails with the error's message: smith's own packages are fixed in this file, so
+// a fetch that fails is a failure of the build, not something to recover from.
+static const char *build_package_path(SmithBuild *b, const SmithPackage *package) {
+    __auto_type found = smith_package(b, package);
+    return build_unwrap(b, &found, sizeof found, "package", package->url);
+}
+
+// The lines of a file, or the build fails: smith's own build reads only files it has just made.
+static const char *const *build_lines(SmithBuild *b, const char *path) {
+    __auto_type read = smith_lines(b, path);
+    return (const char *const *)build_unwrap(b, &read, sizeof read, "cannot read", path);
+}
+
 static bool build_is_linux(SmithBuild *b) {
     return strcmp(b->os, "Linux") == 0;
 }
@@ -153,7 +185,7 @@ static int build_protocol_run(SmithRun *run) {
                    protocol->name, check ? "checked" : "written");
             continue;
         }
-        const char *folder = smith_package(run->b, &(SmithPackage){.url = protocol->url, .hash = protocol->hash});
+        const char *folder = build_package_path(run->b, &(SmithPackage){.url = protocol->url, .hash = protocol->hash});
         const char *const argv[] = {run->inputs[0],
                                     protocol->name,
                                     smith_fmt(run->b, "%s/%s", folder, protocol->schema),
@@ -937,18 +969,18 @@ static const char *build_enzyme_folder(SmithBuild *b) {
 
 static const char *build_cmake_package(SmithBuild *b) {
     if (build_is_linux(b) && build_is_arm(b)) {
-        return smith_package(
+        return build_package_path(
             b, &(SmithPackage){
                    .url = "https://github.com/Kitware/CMake/releases/download/v4.4.4/cmake-4.4.4-linux-aarch64.tar.gz",
                    .hash = "sha256:a1b6cc63636a0e55c63257cf3315a8a5f129e42fade25db1afea4ff8ab06f25e"});
     }
     if (build_is_linux(b)) {
-        return smith_package(
+        return build_package_path(
             b, &(SmithPackage){
                    .url = "https://github.com/Kitware/CMake/releases/download/v4.4.4/cmake-4.4.4-linux-x86_64.tar.gz",
                    .hash = "sha256:e5bb807f7728cb60cd8b27ebc97a2edb469b68655f21e844a600c3575b76f5bb"});
     }
-    return smith_package(
+    return build_package_path(
         b, &(SmithPackage){
                .url = "https://github.com/Kitware/CMake/releases/download/v4.4.4/cmake-4.4.4-macos-universal.tar.gz",
                .hash = "sha256:4b7b73704b1db9b374e5c9ab8e17ac6148b817b6396ee75cd94a852cbac9d305"});
@@ -956,18 +988,18 @@ static const char *build_cmake_package(SmithBuild *b) {
 
 static const char *build_python_package(SmithBuild *b) {
     if (build_is_linux(b) && build_is_arm(b)) {
-        return smith_package(
+        return build_package_path(
             b, &(SmithPackage){.url = "https://github.com/astral-sh/python-build-standalone/releases/download/20261020/"
                                       "cpython-3.13.16%2B20261020-aarch64-unknown-linux-gnu-install_only.tar.gz",
                                .hash = "sha256:908e16f2083b59cc1eea70b8afb7995acae3f524b2e26409beae01392e07561b"});
     }
     if (build_is_linux(b)) {
-        return smith_package(
+        return build_package_path(
             b, &(SmithPackage){.url = "https://github.com/astral-sh/python-build-standalone/releases/download/20261020/"
                                       "cpython-3.13.16%2B20261020-x86_64-unknown-linux-gnu-install_only.tar.gz",
                                .hash = "sha256:0ad293ecda8ea93a28e4a6b5e9cc20ae74be15aafed75be04418b8f82bd0d0da"});
     }
-    return smith_package(
+    return build_package_path(
         b, &(SmithPackage){.url = "https://github.com/astral-sh/python-build-standalone/releases/download/20261020/"
                                   "cpython-3.13.16%2B20261020-aarch64-apple-darwin-install_only.tar.gz",
                            .hash = "sha256:235f3d5b182a171f6564ee98ef2812cfb2da8a73c4a37fca1937b25702f94880"});
@@ -1278,7 +1310,7 @@ static int build_z3_objects(SmithRun *run, const BuildProve *prove, const char *
                                   .log = listing,
                                   .stdout_only = true});
     if (listed != 0) return listed;
-    const char *const *commands = smith_lines(b, listing);
+    const char *const *commands = build_lines(b, listing);
     if (commands == nullptr || commands[0] == nullptr) return 1;
     size_t last = 0;
     while (commands[last + 1] != nullptr)
@@ -1467,7 +1499,7 @@ static int build_bitwuzla_find_library(SmithBuild *b, const BuildBitwuzla *bz, c
         build_spawn(&(BuildSpawn){.argv = smith_list(b, "/usr/bin/perl", "-0pi", "-e", program, meson_build, nullptr),
                                   .environment = environment});
     if (status != 0) return status;
-    for (const char *const *line = smith_lines(b, meson_build); *line != nullptr; line++) {
+    for (const char *const *line = build_lines(b, meson_build); *line != nullptr; line++) {
         if (strstr(*line, "find_library('gmp'") != nullptr) return 0;
     }
     fputs("bitwuzla: Bitwuzla's src/meson.build changed in a way this function does not know\n", stderr);
@@ -1542,10 +1574,10 @@ static int build_bitwuzla_make(SmithRun *run, BuildBitwuzla *bz) {
 // so it is the newest that builds against LLVM 23.1.3.
 static int build_prove_libs_run(SmithRun *run, const char *ninja) {
     SmithBuild *b = run->b;
-    const char *z3 = smith_package(
+    const char *z3 = build_package_path(
         b, &(SmithPackage){.url = "https://github.com/Z3Prover/z3/archive/refs/tags/z3-5.3.1.tar.gz",
                            .hash = "sha256:c007089dd8d92298d2a7d14105b14e8dddfbb540062ce471c3111e0741edd8da"});
-    const char *alive2 = smith_package(
+    const char *alive2 = build_package_path(
         b, &(SmithPackage){.url = "https://github.com/AliveToolkit/alive2/archive/"
                                   "01a5ec45c8152995755f7331827407a9de19f262.tar.gz",
                            .hash = "sha256:ea6d0ad5869a4c863ca537c65fe22e2f1198a5a1b2fc51d3a96b8020cf78cc13"});
@@ -1566,22 +1598,22 @@ static int build_prove_libs_run(SmithRun *run, const char *ninja) {
 // (which Meson would fetch itself), and Meson to build it. All pinned by hash, all built static, none from Homebrew.
 static int build_bitwuzla_run(SmithRun *run, const char *ninja) {
     SmithBuild *b = run->b;
-    const char *bitwuzla = smith_package(
+    const char *bitwuzla = build_package_path(
         b, &(SmithPackage){.url = "https://github.com/bitwuzla/bitwuzla/archive/refs/tags/0.9.1.tar.gz",
                            .hash = "sha256:42707f38900a20bb18108e426ba667560d1fd2ccce0d4f75aa60439b546488b4"});
-    const char *meson = smith_package(
+    const char *meson = build_package_path(
         b, &(SmithPackage){.url = "https://github.com/mesonbuild/meson/releases/download/1.9.1/meson-1.9.1.tar.gz",
                            .hash = "sha256:4e076606f2afff7881d195574bddcd8d89286f35a17b4977a216f535dc0c74ac"});
-    const char *gmp = smith_package(
+    const char *gmp = build_package_path(
         b, &(SmithPackage){.url = "https://ftp.gnu.org/gnu/gmp/gmp-6.3.0.tar.xz",
                            .hash = "sha256:a3c2b80201b89e68616f4ad30bc66aee4927c3ce50e33929ca819d5c43538898"});
-    const char *mpfr = smith_package(
+    const char *mpfr = build_package_path(
         b, &(SmithPackage){.url = "https://ftp.gnu.org/gnu/mpfr/mpfr-4.2.2.tar.xz",
                            .hash = "sha256:b67ba0383ef7e8a8563734e2e889ef5ec3c3b898a01d00fa0a6869ad81c6ce01"});
-    const char *cadical = smith_package(
+    const char *cadical = build_package_path(
         b, &(SmithPackage){.url = "https://github.com/arminbiere/cadical/archive/rel-2.1.2.tar.gz",
                            .hash = "sha256:292c2bb8d712d6d05fce3d3df63b922b8fa45e03974a79f7bae5bf68c284f131"});
-    const char *symfpu = smith_package(
+    const char *symfpu = build_package_path(
         b, &(SmithPackage){.url = "https://github.com/martin-cs/symfpu/archive/"
                                   "40bdec00e99f8ea1b96c3dac0a05eed11c541639.tar.gz",
                            .hash = "sha256:ba17877fbf0c851e113fddaab225152f1c0b2044429396b56b2f113832e36ce5"});
@@ -1603,7 +1635,7 @@ static int build_bitwuzla_run(SmithRun *run, const char *ninja) {
 // build_enzyme_make, with patches/enzyme/*.patch applied to a copy.
 static int build_enzyme_run(SmithRun *run, const char *ninja) {
     SmithBuild *b = run->b;
-    const char *enzyme = smith_package(
+    const char *enzyme = build_package_path(
         b, &(SmithPackage){.url = "https://github.com/EnzymeAD/Enzyme/archive/refs/tags/v0.0.303.tar.gz",
                            .hash = "sha256:0ca3114d008e524cd3b13152bbc172794b20af643d1628161655373eba4554de"});
     BuildEnzyme build = {.source = enzyme,
@@ -1650,10 +1682,10 @@ static int build_llvm_run_linux(SmithRun *run, const char *source, const char *n
 // step, so the packages are fetched only when this target runs, not on every smith build.
 static int build_llvm_run(SmithRun *run) {
     SmithBuild *b = run->b;
-    const char *ninja_source = smith_package(
+    const char *ninja_source = build_package_path(
         b, &(SmithPackage){.url = "https://github.com/ninja-build/ninja/archive/refs/tags/v1.13.2.tar.gz",
                            .hash = "sha256:974d6b2f4eeefa25625d34da3cb36bdcebe7fbce40f4c16ac0835fd1c0cbae17"});
-    const char *source = smith_package(
+    const char *source = build_package_path(
         b,
         &(SmithPackage){
             .url =
@@ -1732,7 +1764,7 @@ static const char *build_tree_sitter_cli(SmithBuild *b) {
     const char *tools = smith_fmt(b, "%s/smith/tools", cache);
     const char *cli = smith_fmt(b, "%s/tree-sitter-0.27.1", tools);
     if (access(cli, X_OK) == 0) return cli;
-    const char *source = smith_package(
+    const char *source = build_package_path(
         b, &(SmithPackage){.url = "https://github.com/tree-sitter/tree-sitter/releases/download/v0.27.1/"
                                   "tree-sitter-macos-arm64.gz",
                            .hash = "sha256:46cb97d9a2c52c94e22d9a76c2f1116156b8b61f98360e2a9cce05fcb197cd4d"});
@@ -1745,7 +1777,7 @@ static int build_tree_sitter(SmithRun *run) {
     SmithBuild *b = run->b;
     const char *cli = build_tree_sitter_cli(b);
     if (cli == nullptr) return 1;
-    const char *c_source = smith_package(
+    const char *c_source = build_package_path(
         b, &(SmithPackage){.url = "https://github.com/tree-sitter/tree-sitter-c/archive/refs/tags/v0.24.2.tar.gz",
                            .hash = "sha256:2eeb4db31f8fa0865e45488503d13403923bcb485a1bdb637abff8c42dd97364"});
     const char *vendor = "tree-sitter/.vendor/tree-sitter-c";

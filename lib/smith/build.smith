@@ -109,8 +109,8 @@ module smith::build;
 // not followed, and more than 64 folders deep is an error). Every other component goes through fnmatch, the last one
 // included, and a hidden entry matches only a component that starts with '.', as in the shell
 [[smith::c_name("smith_glob")]] export const char *const *glob(Build *b, const char *const *patterns);
-// a command's stdout without its last newline; no shell. A program that cannot start, exits non-zero or is killed is an
-// error
+// a command's stdout without its last newline; no shell. A program that cannot start, exits non-zero or is killed fails
+// the build (it is a mistake in the build file; build::capture_or is the form that gives a value instead)
 [[smith::c_name("smith_capture")]] export const char *capture(Build *b, const char *const *argv);
 // like build::capture, but returns fallback (may be nullptr) when the program cannot start, exits non-zero or is
 // killed; its stderr goes to /dev/null
@@ -141,15 +141,35 @@ module smith::build;
     const char *url;  // https:// (file:// for tests)
     const char *hash; // "sha256:<64 hex digits>" of the archive's bytes; `smith fetch <url>` prints the line to paste
 } Package;
+// Why a package could not be had.
+// NOLINTBEGIN(readability-identifier-naming)
+// An enum's constants are written short in a module (build::Fetch, C's SmithPackageKind_Fetch), and the check wants C's
+// Type_Value.
+
+[[smith::c_name("SmithPackageKind")]] export typedef enum {
+    Fetch,   // the download, the extraction or the archive failed
+    Hash,    // the archive's bytes are not the hash the build file names
+    Offline, // -DOFFLINE is set and the package is not in the cache
+} PackageKind;
+// NOLINTEND(readability-identifier-naming)
+
+[[smith::c_name("SmithPackageError")]] export typedef struct {
+    PackageKind kind;
+    const char *message; // names the URL (and both hashes for a wrong hash), in the arena
+} PackageError;
+// A build.c writes the type smith_build_PackageResult, the lowering's name for the typedef.
+export typedef result(const char *, PackageError) PackageResult; // NOLINT(readability-identifier-naming)
+
 // The absolute path of the package's extracted contents, in smith's cache: $XDG_CACHE_HOME/smith/packages/<hex>/, or
-// ~/.cache/smith/packages/<hex>/ when that is unset, keyed by the archive's hash. Fetched, verified and extracted on
-// the first use (smith's own HTTPS client; smith itself reads .tar, .tar.gz and .tar.xz);
+// ~/.cache/smith/packages/<hex>/ when that is unset, keyed by the archive's hash, as `.ok`. Fetched, verified and
+// extracted on the first use (smith's own HTTPS client; smith itself reads .tar, .tar.gz and .tar.xz);
 // afterwards it is only looked up, so a build works offline once it has fetched. When the archive holds one top-level
 // folder, the path is that folder's contents. The package appears in the cache only when it is complete: a fetch that
-// is interrupted leaves nothing under the hash. A wrong hash is an error that names the URL and both hashes, and
-// -DOFFLINE makes a package missing from the cache an error that names its URL instead of a fetch. The path is stable,
-// so it can go in steps, -I flags and objects. macOS only for now.
-[[smith::c_name("smith_package")]] export const char *package(Build *b, const Package *package);
+// is interrupted leaves nothing under the hash. A wrong hash gives `.error` of kind Hash that names the URL and both
+// hashes, a failed fetch kind Fetch, and -DOFFLINE makes a package missing from the cache kind Offline, naming its
+// URL, instead of a fetch. A missing .url or .hash is a mistake in the build file, not a failure at run time: it fails
+// the build. The path is stable, so it can go in steps, -I flags and objects. macOS only for now.
+[[smith::c_name("smith_package")]] export PackageResult package(Build *b, const Package *package);
 
 // Helpers
 [[smith::c_name("smith_fmt")]] export [[gnu::format(printf, 2, 3)]] const char *fmt(Build *b, const char *format, ...);
@@ -178,10 +198,23 @@ module smith::build;
 // regeneration edge on every call's needs, so the executor builds the needs, runs the program again with them in place,
 // and reloads. A pending `more` may be the one that calls build::default_targets.
 [[smith::c_name("smith_defer")]] export void defer(Build *b, const char *const *needs, void (*more)(Build *b));
-// One entry per line of the file, without the newline; a final newline adds no entry and an empty line is "". The file
-// is read on every `smith build`. A file that a step makes is read inside build::defer's `more`, never in build(). A
-// missing file or one over 16 MiB is an error.
-[[smith::c_name("smith_lines")]] export const char *const *lines(Build *b, const char *path);
+// Why a file could not be read as lines.
+// NOLINTBEGIN(readability-identifier-naming)
+// An enum's constants are written short in a module (build::Missing, C's SmithLinesError_Missing), and the check wants
+// C's Type_Value.
+
+[[smith::c_name("SmithLinesError")]] export typedef enum {
+    Missing, // the file does not exist or is not a regular file; the usual cause is a file a step makes, read too early
+} LinesError;
+// NOLINTEND(readability-identifier-naming)
+
+// A build.c writes the type smith_build_Lines, the lowering's name for the typedef.
+export typedef result(const char *const *, LinesError) Lines; // NOLINT(readability-identifier-naming)
+
+// One entry per line of the file, without the newline, as `.ok`; a final newline adds no entry and an empty line is "".
+// The file is read on every `smith build`. A file that a step makes is read inside build::defer's `more`, never in
+// build(). A missing file is `.error` Missing; one over 16 MiB fails the build.
+[[smith::c_name("smith_lines")]] export Lines lines(Build *b, const char *path);
 
 // Runs a program, no shell, and returns its stdout split into lines as build::lines does, with its stderr passed
 // through. A program that cannot start, exits non-zero or is killed prints `smith: <argv[0]> failed (status N)` and

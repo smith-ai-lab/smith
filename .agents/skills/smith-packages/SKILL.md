@@ -19,21 +19,27 @@ smith fetch https://example.com/lib-1.2.tar.gz
 `smith fetch` downloads with smith's own HTTPS client (redirects to https only, the system's certificate checks), stores the archive in the cache and prints the line to paste. Then, in build.c:
 
 ```c
-const char *lib = smith_package(b, &(SmithPackage){
+smith_build_PackageResult found = smith_package(b, &(SmithPackage){
     .url = "https://example.com/lib-1.2.tar.gz",
     .hash = "sha256:9f2c...",
-});                                              // the absolute path of the extracted contents
+});
+if (found.tag == smith_enum_result_const_char_ptr__SmithPackageError_tag_error) {
+    fprintf(stderr, "%s\n", found.error.message); // .error.kind: SmithPackageKind_Fetch, _Hash or _Offline
+    exit(2);
+}
+if (found.tag != smith_enum_result_const_char_ptr__SmithPackageError_tag_ok) __builtin_unreachable(); // so `.ok` reads as ok
+const char *lib = found.ok;                      // the absolute path of the extracted contents
 SmithObject o = {.compiler = "smith-cc", .source = smith_fmt(b, "%s/src/lib.c", lib), .output = "build/lib.o",
                  .flags = smith_list(b, "-I", smith_fmt(b, "%s/include", lib), nullptr)};
 smith_object(b, &o);
 ```
 
-(`build::package(b, &(build::Package){...})` in a build.smith.)
+(`build::package(b, &(build::Package){...})` in a build.smith is a `result(const char *, build::PackageError)`: `.ok` the path, `.error` with `kind` Fetch, Hash or Offline and `message`. A missing `.url` or `.hash` is a mistake in the build file and fails the build.)
 
 - The first call fetches, checks the hash and extracts (`.tar`, `.tar.gz`, `.tar.xz`, in smith itself; **a zip is refused**). A `.gz` that holds one file, not a tar (a release binary), is a package folder with that file in it, named as the URL without `.gz` and mode 0644 (`chmod +x` a copy); a `.xz` of one file is not read; later calls only look the folder up, so builds work offline. An archive with one top-level folder is returned as that folder's contents. The path is stable: use it in steps, `-I` flags and objects.
 - Extraction refuses absolute names, `..`, a path through a symlink and a symlink that points outside the package. File modes and times are kept.
 - `smith_package` runs every time build.c runs, before the executor: it is a lookup when cached.
-- A wrong hash is an error with both hashes (and the URL): paste the actual one only after you have confirmed the archive is the one you meant. `-DOFFLINE` turns a package missing from the cache into an error that names its URL, with no fetch (`smith build -DOFFLINE`). macOS only for now.
+- A wrong hash is a `PackageError` of kind Hash with both hashes (and the URL): paste the actual one only after you have confirmed the archive is the one you meant. `-DOFFLINE` turns a package missing from the cache into kind Offline naming its URL, with no fetch (`smith build -DOFFLINE`). macOS only for now.
 
 ## The caches
 

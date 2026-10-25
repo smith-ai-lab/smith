@@ -64,7 +64,7 @@ static size_t test_below(uint64_t *state, size_t bound) {
 }
 
 // Extracts `size` bytes of `data` (written to <scratch>/archive) into a fresh <scratch>/box/out.
-static bool test_extract_bytes(const char *scratch, const uint8_t *data, size_t size, SmithPackageError *error) {
+static bool test_extract_bytes(const char *scratch, const uint8_t *data, size_t size, SmithPackageFault *error) {
     char archive[PATH_MAX];
     char box[PATH_MAX];
     char folder[PATH_MAX];
@@ -123,7 +123,7 @@ static bool test_box_is_clean(const char *scratch) {
 }
 
 static int test_mode_extract(const char *archive, const char *folder) {
-    SmithPackageError error = {};
+    SmithPackageFault error = {};
     SmithExtracted extracted;
     if (!smith_package_extract(archive, "file", folder, &extracted, &error)) {
         printf("%s\n", error.text);
@@ -161,7 +161,7 @@ static int test_mode_prefixes(const char *archive, const char *scratch, size_t s
     }
     for (size_t length = 0; length < limit; length++) {
         if (!test_prefix_wanted(length, step)) continue;
-        SmithPackageError error = {};
+        SmithPackageFault error = {};
         if (test_extract_bytes(scratch, test_original, length, &error)) {
             fprintf(stderr, "a prefix of %zu of %zu bytes was accepted\n", length, test_original_size);
             return 1;
@@ -247,7 +247,7 @@ static int test_mode_fuzz(const char *archive, const char *scratch, size_t itera
     for (size_t i = 0; i < iterations; i++) {
         size_t size = 0;
         test_damage(&size, &state, tar);
-        SmithPackageError error = {};
+        SmithPackageFault error = {};
         if (test_extract_bytes(scratch, test_damaged, size, &error))
             accepted++;
         else if (error.text[0] == '\0') {
@@ -315,7 +315,7 @@ static int test_mode_vectors(void) {
     for (size_t i = 0; i < sizeof test_vectors / sizeof test_vectors[0]; i++) {
         const TestVector *vector = &test_vectors[i];
         TestOutput output = {};
-        SmithPackageError error = {};
+        SmithPackageFault error = {};
         bool ok = vector->xz ? smith_xz_decode(vector->bytes, vector->size, test_collect, &output, &error)
                              : smith_gzip_decode(vector->bytes, vector->size, test_collect, &output, &error);
         if (!ok || output.size != strlen(vector->expected) ||

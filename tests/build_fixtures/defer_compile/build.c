@@ -7,7 +7,9 @@ static void more(SmithBuild *b) {
     SmithProgram late_program = {.linker = "smith-cc", .output = "build/late", .objects = (const SmithObject *[]){&late, nullptr}};
     smith_program(b, &late_program);
     smith_default(b, late_program.step.outputs);
-    const char *const *names = smith_lines(b, "list");
+    smith_build_Lines read_names = smith_lines(b, "list");
+    if (read_names.tag != smith_enum_result_const_char_ptr_const_ptr__SmithLinesError_tag_ok) return;
+    const char *const *names = read_names.ok;
     for (size_t i = 0; names[i] != nullptr; i++) {
         const char *out = smith_fmt(b, "%s.out", names[i]);
         SmithStep step = {

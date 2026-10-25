@@ -2,7 +2,9 @@
 #include <stddef.h>
 
 void build(SmithBuild *b) {
-    const char *const *lines = smith_lines(b, "data");
+    smith_build_Lines read_lines = smith_lines(b, "data");
+    if (read_lines.tag != smith_enum_result_const_char_ptr_const_ptr__SmithLinesError_tag_ok) return;
+    const char *const *lines = read_lines.ok;
     const char *text = smith_fmt(b, "%zu", (size_t)0);
     size_t count = 0;
     while (lines[count] != nullptr)

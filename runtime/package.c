@@ -168,14 +168,16 @@ static bool smith_sha256_file(const char *path, char hex[smith_sha256_hex_size])
 
 typedef struct {
     char text[smith_package_error_size];
-} SmithPackageError;
+    bool wrong_hash; // the archive's bytes are not the hash the caller named (the build library's PackageKind Hash)
+} SmithPackageFault;
 
-[[gnu::format(printf, 2, 3)]] static bool smith_package_fail(SmithPackageError *error, const char *format, ...) {
+[[gnu::format(printf, 2, 3)]] static bool smith_package_fail(SmithPackageFault *error, const char *format, ...) {
     va_list args;
     va_start(args, format);
     int written = vsnprintf(error->text, sizeof error->text, format, args);
     va_end(args);
     SMITH_ASSERT(written > 0);
+    error->wrong_hash = false;
     return false;
 }
 
@@ -223,7 +225,7 @@ static void smith_package_remove(const char *path) {
 
 // The only place a package is downloaded: smith's HTTP client, https only (and file:// for tests), also after a
 // redirect. The body goes to the destination as it arrives. A failure's message is the client's, naming the URL.
-static bool smith_package_download(SmithIo *io, const char *url, const char *destination, SmithPackageError *error) {
+static bool smith_package_download(SmithIo *io, const char *url, const char *destination, SmithPackageFault *error) {
     SMITH_ASSERT(io != nullptr);
     SmithHttpResult result = smith_http_get(io, url, destination);
     if (result.error.code == 0) return true;
@@ -240,7 +242,7 @@ static const char *smith_cache_name(SmithCacheKind kind) {
 }
 
 // $XDG_CACHE_HOME/smith, or ~/.cache/smith: the folder of every smith cache.
-static bool smith_cache_base(char *out, SmithPackageError *error) {
+static bool smith_cache_base(char *out, SmithPackageFault *error) {
     const char *xdg = getenv("XDG_CACHE_HOME");
     const char *home = getenv("HOME");
     int written = 0;
@@ -257,7 +259,7 @@ static bool smith_cache_base(char *out, SmithPackageError *error) {
 }
 
 // The folder of one cache: <base>/modules or <base>/packages.
-static bool smith_cache_folder(SmithCacheKind kind, char *out, SmithPackageError *error) {
+static bool smith_cache_folder(SmithCacheKind kind, char *out, SmithPackageFault *error) {
     char base[PATH_MAX];
     if (!smith_cache_base(base, error)) return false;
     int written = snprintf(out, PATH_MAX, "%s/%s", base, smith_cache_name(kind));
@@ -265,7 +267,7 @@ static bool smith_cache_folder(SmithCacheKind kind, char *out, SmithPackageError
     return true;
 }
 
-static bool smith_package_root(char *out, SmithPackageError *error) {
+static bool smith_package_root(char *out, SmithPackageFault *error) {
     return smith_cache_folder(SmithCache_Packages, out, error);
 }
 
@@ -375,7 +377,7 @@ static bool smith_package_parse_hash(const char *hash, char digits[smith_sha256_
 
 // The folder to move into place: the archive's one top-level folder when it has exactly one entry (as `zig fetch` and
 // tar --strip-components=1 do), else the extraction folder itself. `single` says which.
-static bool smith_package_contents(const char *extract, char *contents, bool *single, SmithPackageError *error) {
+static bool smith_package_contents(const char *extract, char *contents, bool *single, SmithPackageFault *error) {
     DIR *dir = opendir(extract);
     if (dir == nullptr) return smith_package_fail(error, "cannot read %s", extract);
     size_t entries = 0;
@@ -429,14 +431,16 @@ static void smith_package_file_name(const char *url, char *name, size_t size) {
 
 // Verifies the downloaded archive, extracts it and moves it to its folder. The temporaries are the caller's to remove.
 static bool smith_package_install(const char *url, const char *wanted, const SmithPackageTemps *temps, char *folder,
-                                  char hash[smith_package_hash_size], SmithPackageError *error) {
+                                  char hash[smith_package_hash_size], SmithPackageFault *error) {
     char digits[smith_sha256_hex_size];
     if (!smith_sha256_file(temps->download, digits))
         return smith_package_fail(error, "cannot read the download of %s", url);
     int written = snprintf(hash, smith_package_hash_size, "sha256:%s", digits);
     SMITH_ASSERT(written == 71);
     if (wanted != nullptr && strcmp(wanted, hash) != 0) {
-        return smith_package_fail(error, "wrong hash for %s\n  expected %s\n  actual   %s", url, wanted, hash);
+        smith_package_fail(error, "wrong hash for %s\n  expected %s\n  actual   %s", url, wanted, hash);
+        error->wrong_hash = true;
+        return false;
     }
     written = snprintf(folder, PATH_MAX, "%s/%s", temps->packages, digits);
     SMITH_ASSERT(written > 0 && written < PATH_MAX);
@@ -469,15 +473,16 @@ static bool smith_package_install(const char *url, const char *wanted, const Smi
 // cached is not fetched again. With nullptr (`smith fetch`) the archive is always downloaded and its hash is the
 // answer, put in `hash` either way. `offline` turns a missing package into an error that names the URL.
 static bool smith_package_ensure(SmithIo *io, const char *url, const char *wanted, bool offline, char *folder,
-                                 char hash[smith_package_hash_size], SmithPackageError *error) {
+                                 char hash[smith_package_hash_size], SmithPackageFault *error) {
     SmithPackageTemps temps;
     if (!smith_package_root(temps.packages, error)) return false;
     char digits[smith_sha256_hex_size];
     char expected[smith_package_hash_size]; // a copy: install writes the actual hash into `hash`
     if (wanted != nullptr) {
         if (!smith_package_parse_hash(wanted, digits)) {
-            return smith_package_fail(error, "the hash of %s must be sha256: and 64 hex digits, not \"%s\"", url,
-                                      wanted);
+            smith_package_fail(error, "the hash of %s must be sha256: and 64 hex digits, not \"%s\"", url, wanted);
+            error->wrong_hash = true;
+            return false;
         }
         int written = snprintf(folder, PATH_MAX, "%s/%s", temps.packages, digits);
         SMITH_ASSERT(written > 0 && written < PATH_MAX);

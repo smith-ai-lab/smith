@@ -93,7 +93,7 @@ typedef struct {
     char hash[smith_package_hash_size];
     char folder[PATH_MAX];
     char actual[smith_package_hash_size];
-    SmithPackageError error;
+    SmithPackageFault error;
 } Case;
 
 static void start_case(Case *c) {

@@ -144,4 +144,4 @@ Generator rules:
   needs and regenerates before it builds any target, so stale steps never run. No-op: the needs are older than the
   manifest and the executor prints `no work to do`.
 - `smith_lines` reads the file into the arena on every `smith build` (limit 16 MiB). A file a step makes is read inside
-  `more`; read in `build()` it is the error `cannot read <path>; if a step makes it, read it inside smith_defer`.
+  `more`; read in `build()` it is the result's `.error` (`Missing`), which smith's own steps turn into the failure `cannot read <path>; if a step makes it, read it inside smith_defer`.

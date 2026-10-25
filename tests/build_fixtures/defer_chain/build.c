@@ -2,7 +2,9 @@
 #include <stddef.h>
 
 static void last(SmithBuild *b) {
-    const char *const *names = smith_lines(b, "second");
+    smith_build_Lines read_names = smith_lines(b, "second");
+    if (read_names.tag != smith_enum_result_const_char_ptr_const_ptr__SmithLinesError_tag_ok) return;
+    const char *const *names = read_names.ok;
     SmithStep step = {
         .command = (const char *[]){"sh", "-c", "echo \"$0\" > \"$1\"", names[0], "final", nullptr},
         .inputs = (const char *[]){"second", nullptr},

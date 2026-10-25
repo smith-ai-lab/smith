@@ -136,16 +136,23 @@ export void test_build_lines_no_final_newline_still_gives_the_line(io::Io *io) {
                          status_and(&one, scratch::read(&p, "result")));
 }
 
-export void test_build_lines_an_empty_file_is_an_empty_list_and_a_missing_one_exits_2(io::Io *io) {
+export void test_build_lines_an_empty_file_is_an_empty_list_and_a_missing_one_is_an_error_value(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", "lines_empty");
     scratch::Run empty = scratch::build(&p, "");
     scratch::expect_text("lines: an empty file is an empty list", "0 empty",
                          status_and(&empty, scratch::read(&p, "result")));
     (void)scratch::sh(&p, "rm data");
     scratch::Run missing = scratch::build(&p, "");
-    scratch::expect_status("lines: a missing file exits 2", 2, &missing);
-    scratch::expect_contains("lines: the missing file message", missing.err,
-                             "smith: build.c: cannot read data; if a step makes it, read it inside smith_defer");
+    scratch::expect_text("lines: a missing file is the result's error, which the build file handles", "0 missing",
+                         status_and(&missing, scratch::read(&p, "result")));
+}
+
+export void test_build_lines_a_file_over_16_mib_fails_the_build(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "lines_empty");
+    (void)scratch::sh(&p, "head -c 17825792 /dev/zero > data");
+    scratch::Run big = scratch::build(&p, "");
+    scratch::expect_status("lines: a file over 16 MiB exits 2", 2, &big);
+    scratch::expect_contains("lines: the message", big.err, "data is larger than 16 MiB");
 }
 
 // 11c. Modules: the parallel build, ten clean builds in a row, 80 sources sharing the modules.

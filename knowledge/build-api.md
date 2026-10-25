@@ -156,7 +156,9 @@ typedef struct {
 // is interrupted leaves nothing under the hash. A wrong hash is an error that names the URL and both hashes, and
 // -DOFFLINE makes a package missing from the cache an error that names its URL instead of a fetch. The path is stable,
 // so it can go in steps, -I flags and objects. macOS only for now.
-const char *smith_package(SmithBuild *b, const SmithPackage *package);
+// Returns a result(const char *, PackageError): .ok is the path, .error has a kind (Fetch, Hash, Offline) and a message.
+// A missing .url or .hash fails the build. A build.c writes the type smith_build_PackageResult.
+smith_build_PackageResult smith_package(SmithBuild *b, const SmithPackage *package);
 
 // Helpers
 [[gnu::format(printf, 2, 3)]] const char *smith_fmt(SmithBuild *b, const char *format, ...);
@@ -193,8 +195,8 @@ void smith_defer(SmithBuild *b, const char *const *needs, void (*more)(SmithBuil
 
 // One entry per line of the file, without the newline; a final newline adds no entry and an empty line is "". The file
 // is read on every `smith build`. A file that a step makes is read inside smith_defer's `more`, never in build(). A
-// missing file or one over 16 MiB is an error.
-const char *const *smith_lines(SmithBuild *b, const char *path);
+// missing file is a result's .error (Missing); one over 16 MiB fails the build.
+smith_build_Lines smith_lines(SmithBuild *b, const char *path);
 
 // Runs a program, no shell, and returns its stdout split into lines as smith_lines does, with its stderr passed
 // through. A program that cannot start, exits non-zero or is killed prints `smith: <argv[0]> failed (status N)` and
