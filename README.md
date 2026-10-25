@@ -570,7 +570,7 @@ and `gh` signed in. A clone builds with the release of its newest ancestor commi
 
 ```sh
 git clone git@github.com:adam-r-kowalski/smith && cd smith
-sh scripts/stage0.sh llvm      # builds LLVM 23.1.3 (r8) into ~/.cache/smith/llvm, about 9 minutes, once
+sh scripts/stage0.sh llvm      # builds LLVM 23.1.3 (r9) into ~/.cache/smith/llvm, about 9 minutes, once
 sh scripts/stage0.sh install   # builds the full smith and installs smith, smith-cc and smith-c++ in ~/.local/bin
 ```
 

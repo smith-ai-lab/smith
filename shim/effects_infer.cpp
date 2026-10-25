@@ -2,12 +2,11 @@
 // callees, and the two annotations that state it.
 //
 //   [[smith::pure]]                    nothing at all
-//   [[smith::alloc, smith::net]]       a ceiling: what the function may do, one attribute for each effect
-//   __attribute__((smith_effects("alloc", "net")))  the same, in one GNU attribute with the names as strings
+//   [[smith::effects(alloc, net)]]     a ceiling: what the function may do (a promise on a declaration with no body)
 //   no attribute                       inferred
-// (clang reads the arguments of a C23 attribute in a scope it does not own only when it knows the attribute, and a
-// plugin's is not asked: `[[smith::effects(alloc)]]` would reach the handler with no arguments, so the C23 spelling is
-// one attribute for each effect, which needs none.)
+// `[[smith::alloc]]`, one attribute for each effect, is also accepted, undocumented. The arguments of a scoped C23
+// attribute reach a plugin's handler only with patches/clang-plugin-attr-args.patch (LLVM r9): clang read them only for
+// an attribute it knew without the plugins, and a bare identifier after the first as an expression.
 //
 // A function that has a body gets the set of the effects of its calls, followed through the functions of the file
 // (and of the headers it includes) to the calls the file cannot see into: a function of libc or libSystem has the set
@@ -74,11 +73,23 @@ bool declaredSet(const Decl *decl, uint32_t &set) {
     return found;
 }
 
+// Sets the flag r9 adds to ParsedAttrInfo (patches/clang-plugin-attr-args.patch), when the headers have it: the parser
+// then reads `alloc, net` as identifiers.
+template <class Info> auto allowIdentifiers(Info &info, int) -> decltype(info.HasVariadicIdentifierArg = 1, void()) {
+    info.HasVariadicIdentifierArg = 1;
+}
+template <class Info> void allowIdentifiers(Info &, long) {}
+
+// `[[smith::effects(alloc, net)]]`, and `__attribute__((smith_effects("alloc", "net")))`: the names are identifiers or
+// strings.
 struct EffectsAttr final : ParsedAttrInfo {
     EffectsAttr() {
         OptArgs = 15;
         AcceptsExprPack = 0;
-        static constexpr Spelling spellings[] = {{ParsedAttr::AS_GNU, "smith_effects"}};
+        allowIdentifiers(*this, 0);
+        static constexpr Spelling spellings[] = {{ParsedAttr::AS_C23, "smith::effects"},
+                                                 {ParsedAttr::AS_CXX11, "smith::effects"},
+                                                 {ParsedAttr::AS_GNU, "smith_effects"}};
         Spellings = spellings;
     }
     bool diagAppertainsToDecl(Sema &S, const ParsedAttr &Attr, const Decl *D) const override {
@@ -90,21 +101,24 @@ struct EffectsAttr final : ParsedAttrInfo {
     AttrHandling handleDeclAttribute(Sema &S, Decl *D, const ParsedAttr &Attr) const override {
         std::string text = prefix;
         for (unsigned at = 0; at < Attr.getNumArgs(); at++) {
-            const auto *literal = dyn_cast_or_null<StringLiteral>(Attr.getArgAsExpr(at));
-            uint32_t bit = 0;
-            if (literal != nullptr)
-                for (const Name &name : names)
-                    if (literal->getString() == name.text) bit = name.bit;
-            if (bit == 0) {
+            std::string written;
+            if (Attr.isArgIdent(at)) {
+                written = Attr.getArgAsIdent(at)->getIdentifierInfo()->getName().str();
+            } else if (const auto *literal = dyn_cast_or_null<StringLiteral>(Attr.getArgAsExpr(at))) {
+                written = literal->getString().str();
+            }
+            bool known = false;
+            for (const Name &name : names)
+                known = known || written == name.text;
+            if (!known) {
                 unsigned id = S.getDiagnostics().getCustomDiagID(
-                    DiagnosticsEngine::Error, "smith-effect: an effect is one of the strings \"alloc\", \"files\", "
-                                              "\"net\", \"console\", \"clock\", \"process\", \"env\", \"entropy\", "
-                                              "\"globals\", \"c\"");
+                    DiagnosticsEngine::Error, "smith-effect: an effect is one of alloc, files, net, console, clock, "
+                                              "process, env, entropy, globals, c");
                 S.Diag(Attr.getLoc(), id);
                 return AttributeNotApplied;
             }
             if (at > 0) text += ",";
-            text += literal->getString().str();
+            text += written;
         }
         D->addAttr(AnnotateAttr::Create(S.Context, text, nullptr, 0, Attr.getRange()));
         return AttributeApplied;
