@@ -1,0 +1,546 @@
+// End-to-end tests for the files a smith with clang inside carries and writes on first use (tests/resource.sh): clang's
+// builtin headers, the compiler-rt runtimes, libLTO.dylib, and the bin/clang the driver runs again for -cc1. Every test
+// uses a data folder of its own (XDG_DATA_HOME, in the test's scratch folder, with a cache of its own where the test
+// removes or cleans it), so the real ones are never read or changed. A smith without clang inside (the stage0) has none
+// of this, and the tests do nothing.
+module resource_test;
+
+import smith::format;
+import smith::io;
+import smith::test;
+import scratch;
+
+// Every command: the data folder, the smith under test, and the shell functions the checks use. A program of the
+// programs folder is a clone of the smith that made it: the same bytes in a file of its own, never a hard link (macOS's
+// policy daemon kills a process when another name of its file is removed; issue #48). `variant` is a copy of smith with
+// another LC_UUID, as a rebuild has.
+constexpr char prelude[] =
+    "export XDG_DATA_HOME=\"$(cd .. && pwd)/data\"\n"
+    "smith=$SMITH_SELF\n"
+    "clang_folders=$XDG_DATA_HOME/smith/clang\n"
+    "program_folders=$XDG_DATA_HOME/smith/programs\n"
+    "is_copy() { cmp -s \"$1\" \"$2\" && [ ! \"$1\" -ef \"$2\" ]; }\n"
+    "yn() { [ -e \"$1\" ] && echo yes || echo no; }\n"
+    "tool_of() { otool -l \"$1\" | sed -n '/LC_BUILD_VERSION/,/version/p' | sed -n 's/^ *tool \\(.*\\)/\\1/p'; }\n"
+    "variant() { cp \"$smith\" \"../$1\"; perl -0777 -pi -e 's/(\\x1b\\0\\0\\0\\x18\\0\\0\\0)(.{16})/$1 . "
+    "(\"\\x'\"$2\"'\" x 16)/se' \"../$1\"; codesign -f -s - \"../$1\" >/dev/null 2>&1; }\n"
+    "folder_of() { for f in \"$program_folders\"/*; do is_copy \"$f/bin/ld\" \"$1\" && echo \"$f\"; done; }\n";
+
+// Where the files are, once a compile has written them.
+constexpr char where[] = "out=$(\"$smith\" cc -print-resource-dir)\n"
+                         "major=${out##*/}\n"
+                         "folder=${out%/lib/clang/*}\n"
+                         "programs=$(\"$smith\" cc --smith-which -c hello.c | head -n 1 | cut -d ' ' -f 3)\n"
+                         "programs=${programs%/bin/clang}\n";
+
+// Eight workers of two smiths, five rounds each, on the one runtime folder: the number of failures.
+constexpr char workers[] = "for n in 1 2 3 4 5 6 7 8; do\n"
+                           "    (for round in 1 2 3 4 5; do\n"
+                           "        \"$smith\" cc objc2.m -framework Foundation -o \"objc_a$n\" 2>>\"../mix$n\" && [ "
+                           "\"$(./objc_a$n)\" = 7 ] || echo bad >>\"../mix$n.bad\"\n"
+                           "        \"../smith_b\" cc objc2.m -framework Foundation -o \"objc_c$n\" 2>>\"../mix$n\" && "
+                           "[ \"$(./objc_c$n)\" = 7 ] || echo bad >>\"../mix$n.bad\"\n"
+                           "    done) &\n"
+                           "done\n"
+                           "wait\n"
+                           "cat ../mix*.bad 2>/dev/null | wc -l | tr -d ' '\n";
+
+// A programs folder whose smith is running, or whose binary exists, stays: what each folder does after a prune.
+constexpr char lock_script[] =
+    "two_hours_ago=$(date -v-2H +%Y%m%d%H%M)\n"
+    "variant smith_d 11\n"
+    "variant smith_e 22\n"
+    "../smith_d cc -fsyntax-only hello.c\n"
+    "../smith_e cc -fsyntax-only hello.c\n"
+    "folder_d=$(folder_of ../smith_d)\n"
+    "folder_e=$(folder_of ../smith_e)\n"
+    "(sleep 20 | ../smith_d lsp >/dev/null 2>&1) </dev/null >/dev/null 2>&1 &\n"
+    "holder=$!\n"
+    "tries=0\n"
+    "while [ $tries -lt 100 ] && ! [ -f \"$folder_d/.in-use\" ]; do sleep 0.1; tries=$((tries + 1)); done\n"
+    "sleep 1\n"
+    "rm ../smith_d\n"
+    "touch -t \"$two_hours_ago\" \"$folder_d\" \"$folder_e\"\n"
+    "variant smith_f 33\n"
+    "../smith_f cc -fsyntax-only hello.c\n"
+    "echo \"running=$(yn \"$folder_d\")\"\n"
+    "echo \"binary_exists=$(yn \"$folder_e\")\"\n"
+    "kill $holder 2>/dev/null\n"
+    "wait $holder 2>/dev/null\n"
+    "for p in $(lsof -t \"$folder_d/.in-use\" 2>/dev/null); do kill \"$p\" 2>/dev/null; done\n"
+    "for _ in $(seq 1 300); do\n"
+    "    [ -z \"$(lsof -t \"$folder_d/.in-use\" 2>/dev/null)\" ] && break\n"
+    "    sleep 0.1\n"
+    "done\n"
+    "touch -t \"$two_hours_ago\" \"$folder_d\"\n"
+    "variant smith_g 44\n"
+    "../smith_g cc -fsyntax-only hello.c\n"
+    "echo \"died=$(yn \"$folder_d\")\"\n"
+    "echo \"binary_exists_still=$(yn \"$folder_e\")\"\n";
+
+// A project with the sources; false when this smith has no clang inside (the stage0), whose tests do nothing.
+static bool begin(io::Io *io, scratch::Project *p, bool own_cache) {
+    *p = scratch::project(io, "p", "resource");
+    if (own_cache) {
+        scratch::own_cache(p);
+    }
+    const char *which = scratch::capture(
+        p, format::push(&io->arena, prelude, "smith cc --smith-which -c a.c | head -n 1 | cut -d ' ' -f 1,2").data);
+    return scratch::same(which, "clang in-process");
+}
+
+static scratch::Run run(io::Io *io, const scratch::Project *p, const char *commands) {
+    return scratch::sh(p, format::push(&io->arena, prelude, commands).data);
+}
+
+static scratch::Run run_after(io::Io *io, const scratch::Project *p, const char *commands) {
+    return scratch::sh(p, format::push(&io->arena, prelude, where, commands).data);
+}
+
+static const char *text(io::Io *io, const scratch::Project *p, const char *commands) {
+    return scratch::capture(p, format::push(&io->arena, prelude, commands).data);
+}
+
+static const char *text_after(io::Io *io, const scratch::Project *p, const char *commands) {
+    return scratch::capture(p, format::push(&io->arena, prelude, where, commands).data);
+}
+
+// The first compile, which writes the folders.
+static void first_compile(io::Io *io, const scratch::Project *p) {
+    scratch::Run compiled = run(io, p, "\"$smith\" cc -fsyntax-only hello.c");
+    scratch::expect_status("resource: a first compile", 0, &compiled);
+}
+
+// A compile of `source` and the run of its program: "<status> <output>", and what the compiler printed.
+static const char *built(io::Io *io, const scratch::Project *p, const char *compile, const char *program) {
+    return text_after(io, p, format::push(&io->arena, compile, " 2>../err; echo \"$? $(", program, ")\"").data);
+}
+
+static const char *printed(io::Io *io, const scratch::Project *p) {
+    return text(io, p, "cat ../err");
+}
+
+export void test_resource_which_names_a_programs_folder_and_writes_nothing(io::Io *io) {
+    scratch::Project p;
+    if (!begin(io, &p, false)) {
+        return;
+    }
+    scratch::expect_text("resource: which names a bin/clang in a folder of the programs folder",
+                         text(io, &p, "echo \"$program_folders/\""),
+                         text(io, &p,
+                              "p=$(\"$smith\" cc --smith-which -c hello.c | head -n 1 | cut -d ' ' -f 3); "
+                              "p=${p%/bin/clang}; echo \"${p%/*}/\""));
+    scratch::expect_text("resource: which writes nothing", "no", text(io, &p, "yn \"$XDG_DATA_HOME\""));
+}
+
+export void test_resource_the_first_compile_writes_the_folders(io::Io *io) {
+    scratch::Project p;
+    if (!begin(io, &p, false)) {
+        return;
+    }
+    scratch::Run compiled = run(io, &p, "\"$smith\" cc -fsyntax-only hello.c");
+    scratch::expect_status("resource: the first compile works", 0, &compiled);
+    scratch::expect_text("resource: the resource directory is in a folder of the runtime folders",
+                         text(io, &p, "echo \"$clang_folders/\""), text_after(io, &p, "echo \"${folder%/*}/\""));
+    scratch::expect_text("resource: and the first compile writes the folder", "yes",
+                         text_after(io, &p, "yn \"$folder\""));
+    scratch::expect_text("resource: and the programs folder", "yes", text_after(io, &p, "yn \"$programs\""));
+    scratch::expect_text("resource: the runtime folder holds no program", "no",
+                         text_after(io, &p, "yn \"$folder/bin\""));
+    scratch::expect_text("resource: the programs folder's lib is the runtime folder's",
+                         text_after(io, &p, "echo \"$folder/lib\""), text_after(io, &p, "readlink \"$programs/lib\""));
+    scratch::expect_text("resource: iOS's runtimes are not carried", "no",
+                         text_after(io, &p, "yn \"$folder/lib/clang/$major/lib/darwin/libclang_rt.ios.a\""));
+    scratch::expect_text("resource: no half-written folder is left", "",
+                         text(io, &p, "{ ls \"$clang_folders\"; ls \"$program_folders\"; } | grep tmp"));
+}
+
+static void holds(io::Io *io, const scratch::Project *p, const char *file) {
+    char name[256];
+    char command[256];
+    (void)format::to(name, sizeof name, "resource: the folder holds ", file);
+    (void)format::to(command, sizeof command, "yn \"$folder/lib/clang/$major/", file, "\"");
+    scratch::expect_text(name, "yes", text_after(io, p, command));
+}
+
+export void test_resource_the_runtime_folder_holds_the_files(io::Io *io) {
+    scratch::Project p;
+    if (!begin(io, &p, false)) {
+        return;
+    }
+    first_compile(io, &p);
+    // lib/clang/<major>/ is under the folder; libLTO is beside it
+    holds(io, &p, "include/stddef.h");
+    holds(io, &p, "include/arm_neon.h");
+    holds(io, &p, "share/asan_ignorelist.txt");
+    holds(io, &p, "lib/darwin/libclang_rt.asan_osx_dynamic.dylib");
+    holds(io, &p, "lib/darwin/libclang_rt.ubsan_osx_dynamic.dylib");
+    holds(io, &p, "lib/darwin/libclang_rt.osx.a");
+    holds(io, &p, "lib/darwin/libclang_rt.profile_osx.a");
+    scratch::expect_text("resource: the folder holds lib/libLTO.dylib", "yes",
+                         text_after(io, &p, "yn \"$folder/lib/libLTO.dylib\""));
+}
+
+static void is_a_copy(io::Io *io, const scratch::Project *p, const char *program) {
+    char name[256];
+    char command[256];
+    (void)format::to(name, sizeof name, "resource: bin/", program,
+                     " is a copy of the smith that ran, with a file of its own");
+    (void)format::to(command, sizeof command, "is_copy \"$programs/bin/", program,
+                     "\" \"$smith\" && echo yes || echo no");
+    scratch::expect_text(name, "yes", text_after(io, p, command));
+}
+
+export void test_resource_the_programs_are_copies_of_the_smith(io::Io *io) {
+    scratch::Project p;
+    if (!begin(io, &p, false)) {
+        return;
+    }
+    first_compile(io, &p);
+    is_a_copy(io, &p, "clang");
+    is_a_copy(io, &p, "clang++");
+    is_a_copy(io, &p, "ld");
+}
+
+export void test_resource_the_builtin_headers_come_from_the_folder(io::Io *io) {
+    scratch::Project p;
+    if (!begin(io, &p, false)) {
+        return;
+    }
+    first_compile(io, &p);
+    scratch::expect_contains("resource: the builtin headers come from the folder",
+                             text_after(io, &p, "\"$smith\" cc -M hello.c"),
+                             text_after(io, &p, "echo \"$folder/lib/clang/$major/include/stddef.h\""));
+    scratch::expect_text("resource: nothing names an LLVM install", "",
+                         text(io, &p, "\"$smith\" cc -### -c hello.c 2>&1 | grep -F 'smith/llvm' | head -n 1"));
+}
+
+// A second compile reads the folder and writes nothing.
+export void test_resource_a_second_compile_rewrites_no_file(io::Io *io) {
+    scratch::Project p;
+    if (!begin(io, &p, false)) {
+        return;
+    }
+    first_compile(io, &p);
+    constexpr char files[] = "ls -l \"$folder/lib/clang/$major/include/stddef.h\" \"$folder/lib/libLTO.dylib\"";
+    scratch::Run stamped = run_after(io, &p, format::push(&io->arena, files, " >../stamp").data);
+    scratch::expect_status("resource: the stamps", 0, &stamped);
+    scratch::sleep(&p, 1000);
+    scratch::Run second = run(io, &p, "\"$smith\" cc -fsyntax-only hello.c");
+    scratch::expect_status("resource: a second compile works", 0, &second);
+    scratch::expect_text("resource: and rewrites no file", text(io, &p, "cat ../stamp"), text_after(io, &p, files));
+}
+
+// smith lint and smith lsp read the same folder for the builtin headers, not the LLVM install.
+export void test_resource_lint_and_lsp_read_clangs_folder(io::Io *io) {
+    scratch::Project p;
+    if (!begin(io, &p, false)) {
+        return;
+    }
+    first_compile(io, &p);
+    scratch::Run linted =
+        run(io, &p,
+            "\"$smith\" lint --quiet --checks='-*,bugprone-sizeof-expression' --extra-arg=-v hello.c -- >../lint 2>&1");
+    scratch::expect_status("resource: smith lint parses a file that includes a builtin header", 0, &linted);
+    scratch::expect_contains("resource: and its builtin headers come from clang's folder", text(io, &p, "cat ../lint"),
+                             text(io, &p, "echo \"$XDG_DATA_HOME/smith/programs/\""));
+    scratch::expect_text("resource: and no LLVM install is named", "",
+                         text(io, &p, "grep -F 'smith/llvm' ../lint | head -n 1"));
+    scratch::Run set_up = run(io, &p,
+                              "printf '[{\"directory\": \"%s\", \"file\": \"hello.c\", \"arguments\": [\"smith-cc\", "
+                              "\"-c\", \"hello.c\"]}]\\n' "
+                              "\"$PWD\" >compile_commands.json; printf 'Checks: \"-*\"\\n' >.clang-tidy");
+    scratch::expect_status("resource: the compile database", 0, &set_up);
+    scratch::Run checked = run(io, &p, "\"$smith\" lsp --check=hello.c >../lsp 2>&1");
+    scratch::expect_status("resource: smith lsp --check works", 0, &checked);
+    scratch::expect_text("resource: and logs no error", "0", text(io, &p, "grep -c 'E\\[' ../lsp"));
+    scratch::expect_contains(
+        "resource: and its resource directory is in this smith's programs folder, which links clang's",
+        text(io, &p, "cat ../lsp"), text(io, &p, "echo \"-resource-dir=$XDG_DATA_HOME/smith/programs/\""));
+    scratch::expect_contains("resource: and it is lib/clang/<major>", text(io, &p, "cat ../lsp"),
+                             text_after(io, &p, "echo \"/lib/clang/$major\""));
+}
+
+// -flto links with lld, which has LLVM inside it and so needs no libLTO.dylib; the driver still names the one in the
+// folder for a linker that does, and SMITH_LINKER=/usr/bin/ld loads it.
+export void test_resource_an_flto_link_needs_no_lib_lto(io::Io *io) {
+    scratch::Project p;
+    if (!begin(io, &p, false)) {
+        return;
+    }
+    first_compile(io, &p);
+    scratch::expect_text("resource: an -flto link works", "0 hi",
+                         built(io, &p, "\"$smith\" cc -flto hello.c -o lto", "./lto"));
+    scratch::expect_text("resource: and the linker prints nothing about libLTO", "", printed(io, &p));
+    scratch::expect_text("resource: an -flto link with the system ld works", "0 hi",
+                         built(io, &p, "SMITH_LINKER=/usr/bin/ld \"$smith\" cc -flto hello.c -o lto_ld", "./lto_ld"));
+    scratch::expect_text("resource: and it prints nothing", "", printed(io, &p));
+}
+
+// The program the driver runs as `ld` is smith, and the link is lld's, in that process. An lld binary says so in its
+// LC_BUILD_VERSION: tool 4 (ld64's LD is 3), with LLVM's version.
+export void test_resource_the_link_is_lld_in_smiths_process(io::Io *io) {
+    scratch::Project p;
+    if (!begin(io, &p, false)) {
+        return;
+    }
+    first_compile(io, &p);
+    scratch::expect_text("resource: a link works", "0 hi",
+                         built(io, &p, "\"$smith\" cc hello.c -o linked", "./linked"));
+    scratch::expect_text("resource: and is lld's", "4", text(io, &p, "tool_of linked"));
+    scratch::expect_text("resource: and is signed, with no codesign step", "0",
+                         text(io, &p, "codesign --verify linked >/dev/null 2>&1; echo $?"));
+    scratch::expect_text("resource: and is signed ad hoc by the linker", "1",
+                         text(io, &p, "codesign -dv linked 2>&1 | grep -c 'linker-signed'"));
+    scratch::expect_text("resource: SMITH_LINKER=/usr/bin/ld links with ld", "0 hi 3",
+                         text_after(io, &p,
+                                    "SMITH_LINKER=/usr/bin/ld \"$smith\" cc hello.c -o linked_ld 2>../err; "
+                                    "echo \"$? $(./linked_ld) $(tool_of linked_ld)\""));
+}
+
+export void test_resource_a_missing_linker_and_an_undefined_symbol_fail(io::Io *io) {
+    scratch::Project p;
+    if (!begin(io, &p, false)) {
+        return;
+    }
+    first_compile(io, &p);
+    scratch::Run none = run(io, &p, "SMITH_LINKER=/nonexistent/ld \"$smith\" cc hello.c -o linked_none");
+    scratch::expect_status("resource: a SMITH_LINKER that is not there is an error", 1, &none);
+    scratch::expect_contains("resource: and says what it is", none.err, "SMITH_LINKER");
+    scratch::Run undefined = run(io, &p, "\"$smith\" cc undefined.c -o undefined");
+    scratch::expect_status("resource: an undefined symbol fails", 1, &undefined);
+    scratch::expect_contains("resource: with lld's message", undefined.err, "undefined symbol: missing");
+    scratch::expect_text("resource: and leaves no output", "no", text(io, &p, "yn undefined"));
+}
+
+// What ld links today, lld links: frameworks, a dynamic library, -dead_strip, an Objective-C selector stub, a dSYM.
+export void test_resource_lld_links_frameworks_arc_and_dead_strip(io::Io *io) {
+    scratch::Project p;
+    if (!begin(io, &p, false)) {
+        return;
+    }
+    first_compile(io, &p);
+    scratch::expect_text(
+        "resource: a program with frameworks, ARC and -dead_strip", "0 7",
+        built(io, &p,
+              "\"$smith\" cc -fobjc-arc -g objc.m -framework Foundation -framework AppKit -framework Metal "
+              "-Wl,-dead_strip -o objc",
+              "./objc 2>/dev/null"));
+    scratch::expect_text("resource: and its dSYM has the debug info", "yes",
+                         text(io, &p, "[ -f objc.dSYM/Contents/Resources/DWARF/objc ] && echo yes || echo no"));
+}
+
+export void test_resource_lld_links_a_dynamic_library_and_a_program_against_it(io::Io *io) {
+    scratch::Project p;
+    if (!begin(io, &p, false)) {
+        return;
+    }
+    first_compile(io, &p);
+    scratch::Run linked = run(io, &p, "\"$smith\" cc -dynamiclib hello.c -o libhello.dylib");
+    scratch::expect_status("resource: a dynamic library links", 0, &linked);
+    scratch::Run library = run(io, &p, "\"$smith\" cc -dynamiclib lib.c -o liblib.dylib");
+    scratch::expect_status("resource: the library to link against", 0, &library);
+    scratch::expect_text(
+        "resource: and a program links against it", "0 lib",
+        built(io, &p, "\"$smith\" cc uselib.c -L. -llib -Wl,-rpath,@loader_path -o uselib", "./uselib"));
+}
+
+// Compiling and linking in one command runs the driver again with -cc1: bin/clang is smith. A copy of smith is the same
+// smith (the same LC_UUID), so it uses the same programs, and the links outlive the smith they were made from.
+export void test_resource_a_copy_of_smith_uses_the_same_programs(io::Io *io) {
+    scratch::Project p;
+    if (!begin(io, &p, false)) {
+        return;
+    }
+    first_compile(io, &p);
+    scratch::expect_text("resource: a compile and a link with a copy of smith", "0 hi",
+                         built(io, &p, "cp \"$smith\" ../smith2; ../smith2 cc hello.c -o prog", "./prog"));
+    scratch::expect_text("resource: a copy of smith makes no programs of its own", "1",
+                         text(io, &p, "ls \"$program_folders\" | wc -l | tr -d ' '"));
+    scratch::Run removed = run(io, &p, "rm ../smith2");
+    scratch::expect_status("resource: the copy is removed", 0, &removed);
+    scratch::expect_text("resource: after the copy is removed, a compile and a link still work", "0 hi",
+                         built(io, &p, "\"$smith\" cc hello.c -o prog", "./prog"));
+}
+
+// Two different smiths (another LC_UUID, as a rebuild has) never share or remake each other's programs, and keep
+// working at once on the one runtime folder: each compiles and links an Objective-C program, many times, together.
+export void test_resource_two_smiths_keep_their_own_programs(io::Io *io) {
+    scratch::Project p;
+    if (!begin(io, &p, false)) {
+        return;
+    }
+    first_compile(io, &p);
+    scratch::Run made = run(io, &p, "variant smith_b ab");
+    scratch::expect_status("resource: a second smith is made", 0, &made);
+    scratch::expect_text("resource: a second smith (another LC_UUID) works", "0 7",
+                         built(io, &p, "../smith_b cc objc2.m -framework Foundation -o objc_b", "./objc_b"));
+    scratch::expect_text("resource: and has programs folder of its own", "2",
+                         text(io, &p, "ls \"$program_folders\" | wc -l | tr -d ' '"));
+    scratch::expect_text(
+        "resource: that hold its own copies", "yes",
+        text(io, &p,
+             "for f in \"$program_folders\"/*; do is_copy \"$f/bin/ld\" ../smith_b && echo yes; done | head -n 1"));
+    scratch::expect_text("resource: and the first smith's copies are still the first", "yes",
+                         text_after(io, &p, "is_copy \"$programs/bin/ld\" \"$smith\" && echo yes || echo no"));
+}
+
+export void test_resource_eight_workers_of_two_smiths_all_link_and_run(io::Io *io) {
+    scratch::Project p;
+    if (!begin(io, &p, false)) {
+        return;
+    }
+    first_compile(io, &p);
+    scratch::Run made = run(io, &p, "variant smith_b ab");
+    scratch::expect_status("resource: a second smith is made", 0, &made);
+    scratch::expect_text("resource: eight workers of two smiths, five rounds each, all link and run", "0",
+                         text(io, &p, workers));
+    scratch::expect_text("resource: and the programs are still each its own", "yes",
+                         text_after(io, &p,
+                                    "is_copy \"$programs/bin/clang\" \"$smith\" && is_copy \"$programs/bin/ld\" "
+                                    "\"$smith\" && echo yes || echo no"));
+    scratch::expect_text("resource: and no half-made folder is left", "",
+                         text(io, &p, "ls \"$program_folders\" | grep tmp"));
+}
+
+// A programs folder idle for more than 31 days is removed when a new one is made; a recent one, and the runtime folder,
+// stay.
+export void test_resource_an_idle_programs_folder_is_removed(io::Io *io) {
+    scratch::Project p;
+    if (!begin(io, &p, false)) {
+        return;
+    }
+    first_compile(io, &p);
+    scratch::Run staged = run_after(
+        io, &p,
+        "variant smith_b ab; variant smith_c cd; ../smith_b cc -fsyntax-only hello.c; old=$(folder_of ../smith_b); "
+        "echo \"$old\" >../old; touch -t 202001010000 \"$old\"; mkdir \"$program_folders/stale.99.tmp\"; "
+        "touch -t 202001010000 \"$program_folders/stale.99.tmp\"; ../smith_c cc -fsyntax-only hello.c; "
+        "echo \"$programs\" >../recent; echo \"$folder\" >../runtime");
+    scratch::expect_status("resource: a new programs folder is made", 0, &staged);
+    scratch::expect_text("resource: an idle programs folder is removed when a new one is made", "no",
+                         text(io, &p, "yn \"$(cat ../old)\""));
+    scratch::expect_text("resource: so is an old half-made one", "no",
+                         text(io, &p, "yn \"$program_folders/stale.99.tmp\""));
+    scratch::expect_text("resource: a recent one stays", "yes", text(io, &p, "yn \"$(cat ../recent)\""));
+    scratch::expect_text("resource: and the runtime folder", "yes", text(io, &p, "yn \"$(cat ../runtime)\""));
+}
+
+// A programs folder records its binary (LC_UUID and path). When a new one is made, the folder of a binary that is gone
+// is removed, unless a running smith holds its lock (a long-running `smith lsp` of a deleted worktree) or it is younger
+// than an hour; one whose binary exists stays.
+export void test_resource_a_programs_folder_records_its_binary(io::Io *io) {
+    scratch::Project p;
+    if (!begin(io, &p, false)) {
+        return;
+    }
+    scratch::Run made = run(io, &p, "variant smith_d 11; ../smith_d cc -fsyntax-only hello.c");
+    scratch::expect_status("resource: a smith with a programs folder", 0, &made);
+    scratch::expect_text("resource: a programs folder records its binary", "smith_d",
+                         text(io, &p, "sed -n 2p \"$(folder_of ../smith_d)/binary\" | sed 's,.*/,,'"));
+}
+
+export void test_resource_a_folder_whose_smith_is_running_stays(io::Io *io) {
+    scratch::Project p;
+    if (!begin(io, &p, false)) {
+        return;
+    }
+    first_compile(io, &p);
+    scratch::Run staged = run_after(io, &p, lock_script);
+    scratch::expect_status("resource: the lock script", 0, &staged);
+    scratch::expect_contains("resource: a folder whose smith is running stays when its binary is gone", staged.out,
+                             "running=yes");
+    scratch::expect_contains("resource: and one whose binary exists is never touched", staged.out, "binary_exists=yes");
+    scratch::expect_contains("resource: once that smith has died the next prune removes its folder", staged.out,
+                             "died=no");
+    scratch::expect_contains("resource: and a folder whose binary exists still stays", staged.out,
+                             "binary_exists_still=yes");
+}
+
+export void test_resource_a_folder_younger_than_an_hour_stays(io::Io *io) {
+    scratch::Project p;
+    if (!begin(io, &p, false)) {
+        return;
+    }
+    first_compile(io, &p);
+    scratch::Run staged =
+        run(io, &p,
+            "variant smith_e 22; ../smith_e cc -fsyntax-only hello.c; folder_e=$(folder_of ../smith_e); "
+            "echo \"$folder_e\" >../young; rm ../smith_e; "
+            "touch -t \"$(date -v-30M +%Y%m%d%H%M)\" \"$folder_e\"; variant smith_h 55; "
+            "../smith_h cc -fsyntax-only hello.c");
+    scratch::expect_status("resource: a young folder whose binary is gone, and a new one", 0, &staged);
+    scratch::expect_text("resource: a folder younger than an hour stays even when its binary is gone", "yes",
+                         text(io, &p, "yn \"$(cat ../young)\""));
+}
+
+export void test_resource_smith_cplusplus_compiles_and_links_cplusplus(io::Io *io) {
+    scratch::Project p;
+    if (!begin(io, &p, false)) {
+        return;
+    }
+    first_compile(io, &p);
+    scratch::expect_text("resource: smith-c++ compiles and links C++", "0 3",
+                         built(io, &p, "ln -s \"$smith\" ../smith-c++; ../smith-c++ v.cpp -o v", "./v"));
+}
+
+// A sanitized program loads its runtime from the folder, which neither smith cache clean nor pruning nor a removed
+// cache touches.
+export void test_resource_a_sanitized_program_loads_its_runtime_from_the_folder(io::Io *io) {
+    scratch::Project p;
+    if (!begin(io, &p, true)) {
+        return;
+    }
+    first_compile(io, &p);
+    scratch::expect_text("resource: a sanitized program builds and runs", "0 hi",
+                         built(io, &p, "\"$smith\" cc -fsanitize=address,undefined -g hello.c -o asan", "./asan"));
+    scratch::expect_text("resource: its rpath is the folder's runtime",
+                         text_after(io, &p, "echo \"$folder/lib/clang/$major/lib/darwin\""),
+                         text(io, &p, "otool -l asan | sed -n 's/^ *path \\(.*clang.*\\) (offset.*/\\1/p'"));
+    scratch::Run cleaned = run(io, &p, "\"$smith\" cache clean");
+    scratch::expect_status("resource: smith cache clean works", 0, &cleaned);
+    scratch::expect_text(
+        "resource: the folder is still there", "yes",
+        text_after(io, &p, "yn \"$folder/lib/clang/$major/lib/darwin/libclang_rt.asan_osx_dynamic.dylib\""));
+    scratch::expect_text("resource: the sanitized program still runs", "hi", text(io, &p, "./asan"));
+    scratch::Run removed = run(io, &p, "rm -rf \"$XDG_CACHE_HOME\"");
+    scratch::expect_status("resource: the whole cache is removed", 0, &removed);
+    scratch::expect_text("resource: with the whole cache removed it still runs", "hi", text(io, &p, "./asan"));
+    scratch::Run bad = run(io, &p, "\"$smith\" cc -fsanitize=address -g bad.c -o bad");
+    scratch::expect_status("resource: a program that reads out of bounds is built", 0, &bad);
+    scratch::expect_text("resource: and still finds the runtime to report an error", "AddressSanitizer",
+                         text(io, &p, "./bad 2>&1 | grep -o AddressSanitizer | head -n 1"));
+}
+
+// Processes that start together on a new data folder all work, and leave one folder.
+export void test_resource_eight_first_compiles_at_once_leave_one_folder(io::Io *io) {
+    scratch::Project p;
+    if (!begin(io, &p, false)) {
+        return;
+    }
+    first_compile(io, &p);
+    scratch::Run raced = run(io, &p,
+                             "before=$(ls \"$clang_folders\"); rm -rf \"$XDG_DATA_HOME\"; "
+                             "for n in 1 2 3 4 5 6 7 8; do (\"$smith\" cc -fsyntax-only hello.c 2>\"../race$n\" && "
+                             "echo ok >\"../race$n.ok\") & done; "
+                             "wait; echo \"ok=$(ls ../race*.ok | wc -l | tr -d ' ')\"; "
+                             "[ \"$before\" = \"$(ls \"$clang_folders\")\" ] && echo same=yes; "
+                             "echo \"programs=$(ls \"$program_folders\" | wc -l | tr -d ' ')\"");
+    scratch::expect_contains("resource: eight first compiles at once all work", raced.out, "ok=8");
+    scratch::expect_contains("resource: and leave the one folder, with the same name", raced.out, "same=yes");
+    scratch::expect_contains("resource: and one programs folder", raced.out, "programs=1");
+}
+
+export void test_resource_an_unusable_data_folder_is_a_message_and_status_2(io::Io *io) {
+    scratch::Project p;
+    if (!begin(io, &p, false)) {
+        return;
+    }
+    scratch::Run relative = run(io, &p, "env -u XDG_DATA_HOME HOME=relative \"$smith\" cc -fsyntax-only hello.c");
+    scratch::expect_status("resource: no usable data folder: status 2", 2, &relative);
+    scratch::expect_contains("resource: and a message that names the variables", relative.err,
+                             "set HOME or XDG_DATA_HOME");
+    scratch::Run unwritable = run(io, &p, "XDG_DATA_HOME=/dev/null/data \"$smith\" cc -fsyntax-only hello.c");
+    scratch::expect_status("resource: an unwritable data folder: status 2", 2, &unwritable);
+    scratch::expect_contains("resource: and a message that names it", unwritable.err, "cannot create");
+}
