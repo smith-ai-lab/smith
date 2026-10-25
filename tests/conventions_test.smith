@@ -1,0 +1,370 @@
+// End-to-end tests for builds by convention (issue #43): a folder with no build file and a main.smith or main.c builds,
+// runs and tests, with smith_app and smith_app_tests as its build program. The folders are in
+// tests/build_fixtures/conv_*; each test makes its own project from one and runs smith there.
+module conventions_test;
+
+import smith::format;
+import smith::io;
+import smith::test;
+import scratch;
+
+// The last line of a command's output: the program's output follows the build's.
+static const char *last_line(const scratch::Project *p, const char *command) {
+    return scratch::capture(p, format::push(&p->io->arena, "{ ", command, "; } | tail -n 1").data);
+}
+
+// The files a compile of the build lists in .smith/build.info, as a line.
+static const char *compiled(const scratch::Project *p) {
+    return scratch::capture(p, "grep '^compile\t' .smith/build.info | cut -f2 | grep -v '^build.c$' | tr '\n' ' ' | "
+                               "sed 's/ $//'");
+}
+
+static const char *yes_no(bool value) {
+    return value ? "yes" : "no";
+}
+
+// The output and the errors of a run as one text.
+static const char *both(io::Io *io, const scratch::Run *run) {
+    return format::push(&io->arena, run->out, run->err).data;
+}
+
+// --- 1. a .smith project: main imports geometry::box, which imports geometry::scale; one more module nothing imports -
+
+export void test_conventions_smith_builds_with_no_build_file(io::Io *io) {
+    scratch::Project p = scratch::project(io, "shapes", "conv_shapes");
+    scratch::Run built = scratch::build(&p, "");
+    scratch::expect_status("smith: builds with no build file", 0, &built);
+    scratch::expect_text("smith: the debug program is build/debug/<folder>", "yes",
+                         yes_no(scratch::exists(&p, "build/debug/shapes")));
+    scratch::expect_text("smith: the project gets no build file", "no", yes_no(scratch::exists(&p, "build.c")));
+    scratch::expect_text("smith: the build program is smith's, in .smith", "yes",
+                         yes_no(scratch::exists(&p, ".smith/conventions.c")));
+    scratch::expect_text("smith: the files of the program, found by their imports",
+                         "main.smith geometry/box.smith geometry/scale.smith tests/box_test.smith", compiled(&p));
+    scratch::expect_text("smith: a module nothing imports is not compiled", "no",
+                         yes_no(scratch::exists(&p, "build/debug/geometry/unused.o")));
+    scratch::expect_text("smith: ... nor is its header written", "no",
+                         yes_no(scratch::exists(&p, ".smith/include/geometry/unused.h")));
+    scratch::expect_text("smith: the compile commands are in .smith", "yes",
+                         yes_no(scratch::exists(&p, ".smith/compile_commands.json")));
+    scratch::expect_text("smith: ... and not at the root", "no", yes_no(scratch::exists(&p, "compile_commands.json")));
+    scratch::Run again = scratch::build(&p, "");
+    scratch::expect_text("smith: a second build has nothing to do", "smith: no work to do.", again.out);
+}
+
+export void test_conventions_smith_run_runs_the_program(io::Io *io) {
+    scratch::Project p = scratch::project(io, "shapes", "conv_shapes");
+    scratch::expect_text("smith run: runs the program", "12", last_line(&p, "smith run"));
+}
+
+export void test_conventions_smith_test_passes(io::Io *io) {
+    scratch::Project p = scratch::project(io, "shapes", "conv_shapes");
+    scratch::Run run = scratch::sh(&p, "smith test");
+    scratch::expect_status("smith test: passes", 0, &run);
+    scratch::expect_contains("smith test: ran the test", both(io, &run), "1 passed, 0 failed");
+}
+
+export void test_conventions_smith_release_and_fast_programs(io::Io *io) {
+    scratch::Project p = scratch::project(io, "shapes", "conv_shapes");
+    scratch::Run run = scratch::build(&p, "release fast");
+    scratch::expect_status("smith build release fast: builds", 0, &run);
+    scratch::expect_text("smith: the release program", "yes", yes_no(scratch::exists(&p, "build/release/shapes")));
+    scratch::expect_text("smith: the fast program", "yes", yes_no(scratch::exists(&p, "build/fast/shapes")));
+    scratch::expect_text("smith: the release program runs", "12", scratch::capture(&p, "build/release/shapes"));
+    scratch::expect_text("smith: the fast program runs", "12", scratch::capture(&p, "build/fast/shapes"));
+}
+
+export void test_conventions_smith_the_profiles_flags(io::Io *io) {
+    scratch::Project p = scratch::project(io, "shapes", "conv_shapes");
+    scratch::Run release = scratch::build(&p, "-t commands build/release/geometry/box.o");
+    scratch::expect_contains("smith: release has -O2", release.out, " -O2 ");
+    scratch::expect_lacks("smith: release keeps assertions on", release.out, "-DNDEBUG");
+    scratch::Run fast = scratch::build(&p, "-t commands build/fast/geometry/box.o");
+    scratch::expect_contains("smith: fast has -DNDEBUG", fast.out, "-DNDEBUG");
+    scratch::Run debug = scratch::build(&p, "-t commands build/debug/geometry/box.o");
+    scratch::expect_contains("smith: debug has the sanitizers", debug.out, "-fsanitize=address,undefined");
+    scratch::expect_contains("smith: ... and -std=gnu2y -Werror", debug.out, "-std=gnu2y");
+}
+
+// A module added to the program is found on the next build, with no change to a build file.
+export void test_conventions_smith_a_new_import_is_followed_on_the_next_build(io::Io *io) {
+    scratch::Project p = scratch::project(io, "shapes", "conv_shapes");
+    scratch::write(&p, "geometry/volume.smith",
+                   "module geometry::volume;\n"
+                   "import geometry::box;\n"
+                   "\n"
+                   "export i32 of(i32 w, i32 h, i32 d) {\n"
+                   "    return box::area(w, h) * d;\n"
+                   "}\n");
+    scratch::write(&p, "main.smith",
+                   "module main;\n"
+                   "import geometry::volume;\n"
+                   "import <stdio.h>;\n"
+                   "\n"
+                   "int main() {\n"
+                   "    c::printf(\"%d\\n\", volume::of(2, 3, 4));\n"
+                   "    return 0;\n"
+                   "}\n");
+    scratch::expect_text("smith: a new import is followed on the next build", "24", last_line(&p, "smith run"));
+    scratch::expect_text("smith: ... through the modules it imports", "yes",
+                         yes_no(scratch::exists(&p, "build/debug/geometry/scale.o")));
+}
+
+// --- 2. a C project: main.c includes util.h (util.c beside it), which includes deep/x.h (deep/x.c); a stray .c -----
+
+export void test_conventions_c_builds_with_no_build_file(io::Io *io) {
+    scratch::Project p = scratch::project(io, "calc", "conv_calc");
+    scratch::Run built = scratch::build(&p, "");
+    scratch::expect_status("c: builds with no build file", 0, &built);
+    scratch::expect_text("c: the files of the program, found by their includes",
+                         "main.c util.c deep/x.c tests/util_test.c", compiled(&p));
+    scratch::expect_text("c: a .c nothing includes is not compiled", "no",
+                         yes_no(scratch::exists(&p, "build/debug/stray.o")));
+    scratch::expect_text("c: the objects keep the folders", "yes", yes_no(scratch::exists(&p, "build/debug/deep/x.o")));
+}
+
+export void test_conventions_c_runs(io::Io *io) {
+    scratch::Project p = scratch::project(io, "calc", "conv_calc");
+    scratch::expect_text("c: runs", "42", last_line(&p, "smith run"));
+}
+
+export void test_conventions_c_the_tests_pass(io::Io *io) {
+    scratch::Project p = scratch::project(io, "calc", "conv_calc");
+    scratch::Run run = scratch::sh(&p, "smith test");
+    scratch::expect_status("c: the tests pass", 0, &run);
+    scratch::expect_contains("c: ... one of them", both(io, &run), "1 passed, 0 failed");
+}
+
+export void test_conventions_c_smith_prove_runs_on_it(io::Io *io) {
+    scratch::Project p = scratch::project(io, "calc", "conv_calc");
+    scratch::Run run = scratch::sh(&p, "smith prove");
+    scratch::expect_status("c: smith prove runs on it", 0, &run);
+    scratch::expect_contains("c: ... and says there is nothing to prove", run.out, "nothing to prove");
+}
+
+export void test_conventions_c_smith_prove_function_naming_nothing_fails(io::Io *io) {
+    scratch::Project p = scratch::project(io, "calc", "conv_calc");
+    scratch::Run run = scratch::sh(&p, "smith prove --function=no_such_function");
+    scratch::expect_status("c: smith prove --function= naming nothing fails", 1, &run);
+    scratch::expect_contains("c: ... and says no source defines it", run.err,
+                             "--function: no function by that name in any source");
+}
+
+export void test_conventions_c_smith_lint_reads_the_builds_compiles(io::Io *io) {
+    scratch::Project p = scratch::project(io, "calc", "conv_calc");
+    scratch::Run run = scratch::sh(&p, "cp \"$SMITH_REPO/.clang-tidy\" \"$SMITH_REPO/.clang-format\" . && smith lint");
+    scratch::expect_status("c: smith lint reads the build's compiles", 0, &run);
+}
+
+// A comment is not an include, and a block comment spans lines.
+export void test_conventions_c_includes_in_comments_are_not_followed(io::Io *io) {
+    scratch::Project p = scratch::project(io, "calc", "conv_calc");
+    scratch::write(&p, "util.h",
+                   "#pragma once\n// #include \"stray.h\"\n/*\n#include \"stray.h\"\n*/\n"
+                   "int util_twice(int x);\n");
+    scratch::write(&p, "stray.h", "int stray_value(void);\n");
+    scratch::write(&p, "stray.c", "int stray_value(void) {\n    return 1;\n}\n");
+    (void)scratch::build(&p, "");
+    scratch::expect_text("c: includes in comments are not followed", "no",
+                         yes_no(scratch::exists(&p, "build/debug/stray.o")));
+}
+
+// The same two calls in a build.c are the same build: the same commands for every target.
+export void test_conventions_explicit_the_same_two_calls_in_a_build_c_are_the_same_build(io::Io *io) {
+    scratch::Project p = scratch::project(io, "calc", "conv_calc");
+    scratch::write(&p, "build.c",
+                   "#include <smith/build.h>\n"
+                   "\n"
+                   "void build(SmithBuild *b) {\n"
+                   "    smith_app(b, &(SmithApp){});\n"
+                   "    smith_app_tests(b, &(SmithAppTests){});\n"
+                   "}\n");
+    constexpr char commands[] =
+        "smith build -t commands build/debug/calc build/release/calc build/fast/calc build/tests";
+    const char *explicit_commands = scratch::capture(&p, commands);
+    scratch::Run run = scratch::sh(&p, "smith test");
+    scratch::expect_status("explicit: the two calls in a build.c: smith test passes", 0, &run);
+    (void)scratch::sh(&p, "rm build.c && rm -rf .smith build");
+    scratch::expect_text("explicit: ... give the commands of no build file", explicit_commands,
+                         scratch::capture(&p, commands));
+}
+
+// --- 3. smith's libraries need no declaration
+// -------------------------------------------------------------------------
+
+export void test_conventions_library_include_io_links_io(io::Io *io) {
+    scratch::Project p = scratch::project(io, "ioc", "conv_ioc");
+    scratch::expect_text("library: #include <smith/io.h> links io", "seed 1", last_line(&p, "smith run"));
+    scratch::expect_text("library: ... and the libraries io needs", "arena.o contract.o io.o math.o random.o trace.o",
+                         scratch::capture(&p, "ls build/debug/smith | tr '\\n' ' ' | sed 's/ $//'"));
+}
+
+export void test_conventions_library_import_smith_text_links_text(io::Io *io) {
+    scratch::Project p = scratch::project(io, "textual", "conv_textual");
+    scratch::expect_text("library: import smith::text links text", "42", last_line(&p, "smith run"));
+}
+
+export void test_conventions_library_import_a_header_in_a_smith_file_links_io(io::Io *io) {
+    scratch::Project p = scratch::project(io, "iosmith", "conv_iosmith");
+    scratch::expect_text("library: import <smith/io.h>; in a .smith file links io", "hello",
+                         last_line(&p, "smith run"));
+}
+
+// A library used only by a test is built for the tests and not linked into the program.
+export void test_conventions_library_used_only_by_a_test_is_not_linked_into_the_program(io::Io *io) {
+    scratch::Project p = scratch::project(io, "tonly", "conv_tonly");
+    scratch::Run run = scratch::sh(&p, "smith test");
+    scratch::expect_status("library: a test that includes <smith/io.h> links io", 0, &run);
+    scratch::Run commands = scratch::build(&p, "-t commands build/debug/tonly");
+    scratch::expect_lacks("library: ... and the program does not", commands.out, "smith/io.o");
+}
+
+// --- 4. a folder that follows no convention
+// ---------------------------------------------------------------------------
+
+export void test_conventions_error_a_makefile_and_no_main(io::Io *io) {
+    scratch::Project p = scratch::project(io, "make", "conv_make");
+    scratch::Run run = scratch::build(&p, "");
+    scratch::expect_status("error: a Makefile and no main: status 2", 2, &run);
+    scratch::expect_contains("error: ... says the Makefile is the build", run.err,
+                             "smith: this folder has a Makefile and no build.c or build.smith");
+    scratch::expect_contains("error: ... and how to translate it", run.err,
+                             "Translate it with `smith build --dump-config > build.c`");
+    scratch::expect_contains("error: ... or to build by convention", run.err, "delete it to build by convention");
+    scratch::expect_text("error: ... and guesses nothing", "no", yes_no(scratch::exists(&p, ".smith/program")));
+}
+
+export void test_conventions_error_run_and_test_say_the_same_for_a_makefile(io::Io *io) {
+    scratch::Project p = scratch::project(io, "make", "conv_make");
+    scratch::Run run = scratch::sh(&p, "smith run");
+    scratch::expect_status("error: smith run says the same", 2, &run);
+    scratch::Run test = scratch::sh(&p, "smith test");
+    scratch::expect_status("error: smith test says the same", 2, &test);
+}
+
+export void test_conventions_error_an_empty_folder(io::Io *io) {
+    scratch::Project p = scratch::project(io, "empty", nullptr);
+    scratch::Run run = scratch::build(&p, "");
+    scratch::expect_status("error: an empty folder: status 2", 2, &run);
+    scratch::expect_contains("error: ... says what smith looked for", run.err,
+                             "smith: no build.c in this folder, and no main.smith or main.c to build by convention");
+    scratch::expect_contains("error: ... and how to start a build file", run.err,
+                             "Add a main.smith or main.c (`smith new` writes one)");
+}
+
+export void test_conventions_error_both_main_smith_and_main_c(io::Io *io) {
+    scratch::Project p = scratch::project(io, "both", "conv_both");
+    scratch::Run run = scratch::build(&p, "");
+    scratch::expect_status("error: both main.smith and main.c: status 2", 2, &run);
+    scratch::expect_contains("error: ... names both", run.err, "both main.smith and main.c are here");
+}
+
+export void test_conventions_test_a_project_with_no_tests_says_so(io::Io *io) {
+    scratch::Project p = scratch::project(io, "plain", "conv_plain");
+    scratch::Run run = scratch::sh(&p, "smith test");
+    scratch::expect_status("test: a project with no tests says so", 0, &run);
+    scratch::expect_contains("test: ... in smith test's words", run.err, "the build declares no tests");
+}
+
+// --- 6. several programs, the defaults every program shares, folders' flags, includes found through -I
+// -----------------
+
+export void test_conventions_multi_smith_build_and_run(io::Io *io) {
+    scratch::Project p = scratch::project(io, "multi", "conv_multi");
+    scratch::Run run = scratch::build(&p, "");
+    scratch::expect_status("multi: smith build", 0, &run);
+    scratch::expect_text("multi: builds the project's program", "yes",
+                         yes_no(scratch::exists(&p, "build/debug/multi")));
+    scratch::expect_text("multi: ... and not the tool", "no", yes_no(scratch::exists(&p, "build/debug/tool")));
+    scratch::expect_text("multi: smith run runs the program, found through -I", "21", last_line(&p, "smith run"));
+    scratch::expect_text("multi: ... after the file its folder's compiles wait for was made", "yes",
+                         yes_no(scratch::exists(&p, "build/gen.h")));
+}
+
+export void test_conventions_multi_the_tool_and_the_profiles_build_every_program(io::Io *io) {
+    scratch::Project p = scratch::project(io, "multi", "conv_multi");
+    (void)scratch::build(&p, "tools");
+    scratch::expect_text("multi: smith build tools builds the tool", "yes",
+                         yes_no(scratch::exists(&p, "build/debug/tool")));
+    (void)scratch::build(&p, "release fast");
+    scratch::expect_text("multi: release and fast build every program", "yes",
+                         yes_no(scratch::exists(&p, "build/release/tool")));
+    scratch::expect_text("multi: ... the fast one too", "yes", yes_no(scratch::exists(&p, "build/fast/tool")));
+}
+
+export void test_conventions_multi_release_is_thin_lto_and_a_folders_flags_reach_its_sources(io::Io *io) {
+    scratch::Project p = scratch::project(io, "multi", "conv_multi");
+    scratch::Run compile = scratch::build(&p, "-t commands build/release/src/base/value.o");
+    scratch::expect_contains("multi: release compiles to ThinLTO", compile.out, "-flto=thin");
+    scratch::Run link = scratch::build(&p, "-t commands build/release/multi");
+    scratch::expect_contains("multi: ... and links with it", link.out, "-flto=thin");
+    scratch::expect_contains("multi: ... and with the defaults' link flags", link.out, "-Wl,-headerpad,0x100");
+    scratch::Run folder = scratch::build(&p, "-t commands build/debug/src/base/value.o");
+    scratch::expect_contains("multi: a folder's flags reach its sources", folder.out, "-DFROM_BASE=1");
+    scratch::Run main = scratch::build(&p, "-t commands build/debug/main.o");
+    scratch::expect_lacks("multi: ... and no others", main.out, "FROM_BASE");
+}
+
+export void test_conventions_multi_the_build_api_reads_the_defaults(io::Io *io) {
+    scratch::Project p = scratch::project(io, "multi", "conv_multi");
+    (void)scratch::build(&p, "");
+    const char *info = scratch::read(&p, "info.txt");
+    scratch::expect_contains("multi: build::sources", info, "sources: src/base/value.c");
+    scratch::expect_contains("multi: build::objects", info, "build/release/src/base/value.o");
+    scratch::expect_contains("multi: build::profile_flags: the profile's own", info,
+                             "-O2 -DNDEBUG -Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-function "
+                             "-flto=thin -I src");
+    scratch::expect_contains("multi: build::profile_link_flags", info, "link: -flto=thin -Wl,-headerpad,0x100");
+    scratch::expect_contains("multi: build::source_flags: the folder's", info, "-DFROM_BASE=1");
+}
+
+export void test_conventions_multi_smith_test_passes(io::Io *io) {
+    scratch::Project p = scratch::project(io, "multi", "conv_multi");
+    scratch::Run run = scratch::sh(&p, "smith test");
+    scratch::expect_status("multi: smith test passes", 0, &run);
+    scratch::expect_contains("multi: ... the helper a test includes is linked", run.out, "1 passed");
+    scratch::expect_text("multi: ... and a helper nothing includes is compiled", "yes",
+                         yes_no(scratch::exists(&p, "build/debug/tests/lonely.o")));
+}
+
+// Two programs may share a source only with the same flags.
+export void test_conventions_multi_the_same_source_with_different_flags(io::Io *io) {
+    scratch::Project p = scratch::project(io, "multi", "conv_multi");
+    scratch::write(&p, "build.c",
+                   "#include <smith/build.h>\n"
+                   "\n"
+                   "void build(SmithBuild *b) {\n"
+                   "    smith_defaults(b, &(SmithDefaults){.flags = smith_list(b, \"-I\", \"src\", nullptr)});\n"
+                   "    smith_app(b, &(SmithApp){});\n"
+                   "    smith_app(b, &(SmithApp){.entry = \"tools/tool.c\", .name = \"tool\", "
+                   ".flags = smith_list(b, \"-DX=1\", nullptr)});\n"
+                   "}\n");
+    scratch::Run run = scratch::build(&p, "");
+    scratch::expect_status("multi: the same source with different flags: status 2", 2, &run);
+    scratch::expect_contains("multi: ... names the source", run.err,
+                             "src/base/value.c is compiled twice with different flags");
+}
+
+export void test_conventions_multi_smith_defaults_after_smith_app_is_refused(io::Io *io) {
+    scratch::Project p = scratch::project(io, "multi", "conv_multi");
+    scratch::write(&p, "build.c",
+                   "#include <smith/build.h>\n"
+                   "\n"
+                   "void build(SmithBuild *b) {\n"
+                   "    smith_app(b, &(SmithApp){});\n"
+                   "    smith_defaults(b, &(SmithDefaults){});\n"
+                   "}\n");
+    scratch::Run run = scratch::build(&p, "");
+    scratch::expect_contains("multi: smith_defaults after smith_app is refused", run.err,
+                             "smith_defaults comes before smith_app");
+}
+
+// --- 7. property tests in a .smith file: the key is written c::SmithKey, random::Key or through an alias
+// ---------------
+
+export void test_conventions_keys_random_key_and_an_aliases_key_are_property_tests(io::Io *io) {
+    scratch::Project p = scratch::project(io, "keys", "conv_keys");
+    scratch::Run run = scratch::sh(&p, "smith test");
+    scratch::expect_status("keys: random::Key and an alias's Key are property tests: smith test passes", 0, &run);
+    scratch::expect_contains("keys: ... all three tests ran", run.out, "3 passed");
+}

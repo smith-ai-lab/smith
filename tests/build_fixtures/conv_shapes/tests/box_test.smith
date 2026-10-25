@@ -1,0 +1,6 @@
+import <smith/test.h>;
+import geometry::box;
+
+void test_area(void) {
+    c::smith_check_equal_i32(box::area(2, 3), 6);
+}

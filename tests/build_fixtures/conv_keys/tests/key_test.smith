@@ -1,0 +1,16 @@
+module key_test;
+import <smith/test.h>;
+import smith::random;
+
+export void test_plain(random::Key key) {
+    (void)key;
+    c::smith_check(true);
+}
+
+static i32 helper(i32 x) {
+    return x;
+}
+
+export void test_helper() {
+    c::smith_check_equal_i32(helper(2), 2);
+}

@@ -1,0 +1,8 @@
+module alias_test;
+import <smith/test.h>;
+import smith::random as rng;
+
+export void test_aliased(rng::Key key) {
+    (void)key;
+    c::smith_check(true);
+}

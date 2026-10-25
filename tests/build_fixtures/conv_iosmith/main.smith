@@ -1,0 +1,9 @@
+import <smith/io.h>;
+import <stdio.h>;
+
+int main(int argc, char **argv) {
+    c::SmithIo io = c::smith_io_make(argc, argv);
+    c::printf("hello\n");
+    c::smith_io_close(&io);
+    return 0;
+}
