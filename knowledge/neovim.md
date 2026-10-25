@@ -122,9 +122,9 @@ functions without a semicolon, Apple blocks and `__block`.
 
 One ambiguity is C's own: `module ;` and `module a;` are valid C when `module` is a type, and read as the module line.
 
-Regenerating `parser.c` is a developer step: `scripts/tree-sitter.sh` (add `corpus` to run the CLI's own corpus tests). It
-downloads the tree-sitter CLI 0.27.1 into `~/.cache/smith/tools` (sha256 of the release archive pinned in the script),
-fetches tree-sitter-c with `smith fetch` (pinned by hash), and generates at ABI 15, the one Neovim 0.12 loads. Edit
+Regenerating `parser.c` is a developer step: `smith build tree-sitter` (add `-Dcorpus` to run the CLI's own corpus tests). It
+downloads the tree-sitter CLI 0.27.1 into `~/.cache/smith/tools` (sha256 of the release archive pinned in `build.c`),
+fetches tree-sitter-c with `smith_package` (pinned by hash), and generates at ABI 15, the one Neovim 0.12 loads. Edit
 `grammar.js` and the corpus in `tree-sitter/test/corpus`, regenerate, commit `src/`.
 
 ## Tests
