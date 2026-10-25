@@ -321,7 +321,7 @@ export void test_format_push_on_an_arena() {
     static struct {
         alignas(arena::align_max) u8 bytes[1024];
     } memory;
-    arena::Arena a = arena::make(memory.bytes, sizeof memory.bytes);
+    arena::Arena a = arena::fixed(memory.bytes, sizeof memory.bytes);
     char path[:] = format::push(&a, "build/meshes/", "ship", ".mesh");
     test::check_equal(countof(path), 22);
     test::check(is(path.data, "build/meshes/ship.mesh")); // terminated after its length

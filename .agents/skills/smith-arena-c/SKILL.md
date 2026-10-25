@@ -11,7 +11,7 @@ C and C++ cannot call a generic, so they pass `sizeof` and `alignof` to the func
 #include <smith/arena.h>
 
 alignas(smith_arena_align_max) static unsigned char memory[1 << 20];
-SmithArena arena = smith_arena_fixed(memory, sizeof memory); // smith_arena_make is the same; never grows
+SmithArena arena = smith_arena_fixed(memory, sizeof memory); // never grows
 
 Foo *foo = smith_arena_push(&arena, sizeof(Foo), alignof(Foo));                  // zeroed
 Foo *foos = smith_arena_push_array(&arena, sizeof(Foo), count, alignof(Foo));    // zeroed, count * size checked for overflow

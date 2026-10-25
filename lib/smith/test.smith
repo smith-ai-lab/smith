@@ -550,7 +550,7 @@ void reset() {
     usize rounded = (capacity + arena::align_max - 1) & ~(arena::align_max - 1);
     if (memory_block == nullptr || capacity > memory_capacity || rounded > memory_capacity - memory_used)
         memory_stop(capacity);
-    arena::Arena result = arena::make(memory_block + memory_used, capacity);
+    arena::Arena result = arena::fixed(memory_block + memory_used, capacity);
     memory_used += rounded;
     return result;
 }

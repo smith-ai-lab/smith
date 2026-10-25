@@ -619,7 +619,7 @@ int main(void) {
     test_sent = test_buffer_make();
     void *memory = mmap(nullptr, (size_t)64 << 20, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
     SMITH_ASSERT(memory != MAP_FAILED);
-    test_view = smith_arena_make(memory, (size_t)64 << 20);
+    test_view = smith_arena_fixed(memory, (size_t)64 << 20);
     test_initialize();
     test_protocol_errors();
     test_tools_list();

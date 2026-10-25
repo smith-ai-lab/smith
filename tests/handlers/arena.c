@@ -19,7 +19,7 @@ static void check(const char *name, bool good) {
 
 int main(void) {
     static alignas(smith_arena_align_max) unsigned char memory[1 << 12];
-    SmithArena arena = smith_arena_make(memory, sizeof memory);
+    SmithArena arena = smith_arena_fixed(memory, sizeof memory);
     SmithArenaAllocator allocator = smith_arena_allocator(&arena);
     SmithAllocator *previous = smith_handlers_set_allocator(&allocator.base);
     unsigned char *a = malloc(100);

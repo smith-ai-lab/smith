@@ -81,8 +81,7 @@ allocator; `checked`, `failing` and the profiles.
   needs) from its backing (the OS through `mmap` by default, or a `SmithAllocator`) when full, so `push` and `push_slice`
   never return null; `Arena.grown` is the bytes beyond the first chunk; chunks are a list kept across `reset` and the end
   of a scope (a scope remembers the chunk it began in, ending it walks back and keeps the later ones as spares), so the
-  second pass over the same work takes none; `arena::release` gives them back. `arena::fixed(memory, capacity)` (also
-  `make`) never grows: a full one is the checked failure that names the capacity. `arena::try_push_raw` is the form that
+  second pass over the same work takes none; `arena::release` gives them back. `arena::fixed(memory, capacity)` never grows: a full one is the checked failure that names the capacity. `arena::try_push_raw` is the form that
   returns null. As an allocator (`arena::allocator`) a growing arena answers `owns` for every chunk and null only when
   its backing refuses. The `option` forms of the pushes wait for a release whose smith compiles `option` in its own
   libraries (the lag rule: arena is compiled into smith itself).

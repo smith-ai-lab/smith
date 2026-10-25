@@ -216,7 +216,7 @@ static void test_pin_keys(TestPins *pins) {
 
 static void test_pin_distributions(TestPins *pins) {
     static TestMemory memory;
-    SmithArena arena = smith_arena_make(memory.bytes, sizeof memory.bytes);
+    SmithArena arena = smith_arena_fixed(memory.bytes, sizeof memory.bytes);
     const double weights[] = {1.0, 2.0, 3.0, 0.0, 4.0};
     SmithCategorical categorical = smith_categorical_make(&arena, weights, 5);
     for (size_t i = 0; i < 5; i++) {
@@ -269,7 +269,7 @@ static uint64_t test_fold(uint64_t digest, uint64_t value) {
 
 static uint64_t test_digest_draws(const SmithRandomTap *tap) {
     static TestMemory memory;
-    SmithArena arena = smith_arena_make(memory.bytes, sizeof memory.bytes);
+    SmithArena arena = smith_arena_fixed(memory.bytes, sizeof memory.bytes);
     const double weights[] = {1.0, 2.0, 3.0, 0.0, 4.0, 0.5, 9.5};
     SmithCategorical categorical = smith_categorical_make(&arena, weights, 7);
     uint64_t digest = 0xcbf29ce484222325ULL;

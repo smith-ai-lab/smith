@@ -507,7 +507,7 @@ export void test_json_tree_does_not_touch_the_arena_on_failure() {
 
 export void test_json_tree_that_does_not_fit_is_an_error() {
     alignas(arena::align_max) u8 memory[1024];
-    arena::Arena arena = arena::make(memory, sizeof memory);
+    arena::Arena arena = arena::fixed(memory, sizeof memory);
     char big[2048];
     usize used = 0;
     big[used++] = '[';
