@@ -1,0 +1,101 @@
+// The executor's jobs, from tests/build.sh sections 14d and 14e: jobs run at once and print whole, a pool serialises
+// its jobs, a console job keeps stdin, and Ctrl-C (SIGINT) stops the jobs, removes what they half wrote and exits with
+// 130. Order, never durations: a job that must overlap another waits for the other's mark, and a pooled one waits a
+// bounded while for a mark that must not come, so a loaded machine can only make a check weaker, never fail it.
+module build_executor_jobs_test;
+
+import smith::arena;
+import smith::format;
+import smith::io;
+import smith::test;
+import <string.h>;
+import scratch;
+
+static const char *flat(io::Io *io, const char *text) {
+    usize length = __builtin_strlen(text);
+    char *copy = arena::push_slice(&io->arena, char, length + 1).data;
+    for (usize i = 0; i < length; i++)
+        copy[i] = text[i] == '\n' ? ' ' : text[i];
+    copy[length] = '\0';
+    return copy;
+}
+
+static scratch::Run exec(const scratch::Project *p, const char *arguments) {
+    return scratch::sh(p, format::push(&p->io->arena, "smith --smith-exec build.ninja ", arguments).data);
+}
+
+// 14d. Two jobs at once, each printing whole.
+export void test_build_executor_jobs_run_at_once_and_print_whole(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "exec_pool_parallel");
+    scratch::Run run = exec(&p, "-j2");
+    const char *text = flat(io, run.out);
+    scratch::expect_contains("parallel: a job's output is printed whole", text, "a1 a2 a3");
+    scratch::expect_contains("parallel: and so is the other's", text, "b1 b2 ");
+    const char *b = c::strstr(text, "b1 b2");
+    const char *a = c::strstr(text, "a1 a2");
+    if (b == nullptr || a == nullptr || b > a) {
+        test::note("parallel: the one that ends first prints first: b before a expected\n%s", text);
+    }
+    test::check_condition(b != nullptr && a != nullptr && b < a);
+    scratch::expect_text("parallel: the progress line counts jobs as they end", "[1/2] [2/2]",
+                         scratch::sh(&p, "smith --smith-exec build.ninja -j2 | grep -o '^\\[[0-9]/[0-9]\\]' | tr "
+                                         "'\\n' ' ' | sed 's/ $//'")
+                             .out);
+}
+
+// A pool of depth 1 runs one job at a time.
+export void test_build_executor_a_pool_of_depth_one_runs_one_job_at_a_time(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "exec_pool_one");
+    (void)exec(&p, "-j4");
+    scratch::expect_text("pool: a pool of depth 1 runs one job at a time", "start end start end",
+                         scratch::capture(&p, "tr '\\n' ' ' <order | sed 's/ $//'"));
+}
+
+export void test_build_executor_without_the_pool_the_jobs_run_together(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "exec_pool_one");
+    // The other's start is waited for as long as it takes.
+    (void)scratch::sh(&p, "sed -i.bak -e 's/  pool = one//' -e 's/-lt 20 /-lt 12000 /' build.ninja");
+    (void)exec(&p, "-j4");
+    scratch::expect_text("pool: without it the two run together", "start start end end",
+                         scratch::capture(&p, "tr '\\n' ' ' <order | sed 's/ $//'"));
+}
+
+export void test_build_executor_a_console_job_keeps_stdin_and_stdout(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "exec_console");
+    scratch::Run run = scratch::sh(&p, "printf 'hello\\n' | smith --smith-exec build.ninja");
+    char state[64];
+    (void)format::to(state, sizeof state, run.status, " ", scratch::read(&p, "answer"));
+    scratch::expect_text("console: the job reads the build's own stdin", "0 got hello", state);
+    scratch::expect_contains("console: and writes straight to its stdout", run.out, "terminal: hello");
+}
+
+// 14e. Ctrl-C. The jobs sleep a number of seconds nothing else on the machine sleeps (other tests run beside this one,
+// and pgrep sees every process), and are long enough that only the interrupt can end them: the test is "ended far
+// before the sleep did", not a number of seconds that a loaded machine could pass. Only the build this shell started
+// is signalled.
+constexpr char interrupt_script[] =
+    "nap=$((600 + $$ % 3000)); sed -i.bak \"s/NAP/$nap/g\" build.ninja; "
+    "smith --smith-exec build.ninja >o 2>e & pid=$!; n=0; "
+    "while [ \"$(wc -l <started 2>/dev/null | tr -d ' ')\" != 2 ] && [ $n -lt 12000 ]; do n=$((n+1)); sleep 0.05; "
+    "done; "
+    "t0=$(perl -MTime::HiRes=time -e 'printf \"%.3f\", time'); kill -INT $pid; wait $pid; rc=$?; "
+    "t1=$(perl -MTime::HiRes=time -e 'printf \"%.3f\", time'); "
+    "echo \"status $rc\"; echo \"sleepers $(pgrep -f \"sleep $nap\\$\" | wc -l | tr -d ' ')\"; "
+    "[ -e slow ] && echo \"slow yes\" || echo \"slow no\"; "
+    // Wall time, on purpose: the build must end long before the jobs' sleep does.
+    "echo \"wall $(perl -e \"print(($t1 - $t0) < $nap / 2 ? 'prompt' : 'late')\")\"; "
+    "sed -i.bak \"s/sleep $nap/true/\" build.ninja; smith --smith-exec build.ninja; "
+    "echo \"next $? $(wc -l <started | tr -d ' ')\"";
+
+export void test_build_executor_ctrl_c_stops_the_jobs_and_removes_half_written_outputs(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "exec_interrupt");
+    scratch::Run run = scratch::sh(&p, interrupt_script);
+    scratch::expect_contains("interrupt: the build exits with 130", run.out, "status 130\n");
+    scratch::expect_contains("interrupt: and says why", scratch::read(&p, "e"), "interrupted by user");
+    scratch::expect_contains("interrupt: both jobs were stopped", run.out, "sleepers 0\n");
+    scratch::expect_contains("interrupt: the half-written output is removed", run.out, "slow no\n");
+    scratch::expect_contains(
+        "interrupt: and it did not wait for the jobs (wall time, on purpose: it must end long before their sleep)",
+        run.out, "wall prompt\n");
+    scratch::expect_contains("interrupt: the next build runs both again", run.out, "next 0 4\n");
+}

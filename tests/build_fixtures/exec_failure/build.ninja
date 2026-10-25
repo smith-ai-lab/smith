@@ -1,0 +1,9 @@
+rule r
+  command = $cmd
+build bad: r
+  cmd = echo to-out; echo to-err >&2; exit 3
+build good: r
+  cmd = echo ran >> good.log; echo G > good
+build after: r bad
+  cmd = echo ran >> after.log; echo A > after
+default bad good after

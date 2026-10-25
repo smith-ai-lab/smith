@@ -1,0 +1,145 @@
+// The last blocks of tests/build.sh: a smith with no token hook and `.smith` modules (15), smith_cat with a nullptr
+// first list (13z), a compiler named smith (13y), the smith-cc beside the running smith (13y2), naming a library (13z
+// and 13z2) and the progress lines (13b). The timing of a no-op build that closed the script asserted nothing and is
+// gone.
+module build_tail_test;
+
+import smith::format;
+import smith::io;
+import smith::test;
+import scratch;
+
+// 15. A smith without the token hook (a stage0) still writes headers; the compile says what is missing. A smith with
+// the hook has nothing to check here (tests/build_lang_test.smith builds the modules).
+export void test_build_tail_without_the_token_hook_the_build_fails_clearly(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "lang_project");
+    (void)scratch::sh(&p, "mkdir bin && { cp -c \"$SMITH_SELF\" bin/smith-cc 2>/dev/null || cp \"$SMITH_SELF\" "
+                          "bin/smith-cc; }; cp -R \"$SMITH_REPO/tests/smith-lang/cases/module-three/src\" src");
+    if (scratch::sh(&p, "smith cc --smith-which -x c 2>/dev/null | grep -q 'token-hook yes'").status == 0) {
+        return;
+    }
+    scratch::Run built = scratch::build(&p, "");
+    scratch::expect_failure("modules: without the token hook the build fails", &built);
+    char both[8192];
+    (void)format::to(both, sizeof both, built.out, built.err);
+    scratch::expect_contains("modules: with a clear message", both, "token hook");
+    scratch::expect_text("modules: after the headers were written", "lib/text.h",
+                         scratch::capture(&p, "cd .smith/include && ls lib/text.h"));
+}
+
+// 13z. smith_cat: a nullptr first list would end the arguments and drop the other lists, so it is an error that says
+// so.
+export void test_build_tail_smith_cat_refuses_a_nullptr_first_list(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "tail_cat_null");
+    scratch::Run run = scratch::build(&p, "");
+    scratch::expect_failure("smith_cat: a nullptr first list fails", &run);
+    scratch::expect_contains("smith_cat: ... as a build.c error that says why", run.err,
+                             "smith: build.c: smith_cat: the first list is nullptr");
+    scratch::expect_contains("smith_cat: ... and what to write instead", run.err, "(const char *[]){nullptr}");
+}
+
+export void test_build_tail_smith_cat_with_an_empty_first_list_keeps_the_others(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "tail_cat_empty");
+    (void)scratch::build(&p, "");
+    scratch::expect_text("smith_cat: an empty first list keeps the others", "--function=x",
+                         scratch::read(&p, "joined.txt"));
+}
+
+// 13y. A compiler named smith, by name, by path or from the environment (CC=$HOME/.local/bin/smith), is refused before
+// anything runs, with the hint to use smith-cc or smith-c++.
+export void test_build_tail_cc_set_to_the_smith_path_is_refused(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "tail_compiler_smith");
+    scratch::Run run = scratch::sh(&p, "CC=\"$SMITH_SELF\" smith build");
+    const char *self = scratch::capture(&p, "printf %s \"$SMITH_SELF\"");
+    char text[1024];
+    scratch::expect_failure("CC=<path>/smith in the environment is refused", &run);
+    (void)format::to(text, sizeof text, "smith: build.c: smith_object: .compiler is \"", self, "\"");
+    scratch::expect_contains("CC=<path>/smith: ... as a build.c error naming the value", run.err, text);
+    (void)format::to(text, sizeof text, "use \"", scratch::capture(&p, "dirname \"$SMITH_SELF\""), "/smith-cc\" for C");
+    scratch::expect_contains("CC=<path>/smith: ... with the hint for C", run.err, text);
+    scratch::expect_contains("CC=<path>/smith: ... and for C++", run.err, "smith-c++\" for C++");
+    scratch::expect_text("CC=<path>/smith: nothing ran", "",
+                         scratch::capture(&p, "ls main.o .smith/compiler 2>/dev/null"));
+}
+
+export void test_build_tail_dcc_smith_is_refused(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "tail_compiler_smith");
+    scratch::Run run = scratch::build(&p, "-DCC=smith");
+    scratch::expect_failure("-DCC=smith is refused", &run);
+    scratch::expect_contains("-DCC=smith: ... with the hint", run.err, "use \"smith-cc\" for C");
+}
+
+export void test_build_tail_cc_smith_cc_still_builds(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "tail_compiler_smith");
+    scratch::Run run = scratch::sh(&p, "env CC=smith-cc smith build");
+    scratch::expect_status("CC=smith-cc still builds", 0, &run);
+}
+
+// 13y2. A smith builds with its own smith-cc, the link beside it, and never with the one earlier on PATH (issue #191):
+// a copy of smith whose smith-cc leaves a marker is the one that compiles, with another smith-cc first on PATH.
+constexpr char own_link_setup[] =
+    "mkdir own other && cp \"$SMITH_SELF\" own/smith && for kind in own other; do "
+    "printf '#!/bin/sh\\necho %s >>\"%s/marker\"\\nexec \"%s\" cc \"$@\"\\n' \"$kind\" \"$PWD\" \"$SMITH_SELF\" "
+    ">$kind/smith-cc; chmod +x $kind/smith-cc; done";
+
+export void test_build_tail_a_smith_builds_with_the_smith_cc_beside_it_not_the_one_on_path(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "tail_own_link");
+    scratch::Run setup = scratch::sh(&p, own_link_setup);
+    scratch::expect_status("own link: the setup", 0, &setup);
+    scratch::Run run = scratch::sh(&p, "PATH=$PWD/other:$PATH \"$PWD/own/smith\" build >out.txt 2>err.txt");
+    scratch::expect_status("own link: the build runs", 0, &run);
+    scratch::expect_text("own link: the smith-cc beside the running smith compiled, not the one on PATH", "own",
+                         scratch::capture(&p, "sort -u marker 2>/dev/null | tr '\\n' ' ' | sed 's/ $//'"));
+}
+
+// 13z. Naming a library is enough: smith_library(b, "contract") brings trace, and "io" brings the arena and random,
+// whether the project passes them to smith_program or not (smith_program adds what the libraries it links need).
+export void test_build_tail_library_contract_alone_links_and_brings_trace(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "tail_library_contract");
+    scratch::Run built = scratch::build(&p, "");
+    scratch::expect_status("library needs: contract alone links (trace comes with it)", 0, &built);
+    scratch::expect_text("library needs: ... and brings trace's object", "build/smith/trace.o",
+                         scratch::capture(&p, "ls build/smith/trace.o"));
+    scratch::Run app = scratch::sh(&p, "build/app");
+    scratch::expect_failure("library needs: a failing contract aborts", &app);
+    scratch::expect_contains("library needs: ... with its report", app.err, "requires failed");
+}
+
+// 13z2. A program that indexes a slice links the trace library with no line in a build file: the conventions find `[:`
+// in a .smith source (issue #82).
+export void test_build_tail_a_program_that_indexes_a_slice_links_trace(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "tail_slices");
+    scratch::Run built = scratch::build(&p, "");
+    scratch::expect_status("slices: a program that indexes one builds with no build file", 0, &built);
+    scratch::expect_text("slices: ... and links trace", "build/debug/smith/trace.o",
+                         scratch::capture(&p, "ls build/debug/smith/trace.o"));
+}
+
+export void test_build_tail_library_io_alone_links_and_brings_the_arena_and_random(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "tail_library_io");
+    scratch::Run built = scratch::build(&p, "");
+    scratch::expect_status("library needs: io alone links (arena and random come with it)", 0, &built);
+    scratch::expect_text(
+        "library needs: ... their objects are made beside io's", "build/smith/arena.o build/smith/random.o",
+        scratch::capture(&p, "ls build/smith/arena.o build/smith/random.o | tr '\\n' ' ' | sed 's/ $//'"));
+    scratch::Run app = scratch::sh(&p, "build/app");
+    char state[64];
+    (void)format::to(state, sizeof state, app.status, " ", app.out);
+    scratch::expect_text("library needs: ... and the program runs", "0 seed 1", state);
+    scratch::Run second = scratch::build(&p, "");
+    char both[4096];
+    (void)format::to(both, sizeof both, second.out, second.err);
+    scratch::expect_contains("library needs: a second build changes nothing", both, "no work to do");
+}
+
+// 13b. The progress lines say what a compile and a link do, not the whole command; -v shows the command.
+export void test_build_tail_progress_lines_say_what_a_compile_and_a_link_do(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "tail_progress");
+    scratch::Run built = scratch::build(&p, "");
+    scratch::expect_contains("progress: a compile says what it compiles", built.out, "compile main.c");
+    scratch::expect_contains("progress: a link says what it links", built.out, "link build/");
+    scratch::expect_lacks("progress: no command line without -v", built.out, " -o ");
+    (void)scratch::sh(&p, "touch main.c");
+    scratch::Run verbose = scratch::build(&p, "-v");
+    scratch::expect_contains("progress: -v shows the command", verbose.out, " -o ");
+}
