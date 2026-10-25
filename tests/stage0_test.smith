@@ -1,6 +1,7 @@
 // scripts/stage0.smith (issue #112, #293) with no network: scratch git repositories and a stand-in `gh` that keeps its
 // "releases" in a folder, each one made by scripts/release.sh package from a stand-in smith. Never touches a real
-// repository. The tool is built the way the README builds it, with the system's clang.
+// repository. The tool is built the way the README builds it, with the system's compiler: clang on macOS, cc (GCC) as
+// gnu2x on Linux, where a missing release would build the seed, which SMITH_STAGE0_SEED=0 turns off.
 module stage0_test;
 
 import smith::io;
@@ -13,8 +14,9 @@ import scratch;
 // pushed for those named by `tags`.
 constexpr const char *setup =
     "set -e; mkdir bin gh; "
-    "clang -std=c23 -x c gh.c -o bin/gh; clang -std=c23 -x c smith.c -o fake-smith; "
-    "clang -std=c23 -x c \"$SMITH_REPO/scripts/stage0.smith\" -o stage0-tool; "
+    "if [ \"$(uname -s)\" = Darwin ]; then c='clang -std=c23'; else c='cc -std=gnu2x'; fi; "
+    "$c -x c gh.c -o bin/gh; $c -x c smith.c -o fake-smith; "
+    "$c -x c \"$SMITH_REPO/scripts/stage0.smith\" -o stage0-tool; "
     "git init -q --bare origin.git; git init -q -b main repo; cd repo; "
     "git config user.email t@t; git config user.name t; git remote add origin ../origin.git; "
     "mkdir scripts; cp \"$SMITH_REPO/scripts/release.sh\" scripts/; git add scripts; git commit -qm zero; "
@@ -36,7 +38,8 @@ static scratch::Project repository(io::Io *io) {
 static scratch::Run tool(const scratch::Project *p, const char *arguments, const char *environment) {
     char command[1024];
     __builtin_snprintf(command, sizeof command,
-                       "cd repo && %s PATH=\"$PWD/../bin:$PATH\" GH_LOG=\"$PWD/../gh.log\" GH_DIR=\"$PWD/../gh\" "
+                       "cd repo && %s SMITH_STAGE0_SEED=0 PATH=\"$PWD/../bin:$PATH\" GH_LOG=\"$PWD/../gh.log\" "
+                       "GH_DIR=\"$PWD/../gh\" "
                        "STAGE0_OUT=\"$PWD/../build.out\" ../stage0-tool %s",
                        environment, arguments);
     return scratch::sh(p, command);
