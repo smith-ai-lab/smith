@@ -12,7 +12,7 @@ modules (smith passes `-fmodules-prune-interval=604800 -fmodules-prune-after=267
 (a `<hex>.used` stamp per package and `prune.timestamp`). Both are keyed by hash, so a removed entry is fetched or built
 again. `smith cache` shows each cache's path, entries and size (`-v` lists the entries and their last use);
 `smith cache clean [modules|packages]` empties them, and refuses while a `smith build` runs (builds hold a shared flock
-on `<cache>/smith/lock`). Tests: `tests/cache.sh`, with caches of their own. See [the build file](build-file.md).
+on `<cache>/smith/lock`). Tests: `tests/cache_*_test.smith`, with caches of their own. See [the build file](build-file.md).
 
 smith keeps two caches under `$XDG_CACHE_HOME/smith/` (or `~/.cache/smith/`), each keyed by hash, so anything removed
 from either is simply fetched or built again:
@@ -39,7 +39,7 @@ constants in `runtime/package.c`). For packages smith applies it:
   renames a stale package out of the way (`.tmp-prune-*`) and reads the stamp again before it deletes anything. If the
   build's touch is there, the package is renamed back and kept; if the rename came first, the build finds no folder and
   fetches it again. So a build always gets a complete folder, and a package used in the last 31 days is never removed.
-- Tests fake the clock through file times (`touch -t`) in `tests/cache.sh`, with caches of their own in a temporary
+- Tests fake the clock through file times (`touch -t`) in `tests/cache_*_test.smith`, with caches of their own in a temporary
   `XDG_CACHE_HOME`.
 
 `smith cache` prints each cache's path, number of entries and size on disk; `smith cache -v` also lists each entry and

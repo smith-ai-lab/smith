@@ -34,7 +34,7 @@ the prover with arguments; `smith dbg` is lldb.
 
 `smith check` is the standard one here too: `smith fmt` (the dry run) over every file git sees, `smith docs`, `smith
 lint` (clang-tidy over the compiles of `build.c`, which also declares the libraries' and tests' sources with
-`smith_compile_command`; `shim/.clang-tidy` is the C++ glue's own rules), `smith test` (the `test-<name>` tasks, `test-compare`
+`smith_compile_command`; `shim/.clang-tidy` is the C++ glue's own rules), `smith test` (the `test-<name>` tasks, `tests/compare_test.smith`
 among them) and `smith prove`; it must pass before a change is done. `smith fmt` (no arguments) rewrites the sources.
 
 smith's top level is only verbs (`smith cc`, `smith c++`, `smith build`, `smith new`, ...), so what a project does is
