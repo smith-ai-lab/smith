@@ -9,12 +9,28 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <string>
 
 int clang_main(int argc, char **argv, const llvm::ToolContext &context);
 
 // shim/hook.cpp: makes every compile of a .smith file offer its tokens to the lowering.
 #ifdef SMITH_HOOK
 extern "C" void smith_hook_install();
+#endif
+
+#ifdef SMITH_HOOK
+// Whether a command has a source among its inputs (a file of a language clang compiles).
+static bool hasSource(int argc, char **argv) {
+    static const char *const endings[] = {".c", ".cc", ".cpp", ".cxx", ".m", ".mm", ".smith"};
+    for (int i = 1; i < argc; i++) {
+        size_t length = std::strlen(argv[i]);
+        for (const char *ending : endings) {
+            size_t size = std::strlen(ending);
+            if (argv[i][0] != '-' && length > size && std::strcmp(argv[i] + length - size, ending) == 0) return true;
+        }
+    }
+    return false;
+}
 #endif
 
 // Runs clang as `program` (the clang or clang++ in the LLVM install smith was linked against) on argv[1 .. argc);
@@ -42,32 +58,47 @@ extern "C" int smith_clang_main(const char *program, int argc, char **argv, bool
         arguments.push_back(const_cast<char *>(resource));
     }
     if (!cc1 && lld) arguments.push_back(const_cast<char *>("-mlinker-version=1115.7.3"));
-    // The frame sizes of a compile to an object, for the program's worst-case stack (#207): `-fstack-usage` writes
-    // `<object>.su`, which the effects plugin reads and removes (shim/effects_infer.cpp). Only for `-c`: one command
-    // that compiles and links names every .su after the program.
-    bool compiles = false, stack = !cc1;
+    // The frame sizes of a compile to an object, for the program's worst-case stack (#207): `-fstack-usage` writes a
+    // `.su` that the effects plugin reads and removes (shim/effects_infer.cpp). With `-c` it is beside the object
+    // (`SMITH_STACK_USAGE_ADDED=1`: the plugin looks there); one command that compiles and links names every `.su`
+    // after the program (`-o p` is `p.su`), the file the driver chose is then given to the plugin, which reads it
+    // after each job, in turn.
+    bool compiles = false, stack = !cc1, link = false;
+    const char *output = nullptr;
     for (int i = 1; i < argc; i++) {
         const char *argument = argv[i];
-        compiles = compiles || std::strcmp(argument, "-c") == 0;
-        if (std::strcmp(argument, "-o") == 0 && i + 1 < argc) { // `-o /dev/null` has no place for a .su
-            size_t length = std::strlen(argv[i + 1]);
-            if (length < 3 || std::strcmp(argv[i + 1] + length - 2, ".o") != 0) stack = false;
-        }
+        if (std::strcmp(argument, "-c") == 0) compiles = true;
+        if (std::strcmp(argument, "-o") == 0 && i + 1 < argc) output = argv[i + 1];
         if (std::strcmp(argument, "-E") == 0 || std::strcmp(argument, "-S") == 0 ||
             std::strcmp(argument, "-fsyntax-only") == 0 || std::strcmp(argument, "-###") == 0 ||
-            std::strcmp(argument, "-fstack-usage") == 0 || std::strncmp(argument, "-M", 2) == 0) {
+            std::strcmp(argument, "-fstack-usage") == 0 || std::strcmp(argument, "-M") == 0 ||
+            std::strcmp(argument, "-MM") == 0) {
             stack = false;
         }
         arguments.push_back(argv[i]);
     }
 #ifdef SMITH_HOOK
-    if (stack && compiles) {
+    link = !compiles && hasSource(argc, argv);
+    size_t length = output == nullptr ? 0 : std::strlen(output);
+    bool placed = compiles ? (length > 2 && std::strcmp(output + length - 2, ".o") == 0) || output == nullptr
+                           : output == nullptr || std::strncmp(output, "/dev/", 5) != 0;
+    if (stack && (compiles || link) && placed) {
+        std::string file = "1";
+        if (link) { // the driver's own rule: the output without its extension, `.su`
+            file = output == nullptr ? "a.su" : output;
+            size_t dot = file.rfind('.'), slash = file.rfind('/');
+            if (output != nullptr && dot != std::string::npos && (slash == std::string::npos || dot > slash))
+                file.erase(dot);
+            if (output != nullptr) file += ".su";
+        }
         arguments.push_back(const_cast<char *>("-fstack-usage"));
-        setenv("SMITH_STACK_USAGE_ADDED", "1", 1);
+        setenv("SMITH_STACK_USAGE_ADDED", file.c_str(), 1);
     }
 #else
     (void)stack;
     (void)compiles;
+    (void)link;
+    (void)output;
 #endif
     arguments.push_back(nullptr);
     int count = static_cast<int>(arguments.size()) - 1;
