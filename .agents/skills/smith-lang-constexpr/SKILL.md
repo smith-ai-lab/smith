@@ -5,13 +5,20 @@ description: "Ordinary C functions run at compile time in a .smith file: constex
 
 # Functions at compile time
 
-C needs a macro, a generator script or a run-time table for a computed constant. In a `.smith` file a plain C function (a definition in the file, any C: loops, locals, structs, recursion, assignments) runs inside the compiler wherever C **requires** a constant:
+C needs a macro, a generator script or a run-time table for a computed constant. In a `.smith` file a plain C function (a definition in the file, any C: loops, locals, structs, assignments; a module has no recursion, see smith-lang-effects) runs inside the compiler wherever C **requires** a constant:
 
 ```smith
 module tables;
 
-static i32 fib(i32 n) {                         // plain C: recursion, loops, structs, assignments
-    return n < 2 ? n : fib(n - 1) + fib(n - 2);
+static i32 fib(i32 n) {                         // plain C: loops, structs, assignments
+    i32 a = 0;
+    i32 b = 1;
+    for (i32 i = 0; i < n; i++) {
+        i32 next = a + b;
+        a = b;
+        b = next;
+    }
+    return a;
 }
 
 struct Table {

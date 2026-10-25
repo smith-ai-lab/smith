@@ -15,7 +15,14 @@ static i32 sum(Pair p) {
 }
 
 export i32 fib(i32 n) {
-    return n < 2 ? twice(n) / 2 : fib(n - 1) + fib(n - 2);
+    i32 a = 0;
+    i32 b = 1;
+    for (i32 i = 0; i < n; i++) { // a loop: a module has no recursion
+        i32 next = twice(a + b) / 2;
+        a = b;
+        b = next;
+    }
+    return twice(a) / 2;
 }
 
 export i32 combine(i32 a, i32 b) {

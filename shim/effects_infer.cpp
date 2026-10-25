@@ -46,6 +46,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <unistd.h>
 #include <vector>
@@ -190,6 +191,7 @@ struct Edge {
     SourceLocation loc;
     std::string symbol;      // the callee's linkage name, for a call the summary resolves across files
     bool unresolved = false; // a project function the file has no body for: no effect here, see the summary
+    bool tail = false;       // `[[clang::musttail]] return f(...);`: a jump, which makes a loop of a cycle
 };
 
 struct Node {
@@ -248,10 +250,24 @@ class Collector {
     Node &node;
     const SourceManager &sm;
     Symbols symbols;
-    Symbols names; // how a function is shown in a chain
+    Symbols names;                    // how a function is shown in a chain
+    std::set<const CallExpr *> tails; // the calls of `[[clang::musttail]] return` statements, met before the calls
+
+    // The call a `[[clang::musttail]] return f(...);` makes, remembered: an attributed statement is visited before its
+    // children.
+    void noteTail(const AttributedStmt *attributed) {
+        bool musttail = false;
+        for (const Attr *attribute : attributed->getAttrs())
+            musttail = musttail || isa<MustTailAttr>(attribute);
+        const auto *returned = dyn_cast<ReturnStmt>(attributed->getSubStmt());
+        if (!musttail || returned == nullptr || returned->getRetValue() == nullptr) return;
+        if (const auto *call = dyn_cast<CallExpr>(returned->getRetValue()->IgnoreParenImpCasts())) tails.insert(call);
+    }
 
     void visit(const Stmt *statement) {
-        if (const auto *call = dyn_cast<CallExpr>(statement)) {
+        if (const auto *attributed = dyn_cast<AttributedStmt>(statement)) {
+            noteTail(attributed);
+        } else if (const auto *call = dyn_cast<CallExpr>(statement)) {
             onCall(call);
         } else if (isa<ObjCMessageExpr>(statement)) {
             leaf(statement->getBeginLoc(), C, "an Objective-C message");
@@ -276,6 +292,7 @@ class Collector {
             edge.name = names(definition);
             edge.loc = call->getBeginLoc();
             edge.symbol = symbols(definition);
+            edge.tail = tails.count(call) != 0;
             node.edges.push_back(edge);
             return;
         }
@@ -322,6 +339,9 @@ class Analysis {
         bad =
             engine.getCustomDiagID(DiagnosticsEngine::Error, "smith-effect: `%0` is %1, but it has the effects %2: %3");
         note = engine.getCustomDiagID(DiagnosticsEngine::Note, "%0");
+        recursion = engine.getCustomDiagID(
+            DiagnosticsEngine::Error, "smith-effect: recursion in a module: %0 (write a loop; a call that ends the "
+                                      "function can be `[[clang::musttail]] return f(...);`)");
     }
 
     void run() {
@@ -331,13 +351,14 @@ class Analysis {
             Node &node = nodes[function];
             if (node.annotated && inMain(node.function)) check(node);
         }
+        if (isModule()) checkRecursion();
         writeSummary();
     }
 
   private:
     ASTContext &context;
     DiagnosticsEngine &engine;
-    unsigned bad, note;
+    unsigned bad, note, recursion;
     ASTNameGenerator generator;
     std::string output; // the object file being written: the summary goes beside it, `<object>.fx`
     std::map<const FunctionDecl *, Node> nodes;
@@ -425,6 +446,111 @@ class Analysis {
             if ((set & bit) != 0) return &edge;
         }
         return nullptr;
+    }
+
+    // Whether the main file is a module: a `module a::b;` line begins a line of it.
+    bool isModule() {
+        const SourceManager &sm = context.getSourceManager();
+        llvm::StringRef text = sm.getBufferData(sm.getMainFileID());
+        for (size_t at = text.find("module "); at != llvm::StringRef::npos; at = text.find("module ", at + 1))
+            if (at == 0 || text[at - 1] == '\n') return true;
+        return false;
+    }
+
+    // No recursion in a module: a call that sits on a cycle of the functions the file defines is an error naming the
+    // cycle, unless every call of the cycle is a `[[clang::musttail]]` return (a jump, which is a loop). Calls through
+    // a pointer and into code with no body are not followed (they are `c`). Imports are acyclic, so a cycle is always
+    // inside one module, and one file says it.
+    void checkRecursion() {
+        std::vector<const Node *> list;
+        std::map<const FunctionDecl *, size_t> index;
+        for (const FunctionDecl *function : order) {
+            if (!inMain(function)) continue;
+            index[function] = list.size();
+            list.push_back(&nodes[function]);
+        }
+        size_t count = list.size();
+        std::vector<std::vector<size_t>> next(count);
+        for (size_t i = 0; i < count; i++)
+            for (const Edge &edge : list[i]->edges) {
+                auto found = edge.callee == nullptr ? index.end() : index.find(edge.callee);
+                if (found != index.end()) next[i].push_back(found->second);
+            }
+        // Strongly connected components, with a work list in place of the recursion.
+        std::vector<long> number(count, -1), low(count, 0), component(count, -1);
+        std::vector<bool> open(count, false);
+        std::vector<size_t> stack;
+        long counter = 0, components = 0;
+        for (size_t root = 0; root < count; root++) {
+            if (number[root] >= 0) continue;
+            std::vector<std::pair<size_t, size_t>> work{{root, 0}};
+            number[root] = low[root] = counter++;
+            stack.push_back(root);
+            open[root] = true;
+            while (!work.empty()) {
+                size_t node = work.back().first;
+                size_t &at = work.back().second;
+                if (at < next[node].size()) {
+                    size_t to = next[node][at++];
+                    if (number[to] < 0) {
+                        number[to] = low[to] = counter++;
+                        stack.push_back(to);
+                        open[to] = true;
+                        work.push_back({to, 0});
+                    } else if (open[to]) {
+                        low[node] = std::min(low[node], number[to]);
+                    }
+                    continue;
+                }
+                if (low[node] == number[node]) {
+                    for (size_t member = count; member != node;) {
+                        member = stack.back();
+                        stack.pop_back();
+                        open[member] = false;
+                        component[member] = components;
+                    }
+                    components++;
+                }
+                work.pop_back();
+                if (!work.empty()) low[work.back().first] = std::min(low[work.back().first], low[node]);
+            }
+        }
+        std::vector<bool> said(static_cast<size_t>(components), false);
+        for (size_t i = 0; i < count; i++)
+            for (const Edge &edge : list[i]->edges) {
+                auto found = edge.callee == nullptr ? index.end() : index.find(edge.callee);
+                if (found == index.end() || edge.tail || component[found->second] != component[i]) continue;
+                if (said[static_cast<size_t>(component[i])]) continue;
+                said[static_cast<size_t>(component[i])] = true;
+                engine.Report(edge.loc, recursion) << cycleText(list, index, i, edge, found->second);
+            }
+    }
+
+    // `a -> b (a.smith:4) -> a (b.smith:9)`: the call that closes a cycle, and the way back from its callee.
+    std::string cycleText(const std::vector<const Node *> &list, const std::map<const FunctionDecl *, size_t> &index,
+                          size_t from, const Edge &call, size_t to) {
+        std::string text = shownName(list[from]->function);
+        text += " -> " + call.name + " (" + where(call.loc) + ")";
+        if (to == from) return text;
+        // The shortest way back from `to` to `from`, by a search over the calls (tail calls too).
+        std::vector<long> before(list.size(), -1);
+        std::vector<const Edge *> via(list.size(), nullptr);
+        std::vector<size_t> queue{to};
+        before[to] = static_cast<long>(to);
+        for (size_t head = 0; head < queue.size() && before[from] < 0; head++)
+            for (const Edge &edge : list[queue[head]]->edges) {
+                auto found = edge.callee == nullptr ? index.end() : index.find(edge.callee);
+                if (found == index.end() || before[found->second] >= 0) continue;
+                before[found->second] = static_cast<long>(queue[head]);
+                via[found->second] = &edge;
+                queue.push_back(found->second);
+            }
+        std::vector<const Edge *> back;
+        for (size_t at = from; at != to && before[at] >= 0; at = static_cast<size_t>(before[at]))
+            back.push_back(via[at]);
+        for (size_t i = back.size(); i-- > 0;)
+            text += " -> " + back[i]->name + " (" + where(back[i]->loc) + ")";
+        return text;
     }
 
     std::string where(SourceLocation loc) {
