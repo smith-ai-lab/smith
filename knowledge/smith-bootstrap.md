@@ -49,8 +49,9 @@ while ([release](release.md)): a clone older than the 20 newest releases (and a 
 
 **On Linux** (issue #305) a release has a Linux build, `smith-linux-<arch>.tar.xz`, once the Linux CI job publishes it;
 `stage0.smith` takes it the same way. When no release can be had (no Linux build yet, the chain broken, or the download
-failing) it builds smith from source instead: `scripts/seed_linux.smith`, the seed (also `SMITH_STAGE0_SEED=1`), which
-builds the pinned LLVM with `scripts/llvm_linux.smith`, then stage A (`smith.c`, the shims and LLVM, with weak
-stand-ins for the libraries made from their headers' `smith-names` and `smith-bodies` lines), the libraries compiled
-by stage A, stage B linked with them, and stage B's `smith build`. It needs the system's C and C++ compiler (clang 19 or
-GCC 13 or later), cmake, ninja, python3, curl, patch and xz, and about two hours and 15 GB the first time.
+failing) it builds smith from source instead: `scripts/seed_linux.smith`, the seed (`SMITH_STAGE0_SEED=1` asks for it,
+`=0` never builds it), which builds the pinned LLVM with `scripts/llvm_linux.smith`, then stage A (`smith.c`, the shims
+and LLVM, with weak stand-ins for the libraries made from their headers' `smith-names` and `smith-bodies` lines), the
+libraries compiled by stage A, stage B linked with them, and stage B's `smith build`. It needs the system's C and C++
+compiler (clang 19 or GCC 13 or later), cmake, ninja, python3, curl, patch and xz, and about two hours and 15 GB the
+first time.

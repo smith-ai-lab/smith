@@ -11,7 +11,7 @@
 // smith installed, `smith build` does all of this already. SMITH_STAGE0_RELEASE=<tag> names the release to use.
 // On Linux, when no release can be had (none has a Linux build yet, or the download fails), it builds smith from
 // source instead: scripts/seed_linux.smith, the seed of the Linux release chain (issue #305), which needs about two
-// hours the first time. SMITH_STAGE0_SEED=1 asks for the seed directly.
+// hours the first time. SMITH_STAGE0_SEED=1 asks for the seed directly, and SMITH_STAGE0_SEED=0 never builds it.
 #include <fcntl.h>
 #include <limits.h>
 #include <spawn.h>
@@ -197,6 +197,7 @@ int main(int argc, char **argv) {
     seed_on_failure = strcmp(system.sysname, "Linux") == 0;
     const char *wanted = getenv("SMITH_STAGE0_SEED");
     if (seed_on_failure && wanted != nullptr && strcmp(wanted, "1") == 0) seed();
+    if (wanted != nullptr && strcmp(wanted, "0") == 0) seed_on_failure = false; // a failure is only reported
     char name[128];
     snprintf(name, sizeof name, "smith-%s-%s.tar.xz", system.sysname, system.machine);
     for (char *c = name; *c != '\0'; c++)
