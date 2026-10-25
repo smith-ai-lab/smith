@@ -6,7 +6,7 @@
 # passes the packages (pinned by SHA-256 there). Run again with nothing changed, cmake and ninja find nothing to do.
 set -eu
 z3=$1 alive2=$2 cmake=$3 python=$4 llvm=$5 ninja=$6
-cache=${XDG_CACHE_HOME:-$HOME/.cache}/smith/llvm/${SMITH_LLVM_NAME:-23.1.3-r9}
+cache=${XDG_CACHE_HOME:-$HOME/.cache}/smith/llvm/${SMITH_LLVM_NAME:-23.1.3-r10}
 out=$cache/prove
 cmake=$cmake/CMake.app/Contents/bin/cmake
 sdk=$(xcrun --show-sdk-path)
