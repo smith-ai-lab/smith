@@ -784,7 +784,7 @@ int smith_effects_check(int count, char **files, const char *stack); // shim/eff
 // The effect summary of an object: where the compile that makes the object writes it (the plugin) and where the link
 // reads it. In a project (a `.smith` folder in the working folder) it is `.smith/effects/<the object's absolute path,
 // `%` for `/`>.fx`, out of the build folders, otherwise `<object>.fx` beside the object. runtime/build_runtime.c has
-// the same rule (`smith_effects_path`) for the outputs a build declares; tests/effects_infer.sh checks that they agree.
+// the same rule (`smith_effects_path`) for the outputs a build declares; tests/effects_infer_test.smith checks that they agree.
 bool smith_effects_summary_path(const char *object, char *out, size_t capacity) {
     char absolute[PATH_MAX];
     while (strncmp(object, "./", 2) == 0)
