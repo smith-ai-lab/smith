@@ -388,6 +388,10 @@ export void test_defer_run(io::Io *io) {
     corpus_case(io, "defer-run");
 }
 
+export void test_enum_builtin_option_result(io::Io *io) {
+    corpus_case(io, "enum-builtin-option-result");
+}
+
 export void test_enum_c_rule(io::Io *io) {
     corpus_case(io, "enum-c-rule");
 }
@@ -498,6 +502,10 @@ export void test_error_enum_generic_dot(io::Io *io) {
 
 export void test_error_enum_payload(io::Io *io) {
     corpus_case(io, "error-enum-payload");
+}
+
+export void test_error_enum_builtin_redeclare(io::Io *io) {
+    corpus_case(io, "error-enum-builtin-redeclare");
 }
 
 export void test_error_enum_type_function(io::Io *io) {
