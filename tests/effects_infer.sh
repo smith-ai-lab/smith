@@ -300,7 +300,7 @@ i32 main() { return lib::deep(1) - lib::deep(1); }
 EOF2
 total=$((total + 1))
 (cd "$work/sm" && smith build) >"$work/sm/log" 2>&1
-stack=$(find "$work/sm/build" -name '*.stack' | head -n 1)
+stack=$work/sm/build/debug/sm.stack
 if [ -n "$stack" ] && awk -F'\t' '$1 == "fx::lib::deep" && $2 + 0 > 256 && $3 ~ /^fx::lib::deep -> / { found = 1 } END { exit !found }' "$stack"; then
     echo "ok    stack: a module's function has its frame and its callee's in the build's .stack"
 else
