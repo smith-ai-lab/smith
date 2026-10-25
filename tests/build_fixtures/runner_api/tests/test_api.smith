@@ -1,0 +1,181 @@
+import smith::arena;
+import smith::math;
+import smith::test;
+
+void test_ordering_passes(void) {
+    i32 one = 1;
+    i32 two = 2;
+    test::check_less(one, two);
+    test::check_less_equal(one, two);
+    test::check_less_equal(two, 2);
+    test::check_greater(two, one);
+    test::check_greater_equal(two, one);
+    test::check_greater_equal(two, 2);
+    test::check_not_equal(one, two);
+    u8 small = 3;
+    u8 big = 200;
+    test::check_less(small, big);
+    f64 pi = 3.14159;
+    test::check_greater(pi, 3.0);
+    test::check_less(-1.5, pi);
+    char a = 'a';
+    test::check_less(a, 'b');
+    bool no = false;
+    test::check_not_equal(no, true);
+}
+
+void test_lt_fails(void) {
+    i32 a = 5;
+    i32 b = 5;
+    test::check_less(a, b);
+}
+
+void test_le_fails(void) {
+    u16 a = 6;
+    u16 b = 5;
+    test::check_less_equal(a, b);
+}
+
+void test_gt_fails(void) {
+    i64 a = -5;
+    i64 b = 5;
+    test::check_greater(a, b);
+}
+
+void test_ge_fails(void) {
+    i8 a = -5;
+    i8 b = 5;
+    test::check_greater_equal(a, b);
+}
+
+void test_ne_fails(void) {
+    i32 count = 5;
+    test::check_not_equal(count, 5);
+}
+
+void test_nan_lt(void) {
+    f64 not_a_number = math::nan(f64);
+    test::check_less(not_a_number, 1.0);
+}
+
+void test_nan_le(void) {
+    f64 not_a_number = math::nan(f64);
+    test::check_less_equal(1.0, not_a_number);
+}
+
+void test_nan_gt(void) {
+    f32 not_a_number = math::nan(f32);
+    test::check_greater(not_a_number, 1.0f);
+}
+
+void test_nan_ge(void) {
+    f32 not_a_number = math::nan(f32);
+    test::check_greater_equal(not_a_number, not_a_number);
+}
+
+void test_nan_eq(void) {
+    f64 not_a_number = math::nan(f64);
+    test::check_equal(not_a_number, not_a_number);
+}
+
+void test_nan_ne_passes(void) {
+    f64 not_a_number = math::nan(f64);
+    test::check_not_equal(not_a_number, not_a_number);
+    test::check_not_equal(not_a_number, 1.0);
+}
+
+void test_near_generic_passes(void) {
+    f32 a = 1.0f;
+    f32 b = 1.05f;
+    test::check_near(a, b, 0.1f);
+    f64 x = 1.0;
+    f64 y = 1.0 + 1e-12;
+    test::check_near(x, y, 1e-9);
+    f64 infinity = math::infinity(f64);
+    test::check_near(infinity, infinity, 0.0);
+}
+
+void test_near_f32_fails(void) {
+    f32 a = 1.0f;
+    f32 b = 1.5f;
+    f32 tolerance = 0.1f;
+    test::check_near(a, b, tolerance);
+}
+
+void test_near_infinity_fails(void) {
+    f64 infinity = math::infinity(f64);
+    f64 big = 1e300;
+    test::check_near(infinity, big, big);
+}
+
+void test_same_bits_passes(void) {
+    f64 not_a_number = math::nan(f64);
+    test::check_same_bits(not_a_number, not_a_number);
+    f32 minus_zero = -0.0f;
+    test::check_same_bits(minus_zero, -0.0f);
+}
+
+void test_same_bits_zero_fails(void) {
+    f64 zero = 0.0;
+    test::check_same_bits(zero, -0.0);
+}
+
+void test_same_bits_f32_fails(void) {
+    f32 one = 1.0f;
+    f32 next = 1.0000001f;
+    test::check_same_bits(one, next);
+}
+
+void test_pointer_passes(void) {
+    i32 value = 1;
+    i32 *none = nullptr;
+    i32 *some = &value;
+    test::check_equal(none, nullptr);
+    test::check_not_equal(some, nullptr);
+    test::check_equal(some, &value);
+    i32 values[2] = {1, 2};
+    test::check_less(&values[0], &values[1]);
+}
+
+void test_pointer_null_fails(void) {
+    i32 value = 1;
+    i32 *some = &value;
+    test::check_equal(some, nullptr);
+}
+
+void test_pointer_not_null_fails(void) {
+    i32 *none = nullptr;
+    test::check_not_equal(none, nullptr);
+}
+
+void test_typed_passes(void) {
+    u32 small = 3;
+    u64 big = 3;
+    test::check_equal((u64)small, big);
+    test::check_less(small, 10);
+}
+
+void test_expressions_pass(void) {
+    i32 a = 2;
+    test::check_equal(a * 2 + 1, a > 1 ? 5 : 6);
+    test::check_less(a - 1, a);
+    test::check_equal(a + 1, 3);
+}
+
+void test_memory_passes(void) {
+    arena::Arena memory = test::memory(1 << 12);
+    i32 *items = arena::push_slice(&memory, i32, 10).data;
+    for (i32 i = 0; i < 10; i++) {
+        items[i] = i * i;
+    }
+    test::check_equal(items[9], 81);
+    f64 *halves = arena::push_slice(&memory, f64, 4).data;
+    halves[3] = 1.5;
+    test::check_near(halves[3], 1.5, 0.0);
+}
+
+void test_memory_stops(void) {
+    arena::Arena memory = test::memory(256);
+    test::expect_abort();
+    (void)arena::push_slice(&memory, f64, 100).data;
+}

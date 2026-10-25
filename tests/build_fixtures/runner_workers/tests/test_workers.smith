@@ -1,0 +1,197 @@
+import <assert.h>;
+import <stdio.h>;
+import <stdlib.h>;
+import <unistd.h>;
+import smith::arena;
+import smith::random;
+import smith::test;
+
+void test_crash_1_before(void) {
+    test::check_equal(1, 1);
+}
+
+void test_crash_2_dies(void) {
+    test::note("about to abort");
+    c::abort();
+}
+
+void test_crash_3_after(void) {
+    test::check_equal(2, 2);
+}
+
+void test_crash_4_after(void) {
+    test::check_equal(3, 3);
+}
+
+void test_late_1_before(void) {
+    test::check(true);
+}
+
+void test_late_2_sleeps(void) {
+    c::sleep(30);
+}
+
+void test_late_3_after(void) {
+    test::check(true);
+}
+
+void test_report_1_before(void) {
+    test::check(true);
+}
+
+void test_report_2_overflows(void) {
+    u8 *bytes = (u8 *)c::malloc(8);
+    volatile usize index = 8;
+    bytes[index] = 'x';
+    c::free(bytes);
+}
+
+void test_report_3_prints_one(void) {
+    c::printf("AddressSanitizer: a test that only says so\n");
+}
+
+void test_report_4_after(void) {
+    test::check(true);
+}
+
+void test_aborts_1_assert(void) {
+    test::expect_abort();
+    c::assert(false);
+}
+
+void test_aborts_2_quiet(void) {
+    test::expect_abort();
+    c::printf("hidden-by-the-check\n");
+    c::abort();
+}
+
+void test_aborts_3_reads(void) {
+    u8 *bytes = (u8 *)c::malloc(8);
+    volatile usize index = 8;
+    test::expect_abort();
+    c::printf("before the read\n");
+    (void)bytes[index];
+    c::free(bytes);
+}
+
+void test_aborts_4_after(void) {
+    test::expect_abort();
+    c::abort();
+}
+
+void test_unwind_1_fails(void) {
+    test::check_equal(1, 2);
+}
+
+void test_unwind_2_fails(void) {
+    test::check_equal(3, 4);
+}
+
+void test_unwind_3_passes(void) {
+    test::check(true);
+}
+
+void test_out_1_fails(void) {
+    c::printf("from-1\n");
+    c::fprintf(c::stderr, "err-from-1\n");
+    test::check_equal(1, 2);
+}
+
+void test_out_2_passes(void) {
+    c::printf("from-2\n");
+    c::fprintf(c::stderr, "err-from-2\n");
+}
+
+void test_out_3_fails(void) {
+    c::printf("from-3\n");
+    test::check_equal(1, 2);
+}
+
+void test_out_4_buffers(void) {
+    static char buffer[256];
+    c::setvbuf(c::stdout, buffer, c::_IOFBF, sizeof buffer);
+    c::printf("from-4\n"); // still in the test's own buffer when the test returns
+}
+
+void test_out_5_fails(void) {
+    test::check_equal(1, 2);
+}
+
+static i32 dirty_death;
+static i32 dirty_failed;
+
+void test_dirty_1_death(void) {
+    dirty_death = 1;
+    test::expect_abort(); // stands for the program ending: the worker ends with it
+    c::abort();
+}
+
+void test_dirty_2_fresh(void) {
+    test::check_equal(dirty_death, 0);
+}
+
+void test_dirty_3_fails(void) {
+    dirty_failed = 1;
+    test::check_equal(1, 2); // unwinds out of whatever it was doing: the worker ends
+}
+
+void test_dirty_4_fresh(void) {
+    test::check_equal(dirty_failed, 0);
+}
+
+// A failure that depends on state: the first run in a process fails only for a large x, a later one always fails. Shrinking
+// reruns the key in one worker, so its smaller cases fail on the state its earlier attempts left, not on their own.
+static i32 leaky_runs;
+
+void test_shrink_leaky(random::Key key) {
+    i64 x = random::uniform_int64_sample(key, (random::UniformInt64){.low = 0, .high = 1000});
+    leaky_runs += 1;
+    bool fails = leaky_runs == 1 ? x >= 500 : true;
+    test::check_equal(fails, false);
+}
+
+static void *fresh_base;
+
+void test_fresh_1_sets(void) {
+    test::note("note from 1");
+    arena::Arena memory = test::memory(4096);
+    u8 *bytes = arena::push_slice(&memory, u8, 100).data;
+    fresh_base = bytes;
+    for (usize i = 0; i < 100; i++) {
+        bytes[i] = 0xAB;
+    }
+}
+
+void test_fresh_2_sees(void) {
+    arena::Arena memory = test::memory(4096);
+    u8 *bytes = arena::push_slice(&memory, u8, 100).data;
+    if (fresh_base != nullptr) {
+        test::check_equal((void *)bytes, fresh_base); // given back: the same memory
+    }
+    for (usize i = 0; i < 100; i++) {
+        test::check_equal(bytes[i], 0);
+    }
+    test::check_equal(1, 2); // fails to show the note it was given: none
+}
+
+void test_fresh_3_big(void) {
+    arena::Arena memory = test::memory(200U << 20);
+    u64 *item = arena::push(&memory, u64);
+    test::check_not_equal(item, nullptr);
+}
+
+void test_fresh_4_big(void) {
+    arena::Arena memory = test::memory(200U << 20); // out of capacity if the last test's was not given back
+    u64 *item = arena::push(&memory, u64);
+    test::check_not_equal(item, nullptr);
+}
+
+static i32 ran;
+
+void test_order_a(void) {
+    ran = 1;
+}
+
+void test_order_b(void) {
+    test::check_equal(ran, 1); // only if order_a ran first, in this process
+}

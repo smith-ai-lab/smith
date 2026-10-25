@@ -1,0 +1,35 @@
+import smith::math;
+import smith::test;
+
+void test_size(void) {
+    usize count = test::full() ? 1000 : 10;
+    test::note("count %zu", count);
+    test::check_equal(count, 10);
+}
+
+void test_bits_equal(void) {
+    test::check_same_bits(0.1 + 0.2, 0.30000000000000004);
+    test::check_same_bits(-0.0, -0.0);
+    test::check_same_bits(1.5f, 1.5f);
+    f64 not_a_number = math::nan(f64);
+    test::check_same_bits(not_a_number, not_a_number);
+    f64 minus_infinity = -math::infinity(f64);
+    test::check_same_bits(minus_infinity, minus_infinity);
+}
+
+void test_bits_zero(void) {
+    f64 zero = 0.0;
+    test::check_same_bits(zero, -0.0);
+}
+
+void test_bits_nan(void) {
+    f64 first = __builtin_nan("1");
+    f64 second = __builtin_nan("2");
+    test::check_same_bits(first, second);
+}
+
+void test_bits_float(void) {
+    f32 one = 1.0f;
+    f32 next = 1.0000001f;
+    test::check_same_bits(one, next);
+}

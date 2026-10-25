@@ -1,0 +1,5 @@
+import smith::test;
+
+void test_x(void) {
+    test::check(true);
+}

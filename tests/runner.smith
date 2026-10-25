@@ -1,0 +1,159 @@
+// Helpers of the tests of smith_tests and of the runner it builds (tests/test_runner_*_test.smith, ported from
+// tests/test.sh): a project made from the fixture `runner_base` (a build.c with smith_tests, the sanitizers on unless
+// -DSAN=0) and the files of another fixture, the runner built in it, and its output read back without the timings.
+// Every case runs the runner twice, as workers (the default) and with `--isolate` (a process per test), and both must
+// give the same result.
+module runner;
+
+import smith::arena;
+import smith::format;
+import smith::io;
+import smith::test;
+import <string.h>;
+import scratch;
+
+// The runner's output without the timings: the slowest list is dropped and the summary's seconds are masked.
+constexpr char plain_filter[] = "sed -e '/^slowest:/,/^$/d' -e 's/ in [0-9.]* s$//' | sed '/./,$!d'";
+
+// A project: the build.c of `base` (runner_base, or runner_c for C only) with the files of the fixture `files` over it.
+export scratch::Project project(io::Io *io, const char *base, const char *files) {
+    scratch::Project p = scratch::project(io, "p", base);
+    const char *copy = format::push(&io->arena, "cp -R \"$SMITH_REPO/tests/build_fixtures/", files, "/.\" .").data;
+    scratch::Run copied = scratch::sh(&p, copy);
+    scratch::expect_status("runner: the files of the fixture are copied", 0, &copied);
+    return p;
+}
+
+// The second argument of the runner for mode 0 (workers) and mode 1 (a process per test).
+export const char *flag(usize mode) {
+    return mode == 0 ? "" : "--isolate";
+}
+
+// A check's name, saying the mode when it is the isolated one.
+export const char *label(io::Io *io, const char *iso, const char *name) {
+    if (iso[0] == '\0')
+        return name;
+    return format::push(&io->arena, name, " (", iso, ")").data;
+}
+
+// `smith build` with the output of the build's own errors, stderr after stdout.
+export scratch::Run build(const scratch::Project *p, const char *arguments) {
+    return scratch::sh(p, format::push(&p->io->arena, "env SMITH_OUTPUT=full smith build ", arguments, " 2>&1").data);
+}
+
+// `smith test` of the project, as a task.
+export scratch::Run smith_test(const scratch::Project *p, const char *iso, const char *arguments) {
+    return scratch::sh(p, format::push(&p->io->arena, "env SMITH_OUTPUT=full smith test ", iso, " ", arguments, " 2>&1").data);
+}
+
+// The runner of the project, its two streams in one.
+export scratch::Run tests(const scratch::Project *p, const char *iso, const char *arguments) {
+    return scratch::sh(p, format::push(&p->io->arena, "build/tests ", iso, " ", arguments, " 2>&1").data);
+}
+
+// The runner's output through plain_filter.
+export scratch::Run plain(const scratch::Project *p, const char *iso, const char *arguments) {
+    return scratch::sh(p, format::push(&p->io->arena, "build/tests ", iso, " ", arguments, " 2>&1 | ", plain_filter).data);
+}
+
+// The runner's trace turned into the report by smith symbolize, with the timings left out; the text is the same under
+// the project's lines, spaces squeezed (the columns of the call chain follow the longest path).
+export const char *report(const scratch::Project *p, const char *iso, const char *arguments) {
+    const char *command = format::push(&p->io->arena, "build/tests ", iso, " --trace ", arguments,
+                                       " 2>&1 | smith symbolize 2>&1 | ", plain_filter,
+                                       " | sed -e '/smith_test_execute/d' -e '/smith_test_run_key/d' | tr -s ' '")
+                              .data;
+    return scratch::capture(p, command);
+}
+
+// The runner's trace through smith symbolize, whole.
+export const char *symbolized(const scratch::Project *p, const char *iso, const char *arguments) {
+    const char *command =
+        format::push(&p->io->arena, "build/tests ", iso, " ", arguments, " --trace 2>&1 | smith symbolize 2>&1").data;
+    return scratch::capture(p, command);
+}
+
+// Whether this smith can symbolize (it can when it was built with its debugger and symbolizer).
+export bool can_symbolize(const scratch::Project *p) {
+    return scratch::sh(p, "smith symbolize --available").status == 0;
+}
+
+// The text with every run of spaces made one space, as `tr -s ' '` does.
+export const char *squeezed(io::Io *io, const char *text) {
+    usize length = c::strlen(text);
+    char *copy = arena::push_slice(&io->arena, char, length + 1).data;
+    usize at = 0;
+    for (usize i = 0; i < length; i++) {
+        if (text[i] == ' ' && at > 0 && copy[at - 1] == ' ')
+            continue;
+        copy[at++] = text[i];
+    }
+    copy[at] = '\0';
+    return copy;
+}
+
+// The number of the line (from 1) of the `occurrence`th line (from 1) of a project's file that holds the text.
+export usize line_of_nth(const scratch::Project *p, const char *file, const char *text, usize occurrence) {
+    const char *whole = scratch::read(p, file);
+    usize line = 1;
+    usize seen = 0;
+    const char *start = whole;
+    for (const char *c = whole;; c++) {
+        if (*c == '\n' || *c == '\0') {
+            usize length = (usize)(c - start);
+            for (usize i = 0; i + c::strlen(text) <= length; i++) {
+                if (c::strncmp(start + i, text, c::strlen(text)) == 0) {
+                    seen++;
+                    break;
+                }
+            }
+            if (seen == occurrence)
+                return line;
+            if (*c == '\0')
+                break;
+            line++;
+            start = c + 1;
+        }
+    }
+    test::note("%s: no line %zu holds: %s", file, occurrence, text);
+    test::check(false);
+    return 0;
+}
+
+export usize line_of(const scratch::Project *p, const char *file, const char *text) {
+    return line_of_nth(p, file, text, 1);
+}
+
+// The report of a failed check of a test, compared as the report smith test prints it. `source` is the text of the
+// failing line (found in `file`), `values` the line under it, `extra` the lines after the chain (notes and output).
+export void expect_failure_block(const scratch::Project *p, const char *iso, const char *name, const char *test_name,
+                                 const char *file, const char *source, const char *values, const char *extra) {
+    io::Io *io = p->io;
+    usize line = line_of(p, file, source);
+    const char *wanted = format::push(&io->arena, "FAIL ", test_name, "\n  check failed at ", file, ":", line,
+                                      "\n     ", line, " |     ", source, "\n           ", values,
+                                      "\n  called from\n    ", file, ":", line, " test_", test_name, "\n", extra,
+                                      "\n0 passed, 1 failed")
+                             .data;
+    const char *arguments = format::push(&io->arena, "--test ", test_name).data;
+    scratch::expect_text(label(io, iso, name), squeezed(io, wanted), report(p, iso, arguments));
+}
+
+// A run of the runner holds the text.
+export void expect_has(io::Io *io, const char *iso, const char *name, const scratch::Run *run, const char *needle) {
+    scratch::expect_contains(label(io, iso, name), run->out, needle);
+}
+
+export void expect_lacks(io::Io *io, const char *iso, const char *name, const scratch::Run *run, const char *needle) {
+    scratch::expect_lacks(label(io, iso, name), run->out, needle);
+}
+
+// The forks the run made: the runner's `forks: N` line of --stats.
+export usize forks_of(const scratch::Run *run) {
+    const char *at = c::strstr(run->out, "forks: ");
+    test::check_not_equal(at, nullptr);
+    usize count = 0;
+    for (at += 7; *at >= '0' && *at <= '9'; at++)
+        count = count * 10 + (usize)(*at - '0');
+    return count;
+}

@@ -1,0 +1,44 @@
+import <stdio.h>;
+import <stdlib.h>;
+import <unistd.h>;
+import smith::test;
+
+void test_inproc_pass(void) {
+    c::printf("in-process output\n");
+    test::check_equal(1 + 1, 2);
+}
+
+void test_inproc_fail(void) {
+    i32 total = 40;
+    total += 2;
+    test::check_equal(total, 41);
+}
+
+void test_inproc_local(void) {
+    i32 answer = 41;
+    answer += 1;
+    test::check_equal(answer, 42);
+}
+
+void test_inproc_pid(void) {
+    c::printf("pid %d\n", (i32)c::getpid());
+}
+
+void test_inabort_abort(void) {
+    test::expect_abort();
+    c::abort();
+}
+
+void test_inabort_trap(void) {
+    test::expect_abort();
+    __builtin_trap();
+}
+
+void test_inabort_returns(void) {
+    test::expect_abort();
+}
+
+void test_inabort_check_after(void) {
+    test::expect_abort();
+    test::check_equal(1, 2);
+}

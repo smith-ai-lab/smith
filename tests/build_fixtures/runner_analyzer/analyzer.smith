@@ -1,0 +1,26 @@
+import smith::test;
+
+typedef struct {
+    i32 x;
+} Box;
+
+Box *find(i32 key);
+void missing(void);
+
+static i32 checked(bool flag) {
+    Box *p = nullptr;
+    if (flag) p = find(1);
+    test::check(p != nullptr);
+    return p->x;
+}
+
+static i32 unchecked(bool flag) {
+    Box *p = nullptr;
+    if (flag) p = find(1);
+    if (p == nullptr) missing();
+    return p->x;
+}
+
+i32 analyzed(void) {
+    return checked(true) + unchecked(true);
+}

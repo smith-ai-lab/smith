@@ -1,0 +1,75 @@
+import <assert.h>;
+import <stdio.h>;
+import <stdlib.h>;
+import smith::arena;
+import smith::test;
+
+void test_abort_assert(void) {
+    test::expect_abort();
+    c::printf("child noise\n");
+    c::assert(1 > 2);
+}
+
+void test_abort_arena(void) {
+    arena::Arena memory = test::memory(128);
+    test::expect_abort();
+    (void)arena::push_slice(&memory, u8, 1000).data;
+}
+
+void test_abort_abort(void) {
+    test::expect_abort();
+    c::abort();
+}
+
+void test_abort_trap(void) {
+    test::expect_abort();
+    __builtin_trap();
+}
+
+void test_sanitized_read(void) {
+    u8 *bytes = (u8 *)c::malloc(8);
+    volatile usize index = 8;
+    test::expect_abort();
+    c::printf("before\n");
+    (void)bytes[index];
+    c::free(bytes);
+}
+
+void test_sanitized_overflow(void) {
+    volatile i32 largest = 2147483647;
+    test::expect_abort();
+    (void)(largest + 1);
+}
+
+void test_abort_exit(void) {
+    test::expect_abort();
+    c::exit(3);
+}
+
+void test_abort_returns(void) {
+    test::expect_abort();
+    c::printf("child output\n");
+}
+
+void test_abort_check_inside(void) {
+    test::expect_abort();
+    test::check(false);
+}
+
+void test_abort_twice(void) {
+    test::expect_abort();
+    test::expect_abort(); // harmless
+    c::abort();
+}
+
+void test_abort_before(void) {
+    c::printf("aborting early\n");
+    c::abort();
+    test::expect_abort();
+}
+
+void test_abort_after_check(void) {
+    test::check_equal(1 + 1, 2);
+    test::expect_abort();
+    c::abort();
+}
