@@ -315,10 +315,10 @@ local function line_of(path, text)
   error(text .. " is not in " .. path)
 end
 
--- With the cursor inside a test function of tests/test_*.c: the runner, built, and --test <name> --in-process.
+-- With the cursor inside a test function of a *_test.c: the runner, built, and --test <name> --in-process.
 function tests.dap_test_under_cursor()
   local folder = os.getenv("SMITH_NEW")
-  local test_file = vim.fn.glob(folder .. "/tests/test_*.c")
+  local test_file = vim.fn.glob(folder .. "/*_test.c")
   check(test_file ~= "", "the new project has a test")
   local name = vim.fn.fnamemodify(test_file, ":t")
   local lines = vim.fn.readfile(test_file)
@@ -328,7 +328,7 @@ function tests.dap_test_under_cursor()
     if found then function_line, function_name = number, found break end
   end
   check(function_name, "a test function in " .. test_file)
-  local configuration = run_configuration(folder, "tests/" .. name, function_line + 1)
+  local configuration = run_configuration(folder, name, function_line + 1)
   equal(vim.uv.fs_realpath(folder .. "/build/tests"), vim.uv.fs_realpath(configuration.program), "the runner")
   check(configuration.program:sub(1, 1) == "/", "an absolute path: " .. configuration.program)
   check(vim.uv.fs_stat(configuration.program), "the runner was built")
@@ -552,8 +552,8 @@ end
 function tests.neotest_is_test_file()
   local adapter = require("neotest-smith")
   local folder = os.getenv("SMITH_NEW")
-  local test_file = vim.fn.glob(folder .. "/tests/test_*.c")
-  check(adapter.is_test_file(test_file), "tests/test_*.c of a project")
+  local test_file = vim.fn.glob(folder .. "/*_test.c")
+  check(adapter.is_test_file(test_file), "a *_test.c of a project")
   check(not adapter.is_test_file(folder .. "/main.c"), "main.c is not a test file")
   check(not adapter.is_test_file(folder .. "/build.c"), "build.c is not a test file")
   local other = write_project({ ["build.c"] = "", ["box_test.smith"] = "", ["box.smith"] = "", ["test_box.h"] = "" })
@@ -577,7 +577,7 @@ end
 function tests.neotest_discover_c()
   stub_neotest()
   local folder = os.getenv("SMITH_NEW")
-  local path = vim.fn.glob(folder .. "/tests/test_*.c")
+  local path = vim.fn.glob(folder .. "/*_test.c")
   local expected = {}
   for _, line in ipairs(vim.fn.readfile(path)) do
     local found = line:match("^void (test_[%w_]+)%(")
@@ -619,7 +619,7 @@ function tests.neotest_build_spec()
   stub_neotest()
   local folder = os.getenv("SMITH_NEW")
   local root = vim.uv.fs_realpath(folder)
-  local c_file = vim.fn.glob(folder .. "/tests/test_*.c")
+  local c_file = vim.fn.glob(folder .. "/*_test.c")
   local test = { type = "test", name = "test_x", path = c_file, id = c_file .. "::test_x" }
   local spec = spec_for(test)
   equal({ "smith", "test", "--test", "test_x", "--verbose" }, spec.command, "a test")
