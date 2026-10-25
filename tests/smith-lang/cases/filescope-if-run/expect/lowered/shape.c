@@ -50,6 +50,19 @@ __INT32_TYPE__ shape_platform(void) {
 return undeclared_function();
 }
 #endif
+#if SMITH_TARGET_OS == 1
+
+__INT32_TYPE__ shape_sides(void);
+__INT32_TYPE__ shape_sides(void) {
+return 4;
+}
+#else
+
+__INT32_TYPE__ shape_sides(void);
+__INT32_TYPE__ shape_sides(void) {
+return 4;
+}
+#endif
 
 __INT32_TYPE__ shape_both(void) __asm__("_shape::both");
 __INT32_TYPE__ shape_both(void) {

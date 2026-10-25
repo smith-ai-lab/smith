@@ -356,6 +356,16 @@ static const char *smith_lang_declare(SmithLang *lang, const SmithHost *host, co
         smith_lang_error(lang, host, lang->decl.c_name_location,
                          "`%.*s` was declared before; [[smith::c_name]] goes on its first declaration", (int)length,
                          name);
+    } else if (smith_lang_takes_c_name(lang, kind, exported)) {
+        // Declared again with its C name: each branch of a file-scope `if constexpr` read by the raw lowering (issue
+        // #335), or a declaration before the definition. The same name is the same symbol; another is an error.
+        lang->decl.c_name_used = true;
+        if (!smith_lang_equals(smith_lang_str(lang->decl.c_name), lang->decl.c_name.length,
+                               smith_lang_str(known->c_name))) {
+            smith_lang_error(lang, host, lang->decl.c_name_location,
+                             "`%.*s` was declared before with the C name `%s`; a declaration of it names no other",
+                             (int)length, name, smith_lang_str(known->c_name));
+        }
     }
     if (known != nullptr && exported && !known->exported) known->exported = true;
     const char *prefixed = smith_lang_prefixed(lang, name, length);

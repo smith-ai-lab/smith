@@ -999,6 +999,7 @@ static void smith_lang_process_token(SmithLang *lang, const SmithHost *host, con
     }
     if (closes && lang->ifc[lang->ifc_count - 1].file_scope) { // a branch's `}` around declarations is dropped
         smith_lang_ifc_close(lang, host);
+        if (lang->ifc_count == 0) smith_lang_field_after_imports(lang, host);
         return;
     }
     smith_lang_dispatch(lang, host, token);
