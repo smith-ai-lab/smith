@@ -212,9 +212,9 @@ static void build_protocol(SmithBuild *b, const BuildConfig *config, const char 
 // check`) fails when a committed header differs from what its module generates. The header is written as the generator
 // makes it and formatted with the repository's .clang-format (smith fmt keeps it so; the stage0 formats with Homebrew's
 // clang-format, the same version), so it reads like one written by hand.
-static const char *const build_generated_headers[] = {"arena",  "autodiff", "build", "contract", "effects",
-                                                      "format", "inflate",  "io",    "math",     "option",
-                                                      "random", "result",   "test",  "text",     nullptr};
+static const char *const build_generated_headers[] = {"arena",   "autodiff", "build", "contract", "effects", "format",
+                                                      "inflate", "io",       "math",  "mem",      "option",  "random",
+                                                      "result",  "test",     "text",  nullptr};
 
 // Generates each module's header into a scratch folder and runs `action` (sh, with $name and $dir) on it.
 static SmithStep build_header_step(SmithBuild *b, const BuildConfig *config, const char *action) {
@@ -530,6 +530,8 @@ static const char *const build_smith_inputs[] = {
     "lib/smith/format.smith",
     "include/smith/math.h",
     "lib/smith/math.smith",
+    "include/smith/mem.h",
+    "lib/smith/mem.smith",
     "include/smith/option.h",
     "lib/smith/option.smith",
     "include/smith/result.h",
@@ -689,8 +691,9 @@ static const char *const *build_test_modules(SmithBuild *b, const BuildConfig *c
             .description = smith_fmt(b, "compile %s", tests[i]),
         };
         smith_step(b, &compile);
-        smith_compile_command(b, smith_cc, tests[i],
-                              smith_cat(b, flags, smith_list(b, "-I", ".smith/include", nullptr), nullptr));
+        smith_compile_command(
+            b, smith_cc, tests[i],
+            smith_cat(b, flags, smith_list(b, "-I", ".smith/include", "-fdefer-ts", nullptr), nullptr));
         needs = smith_cat(b, needs, write.outputs, nullptr);
     }
     return needs;
@@ -742,6 +745,7 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config, cons
     smith_compile_command(b, config->cc, "lib/smith/inflate.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/io.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/math.smith", smith_flags);
+    smith_compile_command(b, config->cc, "lib/smith/mem.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/random.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/test.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/text.smith", smith_flags);
