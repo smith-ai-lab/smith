@@ -1,0 +1,16 @@
+module tuples::pairs;
+
+export typedef struct { i32, f32 } Pair;
+
+export struct { i32, struct { f32, f32 } } nested() {
+    return {1, {2.0f, 3.0f}};
+}
+
+export Pair make(i32 a, f32 b) {
+    return {a, b};
+}
+
+export f32 total(struct { i32, f32 } t, Pair *p) {
+    (*p)[0] += t[0];
+    return t[1] + (f32)countof(t);
+}

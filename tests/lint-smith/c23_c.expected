@@ -1,0 +1,10 @@
+idiom/c23.c:1:11: error: `<stdbool.h>` is not needed: `bool`, `true` and `false` are keywords in C23
+idiom/c23.c:4:16: error: `__attribute__((noreturn))` has a standard spelling: write `[[noreturn]]`
+idiom/c23.c:5:16: error: `__attribute__((unused))` has a standard spelling: write `[[maybe_unused]]`
+idiom/c23.c:5:24: error: `__attribute__((warn_unused_result))` has a standard spelling: write `[[nodiscard]]`
+idiom/c23.c:6:1: error: `_Noreturn` is C11's spelling: write `[[noreturn]]`
+idiom/c23.c:9:21: error: `{0}` is C's way to zero a whole object: write `{}`
+idiom/c23.c:10:18: error: `NULL` is a macro: write `nullptr`
+idiom/c23.c:13:1: error: `_Static_assert` is C11's spelling: write `static_assert`, a keyword in C23
+idiom/c23.c:14:1: error: `_Alignas` is C11's spelling: write `alignas`, a keyword in C23
+idiom/c23.c:15:40: error: `_Alignof` is C11's spelling: write `alignof`, a keyword in C23

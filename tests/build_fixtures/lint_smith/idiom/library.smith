@@ -1,0 +1,8 @@
+module idiom::library;
+
+import <smith/arena.h>;
+
+export void use(c::SmithArena *arena) {
+    void *memory = c::smith_arena_push(arena, 8, 8);
+    (void)memory;
+}

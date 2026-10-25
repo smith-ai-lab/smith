@@ -1,0 +1,34 @@
+module kinds;
+
+export typedef struct {
+    u32 a;
+} Good;
+
+export typedef struct {
+    u32 a;
+} bad_type;
+
+export struct Tag {
+    u32 a;
+};
+
+export struct tag_bad {
+    u32 a;
+};
+
+export typedef enum {
+    Color_Red,
+    Color_Green,
+} Color;
+
+export typedef enum {
+    Shade_Light,
+    bad_shade,
+} Shade;
+
+export constexpr u32 limit = 4;
+export constexpr u32 BadLimit = 4;
+
+export u32 f(u32 good_param, u32 BadParam) {
+    return good_param + BadParam + limit + BadLimit;
+}

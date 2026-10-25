@@ -1,0 +1,4 @@
+idiom/consts.c:1:18: error: `const` object `limit` has a constant initializer: write `constexpr`
+idiom/consts.c:2:28: error: `const` array `table` has a constant initializer: write `constexpr`
+idiom/consts.smith:3:11: error: `const` object `limit` has a constant initializer: write `constexpr`
+idiom/consts.smith:4:10: error: `const` array `table` has a constant initializer: write `constexpr`

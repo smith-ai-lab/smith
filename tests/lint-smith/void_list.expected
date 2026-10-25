@@ -1,0 +1,4 @@
+idiom/void_list.smith:3:26: error: `(void)` is C's way to say no parameters: in C23 `()` means that, write `()`
+idiom/void_list.smith:4:11: error: `(void)` is C's way to say no parameters: in C23 `()` means that, write `()`
+idiom/void_list.smith:6:11: error: `(void)` is C's way to say no parameters: in C23 `()` means that, write `()`
+idiom/void_list.smith:13:17: error: `(void)` is C's way to say no parameters: in C23 `()` means that, write `()`

@@ -1,0 +1,5 @@
+module idiom::all;
+
+export usize f(usize n) {
+    return n + 1;
+}

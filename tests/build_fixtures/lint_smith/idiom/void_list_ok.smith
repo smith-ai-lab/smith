@@ -1,0 +1,9 @@
+module idiom::void_list_ok;
+
+typedef void (*Callback)();
+
+u32 plain() {
+    u32 x = 1;
+    (void)x;
+    return (u32)sizeof(void) + x;
+}

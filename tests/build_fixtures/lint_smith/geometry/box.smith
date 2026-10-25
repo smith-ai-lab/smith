@@ -1,0 +1,28 @@
+module geometry::box;
+
+export typedef struct {
+    f32 width;
+    f32 height;
+} Box;
+
+export typedef struct {
+    f32 w;
+} bad_Type;
+
+export f32 area(Box b) {
+    f32 half = 1;
+    return b.width * b.height * half;
+}
+
+export f32 Perimeter(Box b) {
+    return 2 * (b.width + b.height);
+}
+
+static i32 bad_Helper(i32 x) {
+    i32 Bad_Name = x;
+    return Bad_Name;
+}
+
+export i32 use_helper(i32 x) {
+    return bad_Helper(x);
+}

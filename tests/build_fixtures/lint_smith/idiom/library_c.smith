@@ -1,0 +1,7 @@
+module idiom::library_c;
+
+import <string.h>;
+
+export void zero(void *memory, usize n) {
+    c::memset(memory, 0, n);
+}

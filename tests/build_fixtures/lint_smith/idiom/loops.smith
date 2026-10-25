@@ -1,0 +1,31 @@
+module idiom::loops;
+
+export u32 forever(u32 n) {
+    for (;;) {
+        n++;
+        if (n > 8) break;
+    }
+    while (true) {
+        n++;
+        if (n > 9) break;
+    }
+    do {
+        n++;
+    } while (1);
+    return n;
+}
+
+export u32 bounded(u32 n) {
+    for (u32 i = 0; i < 4; i++) n += i;
+    while (n < 10) n++;
+    do {
+        n++;
+    } while (n < 20);
+    return n;
+}
+
+int main(void) {
+    for (;;) {
+    }
+    return 0;
+}

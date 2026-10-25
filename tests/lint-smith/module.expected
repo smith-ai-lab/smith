@@ -1,0 +1,4 @@
+build.smith:1:1: error: this file has no `module` line, and every .smith file is a module: write `module build;` at the top (its path from the project's root, `tests/` being a root of its own), and `export` what other files use
+main.smith:1:1: error: this file has no `module` line, and every .smith file is a module: write `module main;` at the top (its path from the project's root, `tests/` being a root of its own), and `export` what other files use
+mod/loose.smith:1:1: error: this file has no `module` line, and every .smith file is a module: write `module mod::loose;` at the top (its path from the project's root, `tests/` being a root of its own), and `export` what other files use
+tests/loose_test.smith:1:1: error: this file has no `module` line, and every .smith file is a module: write `module loose_test;` at the top (its path from the project's root, `tests/` being a root of its own), and `export` what other files use

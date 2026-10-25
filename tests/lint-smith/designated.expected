@@ -1,0 +1,2 @@
+idiom/designated.smith:11:28: error: this initializes `Shape`, which another file defines, by position: name the fields (`{.field = value, ...}`), so that a field added to it cannot shift the values
+idiom/designated.smith:16:33: error: this initializes `Shape`, which another file defines, by position: name the fields (`{.field = value, ...}`), so that a field added to it cannot shift the values

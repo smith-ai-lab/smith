@@ -1,0 +1,8 @@
+module idiom::library_ok;
+
+import smith::arena;
+
+export void use(arena::Arena *arena) {
+    u64 *value = arena::push(arena, u64);
+    (void)value;
+}

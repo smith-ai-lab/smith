@@ -1,0 +1,5 @@
+kinds.smith:9:3: error: invalid case style for typedef 'bad_type' [readability-identifier-naming,-warnings-as-errors]
+kinds.smith:15:15: error: invalid case style for struct 'tag_bad' [readability-identifier-naming,-warnings-as-errors]
+kinds.smith:26:5: error: invalid case style for enum constant 'bad_shade'; cannot be fixed automatically [readability-identifier-naming,-warnings-as-errors]
+kinds.smith:30:22: error: invalid case style for constexpr variable 'BadLimit' [readability-identifier-naming,-warnings-as-errors]
+kinds.smith:32:34: error: invalid case style for parameter 'BadParam' [readability-identifier-naming,-warnings-as-errors]
