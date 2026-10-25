@@ -40,6 +40,7 @@ A C toolchain and a modern standard library for C, written in C. Each fact has o
 - `smith lsp` and `smith lint` handle `.smith` files as written, with no LLVM change beyond the hooks; clangd has one general hook through which smith's plugins add hover lines and code actions (owner, 2026-10-24: "add a general clangd hook for plugin hover lines (and code actions)"), never a smith feature written into clangd. [smith-names-as-written](knowledge/smith-names-as-written.md)
 - A module's generated header includes exactly what its exports need. [smith-module-headers](knowledge/smith-module-headers.md)
 - The idiom checks and `smith-effects` are clang-tidy checks, on in smith's default `.clang-tidy`; a program touches the world only through capabilities passed down from `main`. [idiom-checks](knowledge/idiom-checks.md), [effects-check](knowledge/effects-check.md)
+- Effects are queried only by `static_assert(effects::within(f, mask))`; there is no `effects::of`. [effects-check](knowledge/effects-check.md)
 - smith's libraries are a modern standard library for C holding only what is proven: a library joins when two projects need it, does one thing, defines no macros. [libraries](knowledge/libraries.md)
 - The protocol code of `smith mcp` is generated, never written by hand; `smith mcp` is the debugger as MCP tools. [protocol-generation](knowledge/protocol-generation.md), [mcp-server](knowledge/mcp-server.md)
 - Neovim support is this repository and enables nothing the user did not ask for. [neovim](knowledge/neovim.md)
