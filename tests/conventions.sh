@@ -93,7 +93,7 @@ export i32 nothing() {
     return 0 +; // would not compile: nothing imports this file, so nothing compiles it
 }
 EOF
-cat >tests/test_box.smith <<'EOF'
+cat >tests/box_test.smith <<'EOF'
 import <smith/test.h>;
 import geometry::box;
 
@@ -106,7 +106,7 @@ expect "smith: builds with no build file" 0 "$rc"
 expect "smith: the debug program is build/debug/<folder>" yes "$(exists build/debug/shapes)"
 expect "smith: the project gets no build file" no "$(exists build.c)"
 expect "smith: the build program is smith's, in .smith" yes "$(exists .smith/conventions.c)"
-expect "smith: the files of the program, found by their imports" "main.smith geometry/box.smith geometry/scale.smith tests/test_box.smith" \
+expect "smith: the files of the program, found by their imports" "main.smith geometry/box.smith geometry/scale.smith tests/box_test.smith" \
     "$(compiled .)"
 expect "smith: a module nothing imports is not compiled" no "$(exists build/debug/geometry/unused.o)"
 expect "smith: ... nor is its header written" no "$(exists .smith/include/geometry/unused.h)"
@@ -198,7 +198,7 @@ EOF
 cat >stray.c <<'EOF'
 int stray(void) { return 1 +; } // nothing includes stray.h, so nothing compiles this
 EOF
-cat >tests/test_util.c <<'EOF'
+cat >tests/util_test.c <<'EOF'
 #include "util.h"
 
 #include <smith/test.h>
@@ -209,7 +209,7 @@ void test_twice(void) {
 EOF
 capture smith build
 expect "c: builds with no build file" 0 "$rc"
-expect "c: the files of the program, found by their includes" "main.c util.c deep/x.c tests/test_util.c" "$(compiled .)"
+expect "c: the files of the program, found by their includes" "main.c util.c deep/x.c tests/util_test.c" "$(compiled .)"
 expect "c: a .c nothing includes is not compiled" no "$(exists build/debug/stray.o)"
 expect "c: the objects keep the folders" yes "$(exists build/debug/deep/x.o)"
 capture smith run
@@ -314,7 +314,7 @@ expect "library: import <smith/io.h>; in a .smith file links io" "hello" "$(last
 mkdir "$work/tonly" && cd "$work/tonly" || exit 1
 mkdir tests
 printf 'int main(void) {\n    return 0;\n}\n' >main.c
-cat >tests/test_clock.c <<'EOF'
+cat >tests/clock_test.c <<'EOF'
 #include <smith/io.h>
 #include <smith/test.h>
 
@@ -398,7 +398,7 @@ int main(void) {
     return 0;
 }
 EOF
-cat >tests/test_value.c <<'EOF'
+cat >tests/value_test.c <<'EOF'
 #include <smith/test.h>
 
 #include "base/value.h"

@@ -430,7 +430,7 @@ void smith_app(SmithBuild *b, SmithApp *app);
 //                                .link_flags});
 // With no test file there is no task, and `smith test` says so.
 typedef struct {
-    const char *folder;            // the helpers of the tests (.c files directly in it), by default "tests"
+    const char *folder;            // by default "tests"
     const char *const *inputs;     // files the tests read when they run, such as compiled shaders; built first
     const char *const *link_flags; // added to the runner's link, such as -framework Metal
     SmithStep step;                // set: the task test
