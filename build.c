@@ -738,7 +738,6 @@ static const BuildTestScript build_test_scripts[] = {
     {"release", "release", nullptr, nullptr, 0},
     {"resource", "resource", nullptr, nullptr, 0},
     {"run", "run", nullptr, nullptr, 0},
-    {"skills", "skills", nullptr, nullptr, 0},
     {"main", "test", "main", nullptr, 1},
     {"reports", "test", "reports,misc,explain,lang", nullptr, 1},
     {"rest", "test", "alongside,workers,flags,budget,shrink_int,shrink_list,shrink_normal,inprocess", nullptr, 1},

@@ -1,0 +1,530 @@
+// The examples in the plugin's skills (.agents/skills/*/SKILL.md) are compiled, not trusted. Every fenced block whose
+// info string is exactly `smith` is a complete file: it is written to a folder of its own per skill (a block that
+// starts `module a::b;` goes to a/b.smith, as the path rule needs; the others to example-N.smith), the headers of the
+// skill's modules are made (`smith cc --smith-header`, as `smith build` does, twice so that a module may import
+// another), and every file is syntax-checked with `smith cc -fsyntax-only` and warnings as errors. A block marked
+// `smith fragment` is part of a file and is skipped; C is `c`. Also checked, so that an example teaches the idiom: a
+// complete `smith` block has no #include, #define, or standard C type (uint32_t, size_t...), and a `c` block has no
+// `module`, `import` or `c::`. There is a test for each skill that has such a block, `skill_case(io, "<skill>")`; a
+// skill that gets its first block needs one: `test_every_skill_with_a_block_has_a_test` says which.
+module skills_test;
+
+import smith::arena;
+import smith::format;
+import smith::io;
+import smith::test;
+import <string.h>;
+import scratch;
+
+constexpr usize modules_max = 32;
+
+// The modules a skill's complete blocks make: the file each is placed in and the line of its fence.
+typedef struct {
+    const char *paths[modules_max];
+    usize lines[modules_max];
+    usize count;
+} Placed;
+
+// The idiom a complete block follows: no preprocessor line, no standard C type name (no match is the pass).
+constexpr char c_renamed[] = "grep -nE '^[[:space:]]*#[[:space:]]*(include|define)|"
+                             "\\<(u?int(8|16|32|64)_t|size_t|ptrdiff_t)\\>' raw";
+
+// What a block is, from its info string.
+typedef enum { Block_Smith, Block_Fragment, Block_C, Block_Bad, Block_Other } Block;
+
+static Block block_of(const char *info) {
+    if (c::strcmp(info, "smith") == 0) return Block_Smith;
+    if (c::strcmp(info, "smith fragment") == 0) return Block_Fragment;
+    if (c::strcmp(info, "c") == 0) return Block_C;
+    return c::strncmp(info, "smith", 5) == 0 ? Block_Bad : Block_Other;
+}
+
+static const char *where(io::Io *io, const char *name, usize line) {
+    return format::push(&io->arena, name, "/SKILL.md:", line).data;
+}
+
+// A `c` block holds no .smith.
+static void check_c_block(io::Io *io, const scratch::Project *p, const char *name, usize line, const char *body) {
+    scratch::write(p, "raw", body);
+    scratch::Run run = scratch::sh(p, "grep -nE '^(module|import) |c::' raw");
+    scratch::expect_status(
+        format::push(&io->arena, where(io, name, line), ": a c block holds .smith (tag it smith)").data, 1, &run);
+}
+
+// A complete `smith` block is placed in the file its module line implies (example-N.smith without one), and is not
+// C renamed.
+static void place_smith_block(io::Io *io, const scratch::Project *p, const char *name, usize line, const char *body,
+                              Placed *placed) {
+    const char *label = where(io, name, line);
+    scratch::write(p, "raw", body);
+    scratch::Run renamed = scratch::sh(p, c_renamed);
+    scratch::expect_status(format::push(&io->arena, label, ": a smith block is C renamed (see smith-idiom)").data, 1,
+                           &renamed);
+    if (renamed.status == 0) return;
+    const char *module = scratch::capture(p, "sed -n 's/^module \\([A-Za-z0-9_:]*\\);.*/\\1/p' raw | head -n 1");
+    const char *path =
+        module[0] != '\0'
+            ? format::push(
+                  &io->arena,
+                  scratch::capture(p, format::push(&io->arena, "printf '%s' '", module, "' | sed 's|::|/|g'").data),
+                  ".smith")
+                  .data
+            : format::push(&io->arena, "example-", line, ".smith").data;
+    bool twice = scratch::exists(p, path);
+    if (twice) test::note("%s: module %s is defined by two blocks", label, module);
+    test::check_condition(!twice);
+    if (twice || placed->count == modules_max) return;
+    scratch::Run copied =
+        scratch::sh(p, format::push(&io->arena, "mkdir -p \"$(dirname '", path, "')\" && cp raw '", path, "'").data);
+    scratch::expect_status(label, 0, &copied);
+    placed->paths[placed->count] = path;
+    placed->lines[placed->count] = line;
+    placed->count++;
+}
+
+// The next line of the text, in place: its end, past the newline.
+static const char *line_end(const char *at) {
+    const char *end = c::strchr(at, '\n');
+    return end != nullptr ? end + 1 : at + c::strlen(at);
+}
+
+// Walks the fenced blocks of the file SKILL.md in the project: the `c` blocks are checked and the complete `smith`
+// blocks are placed.
+static void walk_blocks(io::Io *io, const scratch::Project *p, const char *name, Placed *placed) {
+    const char *at = scratch::read(p, "SKILL.md");
+    char *body = arena::push_slice(&io->arena, char, c::strlen(at) + 1).data;
+    bool open = false;
+    usize indent = 0;
+    usize used = 0;
+    usize fence = 0;
+    Block kind = Block_Other;
+    for (usize number = 1; *at != '\0'; number++) {
+        const char *next = line_end(at);
+        usize spaces = 0;
+        while (at[spaces] == ' ')
+            spaces++;
+        if (c::strncmp(at + spaces, "```", 3) == 0) {
+            if (!open) {
+                usize length = (usize)(next - at) - spaces - 3;
+                while (length > 0 && (at[spaces + 2 + length] == '\n' || at[spaces + 2 + length] == ' '))
+                    length--;
+                char *info = arena::push_slice(&io->arena, char, length + 1).data;
+                __builtin_memcpy(info, at + spaces + 3, length);
+                kind = block_of(info);
+                if (kind == Block_Bad) {
+                    test::note("%s: unknown info string: must be exactly 'smith' or 'smith fragment', not '%s'",
+                               where(io, name, number), info);
+                    test::check_condition(false);
+                }
+                open = true;
+                indent = spaces;
+                fence = number;
+                used = 0;
+            } else {
+                open = false;
+                body[used] = '\0';
+                if (kind == Block_C) check_c_block(io, p, name, fence, body);
+                if (kind == Block_Smith) place_smith_block(io, p, name, fence, body, placed);
+            }
+        } else if (open) {
+            usize skip = 0;
+            while (skip < indent && at[skip] == ' ')
+                skip++;
+            usize length = (usize)(next - at) - skip;
+            __builtin_memcpy(body + used, at + skip, length);
+            used += length;
+        }
+        at = next;
+    }
+}
+
+// The headers of the skill's modules, twice: the second pass has the headers the first made.
+constexpr char headers_script[] =
+    "mkdir -p .smith/include; flags=\"-I $SMITH_REPO/include -I $PWD/.smith/include -I $PWD\"; "
+    "for pass in 1 2; do while read -r path; do "
+    "module=$(sed -n 's/^module \\([A-Za-z0-9_:]*\\);.*/\\1/p' \"$path\" | head -n 1); [ -n \"$module\" ] || continue; "
+    "header=$PWD/.smith/include/$(printf '%s' \"$module\" | sed 's|::|/|g').h; mkdir -p \"$(dirname \"$header\")\"; "
+    "smith cc --smith-header \"$path\" -o \"$header\" $flags >/dev/null 2>&1 || :; done <modules; done";
+
+// A file with no `module` line is a program's file or a test's: smith build declares the tests there, and a `main`
+// needs no prototype, so only a module's own functions are held to -Wmissing-prototypes.
+static void check_module(io::Io *io, const scratch::Project *p, const char *name, const char *path, usize line) {
+    const char *strict = c::strncmp(path, "example-", 8) == 0 ? "-Wno-missing-prototypes" : "-Wmissing-prototypes";
+    const char *command =
+        format::push(&io->arena, "flags=\"-I $SMITH_REPO/include -I $PWD/.smith/include -I $PWD\"; ",
+                     "smith cc -fsyntax-only -std=gnu2y ", strict,
+                     " -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough "
+                     "-Wstrict-prototypes -Wvla -Werror $flags '",
+                     path,
+                     "' 2>&1 && smith lint --quiet --checks=\"-*,smith-preprocessor,smith-sized-types,"
+                     "smith-module-library,smith-bounded-loop,smith-c23,smith-constexpr\" '",
+                     path, "' -- -std=gnu2y $flags 2>&1")
+            .data;
+    scratch::Run run = scratch::sh(p, command);
+    scratch::expect_status(format::push(&io->arena, where(io, name, line), " (", path, ")").data, 0, &run);
+}
+
+static void skill_case(io::Io *io, const char *name) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Run copied = scratch::sh(
+        &p, format::push(&io->arena, "cp \"$SMITH_REPO/.agents/skills/", name, "/SKILL.md\" SKILL.md").data);
+    scratch::expect_status("the skill is copied", 0, &copied);
+    Placed placed = {};
+    walk_blocks(io, &p, name, &placed);
+    if (placed.count == 0) return;
+    for (usize i = 0; i < placed.count; i++)
+        scratch::write(&p, "modules",
+                       format::push(&io->arena, scratch::read(&p, "modules"), placed.paths[i], "\n").data);
+    scratch::Run headers = scratch::sh(&p, headers_script);
+    scratch::expect_status("the headers", 0, &headers);
+    for (usize i = 0; i < placed.count; i++)
+        check_module(io, &p, name, placed.paths[i], placed.lines[i]);
+}
+
+// A skill with a `c` or `smith` block needs a test below.
+export void test_every_skill_with_a_block_has_a_test(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Run run = scratch::sh(
+        &p, "cd \"$SMITH_REPO/.agents/skills\" && for d in *; do "
+            "if grep -E '^ *```(c|smith)( .*)?$' \"$d/SKILL.md\" | grep -v 'smith fragment$' | grep -q .; then "
+            "grep -q \"skill_case(io, \\\"$d\\\")\" ../../tests/skills_test.smith || echo \"$d\"; fi; done");
+    scratch::expect_text("skills with a block and no test in tests/skills_test.smith", "", run.out);
+}
+
+// --- the skills, one test each -------------------------------------------------------------------------------------
+
+export void test_skill_smith_adopt_build(io::Io *io) {
+    skill_case(io, "smith-adopt-build");
+}
+
+export void test_skill_smith_adopt_prove(io::Io *io) {
+    skill_case(io, "smith-adopt-prove");
+}
+
+export void test_skill_smith_arena(io::Io *io) {
+    skill_case(io, "smith-arena");
+}
+
+export void test_skill_smith_arena_c(io::Io *io) {
+    skill_case(io, "smith-arena-c");
+}
+
+export void test_skill_smith_autodiff(io::Io *io) {
+    skill_case(io, "smith-autodiff");
+}
+
+export void test_skill_smith_autodiff_c(io::Io *io) {
+    skill_case(io, "smith-autodiff-c");
+}
+
+export void test_skill_smith_build_c(io::Io *io) {
+    skill_case(io, "smith-build-c");
+}
+
+export void test_skill_smith_build_functions(io::Io *io) {
+    skill_case(io, "smith-build-functions");
+}
+
+export void test_skill_smith_build_levels_high(io::Io *io) {
+    skill_case(io, "smith-build-levels-high");
+}
+
+export void test_skill_smith_build_objects(io::Io *io) {
+    skill_case(io, "smith-build-objects");
+}
+
+export void test_skill_smith_build_smith(io::Io *io) {
+    skill_case(io, "smith-build-smith");
+}
+
+export void test_skill_smith_build_tests(io::Io *io) {
+    skill_case(io, "smith-build-tests");
+}
+
+export void test_skill_smith_contract(io::Io *io) {
+    skill_case(io, "smith-contract");
+}
+
+export void test_skill_smith_contract_c(io::Io *io) {
+    skill_case(io, "smith-contract-c");
+}
+
+export void test_skill_smith_contract_proof(io::Io *io) {
+    skill_case(io, "smith-contract-proof");
+}
+
+export void test_skill_smith_contract_roles(io::Io *io) {
+    skill_case(io, "smith-contract-roles");
+}
+
+export void test_skill_smith_effects(io::Io *io) {
+    skill_case(io, "smith-effects");
+}
+
+export void test_skill_smith_http(io::Io *io) {
+    skill_case(io, "smith-http");
+}
+
+export void test_skill_smith_idiom_after(io::Io *io) {
+    skill_case(io, "smith-idiom-after");
+}
+
+export void test_skill_smith_idiom_before(io::Io *io) {
+    skill_case(io, "smith-idiom-before");
+}
+
+export void test_skill_smith_inflate(io::Io *io) {
+    skill_case(io, "smith-inflate");
+}
+
+export void test_skill_smith_inflate_sink(io::Io *io) {
+    skill_case(io, "smith-inflate-sink");
+}
+
+export void test_skill_smith_io(io::Io *io) {
+    skill_case(io, "smith-io");
+}
+
+export void test_skill_smith_io_async(io::Io *io) {
+    skill_case(io, "smith-io-async");
+}
+
+export void test_skill_smith_io_c(io::Io *io) {
+    skill_case(io, "smith-io-c");
+}
+
+export void test_skill_smith_io_capabilities(io::Io *io) {
+    skill_case(io, "smith-io-capabilities");
+}
+
+export void test_skill_smith_io_errors(io::Io *io) {
+    skill_case(io, "smith-io-errors");
+}
+
+export void test_skill_smith_io_fake(io::Io *io) {
+    skill_case(io, "smith-io-fake");
+}
+
+export void test_skill_smith_io_net(io::Io *io) {
+    skill_case(io, "smith-io-net");
+}
+
+export void test_skill_smith_io_processes(io::Io *io) {
+    skill_case(io, "smith-io-processes");
+}
+
+export void test_skill_smith_json(io::Io *io) {
+    skill_case(io, "smith-json");
+}
+
+export void test_skill_smith_json_pull_write(io::Io *io) {
+    skill_case(io, "smith-json-pull-write");
+}
+
+export void test_skill_smith_lang(io::Io *io) {
+    skill_case(io, "smith-lang");
+}
+
+export void test_skill_smith_lang_affine(io::Io *io) {
+    skill_case(io, "smith-lang-affine");
+}
+
+export void test_skill_smith_lang_array_dims(io::Io *io) {
+    skill_case(io, "smith-lang-array-dims");
+}
+
+export void test_skill_smith_lang_array_params(io::Io *io) {
+    skill_case(io, "smith-lang-array-params");
+}
+
+export void test_skill_smith_lang_arrays(io::Io *io) {
+    skill_case(io, "smith-lang-arrays");
+}
+
+export void test_skill_smith_lang_c_headers(io::Io *io) {
+    skill_case(io, "smith-lang-c-headers");
+}
+
+export void test_skill_smith_lang_c_interop(io::Io *io) {
+    skill_case(io, "smith-lang-c-interop");
+}
+
+export void test_skill_smith_lang_concepts(io::Io *io) {
+    skill_case(io, "smith-lang-concepts");
+}
+
+export void test_skill_smith_lang_constexpr(io::Io *io) {
+    skill_case(io, "smith-lang-constexpr");
+}
+
+export void test_skill_smith_lang_defer(io::Io *io) {
+    skill_case(io, "smith-lang-defer");
+}
+
+export void test_skill_smith_lang_effects(io::Io *io) {
+    skill_case(io, "smith-lang-effects");
+}
+
+export void test_skill_smith_lang_enums(io::Io *io) {
+    skill_case(io, "smith-lang-enums");
+}
+
+export void test_skill_smith_lang_exports(io::Io *io) {
+    skill_case(io, "smith-lang-exports");
+}
+
+export void test_skill_smith_lang_generics(io::Io *io) {
+    skill_case(io, "smith-lang-generics");
+}
+
+export void test_skill_smith_lang_generics_auto(io::Io *io) {
+    skill_case(io, "smith-lang-generics-auto");
+}
+
+export void test_skill_smith_lang_generics_more(io::Io *io) {
+    skill_case(io, "smith-lang-generics-more");
+}
+
+export void test_skill_smith_lang_if_constexpr(io::Io *io) {
+    skill_case(io, "smith-lang-if-constexpr");
+}
+
+export void test_skill_smith_lang_modules(io::Io *io) {
+    skill_case(io, "smith-lang-modules");
+}
+
+export void test_skill_smith_lang_reflection(io::Io *io) {
+    skill_case(io, "smith-lang-reflection");
+}
+
+export void test_skill_smith_lang_reflection_field(io::Io *io) {
+    skill_case(io, "smith-lang-reflection-field");
+}
+
+export void test_skill_smith_lang_rest(io::Io *io) {
+    skill_case(io, "smith-lang-rest");
+}
+
+export void test_skill_smith_lang_rest_expand(io::Io *io) {
+    skill_case(io, "smith-lang-rest-expand");
+}
+
+export void test_skill_smith_lang_sized_types(io::Io *io) {
+    skill_case(io, "smith-lang-sized-types");
+}
+
+export void test_skill_smith_lang_slice_pointers(io::Io *io) {
+    skill_case(io, "smith-lang-slice-pointers");
+}
+
+export void test_skill_smith_lang_slice_qualifiers(io::Io *io) {
+    skill_case(io, "smith-lang-slice-qualifiers");
+}
+
+export void test_skill_smith_lang_target(io::Io *io) {
+    skill_case(io, "smith-lang-target");
+}
+
+export void test_skill_smith_lang_tuples(io::Io *io) {
+    skill_case(io, "smith-lang-tuples");
+}
+
+export void test_skill_smith_lang_type_values(io::Io *io) {
+    skill_case(io, "smith-lang-type-values");
+}
+
+export void test_skill_smith_lang_type_values_more(io::Io *io) {
+    skill_case(io, "smith-lang-type-values-more");
+}
+
+export void test_skill_smith_math(io::Io *io) {
+    skill_case(io, "smith-math");
+}
+
+export void test_skill_smith_metal(io::Io *io) {
+    skill_case(io, "smith-metal");
+}
+
+export void test_skill_smith_modules_cache(io::Io *io) {
+    skill_case(io, "smith-modules-cache");
+}
+
+export void test_skill_smith_packages(io::Io *io) {
+    skill_case(io, "smith-packages");
+}
+
+export void test_skill_smith_prove(io::Io *io) {
+    skill_case(io, "smith-prove");
+}
+
+export void test_skill_smith_prove_calls(io::Io *io) {
+    skill_case(io, "smith-prove-calls");
+}
+
+export void test_skill_smith_prove_loops(io::Io *io) {
+    skill_case(io, "smith-prove-loops");
+}
+
+export void test_skill_smith_prove_pointers(io::Io *io) {
+    skill_case(io, "smith-prove-pointers");
+}
+
+export void test_skill_smith_prove_slices(io::Io *io) {
+    skill_case(io, "smith-prove-slices");
+}
+
+export void test_skill_smith_prove_trusted(io::Io *io) {
+    skill_case(io, "smith-prove-trusted");
+}
+
+export void test_skill_smith_random(io::Io *io) {
+    skill_case(io, "smith-random");
+}
+
+export void test_skill_smith_random_c(io::Io *io) {
+    skill_case(io, "smith-random-c");
+}
+
+export void test_skill_smith_random_distributions(io::Io *io) {
+    skill_case(io, "smith-random-distributions");
+}
+
+export void test_skill_smith_random_own(io::Io *io) {
+    skill_case(io, "smith-random-own");
+}
+
+export void test_skill_smith_random_split(io::Io *io) {
+    skill_case(io, "smith-random-split");
+}
+
+export void test_skill_smith_test(io::Io *io) {
+    skill_case(io, "smith-test");
+}
+
+export void test_skill_smith_test_c(io::Io *io) {
+    skill_case(io, "smith-test-c");
+}
+
+export void test_skill_smith_test_checks(io::Io *io) {
+    skill_case(io, "smith-test-checks");
+}
+
+export void test_skill_smith_test_modules(io::Io *io) {
+    skill_case(io, "smith-test-modules");
+}
+
+export void test_skill_smith_text(io::Io *io) {
+    skill_case(io, "smith-text");
+}
+
+export void test_skill_smith_text_c(io::Io *io) {
+    skill_case(io, "smith-text-c");
+}
+
+export void test_skill_smith_text_numbers(io::Io *io) {
+    skill_case(io, "smith-text-numbers");
+}
+
+export void test_skill_smith_trace(io::Io *io) {
+    skill_case(io, "smith-trace");
+}
