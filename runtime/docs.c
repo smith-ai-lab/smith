@@ -851,6 +851,15 @@ static void smith_docs_index(SmithDocs *docs, const char **names, uint32_t name_
 
 // ---- Skills
 
+constexpr uint32_t smith_docs_skill_lines_max = 60;
+
+static uint32_t smith_docs_line_count(SmithDocsText text) {
+    uint32_t lines = 0;
+    for (size_t i = 0; i < text.length; i++)
+        lines += text.begin[i] == '\n' ? 1 : 0;
+    return lines;
+}
+
 static void smith_docs_skill(SmithDocs *docs, const char *folder) {
     char relative[smith_docs_path_capacity];
     snprintf(relative, sizeof(relative), ".agents/skills/%s/SKILL.md", folder);
@@ -872,6 +881,10 @@ static void smith_docs_skill(SmithDocs *docs, const char *folder) {
     if (smith_docs_get(&fields, "description").length == 0) {
         smith_docs_report(docs, "%s: frontmatter lacks description", relative);
     }
+    uint32_t lines = smith_docs_line_count(smith_docs_read(docs, relative));
+    if (lines > smith_docs_skill_lines_max)
+        smith_docs_report(docs, "%s: %u lines; a skill stays under %u: split it or shorten it", relative, lines,
+                          smith_docs_skill_lines_max);
 }
 
 static void smith_docs_skills(SmithDocs *docs) {

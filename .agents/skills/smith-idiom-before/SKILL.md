@@ -11,14 +11,11 @@ A module that allocates from an arena, draws random numbers and prints through i
 // rolls.h
 #ifndef ROLLS_H
 #define ROLLS_H
-
 #include <stddef.h>
 #include <stdint.h>
-
 #include <smith/arena.h>
 #include <smith/io.h>
 #include <smith/random.h>
-
 #define ROLLS_SIDES 6
 
 typedef struct {
@@ -29,24 +26,20 @@ typedef struct {
 Rolls rolls_make(SmithArena *arena, SmithKey key, size_t count);
 double rolls_mean(const Rolls *rolls);
 void rolls_print(SmithConsole *console, const Rolls *rolls);
-
 #endif
 ```
 
 ```c
 // rolls.c
 #include "rolls.h"
-
 #include <stdalign.h>
-
 // count rolls of a die, each from its own key split from `key`.
 Rolls rolls_make(SmithArena *arena, SmithKey key, size_t count) {
     Rolls rolls = {.faces = smith_arena_push_array(arena, sizeof(uint32_t), count, alignof(uint32_t)), .count = count};
     SmithKey *keys = smith_arena_push_array(arena, sizeof(SmithKey), count, alignof(SmithKey));
     smith_key_split_n(key, keys, count);
-    for (size_t i = 0; i < count; i++) {
+    for (size_t i = 0; i < count; i++)
         rolls.faces[i] = (uint32_t)smith_uniform_int64_sample(keys[i], (SmithUniformInt64){.low = 1, .high = ROLLS_SIDES});
-    }
     return rolls;
 }
 
@@ -55,7 +48,6 @@ double rolls_mean(const Rolls *rolls) {
     for (size_t i = 0; i < rolls->count; i++) sum += rolls->faces[i];
     return rolls->count == 0 ? 0 : (double)sum / (double)rolls->count;
 }
-
 void rolls_print(SmithConsole *console, const Rolls *rolls) {
     for (size_t i = 0; i < rolls->count; i++) smith_console_printf(console, "%u ", rolls->faces[i]);
     smith_console_printf(console, "(mean %.2f)\n", rolls_mean(rolls));

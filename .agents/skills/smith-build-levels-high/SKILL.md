@@ -44,16 +44,12 @@ A second program is a second `build::app` with its own `.entry` and `.name`; a s
 build::defaults(b, &(build::Defaults){
     .flags = build::list(b, "-I", "src", nullptr),                       // "base/math.h" is src/base/math.h; the scan follows -I
     .folders = (const build::Folder[]){{"src/base", build::list(b, "-O2", nullptr)}, {}},
-    .link_flags = build::list(b, "-mmacosx-version-min=26.0", nullptr),
 });
 build::app(b, &(build::App){.entry = "src/main.c", .name = "game"});
-build::app(b, &(build::App){.entry = "tools/report.c", .name = "report", .tool = true});
 build::app_tests(b, &(build::AppTests){.inputs = build::list(b, "build/meshes", nullptr)});   // helpers in tests/ are linked too
 ```
 
-`build::AppTests` has `.folder`. A list ends in `nullptr`: `build::list(b, "-DX=1", "-O3", nullptr)`.
-
-Add a task or a step beside the calls, in the same function (this does not leave the level):
+A list ends in `nullptr`: `build::list(b, "-DX=1", "-O3", nullptr)`. A task or a step goes beside the calls, in the same function (this does not leave the level):
 
 ```c
 build::task(b, "greet", &(build::Step){.command = build::list(b, "echo", "hi", nullptr)});   // smith build greet

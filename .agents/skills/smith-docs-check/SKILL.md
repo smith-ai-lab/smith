@@ -19,6 +19,7 @@ description: "The checks of smith docs with their messages (path: message), conc
 | the index lists a concept twice, or not at all, or lists a file that is no concept | `knowledge/index.md: x.md is listed twice`, `does not list x.md`, `lists x.md, which is not a concept on disk` |
 | an index description differs from the concept's | `knowledge/index.md: description of x.md differs from its own` |
 | a skill folder has no `SKILL.md`, no frontmatter, a wrong `name`, no `description` | `.agents/skills/a/SKILL.md: missing`, `no frontmatter`, `name 'b' does not match its folder`, `frontmatter lacks description` |
+| a skill has more than 60 lines | `.agents/skills/a/SKILL.md: 61 lines; a skill stays under 60: split it or shorten it` |
 | `.agents/skills` exists and `.claude/skills` is not a symlink to it | `.claude/skills: missing; it must be a symlink to ../.agents/skills`, `is not a symlink`, `links to X, not ../.agents/skills` |
 | a relative link in AGENTS.md, knowledge or a skill does not resolve (links in code, `#anchors` and URLs are ignored) | `AGENTS.md: broken link knowledge/gone.md` |
 | a document of `knowledge/` links into a skill | `knowledge/x.md: links the skill ../.agents/skills/a/SKILL.md; knowledge never links skills` |
