@@ -4,6 +4,7 @@
 // knowledge/build-file.md.
 #ifdef __linux__
 // What glibc hides from C23 and macOS does not: nftw's FTW_PHYS, dladdr (knowledge/platform-layer.md).
+// NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming): glibc's name for it
 #define _GNU_SOURCE
 #endif
 #include <smith/build.h>
