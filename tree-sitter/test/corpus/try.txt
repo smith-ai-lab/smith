@@ -9,11 +9,10 @@ static option(usize) f(int a) {
     int x = try g(a);
     x = try g(x);
     try g(x);
-    return try g(a);
+    return {.some = try g(a)};
 }
 
 --------------------------------------------------------------------------------
-
 
 (translation_unit
   (module_declaration
@@ -62,8 +61,12 @@ static option(usize) f(int a) {
             (argument_list
               (identifier)))))
       (return_statement
-        (try_expression
-          (call_expression
-            (identifier)
-            (argument_list
-              (identifier))))))))
+        (initializer_list
+          (initializer_pair
+            (field_designator
+              (field_identifier))
+            (try_expression
+              (call_expression
+                (identifier)
+                (argument_list
+                  (identifier))))))))))

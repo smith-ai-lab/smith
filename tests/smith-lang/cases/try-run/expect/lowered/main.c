@@ -22,11 +22,14 @@ try main_step(a - 1);
 return {.ok = x};
 }
 static struct smith_enum_result_i32__i32 main_returned(__INT32_TYPE__ a) {
-return try main_step(a);
+return {.ok = try main_step(a)};
 }
 static struct smith_enum_option_i32 main_options(__INT32_TYPE__ a) {
 __INT32_TYPE__ v = try main_pick(a);
 return {.some = v * 2};
+}
+static struct smith_enum_option_i32 main_payload_option(__INT32_TYPE__ a) {
+return {.some = try main_pick(a)};
 }
 static void main_show(struct smith_enum_result_i32__i32 r) {
 switch (r) {
@@ -45,5 +48,7 @@ main_show(main_returned(-4));
 struct smith_enum_option_i32 good = main_options(3);
 struct smith_enum_option_i32 bad = main_options(-3);
 printf("%d %d\n", good == .some ? good.some : -1, bad == .none);
+struct smith_enum_option_i32 viaPayload = main_payload_option(7);
+printf("%d\n", viaPayload == .some ? viaPayload.some : -1);
 return 0;
 }

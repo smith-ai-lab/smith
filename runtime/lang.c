@@ -408,8 +408,8 @@ typedef struct {
     uint32_t try_id;
     uint32_t try_location;
     int try_kind;
-    bool try_wrap;  // after `return`: the value is the function's own result
-    char type[256]; // the function's return type
+    bool try_payload; // the `try` is a variant's payload in braces: it ends at the `,` or `}`
+    char type[256];   // the function's return type
     char ret_type[256];
 } SmithLangTry;
 

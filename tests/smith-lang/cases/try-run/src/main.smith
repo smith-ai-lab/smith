@@ -2,8 +2,8 @@ module main;
 import <stdio.h>;
 
 // `try` returns the failure of a result or an option at once and gives the success value otherwise (issue #211). It
-// is a declaration's initializer, an assignment, a statement of its own, or after `return`; the `defer`s already set
-// run on the way out.
+// is a declaration's initializer, an assignment, a statement of its own, or the payload of a returned variant
+// (`return {.ok = try f()};`); the `defer`s already set run on the way out.
 static result(i32, i32) step(i32 n) {
     if (n < 0) return {.error = n};
     return {.ok = n};
@@ -30,12 +30,16 @@ static result(i32, i32) assigned(i32 a) {
 }
 
 static result(i32, i32) returned(i32 a) {
-    return try step(a);
+    return {.ok = try step(a)};
 }
 
 static option(i32) options(i32 a) {
     i32 v = try pick(a);
     return {.some = v * 2};
+}
+
+static option(i32) payload_option(i32 a) {
+    return {.some = try pick(a)};
 }
 
 static void show(result(i32, i32) r) {
@@ -56,5 +60,7 @@ i32 main() {
     option(i32) good = options(3);
     option(i32) bad = options(-3);
     c::printf("%d %d\n", good == .some ? good.some : -1, bad == .none);
+    option(i32) viaPayload = payload_option(7);
+    c::printf("%d\n", viaPayload == .some ? viaPayload.some : -1);
     return 0;
 }

@@ -520,6 +520,10 @@ export void test_error_try_error_type(io::Io *io) {
     corpus_case(io, "error-try-error-type");
 }
 
+export void test_error_try_return_value(io::Io *io) {
+    corpus_case(io, "error-try-return-value");
+}
+
 export void test_error_try_plain_function(io::Io *io) {
     corpus_case(io, "error-try-plain-function");
 }

@@ -23,6 +23,11 @@ option ok
 option fails
   option errdefer
 1
+payload ok
+ok 6
+  payload errdefer
+payload fails
+error -6
   inner ok 2
 block ok
 ok 1
