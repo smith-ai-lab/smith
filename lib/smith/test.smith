@@ -496,12 +496,9 @@ Shared *shared_slots; // the runner's: one per job, and one more for shrinking
 u32 *workers_to_kill; // SMITH_TEST_KILL_WORKERS=n: the next n commands kill their worker before it begins (a test of
                       // the runner)
 u8 *memory_block;
-usize memory_used; // a multiple of arena::align_max
-bool full_run;     // the runner was given --full; set before any test forks, so every child sees it
-bool update_run;   // the runner was given --update: test::golden writes its file and passes
-io::Io (*golden_make_io)(i32 argc, char **argv); // the runner's make_io, which gives test::golden the files effect
-i32 golden_argc;
-char **golden_argv;
+usize memory_used;  // a multiple of arena::align_max
+bool full_run;      // the runner was given --full; set before any test forks, so every child sees it
+bool update_run;    // the runner was given --update: test::golden writes its file and passes
 u8 *golden_log;     // shared by every process: the files --update wrote, each path ended by a zero byte
 usize *golden_used; // the bytes of golden_log in use, shared likewise
 bool worker;        // this process is a worker: a failed check unwinds to its loop
@@ -1256,9 +1253,8 @@ void diff_render(Diff *diff, const Edit *edits, usize count, const Row *old_rows
 
 // The bytes of the file in the test's memory (a zero after them), or nullptr when it cannot be read. The files effect
 // is a real io made for the call from the runner's make_io, as run_io makes a test's.
-const char *golden_read(const char *path, usize *size) {
-    io::Io io = golden_make_io(golden_argc, golden_argv);
-    io::Read file = io::files_read(&io.files, &io.arena, path);
+const char *golden_read(io::Io *io, const char *path, usize *size) {
+    io::Read file = io::files_read(&io->files, &io->arena, path);
     const char *result = nullptr;
     if (file.error.code == 0) {
         arena::Arena memory_arena = memory(countof(file.data) + 1);
@@ -1267,24 +1263,21 @@ const char *golden_read(const char *path, usize *size) {
         *size = countof(file.data);
         result = buffer;
     }
-    io::close(&io);
     return result;
 }
 
 // The file written whole, its folders made. False when it cannot be.
-bool golden_write(const char *path, const char *text, usize size) {
+bool golden_write(io::Io *io, const char *path, const char *text, usize size) {
     char folder[path_capacity];
     __builtin_snprintf(folder, sizeof folder, "%s", path);
     char *slash = c::strrchr(folder, '/');
-    io::Io io = golden_make_io(golden_argc, golden_argv);
     bool made = true;
     if (slash != nullptr && slash != folder) {
         *slash = '\0';
-        made = io::files_make_folder(&io.files, folder).code == 0;
+        made = io::files_make_folder(&io->files, folder).code == 0;
     }
     const u8 *bytes = (const u8 *)text;
-    made = made && io::files_write(&io.files, path, bytes[0:size], io::Replace).code == 0;
-    io::close(&io);
+    made = made && io::files_write(&io->files, path, bytes[0:size], io::Replace).code == 0;
     return made;
 }
 
@@ -1350,21 +1343,22 @@ export [[nodiscard]] bool updating() {
 // tests), byte for byte. A mismatch fails the test with a unified diff, the expected file on the left (3 lines of
 // context, 40 lines at most, then how many more); a missing file fails it too, and is never made on its own. Under
 // `smith test --update` the file is written when it differs (its folders made) and the test passes; the runner lists
-// the files it wrote. The file is read and written with the files effect, and the test needs no io for it.
-export void golden(const char path[:], const char actual[:]) {
+// the files it wrote. The file is read and written through the files of the io the test takes, as any test that touches
+// files does.
+export void golden(io::Io *io, const char path[:], const char actual[:]) {
     char file[path_capacity];
     if (countof(path) == 0 || countof(path) >= path_capacity)
         golden_fail("the golden path is empty or too long", "", "");
     __builtin_memcpy(file, path.data, countof(path));
     file[countof(path)] = '\0';
     usize size = 0;
-    const char *expected = golden_read(file, &size);
+    const char *expected = golden_read(io, file, &size);
     usize actual_size = countof(actual);
     const char *actual_text = actual_size > 0 ? actual.data : "";
     if (expected != nullptr && size == actual_size && (size == 0 || c::memcmp(expected, actual_text, size) == 0))
         return;
     if (update_run) {
-        if (!golden_write(file, actual_text, actual_size)) golden_fail("cannot write ", file, "");
+        if (!golden_write(io, file, actual_text, actual_size)) golden_fail("cannot write ", file, "");
         golden_note(file);
         return;
     }
@@ -2805,9 +2799,6 @@ void say_explained(const Options *options) {
 // What test::golden needs, made before any test forks: --update, the runner and the log of the files it wrote.
 void golden_begin(const Options *options) {
     update_run = options->update;
-    golden_make_io = options->runner->make_io;
-    golden_argc = options->runner->argc;
-    golden_argv = options->runner->argv;
     golden_log = (u8 *)map_bytes(golden_log_capacity, map_shared);
     golden_used = (usize *)map_bytes(sizeof(usize), map_shared);
 }

@@ -94,6 +94,10 @@ export void test_the_contract_header_compiles_alone(io::Io *io) {
     committed(io, "contract");
 }
 
+export void test_the_effects_header_compiles_alone(io::Io *io) {
+    committed(io, "effects");
+}
+
 export void test_the_format_header_compiles_alone(io::Io *io) {
     committed(io, "format");
 }

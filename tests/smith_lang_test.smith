@@ -187,7 +187,8 @@ static Built build_command(const Case *kase) {
 
 // The golden file of the case.
 static void golden_at(const Case *kase, const char *relative, const char *actual) {
-    test::golden(slice_of(join(kase, "tests/smith-lang/cases/", kase->name, "/", relative)), slice_of(actual));
+    test::golden(kase->io, slice_of(join(kase, "tests/smith-lang/cases/", kase->name, "/", relative)),
+                 slice_of(actual));
 }
 
 // The errors: file:line:column: message, and nothing else (no warnings, notes, source lines or counts).
@@ -1437,4 +1438,12 @@ export void test_value_query_plain(io::Io *io) {
 
 export void test_value_query_windows(io::Io *io) {
     corpus_case(io, "value-query-windows");
+}
+
+export void test_error_fields_enum_member(io::Io *io) {
+    corpus_case(io, "error-fields-enum-member");
+}
+
+export void test_generic_fields_doc(io::Io *io) {
+    corpus_case(io, "generic-fields-doc");
 }

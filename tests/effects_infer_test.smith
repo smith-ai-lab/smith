@@ -33,7 +33,7 @@ static void effects_case(io::Io *io, const char *file) {
                      "\"$TMPDIR/out\"; }")
             .data;
     scratch::Run run = scratch::sh(&p, command);
-    test::golden(slice_of(format::push(&io->arena, "tests/effects/", file, ".expected").data), slice_of(run.out));
+    test::golden(io, slice_of(format::push(&io->arena, "tests/effects/", file, ".expected").data), slice_of(run.out));
 }
 
 export void test_every_file_has_a_test(io::Io *io) {
@@ -425,4 +425,50 @@ export void test_recursion_smith(io::Io *io) {
 
 export void test_recursion_plain_smith(io::Io *io) {
     effects_case(io, "recursion_plain.smith");
+}
+
+// effects::within in a generic (skill smith-lang-effects): a function of another module is judged by the link, which
+// names the chain through that module; one that fits builds.
+export void test_within_in_modules_the_link_judges_a_function_of_another_module_and_names_the_chain(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Run made = scratch::sh(&p, "mkdir -p fx3");
+    scratch::expect_status("the folder of the module", 0, &made);
+    scratch::write(&p, "fx3/lib.smith",
+                   "module fx3::lib;\nimport <stdio.h>;\nexport i32 plain(i32 x) { return x + 1; }\n"
+                   "export i32 noisy(i32 x) { c::printf(\"%d\\n\", x); return x; }\n");
+    scratch::write(&p, "main.smith",
+                   "module main;\nimport fx3::lib as lib;\nimport smith::effects;\n"
+                   "export i32 run(constexpr auto f, i32 x) {\n"
+                   "    static_assert(effects::within(f, effects::alloc), \"run: f may only allocate\");\n"
+                   "    return f(x);\n}\n"
+                   "i32 main() { return run(lib::plain, 1) + run(lib::noisy, 1) - 4; }\n");
+    scratch::Run run = scratch::sh(&p, "smith build 2>&1 | grep -E 'smith-effect' | sed 's/^main.smith:5:[0-9]*: //'");
+    scratch::expect_text("within, modules: the link judges a function of another module and names the chain",
+                         "error: smith-effect: static assertion failed: run: f may only allocate: `fx3::lib::noisy` "
+                         "has the effects console "
+                         "beyond the allowed ones: fx3::lib::noisy -> printf (lib.smith:4)",
+                         run.out);
+}
+
+// Promises: `smith check` lists what smith trusts and does not check, from the `P` lines of the summaries a build left
+// (an effects attribute on a declaration with no source, a function that calls smith_trusted()), a header's once.
+export void test_promises_smith_check_lists_two_declared_promises_and_a_trusted_function(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::write(&p, "lib.h",
+                   "[[smith::effects(alloc, net)]] int curl_perform(void *handle);\n[[smith::pure]] int twice(int);\n");
+    scratch::write(
+        &p, "main.c",
+        "#include <smith/contract.h>\n#include \"lib.h\"\nstatic int edge(int x) { smith_trusted(); return x; }\n"
+        "int main(void) { return edge(0); }\n");
+    (void)scratch::sh(&p, "smith build >/dev/null 2>&1");
+    scratch::Run run = scratch::sh(&p, "smith check -v 2>&1 | grep -E '^smith check: (promises|  )'");
+    scratch::expect_text(
+        "promises: smith check -v lists two declared promises and a trusted function",
+        "smith check: promises: 3\nsmith check:   ./lib.h:1 curl_perform\nsmith check:   ./lib.h:2 twice\n"
+        "smith check:   main.c:3 edge",
+        run.out);
+}
+
+export void test_within_smith(io::Io *io) {
+    effects_case(io, "within.smith");
 }

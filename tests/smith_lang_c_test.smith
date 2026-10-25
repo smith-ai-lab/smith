@@ -152,7 +152,8 @@ static void behave(io::Io *io, const char *name) {
         scratch::Run built = scratch::sh(&p, build);
         scratch::expect_status(text(&p, "the .", kinds[i], " builds", ""), 0, &built);
         scratch::Run ran = scratch::sh(&p, format::push(&io->arena, "./", name, ".", kinds[i], ".bin 2>&1").data);
-        test::golden(slice_of(format::push(&io->arena, "tests/smith-lang-c/", name, ".out").data), slice_of(ran.out));
+        test::golden(io, slice_of(format::push(&io->arena, "tests/smith-lang-c/", name, ".out").data),
+                     slice_of(ran.out));
     }
 }
 
