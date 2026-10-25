@@ -24,7 +24,10 @@
 #include <unistd.h>
 
 // Everything the targets share.
+typedef struct BuildPlatform BuildPlatform;
+
 typedef struct {
+    const BuildPlatform *platform; // what differs between macOS and Linux
     const char *cc;
     const char *const *cflags;
     const char *binary; // the smith this build makes
@@ -40,6 +43,61 @@ typedef struct {
     const char
         *enzyme; // the folder with libEnzymeStatic-23.a (build_enzyme_make): smith differentiates at link time, else ""
 } BuildConfig;
+
+// What smith's own link differs in, macOS and Linux (issue #305, knowledge/platform-layer.md): the one table of it.
+struct BuildPlatform {
+    const char *whole_start;           // before an archive linked whole: libsmithtools.a, whose tweaks nothing names
+    const char *whole_end;             // and after it ("" when the start names the archive itself)
+    const char *group_start;           // around the static archives of LLVM, clang, lld and lldb, which name each other
+    const char *lld;                   // lld's library for the platform's object format
+    const char *const *link_flags;     // smith's link: drop what nothing reaches, export only main
+    const char *const *lldb_libraries; // what lldb's host layer uses
+    const char *const *system_libraries; // last: the C++ library and the platform's own
+    const char *const *pack_libraries;   // scripts/pack.c's (libcompression on macOS)
+    const char *pack_runtime;            // the files of the LLVM install, besides clang's headers, that are packed
+};
+
+static const BuildPlatform build_platform_macos = {
+    .whole_start = "-Wl,-force_load,",
+    .whole_end = "",
+    .group_start = "",
+    .lld = "liblldMachO.a",
+    .link_flags = (const char *const[]){"-Wl,-dead_strip", "-Wl,-exported_symbol,_main", nullptr},
+    .lldb_libraries = (const char *const[]){"-ledit", "-framework", "Foundation", "-framework", "CoreFoundation",
+                                            "-framework", "CoreServices", "-framework", "Security", nullptr},
+    .system_libraries = (const char *const[]){"-lc++", "-lm", "-lcompression", nullptr},
+    .pack_libraries = (const char *const[]){"-lcompression", nullptr},
+    .pack_runtime = "lib/clang/*/lib/darwin/*osx* lib/libLTO.dylib",
+};
+
+// On Linux the archives are linked in a group (ELF's linker reads each archive once, in order); libstdc++ is linked
+// statically, so smith needs no GLIBCXX version of the machine it runs on; the build-id names its programs folder.
+static const BuildPlatform build_platform_linux = {
+    .whole_start = "-Wl,--whole-archive",
+    .whole_end = "-Wl,--no-whole-archive",
+    .group_start = "-Wl,--start-group",
+    .lld = "liblldELF.a",
+    .link_flags = (const char *const[]){"-Wl,--gc-sections", "-Wl,--build-id=md5", nullptr},
+    .lldb_libraries = (const char *const[]){nullptr},
+    .system_libraries = (const char *const[]){"-Wl,--end-group", "-Wl,-Bstatic", "-lstdc++", "-Wl,-Bdynamic", "-lm",
+                                              "-lpthread", "-ldl", "-lrt", nullptr},
+    .pack_libraries = (const char *const[]){nullptr},
+    .pack_runtime = "lib/clang/*/lib/*-linux-gnu/*",
+};
+
+// Whether this build runs on Linux (issue #305): smith build llvm has its own recipe there (scripts/llvm_linux.smith)
+// and its own packages; everything else is macOS's.
+static bool build_is_linux(SmithBuild *b) {
+    return strcmp(b->os, "Linux") == 0;
+}
+
+static bool build_is_arm(SmithBuild *b) {
+    return strcmp(b->arch, "arm64") == 0 || strcmp(b->arch, "aarch64") == 0;
+}
+
+static const BuildPlatform *build_platform(SmithBuild *b) {
+    return build_is_linux(b) ? &build_platform_linux : &build_platform_macos;
+}
 
 // A make variable set with ?=: -DNAME=value, else the environment, else the fallback.
 static const char *build_variable(SmithBuild *b, const char *name, const char *fallback, const char *description) {
@@ -191,15 +249,22 @@ static void build_headers(SmithBuild *b, const BuildConfig *config) {
 // found before libclangTidyMain.a's, then all of clang's and of LLVM's, clangd's other libraries (libclangd[A-Z]*
 // matches none of them) and libclangmain.a, which holds clang's main. The linker's -dead_strip drops what the driver,
 // the compiler and the targets do not reach, so the list is not worked out by hand.
-static const char *const *build_clang_libraries(SmithBuild *b, const char *llvm) {
+static const char *const *build_clang_libraries(SmithBuild *b, const BuildConfig *config) {
+    const char *llvm = config->llvm;
+    const BuildPlatform *platform = config->platform;
     const char *const *found = smith_glob(b, (const char *[]){smith_fmt(b, "%s/lib/libclang[A-Z]*.a", llvm),
                                                               smith_fmt(b, "%s/lib/libLLVM*.a", llvm), nullptr});
-    const char *const *first = smith_list(b, smith_fmt(b, "-Wl,-force_load,%s/lib/libsmithtools.a", llvm), nullptr);
-    const char *const *more =
-        smith_list(b, smith_fmt(b, "%s/lib/libclangdSupport.a", llvm),
-                   smith_fmt(b, "%s/lib/libclangdRemoteIndex.a", llvm), smith_fmt(b, "%s/lib/libclangmain.a", llvm),
-                   smith_fmt(b, "%s/lib/liblldMachO.a", llvm), smith_fmt(b, "%s/lib/liblldCommon.a", llvm), nullptr);
-    return smith_cat(b, first, found, more, nullptr);
+    const char *tools = smith_fmt(b, "%s/lib/libsmithtools.a", llvm);
+    const char *const *first = platform->whole_end[0] == '\0'
+                                   ? smith_list(b, smith_fmt(b, "%s%s", platform->whole_start, tools), nullptr)
+                                   : smith_list(b, platform->whole_start, tools, platform->whole_end, nullptr);
+    const char *const *group =
+        smith_when(b, platform->group_start[0] != '\0', (const char *[]){platform->group_start, nullptr});
+    const char *const *more = smith_list(
+        b, smith_fmt(b, "%s/lib/libclangdSupport.a", llvm), smith_fmt(b, "%s/lib/libclangdRemoteIndex.a", llvm),
+        smith_fmt(b, "%s/lib/libclangmain.a", llvm), smith_fmt(b, "%s/lib/%s", llvm, platform->lld),
+        smith_fmt(b, "%s/lib/liblldCommon.a", llvm), nullptr);
+    return smith_cat(b, first, group, found, more, nullptr);
 }
 
 // lldb's libraries, when the install has them (scripts/llvm.sh copies the static ones of its build into the install):
@@ -208,11 +273,8 @@ static const char *const *build_lldb_libraries(SmithBuild *b, const BuildConfig 
     if (!config->lldb) return smith_list(b, nullptr);
     const char *const *found =
         smith_glob(b, (const char *[]){smith_fmt(b, "%s/lib/liblldb[A-Z]*.a", config->llvm), nullptr});
-    return smith_cat(b, found,
-                     (const char *[]){smith_fmt(b, "%s/lib/libsmithlldb.a", config->llvm), "-ledit", "-framework",
-                                      "Foundation", "-framework", "CoreFoundation", "-framework", "CoreServices",
-                                      "-framework", "Security", nullptr},
-                     nullptr);
+    return smith_cat(b, found, smith_list(b, smith_fmt(b, "%s/lib/libsmithlldb.a", config->llvm), nullptr),
+                     config->platform->lldb_libraries, nullptr);
 }
 
 // Enzyme (build_enzyme_make), before LLVM's libraries: shim/lld.cpp registers it with the linker's LTO pipeline.
@@ -319,7 +381,7 @@ static const char *build_resource_pack(SmithBuild *b, const BuildConfig *config,
         .linker = config->cc,
         .output = smith_fmt(b, "%s/pack", folder),
         .objects = (const SmithObject *[]){&tool, nullptr},
-        .libraries = (const char *[]){"-lcompression", nullptr},
+        .libraries = config->platform->pack_libraries,
     };
     smith_program(b, &program);
     const char *pack = smith_fmt(b, "%s/clang-resource.pack", folder);
@@ -328,8 +390,10 @@ static const char *build_resource_pack(SmithBuild *b, const BuildConfig *config,
             (const char *[]){
                 "sh", "-c",
                 // NOLINTNEXTLINE(bugprone-suspicious-missing-comma): one script, in two literals
-                "root=$PWD && cd \"$0\" && (find lib/clang/*/include lib/clang/*/share -type f; "
-                "ls lib/clang/*/lib/darwin/*osx* lib/libLTO.dylib) | LC_ALL=C sort | \"$root/$1\" \"$root/$2\"",
+                smith_fmt(b,
+                          "root=$PWD && cd \"$0\" && (find lib/clang/*/include lib/clang/*/share -type f; ls %s) | "
+                          "LC_ALL=C sort | \"$root/$1\" \"$root/$2\"",
+                          config->platform->pack_runtime),
                 config->llvm, program.output, pack, nullptr},
         .inputs = smith_cat(b, program.step.outputs,
                             smith_list(b, smith_fmt(b, "%s/lib/smith-clang.id", config->llvm), nullptr), nullptr),
@@ -573,15 +637,14 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
     SmithProgram program = {
         .linker = config->cc,
         .output = smith_fmt(b, "%s/smith", folder),
-        .flags = smith_cat(b, (const char *[]){"-Wl,-dead_strip", "-Wl,-exported_symbol,_main", nullptr},
+        .flags = smith_cat(b, config->platform->link_flags,
                            smith_when(b, config->enzyme[0] != '\0',
                                       (const char *[]){"-Wl,-exported_symbol,_llvmGetPassPluginInfo", nullptr}),
                            nullptr),
         .objects = objects,
         .libraries = smith_cat(b, shims.prove.libraries != nullptr ? shims.prove.libraries : smith_list(b, nullptr),
-                               build_enzyme_libraries(b, config), build_clang_libraries(b, config->llvm),
-                               build_lldb_libraries(b, config),
-                               (const char *[]){"-lc++", "-lm", "-lcompression", nullptr}, nullptr),
+                               build_enzyme_libraries(b, config), build_clang_libraries(b, config),
+                               build_lldb_libraries(b, config), config->platform->system_libraries, nullptr),
     };
     smith_program(b, &program);
     smith_default(b, build_links(b, &program.step, folder));
@@ -928,16 +991,6 @@ static const char *build_llvm_folder(SmithBuild *b) {
 static const char *build_enzyme_folder(SmithBuild *b) {
     const char *cache = smith_env(b, "XDG_CACHE_HOME", smith_fmt(b, "%s/.cache", smith_env(b, "HOME", "")));
     return smith_fmt(b, "%s/smith/enzyme/0.0.303-%s", cache, smith_env(b, "SMITH_LLVM_NAME", "23.1.3-r10"));
-}
-
-// Whether this build runs on Linux (issue #305): smith build llvm has its own recipe there (scripts/llvm_linux.smith)
-// and its own packages; everything else is macOS's.
-static bool build_is_linux(SmithBuild *b) {
-    return strcmp(b->os, "Linux") == 0;
-}
-
-static bool build_is_arm(SmithBuild *b) {
-    return strcmp(b->arch, "arm64") == 0 || strcmp(b->arch, "aarch64") == 0;
 }
 
 static const char *build_cmake_package(SmithBuild *b) {
@@ -1932,7 +1985,7 @@ static bool build_has_command_hook(SmithBuild *b, const char *llvm) {
 // Whether the LLVM install has what smith links clang, lld and the tools from.
 static bool build_llvm_linkable(SmithBuild *b, const char *llvm) {
     return build_has_command_hook(b, llvm) && access(smith_fmt(b, "%s/lib/libclangmain.a", llvm), R_OK) == 0 &&
-           access(smith_fmt(b, "%s/lib/liblldMachO.a", llvm), R_OK) == 0 &&
+           access(smith_fmt(b, "%s/lib/%s", llvm, build_platform(b)->lld), R_OK) == 0 &&
            access(smith_fmt(b, "%s/lib/libsmithtools.a", llvm), R_OK) == 0 &&
            access(smith_fmt(b, "%s/lib/smith-clang.id", llvm), R_OK) == 0;
 }
@@ -1966,6 +2019,7 @@ void build(SmithBuild *b) {
     const char *werror = build_variable(b, "WERROR", "-Werror", "-Werror, or empty to let warnings pass");
     const char *folder = build_variable(b, "BUILD", smith_fmt(b, "build/%s-%s", b->os, b->arch), "the build folder");
     BuildConfig config = {
+        .platform = build_platform(b),
         .cc = build_variable(b, "CC", "smith-cc", "the smith that compiles smith: it compiles the .smith libraries"),
         .prefix = build_variable(b, "PREFIX", smith_fmt(b, "%s/.local", smith_env(b, "HOME", "")), "install here"),
         .werror = werror,
