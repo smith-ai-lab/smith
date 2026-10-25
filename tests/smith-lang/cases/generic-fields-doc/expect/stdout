@@ -3,8 +3,8 @@ Low: [Quiet.]
 High: []
 Max: [Very loud.]
 []
-round: []
-none: []
+round: [A circle.]
+none: [Nothing.]
 plain: []
 [Settings of the server.
 Read once at start.]
@@ -35,3 +35,7 @@ level: [a
 b]
 quote: [Say "hi" \ then
   indented]
+[]
+round: [A circle.]
+none: [Nothing.]
+plain: []

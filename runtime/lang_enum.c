@@ -96,7 +96,10 @@ static size_t smith_lang_enum_build(SmithLang *lang, const SmithHost *host, cons
         snprintf(text, sizeof text, "%.*s_tag_%.*s", (int)name->length, name->text, (int)variant->length,
                  variant->text);
         if (at > 0) made[used++] = smith_lang_tuple_made(SmithTokenKind_Punctuator, ",", 1, token, false);
-        made[used++] = smith_lang_tuple_made(SmithTokenKind_Identifier, text, strlen(text), token, at > 0);
+        // the constant stands where its variant is written, so the doc comment above the variant is the constant's
+        // (clang finds it by place; the header pass writes it above the constant)
+        made[used++] =
+            smith_lang_tuple_made(SmithTokenKind_Identifier, text, strlen(text), &span[variants.starts[at]], at > 0);
     }
     made[used++] = smith_lang_tuple_made(SmithTokenKind_Punctuator, "}", 1, token, true);
     made[used++] = smith_lang_tuple_made(SmithTokenKind_Identifier, "tag", 3, token, true);

@@ -2432,18 +2432,9 @@ class SmithHook final : public TokenHook, public NameSource {
             snprintf(out->name, sizeof out->name, "%s", name.c_str());
             snprintf(out->type, sizeof out->type, "%s",
                      type.getAsString(sema.getASTContext().getPrintingPolicy()).c_str());
-            // a payload enum's tag constants are written by the lowering, at the enum's own place: their comment is
-            // the enum's, so a variant's doc is the one above its member of the union
-            out->doc[0] = 0;
-            out->doc_overflow = record == nullptr && !docOf(sema, constant, out->doc, sizeof out->doc);
-            if (record == nullptr || record->getDefinition() == nullptr) continue;
-            for (const FieldDecl *field : record->getDefinition()->fields()) { // the variant's member in the union
-                const auto *inner = field->getType()->getAsRecordDecl();
-                if (inner == nullptr || !inner->isUnion()) continue;
-                for (const FieldDecl *member : inner->fields()) {
-                    if (member->getName() == name) out->doc_overflow = !docOf(sema, member, out->doc, sizeof out->doc);
-                }
-            }
+            // a payload enum's tag constants are written by the lowering at the place of their variant, so the doc
+            // comment above the variant is the constant's
+            out->doc_overflow = !docOf(sema, constant, out->doc, sizeof out->doc);
         }
         out->status = SmithFields_Ok;
         return true;

@@ -50,11 +50,13 @@ export typedef enum {
     Max,
 } Volume;
 
-// The variants of an enum with payloads are listed too; their docs are not read yet.
+// The variants of an enum with payloads are listed too, with the doc above each.
 export typedef enum {
+    /// A circle.
     f32 round;
+    /// Nothing.
     none;
-    plain;
+    plain; // no doc
 } Shape;
 
 export void run() {
