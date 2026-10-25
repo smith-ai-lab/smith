@@ -391,7 +391,9 @@ static void smith_run_report_failure(SmithExec *exec, const SmithJob *job, const
         used += (size_t)snprintf(exec->scratch + used, smith_exec_text_max - used, "%s ",
                                  exec->graph.nodes[smith_plan_output(exec, edge, k)].path);
     }
-    smith_run_text(exec, "%s\n%s\n", exec->scratch, edge->command);
+    // printed as it is: formatting the scratch into itself would overlap
+    smith_run_emit(exec, exec->scratch, used);
+    smith_run_text(exec, "\n%s\n", edge->command);
     if (job->message[0] != '\0') smith_run_text(exec, "smith: %s\n", job->message);
 }
 
