@@ -9,7 +9,7 @@ typedef struct {
 
 i32 main(i32 argc, char **argv) {
     alignas(arena::align_max) static u8 memory[4096];
-    arena::Arena a = arena::make(memory, sizeof memory);
+    arena::Arena a = arena::fixed(memory, sizeof memory);
     Point *point = arena::push(&a, Point);
     point->id = 3;
     Point *points = arena::push_slice(&a, Point, 4).data;
