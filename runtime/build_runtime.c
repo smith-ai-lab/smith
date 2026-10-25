@@ -2040,6 +2040,25 @@ static bool smith_flags_have(const char *const *flags, const char *needle) {
     return false;
 }
 
+// AddressSanitizer checks at start-up that dlsym("puts") lands in its own runtime ("interceptors not installed"), which
+// the runtime's puts tuple makes false; the check is `verify_interceptors`, off by default here through a weak
+// __asan_default_options in an object of the program (the program's own, strong, wins). The runtime ahead of ASan keeps
+// its puts, so a console handler also catches puts and the printf of a literal the optimizer turned into one.
+static void smith_handlers_asan_options(SmithBuild *b, const SmithProgram *program, const char *folder) {
+    const char *object = smith_text("%s/smith_asan_options.o", folder);
+    const char *script =
+        "printf '%s\\n' 'const char *__asan_default_options(void);' "
+        "'__attribute__((weak)) const char *__asan_default_options(void) { return \"verify_interceptors=0\"; }' "
+        "| \"$0\" -x c - -c -o \"$1\"";
+    SmithStep step = {
+        .command = smith_list(b, "sh", "-c", script, smith_copy_string(program->linker), object, nullptr),
+        .implicit_inputs = smith_one(smith_compiler_file(program->linker)),
+        .outputs = smith_one(object),
+        .description = smith_text("compile %s", object),
+    };
+    smith_step(b, &step);
+}
+
 // The step that links the dylib into `folder` (once for each folder), and the arguments a program of that folder adds
 // to its link line.
 static const char *const *smith_handlers_link(SmithBuild *b, const SmithProgram *program, const char *folder) {
@@ -2072,12 +2091,14 @@ static const char *const *smith_handlers_link(SmithBuild *b, const SmithProgram 
             .description = smith_text("link %s", dylib),
         };
         smith_step(b, &step);
+        if (smith_flags_have(program->flags, "-fsanitize=") && smith_flags_have(program->flags, "address"))
+            smith_handlers_asan_options(b, program, folder);
     }
     const char *const *address = nullptr;
     if (smith_flags_have(program->flags, "-fsanitize=") && smith_flags_have(program->flags, "address")) {
         const char *resource = smith_capture(b, (const char *[]){program->linker, "-print-resource-dir", nullptr});
         address = smith_list(b, smith_text("-L%.*s/lib/darwin", (int)strcspn(resource, "\n"), resource),
-                             "-lclang_rt.asan_osx_dynamic", nullptr);
+                             "-lclang_rt.asan_osx_dynamic", smith_text("%s/smith_asan_options.o", folder), nullptr);
     }
     // the link of a sanitized program already has the rpath @executable_path (a second one is a warning)
     return smith_cat(
@@ -2139,7 +2160,10 @@ void smith_program(SmithBuild *b, SmithProgram *program) {
     const char *folder = slash != nullptr ? smith_text("%.*s", (int)(slash - copy.output), copy.output) : ".";
     if (!smith_is_smith_itself(copy.output)) {
         handlers = smith_handlers_link(b, &copy, folder);
-        handlers_files = smith_one(smith_text("%s/libsmith_handlers.dylib", folder));
+        handlers_files = smith_flags_have(copy.flags, "address") && smith_flags_have(copy.flags, "-fsanitize=")
+                             ? smith_list(b, smith_text("%s/libsmith_handlers.dylib", folder),
+                                          smith_text("%s/smith_asan_options.o", folder), nullptr)
+                             : smith_one(smith_text("%s/libsmith_handlers.dylib", folder));
     }
 #endif
     copy.step = (SmithStep){

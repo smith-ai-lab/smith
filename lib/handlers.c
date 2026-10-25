@@ -343,6 +343,14 @@ static int smith_handlers_putchar(int c) {
     return fputc(c, smith_handlers_map(stdout));
 }
 
+// With no handler set it is libc's own puts. A program with ASan gets verify_interceptors=0 from the build (ASan's
+// start-up check wants dlsym("puts") inside its runtime, which this tuple makes false; build_runtime.c).
+static int smith_handlers_puts(const char *text) {
+    if (smith_handlers_console_current() == nullptr) return puts(text);
+    FILE *out = smith_handlers_map(stdout);
+    return fputs(text, out) < 0 || fputc('\n', out) < 0 ? EOF : 1;
+}
+
 [[gnu::format(printf, 2, 0)]] static int smith_handlers_vfprintf(FILE *stream, const char *format, va_list args) {
     return vfprintf(smith_handlers_map(stream), format, args);
 }
@@ -521,8 +529,7 @@ __attribute__((used, section("__DATA,__interpose"))) static const SmithInterpose
     {(uintptr_t)&smith_handlers_fputc, (uintptr_t)&fputc},
     {(uintptr_t)&smith_handlers_fputc, (uintptr_t)&putc},
     {(uintptr_t)&smith_handlers_putchar, (uintptr_t)&putchar},
-    // puts is not here: with its tuple present AddressSanitizer's start-up check aborts ("interceptors not installed"),
-    // so a puts, and a printf of a literal ending in a newline that the optimizer turns into one, is not reached.
+    {(uintptr_t)&smith_handlers_puts, (uintptr_t)&puts},
     {(uintptr_t)&smith_handlers_fprintf, (uintptr_t)&fprintf},
     {(uintptr_t)&smith_handlers_vfprintf, (uintptr_t)&vfprintf},
     {(uintptr_t)&smith_handlers_printf, (uintptr_t)&printf},
