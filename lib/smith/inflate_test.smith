@@ -292,7 +292,7 @@ export void test_inflate_decodes_an_empty_stream(io::Io *io) {
 }
 
 export void test_inflate_a_null_output_with_a_capacity_stops() {
-    u8 input[1] = {0};
+    u8 input[1] = {};
     usize used = 0;
     usize produced = 0;
     test::expect_abort();
@@ -316,7 +316,7 @@ static bool inflate_test_sink(void *context, const u8 *data, usize size) {
 
 export void test_inflate_a_null_sink_stops() {
     static u8 window[inflate::window];
-    u8 input[1] = {0};
+    u8 input[1] = {};
     usize used = 0;
     u64 produced = 0;
     test::expect_abort();
@@ -324,7 +324,7 @@ export void test_inflate_a_null_sink_stops() {
 }
 
 export void test_inflate_a_null_window_stops() {
-    u8 input[1] = {0};
+    u8 input[1] = {};
     usize used = 0;
     u64 produced = 0;
     test::expect_abort();
