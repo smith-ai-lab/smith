@@ -66,7 +66,10 @@ export void test_dbg_crash_asan_report_then_frames(io::Io *io) {
     scratch::expect_contains("asan: the frame of main", err, "smith dbg: prog.c:23: main");
     scratch::expect_contains("asan: the source line", err, "return heap[pick(p, 1) + 8];");
     scratch::expect_contains("asan: a struct local", err, "@ p     = (x = 3, y = 4)");
-    scratch::expect_lacks("asan: no frame of the sanitizer's runtime", err, "compiler-rt");
+    // The frames smith dbg shows are its own "smith dbg:" lines; the report the program printed names compiler-rt's
+    // sources in malloc's frame (the path of the LLVM build), and that is the program's text, not a frame shown.
+    scratch::expect_text("asan: no frame of the sanitizer's runtime", "0",
+                         scratch::capture(&p, "grep '^smith dbg: ' err.txt | grep -c compiler-rt"));
 }
 
 // 2. A signal: the stop reason, the status 128 + 11, and the standard output and error as they are.
