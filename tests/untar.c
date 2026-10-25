@@ -203,11 +203,11 @@ static void test_damage_header(uint8_t *data, size_t size, uint64_t *state) {
     if (choice == 0) {
         const char *name = test_names[test_below(state, sizeof test_names / sizeof test_names[0])];
         memset(block, 0, 100);
-        memcpy(block, name, strlen(name));
+        memcpy(block, name, strlen(name) + 1); // a name is shorter than the field
     } else if (choice == 1) {
         const char *name = test_names[test_below(state, sizeof test_names / sizeof test_names[0])];
         memset(block + 157, 0, 100);
-        memcpy(block + 157, name, strlen(name));
+        memcpy(block + 157, name, strlen(name) + 1);
         block[156] = '2';
     } else {
         block[156] = (uint8_t)test_types[test_below(state, sizeof test_types - 1)];
