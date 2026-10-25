@@ -609,6 +609,10 @@ export void test_error_export_two_names(io::Io *io) {
     corpus_case(io, "error-export-two-names");
 }
 
+export void test_error_filescope_if(io::Io *io) {
+    corpus_case(io, "error-filescope-if");
+}
+
 export void test_error_generic_concept_local(io::Io *io) {
     corpus_case(io, "error-generic-concept-local");
 }
@@ -839,6 +843,14 @@ export void test_export_inline_attributes(io::Io *io) {
 
 export void test_exported_variable_declared(io::Io *io) {
     corpus_case(io, "exported-variable-declared");
+}
+
+export void test_filescope_if_imports(io::Io *io) {
+    corpus_case(io, "filescope-if-imports");
+}
+
+export void test_filescope_if_run(io::Io *io) {
+    corpus_case(io, "filescope-if-run");
 }
 
 export void test_foreign_extern(io::Io *io) {
