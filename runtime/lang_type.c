@@ -1651,9 +1651,11 @@ static void smith_lang_field_after_imports(SmithLang *lang, const SmithHost *hos
         lang->recording || !lang->is_module) {
         return;
     }
-    // An import next, or a file-scope `if constexpr` that may hold imports (issue #335): its branch asks again.
+    // An import next, or a file-scope `if constexpr` that may hold imports (issue #335): its branch asks again, and so
+    // does the `}` that closes a taken branch, after which more imports may follow.
     const SmithToken *next = smith_lang_peek(lang, host, 0, false);
     if (smith_lang_ident(next, "import") || smith_lang_ident(next, "if")) return;
+    if (smith_lang_punct(next, "}") && lang->ifc_count > 0 && lang->ifc[lang->ifc_count - 1].file_scope) return;
     smith_lang_fields_define(lang, host, nullptr, next->location, 0);
     SmithLangTyName *holder = smith_lang_ty_add("Field", 5, SmithLangTy_Holder, 0);
     if (holder != nullptr) snprintf(holder->field, sizeof holder->field, "type");

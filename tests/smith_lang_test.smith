@@ -849,6 +849,10 @@ export void test_filescope_if_imports(io::Io *io) {
     corpus_case(io, "filescope-if-imports");
 }
 
+export void test_filescope_if_reflect(io::Io *io) {
+    corpus_case(io, "filescope-if-reflect");
+}
+
 export void test_filescope_if_run(io::Io *io) {
     corpus_case(io, "filescope-if-run");
 }

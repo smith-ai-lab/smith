@@ -3183,6 +3183,39 @@ int main(void) {
     clock::say();
     return 0;
 }
+==> filescope-if-reflect/src/count.smith <==
+// A taken file-scope `if constexpr` that holds imports, more imports after it, and a generic that reflects (issue
+// #335): `Field` is defined after the last import, not at the branch's `}`.
+module count;
+
+import target;
+if constexpr (target::os == target::macos || target::os == target::linux) {
+    import <stdint.h>;
+}
+import <stddef.h>;
+import <stdio.h>;
+
+export usize count_of(constexpr type T) {
+    return countof(fields(T));
+}
+
+export void show(constexpr type T) {
+    c::printf("%zu %s\n", countof(fields(T)), fields(T)[0].name);
+}
+==> filescope-if-reflect/src/main.smith <==
+module main;
+
+import count;
+
+typedef struct {
+    i32 a;
+    f32 b;
+} Pair;
+
+i32 main() {
+    count::show(Pair);
+    return (i32)count::count_of(Pair) - 2;
+}
 ==> filescope-if-run/src/main.smith <==
 import shape;
 import <stdio.h>;
