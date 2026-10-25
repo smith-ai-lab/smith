@@ -24,7 +24,8 @@ static scratch::Run exec(const scratch::Project *p, const char *arguments) {
     return scratch::sh(p, format::push(&p->io->arena, "smith --smith-exec build.ninja ", arguments).data);
 }
 
-// 14d. Two jobs at once, each printing whole.
+// 14d. Two jobs at once, each printing whole. a waits for b to finish (so they only pass if they overlap), then 2 s more so
+// that b's end is reported before a's however loaded the machine is.
 export void test_build_executor_jobs_run_at_once_and_print_whole(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", "exec_pool_parallel");
     scratch::Run run = exec(&p, "-j2");
