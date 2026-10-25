@@ -49,6 +49,8 @@ constexpr char run_script[] =
 constexpr char setup_script[] =
     "mkdir -p \"$0/tested\" \"$1\" && for n in smith smith-cc smith-c++; do ln -sf "
     "\"$SMITH_SELF\" \"$0/tested/$n\"; done; "
+    "if [ \"$(uname -s)\" != Darwin ]; then printf '#!/bin/sh\\nunset SMITH_CLANG\\nexec smith-cc \"$@\"\\n' "
+    ">\"$0/tested/cc\" && chmod +x \"$0/tested/cc\"; fi; "
     "if [ -n \"$2\" ]; then cp -R \"${SMITH_REPO:-.}/tests/build_fixtures/$2/.\" \"$1\"; fi";
 
 // Runs `sh -c command` in a folder and waits. The commands see the smith under test first on PATH, a cache of their own
@@ -75,7 +77,8 @@ static const char *join(io::Io *io, const char *folder, const char *name) {
 
 // A project: a folder `name` in the test's scratch folder, with the files of tests/build_fixtures/<fixture> in it
 // (none when `fixture` is nullptr). Links named smith, smith-cc and smith-c++ to the smith under test, which is the one
-// running the tests ($SMITH_SELF), are in a folder that is first on PATH for its commands.
+// running the tests ($SMITH_SELF), are in a folder that is first on PATH for its commands. The fixtures' `cc` is a C23
+// clang, as macOS's is; on Linux, where it is GCC, that folder has a `cc` that runs the smith-cc under test.
 export Project project(io::Io *io, const char *name, const char *fixture) {
     const char *scratch = test::scratch(io);
     Project p = {.io = io, .dir = join(io, scratch, name), .tested = join(io, scratch, "tested"), .cache = ""};
