@@ -43,6 +43,8 @@
 
 #include "effects_table.h"
 
+#include <algorithm>
+#include <cstdlib>
 #include <functional>
 #include <map>
 #include <memory>
@@ -334,8 +336,9 @@ class Collector {
 
 class Analysis {
   public:
-    Analysis(ASTContext &context, std::string output)
-        : context(context), engine(context.getDiagnostics()), generator(context), output(std::move(output)) {
+    Analysis(ASTContext &context, std::string output, std::string flags, bool own)
+        : context(context), engine(context.getDiagnostics()), generator(context), output(std::move(output)),
+          ownSizes(own), flags(std::move(flags)) {
         bad =
             engine.getCustomDiagID(DiagnosticsEngine::Error, "smith-effect: `%0` is %1, but it has the effects %2: %3");
         note = engine.getCustomDiagID(DiagnosticsEngine::Note, "%0");
@@ -360,7 +363,9 @@ class Analysis {
     DiagnosticsEngine &engine;
     unsigned bad, note, recursion;
     ASTNameGenerator generator;
-    std::string output; // the object file being written: the summary goes beside it, `<object>.fx`
+    std::string output;    // the object file being written: the summary goes beside it, `<object>.fx`
+    bool ownSizes = false; // the .su is smith's: removed after it is read
+    std::string flags;     // what the frame sizes are for: `opt=0 sanitize=address,undefined`
     std::map<const FunctionDecl *, Node> nodes;
     std::vector<const FunctionDecl *> order;
 
@@ -604,6 +609,54 @@ class Analysis {
                std::to_string(presumed.getColumn());
     }
 
+    // The frames the backend gave the functions of this file: `-fstack-usage` (which smith adds to its compiles) writes
+    // `<object without .o>.su`, one line `file:line:name<TAB>bytes<TAB>static|dynamic|bounded` a function, and this
+    // returns one `S` line (symbol, bytes, kind) for each function of the file that has one, then the `H` line with
+    // the flags the numbers are for (a frame at -O0 with sanitizers is larger than at -O2). The .su is removed when
+    // smith asked for it. An object compiled without it has no `S` lines, and the program's stack is then unknown.
+    std::string frames() {
+        std::string base = output.substr(0, output.size() - 2);
+        auto buffer = llvm::MemoryBuffer::getFile(base + ".su");
+        if (!buffer) return "";
+        std::map<std::string, std::pair<std::string, std::string>> sizes;
+        llvm::SmallVector<llvm::StringRef, 64> lines;
+        (*buffer)->getBuffer().split(lines, '\n', -1, false);
+        for (llvm::StringRef line : lines) {
+            llvm::SmallVector<llvm::StringRef, 4> field;
+            line.split(field, '\t');
+            if (field.size() < 3) continue;
+            llvm::StringRef head = field[0];
+            size_t colon = 0; // the name starts after `:digits:`
+            for (size_t at = head.find(':'); at != llvm::StringRef::npos; at = head.find(':', at + 1)) {
+                size_t digits = at + 1;
+                while (digits < head.size() && head[digits] >= '0' && head[digits] <= '9')
+                    digits++;
+                if (digits > at + 1 && digits < head.size() && head[digits] == ':') {
+                    colon = digits + 1;
+                    break;
+                }
+            }
+            if (colon == 0) continue;
+            sizes[head.substr(colon).str()] = {field[1].str(), field[2].str()};
+        }
+        if (ownSizes) {
+            std::error_code ignored = llvm::sys::fs::remove(base + ".su");
+            (void)ignored;
+        }
+        std::string text;
+        for (const FunctionDecl *function : order) {
+            const Node &node = nodes[function];
+            std::string name =
+                node.symbol.substr(node.symbol.find('#') == std::string::npos ? 0 : node.symbol.find('#') + 1);
+            auto found = sizes.find(name);
+            if (found == sizes.end() && !name.empty() && name[0] == '_') found = sizes.find(name.substr(1));
+            if (found == sizes.end()) continue;
+            text += "S\t" + node.symbol + "\t" + found->second.first + "\t" + found->second.second + "\n";
+        }
+        if (text.empty()) return "";
+        return text + "H\t" + flags + "\n";
+    }
+
     // The summary of this file beside its object: one line a function (F: symbol, declared set or -1, what its own body
     // reaches in this file, where, its name) and one for each thing it calls (L a leaf with its effects, E a call to
     // a function by symbol, with a body here or not: the program's check follows it across files). The file is replaced
@@ -621,10 +674,12 @@ class Analysis {
                     text += "L\t" + node.symbol + "\t" + std::to_string(edge.effects) + "\t" + place(edge.loc) + "\t" +
                             edge.name + "\n";
                 } else {
-                    text += "E\t" + node.symbol + "\t" + edge.symbol + "\t" + place(edge.loc) + "\t" + edge.name + "\n";
+                    text += "E\t" + node.symbol + "\t" + edge.symbol + "\t" + place(edge.loc) + "\t" + edge.name +
+                            "\t" + (edge.tail ? "1" : "0") + "\n";
                 }
             }
         }
+        text += frames(); // the sizes of the frames, when the compile wrote them
         char where[4096];
         if (!smith_effects_summary_path(output.c_str(), where, sizeof where)) return;
         std::string path = where;
@@ -647,13 +702,15 @@ class Analysis {
 
 class Consumer : public ASTConsumer {
   public:
-    explicit Consumer(std::string output) : output(std::move(output)) {}
+    Consumer(std::string output, std::string flags, bool own)
+        : output(std::move(output)), flags(std::move(flags)), own(own) {}
     void HandleTranslationUnit(ASTContext &context) override {
-        Analysis(context, output).run();
+        Analysis(context, output, flags, own).run();
     }
 
   private:
-    std::string output;
+    std::string output, flags;
+    bool own;
 };
 
 struct EffectsPlugin final : PluginASTAction {
@@ -665,7 +722,13 @@ struct EffectsPlugin final : PluginASTAction {
         const FrontendOptions &options = instance.getFrontendOpts();
         bool writes_object = options.ProgramAction == frontend::EmitObj || options.ProgramAction == frontend::EmitBC;
         std::string output = writes_object && StringRef(options.OutputFile).ends_with(".o") ? options.OutputFile : "";
-        return std::make_unique<Consumer>(output);
+        std::string flags = "opt=" + std::to_string(instance.getCodeGenOpts().OptimizationLevel);
+        const SanitizerSet &sanitize = instance.getLangOpts().Sanitize;
+        if (sanitize.has(SanitizerKind::Address)) flags += " address";
+        if (sanitize.hasOneOf(SanitizerKind::Undefined)) flags += " undefined";
+        if (sanitize.has(SanitizerKind::Thread)) flags += " thread";
+        bool own = !output.empty() && getenv("SMITH_STACK_USAGE_ADDED") != nullptr; // smith asked (shim/clang.cpp)
+        return std::make_unique<Consumer>(output, flags, own);
     }
     bool ParseArgs(const CompilerInstance &, const std::vector<std::string> &) override {
         return true;
@@ -709,12 +772,15 @@ struct Edit {
     char kind = 'L'; // L a leaf with effects, E a call by symbol
     uint32_t effects = 0;
     std::string callee, place, name;
+    bool tail = false; // a `[[clang::musttail]]` call: a jump, which leaves a cycle no deeper
 };
 
 struct Function {
     std::string name, place;
     long declared = -1;
     uint32_t local = 0, inferred = 0;
+    long frame = -1;      // bytes of its own frame from the backend, -1 when the object had none
+    bool dynamic = false; // the frame grows at run time (a variable-length array, alloca): no bound
     std::vector<Edit> edges;
 };
 
@@ -728,6 +794,19 @@ class Program {
         for (llvm::StringRef line : lines) {
             llvm::SmallVector<llvm::StringRef, 8> field;
             line.split(field, '\t');
+            if (field.size() >= 2 && field[0] == "H") {
+                if (std::find(builds.begin(), builds.end(), field[1].str()) == builds.end())
+                    builds.push_back(field[1].str());
+                continue;
+            }
+            if (field.size() >= 4 && field[0] == "S") {
+                auto owner = owners.find(field[1].str());
+                if (owner == owners.end() || owner->second != path) continue;
+                Function &function = functions[field[1].str()];
+                field[2].getAsInteger(10, function.frame);
+                function.dynamic = field[3] != "static";
+                continue;
+            }
             if (field.size() < 5) continue;
             if (field[0] == "F" && field.size() >= 6) {
                 if (functions.count(field[1].str()) != 0) continue; // the first definition stands
@@ -753,6 +832,7 @@ class Program {
                 }
                 edge.place = field[3].str();
                 edge.name = field[4].str();
+                edge.tail = field.size() >= 6 && field[5] == "1";
                 functions[field[1].str()].edges.push_back(edge);
             }
         }
@@ -790,9 +870,121 @@ class Program {
         return errors;
     }
 
+    // The worst-case stack of every function with a frame, written to `path` (skill smith-lang-effects): its own frame
+    // plus the deepest of its callees, over the merged call graph. A tail call that closes a cycle leaves it no
+    // deeper; any other cycle, and a frame that grows at run time, make it `unbounded`. A call into code with no
+    // source (a leaf with effects, a pointer call, a function no summary defines) is not measured: the function adds
+    // `slack` bytes for it and the row names what it calls. Nothing is written when no object had frame sizes.
+    void writeStack(const std::string &path, long slack) {
+        bool any = false;
+        for (const auto &entry : functions)
+            any = any || entry.second.frame >= 0;
+        if (!any) return;
+        std::vector<std::string> order = postorder();
+        std::map<std::string, Depth> depths;
+        for (const std::string &symbol : order) {
+            const Function &function = functions[symbol];
+            Depth depth;
+            depth.bytes = function.frame < 0 ? 0 : function.frame;
+            depth.unbounded = function.dynamic || cyclic.count(symbol) != 0;
+            const Depth *deepest = nullptr;
+            for (const Edit &edge : function.edges) {
+                if (edge.kind == 'L') {
+                    if (edge.effects != 0) depth.outside.insert(edge.name);
+                } else if (functions.count(edge.callee) == 0) {
+                    depth.outside.insert(edge.name);
+                } else if (depths.count(edge.callee) != 0 && backs.count(&edge) == 0) {
+                    const Depth &child = depths[edge.callee];
+                    depth.unbounded = depth.unbounded || child.unbounded;
+                    depth.outside.insert(child.outside.begin(), child.outside.end());
+                    if (deepest == nullptr || child.bytes > deepest->bytes) deepest = &child;
+                }
+            }
+            depth.path = function.name;
+            if (deepest != nullptr) {
+                depth.bytes += deepest->bytes;
+                depth.path += " -> " + deepest->path;
+            }
+            depths[symbol] = depth;
+        }
+        std::string text = "# smith stack 1: bytes of stack a call of each function needs at most, for the build\n";
+        text += "# build:";
+        for (const std::string &build : builds)
+            text += " [" + build + "]";
+        text +=
+            "\n# slack: " + std::to_string(slack) + " bytes for the calls of code with no source (SMITH_STACK_SLACK)\n";
+        text += "# columns: function, worst bytes (or unbounded), bytes without slack, calls of code with no source, "
+                "deepest path\n";
+        for (const auto &entry : functions) {
+            if (entry.second.frame < 0 || depths.count(entry.first) == 0) continue;
+            const Depth &depth = depths[entry.first];
+            std::string outside;
+            for (const std::string &name : depth.outside)
+                outside += (outside.empty() ? "" : ",") + name;
+            text += entry.second.name + "\t" +
+                    (depth.unbounded ? std::string("unbounded")
+                                     : std::to_string(depth.bytes + (depth.outside.empty() ? 0 : slack))) +
+                    "\t" + std::to_string(depth.bytes) + "\t" + (outside.empty() ? "-" : outside) + "\t" + depth.path +
+                    "\n";
+        }
+        std::string temporary = path + ".part" + std::to_string(getpid());
+        std::error_code error;
+        {
+            llvm::raw_fd_ostream file(temporary, error);
+            if (error) return;
+            file << text;
+        }
+        if (llvm::sys::fs::rename(temporary, path)) {
+            std::error_code ignored = llvm::sys::fs::remove(temporary);
+            (void)ignored;
+        }
+    }
+
   private:
+    struct Depth {
+        long bytes = 0;
+        bool unbounded = false;
+        std::set<std::string> outside;
+        std::string path;
+    };
     std::map<std::string, Function> functions;
     std::map<std::string, std::string> owners;
+    std::vector<std::string> builds;
+    std::set<std::string> cyclic; // functions with a call that closes a cycle and is no tail call
+    std::set<const Edit *> backs; // the calls that close a cycle
+
+    // The functions callees first, by a walk with its own stack; the calls that close a cycle are noted.
+    std::vector<std::string> postorder() {
+        std::vector<std::string> order;
+        std::map<std::string, int> color; // 1 on the walk, 2 done
+        for (const auto &root : functions) {
+            if (color[root.first] != 0) continue;
+            std::vector<std::pair<std::string, size_t>> walk;
+            walk.push_back({root.first, 0});
+            color[root.first] = 1;
+            while (!walk.empty()) {
+                std::string symbol = walk.back().first;
+                const Function &function = functions[symbol];
+                if (walk.back().second >= function.edges.size()) {
+                    color[symbol] = 2;
+                    order.push_back(symbol);
+                    walk.pop_back();
+                    continue;
+                }
+                const Edit &edge = function.edges[walk.back().second++];
+                if (edge.kind != 'E' || functions.count(edge.callee) == 0) continue;
+                int state = color[edge.callee];
+                if (state == 0) {
+                    color[edge.callee] = 1;
+                    walk.push_back({edge.callee, 0});
+                } else if (state == 1) {
+                    backs.insert(&edge);
+                    if (!edge.tail) cyclic.insert(symbol);
+                }
+            }
+        }
+        return order;
+    }
 
     uint32_t visible(const std::string &symbol) {
         auto found = functions.find(symbol);
@@ -856,11 +1048,18 @@ class Program {
 
 } // namespace
 
-extern "C" int smith_effects_check(int count, char **files) {
+extern "C" int smith_effects_check(int count, char **files, const char *stack) {
     Program program;
     bool any = false;
     for (int i = 0; i < count; i++)
         any = program.read(files[i]) || any;
     if (!any) return 0;
-    return program.check() > 0 ? 1 : 0;
+    if (program.check() > 0) return 1;
+    if (stack != nullptr) {
+        const char *text = getenv("SMITH_STACK_SLACK");
+        long slack = 65536;
+        if (text != nullptr && *text != '\0') slack = std::strtol(text, nullptr, 10);
+        program.writeStack(stack, slack);
+    }
+    return 0;
 }
