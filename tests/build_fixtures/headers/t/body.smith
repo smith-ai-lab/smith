@@ -1,0 +1,6 @@
+module t::body;
+import <stdio.h>;
+export u32 body_only(u32 x) {
+    c::printf("%u\n", x);
+    return x;
+}

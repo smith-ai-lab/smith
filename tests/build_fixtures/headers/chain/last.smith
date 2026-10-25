@@ -1,0 +1,6 @@
+module chain::last;
+import chain::m0;
+import t::point;
+export point::Point last() {
+    return point::origin();
+}

@@ -48,7 +48,7 @@ What the header keeps of the source (written by the plain lexer, `runtime/lang_t
     `game::main` importing `lib::text` writes `#include "../lib/text.h"`. So the headers of one tree (`include/smith`,
     `.smith/include/smith`, an installed copy) find each other with no include path of their own, which smith's own
     build needs: `smith.c` includes `include/smith/random.h` with no `-I`, and so does a stage0 compiling it alone
-    (`tests/headers.sh` compiles each header with and without an include path). The in-memory interface an importer
+    (`tests/headers_test.smith` compiles each header with and without an include path). The in-memory interface an importer
     reads from a module's source is included from the include path, as the importer wrote it.
   - A C header imported with `import <h>;` or `import "h";` when an exported declaration writes a name of it as
     `c::name` (`struct c::tag` is a tag); one only a body uses is not included. With one import (or the spellings of one
@@ -65,7 +65,7 @@ What the header keeps of the source (written by the plain lexer, `runtime/lang_t
     pass has no parser to say which header declares one. A module whose exports need a header's names `import`s it and
     writes them `c::name` (`import <smith/arena.h>;` and `c::SmithArena` for a C library's type). A name that only an
     `#include` declares, used in an export, is not defined in the header: the includer's compile fails, and
-    `tests/headers.sh` (every committed generated header compiles on its own, as C and as C++) finds it.
+    `tests/headers_test.smith` (every committed generated header compiles on its own, as C and as C++) finds it.
   A conditional around imports (`#if defined(__linux__) import <linux/x.h>; #else import <sys/x.h>; #endif`) is
   copied with the imports it holds: when one import of a conditional is kept, so are the others of it (they are other
   spellings of it), and a conditional with none kept is left out. The `#if 0` text is left out.

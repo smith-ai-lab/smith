@@ -1,0 +1,3 @@
+module t::typed;
+import <stdio.h>;
+export c::FILE *typed_open(const char *path);
