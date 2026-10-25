@@ -110,7 +110,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
 - **`test::expect_abort()`** (`smith_test_expect_abort()` in C) says that from this call on the running test must stop the program on purpose, and is
   a plain function: the test calls it and then runs the code that aborts,
   as its last statements. It records a flag and the call's stack in the block the worker shares with the runner, and the
-  runner judges how the test ended. The test passes when it ends with `SIGABRT` or `SIGTRAP` (an `assert`, `abort()`,
+  runner judges how the test ended. The test passes when it ends with `SIGABRT` or `SIGTRAP` (`SIGILL` for `__builtin_trap` on x86_64) (an `assert`, `abort()`,
   `__builtin_trap`, the arena's capacity stop, a failed contract or library check) and its output holds no sanitizer
   report. It fails, at the call's file and line from its stack, when the test returns ("the test returned"), exits ("it
   exited with status N"), crashes with another signal such as `SIGSEGV` ("it crashed"), fails a check ("a check failed,

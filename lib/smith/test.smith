@@ -184,6 +184,9 @@ constexpr i32 interrupted = c::EINTR;                        // NOLINT(smith-pre
 constexpr i32 write_only = c::O_WRONLY;                      // NOLINT(smith-preprocessor)
 constexpr c::clockid_t clock_monotonic = c::CLOCK_MONOTONIC; // NOLINT(smith-preprocessor)
 
+// __builtin_trap's signal: brk raises SIGTRAP on aarch64, ud2 SIGILL on x86_64.
+constexpr i32 sig_builtin_trap = target::arch == target::x86_64 ? sig_ill : sig_trap;
+
 // A status from waitpid, as the signal that ended the process (or 0) and its exit status (or 0). The low seven bits
 // are the signal, 0 for an exit and 0x7f for a stop; an exit's status is the next byte.
 constexpr u32 status_signal_mask = 0x7f;
@@ -1508,21 +1511,26 @@ void *map_bytes(usize bytes, i32 flags) {
     (void)io::console_print_error(options->console, buffer);
 }
 
+// A stop on purpose: SIGABRT, SIGTRAP or the signal of __builtin_trap.
+bool is_stop(i32 signal_number) {
+    return signal_number == sig_abrt || signal_number == sig_trap || signal_number == sig_builtin_trap;
+}
+
 // A process that catches a fatal signal exits with 128 plus its number, so macOS writes no crash report for an expected
 // abort or a crashing test. AddressSanitizer keeps its own SIGSEGV, SIGBUS and SIGFPE handlers, whose report ends in
-// abort(). After test::expect_abort, SIGABRT and SIGTRAP are what the test expects: the process exits, and the runner,
-// finding the flag in the shared block, passes the test. --in-process has no process to end: the runner's loop takes
-// the test back.
+// abort(). After test::expect_abort, a stop on purpose (is_stop) is what the test expects: the process exits, and the
+// runner, finding the flag in the shared block, passes the test. --in-process has no process to end: the runner's loop
+// takes the test back.
 void on_signal(i32 signal_number, c::siginfo_t *info, void *context) {
     (void)info;
-    if (shared->expect_abort && (signal_number == sig_abrt || signal_number == sig_trap)) {
+    if (shared->expect_abort && is_stop(signal_number)) {
         if (in_process) {
             abort_signal = signal_number;
             c::siglongjmp(loop_jump, 2);
         }
         c::_exit(signal_status + signal_number);
     }
-    shared->heading = signal_number == sig_abrt || signal_number == sig_trap ? "aborted" : "crashed";
+    shared->heading = is_stop(signal_number) ? "aborted" : "crashed";
     shared->frame_count = c::smith_trace_capture_signal(shared->frames, frames_max, context);
     shared->frames_exact = true;
     c::_exit(signal_status + signal_number);
@@ -1803,7 +1811,7 @@ const char *abort_verdict(i32 signal_number, i32 code, const char *text, usize l
     if (has_report(text, length))
         return "expected an abort; it was stopped by a sanitizer report, which is a bug, not the stop the test "
                "expected";
-    if (signal_number == sig_abrt || signal_number == sig_trap) return nullptr;
+    if (is_stop(signal_number)) return nullptr;
     if (signal_number != 0) {
         const char *name = signal_name(signal_number);
         if (name != nullptr)
