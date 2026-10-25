@@ -4064,11 +4064,13 @@ export typedef enum {
     Max,
 } Volume;
 
-// The variants of an enum with payloads are listed too; their docs are not read yet.
+// The variants of an enum with payloads are listed too, with the doc above each.
 export typedef enum {
+    /// A circle.
     f32 round;
+    /// Nothing.
     none;
-    plain;
+    plain; // no doc
 } Shape;
 
 export void run() {
@@ -4087,6 +4089,7 @@ import docs;
 i32 main() {
     docs::run();
     docs::show(docs::Options); // the struct and its comments come from the module's header
+    docs::show(docs::Shape);   // a payload enum's variants too
     return 0;
 }
 ==> generic-fields-error/src/main.smith <==
