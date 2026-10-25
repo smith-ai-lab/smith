@@ -349,7 +349,7 @@ log=$(client open main.smith geometry/box.smith -- hover main.smith 7 18 -- hove
     definition main.smith 7 18 geometry/box.smith:5:12 -- definition main.smith 6 10 geometry/box.smith:3:50 -- \
     symbols main.smith -- hover geometry/box.smith 5 12 -- hover geometry/box.smith 3 50 -- symbols geometry/box.smith)
 expect_line "hover: a call, the function as written" "$log" \
-    'hover main.smith:7:18: function box::area |  | provided by "geometry/box.h" |  | → float |  | Parameters: |  | - box::Box b |  | float box::area(box::Box b)'
+    'hover main.smith:7:18: function box::area |  | provided by "geometry/box.h" |  | → float |  | Parameters: |  | - box::Box b |  | pure |  | float box::area(box::Box b)'
 expect_line "hover: a type, as written" "$log" \
     'hover main.smith:6:10: type-alias box::Box |  | provided by "geometry/box.h" |  | Type: struct box::Box |  | typedef struct box::Box box::Box'
 expect_line "definition: the function is in the other module's .smith, at its name" "$log" \
@@ -436,7 +436,7 @@ expect_line "dims: the hover shows the tags of qualified slices as written" "$lo
     'hover geometry/dims.smith:10:14: function tags |  | → usize (aka unsigned long) |  | Parameters: |  | - u8[const restrict :] a | - const char[:] b |  | pure |  | usize tags(u8[const restrict :] a, const char[:] b)'
 log=$(client open geometry/grid.smith -- hover geometry/grid.smith 3 12)
 expect_line "dims: the hover of a function shows an f32[:][:] parameter as written" "$log" \
-    'hover geometry/grid.smith:3:12: function grid |  | → f32 (aka float) |  | Parameters: |  | - f32[:][:] g | - usize i (aka unsigned long) |  | f32 grid(f32[:][:] g, usize i)'
+    'hover geometry/grid.smith:3:12: function grid |  | → f32 (aka float) |  | Parameters: |  | - f32[:][:] g | - usize i (aka unsigned long) |  | pure |  | f32 grid(f32[:][:] g, usize i)'
 
 # A slice element in a generic call's argument: the editor answers (it used to loop in the token collector, issue #264).
 log=$(client open sliced.smith pick.smith -- hover sliced.smith 5 24)
@@ -782,11 +782,11 @@ log=$(client_in "$modules" open main.smith foo.smith -- hover main.smith 6 18 --
     definition main.smith 6 18 foo.smith:3:12 -- hover foo.smith 3 12 -- hover foo.smith 7 41 -- symbols foo.smith -- \
     references foo.smith 3 12 -- highlight foo.smith 3 12)
 expect_line "modules: hover on a call into the other module, as written" "$log" \
-    'hover main.smith:6:18: function foo::f |  | provided by "foo.smith" |  | → int32_t (aka int) |  | Parameters: |  | - int32_t x (aka int) |  | int32_t foo::f(int32_t x)'
+    'hover main.smith:6:18: function foo::f |  | provided by "foo.smith" |  | → int32_t (aka int) |  | Parameters: |  | - int32_t x (aka int) |  | pure |  | int32_t foo::f(int32_t x)'
 expect_line "modules: go-to-definition lands in the other module's source" "$log" \
     "definition main.smith:6:18 -> foo.smith:3:12"
 expect_line "modules: hover at the function's definition" "$log" \
-    "hover foo.smith:3:12: function f |  | → i32 (aka int) |  | Parameters: |  | - i32 x (aka int) |  | i32 f(i32 x)"
+    "hover foo.smith:3:12: function f |  | → i32 (aka int) |  | Parameters: |  | - i32 x (aka int) |  | pure |  | i32 f(i32 x)"
 expect_line "modules: hover at the type's definition" "$log" \
     "hover foo.smith:7:41: type-alias Pair |  | Type: struct Pair |  | typedef struct Pair Pair"
 expect "modules: symbols, as written, each once" \

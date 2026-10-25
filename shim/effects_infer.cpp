@@ -69,7 +69,36 @@ extern "C" bool smith_effects_summary_path(const char *object, char *out, size_t
 namespace {
 
 constexpr const char *prefix = "smith::effects:";
-const std::string hoverPrefix = "smith::hover:"; // an implicit annotation clangd's hover shows (see hoverProvider)
+
+// ---- The hover table -----------------------------------------------------------------------------------------------
+
+// The line the editor's hover shows for a function with no attribute, by USR: filled at the end of each unit the editor
+// parses, read by the provider below on clangd's threads.
+std::mutex hoverMutex;
+std::map<std::string, std::string> hoverTable;
+
+std::string hoverText(uint32_t set, bool declared) {
+    std::string line = set == 0 ? "pure" : "effects: " + describe(set);
+    return declared ? line + " (declared)" : line;
+}
+
+// The key of a function in the table: its linkage name (the file's name too when only the file sees it).
+std::string usrOf(const NamedDecl *decl) {
+    ASTContext &context = decl->getASTContext();
+    ASTNameGenerator generator(context);
+    std::string name = generator.getName(decl);
+    if (!name.empty() && name[0] == '\x01') name.erase(0, 1);
+    if (!decl->isExternallyVisible()) {
+        const SourceManager &sm = context.getSourceManager();
+        name += "#" + std::string(sm.getFilename(sm.getExpansionLoc(decl->getLocation())));
+    }
+    return name;
+}
+
+void setHoverLine(const std::string &usr, const std::string &line) {
+    std::lock_guard<std::mutex> lock(hoverMutex);
+    hoverTable[usr] = line;
+}
 
 // ---- The annotations -----------------------------------------------------------------------------------------------
 
@@ -775,20 +804,17 @@ class Analysis {
         }
         if (text.empty()) return "";
         return text + "H\t" + flags + "\n";
-    // What the editor's hover says of each function the file defines, kept on the function as an implicit annotation
-    // (`smith::hover:<line>`) for the hover provider below: the effects it has, or the ones its attribute declares.
-    // The annotation is added after the code is generated, so no object carries it.
+    }
+
+    // What the editor's hover says of each function the file defines without an attribute: the effects it has, kept in
+    // a table of the plugin's own (by the declaration's linkage name) for the hover provider below. It is not kept on
+    // the declaration: clangd shows every `AnnotateAttr` of a declaration as an "Annotation:" line.
     void attachHover() {
         for (const FunctionDecl *function : order) {
             const Node &node = nodes[function];
-            uint32_t set = node.annotated ? node.declared : node.inferred;
-            std::string line = set == 0 ? "pure" : "effects: " + describe(set);
-            if (node.annotated) line += " (declared)";
-            for (const FunctionDecl *redeclaration : function->redecls()) {
-                if (redeclaration->isImplicit()) continue;
-                auto *attribute = AnnotateAttr::CreateImplicit(context, hoverPrefix + line, nullptr, 0);
-                const_cast<FunctionDecl *>(redeclaration)->addAttr(attribute);
-            }
+            if (node.annotated) continue; // the provider reads a declared set from the attribute itself
+            std::string usr = usrOf(function);
+            if (!usr.empty()) setHoverLine(usr, hoverText(node.inferred, false));
         }
     }
 
@@ -958,15 +984,19 @@ void registerHoverProvider(HoverProvider provider);
 namespace {
 
 bool hoverProvider(const NamedDecl &decl, clang::clangd::HoverSection &section) {
-    for (const Decl *redeclaration : decl.redecls()) {
-        for (const auto *attribute : redeclaration->specific_attrs<AnnotateAttr>()) {
-            llvm::StringRef text = attribute->getAnnotation();
-            if (!text.starts_with(hoverPrefix)) continue;
-            section.Lines.push_back(text.drop_front(hoverPrefix.size()).str());
-            return true;
-        }
+    if (!isa<FunctionDecl>(decl)) return false;
+    uint32_t declared = 0;
+    if (declaredSet(&decl, declared)) { // a ceiling, a promise or [[smith::pure]]: the attribute says it
+        section.Lines.push_back(hoverText(declared, true));
+        return true;
     }
-    return false;
+    std::string usr = usrOf(&decl);
+    if (usr.empty()) return false;
+    std::lock_guard<std::mutex> lock(hoverMutex);
+    auto found = hoverTable.find(usr);
+    if (found == hoverTable.end()) return false;
+    section.Lines.push_back(found->second);
+    return true;
 }
 
 const bool hoverRegistered = (clang::clangd::registerHoverProvider(hoverProvider), true);
