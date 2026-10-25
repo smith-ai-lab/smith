@@ -1,0 +1,104 @@
+diff --git a/clang-tools-extra/clangd/Hover.cpp b/clang-tools-extra/clangd/Hover.cpp
+--- a/clang-tools-extra/clangd/Hover.cpp	2026-10-25 06:52:47
++++ b/clang-tools-extra/clangd/Hover.cpp	2026-10-25 06:53:59
+@@ -67,6 +67,16 @@
+ 
+ namespace clang {
+ namespace clangd {
++
++static std::vector<HoverProvider> &hoverProviders() {
++  static std::vector<HoverProvider> Providers;
++  return Providers;
++}
++
++void registerHoverProvider(HoverProvider Provider) {
++  hoverProviders().push_back(Provider);
++}
++
+ namespace {
+ 
+ PrintingPolicy getPrintingPolicy(PrintingPolicy Base) {
+@@ -681,6 +691,13 @@
+ 
+   HI.Kind = index::getSymbolInfo(D).Kind;
+ 
++  // Sections from the registered hover providers (plugins).
++  for (HoverProvider Provider : hoverProviders()) {
++    HoverSection Section;
++    if (Provider(*D, Section))
++      HI.ProviderSections.push_back(std::move(Section));
++  }
++
+   // Fill in template params.
+   if (const TemplateDecl *TD = D->getDescribedTemplate()) {
+     HI.TemplateParameters =
+@@ -1528,6 +1545,16 @@
+     P.appendText(", alignment " + formatSize(*Align));
+ }
+ 
++static void providerSectionsToMarkup(const std::vector<HoverSection> &Sections,
++                                     markup::Document &Output) {
++  for (const HoverSection &Section : Sections) {
++    if (!Section.Heading.empty())
++      Output.addParagraph().appendText(Section.Heading);
++    for (const std::string &Line : Section.Lines)
++      Output.addParagraph().appendText(Line);
++  }
++}
++
+ markup::Document HoverInfo::presentDoxygen() const {
+ 
+   markup::Document Output;
+@@ -1658,6 +1685,8 @@
+     Output.addParagraph().appendText("Type: ").appendCode(
+         llvm::to_string(*Type));
+ 
++  providerSectionsToMarkup(ProviderSections, Output);
++
+   if (Value) {
+     valueToMarkupParagraph(Output.addParagraph());
+   }
+@@ -1731,6 +1760,8 @@
+   if (Type && !ReturnType && !Parameters)
+     Output.addParagraph().appendText("Type: ").appendCode(
+         llvm::to_string(*Type));
++
++  providerSectionsToMarkup(ProviderSections, Output);
+ 
+   if (Value) {
+     valueToMarkupParagraph(Output.addParagraph());
+diff --git a/clang-tools-extra/clangd/Hover.h b/clang-tools-extra/clangd/Hover.h
+--- a/clang-tools-extra/clangd/Hover.h	2026-10-25 06:52:47
++++ b/clang-tools-extra/clangd/Hover.h	2026-10-25 06:53:38
+@@ -24,6 +24,22 @@
+ /// generating hover responses. It can be rendered as a hover panel, or
+ /// embedding clients can use the structured information to provide their own
+ /// UI.
++/// What a hover provider adds to the hover of a declaration: an optional heading
++/// and lines of plain text, shown after the declaration's type and parameters.
++struct HoverSection {
++  std::string Heading;
++  std::vector<std::string> Lines;
++};
++
++/// A hook for plugins that run in clangd's process: a function registered here
++/// is called for every declaration that is hovered and may fill in a section
++/// (it returns whether it did). clangd knows nothing of what a provider says;
++/// the plugin decides how it learns it, for example from an attribute it
++/// attached to the declaration. The prototype uses only clang's AST and
++/// standard types, so a plugin can declare it without clangd's headers.
++using HoverProvider = bool (*)(const NamedDecl &D, HoverSection &Section);
++void registerHoverProvider(HoverProvider Provider);
++
+ struct HoverInfo {
+   /// Contains pretty-printed type and desugared type
+   struct PrintedType {
+@@ -119,6 +135,8 @@
+   // from a #include'd file that are used in the main file, sorted in
+   // alphabetical order.
+   std::vector<std::string> UsedSymbolNames;
++  // Sections added by the registered hover providers, for declarations.
++  std::vector<HoverSection> ProviderSections;
+ 
+   /// Produce a user-readable information based on the specified markup kind.
+   std::string present(MarkupKind Kind) const;

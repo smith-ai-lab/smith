@@ -30,3 +30,4 @@ and clangd's own `--fallback-style` wins over smith's style; a stage0 runs Homeb
 **`.smith` is C to clang-format** (issue #25; `patches/clang-format-smith.patch`, about 100 lines): C's keywords
 only, `::` one token, and `module ...;` and `import ...;` lines at file scope kept whole (`import <sys/wait.h>;`).
 Inside a function `import` and `module` are names, as in C. clangd formats `.smith` the same way (same library).
+- **One hook for a plugin's hover lines** (`patches/clangd-plugin-hover.patch`, LLVM r10, #263): `clang::clangd::registerHoverProvider(bool (*)(const NamedDecl &, HoverSection &))` is called for every hovered declaration and may add a section (a heading and lines of text); clangd knows nothing of what it says. The prototype uses only clang's AST and standard types, so a shim declares it without clangd's headers.
