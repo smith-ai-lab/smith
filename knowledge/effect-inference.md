@@ -38,5 +38,13 @@ diagnostic it has no id for). Skill `smith-lang-effects`.
   differ between a clean and an incremental build; a module's header already carries the declared sets (its exports'
   attributes), which the importer treats as promises. A project function with no body in the file is *unresolved* at
   compile time (no effect, no error) where a system function the table does not know is `c`.
-- **Not yet** (issue #207, later steps): the recursion ban and stack size, hover, and `effects::of` and `effects::within`. The capability
+- **No recursion in a module** (207c): `checkRecursion` finds the strongly connected components of the call graph of the
+  functions the module's file defines (a work list, no recursion) and reports a call that sits on a cycle, once for each
+  cycle, with the way round (`a -> b (a.smith:4) -> a (b.smith:9)`); a call of `[[clang::musttail]] return f(...)` (an
+  AttributedStmt with MustTailAttr over a return of the call) is a jump and does not count, so a cycle of jumps is a
+  loop. Imports are acyclic, so a cycle is always inside one file; calls through a pointer and into code with no body are
+  not followed. Only a file with a `module` line (it begins a line), so plain `.smith` and C say nothing. A survey on
+  scratch copies of the three test beds (a name-based call-graph scan) found no cycle in any module; learner's C tool
+  `tools/fetch/h5strings.c` has two tree walkers that recurse, outside modules. Tests: `tests/effects/recursion*`.
+- **Not yet** (issue #207, later steps): the stack size, hover, and `effects::of` and `effects::within`. The capability
   check [effects-check](effects-check.md) stays until the owner's migration (#208).

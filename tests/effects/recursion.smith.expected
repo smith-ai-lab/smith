@@ -1,0 +1,4 @@
+status 1
+recursion.smith:7:37: error: smith-effect: recursion in a module: recursion::fib -> recursion::fib (recursion.smith:7) (write a loop; a call that ends the function can be `[[clang::musttail]] return f(...);`)
+recursion.smith:13:22: error: smith-effect: recursion in a module: recursion::is_odd -> recursion::is_even (recursion.smith:13) -> recursion::is_odd (recursion.smith:17) (write a loop; a call that ends the function can be `[[clang::musttail]] return f(...);`)
+recursion.smith:47:12: error: smith-effect: recursion in a module: recursion::mixed -> recursion::mixed_back (recursion.smith:47) -> recursion::mixed (recursion.smith:42) (write a loop; a call that ends the function can be `[[clang::musttail]] return f(...);`)
