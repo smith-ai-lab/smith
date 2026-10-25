@@ -75,6 +75,7 @@
     "./.agents/skills/smith-lang-c-headers/",
     "./.agents/skills/smith-lang-defer/",
     "./.agents/skills/smith-lang-effects/",
+    "./.agents/skills/smith-lang-try/",
     "./.agents/skills/smith-lang-enums/",
     "./.agents/skills/smith-lang-exports/",
     "./.agents/skills/smith-lang-constexpr/",

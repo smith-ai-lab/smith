@@ -952,6 +952,7 @@ static void smith_lang_process(SmithLang *lang, const SmithHost *host, const Smi
         if (token->synthetic || !smith_lang_ty_token(lang, host, token)) smith_lang_emit_code(lang, host, *token);
         return;
     }
+    if (smith_lang_try_token(lang, host, token)) return;
     if (smith_lang_enum_function(lang, host, token)) return; // before the type values: it reads `type f(...)` itself
     if (smith_lang_type_on(lang, host) && !token->foreign && !lang->recording && !lang->decl.generic &&
         smith_lang_ty_token(lang, host, token)) {

@@ -1,0 +1,15 @@
+module main;
+
+// `try` needs a function that returns a result or an option (issue #211).
+static result(i32, i32) step(i32 n) {
+    return {.ok = n};
+}
+
+static i32 plain(void) {
+    i32 a = try step(1);
+    return a;
+}
+
+i32 main() {
+    return plain();
+}

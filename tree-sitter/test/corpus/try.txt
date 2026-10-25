@@ -1,0 +1,69 @@
+================================================================================
+try and errdefer: a declaration, an assignment, a statement and a return (issue #211)
+================================================================================
+
+module m;
+
+static option(usize) f(int a) {
+    errdefer close(fd);
+    int x = try g(a);
+    x = try g(x);
+    try g(x);
+    return try g(a);
+}
+
+--------------------------------------------------------------------------------
+
+
+(translation_unit
+  (module_declaration
+    (module_path
+      (identifier)))
+  (function_definition
+    (storage_class_specifier)
+    (macro_type_specifier
+      (identifier)
+      (type_descriptor
+        (primitive_type)))
+    (function_declarator
+      (identifier)
+      (parameter_list
+        (parameter_declaration
+          (primitive_type)
+          (identifier))))
+    (compound_statement
+      (errdefer_statement
+        (expression_statement
+          (call_expression
+            (identifier)
+            (argument_list
+              (identifier)))))
+      (declaration
+        (primitive_type)
+        (init_declarator
+          (identifier)
+          (try_expression
+            (call_expression
+              (identifier)
+              (argument_list
+                (identifier))))))
+      (expression_statement
+        (assignment_expression
+          (identifier)
+          (try_expression
+            (call_expression
+              (identifier)
+              (argument_list
+                (identifier))))))
+      (expression_statement
+        (try_expression
+          (call_expression
+            (identifier)
+            (argument_list
+              (identifier)))))
+      (return_statement
+        (try_expression
+          (call_expression
+            (identifier)
+            (argument_list
+              (identifier))))))))

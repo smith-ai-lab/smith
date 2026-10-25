@@ -31,4 +31,4 @@ export void show(Quotient q) {
 
 - A `switch` names every variant (no `default:`); `q.ok` is read only where `q == .ok` holds.
 - The struct must be named at file scope before a function body uses it, as for any type function; a generic may write `result(T, E)` in its head and body.
-- For a value that may simply be absent use `smith-option`.
+- For a value that may simply be absent use `smith-option`. To return a failure to the caller in one word, `try` (`smith-lang-try`).

@@ -1,0 +1,60 @@
+module main;
+import <stdio.h>;
+
+// `try` returns the failure of a result or an option at once and gives the success value otherwise (issue #211). It
+// is a declaration's initializer, an assignment, a statement of its own, or after `return`; the `defer`s already set
+// run on the way out.
+static result(i32, i32) step(i32 n) {
+    if (n < 0) return {.error = n};
+    return {.ok = n};
+}
+
+static option(i32) pick(i32 n) {
+    if (n < 0) return .none;
+    return {.some = n};
+}
+
+static result(i32, i32) declared(i32 a, i32 b) {
+    defer c::puts("  declared leaves");
+    i32 x = try step(a);
+    defer c::puts("  second defer");
+    i32 y = try step(b);
+    return {.ok = x + y};
+}
+
+static result(i32, i32) assigned(i32 a) {
+    i32 x = 0;
+    x = try step(a);
+    try step(a - 1);
+    return {.ok = x};
+}
+
+static result(i32, i32) returned(i32 a) {
+    return try step(a);
+}
+
+static option(i32) options(i32 a) {
+    i32 v = try pick(a);
+    return {.some = v * 2};
+}
+
+static void show(result(i32, i32) r) {
+    switch (r) {
+    case .ok: c::printf("ok %d\n", r.ok); break;
+    case .error: c::printf("error %d\n", r.error); break;
+    }
+}
+
+i32 main() {
+    show(declared(1, 2));
+    show(declared(-1, 2));
+    show(declared(1, -2));
+    show(assigned(5));
+    show(assigned(0));
+    show(returned(4));
+    show(returned(-4));
+    option(i32) good = options(3);
+    option(i32) bad = options(-3);
+    c::printf("%d %d\n", good == .some ? good.some : -1, bad == .none);
+    return 0;
+}

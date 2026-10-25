@@ -35,4 +35,6 @@ i32 main() {
 - **A plain `.c` file** gets `_Defer` only when its own flags ask for `-fdefer-ts`; smith never changes a C default.
 - `smith fmt` keeps `defer stmt;` and writes a `defer { ... }` block like any block. An affine value used in a deferred statement counts as used (`smith-lang-affine`).
 
+A cleanup that should run only when the function fails is `errdefer` (`smith-lang-try`).
+
 Overview: `smith-lang`. Reference: [knowledge/smith-language.md](../../../knowledge/smith-language.md) ("defer").

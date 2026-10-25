@@ -1,0 +1,20 @@
+module main;
+
+// `try` inside a larger expression is an error: the order of evaluation would be unclear when it fails (issue #211).
+static result(i32, i32) step(i32 n) {
+    return {.ok = n};
+}
+
+static i32 twice(i32 n) {
+    return n * 2;
+}
+
+static result(i32, i32) call(void) {
+    i32 a = twice(try step(1));
+    i32 b = 1 + try step(2);
+    return {.ok = a + b};
+}
+
+i32 main() {
+    return call() == .ok ? 0 : 1;
+}

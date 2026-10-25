@@ -361,6 +361,10 @@ export void test_skill_smith_lang_defer(io::Io *io) {
     skill_case(io, "smith-lang-defer");
 }
 
+export void test_skill_smith_lang_try(io::Io *io) {
+    skill_case(io, "smith-lang-try");
+}
+
 export void test_skill_smith_lang_effects(io::Io *io) {
     skill_case(io, "smith-lang-effects");
 }

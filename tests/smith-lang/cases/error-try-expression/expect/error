@@ -1,0 +1,4 @@
+src/main.smith:13:19: `try` is a statement of its own, the whole value of a declaration, an assignment or a `return`: inside a larger expression the order of evaluation would be unclear when it fails; give it its own declaration (`T x = try f();`) and use `x`
+src/main.smith:13:23: passing 'struct smith_enum_result_i32__i32' to parameter of incompatible type 'i32' (aka 'int')
+src/main.smith:14:15: invalid operands to binary expression ('int' and 'struct smith_enum_result_i32__i32')
+src/main.smith:14:17: `try` is a statement of its own, the whole value of a declaration, an assignment or a `return`: inside a larger expression the order of evaluation would be unclear when it fails; give it its own declaration (`T x = try f();`) and use `x`
