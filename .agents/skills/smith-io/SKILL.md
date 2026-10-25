@@ -16,8 +16,9 @@ import smith::format;
 import smith::io;
 
 i32 main(io::Io *io) {
-    (void)io::console_printf(&io->console, "seed %llu\n", io->seed); // or, with no format string:
-    (void)format::print(&io->console, "seed ", io->seed, "\n");     // typed pieces (smith-format)
+    // a format string, as printf's, or typed pieces with none (smith-format)
+    (void)io::console_printf(&io->console, "%zu arguments\n", io->args.count);
+    (void)format::print(&io->console, "seed ", io->seed, "\n");
     return 0; // the arguments are io->args.count and io->args.values
 }
 ```
@@ -31,7 +32,7 @@ import smith::io;
 
 i32 main(i32 argc, char **argv) {
     io::Io io = io::make(argc, argv);
-    (void)io::console_printf(&io.console, "seed %llu\n", io.seed);
+    (void)io::console_printf(&io.console, "%zu arguments\n", io.args.count);
     io::close(&io);
     return 0;
 }
