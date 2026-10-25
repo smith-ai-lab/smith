@@ -594,6 +594,7 @@ typedef struct {
 typedef struct {
     char tag[smith_lang_tuple_name_max];
     uint32_t depth; // the brace depth of the definition: it ends with that block
+    bool header;    // the module's header holds the definition too (an exported declaration names it)
 } SmithLangEnumDefined;
 
 static SmithLangEnumShape smith_lang_eshapes[smith_lang_eshape_max];
@@ -852,11 +853,25 @@ static bool smith_lang_eshape_call(SmithLang *lang, const SmithHost *host, const
     return true;
 }
 
-static bool smith_lang_eshape_defined(const char *tag) {
+static SmithLangEnumDefined *smith_lang_eshape_entry(const char *tag) {
     for (size_t i = 0; i < smith_lang_edefined_count; i++) { // at most 48
-        if (strcmp(smith_lang_edefined[i].tag, tag) == 0) return true;
+        if (strcmp(smith_lang_edefined[i].tag, tag) == 0) return &smith_lang_edefined[i];
     }
-    return false;
+    return nullptr;
+}
+
+static SmithLangEnumDefined *smith_lang_eshape_note_defined(const char *tag);
+
+// Whether a definition of the struct is in scope: this file's own, or one an import's header made (the compiler has
+// read it, so a second definition would be an error: two modules that write `option(usize)` share one).
+static bool smith_lang_eshape_defined(const SmithHost *host, const char *tag) {
+    if (smith_lang_eshape_entry(tag) != nullptr) return true;
+    if (host->lookup == nullptr ||
+        host->lookup(host->context, tag, (uint32_t)strlen(tag), SmithLookup_Tag).kind != SmithLookup_Tag) {
+        return false;
+    }
+    smith_lang_eshape_note_defined(tag);
+    return true;
 }
 
 // The struct's name for a call: `smith_enum_<function>_<arguments' spelling>`, cut and hashed when long.
@@ -918,11 +933,93 @@ static size_t smith_lang_eshape_define(SmithLang *lang, const SmithHost *host, c
     return count;
 }
 
-static void smith_lang_eshape_note_defined(const char *tag) {
-    if (smith_lang_edefined_count >= smith_lang_eshape_defined_max) return;
+static SmithLangEnumDefined *smith_lang_eshape_note_defined(const char *tag) {
+    if (smith_lang_edefined_count >= smith_lang_eshape_defined_max) return nullptr;
     SmithLangEnumDefined *entry = &smith_lang_edefined[smith_lang_edefined_count++];
     snprintf(entry->tag, sizeof entry->tag, "%s", tag);
     entry->depth = smith_lang_eshape_depth;
+    entry->header = false;
+    return entry;
+}
+
+// The types of a variant as a C header spells them: the sized names as the standard ones, a module's name with its
+// prefix, the rest as written.
+static size_t smith_lang_eshape_words(SmithLang *lang, const SmithToken *tokens, size_t count, char *out,
+                                      size_t capacity) {
+    size_t used = 0;
+    for (size_t at = 0; at < count && used + smith_lang_name_max + 2 < capacity; at++) {
+        const SmithToken *token = &tokens[at];
+        char word[smith_lang_name_max];
+        size_t taken = 1;
+        const SmithLangSized *sized =
+            token->kind == SmithTokenKind_Identifier ? smith_lang_find_sized(token->text, token->length) : nullptr;
+        if (sized != nullptr) {
+            snprintf(word, sizeof word, "%s", sized->header);
+        } else if (token->kind == SmithTokenKind_Identifier &&
+                   smith_lang_word(token->text, token->length) == SmithLangWord_Other) {
+            taken = smith_lang_tuple_resolve(lang, tokens, at, count, word, sizeof word);
+        } else {
+            snprintf(word, sizeof word, "%.*s", (int)(token->length < sizeof word ? token->length : sizeof word - 1),
+                     token->text);
+        }
+        used += (size_t)snprintf(out + used, capacity - used, " %s", word);
+        at += taken - 1;
+    }
+    return used;
+}
+
+// The definition for the module's header, as C reads it, guarded by a macro of the struct's name so that two headers
+// that define the same struct (`option(usize)` in two modules) are included together: one type.
+static bool smith_lang_eshape_header_text(SmithLang *lang, const SmithLangEnumShape *shape,
+                                          const SmithLangEnumCall *call, const char *tag, char *out, size_t capacity) {
+    size_t used = (size_t)snprintf(
+        out, capacity, "#ifndef SMITH_ENUM_%s\n#define SMITH_ENUM_%s\nstruct %s { enum %s_tag {", tag, tag, tag, tag);
+    SmithToken variant[smith_lang_eshape_tokens_max + smith_lang_eshape_params_max * smith_lang_eshape_tokens_max];
+    char members[2048] = "";
+    size_t counted = 0;
+    size_t length = 0;
+    for (size_t at = 0; at <= shape->token_count; at++) { // each variant: its tokens up to the `;`
+        bool end = at == shape->token_count || smith_lang_punct(&shape->tokens[at], ";");
+        if (!end) {
+            const SmithToken *token = &shape->tokens[at];
+            size_t param = shape->param_count;
+            for (size_t p = 0; p < shape->param_count; p++) {
+                if (smith_lang_equals(token->text, token->length, shape->params[p])) param = p;
+            }
+            if (param == shape->param_count) {
+                if (length + 1 < sizeof variant / sizeof variant[0]) variant[length++] = *token;
+                continue;
+            }
+            for (size_t i = call->begin[param]; i < call->end[param]; i++)
+                if (length + 1 < sizeof variant / sizeof variant[0]) variant[length++] = call->tokens[i];
+            continue;
+        }
+        if (length == 0) continue;
+        const SmithToken *name = &variant[length - 1];
+        used += (size_t)snprintf(out + used, capacity - used, "%s %s_tag_%.*s", counted > 0 ? "," : "", tag,
+                                 (int)name->length, name->text);
+        if (length > 1) {
+            size_t have = strlen(members);
+            have += smith_lang_eshape_words(lang, variant, length - 1, members + have, sizeof members - have);
+            snprintf(members + have, sizeof members - have, " %.*s;", (int)name->length, name->text);
+        }
+        counted += 1;
+        length = 0;
+    }
+    used += (size_t)snprintf(out + used, capacity - used,
+                             " } tag; union {%s }; } __attribute__((annotate(\"smith::enum\")));\n#endif\n", members);
+    return used < capacity;
+}
+
+// The definition goes in the header too, in front of the exported declaration that names the struct.
+static void smith_lang_eshape_to_header(SmithLang *lang, const SmithToken *like, const SmithLangEnumShape *shape,
+                                        const SmithLangEnumCall *call, const char *tag) {
+    static char text[4096];
+    if (!smith_lang_eshape_header_text(lang, shape, call, tag, text, sizeof text)) return;
+    SmithToken whole = smith_lang_tuple_made(SmithTokenKind_Identifier, smith_lang_tuple_keep(text, strlen(text)),
+                                             strlen(text), like, false);
+    whole.line_start = true;
+    smith_lang_emit_header(lang, whole);
 }
 
 // A use of a shape at `at` (a name and a `(`), not a member: its shape, else null.
@@ -963,23 +1060,22 @@ static bool smith_lang_eshape_define_ahead(SmithLang *lang, const SmithHost *hos
             !smith_lang_eshape_tag(lang, host, shape, &call, tag, sizeof tag, false)) {
             return false; // said where the call is replaced
         }
-        if (smith_lang_ident(token, "export")) {
-            smith_lang_error(lang, host, each->location,
-                             "an exported declaration cannot name `%s(...)` yet: its struct is not in the module's "
-                             "header (known gap); name a typedef of it in a non-exported declaration",
-                             shape->name);
-            return false;
-        }
         at += call.close - at;
-        if (smith_lang_eshape_defined(tag) || smith_lang_eshape_depth > 0) continue; // a body names it, or errs there
-        size_t added = smith_lang_eshape_define(lang, host, token, shape, &call, tag, made + used,
-                                                smith_lang_queue_max - used - 2);
-        if (added == 0) {
-            smith_lang_error(lang, host, each->location, "this enum type is too long to define");
-            return false;
+        SmithLangEnumDefined *entry = smith_lang_eshape_defined(host, tag) ? smith_lang_eshape_entry(tag) : nullptr;
+        if (entry == nullptr && smith_lang_eshape_depth == 0) { // a body names it, or errs there
+            size_t added = smith_lang_eshape_define(lang, host, token, shape, &call, tag, made + used,
+                                                    smith_lang_queue_max - used - 2);
+            if (added == 0) {
+                smith_lang_error(lang, host, each->location, "this enum type is too long to define");
+                return false;
+            }
+            used += added;
+            entry = smith_lang_eshape_note_defined(tag);
         }
-        used += added;
-        smith_lang_eshape_note_defined(tag);
+        if (entry != nullptr && !entry->header && smith_lang_ident(token, "export")) {
+            smith_lang_eshape_to_header(lang, token, shape, &call, tag); // the exported declaration needs it there
+            entry->header = true;
+        }
     }
     if (used == 0 || used + 1 >= smith_lang_queue_max) return false;
     made[used] = *token;
@@ -1007,22 +1103,15 @@ static bool smith_lang_enum_function(SmithLang *lang, const SmithHost *host, con
         }
     }
     if (token->foreign || lang->in_attribute || !lang->is_module || token->synthetic) return false;
-    if (lang->recording) {
-        smith_lang_enum_generic_dot(lang, host, token);
-        const SmithLangEnumShape *inside =
-            lang->prev_member ? nullptr : smith_lang_eshape_use(lang, host, token, 0, nullptr);
-        if (inside != nullptr) {
-            smith_lang_error(lang, host, token->location, "`%s(...)` cannot be used inside a generic yet (known gap)",
-                             inside->name);
-        }
-        return false;
-    }
-    if (start && smith_lang_eshape_depth == 0 && smith_lang_ident(token, "type") &&
+    bool recording =
+        lang->recording; // a generic's body: its uses are written as they are in any body, nothing is defined
+    if (recording) smith_lang_enum_generic_dot(lang, host, token);
+    if (!recording && start && smith_lang_eshape_depth == 0 && smith_lang_ident(token, "type") &&
         smith_lang_eshape_declare(lang, host, token)) {
         return true;
     }
     if (smith_lang_eshape_count == 0) return false;
-    if (start && smith_lang_eshape_define_ahead(lang, host, token)) return true;
+    if (!recording && start && smith_lang_eshape_define_ahead(lang, host, token)) return true;
     const SmithLangEnumShape *shape =
         lang->prev_member ? nullptr : smith_lang_eshape_use(lang, host, token, 0, nullptr);
     if (shape == nullptr) return false;
@@ -1036,7 +1125,7 @@ static bool smith_lang_enum_function(SmithLang *lang, const SmithHost *host, con
         made[0] = smith_lang_tuple_made(SmithTokenKind_Identifier, "int", 3, token, token->space_before); // so that the
         return smith_lang_tuple_replace(lang, close, made, 1); // declaration still reads, and says no more
     }
-    if (!smith_lang_eshape_defined(tag)) {
+    if (!smith_lang_eshape_defined(host, tag)) {
         char written[smith_lang_tuple_name_max];
         size_t used = (size_t)snprintf(written, sizeof written, "%s(", shape->name);
         for (size_t i = 0; i < call.count && used + 48 < sizeof written; i++)
