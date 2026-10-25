@@ -1,0 +1,3 @@
+status 1
+within.smith:27:5: error: smith-effect: static assertion failed: run: f may only allocate: `viaNoisy` has the effects console beyond the allowed ones: viaNoisy -> noisy (within.smith:23) -> printf (within.smith:18)
+within.smith:36:12: note: in instance within::run(viaNoisy), requested from here

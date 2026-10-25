@@ -371,5 +371,33 @@ else
     echo "FAIL  fix-it: $(cat "$work/fix/log")"
 fi
 
+# effects::within in a generic (skill smith-lang-effects): a function of another module is judged by the link, which names the
+# chain through that module; one that fits builds.
+mkdir -p "$work/within/fx3"
+cat >"$work/within/fx3/lib.smith" <<'EOF2'
+module fx3::lib;
+import <stdio.h>;
+export i32 plain(i32 x) { return x + 1; }
+export i32 noisy(i32 x) { c::printf("%d\n", x); return x; }
+EOF2
+cat >"$work/within/main.smith" <<'EOF2'
+module main;
+import fx3::lib as lib;
+import smith::effects;
+export i32 run(constexpr auto f, i32 x) {
+    static_assert(effects::within(f, effects::alloc), "run: f may only allocate");
+    return f(x);
+}
+i32 main() { return run(lib::plain, 1) + run(lib::noisy, 1) - 4; }
+EOF2
+total=$((total + 1))
+actual=$(cd "$work/within" && smith build 2>&1 | grep -E 'smith-effect' | sed 's/^main.smith:5:[0-9]*: //')
+if [ "error: smith-effect: static assertion failed: run: f may only allocate: \`fx3::lib::noisy\` has the effects console beyond the allowed ones: fx3::lib::noisy -> printf (lib.smith:4)" = "$actual" ]; then
+    echo "ok    within, modules: the link judges a function of another module and names the chain"
+else
+    failures=$((failures + 1))
+    echo "FAIL  within, modules: '$actual'"
+fi
+
 echo "$((total - failures)) of $total passed"
 [ "$failures" -eq 0 ]

@@ -737,7 +737,7 @@ class Analysis {
                 work.pop_back();
                 const auto *call = dyn_cast<CallExpr>(expr);
                 const FunctionDecl *callee = call == nullptr ? nullptr : call->getDirectCallee();
-                if (callee != nullptr && shownName(callee) == "smith::effects::within") {
+                if (callee != nullptr && callee->getName() == "smith_effects_within") {
                     judgeWithin(decl, call);
                     continue;
                 }
