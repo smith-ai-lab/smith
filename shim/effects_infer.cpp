@@ -659,11 +659,12 @@ class Consumer : public ASTConsumer {
 struct EffectsPlugin final : PluginASTAction {
     std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &instance, StringRef) override {
         if (!pluginEnabled) return std::make_unique<ASTConsumer>(); // never null: the multiplexer calls it
-        // A summary only for a compile that writes an object (not the editor's syntax check, not -E or -S).
+        // A summary only for a compile that writes an object (not the editor's syntax check, not -E or -S). A -flto
+        // compile writes bitcode as the object (EmitBC; `-emit-llvm` names a `.bc`), and the build still names its
+        // summary as an output.
         const FrontendOptions &options = instance.getFrontendOpts();
-        std::string output = options.ProgramAction == frontend::EmitObj && StringRef(options.OutputFile).ends_with(".o")
-                                 ? options.OutputFile
-                                 : "";
+        bool writes_object = options.ProgramAction == frontend::EmitObj || options.ProgramAction == frontend::EmitBC;
+        std::string output = writes_object && StringRef(options.OutputFile).ends_with(".o") ? options.OutputFile : "";
         return std::make_unique<Consumer>(output);
     }
     bool ParseArgs(const CompilerInstance &, const std::vector<std::string> &) override {

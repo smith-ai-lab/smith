@@ -28,7 +28,7 @@ diagnostic it has no id for). Skill `smith-lang-effects`.
 - **The error** is at the first call that adds an effect beyond the ceiling and names the chain, `bad -> log_it (log.c:12) ->
   printf`; it is reported wherever a function carries an attribute (module, `.smith` without a module line, C) and in
   the editor.
-- **Across files** (207b). Every compile that writes an object leaves a summary of it (`.smith/effects/<the object's path>.fx` in a project, `<object>.fx` beside it otherwise; the plugin, written whole and
+- **Across files** (207b). Every compile that writes an object (bitcode under `-flto`, ThinLTO's release profile included) leaves a summary of it (`.smith/effects/<the object's path>.fx` in a project, `<object>.fx` beside it otherwise; the plugin, written whole and
   renamed): a line for each function (its linkage name, its declared set or -1, what its own body reaches, where) and for
   each thing it calls (a leaf with its effects, or a call by linkage name). The link of objects that have one, in
   `smith cc` (`smith_check_effects`, smith.c, so `smith build` too, `smith cc --smith-effects x.fx...` by hand; the place is `smith_effects_summary_path` in smith.c and the same rule in runtime/build_runtime.c, which declares it an output of each compile smith's own clang makes and an input of the link, so a summary that changed reruns the check),
