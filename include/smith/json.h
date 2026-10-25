@@ -52,7 +52,7 @@ typedef enum {
     SmithJsonReason_TooDeep,
     SmithJsonReason_StringTooLong,
     SmithJsonReason_TooMany,
-    SmithJsonReason_Full,        // the writer's buffer is full
+    SmithJsonReason_Full, // the writer's buffer is full
 } SmithJsonReason;
 
 // Where and why. offset is a byte of the input (of the output, for the writer).
@@ -172,8 +172,8 @@ typedef struct {
 
 // Each call adds one value (or a key, or an end). A call that cannot be right (a value where a key is due, an end
 // that closes nothing, infinity or nan, finishing an incomplete document) is a bug and stops the program with a report.
-// The first failure of the data (a string that is not UTF-8, a full buffer) is kept in writer.error and every later call
-// does nothing.
+// The first failure of the data (a string that is not UTF-8, a full buffer) is kept in writer.error and every later
+// call does nothing.
 void smith_json_write_object_begin(SmithJsonWriter *writer);
 void smith_json_write_object_end(SmithJsonWriter *writer);
 void smith_json_write_array_begin(SmithJsonWriter *writer);

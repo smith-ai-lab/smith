@@ -51,7 +51,7 @@ constexpr size_t smith_inflate_window = 32768;
 // Decodes the stream at the start of input into output (capacity bytes, all of the output), and sets `used` to the
 // bytes of input the stream took and `size` to the bytes written. A stream that decodes to more than capacity bytes is
 // Overflow, with the first capacity bytes written. A null input with a size, a null output with a capacity or a null
-// `used` or `size` is a bug and stops the program with the report of a failed contract.
+// `used` or `size` is a bug and stops the program with the report of a failed check.
 [[nodiscard]] SmithInflateStatus smith_inflate_decode(SmithInflateFormat format, const uint8_t *input,
                                                       size_t input_size, uint8_t *output, size_t capacity, size_t *used,
                                                       size_t *size);

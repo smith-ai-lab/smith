@@ -5,6 +5,7 @@
 module smith::inflate;
 
 import smith::contract;
+import <smith/trace.h>; // smith_failure_detail: the stop of a wrong call
 
 // <smith/inflate.h>: decompresses a DEFLATE stream, raw, in a zlib wrapper (an Adler-32 trailer) or in a gzip member
 // (a header with its optional fields, a CRC-32 and a length). The input is in memory, the whole of it. Nothing is
@@ -321,9 +322,16 @@ u64 load64(const u8 *p) {
     return (u64)load32(p) | ((u64)load32(p + 4) << 32);
 }
 
+// A wrong call stops the program with the report of a failed check, in every build. It is the edge of the proofs: a
+// caller is not asked to prove what a null pointer means here.
+[[noreturn]] void refuse(const char *what) {
+    contract::trusted();
+    c::smith_failure_format(c::SmithFailure_Check, "inflate: a call that must hold %s", what);
+}
+
 // The CRC-32 of data (gzip's and xz's, polynomial 0xEDB88320), continuing from `crc` (0 to start), by slicing-by-8.
 [[smith::c_name("smith_inflate_crc32")]] export [[nodiscard]] u32 crc32(u32 crc, const u8 *data, usize size) {
-    contract::requires(data != nullptr || size == 0);
+    if (!(data != nullptr || size == 0)) refuse("data != nullptr || size == 0");
     u32 value = ~crc;
     usize left = size;
     while (left >= 8) {
@@ -343,7 +351,7 @@ u64 load64(const u8 *p) {
 
 // The Adler-32 of data (zlib's), continuing from `adler` (1 to start).
 [[smith::c_name("smith_inflate_adler32")]] export [[nodiscard]] u32 adler32(u32 adler, const u8 *data, usize size) {
-    contract::requires(data != nullptr || size == 0);
+    if (!(data != nullptr || size == 0)) refuse("data != nullptr || size == 0");
     constexpr u32 modulus = 65521;
     constexpr usize chunk = 5552; // the most bytes whose sums fit in 32 bits before the reduction
     u32 low = adler & 0xFFFFU;
@@ -836,12 +844,12 @@ Status run(State *s, const u8 *input, usize size, usize *used, u64 *produced) {
 // Decodes the stream at the start of input into output (capacity bytes, all of the output), and sets `used` to the
 // bytes of input the stream took and `size` to the bytes written. A stream that decodes to more than capacity bytes is
 // Overflow, with the first capacity bytes written. A null input with a size, a null output with a capacity or a null
-// `used` or `size` is a bug and stops the program with the report of a failed contract.
+// `used` or `size` is a bug and stops the program with the report of a failed check.
 [[smith::c_name("smith_inflate_decode")]] export [[nodiscard]] Status
 decode(Format format, const u8 *input, usize input_size, u8 *output, usize capacity, usize *used, usize *size) {
-    contract::requires(input != nullptr || input_size == 0);
-    contract::requires(output != nullptr || capacity == 0);
-    contract::requires(used != nullptr && size != nullptr);
+    if (!(input != nullptr || input_size == 0)) refuse("input != nullptr || input_size == 0");
+    if (!(output != nullptr || capacity == 0)) refuse("output != nullptr || capacity == 0");
+    if (!(used != nullptr && size != nullptr)) refuse("used != nullptr && size != nullptr");
     State state = {.out = output, .capacity = capacity, .format = format};
     u64 produced = 0;
     Status status = run(&state, input, input_size, used, &produced);
@@ -854,10 +862,10 @@ decode(Format format, const u8 *input, usize input_size, u8 *output, usize capac
 // it. `size` is set to the bytes produced. A null buffer, sink, `used` or `size` is a bug and stops the program.
 [[smith::c_name("smith_inflate_stream")]] export [[nodiscard]] Status
 stream(Format format, const u8 *input, usize input_size, u8 *buffer, Sink sink, void *context, usize *used, u64 *size) {
-    contract::requires(input != nullptr || input_size == 0);
-    contract::requires(buffer != nullptr);
-    contract::requires(sink != nullptr);
-    contract::requires(used != nullptr && size != nullptr);
+    if (!(input != nullptr || input_size == 0)) refuse("input != nullptr || input_size == 0");
+    if (!(buffer != nullptr)) refuse("buffer != nullptr");
+    if (!(sink != nullptr)) refuse("sink != nullptr");
+    if (!(used != nullptr && size != nullptr)) refuse("used != nullptr && size != nullptr");
     State state = {.out = buffer, .capacity = window, .sink = sink, .context = context, .format = format};
     return run(&state, input, input_size, used, size);
 }
