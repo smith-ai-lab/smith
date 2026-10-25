@@ -11,9 +11,17 @@ import <sanitizer/asan_interface.h>; // the poisoning calls; ASAN_POISON_MEMORY_
 import <smith/handlers.h>;           // SmithAllocator: arena::allocator
 import <smith/trace.h>;              // smith_failure: the stop below is the report a failed contract writes
 import <stdint.h>;
+import <sys/mman.h>; // mmap and munmap: the operating system as the default backing of a growing arena
 
-// <smith/arena.h>: a fixed block of memory with a cursor, for programs that do not call malloc. Nothing is freed on its
-// own; a reset frees everything, and a scope frees what was pushed since it began.
+// <smith/arena.h>: a block of memory with a cursor, for programs that do not call malloc. Nothing is freed on its own;
+// a reset frees everything, and a scope frees what was pushed since it began.
+//
+// Two kinds (owner, 2026-10-25). A fixed arena (arena::fixed, or arena::make) is over memory the caller gives and never
+// grows: a push that does not fit is a checked failure naming the budget. A growing arena (arena::growing) takes
+// another chunk from its backing allocator (the operating system by default) when the current one is full, so a push
+// never fails; the chunks are kept across scopes and resets (a second pass over the same work reuses them), `grown` is
+// the bytes beyond the first chunk, and the operating system refusing is a checked failure naming the size.
+// arena::try_push_raw is the nullable form of a push, for code that refuses.
 //
 // The project compiles lib/smith/arena.smith itself (build.c: smith_library(b, "arena")), so the library is built with
 // the project's own flags, sanitizers included.
@@ -37,13 +45,21 @@ import <stdint.h>;
 // whatever the addresses, so a run is deterministic.
 [[smith::c_name("smith_arena_align_max")]] export constexpr usize align_max = 64;
 
-// A block of memory and a cursor.
+// A chunk of a growing arena: a header (its body is private, below) followed by the memory a push lands in.
+[[smith::c_name("SmithArenaChunk")]] export typedef struct SmithArenaChunk Chunk;
+
+// A block of memory and a cursor. A growing arena's block is its current chunk.
 [[smith::c_name("SmithArena")]] export typedef struct {
     u8 *memory;
     usize capacity;
     usize used;
     usize scopes;  // scopes begun and not yet ended
     usize touched; // AddressSanitizer builds: the poison high-water mark, see lib/smith/arena.smith; otherwise unused
+    usize grown;   // bytes of the chunks beyond the first, kept until release
+    Chunk *chunk;  // the current chunk of a growing arena (null: a fixed arena)
+    Chunk *spare;  // the chunk after the current one, kept for the next time the arena fills
+    c::SmithAllocator *backing; // where a growing arena gets its chunks (null: the operating system)
+    bool growing;
 } Arena;
 
 // A scope: ending it returns the cursor to where it began. Scopes end in the reverse order they began, and an arena is
@@ -51,7 +67,8 @@ import <stdint.h>;
 [[smith::c_name("SmithArenaScope")]] export typedef struct {
     Arena *arena;
     usize used;
-    usize depth; // the arena's scopes before this one began
+    usize depth;  // the arena's scopes before this one began
+    Chunk *chunk; // the arena's current chunk when it began: ending it leaves the chunks entered since
 } Scope;
 
 // Sanitizer builds start each push on an ASan granule and leave a poisoned gap after it, and poison the memory past the
@@ -111,29 +128,212 @@ bool measure(const Arena *arena, usize size, usize align, usize *padding) {
     return *padding <= room && size <= room - *padding;
 }
 
-// A push that cannot be served stops here in every build, as every check does.
+// A push that cannot be served stops here in every build, as every check does. Only a fixed arena gets here:
+// its budget is spent.
 [[noreturn]] void stop(const Arena *arena, usize size, usize align) {
     c::smith_failure_format(c::SmithFailure_Capacity, "push of %zu bytes (align %zu) with %zu of %zu bytes used", size,
                             align, arena->used, arena->capacity);
 }
 
-// An arena over memory, which must be aligned to align_max and hold capacity bytes.
-[[smith::c_name("smith_arena_make")]] export [[nodiscard]] Arena make(void *memory, usize capacity) {
+// A growing arena whose backing refused a chunk: the operating system out of memory, or the allocator it was given
+// returning null. The report names the size and the backing.
+[[noreturn]] void refuse(const Arena *arena, usize size) {
+    c::smith_failure_format(c::SmithFailure_Capacity,
+                            "growing arena: its %s refused a chunk for a push of %zu bytes (%zu bytes grown so far)",
+                            arena->backing != nullptr ? "backing allocator" : "operating system", size, arena->grown);
+}
+
+// An arena over memory, which must be aligned to align_max and hold capacity bytes. It never grows: a push that does
+// not fit is a checked failure naming the budget (arena::try_push_raw is the form that returns null).
+[[smith::c_name("smith_arena_fixed")]] export [[nodiscard]] Arena fixed(void *memory, usize capacity) {
     contract::requires(((usize)memory & (align_max - 1)) == 0);
     contract::requires(capacity > 0);
     return (Arena){.memory = memory, .capacity = capacity}; // nothing is poisoned until the first push
 }
 
-// Zeroed memory for size bytes at align (a power of two, at most align_max). Running out of capacity stops the program
-// with a message naming the request and the capacity, in every build: it is a single comparison, and without it a
-// push would write past the memory.
-[[smith::c_name("smith_arena_push")]] export [[nodiscard]] void *push_raw(Arena *arena, usize size, usize align) {
+// The same as arena::fixed, the name the arena had before it could grow.
+[[smith::c_name("smith_arena_make")]] export [[nodiscard]] Arena make(void *memory, usize capacity) {
+    return fixed(memory, capacity);
+}
+
+// A chunk's header, a multiple of align_max so the memory after it is aligned as an arena's must be. A chunk is one
+// piece from the backing (a mapping or an allocation); the chunks of an arena are a list: `previous` leads back to the
+// first, `next` to the ones kept for reuse. A chunk holds what the arena's block was before it, so that ending a scope
+// (or a reset) puts it back.
+struct Chunk {
+    Chunk *previous;
+    Chunk *next;
+    usize size;    // bytes of the piece, this header included
+    usize touched; // the poison mark of its memory while it is not the arena's block
+    u8 *memory_before;
+    usize capacity_before;
+    usize used_before;
+    usize touched_before;
+};
+
+constexpr usize chunk_header = sizeof(struct Chunk);
+constexpr usize chunk_round = 16 << 10; // a chunk is a whole number of pages
+static_assert(chunk_header == align_max);
+
+// NOLINTBEGIN(smith-preprocessor, bugprone-signed-bitwise)
+constexpr i32 protect_both = c::PROT_READ | c::PROT_WRITE;
+constexpr i32 map_anonymous = c::MAP_PRIVATE | c::MAP_ANON;
+// NOLINTEND(smith-preprocessor, bugprone-signed-bitwise)
+
+// A new piece of size bytes (a multiple of chunk_round), or null.
+Chunk *chunk_new(const Arena *arena, usize size) {
+    contract::trusted(); // the operating system, or the allocator the arena was given, is the edge
+    void *memory = nullptr;
+    if (arena->backing != nullptr) {
+        memory = arena->backing->alloc(arena->backing, size, align_max);
+    } else {
+        memory =
+            c::mmap(nullptr, size, protect_both, map_anonymous, -1, 0); // NOLINT(smith-effects): the default backing
+        if (memory == (void *)-1) memory = nullptr;                     // NOLINT(performance-no-int-to-ptr): MAP_FAILED
+    }
+    if (memory == nullptr) return nullptr;
+    Chunk *chunk = memory;
+    *chunk = (Chunk){.size = size};
+    return chunk;
+}
+
+void chunk_free(const Arena *arena, Chunk *chunk) {
+    contract::trusted();
+    if (sanitized) // the arena poisoned part of the memory, and a later mapping at the same address must not inherit it
+        c::__asan_unpoison_memory_region((u8 *)chunk + chunk_header, chunk->touched);
+    if (arena->backing != nullptr) {
+        arena->backing->free(arena->backing, chunk);
+    } else {
+        (void)c::munmap(chunk, chunk->size); // NOLINT(smith-effects): the default backing
+    }
+}
+
+// The bytes of a piece that hold a push.
+usize chunk_capacity(const Chunk *chunk) {
+    return chunk->size - chunk_header;
+}
+
+// Makes chunk the arena's block, with its predecessor's state saved in it.
+void chunk_enter(Arena *arena, Chunk *chunk) {
+    contract::trusted();
+    if (arena->chunk != nullptr) arena->chunk->next = chunk;
+    chunk->previous = arena->chunk;
+    chunk->memory_before = arena->memory;
+    chunk->capacity_before = arena->capacity;
+    chunk->used_before = arena->used;
+    chunk->touched_before = arena->touched;
+    arena->chunk = chunk;
+    arena->spare = chunk->next;
+    arena->memory = (u8 *)chunk + chunk_header;
+    arena->capacity = chunk_capacity(chunk);
+    arena->used = 0;
+    arena->touched = chunk->touched;
+}
+
+// Makes the chunk before the current one the arena's block again, as it was; the current one is kept as the spare.
+void chunk_leave(Arena *arena) {
+    contract::trusted();
+    Chunk *chunk = arena->chunk;
+    arena->used = 0;
+    if (sanitized) poison_unused(arena); // everything the chunk held is dead
+    chunk->touched = arena->touched;
+    arena->chunk = chunk->previous;
+    arena->spare = chunk;
+    arena->memory = chunk->memory_before;
+    arena->capacity = chunk->capacity_before;
+    arena->used = chunk->used_before;
+    arena->touched = chunk->touched_before;
+}
+
+// The size of a new piece for a push of size bytes at align when the current block is full: twice the current block, or
+// what the push needs, rounded to chunk_round; zero when that overflows.
+usize chunk_size_for(const Arena *arena, usize size, usize align) {
+    usize need = 0;
+    if (__builtin_add_overflow(size, align + poison_gap, &need) || __builtin_add_overflow(need, chunk_header, &need))
+        return 0;
+    usize wanted = arena->capacity > math::max(usize) / 4 ? 0 : arena->capacity * 2 + chunk_header;
+    if (wanted > need) need = wanted;
+    if (need > math::max(usize) - chunk_round) return 0;
+    return (need + chunk_round - 1) & ~(chunk_round - 1);
+}
+
+// Makes room in a growing arena for a push of size bytes at align: enters the spare chunk when it holds the push, else
+// takes a new one from the backing (kept chunks too small for it go back). False when the backing refuses.
+bool grow(Arena *arena, usize size, usize align) {
+    contract::trusted();
+    usize minimum = 0;
+    if (__builtin_add_overflow(size, effective_align(align) + poison_gap, &minimum)) return false;
+    Chunk *spare = arena->spare;
+    if (spare != nullptr && chunk_capacity(spare) >= minimum) {
+        chunk_enter(arena, spare);
+        return true;
+    }
+    usize needed = chunk_size_for(arena, size, align);
+    if (needed == 0) return false;
+    arena->spare = nullptr;
+    arena->chunk->next = nullptr;
+    while (spare != nullptr) {
+        Chunk *next = spare->next;
+        arena->grown -= spare->size;
+        chunk_free(arena, spare);
+        spare = next;
+    }
+    Chunk *chunk = chunk_new(arena, needed);
+    if (chunk == nullptr) return false;
+    arena->grown += chunk->size;
+    chunk_enter(arena, chunk);
+    return true;
+}
+
+// A growing arena over chunks from backing (null: the operating system), the first holding at least `first` bytes. A
+// push never fails: when a chunk is full the arena takes another, and keeps them for the next pass. The first chunk is
+// taken here; the backing refusing it is a checked failure. release gives the chunks back.
+[[smith::c_name("smith_arena_growing")]] export [[nodiscard]] Arena growing(usize first, c::SmithAllocator *backing) {
+    contract::trusted(); // the first chunk comes from the backing
+    contract::requires(first > 0);
+    Arena arena = {.growing = true, .backing = backing};
+    bool overflow = first > math::max(usize) - chunk_header - chunk_round;
+    usize size = overflow ? 0 : (first + chunk_header + chunk_round - 1) & ~(chunk_round - 1);
+    Chunk *chunk = size == 0 ? nullptr : chunk_new(&arena, size);
+    if (chunk == nullptr) refuse(&arena, first);
+    arena.chunk = chunk;
+    arena.memory = (u8 *)chunk + chunk_header;
+    arena.capacity = chunk_capacity(chunk);
+    return arena;
+}
+
+// Gives back to the backing every chunk of a growing arena, the first included; the arena is empty after, and a push to
+// it is a failure. Requires no scope open. A fixed arena has nothing to give back.
+[[smith::c_name("smith_arena_release")]] export void release(Arena *arena) {
+    contract::trusted();
+    contract::requires(arena->scopes == 0);
+    if (!arena->growing || arena->chunk == nullptr) return;
+    while (arena->chunk->previous != nullptr)
+        chunk_leave(arena);
+    Chunk *chunk = arena->chunk;
+    chunk->touched = arena->touched;
+    c::SmithAllocator *backing = arena->backing;
+    Arena gone = *arena;
+    *arena = (Arena){.backing = backing};
+    while (chunk != nullptr) {
+        Chunk *next = chunk->next;
+        chunk_free(&gone, chunk);
+        chunk = next;
+    }
+}
+
+// Zeroed memory for size bytes at align (a power of two, at most align_max), or null when a fixed arena's memory, or
+// the backing of a growing one, cannot hold it. For code that refuses; push_raw stops instead.
+[[smith::c_name("smith_arena_try_push")]] export [[nodiscard]] void *try_push_raw(Arena *arena, usize size,
+                                                                                  usize align) {
     contract::trusted(); // it writes the memory it hands out, whose extent a proof does not know
     contract::requires(arena->used <= arena->capacity);
     contract::requires(align_valid(align));
     contract::ensures(arena->used <= arena->capacity);
     usize padding = 0;
-    if (!measure(arena, size, align, &padding)) stop(arena, size, align);
+    if (!measure(arena, size, align, &padding)) {
+        if (!arena->growing || !grow(arena, size, align) || !measure(arena, size, align, &padding)) return nullptr;
+    }
 
     u8 *result = arena->memory + arena->used + padding;
     arena->used += padding + size;
@@ -146,6 +346,21 @@ bool measure(const Arena *arena, usize size, usize align, usize *padding) {
     __builtin_memset(result, 0, size); // memset is a macro in a fortified SDK; the builtin is a function
 
     return result;
+}
+
+// Zeroed memory for size bytes at align (a power of two, at most align_max). A growing arena takes another chunk when
+// the current one is full, so this never returns null; the backing refusing is a checked failure naming the size. A
+// fixed arena running out of memory stops the program with a message naming the request and the budget, in every
+// build: it is a single comparison, and without it a build with NDEBUG would write past the memory.
+[[smith::c_name("smith_arena_push")]] export [[nodiscard]] void *push_raw(Arena *arena, usize size, usize align) {
+    contract::trusted(); // a failure ends in the report, which is the edge
+    contract::requires(arena->used <= arena->capacity);
+    contract::requires(align_valid(align));
+    contract::ensures(arena->used <= arena->capacity);
+    void *result = try_push_raw(arena, size, align);
+    if (result != nullptr) return result;
+    if (arena->growing) refuse(arena, size);
+    stop(arena, size, align);
 }
 
 // An overflowing count * size is the same stop.
@@ -165,12 +380,23 @@ bool measure(const Arena *arena, usize size, usize align, usize *padding) {
     return push_raw(arena, size * count, align);
 }
 
-// Whether a push of size at align would fit.
+// count items of size bytes, or null when they do not fit (or their size overflows).
+[[smith::c_name("smith_arena_try_push_array")]] export [[nodiscard]] void *
+try_push_array_raw(Arena *arena, usize size, usize count, usize align) {
+    contract::trusted();
+    contract::requires(arena->used <= arena->capacity);
+    contract::requires(align_valid(align));
+    contract::ensures(arena->used <= arena->capacity);
+    if (size > 0 && count > math::max(usize) / size) return nullptr;
+    return try_push_raw(arena, size * count, align);
+}
+
+// Whether a push of size at align would fit; a growing arena always can (try_push_raw says whether the backing agrees).
 [[smith::c_name("smith_arena_fits")]] export [[nodiscard]] bool fits(const Arena *arena, usize size, usize align) {
     contract::requires(arena->used <= arena->capacity);
     contract::requires(align_valid(align));
     usize padding = 0;
-    return measure(arena, size, align, &padding);
+    return arena->growing || measure(arena, size, align, &padding);
 }
 
 // A zeroed T, the size and the alignment of the type. For .smith; C passes sizeof and alignof to smith_arena_push.
@@ -236,10 +462,14 @@ export type slice_of(type element, usize count) {
     return make(memory, capacity);
 }
 
-// Frees everything. Requires that no scope is open.
+// Frees everything. Requires that no scope is open. A growing arena keeps the chunks it grew, so the next pass over the
+// same work takes none.
 [[smith::c_name("smith_arena_reset")]] export void reset(Arena *arena) {
+    contract::trusted(); // the chunks are leaves of a list a proof does not know
     contract::requires(arena->used <= arena->capacity);
     contract::requires(arena->scopes == 0); // a scope still open would restore a cursor past the reset
+    while (arena->chunk != nullptr && arena->chunk->previous != nullptr)
+        chunk_leave(arena);
     arena->used = 0;
     if (sanitized) poison_unused(arena);
 }
@@ -248,19 +478,21 @@ export type slice_of(type element, usize count) {
 [[smith::c_name("smith_arena_scope_begin")]] export [[nodiscard]] Scope scope_begin(Arena *arena) {
     contract::requires(arena->used <= arena->capacity);
     contract::requires(arena->scopes < math::max(usize));
-    Scope scope = {.arena = arena, .used = arena->used, .depth = arena->scopes};
+    Scope scope = {.arena = arena, .used = arena->used, .depth = arena->scopes, .chunk = arena->chunk};
     arena->scopes += 1;
     return scope;
 }
 
-// Ends a scope: frees what was pushed since it began.
+// Ends a scope: frees what was pushed since it began. The chunks a growing arena took inside it stay, for reuse.
 [[smith::c_name("smith_arena_scope_end")]] export void scope_end(Scope scope) {
     contract::trusted(); // the arena is a pointer inside a struct passed by value, which a proof does not know to be
                          // valid
     contract::requires(scope.arena->scopes > 0);                // more ends than begins
     contract::requires(scope.depth == scope.arena->scopes - 1); // ends come last in, first out
-    contract::requires(scope.used <= scope.arena->used);
+    contract::requires(scope.chunk != scope.arena->chunk || scope.used <= scope.arena->used);
     scope.arena->scopes -= 1;
+    while (scope.arena->chunk != scope.chunk) // chunks entered inside the scope are kept for the next time
+        chunk_leave(scope.arena);
     scope.arena->used = scope.used;
     if (sanitized) poison_unused(scope.arena);
 }
@@ -290,9 +522,10 @@ void *allocator_alloc(c::SmithAllocator *self, usize size, usize align) {
     if (align < 16) align = 16;
     if (!align_valid(align)) return nullptr;
     usize header = align > sizeof(Block) ? align : sizeof(Block);
-    usize padding = 0;
-    if (size > math::max(usize) - header || !measure(arena, header + size, align, &padding)) return nullptr;
-    u8 *start = push_raw(arena, header + size, align);
+    if (size > math::max(usize) - header) return nullptr;
+    u8 *start =
+        try_push_raw(arena, header + size, align); // a growing arena takes a chunk; null when the backing refuses
+    if (start == nullptr) return nullptr;
     Block *block = (Block *)(start + header - sizeof(Block));
     block->size = size;
     block->after = arena->used;
@@ -300,9 +533,19 @@ void *allocator_alloc(c::SmithAllocator *self, usize size, usize align) {
     return start + header;
 }
 
-bool allocator_owns(c::SmithAllocator *self, const void *block) {
-    const Arena *arena = ((ArenaAllocator *)self)->arena;
+bool in_block(const Arena *arena, const void *block) {
     return (const u8 *)block >= arena->memory && (const u8 *)block < arena->memory + arena->capacity;
+}
+
+bool allocator_owns(c::SmithAllocator *self, const void *block) {
+    contract::trusted();
+    const Arena *arena = ((ArenaAllocator *)self)->arena;
+    if (in_block(arena, block)) return true;
+    for (const Chunk *chunk = arena->chunk; chunk != nullptr; chunk = chunk->previous) { // an earlier chunk's block
+        const u8 *memory = (const u8 *)chunk + chunk_header;
+        if ((const u8 *)block >= memory && (const u8 *)block < memory + chunk_capacity(chunk)) return true;
+    }
+    return false;
 }
 
 usize allocator_size([[maybe_unused]] c::SmithAllocator *self, const void *block) {
@@ -315,7 +558,7 @@ void allocator_free(c::SmithAllocator *self, void *block) {
     Arena *arena = ((ArenaAllocator *)self)->arena;
     if (block == nullptr || !allocator_owns(self, block)) return;
     Block *header = (Block *)((u8 *)block - sizeof(Block));
-    if (arena->used != header->after || arena->scopes != 0) return;
+    if (!in_block(arena, block) || arena->used != header->after || arena->scopes != 0) return;
     arena->used = (usize)((u8 *)block - header->header - arena->memory);
     if (sanitized) poison_unused(arena);
 }
