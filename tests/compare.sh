@@ -101,6 +101,7 @@ normalize() { # via
     [ "$1" != direct ] && [ -n "$smith_runtime" ] && runtime=$smith_runtime
     for kind in out err; do
         sed -e "s|$prefix|LLVM|g" -e "s|$runtime|LLVM|g" -e 's|^Homebrew clang version|clang version|' \
+            -e 's| -stack-usage-file [^ ]*||' \
             -e 's|LLVM/bin/clang-[0-9]*|LLVM/bin/clang|g' "log/$kind.$1" >"log/$kind.$1.n"
         mv "log/$kind.$1.n" "log/$kind.$1"
     done
@@ -128,6 +129,8 @@ run_one() { # via, arguments
     echo $? >log/rc.$1
     normalize "$1"
     for f in ./*.o ./*.d ./out_* ./prog* ./*.dSYM/Contents/Resources/DWARF/*; do
+        # smith's own `<program>.stack` (the worst-case stack, issue #207) is no file a compiler writes.
+        case $f in ./prog*.stack) continue ;; esac
         if [ -f "$f" ]; then
             echo "$f"
             # A linked program with debug info holds the time of each object it was linked from (the debug map), so only
