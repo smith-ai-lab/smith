@@ -1,0 +1,6 @@
+#!/bin/sh
+# A stub gh: prints $STUB_ANSWER when asked for the artifact named in $STUB_NAME, nothing otherwise; STUB_FAIL makes it fail.
+[ -n "${STUB_FAIL:-}" ] && exit 1
+case $2 in
+*"artifacts?name=$STUB_NAME") printf '%s' "${STUB_ANSWER:-}" ;;
+esac
