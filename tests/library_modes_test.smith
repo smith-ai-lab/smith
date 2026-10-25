@@ -1,0 +1,260 @@
+// The libraries json, text and inflate in the builds the units runner does not make, from tests/json.sh, tests/text.sh
+// and tests/inflate.sh (issue #292). Their tests (lib/json_test.smith, lib/smith/text_test.smith,
+// lib/smith/inflate_test.smith) run on smith's own runner under AddressSanitizer and UBSan; here each is built as a
+// scratch project's tests with smith_tests (the fixture tests/build_fixtures/library_units, whose -DMODE is fast, -O2,
+// or ndebug, -O2 -DNDEBUG) and must pass in the runner's workers and with a process per test (--isolate). Also the
+// heavy runs on more keys under the sanitizers, JSONTestSuite (fetched into $SMITH_JSON_SUITE_CACHE, else
+// ~/.cache/smith-tests, pinned by hash; skipped offline), the C and .smith callers of one text header, and each
+// library compiled alone under the warnings of a new project and naming no libc function.
+module library_modes_test;
+
+import smith::format;
+import smith::io;
+import smith::test;
+import scratch;
+
+// What a library is: where its test file is in the repository and in the project, and its libraries.
+typedef struct {
+    const char *source; // the test file in the repository
+    const char *path;   // where the project holds it (the module's path must end in it)
+    const char *libs;   // comma separated
+    bool fixtures;      // tests/fixtures is copied to the project
+} Library;
+
+static const Library json = {"lib/json_test.smith", "json_test.smith", "arena,random,text,json", false};
+static const Library text = {"lib/smith/text_test.smith", "smith/text_test.smith", "arena,random,text", false};
+static const Library inflate = {"lib/smith/inflate_test.smith", "smith/inflate_test.smith", "arena,random,inflate",
+                                true};
+
+static scratch::Project units_project(io::Io *io, const Library *library) {
+    scratch::Project p = scratch::project(io, "p", "library_units");
+    scratch::Run copied = scratch::sh(
+        &p, format::push(&io->arena, "mkdir -p smith tests && cp \"$SMITH_REPO/", library->source, "\" ", library->path,
+                         library->fixtures ? " && cp -R \"$SMITH_REPO/tests/fixtures\" tests/fixtures" : "")
+                .data);
+    scratch::expect_status("the test file is copied into the project", 0, &copied);
+    return p;
+}
+
+static scratch::Run build_mode(const scratch::Project *p, const Library *library, const char *mode) {
+    return scratch::build(
+        p, format::push(&p->io->arena, "-DMODE=", mode, " -DLIBS=", library->libs, " -DTEST=", library->path).data);
+}
+
+// The runner's summary line, without its time: "N passed, 0 failed".
+static const char *summary(const scratch::Project *p, const char *command) {
+    return scratch::capture(p, format::push(&p->io->arena, command,
+                                            " 2>&1 | grep ' passed, ' | "
+                                            "sed 's/ in [0-9.]* s$//'")
+                                   .data);
+}
+
+// Both builds of a library pass every test, in the workers and with a process per test.
+static void passes_in_mode(io::Io *io, const Library *library, const char *mode) {
+    scratch::Project p = units_project(io, library);
+    scratch::Run built = build_mode(&p, library, mode);
+    scratch::expect_status(format::push(&io->arena, mode, ": the tests build").data, 0, &built);
+    const char *count = scratch::capture(
+        &p, format::push(&io->arena, "grep -c '^export void test_' \"$SMITH_REPO/", library->source, "\"").data);
+    const char *all = format::push(&io->arena, count, " passed, 0 failed").data;
+    scratch::expect_text(format::push(&io->arena, mode, ": all ", count, " tests pass").data, all,
+                         summary(&p, "env SMITH_JSON_SUITE= ./build/tests"));
+    scratch::expect_text(format::push(&io->arena, mode, ": all pass with a process per test").data, all,
+                         summary(&p, "env SMITH_JSON_SUITE= ./build/tests --isolate"));
+}
+
+export void test_library_modes_json_fast(io::Io *io) {
+    passes_in_mode(io, &json, "fast");
+}
+
+export void test_library_modes_json_ndebug(io::Io *io) {
+    passes_in_mode(io, &json, "ndebug");
+}
+
+export void test_library_modes_text_fast(io::Io *io) {
+    passes_in_mode(io, &text, "fast");
+}
+
+export void test_library_modes_text_ndebug(io::Io *io) {
+    passes_in_mode(io, &text, "ndebug");
+}
+
+export void test_library_modes_inflate_fast(io::Io *io) {
+    passes_in_mode(io, &inflate, "fast");
+}
+
+export void test_library_modes_inflate_ndebug(io::Io *io) {
+    passes_in_mode(io, &inflate, "ndebug");
+}
+
+// The full size of the sweep, in the fast build.
+export void test_library_modes_text_full_sweep_of_the_float_patterns(io::Io *io) {
+    scratch::Project p = units_project(io, &text);
+    scratch::Run built = build_mode(&p, &text, "fast");
+    scratch::expect_status("the tests build", 0, &built);
+    scratch::expect_text("full: the sweep of the float patterns, sixteen times denser", "1 passed, 0 failed",
+                         summary(&p, "./build/tests --full --test f32_sweep"));
+}
+
+// JSONTestSuite, pinned by the hash of its archive: the folder of its test_parsing, or "" when it cannot be fetched.
+static const char *json_suite(const scratch::Project *p) {
+    scratch::Run fetched = scratch::sh(
+        p,
+        "cache=${SMITH_JSON_SUITE_CACHE:-$HOME/.cache/smith-tests}; mkdir -p \"$cache\"; XDG_CACHE_HOME=$cache smith "
+        "fetch "
+        "https://github.com/nst/JSONTestSuite/archive/1ef36fa01286573e846ac449e8683f8833c5b26a.tar.gz >fetch.txt 2>&1");
+    if (!scratch::contains(scratch::read(p, "fetch.txt"),
+                           "sha256:32ab2fb37cc26679dbd9164dbb7053bcef10134643d53cb0cef45de7680dcdcc"))
+        return "";
+    const char *folder = scratch::capture(p, "sed -n 's/^smith: .* is in //p' fetch.txt");
+    return fetched.status == 0 && scratch::exists(p, "fetch.txt")
+               ? format::push(&p->io->arena, folder, "/test_parsing").data
+               : "";
+}
+
+// What was done with the suite: the counts, and each implementation-defined case. Skipped with no network.
+export void test_library_modes_json_conformance_with_jsontestsuite(io::Io *io) {
+    scratch::Project p = units_project(io, &json);
+    const char *suite = json_suite(&p);
+    if (suite[0] == '\0') return; // no network
+    scratch::Run built = build_mode(&p, &json, "fast");
+    scratch::expect_status("the tests build", 0, &built);
+    scratch::Run run =
+        scratch::sh(&p, format::push(&io->arena, "env SMITH_JSON_SUITE=", suite,
+                                     " SMITH_JSON_LISTING=\"$PWD/listing\" ./build/tests --test json_conformance")
+                            .data);
+    scratch::expect_status("the conformance test runs", 0, &run);
+    scratch::expect_text("suite: every y_ accepted, every n_ refused, every i_ as listed",
+                         "y_: 95 of 95 accepted; n_: 188 of 188 refused; i_: 35 of 35 as listed",
+                         scratch::capture(&p, "tail -1 listing"));
+}
+
+// Fuzzing under AddressSanitizer and UBSan: many more keys for the damaged documents, the random bytes and the written
+// documents.
+static void fuzz(io::Io *io, const char *name) {
+    scratch::Project p = units_project(io, &json);
+    scratch::Run built = build_mode(&p, &json, "asan");
+    scratch::expect_status("the tests build", 0, &built);
+    scratch::expect_text(format::push(&io->arena, "fuzz: ", name, " on 5000 keys under ASan and UBSan").data,
+                         "1 passed, 0 failed",
+                         summary(&p, format::push(&io->arena, "./build/tests --test ", name, " --seeds 5000").data));
+}
+
+export void test_library_modes_json_fuzz_damaged_documents(io::Io *io) {
+    fuzz(io, "json_damaged_documents_never_misbehave");
+}
+
+export void test_library_modes_json_fuzz_random_bytes(io::Io *io) {
+    fuzz(io, "json_random_bytes_never_misbehave");
+}
+
+export void test_library_modes_json_fuzz_any_value_written(io::Io *io) {
+    fuzz(io, "json_any_value_written");
+}
+
+// More trials for the damage, under the sanitizers: the heavy runs by hand are in the units runner's notes.
+export void test_library_modes_inflate_damaged_input_never_misbehaves(io::Io *io) {
+    scratch::Project p = units_project(io, &inflate);
+    scratch::Run built = build_mode(&p, &inflate, "asan");
+    scratch::expect_status("the tests build", 0, &built);
+    const char *seeds[5] = {"1", "2", "3", "4", "5"};
+    for (usize i = 0; i < 5; i++) {
+        scratch::expect_text(format::push(&io->arena, "damaged input never misbehaves (--seed ", seeds[i], ")").data,
+                             "1 passed, 0 failed",
+                             summary(&p, format::push(&io->arena, "./build/tests --seed ", seeds[i],
+                                                      " --test test_inflate_survives_corrupt_input")
+                                             .data));
+    }
+}
+
+// One header for C and for .smith: a project with smith_library(b, "text"), a C file that includes <smith/text.h> and
+// a .smith file that does `import smith::text;`. smith writes the header and the module's header step writes the same
+// bytes, so neither is "not a header smith wrote" and a second build has nothing to do.
+export void test_library_modes_text_c_and_smith_share_one_header(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "text_both");
+    scratch::Run built = scratch::build(&p, "");
+    scratch::expect_status("both: C and .smith share the header, and the project builds", 0, &built);
+    scratch::Run run = scratch::sh(&p, "./build/prog");
+    scratch::expect_text("both: the .smith and the C caller agree", "42 7", run.out);
+    scratch::Run again = scratch::build(&p, "");
+    scratch::expect_status("the second build succeeds", 0, &again);
+    scratch::expect_text("both: a second build has nothing to do", "smith: no work to do.",
+                         scratch::capture(&p, "smith build 2>&1 | grep -v '^$' | tail -n 1"));
+}
+
+// A library alone: it compiles in C23 and C2y, and with the checks off, using no library function of libc (but the
+// compiler's own calls for a big struct).
+static void compiles_as(io::Io *io, const char *source, const char *standard) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Run built =
+        scratch::sh(&p, format::push(&io->arena, "smith cc -std=", standard,
+                                     " -Wall -Wextra -Wpedantic -Wconversion -Werror -O2 -I \"$SMITH_REPO/include\" -c "
+                                     "\"$SMITH_REPO/",
+                                     source, "\" -o library.o")
+                            .data);
+    scratch::expect_status(format::push(&io->arena, "library: compiles as ", standard).data, 0, &built);
+}
+
+static void names_no_libc_function(io::Io *io, const char *source, const char *allowed) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Run built =
+        scratch::sh(&p, format::push(&io->arena,
+                                     "smith cc -std=gnu23 -O2 -DNDEBUG -ffreestanding -fno-stack-protector -I "
+                                     "\"$SMITH_REPO/include\" -c \"$SMITH_REPO/",
+                                     source, "\" -o library.o")
+                            .data);
+    scratch::expect_status("the library compiles freestanding", 0, &built);
+    scratch::expect_text("library: names no libc function", "",
+                         scratch::capture(&p, format::push(&io->arena, "nm -u library.o | tr -d ' ' | grep -v -x ",
+                                                           allowed, " | sort | tr '\\n' ' '")
+                                                  .data));
+}
+
+export void test_library_modes_json_compiles_as_c23(io::Io *io) {
+    compiles_as(io, "lib/json.c", "gnu23");
+}
+
+export void test_library_modes_json_compiles_as_c2y(io::Io *io) {
+    compiles_as(io, "lib/json.c", "gnu2y");
+}
+
+// smith's own libraries are not libc, and the compiler's calls for a big struct are not the program's.
+export void test_library_modes_json_names_no_libc_function(io::Io *io) {
+    names_no_libc_function(io, "lib/json.c", "-e _memcpy -e _memset -e _bzero -e _memmove -e '_smith_.*'");
+}
+
+export void test_library_modes_text_compiles_as_c23(io::Io *io) {
+    compiles_as(io, "lib/smith/text.smith", "gnu23");
+}
+
+export void test_library_modes_text_compiles_as_c2y(io::Io *io) {
+    compiles_as(io, "lib/smith/text.smith", "gnu2y");
+}
+
+export void test_library_modes_text_names_no_libc_function(io::Io *io) {
+    names_no_libc_function(io, "lib/smith/text.smith", "-e _memcpy -e _memset -e _bzero -e _memmove");
+}
+
+// lib/http.c compiled under the warnings of a new project (its behavior is lib/http_test.smith), from tests/http.sh.
+static void http_compiles(io::Io *io, const char *standard, const char *extra, const char *name) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Run built = scratch::sh(
+        &p, format::push(&io->arena, "smith cc -std=", standard,
+                         " -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wmissing-prototypes "
+                         "-Wstrict-prototypes -Wvla -Werror ",
+                         extra, " -I \"$SMITH_REPO/include\" -c \"$SMITH_REPO/lib/http.c\" -o http.o")
+                .data);
+    scratch::expect_status(name, 0, &built);
+}
+
+export void test_library_modes_http_compiles_as_c23(io::Io *io) {
+    http_compiles(io, "gnu23", "", "library: compiles as -std=gnu23 with the new project's warnings");
+}
+
+export void test_library_modes_http_compiles_as_c2y(io::Io *io) {
+    http_compiles(io, "gnu2y", "", "library: compiles as -std=gnu2y with the new project's warnings");
+}
+
+export void test_library_modes_http_compiles_with_ndebug(io::Io *io) {
+    http_compiles(io, "gnu23", "-O2 -DNDEBUG", "library: compiles with NDEBUG and the same warnings");
+}

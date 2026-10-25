@@ -1,4 +1,4 @@
-// Tests of smith::text, in smith's own test library; tests/text.sh builds them in a scratch project as
+// Tests of smith::text, in smith's own test library; tests/library_modes_test.smith builds them in a scratch project as
 // lib/smith/text_test.smith. strtof in the C locale is the reference for the f32 parser (this program never sets a
 // locale), and the halfway cases are also checked against what they must round to, so the reference is not the only
 // witness.
@@ -529,7 +529,7 @@ export void test_text_f32_round_trips_nine_digits(random::Key key) {
     test_text_check_f32(decimal);
 }
 
-// A sweep of the whole range of f32 patterns, formatted and parsed back. tests/text.sh's `exhaustive` mode does all
+// A sweep of the whole range of f32 patterns, formatted and parsed back. `smith build text-exhaustive` does all
 // 2^32.
 export void test_text_f32_sweep_of_every_pattern() {
     u64 stride = test::full() ? 1021 : 16381; // prime, so the sweep touches every exponent and mantissa

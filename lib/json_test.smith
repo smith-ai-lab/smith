@@ -1,8 +1,9 @@
-// Tests of <smith/json.h>, in smith's own test library; tests/json.sh builds them in a scratch project as
-// lib/json_test.smith. The checks are: known tokens, trees, errors with their offsets and reasons, and the writer's
+// Tests of <smith/json.h>, in smith's own test library; tests/library_modes_test.smith builds them in a scratch project
+// as lib/json_test.smith. The checks are: known tokens, trees, errors with their offsets and reasons, and the writer's
 // exact text; property tests on keys (any document written then read gives the same events, and every f64 and
 // integer comes back exactly); fuzzing (damaged documents never crash, hang or read outside the input, and the pull
-// parser and the tree agree on which are valid); and JSONTestSuite's cases when tests/json.sh gives their folder.
+// parser and the tree agree on which are valid); and JSONTestSuite's cases when tests/library_modes_test.smith gives
+// their folder.
 module json_test;
 
 import smith::arena;
@@ -1356,11 +1357,11 @@ static const TestJsonImplementationDefined *test_json_find_listed(const char *na
 constexpr usize test_json_listing_capacity = 1 << 17;
 
 // Runs every file of the suite's test_parsing folder. The folder and where to list what was done with each case come
-// from the environment of the io (tests/json.sh fetches the package and sets them); the files are read through the
-// io's files. Prints nothing when it passes; a failure names the file.
+// from the environment of the io (tests/library_modes_test.smith fetches the package and sets them); the files are read
+// through the io's files. Prints nothing when it passes; a failure names the file.
 export void test_json_conformance_with_jsontestsuite(io::Io *io) {
     const char *folder = io::args_env(&io->args, "SMITH_JSON_SUITE");
-    if (folder == nullptr || folder[0] == '\0') return; // not fetched: tests/json.sh says so
+    if (folder == nullptr || folder[0] == '\0') return; // not fetched: tests/library_modes_test.smith skips it
     const char *listing_path = io::args_env(&io->args, "SMITH_JSON_LISTING");
     bool listing = listing_path != nullptr && listing_path[0] != '\0';
     char *report = arena::push_slice(&io->arena, char, test_json_listing_capacity).data;
