@@ -58,6 +58,8 @@ constexpr unsigned smith_lang_gen_flag_expand = 4U;
 constexpr unsigned smith_lang_gen_flag_name = 8U;
 constexpr unsigned smith_lang_gen_flag_value = 16U; // an `auto` parameter's name in the result type's `typeof(...)`
 constexpr unsigned smith_lang_gen_flag_slice = 32U; // `smith_array_T_n`: the tag of a slice of the type parameter T
+constexpr unsigned smith_lang_gen_flag_made =
+    64U; // a captured token the lowering made: written again, still no source's
 
 // Adds a token, with its text; the index it got, or UINT32_MAX when the pool is full.
 static uint32_t smith_lang_pool_add(SmithLangPool *pool, SmithLangGenToken token, const char *text, size_t length) {
@@ -81,7 +83,8 @@ static SmithLangGenToken smith_lang_gt_from(const SmithToken *token) {
     kept.flags =
         (uint8_t)((token->line_start ? smith_lang_gen_flag_line_start : 0) |
                   (token->space_before ? smith_lang_gen_flag_space : 0) |
-                  (token->expand ? smith_lang_gen_flag_expand : 0) | (token->name ? smith_lang_gen_flag_name : 0));
+                  (token->expand ? smith_lang_gen_flag_expand : 0) | (token->name ? smith_lang_gen_flag_name : 0) |
+                  (token->synthetic ? smith_lang_gen_flag_made : 0));
     kept.location = token->location;
     return kept;
 }

@@ -88,6 +88,8 @@ void build(SmithBuild *b) {
     smith_object(b, &users_object);
     SmithObject same_object = {.compiler = "smith-cc", .source = "same.smith", .output = "build/same.o", .flags = flags};
     smith_object(b, &same_object);
+    SmithObject sliced_object = {.compiler = "smith-cc", .source = "sliced.smith", .output = "build/sliced.o", .flags = flags};
+    smith_object(b, &sliced_object);
     SmithProgram program = {.linker = "smith-cc", .output = "build/demo", .objects = (const SmithObject *[]){&main_object, &box_object, &util_object, &pick_object, &twice_object, &users_object, nullptr}};
     smith_program(b, &program);
     smith_default(b, program.step.outputs);
@@ -295,13 +297,23 @@ module same;
 export i32 f(i32 x) { return x; }
 export i32 g(i32 m[:]) { return f((i32)countof(m)) + m[0]; }
 EOF2
+# A slice element in the argument of a generic call (issue #264): the rewrite of `xs[0]` is written again with the call,
+# and its tokens must stay the lowering's own, or the editor's token collector never finishes.
+cat >sliced.smith <<'EOF2'
+module sliced;
+import pick;
+
+export i32 h(i32 xs[:]) {
+    return pick::larger(xs[0] + 1, 2);
+}
+EOF2
 # The project builds with smith build, and runs.
 out=$(smith build 2>&1)
 status=$?
 expect "the project builds" 0 "$status"
 [ "$status" -eq 0 ] || printf '%s\n' "$out" | tail -n 20
 expect "the program runs" "area 6.000000" "$(build/demo 2>&1)"
-expect "compile_commands.json tells clangd the language of a .smith file" 6 \
+expect "compile_commands.json tells clangd the language of a .smith file" 7 \
     "$(grep -c '"-x"' compile_commands.json)"
 
 client() { "$work/lsp_client" "$(command -v smith)" "$root" "$@" 2>&1; }
@@ -425,6 +437,10 @@ expect_line "dims: the hover shows the tags of qualified slices as written" "$lo
 log=$(client open geometry/grid.smith -- hover geometry/grid.smith 3 12)
 expect_line "dims: the hover of a function shows an f32[:][:] parameter as written" "$log" \
     'hover geometry/grid.smith:3:12: function grid |  | → f32 (aka float) |  | Parameters: |  | - f32[:][:] g | - usize i (aka unsigned long) |  | f32 grid(f32[:][:] g, usize i)'
+
+# A slice element in a generic call's argument: the editor answers (it used to loop in the token collector, issue #264).
+log=$(client open sliced.smith pick.smith -- hover sliced.smith 5 24)
+expect_line "slice in a generic call: no diagnostics, and the editor answers" "$log" "diagnostics sliced.smith"
 
 # A call to a generic: the compiler sees an instance there, so the layer answers for the lowering: the hover shows the
 # generic as its module wrote it and the instance asked for, and go-to-definition goes to the generic's name.
