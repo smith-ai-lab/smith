@@ -90,7 +90,8 @@ static void check_wrong_on_purpose(const scratch::Project *p) {
 // learns them.
 constexpr char lang_files[] =
     "lang=${SMITH_LANG_CASES:-$SMITH_REPO/tests/smith-lang/cases}; "
-    "bad='/error-import-eof/src/main\\.smith$|/error-tuple-field/src/main\\.smith$|"
+    "bad='/error-import-eof/src/main\\.smith$|/error-tuple-field/src/main\\.smith$|/error-try-expression/src/"
+    "main\\.smith$|"
     "/error-keyword-module/src/shapes\\.smith$|/generic-call-unclosed/src/main\\.smith$|"
     "/generic-call-unclosed-statement/src/main\\.smith$|/generic-list-semicolon-error/src/bad\\.smith$|"
     "/generic-list-syntax-error/src/bad\\.smith$'; "
