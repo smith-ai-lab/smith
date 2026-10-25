@@ -472,3 +472,38 @@ export void test_promises_smith_check_lists_two_declared_promises_and_a_trusted_
 export void test_within_smith(io::Io *io) {
     effects_case(io, "within.smith");
 }
+
+// fails (issue #325): a checked index, an assert, abort and a trap are failure points; a ceiling without `fails`
+// rejects the function that has one, and `within(f, effects::none)` rejects it with the chain.
+export void test_fails_c(io::Io *io) {
+    effects_case(io, "effects_fails.c");
+}
+
+export void test_fails_smith(io::Io *io) {
+    effects_case(io, "effects_fails.smith");
+}
+
+// A callee in another file: the link judges it from the summary and the chain goes through the file.
+export void test_fails_a_callee_in_another_file_reaches_a_pure_caller_at_the_link(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Run made = scratch::sh(&p, "mkdir -p fx4");
+    scratch::expect_status("the folder of the module", 0, &made);
+    scratch::write(&p, "fx4/lib.smith",
+                   "module fx4::lib;\nimport smith::contract;\nexport i32 plain(i32 x) { return x + 1; }\n"
+                   "export i32 get(i32 xs[:], usize i) { return xs[i]; }\n"
+                   "export i32 checked(i32 x) { contract::assert(x > 0); return x; }\n");
+    scratch::write(
+        &p, "main.smith",
+        "module main;\nimport fx4::lib as lib;\nexport [[smith::pure]] i32 good(i32 x) { return lib::plain(x); }\n"
+        "export [[smith::pure]] i32 bad(i32 xs[:], usize i) { return lib::get(xs, i); }\n"
+        "export [[smith::pure]] i32 asserts(i32 x) { return lib::checked(x); }\n"
+        "i32 main() { return good(1) - 2; }\n");
+    scratch::Run run =
+        scratch::sh(&p, "smith build 2>&1 | grep -E 'smith-effect' | sed 's/^main.smith:[45]:[0-9]*: //'");
+    scratch::expect_contains(
+        "fails: the chain through the other file", run.out,
+        "`main::bad` is [[smith::pure]], but it has the effects fails: main::bad -> fx4::lib::get");
+    scratch::expect_contains(
+        "fails: an assert of another file", run.out,
+        "`main::asserts` is [[smith::pure]], but it has the effects fails: main::asserts -> fx4::lib::checked");
+}

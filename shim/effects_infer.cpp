@@ -12,8 +12,9 @@
 // (and of the headers it includes) to the calls the file cannot see into: a function of libc or libSystem has the set
 // the table gives it (shim/effects_table.h), a declaration with an attribute and no body has that set (a promise smith
 // trusts), and any other function without a body is `c`, every effect. A call through a function pointer is `c`, as are
-// inline assembly and an Objective-C message; writing a global or a function-local static is `globals`. Crashing is no
-// effect. An annotation is a ceiling: an inferred effect beyond it is a compile error naming the chain
+// inline assembly and an Objective-C message; writing a global or a function-local static is `globals`. A call that
+// stops the task (a checked index, a contract, `abort`, a trap) is a failure point: `fails` (issue #325). An annotation
+// is a ceiling: an inferred effect beyond it is a compile error naming the chain
 // (`bad -> log_it (log.c:12) -> printf`); the declared set, not the inferred one, is what a caller sees.
 //
 // Linked into smith and run on every compile with no flag, like [[smith::affine]] (shim/affine.cpp): a ParsedAttrInfo
@@ -162,7 +163,7 @@ struct EffectsAttr final : ParsedAttrInfo {
             if (!known) {
                 unsigned id = S.getDiagnostics().getCustomDiagID(
                     DiagnosticsEngine::Error, "smith-effect: an effect is one of alloc, files, net, console, clock, "
-                                              "process, env, entropy, globals, c");
+                                              "process, env, entropy, globals, c, fails");
                 S.Diag(Attr.getLoc(), id);
                 return AttributeNotApplied;
             }
@@ -1120,6 +1121,7 @@ const ParsedAttrInfoRegistry::Add<EffectAttr<6>> env_attribute("smith-env-attr",
 const ParsedAttrInfoRegistry::Add<EffectAttr<7>> entropy_attribute("smith-entropy-attr", "[[smith::entropy]]");
 const ParsedAttrInfoRegistry::Add<EffectAttr<8>> globals_attribute("smith-globals-attr", "[[smith::globals]]");
 const ParsedAttrInfoRegistry::Add<EffectAttr<9>> c_attribute("smith-c-attr", "[[smith::c]]");
+const ParsedAttrInfoRegistry::Add<EffectAttr<10>> fails_attribute("smith-fails-attr", "[[smith::fails]]");
 const ParsedAttrInfoRegistry::Add<PureAttr> pure_attribute("smith-pure-attr", "[[smith::pure]]");
 const FrontendPluginRegistry::Add<EffectsPlugin> plugin("smith-effect-inference", "what a function does to the world");
 

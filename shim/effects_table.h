@@ -3,9 +3,10 @@
 // header's function is looked up here by name, and one the table does not know is `c` too.
 //
 // Effects are one bit each, one per kind of handler: alloc, files, net, console, clock, process, env, entropy,
-// globals (writing a global or a function-local static), c (unchecked C). A function in the "pure" list has none.
-// Crashing is no effect: `abort`, `__builtin_trap` and a failed assert stop the program and write nothing the program
-// can read, so a function that indexes a slice can still be pure.
+// globals (writing a global or a function-local static), c (unchecked C), fails (a failure point). A function in the
+// "pure" list has none. Failing is an effect, `fails` (issue #325): a call that stops the task (`abort`,
+// `__builtin_trap`, smith's `smith_failure` family, so a checked index, a slice bound and a contract) is a failure
+// point, and so is every caller.
 #pragma once
 
 #include "llvm/ADT/StringMap.h"
@@ -28,7 +29,8 @@ enum Effect : uint32_t {
     Entropy = 1u << 7,
     Globals = 1u << 8,
     C = 1u << 9,
-    Everything = (1u << 10) - 1,
+    Fails = 1u << 10,
+    Everything = (1u << 11) - 1,
 };
 
 struct Name {
@@ -38,7 +40,8 @@ struct Name {
 
 inline constexpr Name names[] = {
     {"alloc", Alloc},     {"files", Files}, {"net", Net},         {"console", Console}, {"clock", Clock},
-    {"process", Process}, {"env", Env},     {"entropy", Entropy}, {"globals", Globals}, {"c", C}};
+    {"process", Process}, {"env", Env},     {"entropy", Entropy}, {"globals", Globals}, {"c", C},
+    {"fails", Fails}};
 
 // The names of the bits of a set, in the order of `names`, joined by ", ": "alloc, files". "none" for the empty set.
 inline std::string describe(uint32_t set) {
@@ -209,18 +212,9 @@ inline constexpr const char *pure_functions[] = {
     "strtoimax",
     "strtoumax",
     // <setjmp.h>, <stdarg.h>, builtins and the crash path: a crash is no effect
-    "abort",
-    "__assert_rtn",
-    "__assert_fail",
-    "__builtin_trap",
     "__builtin_unreachable",
     "__stack_chk_fail",
-    "__builtin_abort",
     // smith's own: a failed check or contract stops the program
-    "smith_failure",
-    "smith_contract_failed",
-    "smith_check_failed",
-    "smith_test_failed",
 };
 
 inline constexpr Entry effect_functions[] = {
@@ -403,6 +397,18 @@ inline constexpr Entry effect_functions[] = {
     {"drand48", Globals},
     {"srand48", Globals},
     {"errno", Globals},
+    // fails: the crash path (issue #325)
+    {"abort", Fails},
+    {"__assert_rtn", Fails},
+    {"__assert_fail", Fails},
+    {"__builtin_trap", Fails},
+    {"__builtin_abort", Fails},
+    {"smith_failure", Fails},
+    {"smith_failure_detail", Fails},
+    {"smith_failure_format", Fails},
+    {"smith_contract_failed", Fails},
+    {"smith_check_failed", Fails},
+    {"smith_test_failed", Fails},
     {"__error", Globals},
 };
 

@@ -7,7 +7,7 @@ tags: [language, plugin, effects]
 # Effect inference (issue #207, first step)
 
 What a function does to the world, as a set of effects (`alloc`, `files`, `net`, `console`, `clock`, `process`, `env`,
-`entropy`, `globals`, `c`: one bit each, `shim/effects_table.h`), computed by `shim/effects_infer.cpp`, a second plugin of the
+`entropy`, `globals`, `c`, `fails`: one bit each, `shim/effects_table.h`), computed by `shim/effects_infer.cpp`, a second plugin of the
 kind [affine-types](affine-types.md) is (an AddAfterMainAction that reads the translation unit when it is complete, and
 a ParsedAttrInfo for the attributes; `smith_effects_disable()` turns it off in clang-tidy, which cannot report a
 diagnostic it has no id for). Skill `smith-lang-effects`.
@@ -17,7 +17,7 @@ diagnostic it has no id for). Skill `smith-lang-effects`.
   libSystem has the set `effects_table.h` gives it (pure ones, `malloc` is `alloc`, `read` is `files` and `net`, `printf` is
   `console`...), a declaration with an attribute and no body has the attribute's set (a promise), any other is `c`, as is a
   call through a function pointer, inline assembly and an Objective-C message. Writing a global or a function-local
-  static is `globals`. Crashing (`abort`, a trap, a failed check, a slice index out of range) is no effect.
+  static is `globals`. Failing is the effect `fails` (issue #325, owner: effects are never a bad thing, what matters is knowing and controlling them): a call of `abort`, `__builtin_trap` or `smith_failure*` (the table has them as `fails`) is a failure point, which a checked slice index, a contract and an arena budget lower to, and every caller inherits it, in the file and across files through the summaries. A check that `smith prove` proves is still emitted, so it still counts; removing proved checks is the follow-up of #325 (the proof results must reach the lowering through a file `smith prove` writes, not a prove on every build).
 - **Annotations are ceilings.** `[[smith::pure]]` is the empty set and `[[smith::effects(alloc, net)]]` lists what the
   function may do (the same spelling in C, in a module and on a declaration with no source, where it is a promise). It
   reaches the plugin's handler with its arguments through LLVM's `patches/clang-plugin-attr-args.patch` (r9): clang's

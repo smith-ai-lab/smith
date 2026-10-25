@@ -1,0 +1,5 @@
+status 1
+effects_fails.smith:12:24: error: smith-effect: `pure_at` is [[smith::pure]], but it has the effects fails: pure_at -> smith_failure (effects_fails.smith:12)
+effects_fails.smith:16:24: error: smith-effect: `alloc_at` is limited to alloc, but it has the effects fails: alloc_at -> smith_failure (effects_fails.smith:16)
+effects_fails.smith:30:5: error: smith-effect: static assertion failed: run: f may not fail: `first` has the effects fails beyond the allowed ones: first -> smith_failure (effects_fails.smith:20)
+effects_fails.smith:39:12: note: in instance effects_fails::run(first, struct smith_array_i32_n), requested from here
