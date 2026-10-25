@@ -78,6 +78,13 @@ static bool smith_platform_clone(const char *from, const char *to) {
     return link(from, to) == 0 || symlink(from, to) == 0;
 }
 
+// The monotonic clock in nanoseconds.
+[[maybe_unused]] static unsigned long long smith_platform_monotonic_ns(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (unsigned long long)now.tv_sec * 1000000000ULL + (unsigned long long)now.tv_nsec;
+}
+
 // When the file was last changed.
 static struct timespec smith_platform_mtime(const struct stat *info) {
     return info->st_mtim;

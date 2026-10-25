@@ -375,17 +375,17 @@ constexpr unsigned long smith_explain_resume_rounds_max = 12000; // the ceiling 
 // The time is wall time on purpose: it is how long the kernel may take to deliver the attach's pending SIGSTOP, which
 // a loaded machine stretches (a count of rounds ended the wait while the stop was still to come).
 static void smith_explain_resume(long pid) {
-    unsigned long long began = clock_gettime_nsec_np(CLOCK_MONOTONIC);
+    unsigned long long began = smith_platform_monotonic_ns();
     unsigned long long settled_since = began;
     for (unsigned long round = 0; round < smith_explain_resume_rounds_max; round++) { // a round sleeps 5 ms or more
-        unsigned long long now = clock_gettime_nsec_np(CLOCK_MONOTONIC);
+        unsigned long long now = smith_platform_monotonic_ns();
         if (now - began >= smith_explain_resume_ceiling_ns) return;
         if (now - settled_since >= smith_explain_resume_settled_ns) return;
         int stopped = smith_platform_process_stopped(pid);
         if (stopped < 0) return;
         if (stopped == 1) {
             kill((pid_t)pid, SIGCONT);
-            settled_since = clock_gettime_nsec_np(CLOCK_MONOTONIC);
+            settled_since = smith_platform_monotonic_ns();
         }
         usleep(5000);
     }

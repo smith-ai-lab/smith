@@ -22,6 +22,7 @@ after that calls the functions by name. In `.smith` code the platform is `target
 | `smith_platform_self_id`, `smith_platform_file_id`: the name of a smith's programs folder ([embedded-files-and-programs-folders](embedded-files-and-programs-folders.md)) | the Mach-O `LC_UUID` | the ELF `NT_GNU_BUILD_ID`, linked with `--build-id=md5`: 16 bytes, like a UUID |
 | `smith_platform_clone`: a program of the programs folder | `clonefile`, else a hard link, else a symbolic link | `ioctl(FICLONE)` (btrfs, XFS), else a hard link, else a symbolic link |
 | `smith_platform_mtime`: a file's time (the executor, the symbolizer) | `st_mtimespec` | `st_mtim` |
+| `smith_platform_monotonic_ns`: the monotonic clock (`runtime/explain.c`'s wait for a resumed test) | `clock_gettime_nsec_np` | `clock_gettime` |
 | `smith_platform_process_stopped`: whether a test that `smith --smith-explain` read is still stopped | `proc_pidinfo` | the state letter in `/proc/<pid>/stat` |
 | `smith_platform_decompress`: a file of clang's resource pack | LZFSE (libcompression; `scripts/pack.c` compresses) | nothing: the pack is stored uncompressed (`scripts/pack.c` keeps every file as it is) |
 
