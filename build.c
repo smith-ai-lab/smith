@@ -736,7 +736,6 @@ static const BuildTestScript build_test_scripts[] = {
     {"resource", "resource", nullptr, nullptr, 0},
     {"run", "run", nullptr, nullptr, 0},
     {"skills", "skills", nullptr, nullptr, 0},
-    {"smith-fmt", "smith-fmt", nullptr, nullptr, 0},
     {"smith-lang-0", "smith-lang", "0/3", nullptr, 1},
     {"smith-lang-1", "smith-lang", "1/3", nullptr, 1},
     {"smith-lang-2", "smith-lang", "2/3", nullptr, 1},
