@@ -74,6 +74,9 @@ constexpr bool smith_has_lldb = true;
 // smith built against an LLVM install without lldb (scripts/llvm.sh, the lldb step) runs an external lldb instead.
 int smith_lldb_main(int argc, char **argv);
 int smith_lldb_dap_main(int argc, char **argv);
+#ifdef __linux__
+int smith_lldb_server_main(int argc, char **argv); // shim/lldb_server.cpp: lldb's debug server on Linux
+#endif
 #else
 constexpr bool smith_has_lldb = false;
 #endif
@@ -652,7 +655,11 @@ static void smith_programs_make(const char *runtime, const char *programs, const
     SMITH_ASSERT(written > 0 && (size_t)written < sizeof temporary - 32);
     smith_remove_tree(temporary);
     smith_make_folders(temporary, true);
+#if defined(__linux__) && defined(SMITH_LLDB)
+    static const char *const names[] = {"clang", "clang++", "ld", "lldb-argdumper", "lldb-server"};
+#else
     static const char *const names[] = {"clang", "clang++", "ld", "lldb-argdumper"};
+#endif
     char path[PATH_MAX];
     snprintf(path, sizeof path, "%s/bin", temporary);
     if (mkdir(path, 0755) != 0) smith_die(smith_exit_usage, "cannot create", path);
@@ -2568,6 +2575,21 @@ static void smith_debugserver_environment(void) {
         }
     }
 }
+#else
+// lldb on Linux debugs a process through lldb-server, which is this smith (a clone named lldb-server in its programs
+// folder, shim/lldb_server.cpp). The caller's LLDB_DEBUGSERVER_PATH wins.
+static void smith_debugserver_environment(const char *self) {
+    if (getenv("LLDB_DEBUGSERVER_PATH") != nullptr || !smith_has_lldb) return;
+    char folder[PATH_MAX];
+    char programs[PATH_MAX];
+    char server[PATH_MAX];
+    smith_resource_folder(folder);
+    smith_programs_folder(folder, programs);
+    int written = snprintf(server, sizeof server, "%s/bin/lldb-server", programs);
+    SMITH_ASSERT(written > 0 && (size_t)written < sizeof server); // smith_programs_folder leaves room for it
+    smith_resource_ensure(folder, programs, self);
+    setenv("LLDB_DEBUGSERVER_PATH", server, 0);
+}
 #endif
 
 static int smith_tool_in_process(const SmithTool *tool, int argc, char **argv, const char *self) {
@@ -2903,6 +2925,8 @@ static int smith_tool_launch(const SmithTool *tool, int argc, char **argv, const
 #ifdef __APPLE__
     smith_sdk_environment(self); // clangd, and clang-tidy's compiles, find the SDK as the compiler does
     if (strcmp(tool->command, "dbg") == 0 || strcmp(tool->command, "dap") == 0) smith_debugserver_environment();
+#else
+    if (strcmp(tool->command, "dbg") == 0 || strcmp(tool->command, "dap") == 0) smith_debugserver_environment(self);
 #endif
     bool crash = strcmp(tool->command, "dbg") == 0 && argc >= 3 &&
                  (strcmp(argv[2], "--crash") == 0 || strcmp(argv[2], "--at") == 0);
@@ -3240,6 +3264,9 @@ int main(int argc, char **argv) {
     const char *name = smith_base_name(argv[0]);
     if (strcmp(name, "ld") == 0) return smith_route_linker(argc, argv);
     if (strcmp(name, "lldb-argdumper") == 0) return smith_argdumper(argc, argv);
+#if defined(__linux__) && defined(SMITH_LLDB)
+    if (strcmp(name, "lldb-server") == 0) return smith_lldb_server_main(argc, argv);
+#endif
     // The links act as the verbs by their name, for what needs one program path: CC=smith-cc, CMake,
     // compile_commands.json. So do the driver's own, bin/clang and bin/clang++ of the programs folder, which it runs
     // again with -cc1.
@@ -3260,6 +3287,8 @@ int main(int argc, char **argv) {
     if (strcmp(argv[1], "--smith-explain") == 0) {
 #ifdef __APPLE__
         smith_debugserver_environment();
+#else
+        smith_debugserver_environment(self);
 #endif
         return smith_explain_main(argc - 2, argv + 2, self);
     }

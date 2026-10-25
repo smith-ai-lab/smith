@@ -28,10 +28,16 @@ smith-debug is the short guide for users; this is how it is built.
   `-ledit` and the frameworks Foundation, CoreFoundation, CoreServices and Security). An install without lldb gives a
   smith whose `dbg` and `dap` run an external lldb (`$SMITH_LLDB`, `$SMITH_LLDB_DAP`), as the stage0 does.
 - **smith.c** has two entries in the table of tools, `dbg` and `dap`, and sets, for each the caller has not set:
-  `LLDB_DEBUGSERVER_PATH` (the developer directory's, else Xcode's, else the Command Line Tools' debugserver) and
-  `LLDB_ARGDUMPER_PATH`. lldb expands a program's arguments through `lldb-argdumper`, which it looks up beside
-  smith; smith is a fourth clone in the programs folder (`bin/lldb-argdumper`) and, run under that name, prints
-  `{"arguments": [...]}` as LLVM's does.
+  `LLDB_DEBUGSERVER_PATH` (the developer directory's, else Xcode's, else the Command Line Tools' debugserver; on Linux
+  `bin/lldb-server` of the programs folder, below) and `LLDB_ARGDUMPER_PATH`. lldb expands a program's arguments through
+  `lldb-argdumper`, which it looks up beside smith; smith is a fourth clone in the programs folder
+  (`bin/lldb-argdumper`) and, run under that name, prints `{"arguments": [...]}` as LLVM's does.
+
+**On Linux** (issue #305) lldb debugs a process through `lldb-server gdbserver`, which LLVM builds. smith is that
+program too: `scripts/llvm_linux.smith` puts lldb-server's objects in `libsmithlldb.a` with its `main` renamed
+`smith_lldb_server_tool_main`, `shim/lldb_server.cpp` runs it, and the programs folder has a fifth clone,
+`bin/lldb-server`, which `main` runs as it by its name. So `smith dbg`, `smith dap` and a failed check's report need no
+program beside smith, and nothing is signed.
 
 ## The lldb options, and what each costs when off
 
