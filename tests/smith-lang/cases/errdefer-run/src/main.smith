@@ -35,6 +35,11 @@ static option(i32) options(i32 a) {
     return {.some = v * 2};
 }
 
+static result(i32, i32) payload(i32 a) {
+    errdefer c::puts("  payload errdefer");
+    return {.ok = try step(a)};
+}
+
 static result(i32, i32) block_scope(i32 a) {
     {
         errdefer c::puts("  inner block errdefer");
@@ -66,6 +71,8 @@ i32 main() {
     c::puts("option fails");
     option(i32) bad = options(-3);
     c::printf("%d\n", bad == .none);
+    show("payload ok", payload(6));
+    show("payload fails", payload(-6));
     show("block ok", block_scope(2));
     show("block fails", block_scope(-2));
     return 0;

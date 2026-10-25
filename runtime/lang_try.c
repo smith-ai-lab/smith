@@ -80,9 +80,12 @@ static size_t smith_lang_try_set_flags(const SmithLangTry *tr, char *out, size_t
 }
 
 static SmithLangTryStep smith_lang_try_step(const SmithLang *lang, int32_t *parens, uint32_t start,
-                                            const SmithToken *token, bool strict) {
+                                            const SmithToken *token, bool strict, bool payload) {
     if (lang->brace_depth < start) return SmithLangTryStep_Escapes;
     if (lang->brace_depth > start) return SmithLangTryStep_Inside;
+    if (payload && *parens == 0 && (smith_lang_punct(token, "}") || smith_lang_punct(token, ","))) {
+        return SmithLangTryStep_Ends; // the payload's own end: the token goes on after the statement expression
+    }
     if (smith_lang_punct(token, "(") || smith_lang_punct(token, "[")) {
         *parens += 1;
     } else if (smith_lang_punct(token, ")") || smith_lang_punct(token, "]")) {
@@ -124,12 +127,7 @@ static void smith_lang_try_close(SmithLang *lang, const SmithHost *host, const S
         snprintf(early, sizeof early, "return ( %s ) { . tag = %s_tag_%s } ;", tr->type, name, failure);
     }
     char value[400];
-    if (tr->try_wrap) {
-        snprintf(value, sizeof value, "( %s ) { . tag = %s_tag_%s , . %s = smith_try_%u . %s }", tr->type, name, good,
-                 good, id, good);
-    } else {
-        snprintf(value, sizeof value, "smith_try_%u . %s", id, good);
-    }
+    snprintf(value, sizeof value, "smith_try_%u . %s", id, good);
     smith_lang_try_sayf(lang, host, &at,
                         "; %s if ( smith_try_%u . tag == %s_tag_%s ) { %s%s } if ( smith_try_%u . tag != %s_tag_%s ) "
                         "__builtin_unreachable ( ) ; %s ; } )",
@@ -166,7 +164,7 @@ static bool smith_lang_try_frames(SmithLang *lang, const SmithHost *host, const 
     SmithLangTry *tr = &lang->tr;
     smith_lang_try_prune(lang);
     if (tr->try_open) {
-        SmithLangTryStep step = smith_lang_try_step(lang, &tr->try_parens, tr->try_start, token, true);
+        SmithLangTryStep step = smith_lang_try_step(lang, &tr->try_parens, tr->try_start, token, true, tr->try_payload);
         if (smith_lang_ident(token, "try") && lang->brace_depth == tr->try_start) step = SmithLangTryStep_Escapes;
         if (step == SmithLangTryStep_Ends) smith_lang_try_close(lang, host, token);
         if (step == SmithLangTryStep_Escapes) {
@@ -175,7 +173,7 @@ static bool smith_lang_try_frames(SmithLang *lang, const SmithHost *host, const 
         }
     }
     if (!tr->ret_open) return false;
-    SmithLangTryStep step = smith_lang_try_step(lang, &tr->ret_parens, tr->ret_start, token, false);
+    SmithLangTryStep step = smith_lang_try_step(lang, &tr->ret_parens, tr->ret_start, token, false, false);
     if (step == SmithLangTryStep_Escapes) {
         tr->ret_open = false;
         return false;
@@ -190,15 +188,27 @@ typedef enum {
     SmithLangTryMode_Bad,
     SmithLangTryMode_Value,
     SmithLangTryMode_Statement,
-    SmithLangTryMode_Return
+    SmithLangTryMode_Payload
 } SmithLangTryMode;
 
+// `{.ok = ` or `, .ok = `: the `=` before the `try` gives a payload its value (a member's `p.ok = try f();` has a name
+// before its `.`).
+static bool smith_lang_try_designated(SmithLang *lang, const SmithHost *host) {
+    SmithToken name;
+    SmithToken dot;
+    SmithToken open;
+    return smith_lang_previous(lang, host, 2, &name) && name.kind == SmithTokenKind_Identifier &&
+           smith_lang_previous(lang, host, 3, &dot) && smith_lang_punct(&dot, ".") &&
+           smith_lang_previous(lang, host, 4, &open) && (smith_lang_punct(&open, "{") || smith_lang_punct(&open, ","));
+}
+
 static SmithLangTryMode smith_lang_try_mode(SmithLang *lang, const SmithHost *host) {
-    if (lang->tr.just_returned) return SmithLangTryMode_Return;
+    if (lang->tr.just_returned) return SmithLangTryMode_Value;
     SmithToken before;
     if (!smith_lang_previous(lang, host, 1, &before)) return SmithLangTryMode_Statement;
-    if (smith_lang_ident(&before, "return")) return SmithLangTryMode_Return;
-    if (smith_lang_punct(&before, "=")) return SmithLangTryMode_Value;
+    if (smith_lang_ident(&before, "return")) return SmithLangTryMode_Value;
+    if (smith_lang_punct(&before, "="))
+        return smith_lang_try_designated(lang, host) ? SmithLangTryMode_Payload : SmithLangTryMode_Value;
     if (smith_lang_ident(&before, "else") || smith_lang_punct(&before, ";") || smith_lang_punct(&before, "{") ||
         smith_lang_punct(&before, "}") || smith_lang_punct(&before, ")") || smith_lang_punct(&before, ":")) {
         return SmithLangTryMode_Statement;
@@ -233,7 +243,7 @@ static void smith_lang_try_open(SmithLang *lang, const SmithHost *host, const Sm
     tr->try_start = lang->brace_depth;
     tr->try_id = ++tr->next_id;
     tr->try_kind = kind;
-    tr->try_wrap = mode == SmithLangTryMode_Return;
+    tr->try_payload = mode == SmithLangTryMode_Payload;
     tr->try_location = token->location;
     snprintf(tr->type, sizeof tr->type, "%s", type);
     smith_lang_try_sayf(lang, host, token, "%s __extension__ ( { __auto_type smith_try_%u =",

@@ -413,6 +413,7 @@ bool smith_lang_body_sparse(const SmithLang *lang) {
 
 bool smith_lang_fast_brace(SmithLang *lang, const SmithHost *host, bool open) {
     if (!lang->body_sparse || lang->broken || lang->ifc_count > 0) return false; // an `if constexpr` counts braces
+    if (lang->tr.try_open) return false;                                         // a `try` in braces ends at the `}`
     if (!open) {
         if (lang->brace_depth == 1 && lang->braces[0] == SmithLangBrace_Function) { // the function's own: it ends
             lang->brace_depth = 0;

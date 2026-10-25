@@ -1632,6 +1632,10 @@
         {
           "type": "pack_expansion",
           "named": true
+        },
+        {
+          "type": "try_expression",
+          "named": true
         }
       ]
     }
@@ -2651,6 +2655,10 @@
           },
           {
             "type": "initializer_list",
+            "named": true
+          },
+          {
+            "type": "try_expression",
             "named": true
           }
         ]

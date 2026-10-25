@@ -27,6 +27,10 @@ errdefer puts("  option errdefer");
 __INT32_TYPE__ v = try main_pick(a);
 return {.some = v * 2};
 }
+static struct smith_enum_result_i32__i32 main_payload(__INT32_TYPE__ a) {
+errdefer puts("  payload errdefer");
+return {.ok = try main_step(a)};
+}
 static struct smith_enum_result_i32__i32 main_block_scope(__INT32_TYPE__ a) {
 {
 errdefer puts("  inner block errdefer");
@@ -56,6 +60,8 @@ printf("%d\n", good == .some ? good.some : -1);
 puts("option fails");
 struct smith_enum_option_i32 bad = main_options(-3);
 printf("%d\n", bad == .none);
+main_show("payload ok", main_payload(6));
+main_show("payload fails", main_payload(-6));
 main_show("block ok", main_block_scope(2));
 main_show("block fails", main_block_scope(-2));
 return 0;

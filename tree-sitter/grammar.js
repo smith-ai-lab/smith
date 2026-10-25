@@ -76,6 +76,11 @@ module.exports = grammar(C, {
       choice(original, seq('return', $.initializer_list, ';'), seq('return', $.enum_specifier, ';'),
         seq('return', $.try_expression, ';')),
 
+    // return {.ok = try f()}; (a variant's payload)
+    initializer_pair: ($, original) => choice(original, seq(
+      field('designator', repeat1(choice($.subscript_designator, $.field_designator, $.subscript_range_designator))),
+      '=', field('value', $.try_expression))),
+
     // int x = try f(); and x = try f();
     init_declarator: ($, original) =>
       choice(original, seq(field('declarator', $._declarator), '=', field('value', $.try_expression))),
@@ -124,7 +129,7 @@ module.exports = grammar(C, {
     ),
 
     // `draw({.circle = {.radius = 1}})`: braces that begin with a designator are no block: an enum's payload, as an argument
-    designated_list: $ => seq('{', $.field_designator, '=', choice($.expression, $.initializer_list),
+    designated_list: $ => seq('{', $.field_designator, '=', choice($.expression, $.initializer_list, $.try_expression),
       repeat(seq(',', $._initializer_item)), optional(','), '}'),
 
     // A sized type's name is a keyword where a type could begin (the first word in `enum { ... }` may be a payload's
