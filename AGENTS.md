@@ -55,4 +55,5 @@ A C toolchain and a modern standard library for C, written in C. Each fact has o
 - Finish open issues before starting new work; a new idea becomes an issue, not a branch. The order is the pinned roadmap, #73: take the first unchecked item of a track nothing running blocks, and give a new issue its place there.
 - Hand work to subagents whenever possible, on Sonnet 5.5 at medium reasoning effort.
 - Fix what clang-tidy reports; do not weaken `.clang-tidy`. Subagents never run `smith build install` (the orchestrating agent installs after a merge); never `pkill` or `killall`.
+- smith's own tools come before grep and prints: `smith lsp` for code, `smith dbg` for a crash. When one gives wrong, missing or slow answers, keep going with grep or prints, and make the tool right too: fix it when it is in your ticket's area, else file an issue naming the query, what it said and what it should have said. Owner: "if they're ever not good enough, fix them."
 - Known gaps: [known-gaps](knowledge/known-gaps.md).
