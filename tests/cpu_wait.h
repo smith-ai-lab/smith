@@ -4,8 +4,16 @@
 #ifndef SMITH_TESTS_CPU_WAIT_H
 #define SMITH_TESTS_CPU_WAIT_H
 
+#ifdef __APPLE__
 #include <libproc.h>
 #include <mach/mach_time.h>
+#else
+#include <dirent.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#endif
 #include <poll.h>
 #include <stdint.h>
 #include <sys/types.h>
@@ -19,6 +27,7 @@ constexpr int cpu_wait_spent = 1;
 constexpr int cpu_wait_hung = 2;
 constexpr int cpu_wait_slices_max = cpu_wait_hang_milliseconds / cpu_wait_slice_milliseconds + 1;
 
+#ifdef __APPLE__
 static uint64_t cpu_wait_cpu_ns(pid_t pid) {
     struct rusage_info_v2 usage = {};
     if (proc_pid_rusage(pid, RUSAGE_INFO_V2, (rusage_info_t *)&usage) != 0) return 0;
@@ -30,6 +39,60 @@ static uint64_t cpu_wait_cpu_ns(pid_t pid) {
 static uint64_t cpu_wait_wall_ms(void) {
     return clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW) / 1000000;
 }
+
+// The children of `pid`, at most `max`; returns how many.
+[[maybe_unused]] static int cpu_wait_children(pid_t pid, pid_t *out, int max) {
+    int bytes = proc_listchildpids(pid, out, max * (int)sizeof(pid_t));
+    return bytes > 0 ? bytes / (int)sizeof(pid_t) : 0;
+}
+#else
+// utime and stime, fields 14 and 15 of /proc/<pid>/stat (after the command's closing parenthesis), in clock ticks.
+static uint64_t cpu_wait_cpu_ns(pid_t pid) {
+    char path[64];
+    snprintf(path, sizeof path, "/proc/%d/stat", (int)pid);
+    FILE *file = fopen(path, "r");
+    if (file == nullptr) return 0;
+    char text[1024];
+    size_t count = fread(text, 1, sizeof text - 1, file);
+    fclose(file);
+    text[count] = '\0';
+    const char *at = strrchr(text, ')');
+    if (at == nullptr) return 0;
+    unsigned long long user = 0;
+    unsigned long long system = 0;
+    if (sscanf(at + 1, " %*c %*d %*d %*d %*d %*d %*u %*u %*u %*u %*u %llu %llu", &user, &system) != 2) return 0;
+    return (uint64_t)(user + system) * 1000000000ULL / (uint64_t)sysconf(_SC_CLK_TCK);
+}
+
+static uint64_t cpu_wait_wall_ms(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC_RAW, &now);
+    return (uint64_t)now.tv_sec * 1000 + (uint64_t)now.tv_nsec / 1000000;
+}
+
+// The children of `pid` (of every one of its threads: /proc/<pid>/task/<tid>/children), at most `max`; returns how
+// many.
+[[maybe_unused]] static int cpu_wait_children(pid_t pid, pid_t *out, int max) {
+    char path[64];
+    snprintf(path, sizeof path, "/proc/%d/task", (int)pid);
+    DIR *tasks = opendir(path);
+    if (tasks == nullptr) return 0;
+    int found = 0;
+    for (struct dirent *task = readdir(tasks); task != nullptr && found < max; task = readdir(tasks)) {
+        if (task->d_name[0] == '.') continue;
+        char children[320];
+        snprintf(children, sizeof children, "/proc/%d/task/%s/children", (int)pid, task->d_name);
+        FILE *file = fopen(children, "r");
+        if (file == nullptr) continue;
+        int child = 0;
+        while (found < max && fscanf(file, "%d", &child) == 1) // one number per child, bounded by max
+            out[found++] = (pid_t)child;
+        fclose(file);
+    }
+    closedir(tasks);
+    return found;
+}
+#endif
 
 // Waits until `fd` is readable (cpu_wait_ready), `pid` has spent `cpu_ms` of CPU time since the call (cpu_wait_spent),
 // or ten minutes of wall time have passed (cpu_wait_hung). With `extend`, a server still spending CPU time is waited
