@@ -127,7 +127,7 @@ i32 main() { return good(1) + bad(1) - 4; }
 EOF2
 total=$((total + 1))
 actual=$(cd "$work/mods" && smith build 2>&1 | grep -E 'smith-effect' | sed 's/^main.smith:4:[0-9]*: //')
-expected="error: smith-effect: \`main_bad\` is [[smith::pure]], but it has the effects console: main_bad -> fx::lib::noisy (main.smith:4) -> printf (lib.smith:4)"
+expected="error: smith-effect: \`bad\` is [[smith::pure]], but it has the effects console: bad -> fx::lib::noisy (main.smith:4) -> printf (lib.smith:4)"
 if [ "$expected" = "$actual" ]; then
     echo "ok    across files, modules: a build's link names the chain through the other module"
 else
@@ -153,7 +153,7 @@ fi
 printf 'module fx::lib;\nimport <stdio.h>;\nexport i32 plain(i32 x) { return x + 1; }\nexport i32 noisy(i32 x) { c::printf("%%d\\n", x); return x; }\n' >"$work/mods/fx/lib.smith"
 total=$((total + 1))
 actual=$(rebuilt)
-expected="error: smith-effect: \`main_bad\` is [[smith::pure]], but it has the effects console: main_bad -> fx::lib::noisy (main.smith:4) -> printf (lib.smith:4)"
+expected="error: smith-effect: \`bad\` is [[smith::pure]], but it has the effects console: bad -> fx::lib::noisy (main.smith:4) -> printf (lib.smith:4)"
 if [ "$expected" = "$actual" ]; then
     echo "ok    incremental: the callee edited back to print, the same error as a clean build"
 else
@@ -305,6 +305,30 @@ if [ -n "$stack" ] && awk -F'\t' '$1 == "fx::lib::deep" && $2 + 0 > 256 && $3 ~ 
     echo "ok    stack: a module's function has its frame and its callee's in the build's .stack"
 else
     failures=$((failures + 1)); echo "FAIL  stack: module: ${stack:-no .stack} $(tail -n 5 "$work/sm/log")"
+fi
+
+# The link names every function as the source writes it: a private function of the importer (`bad2`, not `main_bad2`), an
+# export of a module (`fx2::lib::loud`) and a private function of that module (`shout`).
+mkdir -p "$work/names/fx2"
+cat >"$work/names/fx2/lib.smith" <<'EOF2'
+module fx2::lib;
+import <stdio.h>;
+static i32 shout(i32 x) { c::printf("%d\n", x); return x; }
+export i32 loud(i32 x) { return shout(x); }
+EOF2
+cat >"$work/names/main.smith" <<'EOF2'
+module main;
+import fx2::lib as lib;
+[[smith::pure]] i32 bad2(i32 x) { return lib::loud(x); }
+i32 main() { return bad2(1) - 1; }
+EOF2
+total=$((total + 1))
+actual=$(cd "$work/names" && smith build 2>&1 | grep -E 'smith-effect' | sed 's/^main.smith:3:[0-9]*: //')
+if [ "error: smith-effect: \`bad2\` is [[smith::pure]], but it has the effects console: bad2 -> fx2::lib::loud (main.smith:3) -> shout (lib.smith:4) -> printf (lib.smith:3)" = "$actual" ]; then
+    echo "ok    names: the link shows the importer's private function, the export and the module's private function as written"
+else
+    failures=$((failures + 1))
+    echo "FAIL  names: '$actual'"
 fi
 
 # The editor shows the same verdict as the link, for modules: with the summaries the build made, `smith lsp --check` of the
