@@ -12,8 +12,8 @@ constexpr uint32_t smith_plan_none = UINT32_MAX;
 static int64_t smith_plan_stat_path(const char *path) {
     struct stat info = {};
     if (stat(path, &info) != 0) return 0;
-    int64_t seconds = (int64_t)info.st_mtimespec.tv_sec;
-    int64_t mtime = seconds * (int64_t)smith_exec_nanoseconds + (int64_t)info.st_mtimespec.tv_nsec;
+    struct timespec modified = smith_platform_mtime(&info);
+    int64_t mtime = (int64_t)modified.tv_sec * (int64_t)smith_exec_nanoseconds + (int64_t)modified.tv_nsec;
     return mtime > 0 ? mtime : 1;
 }
 
