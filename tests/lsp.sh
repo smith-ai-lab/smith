@@ -357,7 +357,7 @@ expect_line "definition: the function is in the other module's .smith, at its na
 expect_line "definition: so is the type" "$log" "definition main.smith:6:10 -> geometry/box.smith:3:50"
 expect_line "symbols: main" "$log" "symbol main.smith: main"
 expect_line "hover at the definition: the function's name, in the module itself" "$log" \
-    "hover geometry/box.smith:5:12: function area |  | → f32 (aka float) |  | Parameters: |  | - Box b |  | f32 area(Box b)"
+    "hover geometry/box.smith:5:12: function area |  | → f32 (aka float) |  | Parameters: |  | - Box b |  | pure |  | f32 area(Box b)"
 expect_line "hover at the definition: and the type's" "$log" \
     "hover geometry/box.smith:3:50: type-alias Box |  | Type: struct Box |  | typedef struct Box Box"
 expect "symbols: a module's names, as written, each once" \
@@ -376,7 +376,7 @@ EOF
 log=$(client open geometry/slices.smith -- hover geometry/slices.smith 3 12 -- hover geometry/slices.smith 3 21 -- \
     hover geometry/slices.smith 4 12 -- symbols geometry/slices.smith)
 expect_line "slice: the hover of a function shows its slice parameter as f32[:]" "$log" \
-    'hover geometry/slices.smith:3:12: function pick |  | → f32 (aka float) |  | Parameters: |  | - f32[:] xs | - usize i (aka unsigned long) |  | f32 pick(f32[:] xs, usize i)'
+    'hover geometry/slices.smith:3:12: function pick |  | → f32 (aka float) |  | Parameters: |  | - f32[:] xs | - usize i (aka unsigned long) |  | pure |  | f32 pick(f32[:] xs, usize i)'
 expect_line "slice: the hover of the parameter shows its type as f32[:]" "$log" \
     'hover geometry/slices.smith:3:21: param xs |  | Type: f32[:] |  | // In pick | f32[:] xs'
 
@@ -387,9 +387,9 @@ expect_line "slice: the hover of the parameter shows its type as f32[:]" "$log" 
 log=$(client open m.smith users.smith -- hover m.smith 2 12 -- hover m.smith 3 12 -- hover m.smith 3 18 -- \
     references m.smith 3 12 -- definition users.smith 5 15 m.smith:3:12 -- symbols m.smith)
 expect_line "after a slice: hover on the first function" "$log" \
-    'hover m.smith:2:12: function a |  | → i32 (aka int) |  | Parameters: |  | - f32[:] g |  | i32 a(f32[:] g)'
+    'hover m.smith:2:12: function a |  | → i32 (aka int) |  | Parameters: |  | - f32[:] g |  | pure |  | i32 a(f32[:] g)'
 expect_line "after a slice: hover on the second function" "$log" \
-    'hover m.smith:3:12: function b |  | → i32 (aka int) |  | Parameters: |  | - i32[:] m |  | i32 b(i32[:] m)'
+    'hover m.smith:3:12: function b |  | → i32 (aka int) |  | Parameters: |  | - i32[:] m |  | pure |  | i32 b(i32[:] m)'
 expect "after a slice: hover on its parameter" 1 "$(printf '%s\n' "$log" | grep -c '^hover m.smith:3:18: param m')"
 expect "after a slice: references of the second function find it" 1 "$(printf '%s\n' "$log" | grep -c '^reference m.smith:3:12')"
 expect_line "after a slice: go-to-definition of the second function, from a call" "$log" \
@@ -431,9 +431,9 @@ EOF
 log=$(client open geometry/dims.smith -- hover geometry/dims.smith 6 12 -- hover geometry/dims.smith 10 14 -- \
     symbols geometry/dims.smith)
 expect_line "dims: the hover of a function shows an f32[:][2] parameter as written" "$log" \
-    'hover geometry/dims.smith:6:12: function rows |  | → f32 (aka float) |  | Parameters: |  | - f32[:][2] m | - usize i (aka unsigned long) |  | f32 rows(f32[:][2] m, usize i)'
+    'hover geometry/dims.smith:6:12: function rows |  | → f32 (aka float) |  | Parameters: |  | - f32[:][2] m | - usize i (aka unsigned long) |  | pure |  | f32 rows(f32[:][2] m, usize i)'
 expect_line "dims: the hover shows the tags of qualified slices as written" "$log" \
-    'hover geometry/dims.smith:10:14: function tags |  | → usize (aka unsigned long) |  | Parameters: |  | - u8[const restrict :] a | - const char[:] b |  | usize tags(u8[const restrict :] a, const char[:] b)'
+    'hover geometry/dims.smith:10:14: function tags |  | → usize (aka unsigned long) |  | Parameters: |  | - u8[const restrict :] a | - const char[:] b |  | pure |  | usize tags(u8[const restrict :] a, const char[:] b)'
 log=$(client open geometry/grid.smith -- hover geometry/grid.smith 3 12)
 expect_line "dims: the hover of a function shows an f32[:][:] parameter as written" "$log" \
     'hover geometry/grid.smith:3:12: function grid |  | → f32 (aka float) |  | Parameters: |  | - f32[:][:] g | - usize i (aka unsigned long) |  | f32 grid(f32[:][:] g, usize i)'

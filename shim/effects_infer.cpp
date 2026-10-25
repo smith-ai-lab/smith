@@ -69,6 +69,7 @@ extern "C" bool smith_effects_summary_path(const char *object, char *out, size_t
 namespace {
 
 constexpr const char *prefix = "smith::effects:";
+const std::string hoverPrefix = "smith::hover:"; // an implicit annotation clangd's hover shows (see hoverProvider)
 
 // ---- The annotations -----------------------------------------------------------------------------------------------
 
@@ -425,6 +426,7 @@ class Analysis {
             if (node.annotated && inMain(node.function)) check(node);
         }
         if (isModule()) checkRecursion();
+        attachHover();
         writeSummary();
         if (syntaxOnly && output.empty() && getenv("SMITH_EFFECTS_OBJECT") == nullptr) checkInEditor();
     }
@@ -773,6 +775,21 @@ class Analysis {
         }
         if (text.empty()) return "";
         return text + "H\t" + flags + "\n";
+    // What the editor's hover says of each function the file defines, kept on the function as an implicit annotation
+    // (`smith::hover:<line>`) for the hover provider below: the effects it has, or the ones its attribute declares.
+    // The annotation is added after the code is generated, so no object carries it.
+    void attachHover() {
+        for (const FunctionDecl *function : order) {
+            const Node &node = nodes[function];
+            uint32_t set = node.annotated ? node.declared : node.inferred;
+            std::string line = set == 0 ? "pure" : "effects: " + describe(set);
+            if (node.annotated) line += " (declared)";
+            for (const FunctionDecl *redeclaration : function->redecls()) {
+                if (redeclaration->isImplicit()) continue;
+                auto *attribute = AnnotateAttr::CreateImplicit(context, hoverPrefix + line, nullptr, 0);
+                const_cast<FunctionDecl *>(redeclaration)->addAttr(attribute);
+            }
+        }
     }
 
     // The summary of this file beside its object: one line a function (F: symbol, declared set or -1, what its own body
@@ -923,6 +940,36 @@ const ParsedAttrInfoRegistry::Add<EffectAttr<8>> globals_attribute("smith-global
 const ParsedAttrInfoRegistry::Add<EffectAttr<9>> c_attribute("smith-c-attr", "[[smith::c]]");
 const ParsedAttrInfoRegistry::Add<PureAttr> pure_attribute("smith-pure-attr", "[[smith::pure]]");
 const FrontendPluginRegistry::Add<EffectsPlugin> plugin("smith-effect-inference", "what a function does to the world");
+
+} // namespace
+
+// The editor's hover (patches/clangd-plugin-hover.patch, LLVM r10): clangd calls this for each hovered declaration, and
+// the lines of its `smith::hover:` annotations are shown. The declarations below are clangd's (Hover.h), written out
+// because the shim has no clangd headers; they are the same types.
+namespace clang::clangd {
+struct HoverSection {
+    std::string Heading;
+    std::vector<std::string> Lines;
+};
+using HoverProvider = bool (*)(const NamedDecl &, HoverSection &);
+void registerHoverProvider(HoverProvider provider);
+} // namespace clang::clangd
+
+namespace {
+
+bool hoverProvider(const NamedDecl &decl, clang::clangd::HoverSection &section) {
+    for (const Decl *redeclaration : decl.redecls()) {
+        for (const auto *attribute : redeclaration->specific_attrs<AnnotateAttr>()) {
+            llvm::StringRef text = attribute->getAnnotation();
+            if (!text.starts_with(hoverPrefix)) continue;
+            section.Lines.push_back(text.drop_front(hoverPrefix.size()).str());
+            return true;
+        }
+    }
+    return false;
+}
+
+const bool hoverRegistered = (clang::clangd::registerHoverProvider(hoverProvider), true);
 
 } // namespace
 
