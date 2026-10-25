@@ -2,29 +2,29 @@ module main;
 
 import <stdio.h>;
 
-type option(type T) {
+type maybe(type T) {
     return enum {
         T some;
         none;
     };
 }
 
-typedef option(usize) Maybe;
-typedef option(f64) MaybeF;
+typedef maybe(usize) Maybe;
+typedef maybe(f64) MaybeF;
 
-// A type function used with a generic's own parameters: each instance writes the struct a written `option(usize)` is.
-option(T) first(constexpr type T, T *xs, usize n) {
+// A type function used with a generic's own parameters: each instance writes the struct a written `maybe(usize)` is.
+maybe(T) first(constexpr type T, T *xs, usize n) {
     if (n == 0) return .none;
     return {.some = xs[0]};
 }
 
-option(typeof(x)) wrap(auto x) {
-    option(typeof(x)) out = {.some = x};
+maybe(typeof(x)) wrap(auto x) {
+    maybe(typeof(x)) out = {.some = x};
     return out;
 }
 
-option(T) pass(constexpr type T, option(T) o) {
-    option(T) copy = o;
+maybe(T) pass(constexpr type T, maybe(T) o) {
+    maybe(T) copy = o;
     return copy;
 }
 

@@ -1,1 +1,1 @@
-src/main.smith:18:5: the struct of this instance's `option(...)` is not defined where the call is (known gap): name the type at file scope first, for example `typedef option(...) Name;`
+src/main.smith:18:5: the struct of this instance's `maybe(...)` is not defined where the call is (known gap): name the type at file scope first, for example `typedef maybe(...) Name;`

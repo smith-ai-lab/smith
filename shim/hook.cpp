@@ -662,8 +662,9 @@ class SmithHook final : public TokenHook, public NameSource {
                              SM.getBufferData(MainFile).contains("auto...") || namesConcept(SM.getBufferData(MainFile));
         host.maybe_if_constexpr = hasIfConstexpr(SM.getBufferData(MainFile));
         host.maybe_slice = hasSlice(SM.getBufferData(MainFile)) || hasStr(SM.getBufferData(MainFile));
-        host.maybe_tuple =
-            host.maybe_slice || hasTuple(SM.getBufferData(MainFile)) || hasPayloadEnum(SM.getBufferData(MainFile));
+        host.maybe_shape = hasShapeCall(SM.getBufferData(MainFile));
+        host.maybe_tuple = host.maybe_slice || hasTuple(SM.getBufferData(MainFile)) ||
+                           hasPayloadEnum(SM.getBufferData(MainFile)) || host.maybe_shape;
         host.maybe_field = hasFieldsUse(SM.getBufferData(MainFile));
         host.import_lines = countImportLines(SM.getBufferData(MainFile));
         host.type_values = &SmithHook::typeValues;
@@ -2623,6 +2624,37 @@ class SmithHook final : public TokenHook, public NameSource {
 
     static void typeValues(void *context) {
         static_cast<SmithHook *>(context)->host.maybe_type_value = true;
+    }
+
+    // Whether the code (not its comments or strings) calls `option(` or `result(`: the built-in type functions that
+    // return an enum, in scope in every module (runtime/lang_enum.c).
+    static bool hasShapeCall(StringRef text) {
+        for (size_t at = 0; at < text.size();) {
+            char c = text[at];
+            if (c == '/' && at + 1 < text.size() && (text[at + 1] == '/' || text[at + 1] == '*')) {
+                bool line = text[at + 1] == '/';
+                size_t end = text.find(line ? "\n" : "*/", at + 2);
+                at = end == StringRef::npos ? text.size() : end + (line ? 1 : 2);
+            } else if (c == '"' || c == '\'') {
+                size_t end = at + 1;
+                while (end < text.size() && text[end] != c && text[end] != '\n')
+                    end += text[end] == '\\' ? 2 : 1;
+                at = end + 1;
+            } else if (isAsciiIdentifierStart(c)) {
+                size_t end = at + 1;
+                while (end < text.size() && isAsciiIdentifierContinue(text[end]))
+                    end += 1;
+                StringRef word = text.substr(at, end - at);
+                size_t next = end;
+                while (next < text.size() && isWhitespace(text[next]))
+                    next += 1;
+                if ((word == "option" || word == "result") && next < text.size() && text[next] == '(') return true;
+                at = end;
+            } else {
+                at += 1;
+            }
+        }
+        return false;
     }
 
     // Whether the text has `enum {` or `enum Name {` with a `;` at its own depth in the braces: an enum with payloads

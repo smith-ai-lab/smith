@@ -1,0 +1,21 @@
+module main;
+
+// `option` and `result` are built in: a module cannot declare its own.
+
+type option(type T) {
+    return enum {
+        T some;
+        none;
+    };
+}
+
+type result(type T, type E) {
+    return enum {
+        T ok;
+        E error;
+    };
+}
+
+i32 main(void) {
+    return 0;
+}
