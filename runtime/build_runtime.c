@@ -1802,6 +1802,82 @@ static const char *const *smith_header_pass_flags(SmithBuild *b, const SmithObje
     return kept;
 }
 
+// The effect summary of an object (issue #207, skill smith-lang-effects), where the compile that makes the object
+// writes it and `smith cc` reads it at the link: in a project (a `.smith` folder in the working folder) it is
+// `.smith/effects/<the object's absolute path, `%` for `/`>.fx`, out of the build folders, otherwise `<object>.fx`
+// beside the object. False when the path does not fit. The same rule is in smith.c (`smith_effects_summary_path`, which
+// the plugin and the link use): a compile and the build must agree on the place, and tests/effects_infer.sh checks that
+// they do.
+static bool smith_effects_path(const char *object, char *out, size_t capacity) {
+    char absolute[PATH_MAX];
+    while (strncmp(object, "./", 2) == 0)
+        object += 2;
+    int written = 0;
+    if (object[0] == '/') {
+        written = snprintf(absolute, sizeof absolute, "%s", object);
+    } else {
+        char folder[PATH_MAX];
+        if (getcwd(folder, sizeof folder) == nullptr) return false;
+        written = snprintf(absolute, sizeof absolute, "%s/%s", folder, object);
+    }
+    if (written <= 0 || (size_t)written >= sizeof absolute) return false;
+    struct stat info = {};
+    if (stat(".smith", &info) != 0 || !S_ISDIR(info.st_mode)) {
+        written = snprintf(out, capacity, "%s.fx", object);
+        return written > 0 && (size_t)written < capacity;
+    }
+    for (char *c = absolute; *c != '\0'; c++) {
+        if (*c == '/') *c = '%';
+    }
+    written = snprintf(out, capacity, ".smith/effects/%s.fx", absolute);
+    return written > 0 && (size_t)written < capacity;
+}
+
+// The summary a compile of this source writes as an output, or nullptr: the compile is smith's own (the driver says so
+// in SMITH_EFFECTS, since an external clang writes none, and a step whose output is never written is never up to date)
+// and the source is C or a .smith file.
+//
+// Whether the compiler is the smith that runs the build: its path (through PATH when it has no `/`) is that of
+// SMITH_SELF once links are followed. A stand-in named smith-cc, or a copy of smith, writes no summary the build could
+// count on.
+static bool smith_compiler_is_this_smith(const char *compiler) {
+    const char *self = getenv("SMITH_SELF");
+    char wanted[PATH_MAX];
+    if (self == nullptr || realpath(self, wanted) == nullptr) return false;
+    char candidate[PATH_MAX];
+    char resolved[PATH_MAX];
+    if (strchr(compiler, '/') != nullptr) {
+        return realpath(compiler, resolved) != nullptr && strcmp(resolved, wanted) == 0;
+    }
+    const char *path = getenv("PATH");
+    if (path == nullptr) return false;
+    for (const char *start = path; *start != '\0';) { // each pass moves past one directory of PATH
+        const char *end = strchr(start, ':');
+        size_t length = end == nullptr ? strlen(start) : (size_t)(end - start);
+        int written = snprintf(candidate, sizeof candidate, "%.*s/%s", (int)length, start, compiler);
+        if (written > 0 && (size_t)written < sizeof candidate && access(candidate, X_OK) == 0) {
+            return realpath(candidate, resolved) != nullptr && strcmp(resolved, wanted) == 0;
+        }
+        if (end == nullptr) break;
+        start = end + 1;
+    }
+    return false;
+}
+
+static const char *smith_effects_summary(const char *compiler, const char *source, const char *object) {
+    const char *on = getenv("SMITH_EFFECTS");
+    if (on == nullptr || strcmp(on, "yes") != 0 || !smith_compiler_is_this_smith(compiler)) return nullptr;
+    if (!smith_ends_with(source, ".c") && !smith_ends_with(source, ".smith")) return nullptr;
+    char path[PATH_MAX];
+    return smith_effects_path(object, path, sizeof path) ? smith_copy_string(path) : nullptr;
+}
+
+static const char *const *smith_effects_outputs(SmithBuild *b, const char *compiler, const char *source,
+                                                const char *object) {
+    const char *summary = smith_effects_summary(compiler, source, object);
+    return summary == nullptr ? smith_list(b, nullptr) : smith_one(summary);
+}
+
 // The header step of a module, and the flags and ordering its compile gets.
 static void smith_lang_header_step(SmithBuild *b, const SmithObject *object, const char *header) {
     SmithStep step = {
@@ -1851,7 +1927,8 @@ void smith_object(SmithBuild *b, SmithObject *object) {
         .inputs = smith_one(copy.source),
         .implicit_inputs = smith_cat(b, copy.implicit_inputs, smith_one(smith_compiler_file(copy.compiler)), nullptr),
         .order_only_inputs = headers ? smith_one(smith_lang_stamp) : smith_list(b, nullptr),
-        .outputs = smith_one(copy.output),
+        .outputs = smith_cat(b, smith_one(copy.output),
+                             smith_effects_outputs(b, copy.compiler, copy.source, copy.output), nullptr),
         .description = smith_text("compile %s", copy.source),
         .depfile = depfile,
     };
@@ -1971,12 +2048,21 @@ void smith_program(SmithBuild *b, SmithProgram *program) {
     copy.libraries = smith_copy_list(program->libraries);
     copy.objects = (const SmithObject *const *)rows;
     const char *const tail[] = {"-o", copy.output, nullptr};
+    // The effect summaries of the objects (an output of each compile that writes one): the link checks them (skill
+    // smith-lang-effects), so a summary that changed reruns it even when its object did not (an attribute moved).
+    const char **summaries = smith_new_list(count);
+    size_t summarized = 0;
+    for (size_t i = 0; i < count; i++) {
+        const char *summary = smith_effects_summary(rows[i]->compiler, rows[i]->source, outputs[i]);
+        if (summary != nullptr) summaries[summarized++] = summary;
+    }
+    summaries[summarized] = nullptr;
     copy.step = (SmithStep){
         .command = smith_cat(b, smith_one(copy.linker), copy.flags, (const char *const *)outputs, copy.libraries, tail,
                              nullptr),
         .inputs = (const char *const *)outputs,
-        .implicit_inputs =
-            smith_cat(b, smith_library_files(copy.libraries), smith_one(smith_compiler_file(copy.linker)), nullptr),
+        .implicit_inputs = smith_cat(b, smith_library_files(copy.libraries),
+                                     smith_one(smith_compiler_file(copy.linker)), summaries, nullptr),
         .outputs = smith_one(copy.output),
         .description = smith_text("link %s", copy.output),
     };

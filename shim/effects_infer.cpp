@@ -28,24 +28,36 @@
 #include "clang/AST/Decl.h"
 #include "clang/AST/Expr.h"
 #include "clang/AST/ExprObjC.h"
+#include "clang/AST/Mangle.h"
 #include "clang/Basic/ParsedAttrInfo.h"
 #include "clang/Frontend/CompilerInstance.h"
+#include "clang/Frontend/FrontendOptions.h"
 #include "clang/Frontend/FrontendPluginRegistry.h"
 #include "clang/Sema/ParsedAttr.h"
 #include "clang/Sema/Sema.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include "effects_table.h"
 
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
+#include <unistd.h>
 #include <vector>
 
 using namespace clang;
 using namespace smith_effects;
 
 static bool pluginEnabled = true;
+
+// Where the summary of an object goes (runtime/build_runtime.c): `.smith/effects/<the object's path>.fx` in a project,
+// beside the object otherwise.
+extern "C" bool smith_effects_summary_path(const char *object, char *out, size_t capacity);
 
 namespace {
 
@@ -176,6 +188,8 @@ struct Edge {
     uint32_t effects = 0;                 // a leaf: the effects of the raw call (callee null)
     std::string name;                     // what the leaf or callee is called
     SourceLocation loc;
+    std::string symbol;      // the callee's linkage name, for a call the summary resolves across files
+    bool unresolved = false; // a project function the file has no body for: no effect here, see the summary
 };
 
 struct Node {
@@ -184,6 +198,7 @@ struct Node {
     uint32_t inferred = 0;
     uint32_t declared = 0;
     bool annotated = false;
+    std::string symbol;
 };
 
 // The root variable of an lvalue (`g`, `g.a[1]`, `p->x` has none: a write through a pointer is the caller's).
@@ -212,7 +227,10 @@ const VarDecl *writtenGlobal(const Expr *expr) {
 // Walks a body with no recursion (a work list) and records the effects it finds.
 class Collector {
   public:
-    explicit Collector(Node &node) : node(node) {}
+    using Symbols = std::function<std::string(const FunctionDecl *)>;
+
+    Collector(Node &node, const SourceManager &sm, Symbols symbols, Symbols names)
+        : node(node), sm(sm), symbols(std::move(symbols)), names(std::move(names)) {}
 
     void walk(const Stmt *body) {
         std::vector<const Stmt *> work{body};
@@ -228,6 +246,9 @@ class Collector {
 
   private:
     Node &node;
+    const SourceManager &sm;
+    Symbols symbols;
+    Symbols names; // how a function is shown in a chain
 
     void visit(const Stmt *statement) {
         if (const auto *call = dyn_cast<CallExpr>(statement)) {
@@ -252,8 +273,9 @@ class Collector {
         if (const FunctionDecl *definition = callee->getDefinition()) {
             Edge edge;
             edge.callee = definition;
-            edge.name = definition->getNameAsString();
+            edge.name = names(definition);
             edge.loc = call->getBeginLoc();
+            edge.symbol = symbols(definition);
             node.edges.push_back(edge);
             return;
         }
@@ -262,6 +284,15 @@ class Collector {
         bool builtin = llvm::StringRef(name).starts_with("__builtin_") || callee->getBuiltinID() != 0;
         if (declaredSet(callee, set) || lookup(name, set)) {
             leaf(call->getBeginLoc(), set, name);
+        } else if (!builtin && !sm.isInSystemHeader(callee->getLocation())) {
+            // A function of the project with no body here: another file may define it, and the summary says what it
+            // does once the program is linked. Until then it adds nothing.
+            Edge edge;
+            edge.unresolved = true;
+            edge.name = names(callee);
+            edge.loc = call->getBeginLoc();
+            edge.symbol = symbols(callee);
+            node.edges.push_back(edge);
         } else {
             leaf(call->getBeginLoc(), builtin ? None : C, name); // a builtin the table does not name has no effect
         }
@@ -286,7 +317,8 @@ class Collector {
 
 class Analysis {
   public:
-    explicit Analysis(ASTContext &context) : context(context), engine(context.getDiagnostics()) {
+    Analysis(ASTContext &context, std::string output)
+        : context(context), engine(context.getDiagnostics()), generator(context), output(std::move(output)) {
         bad =
             engine.getCustomDiagID(DiagnosticsEngine::Error, "smith-effect: `%0` is %1, but it has the effects %2: %3");
         note = engine.getCustomDiagID(DiagnosticsEngine::Note, "%0");
@@ -299,14 +331,41 @@ class Analysis {
             Node &node = entry.second;
             if (node.annotated && inMain(node.function)) check(node);
         }
+        writeSummary();
     }
 
   private:
     ASTContext &context;
     DiagnosticsEngine &engine;
     unsigned bad, note;
+    ASTNameGenerator generator;
+    std::string output; // the object file being written: the summary goes beside it, `<object>.fx`
     std::map<const FunctionDecl *, Node> nodes;
     std::vector<const FunctionDecl *> order;
+
+    // The linkage name a call to the function is known by in another file (the asm label of a module's export
+    // included); a function with internal linkage is only this file's, so its name carries the file's.
+    std::string symbolOf(const FunctionDecl *function) {
+        std::string name = generator.getName(function);
+        if (!name.empty() && name[0] == '\x01') name.erase(0, 1);
+        if (!function->isExternallyVisible()) {
+            const SourceManager &sm = context.getSourceManager();
+            name = sm.getFileEntryRefForID(sm.getMainFileID())
+                       ? sm.getFileEntryRefForID(sm.getMainFileID())->getName().str() + "#" + name
+                       : name;
+        }
+        return name;
+    }
+
+    // The name to show: an export of a module is known by its written path (`fx::lib::noisy`, the asm label the
+    // lowering gives it), anything else by its own name.
+    std::string shownName(const FunctionDecl *function) {
+        std::string symbol = symbolOf(function);
+        size_t path = symbol.find("::");
+        if (path != std::string::npos && symbol.find('#') == std::string::npos)
+            return symbol.substr(symbol[0] == '_' ? 1 : 0);
+        return function->getNameAsString();
+    }
 
     bool inMain(const FunctionDecl *function) {
         const SourceManager &sm = context.getSourceManager();
@@ -323,7 +382,11 @@ class Analysis {
                 Node &node = nodes[function];
                 node.function = function;
                 node.annotated = declaredSet(function, node.declared);
-                Collector(node).walk(function->getBody());
+                node.symbol = symbolOf(function);
+                Collector(
+                    node, context.getSourceManager(), [this](const FunctionDecl *f) { return symbolOf(f); },
+                    [this](const FunctionDecl *f) { return shownName(f); })
+                    .walk(function->getBody());
                 order.push_back(function);
             } else if (const auto *linkage = dyn_cast<LinkageSpecDecl>(decl)) {
                 collect(linkage);
@@ -346,7 +409,7 @@ class Analysis {
                 Node &node = entry.second;
                 uint32_t set = node.inferred;
                 for (const Edge &edge : node.edges)
-                    set |= edge.callee != nullptr ? visible(edge.callee) : edge.effects;
+                    set |= edge.unresolved ? 0u : edge.callee != nullptr ? visible(edge.callee) : edge.effects;
                 if (set != node.inferred) {
                     node.inferred = set;
                     changed = true;
@@ -358,7 +421,7 @@ class Analysis {
     // The first edge of a function whose effects reach `bit` (what a caller of the edge sees).
     const Edge *witness(const Node &node, uint32_t bit) {
         for (const Edge &edge : node.edges) {
-            uint32_t set = edge.callee != nullptr ? visible(edge.callee) : edge.effects;
+            uint32_t set = edge.unresolved ? 0u : edge.callee != nullptr ? visible(edge.callee) : edge.effects;
             if ((set & bit) != 0) return &edge;
         }
         return nullptr;
@@ -405,19 +468,77 @@ class Analysis {
         if ((extra & (extra - 1)) != 0)
             engine.Report(first->loc, note) << "this call is the first of the effects beyond the declared ones";
     }
+
+    // `file:line:column` of a place.
+    std::string place(SourceLocation loc) {
+        const SourceManager &sm = context.getSourceManager();
+        PresumedLoc presumed = sm.getPresumedLoc(sm.getExpansionLoc(loc));
+        if (presumed.isInvalid()) return "?";
+        return std::string(presumed.getFilename()) + ":" + std::to_string(presumed.getLine()) + ":" +
+               std::to_string(presumed.getColumn());
+    }
+
+    // The summary of this file beside its object: one line a function (F: symbol, declared set or -1, what its own body
+    // reaches in this file, where, its name) and one for each thing it calls (L a leaf with its effects, E a call to
+    // a function by symbol, with a body here or not: the program's check follows it across files). The file is replaced
+    // whole, written beside and renamed, so no reader sees half of one.
+    void writeSummary() {
+        if (output.empty()) return;
+        std::string text;
+        for (auto &entry : nodes) {
+            const Node &node = entry.second;
+            text += "F\t" + node.symbol + "\t" + (node.annotated ? std::to_string(node.declared) : "-1") + "\t" +
+                    std::to_string(node.inferred) + "\t" + place(node.function->getLocation()) + "\t" +
+                    shownName(node.function) + "\n";
+            for (const Edge &edge : node.edges) {
+                if (edge.callee == nullptr && !edge.unresolved) {
+                    text += "L\t" + node.symbol + "\t" + std::to_string(edge.effects) + "\t" + place(edge.loc) + "\t" +
+                            edge.name + "\n";
+                } else {
+                    text += "E\t" + node.symbol + "\t" + edge.symbol + "\t" + place(edge.loc) + "\t" + edge.name + "\n";
+                }
+            }
+        }
+        char where[4096];
+        if (!smith_effects_summary_path(output.c_str(), where, sizeof where)) return;
+        std::string path = where;
+        std::string temporary = path + ".part" + std::to_string(getpid());
+        std::error_code error;
+        llvm::StringRef folder = llvm::sys::path::parent_path(path); // empty for an object in the working folder
+        if (!folder.empty() && llvm::sys::fs::create_directories(folder)) return;
+        {
+            llvm::raw_fd_ostream file(temporary, error);
+            if (error) return;
+            file << text;
+        }
+        if (llvm::sys::fs::rename(temporary, path)) {
+            std::error_code ignored =
+                llvm::sys::fs::remove(temporary); // a summary that cannot be put in place is left out
+            (void)ignored;
+        }
+    }
 };
 
 class Consumer : public ASTConsumer {
   public:
+    explicit Consumer(std::string output) : output(std::move(output)) {}
     void HandleTranslationUnit(ASTContext &context) override {
-        Analysis(context).run();
+        Analysis(context, output).run();
     }
+
+  private:
+    std::string output;
 };
 
 struct EffectsPlugin final : PluginASTAction {
-    std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &, StringRef) override {
+    std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &instance, StringRef) override {
         if (!pluginEnabled) return std::make_unique<ASTConsumer>(); // never null: the multiplexer calls it
-        return std::make_unique<Consumer>();
+        // A summary only for a compile that writes an object (not the editor's syntax check, not -E or -S).
+        const FrontendOptions &options = instance.getFrontendOpts();
+        std::string output = options.ProgramAction == frontend::EmitObj && StringRef(options.OutputFile).ends_with(".o")
+                                 ? options.OutputFile
+                                 : "";
+        return std::make_unique<Consumer>(output);
     }
     bool ParseArgs(const CompilerInstance &, const std::vector<std::string> &) override {
         return true;
@@ -445,4 +566,174 @@ const FrontendPluginRegistry::Add<EffectsPlugin> plugin("smith-effect-inference"
 
 extern "C" void smith_effects_disable() {
     pluginEnabled = false;
+}
+
+// ---- The program's check -------------------------------------------------------------------------------------------
+//
+// `smith cc --smith-effects a.o.fx b.o.fx ...`, which smith-cc runs when it links objects that have a summary: the
+// summaries are merged (a function is known by its linkage name), each function's set is solved again with the calls
+// that cross files, and a function with a ceiling whose set reaches past it only now, through another file, is an
+// error naming the whole chain. A function no summary defines has no source: `c`. What the files each found alone was
+// already said when they were compiled.
+
+namespace {
+
+struct Edit {
+    char kind = 'L'; // L a leaf with effects, E a call by symbol
+    uint32_t effects = 0;
+    std::string callee, place, name;
+};
+
+struct Function {
+    std::string name, place;
+    long declared = -1;
+    uint32_t local = 0, inferred = 0;
+    std::vector<Edit> edges;
+};
+
+class Program {
+  public:
+    bool read(const char *path) {
+        auto buffer = llvm::MemoryBuffer::getFile(path);
+        if (!buffer) return false;
+        llvm::SmallVector<llvm::StringRef, 8> lines;
+        (*buffer)->getBuffer().split(lines, '\n', -1, false);
+        for (llvm::StringRef line : lines) {
+            llvm::SmallVector<llvm::StringRef, 8> field;
+            line.split(field, '\t');
+            if (field.size() < 5) continue;
+            if (field[0] == "F" && field.size() >= 6) {
+                if (functions.count(field[1].str()) != 0) continue; // the first definition stands
+                Function &function = functions[field[1].str()];
+                field[2].getAsInteger(10, function.declared);
+                uint64_t local = 0;
+                field[3].getAsInteger(10, local);
+                function.local = static_cast<uint32_t>(local);
+                function.place = field[4].str();
+                function.name = field[5].str();
+                owners[field[1].str()] = path;
+            } else if (field[0] == "L" || field[0] == "E") {
+                auto owner = owners.find(field[1].str());
+                if (owner == owners.end() || owner->second != path) continue;
+                Edit edge;
+                edge.kind = field[0][0];
+                if (edge.kind == 'L') {
+                    uint64_t set = 0;
+                    field[2].getAsInteger(10, set);
+                    edge.effects = static_cast<uint32_t>(set);
+                } else {
+                    edge.callee = field[2].str();
+                }
+                edge.place = field[3].str();
+                edge.name = field[4].str();
+                functions[field[1].str()].edges.push_back(edge);
+            }
+        }
+        return true;
+    }
+
+    // Returns the number of errors, printed as the compiler prints its own.
+    int check() {
+        solve();
+        int errors = 0;
+        for (auto &entry : functions) {
+            Function &function = entry.second;
+            if (function.declared < 0) continue;
+            uint32_t declared = static_cast<uint32_t>(function.declared);
+            uint32_t extra = function.inferred & ~declared;
+            uint32_t now = extra & ~(function.local & ~declared); // what only another file brings in
+            if (now == 0) continue;
+            const Edit *first = nullptr;
+            uint32_t bit = 0;
+            for (const Name &name : names) {
+                if ((now & name.bit) == 0) continue;
+                const Edit *found = witness(function, name.bit);
+                if (found != nullptr) {
+                    first = found;
+                    bit = name.bit;
+                    break;
+                }
+            }
+            if (first == nullptr) continue;
+            std::string kind = declared == 0 ? "[[smith::pure]]" : "limited to " + describe(declared);
+            llvm::errs() << first->place << ": error: smith-effect: `" << function.name << "` is " << kind
+                         << ", but it has the effects " << describe(extra) << ": " << chain(entry.first, bit) << "\n";
+            errors++;
+        }
+        return errors;
+    }
+
+  private:
+    std::map<std::string, Function> functions;
+    std::map<std::string, std::string> owners;
+
+    uint32_t visible(const std::string &symbol) {
+        auto found = functions.find(symbol);
+        if (found == functions.end()) return C; // no summary defines it: no source
+        return found->second.declared >= 0 ? static_cast<uint32_t>(found->second.declared) : found->second.inferred;
+    }
+
+    uint32_t reach(const Edit &edge) {
+        return edge.kind == 'L' ? edge.effects : visible(edge.callee);
+    }
+
+    void solve() {
+        for (bool changed = true; changed;) {
+            changed = false;
+            for (auto &entry : functions) {
+                Function &function = entry.second;
+                uint32_t set = function.local;
+                for (const Edit &edge : function.edges)
+                    set |= reach(edge);
+                if (set != function.inferred) {
+                    function.inferred = set;
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    const Edit *witness(const Function &function, uint32_t bit) {
+        for (const Edit &edge : function.edges)
+            if ((reach(edge) & bit) != 0) return &edge;
+        return nullptr;
+    }
+
+    // `bad -> log_it (log.c:12) -> printf (log.c:5)`: the places without their columns.
+    std::string chain(const std::string &start, uint32_t bit) {
+        std::string text = functions[start].name;
+        std::string symbol = start;
+        for (int step = 0; step < 64; step++) {
+            auto found = functions.find(symbol);
+            if (found == functions.end()) break;
+            const Edit *edge = witness(found->second, bit);
+            if (edge == nullptr) break;
+            text += " -> " + edge->name + " (" + line(edge->place) + ")";
+            if (edge->kind == 'L') break;
+            auto next = functions.find(edge->callee);
+            if (next == functions.end() || next->second.declared >= 0) break;
+            symbol = edge->callee;
+        }
+        return text;
+    }
+
+    // `file:line` of a `path:line:column`.
+    static std::string line(const std::string &place) {
+        size_t last = place.rfind(':');
+        size_t before = last == std::string::npos ? last : place.rfind(':', last - 1);
+        std::string path = before == std::string::npos ? place : place.substr(0, before);
+        std::string rest = before == std::string::npos ? "" : place.substr(before, last - before);
+        return llvm::sys::path::filename(path).str() + rest;
+    }
+};
+
+} // namespace
+
+extern "C" int smith_effects_check(int count, char **files) {
+    Program program;
+    bool any = false;
+    for (int i = 0; i < count; i++)
+        any = program.read(files[i]) || any;
+    if (!any) return 0;
+    return program.check() > 0 ? 1 : 0;
 }
