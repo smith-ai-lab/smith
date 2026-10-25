@@ -698,8 +698,8 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config, cons
 typedef struct {
     const char *task;
     const char *script;
-    const char *mode;  // the script's second argument, or nullptr
-    int phase;         // 0 is a short task, 1 a long one (all start at once)
+    const char *mode; // the script's second argument, or nullptr
+    int phase;        // 0 is a short task, 1 a long one (all start at once)
 } BuildTestScript;
 
 // clang-format off
@@ -786,8 +786,7 @@ static const char *const *build_test(SmithBuild *b, const BuildConfig *config, c
                                  smith_list(b, "env", smith_fmt(b, "CC=%s", config->cc),
                                             smith_fmt(b, "UNITS=%s", units), "SMITH_OUTPUT=full", "sh",
                                             smith_fmt(b, "tests/%s.sh", row->script), binary, nullptr),
-                                 smith_when(b, row->mode != nullptr, smith_list(b, row->mode, nullptr)),
-                                 nullptr),
+                                 smith_when(b, row->mode != nullptr, smith_list(b, row->mode, nullptr)), nullptr),
             .description = smith_fmt(b, "tests/%s.sh %s", row->script, mode),
             .inputs = (const char *[]){binary,
                                        units[0] != '\0' &&

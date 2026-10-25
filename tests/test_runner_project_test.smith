@@ -1,7 +1,7 @@
-// smith_tests in a project, ported from tests/test.sh (sections 6, 8, 8b, 9, 11, 13 and 14): finding the tests in `.smith`
-// and C files, the objects it links, full size, check_same_bits and `.inputs`, the tools on a test file, the libraries
-// under the conventions' warnings, tests in modules and tests that take an io. Each case that runs the runner runs it as
-// workers and with --isolate. Fixtures: tests/build_fixtures/runner_*.
+// smith_tests in a project, ported from tests/test.sh (sections 6, 8, 8b, 9, 11, 13 and 14): finding the tests in
+// `.smith` and C files, the objects it links, full size, check_same_bits and `.inputs`, the tools on a test file, the
+// libraries under the conventions' warnings, tests in modules and tests that take an io. Each case that runs the runner
+// runs it as workers and with --isolate. Fixtures: tests/build_fixtures/runner_*.
 module test_runner_project_test;
 
 import smith::format;
@@ -47,8 +47,8 @@ export void test_runner_project_a_file_without_tests_adds_nothing_and_a_project_
     }
 }
 
-// Section 8. smith_tests links the arena and random itself when .objects leaves them out, and builds with no .objects at
-// all.
+// Section 8. smith_tests links the arena and random itself when .objects leaves them out, and builds with no .objects
+// at all.
 export void test_runner_project_a_library_left_out_of_objects_is_linked_by_smith_tests(io::Io *io) {
     scratch::Project p = runner::project(io, "runner_base", "runner_missing");
     scratch::Run built = runner::build(&p, "");
@@ -140,14 +140,14 @@ export void test_runner_project_inputs_are_built_before_the_tests_and_rerun_them
 // assumption.
 export void test_runner_project_clangd_reads_a_test_file_without_errors(io::Io *io) {
     scratch::Project p = runner::project(io, "runner_base", "runner_checks");
-    if (scratch::sh(&p, "smith lsp --version").status != 0)
-        return;
+    if (scratch::sh(&p, "smith lsp --version").status != 0) return;
     scratch::Run built = runner::build(&p, "");
     scratch::expect_status("clangd: the project builds", 0, &built);
     // The sample is not what smith-effects tests; its checks are off.
     scratch::write(&p, ".clang-tidy", "Checks: \"-*\"\n");
-    scratch::expect_text("clangd: no errors in a test file", "0",
-                         scratch::capture(&p, "smith lsp --check=tests/test_checks.smith 2>&1 | grep -c 'E\\[' || true"));
+    scratch::expect_text(
+        "clangd: no errors in a test file", "0",
+        scratch::capture(&p, "smith lsp --check=tests/test_checks.smith 2>&1 | grep -c 'E\\[' || true"));
 }
 
 // The analyzer: test::check(p != nullptr) is an assumption to it, as contract::assert is (target::static_analyzer), so
@@ -159,8 +159,8 @@ export void test_runner_project_the_analyzer_takes_a_test_check_as_an_assumption
     scratch::expect_status("analyzer: the project builds", 0, &built);
     // The sample is not what smith-effects tests; its checks are off.
     scratch::write(&p, ".clang-tidy", "Checks: \"-*\"\n");
-    scratch::Run lint = scratch::sh(
-        &p, "smith lint --checks='-*,clang-analyzer-*' analyzer.smith -- -std=gnu2y -I.smith/include 2>&1");
+    scratch::Run lint =
+        scratch::sh(&p, "smith lint --checks='-*,clang-analyzer-*' analyzer.smith -- -std=gnu2y -I.smith/include 2>&1");
     scratch::expect_contains(
         "analyzer: a dereference after a plain test of null is reported", lint.out,
         "analyzer.smith:21:12: warning: Access to field 'x' results in a dereference of a null pointer");
@@ -174,21 +174,22 @@ static void check_library_compiles(io::Io *io, const char *source) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     const char *standards[2] = {"gnu2y", "gnu23"};
     for (usize i = 0; i < 2; i++) {
-        const char *command = format::push(
-            &io->arena,
-            "flags=$(awk '/smith_profile_warnings\\[\\] =/ {on = 1} on {print} /nullptr};/ {on = 0}' "
-            "\"$SMITH_REPO/runtime/build_runtime.c\" | grep -o '\"-[^\"]*\"' | tr -d '\"' | grep -v '^-std='); "
-            "flags=\"$flags -Wdouble-promotion -Wundef -Wpointer-arith -Wcast-qual -Wformat=2 "
-            "-Wmissing-variable-declarations -Wcomma -Wunreachable-code\"; "
-            "smith cc -std=", standards[i], " $flags -I \"$SMITH_REPO/include\" -c \"$SMITH_REPO/", source,
-            "\" -o out.o 2>&1").data;
+        const char *command =
+            format::push(
+                &io->arena,
+                "flags=$(awk '/smith_profile_warnings\\[\\] =/ {on = 1} on {print} /nullptr};/ {on = 0}' "
+                "\"$SMITH_REPO/runtime/build_runtime.c\" | grep -o '\"-[^\"]*\"' | tr -d '\"' | grep -v '^-std='); "
+                "flags=\"$flags -Wdouble-promotion -Wundef -Wpointer-arith -Wcast-qual -Wformat=2 "
+                "-Wmissing-variable-declarations -Wcomma -Wunreachable-code\"; "
+                "smith cc -std=",
+                standards[i], " $flags -I \"$SMITH_REPO/include\" -c \"$SMITH_REPO/", source, "\" -o out.o 2>&1")
+                .data;
         scratch::Run run = scratch::sh(&p, command);
-        if (run.status != 0)
-            test::note("%s under %s:\n%s", source, standards[i], run.out);
-        scratch::expect_status(
-            format::push(&io->arena, "flags: ", source, " compiles clean under ", standards[i], " with the conventions' warnings")
-                .data,
-            0, &run);
+        if (run.status != 0) test::note("%s under %s:\n%s", source, standards[i], run.out);
+        scratch::expect_status(format::push(&io->arena, "flags: ", source, " compiles clean under ", standards[i],
+                                            " with the conventions' warnings")
+                                   .data,
+                               0, &run);
     }
 }
 
@@ -268,8 +269,7 @@ export void test_runner_project_the_same_test_in_two_files_fails_the_build(io::I
 
 export void test_runner_project_a_failing_smith_test_names_the_smith_line_and_the_function_as_written(io::Io *io) {
     scratch::Project p = lang_project(io);
-    if (!runner::can_symbolize(&p))
-        return;
+    if (!runner::can_symbolize(&p)) return;
     usize area = runner::line_of(&p, "tests/geometry/box_test.smith", "test::check_equal_u64(area, expected);");
     usize library = runner::line_of(&p, "tests/geometry/box_test.smith", "helpers::require(box::area(2, 3) == 7);");
     usize plain = runner::line_of(&p, "tests/test_plain.smith", "test::check_equal(n, 4);");
@@ -280,9 +280,12 @@ export void test_runner_project_a_failing_smith_test_names_the_smith_line_and_th
                            format::push(&io->arena, "check failed at tests/geometry/box_test.smith:", area).data);
         runner::expect_has(io, iso, "smith tests: ... its source", &fails, "test::check_equal_u64(area, expected);");
         scratch::expect_contains(
-            runner::label(io, iso, "smith tests: ... the function as written, in the chain (the columns follow the longest path)"),
+            runner::label(
+                io, iso,
+                "smith tests: ... the function as written, in the chain (the columns follow the longest path)"),
             runner::squeezed(io, fails.out),
-            format::push(&io->arena, "tests/geometry/box_test.smith:", area, " geometry::box_test::test_area_fails").data);
+            format::push(&io->arena, "tests/geometry/box_test.smith:", area, " geometry::box_test::test_area_fails")
+                .data);
         scratch::Run through = runner::smith_test(&p, iso, "--test geometry::box_test::area_through_a_library");
         runner::expect_has(io, iso, "smith tests: a frame of the module smith::test is not the failing line", &through,
                            format::push(&io->arena, "check failed at tests/geometry/box_test.smith:", library).data);
@@ -298,9 +301,10 @@ export void test_runner_project_a_failing_smith_test_names_the_smith_line_and_th
     }
 }
 
-// Section 14. A test that takes an io: `void test_x(c::SmithIo *io)` (or `io::Io *io`) gets a real io made for it alone,
-// on the run's seed, with a scratch folder of its own (also $TMPDIR), removed when the test passes and kept, with its
-// path printed, when it fails. The tests write what they saw into $SMITH_TEST_PROBE/<name>, which the checks read.
+// Section 14. A test that takes an io: `void test_x(c::SmithIo *io)` (or `io::Io *io`) gets a real io made for it
+// alone, on the run's seed, with a scratch folder of its own (also $TMPDIR), removed when the test passes and kept,
+// with its path printed, when it fails. The tests write what they saw into $SMITH_TEST_PROBE/<name>, which the checks
+// read.
 static scratch::Project io_project(io::Io *io) {
     scratch::Project p = runner::project(io, "runner_base", "runner_io");
     (void)scratch::sh(&p, "mkdir probe");
@@ -311,8 +315,9 @@ static scratch::Project io_project(io::Io *io) {
 
 // The runner with the probe folder of the project in its environment.
 static scratch::Run io_run(const scratch::Project *p, const char *iso, const char *arguments) {
-    return scratch::sh(p, format::push(&p->io->arena, "env SMITH_TEST_PROBE=\"$PWD/probe\" build/tests ", iso, " ",
-                                       arguments, " 2>&1").data);
+    return scratch::sh(
+        p, format::push(&p->io->arena, "env SMITH_TEST_PROBE=\"$PWD/probe\" build/tests ", iso, " ", arguments, " 2>&1")
+               .data);
 }
 
 export void test_runner_project_an_io_test_gets_a_real_io_with_a_scratch_folder_that_is_its_tmpdir(io::Io *io) {
@@ -327,12 +332,13 @@ export void test_runner_project_an_io_test_gets_a_real_io_with_a_scratch_folder_
         runner::expect_has(io, iso, "io tests: a test gets a real io, with a scratch folder that is its TMPDIR", &real,
                            "PASS io_real");
         const char *folder = scratch::read(&p, "probe/real");
-        bool gone = folder[0] != '\0' &&
-                    scratch::sh(&p, format::push(&io->arena, "test -e '", folder, "'").data).status != 0;
+        bool gone =
+            folder[0] != '\0' && scratch::sh(&p, format::push(&io->arena, "test -e '", folder, "'").data).status != 0;
         scratch::expect_text(runner::label(io, iso, "io tests: ... the folder is removed after a pass"), "gone",
                              gone ? "gone" : "kept");
         scratch::Run named = io_run(&p, iso, "--test io_module_name");
-        runner::expect_has(io, iso, "io tests: a test that takes io::Io * gets a real io", &named, "1 passed, 0 failed");
+        runner::expect_has(io, iso, "io tests: a test that takes io::Io * gets a real io", &named,
+                           "1 passed, 0 failed");
         scratch::expect_text(runner::label(io, iso, "io tests: ... with a scratch folder of its own"), "yes",
                              scratch::read(&p, "probe/module_name")[0] != '\0' ? "yes" : "no");
     }
@@ -367,8 +373,7 @@ export void test_runner_project_a_failed_io_test_keeps_its_scratch_folder_and_na
                 : "no");
         runner::expect_has(io, iso, "io tests: ... and the failure names the seed to replay", &failed,
                            "rerun: smith test --test io_fails --seed ");
-        if (folder[0] != '\0')
-            (void)scratch::sh(&p, format::push(&io->arena, "rm -rf '", folder, "'").data);
+        if (folder[0] != '\0') (void)scratch::sh(&p, format::push(&io->arena, "rm -rf '", folder, "'").data);
     }
 }
 
@@ -388,8 +393,8 @@ export void test_runner_project_an_io_test_runs_on_the_seed_it_is_given(io::Io *
         scratch::expect_text(runner::label(io, iso, "io tests: ... another seed, another key"), "6 6",
                              scratch::read(&p, "probe/seed"));
         (void)io_run(&p, iso, "--test io_seed");
-        const char *same = scratch::capture(
-            &p, "read a b < probe/seed; [ -n \"$a\" ] && [ \"$a\" = \"$b\" ] && echo yes || echo no");
+        const char *same =
+            scratch::capture(&p, "read a b < probe/seed; [ -n \"$a\" ] && [ \"$a\" = \"$b\" ] && echo yes || echo no");
         scratch::expect_text(runner::label(io, iso, "io tests: ... without --seed the key still comes from the seed"),
                              "yes", same);
     }
@@ -403,13 +408,15 @@ export void test_runner_project_two_io_tests_run_side_by_side_each_in_a_folder_o
         scratch::Run run = io_run(&p, iso, "--test io_parallel --jobs 2");
         runner::expect_has(io, iso, "io tests: two io tests run side by side", &run, "2 passed, 0 failed");
         const char *different = scratch::capture(
-            &p, "[ -n \"$(cat probe/a)\" ] && [ \"$(cat probe/a)\" != \"$(cat probe/b)\" ] && echo different || echo same");
+            &p,
+            "[ -n \"$(cat probe/a)\" ] && [ \"$(cat probe/a)\" != \"$(cat probe/b)\" ] && echo different || echo same");
         scratch::expect_text(runner::label(io, iso, "io tests: ... each in a folder of its own"), "different",
                              different);
         if (runner::can_symbolize(&p)) {
             scratch::Run task = scratch::sh(
                 &p, format::push(&io->arena, "env SMITH_OUTPUT=full SMITH_TEST_PROBE=\"$PWD/probe\" smith test ", iso,
-                                 " --test io_fixture 2>&1").data);
+                                 " --test io_fixture 2>&1")
+                        .data);
             scratch::expect_status(runner::label(io, iso, "io tests: smith test runs an io test too"), 0, &task);
         }
     }

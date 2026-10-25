@@ -1,12 +1,11 @@
-// Shrinking a failed property test, ported from tests/test.sh (section 4b): a failure is shrunk to the smallest case that
-// still fails, within a budget of runs and seconds, and shrinking one test does not disturb another. Each case runs as
-// workers and with --isolate. Fixtures: tests/build_fixtures/runner_shrink, _alongside and _budget.
+// Shrinking a failed property test, ported from tests/test.sh (section 4b): a failure is shrunk to the smallest case
+// that still fails, within a budget of runs and seconds, and shrinking one test does not disturb another. Each case
+// runs as workers and with --isolate. Fixtures: tests/build_fixtures/runner_shrink, _alongside and _budget.
 module test_runner_shrink_test;
 
 import smith::format;
 import smith::io;
 import smith::test;
-import <stdlib.h>;
 import runner;
 import scratch;
 
@@ -31,34 +30,36 @@ export void test_runner_shrink_a_uniform_failure_shrinks_to_the_boundary(io::Io 
         const char *iso = runner::flag(mode);
         // One run: its seed and its shrunk runs are read from the text it saved, which is also what is reported.
         (void)scratch::sh(&p, format::push(&io->arena, "build/tests ", iso,
-                                           " --trace --test shrink_int --shrink-seconds 3600 >raw.txt 2>&1").data);
+                                           " --trace --test shrink_int --shrink-seconds 3600 >raw.txt 2>&1")
+                                  .data);
         const char *seed =
             scratch::capture(&p, "sed -n 's/^FAIL shrink_int with seed \\([0-9]*\\),.*/\\1/p' raw.txt | head -n 1");
-        const char *runs =
-            scratch::capture(&p, "sed -n 's/.*shrunk in \\([0-9]*\\) runs.*/\\1/p' raw.txt | head -n 1");
+        const char *runs = scratch::capture(&p, "sed -n 's/.*shrunk in \\([0-9]*\\) runs.*/\\1/p' raw.txt | head -n 1");
         if (runner::can_symbolize(&p)) {
-            const char *wanted = format::push(
-                &io->arena, "FAIL shrink_int with seed ", seed, ", shrunk in ", runs, " runs\n check failed at ",
-                "tests/test_shrink.smith:", line, "\n ", line, " | test::check_less(x, 500);\n x = 500, 500 (i64)\n",
-                " called from\n tests/test_shrink.smith:", line, " test_shrink_int\n rerun: smith test --test shrink_int ",
-                "--seed ", seed, "\n\n0 passed, 1 failed").data;
-            scratch::expect_text(
-                runner::label(io, iso, "shrink: a uniform [0, 1000] with x < 500 shrinks to 500"), wanted,
-                runner::report_of(&p, "raw.txt"));
+            const char *wanted = format::push(&io->arena, "FAIL shrink_int with seed ", seed, ", shrunk in ", runs,
+                                              " runs\n check failed at ", "tests/test_shrink.smith:", line, "\n ", line,
+                                              " | test::check_less(x, 500);\n x = 500, 500 (i64)\n",
+                                              " called from\n tests/test_shrink.smith:", line,
+                                              " test_shrink_int\n rerun: smith test --test shrink_int ", "--seed ",
+                                              seed, "\n\n0 passed, 1 failed")
+                                     .data;
+            scratch::expect_text(runner::label(io, iso, "shrink: a uniform [0, 1000] with x < 500 shrinks to 500"),
+                                 wanted, runner::report_of(&p, "raw.txt"));
         }
         scratch::Run alone = runner::tests(&p, iso, "--test shrink_int --shrink-seconds 3600");
         runner::expect_has(io, iso, "shrink: the runner on its own shows 500 and 500", &alone,
                            "    a = 500   (i64)\n    b = 500   (i64)");
         scratch::expect_count(runner::label(io, iso, "shrink: ... in at most 1000 runs"), 1,
-                              (usize)(runs[0] != '\0' && c::atoi(runs) <= 1000));
+                              (usize)(runs[0] != '\0' && runner::number(runs) <= 1000));
 
         scratch::Run unshrunk = runner::tests(&p, iso, "--test shrink_int --shrink 0");
         const char *first = number_in(&p, iso, "--test shrink_int --shrink 0", "s/^    a = \\([0-9]*\\) .*/\\1/p");
         scratch::expect_count(runner::label(io, iso, "shrink: --shrink 0 shows the unshrunk failure"), 1,
-                              (usize)(first[0] != '\0' && c::atoi(first) > 500));
+                              (usize)(first[0] != '\0' && runner::number(first) > 500));
         runner::expect_lacks(io, iso, "shrink: ... without 'shrunk'", &unshrunk, "shrunk");
 
-        scratch::Run rerun = runner::smith_test(&p, iso, format::push(&io->arena, "--test shrink_int --seed ", seed).data);
+        scratch::Run rerun =
+            runner::smith_test(&p, iso, format::push(&io->arena, "--test shrink_int --seed ", seed).data);
         runner::expect_has(io, iso, "shrink: the rerun line shrinks to the same case", &rerun,
                            "    x = 500, 500   (i64)");
     }
@@ -89,13 +90,14 @@ export void test_runner_shrink_a_list_shrinks_to_its_failing_item_and_the_same_s
                                        " --test shrink_list --shrink-seconds 3600 2>&1 | sed -e '/^slowest:/,/^$/d' "
                                        "-e 's/ in [0-9.]* s$//' | grep -v 'smith-trace \\(image\\|frame\\)'")
                               .data;
-        (void)scratch::sh(&p, format::push(&io->arena, "( ", run, " >first.txt ) & ( ", run, " >second.txt ) & wait").data);
+        (void)scratch::sh(&p,
+                          format::push(&io->arena, "( ", run, " >first.txt ) & ( ", run, " >second.txt ) & wait").data);
         const char *first = scratch::read(&p, "first.txt");
         // the length shrinks as far as the failing item allows: length = item + 1 (which item fails first depends on
         // the seed)
-        const char *shape = scratch::capture(
-            &p, "sed -n 's/^    note: length \\([0-9]*\\), item \\([0-9]*\\)$/\\1 \\2/p' first.txt | awk '{ print ($1 == $2 + 1) "
-                "? \"yes\" : \"no\" }'");
+        const char *shape = scratch::capture(&p, "sed -n 's/^    note: length \\([0-9]*\\), item \\([0-9]*\\)$/\\1 "
+                                                 "\\2/p' first.txt | awk '{ print ($1 == $2 + 1) "
+                                                 "? \"yes\" : \"no\" }'");
         scratch::expect_text(runner::label(io, iso, "shrink: a list shrinks to its failing item"), "yes", shape);
         scratch::expect_contains(runner::label(io, iso, "shrink: ... of 91"), first, "    a = 91   (i64)");
         scratch::expect_text(runner::label(io, iso, "shrink: the same seed gives the same shrunk case"), first,
@@ -113,7 +115,8 @@ export void test_runner_shrink_a_normal_failure_shrinks_to_the_value_nearest_thr
             &p, format::push(&io->arena, "build/tests ", iso,
                              " --test shrink_normal --shrink-seconds 3600 --seeds 5000 2>&1 | sed -n 's/^    a = "
                              "\\([0-9.e+-]*\\) .*/\\1/p' | awk '{ print ($1 >= 3 && $1 < 3.0000001) ? \"yes\" : \"no\" "
-                             "}'").data);
+                             "}'")
+                    .data);
         scratch::expect_text(runner::label(io, iso, "shrink: ... to the z nearest 3 from above"), "yes", verdict);
     }
 }
@@ -140,13 +143,14 @@ export void test_runner_shrink_the_budget_stops_shrinking_within_1000_runs_and_e
     scratch::Project p = shrink_project(io, "runner_budget", "-DSAN=0");
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
-        const char *elapsed = scratch::capture(
-            &p, format::push(&io->arena, "s=$(date +%s); build/tests ", iso,
-                             " --test budget >budget.out 2>&1; echo $(($(date +%s) - s))").data);
+        const char *elapsed =
+            scratch::capture(&p, format::push(&io->arena, "s=$(date +%s); build/tests ", iso,
+                                              " --test budget >budget.out 2>&1; echo $(($(date +%s) - s))")
+                                     .data);
         const char *runs = scratch::capture(&p, "sed -n 's/.*shrunk in \\([0-9]*\\) runs.*/\\1/p' budget.out");
         scratch::expect_count(runner::label(io, iso, "budget: it shrinks, and stops within 1000 runs"), 1,
-                              (usize)(runs[0] != '\0' && c::atoi(runs) <= 1000));
+                              (usize)(runs[0] != '\0' && runner::number(runs) <= 1000));
         scratch::expect_count(runner::label(io, iso, "budget: ... and ends near its 10 second budget, not never"), 1,
-                              (usize)(c::atoi(elapsed) <= 90));
+                              (usize)(runner::number(elapsed) <= 90));
     }
 }
