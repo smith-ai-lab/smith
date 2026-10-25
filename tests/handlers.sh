@@ -45,6 +45,20 @@ failures=$((failures + $(grep -c '^FAIL' out.txt)))
 grep -v '^ok  ' out.txt
 expect "the program passes, from itself, a linked library and a dlopened one" 0 $status
 ./t_handlers bench
+# The files and console handlers: fakes set on the thread are reached by read, write, open, close, syscall, the stdio
+# functions and fopen, fdopen and freopen; with none set they are libc's. At -O0 and -O2.
+for optimize in -O0 -O2; do
+    "$smith" cc $flags $optimize "$here/tests/handlers/io.c" libsmith_handlers.dylib -o t_io 2>cc.err
+    expect "the io test builds at $optimize" 0 $?
+    cat cc.err
+    ./t_io >io.txt 2>&1
+    status=$?
+    total=$((total + $(grep -c '^ok  ' io.txt)))
+    failures=$((failures + $(grep -c '^FAIL' io.txt)))
+    grep -v '^ok  ' io.txt
+    expect "the io test passes at $optimize (the fakes are reached, libc's without them)" 0 $status
+    expect "the io test at $optimize ran its 17 checks" 17 "$(grep -c '^ok  ' io.txt)"
+done
 # A project built by the conventions links the runtime by itself, in each profile: a handler set in main is reached.
 mkdir "$work/project" && cp "$here/tests/handlers/project.c" "$work/project/main.c"
 cd "$work/project" || exit 1

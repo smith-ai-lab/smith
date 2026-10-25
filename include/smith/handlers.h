@@ -7,6 +7,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <sys/types.h>
 
 typedef struct SmithAllocator SmithAllocator;
 
@@ -27,3 +28,38 @@ SmithAllocator *smith_handlers_set_allocator(SmithAllocator *allocator);
 
 // The allocator of the calling thread, null when none is set.
 SmithAllocator *smith_handlers_allocator(void);
+
+// The files of the calling thread: open, read, write and close of a file descriptor, which open, read, write, close,
+// syscall (SYS_read, SYS_write) and, through funopen, fopen, fdopen and freopen reach while one is set. Every
+// descriptor from 3 up goes to it (a fake decides what its descriptors are); 0, 1 and 2 are the console's. No files
+// handler set (the default) is libc's. A stream a handler opened is not seekable (the handler has no seek).
+typedef struct SmithFiles SmithFiles;
+
+struct SmithFiles {
+    int (*open)(SmithFiles *self, const char *path, int flags, int mode);
+    ssize_t (*read)(SmithFiles *self, int fd, void *buffer, size_t size);
+    ssize_t (*write)(SmithFiles *self, int fd, const void *buffer, size_t size);
+    int (*close)(SmithFiles *self, int fd);
+};
+
+// Sets the files of the calling thread (null: libc's), returning the ones it had.
+SmithFiles *smith_handlers_set_files(SmithFiles *files);
+
+// The files of the calling thread, null when none is set.
+SmithFiles *smith_handlers_files(void);
+
+// The console of the calling thread: what is written to stdout and stderr (fd 1 and 2, whichever way: write, fwrite,
+// printf, puts, dprintf...) and what is read from stdin (read on fd 0, fgets, getchar, scanf...). No console handler
+// set is libc's.
+typedef struct SmithConsole SmithConsole;
+
+struct SmithConsole {
+    ssize_t (*write)(SmithConsole *self, int fd, const void *buffer, size_t size); // fd is 1 or 2
+    ssize_t (*read)(SmithConsole *self, void *buffer, size_t size);
+};
+
+// Sets the console of the calling thread (null: libc's), returning the one it had.
+SmithConsole *smith_handlers_set_console(SmithConsole *console);
+
+// The console of the calling thread, null when none is set.
+SmithConsole *smith_handlers_console(void);
