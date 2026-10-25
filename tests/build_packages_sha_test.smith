@@ -1,0 +1,48 @@
+// SHA-256 of `smith --smith-sha256`, from tests/build.sh section 11: the NIST vectors (FIPS 180-2 examples, and the
+// empty message), and shasum on random data around the padding boundaries.
+module build_packages_sha_test;
+
+import smith::format;
+import smith::io;
+import smith::test;
+import scratch;
+
+static const char *sha(const scratch::Project *p, const char *file) {
+    return scratch::capture(p, format::push(&p->io->arena, "smith --smith-sha256 ", file).data);
+}
+
+static void vector(const scratch::Project *p, const char *name, const char *content, const char *expected) {
+    scratch::write(p, "input", content);
+    scratch::expect_text(name, expected, sha(p, "input"));
+}
+
+export void test_build_packages_sha256_matches_the_nist_vectors(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    vector(&p, "sha256: \"abc\"", "abc", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    vector(&p, "sha256: the empty message", "", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    vector(&p, "sha256: the 448-bit message", "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq",
+           "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1");
+    vector(&p, "sha256: the 896-bit message",
+           "abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnop"
+           "qrstu",
+           "cf5b16a778af8380036ce59e7b0492370b249b11e8f07a51afac45037afee9d1");
+    (void)scratch::sh(&p, "head -c 1000000 /dev/zero | tr '\\0' a >million");
+    scratch::expect_text("sha256: a million \"a\"", "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0",
+                         sha(&p, "million"));
+}
+
+static void equals_shasum(const scratch::Project *p, const char *name, const char *bytes) {
+    (void)scratch::sh(p, format::push(&p->io->arena, "head -c ", bytes, " /dev/urandom >random").data);
+    scratch::expect_text(name, scratch::capture(p, "shasum -a 256 random | cut -d' ' -f1"), sha(p, "random"));
+}
+
+export void test_build_packages_sha256_equals_shasum_on_random_bytes(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    equals_shasum(&p, "sha256: 300000 random bytes equal shasum", "300000");
+    const char *sizes[9] = {"55", "56", "57", "63", "64", "65", "119", "120", "128"}; // around the padding boundaries
+    for (usize i = 0; i < 9; i++) {
+        char name[64];
+        (void)format::to(name, sizeof name, "sha256: ", sizes[i], " bytes equal shasum");
+        equals_shasum(&p, name, sizes[i]);
+    }
+}

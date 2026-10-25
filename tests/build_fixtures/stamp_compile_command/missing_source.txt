@@ -1,0 +1,6 @@
+#include <smith/build.h>
+
+void build(SmithBuild *b) {
+    smith_compile_command(b, "cc", "", nullptr);
+    smith_default(b, (const char *[]){nullptr});
+}

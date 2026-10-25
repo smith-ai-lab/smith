@@ -1,0 +1,14 @@
+#include <smith/build.h>
+
+static int pass(SmithRun *run) {
+    (void)run;
+    return 0;
+}
+
+void build(SmithBuild *b) {
+    SmithStep step = {.run = pass, .stamp = "build/pass.stamp"};
+    smith_step(b, &step);
+    SmithStep command = {.command = (const char *[]){"true", nullptr}, .stamp = "build/true.stamp"};
+    smith_step(b, &command);
+    smith_default(b, smith_cat(b, step.outputs, command.outputs, nullptr));
+}

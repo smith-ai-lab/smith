@@ -1,0 +1,53 @@
+[
+  {
+    "directory": "@DIR@",
+    "file": "util.c",
+    "output": "build/util.o",
+    "arguments": [
+      "cc",
+      "-MMD",
+      "-MF",
+      "build/util.d",
+      "-c",
+      "util.c",
+      "-o",
+      "build/util.o"
+    ]
+  },
+  {
+    "directory": "@DIR@",
+    "file": "tests/a.c",
+    "arguments": [
+      "cc",
+      "-std=gnu23",
+      "-Iinc",
+      "-c",
+      "tests/a.c"
+    ]
+  },
+  {
+    "directory": "@DIR@",
+    "file": "tests/b.c",
+    "arguments": [
+      "cc",
+      "-c",
+      "tests/b.c"
+    ]
+  },
+  {
+    "directory": "@DIR@",
+    "file": "build.c",
+    "arguments": [
+      "smith-cc",
+      "-std=gnu23",
+      "-g",
+      "-O0",
+      "-Wall",
+      "-Wextra",
+      "-I",
+      ".smith/include",
+      "-c",
+      "build.c"
+    ]
+  }
+]
