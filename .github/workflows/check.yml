@@ -21,6 +21,9 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          # the docs gate (check-docs-gate) compares the branch with origin/main, so it needs the history
+          fetch-depth: 0
 
       - name: Environment
         run: |

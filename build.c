@@ -1734,6 +1734,124 @@ static int build_tree_sitter(SmithRun *run) {
     return status;
 }
 
+// ---- The docs gate (#313): AGENTS.md says a change that adds something updates its skill and its concept in the same
+// commit; this makes `smith check` say so. The commits on the branch since the base, taken together, must change
+// something under .agents/skills/ or knowledge/ when any of them has a subject starting with `feat`. On main itself,
+// with no `feat` commit, or when the base cannot be resolved (a shallow clone), it passes, and says so in the last
+// case.
+static const char *const build_gate_message = "feat commits need their skill and concept updated (AGENTS.md); none of "
+                                              ".agents/skills/ or knowledge/ changed since";
+
+// The lines `git -C dir args...` prints, or nullptr when git fails.
+static const char *const *build_gate_git(SmithRun *run, const char *dir, const char *const *args) {
+    const char *argv[16] = {"git", "-C", dir};
+    size_t count = 3;
+    for (size_t i = 0; args[i] != nullptr && count < 15; i++)
+        argv[count++] = args[i];
+    argv[count] = nullptr;
+    const char *const *lines = nullptr;
+    return smith_run_status(run, argv, &lines) == 0 ? lines : nullptr;
+}
+
+// The commits since the base whose subject starts with `feat`, one line each ("hash subject"), or nullptr.
+static const char *build_gate_feat_commits(SmithRun *run, const char *dir, const char *range) {
+    const char *const *log =
+        build_gate_git(run, dir, (const char *[]){"log", "--no-merges", "--format=%h %s", range, nullptr});
+    const char *found = "";
+    for (size_t i = 0; log != nullptr && log[i] != nullptr; i++) {
+        const char *subject = strchr(log[i], ' ');
+        if (subject != nullptr && strncmp(subject + 1, "feat", 4) == 0)
+            found = smith_fmt(run->b, "%s  %s\n", found, log[i]);
+    }
+    return found;
+}
+
+static int build_gate_run(SmithRun *run, const char *dir, const char *base) {
+    const char *const *branch =
+        build_gate_git(run, dir, (const char *[]){"rev-parse", "--abbrev-ref", "HEAD", nullptr});
+    if (branch != nullptr && branch[0] != nullptr && strcmp(branch[0], "main") == 0) return 0;
+    const char *const *mergebase = build_gate_git(run, dir, (const char *[]){"merge-base", base, "HEAD", nullptr});
+    if (mergebase == nullptr || mergebase[0] == nullptr) {
+        printf("docs gate: %s cannot be resolved here (a shallow clone or no remote): not checked\n", base);
+        return 0;
+    }
+    const char *feats = build_gate_feat_commits(run, dir, smith_fmt(run->b, "%s..HEAD", base));
+    if (feats[0] == '\0') return 0;
+    const char *const *changed =
+        build_gate_git(run, dir,
+                       (const char *[]){"diff", "--name-only", smith_fmt(run->b, "%s...HEAD", base), "--",
+                                        ".agents/skills", "knowledge", nullptr});
+    if (changed != nullptr && changed[0] != nullptr) return 0;
+    fprintf(stderr, "%s %s\nthe feat commits:\n%s", build_gate_message, base, feats);
+    return 1;
+}
+
+// args: the base ref, normally origin/main.
+static int build_docs_gate(SmithRun *run) {
+    return build_gate_run(run, ".", run->args[0]);
+}
+
+static int build_gate_fail(const char *message) {
+    fputs(message, stderr);
+    return 1;
+}
+
+// Runs git in a scratch repository for the test of the gate; 0 on success.
+static int build_gate_scratch(const char *dir, const char *const *args) {
+    const char *argv[16] = {
+        "git", "-C", dir, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"};
+    size_t count = 9;
+    for (size_t i = 0; args[i] != nullptr && count < 15; i++)
+        argv[count++] = args[i];
+    argv[count] = nullptr;
+    return build_spawn(&(BuildSpawn){.argv = argv, .log = "/dev/null"});
+}
+
+// One commit in the scratch repository: the file `path` written (its folders made) and committed with `subject`.
+static int build_gate_commit(const char *dir, const char *path, const char *subject) {
+    char full[PATH_MAX];
+    snprintf(full, sizeof full, "%s/%s", dir, path);
+    for (char *slash = strchr(full + strlen(dir) + 1, '/'); slash != nullptr; slash = strchr(slash + 1, '/')) {
+        *slash = '\0';
+        mkdir(full, 0755);
+        *slash = '/';
+    }
+    FILE *file = fopen(full, "ab");
+    if (file == nullptr) return 1;
+    fputs(subject, file);
+    fclose(file);
+    int status = build_gate_scratch(dir, (const char *[]){"add", "-A", nullptr});
+    return status != 0 ? status : build_gate_scratch(dir, (const char *[]){"commit", "-q", "-m", subject, nullptr});
+}
+
+// The gate on a scratch repository: a fix passes, a feat that changes only code fails, a skill or concept change
+// makes it pass, a base that cannot be resolved passes.
+static int build_docs_gate_test(SmithRun *run) {
+    char dir[PATH_MAX];
+    snprintf(dir, sizeof dir, "%s/smith-gate-XXXXXX", getenv("TMPDIR") != nullptr ? getenv("TMPDIR") : "/tmp");
+    if (mkdtemp(dir) == nullptr) return 1;
+    int status = build_gate_scratch(dir, (const char *[]){"init", "-q", "-b", "main", nullptr});
+    status = status != 0 ? status : build_gate_commit(dir, "a.txt", "chore: start");
+    status = status != 0 ? status : build_gate_scratch(dir, (const char *[]){"checkout", "-q", "-b", "work", nullptr});
+    status = status != 0 ? status : build_gate_commit(dir, "runtime/a.c", "fix: a bug");
+    int failed = status;
+    if (status == 0 && build_gate_run(run, dir, "main") != 0) failed = build_gate_fail("gate: a fix must pass\n");
+    status = failed != 0 ? failed : build_gate_commit(dir, "runtime/b.c", "feat: a feature");
+    failed = failed != 0 ? failed : status;
+    if (failed == 0) {
+        fputs("(the next gate failure is the one under test)\n", stderr);
+        if (build_gate_run(run, dir, "main") == 0) failed = build_gate_fail("gate: a feat with no docs must fail\n");
+    }
+    status = failed != 0 ? failed : build_gate_commit(dir, ".agents/skills/x/SKILL.md", "docs: the skill");
+    failed = failed != 0 ? failed : status;
+    if (failed == 0 && build_gate_run(run, dir, "main") != 0)
+        failed = build_gate_fail("gate: a skill change must pass\n");
+    if (failed == 0 && build_gate_run(run, dir, "nowhere") != 0)
+        failed = build_gate_fail("gate: an unknown base must pass\n");
+    build_spawn(&(BuildSpawn){.argv = (const char *[]){"/bin/rm", "-rf", dir, nullptr}});
+    return failed;
+}
+
 static void build_developer_tasks(SmithBuild *b) {
     SmithStep friction = {
         .run = build_friction,
@@ -1748,6 +1866,19 @@ static void build_developer_tasks(SmithBuild *b) {
         .description = "regenerating tree-sitter/src/parser.c",
     };
     smith_task(b, "tree-sitter", &tree_sitter);
+    SmithStep gate = {
+        .run = build_docs_gate,
+        .args = smith_list(b, "origin/main", nullptr),
+        .description = "checking that feat commits update their skill and concept",
+        .test = true, // part of `smith check`
+    };
+    smith_task(b, "check-docs-gate", &gate);
+    SmithStep gate_test = {
+        .run = build_docs_gate_test,
+        .description = "testing the docs gate on a scratch repository",
+        .test = true,
+    };
+    smith_task(b, "test-docs-gate", &gate_test);
 }
 
 // Whether the LLVM install has the token hook (patches/clang-token-hook.patch), which `smith build llvm` applies: an
