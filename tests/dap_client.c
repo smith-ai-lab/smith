@@ -6,7 +6,6 @@
 // The session: initialize, launch <program>, setBreakpoints at <line> of <source file>, configurationDone, the
 // `stopped` event, stackTrace, scopes, variables (the locals, then the fields of the first one that has fields),
 // continue, the `terminated` event, disconnect. It exits 0 when the locals hold <variable> with <value>, 1 otherwise.
-#include <libproc.h>
 #include <poll.h>
 #include <signal.h>
 #include <spawn.h>
@@ -59,8 +58,7 @@ static uint64_t tree_cpu_ns(pid_t root) {
     for (int at = 0; at < count; at++) { // breadth first, over at most tree_max processes
         total += cpu_wait_cpu_ns(queue[at]);
         pid_t children[64];
-        int bytes = proc_listchildpids(queue[at], children, sizeof children);
-        int found = bytes > 0 ? bytes / (int)sizeof(pid_t) : 0;
+        int found = cpu_wait_children(queue[at], children, 64);
         for (int i = 0; i < found && i < 64 && count < tree_max; i++)
             queue[count++] = children[i];
     }

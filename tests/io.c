@@ -12,7 +12,9 @@
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
+#ifdef __APPLE__
 #include <mach/mach.h>
+#endif
 #include <netinet/in.h>
 #include <pthread.h>
 #include <signal.h>
@@ -379,6 +381,7 @@ static void test_seed(void) {
     smith_io_close(&fourth);
 }
 
+#ifdef __APPLE__
 static size_t test_resident(void) {
     mach_task_basic_info_data_t info = {};
     mach_msg_type_number_t count = MACH_TASK_BASIC_INFO_COUNT;
@@ -387,6 +390,20 @@ static size_t test_resident(void) {
     (void)result;
     return info.resident_size;
 }
+#else
+// The second number of /proc/self/statm is the resident pages.
+static size_t test_resident(void) {
+    FILE *file = fopen("/proc/self/statm", "r");
+    assert(file != nullptr);
+    size_t size = 0;
+    size_t pages = 0;
+    int read = fscanf(file, "%zu %zu", &size, &pages);
+    assert(read == 2);
+    (void)read;
+    fclose(file);
+    return pages * (size_t)sysconf(_SC_PAGESIZE);
+}
+#endif
 
 // The reservation is address space: making the io commits (almost) nothing, touching memory commits what is touched.
 static void test_memory(void) {
