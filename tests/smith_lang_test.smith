@@ -412,6 +412,10 @@ export void test_enum_type_function(io::Io *io) {
     corpus_case(io, "enum-type-function");
 }
 
+export void test_enum_type_function_export(io::Io *io) {
+    corpus_case(io, "enum-type-function-export");
+}
+
 export void test_enum_type_function_generic(io::Io *io) {
     corpus_case(io, "enum-type-function-generic");
 }
