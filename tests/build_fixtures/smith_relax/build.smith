@@ -1,0 +1,5 @@
+import smith::build;
+
+void build(build::Build *b) {
+    build::app(b, &(build::App){.entry = "main.c", .name = "hello"});
+}

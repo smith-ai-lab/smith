@@ -1,0 +1,7 @@
+module build;
+
+import smith::build;
+
+export void build(build::Build *b) {
+    build::app(b, &(build::App){.entry = "prog.c"});
+}

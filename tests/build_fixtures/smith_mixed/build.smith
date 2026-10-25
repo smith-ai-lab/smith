@@ -1,0 +1,10 @@
+import smith::build;
+
+void build(build::Build *b) {
+    build::app(b, &(build::App){});
+    build::app_tests(b, &(build::AppTests){});
+    build::task(b, "greet", &(build::Step){
+        .command = build::list(b, "echo", build::fmt(b, "hello from %s", b->os), nullptr),
+        .description = "greeting",
+    });
+}

@@ -1,0 +1,12 @@
+import smith::build;
+
+void build(build::Build *b) {
+    build::defaults(b, &(build::Defaults){
+        .folders = (const build::Folder[]){{.path = "fixtures", .flags = build::list(b, "-Wno-empty-translation-unit", nullptr)}, {}},
+    });
+    build::app(b, &(build::App){
+        .entry = "main.c",
+        .name = "hello",
+        .flags = build::list(b, "-Wno-gnu-folding-constant", nullptr),
+    });
+}

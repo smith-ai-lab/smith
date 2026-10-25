@@ -1,0 +1,18 @@
+import smith::build;
+
+void build(build::Build *b) {
+    build::Object object = {
+        .compiler = "smith-cc",
+        .source = "main.c",
+        .output = "build/main.o",
+        .flags = build::list(b, "-O1", "-Wall", nullptr),
+    };
+    build::object(b, &object);
+    build::Program program = {
+        .linker = "smith-cc",
+        .output = "build/plain",
+        .objects = (const build::Object *const[]){&object, nullptr},
+    };
+    build::program(b, &program);
+    build::default_targets(b, program.step.outputs);
+}
