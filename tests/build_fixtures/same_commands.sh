@@ -17,6 +17,12 @@ canonical() {
             echo
         done | sort -u
 }
+# smith's link also builds and links the handlers runtime (a dylib beside the program), which make's does not: the step
+# and its three arguments are taken out.
+handlers() {
+    grep -v ' -dynamiclib ' | sed -E -e 's# -L[^ ]* -lsmith_handlers( -Wl,-rpath,@executable_path)?##' \
+        -e 's# -lclang_rt.asan_osx_dynamic##' -e 's# -L[^ ]*/lib/darwin##'
+}
 make -n -B 2>/dev/null | canonical >make.cmds
 smith build -t commands "$@" 2>/dev/null >smith.raw
 while IFS= read -r line; do
@@ -24,4 +30,4 @@ while IFS= read -r line; do
     "sh .smith/command/"*) cat "${line#sh }" ;;
     *) echo "$line" ;;
     esac
-done <smith.raw | canonical >smith.cmds
+done <smith.raw | canonical | handlers >smith.cmds

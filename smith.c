@@ -1134,6 +1134,13 @@ static constexpr unsigned char smith_math_source[] = {
 #embed "lib/smith/math.smith"
 };
 
+static constexpr unsigned char smith_handlers_header[] = {
+#embed "include/smith/handlers.h"
+};
+static constexpr unsigned char smith_handlers_source[] = {
+#embed "lib/handlers.c"
+};
+
 static constexpr unsigned char smith_embedded_http_header[] = {
 #embed "include/smith/http.h"
 };
@@ -1183,6 +1190,7 @@ static const SmithLibrary smith_libraries[] = {
     SMITH_LIBRARY(autodiff, true),
     SMITH_LIBRARY(contract, true),
     SMITH_LIBRARY(format, true),
+    SMITH_LIBRARY(handlers, false),
     SMITH_LIBRARY(inflate, true),
     SMITH_LIBRARY(io, true),
     SMITH_LIBRARY(json, false),
