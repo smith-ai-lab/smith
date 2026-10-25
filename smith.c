@@ -16,6 +16,10 @@
 // runs ninja. See knowledge/build-conventions.md. `smith fetch <url>` puts a package in the cache and `smith cache`
 // shows and cleans the caches. `smith new` writes a ready project: main.smith (or main.c), a test, and what agents
 // need.
+#ifdef __linux__
+// What glibc hides from C23 and macOS does not: nftw's FTW_PHYS, wait4 (knowledge/platform-layer.md).
+#define _GNU_SOURCE
+#endif
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -26,9 +30,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/clonefile.h>
 #include <sys/file.h>
 #include <sys/ioctl.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -41,8 +45,6 @@ extern char **environ;
 #include <dirent.h>
 #include <ftw.h>
 #include <inttypes.h>
-#include <mach-o/dyld.h>
-#include <mach-o/loader.h>
 #include <sys/time.h>
 #include <time.h>
 
@@ -513,16 +515,16 @@ static void smith_resource_unpack(const char *folder) {
 // The programs the driver runs, apart from the files it reads. The runtime folder above is named for the contents and
 // the compiler's identity, and never moves, because a sanitized binary records a path into it. The programs are hard
 // links to the smith that is running, and many different smiths (the installed one, a build of a branch, another
-// agent's) share one runtime folder, so they live in a folder named for the smith itself, its LC_UUID:
-// <data>/smith/programs/<uuid>/{bin/clang, bin/clang++, bin/ld, lib -> the runtime folder's lib}. Two smiths never
-// share or remake each other's links, and a smith without lld has no `ld` to be found. The driver runs `bin/clang`
-// again with -cc1 for a compile with more than one step, so it must be smith, which runs -cc1 in process; a copy keeps
-// working when the smith it was made from is replaced or removed, as an install does. It is a clone (APFS copy on
-// write: its own file, no bytes copied), never a hard link: macOS names a running program by the last name of its file
-// that was looked up, and its policy daemon (syspolicyd) reads that name while it assesses the program, seconds
-// later under load; every test's scratch data folder held a name of the same file and was removed, so the daemon
-// found no file and killed the process (SIGKILL, "Killed: 9", issue #48). A hard link, then a symbolic link, is the
-// fallback on a volume that cannot clone. The folder is built beside its place and renamed into it, so one that
+// agent's) share one runtime folder, so they live in a folder named for the smith itself, its LC_UUID (on Linux its
+// build-id): <data>/smith/programs/<uuid>/{bin/clang, bin/clang++, bin/ld, lib -> the runtime folder's lib}. Two smiths
+// never share or remake each other's links, and a smith without lld has no `ld` to be found. The driver runs
+// `bin/clang` again with -cc1 for a compile with more than one step, so it must be smith, which runs -cc1 in process; a
+// copy keeps working when the smith it was made from is replaced or removed, as an install does. It is a clone (APFS
+// copy on write: its own file, no bytes copied), never a hard link: macOS names a running program by the last name of
+// its file that was looked up, and its policy daemon (syspolicyd) reads that name while it assesses the program,
+// seconds later under load; every test's scratch data folder held a name of the same file and was removed, so the
+// daemon found no file and killed the process (SIGKILL, "Killed: 9", issue #48). A hard link, then a symbolic link, is
+// the fallback on a volume that cannot clone. The folder is built beside its place and renamed into it, so one that
 // exists is whole.
 //
 // When a new one is made, the folders of binaries that are gone are removed (each records its binary, LC_UUID and
@@ -533,59 +535,22 @@ constexpr time_t smith_programs_idle_seconds = 31L * 24 * 3600;
 constexpr time_t smith_programs_touch_seconds = 24L * 3600;
 constexpr time_t smith_programs_temporary_seconds = 3600;
 
-// The hex of the running executable's LC_UUID, which the linker derives from its contents: the same smith is the same
-// name, another build another.
-static void smith_self_uuid(char *out, size_t size) {
-    SMITH_ASSERT(size >= 33);
-    const struct mach_header_64 *header = (const struct mach_header_64 *)_dyld_get_image_header(0);
-    SMITH_ASSERT(header != nullptr && header->magic == MH_MAGIC_64);
-    const struct load_command *command = (const struct load_command *)(header + 1);
-    for (uint32_t i = 0; i < header->ncmds; i++) { // bounded by the header
-        if (command->cmd == LC_UUID) {
-            const struct uuid_command *uuid = (const struct uuid_command *)command;
-            for (size_t k = 0; k < sizeof uuid->uuid; k++)
-                snprintf(out + 2 * k, 3, "%02x", uuid->uuid[k]);
-            return;
-        }
-        command = (const struct load_command *)((const char *)command + command->cmdsize);
-    }
-    smith_die(smith_exit_usage, "this smith has no LC_UUID", nullptr);
-}
+// The platform's identity of an executable, its clone, a file's time and a process's state
+// (knowledge/platform-layer.md).
+#ifdef __APPLE__
+#include "runtime/platform_macos.c"
+#else
+#include "runtime/platform_linux.c"
+#endif
 
 // <data>/smith/programs/<uuid>, from the runtime folder <data>/smith/clang/<name>.
 static void smith_programs_folder(const char *runtime, char *programs) {
     char uuid[33];
-    smith_self_uuid(uuid, sizeof uuid);
+    smith_platform_self_id(uuid, sizeof uuid);
     const char *clang = strstr(runtime, "/smith/clang/");
     SMITH_ASSERT(clang != nullptr);
     int written = snprintf(programs, PATH_MAX, "%.*s/smith/programs/%s", (int)(clang - runtime), runtime, uuid);
     SMITH_ASSERT(written > 0 && written < PATH_MAX - 32);
-}
-
-// The LC_UUID of the Mach-O file `path` as hex, from its first 16 KB; false when it is no thin Mach-O with one.
-static bool smith_file_uuid(const char *path, char *out) {
-    int file = open(path, O_RDONLY);
-    if (file < 0) return false;
-    unsigned char buffer[16384];
-    ssize_t count = read(file, buffer, sizeof buffer);
-    close(file);
-    if (count < (ssize_t)sizeof(struct mach_header_64)) return false;
-    const struct mach_header_64 *header = (const struct mach_header_64 *)buffer;
-    if (header->magic != MH_MAGIC_64) return false;
-    size_t at = sizeof *header;
-    for (uint32_t i = 0; i < header->ncmds; i++) { // bounded by the header
-        if (at + sizeof(struct load_command) > (size_t)count) return false;
-        const struct load_command *command = (const struct load_command *)(buffer + at);
-        if (command->cmd == LC_UUID && at + sizeof(struct uuid_command) <= (size_t)count) {
-            const struct uuid_command *uuid = (const struct uuid_command *)command;
-            for (size_t k = 0; k < sizeof uuid->uuid; k++)
-                snprintf(out + 2 * k, 3, "%02x", uuid->uuid[k]);
-            return true;
-        }
-        if (command->cmdsize < sizeof *command) return false;
-        at += command->cmdsize;
-    }
-    return false;
 }
 
 // Whether the binary a programs folder was made for is gone: its `binary` file names the LC_UUID and the path, and
@@ -606,7 +571,7 @@ static bool smith_programs_orphaned(const char *folder) {
     struct stat info;
     if (stat(path, &info) != 0) return true;
     char found[33];
-    return smith_file_uuid(path, found) && strcmp(found, uuid) != 0;
+    return smith_platform_file_id(path, found) && strcmp(found, uuid) != 0;
 }
 
 // Takes the lock a running smith holds on its programs folder (a shared lock on <folder>/.in-use, kept for the
@@ -689,15 +654,14 @@ static void smith_programs_make(const char *runtime, const char *programs, const
     if (mkdir(path, 0755) != 0) smith_die(smith_exit_usage, "cannot create", path);
     for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
         snprintf(path, sizeof path, "%s/bin/%s", temporary, names[i]);
-        if (clonefile(self, path, 0) != 0 && link(self, path) != 0 && symlink(self, path) != 0)
-            smith_die(smith_exit_usage, "cannot link", path);
+        if (!smith_platform_clone(self, path)) smith_die(smith_exit_usage, "cannot link", path);
     }
     char target[PATH_MAX];
     snprintf(target, sizeof target, "%s/lib", runtime);
     snprintf(path, sizeof path, "%s/lib", temporary);
     if (symlink(target, path) != 0) smith_die(smith_exit_usage, "cannot link", path);
     char uuid[33];
-    smith_self_uuid(uuid, sizeof uuid);
+    smith_platform_self_id(uuid, sizeof uuid);
     snprintf(path, sizeof path, "%s/binary", temporary);
     FILE *record = fopen(path, "w"); // the binary this folder is for: the pruner removes it when that is gone
     if (record == nullptr || fprintf(record, "%s\n%s\n", uuid, self) < 0 || fclose(record) != 0)

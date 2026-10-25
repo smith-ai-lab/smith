@@ -433,6 +433,8 @@ static const char *const build_smith_inputs[] = {
     "runtime/cache.c",
     "runtime/symbolize.c",
     "runtime/explain.c",
+    "runtime/platform_macos.c",
+    "runtime/platform_linux.c",
     "shim/lldb_explain.h",
     "runtime/mcp.c",
     "runtime/mcp_text.c",

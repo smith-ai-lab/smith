@@ -16,8 +16,6 @@
 // (knowledge/failure-reports-and-tests.md).
 
 #include <ctype.h>
-#include <libproc.h>
-#include <sys/proc_info.h>
 
 #include "../shim/lldb_explain.h"
 
@@ -371,14 +369,13 @@ static void smith_explain_arm(void) {
 // by a SIGCONT). So this process continues the test until it has been seen running for a moment.
 constexpr int smith_explain_resume_rounds = 400;
 constexpr int smith_explain_resume_settled = 10;
-constexpr uint32_t smith_explain_stopped = 4; // SSTOP of <sys/proc.h>, a kernel header
 
 static void smith_explain_resume(long pid) {
     int settled = 0;
     for (int round = 0; round < smith_explain_resume_rounds && settled < smith_explain_resume_settled; round++) {
-        struct proc_bsdshortinfo info = {};
-        if (proc_pidinfo((int)pid, PROC_PIDT_SHORTBSDINFO, 0, &info, sizeof info) != (int)sizeof info) return;
-        if (info.pbsi_status == smith_explain_stopped) {
+        int stopped = smith_platform_process_stopped(pid);
+        if (stopped < 0) return;
+        if (stopped == 1) {
             kill((pid_t)pid, SIGCONT);
             settled = 0;
         } else {

@@ -366,7 +366,7 @@ static bool smith_sym_newer(const char *source, const char *binary) {
     struct stat source_info;
     struct stat binary_info;
     if (stat(source, &source_info) != 0 || stat(binary, &binary_info) != 0) return false;
-    return source_info.st_mtimespec.tv_sec > binary_info.st_mtimespec.tv_sec;
+    return smith_platform_mtime(&source_info).tv_sec > smith_platform_mtime(&binary_info).tv_sec;
 }
 
 typedef struct {
