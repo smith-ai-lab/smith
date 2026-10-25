@@ -1,0 +1,36 @@
+import <stdio.h>;
+import <unistd.h>;
+import smith::random;
+import smith::test;
+
+// The next key of a stream: `stream` moves on and the key returned is for one use.
+static random::Key take(random::Key *stream) {
+    random::Key next[2];
+    random::split(*stream, next);
+    *stream = next[0];
+    return next[1];
+}
+
+void test_a_shrinks_slowly(random::Key key) {
+    random::Key *stream = &key;
+    c::usleep(3000); // each of the 1000 runs of shrinking takes this long: several seconds in all
+    i64 smallest = 1000000000;
+    for (u64 i = 0; i < 200; i++) {
+        i64 v = random::uniform_int64_sample(take(stream), (random::UniformInt64){.low = 0, .high = 1000000000});
+        if (v < smallest) {
+            smallest = v;
+        }
+    }
+    test::check_less(smallest, 1000);
+}
+
+void test_b_writes_a_lot(void) {
+    for (i32 i = 0; i < 1000; i++) {
+        c::printf("%0100d\n", i); // 100 KB, past the 64 KiB the runner keeps
+    }
+    c::usleep(1000000); // while the runner shrinks the other test
+    for (i32 i = 0; i < 3000; i++) {
+        c::printf("%0100d\n", i); // 300 KB more: it blocks if nobody reads the pipe
+    }
+    c::printf("done\n");
+}

@@ -1,0 +1,27 @@
+import <signal.h>;
+import <stdio.h>;
+import <stdlib.h>;
+import <unistd.h>;
+import smith::test;
+
+void test_abort_segv(void) {
+    test::expect_abort();
+    c::printf("before the crash\n");
+    c::raise(c::SIGSEGV);
+}
+
+void test_abort_hangs(void) {
+    test::expect_abort();
+    c::printf("hanging\n");
+    c::sleep(30);
+}
+
+void test_abort_exits_zero(void) {
+    test::expect_abort();
+    c::exit(0);
+}
+
+void test_abort_survivor(void) {
+    test::expect_abort();
+    c::abort();
+}

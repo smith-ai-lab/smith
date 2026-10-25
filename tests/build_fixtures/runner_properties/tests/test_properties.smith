@@ -1,0 +1,12 @@
+import smith::random;
+import smith::test;
+
+void test_prop_ok(random::Key key) {
+    i64 x = random::uniform_int64_sample(key, (random::UniformInt64){.low = 0, .high = 1000});
+    test::check_less_equal(x, 1000);
+}
+
+void test_prop_fails(random::Key key) {
+    i64 x = random::uniform_int64_sample(key, (random::UniformInt64){.low = 0, .high = 1000});
+    test::check_less(x, 500);
+}

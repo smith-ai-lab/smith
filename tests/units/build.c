@@ -34,7 +34,7 @@ void build(SmithBuild *b) {
     SmithTests tests = {
         .objects = (const SmithObject *[]){&http, nullptr},
         .sources = smith_glob(b, smith_list(b, "lib/smith/*_test.smith", "lib/*_test.smith", "tests/*_test.smith",
-                                            "tests/scratch.smith", nullptr)),
+                                            "tests/scratch.smith", "tests/runner.smith", nullptr)),
         .flags = flags,
         .link_flags = smith_list(b, "-fsanitize=address,undefined", nullptr),
     };

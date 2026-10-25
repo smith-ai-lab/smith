@@ -1,0 +1,11 @@
+import smith::test;
+
+void test_crash(void) {
+    volatile i32 *pointer = nullptr;
+    test::note("about to crash");
+    *pointer = 1;
+}
+
+void test_survivor(void) {
+    test::check(true);
+}

@@ -1,0 +1,30 @@
+module geometry::box_test;
+import geometry::box;
+import smith::random;
+import smith::test;
+import smith::test::helpers as helpers;
+
+export void test_area() {
+    u64 area = box::area(2, 3);
+    test::check_equal_u64(area, 6); // the named instance: the header pass of a module cannot lower a generic call
+}
+
+export void test_area_fails() {
+    u64 expected = 7;
+    u64 area = box::area(2, 3);
+    test::check_equal_u64(area, expected);
+}
+
+export void test_area_through_a_library() {
+    helpers::require(box::area(2, 3) == 7);
+}
+
+export void test_area_property(random::Key key) {
+    u64 side = random::key_bits(key) % 1000;
+    u64 area = box::area(side, 1);
+    test::check_equal_u64(area, side);
+}
+
+// Not exported: private to the module, nothing can call it, so it is not a test.
+[[maybe_unused]] void test_private() {
+}

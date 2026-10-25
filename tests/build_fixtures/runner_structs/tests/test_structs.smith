@@ -1,0 +1,40 @@
+import smith::test;
+
+typedef struct {
+    i32 m;
+    f32 b;
+} Pair;
+
+typedef struct {
+    Pair pair;
+    u8 flags : 3;
+    i32 values[3];
+    f64 scale;
+} Wide;
+
+void test_same(void) {
+    Wide a = {{1, 2.5f}, 5, {1, 2, 3}, 0.5};
+    Wide b = a;
+    test::check_equal(a, b);
+}
+
+void test_nested(void) {
+    Wide a = {{1, 2.5f}, 5, {1, 2, 3}, 0.5};
+    Wide b = a;
+    b.pair.b = 3.5f;
+    test::check_equal(a, b);
+}
+
+void test_array(void) {
+    Wide a = {{1, 2.5f}, 5, {1, 2, 3}, 0.5};
+    Wide b = a;
+    b.values[2] = 9;
+    test::check_equal(a, b);
+}
+
+void test_bits(void) {
+    Wide a = {{1, 2.5f}, 5, {1, 2, 3}, 0.5};
+    Wide b = a;
+    b.flags = 2;
+    test::check_equal(a, b);
+}

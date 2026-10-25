@@ -1,0 +1,59 @@
+import <assert.h>;
+import smith::random;
+import smith::test;
+
+[[gnu::always_inline]] static inline void check_positive(i32 value) {
+    test::check(value > 0);
+}
+
+void test_passes(void) {
+    test::check(true);
+    test::check_equal(4, 4);
+    test::check_equal(0.5, 0.5);
+    test::check_near(1.0f, 1.0001f, 0.001f);
+    test::check_same_bits(-0.0, -0.0);
+}
+
+void test_check_fails(void) {
+    i32 moves = 0;
+    test::check(moves > 0);
+}
+
+void test_equal_fails(void) {
+    u64 count = 3;
+    u64 expected = 4;
+    test::check_equal(count, expected);
+}
+
+void test_near_fails(void) {
+    test::check_near(1.0, 1.5, 0.1);
+}
+
+void test_same_bits_fails(void) {
+    test::check_same_bits(0.0f, -0.0f);
+}
+
+void test_assert_fails(void) {
+    i32 moves = 1;
+    c::assert(moves == 2);
+}
+
+void test_segfault(void) {
+    volatile i32 *nothing = nullptr;
+    *nothing = 7;
+}
+
+void test_inlined(void) {
+    check_positive(-1);
+}
+
+void test_ordering_fails(void) {
+    i32 total = 2 + 2;
+    test::check_less_equal(total, 3);
+}
+
+void test_prop_function(random::Key key) {
+    i64 x = random::uniform_int64_sample(key, (random::UniformInt64){.low = 0, .high = 1000});
+    test::note("x = %lld", x);
+    test::check(x < 500);
+}
