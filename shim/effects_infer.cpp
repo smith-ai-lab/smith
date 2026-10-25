@@ -190,6 +190,7 @@ struct Edge {
     SourceLocation loc;
     std::string symbol;      // the callee's linkage name, for a call the summary resolves across files
     bool unresolved = false; // a project function the file has no body for: no effect here, see the summary
+    bool tail = false;       // `[[clang::musttail]] return f(...);`: a jump, which makes a loop of a cycle
 };
 
 struct Node {
@@ -249,9 +250,23 @@ class Collector {
     const SourceManager &sm;
     Symbols symbols;
     Symbols names; // how a function is shown in a chain
+    std::set<const CallExpr *> tails; // the calls of `[[clang::musttail]] return` statements, met before the calls
+
+    // The call a `[[clang::musttail]] return f(...);` makes, remembered: an attributed statement is visited before its
+    // children.
+    void noteTail(const AttributedStmt *attributed) {
+        bool musttail = false;
+        for (const Attr *attribute : attributed->getAttrs())
+            musttail = musttail || isa<MustTailAttr>(attribute);
+        const auto *returned = dyn_cast<ReturnStmt>(attributed->getSubStmt());
+        if (!musttail || returned == nullptr || returned->getRetValue() == nullptr) return;
+        if (const auto *call = dyn_cast<CallExpr>(returned->getRetValue()->IgnoreParenImpCasts())) tails.insert(call);
+    }
 
     void visit(const Stmt *statement) {
-        if (const auto *call = dyn_cast<CallExpr>(statement)) {
+        if (const auto *attributed = dyn_cast<AttributedStmt>(statement)) {
+            noteTail(attributed);
+        } else if (const auto *call = dyn_cast<CallExpr>(statement)) {
             onCall(call);
         } else if (isa<ObjCMessageExpr>(statement)) {
             leaf(statement->getBeginLoc(), C, "an Objective-C message");
@@ -276,6 +291,7 @@ class Collector {
             edge.name = names(definition);
             edge.loc = call->getBeginLoc();
             edge.symbol = symbols(definition);
+            edge.tail = tails.count(call) != 0;
             node.edges.push_back(edge);
             return;
         }
