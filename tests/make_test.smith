@@ -120,8 +120,8 @@ static usize find_text(const char *text, const char *needle) {
 // Replaces text[from:to] with `replacement`.
 static void cut(char *text, usize from, usize to, const char *replacement) {
     usize length = c::strlen(replacement);
-    c::memmove(text + from + length, text + to, c::strlen(text + to) + 1);
-    c::memcpy(text + from, replacement, length);
+    __builtin_memmove(text + from + length, text + to, c::strlen(text + to) + 1);
+    __builtin_memcpy(text + from, replacement, length);
 }
 
 static usize word_end(const char *text, usize from) {
@@ -145,7 +145,7 @@ static void name_the_compiler(char *line) {
     while (start > 0 && line[start - 1] != '/')
         start--;
     char word[256];
-    c::memcpy(word, line + start, end - start);
+    __builtin_memcpy(word, line + start, end - start);
     word[end - start] = '\0';
     const char *c_compilers[4] = {"smith-cc", "cc", "clang", "gcc"};
     const char *cxx_compilers[4] = {"smith-c++", "c++", "g++", "clang++"};
@@ -237,7 +237,7 @@ static void canonical(io::Io *io, const char *text, Commands *commands) {
             end++;
         if (end - start < command_capacity) {
             char *line = arena::push_slice(&io->arena, char, command_capacity).data;
-            c::memcpy(line, text + start, end - start);
+            __builtin_memcpy(line, text + start, end - start);
             line[end - start] = '\0';
             name_the_compiler(line);
             drop_dependency_flags(line);
@@ -291,7 +291,7 @@ static const char *joined(io::Io *io, const Commands *commands) {
     for (usize i = 0; i < commands->count; i++) {
         usize length = c::strlen(commands->lines[i]);
         test::check_less(used + length + 2, command_capacity * 8);
-        c::memcpy(text + used, commands->lines[i], length);
+        __builtin_memcpy(text + used, commands->lines[i], length);
         text[used + length] = '\n';
         used += length + 1;
     }
@@ -310,7 +310,7 @@ static const char *expand_commands(const scratch::Project *p, const char *raw) {
             end++;
         char line[1024];
         usize length = end - start < sizeof line - 1 ? end - start : sizeof line - 1;
-        c::memcpy(line, raw + start, length);
+        __builtin_memcpy(line, raw + start, length);
         line[length] = '\0';
         const char *shown = c::strncmp(line, "sh .smith/command/", 18) == 0 ? scratch::read(p, line + 3) : line;
         used += (usize)__builtin_snprintf(text + used, command_capacity * 8 - used, "%s\n", shown);
