@@ -26,17 +26,30 @@
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <fcntl.h>
+#include <mach-o/dyld.h>
 #include <map>
 #include <mutex>
 #include <optional>
 #include <poll.h>
 #include <set>
 #include <sstream>
+#include <spawn.h>
 #include <string>
+#include <sys/resource.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
 #include <thread>
 #include <tuple>
 #include <unistd.h>
 #include <vector>
+
+// shim/effects_infer.cpp: the plugin that judges the calls between files, told here what the editor does.
+extern "C" void smith_effects_editor_start(void (*listener)(const char *source));
+extern "C" void smith_effects_editor_object(const char *source, const char *object);
+extern "C" void smith_effects_editor_saved(const char *source);
+extern "C" void smith_effects_editor_pending(int pending);
+extern char **environ;
 
 namespace {
 
@@ -552,6 +565,226 @@ class Layer {
         *items = std::move(kept);
     }
 };
+
+bool sendFrame(int fd, const std::string &body);
+
+// ---- The editor's side of the effects
+
+// What the layer does for the cross-file effects (skill smith-lang-effects, issue #246): it tells the plugin which
+// object each source is built into, so a saved source's summary lands where the build keeps it; it has the saved file
+// parsed again (clangd's own `forceRebuild`, no text is sent: the editor's text is clangd's draft); when a summary is
+// written it has the other open files parsed again, so their diagnostics follow; and in the background it compiles,
+// one at a time, each source whose summary is missing or older than the source.
+class Editor {
+  public:
+    explicit Editor(int serverFd) : serverFd(serverFd) {}
+
+    // One editor message, before it goes to clangd.
+    void observe(const std::string &body) {
+        auto parsed = llvm::json::parse(body);
+        if (!parsed) {
+            llvm::consumeError(parsed.takeError());
+            return;
+        }
+        Object *message = parsed->getAsObject();
+        if (message == nullptr) return;
+        auto method = message->getString("method");
+        Object *params = message->getObject("params");
+        if (!method || params == nullptr) return;
+        if (*method == "initialize") {
+            initialize(*params);
+            return;
+        }
+        Object *document = params->getObject("textDocument");
+        if (document == nullptr) return;
+        auto uri = document->getString("uri");
+        if (!uri) return;
+        std::lock_guard<std::mutex> guard(lock);
+        if (*method == "textDocument/didOpen") {
+            versions[uri->str()] = document->getInteger("version").value_or(0);
+        } else if (*method == "textDocument/didChange") {
+            versions[uri->str()] = document->getInteger("version").value_or(versions[uri->str()]);
+        } else if (*method == "textDocument/didClose") {
+            versions.erase(uri->str());
+        } else if (*method == "textDocument/didSave") {
+            saved.push_back(uri->str());
+        }
+    }
+
+    // After the saved message went to clangd: the saved file is parsed again, and its parse writes the summary.
+    void afterForward() {
+        std::vector<std::string> uris;
+        {
+            std::lock_guard<std::mutex> guard(lock);
+            uris.swap(saved);
+        }
+        for (const std::string &uri : uris) {
+            smith_effects_editor_saved(pathOfUri(uri).c_str());
+            rebuild(uri);
+        }
+    }
+
+    // A summary was written (the plugin's parse of `source` did): the other open files are parsed again.
+    void written(const std::string &source) {
+        std::vector<std::string> uris;
+        {
+            std::lock_guard<std::mutex> guard(lock);
+            for (const auto &entry : versions) {
+                std::string path = pathOfUri(entry.first);
+                char real[4096];
+                if (realpath(path.c_str(), real) != nullptr) path = real;
+                if (path != source) uris.push_back(entry.first);
+            }
+        }
+        for (const std::string &uri : uris)
+            rebuild(uri);
+    }
+
+    void sendLocked(const std::string &body) {
+        std::lock_guard<std::mutex> guard(sending);
+        sendFrame(serverFd, body);
+    }
+
+    bool forward(const std::string &body) {
+        std::lock_guard<std::mutex> guard(sending);
+        return sendFrame(serverFd, body);
+    }
+
+  private:
+    int serverFd;
+    std::mutex lock, sending;
+    std::map<std::string, int64_t> versions; // the open documents
+    std::vector<std::string> saved;
+
+    // `textDocument/didChange` with no changes and `forceRebuild`: clangd keeps its draft and parses it again.
+    void rebuild(const std::string &uri) {
+        int64_t version = 0;
+        {
+            std::lock_guard<std::mutex> guard(lock);
+            auto found = versions.find(uri);
+            if (found == versions.end()) return;
+            version = found->second;
+        }
+        Object document{{"uri", uri}, {"version", version}};
+        Object params{{"textDocument", std::move(document)}, {"contentChanges", Array()}, {"forceRebuild", true}};
+        Object message{{"jsonrpc", "2.0"}, {"method", "textDocument/didChange"}, {"params", std::move(params)}};
+        sendLocked(llvm::formatv("{0}", Value(std::move(message))).str());
+    }
+
+    void initialize(Object &params) {
+        std::string root;
+        if (auto uri = params.getString("rootUri")) root = pathOfUri(*uri);
+        if (root.empty()) {
+            if (auto path = params.getString("rootPath")) root = path->str();
+        }
+        if (root.empty()) return;
+        std::thread([this, root] { background(root); }).detach();
+    }
+
+    // The compile commands of the project: each source's object goes to the plugin, and the sources whose summary is
+    // missing or older are compiled, one at a time, for the summary only.
+    void background(const std::string &root) {
+        std::string path = root + "/.smith/compile_commands.json";
+        auto buffer = llvm::MemoryBuffer::getFile(path);
+        if (!buffer) return;
+        auto parsed = llvm::json::parse((*buffer)->getBuffer());
+        if (!parsed) {
+            llvm::consumeError(parsed.takeError());
+            return;
+        }
+        Array *entries = parsed->getAsArray();
+        if (entries == nullptr) return;
+        struct Job {
+            std::string directory, source, object;
+            std::vector<std::string> arguments;
+        };
+        std::vector<Job> stale;
+        for (Value &entry : *entries) {
+            Object *object = entry.getAsObject();
+            if (object == nullptr) continue;
+            auto directory = object->getString("directory");
+            auto file = object->getString("file");
+            auto output = object->getString("output");
+            Array *arguments = object->getArray("arguments");
+            if (!directory || !file || !output || arguments == nullptr) continue;
+            Job job;
+            job.directory = directory->str();
+            job.source = file->starts_with("/") ? file->str() : job.directory + "/" + file->str();
+            job.object = output->starts_with("/") ? output->str() : job.directory + "/" + output->str();
+            for (Value &argument : *arguments) {
+                if (auto text = argument.getAsString()) job.arguments.push_back(text->str());
+            }
+            smith_effects_editor_object(job.source.c_str(), job.object.c_str());
+            std::string summary = root + "/" + summaryOf(job.object);
+            struct stat summaryInfo = {}, sourceInfo = {};
+            bool fresh = stat(summary.c_str(), &summaryInfo) == 0 && stat(job.source.c_str(), &sourceInfo) == 0 &&
+                         summaryInfo.st_mtime >= sourceInfo.st_mtime;
+            if (!fresh && stat(job.source.c_str(), &sourceInfo) == 0) stale.push_back(std::move(job));
+        }
+        if (stale.empty()) return;
+        smith_effects_editor_pending(1);
+        for (const Job &job : stale)
+            summarize(job.directory, job.object, job.arguments);
+        smith_effects_editor_pending(0);
+        written(""); // every open file is judged again with all the summaries
+    }
+
+    // `.smith/effects/<the object's absolute path, % for />.fx`, the plugin's place (smith_effects_summary_path).
+    static std::string summaryOf(std::string object) {
+        for (char &c : object) {
+            if (c == '/') c = '%';
+        }
+        return ".smith/effects/" + object + ".fx";
+    }
+
+    // The compile command of a source, for the summary only: no object, no depfile, `SMITH_EFFECTS_OBJECT` says whose
+    // summary it is. Runs in the project's folder and waits.
+    static void summarize(const std::string &directory, const std::string &object, std::vector<std::string> arguments) {
+        char self[4096];
+        uint32_t size = sizeof self;
+        if (_NSGetExecutablePath(self, &size) != 0) return;
+        std::vector<std::string> kept;
+        for (size_t i = 0; i < arguments.size(); i++) {
+            const std::string &argument = arguments[i];
+            if (argument == "-o" || argument == "-MF" || argument == "-MT" || argument == "-MQ") {
+                i += 1;
+            } else if (argument != "-MD" && argument != "-MMD" && argument != "-MP") {
+                kept.push_back(argument);
+            }
+        }
+        kept.erase(std::remove(kept.begin(), kept.end(), std::string("-c")), kept.end());
+        kept.push_back("-fsyntax-only");
+        std::vector<char *> argv;
+        for (std::string &argument : kept)
+            argv.push_back(argument.data());
+        argv.push_back(nullptr);
+        std::string variable = "SMITH_EFFECTS_OBJECT=" + object;
+        std::vector<char *> environment;
+        for (char **entry = environ; *entry != nullptr; entry++)
+            environment.push_back(*entry);
+        environment.push_back(variable.data());
+        environment.push_back(nullptr);
+        posix_spawn_file_actions_t actions;
+        posix_spawn_file_actions_init(&actions);
+        posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0);
+        posix_spawn_file_actions_addopen(&actions, 1, "/dev/null", O_WRONLY, 0);
+        posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0);
+        posix_spawn_file_actions_addchdir(&actions, directory.c_str());
+        pid_t child = 0;
+        if (posix_spawn(&child, self, &actions, nullptr, argv.data(), environment.data()) == 0) {
+            setpriority(PRIO_PROCESS, (id_t)child, 10);
+            int status = 0;
+            waitpid(child, &status, 0);
+        }
+        posix_spawn_file_actions_destroy(&actions);
+    }
+};
+
+Editor *editor = nullptr; // lives as long as the process, like the layer
+
+void summaryWritten(const char *source) {
+    if (editor != nullptr) editor->written(source);
+}
 
 // ---- The pipes
 
@@ -1342,6 +1575,7 @@ int runQueries(int argc, char **argv, int (*server)(int, char **)) {
 
 // Runs `server` (clangd's main) with its input and output behind the layer. Returns its status.
 extern "C" int smith_lsp_run(int argc, char **argv, int (*server)(int, char **)) {
+    smith_effects_editor_start(summaryWritten);
     if (argc > 1 && queryWord(argv[1])) return runQueries(argc, argv, server);
     if (!serves(argc, argv)) return server(argc, argv);
     int fromEditor = dup(0);
@@ -1355,12 +1589,15 @@ extern "C" int smith_lsp_run(int argc, char **argv, int (*server)(int, char **))
     close(fromServer[1]);
     Layer *layer = new Layer; // lives as long as the process: the reading of the editor's messages can outlast clangd
     int serverInput = toServer[1];
+    editor = new Editor(serverInput);
     std::thread([layer, fromEditor, serverInput] {
         Frames frames(fromEditor);
         std::string body;
         while (frames.next(body)) {
             layer->toServer(body);
-            if (!sendFrame(serverInput, body)) break;
+            editor->observe(body);
+            if (!editor->forward(body)) break;
+            editor->afterForward();
         }
         close(serverInput); // the editor is gone: clangd reads the end of its input
     }).detach();
