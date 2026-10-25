@@ -48,6 +48,17 @@ export void test_build_defer_with_a_compile_settles(io::Io *io) {
     scratch::expect_contains("defer compile: the second run has no work", second.out, "no work to do");
 }
 
+// A ThinLTO compile writes its effect summary like any other (the manifest names it as an output, and a step whose
+// output is never written is never up to date), so the second run has no work: the release profile of every project
+// compiles with -flto=thin (#271).
+export void test_build_a_thin_lto_compile_settles(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "lto_compile");
+    scratch::Run first = scratch::build(&p, "");
+    scratch::expect_text("lto: the first build passes", "0 ok", status_and(&first, "ok"));
+    scratch::Run second = scratch::build(&p, "");
+    scratch::expect_contains("lto: the second run has no work", second.out, "no work to do");
+}
+
 // The regeneration rule's command, run without SMITH_EFFECTS and SMITH_SELF (as ninja or a hand run would), writes
 // the manifest `smith build` wrote, byte for byte: the decision is an argument of the program, not the environment.
 export void test_build_defer_the_regeneration_writes_the_same_manifest_without_the_environment(io::Io *io) {
