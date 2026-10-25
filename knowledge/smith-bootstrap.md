@@ -14,7 +14,7 @@ Smith's libraries", and "Getting rid of a second copy to maintain".
 **A clone with no smith** builds and runs `scripts/stage0.smith`: a `.smith` file with no `module` line is plain C23 (the C
 rule), so Apple's clang builds it (`mkdir -p .smith && clang -std=c23 -x c scripts/stage0.smith -o .smith/stage0-tool &&
 .smith/stage0-tool [arguments of smith build]`) and the bootstrap needs no shell. It fetches the tags, walks `git rev-list HEAD` for the first commit that
-has a release `stage0-<commit>`, downloads it (`gh release download`, a child process; the repository is private and `gh` is signed in as it is to clone), checks the SHA-256 (CommonCrypto), unpacks it with `tar` into `.smith/stage0/` and runs
+has a release `stage0-<commit>`, downloads it (`gh release download`, a child process; the repository is private and `gh` is signed in as it is to clone), checks the SHA-256 (`scripts/sha256.h`, smith's own, on every platform), unpacks it with `tar` into `.smith/stage0/` and runs
 `.smith/stage0/bin/smith build` with that `bin/` first on `PATH`, so its `smith-cc` is the `CC` of the build. Nothing in
 the repository records which release to use. `~/.cache/smith/llvm` (`smith build llvm`, about 9 minutes once) must be there
 already; `smith build` says so when it is not (the default target stops, `llvm` and `clean` still work).
@@ -46,3 +46,11 @@ release carries its own embedded runtime and headers, and the tree gives it `bui
 `include/`, which use only what that release compiles. A fresh clone's newest ancestor with a release is at least the
 first release (`stage0-4f1d091`), which compiles every commit since because of the lag rule. A release is pruned after a
 while ([release](release.md)): a clone older than the 20 newest releases (and a week each) pulls main first.
+
+**On Linux** (issue #305) a release has a Linux build, `smith-linux-<arch>.tar.xz`, once the Linux CI job publishes it;
+`stage0.smith` takes it the same way. When no release can be had (no Linux build yet, the chain broken, or the download
+failing) it builds smith from source instead: `scripts/seed_linux.smith`, the seed (also `SMITH_STAGE0_SEED=1`), which
+builds the pinned LLVM with `scripts/llvm_linux.smith`, then stage A (`smith.c`, the shims and LLVM, with weak
+stand-ins for the libraries made from their headers' `smith-names` and `smith-bodies` lines), the libraries compiled
+by stage A, stage B linked with them, and stage B's `smith build`. It needs the system's C and C++ compiler (clang 19 or
+GCC 13 or later), cmake, ninja, python3, curl, patch and xz, and about two hours and 15 GB the first time.

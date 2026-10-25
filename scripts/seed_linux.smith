@@ -1,9 +1,9 @@
 // Builds the first smith on a Linux machine from source, with no smith and no release: the seed of issue #305's Linux
 // release chain, and its way back when the chain breaks (knowledge/smith-bootstrap.md). Everyday Linux clones get a
 // release from scripts/stage0.smith instead, which runs this only when no release has a Linux build. This file has no
-// `module` line, so it is plain C23 (with POSIX's setenv, hence gnu23) and the system's C compiler builds it (clang 19
-// or later, GCC 13 or later):
-//   mkdir -p .smith && cc -std=gnu23 -x c scripts/seed_linux.smith -o .smith/seed-tool && .smith/seed-tool [arguments
+// `module` line, so it is plain C23 (with POSIX's setenv, hence gnu2x, which GCC 13 and clang both read) and the
+// system's C compiler builds it (clang 19 or later, GCC 13 or later):
+//   mkdir -p .smith && cc -std=gnu2x -x c scripts/seed_linux.smith -o .smith/seed-tool && .smith/seed-tool [arguments
 //   of smith build]
 // It needs a C and C++ compiler, cmake, ninja, python3, curl, tar, xz, patch and git, the network, and about 2 hours
 // and 15 GB the first time (LLVM). The stages, each in .smith/seed/:
@@ -155,7 +155,7 @@ static void build_llvm(const char *cc) {
         run((const char *[]){"rm", "-rf", ".smith/seed/llvm-src", nullptr});
         run((const char *[]){"mkdir", "-p", ".smith/seed/llvm-src", nullptr});
         run((const char *[]){"tar", "-xJf", tarball, "-C", ".smith/seed/llvm-src", "--strip-components=1", nullptr});
-        run((const char *[]){cc, "-std=c23", "-O1", "-x", "c", "scripts/llvm_linux.smith", "-o",
+        run((const char *[]){cc, "-std=gnu2x", "-O1", "-x", "c", "scripts/llvm_linux.smith", "-o",
                              ".smith/seed/llvm_linux", nullptr});
         run((const char *[]){".smith/seed/llvm_linux", ".smith/seed/llvm-src", "", "", ".smith/seed/llvm.stamp", "",
                              nullptr});
