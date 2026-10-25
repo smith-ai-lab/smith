@@ -1,0 +1,163 @@
+// scripts/release.sh (issue #111) with no network, from tests/release.sh: the package of the smith under test
+// (checksum, name, contents), the pruning rule on fake tags, the guard in scratch git repositories, and publish and
+// fetch against a stub gh (tests/build_fixtures/release/gh) that keeps its "releases" in a folder. Never touches a real
+// repository.
+module release_test;
+
+import smith::format;
+import smith::io;
+import smith::test;
+import scratch;
+
+// Every command: the stub gh first on PATH, its releases in ../gh and its log in ../gh.log, the script, and the file
+// name of the package. The package is xz of a 235 MB program: level 6 is 56 s of CPU, level 1 is 9 s, and the test is
+// not about the ratio (#116).
+constexpr char prelude[] =
+    "export PATH=\"$PWD/../bin:$PATH\" RELEASE_XZ_LEVEL=1 GH_LOG=\"$PWD/../gh.log\" GH_DIR=\"$PWD/../gh\" "
+    "GITHUB_ACTIONS=; script=\"$SMITH_REPO/scripts/release.sh\"; smith=\"$SMITH_SELF\"; head=$(git rev-parse HEAD); "
+    "name=smith-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m).tar.xz; ";
+
+// A scratch repository with one commit and a bare origin that has no branch yet, the stub gh in ../bin, and a fake
+// smith that says which commit it was built from.
+static scratch::Project repository(io::Io *io) {
+    scratch::Project p = scratch::project(io, "repo", nullptr);
+    scratch::Run made = scratch::sh(
+        &p,
+        "mkdir ../bin ../gh && cp \"$SMITH_REPO/tests/build_fixtures/release/gh\" ../bin/gh && chmod +x ../bin/gh && "
+        ": >../gh.log && git init -q --bare ../origin.git && git init -q -b main . && "
+        "git config user.email t@t && git config user.name t && echo 1 >f && git add f && git commit -qm one && "
+        "git remote add origin ../origin.git && "
+        "printf '#!/bin/sh\\necho \"smith 0.0 commit %s\"\\n' \"$(git rev-parse HEAD)\" >../fake-smith && "
+        "chmod +x ../fake-smith && "
+        "printf '#!/bin/sh\\necho \"smith 0.0 commit other\"\\n' >../other-smith && chmod +x ../other-smith");
+    scratch::expect_status("release: the repository is made", 0, &made);
+    return p;
+}
+
+static const char *capture(io::Io *io, const scratch::Project *p, const char *commands) {
+    return scratch::capture(p, format::push(&io->arena, prelude, commands).data);
+}
+
+static scratch::Run run(io::Io *io, const scratch::Project *p, const char *commands) {
+    return scratch::sh(p, format::push(&io->arena, prelude, commands).data);
+}
+
+// 1. package: the name, the checksum and what is inside
+export void test_release_package_name_checksum_and_contents(io::Io *io) {
+    scratch::Project p = repository(io);
+    scratch::Run packaged = run(io, &p, "sh \"$script\" package \"$smith\" ../pkg");
+    scratch::expect_status("release: package", 0, &packaged);
+    scratch::expect_text("release: package-files", capture(io, &p, "echo $name; echo $name.sha256"),
+                         capture(io, &p, "ls ../pkg"));
+    scratch::expect_text("release: package-checksum", "ok",
+                         capture(io, &p, "cd ../pkg && shasum -a 256 -c \"$name.sha256\" >/dev/null && echo ok"));
+    scratch::expect_text("release: package-contents", "bin/\nbin/smith\nbin/smith-c++\nbin/smith-cc",
+                         capture(io, &p, "tar -tJf \"../pkg/$name\" | sort"));
+    scratch::Run extracted = run(io, &p, "mkdir ../x && tar -C ../x -xJf \"../pkg/$name\"");
+    scratch::expect_status("release: package extracts", 0, &extracted);
+    scratch::expect_text("release: package-runs", capture(io, &p, "\"$smith\" version"),
+                         capture(io, &p, "../x/bin/smith version"));
+    scratch::expect_text("release: package-link", "smith", capture(io, &p, "readlink ../x/bin/smith-c++"));
+}
+
+// 2. prune: 30 fake tags, one a day from 2026-09-01, keep 20 and the newest of each ISO week
+export void test_release_prune_30_tags_keeps_20_and_a_week_each(io::Io *io) {
+    scratch::Project p = repository(io);
+    // the 21st oldest and older go, except the 6th (Sunday: the newest of week 36)
+    scratch::expect_text(
+        "release: prune-30",
+        "stage0-01 stage0-02 stage0-03 stage0-04 stage0-05 stage0-07 stage0-08 stage0-09 stage0-10",
+        capture(io, &p,
+                "day=1; while [ $day -le 30 ]; do printf 'stage0-%02d 2026-09-%02dT10:00:00Z\\n' $day $day; "
+                "day=$((day + 1)); done | sh \"$script\" prune | sort | tr '\\n' ' ' | sed 's| *$||'"));
+}
+
+export void test_release_prune_weeks_run_monday_to_sunday(io::Io *io) {
+    scratch::Project p = repository(io);
+    // ISO weeks run Monday to Sunday: Dec 29 to Jan 4 is one week (a, b, c), Dec 28 and 27 another (d, e)
+    scratch::expect_text(
+        "release: prune-week", "stage0-b stage0-c stage0-e",
+        capture(
+            io, &p,
+            "printf 'stage0-a 2026-01-04T00:00:00Z\\nstage0-b 2026-01-03T00:00:00Z\\nstage0-c 2025-12-29T00:00:00Z\\n"
+            "stage0-d 2025-12-28T00:00:00Z\\nstage0-e 2025-12-27T00:00:00Z\\n' | RELEASE_KEEP=1 sh \"$script\" prune | "
+            "sort | tr '\\n' ' ' | sed 's| *$||'"));
+}
+
+export void test_release_prune_few_tags_prunes_nothing(io::Io *io) {
+    scratch::Project p = repository(io);
+    scratch::expect_text(
+        "release: prune-few", "",
+        capture(io, &p,
+                "day=1; while [ $day -le 5 ]; do printf 'stage0-%02d 2026-09-%02dT10:00:00Z\\n' $day $day; "
+                "day=$((day + 1)); done | sh \"$script\" prune"));
+}
+
+// 3. guard: no origin/main yet, then a different tip, then a branch other than main
+export void test_release_guard_refusals_and_ok(io::Io *io) {
+    scratch::Project p = repository(io);
+    scratch::expect_text("release: refuse-unpushed", "release: cannot fetch origin/main",
+                         capture(io, &p, "sh \"$script\" guard 2>&1 | tail -1"));
+    scratch::Run pushed = scratch::sh(&p, "git push -q origin main && echo 2 >f && git commit -qam two");
+    scratch::expect_status("release: push and a second commit", 0, &pushed);
+    scratch::expect_text("release: refuse-ahead", "release: refusing: HEAD is not origin/main",
+                         capture(io, &p, "sh \"$script\" publish ../fake-smith 2>&1 | tail -1"));
+    scratch::Run topic = scratch::sh(&p, "git reset -q --hard origin/main && git checkout -qb topic");
+    scratch::expect_status("release: a branch other than main", 0, &topic);
+    scratch::expect_text("release: refuse-branch", "release: refusing: HEAD is not on main",
+                         capture(io, &p, "sh \"$script\" guard 2>&1 | tail -1"));
+    scratch::expect_text("release: refuse-no-gh-call", "", capture(io, &p, "cat \"$GH_LOG\""));
+    scratch::Run main_again = scratch::sh(&p, "git checkout -q main");
+    scratch::expect_status("release: back on main", 0, &main_again);
+    scratch::Run guard = run(io, &p, "sh \"$script\" guard");
+    scratch::expect_status("release: guard-ok", 0, &guard);
+}
+
+// publish: the release holds the tarball and the checksum; prunes only stage0-*; a second run creates nothing
+export void test_release_publish_creates_one_release_and_keeps_other_tags(io::Io *io) {
+    scratch::Project p = repository(io);
+    scratch::Run pushed = scratch::sh(&p, "git push -q origin main && mkdir ../gh/stage0-old ../gh/other-tag");
+    scratch::expect_status("release: pushed, with two old tags", 0, &pushed);
+    scratch::Run published = run(io, &p, "sh \"$script\" publish ../fake-smith >/dev/null 2>&1");
+    scratch::expect_status("release: publish", 0, &published);
+    scratch::expect_text("release: publish-assets", capture(io, &p, "echo $name; echo $name.sha256"),
+                         capture(io, &p, "ls \"../gh/stage0-$head\""));
+    scratch::expect_text("release: publish-creates", "1", capture(io, &p, "grep -c 'release create' \"$GH_LOG\""));
+    (void)run(io, &p, "sh \"$script\" publish ../fake-smith >/dev/null 2>&1");
+    scratch::expect_text("release: publish-twice", "1", capture(io, &p, "grep -c 'release create' \"$GH_LOG\""));
+    scratch::expect_text("release: publish-keeps-others", "yes",
+                         capture(io, &p, "[ -d ../gh/other-tag ] && [ -d ../gh/stage0-old ] && echo yes"));
+    scratch::expect_text("release: refuse-wrong-binary",
+                         capture(io, &p, "echo \"release: $PWD/../other-smith was not built from $head\""),
+                         capture(io, &p, "sh \"$script\" publish \"$PWD/../other-smith\" 2>&1 | tail -1"));
+}
+
+// CI: only the commit of a push to main
+export void test_release_ci_releases_only_a_push_to_main(io::Io *io) {
+    scratch::Project p = repository(io);
+    scratch::Run pushed = scratch::sh(&p, "git push -q origin main");
+    scratch::expect_status("release: pushed", 0, &pushed);
+    scratch::expect_text(
+        "release: ci-refuses", "release: CI releases only the commit of a push to main",
+        capture(io, &p, "GITHUB_ACTIONS=true GITHUB_REF=refs/pull/1/merge GITHUB_SHA=$head sh \"$script\" guard 2>&1"));
+    scratch::Run ok =
+        run(io, &p, "GITHUB_ACTIONS=true GITHUB_REF=refs/heads/main GITHUB_SHA=$head sh \"$script\" guard");
+    scratch::expect_status("release: ci-ok", 0, &ok);
+}
+
+// fetch: download, checksum, extract, and the program runs with the commit
+export void test_release_fetch_checks_the_checksum_and_runs(io::Io *io) {
+    scratch::Project p = repository(io);
+    scratch::Run packaged = run(io, &p,
+                                "sh \"$script\" package \"$smith\" ../pkg && mkdir ../gh/stage0-real && "
+                                "cp \"../pkg/$name\" \"../pkg/$name.sha256\" ../gh/stage0-real/");
+    scratch::expect_status("release: package for fetch", 0, &packaged);
+    scratch::Run fetched = run(io, &p, "sh \"$script\" fetch stage0-real ../dl");
+    scratch::expect_status("release: fetch", 0, &fetched);
+    scratch::expect_text("release: fetch-runs", capture(io, &p, "\"$smith\" version"),
+                         capture(io, &p, "../dl/bin/smith version"));
+    scratch::Run corrupted = run(io, &p, "printf x >>\"../gh/stage0-real/$name\"");
+    scratch::expect_status("release: corrupt the package", 0, &corrupted);
+    scratch::expect_text("release: fetch-corrupt", "release: the checksum of stage0-real does not match",
+                         capture(io, &p, "sh \"$script\" fetch stage0-real ../dl2 2>&1 | tail -1"));
+}
