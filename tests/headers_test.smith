@@ -114,6 +114,10 @@ export void test_the_math_header_compiles_alone(io::Io *io) {
     committed(io, "math");
 }
 
+export void test_the_mem_header_compiles_alone(io::Io *io) {
+    committed(io, "mem");
+}
+
 export void test_the_option_header_compiles_alone(io::Io *io) {
     committed(io, "option");
 }
