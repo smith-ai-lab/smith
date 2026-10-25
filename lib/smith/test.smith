@@ -1288,8 +1288,9 @@ bool golden_write(const char *path, const char *text, usize size) {
     return made;
 }
 
-[[noreturn]] void golden_fail(const char *format, const char *path) {
-    __builtin_snprintf(shared->detail, detail_capacity, format, path); // NOLINT(clang-diagnostic-format-nonliteral)
+// Ends the test with a failure that says one thing about a file: the words before the path and the words after.
+[[noreturn]] void golden_fail(const char *before, const char *path, const char *after) {
+    __builtin_snprintf(shared->detail, detail_capacity, "%s%s%s\n", before, path, after);
     stop();
 }
 
@@ -1353,7 +1354,7 @@ export [[nodiscard]] bool updating() {
 export void golden(const char path[:], const char actual[:]) {
     char file[path_capacity];
     if (countof(path) == 0 || countof(path) >= path_capacity)
-        golden_fail("%s", "the golden path is empty or too long\n");
+        golden_fail("the golden path is empty or too long", "", "");
     __builtin_memcpy(file, path.data, countof(path));
     file[countof(path)] = '\0';
     usize size = 0;
@@ -1363,11 +1364,11 @@ export void golden(const char path[:], const char actual[:]) {
     if (expected != nullptr && size == actual_size && (size == 0 || c::memcmp(expected, actual_text, size) == 0))
         return;
     if (update_run) {
-        if (!golden_write(file, actual_text, actual_size)) golden_fail("cannot write %s\n", file);
+        if (!golden_write(file, actual_text, actual_size)) golden_fail("cannot write ", file, "");
         golden_note(file);
         return;
     }
-    if (expected == nullptr) golden_fail("no file %s; run smith test --update to write it\n", file);
+    if (expected == nullptr) golden_fail("no file ", file, "; run smith test --update to write it");
     golden_differ(file, expected, size, actual_text, actual_size);
 }
 
