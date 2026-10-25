@@ -392,6 +392,10 @@ export void test_enum_builtin_option_result(io::Io *io) {
     corpus_case(io, "enum-builtin-option-result");
 }
 
+export void test_enum_builtin_lone_module(io::Io *io) {
+    corpus_case(io, "enum-builtin-lone-module");
+}
+
 export void test_enum_c_rule(io::Io *io) {
     corpus_case(io, "enum-c-rule");
 }

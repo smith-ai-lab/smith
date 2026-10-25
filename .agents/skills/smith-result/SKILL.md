@@ -14,7 +14,7 @@ module quotient;
 
 import <stdio.h>;
 
-typedef result(f64, i32) Quotient;   // name it at file scope once
+export typedef result(f64, i32) Quotient; // name it at file scope once
 
 export Quotient divide(f64 a, f64 b) {
     if (b == 0) return {.error = 7};

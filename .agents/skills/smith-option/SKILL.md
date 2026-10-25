@@ -12,7 +12,7 @@ This skill ships in the smith plugin, from `.agents/skills/smith-option/SKILL.md
 ```smith
 module absent;
 
-typedef option(usize) Index;        // name it at file scope once, then use Index
+export typedef option(usize) Index; // name it at file scope once, then use Index
 
 export Index find(const char *text, char wanted) {
     for (usize i = 0; text[i] != 0; i++)
