@@ -537,17 +537,15 @@ static bool smith_lang_enum_result(SmithLang *lang, const SmithHost *host, const
     return smith_lang_enum_type(host, canonical, type);
 }
 
-// At `return` in an instance's body: `return .name ;` and `return { .name = payload }` are written as the compound
-// literal of the function's payload enum. True when the frame's tokens were taken.
-static bool smith_lang_enum_replay(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
-                                   SmithLangFrame *frame) {
-    uint32_t at = frame->pos;
-    if (replay->instance == nullptr || replay->typing || at + 3 >= frame->end) return false;
+// The words of `return .name ;` and `return { .name = payload }` at the `return` token `at`: `lead ( T ) { . tag = C
+// ...`. `lead` is `return`, or the start of a declaration (`{ T smith_ret_1 =`) when an `errdefer` reads the value
+// first. `next` is where the generic's own tokens go on (after `{ . name =`, or after the bare value), `braced` says
+// that the compound literal's `{` is written here and its `}` is the generic's.
+static bool smith_lang_enum_return_words(SmithLang *lang, const SmithHost *host, const SmithLangReplay *replay,
+                                         uint32_t at, uint32_t end, const char *lead, char *words, size_t capacity,
+                                         uint32_t *next, bool *braced_out) {
+    if (replay->instance == nullptr || replay->typing || at + 3 >= end) return false;
     SmithLangGenToken *keyword = &smith_lang_gt.tokens[at];
-    if (keyword->special != SmithLangGen_Plain || keyword->param != 0 ||
-        !smith_lang_gt_is(keyword, SmithTokenKind_Identifier, "return")) {
-        return false;
-    }
     bool braced = smith_lang_gt_punct(&smith_lang_gt.tokens[at + 1], "{");
     uint32_t dot = at + (braced ? 2 : 1);
     const SmithLangGenToken *variant = &smith_lang_gt.tokens[dot + 1];
@@ -561,20 +559,275 @@ static bool smith_lang_enum_replay(SmithLang *lang, const SmithHost *host, Smith
     SmithToken dot_token = smith_lang_gt_token(&smith_lang_gt, &smith_lang_gt.tokens[dot]);
     SmithToken name_token = smith_lang_gt_token(&smith_lang_gt, variant);
     char constant[smith_lang_enum_name_max + 64];
-    uint32_t place = smith_lang_gen_place(host, replay->generic, keyword, replay->location);
-    char words[smith_lang_enum_name_max * 3 + 96];
+    (void)keyword;
     if (!smith_lang_enum_variant(lang, host, &type, &dot_token, &name_token, bare, constant, sizeof constant)) {
-        snprintf(words, sizeof words, "return ( %s ) { }", type.type); // a value of the type: nothing else is said
+        snprintf(words, capacity, "%s ( %s ) { }", lead, type.type); // a value of the type: nothing else is said
     } else if (bare) {
-        snprintf(words, sizeof words, "return ( %s ) { . tag = %s }", type.type, constant);
+        snprintf(words, capacity, "%s ( %s ) { . tag = %s }", lead, type.type, constant);
     } else {
-        snprintf(words, sizeof words, "return ( %s ) { . tag = %s , . %.*s =", type.type, constant,
-                 (int)variant->length, smith_lang_gt_str(variant));
+        snprintf(words, capacity, "%s ( %s ) { . tag = %s , . %.*s =", lead, type.type, constant, (int)variant->length,
+                 smith_lang_gt_str(variant));
     }
-    frame->pos = dot + (braced ? 3 : 2);
+    *next = dot + (braced ? 3 : 2);
+    *braced_out = braced;
+    return true;
+}
+
+// At `return` in an instance's body: `return .name ;` and `return { .name = payload }` are written as the compound
+// literal of the function's payload enum. True when the frame's tokens were taken.
+static bool smith_lang_enum_replay(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                   SmithLangFrame *frame) {
+    uint32_t at = frame->pos;
+    if (replay->instance == nullptr || replay->typing || at + 3 >= frame->end) return false;
+    SmithLangGenToken *keyword = &smith_lang_gt.tokens[at];
+    if (keyword->special != SmithLangGen_Plain || keyword->param != 0 ||
+        !smith_lang_gt_is(keyword, SmithTokenKind_Identifier, "return")) {
+        return false;
+    }
+    char words[smith_lang_enum_name_max * 3 + 96];
+    uint32_t next = 0;
+    bool braced = false;
+    if (!smith_lang_enum_return_words(lang, host, replay, at, frame->end, "return", words, sizeof words, &next,
+                                      &braced)) {
+        return false;
+    }
+    uint32_t place = smith_lang_gen_place(host, replay->generic, keyword, replay->location);
+    frame->pos = next;
+    replay->braces += braced ? 1 : 0; // the `{` is written here, and the generic's `}` closes it
     SmithLangSlicePart parts[] = {{words, 0, 0}};
     smith_lang_slice_parts(replay, place, parts, 1);
     return true;
+}
+
+// ---- `try` and `errdefer` in an instance's body (issue #357)
+//
+// The generic's body is recorded as written (`try`, `errdefer` and all), and the instance is where the function's
+// kind is known: its result type is a `result(T, E)` or an `option(T)` by then, the same that `smith_lang_enum_result`
+// finds for the dot rule. The replay writes what runtime/lang_try.c writes for a function of a source: the statement
+// expression of a `try`, the flag and the `defer` of an `errdefer`, the value first of a `return` after one. The
+// compiler checks the error type of each instance (the `_Static_assert`), and a call of the other kind has no member to
+// read.
+
+// The `;` (or, for a payload, the `,` or `}`) that ends the `try` at `at`; UINT32_MAX when a larger expression is
+// around it.
+static uint32_t smith_lang_try_replay_end(uint32_t at, uint32_t end, bool payload) {
+    int depth = 0;
+    for (uint32_t i = at + 1; i < end; i++) { // bounded by the frame
+        const SmithLangGenToken *token = &smith_lang_gt.tokens[i];
+        if (token->special != SmithLangGen_Plain) continue;
+        if (smith_lang_gt_is(token, SmithTokenKind_Identifier, "try")) return UINT32_MAX;
+        if (smith_lang_gt_punct(token, "(") || smith_lang_gt_punct(token, "[") || smith_lang_gt_punct(token, "{")) {
+            depth += 1;
+        } else if (smith_lang_gt_punct(token, ")") || smith_lang_gt_punct(token, "]") ||
+                   smith_lang_gt_punct(token, "}")) {
+            if (depth == 0) return payload && smith_lang_gt_punct(token, "}") ? i : UINT32_MAX;
+            depth -= 1;
+        } else if (depth == 0 && smith_lang_gt_punct(token, ";")) {
+            return payload ? UINT32_MAX : i;
+        } else if (depth == 0 && smith_lang_gt_punct(token, ",")) {
+            if (payload) return i;
+            return UINT32_MAX;
+        }
+    }
+    return UINT32_MAX;
+}
+
+static void smith_lang_try_replay_prune(SmithLangReplay *replay) {
+    while (replay->flag_count > 0 && replay->flags[replay->flag_count - 1].depth > replay->braces)
+        replay->flag_count -= 1;
+}
+
+static bool smith_lang_try_replay_designated(uint32_t at) {
+    return at >= 4 && smith_lang_gt.tokens[at - 2].kind == SmithTokenKind_Identifier &&
+           smith_lang_gt_punct(&smith_lang_gt.tokens[at - 3], ".") &&
+           (smith_lang_gt_punct(&smith_lang_gt.tokens[at - 4], "{") ||
+            smith_lang_gt_punct(&smith_lang_gt.tokens[at - 4], ","));
+}
+
+// The words that end a `try`: the return of the failure and the value, as smith_lang_try_close writes them.
+static void smith_lang_try_replay_close(const SmithLangReplay *replay, const char *type, uint32_t id, char *out,
+                                        size_t capacity) {
+    bool result = strncmp(type, "struct smith_enum_result_", 25) == 0;
+    const char *name = type + 7;
+    const char *failure = result ? "error" : "none";
+    const char *good = result ? "ok" : "some";
+    char flags[256] = "";
+    size_t used = 0;
+    for (uint32_t i = 0; i < replay->flag_count && used < sizeof flags; i++)
+        used += (size_t)snprintf(flags + used, sizeof flags - used, "smith_failing_%u = true ; ", replay->flags[i].id);
+    char same[400] = "";
+    char early[300];
+    if (result) {
+        snprintf(same, sizeof same,
+                 "_Static_assert ( __builtin_types_compatible_p ( __typeof__ ( smith_try_%u . error ) , __typeof__ ( "
+                 "( ( %s * ) 0 ) -> error ) ) , \"`try` returns the error as it is: the function's error type must "
+                 "be the call's; to change it, write it out\" ) ;",
+                 id, type);
+        snprintf(early, sizeof early, "return ( %s ) { . tag = %s_tag_%s , . error = smith_try_%u . error } ;", type,
+                 name, failure, id);
+    } else {
+        snprintf(early, sizeof early, "return ( %s ) { . tag = %s_tag_%s } ;", type, name, failure);
+    }
+    snprintf(out, capacity,
+             "; %s if ( smith_try_%u . tag == %s_tag_%s ) { %s%s } if ( smith_try_%u . tag != %s_tag_%s ) "
+             "__builtin_unreachable ( ) ; smith_try_%u . %s ; } )",
+             same, id, name, failure, flags, early, id, name, good, id, good);
+}
+
+static void smith_lang_try_replay_larger(SmithLang *lang, const SmithHost *host, uint32_t place) {
+    smith_lang_error(lang, host, place,
+                     "`try` is a statement of its own, the whole value of a declaration, an assignment or a `return`: "
+                     "inside a larger expression the order of evaluation would be unclear when it fails; give it "
+                     "its own declaration (`T x = try f();`) and use `x`");
+}
+
+// At `try`: its statement expression, around the generic's own tokens up to the end of the statement.
+static bool smith_lang_try_replay_try(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                      SmithLangFrame *frame) {
+    uint32_t at = frame->pos;
+    uint32_t place = smith_lang_gen_place(host, replay->generic, &smith_lang_gt.tokens[at], replay->location);
+    SmithLangEnumType type;
+    if (host->type_query == nullptr) return false; // the raw lowering has no compiler: the tokens stay as written
+    if (!smith_lang_enum_result(lang, host, replay->generic, replay->instance, &type) ||
+        smith_lang_try_kind(type.type) == SmithLangTryKind_None) {
+        smith_lang_error(lang, host, place,
+                         "`try` returns the failure from the function, so the function must return a `result(T, E)` "
+                         "or an `option(T)`; this one returns something else. Test the value by hand: `if (r == "
+                         ".error) return ...;`");
+        frame->pos += 1;
+        return true;
+    }
+    const SmithLangGenToken *before = at > frame->begin ? &smith_lang_gt.tokens[at - 1] : nullptr;
+    bool payload = before != nullptr && smith_lang_gt_punct(before, "=") && smith_lang_try_replay_designated(at);
+    bool value = payload || before == nullptr ? false
+                                              : smith_lang_gt_punct(before, "=") ||
+                                                    smith_lang_gt_is(before, SmithTokenKind_Identifier, "return");
+    bool statement = !payload && !value;
+    if (statement && before != nullptr) {
+        statement = smith_lang_gt_is(before, SmithTokenKind_Identifier, "else") || smith_lang_gt_punct(before, ";") ||
+                    smith_lang_gt_punct(before, "{") || smith_lang_gt_punct(before, "}") ||
+                    smith_lang_gt_punct(before, ")") || smith_lang_gt_punct(before, ":");
+    }
+    uint32_t stop = (statement || value || payload) ? smith_lang_try_replay_end(at, frame->end, payload) : UINT32_MAX;
+    if (stop == UINT32_MAX) {
+        smith_lang_try_replay_larger(lang, host, place);
+        frame->pos += 1;
+        return true;
+    }
+    if (host->hint != nullptr) host->hint(host->context, place, smith_lang_try_hint);
+    smith_lang_try_replay_prune(replay);
+    uint32_t id = ++replay->try_next;
+    char head[120];
+    snprintf(head, sizeof head, "%s __extension__ ( { __auto_type smith_try_%u =", statement ? "( void )" : "", id);
+    char tail[1400];
+    smith_lang_try_replay_close(replay, type.type, id, tail, sizeof tail);
+    frame->pos = stop; // the end token goes on after the statement expression
+    SmithLangSlicePart parts[] = {{head, 0, 0}, {nullptr, at + 1, stop}, {tail, 0, 0}};
+    smith_lang_slice_parts(replay, place, parts, 3);
+    return true;
+}
+
+// At `errdefer`: a flag of the block, and a `defer` that tests it; the statement is the generic's own tokens.
+static bool smith_lang_try_replay_errdefer(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                           SmithLangFrame *frame) {
+    uint32_t at = frame->pos;
+    uint32_t place = smith_lang_gen_place(host, replay->generic, &smith_lang_gt.tokens[at], replay->location);
+    SmithLangEnumType type;
+    if (host->type_query == nullptr) return false;
+    frame->pos += 1;
+    if (!smith_lang_enum_result(lang, host, replay->generic, replay->instance, &type) ||
+        smith_lang_try_kind(type.type) == SmithLangTryKind_None) {
+        smith_lang_error(lang, host, place,
+                         "`errdefer` runs when the function fails, and only a function that returns a `result` or "
+                         "an `option` has a failure to mark; use `defer` here");
+        return true;
+    }
+    smith_lang_try_replay_prune(replay);
+    if (replay->flag_count == sizeof replay->flags / sizeof replay->flags[0]) {
+        smith_lang_error(lang, host, place, "a function has at most %zu `errdefer`s open at once",
+                         sizeof replay->flags / sizeof replay->flags[0]);
+        return true;
+    }
+    uint32_t id = ++replay->try_next;
+    replay->flags[replay->flag_count].id = id;
+    replay->flags[replay->flag_count].depth = replay->braces;
+    replay->flag_count += 1;
+    char words[120];
+    snprintf(words, sizeof words, "bool smith_failing_%u = false ; _Defer if ( smith_failing_%u )", id, id);
+    SmithLangSlicePart parts[] = {{words, 0, 0}};
+    smith_lang_slice_parts(replay, place, parts, 1);
+    return true;
+}
+
+// At `return` while an `errdefer` is open: the value is computed first, the flags read its variant, then it returns.
+static bool smith_lang_try_replay_return(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                         SmithLangFrame *frame) {
+    uint32_t at = frame->pos;
+    smith_lang_try_replay_prune(replay);
+    SmithLangEnumType type;
+    if (replay->flag_count == 0 || !smith_lang_enum_result(lang, host, replay->generic, replay->instance, &type) ||
+        smith_lang_try_kind(type.type) == SmithLangTryKind_None) {
+        return false;
+    }
+    int depth = 0;
+    uint32_t stop = frame->end;
+    for (uint32_t i = at + 1; i < frame->end; i++) { // the `;` of the statement
+        const SmithLangGenToken *token = &smith_lang_gt.tokens[i];
+        if (token->special != SmithLangGen_Plain) continue;
+        depth += smith_lang_gt_punct(token, "(") || smith_lang_gt_punct(token, "[") || smith_lang_gt_punct(token, "{");
+        depth -= smith_lang_gt_punct(token, ")") || smith_lang_gt_punct(token, "]") || smith_lang_gt_punct(token, "}");
+        if (depth == 0 && smith_lang_gt_punct(token, ";")) {
+            stop = i;
+            break;
+        }
+        if (depth < 0) return false;
+    }
+    if (stop == frame->end) return false;
+    uint32_t place = smith_lang_gen_place(host, replay->generic, &smith_lang_gt.tokens[at], replay->location);
+    uint32_t id = ++replay->try_next;
+    char lead[smith_lang_enum_name_max + 64];
+    snprintf(lead, sizeof lead, "{ %s smith_ret_%u =", type.type, id);
+    char head[smith_lang_enum_name_max * 3 + 96];
+    uint32_t next = at + 1;
+    bool braced = false;
+    if (smith_lang_enum_return_words(lang, host, replay, at, stop + 1, lead, head, sizeof head, &next, &braced)) {
+        replay->braces += braced ? 1 : 0;
+    } else {
+        snprintf(head, sizeof head, "%s", lead);
+    }
+    char tail[800];
+    size_t used = (size_t)snprintf(tail, sizeof tail, "; ");
+    const char *failure = strncmp(type.type, "struct smith_enum_result_", 25) == 0 ? "error" : "none";
+    for (uint32_t i = 0; i < replay->flag_count && used < sizeof tail; i++) {
+        used +=
+            (size_t)snprintf(tail + used, sizeof tail - used, "smith_failing_%u = smith_ret_%u . tag == %s_tag_%s ; ",
+                             replay->flags[i].id, id, type.type + 7, failure);
+    }
+    snprintf(tail + used, sizeof tail - used, "return smith_ret_%u ; }", id);
+    frame->pos = stop + 1; // the `;` is the tail's
+    SmithLangSlicePart parts[] = {{head, 0, 0}, {nullptr, next, stop}, {tail, 0, 0}};
+    smith_lang_slice_parts(replay, place, parts, 3);
+    return true;
+}
+
+// What an instance's body does with `try`, `errdefer` and a `return` after an `errdefer`.
+static bool smith_lang_try_replay(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                  SmithLangFrame *frame) {
+    if (replay->instance == nullptr || replay->typing || frame->pos >= frame->end) return false;
+    const SmithLangGenToken *token = &smith_lang_gt.tokens[frame->pos];
+    if (token->special != SmithLangGen_Plain || token->param != 0 || token->kind != SmithTokenKind_Identifier ||
+        smith_lang_member_before(frame->pos)) {
+        return false;
+    }
+    if (smith_lang_gt_is(token, SmithTokenKind_Identifier, "try"))
+        return smith_lang_try_replay_try(lang, host, replay, frame);
+    if (smith_lang_gt_is(token, SmithTokenKind_Identifier, "errdefer")) {
+        return smith_lang_try_replay_errdefer(lang, host, replay, frame);
+    }
+    if (replay->flag_count > 0 && smith_lang_gt_is(token, SmithTokenKind_Identifier, "return")) {
+        return smith_lang_try_replay_return(lang, host, replay, frame);
+    }
+    return false;
 }
 
 // ---- A type function that returns an enum (issue #198, PR 3b)
@@ -1151,7 +1404,12 @@ static uint32_t smith_lang_eshape_instance_call(SmithLang *lang, const SmithHost
         depth -= smith_lang_gt_punct(token, ")") || smith_lang_gt_punct(token, "]");
         if (depth == 0 && smith_lang_gt_punct(token, ",")) {
             if (argument + 1 >= shape->param_count) return 0;
+            if (call->count >= smith_lang_eshape_tokens_max) return 0;
             call->end[argument] = call->count;
+            SmithToken comma = smith_lang_gt_token(&smith_lang_gt, token); // the spelling joins the arguments by it
+            comma.text = smith_lang_tuple_keep(comma.text, comma.length);
+            comma.handle = smith_token_no_handle;
+            call->tokens[call->count++] = comma;
             call->begin[++argument] = call->count;
             continue;
         }
@@ -1171,6 +1429,12 @@ static uint32_t smith_lang_eshape_instance_call(SmithLang *lang, const SmithHost
         }
         if (call->count >= smith_lang_eshape_tokens_max) return 0;
         SmithToken plain = smith_lang_gt_token(&smith_lang_gt, token);
+        for (size_t k = 0; k < sizeof smith_lang_sized / sizeof smith_lang_sized[0]; k++) { // `i32` was lowered
+            if (smith_lang_equals(plain.text, plain.length, smith_lang_sized[k].standard)) {
+                plain.text = smith_lang_sized[k].name;
+                plain.length = (uint32_t)strlen(smith_lang_sized[k].name);
+            }
+        }
         plain.text = smith_lang_tuple_keep(plain.text, plain.length);
         plain.handle = smith_token_no_handle;
         call->tokens[call->count++] = plain;

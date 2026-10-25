@@ -1,0 +1,71 @@
+module main;
+import <stdio.h>;
+
+// `try` and `errdefer` in a generic function (issue #357): the body is kept as written and each instance is lowered
+// as a plain function is, so the kind (result with the same E, or option) is checked per instance.
+typedef result(usize, i32) Wide;
+typedef result(f64, i32) Real;
+typedef option(u8) Small;
+typedef option(f64) Float;
+
+static result(i32, i32) step(i32 n) {
+    if (n < 0) return {.error = n};
+    return {.ok = n};
+}
+
+static option(i32) pick(i32 n) {
+    if (n < 0) return .none;
+    return {.some = n};
+}
+
+result(T, i32) twice(constexpr type T, T x, i32 n) {
+    errdefer c::puts("  errdefer twice");
+    if (n == 0) return {.error = 100}; // a written failure runs it too
+    i32 v = try step(n);
+    return {.ok = x + (T)v};
+}
+
+option(T) maybe_twice(constexpr type T, T x, i32 n) {
+    errdefer c::puts("  errdefer maybe_twice");
+    i32 v = try pick(n);
+    return {.some = x + (T)v};
+}
+
+static void show_wide(Wide r) {
+    switch (r) {
+    case .ok: c::printf("ok %zu\n", r.ok); break;
+    case .error: c::printf("error %d\n", r.error); break;
+    }
+}
+
+static void show_real(Real r) {
+    switch (r) {
+    case .ok: c::printf("ok %g\n", r.ok); break;
+    case .error: c::printf("error %d\n", r.error); break;
+    }
+}
+
+static void show_small(Small o) {
+    switch (o) {
+    case .some: c::printf("some %d\n", o.some); break;
+    case .none: c::printf("none\n"); break;
+    }
+}
+
+static void show_float(Float o) {
+    switch (o) {
+    case .some: c::printf("some %g\n", o.some); break;
+    case .none: c::printf("none\n"); break;
+    }
+}
+
+i32 main() {
+    show_wide(twice(usize, 10, 5));
+    show_wide(twice(usize, 10, -1));
+    show_wide(twice(usize, 10, 0));
+    show_real(twice(f64, 1.5, 2));
+    show_small(maybe_twice(u8, 3, 4));
+    show_small(maybe_twice(u8, 3, -4));
+    show_float(maybe_twice(f64, 1.5, 4));
+    return 0;
+}

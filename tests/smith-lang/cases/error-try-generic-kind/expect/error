@@ -1,0 +1,2 @@
+src/main.smith:12:13: no member named 'error' in 'struct smith_enum_option_i32'
+src/main.smith:12:13: no member named 'ok' in 'struct smith_enum_option_i32'
