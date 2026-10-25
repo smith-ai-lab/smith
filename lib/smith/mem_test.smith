@@ -1,0 +1,102 @@
+// Tests of smith::mem, in smith's own test library (build.c's `test-units` runner links them with the module). A
+// refusal that stops the process (a fixed arena's budget under set_allocator) needs a process of its own and is
+// tests/arena.sh's.
+module smith::mem_test;
+
+import smith::arena;
+import smith::mem;
+import smith::test;
+
+constexpr usize capacity = 4096;
+
+typedef struct {
+    alignas(arena::align_max) u8 bytes[capacity];
+} Memory;
+
+typedef struct {
+    u8 bytes[2 * capacity];
+} Huge;
+
+typedef struct {
+    f64 value;
+    i32 count;
+} Record;
+
+typedef option(Huge *) MaybeHuge;
+typedef option(Record *) MaybeRecord;
+
+// Allocates inside a scope that sets the allocator and restores it with `defer`.
+void allocate_from(arena::ArenaAllocator *allocator, Record **record, u64 *sum) {
+    mem::Allocator *before = mem::set_allocator(&allocator->base);
+    defer mem::set_allocator(before);
+    test::check_condition(mem::allocator() == &allocator->base);
+    *record = mem::alloc(Record);
+    u64 numbers[:] = mem::alloc_slice(u64, 5);
+    test::check_equal(countof(numbers), 5);
+    for (usize i = 0; i < countof(numbers); i++) {
+        test::check_equal(numbers[i], 0);
+        numbers[i] = i + 1;
+        *sum += numbers[i];
+    }
+    test::check_condition(allocator->base.owns(&allocator->base, numbers.data));
+}
+
+export void test_mem_alloc_reaches_the_allocator_in_force_and_defer_restores_it() {
+    static Memory memory;
+    arena::Arena a = arena::fixed(memory.bytes, sizeof memory.bytes);
+    arena::ArenaAllocator allocator = arena::allocator(&a);
+    mem::Allocator *outside = mem::allocator();
+    Record *record = nullptr;
+    u64 sum = 0;
+    allocate_from(&allocator, &record, &sum);
+    test::check_equal(sum, 15);
+    test::check_condition(mem::allocator() == outside);                  // the defer put the old one back
+    test::check_condition(allocator.base.owns(&allocator.base, record)); // from the arena
+    test::check_equal(record->count, 0);                                 // zeroed
+    test::check_condition(a.used > 0);
+}
+
+export void test_mem_alloc_without_an_allocator_set_is_the_systems_and_never_null() {
+    Record *record = mem::alloc(Record);
+    test::check_condition(record != nullptr);
+    test::check_equal(record->value, 0.0);
+    f32 grid[:][:] = mem::alloc_slice(f32, 3, 4);
+    test::check_equal(countof(grid), 3);
+    test::check_equal(countof(grid[2]), 4);
+    grid[2][3] = 5.0f;
+    void *aligned = mem::alloc_raw(100, 64);
+    test::check_equal((usize)aligned & 63, 0);
+    mem::free(aligned);
+    mem::free(grid.data);
+    mem::free(record);
+}
+
+// The tests of an option sit in functions with no generic call: a `== .some` after a call to a generic in the same
+// function does not find the option's type (smith issue filed with this change).
+MaybeRecord try_record() {
+    return mem::try_alloc(Record);
+}
+
+MaybeHuge try_huge() {
+    return mem::try_alloc(Huge);
+}
+
+i32 count_of(MaybeRecord record) {
+    if (record == .some) return record.some->count;
+    return -1;
+}
+
+bool is_some(MaybeHuge huge) {
+    return huge == .some;
+}
+
+export void test_mem_try_alloc_is_an_option() {
+    static Memory memory;
+    arena::Arena a = arena::fixed(memory.bytes, sizeof memory.bytes);
+    arena::ArenaAllocator allocator = arena::allocator(&a);
+    mem::Allocator *before = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(before);
+    test::check_equal(count_of(try_record()), 0); // some, zeroed
+    test::check_condition(!is_some(try_huge()));  // 8 KB in a 4 KB arena: the allocator answers null, so none
+    test::check_condition(mem::try_alloc_raw(2 * capacity, 16) == nullptr);
+}

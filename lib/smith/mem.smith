@@ -1,0 +1,110 @@
+// smith::mem, <smith/mem.h>: memory through the allocator of the current thread. Its C API is the generated header
+// include/smith/mem.h (committed; `smith build headers` regenerates it); the names follow the rule of arena.smith:
+// `mem::alloc_raw` is `smith_mem_alloc`, `mem::set_allocator` is `smith_mem_set_allocator`.
+//
+// Code asks for memory with mem::alloc and mem::alloc_slice and never gets null: the allocator in force is what
+// `malloc` reaches (the runtime of include/smith/handlers.h interposes it in every smith program), by default the
+// system's, and a test or an arena stands in for it with set_allocator. A refusal (the system out of memory, a fixed
+// arena's budget spent) is a checked failure naming the size, not a null for every caller to check; code that can do
+// something about a refusal (a server turning away a huge request) calls mem::try_alloc, which returns an `option`.
+// `malloc` itself keeps C's contract: null when memory is refused. Issue #239; knowledge/handlers.md.
+module smith::mem;
+
+import smith::arena;
+import smith::contract;
+import smith::math;
+import <smith/handlers.h>; // SmithAllocator, smith_handlers_set_allocator
+import <smith/trace.h>;    // smith_failure_format
+import <stdlib.h>;         // malloc, posix_memalign, free: the interposed functions the handler of the thread answers
+
+// An allocator is a struct whose first member is one, passed as &x.allocator (include/smith/handlers.h): alloc,
+// realloc, free, owns and an optional size.
+[[smith::c_name("SmithAllocator")]] export typedef c::SmithAllocator Allocator;
+
+// Sets the allocator of the calling thread (null: the system's) and returns the one it had, as signal() does. Restore
+// it with `defer`:
+//   mem::Allocator *before = mem::set_allocator(&arena_allocator.base);
+//   defer mem::set_allocator(before);
+[[smith::c_name("smith_mem_set_allocator")]] export Allocator *set_allocator(Allocator *allocator) {
+    return c::smith_handlers_set_allocator(allocator);
+}
+
+// The allocator of the calling thread, null when the system's is in force.
+[[smith::c_name("smith_mem_allocator")]] export [[nodiscard]] Allocator *allocator() {
+    return c::smith_handlers_allocator();
+}
+
+// Memory for size bytes at align (a power of two) from the allocator in force, or null when it refuses. Not zeroed.
+// For code that refuses; alloc_raw stops instead.
+[[smith::c_name("smith_mem_try_alloc")]] export [[nodiscard]] void *try_alloc_raw(usize size, usize align) {
+    contract::trusted(); // the allocator is the edge
+    contract::requires(align > 0 && (align & (align - 1)) == 0);
+    usize bytes = size;
+    if (bytes == 0) bytes = 1; // malloc(0) may be null, which would read as a refusal
+    // NOLINTBEGIN(smith-effects): the allocator is the edge: these are the calls the handlers of the thread answer
+    if (align <= 16) return c::malloc(bytes);
+    void *memory = nullptr;
+    if (c::posix_memalign(&memory, align, bytes) != 0) return nullptr;
+    // NOLINTEND(smith-effects)
+    return memory;
+}
+
+// A refusal stops here, in every build, naming the size.
+[[noreturn]] void refuse(usize size, usize align) {
+    c::smith_failure_format(c::SmithFailure_Capacity, "the allocator refused %zu bytes (align %zu)", size, align);
+}
+
+// Zeroed memory for size bytes at align (a power of two) from the allocator in force. Never null: the allocator
+// refusing is a checked failure naming the size.
+[[smith::c_name("smith_mem_alloc")]] export [[nodiscard]] void *alloc_raw(usize size, usize align) {
+    contract::trusted(); // it writes the memory it hands out
+    void *memory = try_alloc_raw(size, align);
+    if (memory == nullptr) refuse(size, align);
+    __builtin_memset(memory, 0, size);
+    return memory;
+}
+
+// count items of size bytes, zeroed; a count that overflows is a refusal of the largest size.
+[[smith::c_name("smith_mem_alloc_array")]] export [[nodiscard]] void *alloc_array_raw(usize size, usize count,
+                                                                                      usize align) {
+    contract::trusted();
+    if (size > 0 && count > math::max(usize) / size) refuse(math::max(usize), align);
+    return alloc_raw(size * count, align);
+}
+
+// Gives memory back to the allocator it came from (a block of any other goes to the system's; null is nothing).
+[[smith::c_name("smith_mem_free")]] export void free(void *block) {
+    contract::trusted();
+    c::free(block); // NOLINT(smith-effects): the edge, as try_alloc_raw
+}
+
+// A zeroed T, the size and the alignment of the type, from the allocator in force. For .smith; C passes sizeof and
+// alignof to smith_mem_alloc.
+[[smith::c_name("smith_mem_alloc_type")]] export [[nodiscard]] T *alloc(constexpr type T) {
+    return (T *)alloc_raw(sizeof(T), alignof(T));
+}
+
+// A zeroed T, or `.none` when the allocator refuses: `if (auto p = mem::try_alloc(Big); p == .some) ...`. The form for
+// code that can do something about a refusal.
+[[smith::c_name("smith_mem_try_alloc_type")]] export [[nodiscard]] option(T *) try_alloc(constexpr type T) {
+    void *memory = try_alloc_raw(sizeof(T), alignof(T));
+    if (memory == nullptr) return .none;
+    __builtin_memset(memory, 0, sizeof(T));
+    return {.some = (T *)memory};
+}
+
+// A zeroed array of T with a size for each `[:]`, as a slice, from the allocator in force: `alloc_slice(f32, n)` is
+// `f32[:]`, `alloc_slice(f32, n, m)` is `f32[:][:]` (one block, row-major), as arena::push_slice.
+[[smith::c_name("smith_mem_alloc_slice_type")]] export [[nodiscard]] arena::slice_of(T, countof(dims))
+    alloc_slice(constexpr type T, auto... dims) {
+    static_assert(countof(dims) > 0, "alloc_slice needs a size for each `[:]` of the result: alloc_slice(T, n)");
+    struct smith_array_T_n result = {};
+    usize total = 1;
+    for constexpr (usize i = 0; i < countof(dims); i++) {
+        usize size = (usize)dims[i];
+        if (__builtin_mul_overflow(total, size, &total)) total = ~(usize)0; // the largest usize: no allocator has it
+        result.count[i] = size;
+    }
+    result.data = alloc_array_raw(sizeof(T), total, alignof(T));
+    return result;
+}

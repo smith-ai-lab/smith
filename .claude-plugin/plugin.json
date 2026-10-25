@@ -102,6 +102,7 @@
     "./.agents/skills/smith-lang-type-values-more/",
     "./.agents/skills/smith-lsp/",
     "./.agents/skills/smith-math/",
+    "./.agents/skills/smith-mem/",
     "./.agents/skills/smith-option/",
     "./.agents/skills/smith-mcp/",
     "./.agents/skills/smith-metal/",
