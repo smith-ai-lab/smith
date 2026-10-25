@@ -803,9 +803,7 @@ expect "modules: references of the function: its definition and its call" \
     "reference foo.smith:3:12 reference main.smith:6:18" \
     "$(printf '%s\n' "$log" | grep '^reference ' | tr '\n' ' ' | sed 's/ $//')"
 expect "modules: highlights of it: the name once" "highlight 3:12" "$(printf '%s\n' "$log" | grep '^highlight ' | tr '\n' ' ' | sed 's/ $//')"
-# A function with a declared set: the hover says so. clangd 23 prints an "Annotation:" line for some AnnotateAttrs; the
-# declared set's own storage (smith::effects:...) does not show on r10, as this line checks. If a later LLVM shows it,
-# patches/pending/clangd-hidden-annotations.patch (waiting for r11) is the way to hide it.
+# A function with a declared set: the hover says so, and shows no "Annotation:" line for the attribute's own storage.
 log=$(client_in "$modules" open declared.smith -- hover declared.smith 3 31)
 expect_line "modules: hover on a function with a declared set" "$log" \
     "hover declared.smith:3:31: function grab |  | → i32 (aka int) |  | Parameters: |  | - i32 x (aka int) |  | effects: alloc (declared) |  | static i32 grab(i32 x)"
