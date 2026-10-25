@@ -376,9 +376,10 @@ typedef struct {
 
 // An `if constexpr` outside a generic whose then-block is being read (runtime/lang_target.c).
 typedef struct {
-    int32_t target; // the brace count before the then-block's `{`: the `}` that returns to it ends the block
-    bool raw;       // the raw lowering: the branches are written between `#if`, `#else` and `#endif`
-    bool in_else;   // raw: the last block is the `else`'s
+    int32_t target;  // the brace count before the then-block's `{`: the `}` that returns to it ends the block
+    bool raw;        // the raw lowering: the branches are written between `#if`, `#else` and `#endif`
+    bool in_else;    // raw: the last block is the `else`'s
+    bool file_scope; // around declarations (issue #335): the branch's braces are dropped, they open no scope
 } SmithLangIfFrame;
 
 // A `constexpr` constant the raw lowering lets a condition name (a compile asks the parser).

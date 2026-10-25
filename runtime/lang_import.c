@@ -417,6 +417,14 @@ static bool smith_lang_is_import(SmithLang *lang, const SmithHost *host, const S
     return !smith_lang_is_own_word(lang, host, keyword);
 }
 
+// The import lines the hook counted are every line that begins with `import`, those of a file-scope `if constexpr`'s
+// branch included (issue #335): the last one seen is where the imports' functions over `type` and their bodies are
+// used. An import line of a branch that is dropped is counted as if it were seen (runtime/lang_target.c).
+static void smith_lang_imports_last(SmithLang *lang, const SmithHost *host, uint32_t location) {
+    if (lang->type_import && lang->imports_seen == host->import_lines) smith_lang_types_define(lang, host, location);
+    if (lang->imports_seen == host->import_lines) smith_lang_body_use(lang, host, location);
+}
+
 static void smith_lang_import(SmithLang *lang, const SmithHost *host, const SmithToken *keyword) {
     if (lang->seen_declaration || (host->declared != nullptr && host->declared(host->context))) {
         smith_lang_error(lang, host, keyword->location, "imports come before any declaration");
@@ -429,9 +437,7 @@ static void smith_lang_import(SmithLang *lang, const SmithHost *host, const Smit
         smith_lang_import_smith(lang, host, keyword);
     }
     // The last import line: the functions over `type` of the imports are defined after it (runtime/lang_type.c).
-    if (lang->type_import && lang->imports_seen == host->import_lines)
-        smith_lang_types_define(lang, host, keyword->location);
-    if (lang->imports_seen == host->import_lines) smith_lang_body_use(lang, host, keyword->location);
+    smith_lang_imports_last(lang, host, keyword->location);
 }
 
 static bool smith_lang_is_module_line(SmithLang *lang, const SmithHost *host, const SmithToken *keyword) {

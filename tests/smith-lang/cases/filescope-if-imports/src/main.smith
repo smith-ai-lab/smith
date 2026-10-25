@@ -1,0 +1,6 @@
+import clock;
+
+int main(void) {
+    clock::say();
+    return 0;
+}

@@ -252,6 +252,15 @@ static const SmithLangConstant *smith_lang_ifc_constant_find(const SmithLang *la
     return false;
 }
 
+// Whether a directive of the raw lowering goes into the module's header too: an exported inline function's (its body is
+// in the header), and one around declarations (issue #335), whose exports are in the header between the same `#if`,
+// `#else` and `#endif`, so that the includer's preprocessor chooses as the module's compile did.
+static bool smith_lang_ifc_header(const SmithLang *lang) {
+    bool around = lang->ifc_count > 0 && lang->ifc[lang->ifc_count - 1].file_scope;
+    return lang->is_module &&
+           (lang->export_active || around || (!lang->in_function && lang->state == SmithLangState_Start));
+}
+
 // One staged token of a condition, written to the pool again: a `target::` fact, a constant or a word, as the
 // evaluation (or the `#if` text) wants it. `*at` moves past what it used.
 static bool smith_lang_ifc_substitute_one(SmithLang *lang, const SmithHost *host, uint32_t *at, uint32_t last, bool raw,
@@ -278,7 +287,7 @@ static bool smith_lang_ifc_substitute_one(SmithLang *lang, const SmithHost *host
             if (!raw)
                 return smith_lang_ifc_fail(error, name->location, "the compiler cannot say `target::%s`", entry->name);
             lang->target_used |= 1U << (unsigned)entry->fact;
-            if (lang->export_active) lang->header_target_used |= 1U << (unsigned)entry->fact;
+            if (smith_lang_ifc_header(lang)) lang->header_target_used |= 1U << (unsigned)entry->fact;
             return smith_lang_ifc_add(&token, SmithTokenKind_Identifier, entry->macro, strlen(entry->macro),
                                       smith_lang_ifc_pseudo);
         }
@@ -413,13 +422,44 @@ static bool smith_lang_ifc_skip(SmithLang *lang, const SmithHost *host, const ch
     return false;
 }
 
+// A branch that is dropped: the block that begins at the next token. A dropped branch at file scope holds import lines
+// the hook counted (issue #335), which are counted here as if they were seen.
+static bool smith_lang_ifc_drop(SmithLang *lang, const SmithHost *host, bool file_scope) {
+    int depth = 0;
+    for (size_t i = 0; i < smith_lang_gt_max; i++) { // bounded by the pool
+        if (smith_lang_peek(lang, host, 0, false)->kind == SmithTokenKind_Eof) return false;
+        SmithToken token = smith_lang_take(lang, host);
+        if (smith_lang_punct(&token, "{")) depth += 1;
+        if (smith_lang_punct(&token, "}") && --depth == 0) return true;
+        if (file_scope && depth == 1 && token.line_start && smith_lang_ident(&token, "import")) {
+            lang->imports_seen += 1;
+            smith_lang_imports_last(lang, host, token.location);
+        }
+    }
+    return false;
+}
+
+// Whether an `if constexpr` here is around declarations (issue #335): in a module, between its declarations. Its
+// branches' braces open no scope: they are dropped, and what is between them is at file scope.
+static bool smith_lang_ifc_file_scope(const SmithLang *lang) {
+    return lang->is_module && !lang->in_function && lang->state == SmithLangState_Start;
+}
+
+// The `{` of a branch at file scope, which is dropped: the braces the frame counts begin inside it.
+static void smith_lang_ifc_enter(SmithLang *lang, const SmithHost *host) {
+    smith_lang_take(lang, host);
+    lang->ifc_braces += 1;
+}
+
 static void smith_lang_ifc_push(SmithLang *lang, const SmithHost *host, uint32_t location, bool raw) {
     if (lang->ifc_count >= smith_lang_if_depth_max) {
         smith_lang_error(lang, host, location, "`if constexpr` blocks nest at most %zu deep", smith_lang_if_depth_max);
         return;
     }
     if (lang->ifc_count == 0) lang->ifc_braces = 0;
-    lang->ifc[lang->ifc_count++] = (SmithLangIfFrame){.target = lang->ifc_braces, .raw = raw};
+    bool file_scope = smith_lang_ifc_file_scope(lang);
+    lang->ifc[lang->ifc_count++] = (SmithLangIfFrame){.target = lang->ifc_braces, .raw = raw, .file_scope = file_scope};
+    if (file_scope) smith_lang_ifc_enter(lang, host);
 }
 
 static void smith_lang_ifc_pop(SmithLang *lang) {
@@ -433,12 +473,12 @@ static bool smith_lang_ifc_is_chain(SmithLang *lang, const SmithHost *host) { //
 }
 
 // After a then-block that was taken: the `else` that follows, a block or a chain of `else if constexpr`, is dropped.
-static void smith_lang_ifc_discard_else(SmithLang *lang, const SmithHost *host) {
+static void smith_lang_ifc_discard_else(SmithLang *lang, const SmithHost *host, bool file_scope) {
     for (size_t guard = 0; guard < smith_lang_if_depth_max * 4; guard++) { // the chain's links
         if (!smith_lang_ident(smith_lang_peek(lang, host, 0, false), "else")) return;
         smith_lang_take(lang, host);
         if (smith_lang_punct(smith_lang_peek(lang, host, 0, false), "{")) {
-            smith_lang_ifc_skip(lang, host, "{", "}");
+            smith_lang_ifc_drop(lang, host, file_scope);
             return;
         }
         if (!smith_lang_ifc_is_chain(lang, host)) {
@@ -451,7 +491,7 @@ static void smith_lang_ifc_discard_else(SmithLang *lang, const SmithHost *host) 
         if (!smith_lang_punct(smith_lang_peek(lang, host, 0, false), "(") ||
             !smith_lang_ifc_skip(lang, host, "(", ")") ||
             !smith_lang_punct(smith_lang_peek(lang, host, 0, false), "{") ||
-            !smith_lang_ifc_skip(lang, host, "{", "}")) {
+            !smith_lang_ifc_drop(lang, host, file_scope)) {
             return;
         }
     }
@@ -459,7 +499,7 @@ static void smith_lang_ifc_discard_else(SmithLang *lang, const SmithHost *host) 
 
 static void smith_lang_dump_line(SmithLang *lang, const char *text) {
     size_t length = strlen(text);
-    if (lang->is_module && lang->export_active) { // an exported inline function's body is in the header too
+    if (smith_lang_ifc_header(lang)) { // an exported inline function's body, or exports around which this is
         smith_lang_header_line(lang, text, length, 0);
         if (lang->aligned && smith_lang_header_append(lang, "\n", 1)) { // the interface read in memory: the next token
             lang->aligned_line += 1;                                    // is on a line after the directive
@@ -516,8 +556,14 @@ static bool smith_lang_ifc_begin(SmithLang *lang, const SmithHost *host, const S
     } else if (good && taken != 0) {
         smith_lang_ifc_push(lang, host, token->location, false);
     } else { // not taken: the block is dropped, and an `else` after it begins
-        smith_lang_ifc_skip(lang, host, "{", "}");
-        if (smith_lang_ident(smith_lang_peek(lang, host, 0, false), "else")) smith_lang_take(lang, host);
+        bool file_scope = smith_lang_ifc_file_scope(lang);
+        smith_lang_ifc_drop(lang, host, file_scope);
+        if (smith_lang_ident(smith_lang_peek(lang, host, 0, false), "else")) {
+            smith_lang_take(lang, host);
+            // At file scope the else-block's braces are dropped too: it is a branch taken, with nothing after it.
+            if (file_scope && smith_lang_punct(smith_lang_peek(lang, host, 0, false), "{"))
+                smith_lang_ifc_push(lang, host, token->location, false);
+        }
     }
     return true;
 }
@@ -526,7 +572,7 @@ static bool smith_lang_ifc_begin(SmithLang *lang, const SmithHost *host, const S
 static void smith_lang_ifc_close(SmithLang *lang, const SmithHost *host) {
     SmithLangIfFrame *frame = &lang->ifc[lang->ifc_count - 1];
     if (!frame->raw) {
-        smith_lang_ifc_discard_else(lang, host);
+        smith_lang_ifc_discard_else(lang, host, frame->file_scope);
         smith_lang_ifc_pop(lang);
         return;
     }
@@ -535,6 +581,8 @@ static void smith_lang_ifc_close(SmithLang *lang, const SmithHost *host) {
         if (!smith_lang_ifc_is_chain(lang, host)) {
             smith_lang_dump_line(lang, "#else");
             frame->in_else = true;
+            if (frame->file_scope && smith_lang_punct(smith_lang_peek(lang, host, 0, false), "{"))
+                smith_lang_ifc_enter(lang, host);
             return;
         }
         smith_lang_take(lang, host);
@@ -550,6 +598,8 @@ static void smith_lang_ifc_close(SmithLang *lang, const SmithHost *host) {
                smith_lang_ifc_resolve(lang, host, mark[0], location, &taken, text, sizeof text, &error);
         if (good) {
             smith_lang_ifc_directive(lang, "#elif", text);
+            if (frame->file_scope && smith_lang_punct(smith_lang_peek(lang, host, 0, false), "{"))
+                smith_lang_ifc_enter(lang, host);
         } else {
             smith_lang_error(lang, host, error.location != 0 ? error.location : location, "in `if constexpr`: %s",
                              error.message[0] != 0 ? error.message : "the condition is not in parentheses");

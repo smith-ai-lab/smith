@@ -559,6 +559,12 @@ SmithLangAct smith_lang_fast(SmithLang *lang, const SmithHost *host, const Smith
         return smith_lang_act(SmithLangAct_Slow); // a tuple, an enum with payloads, is read ahead
     }
     if (lang->is_module && !lang->body_sparse) {
+        // An `if constexpr` around declarations, and every token of its branch (issue #335): the lowering counts the
+        // braces and drops the branch's own.
+        if (lang->ifc_count > 0 ||
+            (host->maybe_if_constexpr && lang->state == SmithLangState_Start && smith_lang_ident(token, "if"))) {
+            return smith_lang_act(SmithLangAct_Slow);
+        }
         if (lang->state == SmithLangState_Stream) return smith_lang_fast_stream(lang, host, token);
         bool declaring = lang->state == SmithLangState_Start || lang->state == SmithLangState_Declare;
         return declaring ? smith_lang_fast_declaring(lang, host, token) : smith_lang_act(SmithLangAct_Slow);

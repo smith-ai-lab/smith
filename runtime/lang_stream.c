@@ -997,6 +997,10 @@ static void smith_lang_process_token(SmithLang *lang, const SmithHost *host, con
             closes = smith_lang_punct(token, "}") && lang->ifc_braces == lang->ifc[lang->ifc_count - 1].target;
         }
     }
+    if (closes && lang->ifc[lang->ifc_count - 1].file_scope) { // a branch's `}` around declarations is dropped
+        smith_lang_ifc_close(lang, host);
+        return;
+    }
     smith_lang_dispatch(lang, host, token);
     if (!token->foreign && (smith_lang_ident(token, "module") || smith_lang_ident(token, "import"))) {
         smith_lang_field_after_imports(lang, host);

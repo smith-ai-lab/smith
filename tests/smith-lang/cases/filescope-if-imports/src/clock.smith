@@ -1,0 +1,29 @@
+// Imports chosen by the target (issue #335): a branch that holds only imports may sit among the import lines, and the
+// header of the branch not taken is never read.
+module clock;
+
+import target;
+import <stdio.h>;
+
+if constexpr (target::os == target::macos) {
+    import <mach/mach_time.h>;
+} else if constexpr (target::os == target::linux) {
+    import <time.h>;
+} else {
+    import <no_such_header_anywhere.h>;
+}
+
+import <stdint.h>;
+
+export bool ticks(void) {
+    if constexpr (target::os == target::macos) {
+        return c::mach_absolute_time() > 0;
+    } else {
+        struct c::timespec now = {};
+        return c::clock_gettime(c::CLOCK_MONOTONIC, &now) == 0;
+    }
+}
+
+export void say(void) {
+    c::printf("%d %d\n", ticks() ? 1 : 0, (i32)sizeof(c::uint32_t));
+}
