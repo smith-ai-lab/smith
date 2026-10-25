@@ -991,6 +991,41 @@ expect_line "editor: a file with a payload enum is read, and the dot rule's erro
 expect "editor: and the names the lowering writes for the enum (its tag and constants) are not judged" 0 \
     "$(printf '%s\n' "$log" | grep -c 'Invalid case style')"
 
+# Effects across files, in the editor (issue #246): a.c's pure function calls noisy, which b.c defines and prints in. The
+# summary of b.c is the build's (made here by the compile), the editor reads it, and a.c shows the link's error with the
+# chain. Saving b.c without the print rewrites its summary and a.c's diagnostics are published again without the error,
+# with a.c untouched.
+mkdir -p "$work/fx/.smith"
+fx=$(cd "$work/fx" && pwd -P)
+cat >"$fx/lib.h" <<'EOF2'
+int noisy(int x);
+EOF2
+cat >"$fx/a.c" <<'EOF2'
+#include "lib.h"
+[[smith::pure]] int bad(int x) { return noisy(x); }
+int main(void) { return bad(1); }
+EOF2
+cat >"$fx/b.c" <<'EOF2'
+#include <stdio.h>
+#include "lib.h"
+int noisy(int x) {
+    printf("%d\n", x);
+    return x;
+}
+EOF2
+cat >"$fx/.smith/compile_commands.json" <<EOF2
+[{"directory":"$fx","file":"a.c","output":"a.o","arguments":["smith-cc","-std=gnu2y","-c","a.c","-o","a.o"]},
+ {"directory":"$fx","file":"b.c","output":"b.o","arguments":["smith-cc","-std=gnu2y","-c","b.c","-o","b.o"]}]
+EOF2
+cp "$fx/.smith/compile_commands.json" "$fx/compile_commands.json"
+(cd "$fx" && smith cc -std=gnu2y -c b.c -o b.o) >/dev/null 2>&1
+log=$(client_in "$fx" open a.c b.c -- replace b.c '    printf("%d\n", x);
+' '' -- save b.c)
+expect_line "effects: a.c shows the error through b.c, with the chain" "$log" \
+    "diag a.c:2:41: Smith-effect: \`bad\` is [[smith::pure]], but it has the effects console: bad -> noisy (a.c:2) -> printf (b.c:4)"
+expect "effects: after b.c is saved without the print, a.c has no diagnostics again" 1 \
+    "$(printf '%s\n' "$log" | grep -c '^diag a.c')"
+
 fi
 echo
 echo "$total language server checks, $failures failed"

@@ -4,6 +4,8 @@
 //
 // Usage: lsp_client <smith> <project> <command> ...
 //   open FILE ... [--]            opens the files together (the `--` ends the list, for more commands after it);
+//   save FILE                     writes the editor's text of FILE to disk, sends didSave and prints the diagnostics
+//                                 of every open file once they have been published again
 //   "diagnostics FILE" and a "diag FILE:L:C: message" line each replace FILE OLD NEW          changes the open FILE in
 //   the editor (not on disk), first OLD to NEW; its diagnostics hover FILE L C                "hover FILE:L:C: text"
 //   (the lines of the hover joined with " | ") definition FILE L C [END]     "definition FILE:L:C -> FILE:L:C"; with
@@ -297,6 +299,30 @@ static void lsp_command_replace(const char *file, const char *from, const char *
     lsp_print_diagnostics(slot);
 }
 
+// Writes the editor's text of FILE to disk and tells the server it was saved; then waits for every open file to publish
+// again and prints them all, in the order they were opened.
+static void lsp_command_save(const char *file) {
+    LspFile *slot = lsp_find(file);
+    if (slot == nullptr) lsp_fail("not open", file);
+    char path[1024];
+    snprintf(path, sizeof path, "%s/%s", lsp_root, file);
+    FILE *out = fopen(path, "w");
+    if (out == nullptr) lsp_fail("cannot write", path);
+    fputs(slot->text, out);
+    fclose(out);
+    LspFile *all[lsp_slot_count] = {};
+    for (size_t i = 0; i < lsp_file_count; i++) {
+        lsp_files[i].has_published = false;
+        all[i] = &lsp_files[i];
+    }
+    static char params[1024 + 1024];
+    snprintf(params, sizeof params, "{\"textDocument\":{\"uri\":\"file://%s/%s\"}}", lsp_root, file);
+    lsp_notify("textDocument/didSave", params);
+    lsp_settle(all, lsp_file_count);
+    for (size_t i = 0; i < lsp_file_count; i++)
+        lsp_print_diagnostics(all[i]);
+}
+
 static void lsp_position_params(char *params, size_t capacity, const char *file, const char *line, const char *column,
                                 const char *extra) {
     snprintf(params, capacity,
@@ -577,6 +603,10 @@ static int lsp_run_command(int argc, char **argv, int at) {
     if (strcmp(name, "replace") == 0 && rest >= 3) {
         lsp_command_replace(argv[at + 1], argv[at + 2], argv[at + 3]);
         return 4;
+    }
+    if (strcmp(name, "save") == 0 && rest >= 1) {
+        lsp_command_save(argv[at + 1]);
+        return 2;
     }
     if (strcmp(name, "hover") == 0 && rest >= 3) {
         lsp_command_hover(argv[at + 1], argv[at + 2], argv[at + 3]);

@@ -307,6 +307,30 @@ else
     failures=$((failures + 1)); echo "FAIL  stack: module: ${stack:-no .stack} $(tail -n 5 "$work/sm/log")"
 fi
 
+# The editor shows the same verdict as the link, for modules: with the summaries the build made, `smith lsp --check` of the
+# importer shows the error and its chain; once the callee is pure (and its summary made), it is gone.
+check_editor() { # the effect errors the editor shows for main.smith
+    (cd "$work/mods" && timeout -s KILL 120 smith lsp --check="$work/mods/main.smith" 2>&1 | grep -o 'smith-effect: .*' | sed 's/^smith-effect: //')
+}
+total=$((total + 1))
+(cd "$work/mods" && smith build) >/dev/null 2>&1
+actual=$(check_editor)
+if [ "\`bad\` is [[smith::pure]], but it has the effects console: bad -> fx::lib::noisy (main.smith:4) -> printf (lib.smith:4)" = "$actual" ]; then
+    echo "ok    editor, modules: lsp --check shows the error through the other module, with the chain"
+else
+    failures=$((failures + 1))
+    echo "FAIL  editor, modules: '$actual'"
+fi
+printf 'module fx::lib;\nimport <stdio.h>;\nexport i32 plain(i32 x) { return x + 1; }\nexport i32 noisy(i32 x) { return x; }\n' >"$work/mods/fx/lib.smith"
+(cd "$work/mods" && smith build) >/dev/null 2>&1
+total=$((total + 1))
+if [ -z "$(check_editor)" ]; then
+    echo "ok    editor, modules: and it is gone once the callee is pure and rebuilt"
+else
+    failures=$((failures + 1))
+    echo "FAIL  editor, modules: still there: '$(check_editor)'"
+fi
+
 # The fix-it of an effects error: applied (clang's -fixit), the file compiles.
 mkdir "$work/fix"
 cp "$here/tests/effects/effects_ceiling.c" "$work/fix/c.c"

@@ -35,6 +35,7 @@
 #include "clang/Frontend/FrontendPluginRegistry.h"
 #include "clang/Sema/ParsedAttr.h"
 #include "clang/Sema/Sema.h"
+#include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -49,6 +50,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <set>
 #include <string>
 #include <unistd.h>
@@ -346,11 +348,66 @@ class Collector {
 
 // ---- The whole file ------------------------------------------------------------------------------------------------
 
+// ---- The editor ----------------------------------------------------------------------------------------------------
+//
+// `smith lsp` (shim/lsp.cpp) runs clangd in this process and tells the plugin what it learns from the editor: that it
+// is the editor's parse (the summaries of other files are judged), the object each source is built into (where its
+// summary goes) and which source was just saved (its parse writes the summary). When a summary is written the layer
+// is told, to have the files that call into it parsed again.
+
+std::mutex editorMutex;
+bool editorOn = false;
+std::map<std::string, std::string> editorObjects; // canonical source -> object path
+std::set<std::string> editorSaved;                // canonical sources saved and not yet written
+void (*editorListener)(const char *) = nullptr;
+
+std::string canonical(const std::string &path) {
+    llvm::SmallString<256> real;
+    if (llvm::sys::fs::real_path(path, real)) return path;
+    return std::string(real);
+}
+
+bool editorPendingFlag = false;
+
+bool editorPending() {
+    std::lock_guard<std::mutex> lock(editorMutex);
+    return editorPendingFlag;
+}
+
+bool editorActive() {
+    std::lock_guard<std::mutex> lock(editorMutex);
+    return editorOn;
+}
+
+// The object of a source saved since its summary was last written; "" for any other parse.
+std::string savedObject(const std::string &source) {
+    std::lock_guard<std::mutex> lock(editorMutex);
+    auto saved = editorSaved.find(source);
+    auto object = editorObjects.find(source);
+    if (saved == editorSaved.end() || object == editorObjects.end()) return "";
+    editorSaved.erase(saved);
+    return object->second;
+}
+
+void editorWritten(const std::string &source) {
+    void (*listener)(const char *) = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(editorMutex);
+        listener = editorListener;
+    }
+    if (listener != nullptr) listener(source.c_str());
+}
+
+struct EditorViolation {
+    std::string name, place, kind, extra, chain;
+};
+std::vector<EditorViolation> editorCheck(const std::string &label, const std::string &own, const std::string &folder);
+
 class Analysis {
   public:
-    Analysis(ASTContext &context, std::string output, std::string flags, bool own)
-        : context(context), engine(context.getDiagnostics()), generator(context), output(std::move(output)),
-          ownSizes(own), flags(std::move(flags)) {
+    Analysis(ASTContext &context, std::string output, std::string flags, bool own, bool syntaxOnly)
+        : context(context), engine(context.getDiagnostics()), generator(context), syntaxOnly(syntaxOnly),
+          output(std::move(output)), ownSizes(own), flags(std::move(flags)) {
         bad =
             engine.getCustomDiagID(DiagnosticsEngine::Error, "smith-effect: `%0` is %1, but it has the effects %2: %3");
         note = engine.getCustomDiagID(DiagnosticsEngine::Note, "%0");
@@ -368,6 +425,7 @@ class Analysis {
         }
         if (isModule()) checkRecursion();
         writeSummary();
+        if (syntaxOnly && output.empty() && getenv("SMITH_EFFECTS_OBJECT") == nullptr) checkInEditor();
     }
 
   private:
@@ -375,6 +433,7 @@ class Analysis {
     DiagnosticsEngine &engine;
     unsigned bad, note, recursion;
     ASTNameGenerator generator;
+    bool syntaxOnly;       // a parse that only reads the file (the editor's, not the preamble's)
     std::string output;    // the object file being written: the summary goes beside it, `<object>.fx`
     bool ownSizes = false; // the .su is smith's: removed after it is read
     std::string flags;     // what the frame sizes are for: `opt=0 sanitize=address,undefined`
@@ -651,6 +710,7 @@ class Analysis {
     // the flags the numbers are for (a frame at -O0 with sanitizers is larger than at -O2). The .su is removed when
     // smith asked for it. An object compiled without it has no `S` lines, and the program's stack is then unknown.
     std::string frames() {
+        if (output.size() < 3) return ""; // no object: the editor's parse, a summary-only compile
         std::string base = output.substr(0, output.size() - 2);
         const char *asked = getenv("SMITH_STACK_USAGE_ADDED"); // "1": beside the object; else the file the driver chose
         std::string file = asked != nullptr && asked[0] != '\0' && std::strcmp(asked, "1") != 0 ? asked : base + ".su";
@@ -705,8 +765,7 @@ class Analysis {
     // reaches in this file, where, its name) and one for each thing it calls (L a leaf with its effects, E a call to
     // a function by symbol, with a body here or not: the program's check follows it across files). The file is replaced
     // whole, written beside and renamed, so no reader sees half of one.
-    void writeSummary() {
-        if (output.empty()) return;
+    std::string summaryText() {
         std::string text;
         for (const FunctionDecl *function : order) { // source order, so the same source writes the same summary
             const Node &node = nodes[function];
@@ -724,37 +783,92 @@ class Analysis {
             }
         }
         text += frames(); // the sizes of the frames, when the compile wrote them
+        return text;
+    }
+
+    // `SMITH_EFFECTS_OBJECT` names the object whose summary a compile writes (the editor's background pass compiles a
+    // source for its summary only, in the place the build keeps it).
+    void writeSummary() {
+        const char *named = getenv("SMITH_EFFECTS_OBJECT");
+        if (named != nullptr && *named != '\0') {
+            writeText(named, summaryText());
+            return;
+        }
+        if (output.empty()) return;
+        writeText(output, summaryText());
+    }
+
+    // The summary put in the place the object's one goes.
+    static bool writeText(const std::string &object, const std::string &text) {
         char where[4096];
-        if (!smith_effects_summary_path(output.c_str(), where, sizeof where)) return;
+        if (!smith_effects_summary_path(object.c_str(), where, sizeof where)) return false;
         std::string path = where;
         std::string temporary = path + ".part" + std::to_string(getpid());
         std::error_code error;
         llvm::StringRef folder = llvm::sys::path::parent_path(path); // empty for an object in the working folder
-        if (!folder.empty() && llvm::sys::fs::create_directories(folder)) return;
+        if (!folder.empty() && llvm::sys::fs::create_directories(folder)) return false;
         {
             llvm::raw_fd_ostream file(temporary, error);
-            if (error) return;
+            if (error) return false;
             file << text;
         }
         if (llvm::sys::fs::rename(temporary, path)) {
             std::error_code ignored =
                 llvm::sys::fs::remove(temporary); // a summary that cannot be put in place is left out
             (void)ignored;
+            return false;
         }
+        return true;
+    }
+
+    // The editor's parse of a file (clangd, `smith lsp --check`): when the file was just saved its summary is written
+    // (the build's own place, so a build after the editor does no extra work), and the calls that cross files are
+    // judged with the summaries of the other files on disk, the way the link judges them: an error at the call with
+    // the link's text and chain. The link stays the authority.
+    void checkInEditor() {
+        if (!editorActive()) return;
+        const SourceManager &sm = context.getSourceManager();
+        auto mainFile = sm.getFileEntryRefForID(sm.getMainFileID());
+        if (!mainFile) return;
+        std::string source = canonical(mainFile->getName().str());
+        std::string text = summaryText();
+        std::string object = savedObject(source);
+        if (!object.empty() && writeText(object, text)) editorWritten(source);
+        char folder[4096];
+        if (!smith_effects_summary_path("x.o", folder, sizeof folder)) return;
+        std::string directory = llvm::sys::path::parent_path(folder).str();
+        for (const EditorViolation &violation : ::editorCheck("editor:" + source, text, directory)) {
+            SourceLocation loc = locate(violation.place);
+            if (loc.isInvalid()) continue;
+            engine.Report(loc, bad) << violation.name << violation.kind << violation.extra << violation.chain;
+        }
+    }
+
+    // A place `path:line:column` as a location of the main file; invalid when it is in another file.
+    SourceLocation locate(const std::string &placed) {
+        size_t last = placed.rfind(':'), before = last == std::string::npos ? last : placed.rfind(':', last - 1);
+        if (before == std::string::npos) return SourceLocation();
+        unsigned line = std::strtoul(placed.c_str() + before + 1, nullptr, 10);
+        unsigned column = std::strtoul(placed.c_str() + last + 1, nullptr, 10);
+        const SourceManager &sm = context.getSourceManager();
+        PresumedLoc main = sm.getPresumedLoc(sm.getLocForStartOfFile(sm.getMainFileID()));
+        if (main.isInvalid() || placed.substr(0, before) != main.getFilename()) return SourceLocation();
+        return sm.translateLineCol(sm.getMainFileID(), line, column);
     }
 };
 
 class Consumer : public ASTConsumer {
   public:
-    Consumer(std::string output, std::string flags, bool own)
-        : output(std::move(output)), flags(std::move(flags)), own(own) {}
+    Consumer(std::string output, std::string flags, bool own, bool syntaxOnly)
+        : output(std::move(output)), flags(std::move(flags)), own(own), syntaxOnly(syntaxOnly) {}
     void HandleTranslationUnit(ASTContext &context) override {
-        Analysis(context, output, flags, own).run();
+        Analysis(context, output, flags, own, syntaxOnly).run();
     }
 
   private:
     std::string output, flags;
     bool own;
+    bool syntaxOnly;
 };
 
 struct EffectsPlugin final : PluginASTAction {
@@ -772,7 +886,7 @@ struct EffectsPlugin final : PluginASTAction {
         if (sanitize.hasOneOf(SanitizerKind::Undefined)) flags += " undefined";
         if (sanitize.has(SanitizerKind::Thread)) flags += " thread";
         bool own = !output.empty() && getenv("SMITH_STACK_USAGE_ADDED") != nullptr; // smith asked (shim/clang.cpp)
-        return std::make_unique<Consumer>(output, flags, own);
+        return std::make_unique<Consumer>(output, flags, own, options.ProgramAction == frontend::ParseSyntaxOnly);
     }
     bool ParseArgs(const CompilerInstance &, const std::vector<std::string> &) override {
         return true;
@@ -833,8 +947,14 @@ class Program {
     bool read(const char *path) {
         auto buffer = llvm::MemoryBuffer::getFile(path);
         if (!buffer) return false;
+        readText(path, (*buffer)->getBuffer());
+        return true;
+    }
+
+    // A summary given as text, known by `path` (the editor's own, not yet on disk).
+    void readText(const std::string &path, llvm::StringRef text) {
         llvm::SmallVector<llvm::StringRef, 8> lines;
-        (*buffer)->getBuffer().split(lines, '\n', -1, false);
+        text.split(lines, '\n', -1, false);
         for (llvm::StringRef line : lines) {
             llvm::SmallVector<llvm::StringRef, 8> field;
             line.split(field, '\t');
@@ -880,14 +1000,20 @@ class Program {
                 functions[field[1].str()].edges.push_back(edge);
             }
         }
-        return true;
     }
 
-    // Returns the number of errors, printed as the compiler prints its own.
-    int check() {
+    // What the link and the editor report: a function whose ceiling is passed only through another file.
+    struct Violation {
+        std::string symbol, name, place, kind, extra, chain;
+    };
+
+    // The violations (solved again with the calls that cross files); `only` limits them to the functions one summary
+    // defines (the editor judges the open file only), "" for all.
+    std::vector<Violation> violations(const std::string &only = "") {
         solve();
-        int errors = 0;
+        std::vector<Violation> found;
         for (auto &entry : functions) {
+            if (!only.empty() && owners[entry.first] != only) continue;
             Function &function = entry.second;
             if (function.declared < 0) continue;
             uint32_t declared = static_cast<uint32_t>(function.declared);
@@ -907,8 +1033,17 @@ class Program {
             }
             if (first == nullptr) continue;
             std::string kind = declared == 0 ? "[[smith::pure]]" : "limited to " + describe(declared);
-            llvm::errs() << first->place << ": error: smith-effect: `" << function.name << "` is " << kind
-                         << ", but it has the effects " << describe(extra) << ": " << chain(entry.first, bit) << "\n";
+            found.push_back({entry.first, function.name, first->place, kind, describe(extra), chain(entry.first, bit)});
+        }
+        return found;
+    }
+
+    // Returns the number of errors, printed as the compiler prints its own.
+    int check() {
+        int errors = 0;
+        for (const Violation &violation : violations()) {
+            llvm::errs() << violation.place << ": error: smith-effect: `" << violation.name << "` is " << violation.kind
+                         << ", but it has the effects " << violation.extra << ": " << violation.chain << "\n";
             errors++;
         }
         return errors;
@@ -983,6 +1118,12 @@ class Program {
         }
     }
 
+    // The editor, while the summaries of the project are still being made: a function no summary defines yet is not
+    // judged (the link will, with every summary).
+    void setLenient(bool value) {
+        lenient = value;
+    }
+
   private:
     struct Depth {
         long bytes = 0;
@@ -990,6 +1131,7 @@ class Program {
         std::set<std::string> outside;
         std::string path;
     };
+    bool lenient = false;
     std::map<std::string, Function> functions;
     std::map<std::string, std::string> owners;
     std::vector<std::string> builds;
@@ -1031,7 +1173,7 @@ class Program {
 
     uint32_t visible(const std::string &symbol) {
         auto found = functions.find(symbol);
-        if (found == functions.end()) return C; // no summary defines it: no source
+        if (found == functions.end()) return lenient ? 0 : C; // no summary defines it: no source
         return found->second.declared >= 0 ? static_cast<uint32_t>(found->second.declared) : found->second.inferred;
     }
 
@@ -1089,6 +1231,22 @@ class Program {
     }
 };
 
+// The editor's check of the open file: its own summary (fresh, from this parse) merged with the others' on disk, the
+// violations of its own functions that come through another file.
+std::vector<EditorViolation> editorCheck(const std::string &label, const std::string &own, const std::string &folder) {
+    Program program;
+    program.setLenient(editorPending());
+    program.readText(label, own); // first: its functions win over the stale copy in its own file's summary
+    std::error_code error;
+    for (llvm::sys::fs::directory_iterator it(folder, error), end; !error && it != end; it.increment(error)) {
+        if (llvm::sys::path::extension(it->path()) == ".fx") program.read(it->path().c_str());
+    }
+    std::vector<EditorViolation> result;
+    for (const auto &violation : program.violations(label))
+        result.push_back({violation.name, violation.place, violation.kind, violation.extra, violation.chain});
+    return result;
+}
+
 } // namespace
 
 extern "C" int smith_effects_check(int count, char **files, const char *stack) {
@@ -1102,4 +1260,27 @@ extern "C" int smith_effects_check(int count, char **files, const char *stack) {
         program.writeStack(stack);
     }
     return 0;
+}
+
+// The API of the layer between the editor and clangd (shim/lsp.cpp).
+extern "C" void smith_effects_editor_start(void (*listener)(const char *source)) {
+    std::lock_guard<std::mutex> lock(editorMutex);
+    editorOn = true;
+    editorListener = listener;
+}
+
+extern "C" void smith_effects_editor_object(const char *source, const char *object) {
+    std::lock_guard<std::mutex> lock(editorMutex);
+    editorObjects[canonical(source)] = object;
+}
+
+extern "C" void smith_effects_editor_saved(const char *source) {
+    std::lock_guard<std::mutex> lock(editorMutex);
+    editorSaved.insert(canonical(source));
+}
+
+// Whether summaries of the project are still being made (the layer's background pass).
+extern "C" void smith_effects_editor_pending(int pending) {
+    std::lock_guard<std::mutex> lock(editorMutex);
+    editorPendingFlag = pending != 0;
 }
