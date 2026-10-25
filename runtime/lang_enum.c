@@ -595,6 +595,8 @@ typedef struct {
     char params[smith_lang_eshape_params_max][48];
     SmithToken tokens[smith_lang_eshape_tokens_max]; // between the braces of the enum
     size_t token_count;
+    char module[64]; // the import's name that an importer writes before it (`opt::option(...)`); empty: this file's own
+    bool exported;   // `export type option(...)`: the header carries the shape
 } SmithLangEnumShape;
 
 typedef struct {
@@ -795,6 +797,10 @@ static bool smith_lang_eshape_declare(SmithLang *lang, const SmithHost *host, co
             return false;
         }
         shape->tokens[shape->token_count++] = copy;
+    }
+    if (lang->pending_export) { // `export type option(...)`: the header carries the shape, nothing else is exported
+        shape->exported = true;
+        lang->pending_export = false;
     }
     smith_lang_eshape_count += 1;
     lang->tuples_seen = true;
@@ -1276,23 +1282,122 @@ static uint32_t smith_lang_eshape_put_call(SmithLang *lang, const SmithHost *hos
     return length;
 }
 
+// ---- The shape in a module's header (issue #198, 2c)
+//
+// `export type option(type T) { return enum { T some; none; }; }` adds a line to the module's header,
+// `// smith-eshape: option(T) { T some ; none ; }` (the tokens separated by spaces), which an importer reads when it
+// reads the interface (smith_lang_eshape_import) and keeps as a shape of its own whose `module` is the import's name:
+// `opt::option(usize)` is the struct `smith_enum_option_usize`, the one a write of `option(usize)` in the module is.
+
+static size_t smith_lang_eshape_lines(const SmithLang *lang, char *out, size_t capacity, size_t used) {
+    (void)lang;
+    for (size_t i = 0; i < smith_lang_eshape_count; i++) { // at most 16
+        const SmithLangEnumShape *shape = &smith_lang_eshapes[i];
+        if (!shape->exported || shape->module[0] != 0) continue;
+        used = smith_lang_append(out, capacity, used, "// smith-eshape: %s(", shape->name);
+        for (size_t p = 0; p < shape->param_count; p++)
+            used = smith_lang_append(out, capacity, used, p > 0 ? ",%s" : "%s", shape->params[p]);
+        used = smith_lang_append(out, capacity, used, ") {");
+        for (size_t t = 0; t < shape->token_count; t++)
+            used = smith_lang_append(out, capacity, used, " %.*s", (int)shape->tokens[t].length, shape->tokens[t].text);
+        used = smith_lang_append(out, capacity, used, " }\n");
+    }
+    return used;
+}
+
+// The shapes a header's `// smith-eshape:` lines hold, kept for the import named `bind`.
+static void smith_lang_eshape_import(const char *text, uint32_t length, const char *bind, size_t bind_length) {
+    static const char marker[] = "// smith-eshape: ";
+    for (const char *at = memmem(text, length, marker, sizeof marker - 1); at != nullptr;
+         at = memmem(at + 1, (size_t)(text + length - at - 1), marker, sizeof marker - 1)) { // one pass per line
+        const char *line = at + sizeof marker - 1;
+        const char *end = memchr(line, '\n', (size_t)(text + length - line));
+        if (end == nullptr) end = text + length;
+        if (smith_lang_eshape_count >= smith_lang_eshape_max || bind_length >= sizeof smith_lang_eshapes[0].module)
+            return;
+        SmithLangEnumShape *shape = &smith_lang_eshapes[smith_lang_eshape_count];
+        memset(shape, 0, sizeof *shape);
+        memcpy(shape->module, bind, bind_length);
+        shape->exported = true;
+        const char *cursor = line;
+        size_t name = strcspn(cursor, "(");
+        if (cursor + name >= end || name >= sizeof shape->name) continue;
+        memcpy(shape->name, cursor, name);
+        cursor += name + 1;
+        for (; cursor < end && *cursor != ')'; cursor += *cursor == ',' ? 1 : 0) { // the parameters
+            size_t each = strcspn(cursor, ",)");
+            if (each >= sizeof shape->params[0] || shape->param_count >= smith_lang_eshape_params_max) break;
+            memcpy(shape->params[shape->param_count++], cursor, each);
+            cursor += each;
+        }
+        cursor += 4; // `) {` and the space
+        bool duplicate = false;
+        for (size_t i = 0; i < smith_lang_eshape_count; i++)
+            duplicate = duplicate || (strcmp(smith_lang_eshapes[i].name, shape->name) == 0 &&
+                                      strcmp(smith_lang_eshapes[i].module, shape->module) == 0);
+        while (!duplicate && cursor < end) { // the variants' tokens
+            while (cursor < end && *cursor == ' ')
+                cursor += 1;
+            size_t word = 0;
+            while (cursor + word < end && cursor[word] != ' ')
+                word += 1;
+            if (word == 0 || (word == 1 && *cursor == '}' && cursor + 1 >= end)) break;
+            if (shape->token_count >= smith_lang_eshape_tokens_max) break;
+            SmithToken token = {};
+            token.kind = isalpha((unsigned char)*cursor) || *cursor == '_' ? SmithTokenKind_Identifier
+                         : isdigit((unsigned char)*cursor)                 ? SmithTokenKind_Number
+                                                                           : SmithTokenKind_Punctuator;
+            token.text = smith_lang_eshape_keep(cursor, word);
+            token.length = (uint32_t)word;
+            token.handle = smith_token_no_handle;
+            token.space_before = true;
+            if (token.text == nullptr) break;
+            shape->tokens[shape->token_count++] = token;
+            cursor += word;
+        }
+        if (!duplicate) smith_lang_eshape_count += 1;
+    }
+}
+
 // Whether the token names a type function that returns an enum.
 static bool smith_lang_eshape_named(const SmithToken *name) {
     return smith_lang_eshape_count > 0 && name->kind == SmithTokenKind_Identifier &&
            smith_lang_eshape_find(name) != nullptr;
 }
 
-// A use of a shape at `at` (a name and a `(`), not a member: its shape, else null.
+// A use of a shape at `at`: `name (` of this file's own, or `module :: name (` of an import's exported one (not a
+// member): its shape, else null, and `*open`, the index of the `(`.
 static const SmithLangEnumShape *smith_lang_eshape_use(SmithLang *lang, const SmithHost *host, const SmithToken *first,
-                                                       size_t at, const SmithToken *before) {
+                                                       size_t at, const SmithToken *before, size_t *open) {
     const SmithToken *name = smith_lang_eshape_at(lang, host, first, at);
-    const SmithLangEnumShape *shape = smith_lang_eshape_find(name);
-    if (shape == nullptr || !smith_lang_punct(smith_lang_eshape_at(lang, host, first, at + 1), "(")) return nullptr;
     if (before != nullptr && (smith_lang_punct(before, ".") || smith_lang_punct(before, "->") ||
                               smith_lang_punct(before, "::") || smith_lang_ident(before, "struct"))) {
         return nullptr;
     }
-    return shape;
+    const SmithLangEnumShape *shape = smith_lang_eshape_find(name);
+    if (shape != nullptr && shape->module[0] == 0 &&
+        smith_lang_punct(smith_lang_eshape_at(lang, host, first, at + 1), "(")) {
+        *open = at + 1;
+        return shape;
+    }
+    if (name->kind != SmithTokenKind_Identifier || smith_lang_eshape_count == 0 ||
+        !smith_lang_punct(smith_lang_eshape_at(lang, host, first, at + 1), "::")) {
+        return nullptr;
+    }
+    const SmithToken *member = smith_lang_eshape_at(lang, host, first, at + 2);
+    if (member->kind != SmithTokenKind_Identifier ||
+        !smith_lang_punct(smith_lang_eshape_at(lang, host, first, at + 3), "(")) {
+        return nullptr;
+    }
+    for (size_t i = 0; i < smith_lang_eshape_count; i++) { // `opt::option(`
+        const SmithLangEnumShape *each = &smith_lang_eshapes[i];
+        if (each->module[0] != 0 && smith_lang_equals(name->text, name->length, each->module) &&
+            smith_lang_equals(member->text, member->length, each->name)) {
+            *open = at + 3;
+            return each;
+        }
+    }
+    return nullptr;
 }
 
 // At the first token of a declaration or statement: the structs its enum type functions' calls name that no scope
@@ -1311,12 +1416,13 @@ static bool smith_lang_eshape_define_ahead(SmithLang *lang, const SmithHost *hos
         if (depth <= 0 && (smith_lang_punct(each, ";") || smith_lang_punct(each, "{") || smith_lang_punct(each, "}"))) {
             break; // the end of the head or the statement, or of the block it is in
         }
-        const SmithLangEnumShape *shape = smith_lang_eshape_use(lang, host, token, at, before);
+        size_t open = 0;
+        const SmithLangEnumShape *shape = smith_lang_eshape_use(lang, host, token, at, before, &open);
         before = each;
-        if (shape == nullptr || smith_lang_eshape_dependent(lang, host, token, at + 1)) continue;
+        if (shape == nullptr || smith_lang_eshape_dependent(lang, host, token, open)) continue;
         SmithLangEnumCall call;
         char tag[smith_lang_tuple_name_max];
-        if (!smith_lang_eshape_call(lang, host, token, at + 1, shape, &call, false) ||
+        if (!smith_lang_eshape_call(lang, host, token, open, shape, &call, false) ||
             !smith_lang_eshape_tag(lang, host, shape, &call, tag, sizeof tag, false)) {
             return false; // said where the call is replaced
         }
@@ -1373,14 +1479,15 @@ static bool smith_lang_enum_function(SmithLang *lang, const SmithHost *host, con
     }
     if (smith_lang_eshape_count == 0) return false;
     if (!recording && start && smith_lang_eshape_define_ahead(lang, host, token)) return true;
+    size_t open = 0;
     const SmithLangEnumShape *shape =
-        lang->prev_member ? nullptr : smith_lang_eshape_use(lang, host, token, 0, nullptr);
-    if (shape != nullptr && smith_lang_eshape_dependent(lang, host, token, 1)) {
-        if (lang->decl.exported || lang->pending_export) {
+        lang->prev_member ? nullptr : smith_lang_eshape_use(lang, host, token, 0, nullptr, &open);
+    if (shape != nullptr && smith_lang_eshape_dependent(lang, host, token, open)) {
+        if ((lang->decl.exported || lang->pending_export) && !shape->exported && shape->module[0] == 0) {
             smith_lang_error(lang, host, token->location,
-                             "an exported generic cannot name `%s(...)` of a generic's own types yet (known gap): an "
-                             "importer has no shape for it; the type function itself is not exported",
-                             shape->name);
+                             "an exported generic cannot name `%s(...)` of a generic's own types unless the type "
+                             "function is exported too: write `export type %s(...)`; an importer has no shape for it",
+                             shape->name, shape->name);
         }
         return false;
     }
@@ -1388,9 +1495,9 @@ static bool smith_lang_enum_function(SmithLang *lang, const SmithHost *host, con
     SmithLangEnumCall call;
     char tag[smith_lang_tuple_name_max];
     SmithToken made[2];
-    if (!smith_lang_eshape_call(lang, host, token, 1, shape, &call, true) ||
+    if (!smith_lang_eshape_call(lang, host, token, open, shape, &call, true) ||
         !smith_lang_eshape_tag(lang, host, shape, &call, tag, sizeof tag, true)) {
-        size_t close = smith_lang_eshape_close(lang, host, token, 1, "(", ")");
+        size_t close = smith_lang_eshape_close(lang, host, token, open, "(", ")");
         if (close == 0) return false;
         made[0] = smith_lang_tuple_made(SmithTokenKind_Identifier, "int", 3, token, token->space_before); // so that the
         return smith_lang_tuple_replace(lang, close, made, 1); // declaration still reads, and says no more

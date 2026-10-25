@@ -975,6 +975,72 @@ i32 main() {
     c::printf("%d %d\n", t == .full, flip(t) == .empty);
     return 0;
 }
+==> enum-type-function-export/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import opt;
+import other;
+
+typedef opt::option(usize) Maybe;
+typedef opt::option(f64) MaybeF;
+
+static usize or_else(Maybe m, usize otherwise) {
+    if (m == .some) return m.some;
+    return otherwise;
+}
+
+static f64 or_zero(MaybeF m) {
+    if (m == .some) return m.some;
+    return 0;
+}
+
+opt::option(i32) twice(i32 x) {
+    return {.some = x * 2};
+}
+
+i32 main(void) {
+    usize xs[2] = {7, 8};
+    Maybe a = opt::first(usize, xs, 2);
+    Maybe n = opt::first(usize, xs, 0);
+    Maybe f = opt::find("key=value", '=');
+    MaybeF w = opt::first(f64, (f64[]){2.5}, 1);
+    Maybe p = other::pick(5);
+    c::printf("%zu\n", or_else(p, 0));
+    c::printf("%zu %zu %zu %g\n", or_else(a, 0), or_else(n, 99), or_else(f, 99), or_zero(w));
+    return 0;
+}
+==> enum-type-function-export/src/opt.smith <==
+module opt;
+
+export type option(type T) {
+    return enum {
+        T some;
+        none;
+    };
+}
+
+typedef option(usize) Index;
+
+export option(T) first(constexpr type T, T *xs, usize n) {
+    if (n == 0) return .none;
+    return {.some = xs[0]};
+}
+
+export option(usize) find(const char *text, char wanted) {
+    for (usize i = 0; text[i] != 0; i++)
+        if (text[i] == wanted) return {.some = i};
+    return .none;
+}
+==> enum-type-function-export/src/other.smith <==
+module other;
+
+import opt;
+
+// A second importer of the exported type function: its `opt::option(usize)` is the struct the others have.
+export opt::option(usize) pick(usize v) {
+    return {.some = v};
+}
 ==> enum-type-function-generic/src/main.smith <==
 module main;
 
