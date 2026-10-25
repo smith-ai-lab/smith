@@ -1,0 +1,32 @@
+module hw::dev;
+
+import <stdio.h>;
+import <string.h>;
+
+export typedef struct [[clang::annotate("smith::capability")]] {
+    i32 fd;
+} Dev;
+
+static void helper(const char *text) {
+    c::fputs(text, c::stdout);
+}
+
+export void write(Dev *dev, const char *text) {
+    (void)dev;
+    helper(text);
+}
+
+export void leak(const char *text) {
+    helper(text);
+}
+
+export usize size(const char *text) {
+    return c::strlen(text);
+}
+
+// An instance is compiled in the file that calls it, and is the code of this module: its raw call is the module's own.
+export void emit(Dev *dev, auto value) {
+    (void)dev;
+    (void)value;
+    c::fputs("x", c::stdout);
+}

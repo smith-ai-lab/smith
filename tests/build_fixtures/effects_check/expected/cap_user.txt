@@ -1,0 +1,1 @@
+lib/cap_user.c:7:5: error: `puts` touches the world: take a `SmithConsole *` from main's SmithIo and print and read through it (smith_console_print, smith_console_read_line)

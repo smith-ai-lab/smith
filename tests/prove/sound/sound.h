@@ -2,7 +2,7 @@
 // satisfy its smith_requires, under AddressSanitizer and UBSan, and a contract that fails while it runs (an ensures, an
 // invariant, an assert, a requires of a callee) or a sanitizer's report is a wrong "proved". A harness is
 // tests/prove/sound/<case>.c: it includes the case it tests, so static functions are reachable, and is run by
-// tests/prove_sound.sh, which first asks smith prove for `ok` on each function the harness lists on its `// proves:` line.
+// tests/prove_sound_test.smith, which first asks smith prove for `ok` on each function the harness lists on its `// proves:` line.
 //
 // Inputs are generated, then filtered: a failed smith_requires of the function is not an error but a rejected input
 // (the hook below turns every failed contract into a longjmp), counted, and a harness whose accepted inputs are rare

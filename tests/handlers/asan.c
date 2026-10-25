@@ -1,6 +1,6 @@
 // ASan still reports through the handlers runtime (and with its puts check off): no argument overflows a malloc'd
-// block, one argument reads it after free, two make puts read past an unterminated string. tests/handlers.sh expects a
-// report.
+// block, one argument reads it after free, two make puts read past an unterminated string. tests/handlers_test.smith
+// expects a report.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

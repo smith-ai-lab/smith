@@ -1,0 +1,5 @@
+hw/dev.smith:19:13: error: `leak` is exported by a capability's implementation and reaches `c::fputs`, but takes and returns no capability, so any caller could touch the world: take a capability, such as the `SmithConsole *` it needs, or make it static
+hw_main.smith:6:18: error: a capability cannot be kept in static storage (`global_dev`); pass it as a parameter from main
+hw_main.smith:10:5: error: `c::printf` touches the world: take a `SmithConsole *` from main's SmithIo and print and read through it (smith_console_print, smith_console_read_line)
+hw_main.smith:18:5: error: `c::exit` touches the world: return the status from main instead
+hw_main.smith:20:24: error: `c::smith_io_make` makes a real capability and may be called only in main: take the capability as a parameter (a test makes a fake)

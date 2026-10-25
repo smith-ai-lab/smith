@@ -1,0 +1,4 @@
+stored.c:7:17: error: a capability cannot be kept in static storage (`global_io`); pass it as a parameter from main
+stored.c:8:13: error: a capability cannot be kept in static storage (`global_clock`); pass it as a parameter from main
+stored.c:9:15: error: a capability cannot be kept in static storage (`bundle`); pass it as a parameter from main
+stored.c:13:25: error: a capability cannot be kept in static storage (`console`); pass it as a parameter from main

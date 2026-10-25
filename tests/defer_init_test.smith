@@ -1,0 +1,146 @@
+// scripts/defer_init.c on Mach-O objects, from tests/defer.sh (issue #292): it moves a Mach-O object's static
+// initializers out of the section dyld runs at load (scripts/llvm.sh uses it on the objects of clang-format, clang-tidy
+// and clangd). Two objects with an initializer each and a main that runs the section of one of them by hand. macOS
+// only.
+module defer_init_test;
+
+import smith::io;
+import smith::test;
+import scratch;
+
+static bool darwin(const scratch::Project *p) {
+    return scratch::same(scratch::capture(p, "uname -s"), "Darwin");
+}
+
+// A project with the tool built and the three objects compiled; nullptr-free: `ok` is false off macOS.
+static scratch::Project objects(io::Io *io, bool *ok) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    *ok = darwin(&p);
+    if (!*ok) {
+        return p;
+    }
+    scratch::write(&p, "a.c",
+                   "#include <stdio.h>\n__attribute__((constructor)) static void init_a(void) { puts(\"init a\"); }\n");
+    scratch::write(&p, "b.c",
+                   "#include <stdio.h>\n__attribute__((constructor)) static void init_b(void) { puts(\"init b\"); }\n");
+    scratch::write(&p, "main.c",
+                   "#include <mach-o/getsect.h>\n"
+                   "#include <mach-o/ldsyms.h>\n"
+                   "#include <stdio.h>\n"
+                   "int main(void) {\n"
+                   "    puts(\"main\");\n"
+                   "    unsigned long size = 0;\n"
+                   "    void (**table)(void) = (void (**)(void))getsectiondata(&_mh_execute_header, \"__DATA\", "
+                   "\"__smith_demo\", &size);\n"
+                   "    printf(\"section %s, %lu entries\\n\", table != nullptr ? \"found\" : \"missing\", size / "
+                   "sizeof table[0]);\n"
+                   "    for (unsigned long i = 0; table != nullptr && i < size / sizeof table[0]; i++)\n"
+                   "        table[i]();\n"
+                   "    return 0;\n"
+                   "}\n");
+    scratch::Run tool = scratch::sh(&p, "smith cc -std=gnu23 -Wall -Wextra -Wpedantic -Werror "
+                                        "\"$SMITH_REPO/scripts/defer_init.c\" -o defer_init");
+    scratch::expect_status("defer: the tool builds under the warnings", 0, &tool);
+    scratch::Run compiled =
+        scratch::sh(&p, "for f in a b main; do smith cc -std=gnu23 -c $f.c -o $f.o || exit 1; done");
+    scratch::expect_status("defer: the three objects compile", 0, &compiled);
+    return p;
+}
+
+export void test_defer_before_both_initializers_run_at_load(io::Io *io) {
+    bool ok = false;
+    scratch::Project p = objects(io, &ok);
+    if (!ok) {
+        return;
+    }
+    scratch::Run linked = scratch::sh(&p, "smith cc main.o a.o b.o -o plain");
+    scratch::expect_status("defer: the plain program links", 0, &linked);
+    scratch::expect_text("defer: before: both initializers run at load, before main",
+                         "init a\ninit b\nmain\nsection missing, 0 entries", scratch::capture(&p, "./plain"));
+}
+
+export void test_defer_the_tool_says_what_it_did(io::Io *io) {
+    bool ok = false;
+    scratch::Project p = objects(io, &ok);
+    if (!ok) {
+        return;
+    }
+    scratch::expect_text("defer: the tool says what it did", "a.o: 1 initializer section(s) deferred as __smith_demo",
+                         scratch::capture(&p, "./defer_init a.o a_deferred.o demo"));
+}
+
+export void test_defer_an_object_with_no_initializer_is_unchanged(io::Io *io) {
+    bool ok = false;
+    scratch::Project p = objects(io, &ok);
+    if (!ok) {
+        return;
+    }
+    scratch::Run made = scratch::sh(&p, "./defer_init main.o main_same.o demo >/dev/null");
+    scratch::expect_status("defer: the tool runs on main.o", 0, &made);
+    scratch::expect_text("defer: an object with no initializer is unchanged",
+                         scratch::capture(&p, "shasum main.o | cut -d' ' -f1"),
+                         scratch::capture(&p, "shasum main_same.o | cut -d' ' -f1"));
+}
+
+export void test_defer_after_nothing_runs_at_load_and_the_section_holds_both(io::Io *io) {
+    bool ok = false;
+    scratch::Project p = objects(io, &ok);
+    if (!ok) {
+        return;
+    }
+    scratch::Run made = scratch::sh(&p, "./defer_init a.o a_deferred.o demo >/dev/null && "
+                                        "./defer_init b.o b_deferred.o demo >/dev/null");
+    scratch::expect_status("defer: the tool runs on a.o and b.o", 0, &made);
+    scratch::Run linked = scratch::sh(&p, "smith cc main.o a_deferred.o b_deferred.o -Wl,-dead_strip -o deferred");
+    scratch::expect_status("defer: the deferred program links", 0, &linked);
+    scratch::expect_text("defer: after: nothing runs at load, and the section holds both, kept by -dead_strip, to run "
+                         "by hand",
+                         "main\nsection found, 2 entries\ninit a\ninit b", scratch::capture(&p, "./deferred"));
+}
+
+export void test_defer_the_section_is_plain_data_and_no_mod_init_func_is_left(io::Io *io) {
+    bool ok = false;
+    scratch::Project p = objects(io, &ok);
+    if (!ok) {
+        return;
+    }
+    scratch::Run made = scratch::sh(&p, "./defer_init a.o a_deferred.o demo >/dev/null");
+    scratch::expect_status("defer: the tool runs on a.o", 0, &made);
+    scratch::expect_text("defer: the section is plain data in the object", "yes",
+                         scratch::capture(&p, "otool -l a_deferred.o | grep -q 'sectname __smith_demo' && echo yes || "
+                                              "echo no"));
+    scratch::expect_text("defer: no __mod_init_func is left in the object", "no",
+                         scratch::capture(&p, "otool -l a_deferred.o | grep -q 'sectname __mod_init_func' && echo "
+                                              "yes || echo no"));
+}
+
+export void test_defer_a_missing_input_fails(io::Io *io) {
+    bool ok = false;
+    scratch::Project p = objects(io, &ok);
+    if (!ok) {
+        return;
+    }
+    scratch::Run run = scratch::sh(&p, "./defer_init missing.o x.o demo >/dev/null 2>&1");
+    scratch::expect_status("defer: a missing input fails", 1, &run);
+}
+
+export void test_defer_a_wrong_usage_is_2(io::Io *io) {
+    bool ok = false;
+    scratch::Project p = objects(io, &ok);
+    if (!ok) {
+        return;
+    }
+    scratch::Run run = scratch::sh(&p, "./defer_init a.o >/dev/null 2>&1");
+    scratch::expect_status("defer: a wrong usage is 2", 2, &run);
+}
+
+export void test_defer_a_file_that_is_no_mach_o_object_is_refused(io::Io *io) {
+    bool ok = false;
+    scratch::Project p = objects(io, &ok);
+    if (!ok) {
+        return;
+    }
+    scratch::write(&p, "text.o", "not an object");
+    scratch::Run run = scratch::sh(&p, "./defer_init text.o x.o demo >/dev/null 2>&1");
+    scratch::expect_status("defer: a file that is no Mach-O object is refused", 1, &run);
+}

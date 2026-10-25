@@ -1,0 +1,89 @@
+// What the tests of `smith prove` (tests/prove_*_test.smith, issue #292) share: the command that proves a file of
+// tests/prove ($c in the arguments), and the checks that a list of functions of a file are all proved, or all refuted
+// with a text, each failing name in the note of the failure.
+module prove_cases;
+
+import smith::arena;
+import smith::format;
+import smith::io;
+import smith::test;
+import scratch;
+import <string.h>;
+
+// `smith prove args -- -I include`, both streams together. $c in args is tests/prove.
+export scratch::Run prove(const scratch::Project *p, const char *args) {
+    return scratch::sh(p, format::push(&p->io->arena, "c=\"$SMITH_REPO/tests/prove\"; smith prove ", args,
+                                       " -- -I \"$SMITH_REPO/include\" 2>&1")
+                              .data);
+}
+
+// The word number `index` of a text separated by spaces, or nullptr when there are fewer.
+static const char *word(io::Io *io, const char *text, usize index) {
+    usize at = 0;
+    for (usize n = 0; n <= index; n++) {
+        while (text[at] == ' ')
+            at++;
+        if (text[at] == '\0') return nullptr;
+        usize start = at;
+        while (text[at] != ' ' && text[at] != '\0')
+            at++;
+        if (n == index) {
+            char *copy = arena::push_slice(&io->arena, char, at - start + 1).data;
+            __builtin_memcpy(copy, text + start, at - start);
+            copy[at - start] = '\0';
+            return copy;
+        }
+    }
+    return nullptr;
+}
+
+static scratch::Run function(const scratch::Project *p, const char *file, const char *prefix, const char *name) {
+    return prove(p, format::push(&p->io->arena, "--function=", prefix, name, " ", file).data);
+}
+
+// Every function of `names` (separated by spaces), with `prefix` before each, is proved in `file` (a shell word such as
+// "$c/memory.c").
+export void each_proved(const scratch::Project *p, const char *what, const char *file, const char *prefix,
+                        const char *names) {
+    bool failed = false;
+    for (usize i = 0; word(p->io, names, i) != nullptr; i++) {
+        const char *name = word(p->io, names, i);
+        scratch::Run run = function(p, file, prefix, name);
+        if (run.status != 0) {
+            test::note("%s: %s is not proved (status %d)\n%s", what, name, run.status, run.out);
+            failed = true;
+        }
+    }
+    test::check_condition(!failed);
+}
+
+// Every function of `names` fails in `file` (status 1) with `needle` in its output.
+export void each_refuted(const scratch::Project *p, const char *what, const char *file, const char *prefix,
+                         const char *needle, const char *names) {
+    bool failed = false;
+    for (usize i = 0; word(p->io, names, i) != nullptr; i++) {
+        const char *name = word(p->io, names, i);
+        scratch::Run run = function(p, file, prefix, name);
+        if (run.status != 1 || !scratch::contains(run.out, needle)) {
+            test::note("%s: %s is not refuted with `%s` (status %d)\n%s", what, name, needle, run.status, run.out);
+            failed = true;
+        }
+    }
+    test::check_condition(!failed);
+}
+
+// Every function of `names` fails in `file` and its output says neither of poison nor of undefined behaviour: the
+// counterexample is a value.
+export void each_value_counterexample(const scratch::Project *p, const char *what, const char *file,
+                                      const char *names) {
+    bool failed = false;
+    for (usize i = 0; word(p->io, names, i) != nullptr; i++) {
+        const char *name = word(p->io, names, i);
+        scratch::Run run = function(p, file, "", name);
+        if (scratch::contains(run.out, "poison") || scratch::contains(run.out, "undefined behaviour")) {
+            test::note("%s: %s names poison or undefined behaviour\n%s", what, name, run.out);
+            failed = true;
+        }
+    }
+    test::check_condition(!failed);
+}

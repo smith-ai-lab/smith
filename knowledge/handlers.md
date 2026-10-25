@@ -53,7 +53,7 @@ prebuilt library's and one loaded with `dlopen`. Owner (2026-10-24): "always int
   `verify_interceptors`), which our `puts` tuple makes false, so every ASan program died with "interceptors not installed".
   A program linked with ASan therefore also links `smith_asan_options.o`, a weak `__asan_default_options` returning
   `verify_interceptors=0` (the program's own strong one wins). The weak one in the dylib is not seen: ASan binds to its own. Turning the check off
-  hides nothing: ASan's interceptors are still in front of ours (our calls to libc functions reach ASan's, `tests/handlers.sh`
+  hides nothing: ASan's interceptors are still in front of ours (our calls to libc functions reach ASan's, `tests/handlers_test.smith`
   checks a heap overflow, a use after free and a `puts` that reads past its string, all still reported), and the check only
   asks about `puts`, whose tuple is ours on purpose.
 - **A thread-local is read in a function of its own**, after the counter and `ready` checks: unoptimized code computes its
@@ -67,7 +67,7 @@ prebuilt library's and one loaded with `dlopen`. Owner (2026-10-24): "always int
   a container with the `SmithAllocator` first, not a `ctx` field, because a field added to handlers.h waits for a smith
   release (the lag rule: arena is built into smith).
 
-The steps (issue #239): the allocator family and its tests (`tests/handlers.sh`); linking it into every program (this
+The steps (issue #239): the allocator family and its tests (`tests/handlers_test.smith`); linking it into every program (this
 step, B1); `read`, `write`, `open`, `close`, `syscall` and stdio with their handlers (B2); `smith::mem` and arena's
 allocator; `checked`, `failing` and the profiles.
 

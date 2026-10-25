@@ -1,0 +1,7 @@
+import primes;
+import <stdio.h>;
+
+int main(void) {
+    c::printf("%d\n", primes::shown_sum(3));
+    return 0;
+}

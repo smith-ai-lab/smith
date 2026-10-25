@@ -1,0 +1,1 @@
+made.c:12:12: error: `smith_io_make` makes a real capability and may be called only in main: take the capability as a parameter (a test makes a fake)

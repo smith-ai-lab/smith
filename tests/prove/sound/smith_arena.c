@@ -2,7 +2,7 @@
 // link:
 // smith's arena: the three proved functions, and the ensures its trusted pushes promise (callers assume it, so the
 // harness runs them on arenas over real memory).
-#include "arena_lowered.c" // `smith cc --smith-lower lib/smith/arena.smith`, written by tests/prove_sound.sh
+#include "arena_lowered.c" // `smith cc --smith-lower lib/smith/arena.smith`, written by tests/prove_sound_test.smith
 #include "sound.h"
 
 static void arena_make_random(SmithArena *arena, uint8_t *memory, size_t capacity) {

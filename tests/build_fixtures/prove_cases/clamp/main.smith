@@ -1,0 +1,7 @@
+import stats;
+import smith::contract;
+
+int main(void) {
+    contract::assert(stats::clamp(7, 5, 0) >= 0);
+    return 0;
+}

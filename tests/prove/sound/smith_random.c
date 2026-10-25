@@ -2,7 +2,7 @@
 // link: lib/smith/arena.smith
 // smith's random draws: the proved functions, the ensures of the trusted draw_index (callers assume it), and what each
 // draw promises in its comment (a value inside its range).
-#include "random_lowered.c" // `smith cc --smith-lower lib/smith/random.smith`, written by tests/prove_sound.sh
+#include "random_lowered.c" // `smith cc --smith-lower lib/smith/random.smith`, written by tests/prove_sound_test.smith
 #include "sound.h"
 
 SOUND_MAIN({
