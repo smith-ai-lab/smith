@@ -232,7 +232,7 @@ export void test_library_modes_text_compiles_as_c2y(io::Io *io) {
 }
 
 export void test_library_modes_text_names_no_libc_function(io::Io *io) {
-    names_no_libc_function(io, "lib/smith/text.smith", "-e _memcpy -e _memset -e _bzero -e _memmove");
+    names_no_libc_function(io, "lib/smith/text.smith", "-e _memcpy -e _memset -e _bzero -e _memmove -e '_smith_.*'");
 }
 
 // lib/http.c compiled under the warnings of a new project (its behavior is lib/http_test.smith), from tests/http.sh.
