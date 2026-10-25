@@ -607,7 +607,14 @@ class Analysis {
         }
         if (first == nullptr) return;
         std::string kind = node.declared == 0 ? "[[smith::pure]]" : "limited to " + describe(node.declared);
-        engine.Report(first->loc, bad) << node.function->getName() << kind << describe(extra) << chain(node, bit);
+        auto report = engine.Report(first->loc, bad);
+        report << node.function->getName() << kind << describe(extra) << chain(node, bit);
+        // The fix: one more attribute on the function with the effects beyond its declared ones. A function's declared
+        // set is the union of its attributes' sets, so this also fits a function that has a ceiling or `[[smith::pure]]`.
+        SourceLocation start = node.function->getBeginLoc();
+        if (start.isValid() && !start.isMacroID() && !node.function->isImplicit()) {
+            report << FixItHint::CreateInsertion(start, "[[smith::effects(" + describe(extra) + ")]] ");
+        }
         if ((extra & (extra - 1)) != 0)
             engine.Report(first->loc, note) << "this call is the first of the effects beyond the declared ones";
     }
