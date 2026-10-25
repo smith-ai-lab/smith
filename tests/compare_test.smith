@@ -1,0 +1,290 @@
+// Runs a table of invocations through a real compiler and through smith (`smith cc` and the link smith-cc), and
+// compares what each prints, how each exits and which files each writes (tests/compare.sh, one test per invocation).
+// Both run in the same folder, one after the other, with the same relative paths.
+//
+// REAL, the real compiler, is $SMITH_REAL; when that is unset it is the clang of the LLVM install smith links (the
+// install under ~/.cache/smith/llvm whose lib/smith-clang.id is the identity `smith cc --smith-which` prints), which
+// every case must match. A smith without clang inside (the stage0) with no $SMITH_REAL, or no such compiler, skips the
+// tests. Homebrew's clang says "Homebrew clang" in its version, in debug info and in bitcode, so those cases differ
+// against it.
+module compare_test;
+
+import smith::format;
+import smith::io;
+import smith::test;
+import scratch;
+
+// $real: $SMITH_REAL, else the install smith links; empty when there is none.
+constexpr char find_real[] =
+    "real=${SMITH_REAL:-}; if [ -z \"$real\" ]; then "
+    "id=$(smith cc --smith-which -c a.c | sed -n 's/^identity //p'); "
+    "for d in \"$HOME\"/.cache/smith/llvm/*/install; do "
+    "[ -n \"$id\" ] && [ \"$(cat \"$d/lib/smith-clang.id\" 2>/dev/null)\" = \"$id\" ] && real=$d/bin/clang; done; fi; "
+    "[ -x \"$real\" ] || real=; echo \"$real\"";
+
+// Three things differ between two builds of the same LLVM, and only in text: where each one lives, and the name of the
+// program it prints for itself, which is the symlink smith was given (clang) where the clang binary prints what it
+// points to (clang-23): -v, --version, -###, -print-search-dirs. Each is rewritten to one name, so that everything else
+// is compared. On macOS smith picks the SDK through the environment (smith_sdk_environment in smith.c): Homebrew's
+// clang's default config would force the Command Line Tools SDK, so the direct run gets the same two variables. A smith
+// with clang inside links with lld, which Apple's ld and lld write differently, so the programs are compared by what
+// they print, and the real clang is told the linker's version that smith tells the driver for lld (shim/clang.cpp),
+// since the version of the `ld` it was built beside makes it use `objc_msgSendClass$` stubs, which lld does not write.
+// smith's own
+// `<program>.stack` (the worst-case stack, issue #207) is no file a compiler writes. A linked program with debug info
+// holds the time of each object it was linked from (the debug map), so only its size is compared against ld's.
+// The result is `ok`, or `differs in:` the outputs that differ, and the start of each diff.
+constexpr char compare_case[] =
+    "smith=$SMITH_SELF\n"
+    "realdir=$(dirname \"$real\")\n"
+    "realname=$(basename \"$real\")\n"
+    "work=$PWD\n"
+    "mkdir -p log links\n"
+    "ln -sf \"$smith\" links/smith-cc # the compiler also runs by this name\n"
+    "direct_env() {\n"
+    "    if [ \"$(uname -s)\" = Darwin ]; then\n"
+    "        CLANG_NO_DEFAULT_CONFIG=1\n"
+    "        SDKROOT=$(xcrun --show-sdk-path)\n"
+    "        export CLANG_NO_DEFAULT_CONFIG SDKROOT\n"
+    "    fi\n"
+    "}\n"
+    "real_prefix=$(cd \"$realdir/..\" && pwd -P)\n"
+    "smith_prefix=$real_prefix\n"
+    "smith_runtime=\n"
+    "inproc=$(\"$smith\" cc --smith-which -c a.c | head -n 1)\n"
+    "real_flags=\n"
+    "case $inproc in\n"
+    "\"clang in-process \"*)\n"
+    "    smith_prefix=${inproc#clang in-process }\n"
+    "    smith_prefix=${smith_prefix%/bin/clang}\n"
+    "    smith_runtime=$(\"$smith\" cc -print-resource-dir)\n"
+    "    smith_runtime=${smith_runtime%/lib/clang/*}\n"
+    "    real_flags=-mlinker-version=1115.7.3\n"
+    "    ;;\n"
+    "esac\n"
+    "normalize() {\n"
+    "    prefix=$real_prefix\n"
+    "    [ \"$1\" != direct ] && prefix=$smith_prefix\n"
+    "    runtime=$prefix\n"
+    "    [ \"$1\" != direct ] && [ -n \"$smith_runtime\" ] && runtime=$smith_runtime\n"
+    "    for kind in out err; do\n"
+    "        sed -e \"s|$prefix|LLVM|g\" -e \"s|$runtime|LLVM|g\" -e 's|^Homebrew clang version|clang version|' \\\n"
+    "            -e 's| -stack-usage-file [^ ]*||' \\\n"
+    "            -e 's|LLVM/bin/clang-[0-9]*|LLVM/bin/clang|g' \"log/$kind.$1\" >\"log/$kind.$1.n\"\n"
+    "        mv \"log/$kind.$1.n\" \"log/$kind.$1\"\n"
+    "    done\n"
+    "}\n"
+    "run_one() {\n"
+    "    rm -rf ./*.o ./*.d ./out_* ./prog* ./*.dSYM\n"
+    "    case $1 in\n"
+    "    direct) (\n"
+    "        PATH=\"$realdir:$PATH\"\n"
+    "        direct_env\n"
+    "        eval \"$realname $real_flags $2\"\n"
+    "    ) </dev/null >log/out.$1 2>log/err.$1 ;;\n"
+    "    smith | link) (\n"
+    "        if \"$smith\" cc --smith-which -c a.c | grep -q '^clang in-process'; then\n"
+    "            unset SMITH_CLANG\n"
+    "        else\n"
+    "            SMITH_CLANG=$real\n"
+    "            export SMITH_CLANG\n"
+    "        fi\n"
+    "        if [ \"$1\" = smith ]; then eval \"\\\"$smith\\\" cc $2\"; else eval \"\\\"$work/links/smith-cc\\\" $2\"; "
+    "fi\n"
+    "    ) </dev/null >log/out.$1 2>log/err.$1 ;;\n"
+    "    esac\n"
+    "    echo $? >log/rc.$1\n"
+    "    normalize \"$1\"\n"
+    "    for f in ./*.o ./*.d ./out_* ./prog* ./*.dSYM/Contents/Resources/DWARF/*; do\n"
+    "        case $f in ./prog*.stack) continue ;; esac\n"
+    "        if [ -f \"$f\" ]; then\n"
+    "            echo \"$f\"\n"
+    "            case \" $2 $f\" in\n"
+    "            *./prog* | *.dSYM/*)\n"
+    "                if [ -n \"$real_flags\" ]; then\n"
+    "                    case $f in ./prog*) \"$f\" </dev/null 2>&1 | head -n 1 ;; esac\n"
+    "                else\n"
+    "                    case \" $2 $f\" in *\" -g \"*/prog) wc -c <\"$f\" ;; *) cksum <\"$f\" ;; esac\n"
+    "                fi\n"
+    "                ;;\n"
+    "            *) cksum <\"$f\" ;;\n"
+    "            esac\n"
+    "        fi\n"
+    "    done >log/files.$1\n"
+    "}\n"
+    "run_one direct \"$line\"\n"
+    "run_one smith \"$line\"\n"
+    "run_one link \"$line\"\n"
+    "bad=\n"
+    "for via in smith link; do\n"
+    "    for kind in out err rc files; do\n"
+    "        cmp -s \"log/$kind.direct\" \"log/$kind.$via\" || bad=\"$bad $via:$kind\"\n"
+    "    done\n"
+    "done\n"
+    "if [ -z \"$bad\" ]; then\n"
+    "    echo ok\n"
+    "else\n"
+    "    echo \"differs in:$bad\"\n"
+    "    for entry in $bad; do diff \"log/${entry#*:}.direct\" \"log/${entry#*:}.${entry%:*}\" | head -6; done\n"
+    "fi\n";
+
+// One invocation `smith cc <arguments>` against the real compiler: through `smith cc` and through the link smith-cc.
+static void compared(io::Io *io, const char *arguments) {
+    scratch::Project p = scratch::project(io, "p", "compare");
+    // The two assembly sources differ only in the case of their name, so on a case-insensitive disk they are one file,
+    // the second.
+    scratch::Run made = scratch::sh(&p, "printf '.text\\n.globl _f\\n_f:\\n ret\\n' >src.s; printf '#define R "
+                                        "ret\\n.text\\n.globl _g\\n_g:\\n R\\n' >src.S");
+    scratch::expect_status("compare: the sources are made", 0, &made);
+    const char *real = scratch::capture(&p, find_real);
+    if (*real == '\0') {
+        test::note("compare: skipped, no real clang (set SMITH_REAL)");
+        return;
+    }
+    char command[8192];
+    (void)format::to(command, sizeof command, "line='", arguments, "'; real='", real, "'; ", compare_case);
+    scratch::Run run = scratch::sh(&p, command);
+    char name[512];
+    (void)format::to(name, sizeof name, "compare: ", arguments);
+    scratch::expect_text(name, "ok", run.out);
+}
+
+export void test_compare_version(io::Io *io) {
+    compared(io, "--version");
+}
+
+export void test_compare_preprocess(io::Io *io) {
+    compared(io, "-E hello.c");
+}
+
+export void test_compare_compile_with_a_depfile(io::Io *io) {
+    compared(io, "-c hello.c -o out.o -MMD -MF out.d");
+}
+
+export void test_compare_a_syntax_error_in_a_file_that_is_missing_a_symbol(io::Io *io) {
+    compared(io, "-fsyntax-only bad.c");
+}
+
+export void test_compare_a_missing_input(io::Io *io) {
+    compared(io, "nonexistent.c");
+}
+
+export void test_compare_compile_standard_input(io::Io *io) {
+    compared(io, "-c -x c - -o stdin.o < hello.c");
+}
+
+export void test_compare_preprocess_standard_input(io::Io *io) {
+    compared(io, "-E -x c - < hello.c");
+}
+
+export void test_compare_a_response_file(io::Io *io) {
+    compared(io, "@opts.rsp");
+}
+
+export void test_compare_the_commands_of_a_compile(io::Io *io) {
+    compared(io, "-### -c hello.c");
+}
+
+export void test_compare_print_search_dirs(io::Io *io) {
+    compared(io, "-print-search-dirs");
+}
+
+export void test_compare_print_resource_dir(io::Io *io) {
+    compared(io, "-print-resource-dir");
+}
+
+export void test_compare_print_file_name_of_a_runtime(io::Io *io) {
+    compared(io, "-print-file-name=libclang_rt.asan_osx_dynamic.dylib");
+}
+
+export void test_compare_verbose_compile(io::Io *io) {
+    compared(io, "-v -c hello.c -o out.o");
+}
+
+export void test_compare_optimized_compile_with_warnings_and_debug_info(io::Io *io) {
+    compared(io, "-c -O2 -g -Wall -Wextra -std=gnu23 hello.c -o out.o");
+}
+
+export void test_compare_compile_with_sanitizers(io::Io *io) {
+    compared(io, "-c -O1 -fsanitize=address,undefined -g hello.c -o out.o");
+}
+
+export void test_compare_assembly(io::Io *io) {
+    compared(io, "-S hello.c -o out_a.s");
+}
+
+export void test_compare_llvm_ir(io::Io *io) {
+    compared(io, "-S -emit-llvm -O1 hello.c -o out_a.ll");
+}
+
+export void test_compare_two_sources_to_objects(io::Io *io) {
+    compared(io, "-c hello.c other.c");
+}
+
+export void test_compare_assemble_s(io::Io *io) {
+    compared(io, "-c src.s -o out.o");
+}
+
+export void test_compare_assemble_capital_s(io::Io *io) {
+    compared(io, "-c src.S -o out.o");
+}
+
+export void test_compare_dependencies(io::Io *io) {
+    compared(io, "-M hello.c");
+}
+
+export void test_compare_user_dependencies_with_a_target(io::Io *io) {
+    compared(io, "-MM -MG -MT t hello.c");
+}
+
+export void test_compare_preprocess_without_line_markers_with_definitions(io::Io *io) {
+    compared(io, "-E -P -dD hello.c");
+}
+
+export void test_compare_every_warning(io::Io *io) {
+    compared(io, "-fsyntax-only -Weverything hello.c");
+}
+
+export void test_compare_colored_diagnostics(io::Io *io) {
+    compared(io, "-fsyntax-only -fcolor-diagnostics syntax.c");
+}
+
+export void test_compare_always_colored_diagnostics_as_errors(io::Io *io) {
+    compared(io, "-fsyntax-only -fdiagnostics-color=always -Werror bad.c");
+}
+
+export void test_compare_cplusplus_syntax(io::Io *io) {
+    compared(io, "-x c++ -std=c++20 -fsyntax-only lib.cpp");
+}
+
+export void test_compare_cplusplus_object(io::Io *io) {
+    compared(io, "-x c++ -c lib.cpp -o out.o");
+}
+
+export void test_compare_objective_c_with_arc(io::Io *io) {
+    compared(io, "-c -x objective-c -fobjc-arc obj.m -o out.o");
+}
+
+export void test_compare_link_one_source(io::Io *io) {
+    compared(io, "hello.c -o prog");
+}
+
+export void test_compare_link_two_sources(io::Io *io) {
+    compared(io, "hello.c other.c -o prog");
+}
+
+export void test_compare_link_with_debug_info(io::Io *io) {
+    compared(io, "-g hello.c -o prog");
+}
+
+export void test_compare_link_with_sanitizers(io::Io *io) {
+    compared(io, "-fsanitize=address,undefined -g hello.c -o prog");
+}
+
+export void test_compare_lto_object(io::Io *io) {
+    compared(io, "-O2 -flto -c hello.c -o out.o");
+}
+
+export void test_compare_a_file_prefix_map(io::Io *io) {
+    compared(io, "-c -g -ffile-prefix-map=/ignored=/mapped hello.c -o out.o");
+}
