@@ -32,6 +32,17 @@ if constexpr (target::os == target::macos || target::os == target::linux) {
     }
 }
 
+// The same export, with its C name, in each branch: the header has both, between the `#if` lines.
+if constexpr (target::os == target::macos) {
+    [[smith::c_name("shape_sides")]] export i32 sides(void) {
+        return 4;
+    }
+} else {
+    [[smith::c_name("shape_sides")]] export i32 sides(void) {
+        return 4;
+    }
+}
+
 // A function's own `if constexpr` still keeps its braces.
 export i32 both(void) {
     i32 sum = 0;

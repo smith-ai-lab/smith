@@ -257,8 +257,7 @@ static const SmithLangConstant *smith_lang_ifc_constant_find(const SmithLang *la
 // `#else` and `#endif`, so that the includer's preprocessor chooses as the module's compile did.
 static bool smith_lang_ifc_header(const SmithLang *lang) {
     bool around = lang->ifc_count > 0 && lang->ifc[lang->ifc_count - 1].file_scope;
-    return lang->is_module &&
-           (lang->export_active || around || (!lang->in_function && lang->state == SmithLangState_Start));
+    return lang->is_module && (lang->export_active || around || lang->ifc_opening);
 }
 
 // One staged token of a condition, written to the pool again: a `target::` fact, a constant or a word, as the
@@ -445,10 +444,14 @@ static bool smith_lang_ifc_file_scope(const SmithLang *lang) {
     return lang->is_module && !lang->in_function && lang->state == SmithLangState_Start;
 }
 
-// The `{` of a branch at file scope, which is dropped: the braces the frame counts begin inside it.
+static void smith_lang_field_after_imports(SmithLang *lang, const SmithHost *host); // runtime/lang_type.c
+
+// The `{` of a branch at file scope, which is dropped: the braces the frame counts begin inside it. What is defined
+// after the last import (`Field`) is defined here when the branch begins with no import.
 static void smith_lang_ifc_enter(SmithLang *lang, const SmithHost *host) {
     smith_lang_take(lang, host);
     lang->ifc_braces += 1;
+    smith_lang_field_after_imports(lang, host);
 }
 
 static void smith_lang_ifc_push(SmithLang *lang, const SmithHost *host, uint32_t location, bool raw) {
@@ -536,6 +539,7 @@ static bool smith_lang_ifc_begin(SmithLang *lang, const SmithHost *host, const S
     int64_t taken = 0;
     char text[smith_lang_message_max];
     SmithLangIfcError error = {};
+    lang->ifc_opening = smith_lang_ifc_file_scope(lang);
     bool good = smith_lang_ifc_read_group(lang, host);
     if (!good) {
         smith_lang_error(lang, host, token->location, "this `if constexpr` has a condition that never closes");
@@ -546,12 +550,15 @@ static bool smith_lang_ifc_begin(SmithLang *lang, const SmithHost *host, const S
     smith_lang_gt.count = mark[0];
     smith_lang_gt.text_used = mark[1];
     if (!smith_lang_punct(smith_lang_peek(lang, host, 0, false), "{")) {
+        lang->ifc_opening = false;
         smith_lang_error(lang, host, token->location,
                          "the branches of `if constexpr` are blocks: write `{` after the condition");
         return true;
     }
+    if (!good || !raw) lang->ifc_opening = false;
     if (good && raw) {
         smith_lang_ifc_directive(lang, "#if", text);
+        lang->ifc_opening = false;
         smith_lang_ifc_push(lang, host, token->location, true);
     } else if (good && taken != 0) {
         smith_lang_ifc_push(lang, host, token->location, false);
@@ -563,6 +570,8 @@ static bool smith_lang_ifc_begin(SmithLang *lang, const SmithHost *host, const S
             // At file scope the else-block's braces are dropped too: it is a branch taken, with nothing after it.
             if (file_scope && smith_lang_punct(smith_lang_peek(lang, host, 0, false), "{"))
                 smith_lang_ifc_push(lang, host, token->location, false);
+        } else if (file_scope) {
+            smith_lang_field_after_imports(lang, host);
         }
     }
     return true;
