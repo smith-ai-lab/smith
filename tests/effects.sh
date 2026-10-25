@@ -4,7 +4,7 @@
 # a raw call outside a capability's module; a pure call and a failure call; a raw call in a capability module's private
 # helper; an exported function of that module that reaches a raw effect without a capability; a main-only constructor
 # called outside main; a capability in static storage; an Objective-C message; `.smith` files with names as written
-# (`c::fopen`); and the option CFiles. The editor's case is in tests/lsp.sh. A smith without clang inside (the stage0),
+# (`c::fopen`); and the option CFiles. The editor's case is in tests/lsp_test.smith. A smith without clang inside (the stage0),
 # or whose clang lacks the token hook, is skipped.
 # Usage: sh tests/effects.sh path/to/smith
 set -u

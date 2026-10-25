@@ -1,0 +1,14 @@
+module m;
+
+export typedef struct {
+    u32 a;
+} Box;
+
+export typedef enum {
+    Mode_Fast,
+    Mode_Slow,
+} Mode;
+
+export typedef struct {
+    u32 a;
+} bad_type;

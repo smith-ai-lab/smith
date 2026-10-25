@@ -1,0 +1,11 @@
+module foo;
+
+export i32 f(i32 x) {
+    return x * 2;
+}
+
+export typedef struct { i32 a; i32 b; } Pair;
+
+export i32 sum(Pair p) {
+    return p.a + p.b;
+}

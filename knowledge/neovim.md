@@ -129,13 +129,13 @@ fetches tree-sitter-c with `smith_package` (pinned by hash), and generates at AB
 
 ## Tests
 
-`smith test` runs `tests/tree_sitter.sh` and `tests/neovim.sh`.
+`smith test` runs `tests/tree_sitter_test.smith` and `tests/neovim.sh`.
 
-- `tests/tree_sitter.sh`: the corpus of `tree-sitter/test/corpus` (one test per construct, run by `tests/tree_sitter.c`
+- `tests/tree_sitter_test.smith`: the corpus of `tree-sitter/test/corpus` (one test per construct, run by `tests/tree_sitter.c`
   without the CLI), the samples in `tests/tree_sitter_cases`, the #11 corpus (`tests/smith-lang/cases`, when it exists;
   `SMITH_LANG_CASES=<folder>` checks a copy), and every `.c` and `.h` file of smith, all of which must parse with no
   `ERROR` or `MISSING` node. The driver is compiled by smith against the tree-sitter runtime, pinned by hash.
-- `tests/lsp.sh` (not Neovim): a real `smith lsp` session over stdio on a scratch project of two modules (`.smith` diagnostics
+- `tests/lsp_test.smith` (not Neovim): a real `smith lsp` session over stdio on a scratch project of two modules (`.smith` diagnostics
   at the right line and column, with the names as written, and a note at the declaration in the module; hover (at a
   definition too), references, highlights, rename, definition across modules, symbols and completion, `box::` included,
   all with the names as written; a C file unchanged; and with no

@@ -1,6 +1,6 @@
-// A small Language Server Protocol client for tests/lsp.sh: it starts `smith lsp` in a project, runs the commands on
-// its command line against the server, and prints one line for each thing it learns, with the paths relative to the
-// project and lines and columns from 1, as an editor shows them.
+// A small Language Server Protocol client for tests/lsp_test.smith: it starts `smith lsp` in a project, runs the
+// commands on its command line against the server, and prints one line for each thing it learns, with the paths
+// relative to the project and lines and columns from 1, as an editor shows them.
 //
 // Usage: lsp_client <smith> <project> <command> ...
 //   open FILE ... [--]            opens the files together (the `--` ends the list, for more commands after it);

@@ -1,0 +1,15 @@
+module geometry::box;
+
+export typedef struct { f32 width; f32 height; } Box;
+
+export f32 area(Box b) {
+    return b.width * b.height;
+}
+
+f32 twice(f32 x) {
+    return x * 2.0f;
+}
+
+export f32 perimeter(Box b) {
+    return twice(b.width + b.height);
+}

@@ -1,0 +1,10 @@
+module bad;
+import geometry::box;
+import <stdio.h>;
+
+int main() {
+    box::Box b = {2.0f, 3.0f};
+    printf("area %f\n", (double)box::area(b));
+    box::missing(b);
+    return b.nothing;
+}

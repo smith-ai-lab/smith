@@ -1,0 +1,12 @@
+module fx;
+
+import <stdio.h>;
+import <string.h>;
+
+usize measure(const char *text) {
+    return c::strlen(text);
+}
+
+void say() {
+    c::puts("hello");
+}

@@ -1,0 +1,6 @@
+module sliced;
+import pick;
+
+export i32 h(i32 xs[:]) {
+    return pick::larger(xs[0] + 1, 2);
+}
