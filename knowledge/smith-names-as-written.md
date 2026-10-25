@@ -102,7 +102,7 @@ given (`tests/lint-smith.sh`).
   preprocessor callback, are not missed); the macros are looked up when the file ends, among those the file's imports
   defined: the lowering's own test, so `c::memset` and `c::snprintf` are macros in a fortified SDK. A `.c` file is left
   alone. A line that must keep one says `// NOLINT(smith-preprocessor)`; the corpus of `tests/smith-lang` and
-  `tests/smith-lang-c.sh` compile `.smith` files with the preprocessor on purpose and are not linted (they are not among
+  `tests/smith_lang_c_test.smith` compile `.smith` files with the preprocessor on purpose and are not linted (they are not among
   the build's compiles). `tests/lint-smith.sh` tests it.
 - **`smith-module`** (issue #60; `shim/idiom.h`): a `.smith` file whose text has no `module` line (the raw lexer; comments are skipped) is reported at its first byte with the line its path implies, from the folder the check runs in (the project's root), `tests/` being a root of its own. The compiler never refuses such a file.
 - **The idiom checks** (issue #47; `shim/idiom.h`, registered in the same module, on in the default `.clang-tidy`).
