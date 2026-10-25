@@ -1961,6 +1961,16 @@ static void smith_prefer_own_links(const char *self) {
     if (written > 0 && (size_t)written < sizeof path) setenv("PATH", path, 1);
 }
 
+// The program's `--effects=` argument: whether the compiles write effect summaries, and the smith that writes them,
+// from the build's own configuration (SMITH_EFFECTS and SMITH_SELF as set above), so the manifest does not depend on
+// the environment the program is run in (the regeneration rule repeats it).
+static void smith_build_effects_argument(const char *self, char *out, size_t capacity) {
+    const char *on = getenv("SMITH_EFFECTS");
+    bool yes = on != nullptr && strcmp(on, "yes") == 0;
+    int written = snprintf(out, capacity, "--effects=%s", yes ? self : "no");
+    SMITH_ASSERT(written > 0 && (size_t)written < capacity);
+}
+
 // verb is nullptr for `smith build`, and the project verb that runs this build otherwise (runtime/verbs.c passes
 // nullptr: its targets are smith's own, smith_needs and smith_tests).
 static int smith_build_main(int count, char **args, const char *self, const char *verb) {
@@ -1987,14 +1997,17 @@ static int smith_build_main(int count, char **args, const char *self, const char
     if (use_ninja) smith_build_find_ninja(self, ninja);
     if ((size_t)count > smith_build_args_max) smith_die(smith_exit_usage, "too many arguments", nullptr);
     static char *ninja_argv[smith_build_args_max + smith_build_ninja_prefix + 1];
-    static char *program_argv[smith_build_args_max + 3];
+    static char *program_argv[smith_build_args_max + 4];
     ninja_argv[0] = ninja;
     ninja_argv[1] = (char *)"-f";
     ninja_argv[2] = (char *)".smith/build.ninja";
     program_argv[0] = (char *)".smith/program";
     program_argv[1] = (char *)".smith/build.ninja";
     size_t ninja_used = smith_build_ninja_prefix;
-    size_t program_used = 2;
+    char effects_argument[PATH_MAX + 16];
+    smith_build_effects_argument(self, effects_argument, sizeof effects_argument);
+    program_argv[2] = effects_argument;
+    size_t program_used = 3;
     smith_build_split(count, args, ninja_argv, program_argv, &ninja_used, &program_used);
     SmithExecOptions options =
         smith_build_options((int)(ninja_used - smith_build_ninja_prefix), ninja_argv + smith_build_ninja_prefix);
