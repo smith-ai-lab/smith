@@ -1831,6 +1831,30 @@ static size_t smith_lang_gen_pack_params(SmithLang *lang, const SmithHost *host,
 }
 
 static bool smith_lang_result_call(const SmithLangGeneric *generic);
+static bool smith_lang_eshape_named(const SmithToken *name);
+static uint32_t smith_lang_eshape_put_call(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
+                                           const SmithLangInstance *instance, uint32_t at, uint32_t end, uint32_t place,
+                                           uint32_t instance_id, bool define);
+static void smith_lang_instance_define_enums(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
+                                             const SmithLangInstance *instance, uint32_t place, uint32_t instance_id);
+
+// The tokens [from, to) of the generic's head, each with the instance's types for T; a type function that returns an
+// enum, `option(T)`, is the instance's struct (lang_enum.c).
+static void smith_lang_gen_put_run(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
+                                   const SmithLangInstance *instance, uint32_t from, uint32_t to, uint32_t location,
+                                   uint32_t instance_id) {
+    for (uint32_t at = from; at < to;) {
+        uint32_t took = smith_lang_eshape_put_call(lang, host, generic, instance, at, to, location, instance_id, false);
+        if (took != 0) {
+            at += took;
+            continue;
+        }
+        smith_lang_gen_put_subst(lang, host, generic, instance, &smith_lang_gt.tokens[at], location, instance_id,
+                                 false);
+        at += 1;
+    }
+}
+
 static void smith_lang_gen_put_result(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
                                       const SmithLangInstance *instance, uint32_t location, uint32_t instance_id);
 
@@ -1846,8 +1870,8 @@ static void smith_lang_gen_signature(SmithLang *lang, const SmithHost *host, con
     if (smith_lang_result_call(generic)) {
         smith_lang_gen_put_result(lang, host, generic, instance, location, instance_id);
     } else {
-        for (uint32_t at = result; at < generic->name_index; at++)
-            smith_lang_gen_put_subst(lang, host, generic, instance, &tokens[at], location, instance_id, false);
+        smith_lang_gen_put_run(lang, host, generic, instance, generic->first + result,
+                               generic->first + generic->name_index, location, instance_id);
     }
     smith_lang_gen_put(lang, host, SmithTokenKind_Identifier, smith_lang_str(instance->cname), location, instance_id);
     smith_lang_gen_put(lang, host, SmithTokenKind_Punctuator, "(", location, instance_id);
@@ -1865,9 +1889,7 @@ static void smith_lang_gen_signature(SmithLang *lang, const SmithHost *host, con
             continue;
         }
         if (written++ > 0) smith_lang_gen_put(lang, host, SmithTokenKind_Punctuator, ",", location, instance_id);
-        for (uint32_t at = params[i].start; at < params[i].end; at++)
-            smith_lang_gen_put_subst(lang, host, generic, instance, &smith_lang_gt.tokens[at], location, instance_id,
-                                     false);
+        smith_lang_gen_put_run(lang, host, generic, instance, params[i].start, params[i].end, location, instance_id);
     }
     if (written == 0) smith_lang_gen_put(lang, host, SmithTokenKind_Identifier, "void", location, instance_id);
     smith_lang_gen_put(lang, host, SmithTokenKind_Punctuator, ")", location, instance_id);
@@ -4061,6 +4083,17 @@ static bool smith_lang_replay_pattern(SmithLang *lang, const SmithHost *host, Sm
     return true;
 }
 
+// A type function that returns an enum at the frame's position, `option(T)`: written as the instance's struct.
+static bool smith_lang_replay_shape(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                    SmithLangFrame *frame) {
+    if (replay->instance == nullptr || replay->typing) return false;
+    uint32_t place = smith_lang_gen_place(host, replay->generic, &smith_lang_gt.tokens[frame->pos], replay->location);
+    uint32_t took = smith_lang_eshape_put_call(lang, host, replay->generic, replay->instance, frame->pos, frame->end,
+                                               place, replay->instance_id, false);
+    frame->pos += took;
+    return took != 0;
+}
+
 // Writes the tokens the replay holds, in order. A group becomes its call; a token that names T becomes the type.
 static void smith_lang_replay_run(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay) {
     for (size_t step = 0; replay->count > 0 && step < smith_lang_replay_steps_max; step++) { // bounded
@@ -4099,6 +4132,7 @@ static void smith_lang_replay_run(SmithLang *lang, const SmithHost *host, SmithL
         if (smith_lang_fields_replay(lang, host, replay, frame)) continue;
         if (smith_lang_slice_replay(lang, host, replay, frame)) continue;
         if (smith_lang_enum_replay(lang, host, replay, frame)) continue;
+        if (smith_lang_replay_shape(lang, host, replay, frame)) continue;
         if (smith_lang_list_gone(lang, host, replay, frame)) continue;
         SmithLangPackUse use = smith_lang_pack_use(lang, host, replay, frame->pos, frame->end);
         if (use.kind == SmithLangPack_None &&
@@ -4167,6 +4201,7 @@ static void smith_lang_instance_emit(SmithLang *lang, const SmithHost *host, siz
     smith_lang_gen_note_break(lang);
     smith_lang_fields_declare(lang, host, generic, instance, id, location);
     smith_lang_instance_define_slices(lang, host, instance, location, id);
+    smith_lang_instance_define_enums(lang, host, generic, instance, location, id);
     smith_lang_gen_declaration(lang, host, generic, instance, location, id);
     static const SmithLangPiece weak[] = {{SmithTokenKind_Punctuator, "["},    {SmithTokenKind_Punctuator, "["},
                                           {SmithTokenKind_Identifier, "gnu"},  {SmithTokenKind_Punctuator, "::"},

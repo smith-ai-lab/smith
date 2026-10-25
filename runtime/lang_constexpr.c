@@ -904,6 +904,8 @@ static bool smith_lang_result_call(const SmithLangGeneric *generic) {
     for (size_t i = 0; i < sizeof keywords / sizeof keywords[0]; i++) { // 7 words
         if (smith_lang_cx_word(callee, keywords[i])) return false;
     }
+    SmithToken as_token = smith_lang_gt_token(&smith_lang_gt, callee);
+    if (smith_lang_eshape_named(&as_token)) return false; // a type function that returns an enum: written per instance
     uint32_t after = smith_lang_cx_skip_group(generic->first + first + 1, generic->first + generic->name_index);
     return after == generic->first + generic->name_index;
 }
