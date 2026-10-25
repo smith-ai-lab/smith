@@ -11,13 +11,16 @@ C and C++ cannot call a generic, so they pass `sizeof` and `alignof` to the func
 #include <smith/arena.h>
 
 alignas(smith_arena_align_max) static unsigned char memory[1 << 20];
-SmithArena arena = smith_arena_make(memory, sizeof memory);
+SmithArena arena = smith_arena_fixed(memory, sizeof memory); // smith_arena_make is the same; never grows
 
 Foo *foo = smith_arena_push(&arena, sizeof(Foo), alignof(Foo));                  // zeroed
 Foo *foos = smith_arena_push_array(&arena, sizeof(Foo), count, alignof(Foo));    // zeroed, count * size checked for overflow
 ```
 
 Write `sizeof(T)` and `alignof(T)` from the same `T`. `smith_arena_fits(&arena, size, align)` asks whether a push would fit; a scope is `SmithArenaScope scope = smith_arena_scope_begin(&arena); ...; smith_arena_scope_end(scope);` and `smith_arena_reset(&arena)`.
+
+## Growing, and returning null
+`SmithArena arena = smith_arena_growing(1 << 20, nullptr);` (first chunk, backing: null is the OS, or a `SmithAllocator *`) takes another chunk when full: `smith_arena_push` never returns null, `arena.grown` is the bytes beyond the first chunk, chunks are kept across `smith_arena_reset` and scope ends, and `smith_arena_release(&arena)` gives them back. `smith_arena_try_push` and `smith_arena_try_push_array` (same arguments) return `NULL` for a full fixed arena or a refused chunk, for code that refuses.
 
 ## Carve arenas out of a reservation
 
@@ -44,6 +47,6 @@ Add `-I .smith/include` to the project's own compiles too, and put `arena` in th
 A push past the capacity is a failure like a failed contract (`smith_failure_format` of `<smith/trace.h>`, so the arena links the trace library, which `smith_program` and `smith_tests` bring with it): it writes `smith-trace begin arena out of capacity`, the line `smith-trace detail push of N bytes (align A) with U of C bytes used` and the stack to stderr, and calls `abort()`, in every build, `NDEBUG` included; `smith symbolize` turns it into the failing line and the call chain. It is not an assertion: it is the one check that must survive a fast build, so memory is never corrupted silently. The fix is a bigger block or less pushed, not a retry. Under AddressSanitizer, each push starts on an 8-byte granule with a poisoned gap after it, and the 64 KiB past the cursor is poisoned (lazily, so a 64 GiB arena costs no shadow until it is used), so a write just outside a push is caught.
 
 ## The arena as the allocator of a thread
-`SmithArenaAllocator a = smith_arena_allocator(&arena);` then `SmithAllocator *previous = smith_handlers_set_allocator(&a.base);` (`<smith/handlers.h>`): until it is set back, malloc, calloc, realloc and free in the thread, in any library, are served from the arena. A request that does not fit is `NULL`, as malloc's. `free` of the arena's last block gives it back; any other waits for a reset. Set the previous allocator back before the arena is reset or goes away.
+`SmithArenaAllocator a = smith_arena_allocator(&arena);` then `SmithAllocator *previous = smith_handlers_set_allocator(&a.base);` (`<smith/handlers.h>`): until it is set back, malloc, calloc, realloc and free in the thread, in any library, are served from the arena. A request that does not fit is `NULL`, as malloc's (a growing arena takes a chunk first, and is null only when its backing refuses). `free` of the arena's last block gives it back; any other waits for a reset. Set the previous allocator back before the arena is reset or goes away.
 
 Also in this family: [smith-arena](../smith-arena/SKILL.md).

@@ -70,3 +70,19 @@ prebuilt library's and one loaded with `dlopen`. Owner (2026-10-24): "always int
 The steps (issue #239): the allocator family and its tests (`tests/handlers.sh`); linking it into every program (this
 step, B1); `read`, `write`, `open`, `close`, `syscall` and stdio with their handlers (B2); `smith::mem` and arena's
 allocator; `checked`, `failing` and the profiles.
+
+- **Allocation in .smith (step C2, owner 2026-10-25):** `smith::mem` (`lib/smith/mem.smith`) is the smith face of the
+  allocator handler: `mem::set_allocator` returns the previous one (`defer` puts it back), `mem::alloc(T)` and
+  `mem::alloc_slice(T, n)` go through whatever `malloc` reaches and never return null, `mem::try_alloc` returns an
+  `option` for code that refuses, and the `malloc` itself keeps C's nullable contract. A refusal is a checked failure that
+  names the size, for the cases "if you can handle it locally it is a result or an option, otherwise you let it crash":
+  allocation is the second kind.
+- **Arenas grow or are fixed.** `arena::growing(first, backing)` takes a chunk twice the current block (or what the push
+  needs) from its backing (the OS through `mmap` by default, or a `SmithAllocator`) when full, so `push` and `push_slice`
+  never return null; `Arena.grown` is the bytes beyond the first chunk; chunks are a list kept across `reset` and the end
+  of a scope (a scope remembers the chunk it began in, ending it walks back and keeps the later ones as spares), so the
+  second pass over the same work takes none; `arena::release` gives them back. `arena::fixed(memory, capacity)` (also
+  `make`) never grows: a full one is the checked failure that names the capacity. `arena::try_push_raw` is the form that
+  returns null. As an allocator (`arena::allocator`) a growing arena answers `owns` for every chunk and null only when
+  its backing refuses. The `option` forms of the pushes wait for a release whose smith compiles `option` in its own
+  libraries (the lag rule: arena is compiled into smith itself).
