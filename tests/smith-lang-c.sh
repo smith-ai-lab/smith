@@ -69,6 +69,10 @@ compare build build.c ""
 compare build_runtime runtime/build_runtime.c ""
 compare stub tests/stub.c "-DNAME=\"stub\""
 compare pack scripts/pack.c ""
+# scripts/stage0.smith is plain C for the system's clang; as a .c file it is the same program.
+cp scripts/stage0.smith scripts/stage0.c
+compare stage0 scripts/stage0.c ""
+rm -f scripts/stage0.c
 compare lib_http lib/http.c ""
 # Not tests/random.c: it includes the lowering of random, and both print the name "random.c", which the compiler makes one string;
 # as random.smith it is two, so the constants after it are numbered differently. (Nothing else differs.)
