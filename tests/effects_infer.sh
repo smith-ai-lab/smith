@@ -309,13 +309,14 @@ else
 # The fix-it of an effects error: applied (clang's -fixit), the file compiles.
 mkdir "$work/fix"
 cp "$here/tests/effects/effects_ceiling.c" "$work/fix/c.c"
-printf '[[smith::pure]] int twice(int x) { return x * 2; }\n[[smith::pure]] int noisy(int x) { puts("x"); return x; }\n' >"$work/fix/p.c"
+printf '[[smith::pure]] int twice(int x) { return x * 2; }\n[[smith::pure]] int noisy(int x) { puts("x"); return x; }\n[[smith::alloc]] void *single(unsigned n) { FILE *f = fopen("d", "r"); (void)f; return malloc(n); }\n' >"$work/fix/p.c"
 total=$((total + 1))
 if (cd "$work/fix" && for f in c.c p.c; do
-    smith cc -std=gnu2y -I "$here/include" -include stdio.h -Xclang -fixit -fsyntax-only "$f" >/dev/null 2>&1
-    smith cc -std=gnu2y -I "$here/include" -include stdio.h -fsyntax-only "$f" || exit 1
-done) >"$work/fix/log" 2>&1 && grep -q 'smith::effects(files)' "$work/fix/c.c" && grep -q 'smith::effects(console)' "$work/fix/p.c"; then
-    echo "ok    fix-it: the attribute it writes makes the ceiling and the pure function compile"
+    smith cc -std=gnu2y -I "$here/include" -include stdio.h -include stdlib.h -Xclang -fixit -fsyntax-only "$f" >/dev/null 2>&1
+    smith cc -std=gnu2y -I "$here/include" -include stdio.h -include stdlib.h -fsyntax-only "$f" || exit 1
+done) >"$work/fix/log" 2>&1 && grep -q '^\[\[smith::effects(alloc, files)\]\] void \*too_much' "$work/fix/c.c" && grep -q '^\[\[smith::effects(console)\]\] int noisy' "$work/fix/p.c" &&
+    grep -q '^\[\[smith::pure\]\] int twice' "$work/fix/p.c" && grep -q '^\[\[smith::effects(alloc, files)\]\] void \*single' "$work/fix/p.c"; then
+    echo "ok    fix-it: it replaces the attribute with the whole set (ceiling, pure, a single effect's), and the files compile"
 else
     failures=$((failures + 1))
     echo "FAIL  fix-it: $(cat "$work/fix/log")"
