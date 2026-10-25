@@ -1,0 +1,104 @@
+// `smith cache clean` and a running build that holds the caches, from tests/cache.sh sections 7 and 8 (issue #292).
+// Every case has a cache of its own (scratch::own_cache), so the real ~/.cache/smith is never touched.
+module cache_clean_test;
+
+import smith::format;
+import smith::io;
+import smith::test;
+import scratch;
+
+constexpr char busy_build[] =
+    "#include <smith/build.h>\n\nvoid build(SmithBuild *b) {\n"
+    "    SmithStep wait = {.command = (const char *[]){\"sh\", \"-c\", \"touch started; while [ ! -e release ]; do "
+    "sleep 0.1; done; touch finished\", nullptr}};\n"
+    "    smith_task(b, \"wait\", &wait);\n    smith_default(b, smith_list(b, nullptr));\n}\n";
+
+static scratch::Project project_with(io::Io *io, const char *fixture) {
+    scratch::Project p = scratch::project(io, "p", fixture);
+    scratch::own_cache(&p);
+    return p;
+}
+
+static scratch::Run run(const scratch::Project *p, const char *body) {
+    return scratch::sh(p, format::push(&p->io->arena, ". ./prelude; ", body).data);
+}
+
+static const char *text(const scratch::Project *p, const char *body) {
+    return scratch::capture(p, format::push(&p->io->arena, ". ./prelude; ", body).data);
+}
+
+// A project that has built (so the modules are cached) and fetched a package.
+static scratch::Project cached_project(io::Io *io) {
+    scratch::Project p = project_with(io, "cache_modules");
+    scratch::Run fetched = run(&p, "fetch1");
+    scratch::expect_status("the package is fetched", 0, &fetched);
+    scratch::Run built = scratch::build(&p, "");
+    scratch::expect_status("the project builds", 0, &built);
+    return p;
+}
+
+static const char *modules_and_packages(const scratch::Project *p) {
+    return text(p, "echo \"$(exists \"$modules\") $(exists \"$packages\")\"");
+}
+
+export void test_cache_clean_modules_removes_the_modules_and_keeps_the_packages(io::Io *io) {
+    scratch::Project p = cached_project(io);
+    scratch::Run cleaned = scratch::sh(&p, "smith cache clean modules");
+    scratch::expect_status("cache clean modules: exits 0", 0, &cleaned);
+    scratch::expect_contains("cache clean modules: says what it removed", cleaned.out,
+                             format::push(&io->arena, "removed ", p.cache, "/smith/modules").data);
+    scratch::expect_text("cache clean modules: the modules are gone", "no", text(&p, "exists \"$modules\""));
+    scratch::expect_text("cache clean modules: the packages stay", "yes", text(&p, "exists \"$packages\""));
+}
+
+export void test_cache_modules_are_built_again_after_a_clean(io::Io *io) {
+    scratch::Project p = cached_project(io);
+    scratch::Run cleaned = scratch::sh(&p, "smith cache clean modules");
+    scratch::expect_status("the modules are cleaned", 0, &cleaned);
+    scratch::Run rebuilt = scratch::sh(&p, "rm -rf build && smith build");
+    scratch::expect_status("cache clean: modules are built again after a clean", 0, &rebuilt);
+    scratch::expect_text("cache clean: modules are built again after a clean (it runs)", "7",
+                         scratch::capture(&p, "./build/app"));
+}
+
+export void test_cache_clean_packages_removes_the_packages_and_keeps_the_modules(io::Io *io) {
+    scratch::Project p = cached_project(io);
+    scratch::Run cleaned = scratch::sh(&p, "smith cache clean packages");
+    scratch::expect_status("cache clean packages: exits 0", 0, &cleaned);
+    scratch::expect_text("cache clean packages: the packages are gone", "no", text(&p, "exists \"$packages\""));
+    scratch::expect_text("cache clean packages: the modules stay", "yes", text(&p, "exists \"$modules\""));
+}
+
+export void test_cache_clean_removes_both_and_a_package_is_fetched_again(io::Io *io) {
+    scratch::Project p = cached_project(io);
+    scratch::Run cleaned = scratch::sh(&p, "smith cache clean");
+    scratch::expect_status("cache clean: both (status)", 0, &cleaned);
+    scratch::expect_text("cache clean: both", "no no", modules_and_packages(&p));
+    scratch::Run listed = scratch::sh(&p, "smith cache");
+    scratch::expect_contains("cache: empty again", listed.out, "0 entries, 0 B");
+    scratch::Run fetched = run(&p, "smith fetch \"$(url 1)\"");
+    scratch::expect_status("cache clean: a package is fetched again", 0, &fetched);
+    scratch::expect_text("cache clean: a package is fetched again (it is there)", "yes",
+                         text(&p, "exists \"$packages\"/*/file.txt"));
+}
+
+// Section 8: a running build holds the caches; smith cache clean refuses while it runs, and works after.
+export void test_cache_busy_clean_refuses_while_a_build_runs_and_works_after(io::Io *io) {
+    scratch::Project p = project_with(io, "cache_package");
+    scratch::write(&p, "build.c", busy_build);
+    scratch::Run fetched = run(&p, "fetch3");
+    scratch::expect_status("the packages are fetched", 0, &fetched);
+    scratch::Run started = run(&p, "(smith build wait </dev/null >/dev/null 2>&1 &); "
+                                   "for _ in $(seq 60); do [ -e started ] && break; sleep 0.5; done; exists started");
+    scratch::expect_text("busy: the build is running", "yes", started.out);
+    scratch::Run refused = scratch::sh(&p, "smith cache clean");
+    scratch::expect_status("busy: smith cache clean refuses while a build runs", 2, &refused);
+    scratch::expect_contains("busy: and says why", refused.err, "a smith build is using the cache");
+    scratch::expect_text("busy: nothing was removed", "yes", text(&p, "exists \"$packages/$(hex 1)/file.txt\""));
+    scratch::Run shown = scratch::sh(&p, "smith cache");
+    scratch::expect_status("busy: showing the caches is still allowed", 0, &shown);
+    // The build runs until told: no number of seconds a loaded machine could outlast.
+    scratch::Run after = run(&p, "touch release; for _ in $(seq 150); do smith cache clean >/dev/null 2>&1 && break; "
+                                 "sleep 0.2; done; smith cache clean >/dev/null; echo \"$? $(exists \"$packages\")\"");
+    scratch::expect_text("busy: after the build, smith cache clean works", "0 no", after.out);
+}

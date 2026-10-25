@@ -1,0 +1,190 @@
+// The package cache and `smith cache`, from tests/cache.sh sections 1 to 4 (issue #292): listing, usage errors, and the
+// one pruning rule (31 days unused, checked at most once a week). Every case uses a cache of its own through
+// XDG_CACHE_HOME (scratch::own_cache), so the real ~/.cache/smith is never read, pruned or cleaned. The clock is faked
+// through file times (touch -t), never by waiting. The shell functions of tests/build_fixtures/cache_package/prelude
+// make three packages (file:// archives) and fetch them.
+module cache_packages_test;
+
+import smith::format;
+import smith::io;
+import smith::test;
+import scratch;
+
+static scratch::Project cache_project(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "cache_package");
+    scratch::own_cache(&p);
+    return p;
+}
+
+// A shell command with the functions of the prelude.
+static scratch::Run run(const scratch::Project *p, const char *body) {
+    return scratch::sh(p, format::push(&p->io->arena, ". ./prelude; ", body).data);
+}
+
+static const char *text(const scratch::Project *p, const char *body) {
+    return scratch::capture(p, format::push(&p->io->arena, ". ./prelude; ", body).data);
+}
+
+// A setup command that must succeed.
+static void setup(const scratch::Project *p, const char *body) {
+    scratch::Run made = run(p, body);
+    scratch::expect_status("the setup of the case", 0, &made);
+}
+
+// The weekly check is not due, so nothing is removed.
+export void test_cache_prune_the_weekly_check_is_not_due_so_nothing_is_removed(io::Io *io) {
+    scratch::Project p = cache_project(io);
+    scratch::Run used = run(&p, "fetch3; touch -t $old \"$packages/$(hex 1).used\" \"$packages/$(hex 2).used\"; "
+                                "touch \"$packages/prune.timestamp\"; use 3");
+    scratch::expect_status("prune: a build using a package succeeds", 0, &used);
+    scratch::expect_text("prune: the weekly check is not due, so nothing is removed", "yes yes yes",
+                         text(&p, "echo \"$(exists \"$packages/$(hex 1)\") $(exists \"$packages/$(hex 2)\") "
+                                  "$(exists \"$packages/$(hex 3)\")\""));
+}
+
+static void stale_setup(const scratch::Project *p) {
+    setup(
+        p,
+        "fetch3; touch -t $old \"$packages/$(hex 1).used\" \"$packages/$(hex 2).used\" \"$packages/prune.timestamp\"; "
+        "use 1 >/dev/null 2>&1; true");
+}
+
+export void test_cache_prune_a_build_using_a_stale_package_keeps_it(io::Io *io) {
+    scratch::Project p = cache_project(io);
+    scratch::Run used = run(&p, "fetch3; touch -t $old \"$packages/$(hex 1).used\" \"$packages/$(hex 2).used\" "
+                                "\"$packages/prune.timestamp\"; use 1");
+    scratch::expect_status("prune: a build using a stale package keeps it (the build)", 0, &used);
+    scratch::expect_text("prune: a build using a stale package keeps it", "yes",
+                         text(&p, "exists \"$packages/$(hex 1)\""));
+    scratch::expect_text("prune: and refreshes its stamp", text(&p, "date -u +%Y"),
+                         text(&p, "year_of \"$packages/$(hex 1).used\""));
+    scratch::expect_text("prune: the unused stale package is removed", "no", text(&p, "exists \"$packages/$(hex 2)\""));
+    scratch::expect_text("prune: with its stamp", "no", text(&p, "exists \"$packages/$(hex 2).used\""));
+    scratch::expect_text("prune: a package used lately stays", "yes", text(&p, "exists \"$packages/$(hex 3)\""));
+    scratch::expect_text("prune: the check is recorded", text(&p, "date -u +%Y"),
+                         text(&p, "year_of \"$packages/prune.timestamp\""));
+}
+
+export void test_cache_prune_a_removed_package_is_fetched_again_by_a_build_that_may_fetch(io::Io *io) {
+    scratch::Project p = cache_project(io);
+    stale_setup(&p);
+    scratch::Run offline = run(&p, "use 2");
+    scratch::expect_status("prune: a removed package is simply not found offline", 2, &offline);
+    scratch::Run online = run(&p, "smith build \"-DURL=$(url 2)\" \"-DHASH=sha256:$(hex 2)\"");
+    scratch::expect_status("prune: and fetched again by a build that may fetch (the build)", 0, &online);
+    scratch::expect_text("prune: and fetched again by a build that may fetch", "yes",
+                         text(&p, "exists \"$packages/$(hex 2)/file.txt\""));
+}
+
+// Section 1: empty caches.
+export void test_cache_lists_nothing_with_nothing_cached(io::Io *io) {
+    scratch::Project p = cache_project(io);
+    scratch::Run listed = scratch::sh(&p, "smith cache");
+    scratch::expect_status("cache: exits 0 with nothing cached", 0, &listed);
+    scratch::expect_contains("cache: the modules path", listed.out,
+                             format::push(&io->arena, "modules: ", p.cache, "/smith/modules").data);
+    scratch::expect_contains("cache: the packages path", listed.out,
+                             format::push(&io->arena, "packages: ", p.cache, "/smith/packages").data);
+    scratch::expect_contains("cache: no entries", listed.out, "0 entries, 0 B");
+    scratch::expect_contains("cache: the rule is stated", listed.out,
+                             "unused for 31 days is removed, checked at most once a week");
+}
+
+export void test_cache_clean_with_nothing_cached_exits_zero(io::Io *io) {
+    scratch::Project p = cache_project(io);
+    scratch::Run cleaned = scratch::sh(&p, "smith cache clean");
+    scratch::expect_status("cache clean: with nothing cached exits 0", 0, &cleaned);
+}
+
+export void test_cache_an_unknown_word_is_a_usage_error(io::Io *io) {
+    scratch::Project p = cache_project(io);
+    scratch::Run bogus = scratch::sh(&p, "smith cache bogus");
+    scratch::expect_status("cache: an unknown word is a usage error", 2, &bogus);
+    scratch::expect_contains("cache: and the usage is shown", bogus.err, "usage: smith cache");
+}
+
+export void test_cache_clean_an_unknown_cache_is_a_usage_error(io::Io *io) {
+    scratch::Project p = cache_project(io);
+    scratch::Run everything = scratch::sh(&p, "smith cache clean everything");
+    scratch::expect_status("cache clean: an unknown cache is a usage error", 2, &everything);
+}
+
+export void test_cache_clean_too_many_arguments_are_a_usage_error(io::Io *io) {
+    scratch::Project p = cache_project(io);
+    scratch::Run extra = scratch::sh(&p, "smith cache clean modules extra");
+    scratch::expect_status("cache clean: too many arguments are a usage error", 2, &extra);
+}
+
+export void test_cache_verbose_takes_nothing_else(io::Io *io) {
+    scratch::Project p = cache_project(io);
+    scratch::Run extra = scratch::sh(&p, "smith cache -v extra");
+    scratch::expect_status("cache: -v takes nothing else", 2, &extra);
+}
+
+// Section 2: listing packages.
+export void test_cache_lists_fetched_packages(io::Io *io) {
+    scratch::Project p = cache_project(io);
+    setup(&p, "fetch3");
+    scratch::expect_text("fetch: each package has a stamp beside it", "yes yes yes",
+                         text(&p, "echo \"$(exists \"$packages/$(hex 1).used\") $(exists \"$packages/$(hex 2).used\") "
+                                  "$(exists \"$packages/$(hex 3).used\")\""));
+    scratch::Run listed = scratch::sh(&p, "smith cache");
+    scratch::expect_contains("cache: three packages", listed.out, "3 entries");
+    scratch::Run verbose = scratch::sh(&p, "smith cache -v");
+    scratch::expect_contains("cache -v: lists the first package", verbose.out, text(&p, "hex 1 | cut -c1-16"));
+    scratch::expect_contains("cache -v: and its last use", verbose.out,
+                             format::push(&io->arena, "last used ", text(&p, "date -u +%Y-%m-%d")).data);
+    setup(&p, "touch -t 202001020304 \"$packages/$(hex 1).used\"");
+    scratch::Run stamped = scratch::sh(&p, "smith cache -v");
+    scratch::expect_contains("cache -v: the last use is the stamp's time", stamped.out, "last used 2020-01-02");
+}
+
+// Section 4: pruning leaves what it must, and removes what is orphaned or abandoned.
+export void test_cache_prune_a_fetch_in_progress_is_kept_and_an_abandoned_one_removed(io::Io *io) {
+    scratch::Project p = cache_project(io);
+    setup(&p, "fetch3; mkdir \"$packages/.tmp-9999-extract\" \"$packages/.tmp-8888-extract\"; "
+              ": >\"$packages/.tmp-9999-archive\"; touch -t $old \"$packages/.tmp-8888-extract\" "
+              "\"$packages/prune.timestamp\"; use 3 >/dev/null 2>&1; true");
+    scratch::expect_text("prune: a fetch in progress is kept", "yes yes",
+                         text(&p, "echo \"$(exists \"$packages/.tmp-9999-extract\") "
+                                  "$(exists \"$packages/.tmp-9999-archive\")\""));
+    scratch::expect_text("prune: an abandoned temporary folder older than 31 days is removed", "no",
+                         text(&p, "exists \"$packages/.tmp-8888-extract\""));
+}
+
+export void test_cache_prune_a_package_with_no_stamp_is_kept_and_stamped_then_removed_when_stale(io::Io *io) {
+    scratch::Project p = cache_project(io);
+    setup(&p, "fetch3; mkdir \"$packages/legacy\"; echo legacy >\"$packages/legacy/file.txt\"; "
+              "touch -t $old \"$packages/prune.timestamp\"; use 3 >/dev/null 2>&1; true");
+    scratch::expect_text("prune: a package with no stamp is kept", "yes",
+                         text(&p, "exists \"$packages/legacy/file.txt\""));
+    scratch::expect_text("prune: and gets a stamp now", "yes", text(&p, "exists \"$packages/legacy.used\""));
+    setup(&p, "touch -t $old \"$packages/legacy.used\" \"$packages/prune.timestamp\"; use 3 >/dev/null 2>&1; true");
+    scratch::expect_text("prune: a stamped package unused for 31 days is removed", "no",
+                         text(&p, "exists \"$packages/legacy\""));
+}
+
+export void test_cache_prune_a_stale_stamp_whose_package_is_gone_is_removed(io::Io *io) {
+    scratch::Project p = cache_project(io);
+    setup(&p, "fetch3; : >\"$packages/orphan.used\"; touch -t $old \"$packages/orphan.used\" "
+              "\"$packages/prune.timestamp\"; use 3 >/dev/null 2>&1; true");
+    scratch::expect_text("prune: a stale stamp whose package is gone is removed", "no",
+                         text(&p, "exists \"$packages/orphan.used\""));
+}
+
+export void test_cache_prune_a_package_used_just_now_is_kept(io::Io *io) {
+    scratch::Project p = cache_project(io);
+    setup(&p, "fetch3; touch -t $old \"$packages/prune.timestamp\"; touch \"$packages/$(hex 3).used\"; "
+              "use 3 >/dev/null 2>&1; true");
+    scratch::expect_text("prune: a package used just now is kept", "yes",
+                         text(&p, "exists \"$packages/$(hex 3)/file.txt\""));
+}
+
+export void test_cache_prune_smith_fetch_also_checks_and_keeps_what_it_fetched(io::Io *io) {
+    scratch::Project p = cache_project(io);
+    setup(&p, "fetch3; touch -t $old \"$packages/prune.timestamp\"");
+    scratch::Run fetched = run(&p, "smith fetch \"$(url 1)\"");
+    scratch::expect_status("prune: smith fetch also checks, and keeps what it fetched", 0, &fetched);
+    scratch::expect_text("prune: smith fetch also checks, and keeps what it fetched (the package)", "yes",
+                         text(&p, "exists \"$packages/$(hex 1)/file.txt\""));
+}

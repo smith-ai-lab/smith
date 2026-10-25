@@ -1,0 +1,19 @@
+# Sourced by the cache tests (tests/cache_*_test.smith): $PWD is the project, XDG_CACHE_HOME the test's own cache.
+old=202001010000 # a time years ago, for touch -t
+packages=$XDG_CACHE_HOME/smith/packages
+modules=$XDG_CACHE_HOME/smith/modules
+exists() { [ -e "$1" ] && echo yes || echo no; }
+# Three packages as tar.gz files in arc/.
+mkpkgs() {
+    mkdir -p arc/src
+    for n in 1 2 3; do
+        mkdir -p "arc/src/pkg$n-1.0"
+        echo "package $n" >"arc/src/pkg$n-1.0/file.txt"
+        (cd arc/src && tar -czf "../pkg$n.tar.gz" "pkg$n-1.0")
+    done
+}
+url() { echo "file://$PWD/arc/pkg$1.tar.gz"; }
+hex() { shasum -a 256 "arc/pkg$1.tar.gz" | cut -d' ' -f1; }
+fetch3() { mkpkgs && for n in 1 2 3; do smith fetch "$(url $n)" >/dev/null 2>&1; done; }
+use() { smith build "-DURL=$(url "$1")" "-DHASH=sha256:$(hex "$1")" -DOFFLINE; }
+year_of() { stat -f %Sm -t %Y "$1"; }
