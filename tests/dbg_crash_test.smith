@@ -27,8 +27,28 @@ static bool make(io::Io *io, scratch::Project *p) {
 }
 
 // The program's standard error after `smith dbg ARGUMENTS`, which the checks read; the status is the run's.
+static void note_output(const scratch::Project *p, const char *folder);
+
 static scratch::Run crash(const scratch::Project *p, io::Io *io, const char *arguments) {
-    return scratch::sh(p, format::push(&io->arena, "smith dbg ", arguments, " >out.txt 2>err.txt").data);
+    scratch::Run run = scratch::sh(p, format::push(&io->arena, "smith dbg ", arguments, " >out.txt 2>err.txt").data);
+    note_output(p, "");
+    return run;
+}
+
+// A failure shows the debugger's whole output, standard output and error, so that the cause is named.
+static void note_output(const scratch::Project *p, const char *folder) {
+    const char *out = scratch::read(p, format::push(&p->io->arena, folder, "out.txt").data);
+    const char *err = scratch::read(p, format::push(&p->io->arena, folder, "err.txt").data);
+    test::note("smith dbg standard output:\n%s\nsmith dbg standard error:\n%s", out, err);
+}
+
+// smith dbg --crash on the .smith app, with the arguments of the program.
+static scratch::Run crash_app(const scratch::Project *p, io::Io *io, const char *arguments) {
+    scratch::Run run = scratch::sh(
+        p, format::push(&io->arena, "cd w/app && smith dbg --crash build/debug/app ", arguments, " >out.txt 2>err.txt")
+               .data);
+    note_output(p, "w/app/");
+    return run;
 }
 
 // 1. A C program that writes past an array: ASan's report as the program printed it, then the frames with their values.
@@ -128,7 +148,7 @@ export void test_dbg_crash_a_slice_out_of_range_in_smith(io::Io *io) {
     if (!make_smith_app(io, &p)) {
         return;
     }
-    scratch::Run run = scratch::sh(&p, "cd w/app && smith dbg --crash build/debug/app x >out.txt 2>err.txt");
+    scratch::Run run = crash_app(&p, io, "x");
     const char *err = scratch::read(&p, "w/app/err.txt");
     scratch::expect_status("smith slice: the status is 128 + SIGABRT", 134, &run);
     scratch::expect_contains("smith slice: the frame as written", err, "smith dbg: main.smith:6: main::total");
@@ -142,7 +162,7 @@ export void test_dbg_crash_a_failed_contract_in_smith(io::Io *io) {
     if (!make_smith_app(io, &p)) {
         return;
     }
-    scratch::sh(&p, "cd w/app && smith dbg --crash build/debug/app x y >out.txt 2>err.txt");
+    crash_app(&p, io, "x y");
     const char *err = scratch::read(&p, "w/app/err.txt");
     scratch::expect_contains("contract: the failing call's frame", err, "smith dbg: main.smith:11: main::positive");
     scratch::expect_contains("contract: its argument", err, "@ n = -1");
@@ -154,7 +174,7 @@ export void test_dbg_crash_a_smith_program_that_exits(io::Io *io) {
     if (!make_smith_app(io, &p)) {
         return;
     }
-    scratch::sh(&p, "cd w/app && smith dbg --crash build/debug/app >out.txt 2>err.txt");
+    crash_app(&p, io, "");
     scratch::expect_contains("smith: a program that exits", scratch::read(&p, "w/app/err.txt"), "smith dbg: exited");
 }
 
