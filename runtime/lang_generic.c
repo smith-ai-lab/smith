@@ -1355,7 +1355,7 @@ static void smith_lang_gen_put_token(SmithLang *lang, const SmithHost *host, con
                                      const SmithLangGenToken *token, uint32_t location, uint32_t instance, bool real) {
     SmithToken written = smith_lang_gt_token(pool, token);
     written.location = location;
-    written.synthetic = !real;
+    written.synthetic = !real || (token->flags & smith_lang_gen_flag_made) != 0; // a made token has no source place
     written.instance = instance;
     // An instance's tokens begin the lines the generic's did: the compiler reads it (-Wmisleading-indentation).
     // (Only a host with a parser: the raw lowering is text, and lines in it would change the lowering's bytes.)
