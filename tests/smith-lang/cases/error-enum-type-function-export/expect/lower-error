@@ -1,0 +1,1 @@
+src/opt.smith:10:8: an exported generic cannot name `option(...)` of a generic's own types yet (known gap): an importer has no shape for it; the type function itself is not exported

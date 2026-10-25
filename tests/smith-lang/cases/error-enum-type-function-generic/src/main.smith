@@ -1,0 +1,20 @@
+module main;
+
+type option(type T) {
+    return enum {
+        T some;
+        none;
+    };
+}
+
+option(T) first(constexpr type T, T *xs, usize n) {
+    if (n == 0) return .none;
+    return {.some = xs[0]};
+}
+
+i32 main(void) {
+    usize xs[1] = {1};
+    // the struct of `option(usize)` is named nowhere at file scope before this call
+    first(usize, xs, 1);
+    return 0;
+}

@@ -1,0 +1,9 @@
+module main;
+
+import opt;
+
+i32 main(void) {
+    usize xs[1] = {1};
+    opt::first(usize, xs, 1);
+    return 0;
+}
