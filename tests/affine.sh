@@ -66,8 +66,9 @@ for name in affine_second_use.c affine_second_use.smith; do
     fi
 done
 
-# The narrowing of a payload enum (#198) shows in the editor too (for C: clangd hangs on a `.smith` payload enum).
-for name in enum_tagged.c; do
+# The narrowing of a payload enum (#198) shows in the editor too, for C and for `.smith` (clangd hung on the latter
+# until #227).
+for name in enum_tagged.c enum_read_unchecked.smith; do
     total=$((total + 1))
     if timeout -s KILL 120 smith lsp --check="$here/tests/affine/$name" 2>&1 | grep -q "smith-enum: 's.circle' is read where"; then
         echo "ok    lsp $name"
