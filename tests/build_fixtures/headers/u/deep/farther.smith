@@ -1,0 +1,4 @@
+module u::deep::farther;
+import t::point;
+import u::far;
+export far::Far farther(far::Far f, point::Point p);

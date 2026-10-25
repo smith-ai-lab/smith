@@ -1,0 +1,5 @@
+module u::far;
+import t::point;
+export typedef struct {
+    point::Point at;
+} Far;

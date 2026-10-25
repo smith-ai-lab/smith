@@ -1,0 +1,5 @@
+module t::body_module;
+import t::point;
+export i32 body_module_x() {
+    return point::origin().x;
+}

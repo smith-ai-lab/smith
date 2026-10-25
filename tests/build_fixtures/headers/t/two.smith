@@ -1,0 +1,7 @@
+module t::two;
+import <string.h>;
+import <stdio.h>;
+export c::FILE *two_stream();
+export u32 two_length(const char *s) {
+    return (u32)c::strlen(s);
+}

@@ -1,0 +1,3 @@
+module t::uses;
+import t::point;
+export point::Point shifted(point::Point p);
