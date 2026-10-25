@@ -424,7 +424,7 @@ export void test_new_the_language_flag(io::Io *io) {
     scratch::expect_contains("new --help: shows the flag", help.out, "--language smith|c");
 }
 
-// 1b. assert(false) stops debug and release and not fast, in a scratch copy of each generated project.
+// 1b. assert(false) stops debug, release and fast (#326), in a scratch copy of each generated project.
 static void assert_false_stops(io::Io *io, const char *dir, const char *language_flag, const char *extension,
                                const char *macro) {
     scratch::Project p = fresh(io);
@@ -440,8 +440,8 @@ static void assert_false_stops(io::Io *io, const char *dir, const char *language
     __builtin_snprintf(label, sizeof label, "assert(false) in %s: the three build", extension);
     scratch::expect_status(label, 0, &built);
     const char *modes[] = {"debug", "release", "fast"};
-    const char *statuses[] = {"134", "134", "0"};
-    const char *meanings[] = {"debug stops", "release stops", "fast does not stop"};
+    const char *statuses[] = {"134", "134", "134"};
+    const char *meanings[] = {"debug stops", "release stops", "fast stops"};
     for (usize i = 0; i < _Countof(modes); i++) {
         __builtin_snprintf(command, sizeof command, "build/%s/%s >/dev/null 2>&1; echo $?", modes[i], dir);
         __builtin_snprintf(label, sizeof label, "assert(false) in %s: %s", extension, meanings[i]);
@@ -449,12 +449,12 @@ static void assert_false_stops(io::Io *io, const char *dir, const char *language
     }
 }
 
-export void test_new_assert_false_stops_debug_and_release_in_smith(io::Io *io) {
+export void test_new_assert_false_stops_every_build_in_smith(io::Io *io) {
     assert_false_stops(io, "hello", "", "smith", "contract::assert");
 }
 
-export void test_new_assert_false_stops_debug_and_release_in_c(io::Io *io) {
-    assert_false_stops(io, "hellc", "--language c", "c", "assert");
+export void test_new_assert_false_stops_every_build_in_c(io::Io *io) {
+    assert_false_stops(io, "hellc", "--language c", "c", "smith_assert");
 }
 
 // 1c. smith's libraries build under the conventions' flags (gnu2y, every warning an error) in all three profiles and

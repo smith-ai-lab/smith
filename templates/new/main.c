@@ -1,8 +1,8 @@
 // @NAME@. `smith run` builds and runs it.
 #include "primes.h"
 
-#include <assert.h>
 #include <inttypes.h>
+#include <smith/contract.h>
 #include <smith/io.h>
 #include <stdint.h>
 
@@ -17,7 +17,7 @@ static void report(SmithConsole *console, int32_t sum) {
 int main(int argc, char **argv) {
     SmithIo io = smith_io_make(argc, argv);
     int32_t sum = primes_sum(5);
-    assert(sum <= 28);
+    smith_assert(sum <= 28);
     report(&io.console, sum);
     smith_io_close(&io);
     return 0;

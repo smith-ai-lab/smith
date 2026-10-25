@@ -9,8 +9,8 @@ you commit: it checks the formatting, the lint and these documents (`smith docs`
 
 - **There is no build file and no config file.** smith builds by convention: `main.smith` or `main.c` at the root is the
   program, named for the folder; what it imports or includes is compiled with it; a `*_test.smith` (`*_test.c`) beside the module it tests is its tests; integration tests, if any, go in `tests/`.
-  `smith build` is the debug profile (sanitizers on), `smith build release` keeps assertions on, `smith build fast`
-  turns them off. `smith fmt` and `smith lint` use smith's own style and checks.
+  `smith build` is the debug profile (sanitizers on), `smith build release` and `smith build fast` optimize; every profile keeps the contracts and assertions
+  (only `smith prove` removes a check). `smith fmt` and `smith lint` use smith's own style and checks.
 - **Effects come through parameters from `main`.** `main` makes the io, `io::Io io = io::make(argc, argv)` in `.smith`
   (`SmithIo io = smith_io_make(argc, argv)` in C), and a function that touches the world takes the part it needs
   (`io::Files *`, `io::Console *`, `io::Clock *`...; `SmithFiles *` in C), so its signature says what it can do and a

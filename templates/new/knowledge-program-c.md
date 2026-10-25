@@ -17,5 +17,5 @@ tags: [program]
 - Effects come through parameters from `main`: `report` takes a `SmithConsole *` and nothing else, so its signature says
   what it can do to the world, and a test gives it a fake console (`smith_io_make_test`, which anything may call).
   `smith lint` (the `smith-effects` check) reports a call such as `printf` outside a capability's own module.
-- The contracts and the assertion stay on in every build but `fast` (`-DNDEBUG`).
+- The contracts and the assertion stay on in every build, `fast` included; only a proof removes one.
 - `primes_test.c` tests `primes_sum`; `smith test` runs it, and `smith check` does too.
