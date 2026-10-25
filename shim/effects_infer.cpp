@@ -432,7 +432,13 @@ void editorWritten(const std::string &source) {
 struct EditorViolation {
     std::string name, place, kind, extra, chain;
 };
-std::vector<EditorViolation> editorCheck(const std::string &label, const std::string &own, const std::string &folder);
+struct EditorHover {
+    std::string symbol;
+    uint32_t set;
+    bool declared;
+};
+std::vector<EditorViolation> editorCheck(const std::string &label, const std::string &own, const std::string &folder,
+                                         std::vector<EditorHover> &hovers);
 
 class Analysis {
   public:
@@ -894,7 +900,13 @@ class Analysis {
         char folder[4096];
         if (!smith_effects_summary_path("x.o", folder, sizeof folder)) return;
         std::string directory = llvm::sys::path::parent_path(folder).str();
-        for (const EditorViolation &violation : ::editorCheck("editor:" + source, text, directory)) {
+        std::vector<EditorHover> hovers;
+        std::vector<EditorViolation> found = ::editorCheck("editor:" + source, text, directory, hovers);
+        // What hover says of a function that is defined or called here, from the same solve that judged the file, so
+        // it does not depend on which file the editor parsed first (the key is the one `usrOf` makes).
+        for (const EditorHover &hover : hovers)
+            setHoverLine(hover.symbol, hoverText(hover.set, hover.declared));
+        for (const EditorViolation &violation : found) {
             SourceLocation loc = locate(violation.place);
             if (loc.isInvalid()) continue;
             engine.Report(loc, bad) << violation.name << violation.kind << violation.extra << violation.chain;
@@ -1209,6 +1221,27 @@ class Program {
         }
     }
 
+    // The solved set of every function the summary `label` defines and of each function they call that another summary
+    // defines (a name only the project sees, `file#name`, is left out: hover keys on the linkage name).
+    void hovers(const std::string &label, std::vector<EditorHover> &out) {
+        std::set<std::string> seen;
+        auto add = [&](const std::string &symbol) {
+            auto found = functions.find(symbol);
+            if (found == functions.end() || symbol.find('#') != std::string::npos || !seen.insert(symbol).second)
+                return;
+            bool declared = found->second.declared >= 0;
+            out.push_back(
+                {symbol, declared ? static_cast<uint32_t>(found->second.declared) : found->second.inferred, declared});
+        };
+        for (const auto &entry : functions) {
+            if (owners[entry.first] != label) continue;
+            add(entry.first);
+            for (const Edit &edge : entry.second.edges) {
+                if (edge.kind == 'E') add(edge.callee);
+            }
+        }
+    }
+
     // The editor, while the summaries of the project are still being made: a function no summary defines yet is not
     // judged (the link will, with every summary).
     void setLenient(bool value) {
@@ -1324,7 +1357,8 @@ class Program {
 
 // The editor's check of the open file: its own summary (fresh, from this parse) merged with the others' on disk, the
 // violations of its own functions that come through another file.
-std::vector<EditorViolation> editorCheck(const std::string &label, const std::string &own, const std::string &folder) {
+std::vector<EditorViolation> editorCheck(const std::string &label, const std::string &own, const std::string &folder,
+                                         std::vector<EditorHover> &hovers) {
     Program program;
     program.setLenient(editorPending());
     program.readText(label, own); // first: its functions win over the stale copy in its own file's summary
@@ -1335,6 +1369,7 @@ std::vector<EditorViolation> editorCheck(const std::string &label, const std::st
     std::vector<EditorViolation> result;
     for (const auto &violation : program.violations(label))
         result.push_back({violation.name, violation.place, violation.kind, violation.extra, violation.chain});
+    program.hovers(label, hovers);
     return result;
 }
 
