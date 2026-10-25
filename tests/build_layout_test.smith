@@ -24,7 +24,7 @@ export void test_build_layout_the_program_never_links_a_test(io::Io *io) {
 
 export void test_build_layout_a_test_module_cannot_name_a_private_function(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", "unit_private");
-    scratch::Run run = scratch::sh(&p, "smith test");
+    scratch::Run run = scratch::sh(&p, "env SMITH_OUTPUT=full smith test");
     scratch::expect_failure("layout: a private function is out of reach", &run);
-    scratch::expect_contains("layout: and the error says so", run.err, "lists no export `scale`");
+    scratch::expect_contains("layout: and the error says so", run.out, "lists no export `scale`");
 }
