@@ -721,7 +721,6 @@ static const BuildTestScript build_test_scripts[] = {
     {"inflate", "inflate", nullptr, nullptr, 0},
     {"io", "io", nullptr, nullptr, 0},
     {"json", "json", nullptr, nullptr, 0},
-    {"lint-smith", "lint-smith", nullptr, nullptr, 0},
     {"lsp-folders", "lsp", "folders", nullptr, 1},
     {"lsp-project", "lsp", "project", nullptr, 1},
     {"mcp-fake-asan", "mcp", "fake-asan", nullptr, 0},

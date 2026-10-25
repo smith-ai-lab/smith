@@ -1,0 +1,17 @@
+module idiom::c23_ok;
+
+typedef struct {
+    u32 a;
+    u32 b;
+} Pair;
+
+[[noreturn]] void stop();
+[[nodiscard]] u32 compute();
+
+export u32 f(const u8 *p) {
+    bool flag = p == nullptr;
+    Pair pair = {};
+    Pair one = {1};
+    u8 bytes[4] = {};
+    return pair.a + one.a + bytes[0] + flag;
+}

@@ -1,0 +1,20 @@
+module idiom::sized;
+
+import <stddef.h>;
+import <stdint.h>;
+
+export c::uint64_t wide(c::size_t n, unsigned x, unsigned long long y, double d, float f) {
+    unsigned char byte = 1;
+    long count = 2;
+    int plain = 3;
+    short half = 4;
+    return n + x + y + (c::uint64_t)d + (c::uint64_t)f + byte + count + plain + half;
+}
+
+export char first(const char *text) {
+    return text[0];
+}
+
+int main(int argc, char **argv) {
+    return argc + (argv == nullptr);
+}

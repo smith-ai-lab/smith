@@ -1,0 +1,4 @@
+idiom/loops.c:2:5: error: `for (;;)` never ends on its own: bound the loop by a count (`for (usize i = 0; i < limit; i++)`); only `main` runs forever
+idiom/loops.smith:4:5: error: `for (;;)` never ends on its own: bound the loop by a count (`for (usize i = 0; i < limit; i++)`); only `main` runs forever
+idiom/loops.smith:8:5: error: a `while` with a constant condition never ends on its own: bound the loop by a count (`for (usize i = 0; i < limit; i++)`); only `main` runs forever
+idiom/loops.smith:12:5: error: a `do ... while` with a constant condition never ends on its own: bound the loop by a count (`for (usize i = 0; i < limit; i++)`); only `main` runs forever

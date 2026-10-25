@@ -1,0 +1,11 @@
+module idiom::consts;
+
+const u32 limit = 4;
+const u8 table[] = {1, 2, 3};
+constexpr u32 fine = 5;
+const char *const name = "idiom";
+
+export u32 f(u32 n) {
+    const u32 local = 2;
+    return n + limit + table[0] + fine + local + (name != nullptr);
+}

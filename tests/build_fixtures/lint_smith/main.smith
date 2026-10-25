@@ -1,0 +1,7 @@
+import geometry::box;
+
+i32 main(void) {
+    box::Box b = {2, 3};
+    i32 BadLocal = 4;
+    return (i32)box::area(b) + BadLocal;
+}

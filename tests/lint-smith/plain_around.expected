@@ -1,0 +1,7 @@
+geometry/box.smith:10:3: error: invalid case style for typedef 'bad_Type' [readability-identifier-naming,-warnings-as-errors]
+geometry/box.smith:17:12: error: invalid case style for function 'Perimeter' [readability-identifier-naming,-warnings-as-errors]
+geometry/box.smith:21:12: error: invalid case style for function 'bad_Helper' [readability-identifier-naming,-warnings-as-errors]
+geometry/box.smith:22:9: error: invalid case style for variable 'Bad_Name' [readability-identifier-naming,-warnings-as-errors]
+plain.c:1:26: error: invalid case style for parameter 'Bad_Arg' [readability-identifier-naming,-warnings-as-errors]
+plain.c:1:5: error: invalid case style for function 'geometry_box_Odd' [readability-identifier-naming,-warnings-as-errors]
+plain2.c:1:5: error: invalid case style for function 'geometry_box_Area' [readability-identifier-naming,-warnings-as-errors]

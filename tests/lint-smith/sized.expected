@@ -1,0 +1,14 @@
+idiom/sized.smith:6:11: error: `uint64_t` is a C type, and a .smith file has the sized types: write `u64`
+idiom/sized.smith:6:28: error: `size_t` is a C type, and a .smith file has the sized types: write `usize`
+idiom/sized.smith:6:38: error: `unsigned` is a C type, and a .smith file has the sized types: write `u32`
+idiom/sized.smith:6:50: error: `unsigned long long` is a C type, and a .smith file has the sized types: write `u64`
+idiom/sized.smith:6:72: error: `double` is a C type, and a .smith file has the sized types: write `f64`
+idiom/sized.smith:6:82: error: `float` is a C type, and a .smith file has the sized types: write `f32`
+idiom/sized.smith:7:5: error: `unsigned char` is a C type, and a .smith file has the sized types: write `u8`
+idiom/sized.smith:8:5: error: `long` is a C type, and a .smith file has the sized types: write `i64`
+idiom/sized.smith:9:5: error: `int` is a C type, and a .smith file has the sized types: write `i32`
+idiom/sized.smith:10:5: error: `short` is a C type, and a .smith file has the sized types: write `i16`
+idiom/sized.smith:11:28: error: `uint64_t` is a C type, and a .smith file has the sized types: write `u64`
+idiom/sized.smith:11:45: error: `uint64_t` is a C type, and a .smith file has the sized types: write `u64`
+idiom/sized.smith:18:1: error: `int` is a C type, and a .smith file has the sized types: write `i32`
+idiom/sized.smith:18:10: error: `int` is a C type, and a .smith file has the sized types: write `i32`

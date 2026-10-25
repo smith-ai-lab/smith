@@ -1,0 +1,12 @@
+pre/bad.smith:3:1: error: `#include`
+pre/bad.smith:7:1: error: `#define`
+pre/bad.smith:8:1: error: `#pragma`
+pre/bad.smith:10:1: error: `#if`
+pre/bad.smith:12:8: error: `c::assert` macro
+pre/bad.smith:12:22: error: `c::SIZE_MAX` macro
+pre/bad.smith:13:8: error: `c::assert` macro
+pre/bad.smith:13:18: error: `c::isfinite` macro
+pre/bad.smith:14:5: error: `_Pragma`
+pre/bad.smith:17:1: error: `#else`
+pre/bad.smith:18:1: error: `#endif`
+pre/bad.smith:19:1: error: `#error`

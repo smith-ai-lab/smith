@@ -1,0 +1,3 @@
+u32 plain(void) {
+    return 1;
+}

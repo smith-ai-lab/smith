@@ -1,0 +1,4 @@
+int main(void) {
+    i32 BadLocal = 0;
+    return BadLocal;
+}

@@ -1,0 +1,5 @@
+module geometry::recursive;
+
+export u32 fact(u32 n) {
+    return n < 2 ? 1 : n * fact(n - 1);
+}
