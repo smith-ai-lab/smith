@@ -1,0 +1,173 @@
+// C functions as steps (`.run`), ported from tests/build.sh sections 9k to 9n, 9o2 and 9o4: a check that reads objects
+// with nm, a step that writes its output with smith_write, editing the function, smith_run_status and smith_run_lines,
+// the data a function gets from its command, and smith_run_program. The section 9o that timed a trivial .run task
+// asserted nothing and is not ported. Each fixture is tests/build_fixtures/steps_<name>/build.c.
+module build_steps_run_test;
+
+import smith::io;
+import smith::test;
+import scratch;
+import <string.h>;
+
+static const char *stamp_exists(const scratch::Project *p) {
+    return scratch::capture(p, "ls .smith/stamp/* >/dev/null 2>&1 && echo yes || echo no");
+}
+
+static scratch::Project libc_project(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "steps_libc");
+    scratch::write(&p, "base.c",
+                   "#include <math.h>\n#include <string.h>\n"
+                   "float base_root(float x) {\n    char a[4] = \"abc\", c[4];\n"
+                   "    memcpy(c, a, 4);\n    return sqrtf(x) + (float)c[0];\n}\n");
+    scratch::write(&p, "game.c", "float base_root(float x);\nfloat game_run(float x) { return base_root(x); }\n");
+    return p;
+}
+
+export void test_build_steps_function_a_clean_tree_passes_and_a_second_build_does_nothing(io::Io *io) {
+    scratch::Project p = libc_project(io);
+    scratch::Run first = scratch::build(&p, "check-libc");
+    scratch::expect_status("function: a clean tree passes", 0, &first);
+    scratch::expect_text("function: a clean tree passes", "yes", stamp_exists(&p));
+    scratch::Run second = scratch::build(&p, "check-libc");
+    scratch::expect_contains("function: a second build does nothing", second.out, "no work to do");
+}
+
+export void test_build_steps_function_a_forbidden_symbol_fails_the_build_and_restoring_passes(io::Io *io) {
+    scratch::Project p = libc_project(io);
+    (void)scratch::build(&p, "check-libc");
+    scratch::write(&p, "game.c",
+                   "#include <stdio.h>\nfloat base_root(float x);\n"
+                   "float game_run(float x) { puts(\"hi\"); return base_root(x); }\n");
+    (void)scratch::sh(&p, "rm -rf .smith/stamp");
+    scratch::Run bad = scratch::sh(&p, "smith build check-libc 2>&1");
+    scratch::expect_failure("function: a forbidden symbol fails the build", &bad);
+    scratch::expect_contains("function: the message names the object and the symbol", bad.out,
+                             "build/game.o uses puts from the C library, which is not allowed");
+    scratch::expect_text("function: a failed check leaves no stamp", "no", stamp_exists(&p));
+    scratch::write(&p, "game.c", "float base_root(float x);\nfloat game_run(float x) { return base_root(x); }\n");
+    scratch::Run restored = scratch::build(&p, "check-libc");
+    scratch::expect_status("function: restored, it passes", 0, &restored);
+    scratch::expect_text("function: restored, it passes", "yes", stamp_exists(&p));
+}
+
+export void test_build_steps_a_run_step_with_restat_stops_what_depends_on_unchanged_bytes(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "steps_run_restat");
+    scratch::write(&p, "seed.txt", "hello world\nline two\n");
+    scratch::Run first = scratch::build(&p, "");
+    scratch::expect_status("restat: the .run step writes its output", 0, &first);
+    scratch::expect_text("restat: the .run step writes its output", "hello world",
+                         scratch::capture(&p, "cat final.txt"));
+    scratch::write(&p, "seed.txt", "hello world\nline two changed\n");
+    (void)scratch::build(&p, "");
+    scratch::expect_count("restat: the .run step reran and the bytes are the same", 1,
+                          scratch::lines(&p, "copies.log"));
+    scratch::write(&p, "seed.txt", "goodbye world\nline two\n");
+    (void)scratch::build(&p, "");
+    scratch::expect_text("restat: changed bytes rerun what depends on it", "goodbye world",
+                         scratch::capture(&p, "cat final.txt"));
+    scratch::expect_count("restat: changed bytes rerun what depends on it", 2, scratch::lines(&p, "copies.log"));
+}
+
+export void test_build_steps_a_run_task_runs_every_time_with_its_args(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "steps_run_restat");
+    scratch::write(&p, "seed.txt", "hello world\nline two\n");
+    scratch::Run first = scratch::build(&p, "show");
+    scratch::expect_contains("task: runs and prints", first.out, "task saw alpha");
+    (void)scratch::build(&p, "show");
+    scratch::expect_count("task: runs every time, with .args", 2, scratch::lines(&p, "runs.log"));
+    scratch::expect_text("task: runs every time, with .args", "alpha beta",
+                         scratch::capture(&p, "sed -n 1p runs.log | sed 's/ *$//'"));
+}
+
+export void test_build_steps_a_run_function_returning_three_fails_the_build_and_stops_what_follows(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "steps_run_restat");
+    scratch::write(&p, "seed.txt", "hello world\nline two\n");
+    scratch::Run run = scratch::sh(&p, "smith build broken 2>&1");
+    scratch::expect_failure("failure: a function returning 3 fails the build", &run);
+    scratch::expect_contains("failure: ninja reports the status", run.out, "code=3");
+    scratch::expect_contains("failure: the function's own message shows", run.out, "this step fails");
+    scratch::expect_text("failure: nothing after it ran", "no", scratch::exists(&p, "after.out") ? "yes" : "no");
+}
+
+export void test_build_steps_editing_the_function_reruns_the_step_and_options_reach_it(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "steps_run_edit");
+    scratch::Run first = scratch::build(&p, "it");
+    scratch::expect_status("edit: the function runs", 0, &first);
+    scratch::expect_text("edit: the function runs", "v1 nobody", scratch::capture(&p, "cat it.out"));
+    scratch::Run again = scratch::build(&p, "it");
+    scratch::expect_contains("edit: unchanged, nothing reruns", again.out, "no work to do");
+    (void)scratch::sh(&p, "sed 's/\"v1 %s/\"v2 %s/' build.c >build.c.new && mv build.c.new build.c");
+    scratch::Run edited = scratch::build(&p, "it");
+    scratch::expect_status("edit: editing build.c reruns the step", 0, &edited);
+    scratch::expect_text("edit: editing build.c reruns the step", "v2 nobody", scratch::capture(&p, "cat it.out"));
+    scratch::Run ada = scratch::build(&p, "it -Dwho=Ada");
+    scratch::expect_status("options: -Dname=value reaches the function through .args", 0, &ada);
+    scratch::expect_text("options: -Dname=value reaches the function through .args", "v2 Ada",
+                         scratch::capture(&p, "cat it.out"));
+    (void)scratch::build(&p, "it -Dwho='a b$c'");
+    scratch::expect_text("options: a value with a space and a dollar", "v2 a b$c", scratch::capture(&p, "cat it.out"));
+}
+
+export void test_build_steps_a_run_step_added_in_a_defer_callback_runs(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "steps_run_edit");
+    scratch::Run run = scratch::build(&p, "");
+    scratch::expect_status("defer: a .run step added in a smith_defer callback runs", 0, &run);
+    scratch::expect_text("defer: a .run step added in a smith_defer callback runs", "from defer",
+                         scratch::capture(&p, "cat deferred.out"));
+}
+
+export void test_build_steps_smith_run_status_and_smith_run_lines(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "steps_run_status");
+    scratch::Run run = scratch::sh(&p, "smith build 2>&1");
+    scratch::expect_status("run_status: the probe step succeeds", 0, &run);
+    scratch::expect_contains("run_status: failing program prints the message", run.out, "smith: sh failed (status 5)");
+    scratch::expect_contains("run_status: its stderr passes through", run.out, "oops");
+    scratch::expect_text("run_status: statuses and lines are exact",
+                         "true 0\nfalse 1\nmissing 127 lines null\nsh 4 [a] [] [b c] [last]\nlines x y end\n"
+                         "failing null",
+                         scratch::capture(&p, "cat status.txt"));
+}
+
+// A .run step gets its data from its command: .args and .inputs with a space and a $ in a value, no -D option, and
+// build() is not called again for it.
+export void test_build_steps_a_run_step_gets_its_data_from_its_command(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "steps_run_data");
+    scratch::write(&p, "in put.txt", "a\n");
+    scratch::write(&p, "$HOME.txt", "b\n");
+    scratch::Run first = scratch::build(&p, "-Dwho=Ada");
+    scratch::expect_status(".run data: the step succeeds", 0, &first);
+    scratch::expect_text(".run data: inputs, outputs and args arrive exactly, and no -D option does",
+                         "input [in put.txt]\ninput [$HOME.txt]\noutput [seen.txt]\narg [two words]\narg [$dollar]\n"
+                         "arg [it's]\narg [--arg]\nwho [unset]",
+                         scratch::capture(&p, "cat seen.txt"));
+    scratch::expect_count(".run data: build() runs once per smith build, not once per .run step", 1,
+                          scratch::lines(&p, "calls.log"));
+    (void)scratch::build(&p, "-Dwho=Bob");
+    scratch::expect_count(".run data: build() ran once more for a second smith build", 2,
+                          scratch::lines(&p, "calls.log"));
+}
+
+static usize count_of(const char *text, const char *needle) {
+    usize count = 0;
+    for (const char *at = c::strstr(text, needle); at != nullptr; at = c::strstr(at + 1, needle))
+        count++;
+    return count;
+}
+
+export void test_build_steps_smith_run_program_passes_the_environment_and_returns_statuses(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "steps_run_program");
+    scratch::Run run = scratch::sh(&p, "env HOME_KEPT=old smith build play");
+    scratch::expect_status("run_program: the step succeeds", 0, &run);
+    scratch::expect_contains("run_program: the environment variable arrives", run.out,
+                             "program says two words $x and kept");
+    scratch::expect_contains("run_program: statuses are 0, 3, 128 plus the signal and 127", run.out,
+                             "statuses 0 3 137 127");
+    const char *function_line = c::strstr(run.out, "function line first");
+    const char *program_line = c::strstr(run.out, "program says");
+    test::check_condition(function_line != nullptr && program_line != nullptr && function_line < program_line);
+    // The executor prints a job's stdout and stderr together, as the original read $out$err.
+    scratch::expect_contains("run_program: stderr reaches the terminal",
+                             scratch::contains(run.out, "err-line") ? run.out : run.err, "err-line");
+    scratch::expect_count("run_program: the program's line is in smith build's own stdout", 1,
+                          count_of(run.out, "program says"));
+}

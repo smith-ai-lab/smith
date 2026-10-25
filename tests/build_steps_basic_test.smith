@@ -1,0 +1,161 @@
+// The steps of a build.c, ported from tests/build.sh sections 1 to 8 and 9b: a copy step, tasks and stamp steps, spaces
+// and a literal $, a depfile, what build.c includes, options, glob/env/capture, restat and always, and where smith
+// keeps its files. Each fixture is tests/build_fixtures/steps_<name>/build.c.
+module build_steps_basic_test;
+
+import smith::io;
+import smith::test;
+import scratch;
+
+export void test_build_steps_a_copy_step_reruns_when_its_input_changes(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "steps_copy");
+    scratch::write(&p, "input", "one\n");
+    scratch::Run first = scratch::build(&p, "");
+    scratch::expect_status("copy: the first build exits 0", 0, &first);
+    scratch::expect_text("copy: the first build makes the output", "one", scratch::capture(&p, "cat output"));
+    scratch::Run second = scratch::build(&p, "");
+    scratch::expect_contains("copy: the second build does nothing", second.out, "no work to do");
+    scratch::write(&p, "input", "two\n");
+    (void)scratch::build(&p, "");
+    scratch::expect_text("copy: a changed input reruns the step", "two", scratch::capture(&p, "cat output"));
+}
+
+export void test_build_steps_a_task_runs_every_time_and_a_stamp_step_once_per_input(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "steps_tasks");
+    scratch::write(&p, "watched", "a\n");
+    (void)scratch::build(&p, "hello");
+    (void)scratch::build(&p, "hello");
+    scratch::expect_count("task: runs on every smith build <task>", 2, scratch::lines(&p, "log"));
+    (void)scratch::build(&p, "");
+    (void)scratch::build(&p, "");
+    scratch::expect_count("stamp step: runs once for an unchanged input", 1, scratch::lines(&p, "stamped_log"));
+    scratch::write(&p, "watched", "b\n");
+    (void)scratch::build(&p, "");
+    scratch::expect_count("stamp step: reruns when its input changes", 2, scratch::lines(&p, "stamped_log"));
+}
+
+// Two stamp steps with one command and different inputs get two stamps, so ninja accepts both.
+export void test_build_steps_two_stamp_steps_with_one_command_both_run(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "steps_two_stamps");
+    scratch::write(&p, "one", "a\n");
+    scratch::write(&p, "two", "a\n");
+    scratch::Run run = scratch::build(&p, "");
+    scratch::expect_status("stamp steps with one command: both run", 0, &run);
+    scratch::expect_count("stamp steps with one command: both run", 2, scratch::lines(&p, "log"));
+}
+
+export void test_build_steps_spaces_and_a_literal_dollar_survive(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "steps_spaces");
+    scratch::write(&p, "my input.txt", "spaced\n");
+    (void)scratch::build(&p, "");
+    scratch::expect_text("spaces: a file name with a space is copied", "spaced",
+                         scratch::capture(&p, "cat 'my copy.txt'"));
+    scratch::expect_text("dollar: a literal $ and quotes in a command word survive", "a$b 'q'",
+                         scratch::capture(&p, "cat 'dollar file.txt'"));
+}
+
+export void test_build_steps_a_changed_header_rebuilds_the_object_through_its_depfile(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "steps_depfile");
+    scratch::write(&p, "a.c", "#include \"a.h\"\nint a(void) { return VALUE; }\n");
+    scratch::write(&p, "a.h", "#define VALUE 1\n");
+    (void)scratch::build(&p, "");
+    (void)scratch::build(&p, "");
+    scratch::expect_count("depfile: an unchanged tree compiles once", 1, scratch::lines(&p, "count"));
+    scratch::write(&p, "a.h", "#define VALUE 2\n");
+    (void)scratch::build(&p, "");
+    scratch::expect_count("depfile: a changed header rebuilds the object", 2, scratch::lines(&p, "count"));
+}
+
+export void test_build_steps_editing_build_c_and_what_it_includes_reruns_the_step(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "steps_includes");
+    scratch::write(&p, "config.h", "#define MESSAGE \"v1\"\n");
+    (void)scratch::build(&p, "");
+    scratch::expect_text("build.c: first output", "v1", scratch::capture(&p, "cat out"));
+    (void)scratch::sh(&p, "sed 's/\"v1\"/\"v2\"/;' config.h >config.tmp && mv config.tmp config.h");
+    (void)scratch::build(&p, "");
+    scratch::expect_text("build.c: an edited header it includes rebuilds the program", "v2",
+                         scratch::capture(&p, "cat out"));
+    (void)scratch::sh(
+        &p, "sed 's/MESSAGE, nullptr/MESSAGE, \"extra\", nullptr/' build.c >build.tmp && mv build.tmp build.c");
+    scratch::Run changed = scratch::build(&p, "");
+    scratch::expect_text("build.c: a changed command reruns the step", "v2", scratch::capture(&p, "cat out"));
+    scratch::expect_status("build.c: the changed command ran", 0, &changed);
+}
+
+export void test_build_steps_options_reach_the_commands_and_bad_ones_fail(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "steps_options");
+    (void)scratch::build(&p, "");
+    scratch::expect_text("options: the fallback", "world quiet", scratch::capture(&p, "cat greeting"));
+    (void)scratch::build(&p, "-Dname=Ada");
+    scratch::expect_text("options: -Dname=value reaches the command", "Ada quiet",
+                         scratch::capture(&p, "cat greeting"));
+    (void)scratch::build(&p, "-Dname=Bob -Dloud");
+    scratch::expect_text("options: a changed value and a flag rerun the step", "Bob loud",
+                         scratch::capture(&p, "cat greeting"));
+    (void)scratch::build(&p, "-Dname=");
+    scratch::expect_text("options: -Dname= is the empty string", " quiet", scratch::capture(&p, "cat greeting"));
+    scratch::Run nope = scratch::build(&p, "-Dnope");
+    scratch::expect_status("options: an undeclared -D fails", 2, &nope);
+    scratch::expect_contains("options: the error lists the declared options", nope.err, "-Dname=value  who to greet");
+    scratch::expect_contains("options: the error names the unknown one", nope.err, "unknown option -Dnope");
+    scratch::Run flag = scratch::build(&p, "-Dloud=1");
+    scratch::expect_status("options: a value for a flag fails", 2, &flag);
+    scratch::Run bare = scratch::build(&p, "-Dname");
+    scratch::expect_status("options: a bare -D for a valued option fails", 2, &bare);
+}
+
+export void test_build_steps_glob_env_and_capture_feed_the_commands(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "steps_glob_env");
+    (void)scratch::sh(&p, "mkdir src && echo a >src/a.txt");
+    (void)scratch::build(&p, "");
+    scratch::expect_text("glob: the first file", "a", scratch::capture(&p, "cat joined"));
+    (void)scratch::sh(&p, "echo b >src/b.txt");
+    (void)scratch::build(&p, "");
+    scratch::expect_text("glob: a new file is picked up with no edit to build.c", "a\nb",
+                         scratch::capture(&p, "cat joined"));
+    scratch::expect_text("env: the fallback", "unset", scratch::capture(&p, "cat env.out"));
+    (void)scratch::sh(&p, "env SMITH_TEST_VALUE=set smith build");
+    scratch::expect_text("env: a changed variable reruns the step", "set", scratch::capture(&p, "cat env.out"));
+    scratch::expect_text("capture: the value reaches a command", "from capture",
+                         scratch::capture(&p, "cat capture.out"));
+}
+
+export void test_build_steps_restat_stops_what_depends_on_an_unchanged_output(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "steps_restat");
+    scratch::write(&p, "trigger", "1\n");
+    (void)scratch::build(&p, "");
+    scratch::write(&p, "trigger", "2\n");
+    (void)scratch::build(&p, "");
+    scratch::expect_count("restat: the generator reran", 2, scratch::lines(&p, "generations"));
+    scratch::expect_count("restat: an unchanged output does not rerun what depends on it", 1,
+                          scratch::lines(&p, "copies"));
+}
+
+export void test_build_steps_always_reruns_the_step_every_build(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "steps_always");
+    (void)scratch::build(&p, "");
+    (void)scratch::build(&p, "");
+    scratch::expect_count("always: reruns the step every build", 2, scratch::lines(&p, "ticks"));
+}
+
+export void test_build_steps_smith_keeps_its_files_in_dot_smith_and_a_clean_task_works(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "steps_folder");
+    scratch::Run first = scratch::build(&p, "");
+    scratch::expect_status("folder: a build whose steps write nothing under build/ leaves no build/", 0, &first);
+    scratch::expect_text("folder: a build whose steps write nothing under build/ leaves no build/", "absent",
+                         scratch::exists(&p, "build") ? "present" : "absent");
+    scratch::expect_text("folder: smith keeps its files in .smith", "present present",
+                         scratch::capture(&p, "echo $([ -f .smith/build.ninja ] && echo present) "
+                                              "$([ -f .smith/include/smith/build.h ] && echo present)"));
+    scratch::expect_text("folder: .smith/.gitignore holds *", "*", scratch::capture(&p, "cat .smith/.gitignore"));
+    (void)scratch::sh(&p, "mkdir build && echo x >build/file");
+    scratch::Run clean = scratch::build(&p, "clean");
+    scratch::expect_status("clean: a task running rm -rf build exits 0", 0, &clean);
+    scratch::expect_text("clean: a task running rm -rf build exits 0", "absent",
+                         scratch::exists(&p, "build") ? "present" : "absent");
+    (void)scratch::sh(&p, "rm -f out");
+    scratch::Run next = scratch::build(&p, "");
+    scratch::expect_status("clean: the next smith build works", 0, &next);
+    scratch::expect_text("clean: the next smith build works", "present",
+                         scratch::exists(&p, "out") ? "present" : "absent");
+}
