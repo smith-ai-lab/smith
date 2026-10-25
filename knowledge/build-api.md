@@ -473,7 +473,7 @@ outputs (objects, programs), so it runs during the build, after they exist; the 
   needs in `.inputs`, `.outputs` and `.args`; an option's value goes in `.args`
   (`.args = (const char *[]){smith_option_value(b, "who", "nobody", "a name"), nullptr}`). A `.run` step added inside a
   `smith_defer` callback works the same way. `run->b` works with every helper that needs no `build()` state.
-  Measured (`tests/build.sh`): a `.run` task that does nothing costs about the same as a `true` task, 10 ms against 9 ms
+  Measured (`tests/build_*_test.smith`): a `.run` task that does nothing costs about the same as a `true` task, 10 ms against 9 ms
   per `smith build`, which is the cost of starting a process.
 - **The function.** `int f(SmithRun *run)` returns 0 for success. `run->inputs`, `run->outputs` (the stamp included;
   empty for a task) and `run->args` are the step's own lists, and `run->b` works with every helper. Like a command, it

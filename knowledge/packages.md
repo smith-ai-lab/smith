@@ -43,7 +43,7 @@ const char *cmake = smith_package(b, &(SmithPackage){
   `.smith/lib/smith/*.smith` that its manifest compiles (knowledge/smith-bootstrap.md), and `smith_library` does not offer
   http until a second project needs it); Network.framework is
   loaded with `dlopen` on the first download, so nothing else pays for it. SHA-256 is in smith, checked against the NIST
-  test vectors in `tests/build.sh`. The network cases are tested in `tests/package.sh` (a real cache, a scripted
+  test vectors in `tests/build_*_test.smith`. The network cases are tested in `tests/package_checks_test.smith` (a real cache, a scripted
   network: redirects, a refused cross-scheme redirect, 404, a short body, a broken connection, a wrong hash, a TLS
   failure, leftovers of a killed fetch). macOS only for now.
 - **Extraction** is smith's own code and runs no process: see [Archives](archives.md) below.

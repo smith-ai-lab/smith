@@ -82,7 +82,7 @@ export void build(build::Build *b) {
 ```
 
 A `main.c` project gets the same as a build.c through `<smith/build.h>` (`smith_app`, `.entry = "main.c"`). Building with
-the dumped file gives the same commands, for every target, as building with no file (`tests/build-smith.sh` compares
+the dumped file gives the same commands, for every target, as building with no file (`tests/build_smith_test.smith` compares
 `smith build -t commands` for `.smith` and C). A project that already has a build file is already explicit: the
 command says so on stderr, prints nothing to stdout and exits 0. A folder that follows no convention is the same error as
 `smith build`. (A folder with a Makefile and no build file, with or without a main, is the Makefile translator's, issue #44: the command

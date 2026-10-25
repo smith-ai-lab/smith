@@ -8,7 +8,7 @@
 // The verbs (smith test, smith check, smith fmt, smith lint, smith docs, smith prove, smith run) mean the same here as
 // in every project and read what this file declares: the tests below are the tests, the compiles are what lint and
 // prove look at (sources that are never built but should be linted are declared with smith_compile_command). Targets of
-// smith build: the default, text-exhaustive, headers, test-compare -DREAL=..., install (-DCC=...,
+// smith build: the default, text-exhaustive, headers, install (-DCC=...,
 // -DPREFIX=...), release (CI only), llvm and clean.
 #include <smith/build.h>
 
@@ -28,7 +28,6 @@ typedef struct {
     const char *cc;
     const char *const *cflags;
     const char *binary; // the smith this build makes
-    const char *real;   // the compiler `compare` checks smith against
     const char *prefix;
     const char *werror;
     const char *llvm;    // the LLVM install smith links clang from, so that it compiles in its own process; else ""
@@ -704,13 +703,6 @@ typedef struct {
 static const BuildTestScript build_test_scripts[] = {
     {"arena", "arena", nullptr, nullptr, 0},
     {"autodiff", "autodiff", nullptr, nullptr, 1},
-    {"build-0", "build", "0/4", nullptr, 1},
-    {"build-1", "build", "1/4", nullptr, 1},
-    {"build-2", "build", "2/4", nullptr, 1},
-    {"build-3", "build", "3/4", nullptr, 1},
-    {"build-smith", "build-smith", nullptr, nullptr, 1},
-    {"cache", "cache", nullptr, nullptr, 0},
-    {"ci_tree", "ci_tree", nullptr, nullptr, 0},
     {"contract", "contract", nullptr, nullptr, 0},
     {"dap", "dap", nullptr, nullptr, 0},
     {"dbg-crash", "dbg_crash", nullptr, nullptr, 0},
@@ -728,14 +720,10 @@ static const BuildTestScript build_test_scripts[] = {
     {"mcp-fake-ndebug", "mcp", "fake-ndebug", nullptr, 0},
     {"mcp-real", "mcp", "real", nullptr, 1},
     {"neovim", "neovim", nullptr, nullptr, 0},
-    {"package", "package", nullptr, nullptr, 0},
     {"protocol", "protocol", nullptr, nullptr, 0},
     {"prove", "prove", nullptr, nullptr, 1},
     {"prove-sound", "prove_sound", nullptr, nullptr, 1},
     {"random", "random", nullptr, nullptr, 0},
-    {"release", "release", nullptr, nullptr, 0},
-    {"resource", "resource", nullptr, nullptr, 0},
-    {"run", "run", nullptr, nullptr, 0},
     {"main", "test", "main", nullptr, 1},
     {"reports", "test", "reports,misc,explain,lang", nullptr, 1},
     {"rest", "test", "alongside,workers,flags,budget,shrink_int,shrink_list,shrink_normal,inprocess", nullptr, 1},
@@ -747,7 +735,6 @@ static const BuildTestScript build_test_scripts[] = {
     {"isolate-shrink-normal", "test", "isolate", "shrink_normal", 1},
     {"text", "text", nullptr, nullptr, 0},
     {"tree_sitter", "tree_sitter", nullptr, nullptr, 0},
-    {"untar", "untar", nullptr, nullptr, 1},
 };
 // clang-format on
 
@@ -844,7 +831,7 @@ static const char *build_units(SmithBuild *b, const char *binary, const char *fo
 // The task of every script, each one of smith's tests (`smith test` runs them); returns the list, which the install
 // waits for. Each script runs with SMITH_OUTPUT=full, what `smith check` and `smith test` set beneath them (#78): the
 // scripts read the full output of the smith under test, so `smith build install` (which sets nothing) runs the same
-// tests as `smith check`. The quiet form is tested with the variable unset (tests/run.sh).
+// tests as `smith check`. The quiet form is tested with the variable unset (tests/run_routing_test.smith).
 static const char *const *build_test(SmithBuild *b, const BuildConfig *config, const char *binary, const char *folder) {
     build_check_test_parts(b);
     const char *units = config->hook ? build_units(b, binary, folder) : "";
@@ -890,22 +877,6 @@ static const char *const *build_test(SmithBuild *b, const BuildConfig *config, c
     };
     smith_task(b, "prove-sound-full", &sound_full);
     return tasks;
-}
-
-// One of smith's tests, `test-compare`: runs a table of invocations through a real compiler and through smith, and
-// compares stdout, stderr, exit status and the files produced. REAL is the compiler: the clang of the LLVM that smith
-// links, or Homebrew's on macOS for a smith without clang inside, else for example -DREAL=/usr/bin/clang.
-static void build_compare(SmithBuild *b, const BuildConfig *config, const char *binary) {
-    SmithStep compare = {
-        .command =
-            config->real[0] != '\0'
-                ? (const char *[]){"sh", "tests/compare.sh", binary, config->real, nullptr}
-                : (const char *[]){"sh", "-c", "echo 'usage: smith build test-compare -DREAL=/path/to/clang'; exit 2",
-                                   nullptr},
-        .inputs = (const char *[]){binary, nullptr},
-        .test = true,
-    };
-    smith_task(b, "test-compare", &compare);
 }
 
 // Copies smith, once its tests pass, to $PREFIX/bin, with the links smith-cc and smith-c++ (and without the old
@@ -1936,9 +1907,6 @@ void build(SmithBuild *b) {
     config.llvm_id =
         smith_capture_or(b, (const char *[]){"cat", smith_fmt(b, "%s/lib/smith-clang.id", config.llvm), nullptr}, "");
     // Not the environment's CXX, which may be smith-c++ itself: the shim wants LLVM's own headers and a clang.
-    // The compiler `compare` checks smith against: the clang of the LLVM smith links (it must match on every case).
-    config.real = build_variable(b, "REAL", smith_fmt(b, "%s/bin/clang", config.llvm),
-                                 "the compiler `compare` checks smith against");
     config.cxx = smith_option_value(b, "CXX", smith_fmt(b, "%s/bin/clang++", config.llvm), "compiles shim/clang.cpp");
     config.prove = build_prove_folder(b, config.llvm);
     config.hook = build_has_hook(b, config.llvm);
@@ -1955,7 +1923,6 @@ void build(SmithBuild *b) {
     config.binary = smith.outputs[0];
     build_headers(b, &config);
     const char *const *tested = build_test(b, &config, config.binary, folder);
-    build_compare(b, &config, config.binary);
     build_install(b, &config, config.binary, tested);
     build_release(b, config.binary);
     build_llvm(b);

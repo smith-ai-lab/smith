@@ -30,5 +30,5 @@ file ([the language](smith-language.md)). Nothing else in build.c changes: the m
   which reads this file, knows neither the extension nor smith's standard).
 
 A stage0 (no clang inside, so no token hook) still writes the headers; the compile of a `.smith` source fails there,
-saying the compiler needs the token hook. `tests/build.sh` section 15 builds three modules and a C file, and checks the
+saying the compiler needs the token hook. `tests/build_tail_test.smith` builds three modules and a C file, and checks the
 rebuilds, a cycle, a path that does not match, a plain file and the helpers.

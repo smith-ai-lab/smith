@@ -50,7 +50,7 @@ compiler it is:
 
 The program writes the file on every run, and `smith build` runs the program before ninja every time, but it rewrites the
 file only when the text changes. ninja then sees a newer input only after a change of compiler, and a build with the same
-compiler stays "no work to do". Going back to the old compiler is a change as well. `tests/build.sh` covers it: a stand-in
+compiler stays "no work to do". Going back to the old compiler is a change as well. `tests/build_*_test.smith` covers it: a stand-in
 compiler replaced, `COMPILER` switched, smith routing to another `SMITH_CLANG`, a smith replaced by a copy (nothing
 rebuilds), smith switched to an external clang and back, and a stand-in smith whose identity line changes.
 

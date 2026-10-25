@@ -8,7 +8,7 @@ tags: [archives, untar]
 
 **smith reads its archives itself, in its own C** (`runtime/gzip.c`, `xz.c`, `untar.c`): DEFLATE is the library `smith::inflate` (`lib/smith/inflate.smith`, skill smith-inflate; also learner's), gzip's members loop is `gzip.c`, then LZMA2 and tar, no
 vendored library and no zip, which no package uses. Extraction refuses absolute names, `..`, a path through a
-symlink, and a symlink that points outside the package; it keeps file modes and times. Tests: `tests/untar.sh`
+symlink, and a symlink that points outside the package; it keeps file modes and times. Tests: `tests/untar_*_test.smith`
 (hostile and damaged archives, and the readers under ASan and UBSan). See [the build file](build-file.md).
 
 `smith_package` reads `.tar`, `.tar.gz` (or `.tgz`) and `.tar.xz`, told apart by their first bytes, never by the name.
@@ -55,7 +55,7 @@ zip is refused by name (`zip archives are not supported`), as are bzip2 and zstd
 - **Not done:** `._name` AppleDouble companions that macOS tar writes (they begin with the AppleDouble magic number) are
   dropped, as bsdtar turns them into attributes and smith keeps none. Extended attributes, ACLs and file flags are not
   kept. There is no limit on how much an archive may write, as with `tar`: the SHA-256 in build.c is what vouches for it.
-- **Tests:** `tests/untar.sh`. Archives made with the system tar, gzip and xz in every format, check and block layout
+- **Tests:** `tests/untar_*_test.smith`. Archives made with the system tar, gzip and xz in every format, check and block layout
   above, each extracted and compared with its source (every path, byte, mode and link); hostile archives made with
   `tar -P -s` (traversal, absolute names, escaping and absolute symlinks, a file written through a symlink, a FIFO and
   a device) and damaged ones (truncated, wrong gzip CRC-32 and size, a changed byte under each xz check, damaged xz

@@ -49,7 +49,7 @@ tree is never left wrong, at worst built twice.
 
 Yes. It is the executor's input, so it is not a fallback format that can be dropped; what stays optional is ninja. Keep
 `SMITH_NINJA=<ninja>` for one release cycle: it costs 20 lines in `smith.c`, and it lets anyone check the executor
-against ninja on the same file (`tests/build.sh` and the generated-graph test do). Remove it, and the "ninja language"
+against ninja on the same file (`tests/build_*_test.smith` and the generated-graph test do). Remove it, and the "ninja language"
 claims in `docs/build-c.md`, when the manifest's last producer other than smith is gone.
 
 ## Parallelism, and a job that is not a process
@@ -121,7 +121,7 @@ reproducible); every object and generated file is the same.
 
 ## How it was checked
 
-- `tests/build.sh` has 89 checks of the executor (a failed job, `-k`, depfiles, restat, pools, parallel output, Ctrl-C,
+- `tests/build_*_test.smith` has 89 checks of the executor (a failed job, `-k`, depfiles, restat, pools, parallel output, Ctrl-C,
   the tools, malformed manifests, the logs and the upgrade from ninja); `tests/io.c` has the process capture.
 - `python3 tests/ninja_compare.py <smith>` compares the executor with ninja on random manifests (plain, restat, depfile
   and multi-output steps, implicit and order-only inputs, aliases, defaults), each edited at random between builds (a
