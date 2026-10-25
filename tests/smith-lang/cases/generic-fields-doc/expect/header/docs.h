@@ -41,9 +41,13 @@ docs_High, // no doc
 docs_Max,
 } docs_Volume;
 
-// The variants of an enum with payloads are listed too; their docs are not read yet.
-typedef struct smith_enum_docs_Shape {enum docs_Shape_tag {docs_Shape_tag_round, docs_Shape_tag_none, docs_Shape_tag_plain } tag; union {
-float round; };
+// The variants of an enum with payloads are listed too, with the doc above each.
+typedef struct smith_enum_docs_Shape {enum docs_Shape_tag {
+/// A circle.
+docs_Shape_tag_round,
+/// Nothing.
+docs_Shape_tag_none, docs_Shape_tag_plain } tag; union {
+float round; }; // no doc
 } __attribute__((annotate("smith::enum"))) docs_Shape;
 
 void docs_run() __asm__("_docs::run");

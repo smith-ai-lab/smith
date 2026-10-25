@@ -5,5 +5,6 @@ import docs;
 i32 main() {
     docs::run();
     docs::show(docs::Options); // the struct and its comments come from the module's header
+    docs::show(docs::Shape); // a payload enum's variants too
     return 0;
 }

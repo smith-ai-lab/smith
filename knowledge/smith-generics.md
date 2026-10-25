@@ -164,8 +164,9 @@ Point *p = arena::push(&a, Point);                  // the type is the argument 
   module's header keeps them (it already copies comments) and an instance elsewhere reads them. A long text is cut into
   adjacent string literals (one token holds 255 bytes). `Field` gains a `doc` slice (the maker takes it last). `fields`
   of an enum lists its constants (`SmithFieldInfo.is_enum`; the module's prefix of C's `docs_Low` is cut by
-  `sourceName`); a payload enum's variants are its tag constants, whose docs would be the lowering's (made tokens), so
-  they are empty for now.
+  `sourceName`); a payload enum's variants are its tag constants, which the lowering writes at the place of
+  their variant, so the comment above a variant is the constant's (clang finds it by place; the header has it above
+  the constant).
   **`fields(T)` is an array of `Field`** (issue #100, ticket 5 of #95). `Field` is `struct smith_field { char name[:];
   unsigned __int128 type; }` (a type value is a handle, `runtime/lang_type.c`), `typedef`ed `Field` and defined with the
   `static inline Field smith_field_make(char *name, size_t length, unsigned long long kind)` that builds one, raw (the
