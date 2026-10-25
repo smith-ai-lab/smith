@@ -45,6 +45,8 @@ A C toolchain and a modern standard library for C, written in C. Each fact has o
 - smith is batteries included: its standard library covers what programs commonly reach for (data formats and serialization, ML, windows, the GPU, HTTP), so a project needs no third-party library; each library does one thing and defines no macros (owner, 2026-10-25). [libraries](knowledge/libraries.md)
 - The protocol code of `smith mcp` is generated, never written by hand; `smith mcp` is the debugger as MCP tools. [protocol-generation](knowledge/protocol-generation.md), [mcp-server](knowledge/mcp-server.md)
 - Neovim support is this repository and enables nothing the user did not ask for. [neovim](knowledge/neovim.md)
+- Allocation never returns null in .smith: arenas grow from a backing allocator, a fixed arena's budget or the OS refusing is a checked failure; `try_push`/`try_alloc` return option for code that refuses (owner, 2026-10-25). [handlers](knowledge/handlers.md)
+- Prefer inputs to outputs: a function returns what it computes, allocated through the current allocator, instead of filling an out parameter; a pointer parameter that the function updates because updating that thing is the point (an optimizer's step, an arena) is not an out parameter (owner, 2026-10-25).
 
 ## How to work
 
