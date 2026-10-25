@@ -10,15 +10,17 @@ This skill ships in the smith plugin, from `.agents/skills/smith-option/SKILL.md
 `option` is in scope in every module with no import; `smith::option` (`lib/smith/option.smith`, readable source, its header what the compiler reads) defines the one type function, `option(type T)`: an enum with a payload (`smith-lang-enums`), `some` carrying a `T` and `none` carrying nothing. `option(usize)` written anywhere, in any module, is one type. A module cannot declare its own `option` (an error names the built-in).
 
 ```smith
+module absent;
+
 typedef option(usize) Index;        // name it at file scope once, then use Index
 
-Index find(const char *text, char wanted) {
+export Index find(const char *text, char wanted) {
     for (usize i = 0; text[i] != 0; i++)
         if (text[i] == wanted) return {.some = i};
     return .none;
 }
 
-usize or_else(Index at, usize otherwise) {
+export usize or_else(Index at, usize otherwise) {
     if (at == .some) return at.some;       // `.some` is read only where `at == .some` holds
     return otherwise;
 }
