@@ -52,8 +52,7 @@ export const char *flag(usize mode) {
 
 // A check's name, saying the mode when it is the isolated one.
 export const char *label(io::Io *io, const char *iso, const char *name) {
-    if (iso[0] == '\0')
-        return name;
+    if (iso[0] == '\0') return name;
     return format::push(&io->arena, name, " (", iso, ")").data;
 }
 
@@ -64,7 +63,8 @@ export scratch::Run build(const scratch::Project *p, const char *arguments) {
 
 // `smith test` of the project, as a task.
 export scratch::Run smith_test(const scratch::Project *p, const char *iso, const char *arguments) {
-    return scratch::sh(p, format::push(&p->io->arena, "env SMITH_OUTPUT=full smith test ", iso, " ", arguments, " 2>&1").data);
+    return scratch::sh(
+        p, format::push(&p->io->arena, "env SMITH_OUTPUT=full smith test ", iso, " ", arguments, " 2>&1").data);
 }
 
 // The runner of the project, its two streams in one.
@@ -74,16 +74,17 @@ export scratch::Run tests(const scratch::Project *p, const char *iso, const char
 
 // The runner's output through plain_filter.
 export scratch::Run plain(const scratch::Project *p, const char *iso, const char *arguments) {
-    return scratch::sh(p, format::push(&p->io->arena, "build/tests ", iso, " ", arguments, " 2>&1 | ", plain_filter).data);
+    return scratch::sh(p,
+                       format::push(&p->io->arena, "build/tests ", iso, " ", arguments, " 2>&1 | ", plain_filter).data);
 }
 
 // The runner's trace turned into the report by smith symbolize, with the timings left out; the text is the same under
 // the project's lines, spaces squeezed (the columns of the call chain follow the longest path).
 export const char *report(const scratch::Project *p, const char *iso, const char *arguments) {
-    const char *command = format::push(&p->io->arena, "build/tests ", iso, " --trace ", arguments,
-                                       " 2>&1 | smith symbolize 2>&1 | ", plain_filter,
-                                       " | sed -e '/smith_test_execute/d' -e '/smith_test_run_key/d' | tr -s ' '")
-                              .data;
+    const char *command =
+        format::push(&p->io->arena, "build/tests ", iso, " --trace ", arguments, " 2>&1 | smith symbolize 2>&1 | ",
+                     plain_filter, " | sed -e '/smith_test_execute/d' -e '/smith_test_run_key/d' | tr -s ' '")
+            .data;
     return scratch::capture(p, command);
 }
 
@@ -113,36 +114,40 @@ export const char *squeezed(io::Io *io, const char *text) {
     char *copy = arena::push_slice(&io->arena, char, length + 1).data;
     usize at = 0;
     for (usize i = 0; i < length; i++) {
-        if (text[i] == ' ' && at > 0 && copy[at - 1] == ' ')
-            continue;
+        if (text[i] == ' ' && at > 0 && copy[at - 1] == ' ') continue;
         copy[at++] = text[i];
     }
     copy[at] = '\0';
     return copy;
 }
 
+// The number a text starts with (digits only), 0 when it has none.
+export usize number(const char *text) {
+    usize value = 0;
+    for (; *text >= '0' && *text <= '9'; text++)
+        value = value * 10 + (usize)(*text - '0');
+    return value;
+}
+
 // The number of the line (from 1) of the `occurrence`th line (from 1) of a project's file that holds the text.
 export usize line_of_nth(const scratch::Project *p, const char *file, const char *text, usize occurrence) {
     const char *whole = scratch::read(p, file);
+    usize size = c::strlen(whole);
+    usize wanted = c::strlen(text);
     usize line = 1;
     usize seen = 0;
-    const char *start = whole;
-    for (const char *c = whole;; c++) {
-        if (*c == '\n' || *c == '\0') {
-            usize length = (usize)(c - start);
-            for (usize i = 0; i + c::strlen(text) <= length; i++) {
-                if (c::strncmp(start + i, text, c::strlen(text)) == 0) {
-                    seen++;
-                    break;
-                }
-            }
-            if (seen == occurrence)
-                return line;
-            if (*c == '\0')
+    usize start = 0;
+    for (usize at = 0; at <= size; at++) {
+        if (whole[at] != '\n' && whole[at] != '\0') continue;
+        for (usize i = start; i + wanted <= at; i++) {
+            if (c::strncmp(whole + i, text, wanted) == 0) {
+                seen++;
                 break;
-            line++;
-            start = c + 1;
+            }
         }
+        if (seen == occurrence) return line;
+        line++;
+        start = at + 1;
     }
     test::note("%s: no line %zu holds: %s", file, occurrence, text);
     test::check(false);
@@ -159,11 +164,11 @@ export void expect_failure_block(const scratch::Project *p, const char *iso, con
                                  const char *file, const char *source, const char *values, const char *extra) {
     io::Io *io = p->io;
     usize line = line_of(p, file, source);
-    const char *wanted = format::push(&io->arena, "FAIL ", test_name, "\n  check failed at ", file, ":", line,
-                                      "\n     ", line, " |     ", source, "\n           ", values,
-                                      "\n  called from\n    ", file, ":", line, " test_", test_name, "\n", extra,
-                                      "\n0 passed, 1 failed")
-                             .data;
+    const char *wanted =
+        format::push(&io->arena, "FAIL ", test_name, "\n  check failed at ", file, ":", line, "\n     ", line,
+                     " |     ", source, "\n           ", values, "\n  called from\n    ", file, ":", line, " test_",
+                     test_name, "\n", extra, "\n0 passed, 1 failed")
+            .data;
     const char *arguments = format::push(&io->arena, "--test ", test_name).data;
     scratch::expect_text(label(io, iso, name), squeezed(io, wanted), report(p, iso, arguments));
 }

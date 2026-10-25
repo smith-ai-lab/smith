@@ -1,6 +1,6 @@
 // Expected aborts, the three build profiles, isolation (a crash, a sanitizer report, a hang and an exit each fail one
-// test and the rest still run) and the runner's options, ported from tests/test.sh (sections 2, 3 and 4). Each case runs
-// as workers and with --isolate. Fixtures: tests/build_fixtures/runner_*.
+// test and the rest still run) and the runner's options, ported from tests/test.sh (sections 2, 3 and 4). Each case
+// runs as workers and with --isolate. Fixtures: tests/build_fixtures/runner_*.
 module test_runner_aborts_test;
 
 import smith::format;
@@ -90,10 +90,10 @@ export void test_runner_aborts_jobs_one_gives_the_same_results_as_the_default(io
         // the addresses of the trace differ per run
         const char *filter = " 2>&1 | sed -e '/^slowest:/,/^$/d' -e 's/ in [0-9.]* s$//' | grep -v 'smith-trace "
                              "\\(image\\|frame\\)'";
-        const char *all = scratch::capture(
-            &p, format::push(&io->arena, "build/tests ", iso, " --test abort", filter).data);
-        const char *one = scratch::capture(
-            &p, format::push(&io->arena, "build/tests ", iso, " --test abort --jobs 1", filter).data);
+        const char *all =
+            scratch::capture(&p, format::push(&io->arena, "build/tests ", iso, " --test abort", filter).data);
+        const char *one =
+            scratch::capture(&p, format::push(&io->arena, "build/tests ", iso, " --test abort --jobs 1", filter).data);
         scratch::expect_text(runner::label(io, iso, "jobs: --jobs 1 gives the same results"), all, one);
     }
 }
@@ -180,7 +180,8 @@ export void test_runner_aborts_a_sanitizer_report_an_exit_and_a_later_test_are_i
                            "FAIL overflow: killed by SIGABRT");
         runner::expect_has(io, iso, "isolation: ... with the note", &overflow, "    note: index 8");
         scratch::Run exits = runner::tests(&p, iso, "--test exits");
-        runner::expect_has(io, iso, "isolation: an exit status is reported", &exits, "FAIL exits: exited with status 3");
+        runner::expect_has(io, iso, "isolation: an exit status is reported", &exits,
+                           "FAIL exits: exited with status 3");
         scratch::Run after = runner::tests(&p, iso, "--test ok_after --verbose");
         runner::expect_has(io, iso, "isolation: a test after the others still runs", &after, "PASS ok_after");
     }
@@ -199,9 +200,8 @@ export void test_runner_aborts_a_hang_a_busy_test_and_an_alarm_are_reported(io::
         runner::expect_has(io, iso, "isolation: ... and says the wall time, since threads add CPU time", &spins,
                            "s of wall time passed; threads add CPU time)");
         scratch::Run naps = runner::tests(&p, iso, "--test naps --timeout 1 --verbose");
-        runner::expect_has(io, iso,
-                           "isolation: a blocked test spends no CPU time, so the CPU limit does not end it", &naps,
-                           "PASS naps");
+        runner::expect_has(io, iso, "isolation: a blocked test spends no CPU time, so the CPU limit does not end it",
+                           &naps, "PASS naps");
         scratch::Run napped = runner::tests(&p, iso, "--test naps --timeout 1 --wall-timeout 1");
         runner::expect_has(io, iso, "isolation: ... and the wall-clock backstop (a hang, wall time on purpose) does",
                            &napped, "FAIL naps: hung after 1.");
@@ -230,7 +230,8 @@ export void test_runner_aborts_a_note_shows_in_full_up_to_four_kib(io::Io *io) {
 // the test not started): the test gets a fresh worker, three times, and is never reported as over its CPU time limit.
 export void test_runner_aborts_a_test_whose_worker_was_lost_gets_a_fresh_one(io::Io *io) {
     scratch::Project p = built(io, "runner_base", "runner_isolation", "");
-    scratch::Run twice = scratch::sh(&p, "env SMITH_TEST_KILL_WORKERS=2 build/tests --test ok_after --jobs 1 --verbose 2>&1");
+    scratch::Run twice =
+        scratch::sh(&p, "env SMITH_TEST_KILL_WORKERS=2 build/tests --test ok_after --jobs 1 --verbose 2>&1");
     scratch::expect_contains("lost workers: a test whose worker was stopped twice before it began passes in the third",
                              twice.out, "PASS ok_after");
     scratch::Run never = scratch::sh(&p, "env SMITH_TEST_KILL_WORKERS=20 build/tests --test ok_after --jobs 1 2>&1");
@@ -292,8 +293,8 @@ export void test_runner_aborts_smith_test_runs_the_runner_and_passes_its_options
         scratch::Run keep_n = runner::smith_test(&p, iso, "--test prop_ok --seeds 3 -k 2");
         scratch::expect_status(runner::label(io, iso, "task: -k N too"), 0, &keep_n);
         scratch::Run bad = runner::smith_test(&p, iso, "--test prop_ok --seeds x");
-        scratch::expect_failure(runner::label(io, iso, "task: a bad option reaches the runner's usage, and fails the task"),
-                                &bad);
+        scratch::expect_failure(
+            runner::label(io, iso, "task: a bad option reaches the runner's usage, and fails the task"), &bad);
         runner::expect_has(io, iso, "task: ... which says so", &bad, "usage:");
         scratch::Run filtered = runner::smith_test(&p, iso, "--test ok_after --jobs 1");
         scratch::expect_status(runner::label(io, iso, "task: --test filters, and a passing run exits 0"), 0, &filtered);
@@ -305,8 +306,9 @@ export void test_runner_aborts_smith_test_runs_the_runner_and_passes_its_options
 
 // The task prints the values under the failing line, named by their text (x = 700, 500); the runner on its own prints
 // them as a and b. The seed, the first value and the rerun line are the same either way.
-constexpr char digest[] = " | sed -n '/^FAIL prop_fails/,/rerun/p' | grep -E '^FAIL|^ +[ax] = |rerun' | sed -e 's/^ *//' "
-                          "-e 's/^[ax] = \\([0-9]*\\).*/first \\1/'";
+constexpr char digest[] =
+    " | sed -n '/^FAIL prop_fails/,/rerun/p' | grep -E '^FAIL|^ +[ax] = |rerun' | sed -e 's/^ *//' "
+    "-e 's/^[ax] = \\([0-9]*\\).*/first \\1/'";
 
 export void test_runner_aborts_a_failure_names_its_seed_and_the_rerun_line_reproduces_it(io::Io *io) {
     scratch::Project p = properties_project(io);
@@ -316,17 +318,21 @@ export void test_runner_aborts_a_failure_names_its_seed_and_the_rerun_line_repro
         scratch::write(&p, "failed.txt", failed.out);
         const char *seed =
             scratch::capture(&p, "sed -n 's/^FAIL prop_fails with seed \\([0-9]*\\).*/\\1/p' failed.txt");
-        scratch::expect_count(runner::label(io, iso, "properties: a failure names its seed"), 1, (usize)(seed[0] != '\0'));
+        scratch::expect_count(runner::label(io, iso, "properties: a failure names its seed"), 1,
+                              (usize)(seed[0] != '\0'));
         runner::expect_has(io, iso, "properties: ... and a rerun line", &failed,
                            format::push(&io->arena, "    rerun: smith test --test prop_fails --seed ", seed).data);
         const char *first = scratch::capture(&p, format::push(&io->arena, "cat failed.txt", digest).data);
-        const char *second = scratch::capture(
-            &p, format::push(&io->arena, "env SMITH_OUTPUT=full smith test ", iso, " --test prop_fails --seed ", seed,
-                             " --shrink 0 2>&1", digest).data);
-        scratch::expect_text(runner::label(io, iso, "properties: the rerun line reproduces the failure"), first, second);
-        const char *third = scratch::capture(
-            &p, format::push(&io->arena, "build/tests ", iso, " --test prop_fails --seed ", seed, " --shrink 0 2>&1",
-                             digest).data);
+        const char *second =
+            scratch::capture(&p, format::push(&io->arena, "env SMITH_OUTPUT=full smith test ", iso,
+                                              " --test prop_fails --seed ", seed, " --shrink 0 2>&1", digest)
+                                     .data);
+        scratch::expect_text(runner::label(io, iso, "properties: the rerun line reproduces the failure"), first,
+                             second);
+        const char *third =
+            scratch::capture(&p, format::push(&io->arena, "build/tests ", iso, " --test prop_fails --seed ", seed,
+                                              " --shrink 0 2>&1", digest)
+                                     .data);
         scratch::expect_text(runner::label(io, iso, "properties: --seed reproduces it too"), first, third);
     }
 }

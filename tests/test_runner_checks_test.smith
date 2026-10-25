@@ -38,9 +38,10 @@ export void test_runner_checks_a_passing_test_prints_its_line_and_the_summary_on
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::expect_text(runner::label(io, iso, "pass: the line and the summary, nothing else"),
-                             "PASS passing\n\n1 passed, 0 failed", runner::plain(&p, iso, "--test passing --verbose").out);
-        scratch::expect_text(runner::label(io, iso, "pass: without --verbose only the summary"),
-                             "1 passed, 0 failed", runner::plain(&p, iso, "--test passing").out);
+                             "PASS passing\n\n1 passed, 0 failed",
+                             runner::plain(&p, iso, "--test passing --verbose").out);
+        scratch::expect_text(runner::label(io, iso, "pass: without --verbose only the summary"), "1 passed, 0 failed",
+                             runner::plain(&p, iso, "--test passing").out);
         scratch::expect_text(runner::label(io, iso, "pass: the C names pass too, and hide the output"),
                              "PASS c_passing\n\n1 passed, 0 failed",
                              runner::plain(&p, iso, "--test c_passing --verbose").out);
@@ -52,7 +53,8 @@ export void test_runner_checks_the_runner_alone_prints_a_raw_trace_with_a_and_b(
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run run = runner::tests(&p, iso, "--test compare");
-        runner::expect_has(io, iso, "raw: a failed check prints a trace block", &run, "  smith-trace begin check failed");
+        runner::expect_has(io, iso, "raw: a failed check prints a trace block", &run,
+                           "  smith-trace begin check failed");
         runner::expect_has(io, iso, "raw: ... with frames", &run, "  smith-trace frame 0x");
         runner::expect_has(io, iso, "raw: ... and the image's UUID", &run, "  smith-trace image ");
         runner::expect_has(io, iso, "raw: ... both values with their type, named a and b", &run,
@@ -64,8 +66,7 @@ export void test_runner_checks_the_runner_alone_prints_a_raw_trace_with_a_and_b(
 
 export void test_runner_checks_a_failed_ordering_check_names_the_line_and_its_values(io::Io *io) {
     scratch::Project p = checks_project(io);
-    if (!runner::can_symbolize(&p))
-        return;
+    if (!runner::can_symbolize(&p)) return;
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         runner::expect_failure_block(&p, iso, "compare: the failure block", "compare", "tests/test_checks.smith",
@@ -81,8 +82,7 @@ export void test_runner_checks_a_failed_ordering_check_names_the_line_and_its_va
 
 export void test_runner_checks_each_type_prints_the_way_its_kind_does(io::Io *io) {
     scratch::Project p = checks_project(io);
-    if (!runner::can_symbolize(&p))
-        return;
+    if (!runner::can_symbolize(&p)) return;
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         runner::expect_failure_block(
@@ -94,7 +94,8 @@ export void test_runner_checks_each_type_prints_the_way_its_kind_does(io::Io *io
         runner::expect_failure_block(&p, iso, "types: a bool prints true and false", "bool", "tests/test_checks.smith",
                                      "test::check_equal(flag, false);", "flag = true, false   (bool)", "");
         const char *traced = runner::symbolized(&p, iso, "--test pointer");
-        scratch::expect_contains(runner::label(io, iso, "types: a pointer prints as an address"), traced, "pointer = 0x");
+        scratch::expect_contains(runner::label(io, iso, "types: a pointer prints as an address"), traced,
+                                 "pointer = 0x");
         scratch::expect_contains(runner::label(io, iso, "types: ... and nullptr as nullptr"), traced,
                                  ", nullptr   (ptr)");
     }
@@ -102,15 +103,15 @@ export void test_runner_checks_each_type_prints_the_way_its_kind_does(io::Io *io
 
 export void test_runner_checks_check_near_shows_the_values_the_tolerance_and_the_distance(io::Io *io) {
     scratch::Project p = checks_project(io);
-    if (!runner::can_symbolize(&p))
-        return;
+    if (!runner::can_symbolize(&p)) return;
     usize line = runner::line_of(&p, "tests/test_checks.smith", "test::check_near(low, high, tolerance);");
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         const char *traced = runner::symbolized(&p, iso, "--test near");
         scratch::expect_contains(runner::label(io, iso, "near: the failure names the line"), traced,
                                  format::push(&io->arena, "  check failed at tests/test_checks.smith:", line).data);
-        scratch::expect_contains(runner::label(io, iso, "near: ... shows the first value"), traced, "= 1 [0x1p+0]   (f64)");
+        scratch::expect_contains(runner::label(io, iso, "near: ... shows the first value"), traced,
+                                 "= 1 [0x1p+0]   (f64)");
         scratch::expect_contains(runner::label(io, iso, "near: ... the second"), traced, "= 1.5 [0x1.8p+0]   (f64)");
         scratch::expect_contains(runner::label(io, iso, "near: ... the tolerance"), traced,
                                  "= 0.1 [0x1.999999999999ap-4]   (f64)");
@@ -121,8 +122,7 @@ export void test_runner_checks_check_near_shows_the_values_the_tolerance_and_the
 
 export void test_runner_checks_the_c_checks_print_the_same_block_named_by_their_text(io::Io *io) {
     scratch::Project p = checks_project(io);
-    if (!runner::can_symbolize(&p))
-        return;
+    if (!runner::can_symbolize(&p)) return;
     usize near_line = runner::line_of(&p, "tests/test_checks_c.c", "smith_check_near_f64(1.0, 1.5, 0.1);");
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
@@ -191,8 +191,7 @@ export void test_runner_checks_the_api_tests_are_found_and_the_passing_ones_pass
 
 export void test_runner_checks_the_ordering_checks_fail_with_the_values_and_their_types(io::Io *io) {
     scratch::Project p = api_project(io);
-    if (!runner::can_symbolize(&p))
-        return;
+    if (!runner::can_symbolize(&p)) return;
     const char *file = "tests/test_api.smith";
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
@@ -211,8 +210,7 @@ export void test_runner_checks_the_ordering_checks_fail_with_the_values_and_thei
 
 export void test_runner_checks_a_nan_is_unordered_so_every_comparison_but_not_equal_fails(io::Io *io) {
     scratch::Project p = api_project(io);
-    if (!runner::can_symbolize(&p))
-        return;
+    if (!runner::can_symbolize(&p)) return;
     const char *file = "tests/test_api.smith";
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
@@ -236,8 +234,7 @@ export void test_runner_checks_a_nan_is_unordered_so_every_comparison_but_not_eq
 
 export void test_runner_checks_same_bits_tells_zero_from_minus_zero_and_shows_hex(io::Io *io) {
     scratch::Project p = api_project(io);
-    if (!runner::can_symbolize(&p))
-        return;
+    if (!runner::can_symbolize(&p)) return;
     const char *file = "tests/test_api.smith";
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
@@ -252,12 +249,12 @@ export void test_runner_checks_same_bits_tells_zero_from_minus_zero_and_shows_he
 
 export void test_runner_checks_check_near_for_f32_and_infinity_and_pointers_report_their_values(io::Io *io) {
     scratch::Project p = api_project(io);
-    if (!runner::can_symbolize(&p))
-        return;
+    if (!runner::can_symbolize(&p)) return;
     const char *file = "tests/test_api.smith";
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
-        runner::expect_failure_block(&p, iso, "api: check_near for f32 shows the values, the tolerance and the distance",
+        runner::expect_failure_block(&p, iso,
+                                     "api: check_near for f32 shows the values, the tolerance and the distance",
                                      "near_f32_fails", file, "test::check_near(a, b, tolerance);",
                                      "a = 1 [0x1p+0]   (f32)\n           b = 1.5 [0x1.8p+0]   (f32)\n"
                                      "           tolerance = 0.1 [0x1.99999ap-4]   (f32)\n"
@@ -266,8 +263,7 @@ export void test_runner_checks_check_near_for_f32_and_infinity_and_pointers_repo
         const char *infinity = runner::symbolized(&p, iso, "--test near_infinity_fails");
         scratch::expect_contains(runner::label(io, iso, "api: check_near fails on an infinity against a finite value"),
                                  infinity, "check failed at tests/test_api.smith:");
-        scratch::expect_contains(runner::label(io, iso, "api: ... and the distance is inf"), infinity,
-                                 "= inf   (f64)");
+        scratch::expect_contains(runner::label(io, iso, "api: ... and the distance is inf"), infinity, "= inf   (f64)");
         const char *pointer = runner::symbolized(&p, iso, "--test pointer_null_fails");
         scratch::expect_contains(
             runner::label(io, iso, "api: a non-null pointer against nullptr prints its address and nullptr"), pointer,
