@@ -27,6 +27,20 @@ This skill ships in the smith plugin, from `.agents/skills/smith-lsp/SKILL.md` i
 
 Diagnostics at the line and column of the source (the lowering's own, such as ``printf` is a C name; write `c::printf``, and clang's), hover, go-to-definition and references across modules (from a call of a generic to the generic), document symbols, completion (`box::` offers the module's exports), signature help, inlay hints. A "did you mean" note points at the declaration in the module's `.smith`. A run-time array is shown as written: `f32[:]`, `f32[:][2]`, `f32[:][:]`, `const char[:]`, `u8[restrict :]` and `u8[const :]` in a hover, the outline and a completion, never `struct smith_array_f32_n`. Not done: a rename of an exported name edits only what clangd's index has seen; hover in an importer shows types as the generated header writes them (`int32_t`, not `i32`); completion offers `#include` edits for C names; only one `.smith` file is lowered at a time, so a project of many modules opens a little slower than the same in C.
 
+## Ask it from the shell
+
+```sh
+smith lsp def arena::push            # path:line:col: kind: name: the declaration, one line a name
+smith lsp refs arena::push           # every use: aliases (x::push), the module path, calls of a generic, C names in C files
+smith lsp hover src/a.smith:12:5     # what hover shows, one line each (the type of an `auto` local, as written)
+smith lsp symbols src/a.smith        # the outline
+smith lsp diag [FILE...]             # the editor's diagnostics, no build; status 1 on any error; no files: all sources
+printf 'def random::Key\nrefs random::split\n' | smith lsp -    # a query a line, one index load
+```
+
+- A name is as written (`arena::push`, `box::area`, a bare `push` is every module's) or a C name (`smith_arena_push`). Output is grep's shape, paths relative to the folder, so it pipes into `grep`, `sort`, `head`.
+- It is the editor's server and index: the first query in a project waits for the index (`smith lsp: bringing the index up to date` on stderr; minutes on a big project, then seconds), a file changed since is indexed again first. Use it instead of grep for a symbol in `.smith`; **a C macro is found with grep** (it is not in the index). `smith lsp diag FILE` after an edit made outside Edit or Write.
+
 ## Check it without an editor
 
 ```sh

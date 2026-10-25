@@ -14,16 +14,27 @@
 
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/JSON.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cerrno>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <iostream>
 #include <map>
 #include <mutex>
+#include <optional>
+#include <poll.h>
+#include <set>
+#include <sstream>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <unistd.h>
 #include <vector>
 
@@ -548,6 +559,13 @@ class Frames {
   public:
     explicit Frames(int fd) : fd(fd) {}
 
+    // Whether a message can be read within `milliseconds` (one is half read, or the input has bytes or its end).
+    bool ready(int milliseconds) {
+        if (!pending.empty()) return true;
+        struct pollfd watch = {fd, POLLIN, 0};
+        return poll(&watch, 1, milliseconds) > 0;
+    }
+
     // The body of the next message; false at the end of the input.
     bool next(std::string &body) {
         size_t end = std::string::npos;
@@ -613,10 +631,718 @@ bool serves(int argc, char **argv) {
     return true;
 }
 
+// ---- Queries from the shell (issue #248)
+//
+// `smith lsp def|refs|hover|diag|symbols NAME...` and `smith lsp -` (one query a line from the standard input) are
+// answered by a client of the same server the editor talks to, behind the same layer: clangd runs in this process on a
+// pair of pipes, its answers come back with the names as the source writes them, and what it knows is its own index on
+// disk, shared with the editor. The output is grep's shape, `path:line:col: kind: text`, one fact a line.
+
+bool queryWord(StringRef word) {
+    return word == "def" || word == "refs" || word == "hover" || word == "diag" || word == "symbols" || word == "-";
+}
+
+// The folder a query's paths are relative to.
+std::string workingFolder() {
+    char buffer[4096];
+    return getcwd(buffer, sizeof buffer) != nullptr ? buffer : ".";
+}
+
+std::string relativePath(StringRef path) {
+    static const std::string folder = workingFolder() + "/";
+    return path.starts_with(folder) ? path.drop_front(folder.size()).str() : path.str();
+}
+
+std::string uriOfPath(StringRef path) {
+    std::string uri = "file://";
+    for (char c : path) {
+        if (c == ' ' || c == '%' || c == '#' || c == '?') {
+            char escaped[4];
+            snprintf(escaped, sizeof escaped, "%%%02X", (unsigned)(unsigned char)c);
+            uri += escaped;
+        } else {
+            uri += c;
+        }
+    }
+    return uri;
+}
+
+const char *kindName(int64_t kind) {
+    static const char *const names[] = {"",         "file",     "module",   "namespace",   "package",     "class",
+                                        "method",   "property", "field",    "constructor", "enum",        "interface",
+                                        "function", "variable", "constant", "string",      "number",      "boolean",
+                                        "array",    "object",   "key",      "null",        "enum-member", "struct",
+                                        "event",    "operator", "type"};
+    return kind > 0 && kind < (int64_t)(sizeof names / sizeof names[0]) ? names[kind] : "symbol";
+}
+
+// What a place says: the line of the file, the way the source wrote it.
+class Sources {
+  public:
+    std::string line(const std::string &path, int64_t number) {
+        auto found = files.find(path);
+        if (found == files.end()) {
+            std::vector<std::string> lines;
+            std::ifstream file(path);
+            for (std::string text; std::getline(file, text);)
+                lines.push_back(text);
+            found = files.emplace(path, std::move(lines)).first;
+        }
+        if (number < 0 || number >= (int64_t)found->second.size()) return "";
+        StringRef text = StringRef(found->second[(size_t)number]).trim();
+        return text.take_front(160).str();
+    }
+
+  private:
+    std::map<std::string, std::vector<std::string>> files;
+};
+
+struct Place {
+    std::string path;
+    int64_t line = 0;
+    int64_t column = 0;
+    std::string kind;
+    std::string name;
+    std::string lowered; // the compiler's name, as the index has it
+    bool operator<(const Place &other) const {
+        return std::tie(path, line, column) < std::tie(other.path, other.line, other.column);
+    }
+};
+
+class Session {
+  public:
+    Session(Layer &layer, int toServer, int fromServer, int out)
+        : layer(layer), toServer(toServer), frames(fromServer), out(out) {}
+
+    int status = 0;
+
+    bool start() {
+        std::string root = projectRoot();
+        Object workspace{{"symbol", Object{}}};
+        Object text{{"hover", Object{{"contentFormat", Array{"plaintext"}}}},
+                    {"documentSymbol", Object{{"hierarchicalDocumentSymbolSupport", false}}},
+                    {"publishDiagnostics", Object{{"versionSupport", true}}}};
+        Object capabilities{{"workspace", std::move(workspace)},
+                            {"textDocument", std::move(text)},
+                            {"window", Object{{"workDoneProgress", true}}}};
+        Object params{
+            {"processId", (int64_t)getpid()}, {"rootUri", uriOfPath(root)}, {"capabilities", std::move(capabilities)}};
+        if (!request("initialize", std::move(params), 60)) return false;
+        notify("initialized", Object{});
+        // The server reads the project's compile commands, and starts its background index, when the first file is
+        // opened: any one of the project's sources.
+        std::vector<std::string> files = projectSources();
+        if (!files.empty()) open(files[0]);
+        waitForIndex();
+        return true;
+    }
+
+    void finish() {
+        request("shutdown", Value(nullptr), 5);
+        notify("exit", Object{});
+    }
+
+    void run(const std::string &word, const std::vector<std::string> &operands) {
+        if (word == "def") {
+            for (const std::string &name : operands)
+                definitions(name);
+        } else if (word == "refs") {
+            for (const std::string &name : operands)
+                references(name);
+        } else if (word == "hover") {
+            for (const std::string &spot : operands)
+                hover(spot);
+        } else if (word == "symbols") {
+            for (const std::string &file : operands)
+                outline(file);
+        } else if (word == "diag") {
+            diagnose(operands);
+        }
+    }
+
+  private:
+    Layer &layer;
+    int toServer;
+    Frames frames;
+    int out;
+    int64_t nextId = 1;
+    std::set<std::string> opened;
+    struct Published {
+        int64_t version = -1;
+        Array items;
+    };
+    std::map<std::string, Published> diagnostics;
+    bool indexBegun = false;
+    bool indexEnded = false;
+    std::string indexProgress; // the server's last "done/total" of the index
+    Sources sources;
+
+    enum class Read { Message, Timeout, Closed };
+
+    static std::string projectRoot() {
+        std::string folder = workingFolder();
+        for (std::string here = folder; !here.empty() && here != "/"; here = here.substr(0, here.rfind('/'))) {
+            if (access((here + "/.smith/compile_commands.json").c_str(), F_OK) == 0 ||
+                access((here + "/compile_commands.json").c_str(), F_OK) == 0) {
+                return here;
+            }
+            if (here.rfind('/') == 0) break;
+        }
+        return folder;
+    }
+
+    void say(const std::string &line) {
+        std::string text = line + "\n";
+        if (!writeAll(out, text.data(), text.size())) status = status != 0 ? status : 2;
+    }
+
+    bool send(Object message, bool through = true) {
+        message["jsonrpc"] = "2.0";
+        std::string body = llvm::formatv("{0}", Value(std::move(message))).str();
+        if (through) layer.toServer(body);
+        return sendFrame(toServer, body);
+    }
+
+    void notify(const char *method, Value params) {
+        send(Object{{"method", method}, {"params", std::move(params)}});
+    }
+
+    // A message of the server's: its requests are answered, its notifications noted.
+    void handle(Object &message) {
+        auto method = message.getString("method");
+        if (!method) return;
+        if (Value *id = message.get("id")) {
+            send(Object{{"id", *id}, {"result", nullptr}}, false); // a progress token, a registration: accepted
+            return;
+        }
+        Object *params = message.getObject("params");
+        if (params == nullptr) return;
+        if (*method == "$/progress") {
+            Object *value = params->getObject("value");
+            auto kind = value != nullptr ? value->getString("kind") : std::nullopt;
+            if (kind && *kind == "begin") {
+                indexBegun = true;
+                std::cerr << "smith lsp: bringing the index up to date\n";
+            }
+            if (kind && *kind == "report" && value != nullptr)
+                indexProgress = value->getString("message").value_or("").str();
+            if (kind && *kind == "end") indexEnded = true;
+        } else if (*method == "textDocument/publishDiagnostics") {
+            auto uri = params->getString("uri");
+            Array *items = params->getArray("diagnostics");
+            if (!uri || items == nullptr) return;
+            Published &entry = diagnostics[uri->str()];
+            entry.version = params->getInteger("version").value_or(-1);
+            entry.items = *items;
+        }
+    }
+
+    Read read(Object &message, int milliseconds) {
+        if (!frames.ready(milliseconds)) return Read::Timeout;
+        std::string body;
+        if (!frames.next(body)) return Read::Closed;
+        auto parsed = llvm::json::parse(layer.toEditor(std::move(body)));
+        if (!parsed) {
+            llvm::consumeError(parsed.takeError());
+            return Read::Message;
+        }
+        Object *object = parsed->getAsObject();
+        if (object == nullptr) return Read::Message;
+        message = std::move(*object);
+        handle(message);
+        return Read::Message;
+    }
+
+    // The answer of a request, or nothing when the server did not give one in time or refused it.
+    std::optional<Value> request(const char *method, Value params, int seconds, bool through = true) {
+        int64_t id = nextId++;
+        if (!send(Object{{"id", id}, {"method", method}, {"params", std::move(params)}}, through)) return std::nullopt;
+        auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
+        while (std::chrono::steady_clock::now() < deadline) {
+            Object message;
+            Read got = read(message, 100);
+            if (got == Read::Closed) return std::nullopt;
+            if (got == Read::Timeout || message.get("method") != nullptr) continue;
+            Value *answered = message.get("id");
+            if (answered == nullptr || answered->getAsInteger().value_or(-1) != id) continue;
+            if (message.get("error") != nullptr) return std::nullopt;
+            Value *result = message.get("result");
+            return result != nullptr ? std::optional<Value>(std::move(*result)) : std::optional<Value>(nullptr);
+        }
+        return std::nullopt;
+    }
+
+    // The index is up to date when the server's background indexing has begun and ended; it is not begun when there is
+    // nothing to index, which the server does not announce, so a moment with no beginning is "nothing".
+    void waitForIndex() {
+        auto begin = std::chrono::steady_clock::now();
+        auto told = begin;
+        for (;;) {
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed = now - begin;
+            if (indexEnded) return;
+            if (elapsed > std::chrono::minutes(30)) { // never an answer from an incomplete index without saying so
+                std::cerr << "smith lsp: the index is not finished (" << indexProgress
+                          << "): the answer may be incomplete\n";
+                if (status == 0) status = 1;
+                return;
+            }
+            if (!indexBegun && elapsed > std::chrono::seconds(3)) return;
+            if (indexBegun && now - told > std::chrono::seconds(10)) {
+                told = now;
+                std::cerr << "smith lsp: indexing " << indexProgress << "\n";
+            }
+            Object message;
+            if (read(message, 100) == Read::Closed) return;
+        }
+    }
+
+    bool open(const std::string &path, bool send = true) {
+        std::string uri = uriOfPath(path);
+        if (opened.count(uri) != 0) return true;
+        std::ifstream file(path);
+        if (!file) return false;
+        if (!send) return true;
+        std::stringstream text;
+        text << file.rdbuf();
+        notify("textDocument/didOpen",
+               Object{{"textDocument",
+                       Object{{"uri", uri}, {"languageId", "c"}, {"version", (int64_t)1}, {"text", text.str()}}}});
+        opened.insert(uri);
+        return true;
+    }
+
+    static std::string absolute(const std::string &path) {
+        if (!path.empty() && path[0] == '/') return path;
+        return workingFolder() + "/" + (StringRef(path).starts_with("./") ? path.substr(2) : path);
+    }
+
+    static bool endsWithName(StringRef written, StringRef name) {
+        if (written == name) return true;
+        return written.size() > name.size() + 2 && written.ends_with(name) &&
+               written.substr(written.size() - name.size() - 2, 2) == "::";
+    }
+
+    static Place placeOf(Object &symbol) {
+        Place place;
+        place.name = symbol.getString("name").value_or("").str();
+        place.kind = kindName(symbol.getInteger("kind").value_or(0));
+        Object *location = symbol.getObject("location");
+        if (location == nullptr) return place;
+        place.path = pathOfUri(location->getString("uri").value_or(""));
+        Object *range = location->getObject("range");
+        Object *start = range != nullptr ? range->getObject("start") : nullptr;
+        if (start != nullptr) {
+            place.line = start->getInteger("line").value_or(0);
+            place.column = start->getInteger("character").value_or(0);
+        }
+        return place;
+    }
+
+    // Waits until the server has read the file (its diagnostics are published): the names the lowering made of it are
+    // known then, and `smith::namesOf` has them.
+    void awaitParsed(const std::string &path) {
+        std::string uri = uriOfPath(path);
+        auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+        while (diagnostics.find(uri) == diagnostics.end() && std::chrono::steady_clock::now() < deadline) {
+            Object message;
+            if (read(message, 100) == Read::Closed) return;
+        }
+        if (diagnostics.find(uri) == diagnostics.end()) {
+            std::cerr << "smith lsp: " << relativePath(path)
+                      << ": the server did not read it in 30 s; what it holds is missing\n";
+            diagnostics[uri]; // said once
+            if (status == 0) status = 1;
+        }
+    }
+
+    // A name of a symbol in a .smith file as the source writes it, with its module: `smith::arena::push`.
+    std::string qualified(const Place &place) {
+        if (!open(place.path)) return "";
+        awaitParsed(place.path);
+        std::shared_ptr<const smith::FileNames> names = smith::namesOf(place.path);
+        const smith::WrittenName *written = names ? names->find(place.name) : nullptr;
+        if (written == nullptr) return "";
+        return written->module.empty() ? written->written : written->module + "::" + written->member;
+    }
+
+    // The places a name is defined: by the name as the source writes it (a bare name, `module::name` or the whole
+    // path), or by the C name the compiler calls it. The index is asked for the module path and the name joined with
+    // `_`, which is the compiler's name, and the names of the .smith files that hold the answers say what is written.
+    std::vector<Place> find(const std::string &name, std::vector<Place> *headers = nullptr) {
+        std::set<Place> found;
+        std::map<std::string, Place> declared; // the generated header's declarations: where C reaches the name
+        std::vector<Place> instances;          // a generic's instances (`<name>__f32`), where its calls are
+        std::string joined = name;
+        for (size_t at; (at = joined.find("::")) != std::string::npos;)
+            joined.replace(at, 2, "_");
+        // A function with a C name (`[[smith::c_name("smith_arena_push")]] push_raw`) is in the index under the C name,
+        // which the written name does not spell: when the joined name finds nothing, the module's own name is asked
+        // for and every .smith symbol it brings is judged by what the source writes.
+        std::string module = StringRef(name).rsplit("::").first.str();
+        for (size_t at; (at = module.rfind("::")) != std::string::npos;)
+            module = module.substr(at + 2);
+        for (int pass = 0; pass < 2 && found.empty(); pass++) {
+            if (pass == 1 && (module.empty() || module == name)) break;
+            auto answer = request("workspace/symbol", Object{{"query", pass == 0 ? joined : module}}, 120, false);
+            Array *list = answer ? answer->getAsArray() : nullptr;
+            if (list == nullptr) return {};
+            for (Value &entry : *list) {
+                Object *symbol = entry.getAsObject();
+                if (symbol == nullptr) continue;
+                Place place = placeOf(*symbol);
+                place.lowered = place.name;
+                if (place.path.empty()) continue;
+                if (place.path.find("/.smith/include/") != std::string::npos) {
+                    declared.emplace(place.lowered, place);
+                    continue;
+                }
+                if (place.lowered.find("__") != std::string::npos) instances.push_back(place);
+                if (place.name == name) {
+                    found.insert(place); // a C name
+                    continue;
+                }
+                bool smith = StringRef(place.path).ends_with(".smith");
+                bool candidate =
+                    pass == 1 || place.name.find(StringRef(name).rsplit("::").second.str()) != std::string::npos;
+                if (!smith || !candidate) continue;
+                std::string written = qualified(place);
+                if (written.empty() || !endsWithName(written, name)) continue;
+                place.name = written;
+                found.insert(place);
+            }
+        }
+        if (headers != nullptr) {
+            for (const Place &place : found) {
+                auto header = declared.find(place.lowered);
+                if (header != declared.end()) headers->push_back(header->second);
+                for (const Place &instance : instances) {
+                    if (StringRef(instance.lowered).starts_with(place.lowered + "__")) headers->push_back(instance);
+                }
+            }
+        }
+        return std::vector<Place>(found.begin(), found.end());
+    }
+
+    void definitions(const std::string &name) {
+        std::vector<Place> places = find(name);
+        for (const Place &place : places) {
+            say(relativePath(place.path) + ":" + std::to_string(place.line + 1) + ":" +
+                std::to_string(place.column + 1) + ": " + place.kind + ": " + place.name + ": " +
+                sources.line(place.path, place.line));
+        }
+        if (places.empty()) status = status != 0 ? status : 1;
+    }
+
+    // The calls of a generic: the compiler sees an instance where one is written, so the index has the instance, not
+    // the call. The lowering knows each call (shim/names.h, CallSite) of the files it parsed: the files that write the
+    // name are read, and each call that says it is of this generic is a reference.
+    void genericCalls(const Place &generic, std::set<Place> &found) {
+        StringRef member = StringRef(generic.name).rsplit("::").second;
+        for (const std::string &path : projectSources()) {
+            if (!StringRef(path).ends_with(".smith") || !open(path, false)) continue;
+            std::ifstream file(path);
+            std::stringstream text;
+            text << file.rdbuf();
+            if (text.str().find(member.str() + "(") == std::string::npos) continue;
+            open(path);
+            awaitParsed(path);
+            std::shared_ptr<const smith::FileNames> names = smith::namesOf(path);
+            if (!names) continue;
+            for (const smith::CallSite &site : names->calls) {
+                if (site.file != generic.path || (int64_t)site.definition_line != generic.line) continue;
+                Place use;
+                use.path = path;
+                use.line = site.line;
+                use.column = site.column;
+                found.insert(use);
+            }
+        }
+    }
+
+    void references(const std::string &name) {
+        std::set<Place> found;
+        std::vector<Place> headers;
+        std::vector<Place> places = find(name, &headers);
+        for (const Place &place : places) {
+            if (StringRef(place.path).ends_with(".smith")) genericCalls(place, found);
+        }
+        places.insert(places.end(), headers.begin(), headers.end()); // the declaration C code uses is its own symbol
+        for (const Place &place : places) {
+            if (!open(place.path)) continue;
+            Object where{{"textDocument", Object{{"uri", uriOfPath(place.path)}}},
+                         {"position", Object{{"line", place.line}, {"character", place.column}}},
+                         {"context", Object{{"includeDeclaration", true}}}};
+            auto answer = request("textDocument/references", std::move(where), 120);
+            Array *list = answer ? answer->getAsArray() : nullptr;
+            if (list == nullptr) continue;
+            for (Value &entry : *list) {
+                Object *location = entry.getAsObject();
+                if (location == nullptr) continue;
+                Place use;
+                use.path = pathOfUri(location->getString("uri").value_or(""));
+                if (Object *range = location->getObject("range"))
+                    if (Object *start = range->getObject("start")) {
+                        use.line = start->getInteger("line").value_or(0);
+                        use.column = start->getInteger("character").value_or(0);
+                    }
+                if (!use.path.empty() && use.path.find("/.smith/include/") == std::string::npos) found.insert(use);
+            }
+        }
+        for (const Place &use : found) {
+            say(relativePath(use.path) + ":" + std::to_string(use.line + 1) + ":" + std::to_string(use.column + 1) +
+                ": ref: " + sources.line(use.path, use.line));
+        }
+        if (found.empty()) status = status != 0 ? status : 1;
+    }
+
+    // `FILE:LINE:COL`: the file and the place, from 1.
+    static bool spot(const std::string &text, std::string &file, int64_t &line, int64_t &column) {
+        size_t last = text.rfind(':');
+        size_t before = last == std::string::npos || last == 0 ? std::string::npos : text.rfind(':', last - 1);
+        if (before == std::string::npos) return false;
+        file = text.substr(0, before);
+        line = std::strtoll(text.c_str() + before + 1, nullptr, 10) - 1;
+        column = std::strtoll(text.c_str() + last + 1, nullptr, 10) - 1;
+        return line >= 0 && column >= 0;
+    }
+
+    static void flatten(Value &contents, std::vector<std::string> &lines) {
+        std::string text;
+        if (auto plain = contents.getAsString()) {
+            text = plain->str();
+        } else if (Object *markup = contents.getAsObject()) {
+            text = markup->getString("value").value_or("").str();
+        } else if (Array *parts = contents.getAsArray()) {
+            for (Value &part : *parts)
+                flatten(part, lines);
+            return;
+        }
+        std::stringstream stream(text);
+        for (std::string line; std::getline(stream, line);) {
+            StringRef trimmed = StringRef(line).trim();
+            if (trimmed.empty() || trimmed.starts_with("```") || trimmed == "---") continue;
+            lines.push_back(trimmed.str());
+        }
+    }
+
+    void hover(const std::string &where) {
+        std::string file;
+        int64_t line = 0;
+        int64_t column = 0;
+        if (!spot(where, file, line, column)) {
+            std::cerr << "smith lsp hover: `" << where << "` is not FILE:LINE:COL\n";
+            status = 2;
+            return;
+        }
+        std::string path = absolute(file);
+        if (!open(path)) {
+            std::cerr << "smith lsp hover: cannot read " << file << "\n";
+            status = 2;
+            return;
+        }
+        Object params{{"textDocument", Object{{"uri", uriOfPath(path)}}},
+                      {"position", Object{{"line", line}, {"character", column}}}};
+        auto answer = request("textDocument/hover", std::move(params), 120);
+        Object *object = answer ? answer->getAsObject() : nullptr;
+        Value *contents = object != nullptr ? object->get("contents") : nullptr;
+        std::vector<std::string> lines;
+        if (contents != nullptr) flatten(*contents, lines);
+        for (const std::string &text : lines)
+            say(relativePath(path) + ":" + std::to_string(line + 1) + ":" + std::to_string(column + 1) +
+                ": hover: " + text);
+        if (lines.empty()) status = status != 0 ? status : 1;
+    }
+
+    void outlineOf(Array &list, const std::string &path) {
+        for (Value &entry : list) {
+            Object *symbol = entry.getAsObject();
+            if (symbol == nullptr) continue;
+            Place place = placeOf(*symbol);
+            if (symbol->getObject("location") == nullptr) { // a tree: the range is in the symbol itself
+                place.path = path;
+                if (Object *range = symbol->getObject("selectionRange"))
+                    if (Object *start = range->getObject("start")) {
+                        place.line = start->getInteger("line").value_or(0);
+                        place.column = start->getInteger("character").value_or(0);
+                    }
+            }
+            std::string detail = symbol->getString("detail").value_or("").str();
+            say(relativePath(path) + ":" + std::to_string(place.line + 1) + ":" + std::to_string(place.column + 1) +
+                ": " + place.kind + ": " + place.name + (detail.empty() ? "" : "  " + detail));
+            if (Array *children = symbol->getArray("children")) outlineOf(*children, path);
+        }
+    }
+
+    void outline(const std::string &file) {
+        std::string path = absolute(file);
+        if (!open(path)) {
+            std::cerr << "smith lsp symbols: cannot read " << file << "\n";
+            status = 2;
+            return;
+        }
+        auto answer =
+            request("textDocument/documentSymbol", Object{{"textDocument", Object{{"uri", uriOfPath(path)}}}}, 120);
+        Array *list = answer ? answer->getAsArray() : nullptr;
+        if (list != nullptr) outlineOf(*list, path);
+    }
+
+    // The sources of the project's compile commands, for `diag` with no files.
+    static std::vector<std::string> projectSources() {
+        std::vector<std::string> files;
+        std::string root = projectRoot();
+        for (const char *database : {"/.smith/compile_commands.json", "/compile_commands.json"}) {
+            auto buffer = llvm::MemoryBuffer::getFile(root + database);
+            if (!buffer) continue;
+            auto parsed = llvm::json::parse((*buffer)->getBuffer());
+            if (!parsed) {
+                llvm::consumeError(parsed.takeError());
+                continue;
+            }
+            Array *entries = parsed->getAsArray();
+            if (entries == nullptr) continue;
+            for (Value &entry : *entries) {
+                Object *command = entry.getAsObject();
+                if (command == nullptr) continue;
+                std::string file = command->getString("file").value_or("").str();
+                if (file.empty()) continue;
+                if (file[0] != '/') file = command->getString("directory").value_or(root).str() + "/" + file;
+                if (file.find("/.smith/include/") == std::string::npos) files.push_back(file);
+            }
+            break;
+        }
+        std::sort(files.begin(), files.end());
+        files.erase(std::unique(files.begin(), files.end()), files.end());
+        return files;
+    }
+
+    void diagnose(const std::vector<std::string> &operands) {
+        std::vector<std::string> files;
+        for (const std::string &file : operands)
+            files.push_back(absolute(file));
+        if (files.empty()) files = projectSources();
+        for (const std::string &path : files) {
+            if (!open(path)) {
+                std::cerr << "smith lsp diag: cannot read " << relativePath(path) << "\n";
+                status = 2;
+                continue;
+            }
+            std::string uri = uriOfPath(path);
+            auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(120);
+            while (diagnostics.find(uri) == diagnostics.end() && std::chrono::steady_clock::now() < deadline) {
+                Object message;
+                if (read(message, 100) == Read::Closed) break;
+            }
+            Published &published = diagnostics[uri];
+            for (Value &entry : published.items) {
+                Object *item = entry.getAsObject();
+                if (item == nullptr) continue;
+                int64_t severity = item->getInteger("severity").value_or(1);
+                static const char *const names[] = {"", "error", "warning", "note", "hint"};
+                int64_t line = 0;
+                int64_t column = 0;
+                if (Object *range = item->getObject("range"))
+                    if (Object *start = range->getObject("start")) {
+                        line = start->getInteger("line").value_or(0);
+                        column = start->getInteger("character").value_or(0);
+                    }
+                std::string message = item->getString("message").value_or("").str();
+                std::replace(message.begin(), message.end(), '\n', ' ');
+                say(relativePath(path) + ":" + std::to_string(line + 1) + ":" + std::to_string(column + 1) + ": " +
+                    names[severity >= 1 && severity <= 4 ? severity : 1] + ": " + message);
+                if (severity == 1) status = 1;
+            }
+        }
+    }
+};
+
+// The words of a line of a batch.
+std::vector<std::string> wordsOf(const std::string &line) {
+    std::vector<std::string> words;
+    std::stringstream stream(line);
+    for (std::string word; stream >> word;)
+        words.push_back(word);
+    return words;
+}
+
+// Runs the queries of the command line, or of the standard input for `-`, against the server `server` on pipes behind
+// the layer. Returns the status: 0, 1 when a query found nothing or a diagnostic is an error, 2 for a bad query.
+int runQueries(int argc, char **argv, int (*server)(int, char **)) {
+    std::vector<std::string> operands;
+    std::vector<char *> flags = {argv[0]};
+    bool verbose = false;
+    for (int i = 1; i < argc; i++) {
+        StringRef arg(argv[i]);
+        if (arg == "--verbose") {
+            verbose = true;
+        } else if (arg.starts_with("--")) {
+            flags.push_back(argv[i]);
+        } else {
+            operands.push_back(argv[i]);
+        }
+    }
+    static char logging[] = "--log=error";
+    static char verbosely[] = "--log=verbose";
+    static char unlimited[] = "--limit-results=0"; // a bare name is every module's: all of them, not a hundred
+    static char priority[] = "--background-index-priority=normal"; // the query waits for the index: not at low priority
+    flags.push_back(verbose ? verbosely : logging);
+    flags.push_back(unlimited);
+    flags.push_back(priority);
+    flags.push_back(nullptr);
+    std::string word = operands.empty() ? "" : operands[0];
+    operands.erase(operands.begin(), operands.empty() ? operands.begin() : operands.begin() + 1);
+    int fromUser = dup(0);
+    int toUser = dup(1);
+    int toServer[2];
+    int fromServer[2];
+    if (fromUser < 0 || toUser < 0 || pipe(toServer) != 0 || pipe(fromServer) != 0) return 2;
+    dup2(toServer[0], 0);
+    close(toServer[0]);
+    dup2(fromServer[1], 1);
+    close(fromServer[1]);
+    Layer *layer = new Layer; // as long as the process, like the editor's
+    std::atomic<int> status{0};
+    std::thread client([&] {
+        Session session(*layer, toServer[1], fromServer[0], toUser);
+        if (!session.start()) {
+            std::cerr << "smith lsp: the language server did not start\n";
+            status = 2;
+        } else {
+            if (word == "-") {
+                std::string text;
+                char chunk[1 << 12];
+                for (ssize_t got; (got = read(fromUser, chunk, sizeof chunk)) > 0;)
+                    text.append(chunk, (size_t)got);
+                std::stringstream lines(text);
+                for (std::string line; std::getline(lines, line);) {
+                    std::vector<std::string> words = wordsOf(line);
+                    if (words.empty() || words[0][0] == '#') continue;
+                    if (!queryWord(words[0]) || words[0] == "-") {
+                        std::cerr << "smith lsp -: `" << line << "` is not a query (def, refs, hover, diag, symbols)\n";
+                        session.status = 2;
+                        continue;
+                    }
+                    session.run(words[0], std::vector<std::string>(words.begin() + 1, words.end()));
+                }
+            } else {
+                session.run(word, operands);
+            }
+            session.finish();
+            status = session.status;
+        }
+        close(toServer[1]); // clangd reads the end of its input
+    });
+    int ended = server((int)flags.size() - 1, flags.data());
+    llvm::outs().flush();
+    client.join();
+    return status != 0 ? status.load() : ended;
+}
+
 } // namespace
 
 // Runs `server` (clangd's main) with its input and output behind the layer. Returns its status.
 extern "C" int smith_lsp_run(int argc, char **argv, int (*server)(int, char **)) {
+    if (argc > 1 && queryWord(argv[1])) return runQueries(argc, argv, server);
     if (!serves(argc, argv)) return server(argc, argv);
     int fromEditor = dup(0);
     int toEditor = dup(1);
