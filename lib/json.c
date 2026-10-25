@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 #include "../include/smith/contract.h"
+#include "../include/smith/trace.h"
 
 // A check that stays in every build: an invariant of this file, not a contract a proof of a caller should read.
 // Trusted, its body is never read, so the assert is a run-time check that writes the failure report (the call's line
@@ -10,6 +11,11 @@ static void smith_json_check(bool holds) {
     smith_trusted();
     smith_assert(holds);
     if (!holds) __builtin_trap();
+}
+
+// A writer call that cannot be right is a bug of the caller, not data: it stops with the report, in every build.
+[[noreturn]] static void smith_json_misuse(const char *what) {
+    smith_failure_detail(SmithFailure_Check, what);
 }
 
 const char *smith_json_reason_text(SmithJsonReason reason) {
@@ -38,12 +44,6 @@ const char *smith_json_reason_text(SmithJsonReason reason) {
         return "string longer than the limit";
     case SmithJsonReason_TooMany:
         return "more values than the limit";
-    case SmithJsonReason_OutOfMemory:
-        return "the arena cannot hold the tree";
-    case SmithJsonReason_NotFinite:
-        return "infinity and nan have no JSON text";
-    case SmithJsonReason_Misplaced:
-        return "value, key or end in the wrong place";
     case SmithJsonReason_Full:
         return "the output buffer is full";
     }
@@ -682,24 +682,23 @@ static void smith_json_build_token(SmithJsonBuild *build, const SmithJsonReader 
     }
 }
 
-// Pushes the one block the tree needs (the nodes, the arrays of children, the decoded strings), or nothing: returns
-// false if the arena cannot hold it.
-static bool smith_json_build_make(SmithJsonBuild *build, SmithArena *arena, SmithJsonSize size) {
+// Pushes the one block the tree needs (the nodes, the arrays of children, the decoded strings). An arena that cannot
+// hold it stops the program with the arena's own report, as any push does.
+static void smith_json_build_make(SmithJsonBuild *build, SmithArena *arena, SmithJsonSize size) {
     size_t pool_count = size.values > 0 ? size.values - 1 : 0;
     size_t node_bytes = size.values * sizeof(SmithJsonValue);
     size_t pool_bytes = pool_count * sizeof(SmithJsonValue *);
-    if (size.values > SIZE_MAX / sizeof(SmithJsonValue) || pool_count > SIZE_MAX / sizeof(SmithJsonValue *))
-        return false;
-    if (node_bytes > SIZE_MAX - pool_bytes || node_bytes + pool_bytes > SIZE_MAX - size.bytes) return false;
+    if (size.values > SIZE_MAX / sizeof(SmithJsonValue) || pool_count > SIZE_MAX / sizeof(SmithJsonValue *) ||
+        node_bytes > SIZE_MAX - pool_bytes || node_bytes + pool_bytes > SIZE_MAX - size.bytes)
+        smith_failure_format(SmithFailure_Capacity, "json tree of %zu values and %zu bytes of text", size.values,
+                             size.bytes);
     static_assert(sizeof(SmithJsonValue) % alignof(SmithJsonValue) == 0 &&
                   sizeof(SmithJsonValue *) % alignof(SmithJsonValue) == 0);
     size_t total = node_bytes + pool_bytes + size.bytes;
-    if (!smith_arena_fits(arena, total, alignof(SmithJsonValue))) return false;
     unsigned char *block = smith_arena_push(arena, total, alignof(SmithJsonValue));
     build->nodes = (SmithJsonValue *)(void *)block;
     build->pool = (const SmithJsonValue **)(void *)(block + node_bytes);
     build->bytes = (char *)(block + node_bytes + pool_bytes);
-    return true;
 }
 
 bool smith_json_parse(SmithArena *arena, struct smith_array_const_char_n input, SmithJsonLimits limits,
@@ -707,10 +706,7 @@ bool smith_json_parse(SmithArena *arena, struct smith_array_const_char_n input, 
     SmithJsonSize size = {};
     if (!smith_json_measure(input, limits, &size, error)) return false;
     SmithJsonBuild build = {};
-    if (!smith_json_build_make(&build, arena, size)) {
-        *error = (SmithJsonError){0, SmithJsonReason_OutOfMemory};
-        return false;
-    }
+    smith_json_build_make(&build, arena, size);
     SmithJsonReader reader = smith_json_reader_make(input, limits);
     for (SmithJsonToken token = smith_json_read(&reader); token != SmithJsonToken_End;
          token = smith_json_read(&reader)) {
@@ -787,7 +783,7 @@ static bool smith_json_begin_value(SmithJsonWriter *writer) {
     if (writer->error.reason != SmithJsonReason_None) return false;
     if (writer->depth == 0) {
         if (writer->state != SmithJsonWriterState_Start)
-            return smith_json_writer_fail(writer, SmithJsonReason_Misplaced);
+            smith_json_misuse("json writer: a second document, or a value where the document is complete");
         return true;
     }
     if (writer->state == SmithJsonWriterState_Item) {
@@ -795,7 +791,7 @@ static bool smith_json_begin_value(SmithJsonWriter *writer) {
         return true;
     }
     if (writer->state == SmithJsonWriterState_Value) return true;
-    return smith_json_writer_fail(writer, SmithJsonReason_Misplaced);
+    smith_json_misuse("json writer: a value where a key, or the end of the object, is due");
 }
 
 // A value is complete.
@@ -825,8 +821,7 @@ static void smith_json_write_end(SmithJsonWriter *writer, bool object) {
     bool open = writer->depth > 0 && smith_json_bit(writer->objects, writer->depth - 1) == object;
     bool ready = writer->state == (object ? SmithJsonWriterState_Key : SmithJsonWriterState_Item);
     if (!open || !ready) {
-        (void)smith_json_writer_fail(writer, SmithJsonReason_Misplaced);
-        return;
+        smith_json_misuse("json writer: an end that closes nothing, the wrong container, or a key without its value");
     }
     writer->depth -= 1;
     if (smith_json_bit(writer->filled, writer->depth)) smith_json_put_break(writer, writer->depth);
@@ -921,8 +916,7 @@ static void smith_json_put_string(SmithJsonWriter *writer, struct smith_array_co
 void smith_json_write_key(SmithJsonWriter *writer, struct smith_array_const_char_n key) {
     if (writer->error.reason != SmithJsonReason_None) return;
     if (writer->depth == 0 || writer->state != SmithJsonWriterState_Key) {
-        (void)smith_json_writer_fail(writer, SmithJsonReason_Misplaced);
-        return;
+        smith_json_misuse("json writer: a key outside an object, or two keys in a row");
     }
     smith_json_put_separator(writer);
     smith_json_put_string(writer, key);
@@ -958,8 +952,7 @@ void smith_json_write_i64(SmithJsonWriter *writer, int64_t value) {
 void smith_json_write_f64(SmithJsonWriter *writer, double value) {
     uint64_t bits = __builtin_bit_cast(uint64_t, value);
     if (((bits >> 52) & 0x7ff) == 0x7ff) {
-        (void)smith_json_writer_fail(writer, SmithJsonReason_NotFinite);
-        return;
+        smith_json_misuse("json writer: infinity and nan have no JSON text");
     }
     char text[smith_text_f64_capacity];
     smith_json_write_number(
@@ -1046,7 +1039,7 @@ void smith_json_write_value(SmithJsonWriter *writer, const SmithJsonValue *value
 
 bool smith_json_writer_finish(SmithJsonWriter *writer, struct smith_array_const_char_n *output) {
     if (writer->error.reason == SmithJsonReason_None && writer->state != SmithJsonWriterState_Done)
-        (void)smith_json_writer_fail(writer, SmithJsonReason_Misplaced);
+        smith_json_misuse("json writer: finished before the document is complete");
     if (writer->error.reason != SmithJsonReason_None) return false;
     *output = (struct smith_array_const_char_n){.data = writer->buffer, .count = {writer->length}};
     return true;

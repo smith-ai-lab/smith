@@ -291,6 +291,46 @@ export void test_inflate_decodes_an_empty_stream(io::Io *io) {
     expect(inflate::decode(inflate::Gzip, gzip, size, nullptr, 0, &used, &produced), inflate::Ok);
 }
 
+export void test_inflate_a_null_output_with_a_capacity_stops() {
+    u8 input[1] = {0};
+    usize used = 0;
+    usize produced = 0;
+    test::expect_abort();
+    (void)inflate::decode(inflate::Raw, input, sizeof input, nullptr, 4, &used, &produced);
+}
+
+export void test_inflate_a_null_input_with_a_size_stops() {
+    u8 output[4];
+    usize used = 0;
+    usize produced = 0;
+    test::expect_abort();
+    (void)inflate::decode(inflate::Raw, nullptr, 1, output, sizeof output, &used, &produced);
+}
+
+static bool inflate_test_sink(void *context, const u8 *data, usize size) {
+    (void)context;
+    (void)data;
+    (void)size;
+    return true;
+}
+
+export void test_inflate_a_null_sink_stops() {
+    static u8 window[inflate::window];
+    u8 input[1] = {0};
+    usize used = 0;
+    u64 produced = 0;
+    test::expect_abort();
+    (void)inflate::stream(inflate::Raw, input, sizeof input, window, nullptr, nullptr, &used, &produced);
+}
+
+export void test_inflate_a_null_window_stops() {
+    u8 input[1] = {0};
+    usize used = 0;
+    u64 produced = 0;
+    test::expect_abort();
+    (void)inflate::stream(inflate::Raw, input, sizeof input, nullptr, inflate_test_sink, nullptr, &used, &produced);
+}
+
 export void test_inflate_reads_every_gzip_header_field(io::Io *io) {
     usize size = 0;
     const u8 *fields = load(io, "fields", "gz", &size);

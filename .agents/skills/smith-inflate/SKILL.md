@@ -5,7 +5,7 @@ description: "Using smith::inflate (import smith::inflate): DEFLATE raw, zlib an
 
 # DEFLATE: smith's inflate
 
-DEFLATE (RFC 1951) with the zlib and gzip wrappers, input whole in memory, no allocation. Damaged input fails with a status and never reads or writes outside its buffers. smith's `.tar.gz` extraction is built on it. A `.smith` module; C includes `<smith/inflate.h>`; `smith_library(b, "inflate")` compiles it and needs nothing else.
+DEFLATE (RFC 1951) with the zlib and gzip wrappers, input whole in memory, no allocation. Damaged input fails with a status (data, so a value); a call that is wrong panics: a null input with a size, a null output with a capacity, a null `used` or `size`, and for `stream` a null window or sink. It never reads or writes outside its buffers. smith's `.tar.gz` extraction is built on it. A `.smith` module; C includes `<smith/inflate.h>`; `smith_library(b, "inflate")` compiles it and needs nothing else.
 
 ## In memory
 

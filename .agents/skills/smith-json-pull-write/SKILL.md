@@ -38,11 +38,11 @@ bool write_pi(const char (*out)[:]) {
     c::smith_json_write_key(&w, text::make("pi"));
     c::smith_json_write_f64(&w, 3.14159); // the fewest digits that read back as the same bits
     c::smith_json_write_object_end(&w);
-    return c::smith_json_writer_finish(&w, out); // false: w.error, one of Full, Misplaced, BadUtf8, NotFinite
+    return c::smith_json_writer_finish(&w, out); // false: w.error, Full or BadUtf8
 }
 ```
 
-The first mistake is kept and the rest do nothing, so check once, at the end. Non-UTF-8 and nan/infinity are refused.
+The first failure of the data is kept and the rest do nothing, so check once, at the end: `Full` (retry with a bigger buffer) or `BadUtf8` (the text is data). A call that cannot be right panics with a report in every build: a value where a key is due, an end that closes nothing, a key outside an object, infinity or nan, finishing before the document is complete.
 
 `smith_json_write_value(&w, tree)` writes a whole tree from `smith_json_parse` back as one value (strings escaped again, numbers as they were written, members in order, duplicate keys kept). It is how a protocol keeps a field it does not look inside: store the `const SmithJsonValue *`, write it back later.
 
