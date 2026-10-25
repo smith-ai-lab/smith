@@ -461,9 +461,10 @@ export void test_new_assert_false_stops_debug_and_release_in_c(io::Io *io) {
 // run, found from the #include alone.
 export void test_new_the_libraries_build_under_the_conventions_flags(io::Io *io) {
     scratch::Project p = fresh(io);
-    generated(&p,
-              "generate hellc --language c && mkdir libs && cp -R hellc/primes.c hellc/primes.h hellc/primes_test.c libs/ && "
-              "cp \"$SMITH_REPO/tests/build_fixtures/new_libs/main.c\" libs/main.c");
+    generated(
+        &p,
+        "generate hellc --language c && mkdir libs && cp -R hellc/primes.c hellc/primes.h hellc/primes_test.c libs/ && "
+        "cp \"$SMITH_REPO/tests/build_fixtures/new_libs/main.c\" libs/main.c");
     scratch::Run built = run_in(&p, "libs", "smith build && smith build release fast");
     scratch::expect_status("libraries: the three build under the conventions' flags", 0, &built);
     const char *modes[] = {"debug", "release", "fast"};

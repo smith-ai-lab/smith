@@ -1,0 +1,31 @@
+// The test layout (issue #294): a unit test sits beside its module as `<module>_test.smith` and is an ordinary module
+// that sees only the exports; `smith test` finds any `*_test.smith` or `*_test.c`; `smith build` never links one.
+module build_layout_test;
+
+import smith::io;
+import smith::test;
+import scratch;
+
+export void test_build_layout_a_test_beside_its_module_is_run_by_smith_test(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "unit_beside");
+    scratch::Run run = scratch::sh(&p, "smith test");
+    scratch::expect_status("layout: smith test passes", 0, &run);
+    scratch::expect_contains("layout: and ran the test beside the module", run.out, "1 passed");
+}
+
+export void test_build_layout_the_program_never_links_a_test(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "unit_beside");
+    scratch::Run built = scratch::build(&p, "");
+    scratch::expect_status("layout: smith build passes", 0, &built);
+    scratch::expect_text("layout: no object of a test", "0",
+                         scratch::capture(&p, "find build -name '*_test*' | wc -l | tr -d ' '"));
+    scratch::Run ran = scratch::sh(&p, "build/debug/p");
+    scratch::expect_status("layout: and the program runs", 0, &ran);
+}
+
+export void test_build_layout_a_test_module_cannot_name_a_private_function(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "unit_private");
+    scratch::Run run = scratch::sh(&p, "smith test");
+    scratch::expect_failure("layout: a private function is out of reach", &run);
+    scratch::expect_contains("layout: and the error says so", run.err, "lists no export `scale`");
+}

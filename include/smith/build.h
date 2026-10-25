@@ -418,10 +418,11 @@ typedef struct {
 
 void smith_app(SmithBuild *b, SmithApp *app);
 
-// The tests of a project, built with the debug flags and run by `smith test`: every *_test.smith and *_test.c file below
-// the root (beside the module it tests, or in the folder for integration tests), and every other .c file directly in
-// the folder, a helper that is linked into the runner. Call it after build::app. The code under test is what the tests and helpers
-// reach by include or import, compiled once in the debug profile with the flags of the programs. Expands to
+// The tests of a project, built with the debug flags and run by `smith test`: every *_test.smith and *_test.c file
+// below the root (beside the module it tests, or in the folder for integration tests), and every other .c file directly
+// in the folder, a helper that is linked into the runner. Call it after build::app. The code under test is what the
+// tests and helpers reach by include or import, compiled once in the debug profile with the flags of the programs.
+// Expands to
 //   build::tests(b, &(build::Tests){.sources = build::glob(b, {"**/*_test.smith", "**/*_test.c"}),
 //                                .objects = what the sources and helpers reach, and the helpers (compiled with
 //                                flags(debug)), .flags = flags(debug), .inputs = .inputs,
