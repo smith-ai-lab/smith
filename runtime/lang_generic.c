@@ -2072,6 +2072,15 @@ typedef struct {
     // a pattern in the arguments, read by the replay and never by the compiler (smith_lang_typed_compact).
     SmithLangSpan junk[smith_lang_junk_max];
     size_t junk_count;
+    // `try` and `errdefer` (runtime/lang_enum.c): the braces open in the body, the flags of the open `errdefer`s and
+    // the numbers of the names a `try` and a `return` write.
+    uint32_t braces;
+    uint32_t try_next;
+    uint32_t flag_count;
+    struct {
+        uint32_t id;
+        uint32_t depth;
+    } flags[16];
 } SmithLangReplay;
 
 static SmithLangReplay smith_lang_replay;
@@ -2083,6 +2092,8 @@ static bool smith_lang_slice_replay(SmithLang *lang, const SmithHost *host, Smit
 static SmithTokenKind smith_lang_slice_kind(const char *word);
 static bool smith_lang_enum_replay(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
                                    SmithLangFrame *frame);
+static bool smith_lang_try_replay(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                  SmithLangFrame *frame);
 static const char *smith_lang_tuple_keep(const char *text, size_t length);
 
 // Writes the words of a frame, then the frame is done.
@@ -2099,8 +2110,11 @@ static void smith_lang_replay_words(SmithLang *lang, const SmithHost *host, cons
         while (*word == ' ')
             word += 1;
         char *stop = word;
-        while (*stop != 0 && *stop != ' ')
+        bool quoted = *word == '"'; // a string literal is one word, spaces and all
+        stop += quoted ? 1 : 0;
+        while (*stop != 0 && (quoted ? *stop != '"' : *stop != ' '))
             stop += 1;
+        stop += quoted && *stop == '"' ? 1 : 0;
         if (stop == word) break;
         const char *kept = smith_lang_tuple_keep(word, (size_t)(stop - word));
         size_t kept_length = strlen(kept);
@@ -4131,6 +4145,7 @@ static void smith_lang_replay_run(SmithLang *lang, const SmithHost *host, SmithL
         }
         if (smith_lang_fields_replay(lang, host, replay, frame)) continue;
         if (smith_lang_slice_replay(lang, host, replay, frame)) continue;
+        if (smith_lang_try_replay(lang, host, replay, frame)) continue;
         if (smith_lang_enum_replay(lang, host, replay, frame)) continue;
         if (smith_lang_replay_shape(lang, host, replay, frame)) continue;
         if (smith_lang_list_gone(lang, host, replay, frame)) continue;
@@ -4149,6 +4164,10 @@ static void smith_lang_replay_run(SmithLang *lang, const SmithHost *host, SmithL
             continue;
         }
         frame->pos += 1;
+        if (token->special == SmithLangGen_Plain && smith_lang_gt_punct(token, "{")) replay->braces += 1;
+        if (token->special == SmithLangGen_Plain && smith_lang_gt_punct(token, "}") && replay->braces > 0) {
+            replay->braces -= 1;
+        }
         if (token->special == SmithLangGen_Plain && replay->generic != nullptr &&
             smith_lang_has_pack(replay->generic)) {
             smith_lang_pack_clash(lang, host, replay, token,

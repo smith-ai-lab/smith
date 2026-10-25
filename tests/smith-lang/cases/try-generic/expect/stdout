@@ -1,0 +1,10 @@
+ok 15
+  errdefer twice
+error -1
+  errdefer twice
+error 100
+ok 3.5
+some 7
+  errdefer maybe_twice
+none
+some 5.5

@@ -11,6 +11,7 @@
 //
 // The kind (result or option) is the function's: the compiler's error for a call of the other kind carries a hint.
 // A statement expression keeps the `try` where it is written, so nothing before it has to be rewritten.
+// A generic's body is recorded as written; smith_lang_try_replay (runtime/lang_enum.c) writes the same for an instance.
 
 static bool smith_lang_enum_return(SmithLang *lang, const SmithHost *host);
 
@@ -307,15 +308,7 @@ static bool smith_lang_try_token(SmithLang *lang, const SmithHost *host, const S
     bool errdefer_word = smith_lang_ident(token, "errdefer");
     if (!tr->on && !try_word && !errdefer_word) return false;
     if ((try_word || errdefer_word) && smith_lang_try_member(lang, host)) return false;
-    if (lang->recording) {
-        if (try_word || errdefer_word) {
-            smith_lang_error(lang, host, token->location,
-                             "`%s` is not in a generic function yet (known gap): the kind it needs cannot be checked "
-                             "before an instance; write the test by hand",
-                             try_word ? "try" : "errdefer");
-        }
-        return false;
-    }
+    if (lang->recording) return false; // a generic's body is kept as written; an instance is lowered when it is read
     tr->on = true;
     tr->just_returned = tr->after_return;
     tr->after_return = false;
