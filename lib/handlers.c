@@ -55,50 +55,50 @@ SmithAllocator *smith_handlers_allocator(void) {
 // The files and the console, found the same way: a counter of the threads that have one, a thread-local table.
 static atomic_uint smith_handlers_files_active;
 static atomic_uint smith_handlers_console_active;
-static thread_local SmithFiles *smith_handlers_files_table;
-static thread_local SmithConsole *smith_handlers_console_table;
+static thread_local SmithFileHandler *smith_handlers_files_table;
+static thread_local SmithConsoleHandler *smith_handlers_console_table;
 
-__attribute__((noinline)) static SmithFiles *smith_handlers_files_get(void) {
+__attribute__((noinline)) static SmithFileHandler *smith_handlers_files_get(void) {
     return smith_handlers_files_table;
 }
 
-__attribute__((noinline)) static SmithConsole *smith_handlers_console_get(void) {
+__attribute__((noinline)) static SmithConsoleHandler *smith_handlers_console_get(void) {
     return smith_handlers_console_table;
 }
 
-__attribute__((noinline)) static SmithFiles *smith_handlers_files_current(void) {
+__attribute__((noinline)) static SmithFileHandler *smith_handlers_files_current(void) {
     if (atomic_load_explicit(&smith_handlers_files_active, memory_order_relaxed) == 0) return nullptr;
     if (!atomic_load_explicit(&smith_handlers_ready, memory_order_relaxed)) return nullptr;
     return smith_handlers_files_get();
 }
 
-__attribute__((noinline)) static SmithConsole *smith_handlers_console_current(void) {
+__attribute__((noinline)) static SmithConsoleHandler *smith_handlers_console_current(void) {
     if (atomic_load_explicit(&smith_handlers_console_active, memory_order_relaxed) == 0) return nullptr;
     if (!atomic_load_explicit(&smith_handlers_ready, memory_order_relaxed)) return nullptr;
     return smith_handlers_console_get();
 }
 
-SmithFiles *smith_handlers_set_files(SmithFiles *files) {
-    SmithFiles *previous = smith_handlers_files_table;
+SmithFileHandler *smith_handlers_set_files(SmithFileHandler *files) {
+    SmithFileHandler *previous = smith_handlers_files_table;
     smith_handlers_files_table = files;
     if (previous == nullptr && files != nullptr) atomic_fetch_add(&smith_handlers_files_active, 1);
     if (previous != nullptr && files == nullptr) atomic_fetch_sub(&smith_handlers_files_active, 1);
     return previous;
 }
 
-SmithFiles *smith_handlers_files(void) {
+SmithFileHandler *smith_handlers_files(void) {
     return smith_handlers_files_current();
 }
 
-SmithConsole *smith_handlers_set_console(SmithConsole *console) {
-    SmithConsole *previous = smith_handlers_console_table;
+SmithConsoleHandler *smith_handlers_set_console(SmithConsoleHandler *console) {
+    SmithConsoleHandler *previous = smith_handlers_console_table;
     smith_handlers_console_table = console;
     if (previous == nullptr && console != nullptr) atomic_fetch_add(&smith_handlers_console_active, 1);
     if (previous != nullptr && console == nullptr) atomic_fetch_sub(&smith_handlers_console_active, 1);
     return previous;
 }
 
-SmithConsole *smith_handlers_console(void) {
+SmithConsoleHandler *smith_handlers_console(void) {
     return smith_handlers_console_current();
 }
 
@@ -229,26 +229,26 @@ static int smith_handlers_open(const char *path, int flags, ...) {
         mode = va_arg(args, int);
         va_end(args);
     }
-    SmithFiles *files = smith_handlers_files_current();
+    SmithFileHandler *files = smith_handlers_files_current();
     return files != nullptr ? files->open(files, path, flags, mode) : open(path, flags, mode);
 }
 
 static ssize_t smith_handlers_read(int fd, void *buffer, size_t size) {
-    SmithConsole *console = fd == 0 ? smith_handlers_console_current() : nullptr;
+    SmithConsoleHandler *console = fd == 0 ? smith_handlers_console_current() : nullptr;
     if (console != nullptr) return console->read(console, buffer, size);
-    SmithFiles *files = fd >= smith_handlers_first_file ? smith_handlers_files_current() : nullptr;
+    SmithFileHandler *files = fd >= smith_handlers_first_file ? smith_handlers_files_current() : nullptr;
     return files != nullptr ? files->read(files, fd, buffer, size) : read(fd, buffer, size);
 }
 
 static ssize_t smith_handlers_write(int fd, const void *buffer, size_t size) {
-    SmithConsole *console = fd == 1 || fd == 2 ? smith_handlers_console_current() : nullptr;
+    SmithConsoleHandler *console = fd == 1 || fd == 2 ? smith_handlers_console_current() : nullptr;
     if (console != nullptr) return console->write(console, fd, buffer, size);
-    SmithFiles *files = fd >= smith_handlers_first_file ? smith_handlers_files_current() : nullptr;
+    SmithFileHandler *files = fd >= smith_handlers_first_file ? smith_handlers_files_current() : nullptr;
     return files != nullptr ? files->write(files, fd, buffer, size) : write(fd, buffer, size);
 }
 
 static int smith_handlers_close(int fd) {
-    SmithFiles *files = fd >= smith_handlers_first_file ? smith_handlers_files_current() : nullptr;
+    SmithFileHandler *files = fd >= smith_handlers_first_file ? smith_handlers_files_current() : nullptr;
     return files != nullptr ? files->close(files, fd) : close(fd);
 }
 
@@ -279,13 +279,13 @@ static pthread_once_t smith_handlers_console_once = PTHREAD_ONCE_INIT;
 
 static int smith_handlers_console_write(void *cookie, const char *data, int size) {
     int fd = (int)(intptr_t)cookie;
-    SmithConsole *console = smith_handlers_console_current();
+    SmithConsoleHandler *console = smith_handlers_console_current();
     return (int)(console != nullptr ? console->write(console, fd, data, (size_t)size) : write(fd, data, (size_t)size));
 }
 
 static int smith_handlers_console_read(void *cookie, char *data, int size) {
     (void)cookie;
-    SmithConsole *console = smith_handlers_console_current();
+    SmithConsoleHandler *console = smith_handlers_console_current();
     return (int)(console != nullptr ? console->read(console, data, (size_t)size) : read(0, data, (size_t)size));
 }
 
@@ -341,11 +341,6 @@ static int smith_handlers_fputc(int c, FILE *stream) {
 
 static int smith_handlers_putchar(int c) {
     return fputc(c, smith_handlers_map(stdout));
-}
-
-static int smith_handlers_puts(const char *text) {
-    FILE *out = smith_handlers_map(stdout);
-    return fputs(text, out) < 0 || fputc('\n', out) < 0 ? EOF : 1;
 }
 
 [[gnu::format(printf, 2, 0)]] static int smith_handlers_vfprintf(FILE *stream, const char *format, va_list args) {
@@ -422,7 +417,7 @@ static int smith_handlers_fclose(FILE *stream) {
 // The stream keeps the handler that opened it: close it before the handler goes away.
 
 typedef struct {
-    SmithFiles *files;
+    SmithFileHandler *files;
     int fd;
 } SmithHandlersFile;
 
@@ -452,7 +447,7 @@ static int smith_handlers_mode_flags(const char *mode) {
     return plus ? O_RDWR : O_RDONLY;
 }
 
-static FILE *smith_handlers_stream(SmithFiles *files, int fd, const char *mode) {
+static FILE *smith_handlers_stream(SmithFileHandler *files, int fd, const char *mode) {
     SmithHandlersFile *file = malloc(sizeof *file);
     if (file == nullptr) return nullptr;
     *file = (SmithHandlersFile){files, fd};
@@ -465,7 +460,7 @@ static FILE *smith_handlers_stream(SmithFiles *files, int fd, const char *mode) 
 }
 
 static FILE *smith_handlers_fopen(const char *path, const char *mode) {
-    SmithFiles *files = smith_handlers_files_current();
+    SmithFileHandler *files = smith_handlers_files_current();
     if (files == nullptr) return fopen(path, mode);
     int fd = files->open(files, path, smith_handlers_mode_flags(mode), 0666);
     FILE *stream = fd >= 0 ? smith_handlers_stream(files, fd, mode) : nullptr;
@@ -474,7 +469,7 @@ static FILE *smith_handlers_fopen(const char *path, const char *mode) {
 }
 
 static FILE *smith_handlers_fdopen(int fd, const char *mode) {
-    SmithFiles *files = fd >= smith_handlers_first_file ? smith_handlers_files_current() : nullptr;
+    SmithFileHandler *files = fd >= smith_handlers_first_file ? smith_handlers_files_current() : nullptr;
     return files != nullptr ? smith_handlers_stream(files, fd, mode) : fdopen(fd, mode);
 }
 
@@ -526,7 +521,8 @@ __attribute__((used, section("__DATA,__interpose"))) static const SmithInterpose
     {(uintptr_t)&smith_handlers_fputc, (uintptr_t)&fputc},
     {(uintptr_t)&smith_handlers_fputc, (uintptr_t)&putc},
     {(uintptr_t)&smith_handlers_putchar, (uintptr_t)&putchar},
-    {(uintptr_t)&smith_handlers_puts, (uintptr_t)&puts},
+    // puts is not here: with its tuple present AddressSanitizer's start-up check aborts ("interceptors not installed"),
+    // so a puts, and a printf of a literal ending in a newline that the optimizer turns into one, is not reached.
     {(uintptr_t)&smith_handlers_fprintf, (uintptr_t)&fprintf},
     {(uintptr_t)&smith_handlers_vfprintf, (uintptr_t)&vfprintf},
     {(uintptr_t)&smith_handlers_printf, (uintptr_t)&printf},

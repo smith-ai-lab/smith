@@ -14,7 +14,7 @@
 
 // A console that keeps what is written to it, by descriptor, and reads from a text it was given.
 typedef struct {
-    SmithConsole console;
+    SmithConsoleHandler console;
     char out[512];
     size_t out_size;
     char err[512];
@@ -23,7 +23,7 @@ typedef struct {
     size_t input_at;
 } FakeConsole;
 
-static ssize_t fake_console_write(SmithConsole *self, int fd, const void *buffer, size_t size) {
+static ssize_t fake_console_write(SmithConsoleHandler *self, int fd, const void *buffer, size_t size) {
     FakeConsole *fake = (FakeConsole *)self;
     char *into = fd == 1 ? fake->out : fake->err;
     size_t *used = fd == 1 ? &fake->out_size : &fake->err_size;
@@ -33,7 +33,7 @@ static ssize_t fake_console_write(SmithConsole *self, int fd, const void *buffer
     return (ssize_t)size;
 }
 
-static ssize_t fake_console_read(SmithConsole *self, void *buffer, size_t size) {
+static ssize_t fake_console_read(SmithConsoleHandler *self, void *buffer, size_t size) {
     FakeConsole *fake = (FakeConsole *)self;
     size_t left = strlen(fake->input) - fake->input_at;
     size_t take = size < left ? size : left;
@@ -44,7 +44,7 @@ static ssize_t fake_console_read(SmithConsole *self, void *buffer, size_t size) 
 
 // Files in memory: a path is a slot, a descriptor is 100 + the slot, and each remembers a read offset.
 typedef struct {
-    SmithFiles files;
+    SmithFileHandler files;
     char path[4][32];
     char data[4][128];
     size_t size[4];
@@ -57,7 +57,7 @@ static bool has(int flags, int bit) {
     return ((unsigned)flags & (unsigned)bit) != 0;
 }
 
-static int fake_files_open(SmithFiles *self, const char *path, int flags, int mode) {
+static int fake_files_open(SmithFileHandler *self, const char *path, int flags, int mode) {
     (void)mode;
     FakeFiles *fake = (FakeFiles *)self;
     for (int slot = 0; slot < 4; slot++) {
@@ -71,7 +71,7 @@ static int fake_files_open(SmithFiles *self, const char *path, int flags, int mo
     return -1;
 }
 
-static ssize_t fake_files_read(SmithFiles *self, int fd, void *buffer, size_t size) {
+static ssize_t fake_files_read(SmithFileHandler *self, int fd, void *buffer, size_t size) {
     FakeFiles *fake = (FakeFiles *)self;
     size_t slot = (size_t)(fd - 100);
     size_t left = fake->size[slot] - fake->offset[slot];
@@ -81,7 +81,7 @@ static ssize_t fake_files_read(SmithFiles *self, int fd, void *buffer, size_t si
     return (ssize_t)take;
 }
 
-static ssize_t fake_files_write(SmithFiles *self, int fd, const void *buffer, size_t size) {
+static ssize_t fake_files_write(SmithFileHandler *self, int fd, const void *buffer, size_t size) {
     FakeFiles *fake = (FakeFiles *)self;
     size_t slot = (size_t)(fd - 100);
     memcpy(fake->data[slot] + fake->size[slot], buffer, size);
@@ -89,7 +89,7 @@ static ssize_t fake_files_write(SmithFiles *self, int fd, const void *buffer, si
     return (ssize_t)size;
 }
 
-static int fake_files_close(SmithFiles *self, int fd) {
+static int fake_files_close(SmithFileHandler *self, int fd) {
     (void)fd;
     ((FakeFiles *)self)->closes += 1;
     return 0;
@@ -105,10 +105,10 @@ static void check(const char *name, bool good) {
 static void test_console_output(void) {
     FakeConsole fake = {.console = {fake_console_write, fake_console_read}, .input = ""};
     check("no console handler: none is reported", smith_handlers_console() == nullptr);
-    SmithConsole *previous = smith_handlers_set_console(&fake.console);
+    SmithConsoleHandler *previous = smith_handlers_set_console(&fake.console);
     write(1, "w;", 2);
     printf("p%d;", 7);
-    puts("s;");
+    fputs("s;", stdout);
     putchar('c');
     fputs(";f;", stdout);
     fwrite("fw;", 1, 3, stdout);
@@ -118,15 +118,15 @@ static void test_console_output(void) {
     syscall(SYS_write, 1, "sy;", 3);
     fflush(stdout);
     smith_handlers_set_console(previous);
-    check("console: write, printf, puts, putchar, fputs, fwrite, dprintf and syscall reach stdout, in order",
-          strcmp(fake.out, "w;p7;s;\nc;f;fw;d;sy;") == 0);
+    check("console: write, printf, putchar, fputs, fwrite, dprintf and syscall reach stdout, in order",
+          strcmp(fake.out, "w;p7;s;c;f;fw;d;sy;") == 0);
     check("console: fprintf and fputc on stderr reach it", strcmp(fake.err, "e9;x") == 0);
 }
 
 static void test_console_input(void) {
     FakeConsole fake = {.console = {fake_console_write, fake_console_read},
                         .input = "first line\nsecond 42\nxyz\nrest"};
-    SmithConsole *previous = smith_handlers_set_console(&fake.console);
+    SmithConsoleHandler *previous = smith_handlers_set_console(&fake.console);
     char line[64] = "";
     char *got = fgets(line, sizeof line, stdin);
     bool first = got != nullptr && strcmp(line, "first line\n") == 0;
@@ -155,7 +155,7 @@ static void test_console_input(void) {
 
 static void test_files(void) {
     FakeFiles fake = {.files = {fake_files_open, fake_files_read, fake_files_write, fake_files_close}};
-    SmithFiles *previous = smith_handlers_set_files(&fake.files);
+    SmithFileHandler *previous = smith_handlers_set_files(&fake.files);
     int fd = open("/fake/a", O_WRONLY | O_CREAT | O_TRUNC, 0644);
     write(fd, "hello", 5);
     close(fd);

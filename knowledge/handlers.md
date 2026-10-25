@@ -40,14 +40,14 @@ prebuilt library's and one loaded with `dlopen`. Owner (2026-10-24): "always int
 - **An optimizer knows malloc**: it may drop or fold a malloc/free pair, so a handler is seen only through calls it cannot
   see through (`tests/handlers/project.c` keeps its pointers in `volatile`).
 
-- **Files and console (step B2):** thirty functions are interposed besides the allocator's: `read write open close
+- **Files and console (step B2):** twenty-nine functions are interposed besides the allocator's: `read write open close
   syscall` (only `SYS_read` and `SYS_write` are decoded) and the stdio family (`fwrite fread fgets fgetc getc getchar
-  ungetc fputs fputc putc putchar puts printf fprintf vprintf vfprintf dprintf vdprintf fflush fopen fdopen freopen fclose
-  fscanf scanf getline fseek`). `SmithConsole {write, read}` takes fds 0, 1 and 2 and `SmithFiles {open, read, write,
+  ungetc fputs fputc putc putchar printf fprintf vprintf vfprintf dprintf vdprintf fflush fopen fdopen freopen fclose
+  fscanf scanf getline fseek`). `SmithConsoleHandler {write, read}` takes fds 0, 1 and 2 and `SmithFileHandler {open, read, write,
   close}` every descriptor from 3 up, each set per thread with a setter that returns the previous handler. With none set
   a counter says so and the real function runs. With a files handler set, `fopen`, `fdopen` and `freopen` return a
   `funopen` stream whose callbacks call the handler, so C's `FILE *` I/O is faked too (not seekable). Not reached: raw
-  `svc`, `pread`, `readv`, `send` and `recv` (the task runtime, #241); `getpid` is left alone (interposing it aborts
+  `svc`, `pread`, `readv`, `send` and `recv` (the task runtime, #241); `puts` too (its tuple makes AddressSanitizer abort at start-up, "interceptors not installed", cause unknown; clang may turn `printf("x\n")` into one); `getpid` is left alone (interposing it aborts
   Objective-C, spike 4).
 - **A thread-local is read in a function of its own**, after the counter and `ready` checks: unoptimized code computes its
   address at the function's start, and dyld calls `close` before the image's thread-local storage exists.
