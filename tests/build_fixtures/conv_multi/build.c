@@ -6,7 +6,7 @@ void build(SmithBuild *b) {
                           .folders = (const SmithFolder[]){{"src/base", smith_list(b, "-DFROM_BASE=1", nullptr),
                                                                     smith_list(b, "build/gen.h", nullptr)},
                                                                    {}},
-                          .link_flags = smith_list(b, "-Wl,-headerpad,0x100", nullptr),
+                          .link_flags = smith_list(b, "-Wl,-rpath,/opt/multi", nullptr),
                       });
     smith_step(b, &(SmithStep){.command = smith_list(b, "sh", "-c", "printf '#define GEN_VALUE 7\\n' > build/gen.h", nullptr),
                                .outputs = smith_list(b, "build/gen.h", nullptr)});

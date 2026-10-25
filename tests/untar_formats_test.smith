@@ -195,8 +195,10 @@ export void test_untar_a_file_keeps_its_modification_time(io::Io *io) {
     const char *package = nullptr;
     scratch::Run fetched = fetch(&p, "a", "arc/a.tar.gz", &package);
     scratch::expect_status("times: the archive extracts", 0, &fetched);
-    scratch::expect_text("times: a file keeps its modification time", text(&p, "stat -f %m src/pkg-1.0/hello.txt"),
-                         text(&p, join(&p, "stat -f %m ", join(&p, package, "/hello.txt"))));
+    scratch::expect_text(
+        "times: a file keeps its modification time",
+        text(&p, "stat -c %Y src/pkg-1.0/hello.txt 2>/dev/null || stat -f %m src/pkg-1.0/hello.txt"),
+        text(&p, join(&p, "f=", join(&p, package, "/hello.txt; stat -c %Y \"$f\" 2>/dev/null || stat -f %m \"$f\""))));
 }
 
 // Several top-level entries: the package is the extraction folder, as it was with tar.

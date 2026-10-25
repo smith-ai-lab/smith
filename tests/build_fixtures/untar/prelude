@@ -11,7 +11,7 @@ mkdir -p "$arc"
 
 # The files of a tree: type, permission bits and size, then the bytes by checksum. Equal listings are equal trees.
 listing() {
-    (cd "$1" && find . -type f -exec sh -c 'for f; do printf "%s %s %s " "$(stat -f "%Sp %z" "$f")" "$f" "$(shasum -a 256 <"$f" | cut -c1-16)"; echo; done' sh {} + | sort
+    (cd "$1" && find . -type f -exec sh -c 'for f; do printf "%s %s %s " "$(stat -c "%A %s" "$f" 2>/dev/null || stat -f "%Sp %z" "$f")" "$f" "$(shasum -a 256 <"$f" | cut -c1-16)"; echo; done' sh {} + | sort
         find . -type l -exec sh -c 'for f; do echo "link $f -> $(readlink "$f")"; done' sh {} + | sort
         find . -type d | sort)
 }

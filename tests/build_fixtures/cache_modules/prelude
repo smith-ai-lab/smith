@@ -15,4 +15,4 @@ mkpkgs() {
 url() { echo "file://$PWD/arc/pkg$1.tar.gz"; }
 fetch1() { mkpkgs && smith fetch "$(url 1)" >/dev/null 2>&1; }
 count_modules() { find "$modules" -name '*.pcm' | wc -l | tr -d ' '; }
-sdk_signature() { find "$modules" -name '*.pcm' ! -name 'inc_*' ! -name 'smith_*' -exec stat -f '%N %m' {} + | sort | md5; }
+sdk_signature() { find "$modules" -name '*.pcm' ! -name 'inc_*' ! -name 'smith_*' -exec sh -c 'stat -c "%n %Y" "$@" 2>/dev/null || stat -f "%N %m" "$@"' sh {} + | sort | cksum; }

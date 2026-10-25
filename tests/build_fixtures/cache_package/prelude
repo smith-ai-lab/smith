@@ -16,4 +16,4 @@ url() { echo "file://$PWD/arc/pkg$1.tar.gz"; }
 hex() { shasum -a 256 "arc/pkg$1.tar.gz" | cut -d' ' -f1; }
 fetch3() { mkpkgs && for n in 1 2 3; do smith fetch "$(url $n)" >/dev/null 2>&1; done; }
 use() { smith build "-DURL=$(url "$1")" "-DHASH=sha256:$(hex "$1")" -DOFFLINE; }
-year_of() { stat -f %Sm -t %Y "$1"; }
+year_of() { date -r "$1" +%Y 2>/dev/null || stat -f %Sm -t %Y "$1"; }
