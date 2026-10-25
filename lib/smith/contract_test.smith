@@ -1,6 +1,6 @@
-// Tests of smith::contract, in smith's own test library; tests/contract.sh builds them in a scratch project as
-// lib/smith/contract_test.smith. A failed contract stops the program as an assert does, which test::expect_abort
-// expects.
+// Tests of smith::contract, in smith's own test library; tests/contract_header_test.smith builds them in a scratch
+// project as lib/smith/contract_test.smith. A failed contract stops the program as an assert does, which
+// test::expect_abort expects.
 module smith::contract_test;
 
 import smith::contract;

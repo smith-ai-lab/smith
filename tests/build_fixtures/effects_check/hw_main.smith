@@ -1,0 +1,23 @@
+import <stdio.h>;
+import <stdlib.h>;
+import <smith/io.h>;
+import hw::dev;
+
+static dev::Dev *global_dev;
+
+int main(int argc, char **argv) {
+    c::SmithIo io = c::smith_io_make(argc, argv);
+    c::printf("hi\n");
+    dev::leak("x");
+    c::abort();
+    c::smith_io_close(&io);
+    return 0;
+}
+
+void other(void) {
+    c::exit(1);
+    c::snprintf(nullptr, 0, "x");
+    c::SmithIo again = c::smith_io_make(0, nullptr);
+    (void)again;
+    dev::emit(global_dev, 5);
+}

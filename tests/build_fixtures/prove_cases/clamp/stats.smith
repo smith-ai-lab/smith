@@ -1,0 +1,10 @@
+module stats;
+
+import smith::contract;
+
+export typeof(x) clamp(auto x, typeof(x) low, typeof(x) high) {
+    contract::requires(low <= high);
+    typeof(x) result = x < low ? low : (x > high ? high : x);
+    contract::ensures(result >= low && result <= high);
+    return result;
+}

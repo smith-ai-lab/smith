@@ -1,0 +1,13 @@
+module libs;
+
+import smith::contract;
+import smith::random;
+
+export u64 pick(u64 index) {
+    contract::requires(index < 10);
+    random::Key key = random::key_make(7);
+    random::Key parts[2];
+    random::split(key, parts);
+    contract::ensures(true);
+    return parts[1].bits + index;
+}

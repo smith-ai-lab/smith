@@ -208,7 +208,7 @@ Sema asks for the tentative definitions, at the end of the unit: no destructor o
 reading `ParmVarDecl::getOriginalType`, which clang keeps under the pointer: a constant index out of range, `++`, `--` and
 assignment of the parameter, `sizeof(xs)`, and an argument to a module's function (declared in the file or in a
 generated header; a C function takes the pointer) that is a pointer or an array of another shape. Tests: the cases
-`array-param*` and `error-array-param-*`, and section 11a of `tests/prove.sh`. In an editor (`smith lsp`) the AST checks
+`array-param*` and `error-array-param-*`, and the array-parameter tests of `tests/prove_smith_test.smith`. In an editor (`smith lsp`) the AST checks
 depend on clangd reaching the end of the unit.
 
 `smith_object` takes a `.smith` source like any other (knowledge/build-file.md). For each module it adds a

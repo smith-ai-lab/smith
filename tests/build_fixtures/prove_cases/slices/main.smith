@@ -1,0 +1,9 @@
+import stats;
+import <stdio.h>;
+
+int main(void) {
+    i32 a[3] = {1, 2, 3};
+    i32 xs[:] = a[0:3];
+    c::printf("%d %d\n", (int)stats::first(xs), (int)stats::firstu(xs));
+    return 0;
+}

@@ -1,4 +1,4 @@
-// A template: tests/autodiff.sh replaces CALL with calls of autodiff::gradient that must not compile.
+// A template: tests/autodiff_test.smith replaces CALL with calls of autodiff::gradient that must not compile.
 module main;
 
 import smith::arena;

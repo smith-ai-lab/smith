@@ -1,0 +1,7 @@
+import libs;
+import <stdio.h>;
+
+int main(void) {
+    c::printf("%d\n", (int)libs::pick(2));
+    return 0;
+}

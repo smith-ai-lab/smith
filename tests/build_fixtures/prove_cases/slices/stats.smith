@@ -1,0 +1,14 @@
+module stats;
+
+import smith::contract;
+
+export i32 first(i32 xs[:]) {
+    contract::ensures(true);
+    if (countof(xs) > 0) return xs[0];
+    return 0;
+}
+
+export i32 firstu(i32 xs[:]) {
+    contract::ensures(true);
+    return xs[0];
+}

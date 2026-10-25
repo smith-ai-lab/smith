@@ -1,0 +1,2 @@
+objc.m:14:30: error: `[NSFileManager defaultManager]` touches the world: wrap it in a capability's implementation (a module that defines a type marked [[clang::annotate("smith::capability")]]) and take that capability as a parameter
+objc.m:15:32: error: `[NSFileManager fileExistsAtPath:]` touches the world: wrap it in a capability's implementation (a module that defines a type marked [[clang::annotate("smith::capability")]]) and take that capability as a parameter

@@ -773,20 +773,6 @@ typedef struct {
 
 // clang-format off
 static const BuildTestScript build_test_scripts[] = {
-    {"autodiff", "autodiff", nullptr, 1},
-    {"contract", "contract", nullptr, 0},
-    {"dap", "dap", nullptr, 0},
-    {"dbg-crash", "dbg_crash", nullptr, 0},
-    {"defer", "defer", nullptr, 0},
-    {"effects", "effects", nullptr, 0},
-    {"handlers", "handlers", nullptr, 0},
-    {"mcp-fake-asan", "mcp", "fake-asan", 0},
-    {"mcp-fake-fast", "mcp", "fake-fast", 0},
-    {"mcp-fake-ndebug", "mcp", "fake-ndebug", 0},
-    {"mcp-real", "mcp", "real", 1},
-    {"neovim", "neovim", nullptr, 0},
-    {"prove", "prove", nullptr, 1},
-    {"prove-sound", "prove_sound", nullptr, 1},
 };
 // clang-format on
 
@@ -825,6 +811,29 @@ static const char *build_units(SmithBuild *b, const char *binary, const char *fo
     };
     smith_task(b, "test-units", &run);
     return smith_fmt(b, "%s/units-project/build/tests", folder);
+}
+
+// The soundness harnesses of `smith prove` on 8 seeds of 50000 inputs each (issue #64): the units runner, with the
+// smith under test first on PATH and as SMITH_SELF. args are smith's path and the runner's, both relative to the root.
+static int build_prove_sound_full(SmithRun *run) {
+    char root[PATH_MAX];
+    if (getcwd(root, sizeof root) == nullptr) return 1;
+    const char *binary = run->args[0];
+    const char *slash = strrchr(binary, '/');
+    int folder_length = slash != nullptr ? (int)(slash - binary) : 0;
+    const char *path = getenv("PATH");
+    char path_entry[2 * PATH_MAX];
+    char self_entry[2 * PATH_MAX];
+    char repo_entry[2 * PATH_MAX];
+    char runner[2 * PATH_MAX];
+    snprintf(path_entry, sizeof path_entry, "PATH=%s/%.*s:%s", root, folder_length, binary,
+             path != nullptr ? path : "");
+    snprintf(self_entry, sizeof self_entry, "SMITH_SELF=%s/%s", root, binary);
+    snprintf(repo_entry, sizeof repo_entry, "SMITH_REPO=%s", root);
+    snprintf(runner, sizeof runner, "%s/%s", root, run->args[1]);
+    const char *const argv[] = {runner, "--full", "--test", "prove_sound_", nullptr};
+    const char *const environment[] = {path_entry, self_entry, repo_entry, "SMITH_OUTPUT=full", nullptr};
+    return smith_run_program(run, argv, environment);
 }
 
 // The task of every script, each one of smith's tests (`smith test` runs them); returns the list, which the install
@@ -869,8 +878,9 @@ static const char *const *build_test(SmithBuild *b, const BuildConfig *config, c
     smith_task(b, "text-exhaustive", &exhaustive);
     // The soundness harnesses of `smith prove` on 8 seeds of 50000 inputs each (issue #64).
     SmithStep sound_full = {
-        .command = (const char *[]){"sh", "-c", "sh tests/prove_sound.sh \"$0\" full", binary, nullptr},
-        .inputs = (const char *[]){binary, nullptr},
+        .run = build_prove_sound_full,
+        .args = smith_list(b, binary, units, nullptr),
+        .inputs = (const char *[]){binary, units[0] != '\0' ? "units-build" : binary, nullptr},
     };
     smith_task(b, "prove-sound-full", &sound_full);
     return tasks;
