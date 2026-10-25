@@ -334,9 +334,10 @@ static void single_gz_extracts(io::Io *io, const char *f) {
     scratch::expect_text(
         join(&p, name, ": the same bytes"), text(&p, join(&p, "shasum -a 256 <single/", f)),
         text(&p, format::push(&p.io->arena, "shasum -a 256 <\"", package, "/", f, "\" 2>/dev/null").data));
-    scratch::expect_text(
-        join(&p, name, ": mode 0644"), "-rw-r--r--",
-        text(&p, format::push(&p.io->arena, "stat -f %Sp \"", package, "/", f, "\" 2>/dev/null").data));
+    scratch::expect_text(join(&p, name, ": mode 0644"), "-rw-r--r--",
+                         text(&p, format::push(&p.io->arena, "f=\"", package, "/", f,
+                                               "\"; stat -c %A \"$f\" 2>/dev/null || stat -f %Sp \"$f\" 2>/dev/null")
+                                      .data));
 }
 
 export void test_untar_single_gz_tool_bin(io::Io *io) {
