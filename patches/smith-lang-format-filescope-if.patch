@@ -1,0 +1,71 @@
+--- a/clang/lib/Format/UnwrappedLineParser.h
++++ b/clang/lib/Format/UnwrappedLineParser.h
+@@ -338,6 +338,12 @@
+   bool IsCpp;
+   // The file is a .smith file (C with modules, issue #25).
+   bool IsSmith;
++  // The branches of file-scope `if constexpr` blocks being parsed in a .smith
++  // file (issue #335): their contents are declarations at file scope.
++  unsigned SmithBranchDepth = 0;
++  bool isSmithFileScope() const {
++    return DeclarationScopeStack.size() == 1 + SmithBranchDepth;
++  }
+   // Whether the `{` the parser is on starts a tuple type body (issue #96):
+   // `struct { i32, f32 }`, a braced list without a `;`.
+   bool isSmithTuple();
+--- a/clang/lib/Format/UnwrappedLineParser.cpp
++++ b/clang/lib/Format/UnwrappedLineParser.cpp
+@@ -1370,7 +1370,7 @@
+ 
+   if (IsSmith) {
+     // Only at file scope: elsewhere `import` and `module` are names.
+-    if (DeclarationScopeStack.size() != 1)
++    if (!isSmithFileScope())
+       return false;
+   } else if (Style.Language == FormatStyle::LK_C ||
+              Style.Standard < FormatStyle::LS_Cpp20) {
+@@ -1397,7 +1397,7 @@
+ 
+   if (IsSmith) {
+     // Only at file scope: elsewhere `import` and `module` are names.
+-    if (DeclarationScopeStack.size() != 1)
++    if (!isSmithFileScope())
+       return false;
+   } else if (Style.Language == FormatStyle::LK_C ||
+              Style.Standard < FormatStyle::LS_Cpp20) {
+@@ -3037,6 +3037,10 @@
+   if (FormatTok->is(tok::exclaim))
+     nextToken();
+ 
++  // A .smith file's `if constexpr` at file scope chooses declarations and
++  // imports (issue #335): its branches are parsed as file scope.
++  const bool SmithDeclarations =
++      IsSmith && FormatTok->is(tok::kw_constexpr) && isSmithFileScope();
+   bool KeepIfBraces = true;
+   if (FormatTok->is(tok::kw_consteval)) {
+     nextToken();
+@@ -3067,8 +3071,10 @@
+     FormatTok->setFinalizedType(TT_ControlStatementLBrace);
+     IfLeftBrace = FormatTok;
+     CompoundStatementIndenter Indenter(this, Style, Line->Level);
+-    parseBlock(/*MustBeDeclaration=*/false, /*AddLevels=*/1u,
++    SmithBranchDepth += SmithDeclarations ? 1 : 0;
++    parseBlock(/*MustBeDeclaration=*/SmithDeclarations, /*AddLevels=*/1u,
+                /*MunchSemi=*/true, KeepIfBraces, &IfBlockKind);
++    SmithBranchDepth -= SmithDeclarations ? 1 : 0;
+     setPreviousRBraceType(TT_ControlStatementRBrace);
+     if (Style.BraceWrapping.BeforeElse)
+       addUnwrappedLine();
+@@ -3105,9 +3111,11 @@
+       ElseLeftBrace = FormatTok;
+       CompoundStatementIndenter Indenter(this, Style, Line->Level);
+       IfStmtKind ElseBlockKind = IfStmtKind::NotIf;
++      SmithBranchDepth += SmithDeclarations ? 1 : 0;
+       FormatToken *IfLBrace =
+-          parseBlock(/*MustBeDeclaration=*/false, /*AddLevels=*/1u,
++          parseBlock(/*MustBeDeclaration=*/SmithDeclarations, /*AddLevels=*/1u,
+                      /*MunchSemi=*/true, KeepElseBraces, &ElseBlockKind);
++      SmithBranchDepth -= SmithDeclarations ? 1 : 0;
+       setPreviousRBraceType(TT_ElseRBrace);
+       if (FormatTok->is(tok::kw_else)) {
+         KeepElseBraces = KeepElseBraces ||
