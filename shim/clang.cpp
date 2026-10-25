@@ -72,7 +72,8 @@ extern "C" int smith_clang_main(const char *program, int argc, char **argv, bool
         if (std::strcmp(argument, "-E") == 0 || std::strcmp(argument, "-S") == 0 ||
             std::strcmp(argument, "-fsyntax-only") == 0 || std::strcmp(argument, "-###") == 0 ||
             std::strcmp(argument, "-fstack-usage") == 0 || std::strcmp(argument, "-M") == 0 ||
-            std::strcmp(argument, "-MM") == 0) {
+            std::strcmp(argument, "-MM") == 0 || std::strncmp(argument, "-flto", 5) == 0 ||
+            std::strcmp(argument, "-emit-llvm") == 0) { // bitcode has no frames yet
             stack = false;
         }
         arguments.push_back(argv[i]);
