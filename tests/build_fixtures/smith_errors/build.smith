@@ -1,0 +1,10 @@
+import smith::build;
+
+void build(build::Build *b) {
+    build::Step step = {.command = build::list(b, "true", nullptr)};
+    build::task(b, "lint", &step);
+    build::alias(b, "fmt", step.outputs);
+    build::Step other = {.command = build::list(b, "true", nullptr)};
+    build::task(b, "release", &other);
+    build::app(b, &(build::App){.entry = "prog.c"});
+}
