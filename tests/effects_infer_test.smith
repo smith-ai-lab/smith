@@ -450,8 +450,9 @@ export void test_within_in_modules_the_link_judges_a_function_of_another_module_
                          run.out);
 }
 
-// Promises: `smith check` lists what smith trusts and does not check, from the `P` lines of the summaries its own build leaves
-// (an effects attribute on a declaration with no source, a function that calls smith_trusted()), a header's once.
+// Promises: `smith check` lists what smith trusts and does not check, from the `P` lines of the summaries its own build
+// leaves (an effects attribute on a declaration with no source, a function that calls smith_trusted()), a header's
+// once.
 export void test_promises_smith_check_lists_two_declared_promises_and_a_trusted_function(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     scratch::write(&p, "lib.h",
