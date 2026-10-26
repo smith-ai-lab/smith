@@ -91,6 +91,10 @@ struct Unit {
     std::vector<CallSite> call_sites;
     std::vector<std::string> notes;
     std::vector<UnrolledLoop> loops;
+    // The files the proof read from besides the unit's own, as `<directory>/<name>` of the debug info: those of every
+    // function the unit reaches (its callees, whose contracts or bodies it assumed, and their callees) and of the
+    // globals they use. The proof of a source is keyed on their bytes too (shim/proved.hpp).
+    std::set<std::string> dependencies;
     std::vector<Cost> costs;                          // filled once the function is prepared
     unsigned instructions = 0, loads = 0, stores = 0; // of the prepared function
     std::vector<std::pair<unsigned, unsigned>>

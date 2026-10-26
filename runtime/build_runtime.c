@@ -1915,10 +1915,12 @@ static void smith_lang_header_step(SmithBuild *b, const SmithObject *object, con
 // file `.smith/proved/<source>.pts` is an input of the compile, and a `-DSMITH_PROVED=<hash of its bytes>` makes the
 // command a function of it too, so a proof written, changed or removed rebuilds the object and nothing else does. Only
 // an optimized compile (-O1 or more: release and fast) leaves checks out, so only it depends on the file; debug never
-// does. The path is the one shim/proved.hpp names. Sets `*input` to the file (or nullptr when there is none) and
-// returns the flag.
-static const char *const *smith_proved_flags(SmithBuild *b, const SmithObject *object, const char **input) {
-    *input = nullptr;
+// does. The path is the one shim/proved.hpp names. The files the proof read besides the source (its `dep` lines: the
+// callees whose contracts it assumed) are inputs too, so a change to a callee compiles the caller again, and the
+// lowering, finding the key stale, puts its checks back. Sets `*inputs` to the proof file and those (empty when there
+// is no proof file) and returns the flag.
+static const char *const *smith_proved_flags(SmithBuild *b, const SmithObject *object, const char *const **inputs) {
+    *inputs = smith_list(b, nullptr);
     const char *source = object->source;
     while (strncmp(source, "./", 2) == 0)
         source += 2;
@@ -1931,8 +1933,19 @@ static const char *const *smith_proved_flags(SmithBuild *b, const SmithObject *o
     char *text = nullptr;
     if (access(path, R_OK) != 0) return smith_list(b, nullptr);
     size_t size = smith_read_file(path, &text);
-    *input = path;
-    return smith_list(b, smith_text("-DSMITH_PROVED=%016" PRIx64, smith_hash_bytes(text, size)), nullptr);
+    const char *flag = smith_text("-DSMITH_PROVED=%016" PRIx64, smith_hash_bytes(text, size));
+    const char *const *lines = smith_split_lines(text, size);
+    size_t count = smith_count(lines);
+    const char **named = smith_new_list(count + 1);
+    size_t used = 0;
+    named[used++] = path;
+    for (size_t i = 0; i < count; i++) {
+        // a file that is gone makes the key stale at the lowering; it is no input, which the graph cannot read
+        if (strncmp(lines[i], "dep ", 4) == 0 && access(lines[i] + 4, R_OK) == 0) named[used++] = lines[i] + 4;
+    }
+    named[used] = nullptr;
+    *inputs = named;
+    return smith_list(b, flag, nullptr);
 }
 
 void smith_object(SmithBuild *b, SmithObject *object) {
@@ -1962,16 +1975,15 @@ void smith_object(SmithBuild *b, SmithObject *object) {
         if (smith_lang_register(copy.source, &header, &first) != nullptr && first && !library)
             smith_lang_header_step(b, &copy, header);
     }
-    const char *proved_input = nullptr;
-    const char *const *proved_flags = smith_proved_flags(b, &copy, &proved_input);
+    const char *const *proved_inputs = nullptr;
+    const char *const *proved_flags = smith_proved_flags(b, &copy, &proved_inputs);
     copy.step = (SmithStep){
         .command =
             smith_cat(b, smith_one(copy.compiler), smith_modules_for(b, copy.source), smith_lang_flags(b, copy.source),
                       copy.flags, proved_flags, smith_library_flags(b, copy.source), tail, nullptr),
         .inputs = smith_one(copy.source),
         .implicit_inputs =
-            smith_cat(b, copy.implicit_inputs, smith_one(smith_compiler_file(copy.compiler)),
-                      proved_input != nullptr ? smith_one(proved_input) : smith_list(b, nullptr), nullptr),
+            smith_cat(b, copy.implicit_inputs, smith_one(smith_compiler_file(copy.compiler)), proved_inputs, nullptr),
         .order_only_inputs = headers ? smith_one(smith_lang_stamp) : smith_list(b, nullptr),
         .outputs = smith_cat(b, smith_one(copy.output),
                              smith_effects_outputs(b, copy.compiler, copy.source, copy.output), nullptr),

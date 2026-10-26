@@ -30,7 +30,7 @@ export i32 demo() {
 ## Rules
 
 - `xs[i]` and `xs[a:b]` are checked in debug and release: a failure is `contract::assert`'s report with the line and the stack. The conventions link the trace library when a source has `[:`; a hand-written `smith_program` names `smith_library(b, "trace")`.
-- **A proof removes a check, and nothing else does.** After `smith prove`, `smith build release` and `fast` (not debug) leave out the checks `.smith/proved/<source>.pts` lists, for exactly the source text and smith that proved them; an edit, a missing file or another smith keeps every check. `SMITH_PROVED_REPORT=1 smith cc -c f.smith -O2 ...` prints `N removed (proved), M kept`. A function whose check is not proved stays checked (`smith-prove`).
+- **A proof removes a check, and nothing else does.** After `smith prove`, `smith build release` and `fast` (not debug) leave out the checks `.smith/proved/<source>.pts` lists, for exactly the source text and smith that proved them; an edit of the source or of a callee file it relied on, a missing file or another smith keeps every check; debug (-O0) always keeps every check, as a safety net against a prover bug. `SMITH_PROVED_REPORT=1 smith cc -c f.smith -O2 ...` prints `N removed (proved), M kept`. A function whose check is not proved stays checked (`smith-prove`).
 - `countof(xs)` of a local or member FIXED array (`u32 xs[4]`) is C2y's `_Countof`: the outer count, in a plain function and in a generic's instance; of a pointer it is clang's error.
 - Empty is count 0 with a null pointer. `xs[a:b]` needs `a <= b <= countof(xs)`; `p[a:b]` needs `a <= b` and `p` pointing at `b` elements.
 - A slice is a pointer only as an argument of a `c::` function (`c::strncmp(word, "abc", countof(word))`).

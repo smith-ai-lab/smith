@@ -3823,9 +3823,52 @@ void collect_costs(Function &function, Unit &unit) {
 
 } // namespace
 
+// The files `root` reads functions and globals from, through everything it calls or uses (issue #221): a check removed
+// on this proof is sound only while each of them is as the proof read it. Called before any callee is replaced.
+void collect_dependencies(const Function &root, std::set<std::string> &files) {
+    std::set<const Function *> seen;
+    std::set<const Value *> visited;
+    std::vector<const Function *> pending{&root};
+    auto add = [&](const DIFile *file) {
+        if (file != nullptr) files.insert(file->getDirectory().str() + "\n" + file->getFilename().str());
+    };
+    std::function<void(const Value *)> use = [&](const Value *value) {
+        if (!visited.insert(value).second) return;
+        if (const auto *function = dyn_cast<Function>(value)) {
+            if (!function->isDeclaration()) pending.push_back(function);
+            return;
+        }
+        if (const auto *global = dyn_cast<GlobalVariable>(value)) {
+            SmallVector<DIGlobalVariableExpression *, 1> expressions;
+            global->getDebugInfo(expressions);
+            for (const DIGlobalVariableExpression *expression : expressions)
+                add(expression->getVariable()->getFile());
+            if (global->hasInitializer()) use(global->getInitializer());
+            return;
+        }
+        if (const auto *constant = dyn_cast<Constant>(value)) {
+            for (const Value *operand : constant->operands())
+                use(operand);
+        }
+    };
+    while (!pending.empty()) {
+        const Function *function = pending.back();
+        pending.pop_back();
+        if (!seen.insert(function).second) continue;
+        if (const DISubprogram *subprogram = function->getSubprogram()) add(subprogram->getFile());
+        for (const Instruction &instruction : instructions(*function)) {
+            for (const DILocation *at = instruction.getDebugLoc().get(); at != nullptr; at = at->getInlinedAt())
+                add(at->getFile());
+            for (const Value *operand : instruction.operands())
+                use(operand);
+        }
+    }
+}
+
 Prepared program_prepare(Program &program, const std::string &name, const Options &options) {
     Prepared prepared;
     prepared.module = CloneModule(*program.module);
+    collect_dependencies(*prepared.module->getFunction(name), prepared.unit.dependencies);
     prepared.function = split_slice_parameters(prepared.module->getFunction(name));
     Function &function = *prepared.function;
     // A value a caller passes is a value. clang writes noundef on a scalar parameter, but not on the integers a struct

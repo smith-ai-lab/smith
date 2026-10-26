@@ -369,38 +369,73 @@ void cache_store(const std::string &path, const prove::Outcome &outcome) {
 // ---- the proof file: what a release build leaves out (issue #221, shim/proved.hpp) ----
 
 // The checks of an index or a cut that a proved function owns, one `file<TAB>line` each, written by the process that
-// proved it to a file the parent made (a proof runs in a process of its own). A check a callee inlined into the unit
-// brings is the callee's, whose own line this proof says nothing of; a generic's instance is one of several that share
-// the source lines.
+// proved it to a file the parent made (a proof runs in a process of its own), and with them one
+// `D<TAB>file<TAB>directory<TAB>name` for each file the proof read besides the source (Unit::dependencies), which the
+// proof file's key covers. A check a callee inlined into the unit brings is the callee's, whose own line this proof
+// says nothing of; a generic's instance is one of several that share the source lines.
 FILE *checks_file = nullptr;
 
 void record_checks(const prove::Unit &unit) {
     if (checks_file == nullptr || unit.name.find('<') != std::string::npos) return;
+    std::set<std::string> sources;
     for (const prove::Point &point : unit.points) {
         if (point.kind != prove::Kind::Assert || point.text != proved::check_text() || !point.inlined.empty() ||
             point.line == 0 || point.file.size() < 6 || point.file.compare(point.file.size() - 6, 6, ".smith") != 0)
             continue;
         std::fprintf(checks_file, "%s\t%u\n", point.file.c_str(), point.line);
+        sources.insert(point.file);
+    }
+    for (const std::string &source : sources) {
+        for (const std::string &dependency : unit.dependencies) {
+            size_t newline = dependency.find('\n');
+            std::fprintf(checks_file, "D\t%s\t%s\t%s\n", source.c_str(), dependency.substr(0, newline).c_str(),
+                         dependency.substr(newline + 1).c_str());
+        }
     }
     std::fflush(checks_file);
 }
 
+std::vector<std::string> split_tabs(const std::string &row) {
+    std::vector<std::string> parts;
+    size_t begin = 0;
+    for (size_t tab; (tab = row.find('\t', begin)) != std::string::npos; begin = tab + 1)
+        parts.push_back(row.substr(begin, tab - begin));
+    std::string last = row.substr(begin);
+    while (!last.empty() && (last.back() == '\n' || last.back() == '\r'))
+        last.pop_back();
+    parts.push_back(last);
+    return parts;
+}
+
 // Writes `.smith/proved/<source>.pts` for each source with a proved check, from what the children recorded. The
-// source's text is read now: the key is of what was proved. Returns how many files it wrote.
+// source's text is read now: the key is of what was proved. A source whose proof read a file that cannot be found is
+// not written (its checks stay). Returns how many files it wrote.
 unsigned write_proved() {
     std::map<std::string, std::set<unsigned>> lines;
+    std::map<std::string, std::set<std::string>> dependencies;
+    std::set<std::string> unkeyed;
     std::fseek(checks_file, 0, SEEK_SET);
-    char row[4096];
+    char row[8192];
     while (std::fgets(row, sizeof row, checks_file) != nullptr) {
-        std::string text(row);
-        size_t tab = text.rfind('\t');
-        if (tab == std::string::npos) continue;
-        lines[text.substr(0, tab)].insert(static_cast<unsigned>(std::strtoul(text.c_str() + tab + 1, nullptr, 10)));
+        std::vector<std::string> parts = split_tabs(row);
+        if (parts.size() == 4 && parts[0] == "D") {
+            if (!parts[3].empty() && parts[3][0] == '<') continue; // "<built-in>": a buffer of the compiler's, no file
+            std::string own = proved::dependency_path("", parts[1]);
+            std::string path = proved::dependency_path(parts[2], parts[3]);
+            if (path.empty()) {
+                unkeyed.insert(parts[1]);
+            } else if (path != own) {
+                dependencies[parts[1]].insert(path);
+            }
+        } else if (parts.size() == 2) {
+            lines[parts[0]].insert(static_cast<unsigned>(std::strtoul(parts[1].c_str(), nullptr, 10)));
+        }
     }
     unsigned written = 0;
     for (const auto &[file, set] : lines) {
         std::string path = proved::path_of(file);
-        if (!path.empty() && proved::write(path, proved::slurp(file), set)) written++;
+        if (path.empty() || unkeyed.count(file) != 0) continue;
+        if (proved::write(path, proved::slurp(file), set, dependencies[file])) written++;
     }
     return written;
 }

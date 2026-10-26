@@ -112,3 +112,91 @@ export void test_prove_checks_the_proof_file_is_an_input_of_the_compile_in_a_rel
     scratch::Run debug = scratch::build(&p, "-v");
     scratch::expect_lacks("a debug build does not depend on it", debug.out, "-o build/debug/edges.o");
 }
+
+// A proof assumes what a callee in another file promises: `user::at`'s check passes because `bounds::pick` ensures
+// `r < 3`. The proof file's key covers that file, so changing the promise puts the check back (issue #221).
+constexpr char bounds_source[] = "module bounds;\n"
+                                 "\n"
+                                 "import smith::contract;\n"
+                                 "\n"
+                                 "export usize pick(usize n) {\n"
+                                 "    contract::requires(n < 3);\n"
+                                 "    usize r = n;\n"
+                                 "    contract::ensures(r < 3);\n"
+                                 "    return r;\n"
+                                 "}\n";
+
+constexpr char bounds_loose[] = "module bounds;\n"
+                                "\n"
+                                "import smith::contract;\n"
+                                "\n"
+                                "export usize pick(usize n) {\n"
+                                "    contract::requires(n < 3);\n"
+                                "    usize r = n;\n"
+                                "    contract::ensures(r < 5);\n"
+                                "    return r;\n"
+                                "}\n";
+
+constexpr char user_source[] = "module user;\n"
+                               "\n"
+                               "import bounds;\n"
+                               "import smith::contract;\n"
+                               "\n"
+                               "export i32 at(const i32 xs[:]) {\n"
+                               "    contract::requires(countof(xs) == 3);\n"
+                               "    contract::ensures(true);\n"
+                               "    return xs[bounds::pick(1)];\n"
+                               "}\n";
+
+constexpr char user_main[] = "module main;\n"
+                             "\n"
+                             "import user;\n"
+                             "\n"
+                             "i32 main() {\n"
+                             "    i32 xs[3] = {1, 2, 3};\n"
+                             "    i32 all[:] = xs;\n"
+                             "    return user::at(all) - 2;\n"
+                             "}\n";
+
+static scratch::Project across_files(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::write(&p, "bounds.smith", bounds_source);
+    scratch::write(&p, "user.smith", user_source);
+    scratch::write(&p, "main.smith", user_main);
+    scratch::Run built = scratch::build(&p, "");
+    scratch::expect_status("the project builds", 0, &built);
+    return p;
+}
+
+static const char *report_of(const scratch::Project *p, const char *source) {
+    const char *command =
+        format::push(&p->io->arena, "SMITH_PROVED_REPORT=1 smith cc -c ", source, " -O2 -I .smith/include -o x.o 2>&1")
+            .data;
+    return scratch::sh(p, command).out;
+}
+
+export void test_prove_checks_a_changed_callee_contract_puts_the_caller_checks_back(io::Io *io) {
+    scratch::Project p = across_files(io);
+    scratch::Run run = scratch::sh(&p, "smith prove 2>&1");
+    scratch::expect_status("both functions are proved", 0, &run);
+    scratch::expect_contains("the proof names the callee's file", scratch::read(&p, ".smith/proved/user.smith.pts"),
+                             "dep bounds.smith");
+    scratch::expect_contains("proved: the check of the index is gone", report_of(&p, "user.smith"),
+                             "1 removed (proved), 0 kept");
+    scratch::write(&p, "bounds.smith", bounds_loose);
+    scratch::expect_contains("the callee's promise changed, user.smith did not: the check is back",
+                             report_of(&p, "user.smith"), "0 removed (proved), 1 kept");
+}
+
+export void test_prove_checks_a_changed_callee_compiles_the_caller_again(io::Io *io) {
+    scratch::Project p = across_files(io);
+    scratch::sh(&p, "smith prove 2>&1");
+    scratch::Run first = scratch::build(&p, "release -v");
+    scratch::expect_status("release builds after a proof", 0, &first);
+    scratch::expect_contains("the callee's file is an input of the caller's compile",
+                             scratch::read(&p, ".smith/build.ninja"), "bounds.smith");
+    scratch::write(&p, "bounds.smith", bounds_loose);
+    scratch::Run second = scratch::build(&p, "release -v");
+    scratch::expect_status("release builds after the callee changed", 0, &second);
+    scratch::expect_contains("the caller compiled again", second.out, "-o build/release/user.o");
+}
