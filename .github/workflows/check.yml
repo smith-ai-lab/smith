@@ -1,15 +1,16 @@
 name: check
 
+# The merge train: a pull request runs no CI. The lead's lander stacks the pull requests labelled `ready` on main and
+# pushes the stack to `train`; one check covers the batch, and main moves only to a tree a green run checked. On
+# 2026-10-26 every push to a pull request queued its own full check and main sat still for 2.5 hours.
 on:
-  pull_request:
-    branches: [main]
   push:
-    branches: [main]
+    branches: [main, train]
 
-# A new push to a pull request cancels its older run; runs on main never cancel each other.
+# A new train cancels the older one (the lander replaced it); runs on main never cancel each other.
 concurrency:
-  group: check-${{ github.event_name == 'pull_request' && github.head_ref || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: check-${{ github.ref == 'refs/heads/train' && 'train' || github.sha }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/train' }}
 
 permissions:
   contents: read
@@ -41,8 +42,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # a push to main whose tree a green run already checked (the pull request's, when main had not moved) skips the
-          # Full check; a pull request never skips, its run is what records the tree (scripts/ci-tree.sh)
+          # a push whose tree a green run already checked skips the Full check: main after a train merges is the tree the
+          # train's run checked (scripts/ci-tree.sh)
           export PATH="/opt/homebrew/bin:$PATH"
           tree=$(sh scripts/ci-tree.sh tree)
           echo "tree=$tree" >>"$GITHUB_OUTPUT"

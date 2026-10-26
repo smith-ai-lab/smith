@@ -12,7 +12,7 @@ case $cmd in
 tree) git rev-parse 'HEAD^{tree}' ;;
 run)
     # fail safe: only a single run id (digits) counts; an error, an empty or a malformed answer is "nothing"
-    id=$(gh api "repos/${GITHUB_REPOSITORY:-}/artifacts?name=tree-$2" \
+    id=$(gh api "repos/${GITHUB_REPOSITORY:-}/actions/artifacts?name=tree-$2" \
         --jq '[.artifacts[] | select(.expired == false)] | first | .workflow_run.id // empty' 2>/dev/null) || id=
     case $id in
     '' | *[!0-9]*) ;;

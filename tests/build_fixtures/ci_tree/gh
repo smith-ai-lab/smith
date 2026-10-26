@@ -1,6 +1,7 @@
 #!/bin/sh
-# A stub gh: prints $STUB_ANSWER when asked for the artifact named in $STUB_NAME, nothing otherwise; STUB_FAIL makes it fail.
+# A stub gh: prints $STUB_ANSWER when asked for the artifact named in $STUB_NAME at GitHub's exact path, nothing otherwise
+# (matching only the end, artifacts?name=, hid the script's 404 for a wrong path); STUB_FAIL makes it fail.
 [ -n "${STUB_FAIL:-}" ] && exit 1
 case $2 in
-*"artifacts?name=$STUB_NAME") printf '%s' "${STUB_ANSWER:-}" ;;
+"repos/$GITHUB_REPOSITORY/actions/artifacts?name=$STUB_NAME") printf '%s' "${STUB_ANSWER:-}" ;;
 esac
