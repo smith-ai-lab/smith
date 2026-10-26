@@ -1524,6 +1524,13 @@ static const char *const *smith_library_flags(SmithBuild *b, const char *source)
     return smith_split_lines(text, size);
 }
 
+// A module has no warnings (knowledge/module-diagnostics.md): the compile of a .smith file with a `module` line ends
+// with the baseline as errors, after every other flag so that none turns one off, then the project's .errors.
+static const char *const *smith_module_flags(SmithBuild *b, const char *source);
+// The project's .warnings, as warnings that never fail the build; only the compile database (smith lint, the editor)
+// carries them, so a build stays quiet.
+static const char *const *smith_module_advisories(SmithBuild *b, const char *source);
+
 // .smith sources (knowledge/smith-language.md). A module's generated header is a step of its own, made from the
 // module's tokens alone (`smith-cc --smith-header`), so every header can be written before any compile, and every
 // compile of a .smith source waits for all of them (an order-only input: the stamp of the check below) and gets `-I
@@ -1980,7 +1987,8 @@ void smith_object(SmithBuild *b, SmithObject *object) {
     copy.step = (SmithStep){
         .command =
             smith_cat(b, smith_one(copy.compiler), smith_modules_for(b, copy.source), smith_lang_flags(b, copy.source),
-                      copy.flags, proved_flags, smith_library_flags(b, copy.source), tail, nullptr),
+                      copy.flags, proved_flags, smith_library_flags(b, copy.source), smith_module_flags(b, copy.source), tail,
+                      nullptr),
         .inputs = smith_one(copy.source),
         .implicit_inputs =
             smith_cat(b, copy.implicit_inputs, smith_one(smith_compiler_file(copy.compiler)), proved_inputs, nullptr),
@@ -2374,7 +2382,7 @@ void smith_compile_command(SmithBuild *b, const char *compiler, const char *sour
     const char *const tail[] = {"-c", copy, nullptr};
     const char *const *arguments =
         smith_cat(b, smith_one(smith_copy_string(compiler)), smith_modules_for(b, copy), smith_lang_flags(b, copy),
-                  smith_copy_list(flags), smith_library_flags(b, copy), tail, nullptr);
+                  smith_copy_list(flags), smith_library_flags(b, copy), smith_module_flags(b, copy), tail, nullptr);
     smith_command_rows[smith_command_row_count++] = (SmithCommandRow){copy, arguments};
 }
 
@@ -2392,11 +2400,15 @@ static void smith_put_compile_commands(FILE *out, const SmithBuild *b, bool firs
     for (size_t i = 0; i < smith_object_row_count; i++) {
         const SmithObject *object = &smith_object_rows[i].object;
         if (!smith_object_rows[i].listed || (first_once && smith_listed_before(i))) continue;
-        smith_json_entry(out, b->root, object->source, object->output, smith_object_rows[i].object.step.command);
+        smith_json_entry(out, b->root, object->source, object->output,
+                         smith_cat((SmithBuild *)b, object->step.command,
+                                   smith_module_advisories((SmithBuild *)b, object->source), nullptr));
         fputs(",\n", out);
     }
     for (size_t i = 0; i < smith_command_row_count; i++) {
-        smith_json_entry(out, b->root, smith_command_rows[i].source, nullptr, smith_command_rows[i].arguments);
+        smith_json_entry(out, b->root, smith_command_rows[i].source, nullptr,
+                         smith_cat((SmithBuild *)b, smith_command_rows[i].arguments,
+                                   smith_module_advisories((SmithBuild *)b, smith_command_rows[i].source), nullptr));
         fputs(",\n", out);
     }
     const char *build_file = smith_build_file_name();
@@ -3578,8 +3590,60 @@ void smith_defaults(SmithBuild *b, const SmithDefaults *defaults) {
         .flags = smith_copy_list(defaults->flags),
         .folders = smith_copy_folders(defaults->folders),
         .link_flags = smith_copy_list(defaults->link_flags),
+        .warnings = smith_copy_list(defaults->warnings),
+        .errors = smith_copy_list(defaults->errors),
     };
     smith_app_include_dirs(smith_app_state.defaults.flags);
+}
+
+// The baseline of a module (knowledge/module-diagnostics.md): each is a diagnostic C23 or Smith gives a written way to
+// say "I meant it" for, so each has an honest fix and no disable comment exists. The unused names and -Wunused-result
+// join when `_` and `_name` exist (#413), and -Wswitch-enum when clang can tell a smith enum from a C header's.
+static const char *const smith_module_baseline[] = {
+    "conversion",
+    "sign-conversion",
+    "shorten-64-to-32",
+    "float-conversion",
+    "implicit-int-float-conversion",
+    "sign-compare",
+    "parentheses",
+    "unsequenced",
+    "implicit-fallthrough",
+    "return-type",
+    "return-stack-address",
+    "dangling",
+    "incompatible-pointer-types",
+    "int-conversion",
+    "cast-qual",
+    "cast-function-type",
+    "sizeof-pointer-memaccess",
+    "sizeof-array-argument",
+    nullptr};
+
+static bool smith_is_module_source(const char *source) {
+    return smith_ends_with(source, ".smith") && smith_lang_module_of(source) != nullptr;
+}
+
+static const char *const *smith_module_prefixed(SmithBuild *b, const char *const *names, const char *prefix,
+                                                const char *const *then) {
+    const char *const *flags = smith_list(b, nullptr);
+    for (size_t i = 0; names != nullptr && names[i] != nullptr; i++)
+        flags = smith_cat(b, flags, smith_list(b, smith_text("%s%s", prefix, names[i]), nullptr), nullptr);
+    return smith_cat(b, flags, then == nullptr ? smith_list(b, nullptr) : then, nullptr);
+}
+
+static const char *const *smith_module_flags(SmithBuild *b, const char *source) {
+    if (!smith_is_module_source(source)) return smith_list(b, nullptr);
+    return smith_module_prefixed(b, smith_module_baseline, "-Werror=",
+                                 smith_module_prefixed(b, smith_app_state.defaults.errors, "-Werror=", nullptr));
+}
+
+static const char *const *smith_module_advisories(SmithBuild *b, const char *source) {
+    if (smith_app_state.defaults.warnings == nullptr || !smith_is_module_source(source))
+        return smith_list(b, nullptr);
+    const char *const *names = smith_app_state.defaults.warnings;
+    const char *const *flags = smith_module_prefixed(b, names, "-W", nullptr);
+    return smith_module_prefixed(b, names, "-Wno-error=", flags);
 }
 
 // The object of a source in a profile: build/<profile>/<source without its extension>.o. A library of smith's is

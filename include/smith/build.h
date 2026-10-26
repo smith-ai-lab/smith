@@ -397,6 +397,8 @@ typedef struct {
     const char *const *flags;      // added to every compile of every profile, after the profile's own
     const SmithFolder *folders;    // settings for the sources below a folder; a row with a nullptr path ends the list
     const char *const *link_flags; // added to every link
+    const char *const *warnings;   // extra diagnostics for modules, shown by lint, never failing
+    const char *const *errors;     // extra diagnostics for modules that fail the build
 } SmithDefaults;
 
 void smith_defaults(SmithBuild *b, const SmithDefaults *defaults);
