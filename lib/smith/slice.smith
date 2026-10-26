@@ -1,0 +1,16 @@
+module smith::slice;
+
+export bool equal(const auto a[:], const typeof(a[0]) b[:]) {
+    if (countof(a) != countof(b)) return false;
+    for (usize i = 0; i < countof(a); i++) {
+        if (a[i] != b[i]) return false;
+    }
+    return true;
+}
+
+export option(usize) find(const auto xs[:], typeof(xs[0]) v) {
+    for (usize i = 0; i < countof(xs); i++) {
+        if (xs[i] == v) return i;
+    }
+    return .none;
+}
