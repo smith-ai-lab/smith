@@ -2701,11 +2701,15 @@ static size_t smith_lang_slice_local_element(uint32_t first, uint32_t last, Smit
     return count;
 }
 
+static bool smith_lang_slice_replay_init(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                         uint32_t place, uint32_t equals, uint32_t end, const char *to,
+                                         SmithLangSlicePart *parts, size_t *used);
+
 // The declaration at the frame's position is a slice local, `T v[:]` or `const T v[restrict :]` (one dimension, an
 // element the generic's own tokens spell): write its struct, the name and what follows as the lowering does, and take
 // the name for a slice. False when it is no such declaration.
-static bool smith_lang_slice_replay_local(SmithLang *lang, SmithLangReplay *replay, SmithLangFrame *frame,
-                                          uint32_t place) {
+static bool smith_lang_slice_replay_local(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                          SmithLangFrame *frame, uint32_t place) {
     static const char *const words[] = {"static", "extern", "typedef", "register", "constexpr", "auto",        "return",
                                         "case",   "goto",   "else",    "sizeof",   "typeof",    "thread_local"};
     uint32_t first = frame->pos;
@@ -2749,9 +2753,13 @@ static bool smith_lang_slice_replay_local(SmithLang *lang, SmithLangReplay *repl
     snprintf(text, sizeof text, "%s %sstruct %s %.*s", definition, is_const ? "const " : "", tag, (int)name->length,
              smith_lang_gt_str(name));
     smith_lang_slice_local_add(replay, name, tag);
-    frame->pos = at + 2;
-    SmithLangSlicePart parts[] = {{text, 0, 0}};
-    smith_lang_slice_parts(replay, place, parts, 1);
+    SmithLangSlicePart parts[8] = {{text, 0, 0}};
+    size_t used = 1;
+    uint32_t pos = at + 2;
+    if (smith_lang_slice_replay_init(lang, host, replay, place, pos, end, tag, parts, &used))
+        pos += 2; // `= xs` converted
+    frame->pos = pos;
+    smith_lang_slice_parts(replay, place, parts, used);
     return true;
 }
 
@@ -3161,6 +3169,52 @@ static bool smith_lang_slice_replay_write(SmithLang *lang, const SmithHost *host
     return changed;
 }
 
+// `= xs ;` at `equals`, where `xs` is a slice of the instance (a parameter or a local) of another qualification than
+// the slice of tag `to` being initialized or assigned (issue #135): appends the `=` and the converted value to the
+// parts, as a call's argument is converted; the `;` is left to the frame. False, with nothing appended, otherwise.
+static bool smith_lang_slice_replay_init(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                         uint32_t place, uint32_t equals, uint32_t end, const char *to,
+                                         SmithLangSlicePart *parts, size_t *used) {
+    SmithLangSliceType from = {};
+    if (host == nullptr || equals + 2 >= end || replay->typing ||
+        !smith_lang_gt_punct(&smith_lang_gt.tokens[equals], "=") ||
+        !smith_lang_gt_punct(&smith_lang_gt.tokens[equals + 2], ";")) {
+        return false;
+    }
+    const SmithLangGenToken *only = &smith_lang_gt.tokens[equals + 1];
+    if (only->kind != SmithTokenKind_Identifier || only->special != SmithLangGen_Plain || only->param != 0 ||
+        !smith_lang_slice_replay_named(replay, equals + 1, &from)) {
+        return false;
+    }
+    SmithLangSliceRelation relation = smith_lang_slice_relation(from.tag, to);
+    if (relation == SmithLangSliceRelation_Same || relation == SmithLangSliceRelation_Other) return false;
+    static char texts[2][640];
+    parts[(*used)++] = (SmithLangSlicePart){"=", 0, 0};
+    bool wraps = smith_lang_slice_replay_words(lang, host, place, from.tag, to, texts);
+    parts[(*used)++] = (SmithLangSlicePart){texts[0], 0, 0};
+    if (!wraps) return true;
+    parts[(*used)++] = (SmithLangSlicePart){nullptr, equals + 1, equals + 2};
+    parts[(*used)++] = (SmithLangSlicePart){texts[1], 0, 0};
+    return true;
+}
+
+// `xs = ys;` where `xs` is a slice of the instance and `ys` another (issue #135): the assignment converts as an
+// initializer does.
+static bool smith_lang_slice_replay_assign(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                           SmithLangFrame *frame, uint32_t place) {
+    uint32_t at = frame->pos;
+    SmithLangSliceType target = {};
+    SmithLangSlicePart parts[8] = {{nullptr, at, at + 1}};
+    size_t used = 1;
+    if (!smith_lang_slice_replay_named(replay, at, &target) ||
+        !smith_lang_slice_replay_init(lang, host, replay, place, at + 1, frame->end, target.tag, parts, &used)) {
+        return false;
+    }
+    frame->pos = at + 3;
+    smith_lang_slice_parts(replay, place, parts, used);
+    return true;
+}
+
 static bool smith_lang_slice_replay_call(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
                                          SmithLangFrame *frame, uint32_t place) {
     uint32_t at = frame->pos;
@@ -3202,8 +3256,9 @@ static bool smith_lang_slice_replay(SmithLang *lang, const SmithHost *host, Smit
     }
     uint32_t place = smith_lang_gen_place(host, replay->generic, (SmithLangGenToken *)token, replay->location);
     if (smith_lang_slice_replay_member(lang, host, replay, frame, place)) return true;
-    if (smith_lang_slice_replay_local(lang, replay, frame, place)) return true;
+    if (smith_lang_slice_replay_local(lang, host, replay, frame, place)) return true;
     if (replay->instance->slices.length == 0 && smith_lang_slice_locals.instance != replay->instance_id) return false;
+    if (smith_lang_slice_replay_assign(lang, host, replay, frame, place)) return true;
     if (smith_lang_slice_replay_call(lang, host, replay, frame, place)) return true;
     if (smith_lang_gt_is(token, SmithTokenKind_Identifier, "countof")) {
         return smith_lang_slice_replay_countof(replay, place, frame);

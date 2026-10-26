@@ -6586,6 +6586,86 @@ i32 main() {
     c::printf("%zu\n", through_restrict(xs));
     return 0;
 }
+==> generic-slice-init-error/src/conv.smith <==
+module conv;
+
+// Dropping `const` in an initializer or an assignment stays an error inside a generic's body, with the message an
+// ordinary function gets.
+
+export usize init(auto xs) {
+    u8 v[:] = xs;
+    return countof(v);
+}
+
+export usize assign(auto xs, auto ys) {
+    xs = ys;
+    return countof(xs);
+}
+==> generic-slice-init-error/src/main.smith <==
+module main;
+
+import conv;
+
+i32 main() {
+    u8 raw[2] = {1, 2};
+    u8 plain[:] = raw;
+    const u8 read[:] = raw;
+    return (i32)(conv::init(read) + conv::assign(plain, read));
+}
+==> generic-slice-init/src/conv.smith <==
+module conv;
+
+// A generic's body converts a slice in an initializer and an assignment as an ordinary function does (issue #135):
+// `const` added, `restrict` added or dropped.
+
+static usize read_sum(const u8 xs[:]) {
+    usize t = 0;
+    for (usize i = 0; i < countof(xs); i++) {
+        t += xs[i];
+    }
+    return t;
+}
+
+export usize init_const(auto xs) {
+    const u8 v[:] = xs;
+    return read_sum(v);
+}
+
+export usize init_restrict(auto xs) {
+    u8 v[restrict :] = xs;
+    return countof(v);
+}
+
+export usize init_unrestrict(auto xs) {
+    u8 v[:] = xs;
+    return countof(v);
+}
+
+export usize assign_const(auto xs, auto ys) {
+    xs = ys;
+    return read_sum(xs);
+}
+
+export usize assign_local(auto xs, auto ys) {
+    u8 v[:] = xs;
+    v = ys;
+    return countof(v) + v[0];
+}
+==> generic-slice-init/src/main.smith <==
+module main;
+
+import conv;
+import <stdio.h>;
+
+i32 main() {
+    u8 raw[5] = {1, 2, 3, 4, 5};
+    u8 xs[:] = raw;
+    const u8 rd[:] = raw;
+    u8 res[restrict :] = raw;
+    c::printf("%zu %zu %zu\n", conv::init_const(xs), conv::init_restrict(xs), conv::init_unrestrict(res));
+    c::printf("%zu %zu\n", conv::assign_const(rd, xs), conv::assign_local(xs, res));
+    return 0;
+}
 ==> generic-slice-local/src/conv.smith <==
 module conv;
 
