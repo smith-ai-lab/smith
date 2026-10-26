@@ -69,6 +69,7 @@
     "./.agents/skills/smith-json-pull-write/",
     "./.agents/skills/smith-lang/",
     "./.agents/skills/smith-lang-arrays/",
+    "./.agents/skills/smith-lang-for/",
     "./.agents/skills/smith-lang-array-dims/",
     "./.agents/skills/smith-lang-array-params/",
     "./.agents/skills/smith-lang-c-interop/",

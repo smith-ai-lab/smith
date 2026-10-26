@@ -17,11 +17,12 @@ export i32 sum(usize count) {
     return total;
 }
 
-// A run-time array is a slice, `i32 xs[:]`: a pointer and a count; `countof(xs)` is its length, `xs[i]` is checked.
+// A run-time array is a slice, `i32 xs[:]`: a pointer and a count; `countof(xs)` is its length, `xs[i]` is checked,
+// and `for (i32 x : xs)` visits each element with no bounds to get wrong.
 export i32 total(i32 xs[:]) {
     i32 sum = 0;
-    for (usize i = 0; i < countof(xs); i++) {
-        sum += xs[i];
+    for (i32 x : xs) {
+        sum += x;
     }
     return sum;
 }

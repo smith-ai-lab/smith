@@ -111,8 +111,9 @@ import smith::io;
 
 i32 sum(const i32 xs[:]) {
     i32 total = 0;
-    for (usize i = 0; i < countof(xs); i++)
-        total += xs[i]; // xs[i] is checked: a bad index stops with a report
+    for (i32 x : xs) { // each element, with no bounds to get wrong
+        total += x;
+    }
     return total;
 }
 
@@ -128,7 +129,7 @@ i32 main(io::Io *io) {
 all 15, middle 9
 ```
 
-A cut `xs[a:b]` is a view of the same elements. `const i32 xs[:]` makes the elements read-only, and `u8 dst[restrict :]`
+`for (i32 x : xs)` visits each element, `for (usize i, i32 x : xs)` adds its position, and `i32 *p` points at the element; C's `for` stays for a step or a reverse walk ([smith-lang-for](.agents/skills/smith-lang-for/SKILL.md)). A cut `xs[a:b]` is a view of the same elements. `const i32 xs[:]` makes the elements read-only, and `u8 dst[restrict :]`
 is C's `restrict`. A parameter written `i32 xs[4]` keeps its 4, where C throws it away:
 
 ```smith

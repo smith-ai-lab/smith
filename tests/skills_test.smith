@@ -397,6 +397,10 @@ export void test_skill_smith_lang_modules(io::Io *io) {
     skill_case(io, "smith-lang-modules");
 }
 
+export void test_skill_smith_lang_for(io::Io *io) {
+    skill_case(io, "smith-lang-for");
+}
+
 export void test_skill_smith_lang_reflection(io::Io *io) {
     skill_case(io, "smith-lang-reflection");
 }
