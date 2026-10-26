@@ -971,9 +971,14 @@ static bool smith_lang_slice_text(SmithLang *lang, const SmithToken *tokens, siz
 // The statement that fails the program unless `condition` holds (in every build): smith_failure
 // (<smith/trace.h>) with the kind of an assert, 4, as `contract::assert` fails, so the report is the same and its line
 // is the line of the index. The function is declared here, so that the file needs no import; the build links it with
-// the trace library.
-static void smith_lang_slice_check(const SmithHost *host, const char *condition, char *out, size_t capacity) {
-    (void)host;
+// the trace library. A check `smith prove` proved can never fail is not written in a release build (issue #221): the
+// host says so for the source `location` of the index or the cut (the host has the proof file; 0 asks for no proof).
+static void smith_lang_slice_check(const SmithHost *host, uint32_t location, const char *condition, char *out,
+                                   size_t capacity) {
+    if (location != 0 && host->proved != nullptr && host->proved(host->context, location)) {
+        out[0] = '\0';
+        return;
+    }
     snprintf(out, capacity, "extern void smith_failure ( unsigned char ) ; if ( ! ( %s ) ) smith_failure ( 4 ) ;",
              condition);
 }
@@ -1129,7 +1134,7 @@ static size_t smith_lang_slice_index(SmithLangSliceCur *cur, const SmithHost *ho
                                      const SmithToken *like) {
     char check[512];
     char pattern[1024];
-    smith_lang_slice_check(host, "smith_i < smith_s . count [ 0 ]", check, sizeof check);
+    smith_lang_slice_check(host, like->location, "smith_i < smith_s . count [ 0 ]", check, sizeof check);
     snprintf(pattern, sizeof pattern,
              "( * __extension__ ( { auto smith_s = ( @0 ) ; __SIZE_TYPE__ smith_i = ( @1 ) ; %s & smith_s . data [ "
              "smith_i ] ; } ) )",
@@ -1143,7 +1148,8 @@ static size_t smith_lang_slice_view(SmithLangSliceCur *cur, const SmithHost *hos
                                     const char *tag, const SmithToken *like) {
     char check[512];
     char pattern[1536];
-    smith_lang_slice_check(host, "smith_a <= smith_b && smith_b <= smith_s . count [ 0 ]", check, sizeof check);
+    smith_lang_slice_check(host, like->location, "smith_a <= smith_b && smith_b <= smith_s . count [ 0 ]", check,
+                           sizeof check);
     snprintf(
         pattern, sizeof pattern,
         "__extension__ ( { auto smith_s = ( @0 ) ; __SIZE_TYPE__ smith_a = ( @1 ) ; __SIZE_TYPE__ smith_b = ( @2 ) ; "
@@ -1172,7 +1178,7 @@ static bool smith_lang_slice_from_pointer(SmithLang *lang, SmithLangSliceCur *cu
     }
     char check[512];
     char pattern[1536];
-    smith_lang_slice_check(host, condition, check, sizeof check);
+    smith_lang_slice_check(host, like->location, condition, check, sizeof check);
     snprintf(pattern, sizeof pattern,
              "__extension__ ( { auto smith_p = ( @0 ) ; __SIZE_TYPE__ smith_a = ( @1 ) ; __SIZE_TYPE__ smith_b = ( @2 "
              ") ; %s struct %s { "
@@ -1239,7 +1245,7 @@ static bool smith_lang_slice_rows(SmithLangSliceCur *cur, const SmithHost *host,
     }
     char check[1024];
     char pattern[4096];
-    smith_lang_slice_check(host, condition, check, sizeof check);
+    smith_lang_slice_check(host, like->location, condition, check, sizeof check);
     if (m == dims->count) {
         snprintf(pattern, sizeof pattern,
                  "( * __extension__ ( { auto smith_s = ( @0 ) ; %s%s & smith_s . data [ %s ] ; } ) )", declarations,
@@ -1281,7 +1287,8 @@ static size_t smith_lang_slice_view_rows(SmithLangSliceCur *cur, const SmithHost
     char check[512];
     char stride[512];
     char pattern[2048];
-    smith_lang_slice_check(host, "smith_a <= smith_b && smith_b <= smith_s . count [ 0 ]", check, sizeof check);
+    smith_lang_slice_check(host, like->location, "smith_a <= smith_b && smith_b <= smith_s . count [ 0 ]", check,
+                           sizeof check);
     smith_lang_slice_stride_text(&type->dims, 1, stride, sizeof stride);
     snprintf(
         pattern, sizeof pattern,
@@ -2847,7 +2854,7 @@ static bool smith_lang_slice_replay_cut(const SmithHost *host, SmithLangReplay *
     char head[640];
     snprintf(condition, sizeof condition, "smith_a%1$u <= smith_b%1$u && smith_b%1$u <= smith_s%1$u . count [ 0 ]",
              counter);
-    smith_lang_slice_check(host, condition, check, sizeof check);
+    smith_lang_slice_check(host, 0, condition, check, sizeof check);
     snprintf(head, sizeof head, "__extension__ ( { auto smith_s%u = (", counter);
     char first[160];
     char second[160];
@@ -2916,7 +2923,7 @@ static bool smith_lang_slice_replay_subscript(SmithLang *lang, const SmithHost *
     frame->pos = close + 1;
     if (colon == UINT32_MAX) {
         snprintf(condition, sizeof condition, "smith_i%1$u < smith_s%1$u . count [ 0 ]", counter);
-        smith_lang_slice_check(host, condition, check, sizeof check);
+        smith_lang_slice_check(host, 0, condition, check, sizeof check);
         snprintf(head, sizeof head, "( * __extension__ ( { auto smith_s%u = (", counter);
         snprintf(tail, sizeof tail, ") ; __SIZE_TYPE__ smith_i%1$u = (", counter);
         char end[1024];
@@ -2968,7 +2975,7 @@ static void smith_lang_slice_replay_element(const SmithHost *host, SmithLangRepl
         }
     }
     char check[480];
-    smith_lang_slice_check(host, condition, check, sizeof check);
+    smith_lang_slice_check(host, 0, condition, check, sizeof check);
     char head[96];
     char between[smith_lang_slice_dims_max][96];
     char end[640];

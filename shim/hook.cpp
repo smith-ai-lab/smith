@@ -42,6 +42,8 @@ extern "C" {
 #include "../runtime/lang.h"
 }
 
+#include "proved.hpp"
+
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
@@ -652,6 +654,7 @@ class SmithHook final : public TokenHook, public NameSource {
         host.read_problem = &SmithHook::readProblem;
         host.suppress = &SmithHook::suppressUse;
         host.hint = &SmithHook::hintAt;
+        host.proved = &SmithHook::provedAt;
         if (OptionalFileEntryRef entry = SM.getFileEntryRefForID(MainFile)) {
             mainName = entry->getName().str();
         }
@@ -744,6 +747,7 @@ class SmithHook final : public TokenHook, public NameSource {
         if (end) reachedEnd = true;
         if (end) moduleFile = smith_lang_is_module(lang);
         bool consumed = measured(tok);
+        if (end) reportProved();
         if (end) giveBack();
         return consumed;
     }
@@ -3496,6 +3500,43 @@ class SmithHook final : public TokenHook, public NameSource {
     }
 
     // The uses of a module that could not be imported are kept out of the diagnostics.
+    // ---- The checks `smith prove` proved (issue #221, shim/proved.hpp)
+    //
+    // An optimized build (release and fast, not the -O0 debug one) leaves out the checks of an index or a cut on a line
+    // that `.smith/proved/<source>.pts` says is proved, for exactly this source text and this smith. Debug, the
+    // prover's own compile and the editor keep every check, and so does a build with no file, or with one of another
+    // key.
+    bool provedLoaded = false;
+    std::set<unsigned> provedLines;
+    unsigned provedRemoved = 0, provedKept = 0;
+
+    void loadProved() {
+        provedLoaded = true;
+        if (!PP.isMacroDefined("__OPTIMIZE__") || getenv("SMITH_PROVING") != nullptr || inEditor || mainName.empty())
+            return;
+        std::string path = proved::path_of(mainName);
+        if (!path.empty()) provedLines = proved::read(path, SM.getBufferData(MainFile).str());
+    }
+
+    static bool provedAt(void *context, uint32_t location) {
+        auto *self = static_cast<SmithHook *>(context);
+        if (!self->provedLoaded) self->loadProved();
+        bool proved = false;
+        if (!self->provedLines.empty()) {
+            SourceLocation at = SourceLocation::getFromRawEncoding(location);
+            proved = self->provedLines.count(self->SM.getPresumedLineNumber(self->SM.getExpansionLoc(at))) > 0;
+        }
+        (proved ? self->provedRemoved : self->provedKept)++;
+        return proved;
+    }
+
+    // SMITH_PROVED_REPORT=1: how many checks of this file the release build left out and how many it kept.
+    void reportProved() {
+        if (provedRemoved + provedKept == 0 || getenv("SMITH_PROVED_REPORT") == nullptr) return;
+        fprintf(stderr, "smith: checks %s: %u removed (proved), %u kept\n", mainName.c_str(), provedRemoved,
+                provedKept);
+    }
+
     static void suppressUse(void *context, uint32_t location) {
         static_cast<SmithHook *>(context)->link->suppressed.insert(location);
     }

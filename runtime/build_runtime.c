@@ -1911,6 +1911,30 @@ static void smith_lang_header_step(SmithBuild *b, const SmithObject *object, con
     smith_step(b, &step);
 }
 
+// What `smith prove` proved of a `.smith` source reaches a release compile through the graph (issue #221): the proof
+// file `.smith/proved/<source>.pts` is an input of the compile, and a `-DSMITH_PROVED=<hash of its bytes>` makes the
+// command a function of it too, so a proof written, changed or removed rebuilds the object and nothing else does. Only
+// an optimized compile (-O1 or more: release and fast) leaves checks out, so only it depends on the file; debug never
+// does. The path is the one shim/proved.hpp names. Sets `*input` to the file (or nullptr when there is none) and
+// returns the flag.
+static const char *const *smith_proved_flags(SmithBuild *b, const SmithObject *object, const char **input) {
+    *input = nullptr;
+    const char *source = object->source;
+    while (strncmp(source, "./", 2) == 0)
+        source += 2;
+    bool release = false;
+    for (size_t i = 0; object->flags != nullptr && object->flags[i] != nullptr; i++)
+        release = release || (strncmp(object->flags[i], "-O", 2) == 0 && strcmp(object->flags[i], "-O0") != 0);
+    if (!release || !smith_ends_with(source, ".smith") || source[0] == '/' || strstr(source, "..") != nullptr)
+        return smith_list(b, nullptr);
+    const char *path = smith_text(".smith/proved/%s.pts", source);
+    char *text = nullptr;
+    if (access(path, R_OK) != 0) return smith_list(b, nullptr);
+    size_t size = smith_read_file(path, &text);
+    *input = path;
+    return smith_list(b, smith_text("-DSMITH_PROVED=%016" PRIx64, smith_hash_bytes(text, size)), nullptr);
+}
+
 void smith_object(SmithBuild *b, SmithObject *object) {
     SMITH_ASSERT(b != nullptr && object != nullptr);
     smith_require_program("smith_object", "compiler", object->compiler);
@@ -1938,12 +1962,16 @@ void smith_object(SmithBuild *b, SmithObject *object) {
         if (smith_lang_register(copy.source, &header, &first) != nullptr && first && !library)
             smith_lang_header_step(b, &copy, header);
     }
+    const char *proved_input = nullptr;
+    const char *const *proved_flags = smith_proved_flags(b, &copy, &proved_input);
     copy.step = (SmithStep){
         .command =
             smith_cat(b, smith_one(copy.compiler), smith_modules_for(b, copy.source), smith_lang_flags(b, copy.source),
-                      copy.flags, smith_library_flags(b, copy.source), tail, nullptr),
+                      copy.flags, proved_flags, smith_library_flags(b, copy.source), tail, nullptr),
         .inputs = smith_one(copy.source),
-        .implicit_inputs = smith_cat(b, copy.implicit_inputs, smith_one(smith_compiler_file(copy.compiler)), nullptr),
+        .implicit_inputs =
+            smith_cat(b, copy.implicit_inputs, smith_one(smith_compiler_file(copy.compiler)),
+                      proved_input != nullptr ? smith_one(proved_input) : smith_list(b, nullptr), nullptr),
         .order_only_inputs = headers ? smith_one(smith_lang_stamp) : smith_list(b, nullptr),
         .outputs = smith_cat(b, smith_one(copy.output),
                              smith_effects_outputs(b, copy.compiler, copy.source, copy.output), nullptr),

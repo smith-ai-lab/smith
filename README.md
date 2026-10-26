@@ -377,6 +377,26 @@ i32 main() {
 
 [smith-contract](.agents/skills/smith-contract/SKILL.md), [smith-prove](.agents/skills/smith-prove/SKILL.md).
 
+#### A proof removes the check
+
+Every index and cut of a slice is checked in every build, and only a proof takes one away: `smith prove` writes the
+checks it proved can never fail to `.smith/proved/<source>.pts`, and a `release` or `fast` build leaves exactly those
+out. Debug keeps every check, and so does a source edited since the proof.
+
+```smith
+module first;
+
+import smith::contract;
+
+export i32 head(const i32 xs[:]) {
+    contract::requires(countof(xs) >= 1); // every caller is proved to meet it
+    contract::ensures(true);              // asks for the proof of `xs[0]`'s check
+    return xs[0];                         // proved: gone from `smith build release`
+}
+```
+
+[smith-prove](.agents/skills/smith-prove/SKILL.md), [smith-lang-arrays](.agents/skills/smith-lang-arrays/SKILL.md).
+
 ### Tests whose signature says what they touch
 
 ```smith project=first

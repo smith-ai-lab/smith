@@ -6,6 +6,7 @@
 // linked into one module (shim/prove_ir.cpp), and each function with a contract is proved on its own
 // (shim/prove_alive.cpp). The results print like a test run.
 #include "prove.hpp"
+#include "proved.hpp"
 
 #include "llvm/Config/llvm-config.h"
 #include "llvm/IR/Instructions.h"
@@ -40,9 +41,6 @@ extern "C" int smith_lang_command(int argc, char **argv, int first, char **out, 
 namespace {
 
 using Clock = std::chrono::steady_clock;
-
-// Bump when a change to the prover can change what a function proves or how it fails.
-#define SMITH_PROVER_VERSION "9"
 
 // The checks of UBSan that become explicit branches to a trap in the IR. null, alignment and object-size are left to
 // Alive2's memory model, which treats an invalid access as undefined behaviour itself; pointer-overflow, bool and enum
@@ -368,6 +366,45 @@ void cache_store(const std::string &path, const prove::Outcome &outcome) {
     cache_prune(directory);
 }
 
+// ---- the proof file: what a release build leaves out (issue #221, shim/proved.hpp) ----
+
+// The checks of an index or a cut that a proved function owns, one `file<TAB>line` each, written by the process that
+// proved it to a file the parent made (a proof runs in a process of its own). A check a callee inlined into the unit
+// brings is the callee's, whose own line this proof says nothing of; a generic's instance is one of several that share
+// the source lines.
+FILE *checks_file = nullptr;
+
+void record_checks(const prove::Unit &unit) {
+    if (checks_file == nullptr || unit.name.find('<') != std::string::npos) return;
+    for (const prove::Point &point : unit.points) {
+        if (point.kind != prove::Kind::Assert || point.text != proved::check_text() || !point.inlined.empty() ||
+            point.line == 0 || point.file.size() < 6 || point.file.compare(point.file.size() - 6, 6, ".smith") != 0)
+            continue;
+        std::fprintf(checks_file, "%s\t%u\n", point.file.c_str(), point.line);
+    }
+    std::fflush(checks_file);
+}
+
+// Writes `.smith/proved/<source>.pts` for each source with a proved check, from what the children recorded. The
+// source's text is read now: the key is of what was proved. Returns how many files it wrote.
+unsigned write_proved() {
+    std::map<std::string, std::set<unsigned>> lines;
+    std::fseek(checks_file, 0, SEEK_SET);
+    char row[4096];
+    while (std::fgets(row, sizeof row, checks_file) != nullptr) {
+        std::string text(row);
+        size_t tab = text.rfind('\t');
+        if (tab == std::string::npos) continue;
+        lines[text.substr(0, tab)].insert(static_cast<unsigned>(std::strtoul(text.c_str() + tab + 1, nullptr, 10)));
+    }
+    unsigned written = 0;
+    for (const auto &[file, set] : lines) {
+        std::string path = proved::path_of(file);
+        if (!path.empty() && proved::write(path, proved::slurp(file), set)) written++;
+    }
+    return written;
+}
+
 // ---- what the report says about time ----
 
 // The queries that took the time, each with the costly operations its value depends on.
@@ -460,6 +497,7 @@ int prove_prepared(prove::Prepared &prepared, const prove::Options &options) {
     Recorded recorded;
     // a proof that took longer than this run's budget allows is proved again, to see whether it still fits
     if (cache_lookup(path, recorded) && recorded.charged <= options.budget_seconds) {
+        record_checks(prepared.unit);
         if (options.verbose)
             std::printf("ok    %s  cached: proved before in %.2f s wall, %.2f s CPU, charged %.2f s\n", label.c_str(),
                         recorded.wall, recorded.cpu, recorded.charged);
@@ -471,6 +509,7 @@ int prove_prepared(prove::Prepared &prepared, const prove::Options &options) {
     case prove::Outcome::Proved:
         status = 0;
         cache_store(path, outcome);
+        record_checks(prepared.unit);
         if (options.verbose)
             std::printf("ok    %s  %.2f s wall, %.2f s CPU, charged %.2f s\n", label.c_str(), outcome.seconds,
                         outcome.cpu_seconds, outcome.charged);
@@ -724,6 +763,8 @@ extern "C" int smith_prove_main(const char *program, const char *resource, int a
     Clock::time_point start = Clock::now();
     std::setvbuf(stdout, nullptr, _IOLBF, 0); // each result as soon as it is known
     Arguments arguments = parse(argc, argv);
+    // The prover reads every check: the compile that makes its IR never leaves one out for an earlier proof.
+    setenv("SMITH_PROVING", "1", 1);
 
     const char *temporary = std::getenv("TMPDIR");
     std::string pattern =
@@ -791,6 +832,9 @@ extern "C" int smith_prove_main(const char *program, const char *resource, int a
                     function.name.c_str(), at(function.file, function.line).c_str(), function.requires_count,
                     function.ensures_count);
     }
+    // The checks the children prove are written for a release build from a run of every function of the group
+    // (--function proves a part, which would drop the rest): a function that fails records nothing, so its checks stay.
+    checks_file = arguments.options.only.empty() ? std::tmpfile() : nullptr;
     for (const std::string &name : prove::program_units(loaded)) {
         if (!wanted_name(prove::program_label(loaded, name))) continue;
         int one = prove_in_child(loaded, name, prove::program_label(loaded, name), arguments.options);
@@ -800,6 +844,13 @@ extern "C" int smith_prove_main(const char *program, const char *resource, int a
             proved++;
             cached += one == 2;
         }
+    }
+    if (checks_file != nullptr) {
+        unsigned written = write_proved();
+        if (written > 0 && arguments.options.verbose)
+            std::printf("proved checks of %u sources written to .smith/proved/ for a release build\n", written);
+        std::fclose(checks_file);
+        checks_file = nullptr;
     }
     // The coverage line: how many of the project's functions have a contract of their own. -v lists the others.
     auto say_coverage = [&] {

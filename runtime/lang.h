@@ -329,6 +329,10 @@ typedef struct {
     // A note for the error the compiler reports at this place (a name it will not find): the lowering knows why, and
     // the compiler does not. A host without diagnostics leaves this null.
     void (*hint)(void *context, uint32_t location, const char *message);
+    // Whether the check an index or a cut makes at this source location is proved (`smith prove` wrote that line to the
+    // file's proof file and this is a release build), so the lowering leaves it out. A host with no proofs leaves this
+    // null: every check stays.
+    bool (*proved)(void *context, uint32_t location);
     // Which `import <h>;` or `import "h";` declared `name` (a declaration of that space, else a macro): the header as
     // that import spells it, `<stdio.h>` or `"mine.h"`, never an internal header the compiler found the name in. Null
     // when no import did. Asked by SMITH_LANG_ASK_IMPORTS; a host without a parser leaves it null.
