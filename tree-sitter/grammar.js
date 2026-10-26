@@ -36,6 +36,9 @@ module.exports = grammar(C, {
     [$.type_parameter, $.type_specifier],
     [$.type_parameter, $.type_qualifier],
     [$.storage_class_specifier, $.list_declaration, $.auto_declaration],
+    [$.storage_class_specifier, $.range_variable, $.list_declaration, $.auto_declaration],
+    [$._declarator, $._declaration_declarator],
+    [$.storage_class_specifier, $.range_variable],
     [$.type_qualifier, $.auto_declaration],
     [$._declaration_modifiers, $.attributed_statement, $.export_declaration],
     [$.pointer_field_declarator, $.tuple_field],
@@ -201,10 +204,19 @@ module.exports = grammar(C, {
     ),
 
     // for constexpr (usize i = 0; i < countof(rest); i++) { ... }: C's for, run at compile time
+    // and the range form (issue #243): for (i32 x : xs) { ... }, for (usize i, auto x : xs) { ... }, also with constexpr
     for_statement: ($, original) => choice(
       original,
       seq('for', 'constexpr', '(', $._for_statement_body, ')', field('body', $.statement)),
+      seq('for', optional('constexpr'), '(', $.range_head, ')', field('body', $.statement)),
     ),
+    range_head: $ => seq(
+      repeat(seq($.range_variable, ',')), // an index; more than one is smith's error, not a syntax error
+      $.range_variable,
+      ':',
+      field('range', $.expression),
+    ),
+    range_variable: $ => seq(choice($._declaration_specifiers, 'auto'), field('declarator', $._declarator)),
 
     // defer c::close(fd); and defer { ... } in a module (C2y's defer TS). The keyword is a token of its own at the start
     // of a statement only: `int defer = 1;` in a file with no module line is still a declaration.
