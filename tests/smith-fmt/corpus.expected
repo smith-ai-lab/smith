@@ -2485,6 +2485,43 @@ int main() {
     struct stat info;
     return (int)sizeof info;
 }
+==> error-range-for/src/main.smith <==
+module main;
+
+// Each header is wrong in its own way; the loop is replaced by an empty one, so that only the error is reported.
+static i32 errors(const i32 xs[:], i32 *p, i32 n, i32 grid[:][2]) {
+    i32 t = 0;
+    for (i32 x : p) {
+        t += 1;
+    }
+    for (i32 x : n) {
+        t += 1;
+    }
+    for (i32 x : grid) {
+        t += 1;
+    }
+    for (i32 x : xs)
+        t += 1;
+    for (i32 i, i32 x : xs) {
+        t += 1;
+    }
+    for (usize i, usize j, i32 x : xs) {
+        t += 1;
+    }
+    for (x : xs) {
+        t += 1;
+    }
+    for (auto [i, x] : xs) {
+        t += 1;
+    }
+    for (auto *p : xs) {
+        t += 1;
+    }
+    for (floating x : xs) {
+        t += 1;
+    }
+    return t;
+}
 ==> error-slice-const-discards/src/main.smith <==
 module main;
 
@@ -4849,6 +4886,119 @@ int main() {
     i32 c = bad::clash(1);
     i32 f = bad::generic_literal(1);
     return a + b + c + f;
+}
+==> generic-for-range-error/src/main.smith <==
+module main;
+
+export i32 bad(auto... rest) {
+    i32 sum = 0;
+    for constexpr (usize i, usize j, auto x : rest) {
+        sum += (i32)x;
+    }
+    for constexpr (x : rest) {
+        sum += 1;
+    }
+    for constexpr (auto x :) {
+        sum += 1;
+    }
+    return sum;
+}
+
+i32 main() {
+    return bad(1, 2);
+}
+==> generic-for-range/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import reflect;
+
+typedef struct {
+    i32 m;
+    f32 b;
+} Pair;
+
+typedef struct {
+    Pair pair;
+    i32 count;
+    f64 scale;
+} Mixed;
+
+i32 main() {
+    Pair pair = {1, 2.5f};
+    Mixed mixed = {pair, 5, 0.5};
+    reflect::show(Pair, &pair);
+    reflect::show(Mixed, &mixed);
+    c::printf("%g %g\n", reflect::sum(Pair, pair), reflect::sum(Mixed, mixed));
+    c::printf("%d %d\n", reflect::total(1, 2, 3), reflect::weighted(10, 20, 30));
+    reflect::each(1, 2.5f, (u8)3, 4.5);
+    c::printf("%d\n", reflect::all_pairs(1, 2, 3, 4));
+    return 0;
+}
+==> generic-for-range/src/reflect.smith <==
+module reflect;
+
+import <stdio.h>;
+
+// `for constexpr (auto f : fields(T))` visits the fields of T. Each turn is a copy of the body with `f` the field of
+// that turn, so `f.name`, `x->[f]` and `typeof(T.[f])` mean what `fields(T)[i]` does in the index loop.
+export void show(constexpr type T, T *x) {
+    c::printf("%zu fields:", (usize)countof(fields(T)));
+    for constexpr (auto f : fields(T)) {
+        if constexpr (is_float(typeof(x->[f]))) {
+            c::printf(" %s=%g", f.name, (f64)x->[f]);
+        } else if constexpr (is_integer(typeof(T.[f]))) {
+            c::printf(" %s=%lld", f.name, (long long)x->[f]);
+        } else {
+            c::printf(" %s=?", f.name);
+        }
+    }
+    c::printf("\n");
+}
+
+export f64 sum(constexpr type T, T value) {
+    f64 total = 0;
+    for constexpr (auto f : fields(T)) {
+        if constexpr (is_float(typeof(T.[f])) || is_integer(typeof(T.[f]))) {
+            typeof(T.[f]) part = value.[f];
+            total += (f64)part;
+        }
+    }
+    return total;
+}
+
+// Over a generic's `rest`, each `x` has its own type; with the index first, the index is a number in each turn.
+export i32 total(auto... rest) {
+    i32 acc = 0;
+    for constexpr (auto x : rest) {
+        acc += (i32)x;
+    }
+    return acc;
+}
+
+export i32 weighted(auto... rest) {
+    i32 acc = 0;
+    for constexpr (usize i, auto x : rest) {
+        acc += (i32)x * (i32)(i + 1);
+    }
+    return acc;
+}
+
+// A different type for each element, a statement without braces, and a loop in a loop.
+export void each(auto... rest) {
+    for constexpr (auto x : rest)
+        c::printf("[%g]", (f64)x);
+    c::printf("\n");
+}
+
+export i32 all_pairs(auto... rest) {
+    i32 acc = 0;
+    for constexpr (auto outer : rest) {
+        for constexpr (auto inner : rest) {
+            acc += (i32)outer * (i32)inner;
+        }
+    }
+    return acc;
 }
 ==> generic-function-error/src/apply.smith <==
 module apply;
@@ -7757,6 +7907,199 @@ int main() {
     int u8 = 4;
     int f32 = 5;
     printf("%u %d %d\n", a, u8 + 1, f32 + 1);
+    return 0;
+}
+==> range-for-generic/src/loops.smith <==
+module loops;
+
+// In a generic's body `xs` has the type of each instance; the loop is the same for a slice of i32 and of f64. The
+// element is named by `auto`, or by a concept that the instance's element must be.
+export f64 sum(auto xs) {
+    f64 total = 0;
+    for (auto x : xs) {
+        total += (f64)x;
+    }
+    return total;
+}
+
+export i32 weighted(auto xs) {
+    i32 total = 0;
+    for (usize i, arithmetic x : xs) {
+        total += (i32)x * (i32)i;
+    }
+    return total;
+}
+
+export i32 scaled_total(auto xs, i32 scale) {
+    i32 total = 0;
+    for (auto x : xs) {
+        defer total += 1;
+        if (x == 2) continue;
+        total += (i32)x * scale;
+    }
+    return total;
+}
+
+// `T *p` points at the element, as outside a generic.
+export void bump(auto xs) {
+    for (typeof(xs[0]) *p : xs) {
+        *p += 10;
+    }
+}
+==> range-for-generic/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import <stdlib.h>;
+import loops;
+
+// What a failed check of a cut or of an index in a generic's body calls.
+[[smith::c_name("smith_failure")]] export void failure(u8 code) {
+    c::exit(code);
+}
+
+i32 main() {
+    i32 ints[4] = {1, 2, 3, 4};
+    f64 reals[3] = {1.5, 2.5, 3.5};
+    i32 ints_view[:] = ints;
+    f64 reals_view[:] = reals;
+    c::printf("%g %g\n", loops::sum(ints_view), loops::sum(reals_view));
+    c::printf("%d %d\n", loops::weighted(ints_view), loops::scaled_total(ints_view, 3));
+    loops::bump(ints_view);
+    c::printf("%d %d %d %d\n", ints[0], ints[1], ints[2], ints[3]);
+    return 0;
+}
+==> range-for/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import <stdlib.h>;
+
+typedef struct {
+    i32 v;
+} Node;
+
+// `for (T x : xs)` loops over a slice or a fixed array with no bounds written by hand. A slice is evaluated once,
+// before the loop, and read through its pointer, so the elements need no check.
+static i32 sum(const i32 xs[:]) {
+    i32 total = 0;
+    for (i32 x : xs) {
+        total += x;
+    }
+    return total;
+}
+
+// A fixed array and an array parameter that keeps its size; the index comes first, a `usize` counted from 0.
+static i32 weighted(i32 xs[4]) {
+    i32 total = 0;
+    for (usize i, i32 x : xs) {
+        total += x * (i32)i;
+    }
+    return total;
+}
+
+// A cut loops over its elements: the index runs 0, 1, 2 over `xs[2:5]`.
+static i32 cut(i32 xs[:]) {
+    i32 total = 0;
+    for (usize i, i32 x : xs[2:5]) {
+        total += (i32)i * 100 + x;
+    }
+    return total;
+}
+
+// `T *p` points at each element, so writing through it changes the slice; `T x` is a copy.
+static void double_all(i32 xs[:]) {
+    for (i32 *p : xs) {
+        *p *= 2;
+    }
+    for (i32 x : xs) {
+        x = 0;
+    }
+}
+
+// A slice of pointers: `Node *n` copies each pointer, `Node **pn` points at each slot.
+static i32 nodes(Node *ns[:]) {
+    i32 total = 0;
+    for (Node *n : ns) {
+        total += n->v;
+    }
+    for (Node **pn : ns) {
+        *pn = nullptr;
+    }
+    return total;
+}
+
+// `auto` takes the element's type, and a concept (`arithmetic`) works where `auto` does.
+static f64 mean(const f64 xs[:]) {
+    f64 total = 0;
+    for (auto x : xs) {
+        total += x;
+    }
+    for (arithmetic y : xs) {
+        total += y;
+    }
+    return total / (f64)(2 * countof(xs));
+}
+
+// `break`, `continue` and `defer`: a deferred statement runs at the end of each turn.
+static i32 control(const i32 xs[:]) {
+    i32 total = 0;
+    for (i32 x : xs) {
+        defer total += 1000;
+        if (x == 2) continue;
+        if (x == 4) break;
+        total += x;
+    }
+    return total;
+}
+
+// `try` returns from the function; loops nest; a body may name the index of an outer loop.
+static result(i32, u8) checked(const i32 xs[:]) {
+    i32 total = 0;
+    for (i32 x : xs) {
+        if (x < 0) return {.error = 1};
+        total += x;
+    }
+    return {.ok = total};
+}
+
+static i32 pairs(const i32 a[:], const i32 b[:]) {
+    i32 total = 0;
+    for (usize i, i32 x : a) {
+        for (usize j, i32 y : b) {
+            total += x * y * (i32)(i + j + 1);
+        }
+    }
+    return total;
+}
+
+// What a failed check of a cut or of an index in a generic's body calls.
+[[smith::c_name("smith_failure")]] export void failure(u8 code) {
+    c::exit(code);
+}
+
+i32 main() {
+    i32 raw[4] = {1, 2, 3, 4};
+    i32 more[6] = {10, 20, 30, 40, 50, 60};
+    i32 all[:] = raw;
+    c::printf("%d %d %d\n", sum(all), weighted(raw), cut(more));
+    double_all(all);
+    c::printf("%d %d %d %d\n", raw[0], raw[1], raw[2], raw[3]);
+    Node a = {5};
+    Node b = {6};
+    Node *ptrs[2] = {&a, &b};
+    Node *pointers[:] = ptrs;
+    i32 node_total = nodes(pointers);
+    c::printf("%d %d\n", node_total, ptrs[0] == nullptr);
+    f64 values[3] = {1.0, 2.0, 6.0};
+    f64 view[:] = values;
+    i32 five[5] = {1, 2, 3, 4, 5};
+    c::printf("%g %d\n", mean(view), control(five));
+    i32 odd[4] = {1, 2, 3, 4};
+    result(i32, u8) good = checked(odd);
+    i32 negative[2] = {1, -1};
+    result(i32, u8) bad = checked(negative);
+    c::printf("%d %d %d\n", good == .ok, bad == .error, pairs(all, odd));
     return 0;
 }
 ==> reflect-questions/src/main.smith <==

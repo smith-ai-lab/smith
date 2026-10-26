@@ -82,6 +82,7 @@ constexpr size_t smith_lang_entries_max =
     smith_lang_type_params_max + smith_lang_call_params_max; // types of an instance
 constexpr size_t smith_lang_instance_depth_max = 32;         // generics asked for by the instances of generics
 constexpr size_t smith_lang_generic_modules_max = 64;        // modules whose generics were read
+constexpr size_t smith_lang_rfor_depth_max = 16;             // range `for` loops over slices open at once
 constexpr size_t smith_lang_if_depth_max = 32;               // `if constexpr` blocks open at once
 constexpr size_t smith_lang_constants_max = 256;             // `constexpr` constants a condition may name
 constexpr size_t smith_lang_condition_max = 200;             // tokens of one condition
@@ -624,6 +625,9 @@ struct SmithLang {
     char tmp[smith_lang_name_max * 2];
     size_t tmp_length;
     // `target::` and `if constexpr` outside generics (runtime/lang_target.c).
+    int32_t rfor[smith_lang_rfor_depth_max]; // range `for` over a slice: the brace count outside its block
+    size_t rfor_count;
+    int32_t rfor_braces;
     SmithLangIfFrame ifc[smith_lang_if_depth_max];
     size_t ifc_count;
     int32_t ifc_braces;
@@ -883,6 +887,9 @@ static const char *smith_lang_str(SmithLangText text) {
 
 // Run-time arrays: `T xs[:]`, `xs[i]`, `xs[a:b]`.
 #include "lang_slice.c"
+
+// Range `for`: `for (T x : xs) { ... }`.
+#include "lang_rfor.c"
 
 // Enums with payloads: `typedef enum { Circle circle; empty; } Shape;`, `.empty`, `case .circle:`.
 #include "lang_enum.c"

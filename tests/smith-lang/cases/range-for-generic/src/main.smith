@@ -1,0 +1,22 @@
+module main;
+
+import <stdio.h>;
+import <stdlib.h>;
+import loops;
+
+// What a failed check of a cut or of an index in a generic's body calls.
+[[smith::c_name("smith_failure")]] export void failure(u8 code) {
+    c::exit(code);
+}
+
+i32 main() {
+    i32 ints[4] = {1, 2, 3, 4};
+    f64 reals[3] = {1.5, 2.5, 3.5};
+    i32 ints_view[:] = ints;
+    f64 reals_view[:] = reals;
+    c::printf("%g %g\n", loops::sum(ints_view), loops::sum(reals_view));
+    c::printf("%d %d\n", loops::weighted(ints_view), loops::scaled_total(ints_view, 3));
+    loops::bump(ints_view);
+    c::printf("%d %d %d %d\n", ints[0], ints[1], ints[2], ints[3]);
+    return 0;
+}

@@ -199,6 +199,10 @@ export void test_affine_slice_elements_smith(io::Io *io) {
     affine_case(io, "affine_slice_elements.smith");
 }
 
+export void test_affine_range_for_smith(io::Io *io) {
+    affine_case(io, "affine_range_for.smith");
+}
+
 export void test_affine_slice_loop_smith(io::Io *io) {
     affine_case(io, "affine_slice_loop.smith");
 }

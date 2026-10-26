@@ -2029,8 +2029,16 @@ typedef struct {
     uint32_t body_start; // the statement written once for each turn
     uint32_t body_end;
     uint32_t iterations;
-    bool stepping; // the body has run: the step comes before the condition
-    bool wrap;     // the body is one statement without braces: each turn is written in braces of its own
+    bool stepping;       // the body has run: the step comes before the condition
+    bool wrap;           // the body is one statement without braces: each turn is written in braces of its own
+    bool range;          // `for constexpr (auto x : list)`: each turn's body names the element for `x`
+    uint32_t alias;      // range: the token of the generic that names the element
+    uint32_t list_start; // range: the list, [start, end) of smith_lang_gt
+    uint32_t list_end;
+    uint32_t pool_first; // range: where the pool was before the loop's condition and step were made, and
+    uint32_t pool_mark;  // after (each turn's body is copied above it)
+    uint32_t text_first;
+    uint32_t text_mark;
 } SmithLangLoop;
 
 typedef struct {
@@ -3641,6 +3649,48 @@ static bool smith_lang_loop_step(SmithLang *lang, const SmithHost *host, const S
     return true;
 }
 
+// The body of one turn of `for constexpr (auto x : list)`: the body's tokens in new tokens at the pool's end, each `x`
+// written as `list[n]` (n the turn's index), so the replay writes the element of that turn (`fields(T)[n]`, `rest[n]`).
+// False after the error.
+static bool smith_lang_loop_range_body(SmithLang *lang, const SmithHost *host, const SmithLangReplay *replay,
+                                       const SmithLangLoop *loop, int64_t index, uint32_t place, uint32_t *first,
+                                       uint32_t *last) {
+    smith_lang_gt.count = loop->pool_mark; // the turn before is written
+    smith_lang_gt.text_used = loop->text_mark;
+    const SmithLangGenToken *name = &smith_lang_gt.tokens[loop->alias];
+    char number[32];
+    snprintf(number, sizeof number, "%lld", (long long)index);
+    uint32_t begin = smith_lang_gt.count;
+    bool good = true;
+    for (uint32_t at = loop->body_start; at < loop->body_end && good; at++) {
+        const SmithLangGenToken *like = &smith_lang_gt.tokens[at];
+        bool member = at > loop->body_start && (smith_lang_gt_punct(&smith_lang_gt.tokens[at - 1], ".") ||
+                                                smith_lang_gt_punct(&smith_lang_gt.tokens[at - 1], "->"));
+        bool named = like->kind == SmithTokenKind_Identifier && like->special == SmithLangGen_Plain && !member &&
+                     like->length == name->length &&
+                     memcmp(smith_lang_gt_str(like), smith_lang_gt_str(name), name->length) == 0;
+        if (!named) {
+            good = smith_lang_pack_push(like, (SmithTokenKind)like->kind, smith_lang_gt_str(like), true);
+            continue;
+        }
+        for (uint32_t i = loop->list_start; i < loop->list_end && good; i++) { // the list, then `[n]`
+            const SmithLangGenToken *part = &smith_lang_gt.tokens[i];
+            good = smith_lang_pack_push(part, (SmithTokenKind)part->kind, smith_lang_gt_str(part), true);
+        }
+        good = good && smith_lang_pack_push(like, SmithTokenKind_Punctuator, "[", false) &&
+               smith_lang_pack_push(like, SmithTokenKind_Number, number, false) &&
+               smith_lang_pack_push(like, SmithTokenKind_Punctuator, "]", false);
+    }
+    if (!good) {
+        smith_lang_error(lang, host, place, "this `for constexpr` body is too long to write out for each element");
+        return false;
+    }
+    (void)replay;
+    *first = begin;
+    *last = smith_lang_gt.count;
+    return true;
+}
+
 // One turn of the `for constexpr` frame on top: the step (after a turn), the condition, then the body once more, or the
 // end of the loop. The body is a frame above it, so the loop is not a recursion of C.
 static void smith_lang_loop_run(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
@@ -3658,15 +3708,185 @@ static void smith_lang_loop_run(SmithLang *lang, const SmithHost *host, SmithLan
         good = false;
     }
     if (!good || go == 0) { // the end of the loop
+        if (loop.range) {   // its condition, step and bodies are not needed any more
+            smith_lang_gt.count = loop.pool_first;
+            smith_lang_gt.text_used = loop.text_first;
+        }
         replay->var_count -= 1;
         replay->count -= 1;
         return;
     }
     loop.stepping = true;
     frame->loop = loop;
+    uint32_t body_start = loop.body_start;
+    uint32_t body_end = loop.body_end;
+    if (loop.range &&
+        !smith_lang_loop_range_body(lang, host, replay, &loop, var->value, place, &body_start, &body_end)) {
+        replay->var_count -= 1;
+        replay->count -= 1;
+        return;
+    }
     if (loop.wrap) smith_lang_replay_literal(replay, '}', place);
-    smith_lang_replay_push(replay, loop.body_start, loop.body_end, 0);
+    smith_lang_replay_push(replay, body_start, body_end, 0);
     if (loop.wrap) smith_lang_replay_literal(replay, '{', place);
+}
+
+// The `:` of a range `for constexpr (auto x : list)` between [first, last), outside brackets (a `? :` and `::` are not
+// it); UINT32_MAX when the head has none.
+static uint32_t smith_lang_for_range_colon(uint32_t first, uint32_t last) {
+    int depth = 0;
+    int conditions = 0;
+    for (uint32_t at = first; at < last; at++) { // bounded by the head
+        const SmithLangGenToken *token = &smith_lang_gt.tokens[at];
+        depth += smith_lang_gt_open(token) ? 1 : smith_lang_gt_close(token) ? -1 : 0;
+        if (depth != 0) continue;
+        if (smith_lang_gt_punct(token, "?")) conditions += 1;
+        if (!smith_lang_gt_punct(token, ":")) continue;
+        if (conditions > 0) {
+            conditions -= 1;
+        } else {
+            return at;
+        }
+    }
+    return UINT32_MAX;
+}
+
+// The head of a range `for constexpr`: where its parts are in smith_lang_gt.
+typedef struct {
+    uint32_t colon;
+    uint32_t close;      // the `)`
+    bool has_index;      // `usize i,` comes first (its name is at `open + 2`)
+    uint32_t index_name; // the token of the index's name
+} SmithLangRangeHead;
+
+// The parts of `(auto x : list)` or `(usize i, auto x : list)` after `open`; false after the error.
+static bool smith_lang_for_range_head(SmithLang *lang, const SmithHost *host, uint32_t open, uint32_t body_start,
+                                      uint32_t place, SmithLangRangeHead *head) {
+    uint32_t close = body_start - 1;
+    uint32_t colon = smith_lang_for_range_colon(open + 1, close);
+    uint32_t comma = UINT32_MAX;
+    unsigned commas = 0;
+    int depth = 0;
+    for (uint32_t i = open + 1; i < colon; i++) { // the comma between the index and the element
+        const SmithLangGenToken *token = &smith_lang_gt.tokens[i];
+        depth += smith_lang_gt_open(token) ? 1 : smith_lang_gt_close(token) ? -1 : 0;
+        if (depth == 0 && smith_lang_gt_punct(token, ",")) {
+            commas += 1;
+            if (comma == UINT32_MAX) comma = i;
+        }
+    }
+    uint32_t element = commas == 0 ? open + 1 : comma + 1;
+    const SmithLangGenToken *name = &smith_lang_gt.tokens[colon - 1];
+    const SmithLangGenToken *type = &smith_lang_gt.tokens[open + 1];
+    bool index_good = commas == 0 || (commas == 1 && comma == open + 3 &&
+                                      (smith_lang_gt_is(type, SmithTokenKind_Identifier, "usize") ||
+                                       smith_lang_gt_is(type, SmithTokenKind_Identifier, "__SIZE_TYPE__")) &&
+                                      smith_lang_gt.tokens[open + 2].kind == SmithTokenKind_Identifier);
+    if (!index_good || colon <= element + 1 || name->kind != SmithTokenKind_Identifier ||
+        name->length >= smith_lang_pack_name_max || colon + 1 >= close) {
+        smith_lang_error(lang, host, place,
+                         "`for constexpr` over a list is written `for constexpr (auto x : list)` or `for constexpr "
+                         "(usize i, auto x : list)`");
+        return false;
+    }
+    *head = (SmithLangRangeHead){.colon = colon, .close = close, .has_index = commas == 1, .index_name = open + 2};
+    return true;
+}
+
+// How many elements the list of a range `for constexpr` has, evaluated as `countof(list)`.
+static bool smith_lang_for_range_count(SmithLang *lang, const SmithHost *host, const SmithLangReplay *replay,
+                                       const SmithLangRangeHead *head, uint32_t place, int64_t *count) {
+    const SmithLangGenToken *like = &smith_lang_gt.tokens[head->colon];
+    uint32_t pool_first = smith_lang_gt.count;
+    uint32_t text_first = smith_lang_gt.text_used;
+    bool good = smith_lang_pack_push(like, SmithTokenKind_Identifier, "countof", false) &&
+                smith_lang_pack_push(like, SmithTokenKind_Punctuator, "(", false);
+    for (uint32_t i = head->colon + 1; i < head->close && good; i++) { // countof(list)
+        const SmithLangGenToken *part = &smith_lang_gt.tokens[i];
+        good = smith_lang_pack_push(part, (SmithTokenKind)part->kind, smith_lang_gt_str(part), true);
+    }
+    good = good && smith_lang_pack_push(like, SmithTokenKind_Punctuator, ")", false);
+    if (!good) {
+        smith_lang_error(lang, host, place, "this `for constexpr` list is too long");
+        return false;
+    }
+    static SmithLangCx evaluation;
+    evaluation =
+        (SmithLangCx){.lang = lang, .host = host, .instance = replay->instance, .replay = replay, .location = place};
+    bool counted = smith_lang_cx_eval(&evaluation, pool_first, smith_lang_gt.count, count);
+    if (!counted) {
+        smith_lang_error(lang, host, place, "in `for constexpr`: the list's length must be a compile-time constant: %s",
+                         evaluation.message);
+    }
+    smith_lang_gt.count = pool_first; // the count is known
+    smith_lang_gt.text_used = text_first;
+    return counted;
+}
+
+// `for constexpr (auto x : list) body` and `for constexpr (usize i, auto x : list) body`: the loop over the list's
+// elements, unrolled. It is the index loop with the count of the list: each turn writes the body with `x` as the
+// list's element of that turn (`list[n]`), so what `list[n]` does in a body (`fields(T)[n].name`, `p.[fields(T)[n]]`,
+// `rest[n]`) is what `x` does.
+static void smith_lang_replay_for_range(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay, uint32_t open,
+                                        uint32_t body_start, uint32_t body_end, uint32_t place) {
+    SmithLangRangeHead head;
+    int64_t count = 0;
+    if (!smith_lang_for_range_head(lang, host, open, body_start, place, &head)) return;
+    if (replay->var_count >= smith_lang_vars_max) {
+        smith_lang_error(lang, host, place,
+                         "`for constexpr` loops and the number parameters of the instance are at most 40 deep");
+        return;
+    }
+    if (!smith_lang_for_range_count(lang, host, replay, &head, place, &count)) return;
+    const SmithLangGenToken *like = &smith_lang_gt.tokens[open];
+    uint32_t pool_first = smith_lang_gt.count;
+    uint32_t text_first = smith_lang_gt.text_used;
+    char variable[smith_lang_pack_name_max];
+    const SmithLangGenToken *index = &smith_lang_gt.tokens[head.index_name];
+    if (!head.has_index) {
+        snprintf(variable, sizeof variable, "smith_for_%zu", replay->var_count);
+    } else {
+        snprintf(variable, sizeof variable, "%.*s", (int)index->length, smith_lang_gt_str(index));
+    }
+    char limit[32];
+    snprintf(limit, sizeof limit, "%lld", (long long)count);
+    uint32_t step_start = pool_first + 3; // the condition is three tokens: `i < n`
+    bool good = smith_lang_pack_push(like, SmithTokenKind_Identifier, variable, false) &&
+                smith_lang_pack_push(like, SmithTokenKind_Punctuator, "<", false) &&
+                smith_lang_pack_push(like, SmithTokenKind_Number, limit, false) &&
+                smith_lang_pack_push(like, SmithTokenKind_Identifier, variable, false) &&
+                smith_lang_pack_push(like, SmithTokenKind_Punctuator, "++", false);
+    if (!good) {
+        smith_lang_error(lang, host, place, "this `for constexpr` list is too long");
+        return;
+    }
+    SmithLangLoop loop = {.cond_start = pool_first,
+                          .cond_end = step_start,
+                          .step_start = step_start,
+                          .step_end = smith_lang_gt.count,
+                          .body_start = body_start,
+                          .body_end = body_end,
+                          .wrap = !smith_lang_gt_punct(&smith_lang_gt.tokens[body_start], "{"),
+                          .range = true,
+                          .alias = head.colon - 1,
+                          .list_start = head.colon + 1,
+                          .list_end = head.close,
+                          .pool_first = pool_first,
+                          .pool_mark = smith_lang_gt.count,
+                          .text_first = text_first,
+                          .text_mark = smith_lang_gt.text_used};
+    SmithLangVar *var = &replay->vars[replay->var_count++];
+    *var = (SmithLangVar){.length = (uint16_t)strlen(variable), .value = 0};
+    snprintf(var->name, sizeof var->name, "%s", variable);
+    if (!smith_lang_replay_push(replay, 0, 0, 0)) {
+        replay->var_count -= 1;
+        smith_lang_error(lang, host, place, "this `for constexpr` is nested too deep");
+        return;
+    }
+    SmithLangFrame *made = &replay->frames[replay->count - 1];
+    made->action = SmithLangFrame_Loop;
+    made->place = place;
+    made->loop = loop;
 }
 
 // `for constexpr (init; condition; step) body`, at the `for` of the frame: C's own for, run now. The variable is a
@@ -3696,6 +3916,10 @@ static void smith_lang_replay_for(SmithLang *lang, const SmithHost *host, SmithL
         const SmithLangGenToken *token = &smith_lang_gt.tokens[i];
         depth += smith_lang_gt_open(token) ? 1 : smith_lang_gt_close(token) ? -1 : 0;
         if (depth == 0 && smith_lang_gt_punct(token, ";") && semi_count < 3) semis[semi_count++] = i;
+    }
+    if (semi_count == 0 && smith_lang_for_range_colon(open + 1, body_start - 1) != UINT32_MAX) {
+        smith_lang_replay_for_range(lang, host, replay, open, body_start, body_end, place);
+        return;
     }
     uint32_t equals = 0;
     for (uint32_t i = open + 1; semi_count == 2 && i < semis[0] && equals == 0; i++)
