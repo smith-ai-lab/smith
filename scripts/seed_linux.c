@@ -1,13 +1,13 @@
 // Builds the first smith on a Linux machine from source, with no smith and no release: the seed of issue #305's Linux
 // release chain, and its way back when the chain breaks (knowledge/smith-bootstrap.md). Everyday Linux clones get a
-// release from scripts/stage0.smith instead, which runs this only when no release has a Linux build. This file has no
+// release from scripts/stage0.c instead, which runs this only when no release has a Linux build. This file has no
 // `module` line, so it is plain C23 (with POSIX's setenv, hence gnu2x, which GCC 13 and clang both read) and the
 // system's C compiler builds it (clang 19 or later, GCC 13 or later):
-//   mkdir -p .smith && cc -std=gnu2x -x c scripts/seed_linux.smith -o .smith/seed-tool && .smith/seed-tool [arguments
+//   mkdir -p .smith && cc -std=gnu2x -x c scripts/seed_linux.c -o .smith/seed-tool && .smith/seed-tool [arguments
 //   of smith build]
 // It needs a C and C++ compiler, cmake, ninja, python3, curl, tar, xz, patch and git, the network, and about 2 hours
 // and 15 GB the first time (LLVM). The stages, each in .smith/seed/:
-//   1. LLVM 23.1.3, pinned by SHA-256, built by scripts/llvm_linux.smith into the package cache (as `smith build
+//   1. LLVM 23.1.3, pinned by SHA-256, built by scripts/llvm_linux.c into the package cache (as `smith build
 //      llvm` does), unless that install is there already;
 //   2. stage A: smith.c, its shims and that LLVM, linked with weak stand-ins for the six libraries, which are .smith
 //      and need a smith to compile. Stage A has clang and the token hook, so it compiles .smith; any call into a
@@ -130,7 +130,7 @@ static bool read_text(const char *file, char *into, size_t capacity) {
     return true;
 }
 
-// Stage 1: the LLVM install, built by scripts/llvm_linux.smith from the pinned source unless it is there.
+// Stage 1: the LLVM install, built by scripts/llvm_linux.c from the pinned source unless it is there.
 static void build_llvm(const char *cc) {
     const char *cache = getenv("XDG_CACHE_HOME");
     const char *home = getenv("HOME");
@@ -155,8 +155,8 @@ static void build_llvm(const char *cc) {
         run((const char *[]){"rm", "-rf", ".smith/seed/llvm-src", nullptr});
         run((const char *[]){"mkdir", "-p", ".smith/seed/llvm-src", nullptr});
         run((const char *[]){"tar", "-xJf", tarball, "-C", ".smith/seed/llvm-src", "--strip-components=1", nullptr});
-        run((const char *[]){cc, "-std=gnu2x", "-O1", "-x", "c", "scripts/llvm_linux.smith", "-o",
-                             ".smith/seed/llvm_linux", nullptr});
+        run((const char *[]){cc, "-std=gnu2x", "-O1", "-x", "c", "scripts/llvm_linux.c", "-o", ".smith/seed/llvm_linux",
+                             nullptr});
         run((const char *[]){".smith/seed/llvm_linux", ".smith/seed/llvm-src", "", "", ".smith/seed/llvm.stamp", "",
                              nullptr});
     }
@@ -329,7 +329,7 @@ static void make_bin(const char *folder, const char *smith) {
 int main(int argc, char **argv) {
     const char *cc = getenv("CC") != nullptr && *getenv("CC") != '\0' ? getenv("CC") : "cc";
     if (getcwd(cwd, sizeof cwd) == nullptr) die("cannot tell the current folder", nullptr);
-    if (!exists("scripts/seed_linux.smith")) die("run this from the root of a clone of smith", nullptr);
+    if (!exists("scripts/seed_linux.c")) die("run this from the root of a clone of smith", nullptr);
     run((const char *[]){"mkdir", "-p", ".smith/seed/a", ".smith/seed/b", nullptr});
     FILE *ignore = fopen(".smith/.gitignore", "w"); // as smith writes it: nothing in .smith/ is committed
     if (ignore == nullptr || fputs("*\n", ignore) < 0 || fclose(ignore) != 0) die("cannot write", ".smith/.gitignore");

@@ -2,7 +2,7 @@
 //
 // smith is built by its previous release (knowledge/smith-bootstrap.md): smith.c is C23 and its libraries are .smith
 // modules, compiled by the smith that runs this build (`smith-cc`, the default CC), so a smith with the token hook and
-// the LLVM of `smith build llvm` is needed. A fresh clone with no smith builds and runs scripts/stage0.smith, which
+// the LLVM of `smith build llvm` is needed. A fresh clone with no smith builds and runs scripts/stage0.c, which
 // downloads the newest release of an ancestor commit and runs its `smith build`.
 //
 // The verbs (smith test, smith check, smith fmt, smith lint, smith docs, smith prove, smith run) mean the same here as
@@ -87,7 +87,7 @@ static const BuildPlatform build_platform_linux = {
     .lldb_server = true,
 };
 
-// Whether this build runs on Linux (issue #305): smith build llvm has its own recipe there (scripts/llvm_linux.smith)
+// Whether this build runs on Linux (issue #305): smith build llvm has its own recipe there (scripts/llvm_linux.c)
 // and its own packages; everything else is macOS's.
 // Transitional (the lag rule, skill smith-dev-build): this file is compiled by the smith that builds it, whose
 // <smith/build.h> still has the old shapes (`smith_package` returns the path, `smith_lines` the lines), and later by a
@@ -1660,14 +1660,14 @@ static int build_enzyme_only(SmithRun *run) {
     return smith_run_program(run, done, nullptr);
 }
 
-// On Linux (issue #305): the same LLVM, built by scripts/llvm_linux.smith (a program, compiled here with the smith
+// On Linux (issue #305): the same LLVM, built by scripts/llvm_linux.c (a program, compiled here with the smith
 // that runs this build), which takes scripts/llvm.sh's arguments with the programs themselves. The prover's libraries
 // and Enzyme are not built on Linux yet.
 static int build_llvm_run_linux(SmithRun *run, const char *source, const char *ninja, const char *stamp) {
     SmithBuild *b = run->b;
     const char *tool = smith_fmt(b, "%s.tool", run->outputs[0]);
     const char *const compile[] = {smith_env(b, "CC", "smith-cc"), "-std=c23", "-O1", "-x",   "c",
-                                   "scripts/llvm_linux.smith",     "-o",       tool,  nullptr};
+                                   "scripts/llvm_linux.c",         "-o",       tool,  nullptr};
     int status = smith_run_program(run, compile, nullptr);
     if (status != 0) return status;
     const char *const make_llvm[] = {tool,
@@ -1729,7 +1729,7 @@ static void build_llvm(SmithBuild *b) {
                              "patches/smith-format-source-extension.patch", "patches/smith-command-hook.patch",
                              "patches/compiler-rt-xnu-fast-mmap.patch", "patches/smith-lang-format-filescope-if.patch",
                              nullptr},
-            smith_when(b, build_is_linux(b), (const char *[]){"scripts/llvm_linux.smith", "scripts/sha256.h", nullptr}),
+            smith_when(b, build_is_linux(b), (const char *[]){"scripts/llvm_linux.c", "scripts/sha256.h", nullptr}),
             nullptr),
         .outputs = (const char *[]){"build/llvm.stamp", nullptr},
     };

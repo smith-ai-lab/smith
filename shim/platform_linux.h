@@ -13,7 +13,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-// The sections the LLVM build's post-install step (scripts/llvm_linux.smith) moved the initializers of a tool into: an
+// The sections the LLVM build's post-install step (scripts/llvm_linux.c) moved the initializers of a tool into: an
 // object's .init_array becomes `__smith_<tool>`, and the linker gives each such section, its name being a C
 // identifier, the symbols __start_<name> and __stop_<name>. They are weak, so a smith without a tool (no lldb, no
 // prover) links, and its table is empty.

@@ -11,8 +11,8 @@ one the release job published for an earlier commit ([release](release.md)). The
 replaced the committed C lowering in `bootstrap/`): "We want to be able to write Smith in idiomatic Smith, including all of
 Smith's libraries", and "Getting rid of a second copy to maintain".
 
-**A clone with no smith** builds and runs `scripts/stage0.smith`: a `.smith` file with no `module` line is plain C23 (the C
-rule), so Apple's clang builds it (`mkdir -p .smith && clang -std=c23 -x c scripts/stage0.smith -o .smith/stage0-tool &&
+**A clone with no smith** builds and runs `scripts/stage0.c`: a plain C23 file (a `.c`: the lint gate rejects a module-less `.smith`; the C
+rule keeps it the same as a `.smith`), so Apple's clang builds it (`mkdir -p .smith && clang -std=c23 -x c scripts/stage0.c -o .smith/stage0-tool &&
 .smith/stage0-tool [arguments of smith build]`) and the bootstrap needs no shell. It fetches the tags, walks `git rev-list HEAD` for the first commit that
 has a release `stage0-<commit>`, downloads it (`gh release download`, a child process; the repository is private and `gh` is signed in as it is to clone), checks the SHA-256 (`scripts/sha256.h`, smith's own, on every platform), unpacks it with `tar` into `.smith/stage0/` and runs
 `.smith/stage0/bin/smith build` with that `bin/` first on `PATH`, so its `smith-cc` is the `CC` of the build. Nothing in
@@ -48,9 +48,9 @@ first release (`stage0-4f1d091`), which compiles every commit since because of t
 while ([release](release.md)): a clone older than the 20 newest releases (and a week each) pulls main first.
 
 **On Linux** (issue #305) a release has a Linux build, `smith-linux-<arch>.tar.xz`, once the Linux CI job publishes it;
-`stage0.smith` takes it the same way. When no release can be had (no Linux build yet, the chain broken, or the download
-failing) it builds smith from source instead: `scripts/seed_linux.smith`, the seed (`SMITH_STAGE0_SEED=1` asks for it,
-`=0` never builds it), which builds the pinned LLVM with `scripts/llvm_linux.smith`, then stage A (`smith.c`, the shims
+`stage0.c` takes it the same way. When no release can be had (no Linux build yet, the chain broken, or the download
+failing) it builds smith from source instead: `scripts/seed_linux.c`, the seed (`SMITH_STAGE0_SEED=1` asks for it,
+`=0` never builds it), which builds the pinned LLVM with `scripts/llvm_linux.c`, then stage A (`smith.c`, the shims
 and LLVM, with weak stand-ins for the libraries made from their headers' `smith-names` and `smith-bodies` lines), the
 libraries compiled by stage A, stage B linked with them, and stage B's `smith build`. It needs the system's C and C++
 compiler (clang 19 or GCC 13 or later), cmake, ninja, python3, curl, patch and xz, and about two hours and 15 GB the

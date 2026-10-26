@@ -1,7 +1,7 @@
 // A C interface to lldb-server's own main, linked into smith on Linux: lldb debugs a process there through lldb-server
 // (`gdbserver`, `platform`), which it starts as LLDB_DEBUGSERVER_PATH. smith.c makes that path a clone of smith named
 // lldb-server in its programs folder and runs this for it, so the debugger needs no program beside smith.
-// scripts/llvm_linux.smith renames the symbol of its main (tools/lldb-server); lldb's static initializers are deferred
+// scripts/llvm_linux.c renames the symbol of its main (tools/lldb-server); lldb's static initializers are deferred
 // (tool.h).
 #include "tool.h"
 

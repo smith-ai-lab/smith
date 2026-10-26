@@ -94,9 +94,9 @@ export void test_pack_compiles_the_same_as_smith(io::Io *io) {
     compare(io, "scripts/pack", "", false);
 }
 
-// scripts/stage0.smith is plain C for the system's clang; as a .c file it is the same program.
+// scripts/stage0.c is plain C for the system's clang; renamed to .smith it is the same program.
 export void test_stage0_compiles_the_same_as_smith(io::Io *io) {
-    compare(io, "scripts/stage0", "", true);
+    compare(io, "scripts/stage0", "", false);
 }
 
 export void test_the_http_library_compiles_the_same_as_smith(io::Io *io) {

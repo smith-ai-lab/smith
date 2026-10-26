@@ -40,7 +40,7 @@ expands. `smith dap` and `smith mcp` launch without expansion already (`shellExp
 `tests/dbg_launch_test.smith` checks an argument with a space and a glob character.
 
 **On Linux** (issue #305) lldb debugs a process through `lldb-server gdbserver`, which LLVM builds. smith is that
-program too: `scripts/llvm_linux.smith` puts lldb-server's objects in `libsmithlldb.a` with its `main` renamed
+program too: `scripts/llvm_linux.c` puts lldb-server's objects in `libsmithlldb.a` with its `main` renamed
 `smith_lldb_server_tool_main`, `shim/lldb_server.cpp` runs it, and the programs folder has a fifth clone,
 `bin/lldb-server`, which `main` runs as it by its name. So `smith dbg`, `smith dap` and a failed check's report need no
 program beside smith, and nothing is signed.

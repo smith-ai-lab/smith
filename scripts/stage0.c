@@ -1,6 +1,6 @@
 // Builds smith in a clone that has no smith (issue #112, #293, knowledge/smith-bootstrap.md): smith is built by its
-// previous release. This file has no `module` line, so it is plain C23 and Apple's clang builds it:
-//   mkdir -p .smith && clang -std=c23 -x c scripts/stage0.smith -o .smith/stage0-tool && .smith/stage0-tool [arguments
+// previous release. This file is plain C23 and Apple's clang builds it:
+//   mkdir -p .smith && clang -std=c23 -x c scripts/stage0.c -o .smith/stage0-tool && .smith/stage0-tool [arguments
 //   of smith build]
 //   1. finds the release `stage0-<commit>` of the newest ancestor commit of HEAD that has one (git tags, walking
 //      `git rev-list HEAD`, after fetching the tags);
@@ -10,7 +10,7 @@
 // It needs git, gh, tar, the network, and `~/.cache/smith/llvm` (`smith build llvm`, about 9 minutes once). With a
 // smith installed, `smith build` does all of this already. SMITH_STAGE0_RELEASE=<tag> names the release to use.
 // On Linux, when no release can be had (none has a Linux build yet, or the download fails), it builds smith from
-// source instead: scripts/seed_linux.smith, the seed of the Linux release chain (issue #305), which needs about two
+// source instead: scripts/seed_linux.c, the seed of the Linux release chain (issue #305), which needs about two
 // hours the first time. SMITH_STAGE0_SEED=1 asks for the seed directly, and SMITH_STAGE0_SEED=0 never builds it.
 #include <fcntl.h>
 #include <limits.h>
@@ -167,15 +167,15 @@ static void fetch(const char *tag, const char *folder, const char *name) {
     if (!succeeds((const char *[]){"tar", "-C", folder, "-xJf", tarball, nullptr})) die("cannot unpack", tarball);
 }
 
-// Builds scripts/seed_linux.smith with the system's C compiler ($CC, else cc) and runs it in this process's place.
+// Builds scripts/seed_linux.c with the system's C compiler ($CC, else cc) and runs it in this process's place.
 [[noreturn]] static void seed(void) {
     seed_on_failure = false;
-    fputs("stage0: no Linux release to use: building smith from source (scripts/seed_linux.smith)\n", stderr);
+    fputs("stage0: no Linux release to use: building smith from source (scripts/seed_linux.c)\n", stderr);
     const char *cc = getenv("CC") != nullptr && *getenv("CC") != '\0' ? getenv("CC") : "cc";
-    if (!run((const char *[]){cc, "-std=gnu2x", "-O1", "-x", "c", "scripts/seed_linux.smith", "-o", ".smith/seed-tool",
+    if (!run((const char *[]){cc, "-std=gnu2x", "-O1", "-x", "c", "scripts/seed_linux.c", "-o", ".smith/seed-tool",
                               nullptr},
              false, false)) {
-        die("cannot compile scripts/seed_linux.smith with", cc);
+        die("cannot compile scripts/seed_linux.c with", cc);
     }
     seed_arguments[0] = (char *)".smith/seed-tool";
     fflush(stdout);

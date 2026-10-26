@@ -586,12 +586,12 @@ the map.
 ## Install
 
 smith is private and pre-release, and runs on macOS on Apple silicon only. You need Xcode or the Command Line Tools, `git`
-and `gh` signed in. A clone builds with the release of its newest ancestor commit, which `scripts/stage0.smith` (plain C23, built with Apple's clang) downloads
+and `gh` signed in. A clone builds with the release of its newest ancestor commit, which `scripts/stage0.c` (plain C23, built with Apple's clang) downloads
 (`stage0-<commit>`, checksum checked):
 
 ```sh
 git clone git@github.com:adam-r-kowalski/smith && cd smith
-mkdir -p .smith && clang -std=c23 -x c scripts/stage0.smith -o .smith/stage0-tool
+mkdir -p .smith && clang -std=c23 -x c scripts/stage0.c -o .smith/stage0-tool
 .smith/stage0-tool llvm      # builds LLVM 23.1.3 (r9) into ~/.cache/smith/llvm, about 9 minutes, once
 .smith/stage0-tool install   # builds the full smith and installs smith, smith-cc and smith-c++ in ~/.local/bin
 ```

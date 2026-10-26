@@ -1,4 +1,4 @@
-// SHA-256 in plain C, for the programs in scripts/ that run before there is a smith (stage0.smith, llvm_linux.smith):
+// SHA-256 in plain C, for the programs in scripts/ that run before there is a smith (stage0.c, llvm_linux.c):
 // they check a download's pin and hash what an LLVM install links. runtime/package.c has smith's own copy, which the
 // build program embeds. Include it once, in a file that has <stdint.h>, <stdio.h> and <string.h>.
 #pragma once
