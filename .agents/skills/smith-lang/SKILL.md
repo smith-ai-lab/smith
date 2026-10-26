@@ -31,7 +31,7 @@ export u32 total(const u32 xs[:]) {            // a slice: a pointer and its cou
 | sized types | `u32`, `f64`, `usize` | `smith-lang-sized-types` |
 | imports | `import lib::text;`, `import <math.h>;` then `c::sqrtf` | `smith-lang-modules`, `smith-lang-c-interop` |
 | modules | `module a::b;`, `export` | `smith-lang-modules`, `smith-lang-exports` |
-| slices | `i32 xs[:]`, `xs[a:b]`, `countof(xs)` | `smith-lang-arrays` |
+| slices, the range `for` | `i32 xs[:]`, `xs[a:b]`, `countof(xs)`, `for (i32 x : xs)` | `smith-lang-arrays`, `smith-lang-for` |
 | generics | `constexpr type T`, `auto x`, `typeof(x)`, `if constexpr` | `smith-lang-generics` |
 | argument lists, reflection | `auto... rest`, `fields(T)` | `smith-lang-rest`, `smith-lang-reflection` |
 | concepts | `arithmetic x`, `integer n = 3;` | `smith-lang-concepts` |

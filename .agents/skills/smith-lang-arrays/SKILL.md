@@ -34,6 +34,7 @@ export i32 demo() {
 - Empty is count 0 with a null pointer. `xs[a:b]` needs `a <= b <= countof(xs)`; `p[a:b]` needs `a <= b` and `p` pointing at `b` elements.
 - A slice is a pointer only as an argument of a `c::` function (`c::strncmp(word, "abc", countof(word))`).
 - A slice is a parameter, a result (`typeof(i32[:]) f(...)`), a local, a global or a field. `arena::push_slice(&a, T, n, m...)` makes one out of an arena (`push_slice(&a, f32, n, m)` is `f32[:][:]`; `smith-arena`): bind it to a `T xs[:]` before indexing.
+- **Visit every element** with `for (i32 x : xs)` (`smith-lang-for`) instead of `for (usize i = 0; i < countof(xs); i++)`.
 - **Qualifiers** (`const`, `restrict`): `smith-lang-slice-qualifiers`. **A pointer to a slice**: `smith-lang-slice-pointers`. **More dimensions** (`f32 xs[:][2]`): `smith-lang-array-dims`. **A parameter written `i32 xs[4]`**: `smith-lang-array-params`.
 - **A slice goes to a generic** (`sum(xs)` with `auto xs`, `test::check_equal(a, b)`; a generic may return one: `typeof(xs) tail(auto xs)`). There `countof(xs)`, `xs[i]`, `&xs[0]` and `xs[a:b]` work as outside (one dimension) and `if constexpr (is_slice(typeof(xs)))` asks the type (true for `T[:]` and more dimensions; false for a pointer and a fixed array). `format` over slices is not built.
 - Underneath: `struct smith_array_i32_n { int32_t *data; size_t count[1]; }`, so C calls an export with `(struct smith_array_i32_n){.data = p, .count = {n}}`.

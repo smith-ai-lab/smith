@@ -41,7 +41,9 @@ Each rule says what enforces it today. "Review" means nothing checks it: you and
     - Enforced by: review; the compiler already requires every variant to be named, `default:` or not.
 13. **A lifetime is a scope, closed by `defer`.** What a stretch of code makes, it gives back on every exit: an arena scope (`arena::scope_begin`, then `defer arena::scope_end(scope);`), a file or lock with its close in a `defer`. Nothing a scope made outlives it (owner: "we should be primarily thinking about arenas and wait groups").
     - Enforced by: review.
-14. **Report friction.** When a skill was wrong, unclear or contradicted another, or something was hard to find, say so in one line at the end of your report, as smith's own agents do.
+14. **A loop over a slice or an array is `for (T x : xs)`**, or `for (usize i, T x : xs)` when it needs the position; C's `for (usize i = 0; i < countof(xs); ++i)` is for a step, a reverse walk, two slices or a changing bound. Over a generic's `rest` or `fields(T)`: `for constexpr (auto x : rest)` (`smith-lang-for`).
+    - Enforced by: review.
+15. **Report friction.** When a skill was wrong, unclear or contradicted another, or something was hard to find, say so in one line at the end of your report, as smith's own agents do.
 
 ## Examples in skills are compiled
 
