@@ -365,7 +365,6 @@ static void smith_fmt_no_list(void) {
 // staged is still listed) and wanted by extension, in smith_fmt_files. NUL-separated names, so no name is mistaken.
 // False, with a message, when git cannot list them.
 static bool smith_fmt_list(size_t *count) {
-#ifdef __APPLE__
     SmithIo io = smith_io_make(0, nullptr);
     const char *const argv[] = {"git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", nullptr};
     SmithProcessResult result = smith_processes_run(&io.processes, &io.arena, argv);
@@ -378,14 +377,6 @@ static bool smith_fmt_list(size_t *count) {
     memcpy(smith_fmt_names, result.output, result.output_size);
     size_t size = result.output_size;
     smith_io_close(&io);
-#else
-    FILE *git = popen("git ls-files -z --cached --others --exclude-standard 2>/dev/null", "r");
-    size_t size = git != nullptr ? fread(smith_fmt_names, 1, smith_verbs_names_max - 1, git) : 0;
-    if (git == nullptr || pclose(git) != 0) {
-        smith_fmt_no_list();
-        return false;
-    }
-#endif
     smith_fmt_names[size] = '\0';
     *count = 0;
     for (size_t at = 0; at < size; at += strlen(smith_fmt_names + at) + 1) { // bounded by the output

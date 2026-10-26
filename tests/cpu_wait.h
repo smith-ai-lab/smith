@@ -56,12 +56,23 @@ static uint64_t cpu_wait_cpu_ns(pid_t pid) {
     size_t count = fread(text, 1, sizeof text - 1, file);
     fclose(file);
     text[count] = '\0';
-    const char *at = strrchr(text, ')');
-    if (at == nullptr) return 0;
-    unsigned long long user = 0;
-    unsigned long long system = 0;
-    if (sscanf(at + 1, " %*c %*d %*d %*d %*d %*d %*u %*u %*u %*u %*u %llu %llu", &user, &system) != 2) return 0;
-    return (uint64_t)(user + system) * 1000000000ULL / (uint64_t)sysconf(_SC_CLK_TCK);
+    char *cursor = strrchr(text, ')');
+    if (cursor == nullptr) return 0;
+    cursor++;
+    while (*cursor == ' ')
+        cursor++;
+    if (*cursor == '\0') return 0;
+    cursor++; // the state, one character
+    // ppid, pgrp, session, tty_nr, tpgid, flags, minflt, cminflt, majflt, cmajflt, then utime and stime
+    constexpr int fields = 12;
+    unsigned long long field[fields] = {};
+    for (int i = 0; i < fields; i++) {
+        char *end = nullptr;
+        field[i] = strtoull(cursor, &end, 10);
+        if (end == cursor) return 0;
+        cursor = end;
+    }
+    return (uint64_t)(field[10] + field[11]) * 1000000000ULL / (uint64_t)sysconf(_SC_CLK_TCK);
 }
 
 static uint64_t cpu_wait_wall_ms(void) {
@@ -84,10 +95,18 @@ static uint64_t cpu_wait_wall_ms(void) {
         snprintf(children, sizeof children, "/proc/%d/task/%s/children", (int)pid, task->d_name);
         FILE *file = fopen(children, "r");
         if (file == nullptr) continue;
-        int child = 0;
-        while (found < max && fscanf(file, "%d", &child) == 1) // one number per child, bounded by max
-            out[found++] = (pid_t)child;
+        char list[1024];
+        size_t length = fread(list, 1, sizeof list - 1, file);
         fclose(file);
+        list[length] = '\0';
+        char *cursor = list;
+        while (found < max) { // one number per child, bounded by max
+            char *end = nullptr;
+            long child = strtol(cursor, &end, 10);
+            if (end == cursor) break;
+            out[found++] = (pid_t)child;
+            cursor = end;
+        }
     }
     closedir(tasks);
     return found;

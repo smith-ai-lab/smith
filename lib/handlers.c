@@ -567,6 +567,7 @@ __attribute__((used, section("__DATA,__interpose"))) static const SmithInterpose
 // and the rest through dlsym(RTLD_NEXT), whose own allocation reaches __libc_calloc. Every call this file makes to a
 // function it defines goes to the next one, never to itself.
 
+// NOLINTBEGIN(bugprone-reserved-identifier,readability-identifier-naming): glibc's and AddressSanitizer's own names
 extern void *__libc_malloc(size_t size);
 extern void *__libc_calloc(size_t count, size_t size);
 extern void *__libc_realloc(void *block, size_t size);
@@ -583,6 +584,7 @@ extern void *__libc_valloc(size_t size);
 [[gnu::weak]] extern void *___interceptor_aligned_alloc(size_t align, size_t size);
 [[gnu::weak]] extern void *___interceptor_valloc(size_t size);
 [[gnu::weak]] extern size_t ___interceptor_malloc_usable_size(const void *block);
+// NOLINTEND(bugprone-reserved-identifier,readability-identifier-naming)
 
 static void *smith_handlers_next_malloc(size_t size) {
     return ___interceptor_malloc != nullptr ? ___interceptor_malloc(size) : __libc_malloc(size);
@@ -627,6 +629,7 @@ typedef void (*SmithHandlersFunction)(void);
 
 // The interceptors of AddressSanitizer for the rest, null without it. Only their addresses are taken, so the type each
 // is declared with here is the generic one.
+// NOLINTBEGIN(bugprone-reserved-identifier,readability-identifier-naming): AddressSanitizer's own names
 [[gnu::weak]] extern void ___interceptor_open(void);
 [[gnu::weak]] extern void ___interceptor_read(void);
 [[gnu::weak]] extern void ___interceptor_write(void);
@@ -651,6 +654,7 @@ typedef void (*SmithHandlersFunction)(void);
 [[gnu::weak]] extern void ___interceptor_fseek(void);
 [[gnu::weak]] extern void ___interceptor_fdopen(void);
 [[gnu::weak]] extern void ___interceptor_freopen(void);
+// NOLINTEND(bugprone-reserved-identifier,readability-identifier-naming)
 
 // The next definition of a function after this program's: AddressSanitizer's interceptor when the program has it,
 // else glibc's (dlsym(RTLD_NEXT)), found the first time it is called (a race finds the same address twice).
@@ -666,7 +670,7 @@ static SmithHandlersFunction smith_handlers_find(SmithHandlersNext *next) {
     if (address == nullptr) {
         void *found = dlsym(RTLD_NEXT, next->name);
         if (found == nullptr) abort(); // glibc defines every one of them
-        memcpy(&address, &found, sizeof address);
+        memcpy((void *)&address, (const void *)&found, sizeof address);
         atomic_store_explicit(&next->address, address, memory_order_release);
     }
     return address;
@@ -763,7 +767,7 @@ size_t malloc_usable_size(void *block) {
     if (___interceptor_malloc_usable_size != nullptr) return ___interceptor_malloc_usable_size(block);
     void *found = dlsym(RTLD_NEXT, "malloc_usable_size");
     size_t (*next)(void *) = nullptr;
-    memcpy(&next, &found, sizeof next);
+    memcpy((void *)&next, (const void *)&found, sizeof next);
     return next != nullptr ? next(block) : 0;
 }
 
