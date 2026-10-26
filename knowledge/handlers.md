@@ -78,6 +78,9 @@ prebuilt library's and one loaded with `dlopen`. Owner (2026-10-24): "always int
   a container with the `SmithAllocator` first, not a `ctx` field, because a field added to handlers.h waits for a smith
   release (the lag rule: arena is built into smith).
 
+- **Checking (step D2a):** `mem::checked(parent)` wraps an allocator and finds leaks, double frees and use after free; the
+  test runner sets one around each test. See [checked-allocator](checked-allocator.md).
+
 The steps (issue #239): the allocator family and its tests (`tests/handlers_test.smith`); linking it into every program (this
 step, B1); `read`, `write`, `open`, `close`, `syscall` and stdio with their handlers (B2); `smith::mem` and arena's
 allocator; `checked`, `failing` and the profiles.

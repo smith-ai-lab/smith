@@ -52,6 +52,7 @@ export void test_writes_a_file(io::Io *io) { // a real io, in a scratch folder t
 - A property test draws everything from its key (split it: a key is used once) and is run on `--seeds` keys. The seed in a failure replays it exactly.
 - `test::memory(capacity)` is the test's memory (an `arena::Arena`), given back before each test and each key. `test::note(format, ...)` prints under a failure; each note replaces the last. `test::full()` is true when the run was given `--full`.
 
+- Every test runs under `mem::checked` ([smith-mem](../smith-mem/SKILL.md)): a test that returns with an allocated block not freed fails with `memory leaked` at the line that allocated it, and a double free or a use after free is reported where it happens. `--unchecked` turns it off.
 - `test::golden(io, path, actual)` compares a text with a file in the project (`smith test --update` writes it): [smith-test-checks](../smith-test-checks/SKILL.md).
 
 Also in this family: [smith-test-modules](../smith-test-modules/SKILL.md), [smith-test-checks](../smith-test-checks/SKILL.md), [smith-test-workers](../smith-test-workers/SKILL.md), [smith-test-c](../smith-test-c/SKILL.md), [smith-build-tests](../smith-build-tests/SKILL.md).
