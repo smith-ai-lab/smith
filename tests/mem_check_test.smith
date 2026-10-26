@@ -34,7 +34,7 @@ export void test_mem_check_skips_a_trusted_function_a_c_file_and_a_file_with_no_
     scratch::Run run = lint(
         &p, "run sample.smith plain.c nomodule.smith >out.txt; grep -c 'is unchecked, since' out.txt; cat out.txt");
     scratch::expect_contains("still six findings", run.out, "6\n");
-    scratch::expect_lacks("the trusted wrapper", run.out, "sample.smith:21");
+    scratch::expect_lacks("the trusted wrapper", run.out, "sample.smith:23");
     scratch::expect_lacks("the C file", run.out, "plain.c:");
     scratch::expect_lacks("the file with no module", run.out, "nomodule.smith:");
 }

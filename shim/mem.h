@@ -60,14 +60,16 @@ inline const Replacement *replacement_for(llvm::StringRef name) {
     return nullptr;
 }
 
-// Whether a function's body calls smith_trusted, the call `contract::trusted()` lowers to.
+// Whether a function's body calls the marker: `smith_trusted`, which `contract::trusted()` lowers to in a .smith file
+// as in C, or `smith_contract_trusted`, the marker beneath it that `contract::check_trusted()` calls directly.
 class TrustedFinder final : public RecursiveASTVisitor<TrustedFinder> {
   public:
     bool found = false;
 
     bool VisitCallExpr(CallExpr *call) {
         if (const FunctionDecl *callee = call->getDirectCallee()) {
-            if (callee->getName() == "smith_trusted") found = true;
+            const StringRef name = callee->getName();
+            if (name == "smith_trusted" || name == "smith_contract_trusted") found = true;
         }
         return !found;
     }
