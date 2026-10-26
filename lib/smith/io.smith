@@ -1364,8 +1364,9 @@ if constexpr (target::os != target::macos) {
     void net_connection_event(Loop *loop, Connection *connection, usize *completed);
 
     // SIGPIPE: a write to a pipe or socket whose reader is gone must be the error EPIPE and never a signal. sigset_t is
-    // a structure on Linux (a bit set on macOS), so it is built with the functions (<signal.h> has macros for these,
-    // which are the preprocessor's).
+    // a structure on Linux (a bit set on macOS), so it is built with glibc's functions. macOS's <signal.h> defines
+    // macros of the same names, and smith-preprocessor reads this branch on macOS too, where it is never compiled.
+    // NOLINTBEGIN(smith-preprocessor)
     void pipe_signal_hold(c::sigset_t *before) {
         c::sigset_t pipe_signal = {};
         c::sigemptyset(&pipe_signal);
@@ -1386,6 +1387,7 @@ if constexpr (target::os != target::macos) {
         }
         c::pthread_sigmask(sig_setmask, before, nullptr);
     }
+    // NOLINTEND(smith-preprocessor)
 }
 
 void loop_link(Loop *loop, Op *op) {
