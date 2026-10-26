@@ -96,6 +96,12 @@ export void test_effects_an_objective_c_message_to_a_framework_class_is_reported
     golden(io, "objc", "objc.m", "-fobjc-arc");
 }
 
+// --- C++: constructors, destructors, operators and conversions have no identifier for a name ---
+
+export void test_effects_cxx_constructors_and_operators_do_not_crash_and_are_judged(io::Io *io) {
+    golden(io, "cxx", "cxx.cpp", "-std=c++20");
+}
+
 // --- .smith: names as written ---
 
 export void test_effects_smith_files_report_names_as_written(io::Io *io) {

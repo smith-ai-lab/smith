@@ -338,7 +338,7 @@ class Collector {
         } else if (const auto *call = dyn_cast<CallExpr>(statement)) {
             callees.insert(call->getCallee()->IgnoreParens());
             if (const FunctionDecl *callee = call->getDirectCallee()) {
-                llvm::StringRef called = callee->getName();
+                llvm::StringRef called = plain_name(callee);
                 node.grows = node.grows || called == "alloca" || called == "__builtin_alloca" ||
                              called == "__builtin_alloca_with_align";
             }
@@ -361,7 +361,7 @@ class Collector {
             leaf(call->getBeginLoc(), C, "a call through a function pointer");
             return;
         }
-        if (callee->getName() == "smith_trusted") node.trusted = true;
+        if (plain_name(callee) == "smith_trusted") node.trusted = true;
         if (const FunctionDecl *definition = callee->getDefinition()) {
             Edge edge;
             edge.callee = definition;
@@ -909,7 +909,7 @@ class Analysis {
                 work.pop_back();
                 const auto *call = dyn_cast<CallExpr>(expr);
                 const FunctionDecl *callee = call == nullptr ? nullptr : call->getDirectCallee();
-                if (callee != nullptr && callee->getName() == "smith_effects_within") {
+                if (callee != nullptr && plain_name(callee) == "smith_effects_within") {
                     judgeWithin(decl, call);
                     continue;
                 }
@@ -994,7 +994,7 @@ class Analysis {
         std::string kind = node.declared == 0 ? "[[smith::pure]]" : "limited to " + describe(node.declared);
         { // the diagnostic is emitted when the builder goes, before the note
             auto report = engine.Report(first->loc, bad);
-            report << node.function->getName() << kind << describe(extra) << chain(node, bit);
+            report << node.function->getNameAsString() << kind << describe(extra) << chain(node, bit);
             // The fix: the function gets the whole set it needs, declared and inferred. With no attribute one is
             // written
             // before it; with `[[smith::effects(...)]]`, `[[smith::pure]]` or an effect's own attribute that one is

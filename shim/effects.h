@@ -206,10 +206,16 @@ inline llvm::StringRef bare_builtin(llvm::StringRef name) {
     return name;
 }
 
+// A declaration's name when it is a plain identifier, else empty: a constructor, destructor, operator or conversion
+// has no identifier, and `getName()` on it asserts ("Name is not a simple identifier").
+inline llvm::StringRef plain_name(const NamedDecl *decl) {
+    return decl->getDeclName().isIdentifier() ? decl->getName() : llvm::StringRef();
+}
+
 // What a function is to the rules, from its declarations: a function the project wrote is `Other` (its own body is
 // judged where it is written); a system function is pure, a failure, or a raw effect.
 inline Verdict classify(const FunctionDecl *fn, const SourceManager &sm) {
-    llvm::StringRef name = fn->getName();
+    llvm::StringRef name = plain_name(fn);
     if (name.empty()) return Verdict::Other;
     if (is_failure_name(name)) return Verdict::Failure;
     if (name.starts_with("__builtin_")) {
@@ -396,7 +402,7 @@ class Effects final : public ClangTidyCheck {
         OptionalFileEntryRef main = sm.getFileEntryRefForID(sm.getMainFileID());
         std::shared_ptr<const ::smith::FileNames> names = ::smith::namesOf(main->getName().str());
         if (names == nullptr) return file;
-        auto found = names->instance_files.find(fn->getName().str());
+        auto found = names->instance_files.find(fn->getNameAsString());
         if (found == names->instance_files.end()) return file;
         private_instance = !found->second.exported;
         return found->second.file;
@@ -434,7 +440,7 @@ class Effects final : public ClangTidyCheck {
 
     // The name of a callee as the source wrote it: `c::fopen` in a .smith file, `io::make` for a module's export.
     std::string written(const FunctionDecl *fn, const SourceManager &sm, bool system) const {
-        std::string name = fn->getName().str();
+        std::string name = fn->getNameAsString();
         if (!in_smith_file(sm)) return name;
         if (system) return "c::" + name;
         OptionalFileEntryRef main = sm.getFileEntryRefForID(sm.getMainFileID());
@@ -551,9 +557,9 @@ class Effects final : public ClangTidyCheck {
         if (at.isMacroID() && sm.isMacroArgExpansion(at)) at = sm.getSpellingLoc(at);
         if (at.isMacroID()) {
             llvm::StringRef macro = Lexer::getImmediateMacroNameForDiagnostics(at, sm, walker.context.getLangOpts());
-            if (!macro.empty() && macro != callee->getName()) name = (in_smith_file(sm) ? "c::" : "") + macro.str();
+            if (!macro.empty() && macro != plain_name(callee)) name = (in_smith_file(sm) ? "c::" : "") + macro.str();
         }
-        effect(walker, at, name, replacement_for(callee->getName()), false);
+        effect(walker, at, name, replacement_for(plain_name(callee)), false);
     }
 
     void function(const FunctionDecl *fn, const ast_matchers::MatchFinder::MatchResult &Result) {
@@ -563,7 +569,7 @@ class Effects final : public ClangTidyCheck {
         bool private_instance = false;
         bool implementation = implements(home_of(fn, sm, private_instance));
         bool failure_path =
-            is_failure_name(fn->getName()) || fn->isNoReturn(); // a function that stops the program may say why
+            is_failure_name(plain_name(fn)) || fn->isNoReturn(); // a function that stops the program may say why
         Info scratch{fn, {}, {}};
         Walker walker(*this, fn, context, implementation, failure_path, &scratch);
         walker.TraverseStmt(fn->getBody());
@@ -595,7 +601,7 @@ class Effects final : public ClangTidyCheck {
                     : std::string("take the capability it needs");
             diag(fn->getLocation(), "`%0` is exported by a capability's implementation and reaches `%1`, but takes and "
                                     "returns no capability, so any caller could touch the world: %2, or make it static")
-                << fn->getName() << first->callee << advice;
+                << fn->getNameAsString() << first->callee << advice;
         }
         exported.clear();
     }
