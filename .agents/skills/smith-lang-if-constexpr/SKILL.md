@@ -45,9 +45,17 @@ module clock;
 import target;
 
 if constexpr (target::os == target::macos) {
-    import smith::clock::macos;   // a platform's code in a module of its own
+    import <libproc.h>; // a macOS header: on Linux this branch is never read
+}
+
+if constexpr (target::os == target::linux) {
+    export i32 ticks_per_second() {
+        return 100;
+    }
 } else {
-    import smith::clock::linux;
+    export i32 ticks_per_second() {
+        return 1000;
+    }
 }
 ```
 The module's header has the same choice as `#if`, so a C includer gets the branch of its own target. `smith fmt` splits a C header with a `/` in its name inside a branch (`import <mach/mach_time.h>;`): put such imports in a platform module.
