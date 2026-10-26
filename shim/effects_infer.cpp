@@ -49,8 +49,10 @@
 #include "names.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <functional>
 #include <map>
 #include <memory>
@@ -233,8 +235,16 @@ struct Edge {
     bool tail = false;       // `[[clang::musttail]] return f(...);`: a jump, which makes a loop of a cycle
 };
 
+// A place a function pointer is made or called, for the report-only mode of the pointer rule (#396): a call through a
+// pointer (target null) or a named function turned into a pointer (assigned, passed, put in a table).
+struct PointerUse {
+    SourceLocation loc;
+    const FunctionDecl *target = nullptr;
+};
+
 struct Node {
     const FunctionDecl *function = nullptr;
+    std::vector<PointerUse> pointers;
     std::vector<Edge> edges;
     uint32_t inferred = 0;
     uint32_t declared = 0;
@@ -296,6 +306,7 @@ class Collector {
     Symbols symbols;
     Symbols names;                                  // how a function is shown in a chain
     std::vector<const StaticAssertDecl *> &asserts; // the static_asserts of the body, for effects::within
+    std::set<const Expr *> callees;   // the callee expressions of the calls met, which are not conversions to a pointer
     std::set<const CallExpr *> tails; // the calls of `[[clang::musttail]] return` statements, met before the calls
 
     // The call a `[[clang::musttail]] return f(...);` makes, remembered: an attributed statement is visited before its
@@ -318,7 +329,14 @@ class Collector {
                 if (const auto *var = dyn_cast<VarDecl>(decl))
                     node.grows = node.grows || var->getType()->isVariablyModifiedType();
             }
+        } else if (const auto *cast = dyn_cast<ImplicitCastExpr>(statement)) {
+            if (cast->getCastKind() == CK_FunctionToPointerDecay && callees.count(cast) == 0) {
+                if (const auto *ref = dyn_cast<DeclRefExpr>(cast->getSubExpr()->IgnoreParens()))
+                    if (const auto *target = dyn_cast<FunctionDecl>(ref->getDecl()))
+                        node.pointers.push_back({cast->getBeginLoc(), target});
+            }
         } else if (const auto *call = dyn_cast<CallExpr>(statement)) {
+            callees.insert(call->getCallee()->IgnoreParens());
             if (const FunctionDecl *callee = call->getDirectCallee()) {
                 llvm::StringRef called = callee->getName();
                 node.grows = node.grows || called == "alloca" || called == "__builtin_alloca" ||
@@ -339,6 +357,7 @@ class Collector {
     void onCall(const CallExpr *call) {
         const FunctionDecl *callee = call->getDirectCallee();
         if (callee == nullptr) {
+            node.pointers.push_back({call->getBeginLoc(), nullptr});
             leaf(call->getBeginLoc(), C, "a call through a function pointer");
             return;
         }
@@ -536,6 +555,7 @@ class Analysis {
     void run() {
         collect(context.getTranslationUnitDecl());
         solve();
+        if (pointerReport()) reportPointers();
         for (const FunctionDecl *function : order) { // source order: the map's order is the pointers'
             Node &node = nodes[function];
             if (node.annotated && inMain(node.function)) check(node);
@@ -660,6 +680,15 @@ class Analysis {
                 notePromise(function);
             } else if (const auto *assertion = dyn_cast<StaticAssertDecl>(decl)) {
                 asserts.push_back(assertion);
+            } else if (const auto *var = dyn_cast<VarDecl>(decl)) {
+                if (pointerReport() && var->hasInit() && var->hasGlobalStorage() && !var->isInvalidDecl()) {
+                    Node &holder = initializers.emplace_back();
+                    Collector(
+                        holder, context, [this](const FunctionDecl *f) { return symbolOf(f); },
+                        [this](const FunctionDecl *f) { return shownName(f); }, asserts)
+                        .walk(var->getInit());
+                    holder.symbol = var->getNameAsString();
+                }
             } else if (const auto *linkage = dyn_cast<LinkageSpecDecl>(decl)) {
                 collect(linkage);
             }
@@ -667,6 +696,48 @@ class Analysis {
     }
 
     // What a caller sees of a function with a body: its declared set when it has one, else what its body does.
+    std::deque<Node> initializers; // the initializers of globals, walked only to report function pointers
+
+    // The report-only mode of the pointer rule (issue #396): `SMITH_EFFECTS_POINTERS=<file>` appends one line for each
+    // place a function pointer is called (the effect today is `c`) or made from a named function, with the effects that
+    // function has, i.e. the set the pointer's type would have to state. Nothing is reported to the compiler.
+    static bool pointerReport() {
+        return getenv("SMITH_EFFECTS_POINTERS") != nullptr;
+    }
+
+    uint32_t pointedEffects(const FunctionDecl *target) {
+        if (const FunctionDecl *definition = target->getDefinition()) return visible(definition);
+        uint32_t set = 0;
+        if (declaredSet(target, set) || lookup(target->getNameAsString(), set)) return set;
+        return C;
+    }
+
+    void reportPointers() {
+        const SourceManager &sm = context.getSourceManager();
+        std::string text;
+        auto lines = [&](const Node &node, const std::string &where) {
+            for (const PointerUse &use : node.pointers) {
+                SourceLocation expansion = sm.getExpansionLoc(use.loc);
+                if (!sm.isWrittenInMainFile(expansion)) continue;
+                PresumedLoc presumed = sm.getPresumedLoc(expansion);
+                text += std::string(use.target == nullptr ? "call" : "make") + "\t" + presumed.getFilename() + ":" +
+                        std::to_string(presumed.getLine()) + "\t" + where + "\t";
+                text += use.target == nullptr ? "-" : use.target->getNameAsString();
+                text += "\t" + (use.target == nullptr ? std::string("c") : describe(pointedEffects(use.target))) + "\n";
+            }
+        };
+        for (const FunctionDecl *function : order)
+            lines(nodes[function], function->getNameAsString());
+        for (const Node &node : initializers)
+            lines(node, "(initializer of " + node.symbol + ")");
+        if (text.empty()) return;
+        std::string path = getenv("SMITH_EFFECTS_POINTERS");
+        FILE *file = fopen(path.c_str(), "a");
+        if (file == nullptr) return;
+        fwrite(text.data(), 1, text.size(), file);
+        fclose(file);
+    }
+
     uint32_t visible(const FunctionDecl *function) {
         auto found = nodes.find(function);
         if (found == nodes.end()) return C; // a body the file could not read (a template, an error)
