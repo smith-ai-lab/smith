@@ -19,6 +19,7 @@ if constexpr (target::os == target::macos) {
 import <poll.h>;
 import <setjmp.h>;
 import <signal.h>;
+import <smith/mem.h>; // NOLINT(smith-module-library): the checked allocator, by its C names (issue #405)
 import <smith/trace.h>;
 import <stdio.h>;
 import <stdlib.h>;
@@ -1438,6 +1439,7 @@ typedef struct {
     bool wall_given;    // --wall-timeout was passed
     bool trace;         // print a failure's stack as a trace block, for smith to turn into the report
     bool stats;         // print the forks the run made
+    bool unchecked;     // --unchecked: no checked allocator around the tests
     const char
         *explain;     // --explain <smith>: the program that reads the failing frame of a check (smith --smith-explain)
     u64 explain_max;  // the failures explained in a run; the others are counted, not read
@@ -1702,6 +1704,57 @@ void disarm() {
     c::setitimer(timer_real, &off, nullptr);
 }
 
+// NOLINTBEGIN(smith-module-library): smith::mem is reached by its C header and C names, because `import smith::mem;`
+// here makes a local named `index` an error (issue #405). The checked allocator around a test (issue #239,
+// mem::checked): every block the test allocates is recorded with its stack, a double free or a free of a block it never
+// made fails the test where it happens, a freed block is poisoned for AddressSanitizer, and a block still live when the
+// test returns fails it, naming the allocation. One per worker, static, because a failed check unwinds out of the test
+// and the next test needs the allocator in a known state.
+// --unchecked turns it off. It wraps the test function alone, not the runner's own setup (an io test's setenv stays
+// outside), so only what the test allocates is checked.
+c::SmithChecked checked_state;
+c::SmithAllocator *checked_outside;
+bool checked_active;
+
+void checked_begin(const Options *options) {
+    if (options->unchecked) return;
+    checked_state = c::smith_mem_checked(nullptr);
+    checked_outside = c::smith_mem_set_allocator(&checked_state.base);
+    checked_active = true;
+}
+
+// A failed test (it unwound) or an ended one: the previous allocator back, the records released.
+void checked_end() {
+    if (!checked_active) return;
+    checked_active = false;
+    c::smith_mem_set_allocator(checked_outside);
+    c::smith_mem_checked_release(&checked_state);
+}
+
+// The test returned: a block it allocated and did not free fails it, with the stack of the allocation as the failure's.
+// A block the C library keeps for itself (the cache of its number printing) is not a leak.
+void checked_finish() {
+    if (!checked_active) return;
+    c::smith_mem_set_allocator(checked_outside);
+    c::SmithCheckedLeaks leaks = c::smith_mem_checked_leaks(&checked_state);
+    if (leaks.count == 0) {
+        checked_end();
+        return;
+    }
+    shared->heading = "memory leaked";
+    shared->frame_count = leaks.first.frame_count < frames_max ? leaks.first.frame_count : frames_max;
+    for (usize i = 0; i < shared->frame_count; i++)
+        shared->frames[i] = leaks.first.frames[i];
+    shared->frames_exact = false;
+    __builtin_snprintf(shared->detail, detail_capacity,
+                       "%zu blocks (%zu bytes) were never freed; the first, %zu bytes, was allocated here\n",
+                       leaks.count, leaks.bytes, leaks.first.size);
+    checked_end();
+    stop();
+}
+
+// NOLINTEND(smith-module-library)
+
 random::Tap hooking_tap; // its word is set in setup(), in the process that draws through it
 
 // Runs a property test on one key: it draws its inputs from the key, so the seed replays it.
@@ -1712,7 +1765,9 @@ void run_key(const Test *test, const Options *options, u64 seed) {
     arm(options);
     random::Key key = random::key_make(seed);
     key.tap = active_tap;
+    checked_begin(options);
     test->property(key);
+    checked_finish();
 }
 
 constexpr usize scratch_tries = 1000; // the names tried for a scratch folder
@@ -1750,7 +1805,9 @@ void run_io(const Test *test, const Options *options, const Command *command) {
     io.seed = seed;
     io.key = random::key_make(seed);
     make_scratch(test, options, &io);
+    checked_begin(options);
     test->with_io(&io);
+    checked_finish();
     io::close(&io);
 }
 
@@ -1762,7 +1819,9 @@ void run_io(const Test *test, const Options *options, const Command *command) {
     if (test->plain != nullptr) {
         reset();
         arm(options);
+        checked_begin(options);
         test->plain();
+        checked_finish();
     } else if (test->with_io != nullptr) {
         run_io(test, options, command);
     } else if (command->seed_given) {
@@ -1805,6 +1864,7 @@ End serve(const Options *options, const Command *command) {
     const Test *test = &table[command->test];
     i32 jumped = c::sigsetjmp(loop_jump, 1); // NOLINT(smith-preprocessor): a macro of __sigsetjmp in glibc
     if (jumped == 0) execute(test, options, command);
+    checked_end(); // a failed test unwound with its allocator still set
     disarm();
     c::fflush(nullptr);
     c::setvbuf(c::stdout, nullptr, c::_IONBF, 0); // NOLINT(smith-preprocessor): a test may have buffered stdout
@@ -2782,6 +2842,8 @@ bool parse_options(i32 argc, char **argv, Options *options) {
             options->stats = true;
         } else if (c::strcmp(flag, "--trace") == 0) {
             options->trace = true;
+        } else if (c::strcmp(flag, "--unchecked") == 0) {
+            options->unchecked = true;
         } else if (c::strcmp(flag, "--no-explain") == 0) {
             options->explain = nullptr;
         } else if (c::strcmp(flag, "--color") == 0) {
@@ -2908,7 +2970,7 @@ void say_written(const Options *options) {
                  "[--timeout <cpu seconds>] [--wall-timeout <seconds>] [--shrink 0|1] [--shrink-seconds <seconds>] "
                  "[--shuffle <seed>] [--isolate] "
                  "[--in-process] [--full] [--update] [--list] [--verbose] [--stats] [--trace] [--color] "
-                 "[--explain <smith>] [--explain-max <n>] [--no-explain]\n",
+                 "[--explain <smith>] [--explain-max <n>] [--no-explain] [--unchecked]\n",
                  runner->argv[0], (c::uintmax_t)seeds_max, jobs_max);
         return usage_status;
     }
