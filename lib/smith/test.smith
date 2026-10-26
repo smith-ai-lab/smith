@@ -849,7 +849,7 @@ constexpr usize label_capacity = 128;
     stop();
 }
 
-[[noreturn]] void fail_near(Value values[:]) {
+[[noreturn]] void fail_near(Value values[4]) {
     Line lines[4] = {{.text = "a", .value = values[0]},
                      {.text = "b", .value = values[1]},
                      {.text = "tolerance", .value = values[2]},

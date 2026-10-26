@@ -1,5 +1,6 @@
 module idiom::unsafe;
 
+import smith::contract;
 import <setjmp.h>;
 import <stdlib.h>;
 
@@ -13,6 +14,13 @@ export i32 jump_in() {
     return c::setjmp(env);
 }
 
+// A function that says smith_trusted() may jump: the test runner does, until #324.
+export void jump_trusted() {
+    contract::trusted();
+    c::longjmp(env, 1);
+}
+
+// `u32 xs[10]` is a checked parameter in a module (`xs[static 10]`): no finding.
 export u32 first(u32 xs[10]) {
     return xs[0];
 }
@@ -23,6 +31,26 @@ export u32 first_slice(u32 xs[:]) {
 
 export u32 first_fixed(u32 (*xs)[10]) {
     return (*xs)[0];
+}
+
+export u32 first_rows(u32 xs[2][3]) {
+    return xs[0][0];
+}
+
+// A bound that is no constant expression cannot be counted.
+export u32 first_run_time(usize n, u32 xs[n]) {
+    return xs[0];
+}
+
+// The forms the lowering leaves a plain pointer.
+export u32 first_const(u32 xs[const 10]) {
+    return xs[0];
+}
+
+export typedef u32 Row[10];
+
+export u32 first_row(Row xs) {
+    return xs[0];
 }
 
 constexpr usize limit = 16;

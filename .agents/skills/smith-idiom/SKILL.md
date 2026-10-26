@@ -44,7 +44,9 @@ Each rule says what enforces it today. "Review" means nothing checks it: you and
     - Enforced by: review.
 14. **A loop over a slice or an array is `for (T x : xs)`**, or `for (usize i, T x : xs)` when it needs the position; C's `for (usize i = 0; i < countof(xs); ++i)` is for a step, a reverse walk, two slices or a changing bound. Over a generic's `rest` or `fields(T)`: `for constexpr (auto x : rest)` (`smith-lang-for`).
     - Enforced by: review.
-15. **Report friction.** When a skill was wrong, unclear or contradicted another, or something was hard to find, say so in one line at the end of your report, as smith's own agents do.
+15. **No jumps, no run-time-sized stack arrays.** `setjmp` and `longjmp` skip every `defer`, so return a `result`; `i32 xs[n]` and `alloca` overflow the stack unchecked, so `arena::push_slice(&a, i32, n)`, or a fixed array when `n` has a maximum. An array parameter keeps its size (`i32 xs[4]`, checked), and one the lowering cannot check (`i32 a[n]`, `i32 a[const 4]`, a typedef'd array) is a slice `i32 a[:]` instead.
+    - Enforced by: `smith lint` and the editor, through `smith-unsafe` (modules only).
+16. **Report friction.** When a skill was wrong, unclear or contradicted another, or something was hard to find, say so in one line at the end of your report, as smith's own agents do.
 
 ## Examples in skills are compiled
 

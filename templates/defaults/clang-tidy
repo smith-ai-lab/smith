@@ -29,7 +29,7 @@
 #   smith-constexpr: a file-scope const object with a constant initializer is constexpr.
 #   smith-mem: a module calls mem::copy, move, zero, fill and equal, never memcpy, memmove, memset or memcmp (contract::trusted() marks a function that wraps one).
 #   smith-module: a .smith file starts with its module line (module primes_test;), written from its path; tests/ is its own root.
-#   smith-unsafe: in a module, no setjmp or longjmp (they skip defer), no array parameter (take a slice) and no run-time-sized stack array or alloca (use an arena).
+#   smith-unsafe: in a module, no setjmp or longjmp (they skip defer), no array parameter the lowering cannot check (`i32 a[n]`; take a slice) and no run-time-sized stack array or alloca (use an arena).
 # smith-sized-types, smith-module, smith-module-library and smith-mem read .smith files only; the others read .smith and C. Delete one from Checks to
 # opt out, or write // NOLINT(smith-c23) on a line.
 #

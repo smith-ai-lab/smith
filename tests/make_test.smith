@@ -134,7 +134,7 @@ static usize word_end(const char *text, usize from) {
     return end;
 }
 
-static bool one_of(const char *word, const char *names[:]) {
+static bool one_of(const char *word, const char *names[4]) {
     for (usize i = 0; i < 4; i++)
         if (c::strcmp(word, names[i]) == 0) return true;
     return false;

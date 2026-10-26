@@ -140,6 +140,16 @@ export i32 corner(i32 xs[4]) {
 }
 ```
 
+`smith lint` reports the unsafe C that remains in a module: `setjmp` and `longjmp` (they skip every `defer`), `alloca` and a stack array sized at run time, and an array parameter it cannot check (`i32 a[n]`, `i32 a[const 4]`), each with what to write instead (`smith-unsafe`, [smith-check-lints](.agents/skills/smith-check-lints/SKILL.md)):
+
+```smith
+module rows;
+
+export i32 first(i32 xs[:]) { // not `usize n, i32 xs[n]`: a slice carries its count
+    return xs[0];
+}
+```
+
 [smith-lang-arrays](.agents/skills/smith-lang-arrays/SKILL.md),
 [smith-lang-slice-qualifiers](.agents/skills/smith-lang-slice-qualifiers/SKILL.md).
 
