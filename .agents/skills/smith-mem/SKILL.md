@@ -33,20 +33,11 @@ export void fill(arena::Arena *a) {
 
 - The calls: `mem::alloc(T)`, `mem::alloc_slice(T, sizes...)` (as `arena::push_slice`), `mem::try_alloc(T)`, `mem::free(p)`, `mem::set_allocator(a)` (returns the previous; null is the system's) and `mem::allocator()`. For C and sizes known at run time: `mem::alloc_raw(size, align)` (`smith_mem_alloc`), `alloc_array_raw`, `try_alloc_raw` (null when refused).
 - An `Allocator` is a struct whose first member is a `SmithAllocator` (`alloc`, `realloc`, `free`, `owns`, optional `size`, `<smith/handlers.h>`); the setter is per thread. `arena::allocator` makes one over an arena (a growing arena never refuses until its backing does); how `malloc` reaches it is in knowledge/handlers.md. Set the previous one back before the allocator's memory goes away.
-- Functions return what they allocate; they do not fill an out parameter (AGENTS.md).
 
 ## Finding mistakes: mem::checked
 
-`mem::checked(parent)` (`smith_mem_checked`; a `null` parent is the system's) wraps an allocator: each block records the stack of its allocation, `mem::free` of a block it already freed (a double free) or never made stops with `memory error` naming both sites, a freed block is kept and poisoned (ASan: `use-after-poison`), and a leak is listed with where it was allocated. `smith test` sets one around every test: a test that returns with a live block fails with `memory leaked` at the line that allocated it (`--unchecked` for a run that must not). It costs nothing in a program that never makes one.
+`mem::checked(parent)` (`smith_mem_checked`; a `null` parent is the system's), used as `set_allocator(&c.base)`, then `checked_report(&c)` and `checked_release(&c)` when done, wraps an allocator: each block records the stack of its allocation, `mem::free` of a block it already freed (a double free) or never made stops with `memory error` naming both sites, a freed block is kept and poisoned (ASan: `use-after-poison`), and a leak is listed with where it was allocated. `smith test` sets one around every test: a test that returns with a live block fails with `memory leaked` at the line that allocated it (`--unchecked` for a run that must not). It costs nothing in a program that never makes one.
 
-```smith fragment
-mem::Checked checked = mem::checked(nullptr);
-mem::Allocator *before = mem::set_allocator(&checked.base);
-i32 *kept = mem::alloc(i32);
-mem::set_allocator(before);
-usize live = mem::checked_report(&checked); // 1: the allocation's stack is written to standard error
-mem::checked_release(&checked);             // frees what was freed; a live block stays the parent's
-```
 
 `checked_leaks(&c)` (count, bytes and first site of the leaks), `checked_leak(&c, after)` (the next leak's site, in order of allocation), `checked_live`, `checked_live_bytes`. A block the C library keeps for itself (its number-printing cache) is not a leak. A block used after an arena's `reset` is `use-after-poison` already: the arena poisons what is past its cursor. Details: knowledge/checked-allocator.md.
 
@@ -59,8 +50,7 @@ import smith::mem;
 export bool demo(u8 dst[:], const u8 src[:]) {
     mem::copy(dst, src);                    // two slices of one element type and one length: unequal lengths fail a check
     u32 word = 0;
-    u8 as_bytes[:] = mem::bytes(&word);     // the value's size travels with it
-    mem::zero(as_bytes);                    // mem::zero(&word) is the same; mem::fill(xs, v) sets each element
+    mem::zero(mem::bytes(&word));           // mem::bytes(&x) is the value's own u8[:]; mem::fill(xs, v) sets each element
     return mem::equal(dst[0:2], src[0:2]);  // the lengths are compared first, then the bytes
 }
 ```
