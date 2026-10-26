@@ -14,6 +14,7 @@
 #include "mem.h"
 #include "names.h"
 #include "preprocessor.h"
+#include "unsafe.h"
 #endif
 
 #include "llvm/ADT/STLExtras.h"
@@ -246,6 +247,10 @@ class SmithModule final : public ClangTidyModule {
         Factories.registerCheckFactory("smith-module", [](StringRef Name, ClangTidyContext *Context) {
             attach(Context);
             return std::make_unique<smith_idiom::ModuleCheck>(Name, Context);
+        });
+        Factories.registerCheckFactory("smith-unsafe", [](StringRef Name, ClangTidyContext *Context) {
+            attach(Context);
+            return std::make_unique<smith_unsafe::UnsafeCheck>(Name, Context);
         });
         Factories.registerCheckFactory("smith-designated-init", [](StringRef Name, ClangTidyContext *Context) {
             attach(Context);
