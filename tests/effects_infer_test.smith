@@ -9,6 +9,7 @@ module effects_infer_test;
 
 import smith::format;
 import smith::io;
+import smith::mem;
 import smith::test;
 import <stdlib.h>;
 import <string.h>;
@@ -282,7 +283,7 @@ export void test_stack_o2_frames_are_the_optimized_ones_and_the_file_says_so(io:
     for (const char *at = path; *at != '\0';) {
         usize length = c::strcspn(at, " \n");
         char step[128] = "";
-        if (length > 0 && length < sizeof step) __builtin_memcpy(step, at, length);
+        if (length > 0 && length < sizeof step) mem::copy(step[0:length], at[0:length]);
         if (length > 0 && c::strcmp(step, "->") != 0) {
             i64 n = frame(&p, "ref2_a", step);
             if (n < 0) n = frame(&p, "ref2_b", step);

@@ -10,6 +10,7 @@ import smith::io;
 import smith::test;
 import scratch;
 import <string.h>;
+import smith::mem;
 
 // The environment make and smith are compared in.
 constexpr char clean[] = "unset CC CXX MAKEFLAGS MFLAGS; ";
@@ -38,8 +39,9 @@ static void printer(const scratch::Project *p, i32 count) {
         used +=
             (usize)__builtin_snprintf(text + used, 65536 - used, "#ifndef R%d\n#define R%d \"unset\"\n#endif\n", i, i);
     used += (usize)__builtin_snprintf(text + used, 65536 - used, "int main(void) {\n");
-    for (i32 i = 1; i <= count; i++)
+    for (i32 i = 1; i <= count; i++) {
         used += (usize)__builtin_snprintf(text + used, 65536 - used, "    puts(\"R%d=\" R%d);\n", i, i);
+    }
     used += (usize)__builtin_snprintf(text + used, 65536 - used, "    return 0;\n}\n");
     scratch::write(p, "main.c", text);
 }
@@ -120,14 +122,15 @@ static usize find_text(const char *text, const char *needle) {
 // Replaces text[from:to] with `replacement`.
 static void cut(char *text, usize from, usize to, const char *replacement) {
     usize length = c::strlen(replacement);
-    __builtin_memmove(text + from + length, text + to, c::strlen(text + to) + 1);
-    __builtin_memcpy(text + from, replacement, length);
+    mem::move(text[from + length:from + length + c::strlen(text + to) + 1], text[to:to + c::strlen(text + to) + 1]);
+    mem::copy(text[from:from + length], replacement[0:length]);
 }
 
 static usize word_end(const char *text, usize from) {
     usize end = from;
-    while (text[end] != '\0' && text[end] != ' ')
+    while (text[end] != '\0' && text[end] != ' ') {
         end++;
+    }
     return end;
 }
 
@@ -142,17 +145,19 @@ static void name_the_compiler(char *line) {
     usize end = word_end(line, 0);
     if (line[end] != ' ' || end >= 256) return;
     usize start = end;
-    while (start > 0 && line[start - 1] != '/')
+    while (start > 0 && line[start - 1] != '/') {
         start--;
+    }
     char word[256];
-    __builtin_memcpy(word, line + start, end - start);
+    mem::copy(word[0:end - start], line[start:start + end - start]);
     word[end - start] = '\0';
     const char *c_compilers[4] = {"smith-cc", "cc", "clang", "gcc"};
     const char *cxx_compilers[4] = {"smith-c++", "c++", "g++", "clang++"};
-    if (one_of(word, c_compilers))
+    if (one_of(word, c_compilers)) {
         cut(line, 0, end, "CC");
-    else if (one_of(word, cxx_compilers))
+    } else if (one_of(word, cxx_compilers)) {
         cut(line, 0, end, "CXX");
+    }
 }
 
 // ` -MMD -MF <file>.d `, ` -MMD ` and ` -MP ` become a space (the first of each), and runs of spaces one.
@@ -167,8 +172,9 @@ static void drop_dependency_flags(char *line) {
     at = find_text(line, " -MP ");
     if (at != no_match) cut(line, at, at + 5, " ");
     for (usize i = 0; line[i] != '\0'; i++)
-        while (line[i] == ' ' && line[i + 1] == ' ')
+        while (line[i] == ' ' && line[i + 1] == ' ') {
             cut(line, i, i + 1, "");
+        }
 }
 
 // Copies the text up to the closing quote (the opening one is passed) into the words, as the shell does: nothing is
@@ -177,8 +183,10 @@ static void drop_dependency_flags(char *line) {
 static bool copy_quoted(const char *line, usize *at, char quote, char *words, usize *used, usize capacity) {
     while (line[*at] != quote) {
         if (line[*at] == '\0' || *used + 2 >= capacity) return false;
-        if (quote == '"' && line[*at] == '\\' && line[*at + 1] != '\0' && c::strchr("$`\"\\", line[*at + 1]) != nullptr)
+        if (quote == '"' && line[*at] == '\\' && line[*at + 1] != '\0' &&
+            c::strchr("$`\"\\", line[*at + 1]) != nullptr) {
             (*at)++;
+        }
         words[(*used)++] = line[(*at)++];
     }
     (*at)++;
@@ -191,8 +199,9 @@ static bool unquote(const char *line, char *words, usize capacity) {
     usize used = 0;
     usize i = 0;
     while (line[i] != '\0') {
-        while (line[i] == ' ')
+        while (line[i] == ' ') {
             i++;
+        }
         if (line[i] == '\0') break;
         if (used > 0) words[used++] = ' ';
         while (line[i] != '\0' && line[i] != ' ') {
@@ -215,14 +224,16 @@ static bool ordered_before(const char *a, const char *b) {
 // Adds a line to the sorted list unless it is in it already.
 static void add_command(Commands *commands, char *line) {
     usize at = 0;
-    while (at < commands->count && ordered_before(commands->lines[at], line))
+    while (at < commands->count && ordered_before(commands->lines[at], line)) {
         at++;
+    }
     if (at < commands->count && c::strcmp(commands->lines[at], line) == 0) {
         return;
     }
     test::check_less(commands->count, command_count);
-    for (usize i = commands->count; i > at; i--)
+    for (usize i = commands->count; i > at; i--) {
         commands->lines[i] = commands->lines[i - 1];
+    }
     commands->lines[at] = line;
     commands->count++;
 }
@@ -233,11 +244,12 @@ static void canonical(io::Io *io, const char *text, Commands *commands) {
     usize start = 0;
     while (text[start] != '\0') {
         usize end = start;
-        while (text[end] != '\0' && text[end] != '\n')
+        while (text[end] != '\0' && text[end] != '\n') {
             end++;
+        }
         if (end - start < command_capacity) {
             char *line = arena::push_slice(&io->arena, char, command_capacity).data;
-            __builtin_memcpy(line, text + start, end - start);
+            mem::copy(line[0:end - start], text[start:start + end - start]);
             line[end - start] = '\0';
             name_the_compiler(line);
             drop_dependency_flags(line);
@@ -256,8 +268,9 @@ static void drop_handlers_link(char *line) {
     usize at = find_text(line, " -lsmith_handlers");
     if (at != no_match) {
         usize start = at;
-        while (start > 0 && line[start - 1] != ' ')
+        while (start > 0 && line[start - 1] != ' ') {
             start--;
+        }
         usize end = at + 17;
         if (c::strncmp(line + end, " -Wl,-rpath,@executable_path", 28) == 0) end += 28;
         if (start > 1 && line[start] == '-' && line[start + 1] == 'L') cut(line, start - 1, end, "");
@@ -265,8 +278,9 @@ static void drop_handlers_link(char *line) {
     at = find_text(line, "/lib/darwin");
     if (at != no_match) {
         usize start = at;
-        while (start > 0 && line[start - 1] != ' ')
+        while (start > 0 && line[start - 1] != ' ') {
             start--;
+        }
         if (start > 1 && line[start] == '-' && line[start + 1] == 'L') cut(line, start - 1, at + 11, "");
     }
 }
@@ -291,7 +305,7 @@ static const char *joined(io::Io *io, const Commands *commands) {
     for (usize i = 0; i < commands->count; i++) {
         usize length = c::strlen(commands->lines[i]);
         test::check_less(used + length + 2, command_capacity * 8);
-        __builtin_memcpy(text + used, commands->lines[i], length);
+        mem::copy(text[used:used + length], commands->lines[i][0:length]);
         text[used + length] = '\n';
         used += length + 1;
     }
@@ -306,11 +320,12 @@ static const char *expand_commands(const scratch::Project *p, const char *raw) {
     usize start = 0;
     while (raw[start] != '\0') {
         usize end = start;
-        while (raw[end] != '\0' && raw[end] != '\n')
+        while (raw[end] != '\0' && raw[end] != '\n') {
             end++;
+        }
         char line[1024];
         usize length = end - start < sizeof line - 1 ? end - start : sizeof line - 1;
-        __builtin_memcpy(line, raw + start, length);
+        mem::copy(line[0:length], raw[start:start + length]);
         line[length] = '\0';
         const char *shown = c::strncmp(line, "sh .smith/command/", 18) == 0 ? scratch::read(p, line + 3) : line;
         used += (usize)__builtin_snprintf(text + used, command_capacity * 8 - used, "%s\n", shown);

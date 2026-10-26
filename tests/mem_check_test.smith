@@ -1,0 +1,49 @@
+// The clang-tidy check smith-mem (issue #399, shim/mem.h): in a module, C's raw memory functions are an error that
+// names the typed function of smith::mem; a function that calls contract::trusted() is the edge and is skipped; a .c
+// file and a .smith file with no module line are untouched; `smith lint --fix` rewrites the calls that map
+// mechanically. A scratch project (tests/build_fixtures/mem_check) with one check on.
+module mem_check_test;
+
+import smith::format;
+import smith::io;
+import smith::test;
+import scratch;
+
+constexpr char prelude[] = "flags=\"-std=gnu2y -I. -I.smith/include -I$SMITH_REPO/include\"; "
+                           "run() { smith lint --quiet --checks='-*,smith-mem' \"$@\" -- $flags 2>&1; }; ";
+
+static scratch::Run lint(const scratch::Project *p, const char *body) {
+    return scratch::sh(p, format::push(&p->io->arena, prelude, body).data);
+}
+
+export void test_mem_check_names_the_replacement_of_each_raw_call_in_a_module(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "mem_check");
+    scratch::Run run = lint(&p, "run sample.smith >out.txt; grep -c 'is unchecked, since' out.txt; cat out.txt");
+    scratch::expect_contains("six calls are findings", run.out, "6\n");
+    scratch::expect_contains("memset", run.out, "`memset` is unchecked");
+    scratch::expect_contains("memset", run.out, "`mem::zero(xs)` or `mem::zero(&x)`");
+    scratch::expect_contains("memcpy", run.out, "use `mem::copy(dst, src)`");
+    scratch::expect_contains("memmove", run.out, "use `mem::move(dst, src)`");
+    scratch::expect_contains("memcmp", run.out, "use `mem::equal(a, b)`");
+    scratch::expect_contains("the marker", run.out,
+                             "mark the function `contract::trusted()` if it implements a wrapper");
+}
+
+export void test_mem_check_skips_a_trusted_function_a_c_file_and_a_file_with_no_module(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "mem_check");
+    scratch::Run run = lint(
+        &p, "run sample.smith plain.c nomodule.smith >out.txt; grep -c 'is unchecked, since' out.txt; cat out.txt");
+    scratch::expect_contains("still six findings", run.out, "6\n");
+    scratch::expect_lacks("the trusted wrapper", run.out, "sample.smith:21");
+    scratch::expect_lacks("the C file", run.out, "plain.c:");
+    scratch::expect_lacks("the file with no module", run.out, "nomodule.smith:");
+}
+
+export void test_mem_check_fix_rewrites_a_memset_of_zero_to_mem_zero(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "mem_check");
+    scratch::Run fixed = lint(&p, "run --fix sample.smith");
+    scratch::expect_contains("the fix is applied", scratch::read(&p, "sample.smith"), "    mem::zero(p);\n");
+    scratch::expect_contains("the fix is applied", scratch::read(&p, "sample.smith"), "    mem::zero(&q);\n");
+    scratch::expect_contains("the others stay", scratch::read(&p, "sample.smith"), "c::memset(buf, 7, n);");
+    (void)fixed;
+}

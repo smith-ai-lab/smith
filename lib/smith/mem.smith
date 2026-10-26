@@ -21,7 +21,6 @@ import <smith/handlers.h>;           // SmithAllocator, smith_handlers_set_alloc
 import <smith/trace.h>;              // smith_failure_format, smith_trace_capture
 import <stdlib.h>; // malloc, posix_memalign, free: the interposed functions the handler of the thread answers
 import <unistd.h>; // write: the reports of mem::checked
-import <string.h>;         // memcpy, memmove, memset, memcmp: the raw functions copy, move, zero and equal wrap
 
 // An allocator is a struct whose first member is one, passed as &x.allocator (include/smith/handlers.h): alloc,
 // realloc, free, owns and an optional size.
@@ -499,7 +498,7 @@ export void copy(auto dst, auto src) {
     static_assert(__builtin_types_compatible_p(typeof(*dst.data), typeof(*src.data)), "mem::copy: one element type");
     bool same_length = dst.count[0] == src.count[0];
     contract::assert(same_length);
-    if (dst.count[0] > 0) c::memcpy(dst.data, src.data, dst.count[0] * sizeof(*dst.data));
+    if (dst.count[0] > 0) __builtin_memcpy(dst.data, src.data, dst.count[0] * sizeof(*dst.data));
 }
 
 // Copies the elements of src into dst as copy does, and the two may overlap.
@@ -508,7 +507,7 @@ export void move(auto dst, auto src) {
     static_assert(__builtin_types_compatible_p(typeof(*dst.data), typeof(*src.data)), "mem::move: one element type");
     bool same_length = dst.count[0] == src.count[0];
     contract::assert(same_length);
-    if (dst.count[0] > 0) c::memmove(dst.data, src.data, dst.count[0] * sizeof(*dst.data));
+    if (dst.count[0] > 0) __builtin_memmove(dst.data, src.data, dst.count[0] * sizeof(*dst.data));
 }
 
 // Sets every byte of a slice's elements, or of the one value a pointer points at, to zero: the size comes from the
@@ -516,16 +515,19 @@ export void move(auto dst, auto src) {
 export void zero(auto x) {
     contract::trusted();
     if constexpr (is_slice(typeof(x))) {
-        if (x.count[0] > 0) c::memset(x.data, 0, x.count[0] * sizeof(*x.data));
+        if (x.count[0] > 0) __builtin_memset(x.data, 0, x.count[0] * sizeof(*x.data));
     } else {
-        c::memset(x, 0, sizeof(*x));
+        __builtin_memset(x, 0, sizeof(*x));
     }
 }
 
 // Sets every element of xs to v (converted to the element type, as an assignment does).
 export void fill(auto xs, auto v) {
-    for (usize i = 0; i < xs.count[0]; i++)
-        xs.data[i] = v;
+    usize at = 0;
+    while (at < xs.count[0]) {
+        xs.data[at] = (typeof(*xs.data))v;
+        at++;
+    }
 }
 
 // Whether two slices of one element type have the same length and the same bytes in their elements (so a NaN equals
@@ -535,7 +537,7 @@ export [[nodiscard]] bool equal(auto a, auto b) {
     static_assert(__builtin_types_compatible_p(typeof(*a.data), typeof(*b.data)), "mem::equal: one element type");
     if (a.count[0] != b.count[0]) return false;
     if (a.count[0] == 0) return true;
-    return c::memcmp(a.data, b.data, a.count[0] * sizeof(*a.data)) == 0;
+    return __builtin_memcmp(a.data, b.data, a.count[0] * sizeof(*a.data)) == 0;
 }
 
 // A slice of count bytes at p: the one place a byte pointer gets its count.

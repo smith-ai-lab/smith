@@ -13,6 +13,7 @@ import smith::io;
 import smith::test;
 import scratch;
 import <string.h>;
+import smith::mem;
 
 // The project is smith's lsp fixture; its folders hold what each test opens.
 static scratch::Project folder(const scratch::Project *root, const char *name) {
@@ -99,7 +100,7 @@ static const char *joined(io::Io *io, const char *log, const char *prefix) {
             if (used > 0) {
                 out[used++] = ' ';
             }
-            __builtin_memcpy(out + used, line, size);
+            mem::copy(out[used:used + size], line[0:size]);
             used += size;
         }
         line += size + (line[size] == '\n' ? 1U : 0U);

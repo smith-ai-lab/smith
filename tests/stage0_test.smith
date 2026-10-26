@@ -7,6 +7,7 @@ module stage0_test;
 import smith::io;
 import smith::test;
 import scratch;
+import smith::mem;
 
 // The folder of the repository (the project's) holds: bin/gh and fake-smith (built from the fixture), the tool, an
 // origin, and `repo`: a copy of the two scripts, five commits, a release for the second and a release for a commit that
@@ -56,9 +57,10 @@ static const char *line(const char *text, usize number) {
         if (text[at] == '\n') n += 1;
     }
     usize size = 0;
-    while (text[at + size] != '\0' && text[at + size] != '\n' && size < sizeof buffer - 1)
+    while (text[at + size] != '\0' && text[at + size] != '\n' && size < sizeof buffer - 1) {
         size += 1;
-    __builtin_memcpy(buffer, text + at, size);
+    }
+    mem::copy(buffer[0:size], text[at:at + size]);
     buffer[size] = '\0';
     return buffer;
 }

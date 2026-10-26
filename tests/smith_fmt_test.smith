@@ -13,6 +13,7 @@ import smith::io;
 import smith::test;
 import <string.h>;
 import scratch;
+import smith::mem;
 
 static typeof(const char[:]) slice_of(const char *text) {
     return text[0:c::strlen(text)];
@@ -58,7 +59,8 @@ static const char *next_line(io::Io *io, const char **at) {
     const char *end = c::strchr(*at, '\n');
     usize length = end != nullptr ? (usize)(end - *at) : c::strlen(*at);
     char *copy = arena::push_slice(&io->arena, char, length + 1).data;
-    __builtin_memcpy(copy, *at, length);
+    const char *line = *at;
+    mem::copy(copy[0:length], line[0:length]);
     *at += length + (end != nullptr ? 1 : 0);
     return copy;
 }

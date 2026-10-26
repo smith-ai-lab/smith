@@ -8,6 +8,7 @@ import smith::io;
 import smith::test;
 import <string.h>;
 import scratch;
+import smith::mem;
 
 typedef struct {
     scratch::Project p;
@@ -158,7 +159,7 @@ export void test_build_package_xz_extracts_and_a_zip_is_refused(io::Io *io) {
         const char *end = c::strchr(start + 1, '"');
         usize length = end != nullptr ? (usize)(end - start - 1) : 0;
         if (length < sizeof hash) {
-            __builtin_memcpy(hash, start + 1, length);
+            mem::copy(hash[0:length], start[1:1 + length]);
             hash[length] = '\0';
         }
     }

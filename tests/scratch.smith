@@ -2,6 +2,8 @@
 // (removed when the test passes), a fixture copied into it, and commands run there through io's processes with the
 // smith under test first on PATH. The smith under test is the one running the tests, `$SMITH_SELF` (set by
 // `smith test`; set it to run a runner by hand). Each test is a process of its own, so the environment it sets is its.
+// NOLINTBEGIN(smith-mem): importing smith::mem into scratch breaks the lowering of every test that imports scratch
+// (#421); converted to mem:: when that is fixed.
 module scratch;
 
 import smith::arena;
@@ -205,3 +207,4 @@ export const char *capture(const Project *p, const char *command) {
     __builtin_memcpy(copy, out, length);
     return copy;
 }
+// NOLINTEND(smith-mem)

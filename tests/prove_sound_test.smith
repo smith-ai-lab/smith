@@ -18,6 +18,7 @@ import smith::io;
 import smith::test;
 import scratch;
 import <string.h>;
+import smith::mem;
 
 // The flags of the harnesses: the sanitizers, the includes of the library and of the raw lowering of two modules, and
 // the files every harness links.
@@ -39,8 +40,9 @@ static const char *directive(io::Io *io, const char *text, const char *prefix) {
     const char *joined = "";
     for (const char *line = text; *line != '\0';) {
         usize length = 0;
-        while (line[length] != '\n' && line[length] != '\0')
+        while (line[length] != '\n' && line[length] != '\0') {
             length++;
+        }
         if (length >= prefix_length && c::strncmp(line, prefix, prefix_length) == 0) {
             const char *value = line + prefix_length;
             usize value_length = length - prefix_length;
@@ -49,7 +51,7 @@ static const char *directive(io::Io *io, const char *text, const char *prefix) {
                 value_length--;
             }
             char *copy = arena::push_slice(&io->arena, char, value_length + 1).data;
-            __builtin_memcpy(copy, value, value_length);
+            mem::copy(copy[0:value_length], value[0:value_length]);
             joined = format::push(&io->arena, joined, " ", copy).data;
         }
         line += length;
@@ -62,15 +64,17 @@ static const char *directive(io::Io *io, const char *text, const char *prefix) {
 static const char *word(io::Io *io, const char *text, usize index) {
     usize at = 0;
     for (usize n = 0; n <= index; n++) {
-        while (text[at] == ' ')
+        while (text[at] == ' ') {
             at++;
+        }
         if (text[at] == '\0') return nullptr;
         usize start = at;
-        while (text[at] != ' ' && text[at] != '\0')
+        while (text[at] != ' ' && text[at] != '\0') {
             at++;
+        }
         if (n == index) {
             char *copy = arena::push_slice(&io->arena, char, at - start + 1).data;
-            __builtin_memcpy(copy, text + start, at - start);
+            mem::copy(copy[0:at - start], text[start:start + at - start]);
             copy[at - start] = '\0';
             return copy;
         }
@@ -159,19 +163,21 @@ static void unsound(io::Io *io, const char *name) {
     scratch::expect_status("prove_sound: the corpus builds", 0, &built);
     for (const char *line = text; *line != '\0';) {
         usize length = 0;
-        while (line[length] != '\n' && line[length] != '\0')
+        while (line[length] != '\n' && line[length] != '\0') {
             length++;
+        }
         if (c::strncmp(line, "// unsound", 10) == 0) {
             const char *colon = c::strchr(line, ':');
             usize kind_length = (usize)(colon - (line + 3));
             const char *rest = colon + 2;
             usize rest_length = length - (usize)(rest - line);
             char *claim = arena::push_slice(&io->arena, char, rest_length + 1).data;
-            __builtin_memcpy(claim, rest, rest_length);
+            mem::copy(claim[0:rest_length], rest[0:rest_length]);
             const char *function = word(io, claim, 0);
             const char *expected = claim + c::strlen(function);
-            while (*expected == ' ')
+            while (*expected == ' ') {
                 expected++;
+            }
             if (kind_length == 7 && c::strncmp(line + 3, "unsound", 7) == 0) {
                 const char *failed = format::push(&io->arena, "FAIL  ", function, "  (").data;
                 if (!scratch::contains(proved.out, failed)) {

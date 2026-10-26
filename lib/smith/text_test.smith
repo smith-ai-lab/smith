@@ -2,6 +2,8 @@
 // lib/smith/text_test.smith. strtof in the C locale is the reference for the f32 parser (this program never sets a
 // locale), and the halfway cases are also checked against what they must round to, so the reference is not the only
 // witness.
+// NOLINTBEGIN(smith-mem): importing smith::mem here breaks the lowering of the `for` loops of this file (#421);
+// converted to mem:: when that is fixed.
 module smith::text_test;
 
 import smith::math;
@@ -1004,3 +1006,4 @@ export void test_text_f32_write_is_shortest_and_round_trips(random::Key key) {
         test::check(c::strtof(shorter, nullptr) != value);
     }
 }
+// NOLINTEND(smith-mem)

@@ -6,13 +6,15 @@ module build_errors_test;
 import smith::io;
 import smith::test;
 import scratch;
+import smith::mem;
 
 static const char *first_line(const char *text) {
     static char line[512];
     usize length = 0;
-    while (text[length] != '\0' && text[length] != '\n' && length + 1 < sizeof line)
+    while (text[length] != '\0' && text[length] != '\n' && length + 1 < sizeof line) {
         length++;
-    __builtin_memcpy(line, text, length);
+    }
+    mem::copy(line[0:length], text[0:length]);
     line[length] = '\0';
     return line;
 }

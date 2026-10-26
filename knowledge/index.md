@@ -46,6 +46,7 @@ What smith is and the contracts its code keeps. Read only the concepts your task
 - [A proof is fast, and fast is CPU time](proof-budget.md): Each proof has a budget of about 10 s of CPU time charged as on 8 idle cores, so a busy machine slows a proof and never fails it.
 - [A module's generated C header](smith-module-headers.md): A module's header includes exactly what its exports need, and C and C++ code calls a module through it.
 - [smith-preprocessor, the check that a .smith file has no directive](smith-preprocessor-check.md): A clang-tidy check reports every directive, _Pragma and C-macro c:: name in a .smith file, each with its replacement.
+- [Typed memory functions, and the raw ones are an error in a module](mem-typed-functions.md): smith::mem has copy, move, zero, fill, equal, bytes and view over slices, and the clang-tidy check smith-mem reports C's memcpy, memmove, memset and memcmp in a module.
 - [No preprocessor, and the target's facts](smith-target-facts.md): A .smith file has no preprocessor, import target gives the facts of the target as literals, and if constexpr picks a branch before the parser.
 
 ## Designs

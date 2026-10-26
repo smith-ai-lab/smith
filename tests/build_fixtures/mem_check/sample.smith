@@ -1,0 +1,24 @@
+module sample;
+
+import <string.h>;
+import smith::contract;
+
+export typedef struct {
+    i32 a;
+    i32 b;
+} Pair;
+
+export void clear(Pair *p, u8 *buf, usize n) {
+    c::memset(p, 0, sizeof *p);
+    Pair q = {1, 2};
+    c::memset(&q, 0, sizeof(q));
+    c::memset(buf, 7, n);
+    c::memcpy(buf, p, n);
+    __builtin_memmove(buf, buf + 1, n);
+    if (c::memcmp(buf, p, n) == 0) return;
+}
+
+export void wrapper(u8 *dst, const u8 *src, usize n) {
+    contract::trusted();
+    c::memcpy(dst, src, n);
+}

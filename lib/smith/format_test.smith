@@ -12,6 +12,7 @@ import smith::test;
 import smith::text;
 import scratch;
 import <stdint.h>;
+import smith::mem;
 
 constexpr usize capacity = 256;
 constexpr i64 i64_max = 9223372036854775807;
@@ -271,7 +272,7 @@ export void test_format_fixed_special_values() {
 
 export void test_format_cut_at_the_capacity() {
     char out[16];
-    __builtin_memset(out, 'x', sizeof out);
+    mem::fill(out[0:sizeof out], 'x');
     format::Written written = format::to(out, 5, "hello", " world");
     test::check(!written.fits);
     test::check_equal(written.length, 11); // what the whole text needs
@@ -315,7 +316,7 @@ export void test_format_cut_in_a_number(random::Key key) {
     test::check_equal(written.fits, room > length);
     if (room > 0) {
         usize kept = room - 1 < length ? room - 1 : length;
-        test::check_equal(__builtin_memcmp(out, whole, kept), 0);
+        test::check_condition(mem::equal(out[0:kept], whole[0:kept]));
         test::check_equal(out[kept], '\0');
     }
 }
@@ -570,7 +571,7 @@ export void test_format_print_too_long_prints_nothing() {
     alignas(arena::align_max) static u8 memory[1 << 20];
     io::Io io = io::make_test((io::Test){.memory = memory, .capacity = sizeof memory, .seed = 7});
     char long_text[5000];
-    __builtin_memset(long_text, 'x', sizeof long_text - 1);
+    mem::fill(long_text[0:sizeof long_text - 1], 'x');
     long_text[sizeof long_text - 1] = '\0';
     io::Error error = format::print(&io.console, long_text);
     test::check(error.code != 0);

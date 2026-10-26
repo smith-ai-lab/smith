@@ -28,6 +28,7 @@ import smith::io;
 import smith::test;
 import <string.h>;
 import scratch;
+import smith::mem;
 
 constexpr usize blocks_max = 96;
 constexpr usize placed_max = 32;
@@ -50,7 +51,7 @@ typedef struct {
 
 static const char *copy_of(io::Io *io, const char *at, usize length) {
     char *copy = arena::push_slice(&io->arena, char, length + 1).data;
-    __builtin_memcpy(copy, at, length);
+    mem::copy(copy[0:length], at[0:length]);
     return copy;
 }
 
@@ -76,7 +77,7 @@ static void parse_info(io::Io *io, const char *info, Block *block) {
         } else if (c::strncmp(at, "file=", 5) == 0) {
             block->path = copy_of(io, at + 5, length - 5);
         } else {
-            __builtin_memcpy(flags + used, at, length);
+            mem::copy(flags[used:used + length], at[0:length]);
             used += length;
             flags[used++] = ',';
         }
@@ -96,8 +97,9 @@ static const char *line_end(const char *at) {
 // The info string after a fence that starts at `at + spaces`, without its trailing blanks.
 static const char *info_after_fence(io::Io *io, const char *at, usize spaces, const char *next) {
     usize length = (usize)(next - at) - spaces - 3;
-    while (length > 0 && (at[spaces + 2 + length] == '\n' || at[spaces + 2 + length] == ' '))
+    while (length > 0 && (at[spaces + 2 + length] == '\n' || at[spaces + 2 + length] == ' ')) {
         length--;
+    }
     return copy_of(io, at + spaces + 3, length);
 }
 
@@ -113,8 +115,9 @@ static void read_blocks(io::Io *io, const scratch::Project *p, Blocks *blocks) {
     for (usize line = 1; *at != '\0'; line++) {
         const char *next = line_end(at);
         usize spaces = 0;
-        while (at[spaces] == ' ')
+        while (at[spaces] == ' ') {
             spaces++;
+        }
         if (c::strncmp(at + spaces, "```", 3) == 0 && !open) {
             open = true;
             indent = spaces;
@@ -131,9 +134,10 @@ static void read_blocks(io::Io *io, const scratch::Project *p, Blocks *blocks) {
             blocks->count++;
         } else if (open) {
             usize skip = 0;
-            while (skip < indent && at[skip] == ' ')
+            while (skip < indent && at[skip] == ' ') {
                 skip++;
-            __builtin_memcpy(body + used, at + skip, (usize)(next - at) - skip);
+            }
+            mem::copy(body[used:used + (usize)(next - at) - skip], at[skip:skip + (usize)(next - at) - skip]);
             used += (usize)(next - at) - skip;
         }
         at = next;
@@ -203,8 +207,9 @@ static void place_blocks(io::Io *io, const scratch::Project *p, const Blocks *bl
 static const char *flags_of(io::Io *io, const Blocks *blocks, const char *name) {
     const char *flags = ",";
     for (usize i = 0; i < blocks->count; i++) {
-        if (c::strcmp(blocks->items[i].project, name) == 0)
+        if (c::strcmp(blocks->items[i].project, name) == 0) {
             flags = format::push(&io->arena, flags, blocks->items[i].flags).data;
+        }
     }
     return flags;
 }
@@ -289,8 +294,9 @@ static void check_project(io::Io *io, const scratch::Project *p, const char *nam
         check_fails_with_output(io, p, label, "refuse", "smith prove >out 2>&1");
         checked = true;
     }
-    if (!checked)
+    if (!checked) {
         test::note("%s: a project of the README has none of run, test, prove, refuse, rejects or port", label);
+    }
     test::check_condition(checked);
 }
 
@@ -458,4 +464,8 @@ export void test_readme_project_reflect(io::Io *io) {
 
 export void test_readme_project_slices(io::Io *io) {
     project_case(io, "slices");
+}
+
+export void test_readme_project_memcopy(io::Io *io) {
+    project_case(io, "memcopy");
 }

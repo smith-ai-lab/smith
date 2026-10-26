@@ -9,6 +9,7 @@ import smith::io;
 import smith::test;
 import scratch;
 import <string.h>;
+import smith::mem;
 
 // `smith prove args -- -I include`, both streams together. $c in args is tests/prove.
 export scratch::Run prove(const scratch::Project *p, const char *args) {
@@ -21,15 +22,17 @@ export scratch::Run prove(const scratch::Project *p, const char *args) {
 static const char *word(io::Io *io, const char *text, usize index) {
     usize at = 0;
     for (usize n = 0; n <= index; n++) {
-        while (text[at] == ' ')
+        while (text[at] == ' ') {
             at++;
+        }
         if (text[at] == '\0') return nullptr;
         usize start = at;
-        while (text[at] != ' ' && text[at] != '\0')
+        while (text[at] != ' ' && text[at] != '\0') {
             at++;
+        }
         if (n == index) {
             char *copy = arena::push_slice(&io->arena, char, at - start + 1).data;
-            __builtin_memcpy(copy, text + start, at - start);
+            mem::copy(copy[0:at - start], text[start:start + at - start]);
             copy[at - start] = '\0';
             return copy;
         }

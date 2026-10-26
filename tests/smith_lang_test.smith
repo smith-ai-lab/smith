@@ -35,6 +35,7 @@ import smith::io;
 import smith::test;
 import <string.h>;
 import scratch;
+import smith::mem;
 
 typedef struct {
     io::Io *io;
@@ -62,7 +63,8 @@ static const char *next_line(io::Io *io, const char **at) {
     const char *end = c::strchr(*at, '\n');
     usize length = end != nullptr ? (usize)(end - *at) : c::strlen(*at);
     char *copy = arena::push_slice(&io->arena, char, length + 1).data;
-    __builtin_memcpy(copy, *at, length);
+    const char *line = *at;
+    mem::copy(copy[0:length], line[0:length]);
     *at += length + (end != nullptr ? 1 : 0);
     return copy;
 }
@@ -72,8 +74,9 @@ static const char *module_of(io::Io *io, const char *file) {
     usize length = c::strlen(file);
     if (length > 6 && c::strcmp(file + length - 6, ".smith") == 0) length -= 6;
     char *copy = arena::push_slice(&io->arena, char, length + 1).data;
-    for (usize i = 0; i < length; i++)
+    for (usize i = 0; i < length; i++) {
         copy[i] = file[i] == '/' ? '.' : file[i];
+    }
     return copy;
 }
 
@@ -81,7 +84,7 @@ static const char *stem_of(io::Io *io, const char *file) {
     usize length = c::strlen(file);
     if (length > 6 && c::strcmp(file + length - 6, ".smith") == 0) length -= 6;
     char *copy = arena::push_slice(&io->arena, char, length + 1).data;
-    __builtin_memcpy(copy, file, length);
+    mem::copy(copy[0:length], file[0:length]);
     return copy;
 }
 
@@ -89,8 +92,9 @@ static const char *stem_of(io::Io *io, const char *file) {
 static const char *object_of(io::Io *io, const char *file) {
     usize length = c::strlen(file);
     char *copy = arena::push_slice(&io->arena, char, length + 1).data;
-    for (usize i = 0; i < length; i++)
+    for (usize i = 0; i < length; i++) {
         copy[i] = file[i] == '/' ? '.' : file[i];
+    }
     return copy;
 }
 

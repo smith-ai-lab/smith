@@ -17,6 +17,7 @@ import <smith/json.h>;
 import <stdio.h>;
 import <stdlib.h>;
 import <string.h>;
+import smith::mem;
 
 // The bytes of a buffer, for the calls of io that take a slice.
 static typeof(const u8[:]) test_io_bytes(const void *data, usize size) {
@@ -313,7 +314,7 @@ static void test_json_check_string(arena::Arena *arena, const char *document, co
     test::note("document %s", document);
     const char string[:] = test_json_only_string(arena, document);
     test::check_equal(countof(string), length);
-    test::check_equal(c::memcmp(string.data, bytes, length), 0);
+    test::check_condition(mem::equal(string.data[0:length], bytes[0:length]));
 }
 
 export void test_json_decodes_strings() {
@@ -349,7 +350,8 @@ export void test_json_reader_decodes_into_the_arena() {
     const char first[:] = c::smith_json_decode(&reader, &arena);
     test::check_greater(arena.used, before);
     test::check_equal(countof(first), 3);
-    test::check_equal(c::memcmp(first.data, "x\ty", 3), 0);
+    const char tabbed[:] = "x\ty";
+    test::check_condition(mem::equal(first, tabbed));
     test::check(c::smith_json_read(&reader) == c::SmithJsonToken_String);
     before = arena.used;
     const char second[:] = c::smith_json_decode(&reader, &arena);
@@ -422,8 +424,9 @@ export void test_json_depth_limit() {
     test::check_equal(error.offset, 0);
     c::SmithJsonLimits deepest = {.depth = c::smith_json_depth_max, .string_length = 10, .count = 2000};
     char many[c::smith_json_depth_max * 2 + 1];
-    __builtin_memset(many, '[', c::smith_json_depth_max);
-    __builtin_memset(many + c::smith_json_depth_max, ']', c::smith_json_depth_max);
+    usize depth = c::smith_json_depth_max;
+    mem::fill(many[0:depth], '[');
+    mem::fill(many[depth:depth * 2], ']');
     many[c::smith_json_depth_max * 2] = '\0';
     test::check(test_json_parses(many, deepest, &error));
 }
@@ -551,7 +554,8 @@ export void test_json_a_large_array_keeps_its_order() {
 static bool test_json_writer_is(c::SmithJsonWriter *writer, const char *expected) {
     const char output[:] = {};
     if (!c::smith_json_writer_finish(writer, &output)) return false;
-    return countof(output) == c::strlen(expected) && c::memcmp(output.data, expected, countof(output)) == 0;
+    return countof(output) == c::strlen(expected) &&
+           mem::equal(output.data[0:countof(output)], expected[0:countof(output)]);
 }
 
 export void test_json_writer_compact() {
@@ -1012,7 +1016,7 @@ static void test_json_check_reader(const char input[:], const TestJsonDocument *
         if (event->token == c::SmithJsonToken_Key || event->token == c::SmithJsonToken_String) {
             const char decoded[:] = c::smith_json_decode(&reader, arena);
             test::check_equal(countof(decoded), event->length);
-            test::check_equal(c::memcmp(decoded.data, event->string, event->length), 0);
+            test::check_condition(mem::equal(decoded.data[0:event->length], event->string[0:event->length]));
             if (reader.escaped) {
                 test::check(decoded.data[countof(decoded)] == '\0');
             }
@@ -1042,7 +1046,7 @@ static void test_json_check_tree(const c::SmithJsonValue *root, const TestJsonDo
             value = containers[depth - 1]->items[next_child[depth - 1]];
             const char member_key[:] = value->key;
             test::check_equal(countof(member_key), event->length);
-            test::check_equal(c::memcmp(value->key.data, event->string, event->length), 0);
+            test::check_condition(mem::equal(value->key.data[0:event->length], event->string[0:event->length]));
             pending_key = true;
             continue;
         }
@@ -1065,7 +1069,7 @@ static void test_json_check_tree(const c::SmithJsonValue *root, const TestJsonDo
             test::check(value->kind == c::SmithJsonKind_String);
             const char member_text[:] = value->text;
             test::check_equal(countof(member_text), event->length);
-            test::check_equal(c::memcmp(value->text.data, event->string, event->length), 0);
+            test::check_condition(mem::equal(value->text.data[0:event->length], event->string[0:event->length]));
             break;
         case c::SmithJsonToken_Number:
             test::check(value->kind == c::SmithJsonKind_Number);
@@ -1130,7 +1134,7 @@ export void test_json_write_value_puts_a_tree_back_as_it_was_written(random::Key
     const char copy[:] = {};
     test::check(c::smith_json_writer_finish(&again, &copy));
     test::check_equal(countof(copy), countof(output));
-    test::check(c::memcmp(copy.data, output.data, countof(output)) == 0);
+    test::check(mem::equal(copy.data[0:countof(output)], output.data[0:countof(output)]));
 }
 
 export void test_json_write_value_keeps_numbers_and_duplicate_keys() {
@@ -1158,8 +1162,9 @@ export void test_json_write_value_keeps_numbers_and_duplicate_keys() {
 export void test_json_any_double_round_trips_bit_for_bit(random::Key key) {
     random::Key *key_stream = &key;
     u64 bits = test_json_random_double_bits(take(key_stream));
-    if (random::bernoulli_sample(take(key_stream), (random::Bernoulli){.probability = 0.5}))
+    if (random::bernoulli_sample(take(key_stream), (random::Bernoulli){.probability = 0.5})) {
         bits = random::key_bits(take(key_stream));
+    }
     f64 d = __builtin_bit_cast(f64, bits);
     if (d != d || d > f64_max || d < -f64_max) return;
     char buffer[64];
@@ -1223,12 +1228,12 @@ static usize test_json_damage(random::Key key, char *bytes, usize length, usize 
             length = at;
             break; // truncate
         case 3:    // delete one byte
-            __builtin_memmove(bytes + at, bytes + at + 1, length - at - 1);
+            mem::move(bytes[at:at + length - at - 1], bytes[at + 1:at + 1 + length - at - 1]);
             length -= 1;
             break;
         case 4: // insert one
             if (length < capacity) {
-                __builtin_memmove(bytes + at + 1, bytes + at, length - at);
+                mem::move(bytes[at + 1:at + 1 + length - at], bytes[at:at + length - at]);
                 bytes[at] = byte;
                 length += 1;
             }
@@ -1245,7 +1250,7 @@ static usize test_json_damage(random::Key key, char *bytes, usize length, usize 
 // nothing outside it (the input sits exactly in its own arena push, so AddressSanitizer sees a stray read).
 static void test_json_judge(arena::Arena *arena, const char *bytes, usize length, c::SmithJsonLimits limits) {
     char *exact = arena::push_slice(arena, char, length == 0 ? 1 : length).data;
-    __builtin_memcpy(exact, bytes, length);
+    mem::copy(exact[0:length], bytes[0:length]);
     const char input[:] = exact[0:length];
     c::SmithJsonReader reader = c::smith_json_reader_make(input, limits);
     c::SmithJsonToken token = c::SmithJsonToken_Null;
@@ -1290,7 +1295,7 @@ export void test_json_damaged_documents_never_misbehave(random::Key key) {
     const char output[:] = {};
     test::check(c::smith_json_writer_finish(&writer, &output));
     char damaged[1 << 14];
-    __builtin_memcpy(damaged, output.data, countof(output));
+    mem::copy(damaged[0:countof(output)], output.data[0:countof(output)]);
     usize length = test_json_damage(take(key_stream), damaged, countof(output), sizeof damaged);
     test::note("damaged %.*s", (i32)length > 400 ? 400 : (i32)length, damaged);
     test_json_judge(&arena, damaged, length, test_json_wide);
@@ -1306,8 +1311,9 @@ export void test_json_random_bytes_never_misbehave(random::Key key) {
     char bytes[64];
     for (usize i = 0; i < length; i++) {
         bytes[i] = (char)random::key_bits(take(key_stream));
-        if (random::bernoulli_sample(take(key_stream), (random::Bernoulli){.probability = 0.6}))
+        if (random::bernoulli_sample(take(key_stream), (random::Bernoulli){.probability = 0.6})) {
             bytes[i] = "[]{}:,\" 0-1e.tfnu\\"[random::key_bits(take(key_stream)) % 19]; // mostly structure
+        }
     }
     test_json_judge(&arena, bytes, length, test_json_wide);
 }

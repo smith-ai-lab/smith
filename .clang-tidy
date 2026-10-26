@@ -16,6 +16,7 @@ Checks: >
   smith-c23,
   smith-constexpr,
   smith-effects,
+  smith-mem,
   smith-module,
   smith-module-library,
   smith-preprocessor,

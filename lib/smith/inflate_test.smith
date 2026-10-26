@@ -14,6 +14,7 @@ import smith::io;
 import smith::random;
 import smith::test;
 import <stdint.h>;
+import smith::mem;
 
 constexpr usize arena_size = (usize)8 << 20; // 8 MiB
 
@@ -70,7 +71,7 @@ static bool is_repeat(const u8 *bytes, usize size) {
 // An exact-size copy in the arena, so reading past its end is a sanitizer report.
 static u8 *exact_copy(arena::Arena *arena, const u8 *bytes, usize size) {
     u8 *copy = arena::push_raw(arena, size == 0 ? 1 : size, 1);
-    if (size > 0) __builtin_memcpy(copy, bytes, size);
+    if (size > 0) mem::copy(copy[0:size], bytes[0:size]);
     return copy;
 }
 
@@ -106,7 +107,7 @@ static bool collect(void *context, const u8 *data, usize size) {
         sink->overflowed = true;
         return false;
     }
-    __builtin_memcpy(sink->data + sink->size, data, size);
+    mem::copy(sink->data[sink->size:sink->size + size], data[0:size]);
     sink->size += size;
     return sink->stop_after == 0 || sink->calls < sink->stop_after;
 }
@@ -158,7 +159,7 @@ static usize store_raw(const u8 *input, usize size, u32 block, u8 *output) {
         output[out + 2] = (u8)(length >> 8);
         output[out + 3] = (u8)~length;
         output[out + 4] = (u8)(~length >> 8);
-        if (length > 0) __builtin_memcpy(output + out + 5, input + in, length);
+        if (length > 0) mem::copy(output[out + 5:out + 5 + length], input[in:in + length]);
         in += length;
         out += 5 + length;
     }
@@ -178,7 +179,7 @@ static usize store_zlib(const u8 *input, usize size, u32 block, u8 *output) {
 
 static usize store_gzip(const u8 *input, usize size, u32 block, u8 *output) {
     const u8 header[10] = {0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 0xff};
-    __builtin_memcpy(output, header, sizeof header);
+    mem::copy(output[0:sizeof header], header[0:sizeof header]);
     usize out = sizeof header + store_raw(input, size, block, output + sizeof header);
     u32 crc = inflate::crc32(0, input, size);
     for (u32 i = 0; i < 4; i++) {
@@ -245,12 +246,12 @@ export void test_inflate_decodes_vectors_of_every_block_type(io::Io *io) {
         test::check_equal(produced, expected_size);
         test::check(same(output, expected, expected_size));
 
-        __builtin_memset(output, 0, expected_size);
+        mem::zero(output[0:expected_size]);
         expect(inflate::decode(inflate::Zlib, zlib, zlib_size, output, expected_size, &used, &produced), inflate::Ok);
         test::check_equal(used, zlib_size);
         test::check(same(output, expected, expected_size));
 
-        __builtin_memset(output, 0, expected_size); // the DEFLATE stream inside the gzip member
+        mem::zero(output[0:expected_size]); // the DEFLATE stream inside the gzip member
         expect(inflate::decode(inflate::Raw, gzip + 10, gzip_size - 18, output, expected_size, &used, &produced),
                inflate::Ok);
         test::check_equal(used, gzip_size - 18);
@@ -453,8 +454,8 @@ export void test_inflate_stops_at_the_end_of_one_stream_and_says_where_it_ended(
     const u8 *second = load(io, "dynamic", "gz", &second_size);
     const u8 *expected = load(io, "dynamic", "bin", &expected_size);
     u8 *both = arena::push_raw(&io->arena, first_size + second_size, 1);
-    __builtin_memcpy(both, first, first_size);
-    __builtin_memcpy(both + first_size, second, second_size);
+    mem::copy(both[0:first_size], first[0:first_size]);
+    mem::copy(both[first_size:first_size + second_size], second[0:second_size]);
     u8 *output = arena::push_raw(&io->arena, expected_size, 1);
     usize used = 0;
     usize produced = 0;
@@ -630,7 +631,7 @@ export void test_prop_inflate_round_trips_stored_blocks(random::Key key) {
                        : f == 1 ? store_zlib(data, size, block, encoded)
                                 : store_gzip(data, size, block, encoded);
         test::check_less_equal(length, capacity);
-        __builtin_memset(decoded, 0, size);
+        mem::zero(decoded[0:size]);
         expect(inflate::decode(format, encoded, length, decoded, size, &used, &produced), inflate::Ok);
         test::check_equal(used, length);
         test::check_equal(produced, size);

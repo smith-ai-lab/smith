@@ -49,3 +49,22 @@ mem::checked_release(&checked);             // frees what was freed; a live bloc
 ```
 
 `checked_leaks(&c)` (count, bytes and first site of the leaks), `checked_leak(&c, after)` (the next leak's site, in order of allocation), `checked_live`, `checked_live_bytes`. A block the C library keeps for itself (its number-printing cache) is not a leak. A block used after an arena's `reset` is `use-after-poison` already: the arena poisons what is past its cursor. Details: knowledge/checked-allocator.md.
+
+## Copies, fills and comparisons: typed, in place of memcpy and friends
+
+```smith
+module copies;
+import smith::mem;
+
+export bool demo(u8 dst[:], const u8 src[:]) {
+    mem::copy(dst, src);                    // two slices of one element type and one length: unequal lengths fail a check
+    u32 word = 0;
+    u8 as_bytes[:] = mem::bytes(&word);     // the value's size travels with it
+    mem::zero(as_bytes);                    // mem::zero(&word) is the same; mem::fill(xs, v) sets each element
+    return mem::equal(dst[0:2], src[0:2]);  // the lengths are compared first, then the bytes
+}
+```
+
+- `mem::copy(dst, src)`, `mem::move(dst, src)` (overlap allowed), `mem::zero(xs)` or `mem::zero(&x)`, `mem::fill(xs, v)`, `mem::equal(a, b)` (a `bool`; bytes, so a NaN equals itself and `0.0` differs from `-0.0`), `mem::bytes(&x)` (`u8[:]`; `mem::read_bytes(&x)` is `const u8[:]`). An element type that differs is a compile error; a length that differs is a checked failure in every build. They lower to the C functions: no cost beyond the checks.
+- Bytes become a typed slice in one place: `mem::can_view(raw, f32)` asks (a whole number of elements, aligned), `mem::view(raw, f32)` returns `f32[:]` and is a checked failure when `can_view` is false (`raw` is a `u8[:]`; an `option` of a slice cannot be written in a generic yet, #408).
+- **In a file with a `module` line the raw functions are a `smith-mem` finding** (`c::memcpy`, `c::memmove`, `c::memset`, `c::memcmp`, `__builtin_memcpy` and the others): the message names the replacement, and `smith lint --fix` rewrites `memset(&x, 0, sizeof x)` to `mem::zero(&x)`. A function that implements a wrapper over the raw function says `contract::trusted()` (`smith_trusted()` in C) and the check skips it. A `.c` file, or a `.smith` file with no `module` line, is untouched (smith-check-lints).

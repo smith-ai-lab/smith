@@ -155,6 +155,42 @@ export void skip(const char (*text)[:], usize n) {
 
 [smith-lang-slice-pointers](.agents/skills/smith-lang-slice-pointers/SKILL.md).
 
+### Typed memory, not `memcpy`
+
+```c
+#include <stddef.h>
+#include <string.h>
+void copy(float *dst, const float *src, size_t n) {
+    memcpy(dst, src, n * sizeof(float)); // the type and the length travel apart from the data
+}
+```
+
+```smith project=memcopy run
+module main;
+
+import smith::format;
+import smith::io;
+import smith::mem;
+
+i32 main(io::Io *io) {
+    f32 raw[4] = {1.5f, 2.5f, 3.5f, 4.5f};
+    f32 copy[4] = {};
+    f32 from[:] = raw;
+    f32 to[:] = copy;
+    mem::copy(to, from); // two slices of one type and one length, checked
+    bool same = mem::equal(to, from);
+    mem::zero(to[0:2]);
+    format::print(&io->console, "same ", same, ", copy[1] ", copy[1], ", copy[3] ", copy[3], "\n");
+    return 0;
+}
+```
+
+```output project=memcopy
+same true, copy[1] 0, copy[3] 4.5
+```
+
+`mem::copy`, `mem::move`, `mem::zero`, `mem::fill`, `mem::equal`, `mem::bytes(&x)` and `mem::view(bytes, f32)` take slices, so a length that does not match is a checked failure, and they lower to the C functions. In a file with a `module` line the raw `memcpy`, `memmove`, `memset` and `memcmp` are a `smith-mem` finding that names the replacement (`smith lint --fix` applies the mechanical ones); a function that implements a wrapper says `contract::trusted()`. A `.c` file is untouched. [smith-mem](.agents/skills/smith-mem/SKILL.md).
+
 ### No preprocessor
 
 ```c

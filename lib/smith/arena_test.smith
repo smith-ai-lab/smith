@@ -6,6 +6,7 @@ module smith::arena_test;
 import smith::arena;
 import smith::math;
 import smith::test;
+import smith::mem;
 
 constexpr usize capacity = 4096;
 
@@ -20,16 +21,18 @@ typedef struct {
 
 export void test_arena_pushes_are_zeroed() {
     static Memory memory;
-    __builtin_memset(memory.bytes, 0xAA, sizeof memory.bytes);
+    mem::fill(memory.bytes[0:sizeof memory.bytes], 0xAA);
     arena::Arena a = arena::fixed(memory.bytes, sizeof memory.bytes);
     u8 *bytes = arena::push_raw(&a, 100, 1);
-    for (usize i = 0; i < 100; i++)
+    for (usize i = 0; i < 100; i++) {
         test::check_equal(bytes[i], 0);
-    __builtin_memset(bytes, 0xBB, 100);
+    }
+    mem::fill(bytes[0:100], 0xBB);
     arena::reset(&a);
     u8 *again = arena::push_raw(&a, 100, 1);
-    for (usize i = 0; i < 100; i++)
+    for (usize i = 0; i < 100; i++) {
         test::check_equal(again[i], 0); // a push after a reset is zeroed too
+    }
 }
 
 export void test_arena_pushes_are_aligned() {
@@ -62,7 +65,7 @@ export void test_arena_typed_and_slice_pushes() {
 
 export void test_arena_typed_pushes_keep_every_alignment() {
     static Memory memory;
-    __builtin_memset(memory.bytes, 0xAA, sizeof memory.bytes);
+    mem::fill(memory.bytes[0:sizeof memory.bytes], 0xAA);
     arena::Arena a = arena::fixed(memory.bytes, sizeof memory.bytes);
     u8 *odd = arena::push(&a, u8);
     test::check_condition(odd != nullptr);
@@ -161,8 +164,8 @@ export void test_arena_carve_makes_separate_arenas() {
     test::check_condition(parent.used >= 3010);
     u8 a[:] = arena::push_slice(&first, u8, 900);
     u8 b[:] = arena::push_slice(&second, u8, 1900);
-    __builtin_memset(&a[0], 1, 900);
-    __builtin_memset(&b[0], 2, 1900);
+    mem::fill(a, 1);
+    mem::fill(b, 2);
     after[9] = 3;
     arena::reset(&first); // a reset gives back its own memory only
     test::check_equal(b[1899], 2);
@@ -174,7 +177,7 @@ export void test_arena_carve_makes_separate_arenas() {
 
 export void test_arena_push_slice_is_a_zeroed_slice_of_the_arena() {
     static Memory memory;
-    __builtin_memset(memory.bytes, 0xAA, sizeof memory.bytes);
+    mem::fill(memory.bytes[0:sizeof memory.bytes], 0xAA);
     arena::Arena a = arena::fixed(memory.bytes, sizeof memory.bytes);
     Record records[:] = arena::push_slice(&a, Record, 6);
     test::check_equal(countof(records), 6);
@@ -201,7 +204,7 @@ export void test_arena_push_slice_is_a_zeroed_slice_of_the_arena() {
 
 export void test_arena_push_slice_with_a_size_for_each_dimension() {
     static Memory memory;
-    __builtin_memset(memory.bytes, 0xAA, sizeof memory.bytes);
+    mem::fill(memory.bytes[0:sizeof memory.bytes], 0xAA);
     arena::Arena a = arena::fixed(memory.bytes, sizeof memory.bytes);
     f32 vector[:] = arena::push_slice(&a, f32, 5);
     f32 matrix[:][:] = arena::push_slice(&a, f32, 3, 4);
@@ -242,9 +245,10 @@ void fill_blocks(arena::Arena *a, usize count, u8 fill) {
     for (usize i = 0; i < count; i++) {
         u8 *block = arena::push_array_raw(a, 1, 1000, 1);
         test::check_condition(block != nullptr);
-        for (usize j = 0; j < 1000; j += 97)
+        for (usize j = 0; j < 1000; j += 97) {
             test::check_equal(block[j], 0); // zeroed, though a chunk reused after a reset held `fill`
-        __builtin_memset(block, fill, 1000);
+        }
+        mem::fill(block[0:1000], fill);
     }
 }
 

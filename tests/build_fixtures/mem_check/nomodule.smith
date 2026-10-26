@@ -1,0 +1,5 @@
+import <string.h>;
+
+void copy_without_module(char *dst, const char *src, usize n) {
+    __builtin_memcpy(dst, src, n);
+}

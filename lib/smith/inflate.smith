@@ -2,6 +2,8 @@
 // Its C API is the generated header include/smith/inflate.h (committed; `smith build headers` regenerates it). Every
 // export has a short name here and a C name (the attribute before it): `inflate::decode` is `smith_inflate_decode`,
 // `inflate::Status` is `SmithInflateStatus`, `inflate::Ok` is `SmithInflateStatus_Ok`.
+// NOLINTBEGIN(smith-mem): smith links inflate itself, so the previous release compiles it and has no smith::mem (the
+// lag rule); converted to mem:: when that is fixed.
 module smith::inflate;
 
 import smith::contract;
@@ -869,3 +871,4 @@ stream(Format format, const u8 *input, usize input_size, u8 *buffer, Sink sink, 
     State state = {.out = buffer, .capacity = window, .sink = sink, .context = context, .format = format};
     return run(&state, input, input_size, used, size);
 }
+// NOLINTEND(smith-mem)

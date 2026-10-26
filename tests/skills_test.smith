@@ -15,6 +15,7 @@ import smith::io;
 import smith::test;
 import <string.h>;
 import scratch;
+import smith::mem;
 
 constexpr usize modules_max = 32;
 
@@ -101,15 +102,17 @@ static void walk_blocks(io::Io *io, const scratch::Project *p, const char *name,
     for (usize number = 1; *at != '\0'; number++) {
         const char *next = line_end(at);
         usize spaces = 0;
-        while (at[spaces] == ' ')
+        while (at[spaces] == ' ') {
             spaces++;
+        }
         if (c::strncmp(at + spaces, "```", 3) == 0) {
             if (!open) {
                 usize length = (usize)(next - at) - spaces - 3;
-                while (length > 0 && (at[spaces + 2 + length] == '\n' || at[spaces + 2 + length] == ' '))
+                while (length > 0 && (at[spaces + 2 + length] == '\n' || at[spaces + 2 + length] == ' ')) {
                     length--;
+                }
                 char *info = arena::push_slice(&io->arena, char, length + 1).data;
-                __builtin_memcpy(info, at + spaces + 3, length);
+                mem::copy(info[0:length], at[spaces + 3:spaces + 3 + length]);
                 kind = block_of(info);
                 if (kind == Block_Bad) {
                     test::note("%s: unknown info string: must be exactly 'smith' or 'smith fragment', not '%s'",
@@ -128,10 +131,11 @@ static void walk_blocks(io::Io *io, const scratch::Project *p, const char *name,
             }
         } else if (open) {
             usize skip = 0;
-            while (skip < indent && at[skip] == ' ')
+            while (skip < indent && at[skip] == ' ') {
                 skip++;
+            }
             usize length = (usize)(next - at) - skip;
-            __builtin_memcpy(body + used, at + skip, length);
+            mem::copy(body[used:used + length], at[skip:skip + length]);
             used += length;
         }
         at = next;
@@ -172,13 +176,15 @@ static void skill_case(io::Io *io, const char *name) {
     Placed placed = {};
     walk_blocks(io, &p, name, &placed);
     if (placed.count == 0) return;
-    for (usize i = 0; i < placed.count; i++)
-        scratch::write(&p, "modules",
-                       format::push(&io->arena, scratch::read(&p, "modules"), placed.paths[i], "\n").data);
+    for (usize i = 0; i < placed.count; i++) {
+        const char *path = placed.paths[i];
+        scratch::write(&p, "modules", format::push(&io->arena, scratch::read(&p, "modules"), path, "\n").data);
+    }
     scratch::Run headers = scratch::sh(&p, headers_script);
     scratch::expect_status("the headers", 0, &headers);
-    for (usize i = 0; i < placed.count; i++)
+    for (usize i = 0; i < placed.count; i++) {
         check_module(io, &p, name, placed.paths[i], placed.lines[i]);
+    }
 }
 
 // A skill with a `c` or `smith` block needs a test below.

@@ -11,6 +11,7 @@ import smith::io;
 import smith::test;
 import scratch;
 import <string.h>;
+import smith::mem;
 
 static scratch::Project untar_project(io::Io *io) {
     return scratch::project(io, "p", "untar");
@@ -44,7 +45,7 @@ static scratch::Run fetch(const scratch::Project *p, const char *cache, const ch
     const char *start = fetched.status == 0 ? c::strstr(fetched.out, "\"sha256:") : nullptr;
     if (start != nullptr) {
         char *hash = arena::push_slice(&p->io->arena, char, 65).data;
-        __builtin_memcpy(hash, start + 8, 64);
+        mem::copy(hash[0:64], start[8:8 + 64]);
         hash[64] = '\0';
         *package = format::push(&p->io->arena, p->dir, "/cache-", cache, "/smith/packages/", hash).data;
     }
