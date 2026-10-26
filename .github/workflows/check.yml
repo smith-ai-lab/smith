@@ -91,6 +91,8 @@ jobs:
         env:
           # the per-task table (wall, cpu, processes) goes to .smith/log/test.log, kept in the artifact
           SMITH_ACCOUNT: all
+          # a waiting CI job gets the next host-wide slot before any local job (knowledge/slots.md)
+          SMITH_PRIORITY: ci
         run: |
           ci="$RUNNER_TEMP/ci"
           mkdir -p "$ci"
