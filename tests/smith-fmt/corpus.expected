@@ -3146,6 +3146,30 @@ i32 main() {
     c::printf("%u %s %llu\n", state::sum(), state::names[1], (unsigned long long)state::chosen);
     return 0;
 }
+==> filescope-if-dropped-macro/src/errors.smith <==
+// A branch not taken is still read by the preprocessor (issue #335): its `import <errno.h>;` names `errno`, a macro
+// once the branch taken has imported the same header, and that is no use of a C macro.
+module errors;
+
+import target;
+
+if constexpr (true) {
+    import <errno.h>;
+} else {
+    import <errno.h>;
+}
+
+export i32 current() {
+    return c::errno;
+}
+==> filescope-if-dropped-macro/src/main.smith <==
+import errors;
+import <stdio.h>;
+
+int main(void) {
+    c::printf("%d\n", errors::current() >= 0 ? 1 : 0);
+    return 0;
+}
 ==> filescope-if-imports/src/clock.smith <==
 // Imports chosen by the target (issue #335): a branch that holds only imports may sit among the import lines, and the
 // header of the branch not taken is never read.

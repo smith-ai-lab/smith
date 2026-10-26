@@ -632,7 +632,8 @@ struct SmithLang {
     SmithLangIfFrame ifc[smith_lang_if_depth_max];
     size_t ifc_count;
     int32_t ifc_braces;
-    bool ifc_opening; // a file-scope `if constexpr`'s condition is being read: its facts and `#if` go into the header
+    bool ifc_opening;  // a file-scope `if constexpr`'s condition is being read: its facts and `#if` go into the header
+    bool ifc_dropping; // a branch not taken is being skipped: its tokens are read but name nothing
     SmithLangConstant constants[smith_lang_constants_max];
     size_t constants_count;
     uint32_t target_used;        // the raw lowering: a bit for each fact the output uses
