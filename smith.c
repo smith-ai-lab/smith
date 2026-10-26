@@ -3294,7 +3294,10 @@ int main(int argc, char **argv) {
 #endif
         return smith_explain_main(argc - 2, argv + 2, self);
     }
-    if (strcmp(argv[1], "--smith-exec") == 0) return smith_exec_main(argc - 2, argv + 2);
+    if (strcmp(argv[1], "--smith-exec") == 0) {
+        smith_slots_arm("exec"); // the first real step takes the slot, as in a build
+        return smith_exec_main(argc - 2, argv + 2);
+    }
     if (strcmp(argv[1], "--smith-account") == 0) return smith_account_main(argc - 2, argv + 2);
     if (strcmp(argv[1], "--smith-slots") == 0) return smith_slots_main(argc - 2, argv + 2);
     const SmithVerb *verb = smith_find_verb(argv[1]);
