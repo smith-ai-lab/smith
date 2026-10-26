@@ -294,6 +294,8 @@ const char *smith_failure_heading(SmithFailureKind kind) {
         return "assert failed";
     case SmithFailure_Capacity:
         return "arena out of capacity";
+    case SmithFailure_Memory:
+        return "memory error";
     }
     return "failed";
 }

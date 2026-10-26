@@ -64,9 +64,11 @@ typedef enum : unsigned char {
     SmithFailure_Invariant,
     SmithFailure_Assert,
     SmithFailure_Capacity,
+    SmithFailure_Memory,
 } SmithFailureKind;
 
-// "check failed", "requires failed", "ensures failed", "invariant failed", "assert failed", "arena out of capacity".
+// "check failed", "requires failed", "ensures failed", "invariant failed", "assert failed", "arena out of capacity",
+// "memory error" (a double free, a free of a block the allocator did not make).
 [[nodiscard]] const char *smith_failure_heading(SmithFailureKind kind);
 
 // The entry point of plain-function checks and contracts (smith_requires, smith_ensures, smith_invariant, smith_assert

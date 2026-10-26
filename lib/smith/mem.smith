@@ -7,15 +7,20 @@
 // system's, and a test or an arena stands in for it with set_allocator. A refusal (the system out of memory, a fixed
 // arena's budget spent) is a checked failure naming the size, not a null for every caller to check; code that can do
 // something about a refusal (a server turning away a huge request) calls mem::try_alloc, which returns an `option`.
-// `malloc` itself keeps C's contract: null when memory is refused. Issue #239; knowledge/handlers.md.
+// `malloc` itself keeps C's contract: null when memory is refused. mem::checked wraps an allocator to find leaks,
+// double frees and use after free (below). Issue #239; knowledge/handlers.md.
 module smith::mem;
 
 import smith::arena;
 import smith::contract;
 import smith::math;
-import <smith/handlers.h>; // SmithAllocator, smith_handlers_set_allocator
-import <smith/trace.h>;    // smith_failure_format
-import <stdlib.h>;         // malloc, posix_memalign, free: the interposed functions the handler of the thread answers
+import target;
+import <dlfcn.h>;                    // dladdr: which library a block was allocated in
+import <sanitizer/asan_interface.h>; // the poisoning calls of mem::checked
+import <smith/handlers.h>;           // SmithAllocator, smith_handlers_set_allocator
+import <smith/trace.h>;              // smith_failure_format, smith_trace_capture
+import <stdlib.h>; // malloc, posix_memalign, free: the interposed functions the handler of the thread answers
+import <unistd.h>; // write: the reports of mem::checked
 
 // An allocator is a struct whose first member is one, passed as &x.allocator (include/smith/handlers.h): alloc,
 // realloc, free, owns and an optional size.
@@ -107,4 +112,371 @@ import <stdlib.h>;         // malloc, posix_memalign, free: the interposed funct
     }
     result.data = alloc_array_raw(sizeof(T), total, alignof(T));
     return result;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// mem::checked: an allocator that wraps another and finds the mistakes of the code that uses it.
+//
+// Every block it hands out is recorded with the stack of its allocation (and of its free). A free of a block it already
+// freed is a double free; a free or realloc of a block it never made is a foreign free; a block still live when the
+// scope ends is a leak, reported with its allocation site (checked_report). A freed block is kept (poisoned for
+// AddressSanitizer, so a read or write after the free is a use-after-poison report) until checked_release, never given
+// back to the parent in between, so its address cannot come round again and hide the mistake. The block is exactly
+// the size asked, so the parent's own redzone (AddressSanitizer's, an arena's gap) catches a write past it, with the
+// parent's own report (heap-buffer-overflow). The user's pointer is the very block the parent made, so a block still
+// live when the checked allocator goes away is an ordinary block of the parent's, and the code that frees it later
+// frees it right. The records are separate, in blocks of the parent's, and a parent of null is the system's. Nothing
+// here is on the path of a program that never makes one: the runner of smith_tests sets one around each test
+// (knowledge/handlers.md).
+//
+// For an arena as the parent the poisoning of what is unused and of everything after a reset is the arena's own
+// (lib/smith/arena.smith): checked adds the record of who allocated what.
+
+constexpr bool sanitized = target::address_sanitizer;
+
+export constexpr usize checked_frames_max = 16; // the frames kept for a site
+constexpr usize free_frames_max = 8;            // the frames kept for the first free
+constexpr usize buckets_count = 256;            // of the table that finds a block by its address
+constexpr u32 state_live = 1;
+constexpr u32 state_freed = 2;
+constexpr usize sites_listed = 8; // the leaks a report lists
+
+typedef struct CheckedRecord {
+    struct CheckedRecord *next; // the next in the bucket
+    u8 *block;                  // what the caller got: the parent's own block
+    usize size;                 // what the caller asked
+    usize span;                 // what the parent made: the size asked, at least 1
+    usize serial;               // 1 for the first allocation: the order a report lists
+    u32 state;
+    u32 alloc_count;
+    u32 free_count;
+    usize alloc_frames[checked_frames_max];
+    usize free_frames[free_frames_max];
+} CheckedRecord;
+
+// The allocator. `base` comes first so &checked.base is what set_allocator takes; the value must not move while set.
+[[smith::c_name("SmithChecked")]] export typedef struct {
+    Allocator base;
+    Allocator *parent; // null: the system's
+    void *buckets;     // the table of records, made with the first block
+    usize serial;
+    usize live;       // blocks not freed
+    usize live_bytes; // their sizes
+} Checked;
+
+// One live block: where it was made.
+[[smith::c_name("SmithCheckedSite")]] export typedef struct {
+    usize serial; // 0 when there is none
+    usize size;
+    usize address;
+    usize frame_count;
+    usize frames[checked_frames_max]; // innermost first, as <smith/trace.h>
+} CheckedSite;
+
+// The bucket of an address: the top 8 bits of its hash (256 buckets).
+usize bucket_of(const void *block) {
+    return (usize)(((u64)(usize)block >> 4) * 0x9E3779B97F4A7C15ULL >> 56);
+}
+
+// Memory from the parent. The system's is reached with the handler of the thread out of the way.
+void *parent_alloc(Checked *self, usize size, usize align) {
+    contract::trusted();
+    if (self->parent != nullptr) return self->parent->alloc(self->parent, size, align);
+    Allocator *before = set_allocator(nullptr);
+    void *block = try_alloc_raw(size, align);
+    set_allocator(before);
+    return block;
+}
+
+void parent_free(Checked *self, void *block) {
+    contract::trusted();
+    if (self->parent != nullptr) {
+        self->parent->free(self->parent, block);
+        return;
+    }
+    Allocator *before = set_allocator(nullptr);
+    free(block);
+    set_allocator(before);
+}
+
+CheckedRecord **table(Checked *self) {
+    contract::trusted();
+    if (self->buckets == nullptr) {
+        self->buckets = parent_alloc(self, buckets_count * sizeof(CheckedRecord *), 16);
+        if (self->buckets != nullptr) __builtin_memset(self->buckets, 0, buckets_count * sizeof(CheckedRecord *));
+    }
+    return (CheckedRecord **)self->buckets;
+}
+
+CheckedRecord *find(const Checked *self, const void *block) {
+    contract::trusted();
+    if (self->buckets == nullptr || block == nullptr) return nullptr;
+    for (CheckedRecord *r = ((CheckedRecord **)self->buckets)[bucket_of(block)]; r != nullptr; r = r->next)
+        if (r->block == block) return r;
+    return nullptr;
+}
+
+// A line on standard error, then the stack as a block `smith symbolize` reads.
+void say_site(const char *heading, const char *details, const usize *frames, u32 count) {
+    contract::trusted();
+    c::smith_trace_write(2, "", heading, nullptr, details, frames, count, false, true);
+}
+
+// Stops: the allocation (and the first free) of the block, on standard error, then the report of the failure, which is
+// the stack of the call that was wrong. A test fails with it.
+[[noreturn]] void misuse(const CheckedRecord *record, const char *message) {
+    contract::trusted();
+    char line[160];
+    __builtin_snprintf(line, sizeof line, "%s\n", message);
+    c::write(2, line, __builtin_strlen(line));
+    if (record != nullptr) {
+        say_site("allocated here", nullptr, record->alloc_frames, record->alloc_count);
+        if (record->free_count > 0) say_site("first freed here", nullptr, record->free_frames, record->free_count);
+    }
+    c::smith_failure_format(c::SmithFailure_Memory, "%s", message);
+}
+
+// A freed block is poisoned to the end of its last 8-byte granule: a block of 4 bytes has the other 4 of its granule.
+void poison_freed(const CheckedRecord *record) {
+    contract::trusted(); // the sanitizer's runtime is the edge; a build without it never calls this
+    c::__asan_poison_memory_region(record->block, (record->span + 7) & ~(usize)7);
+}
+
+void *checked_alloc(Allocator *self, usize size, usize align) {
+    contract::trusted();
+    Checked *checked_self = (Checked *)self;
+    if (align < 16) align = 16;
+    if (size > math::max(usize) - 64) return nullptr;
+    usize span = size > 0 ? size : 1;
+    CheckedRecord **buckets = table(checked_self);
+    if (buckets == nullptr) return nullptr;
+    u8 *block = parent_alloc(checked_self, span, align);
+    CheckedRecord *record = (CheckedRecord *)parent_alloc(checked_self, sizeof(CheckedRecord), 16);
+    if (block == nullptr || record == nullptr) {
+        if (block != nullptr) parent_free(checked_self, block);
+        if (record != nullptr) parent_free(checked_self, record);
+        return nullptr;
+    }
+    usize bucket = bucket_of(block);
+    checked_self->serial += 1;
+    *record = (CheckedRecord){.next = buckets[bucket],
+                              .block = block,
+                              .size = size,
+                              .span = span,
+                              .serial = checked_self->serial,
+                              .state = state_live};
+    record->alloc_count = (u32)c::smith_trace_capture(record->alloc_frames, checked_frames_max);
+    buckets[bucket] = record;
+    checked_self->live += 1;
+    checked_self->live_bytes += size;
+    return block;
+}
+
+// A free of a block the allocator does not hold, or one it has freed, is the mistake; realloc of one is as well.
+CheckedRecord *held(Checked *self, void *block, const char *what) {
+    contract::trusted();
+    CheckedRecord *record = find(self, block);
+    char message[160];
+    if (record == nullptr) {
+        __builtin_snprintf(message, sizeof message, "%s of %p, a block this allocator did not make", what, block);
+        misuse(nullptr, message);
+    }
+    if (record->state == state_freed) {
+        __builtin_snprintf(message, sizeof message, "%s of %p (%zu bytes), a block already freed%s", what, block,
+                           record->size, what[0] == 'f' ? ": a double free" : " (use after free)");
+        misuse(record, message);
+    }
+    return record;
+}
+
+void checked_free(Allocator *self, void *block) {
+    contract::trusted();
+    if (block == nullptr) return;
+    Checked *checked_self = (Checked *)self;
+    CheckedRecord *record = held(checked_self, block, "free");
+    record->state = state_freed;
+    record->free_count = (u32)c::smith_trace_capture(record->free_frames, free_frames_max);
+    checked_self->live -= 1;
+    checked_self->live_bytes -= record->size;
+    if (sanitized) poison_freed(record);
+}
+
+void *checked_realloc(Allocator *self, void *block, usize size, usize align) {
+    contract::trusted();
+    if (block == nullptr) return checked_alloc(self, size, align);
+    CheckedRecord *record = held((Checked *)self, block, "realloc");
+    void *fresh = checked_alloc(self, size, align);
+    if (fresh == nullptr) return nullptr;
+    __builtin_memcpy(fresh, block, record->size < size ? record->size : size);
+    checked_free(self, block);
+    return fresh;
+}
+
+bool checked_owns(Allocator *self, const void *block) {
+    contract::trusted();
+    return find((Checked *)self, block) != nullptr;
+}
+
+usize checked_size(Allocator *self, const void *block) {
+    contract::trusted();
+    const CheckedRecord *record = find((Checked *)self, block);
+    return record != nullptr ? record->size : 0;
+}
+
+// An allocator over parent (null: the system's) that records every block's site. Set it with set_allocator(&x.base);
+// the value must not move while set. Hand it to checked_release when done.
+[[smith::c_name("smith_mem_checked")]] export [[nodiscard]] Checked checked(Allocator *parent) {
+    return (Checked){.base = {.alloc = checked_alloc,
+                              .realloc = checked_realloc,
+                              .free = checked_free,
+                              .owns = checked_owns,
+                              .size = checked_size},
+                     .parent = parent};
+}
+
+// The blocks not freed, and their bytes.
+[[smith::c_name("smith_mem_checked_live")]] export [[nodiscard]] usize checked_live(const Checked *self) {
+    return self->live;
+}
+
+[[smith::c_name("smith_mem_checked_live_bytes")]] export [[nodiscard]] usize checked_live_bytes(const Checked *self) {
+    return self->live_bytes;
+}
+
+// Names of the C library's functions that give the caller a block to free: a block made inside one of these is the
+// caller's to free (a leak if it does not). A block made in any other function of a system library is that library's
+// own bookkeeping (the cache of its number printing, its locale tables), which it keeps for the life of the process.
+const char *const machinery_names[] = {"smith_mem_", "smith::mem::",   "smith_handlers_", "malloc", "calloc",
+                                       "realloc",    "posix_memalign", "aligned_alloc",   "valloc", "reallocf"};
+
+const char *const owning[] = {"strdup",  "strndup",   "asprintf", "vasprintf", "fopen",   "fdopen",   "freopen",
+                              "opendir", "fdopendir", "getline",  "getdelim",  "scandir", "realpath", "getcwd"};
+
+bool starts(const char *text, const char *prefix) {
+    return __builtin_strncmp(text, prefix, __builtin_strlen(prefix)) == 0;
+}
+
+bool system_path(const char *path) {
+    return path != nullptr &&
+           (starts(path, "/usr/lib/") || starts(path, "/System/") || starts(path, "/lib/") || starts(path, "/lib64/"));
+}
+
+// A frame of the allocation itself: this module, the handlers runtime and the system's allocator, which sit between
+// the caller and the checked allocator's alloc.
+bool machinery(const c::Dl_info *info) {
+    if (info->dli_fname != nullptr && (__builtin_strstr(info->dli_fname, "smith_handlers") != nullptr ||
+                                       __builtin_strstr(info->dli_fname, "libsystem_malloc") != nullptr))
+        return true;
+    if (info->dli_sname == nullptr) return false;
+    for (usize i = 0; i < sizeof machinery_names / sizeof machinery_names[0]; i++)
+        if (starts(info->dli_sname, machinery_names[i])) return true;
+    return false;
+}
+
+// Whether the block was allocated by the C library for its own use: walking out from the allocator, the first frame
+// that is not the allocation machinery is in a system library and in a function that does not hand its block to the
+// caller. A frame of the program's own (the caller of mem::alloc, of strdup) ends the walk: the block is its.
+bool library_held(const CheckedRecord *record) {
+    contract::trusted(); // dladdr is the edge
+    for (u32 i = 0; i < record->alloc_count; i++) {
+        c::Dl_info info = {};
+        // NOLINTNEXTLINE(smith-effects): the loader's own table of images, read-only
+        if (c::dladdr((const void *)record->alloc_frames[i], &info) == 0) return false;
+        if (machinery(&info)) continue;
+        if (!system_path(info.dli_fname) || info.dli_sname == nullptr) return false;
+        for (usize name = 0; name < sizeof owning / sizeof owning[0]; name++)
+            if (__builtin_strcmp(info.dli_sname, owning[name]) == 0) return false;
+        return true;
+    }
+    return false;
+}
+
+CheckedSite site_of(const CheckedRecord *record) {
+    CheckedSite site = {.serial = record->serial,
+                        .size = record->size,
+                        .address = (usize)record->block,
+                        .frame_count = record->alloc_count};
+    for (u32 i = 0; i < record->alloc_count; i++)
+        site.frames[i] = record->alloc_frames[i];
+    return site;
+}
+
+// The leaks of the allocator so far: the live blocks that the caller owes, how many, their bytes, and the first.
+[[smith::c_name("SmithCheckedLeaks")]] export typedef struct {
+    usize count;
+    usize bytes;
+    CheckedSite first; // the one allocated first; its serial is 0 when there is none
+} CheckedLeaks;
+
+// The live block made first after `after` (a serial; 0 for the first of all) that is a leak: ask again with its serial
+// for the next. serial is 0 when there is none. The order is the order of allocation, so a report is the same on every
+// run. A block the C library keeps for itself (see library_held) is not a leak.
+[[smith::c_name("smith_mem_checked_leak")]] export [[nodiscard]] CheckedSite checked_leak(const Checked *self,
+                                                                                          usize after) {
+    contract::trusted();
+    CheckedSite site = {};
+    if (self->buckets == nullptr) return site;
+    const CheckedRecord *best = nullptr;
+    for (usize i = 0; i < buckets_count; i++)
+        for (const CheckedRecord *r = ((CheckedRecord **)self->buckets)[i]; r != nullptr; r = r->next)
+            if (r->state == state_live && r->serial > after && (best == nullptr || r->serial < best->serial) &&
+                !library_held(r))
+                best = r;
+    if (best != nullptr) site = site_of(best);
+    return site;
+}
+
+// All the leaks in one pass: their count, bytes and the first.
+[[smith::c_name("smith_mem_checked_leaks")]] export [[nodiscard]] CheckedLeaks checked_leaks(const Checked *self) {
+    contract::trusted();
+    CheckedLeaks leaks = {};
+    if (self->buckets == nullptr) return leaks;
+    const CheckedRecord *first = nullptr;
+    for (usize i = 0; i < buckets_count; i++)
+        for (const CheckedRecord *r = ((CheckedRecord **)self->buckets)[i]; r != nullptr; r = r->next) {
+            if (r->state != state_live || library_held(r)) continue;
+            leaks.count += 1;
+            leaks.bytes += r->size;
+            if (first == nullptr || r->serial < first->serial) first = r;
+        }
+    if (first != nullptr) leaks.first = site_of(first);
+    return leaks;
+}
+
+// Writes the leaks to standard error, the first eight with the stack of their allocation as blocks `smith symbolize`
+// reads, and returns how many there are.
+[[smith::c_name("smith_mem_checked_report")]] export usize checked_report(const Checked *self) {
+    contract::trusted();
+    usize serial = 0;
+    for (usize listed = 0; listed < sites_listed; listed++) {
+        CheckedSite site = checked_leak(self, serial);
+        if (site.serial == 0) break;
+        serial = site.serial;
+        char details[96];
+        __builtin_snprintf(details, sizeof details, "%zu bytes at %p were never freed", site.size,
+                           (void *)site.address);
+        say_site("memory leaked", details, site.frames, (u32)site.frame_count);
+    }
+    return checked_leaks(self).count;
+}
+
+// Gives back what the checked allocator kept: the freed blocks to the parent (unpoisoned), and the records. A block
+// still live stays what the parent made it, for whoever holds it. Set the previous allocator back first.
+[[smith::c_name("smith_mem_checked_release")]] export void checked_release(Checked *self) {
+    contract::trusted();
+    if (self->buckets == nullptr) return;
+    for (usize i = 0; i < buckets_count; i++) {
+        CheckedRecord *r = ((CheckedRecord **)self->buckets)[i];
+        while (r != nullptr) {
+            CheckedRecord *next = r->next;
+            if (sanitized) c::__asan_unpoison_memory_region(r->block, r->span); // back to what the parent made
+            if (r->state == state_freed) parent_free(self, r->block);
+            parent_free(self, r);
+            r = next;
+        }
+    }
+    parent_free(self, self->buckets);
+    self->buckets = nullptr;
+    self->live = 0;
+    self->live_bytes = 0;
 }
