@@ -450,7 +450,7 @@ export void test_within_in_modules_the_link_judges_a_function_of_another_module_
                          run.out);
 }
 
-// Promises: `smith check` lists what smith trusts and does not check, from the `P` lines of the summaries a build left
+// Promises: `smith check` lists what smith trusts and does not check, from the `P` lines of the summaries its own build leaves
 // (an effects attribute on a declaration with no source, a function that calls smith_trusted()), a header's once.
 export void test_promises_smith_check_lists_two_declared_promises_and_a_trusted_function(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
@@ -460,7 +460,7 @@ export void test_promises_smith_check_lists_two_declared_promises_and_a_trusted_
         &p, "main.c",
         "#include <smith/contract.h>\n#include \"lib.h\"\nstatic int edge(int x) { smith_trusted(); return x; }\n"
         "int main(void) { return edge(0); }\n");
-    (void)scratch::sh(&p, "smith build >/dev/null 2>&1");
+    // No build first: `smith check` makes the summaries it lists (issue #311).
     scratch::Run run = scratch::sh(&p, "smith check -v 2>&1 | grep -E '^smith check: (promises|  )'");
     scratch::expect_text(
         "promises: smith check -v lists two declared promises and a trusted function",
