@@ -9,8 +9,8 @@ tags: [build, executor]
 `smith build` runs the manifest itself: no ninja is installed or run. The code is `runtime/executor.c` and the five files
 it includes (`executor_manifest.c`, `executor_state.c`, `executor_plan.c`, `executor_run.c`, `executor_tools.c`), which
 `smith.c` includes; it stands on the `io` module, compiled from `lib/smith/io.smith` and linked. It uses
-`smith::io` (`<smith/io.h>`; so it is macOS only until io has another backend): the manifest and the graph live in `io.arena`, the
-files are read and written through `io.files`, and one kqueue loop waits for every job's process and pipe.
+`smith::io` (`<smith/io.h>`, on kqueue on macOS and epoll on Linux): the manifest and the graph live in `io.arena`, the
+files are read and written through `io.files`, and one event loop waits for every job's process and pipe.
 
 ## Who runs the graph
 
@@ -59,7 +59,7 @@ with a `SmithJob`, a `SmithJobKind` (`start`, `poll`, `stop`: three functions) a
 output, reset when it ends. The loop is: start ready jobs while there are slots and the pools allow, wait on the io
 loop (50 ms at most, so a signal is seen), poll every running job, finish those that ended. A job that runs in this
 process later (a compile with clang inside smith, #1) is another `SmithJobKind`: `start` queues it on a thread or a
-worker, `poll` looks at its done flag (a user event on the kqueue wakes the loop), `stop` cancels it; the planner,
+worker, `poll` looks at its done flag (a user event on the loop wakes it), `stop` cancels it; the planner,
 the pools, the progress line and the log do not change. Threads against worker processes for #1 is not decided here.
 
 ## What ninja does, and what smith does with it

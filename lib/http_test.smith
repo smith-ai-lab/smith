@@ -7,6 +7,7 @@ import smith::arena;
 import smith::format;
 import smith::io;
 import smith::test;
+import target;
 import <errno.h>;
 import <smith/http.h>;
 
@@ -18,7 +19,11 @@ static typeof(const u8[:]) test_io_bytes(const void *data, usize size) {
 
 // The platform's numbers. A C macro is the preprocessor's, and a .smith file has none: each is read once, here.
 // NOLINTBEGIN(smith-preprocessor)
-constexpr i32 eauth = c::EAUTH;
+if constexpr (target::os == target::macos) {
+    constexpr i32 eauth = c::EAUTH;
+} else {
+    constexpr i32 eauth = 80; // smith::io's TLS failure on Linux, which has no EAUTH: macOS's number
+}
 constexpr i32 econnrefused = c::ECONNREFUSED;
 constexpr i32 econnreset = c::ECONNRESET;
 constexpr i32 eio = c::EIO;

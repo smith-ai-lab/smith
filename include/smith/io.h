@@ -12,9 +12,22 @@
 #include <stdint.h>
 #include "arena.h"
 #include "random.h"
+#ifndef SMITH_TARGET_OS
+#if defined(__APPLE__) && defined(__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__)
+#define SMITH_TARGET_OS 1
+#elif defined(__linux__)
+#define SMITH_TARGET_OS 2
+#else
+#define SMITH_TARGET_OS 0
+#endif
+#endif
 #ifdef __cplusplus
 extern "C" {
 #endif
+#if SMITH_TARGET_OS == 1
+#else
+#endif
+
 // An error: code is 0 for success, otherwise an errno value (ENOENT, EINVAL...), and message says what failed, such
 // as "open config.txt: No such file or directory". Real and fake io give the same code and message.
 typedef struct {
@@ -235,7 +248,7 @@ typedef struct [[clang::annotate("smith::capability")]] SmithChild {
     } internal;
 } SmithChild;
 
-// --- net: TLS connections, from the platform (Network.framework on macOS) ---
+// --- net: TLS connections, from the platform (Network.framework on macOS, OpenSSL on Linux) ---
 //
 // A connection is a struct you own and keep where it is until its close has completed. The calls below are ops:
 // connect, then send and receive (one of each at a time), then close. An error is a value: refused and unreachable
@@ -308,10 +321,45 @@ typedef struct {
     bool
         stall; // after the response, a receive never completes: the server has gone quiet (a closed connection ends it)
 } SmithNetServer;
+#if SMITH_TARGET_OS == 1
+#else
+#endif
+#if SMITH_TARGET_OS != 1
+#endif
+#if SMITH_TARGET_OS != 1
+#endif
+#if SMITH_TARGET_OS == 1
+#else
+#endif
+#if SMITH_TARGET_OS == 1
+#else
+#endif
+#if SMITH_TARGET_OS == 1
+#else
+#endif
+#if SMITH_TARGET_OS == 1
+#else
+#endif
+#if SMITH_TARGET_OS == 1
+#else
+#endif
 
 // The error for an errno value, with the message "what path: strerror".
 [[clang::annotate("smith::edge")]] [[nodiscard]] SmithError smith_error_make(int32_t code, const char *what,
                                                                              const char *path);
+#if SMITH_TARGET_OS != 1
+#endif
+#if SMITH_TARGET_OS == 1
+#endif
+#if SMITH_TARGET_OS == 1
+#else
+#endif
+#if SMITH_TARGET_OS == 1
+#else
+#endif
+#if SMITH_TARGET_OS == 1
+#else
+#endif
 
 // Completes the operations that are ready, waiting up to timeout_ns for the first when none is; returns how many it
 // completed. File operations always complete here. The fake io never waits: it completes what is ready now, and when
@@ -455,13 +503,20 @@ struct smith_array_u8_n {
 // read in doubling blocks, so it may use up to twice the output's size.
 [[clang::annotate("smith::edge")]] [[nodiscard]] SmithProcessResult
 smith_processes_run(SmithProcesses *processes, SmithArena *arena, const char *const *argv);
+#if SMITH_TARGET_OS == 1
+#else
+#endif
+#if SMITH_TARGET_OS == 1
+#else
+#endif
 
 // Opens a connection to host:port; with tls, it is a TLS connection whose certificate is checked against host. The op
 // completes when the connection is ready, or fails.
 [[clang::annotate("smith::edge")]] void smith_net_connect_async(SmithNet *net, SmithOp *op, SmithConnection *connection,
                                                                 const char *host, uint16_t port, bool tls);
 
-// Sends all bytes of data (the library copies them, so they need not outlive the call).
+// Sends all bytes of data. On macOS the library copies them, so they need not outlive the call; on Linux they stay the
+// caller's until the op is done, like every op's data.
 [[clang::annotate("smith::edge")]] void smith_net_send_async(SmithNet *net, SmithOp *op, SmithConnection *connection,
                                                              struct smith_array_const_u8_n data);
 

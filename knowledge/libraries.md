@@ -34,6 +34,6 @@ bytes), `smith build headers` regenerates it and `check-headers` (in `check`) fa
 
 **Talking to the OS:** `smith::io` (`import smith::io;`, `<smith/io.h>` from C) is the one way a program touches the
 world outside it (memory, randomness, console, files, clock, processes, the network), each platform behind it on its
-best API (kqueue and Network.framework on macOS). Its module names are the C names without the prefix (`io::Io` is
+best API (kqueue and Network.framework on macOS, epoll and OpenSSL on Linux). Its module names are the C names without the prefix (`io::Io` is
 `SmithIo`, `io::console_printf` is `smith_console_printf`); no nested modules, so a capability's functions are
 `io::<capability>_<name>`.
