@@ -1,0 +1,14 @@
+module main;
+
+import <stdio.h>;
+import finder;
+
+// `option(usize)` is first named inside a function body, with no file-scope typedef: the struct is defined there.
+
+i32 main(void) {
+    option(usize) i = finder::find("key=value", '=');
+    option(usize) j = .none;
+    j = finder::find("a,b", ',');
+    if (i == .some && j == .some) c::printf("%zu %zu\n", i.some, j.some);
+    return 0;
+}

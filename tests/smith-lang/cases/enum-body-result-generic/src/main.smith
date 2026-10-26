@@ -1,0 +1,29 @@
+module main;
+
+import <stdio.h>;
+
+type maybe(type T) { return enum { T some; none; }; }
+
+// `result` and a user's type function, first named in a body; a generic names them with written arguments.
+
+static usize divide(usize a, usize b) {
+    result(usize, i32) r = {.error = 7};
+    if (b != 0) { r = {.ok = a / b}; }
+    maybe(i32) m = {.some = 5};
+    if (r == .ok && m == .some) return r.ok + (usize)m.some;
+    return 0;
+}
+
+export usize via_generic(constexpr type T, T v) {
+    usize k = (usize)v;
+    {
+        option(usize) o = {.some = k};
+        result(usize, i32) r = {.ok = k};
+        return k + sizeof(o) * 0 + sizeof(r) * 0;
+    }
+}
+
+i32 main(void) {
+    c::printf("%zu %zu\n", divide(8, 2), via_generic(i32, 9));
+    return 0;
+}

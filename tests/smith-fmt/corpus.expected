@@ -671,6 +671,123 @@ i32 main() {
     jump();
     return 0;
 }
+==> enum-body-from-file-scope/src/finder.smith <==
+module finder;
+
+export option(usize) find(const char *text, char wanted) {
+    for (usize i = 0; text[i] != 0; i++)
+        if (text[i] == wanted) return {.some = i};
+    return .none;
+}
+==> enum-body-from-file-scope/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import finder;
+
+// `option(usize)` is first named inside a function body, with no file-scope typedef: the struct is defined there.
+
+i32 main(void) {
+    option(usize) i = finder::find("key=value", '=');
+    option(usize) j = .none;
+    j = finder::find("a,b", ',');
+    if (i == .some && j == .some) c::printf("%zu %zu\n", i.some, j.some);
+    return 0;
+}
+==> enum-body-nested-blocks/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+// An inner block names the type after an outer block did; a later block names it again.
+
+static usize walk(usize n) {
+    usize total = 0;
+    {
+        option(usize) outer = {.some = n};
+        {
+            option(usize) inner = {.some = n + 1};
+            if (outer == .some && inner == .some) total += outer.some + inner.some;
+        }
+    }
+    {
+        option(usize) later = {.some = 10};
+        if (later == .some) total += later.some;
+    }
+    return total;
+}
+
+i32 main(void) {
+    c::printf("%zu\n", walk(2));
+    return 0;
+}
+==> enum-body-result-generic/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+type maybe(type T) {
+    return enum {
+        T some;
+        none;
+    };
+}
+
+// `result` and a user's type function, first named in a body; a generic names them with written arguments.
+
+static usize divide(usize a, usize b) {
+    result(usize, i32) r = {.error = 7};
+    if (b != 0) {
+        r = {.ok = a / b};
+    }
+    maybe(i32) m = {.some = 5};
+    if (r == .ok && m == .some) return r.ok + (usize)m.some;
+    return 0;
+}
+
+export usize via_generic(constexpr type T, T v) {
+    usize k = (usize)v;
+    {
+        option(usize) o = {.some = k};
+        result(usize, i32) r = {.ok = k};
+        return k + sizeof(o) * 0 + sizeof(r) * 0;
+    }
+}
+
+i32 main(void) {
+    c::printf("%zu %zu\n", divide(8, 2), via_generic(i32, 9));
+    return 0;
+}
+==> enum-body-sibling-blocks/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+// The same type is first named in two sibling blocks, then at the top of another function.
+
+static usize first(bool left) {
+    if (left) {
+        option(usize) a = {.some = 1};
+        if (a == .some) return a.some;
+    } else {
+        option(usize) b = {.some = 2};
+        if (b == .some) return b.some;
+    }
+    return 0;
+}
+
+static usize second(void) {
+    option(usize) c = {.some = 3};
+    c = .none;
+    if (c == .none) c = {.some = 4};
+    if (c == .some) return c.some;
+    return 0;
+}
+
+i32 main(void) {
+    c::printf("%zu %zu %zu\n", first(true), first(false), second());
+    return 0;
+}
 ==> enum-builtin-lone-module/src/lone.smith <==
 module lone;
 
@@ -1972,11 +2089,6 @@ type opt(type T) {
 }
 
 static opt(usize, usize) two(void);
-
-void use(void) {
-    opt(usize) a = .none;
-    (void)a;
-}
 ==> error-errdefer-plain/src/main.smith <==
 module main;
 import <stdio.h>;

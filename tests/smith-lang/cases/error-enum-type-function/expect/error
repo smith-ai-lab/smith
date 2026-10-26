@@ -1,7 +1,3 @@
 src/main.smith:12:19: a type function that returns an enum must be exactly `return enum {...};` with only `type` parameters for now (known gap)
 src/main.smith:18:6: a type function that returns an enum must be exactly `return enum {...};` with only `type` parameters for now (known gap)
 src/main.smith:25:8: `opt` takes 1 type argument: the arguments of a type function that returns an enum are written types for now (known gap)
-src/main.smith:28:16: variable has incomplete type 'struct smith_enum_opt_usize'
-src/main.smith:28:20: `.none` needs a type to look in: write `Shape x = .none;`, assign it to a variable, return it from a function that names the type, or pass it where a parameter does
-src/main.smith:28:20: expected expression
-src/main.smith:28:5: `opt(usize)` is first named inside a function (or where no declaration begins), and the struct it stands for cannot be defined there yet (known gap): name it first at file scope, in a declaration, for example `typedef opt(usize) Name;`

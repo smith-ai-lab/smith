@@ -23,8 +23,3 @@ type branchy(type T) {
 type opt(type T) { return enum { T some; none; }; }
 
 static opt(usize, usize) two(void);
-
-void use(void) {
-    opt(usize) a = .none;
-    (void)a;
-}

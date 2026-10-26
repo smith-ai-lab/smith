@@ -441,6 +441,22 @@ export void test_enum_builtin_option_result(io::Io *io) {
     corpus_case(io, "enum-builtin-option-result");
 }
 
+export void test_enum_body_from_file_scope(io::Io *io) {
+    corpus_case(io, "enum-body-from-file-scope");
+}
+
+export void test_enum_body_sibling_blocks(io::Io *io) {
+    corpus_case(io, "enum-body-sibling-blocks");
+}
+
+export void test_enum_body_nested_blocks(io::Io *io) {
+    corpus_case(io, "enum-body-nested-blocks");
+}
+
+export void test_enum_body_result_generic(io::Io *io) {
+    corpus_case(io, "enum-body-result-generic");
+}
+
 export void test_enum_builtin_lone_module(io::Io *io) {
     corpus_case(io, "enum-builtin-lone-module");
 }

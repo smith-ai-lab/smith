@@ -1,0 +1,26 @@
+module main;
+
+import <stdio.h>;
+
+// An inner block names the type after an outer block did; a later block names it again.
+
+static usize walk(usize n) {
+    usize total = 0;
+    {
+        option(usize) outer = {.some = n};
+        {
+            option(usize) inner = {.some = n + 1};
+            if (outer == .some && inner == .some) total += outer.some + inner.some;
+        }
+    }
+    {
+        option(usize) later = {.some = 10};
+        if (later == .some) total += later.some;
+    }
+    return total;
+}
+
+i32 main(void) {
+    c::printf("%zu\n", walk(2));
+    return 0;
+}

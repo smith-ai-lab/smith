@@ -31,5 +31,5 @@ export void show(Quotient q) {
 
 - **A value converts to `.ok`** wherever a `result` is expected (an initializer, an assignment, `return`, an argument), with C's conversions for that context; `{.ok = v}` still works. Only success is implicit: write `{.error = e}`. It is an error, naming the explicit form, when `T` and `E` are the same type (`result(i32, i32)`: write `{.ok = v}` or `{.error = v}`) or when `T` is itself a `result` or `option`. A `result` never becomes a value (use `try`, `switch` or `r == .ok`), and `r == 5` is an error. In a generic's body write `{.ok = v}`.
 - A `switch` names every variant (no `default:`); `q.ok` is read only where `q == .ok` holds.
-- The struct must be named at file scope before a function body uses it, as for any type function; a generic may write `result(T, E)` in its head and body.
+- `result(T, E)` may be named first anywhere a type is written, inside a function body too (its struct is defined in the block, the same type as the file-scope one); a generic may write `result(T, E)` in its head and body.
 - For a value that may simply be absent use `smith-option`. To return a failure to the caller in one word, `try` (`smith-lang-try`).

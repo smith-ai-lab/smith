@@ -1001,6 +1001,8 @@ typedef struct {
     char tag[smith_lang_tuple_name_max];
     uint32_t depth; // the brace depth of the definition: it ends with that block
     bool header;    // the module's header holds the definition too (an exported declaration names it)
+    bool made;      // defined here, in a block (issue #425)
+    bool closed;    // ... and the block has ended: the compiler may still find the tag until it leaves the block
 } SmithLangEnumDefined;
 
 static SmithLangEnumShape smith_lang_eshapes[smith_lang_eshape_max];
@@ -1289,7 +1291,9 @@ static bool smith_lang_eshape_call(SmithLang *lang, const SmithHost *host, const
 
 static SmithLangEnumDefined *smith_lang_eshape_entry(const char *tag) {
     for (size_t i = 0; i < smith_lang_edefined_count; i++) { // at most 48
-        if (strcmp(smith_lang_edefined[i].tag, tag) == 0) return &smith_lang_edefined[i];
+        if (strcmp(smith_lang_edefined[i].tag, tag) == 0 && !smith_lang_edefined[i].closed) {
+            return &smith_lang_edefined[i];
+        }
     }
     return nullptr;
 }
@@ -1300,6 +1304,9 @@ static SmithLangEnumDefined *smith_lang_eshape_note_defined(const char *tag);
 // read it, so a second definition would be an error: two modules that write `option(usize)` share one).
 static bool smith_lang_eshape_defined(const SmithHost *host, const char *tag) {
     if (smith_lang_eshape_entry(tag) != nullptr) return true;
+    for (size_t i = 0; i < smith_lang_edefined_count; i++) { // a block's definition that has ended: the parser, which
+        if (smith_lang_edefined[i].closed && strcmp(smith_lang_edefined[i].tag, tag) == 0) return false; // lags the
+    } // lowering by a token, may still hold it
     if (host->lookup == nullptr ||
         host->lookup(host->context, tag, (uint32_t)strlen(tag), SmithLookup_Tag).kind != SmithLookup_Tag) {
         return false;
@@ -1368,11 +1375,20 @@ static size_t smith_lang_eshape_define(SmithLang *lang, const SmithHost *host, c
 }
 
 static SmithLangEnumDefined *smith_lang_eshape_note_defined(const char *tag) {
-    if (smith_lang_edefined_count >= smith_lang_eshape_defined_max) return nullptr;
-    SmithLangEnumDefined *entry = &smith_lang_edefined[smith_lang_edefined_count++];
+    SmithLangEnumDefined *entry = nullptr;
+    for (size_t i = 0; i < smith_lang_edefined_count && entry == nullptr; i++) { // a closed one of the tag is reused
+        if (smith_lang_edefined[i].closed && strcmp(smith_lang_edefined[i].tag, tag) == 0)
+            entry = &smith_lang_edefined[i];
+    }
+    if (entry == nullptr) {
+        if (smith_lang_edefined_count >= smith_lang_eshape_defined_max) return nullptr;
+        entry = &smith_lang_edefined[smith_lang_edefined_count++];
+    }
     snprintf(entry->tag, sizeof entry->tag, "%s", tag);
     entry->depth = smith_lang_eshape_depth;
     entry->header = false;
+    entry->made = false;
+    entry->closed = false;
     return entry;
 }
 
@@ -1893,7 +1909,7 @@ static bool smith_lang_eshape_define_ahead(SmithLang *lang, const SmithHost *hos
         }
         at += call.close - at;
         SmithLangEnumDefined *entry = smith_lang_eshape_defined(host, tag) ? smith_lang_eshape_entry(tag) : nullptr;
-        if (entry == nullptr && smith_lang_eshape_depth == 0) { // a body names it, or errs there
+        if (entry == nullptr) { // in a block the struct is defined there, which C23 makes the file-scope one
             size_t added = smith_lang_eshape_define(lang, host, token, shape, &call, tag, made + used,
                                                     smith_lang_queue_max - used - 2);
             if (added == 0) {
@@ -1902,6 +1918,7 @@ static bool smith_lang_eshape_define_ahead(SmithLang *lang, const SmithHost *hos
             }
             used += added;
             entry = smith_lang_eshape_note_defined(tag);
+            if (entry != nullptr) entry->made = smith_lang_eshape_depth > 0;
         }
         if (entry != nullptr && !entry->header && smith_lang_ident(token, "export")) {
             smith_lang_eshape_to_header(lang, token, shape, &call, tag); // the exported declaration needs it there
@@ -1935,9 +1952,9 @@ static bool smith_lang_eshape_rewrite(SmithLang *lang, const SmithHost *host, co
                                      (int)call.tokens[i].length, call.tokens[i].text);
         snprintf(written + used, sizeof written - used, ")");
         smith_lang_error(lang, host, token->location,
-                         "`%s` is first named inside a function (or where no declaration begins), and the struct it "
-                         "stands for cannot be defined there yet (known gap): name it first at file scope, in a "
-                         "declaration, for example `typedef %s Name;`",
+                         "`%s` is first named where no declaration or statement begins, and the struct it stands for "
+                         "cannot be defined in front of it yet (known gap): name it first in a declaration, for "
+                         "example `typedef %s Name;`",
                          written, written);
     }
     made[0] = smith_lang_tuple_made(SmithTokenKind_Identifier, "struct", 6, token, token->space_before);
@@ -1964,8 +1981,9 @@ static bool smith_lang_enum_function(SmithLang *lang, const SmithHost *host, con
             if (smith_lang_eshape_depth > 0) smith_lang_eshape_depth -= 1;
             size_t kept = 0;
             for (size_t i = 0; i < smith_lang_edefined_count; i++) { // a definition ends with its block
-                if (smith_lang_edefined[i].depth <= smith_lang_eshape_depth)
-                    smith_lang_edefined[kept++] = smith_lang_edefined[i];
+                SmithLangEnumDefined *each = &smith_lang_edefined[i];
+                if (each->depth > smith_lang_eshape_depth && each->made) each->closed = true;
+                if (each->depth <= smith_lang_eshape_depth || each->closed) smith_lang_edefined[kept++] = *each;
             }
             smith_lang_edefined_count = kept;
         }
@@ -1979,7 +1997,8 @@ static bool smith_lang_enum_function(SmithLang *lang, const SmithHost *host, con
         return true;
     }
     if (smith_lang_eshape_count == 0) return false;
-    if (!recording && start && smith_lang_eshape_define_ahead(lang, host, token)) return true;
+    if (start && (!recording || smith_lang_eshape_depth > 0) && smith_lang_eshape_define_ahead(lang, host, token))
+        return true; // (a generic's body records the definition with its statement: each instance has it)
     size_t open = 0;
     const SmithLangEnumShape *shape =
         lang->prev_member || lang->typeish ? nullptr : smith_lang_eshape_use(lang, host, token, 0, nullptr, &open);
