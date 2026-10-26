@@ -1985,10 +1985,9 @@ void smith_object(SmithBuild *b, SmithObject *object) {
     const char *const *proved_inputs = nullptr;
     const char *const *proved_flags = smith_proved_flags(b, &copy, &proved_inputs);
     copy.step = (SmithStep){
-        .command =
-            smith_cat(b, smith_one(copy.compiler), smith_modules_for(b, copy.source), smith_lang_flags(b, copy.source),
-                      copy.flags, proved_flags, smith_library_flags(b, copy.source), smith_module_flags(b, copy.source), tail,
-                      nullptr),
+        .command = smith_cat(b, smith_one(copy.compiler), smith_modules_for(b, copy.source),
+                             smith_lang_flags(b, copy.source), copy.flags, proved_flags,
+                             smith_library_flags(b, copy.source), smith_module_flags(b, copy.source), tail, nullptr),
         .inputs = smith_one(copy.source),
         .implicit_inputs =
             smith_cat(b, copy.implicit_inputs, smith_one(smith_compiler_file(copy.compiler)), proved_inputs, nullptr),
@@ -3599,26 +3598,25 @@ void smith_defaults(SmithBuild *b, const SmithDefaults *defaults) {
 // The baseline of a module (knowledge/module-diagnostics.md): each is a diagnostic C23 or Smith gives a written way to
 // say "I meant it" for, so each has an honest fix and no disable comment exists. The unused names and -Wunused-result
 // join when `_` and `_name` exist (#413), and -Wswitch-enum when clang can tell a smith enum from a C header's.
-static const char *const smith_module_baseline[] = {
-    "conversion",
-    "sign-conversion",
-    "shorten-64-to-32",
-    "float-conversion",
-    "implicit-int-float-conversion",
-    "sign-compare",
-    "parentheses",
-    "unsequenced",
-    "implicit-fallthrough",
-    "return-type",
-    "return-stack-address",
-    "dangling",
-    "incompatible-pointer-types",
-    "int-conversion",
-    "cast-qual",
-    "cast-function-type",
-    "sizeof-pointer-memaccess",
-    "sizeof-array-argument",
-    nullptr};
+static const char *const smith_module_baseline[] = {"conversion",
+                                                    "sign-conversion",
+                                                    "shorten-64-to-32",
+                                                    "float-conversion",
+                                                    "implicit-int-float-conversion",
+                                                    "sign-compare",
+                                                    "parentheses",
+                                                    "unsequenced",
+                                                    "implicit-fallthrough",
+                                                    "return-type",
+                                                    "return-stack-address",
+                                                    "dangling",
+                                                    "incompatible-pointer-types",
+                                                    "int-conversion",
+                                                    "cast-qual",
+                                                    "cast-function-type",
+                                                    "sizeof-pointer-memaccess",
+                                                    "sizeof-array-argument",
+                                                    nullptr};
 
 static bool smith_is_module_source(const char *source) {
     return smith_ends_with(source, ".smith") && smith_lang_module_of(source) != nullptr;
@@ -3639,8 +3637,7 @@ static const char *const *smith_module_flags(SmithBuild *b, const char *source) 
 }
 
 static const char *const *smith_module_advisories(SmithBuild *b, const char *source) {
-    if (smith_app_state.defaults.warnings == nullptr || !smith_is_module_source(source))
-        return smith_list(b, nullptr);
+    if (smith_app_state.defaults.warnings == nullptr || !smith_is_module_source(source)) return smith_list(b, nullptr);
     const char *const *names = smith_app_state.defaults.warnings;
     const char *const *flags = smith_module_prefixed(b, names, "-W", nullptr);
     return smith_module_prefixed(b, names, "-Wno-error=", flags);

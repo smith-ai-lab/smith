@@ -32,4 +32,8 @@ The naming check (`readability-identifier-naming`, which judges `.smith` names a
 
 `// NOLINT(smith-c23)` (or `NOLINTBEGIN`/`NOLINTEND`) opts a line out, and deleting a check from `Checks` opts a project out. The C checks read C files and `.smith`, never C++.
 
+## Warnings in a module
+
+Not a clang-tidy check but the compile: in a `.smith` file with a `module` line, a lossy implicit conversion, a missing `[[fallthrough]]`, `if (x = y)`, a cast that drops `const` and the other baseline diagnostics are errors, each with `[-Wname]` in the message. Fix the code (a written cast, matching types, parentheses); a `-Wno-` in `.flags` does not turn one off. The list and the opt-in `.warnings` and `.errors` are in [smith-build-warnings](../smith-build-warnings/SKILL.md).
+
 Also in this family: [smith-check](../smith-check/SKILL.md).

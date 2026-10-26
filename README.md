@@ -477,6 +477,26 @@ d/dm = 12, d/db = 4
 
 [smith-autodiff](.agents/skills/smith-autodiff/SKILL.md).
 
+## A module has no warnings
+
+In a module (a `.smith` file with a `module` line) every warning of a fixed baseline is an error, and each has a written way to say you meant it, so there is no disable comment: a lossy implicit conversion, `if (x = y)`, a case that falls through without `[[fallthrough]];`, a cast that drops `const`, a missing return. A `.c` file keeps its flags. Other checks (`padded`, `shadow`) are yours to opt into with `.warnings` or `.errors` in `build::defaults`.
+
+```smith project=constcast rejects
+module main;
+
+i32 main() {
+    const char *name = "smith";
+    char *copy = (char *)name;
+    return copy[0];
+}
+```
+
+```output project=constcast
+cast from 'const char *' to 'char *' drops const qualifier
+```
+
+[smith-build-warnings](.agents/skills/smith-build-warnings/SKILL.md), [module-diagnostics](knowledge/module-diagnostics.md).
+
 ## Port your C project, step by step
 
 Every step is optional and leaves the project building. The project here is a Makefile, `main.c`, `greet.c` and `greet.h`.

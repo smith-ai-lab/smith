@@ -26,4 +26,15 @@ export void build(build::Build *b) {
 
 Find the flag's name in the diagnostic: clang ends it with `[-Wname]`, and `-Wno-name` turns it off. Check with `smith build -t commands <target>` that the flag is last on the files you meant, and `-Werror=name` puts one back.
 
+## A module has no warnings
+
+A `.smith` file with a `module` line is compiled with a baseline as errors, after your flags, so no `-Wno-` removes one: lossy implicit conversions (`conversion`, `sign-conversion`, `shorten-64-to-32`, `float-conversion`), `sign-compare`, `parentheses`, `unsequenced`, `implicit-fallthrough`, `return-type`, `return-stack-address`, `dangling`, `incompatible-pointer-types`, `int-conversion`, `cast-qual`, `cast-function-type`, `sizeof-pointer-memaccess`, `sizeof-array-argument`. Each has a written fix (a cast, `[[fallthrough]];`, parentheses, matching types), so none has a disable. A `.c` file and a file with no `module` line keep today's flags. Heuristic diagnostics are yours to opt into in `build::defaults`, by name without `-W`:
+
+```smith fragment
+build::defaults(b, &(build::Defaults){
+    .warnings = build::list(b, "padded", nullptr),   // smith lint and the editor show it; the build is quiet and passes
+    .errors = build::list(b, "shadow", nullptr),     // fails the build, in modules only
+});
+```
+
 Also in this family: [smith-build-levels](../smith-build-levels/SKILL.md), [smith-build-levels-high](../smith-build-levels-high/SKILL.md), [smith-build-levels-low](../smith-build-levels-low/SKILL.md).

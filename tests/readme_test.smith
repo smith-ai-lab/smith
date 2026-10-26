@@ -436,6 +436,10 @@ export void test_readme_project_pack(io::Io *io) {
     project_case(io, "pack");
 }
 
+export void test_readme_project_constcast(io::Io *io) {
+    project_case(io, "constcast");
+}
+
 export void test_readme_project_packerror(io::Io *io) {
     project_case(io, "packerror");
 }

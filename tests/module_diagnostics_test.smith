@@ -1,0 +1,80 @@
+// A module has no warnings (issue #414, knowledge/module-diagnostics.md): the baseline fails the compile of a module
+// and of nothing else, and build::defaults' .errors adds a diagnostic to it.
+module module_diagnostics_test;
+
+import smith::io;
+import smith::test;
+import scratch;
+
+static const char *cast_away_const = "module main;\n"
+                                     "\n"
+                                     "i32 main() {\n"
+                                     "    const char *s = \"hi\";\n"
+                                     "    char *m = (char *)s;\n"
+                                     "    return m[0];\n"
+                                     "}\n";
+
+static const char *padded = "module main;\n"
+                            "\n"
+                            "struct Padded {\n"
+                            "    char c;\n"
+                            "    i64 n;\n"
+                            "};\n"
+                            "\n"
+                            "i32 main() {\n"
+                            "    struct Padded p = {'a', 1};\n"
+                            "    return (i32)p.n;\n"
+                            "}\n";
+
+// What the build printed, on either stream.
+static const char *both(const scratch::Run *run) {
+    static char text[16384];
+    __builtin_snprintf(text, sizeof text, "%s%s", run->out, run->err);
+    return text;
+}
+
+static const char *build_with(const char *field) {
+    static char text[512];
+    __builtin_snprintf(text, sizeof text,
+                       "module build;\n\nimport smith::build;\n\nexport void build(build::Build *b) {\n"
+                       "    build::defaults(b, &(build::Defaults){%s});\n    build::app(b, &(build::App){});\n}\n",
+                       field);
+    return text;
+}
+
+export void test_module_diagnostics_a_module_fails_on_the_baseline(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::write(&p, "main.smith", cast_away_const);
+    scratch::Run run = scratch::build(&p, "");
+    scratch::expect_failure("a cast that drops const fails in a module", &run);
+    scratch::expect_contains("the message names the diagnostic", both(&run), "-Wcast-qual");
+}
+
+export void test_module_diagnostics_a_c_file_keeps_its_flags(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::write(&p, "main.c",
+                   "int main(void) {\n    const char *s = \"hi\";\n    char *m = (char *)s;\n    return m[0] == 'h' ? "
+                   "0 : 1;\n}\n");
+    scratch::Run run = scratch::build(&p, "");
+    scratch::expect_status("the same cast compiles in a .c file", 0, &run);
+}
+
+export void test_module_diagnostics_an_extra_is_off_until_listed(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::write(&p, "main.smith", padded);
+    scratch::Run quiet = scratch::build(&p, "");
+    scratch::expect_status("padding is no error by default", 0, &quiet);
+    scratch::write(&p, "build.smith", build_with(".errors = build::list(b, \"padded\", nullptr)"));
+    scratch::Run run = scratch::build(&p, "");
+    scratch::expect_failure(".errors makes padding an error", &run);
+    scratch::expect_contains("the message names the diagnostic", both(&run), "-Wpadded");
+}
+
+export void test_module_diagnostics_warnings_never_fail_the_build(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::write(&p, "main.smith", padded);
+    scratch::write(&p, "build.smith", build_with(".warnings = build::list(b, \"padded\", nullptr)"));
+    scratch::Run run = scratch::build(&p, "");
+    scratch::expect_status(".warnings does not fail the build", 0, &run);
+    scratch::expect_lacks("and the build is quiet", both(&run), "-Wpadded");
+}
