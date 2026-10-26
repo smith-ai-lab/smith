@@ -2281,7 +2281,7 @@ processes_cores(const Processes *processes) {
 // --- children with pipes
 
 // Makes a pipe whose ends close on exec; the child gets its copies by dup2.
-bool pipe_make(i32 ends[2]) {
+bool pipe_make(i32 ends[:]) {
     if (c::pipe(ends) != 0) return false;
     c::fcntl(ends[0], set_descriptor_flags, fd_cloexec);
     c::fcntl(ends[1], set_descriptor_flags, fd_cloexec);

@@ -806,6 +806,7 @@ void explain_join(const char *text, usize used, u64 ended, i32 status) {
 
 // Ends the test with a failed check. In a worker the test unwinds to the worker's loop; a process-per-test child exits.
 [[noreturn]] void stop() {
+    contract::trusted(); // the runner jumps out of a failed check with siglongjmp, until #324 unwinds instead
     c::fflush(nullptr);
     if (shared->frame_count == 0) { // a failure that brought its own stack (smith_failure) keeps it
         shared->heading = "check failed";
@@ -848,7 +849,7 @@ constexpr usize label_capacity = 128;
     stop();
 }
 
-[[noreturn]] void fail_near(Value values[4]) {
+[[noreturn]] void fail_near(Value values[:]) {
     Line lines[4] = {{.text = "a", .value = values[0]},
                      {.text = "b", .value = values[1]},
                      {.text = "tolerance", .value = values[2]},
@@ -1571,6 +1572,7 @@ bool is_stop(i32 signal_number) {
 // runner, finding the flag in the shared block, passes the test. --in-process has no process to end: the runner's loop
 // takes the test back.
 void on_signal(i32 signal_number, c::siginfo_t *info, void *context) {
+    contract::trusted(); // the runner jumps out of a failed check with siglongjmp, until #324 unwinds instead
     (void)info;
     if (shared->expect_abort && is_stop(signal_number)) {
         if (in_process) {
@@ -1875,6 +1877,7 @@ f64 process_cpu() {
 // A worker's test: the end it came to without the worker ending. The arenas, the note and the alarm are the test's own
 // (execute resets them before each test and each key); a failed check lands back here.
 End serve(const Options *options, const Command *command) {
+    contract::trusted(); // the runner jumps out of a failed check with siglongjmp, until #324 unwinds instead
     const Test *test = &table[command->test];
     f64 cpu_before = process_cpu();
     i32 jumped = c::sigsetjmp(loop_jump, 1); // NOLINT(smith-preprocessor): a macro of __sigsetjmp in glibc
