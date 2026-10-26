@@ -25,8 +25,10 @@ extern "C" int smith_lldb_main(int argc, char **argv) {
     const char *args[capacity];
     int n = 0;
     args[n++] = argv[0];
-    for (const char *option : no_shell) args[n++] = option;
-    for (int i = 1; i < argc; i++) args[n++] = argv[i];
+    for (const char *option : no_shell)
+        args[n++] = option;
+    for (int i = 1; i < argc; i++)
+        args[n++] = argv[i];
     args[n] = nullptr;
     return smith_lldb_driver_main(n, args);
 }

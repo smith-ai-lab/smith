@@ -26,9 +26,8 @@ static bool made(scratch::Project *p) {
 export void test_dbg_launch_run_passes_arguments_as_they_are(io::Io *io) {
     scratch::Project p = scratch::project(io, "dbg_run", nullptr);
     if (!made(&p)) return;
-    scratch::Run run = scratch::sh(&p,
-                                   "smith dbg -b -o 'settings set plugin.process.gdb-remote.packet-timeout 600' "
-                                   "-o run args -- 'a b' '*.txt' 2>&1");
+    scratch::Run run = scratch::sh(&p, "smith dbg -b -o 'settings set plugin.process.gdb-remote.packet-timeout 600' "
+                                       "-o run args -- 'a b' '*.txt' 2>&1");
     scratch::expect_contains("run: an argument with a space stays one", run.out, "<a b>");
     scratch::expect_contains("run: a glob character stays", run.out, "<*.txt>");
     scratch::expect_lacks("run: nothing is expanded", run.out, "<one.txt>");
@@ -37,9 +36,8 @@ export void test_dbg_launch_run_passes_arguments_as_they_are(io::Io *io) {
 export void test_dbg_launch_process_launch_with_x_true_expands(io::Io *io) {
     scratch::Project p = scratch::project(io, "dbg_expand", nullptr);
     if (!made(&p)) return;
-    scratch::Run run = scratch::sh(&p,
-                                   "smith dbg -b -o 'settings set plugin.process.gdb-remote.packet-timeout 600' "
-                                   "-o 'process launch -X true' args -- '*.txt' 2>&1");
+    scratch::Run run = scratch::sh(&p, "smith dbg -b -o 'settings set plugin.process.gdb-remote.packet-timeout 600' "
+                                       "-o 'process launch -X true' args -- '*.txt' 2>&1");
     scratch::expect_contains("-X true: the glob expands", run.out, "<one.txt>");
     scratch::expect_contains("-X true: ... every match", run.out, "<two.txt>");
 }
