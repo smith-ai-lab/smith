@@ -1,0 +1,7 @@
+import errors;
+import <stdio.h>;
+
+int main(void) {
+    c::printf("%d\n", errors::current() >= 0 ? 1 : 0);
+    return 0;
+}

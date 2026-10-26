@@ -423,7 +423,7 @@ static bool smith_lang_ifc_skip(SmithLang *lang, const SmithHost *host, const ch
 
 // A branch that is dropped: the block that begins at the next token. A dropped branch at file scope holds import lines
 // the hook counted (issue #335), which are counted here as if they were seen.
-static bool smith_lang_ifc_drop(SmithLang *lang, const SmithHost *host, bool file_scope) {
+static bool smith_lang_ifc_drop_tokens(SmithLang *lang, const SmithHost *host, bool file_scope) {
     int depth = 0;
     for (size_t i = 0; i < smith_lang_gt_max; i++) { // bounded by the pool
         if (smith_lang_peek(lang, host, 0, false)->kind == SmithTokenKind_Eof) return false;
@@ -436,6 +436,15 @@ static bool smith_lang_ifc_drop(SmithLang *lang, const SmithHost *host, bool fil
         }
     }
     return false;
+}
+
+// The preprocessor still reads a dropped branch's tokens, so a name in it that is a macro of a header imported before
+// (`errno` in another branch's `import <errno.h>;`) is not reported as a C macro used without `c::`.
+static bool smith_lang_ifc_drop(SmithLang *lang, const SmithHost *host, bool file_scope) {
+    lang->ifc_dropping = true;
+    bool dropped = smith_lang_ifc_drop_tokens(lang, host, file_scope);
+    lang->ifc_dropping = false;
+    return dropped;
 }
 
 // Whether an `if constexpr` here is around declarations (issue #335): in a module, between its declarations. Its

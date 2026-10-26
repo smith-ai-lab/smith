@@ -1,0 +1,15 @@
+// A branch not taken is still read by the preprocessor (issue #335): its `import <errno.h>;` names `errno`, a macro
+// once the branch taken has imported the same header, and that is no use of a C macro.
+module errors;
+
+import target;
+
+if constexpr (true) {
+    import <errno.h>;
+} else {
+    import <errno.h>;
+}
+
+export i32 current() {
+    return c::errno;
+}

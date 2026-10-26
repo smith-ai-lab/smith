@@ -845,6 +845,10 @@ export void test_exported_variable_declared(io::Io *io) {
     corpus_case(io, "exported-variable-declared");
 }
 
+export void test_filescope_if_dropped_macro(io::Io *io) {
+    corpus_case(io, "filescope-if-dropped-macro");
+}
+
 export void test_filescope_if_imports(io::Io *io) {
     corpus_case(io, "filescope-if-imports");
 }

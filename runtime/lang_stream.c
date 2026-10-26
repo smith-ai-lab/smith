@@ -1208,6 +1208,7 @@ const char *smith_lang_module_name(const SmithLang *lang) {
 }
 
 bool smith_lang_c_use_allowed(const SmithLang *lang, uint32_t location) {
+    if (lang->ifc_dropping) return true;                  // a branch not taken names nothing
     for (size_t i = 0; i < smith_lang_allowed_max; i++) { // bounded by the table
         if (lang->allowed[i] == location) return true;
     }
