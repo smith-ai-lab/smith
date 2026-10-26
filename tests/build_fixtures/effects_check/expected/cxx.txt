@@ -1,1 +1,1 @@
-
+cxx.cpp:14:15: error: `fopen` touches the world: take a `SmithFiles *` from main's SmithIo and read and write files through it (smith_files_read, smith_files_write)

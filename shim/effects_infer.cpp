@@ -73,6 +73,12 @@ extern "C" bool smith_effects_summary_path(const char *object, char *out, size_t
 
 namespace {
 
+// A declaration's name when it is a plain identifier, else empty: a constructor, destructor, operator or conversion
+// has no identifier, and `getName()` on it asserts ("Name is not a simple identifier").
+llvm::StringRef plain_name(const NamedDecl *decl) {
+    return decl->getDeclName().isIdentifier() ? decl->getName() : llvm::StringRef();
+}
+
 constexpr const char *prefix = "smith::effects:";
 
 // ---- The hover table -----------------------------------------------------------------------------------------------
