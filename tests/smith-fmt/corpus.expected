@@ -811,6 +811,57 @@ int main() {
     printf("%d %d %d %d %d\n", pick(Red), pick(Blue), p.first, p.second, level == Low);
     return 0;
 }
+==> enum-convert/src/main.smith <==
+module main;
+import <stdio.h>;
+
+typedef result(f64, i32) Quotient;
+typedef option(i32) Number;
+typedef option(i64) Wide;
+
+struct Pair {
+    i32 left;
+    i32 right;
+};
+
+typedef option(struct Pair) Maybe;
+
+// A value converts to `.ok` and `.some` wherever a `result` or an `option` is expected (issue #358).
+static Quotient divide(f64 a, f64 b) {
+    if (b == 0) return {.error = 7};
+    return a / b;
+}
+
+static i32 describe(Number n, i32 other) {
+    return n == .some ? n.some : other;
+}
+
+static Number twice(Number n) {
+    if (n != .some) return .none;
+    return n.some * 2;
+}
+
+static Number absent(void) {
+    return .none;
+}
+
+i32 main() {
+    Number a = 5; // a declaration's initializer
+    Number b;
+    b = 6;                         // an assignment
+    Wide c = 7;                    // C's conversions: the 7 is an i64
+    Number d = twice(8);           // an argument and a return
+    Number e = twice(absent());    // an option stays an option
+    Maybe f = (struct Pair){1, 2}; // a struct value
+    Quotient g = divide(9, 3);
+    Quotient h = divide(1, 0);
+    c::printf("%d %d %d %d\n", describe(a, -1), describe(b, -1), (i32)(c == .some ? c.some : -1), describe(d, -1));
+    c::printf("%d\n", describe(e, -1));
+    if (f == .some) c::printf("pair %d %d\n", f.some.left, f.some.right);
+    if (g == .ok) c::printf("quotient %.1f\n", g.ok);
+    if (h == .error) c::printf("error %d\n", h.error);
+    return 0;
+}
 ==> enum-generic-return/src/find.smith <==
 module find;
 
@@ -1745,6 +1796,42 @@ type result(type T, type E) {
 }
 
 i32 main(void) {
+    return 0;
+}
+==> error-enum-convert/src/main.smith <==
+module main;
+
+typedef result(i32, i32) Same;
+typedef option(i32) Inner;
+typedef option(Inner) Nested;
+typedef i32 *Pointer;
+typedef option(Pointer) Maybe;
+typedef option(i32) Number;
+
+// Each conversion that would have to choose is an error that names the explicit form (issue #358).
+static Same same(i32 v) {
+    return v;
+}
+
+static Nested nested(i32 v) {
+    return v;
+}
+
+static Maybe maybe(void) {
+    return nullptr;
+}
+
+// A result or an option never becomes a value, and is never compared with one.
+static bool compared(Number n) {
+    return n == 5;
+}
+
+static i32 unwrapped(Number n) {
+    i32 v = n;
+    return v;
+}
+
+i32 main() {
     return 0;
 }
 ==> error-enum-generic-dot/src/main.smith <==
@@ -2766,22 +2853,6 @@ static i32 plain(void) {
 
 i32 main() {
     return plain();
-}
-==> error-try-return-value/src/main.smith <==
-module main;
-
-// `try` gives the success value, so returning it as it is returns a `T` where a result is expected, as `return v;`
-// does: the fix is `return {.ok = try f()};` (issue #211).
-static result(i32, i32) step(i32 n) {
-    return {.ok = n};
-}
-
-static result(i32, i32) forward(i32 n) {
-    return try step(n);
-}
-
-i32 main() {
-    return forward(1) == .ok ? 0 : 1;
 }
 ==> error-tuple-empty/src/main.smith <==
 struct {
@@ -8830,6 +8901,46 @@ i32 main() {
     show_small(maybe_twice(u8, 3, 4));
     show_small(maybe_twice(u8, 3, -4));
     show_float(maybe_twice(f64, 1.5, 4));
+    return 0;
+}
+==> try-return-value/src/main.smith <==
+module main;
+import <stdio.h>;
+
+typedef result(i32, u8) Step;
+typedef option(i32) Found;
+
+// `try` gives the success value, so `return try f();` returns it as `.ok` (`.some` for an option), as `return v;` does
+// (issue #358).
+static Step step(i32 n) {
+    if (n < 0) return {.error = 3};
+    return n * 2;
+}
+
+static Step forward(i32 n) {
+    return try step(n);
+}
+
+static Found first(i32 n) {
+    if (n == 0) return .none;
+    return n;
+}
+
+static Found again(i32 n) {
+    defer c::puts("again leaves");
+    errdefer c::puts("again failed");
+    return try first(n);
+}
+
+i32 main() {
+    Step a = forward(4);
+    Step b = forward(-1);
+    Found c = again(5);
+    Found d = again(0);
+    if (a == .ok) c::printf("ok %d\n", a.ok);
+    if (b == .error) c::printf("error %d\n", b.error);
+    if (c == .some) c::printf("some %d\n", c.some);
+    if (d == .none) c::puts("none");
     return 0;
 }
 ==> try-run/src/main.smith <==

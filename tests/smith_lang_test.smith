@@ -392,6 +392,18 @@ export void test_try_run(io::Io *io) {
     corpus_case(io, "try-run");
 }
 
+export void test_try_return_value(io::Io *io) {
+    corpus_case(io, "try-return-value");
+}
+
+export void test_enum_convert(io::Io *io) {
+    corpus_case(io, "enum-convert");
+}
+
+export void test_error_enum_convert(io::Io *io) {
+    corpus_case(io, "error-enum-convert");
+}
+
 export void test_try_generic(io::Io *io) {
     corpus_case(io, "try-generic");
 }
@@ -526,10 +538,6 @@ export void test_error_try_kind(io::Io *io) {
 
 export void test_error_try_error_type(io::Io *io) {
     corpus_case(io, "error-try-error-type");
-}
-
-export void test_error_try_return_value(io::Io *io) {
-    corpus_case(io, "error-try-return-value");
 }
 
 export void test_error_try_plain_function(io::Io *io) {

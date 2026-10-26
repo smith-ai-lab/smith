@@ -7,11 +7,11 @@
 //
 //   result(f64, i32) divide(f64 a, f64 b) {
 //       if (b == 0) return {.error = 1};
-//       return {.ok = a / b};
+//       return a / b;
 //   }
 module smith::result;
 
-// The type of a value or an error: `{.ok = value}` or `{.error = reason}`.
+// The type of a value or an error: a value, which converts to `{.ok = value}`, or `{.error = reason}`.
 export type result(type T, type E) {
     return enum {
         T ok;

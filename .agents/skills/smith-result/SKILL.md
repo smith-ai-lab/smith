@@ -1,6 +1,6 @@
 ---
 name: smith-result
-description: "Using smith::result (no import: result(T, E)): a value or the reason there is none, `{.ok = v}` or `{.error = e}`, in place of an out parameter or a sentinel. Load when code writes `result(`, or on a question about returning an error from a function in .smith."
+description: "Using smith::result (no import: result(T, E)): a value or the reason there is none, `return v;` or `{.error = e}`, in place of an out parameter or a sentinel. Load when code writes `result(`, or on a question about returning an error from a function in .smith."
 ---
 
 # A value or an error: smith's result
@@ -18,7 +18,7 @@ export typedef result(f64, i32) Quotient; // name it at file scope once
 
 export Quotient divide(f64 a, f64 b) {
     if (b == 0) return {.error = 7};
-    return {.ok = a / b};
+    return a / b;                  // a value converts to {.ok = a / b}
 }
 
 export void show(Quotient q) {
@@ -29,6 +29,7 @@ export void show(Quotient q) {
 }
 ```
 
+- **A value converts to `.ok`** wherever a `result` is expected (an initializer, an assignment, `return`, an argument), with C's conversions for that context; `{.ok = v}` still works. Only success is implicit: write `{.error = e}`. It is an error, naming the explicit form, when `T` and `E` are the same type (`result(i32, i32)`: write `{.ok = v}` or `{.error = v}`) or when `T` is itself a `result` or `option`. A `result` never becomes a value (use `try`, `switch` or `r == .ok`), and `r == 5` is an error. In a generic's body write `{.ok = v}`.
 - A `switch` names every variant (no `default:`); `q.ok` is read only where `q == .ok` holds.
 - The struct must be named at file scope before a function body uses it, as for any type function; a generic may write `result(T, E)` in its head and body.
 - For a value that may simply be absent use `smith-option`. To return a failure to the caller in one word, `try` (`smith-lang-try`).

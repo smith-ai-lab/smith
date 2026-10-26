@@ -37,7 +37,7 @@ Each rule says what enforces it today. "Review" means nothing checks it: you and
     - Enforced by: `smith lint` and the editor, through `smith-bounded-loop` (also in C).
 11. **C23 spellings.** `nullptr`, `bool`, `{}`, `[[noreturn]]`, `[[maybe_unused]]`, `[[nodiscard]]`, never `NULL`, `_Bool`, `<stdbool.h>`, `{0}`, `__attribute__((noreturn))` or a `(void)` parameter list (`main()`, in C23 `()` means no parameters); a constant is `constexpr`, not a file-scope `const` with a constant initializer.
     - Enforced by: `smith lint` and the editor, through `smith-c23` and `smith-constexpr` (also in C).
-12. **A `switch` over a payload enum has no `default:`.** Name every variant, so a variant added later is an error at each switch instead of falling into a default (`smith-lang-enums`).
+12. **A `switch` over a payload enum has no `default:`.** Name every variant, so a variant added later is an error at each switch instead of falling into a default (`smith-lang-enums`). A success is returned as the value (`return a / b;`, not `return {.ok = a / b};`), for a `result` or an `option` converts it; errors and absence stay explicit (`{.error = e}`, `.none`).
     - Enforced by: review; the compiler already requires every variant to be named, `default:` or not.
 13. **A lifetime is a scope, closed by `defer`.** What a stretch of code makes, it gives back on every exit: an arena scope (`arena::scope_begin`, then `defer arena::scope_end(scope);`), a file or lock with its close in a `defer`. Nothing a scope made outlives it (owner: "we should be primarily thinking about arenas and wait groups").
     - Enforced by: review.
