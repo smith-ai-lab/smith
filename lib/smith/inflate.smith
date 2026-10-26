@@ -2,8 +2,8 @@
 // Its C API is the generated header include/smith/inflate.h (committed; `smith build headers` regenerates it). Every
 // export has a short name here and a C name (the attribute before it): `inflate::decode` is `smith_inflate_decode`,
 // `inflate::Status` is `SmithInflateStatus`, `inflate::Ok` is `SmithInflateStatus_Ok`.
-// NOLINTBEGIN(smith-mem): smith links inflate itself, so the previous release compiles it and has no smith::mem (the
-// lag rule); converted to mem:: when that is fixed.
+// NOLINTBEGIN(smith-mem): lag rule: smith links inflate, the previous release has no smith::mem; convert to mem:: after
+// it
 module smith::inflate;
 
 import smith::contract;

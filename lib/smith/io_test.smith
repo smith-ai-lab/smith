@@ -2,8 +2,7 @@
 // smith's own test library. What needs the real world stays in tests/io.c, run by tests/io_c_test.smith: real files,
 // processes, the terminal, the loopback, the clock, SMITH_SEED, the lazily committed reservation and the console of a
 // pipe.
-// NOLINTBEGIN(smith-mem): importing smith::mem here reserves the stdlib names this file uses (`wait`) (#421); converted
-// to mem:: when that is fixed.
+// NOLINTBEGIN(smith-mem): #421: importing smith::mem reserves the stdlib name `wait`; convert to mem:: after it
 module smith::io_test;
 
 import smith::arena;

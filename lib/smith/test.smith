@@ -2,8 +2,7 @@
 // include/smith/test.h (committed; `smith build headers` regenerates it). Every export has a short name here and, where
 // C calls it, a C name (the attribute before it): `test::check_equal_i32` is `smith_check_equal_i32`, `test::Test` is
 // `SmithTest`. The comments above an export are the header's doc comments, so they name the Smith names.
-// NOLINTBEGIN(smith-mem): the test library lowers its slices before smith::mem is imported: the first conversion fails
-// in the lowering (#421); converted to mem:: when that is fixed.
+// NOLINTBEGIN(smith-mem): #421: slices lower before smith::mem is imported and fail; convert to mem:: after it
 module smith::test;
 
 import smith::arena;
