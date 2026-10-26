@@ -250,7 +250,9 @@ export void test_runner_workers_ninety_jobs_under_a_limit_of_a_hundred_descripto
 }
 
 // Section 12. --in-process: every test in the runner's own process, no fork, so a debugger that does not follow forks
-// (lldb on macOS) stops inside a test. smith dbg is in the full smith only.
+// (lldb on macOS) stops inside a test. smith dbg is in the full smith only. lldb's `run` expands the arguments through
+// a shell it waits 10 s of wall time for ("shell expansion failed (timed out)" on a loaded machine, #344), so the
+// debugger test launches with `process launch -X false`.
 static scratch::Project inprocess_project(io::Io *io) {
     scratch::Project p = runner::project(io, "runner_base", "runner_inproc");
     scratch::Run run = runner::build(&p, "");
@@ -292,8 +294,8 @@ export void test_runner_workers_in_process_smith_dbg_stops_at_a_breakpoint_insid
             &io->arena,
             "smith dbg -b -o 'settings set plugin.process.gdb-remote.packet-timeout 600' -o \"b test_inproc.smith:",
             line,
-            "\" -o run -o 'frame variable answer' -o kill -- build/tests --test inproc_local "
-            "--in-process 2>&1")
+            "\" -o 'process launch -X false' -o 'frame variable answer' -o kill -- build/tests --test "
+            "inproc_local --in-process 2>&1")
             .data;
     scratch::Run run = scratch::sh(&p, command);
     scratch::expect_contains("in-process: smith dbg stops at a breakpoint inside a test", run.out,
