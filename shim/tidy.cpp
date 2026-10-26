@@ -11,6 +11,7 @@
 #include "clang-tidy/readability/IdentifierNamingCheck.h"
 #include "effects.h"
 #include "idiom.h"
+#include "mem.h"
 #include "names.h"
 #include "preprocessor.h"
 #endif
@@ -217,6 +218,10 @@ class SmithModule final : public ClangTidyModule {
         Factories.registerCheckFactory("smith-preprocessor", [](StringRef Name, ClangTidyContext *Context) {
             attach(Context);
             return std::make_unique<smith_preprocessor::PreprocessorCheck>(Name, Context);
+        });
+        Factories.registerCheckFactory("smith-mem", [](StringRef Name, ClangTidyContext *Context) {
+            attach(Context);
+            return std::make_unique<smith_mem::MemCheck>(Name, Context);
         });
         Factories.registerCheckFactory("smith-sized-types", [](StringRef Name, ClangTidyContext *Context) {
             attach(Context);

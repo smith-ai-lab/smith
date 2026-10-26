@@ -21,6 +21,7 @@ import <smith/handlers.h>;           // SmithAllocator, smith_handlers_set_alloc
 import <smith/trace.h>;              // smith_failure_format, smith_trace_capture
 import <stdlib.h>; // malloc, posix_memalign, free: the interposed functions the handler of the thread answers
 import <unistd.h>; // write: the reports of mem::checked
+import <string.h>;         // memcpy, memmove, memset, memcmp: the raw functions copy, move, zero and equal wrap
 
 // An allocator is a struct whose first member is one, passed as &x.allocator (include/smith/handlers.h): alloc,
 // realloc, free, owns and an optional size.
@@ -479,4 +480,109 @@ CheckedSite site_of(const CheckedRecord *record) {
     self->buckets = nullptr;
     self->live = 0;
     self->live_bytes = 0;
+}
+
+// ---- Typed copies, fills and comparisons ---------------------------------------------------------------------------
+//
+// C's memcpy, memmove, memset and memcmp take a `void *` and a byte count, so the type and the length travel apart
+// from the data. These take slices (or a pointer to one value), check what C leaves to the caller, and lower to the C
+// functions: no cost beyond the checks. In a module the raw functions are a `smith-mem` finding (shim/mem.h); this
+// module implements the wrappers, so its functions say `contract::trusted()` to call them.
+
+// The bodies read a slice as its two fields (`.data`, `.count[0]`, the struct of smith-lang-arrays): two `auto`
+// slices of one type make `countof` and `xs[i]` fail on the second (#408), and `.data` of an empty slice is never read.
+
+// Copies the elements of src into dst: two slices of one element type and one length (checked in every build). They
+// must not overlap; mem::move allows it.
+export void copy(auto dst, auto src) {
+    contract::trusted();
+    static_assert(__builtin_types_compatible_p(typeof(*dst.data), typeof(*src.data)), "mem::copy: one element type");
+    bool same_length = dst.count[0] == src.count[0];
+    contract::assert(same_length);
+    if (dst.count[0] > 0) c::memcpy(dst.data, src.data, dst.count[0] * sizeof(*dst.data));
+}
+
+// Copies the elements of src into dst as copy does, and the two may overlap.
+export void move(auto dst, auto src) {
+    contract::trusted();
+    static_assert(__builtin_types_compatible_p(typeof(*dst.data), typeof(*src.data)), "mem::move: one element type");
+    bool same_length = dst.count[0] == src.count[0];
+    contract::assert(same_length);
+    if (dst.count[0] > 0) c::memmove(dst.data, src.data, dst.count[0] * sizeof(*dst.data));
+}
+
+// Sets every byte of a slice's elements, or of the one value a pointer points at, to zero: the size comes from the
+// type. `mem::zero(xs)`, `mem::zero(&x)`.
+export void zero(auto x) {
+    contract::trusted();
+    if constexpr (is_slice(typeof(x))) {
+        if (x.count[0] > 0) c::memset(x.data, 0, x.count[0] * sizeof(*x.data));
+    } else {
+        c::memset(x, 0, sizeof(*x));
+    }
+}
+
+// Sets every element of xs to v (converted to the element type, as an assignment does).
+export void fill(auto xs, auto v) {
+    for (usize i = 0; i < xs.count[0]; i++)
+        xs.data[i] = v;
+}
+
+// Whether two slices of one element type have the same length and the same bytes in their elements (so a NaN equals
+// the same NaN and 0.0 differs from -0.0). The lengths are compared first.
+export [[nodiscard]] bool equal(auto a, auto b) {
+    contract::trusted();
+    static_assert(__builtin_types_compatible_p(typeof(*a.data), typeof(*b.data)), "mem::equal: one element type");
+    if (a.count[0] != b.count[0]) return false;
+    if (a.count[0] == 0) return true;
+    return c::memcmp(a.data, b.data, a.count[0] * sizeof(*a.data)) == 0;
+}
+
+// A slice of count bytes at p: the one place a byte pointer gets its count.
+typeof(u8[:]) bytes_at(u8 *p, usize count) {
+    return p[0:count];
+}
+
+// A slice of count read-only bytes at p.
+typeof(const u8[:]) read_bytes_at(const u8 *p, usize count) {
+    return p[0:count];
+}
+
+// Whether data is a whole number of items of size bytes aligned to align.
+bool whole_items(u8 data[:], usize size, usize align) {
+    if (countof(data) % size != 0) return false;
+    if (countof(data) == 0) return true;
+    return (usize)&data[0] % align == 0;
+}
+
+// The bytes of the one value p points at, as a `u8[:]` that carries the size: `mem::bytes(&x)`. For a value to read
+// only (a `const` pointee) use read_bytes.
+export [[nodiscard]] typeof(u8[:]) bytes(auto p) {
+    contract::trusted();
+    return bytes_at((u8 *)p, sizeof(*p));
+}
+
+// The bytes of the one value p points at, as a `const u8[:]`.
+export [[nodiscard]] typeof(const u8[:]) read_bytes(auto p) {
+    contract::trusted();
+    return read_bytes_at((const u8 *)p, sizeof(*p));
+}
+
+// Whether the bytes are a whole number of T and aligned for T, so that view(data, T) holds. A bytes-to-slice cast is
+// the one unchecked thing C lets you write for this; here the question has an answer first.
+export [[nodiscard]] bool can_view(u8 data[:], constexpr type T) {
+    return whole_items(data, sizeof(T), alignof(T));
+}
+
+// The one sanctioned place bytes become a typed slice: the bytes as a `T[:]`. It is a checked failure unless
+// can_view(data, T) (a whole number of T, aligned for T): `if (mem::can_view(raw, f32)) { f32 xs[:] = mem::view(raw,
+// f32); }`. An option of a slice cannot be written in a generic yet, so the question and the cast are two calls.
+export [[nodiscard]] typeof(T[:]) view(u8 data[:], constexpr type T) {
+    contract::trusted();
+    bool whole = whole_items(data, sizeof(T), alignof(T));
+    contract::assert(whole);
+    struct smith_array_T_n result = {};
+    result.data = (T *)data.data;
+    result.count[0] = data.count[0] / sizeof(T);
+    return result;
 }
