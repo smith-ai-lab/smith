@@ -10,51 +10,37 @@ import smith::contract;
 import smith::math;
 import smith::random;
 import target;
+import <errno.h>;
+import <dirent.h>;
+import <dlfcn.h>;
+import <fcntl.h>;
+import <limits.h>;
+import <pthread.h>;
+import <signal.h>;
+import <spawn.h>;
+import <stdio.h>;
+import <stdlib.h>;
+import <string.h>;
+import <sys/mman.h>;
+import <sys/random.h>;
+import <sys/stat.h>;
+import <sys/wait.h>;
+import <time.h>;
+import <unistd.h>;
+// Each platform's own headers. Every header both use is imported above, before the branches: a branch not taken is
+// still read by the preprocessor, so a header name in it must not be a macro of a header imported before it
+// (`errno` is one once <errno.h> is in).
 if constexpr (target::os == target::macos) {
-    import <errno.h>;
     import <Network/Network.h>;
-    import <dirent.h>;
     import <dispatch/dispatch.h>;
-    import <dlfcn.h>;
-    import <fcntl.h>;
-    import <limits.h>;
-    import <pthread.h>;
-    import <signal.h>;
-    import <spawn.h>;
-    import <stdio.h>;
-    import <stdlib.h>;
-    import <string.h>;
     import <sys/event.h>;
-    import <sys/mman.h>;
-    import <sys/random.h>;
-    import <sys/stat.h>;
-    import <sys/wait.h>;
-    import <time.h>;
-    import <unistd.h>;
 } else {
-    import <errno.h>;
     import <arpa/inet.h>;
-    import <dirent.h>;
-    import <dlfcn.h>;
-    import <fcntl.h>;
-    import <limits.h>;
     import <netdb.h>;
-    import <pthread.h>;
-    import <signal.h>;
-    import <spawn.h>;
-    import <stdio.h>;
-    import <stdlib.h>;
-    import <string.h>;
     import <sys/epoll.h>;
-    import <sys/mman.h>;
-    import <sys/random.h>;
     import <sys/socket.h>;
-    import <sys/stat.h>;
     import <sys/syscall.h>;
     import <sys/timerfd.h>;
-    import <sys/wait.h>;
-    import <time.h>;
-    import <unistd.h>;
 }
 
 // <smith/io.h>: everything a program does to the world outside it, as values you hold and pass on. One line in main
