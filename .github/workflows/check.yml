@@ -18,7 +18,7 @@ permissions:
 jobs:
   check:
     runs-on: [self-hosted, macOS, ARM64]
-    timeout-minutes: 30
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
         with:
@@ -82,9 +82,10 @@ jobs:
 
       - name: Full check
         if: steps.tree.outputs.skip != 'true'
+        # 45, not 25: the host runs CI beside the lanes' builds, and under that load checks were cut off at 25 minutes with no test failing (#391, #401, #406, #393 on 2026-10-26). #360 brings it back down.
         # no shared lock: CI runs in its own clone and must not queue behind the agents' local checks.
         # The step ends before the job does, so the log steps below always run.
-        timeout-minutes: 25
+        timeout-minutes: 45
         shell: bash
         env:
           # the per-task table (wall, cpu, processes) goes to .smith/log/test.log, kept in the artifact
