@@ -365,6 +365,20 @@ export void test_lint_smith_bounded_loop_endless_loops_outside_main_in_c_and_smi
                  "idiom smith-bounded-loop idiom/loops.smith idiom/loops.c >loops.out; idiom_findings <loops.out");
 }
 
+// smith-unsafe (issue #422): setjmp and longjmp, an array parameter and a run-time-sized stack array are findings in a
+// module, and C as it is in a .c file or a .smith file with no `module` line.
+export void test_lint_smith_unsafe_in_a_module_the_three_constructs_are_findings(io::Io *io) {
+    scratch::Project p = prepared(io, false);
+    findings_are(io, &p, "unsafe", "idiom smith-unsafe idiom/unsafe.smith >unsafe.out; idiom_findings <unsafe.out");
+}
+
+export void test_lint_smith_unsafe_a_c_file_and_a_file_with_no_module_line_are_left_alone(io::Io *io) {
+    scratch::Project p = prepared(io, false);
+    scratch::expect_text("smith-unsafe: a .c file and a .smith file with no module line are C as it is", "",
+                         lint_text(&p, "idiom smith-unsafe idiom/unsafe.c idiom/unsafe_plain.smith >unsafe-ok.out; "
+                                       "idiom_findings <unsafe-ok.out"));
+}
+
 export void test_lint_smith_c23_old_spellings_in_a_smith_file(io::Io *io) {
     scratch::Project p = prepared(io, false);
     findings_are(io, &p, "c23", "idiom smith-c23 idiom/c23.smith >c23.out; idiom_findings <c23.out");

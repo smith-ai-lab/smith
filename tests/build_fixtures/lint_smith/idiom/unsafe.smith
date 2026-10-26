@@ -1,0 +1,36 @@
+module idiom::unsafe;
+
+import <setjmp.h>;
+import <stdlib.h>;
+
+static c::jmp_buf env;
+
+export void jump_out() {
+    c::longjmp(env, 1);
+}
+
+export i32 jump_in() {
+    return c::setjmp(env);
+}
+
+export u32 first(u32 xs[10]) {
+    return xs[0];
+}
+
+export u32 first_slice(u32 xs[:]) {
+    return xs[0];
+}
+
+export u32 first_fixed(u32 (*xs)[10]) {
+    return (*xs)[0];
+}
+
+constexpr usize limit = 16;
+
+export u32 sized(usize n) {
+    u32 fixed[16] = {};
+    u32 named[limit] = {};
+    u32 run_time[n];
+    void *raw = c::alloca(n);
+    return fixed[0] + named[0] + run_time[0] + (raw == nullptr ? 0 : 1);
+}
