@@ -128,7 +128,12 @@ static void smith_lang_try_close(SmithLang *lang, const SmithHost *host, const S
         snprintf(early, sizeof early, "return ( %s ) { . tag = %s_tag_%s } ;", tr->type, name, failure);
     }
     char value[400];
-    snprintf(value, sizeof value, "smith_try_%u . %s", id, good);
+    if (tr->try_wrap) { // `return try f();` returns the success value as the variant that holds it
+        snprintf(value, sizeof value, "( %s ) { . tag = %s_tag_%s , . %s = smith_try_%u . %s }", tr->type, name, good,
+                 good, id, good);
+    } else {
+        snprintf(value, sizeof value, "smith_try_%u . %s", id, good);
+    }
     smith_lang_try_sayf(lang, host, &at,
                         "; %s if ( smith_try_%u . tag == %s_tag_%s ) { %s%s } if ( smith_try_%u . tag != %s_tag_%s ) "
                         "__builtin_unreachable ( ) ; %s ; } )",
@@ -245,6 +250,10 @@ static void smith_lang_try_open(SmithLang *lang, const SmithHost *host, const Sm
     tr->try_id = ++tr->next_id;
     tr->try_kind = kind;
     tr->try_payload = mode == SmithLangTryMode_Payload;
+    SmithToken before;
+    tr->try_wrap =
+        mode == SmithLangTryMode_Value &&
+        (tr->just_returned || (smith_lang_previous(lang, host, 1, &before) && smith_lang_ident(&before, "return")));
     tr->try_location = token->location;
     snprintf(tr->type, sizeof tr->type, "%s", type);
     smith_lang_try_sayf(lang, host, token, "%s __extension__ ( { __auto_type smith_try_%u =",

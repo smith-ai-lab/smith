@@ -1,1 +1,0 @@
-src/main.smith:10:12: returning 'i32' (aka 'int') from a function with incompatible result type 'struct smith_enum_result_i32__i32'

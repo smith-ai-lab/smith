@@ -7,13 +7,14 @@
 // `smith_enum_option_usize`, which C callers see too).
 //
 //   option(usize) find(const char *text, char wanted) {
-//       for (usize i = 0; text[i] != 0; i++)
-//           if (text[i] == wanted) return {.some = i};
+//       for (usize i = 0; text[i] != 0; i++) {
+//           if (text[i] == wanted) return i;
+//       }
 //       return .none;
 //   }
 module smith::option;
 
-// The type of a value that may be absent: `{.some = value}` or `.none`.
+// The type of a value that may be absent: `.none`, or a value, which converts to `{.some = value}`.
 export type option(type T) {
     return enum {
         T some;

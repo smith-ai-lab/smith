@@ -1,0 +1,35 @@
+module main;
+
+typedef result(i32, i32) Same;
+typedef option(i32) Inner;
+typedef option(Inner) Nested;
+typedef i32 *Pointer;
+typedef option(Pointer) Maybe;
+typedef option(i32) Number;
+
+// Each conversion that would have to choose is an error that names the explicit form (issue #358).
+static Same same(i32 v) {
+    return v;
+}
+
+static Nested nested(i32 v) {
+    return v;
+}
+
+static Maybe maybe(void) {
+    return nullptr;
+}
+
+// A result or an option never becomes a value, and is never compared with one.
+static bool compared(Number n) {
+    return n == 5;
+}
+
+static i32 unwrapped(Number n) {
+    i32 v = n;
+    return v;
+}
+
+i32 main() {
+    return 0;
+}

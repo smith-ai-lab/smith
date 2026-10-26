@@ -220,6 +220,23 @@ static bool smith_lang_enum_carries(const SmithHost *host, const SmithLangEnumTy
     return host->expr_type(host->context, text, (uint32_t)strlen(text), &found);
 }
 
+// The type of a variant's payload, as the compiler prints it: false when the variant has none.
+static bool smith_lang_enum_payload(const SmithHost *host, const SmithLangEnumType *type, const char *variant,
+                                    SmithExprType *found) {
+    char text[smith_lang_enum_name_max * 2 + 16];
+    snprintf(text, sizeof text, "(\x1f%s\x1f)\x1f{\x1f}\x1f.\x1f%s", type->type, variant);
+    for (char *at = text; *at != 0; at++) { // the type's words are tokens
+        if (*at == ' ') *at = '\x1f';
+    }
+    return host->expr_type(host->context, text, (uint32_t)strlen(text), found);
+}
+
+// Whether `type` is the language's own `result(T, E)` (`*is_result`) or `option(T)`.
+static bool smith_lang_enum_builtin(const SmithLangEnumType *type, bool *is_result) {
+    *is_result = strncmp(type->type, "struct smith_enum_result_", 25) == 0;
+    return *is_result || strncmp(type->type, "struct smith_enum_option_", 25) == 0;
+}
+
 // The variant a `.name` stands for in `type`, checked: false (an error said) when there is none or it needs a payload.
 static bool smith_lang_enum_variant(SmithLang *lang, const SmithHost *host, const SmithLangEnumType *type,
                                     const SmithToken *dot, const SmithToken *variant, bool bare, char *constant,
@@ -249,22 +266,99 @@ static bool smith_lang_enum_is_braced(const SmithToken *tokens, size_t count) {
            smith_lang_punct(&tokens[count - 1], "}");
 }
 
+// A value of `type` with nothing in it, written where an error was said, so that nothing else is said.
+static void smith_lang_enum_blank(const SmithLangEnumType *type, bool literal, const SmithToken *like,
+                                  SmithLangSliceCur *cur) {
+    char empty[smith_lang_enum_name_max + 16];
+    snprintf(empty, sizeof empty, literal ? "( %s ) { }" : "{ }", type->type);
+    SmithLangSliceCur piece = {};
+    piece.count = smith_lang_slice_pattern(piece.tokens, 0, smith_lang_slice_cur_max, empty, nullptr, like);
+    smith_lang_slice_add(cur, piece.tokens, piece.count);
+    cur->changed = true;
+}
+
+// Why a value cannot become the success variant of `type` without being said: the error, or nothing.
+static const char *smith_lang_enum_wrap_refusal(const SmithHost *host, const SmithLangEnumType *type, bool is_result,
+                                                const SmithExprType *good, const SmithExprType *given,
+                                                bool is_nullptr) {
+    SmithLangEnumType inner;
+    bool inner_result;
+    if (smith_lang_enum_type(host, good->canonical, &inner) && smith_lang_enum_builtin(&inner, &inner_result) &&
+        strcmp(good->canonical, given->canonical) != 0) {
+        return "a value could be the payload of the inner `result` or `option` as well as of this one, so it does not "
+               "convert: write the variants out, as `{.some = {.some = v}}` or `{.some = .none}`";
+    }
+    if (is_result) {
+        SmithExprType bad = {};
+        if (smith_lang_enum_payload(host, type, "error", &bad) && strcmp(bad.canonical, good->canonical) == 0) {
+            return "the `.ok` and the `.error` of this `result` have the same type, so a value could be either and "
+                   "does not convert: write `{.ok = v}` or `{.error = v}`";
+        }
+    }
+    if (is_nullptr && !is_result && strchr(good->canonical, '*') != nullptr) {
+        return "`nullptr` does not convert to an `option` of a pointer: write `.none` for no value, or `{.some = "
+               "nullptr}` for a null one";
+    }
+    return nullptr;
+}
+
+// A value `v` where a `result(T, E)` or an `option(T)` is expected stands for `{.ok = v}` or `{.some = v}`; C's own
+// conversions apply to it, as they do to `.ok = v`. False (the tokens are left alone) when the type is neither, when
+// the tokens are a variant written out or an expression of the type itself, or when they have no type of their own.
+static bool smith_lang_enum_wrap(SmithLang *lang, const SmithHost *host, const SmithLangEnumType *type,
+                                 const SmithToken *tokens, size_t count, bool literal, SmithLangSliceCur *cur) {
+    bool is_result;
+    if (count == 0 || !smith_lang_enum_builtin(type, &is_result) || smith_lang_punct(&tokens[0], ".") ||
+        smith_lang_punct(&tokens[0], "{") || smith_lang_ident(&tokens[0], "try") || host->expr_type == nullptr) {
+        return false;
+    }
+    char text[smith_lang_slice_text_max];
+    SmithExprType given = {};
+    if (!smith_lang_slice_text(lang, tokens, count, text, sizeof text) ||
+        !host->expr_type(host->context, text, (uint32_t)strlen(text), &given)) {
+        return false;
+    }
+    SmithLangEnumType same;
+    if (smith_lang_enum_type(host, given.canonical, &same) && strcmp(same.type, type->type) == 0) return false;
+    const char *variant = is_result ? "ok" : "some";
+    SmithExprType good = {};
+    if (!smith_lang_enum_payload(host, type, variant, &good)) return false;
+    bool is_nullptr = count == 1 && smith_lang_ident(&tokens[0], "nullptr");
+    const char *refusal = smith_lang_enum_wrap_refusal(host, type, is_result, &good, &given, is_nullptr);
+    if (refusal != nullptr) {
+        smith_lang_error(lang, host, tokens[0].location, "%s", refusal);
+        smith_lang_enum_blank(type, literal, &tokens[0], cur);
+        return true;
+    }
+    SmithToken name = smith_lang_tuple_made(SmithTokenKind_Identifier, variant, strlen(variant), &tokens[0], false);
+    char constant[smith_lang_enum_name_max + 64];
+    if (!smith_lang_enum_constant(host, type, &name, constant, sizeof constant)) return false;
+    char pattern[smith_lang_enum_name_max * 2 + 80];
+    if (literal) {
+        snprintf(pattern, sizeof pattern, "( %s ) { . tag = %s , . %s = ( @0 ) }", type->type, constant, variant);
+    } else {
+        snprintf(pattern, sizeof pattern, "{ . tag = %s , . %s = ( @0 ) }", constant, variant);
+    }
+    SmithLangSliceSpan spans[1] = {{tokens, count}};
+    SmithLangSliceCur piece = {};
+    piece.count = smith_lang_slice_pattern(piece.tokens, 0, smith_lang_slice_cur_max, pattern, spans, &tokens[0]);
+    smith_lang_slice_add(cur, piece.tokens, piece.count);
+    cur->changed = true;
+    return true;
+}
+
 // A value for an enum of `type`: `.name` or `{.name = payload}` written as C's initializer (`literal` false, after a
 // declaration's `=`) or compound literal (`literal` true). False when the tokens are neither (they are left alone).
 static bool smith_lang_enum_value(SmithLang *lang, const SmithHost *host, const SmithLangEnumType *type,
                                   const SmithToken *tokens, size_t count, bool literal, SmithLangSliceCur *cur) {
     bool bare = smith_lang_enum_is_bare(tokens, count);
-    if (!bare && !smith_lang_enum_is_braced(tokens, count)) return false;
+    if (!bare && !smith_lang_enum_is_braced(tokens, count))
+        return smith_lang_enum_wrap(lang, host, type, tokens, count, literal, cur);
     const SmithToken *dot = bare ? &tokens[0] : &tokens[1];
     const SmithToken *variant = bare ? &tokens[1] : &tokens[2];
     char constant[smith_lang_enum_name_max + 64];
     if (!smith_lang_enum_variant(lang, host, type, dot, variant, bare, constant, sizeof constant)) {
-        char empty[smith_lang_enum_name_max + 16]; // a value of the type, so that nothing else is said
-        snprintf(empty, sizeof empty, literal ? "( %s ) { }" : "{ }", type->type);
-        SmithLangSliceCur piece = {};
-        piece.count = smith_lang_slice_pattern(piece.tokens, 0, smith_lang_slice_cur_max, empty, nullptr, &tokens[0]);
-        smith_lang_slice_add(cur, piece.tokens, piece.count);
-        cur->changed = true;
+        smith_lang_enum_blank(type, literal, &tokens[0], cur); // a value of the type, so that nothing else is said
         return true;
     }
     char pattern[smith_lang_enum_name_max * 2 + 80];
@@ -284,14 +378,27 @@ static bool smith_lang_enum_value(SmithLang *lang, const SmithHost *host, const 
 
 // ---- The contexts that give the type
 
+// Whether the `=` being lowered gives a member in braces its value (`{.v = 5`, `, .v = 5`): the name is no variable.
+static bool smith_lang_enum_designator(SmithLang *lang, const SmithHost *host) {
+    SmithToken name;
+    SmithToken dot;
+    SmithToken open;
+    return smith_lang_previous(lang, host, 1, &name) && name.kind == SmithTokenKind_Identifier &&
+           smith_lang_previous(lang, host, 2, &dot) && smith_lang_punct(&dot, ".") &&
+           smith_lang_previous(lang, host, 3, &open) && (smith_lang_punct(&open, "{") || smith_lang_punct(&open, ","));
+}
+
 // `T x = .v;`, `T x = {.v = ...};` (a declaration: the initializer is C's) and `x = .v;`, `x = {.v = ...};` (an
 // assignment: a compound literal). Called at the `=`. True when the right side was written again.
 static bool smith_lang_enum_equals(SmithLang *lang, const SmithHost *host) {
     const SmithToken *first = smith_lang_peek(lang, host, 0, false);
-    if (!(smith_lang_punct(first, ".") || smith_lang_punct(first, "{"))) return false;
+    bool dotted = smith_lang_punct(first, ".") || smith_lang_punct(first, "{");
+    if (!dotted && (smith_lang_ident(first, "try") || smith_lang_enum_designator(lang, host))) return false;
     static SmithToken right[smith_lang_slice_chain_max];
     size_t count = smith_lang_slice_right(lang, host, 0, right, smith_lang_slice_chain_max);
-    if (!smith_lang_enum_is_bare(right, count) && !smith_lang_enum_is_braced(right, count)) return false;
+    if (count == 0 || (dotted && !smith_lang_enum_is_bare(right, count) && !smith_lang_enum_is_braced(right, count))) {
+        return false;
+    }
     SmithLangEnumType type;
     char text[smith_lang_slice_text_max];
     bool pointer = false;
@@ -303,6 +410,8 @@ static bool smith_lang_enum_equals(SmithLang *lang, const SmithHost *host) {
                                 host->expr_type(host->context, text, (uint32_t)strlen(text), &found) &&
                                 smith_lang_enum_type(host, found.canonical, &type);
     if (!typed) return false;
+    const SmithToken *after = smith_lang_peek(lang, host, count, false);
+    if (!dotted && !smith_lang_punct(after, ";") && !(declares && smith_lang_punct(after, ","))) return false;
     static SmithLangSliceCur converted;
     converted = (SmithLangSliceCur){};
     if (!smith_lang_enum_value(lang, host, &type, right, count, !declares, &converted) || converted.overflow)
@@ -313,10 +422,16 @@ static bool smith_lang_enum_equals(SmithLang *lang, const SmithHost *host) {
 // `return .v;` and `return {.v = ...};`: the type is the function's result.
 static bool smith_lang_enum_return(SmithLang *lang, const SmithHost *host) {
     const SmithToken *first = smith_lang_peek(lang, host, 0, false);
-    if (!(smith_lang_punct(first, ".") || smith_lang_punct(first, "{")) || host->return_type == nullptr) return false;
+    bool dotted = smith_lang_punct(first, ".") || smith_lang_punct(first, "{");
+    if (host->return_type == nullptr || (!dotted && (smith_lang_ident(first, "try") || smith_lang_punct(first, ";")))) {
+        return false;
+    }
     static SmithToken right[smith_lang_slice_chain_max];
     size_t count = smith_lang_slice_right(lang, host, 0, right, smith_lang_slice_chain_max);
-    if (!smith_lang_enum_is_bare(right, count) && !smith_lang_enum_is_braced(right, count)) return false;
+    if (count == 0 || (dotted && !smith_lang_enum_is_bare(right, count) && !smith_lang_enum_is_braced(right, count))) {
+        return false;
+    }
+    if (!dotted && !smith_lang_punct(smith_lang_peek(lang, host, count, false), ";")) return false;
     char returned[256];
     SmithLangEnumType type;
     if (!host->return_type(host->context, returned, sizeof returned) || !smith_lang_enum_type(host, returned, &type)) {
@@ -645,8 +760,8 @@ static bool smith_lang_try_replay_designated(uint32_t at) {
 }
 
 // The words that end a `try`: the return of the failure and the value, as smith_lang_try_close writes them.
-static void smith_lang_try_replay_close(const SmithLangReplay *replay, const char *type, uint32_t id, char *out,
-                                        size_t capacity) {
+static void smith_lang_try_replay_close(const SmithLangReplay *replay, const char *type, uint32_t id, bool wrap,
+                                        char *out, size_t capacity) {
     bool result = strncmp(type, "struct smith_enum_result_", 25) == 0;
     const char *name = type + 7;
     const char *failure = result ? "error" : "none";
@@ -668,10 +783,17 @@ static void smith_lang_try_replay_close(const SmithLangReplay *replay, const cha
     } else {
         snprintf(early, sizeof early, "return ( %s ) { . tag = %s_tag_%s } ;", type, name, failure);
     }
+    char value[400];
+    if (wrap) { // `return try f();` returns the success value as the variant that holds it
+        snprintf(value, sizeof value, "( %s ) { . tag = %s_tag_%s , . %s = smith_try_%u . %s }", type, name, good, good,
+                 id, good);
+    } else {
+        snprintf(value, sizeof value, "smith_try_%u . %s", id, good);
+    }
     snprintf(out, capacity,
              "; %s if ( smith_try_%u . tag == %s_tag_%s ) { %s%s } if ( smith_try_%u . tag != %s_tag_%s ) "
-             "__builtin_unreachable ( ) ; smith_try_%u . %s ; } )",
-             same, id, name, failure, flags, early, id, name, good, id, good);
+             "__builtin_unreachable ( ) ; %s ; } )",
+             same, id, name, failure, flags, early, id, name, good, value);
 }
 
 static void smith_lang_try_replay_larger(SmithLang *lang, const SmithHost *host, uint32_t place) {
@@ -702,6 +824,7 @@ static bool smith_lang_try_replay_try(SmithLang *lang, const SmithHost *host, Sm
     bool value = payload || before == nullptr ? false
                                               : smith_lang_gt_punct(before, "=") ||
                                                     smith_lang_gt_is(before, SmithTokenKind_Identifier, "return");
+    bool wrap = value && smith_lang_gt_is(before, SmithTokenKind_Identifier, "return");
     bool statement = !payload && !value;
     if (statement && before != nullptr) {
         statement = smith_lang_gt_is(before, SmithTokenKind_Identifier, "else") || smith_lang_gt_punct(before, ";") ||
@@ -720,7 +843,7 @@ static bool smith_lang_try_replay_try(SmithLang *lang, const SmithHost *host, Sm
     char head[120];
     snprintf(head, sizeof head, "%s __extension__ ( { __auto_type smith_try_%u =", statement ? "( void )" : "", id);
     char tail[1400];
-    smith_lang_try_replay_close(replay, type.type, id, tail, sizeof tail);
+    smith_lang_try_replay_close(replay, type.type, id, wrap, tail, sizeof tail);
     frame->pos = stop; // the end token goes on after the statement expression
     SmithLangSlicePart parts[] = {{head, 0, 0}, {nullptr, at + 1, stop}, {tail, 0, 0}};
     smith_lang_slice_parts(replay, place, parts, 3);
@@ -1989,7 +2112,6 @@ static bool smith_lang_enum_token(SmithLang *lang, const SmithHost *host, const 
 // `callee`, when that parameter is a payload enum: written as a compound literal. False when it is not one.
 static bool smith_lang_enum_argument(SmithLang *lang, const SmithHost *host, const char *callee, size_t index,
                                      const SmithToken *tokens, size_t count, SmithLangSliceCur *cur) {
-    if (!smith_lang_enum_is_bare(tokens, count) && !smith_lang_enum_is_braced(tokens, count)) return false;
     SmithLangEnumType type;
     return smith_lang_enum_param(host, callee, index, &type) &&
            smith_lang_enum_value(lang, host, &type, tokens, count, true, cur);
