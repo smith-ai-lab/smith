@@ -1133,6 +1133,14 @@ export void test_generic_slice_convert_error(io::Io *io) {
     corpus_case(io, "generic-slice-convert-error");
 }
 
+export void test_generic_slice_init(io::Io *io) {
+    corpus_case(io, "generic-slice-init");
+}
+
+export void test_generic_slice_init_error(io::Io *io) {
+    corpus_case(io, "generic-slice-init-error");
+}
+
 export void test_generic_slice_local(io::Io *io) {
     corpus_case(io, "generic-slice-local");
 }

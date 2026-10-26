@@ -1,0 +1,10 @@
+module main;
+
+import conv;
+
+i32 main() {
+    u8 raw[2] = {1, 2};
+    u8 plain[:] = raw;
+    const u8 read[:] = raw;
+    return (i32)(conv::init(read) + conv::assign(plain, read));
+}

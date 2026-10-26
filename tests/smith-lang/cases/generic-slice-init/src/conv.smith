@@ -1,0 +1,38 @@
+module conv;
+
+// A generic's body converts a slice in an initializer and an assignment as an ordinary function does (issue #135):
+// `const` added, `restrict` added or dropped.
+
+static usize read_sum(const u8 xs[:]) {
+    usize t = 0;
+    for (usize i = 0; i < countof(xs); i++) {
+        t += xs[i];
+    }
+    return t;
+}
+
+export usize init_const(auto xs) {
+    const u8 v[:] = xs;
+    return read_sum(v);
+}
+
+export usize init_restrict(auto xs) {
+    u8 v[restrict :] = xs;
+    return countof(v);
+}
+
+export usize init_unrestrict(auto xs) {
+    u8 v[:] = xs;
+    return countof(v);
+}
+
+export usize assign_const(auto xs, auto ys) {
+    xs = ys;
+    return read_sum(xs);
+}
+
+export usize assign_local(auto xs, auto ys) {
+    u8 v[:] = xs;
+    v = ys;
+    return countof(v) + v[0];
+}
