@@ -203,6 +203,29 @@ export void test_lint_with_no_arguments_lints_the_smith_sources_a_build_compiles
             &p, "grep -h 'main.smith:2:9' verb.out verb.err | head -n 1 | sed 's|^.*/main.smith|main.smith|'"));
 }
 
+// A .smith source the build never compiles is linted too (with the command of the nearest compile), one that
+// `.clang-format-ignore` names is not, and the line says how many files were linted (main.smith, build.c, unbuilt).
+export void test_lint_with_no_arguments_lints_the_smith_sources_the_build_does_not_compile(io::Io *io) {
+    scratch::Project p = scratch::project(io, "r", "lint_verb");
+    scratch::Run prepared_run = scratch::sh(
+        &p, "cp \"$SMITH_REPO/templates/defaults/clang-tidy\" .clang-tidy; git init -q . && "
+            "printf 'int Bad_Unbuilt = 0;\\n' >unbuilt.smith; printf 'int Bad_Ignored = 0;\\n' >ignored.smith; "
+            "printf 'ignored.smith\\n' >.clang-format-ignore; sed -i.bak 's/BadLocal/good_local/' main.smith; "
+            "rm main.smith.bak; git add -A");
+    scratch::expect_status("the project is prepared", 0, &prepared_run);
+    scratch::Run run = scratch::sh(&p, "smith lint >gate.out 2>gate.err");
+    scratch::expect_status("a finding in a .smith file the build does not compile fails smith lint", 1, &run);
+    scratch::expect_text("... it is reported at the source", "1",
+                         scratch::capture(&p,
+                                          "cat gate.out gate.err .smith/log/lint.log | "
+                                          "grep \"unbuilt.smith:1:.*'Bad_Unbuilt'\" | sed 's|^.*/unbuilt|unbuilt|' | "
+                                          "sort -u | grep -c ."));
+    scratch::expect_text("... a file the ignore list names is left alone", "0",
+                         scratch::capture(&p, "cat gate.out gate.err .smith/log/lint.log | grep -c ignored.smith"));
+    scratch::expect_text("... and the number of files linted is printed", "1",
+                         scratch::capture(&p, "cat .smith/log/lint.log | grep -c 'smith lint: linted 3 files'"));
+}
+
 // --- a call to a generic: the instance is judged as the generic's name, not `push_array<f64>` ----------------------
 
 export void test_lint_a_module_that_calls_a_generic_lints_clean(io::Io *io) {

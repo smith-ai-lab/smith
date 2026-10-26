@@ -18,6 +18,13 @@ passed as `--style=file:` and `--config-file=` (`smith_defaults_apply`, smith.c)
 whole and an explicit `--style`, `--config` or `--config-file` wins. `--dump-config` is the tool's, so it prints the
 effective one and makes it the project's (`smith fmt --dump-config > .clang-format`). `smith cc` is untouched.
 
+**Project `smith lint` is a gate over every `.smith` source** (issue #424, `smith_lint_project`, runtime/verbs.c): the
+build's compiles (with their own command from `.smith/compile_commands.json`) and every other `.smith` file git sees
+that `.clang-format-ignore` does not name (the one list of test inputs, generated and copied files; clang-tidy reads the
+nearest compile's command for it). A finding fails it, the last line is `smith lint: linted N files` (`smith check`:
+`lint ok: N files`), and a project with `.smith` sources that lints none fails. A stage0, whose clang cannot read
+`.smith`, leaves them out and says so.
+
 **The editor finds `.smith/compile_commands.json`:** `smith lsp` adds clangd's `--compile-commands-dir` for it when
 the project has no root or `build/` one. **The editor has smith's defaults too** (`patches/smith-editor-defaults.patch`):
 `smith lsp` sets clangd's default fallback style to `file:<smith's .clang-format>` (a fallback style may now be

@@ -9,6 +9,7 @@
 //   check  fmt, docs, lint, test and prove, each reported, the exit status 1 if any failed
 // What a verb needs from build.c it reads from .smith/build.info, which every run of build.c writes
 // (knowledge/verbs.md). Included by smith.c.
+#include <fnmatch.h>
 #include <ftw.h>
 constexpr size_t smith_verb_args_max = 16384;
 constexpr size_t smith_verbs_files_max = 16384;
@@ -434,10 +435,60 @@ static size_t smith_verbs_jobs(void) {
     return (size_t)cores > smith_verbs_jobs_max ? smith_verbs_jobs_max : (size_t)cores;
 }
 
+// True when `.clang-format-ignore` names the file (the one list of files that are test inputs, generated or copied, as
+// smith fmt reads it: a pattern per line, `#` comments, matched against the path from the project's root).
+static bool smith_lint_ignored(const char *name) {
+    static char text[1U << 16];
+    static bool read;
+    static size_t size;
+    if (!read) {
+        read = true;
+        FILE *file = fopen(".clang-format-ignore", "r");
+        size = file != nullptr ? fread(text, 1, sizeof text - 1, file) : 0;
+        if (file != nullptr) fclose(file);
+        text[size] = '\0';
+    }
+    for (size_t at = 0; at < size;) { // bounded by the text
+        size_t length = strcspn(text + at, "\n");
+        char pattern[PATH_MAX];
+        if (text[at] != '#' && length > 0 && length < sizeof pattern) {
+            memcpy(pattern, text + at, length);
+            pattern[length] = '\0';
+            if (fnmatch(pattern, name, 0) == 0) return true;
+        }
+        at += length + 1;
+    }
+    return false;
+}
+
+// The .smith sources git sees that the build does not compile (a library the build only declares, a script, a template)
+// and `.clang-format-ignore` does not name: appended to `files`, which clang-tidy reads with the nearest compile of the
+// database. `sources` counts every .smith source git sees. Returns the new count.
+static size_t smith_lint_unbuilt(const char **files, size_t count, size_t *sources) {
+    size_t listed = 0;
+    if (!smith_fmt_list(&listed)) return count;
+    size_t built = count;
+    for (size_t i = 0; i < listed; i++) { // bounded by the files git sees
+        const char *name = smith_fmt_files[i];
+        if (!smith_ends_with(name, ".smith") || smith_lint_ignored(name)) continue;
+        *sources += 1;
+        bool known = false;
+        for (size_t j = 0; j < built && !known; j++) // bounded by the compiles
+            known = strcmp(files[j], name) == 0;
+        if (known) continue;
+        if (count >= smith_verbs_files_max) smith_die(smith_exit_usage, "too many files to lint", nullptr);
+        files[count++] = name;
+    }
+    return count;
+}
+
 // `smith lint` with no arguments: builds what the project's compiles read (the generated headers), then runs clang-tidy
 // on each of its own C-family sources, side by side, with the flags of the compile (.smith/compile_commands.json). A
-// `.smith` source is linted as written (shim/tidy.cpp) by a smith whose clang has the token hook; the others (the
-// stage0) leave them out and say so once, as `smith cc` refuses them.
+// `.smith` source is linted as written (shim/tidy.cpp) by a smith whose clang has the token hook, the way `smith lint
+// x.smith -- <flags>` does: those the build compiles with their own command, the others git sees (and
+// `.clang-format-ignore` does not name) with the command of the nearest compile. The others (the stage0) leave them out
+// and say so once, as `smith cc` refuses them. The last line says how many files were linted, and a project with
+// `.smith` sources that lints none is an error.
 static int smith_lint_project(int count, char **args, const char *self) {
     int quiet = smith_quiet_verb("lint", count, args, self, false);
     if (quiet >= 0) return quiet;
@@ -446,24 +497,30 @@ static int smith_lint_project(int count, char **args, const char *self) {
     int status = smith_verb_build(self, split, targets, false);
     if (status != 0) return status;
     const SmithInfo *info = smith_info_read("smith lint");
-    static const char *files[smith_verbs_lines_max + 1];
+    static const char *files[smith_verbs_files_max + 1];
     size_t files_count = 0;
     size_t skipped = 0;
+    size_t smith_sources = 0;
     for (size_t i = 0; i < info->compile_count; i++) {
-#ifndef SMITH_HOOK // the condition under which smith_route_clang refuses a .smith input
         if (smith_ends_with(info->compiles[i], ".smith")) {
+            smith_sources += 1;
+#ifndef SMITH_HOOK // the condition under which smith_route_clang refuses a .smith input
             skipped += 1;
             continue;
-        }
 #endif
+        }
         files[files_count++] = info->compiles[i];
     }
+#ifdef SMITH_HOOK
+    files_count = smith_lint_unbuilt(files, files_count, &smith_sources);
+#endif
     if (skipped > 0) {
         fprintf(stderr, "smith lint: %zu .smith source(s) left out: this smith's clang has no token hook\n", skipped);
     }
     if (files_count == 0) {
         fprintf(stderr, "smith lint: the build compiles no C or C++ source of the project's own\n");
-        return 0;
+        fprintf(stderr, "smith lint: linted 0 files\n");
+        return smith_sources > skipped ? 1 : 0; // .smith sources and nothing linted: the gate is empty
     }
     smith_lint_argv[0] = (char *)self;
     smith_lint_argv[1] = (char *)"lint";
@@ -473,6 +530,7 @@ static int smith_lint_project(int count, char **args, const char *self) {
     smith_lint_argv[6] = nullptr;
     size_t failed = smith_verbs_parallel(files_count, smith_verbs_jobs(), smith_lint_job, (void *)files);
     if (failed > 0) fprintf(stderr, "smith lint: clang-tidy failed on %zu of %zu files\n", failed, files_count);
+    fprintf(stderr, "smith lint: linted %zu files\n", files_count);
     return failed > 0 ? 1 : 0;
 }
 

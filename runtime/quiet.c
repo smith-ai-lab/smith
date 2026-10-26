@@ -159,6 +159,8 @@ static void smith_quiet_detail(const char *verb, const char *text, size_t size, 
     size_t sum[3] = {};
     size_t tasks = 0;
     bool seen = false;
+    bool lint = strcmp(verb, "lint") == 0;
+    size_t linted = 0;
     for (size_t at = 0; at < size; at += smith_quiet_line_length(text, size, at) + 1) { // bounded by the text
         const char *line = text + at;
         size_t one = 0, two = 0, three = 0;
@@ -172,6 +174,11 @@ static void smith_quiet_detail(const char *verb, const char *text, size_t size, 
             sum[1] += two;
             sum[2] += three;
             seen = true;
+        } else if (lint) { // "smith lint: linted N files"
+            if (strncmp(line, "smith lint: linted ", 19) == 0) {
+                line += 19;
+                if (smith_quiet_field(&line, &linted, " files")) seen = true;
+            }
         } else if (!prove && strncmp(line, "smith test: ", 12) == 0) {
             line += 12;
             if (smith_quiet_field(&line, &tasks, " tasks")) seen = true;
@@ -187,7 +194,9 @@ static void smith_quiet_detail(const char *verb, const char *text, size_t size, 
     }
     if (covers) snprintf(coverage, coverage_capacity, "%zu of %zu functions", covered[0], covered[1]);
     if (!seen) return;
-    if (prove) {
+    if (lint) {
+        snprintf(out, capacity, "%zu files", linted);
+    } else if (prove) {
         snprintf(out, capacity, "%zu proved, %zu failed, %zu trusted", sum[0], sum[1], sum[2]);
     } else if (tasks > 0) {
         snprintf(out, capacity, "%zu tasks, %zu passed", tasks, sum[0]);
