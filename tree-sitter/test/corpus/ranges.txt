@@ -1,0 +1,67 @@
+================================================================================
+range for, with and without the index, and for constexpr over a list
+================================================================================
+
+int total(const int xs[:]) {
+    for (i32 x : xs) { }
+    for (usize i, auto *p : xs[1:2]) { }
+    for constexpr (auto f : fields(T)) { }
+    for constexpr (usize i, auto x : rest) { }
+    return 0;
+}
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (function_definition
+    (primitive_type)
+    (function_declarator
+      (identifier)
+      (parameter_list
+        (parameter_declaration
+          (type_qualifier)
+          (primitive_type)
+          (array_declarator
+            (identifier)))))
+    (compound_statement
+      (for_statement
+        (range_head
+          (range_variable
+            (primitive_type)
+            (identifier))
+          (identifier))
+        (compound_statement))
+      (for_statement
+        (range_head
+          (range_variable
+            (primitive_type)
+            (identifier))
+          (range_variable
+            (pointer_declarator
+              (identifier)))
+          (subscript_expression
+            (identifier)
+            (slice_range
+              (number_literal)
+              (number_literal))))
+        (compound_statement))
+      (for_statement
+        (range_head
+          (range_variable
+            (identifier))
+          (call_expression
+            (identifier)
+            (argument_list
+              (identifier))))
+        (compound_statement))
+      (for_statement
+        (range_head
+          (range_variable
+            (primitive_type)
+            (identifier))
+          (range_variable
+            (identifier))
+          (identifier))
+        (compound_statement))
+      (return_statement
+        (number_literal)))))
