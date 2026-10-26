@@ -395,12 +395,14 @@ static size_t test_resident(void) {
 static size_t test_resident(void) {
     FILE *file = fopen("/proc/self/statm", "r");
     assert(file != nullptr);
-    size_t size = 0;
-    size_t pages = 0;
-    int read = fscanf(file, "%zu %zu", &size, &pages);
-    assert(read == 2);
-    (void)read;
+    char text[128];
+    size_t count = fread(text, 1, sizeof text - 1, file);
     fclose(file);
+    text[count] = '\0';
+    char *end = nullptr;
+    (void)strtoull(text, &end, 10);                 // the size
+    size_t pages = (size_t)strtoull(end, &end, 10); // the resident pages
+    assert(end != text);
     return pages * (size_t)sysconf(_SC_PAGESIZE);
 }
 #endif
