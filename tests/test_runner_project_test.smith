@@ -344,6 +344,29 @@ export void test_runner_project_an_io_test_gets_a_real_io_with_a_scratch_folder_
     }
 }
 
+// The runner's pid and an io test's row name its scratch folder; a folder that a run before it left under the same name
+// (a failed test keeps its folder, and a pid comes round again) must not be the test's: the test gets a fresh one.
+export void test_runner_project_an_io_test_never_reuses_a_scratch_folder_a_run_before_left(io::Io *io) {
+    scratch::Project p = io_project(io);
+    for (usize mode = 0; mode < 2; mode++) {
+        const char *iso = runner::flag(mode);
+        // `exec` keeps the shell's pid, so $$ is the pid the runner names its folders with.
+        const char *command = format::push(&io->arena,
+                                           "T=\"$PWD/stale\"; mkdir -p \"$T\"; n=0; while [ $n -lt 64 ]; do "
+                                           "mkdir -p \"$T/smith-test-$$-$n\"; : >\"$T/smith-test-$$-$n/stray\"; "
+                                           "n=$((n+1)); done; "
+                                           "TMPDIR=\"$T\" SMITH_TEST_PROBE=\"$PWD/probe\" exec build/tests ",
+                                           iso, " --test io_real 2>&1")
+                                  .data;
+        scratch::Run run = scratch::sh(&p, command);
+        runner::expect_has(io, iso, "io tests: the run passes", &run, "1 passed, 0 failed");
+        // The folder the test used is removed after its pass, so one it reused would be gone: all 64 are still there.
+        scratch::expect_text(runner::label(io, iso, "io tests: ... a scratch folder a run before left is not reused"),
+                             "64", scratch::capture(&p, "ls stale | wc -l | tr -d ' '"));
+        (void)scratch::sh(&p, "rm -rf stale");
+    }
+}
+
 export void test_runner_project_the_working_directory_of_an_io_test_is_the_project_root(io::Io *io) {
     scratch::Project p = io_project(io);
     const char *here = scratch::capture(&p, "pwd -P");
