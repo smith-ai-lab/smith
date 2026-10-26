@@ -16,7 +16,7 @@ A C toolchain and a modern standard library for C, written in C. Each fact has o
 - Contracts are calls read by `smith prove` (Alive2, Bitwuzla, Z3), not a clang plugin and not `-fbounds-safety`; the boundary is `smith_trusted()` and there is no list. [contracts](knowledge/contracts.md), [prover](knowledge/prover.md)
 - Checks run in every build; only a proof removes one (owner, 2026-10-25). [contracts](knowledge/contracts.md)
 - A proof is fast or it is written wrong, and fast is CPU time (about 10 s on 8 idle cores). [proof-budget](knowledge/proof-budget.md)
-- `smith build`, `check` and `test` take a slot of a host-wide counter (cores / 4, `SMITH_SLOTS`) before heavy work; CI (`SMITH_PRIORITY=ci`) goes first, and a smith run by a smith takes none. [slots](knowledge/slots.md)
+- `smith build`, `check` and `test` take a slot of a host-wide counter (cores / 4, `SMITH_SLOTS`) at their first heavy step; CI (`SMITH_PRIORITY=ci`) goes first, and a smith run by a smith takes none. [slots](knowledge/slots.md)
 - Enzyme is linked into smith's lld; an autodiff program links with full LTO, and debug has ASan and no UBSan. [autodiff](knowledge/autodiff.md)
 
 **Adoption and the verbs**

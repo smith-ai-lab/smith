@@ -76,3 +76,17 @@ export void test_zero_slots_means_no_limit(io::Io *io) {
                                      "touch free; wait $a");
     scratch::expect_text("no limit, no wait", "ran\n", out);
 }
+
+// The slot is taken at the first real step, not on entry: a build with work waits while the slot is held, and the same
+// build once it is up to date (no step to run) finishes at once under the same held slot.
+export void test_a_build_takes_its_slot_at_the_first_step_and_an_up_to_date_one_takes_none(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "conv_plain");
+    const char *script = "smith --smith-slots sh -c \"$hold\" & a=$!; w held; "
+                         "smith build 2>b.err >/dev/null & b=$!; "
+                         "ww b.err 'waiting for a slot'; touch free; wait $a $b; "
+                         "rm free held; smith --smith-slots sh -c \"$hold\" & a=$!; w held; "
+                         "smith build 2>c.err >/dev/null; echo \"status $?\"; "
+                         "grep -c 'waiting for a slot' c.err; touch free; wait $a";
+    scratch::Run run = scratch::sh(&p, format::push(&io->arena, prelude, script).data);
+    scratch::expect_text("the first build waits, the second does not", "status 0\n0\n", run.out);
+}

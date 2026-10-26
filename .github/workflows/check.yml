@@ -160,6 +160,8 @@ jobs:
     concurrency:
       group: main-install
       cancel-in-progress: false
+    env:
+      SMITH_PRIORITY: ci # it is CI's work: it gets the next host-wide slot before any local job (knowledge/slots.md)
     steps:
       - uses: actions/checkout@v4
       - name: Is this still the head of main

@@ -6,7 +6,7 @@ tags: [ci, process, machine-load]
 ---
 # Slots limit heavy jobs on a host
 
-Many lanes and two CI runners share one Mac, and its load reached 100 to 170 (#360): CI jobs queued and test limits ran out. So `smith build`, `smith check` and `smith test` (the verbs that start heavy work; `runtime/slots.c`) take a **slot** before they start.
+Many lanes and two CI runners share one Mac, and its load reached 100 to 170 (#360): CI jobs queued and test limits ran out. So `smith build`, `smith check` and `smith test` (the verbs that start heavy work) take a **slot** when the executor starts its first real step (a compile, a link, a test; `runtime/slots.c`). A build that is up to date, or whose steps are only functions of build.c (`friction`, `ci-times`), never waits. The slot is taken by the smith that runs the executor and held until it ends; `smith check` and `smith test` run `smith build` children, which take theirs.
 
 **The counter.** A slot is one of the files `slot-0 ... slot-(n-1)` in a folder of the host (`$SMITH_SLOTS_DIR`, else `/tmp/smith-slots-<uid>`; not `$TMPDIR`, which differs between a shell and a launchd service) with an `flock` held by the process; the file holds "pid verb in folder". There is no daemon and no pid file: the OS drops the lock when the process ends, however it ends (`kill -9` included), so a lock is never stale. The default is cores / 4 slots (at least 1); `SMITH_SLOTS=n` sets it, and `SMITH_SLOTS=0` turns the limit off. A job that waits prints `smith: waiting for a slot (n jobs running: <who>)` to stderr, again every 30 s, and polls every 200 ms. After 4 hours it runs without a slot and says so.
 
