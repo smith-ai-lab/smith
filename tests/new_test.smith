@@ -112,6 +112,9 @@ export void test_new_hello_a_smith_project_is_written_and_committed(io::Io *io) 
         "new hello: no placeholder is left", "",
         scratch::capture(
             &p, "grep -rF -e '@NAME@' -e '@KEBAB@' hello --exclude-dir=.git --exclude-dir=build --exclude-dir=.smith"));
+    scratch::expect_text(
+        "new hello: the .smith template has no C or header file beside it, which an import would read", "",
+        scratch::capture(&p, "ls \"$SMITH_REPO\"/templates/new/*.c \"$SMITH_REPO\"/templates/new/*.h 2>/dev/null"));
     scratch::expect_text("new hello: .gitignore is the template",
                          scratch::capture(&p, "cat \"$SMITH_REPO/templates/new/gitignore\""),
                          scratch::read(&p, "hello/.gitignore"));

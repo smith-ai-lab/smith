@@ -2085,16 +2085,16 @@ static constexpr unsigned char smith_new_primes_test_smith[] = {
 #embed "templates/new/primes_test.smith"
 };
 static constexpr unsigned char smith_new_main_c[] = {
-#embed "templates/new/main.c"
+#embed "templates/new-c/main.c"
 };
 static constexpr unsigned char smith_new_primes_h[] = {
-#embed "templates/new/primes.h"
+#embed "templates/new-c/primes.h"
 };
 static constexpr unsigned char smith_new_primes_c[] = {
-#embed "templates/new/primes.c"
+#embed "templates/new-c/primes.c"
 };
 static constexpr unsigned char smith_new_primes_test_c[] = {
-#embed "templates/new/primes_test.c"
+#embed "templates/new-c/primes_test.c"
 };
 static constexpr unsigned char smith_new_gitignore[] = {
 #embed "templates/new/gitignore"

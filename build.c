@@ -582,7 +582,7 @@ static const char *const build_smith_inputs[] = {
     "lib/http.c",
     "include/smith/test.h",
     "lib/smith/test.smith",
-    "templates/new/main.c",
+    "templates/new-c/main.c",
     "templates/new/gitignore",
     "templates/defaults/clang-format",
     "templates/defaults/clang-tidy",
@@ -736,6 +736,38 @@ static const char *const *build_test_modules(SmithBuild *b, const BuildConfig *c
     return needs;
 }
 
+// The template of `smith new` (templates/new/*.smith) is a program of its own whose modules import one another, so each
+// one's header is written for lint, into a folder of its own (`main`, `primes` and `primes_test` are names a test may
+// use), and each is declared with the flags that read it: without them an importer lowers the template's `primes` with
+// no header and names a capability by its prefixed C name. Returns the headers, which lint builds first.
+static const char *const *build_template_modules(SmithBuild *b, const BuildConfig *config, const char *folder,
+                                                 const char *const *needs) {
+    const char *smith_cc = smith_fmt(b, "%s/smith-cc", folder);
+    const char *const *flags = build_smith_flags(b, config);
+    const char *const *modules = smith_glob(b, smith_list(b, "templates/new/*.smith", nullptr));
+    for (size_t i = 0; modules[i] != nullptr; i++) {
+        const char *name = smith_replace_extension(b, modules[i] + strlen("templates/new/"), "");
+        const char *header = smith_fmt(b, ".smith/template-new/%s.h", name);
+        SmithStep write = {
+            .command = smith_cat(b, smith_list(b, smith_cc, "--smith-header", modules[i], "-o", header, nullptr), flags,
+                                 smith_list(b, "-I", ".smith/template-new", nullptr), nullptr),
+            .inputs = smith_list(b, modules[i], nullptr),
+            .implicit_inputs = smith_list(b, smith_cc, nullptr),
+            .outputs = smith_list(b, header, nullptr),
+            .description = smith_fmt(b, "header %s", modules[i]),
+            .restat = true,
+        };
+        smith_step(b, &write);
+        smith_compile_command(
+            b, smith_cc, modules[i],
+            smith_cat(b, flags,
+                      smith_list(b, "-I", ".smith/template-new", "-I", ".smith/include", "-fdefer-ts", nullptr),
+                      nullptr));
+        needs = smith_cat(b, needs, write.outputs, nullptr);
+    }
+    return needs;
+}
+
 // The other two C files are not part of the program, but compiling them in a plain build checks that they build, and
 // gives the editor their flags in compile_commands.json. They take the flags lint gives them: the runtime reads
 // <smith/build.h>, and the stub is each stub compiler's source, named by -DNAME.
@@ -761,7 +793,7 @@ static void build_other_objects(SmithBuild *b, const BuildConfig *config, const 
 
 // Sources the build never compiles on their own, which `smith lint` (and the editor) still read with the flags the
 // scripts give them: the libraries and their tests. tests/stub.c is built (build_other_objects) with its -D.
-static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config, const char *folder) {
+static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
     const char *const *flags = smith_cat(b, config->cflags, smith_list(b, "-I", "include", nullptr), nullptr);
     const char *const *sources = smith_glob(b, smith_list(b, "lib/*.c", "tests/*.c", "scripts/defer_init.c", nullptr));
     for (size_t i = 0; sources[i] != nullptr; i++) {
@@ -2076,8 +2108,9 @@ void build(SmithBuild *b) {
         smith_when(b, werror[0] != '\0', (const char *[]){werror, nullptr}), nullptr);
 
     SmithStep smith = build_programs(b, &config, folder);
-    build_other_objects(b, &config, folder, build_test_modules(b, &config, folder));
-    build_unbuilt_sources(b, &config, folder);
+    build_other_objects(b, &config, folder,
+                        build_template_modules(b, &config, folder, build_test_modules(b, &config, folder)));
+    build_unbuilt_sources(b, &config);
     build_protocol(b, &config, folder);
     config.binary = smith.outputs[0];
     build_headers(b, &config);
