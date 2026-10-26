@@ -5,7 +5,7 @@ description: "Using smith::io from C (#include <smith/io.h>): the C names (Smith
 
 # smith::io from C
 
-Everything a program does to the world outside it is a value you hold and pass on. It runs on macOS, on kqueue; operations complete in `io::Op`s the caller owns.
+Everything a program does to the world outside it is a value you hold and pass on. It runs on macOS (kqueue) and Linux (epoll); operations complete in `io::Op`s the caller owns.
 
 ## Module names and C names
 

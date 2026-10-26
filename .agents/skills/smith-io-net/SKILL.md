@@ -1,11 +1,11 @@
 ---
 name: smith-io-net
-description: "The network in smith::io: io::net_connect, TLS connections, io::Connection and its reads and writes, on Network.framework. Load when opening a TLS or TCP connection with io::net_connect."
+description: "The network in smith::io: io::net_connect, TLS connections, io::Connection and its reads and writes, on Network.framework (macOS) or OpenSSL (Linux). Load when opening a TLS or TCP connection with io::net_connect."
 ---
 
 # The network
 
-`io.net` makes TLS connections with the platform's stack (Network.framework, loaded with `dlopen` on the first connection, so a program that never connects pays nothing at start). An `io::Connection` is a struct you own and keep in place until its close is done. Everything is an op, with a blocking form:
+`io.net` makes TLS connections with the platform's stack (Network.framework on macOS, OpenSSL's `libssl.so.3` on Linux, each loaded with `dlopen` on the first connection, so a program that never connects pays nothing at start and a Linux machine without OpenSSL runs everything else). An `io::Connection` is a struct you own and keep in place until its close is done. Everything is an op, with a blocking form:
 
 ```smith
 import smith::io;

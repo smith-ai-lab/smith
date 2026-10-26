@@ -5,7 +5,7 @@ description: "Using smith::io (import smith::io; io::Io, io::make, i32 main(io::
 
 # One io in main: smith's io
 
-Everything a program does to the world outside it is a value you hold and pass on. It runs on macOS, on kqueue; operations complete in `io::Op`s the caller owns.
+Everything a program does to the world outside it is a value you hold and pass on. It runs on macOS (kqueue) and Linux (epoll); operations complete in `io::Op`s the caller owns.
 
 **io is the module `smith::io`** (`lib/smith/io.smith`): `import smith::io;`, then `io::Io`, `io::make`, `io::console_printf`, as the arena is `arena::Arena` (`import smith::arena;`) and the key `random::Key`. Its C API is the generated header `.smith/include/smith/io.h` (read it for the exact declarations); C includes it and uses the C names, which are the module's with a prefix, under "From C". The prose below names everything by its module name. The io library compiles with a smith that has clang inside, as the other libraries do.
 
@@ -50,7 +50,7 @@ The rest of this skill writes `io.` for a value and `io->` where the io is a poi
 | `io.files` | the file system: any path the program is given, absolute or relative |
 | `io.clock` | monotonic and wall time |
 | `io.processes` | spawn, wait, run and capture |
-| `io.net` | TLS connections (Network.framework) |
+| `io.net` | TLS connections (Network.framework on macOS, OpenSSL on Linux) |
 | `io.args` | `count`, `values` and the environment (`io::args_env`) |
 
 There are no options.
