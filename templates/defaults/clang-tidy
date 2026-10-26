@@ -28,6 +28,7 @@
 #   smith-c23: nullptr, bool, {} and [[noreturn]], never NULL, _Bool, <stdbool.h>, {0} or __attribute__((noreturn)).
 #   smith-constexpr: a file-scope const object with a constant initializer is constexpr.
 #   smith-module: a .smith file starts with its module line (module primes_test;), written from its path; tests/ is its own root.
+#   smith-unsafe: in a module, no setjmp or longjmp (they skip defer), no array parameter (take a slice) and no run-time-sized stack array or alloca (use an arena).
 # smith-sized-types, smith-module and smith-module-library read .smith files only; the others read .smith and C. Delete one from Checks to
 # opt out, or write // NOLINT(smith-c23) on a line.
 #
@@ -51,7 +52,8 @@ Checks: >
   smith-module,
   smith-module-library,
   smith-preprocessor,
-  smith-sized-types
+  smith-sized-types,
+  smith-unsafe
 WarningsAsErrors: '*'
 # Diagnostics come from the project's own files, never from system headers.
 HeaderFilterRegex: '.*'
