@@ -1213,6 +1213,10 @@ export void test_inline_if_constexpr_memory(io::Io *io) {
     corpus_case(io, "inline-if-constexpr-memory");
 }
 
+export void test_keyword_after_comment(io::Io *io) {
+    corpus_case(io, "keyword-after-comment");
+}
+
 export void test_keyword_names_fine(io::Io *io) {
     corpus_case(io, "keyword-names-fine");
 }

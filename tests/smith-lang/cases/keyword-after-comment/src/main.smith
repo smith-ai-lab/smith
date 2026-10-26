@@ -1,0 +1,20 @@
+module main;
+
+import <stdio.h>;
+import a;
+
+// A statement that begins with a keyword on the line after a trailing comment is a statement, even in a module that
+// imports an exported `option` type.
+
+static i32 pick(i32 x) {
+    i32 y = x; // the comment
+    if (y == 2) return 1;
+    while (y > 5) y -= 1; /* a block comment */
+    for (;;) break;
+    return a::pass(y);
+}
+
+i32 main(void) {
+    c::printf("%d %d\n", pick(2), pick(9));
+    return 0;
+}

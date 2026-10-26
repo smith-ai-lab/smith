@@ -1263,6 +1263,40 @@ static bool smith_lang_aggregate_before(const char *text, size_t end) {
     return false;
 }
 
+// The offset just after the last character of code before `start`: spaces and comments (a trailing `//` comment on a
+// line before, a `/* */` block) are not code, so a keyword that begins a line after a comment is read as a statement.
+static size_t smith_lang_code_before(const char *text, size_t start) {
+    size_t before = start;
+    while (before > 0) { // bounded by the text
+        char c = text[before - 1];
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+            before -= 1;
+            continue;
+        }
+        if (c == '/' && before >= 2 && text[before - 2] == '*') { // the end of a block comment
+            size_t at = before - 2;
+            while (at >= 2 && !(text[at - 2] == '/' && text[at - 1] == '*'))
+                at -= 1;
+            if (at < 2) return before;
+            before = at - 2;
+            continue;
+        }
+        size_t line = before; // the start of this line, then a `//` in it
+        while (line > 0 && text[line - 1] != '\n')
+            line -= 1;
+        size_t comment = before;
+        for (size_t at = line; at + 1 < before; at++) { // bounded by the line
+            if (text[at] == '/' && text[at + 1] == '/') {
+                comment = at;
+                break;
+            }
+        }
+        if (comment == before) return before;
+        before = comment;
+    }
+    return before;
+}
+
 // What the keyword at text[start, end) is being used to name, read from the text around it: a function, variable,
 // parameter, field or type (null: it is not being used as a name). The statement before it is scanned back to its
 // start or to the `{` that encloses it, a bounded distance.
@@ -1271,9 +1305,7 @@ const char *smith_lang_keyword_name_use(const char *text, size_t size, size_t st
     char next = smith_lang_next_char(text, size, end);
     // A name is declared after a type, a qualifier or a `*`: after `)`, `,`, `(` or an operator the keyword is the
     // keyword (`(u32)sizeof(x)`, `typeof(x) y` after a parameter).
-    size_t before = start;
-    while (before > 0 && (text[before - 1] == ' ' || text[before - 1] == '\t' || text[before - 1] == '\n'))
-        before -= 1;
+    size_t before = smith_lang_code_before(text, start);
     if (before > 0 && !smith_lang_name_char(text[before - 1]) && text[before - 1] != '*') return nullptr;
     bool parameters = false;
     bool aggregate = false;
