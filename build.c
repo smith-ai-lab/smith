@@ -1921,22 +1921,24 @@ static int build_docs_gate_test(SmithRun *run) {
 
 // `smith build ci-times [-Dn=10] [-Devent=push]` (issue #360): where CI's time goes. The last n green runs of the check
 // workflow (a push to main, or -Devent=pull_request) are downloaded with `gh` into .smith/ci-times/<run id> (kept, so a
-// run is fetched once): the job's steps in seconds (steps.tsv) and the `check-log` artifact. scripts/ci_times.c, compiled
-// here, prints the report. A run that skipped its check (its tree was checked already) has no log and is counted.
+// run is fetched once): the job's steps in seconds (steps.tsv) and the `check-log` artifact. scripts/ci_times.c,
+// compiled here, prints the report. A run that skipped its check (its tree was checked already) has no log and is
+// counted.
 static int build_ci_times_fetch(SmithBuild *b, const char *id, const char *folder) {
     const char *steps = smith_fmt(b, "%s/steps.tsv", folder);
     if (access(steps, R_OK) == 0) return 0;
     if (build_make_folder(b, folder) != 0) return 1;
-    const char *jq = "(.jobs[] | select(.name == \"check\")) | ((.started_at | fromdate) - (.created_at | fromdate) | "
-                     "\"queued\\t\\(.)\"), (\"job\\t\\((.completed_at | fromdate) - (.started_at | fromdate))\"), (.steps[] | "
-                     "select(.started_at != null and .completed_at != null) | \"\\(.name)\\t\\((.completed_at | fromdate) - "
-                     "(.started_at | fromdate))\")";
-    int status = build_spawn(&(BuildSpawn){
-        .argv = smith_list(b, "gh", "api", smith_fmt(b, "repos/{owner}/{repo}/actions/runs/%s/jobs", id), "--jq", jq,
-                           nullptr),
-        .log = steps,
-        .stdout_only = true,
-        .tail = 5});
+    const char *jq =
+        "(.jobs[] | select(.name == \"check\")) | ((.started_at | fromdate) - (.created_at | fromdate) | "
+        "\"queued\\t\\(.)\"), (\"job\\t\\((.completed_at | fromdate) - (.started_at | fromdate))\"), (.steps[] | "
+        "select(.started_at != null and .completed_at != null) | \"\\(.name)\\t\\((.completed_at | fromdate) - "
+        "(.started_at | fromdate))\")";
+    int status = build_spawn(
+        &(BuildSpawn){.argv = smith_list(b, "gh", "api", smith_fmt(b, "repos/{owner}/{repo}/actions/runs/%s/jobs", id),
+                                         "--jq", jq, nullptr),
+                      .log = steps,
+                      .stdout_only = true,
+                      .tail = 5});
     // A run whose artifact expired or was never made (a skipped check) has no log: that is counted, not an error.
     (void)build_spawn(&(BuildSpawn){.argv = smith_list(b, "gh", "run", "download", id, "-n", "check-log", "-D",
                                                        smith_fmt(b, "%s/", folder), nullptr),
@@ -1950,17 +1952,17 @@ static int build_ci_times(SmithRun *run) {
     const char *event = run->args[1];
     const char *list = smith_fmt(b, "%s/runs.txt", root);
     if (build_make_folder(b, root) != 0) return 1;
-    const char *const *query = smith_list(b, "gh", "run", "list", "--workflow", "check.yml", "--event", event,
-                                          "--status", "success", "--limit", run->args[0], "--json", "databaseId",
-                                          "--jq", ".[].databaseId", nullptr);
+    const char *const *query =
+        smith_list(b, "gh", "run", "list", "--workflow", "check.yml", "--event", event, "--status", "success",
+                   "--limit", run->args[0], "--json", "databaseId", "--jq", ".[].databaseId", nullptr);
     if (strcmp(event, "push") == 0) query = smith_cat(b, query, smith_list(b, "--branch", "main", nullptr), nullptr);
     int status = build_spawn(&(BuildSpawn){.argv = query, .log = list, .stdout_only = true, .tail = 5});
-    const char *const *ids = smith_lines(b, list);
+    const char *const *ids = build_lines(b, list);
     for (size_t i = 0; status == 0 && ids != nullptr && ids[i] != nullptr; i++)
         status = build_ci_times_fetch(b, ids[i], smith_fmt(b, "%s/%s", root, ids[i]));
     const char *tool = smith_fmt(b, "%s/ci_times", root);
-    const char *const compile[] = {smith_env(b, "CC", "smith-cc"), "-std=c23", "-O1", "scripts/ci_times.c", "-o", tool,
-                                   nullptr};
+    const char *const compile[] = {
+        smith_env(b, "CC", "smith-cc"), "-std=c23", "-O1", "scripts/ci_times.c", "-o", tool, nullptr};
     status = status != 0 ? status : build_exec(compile);
     if (status != 0) return status;
     return build_exec(smith_cat(b, smith_list(b, tool, root, nullptr), ids, nullptr));

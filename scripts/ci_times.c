@@ -1,8 +1,9 @@
-// `smith build ci-times` (issue #360): where CI's time goes. It reads a folder with one subfolder per CI run (named by the ids
-// on its command line), each holding what `smith build ci-times` downloaded: `smith-log/test.log` and `check.log` from the
-// `check-log` artifact, and `steps.tsv`, the job's steps in seconds (name, tab, seconds). It prints, for the runs found:
-// the job's steps, the stages of `smith check`, the test tasks by median wall and CPU, the slowest tests the runner
-// listed, and the 2-way split of the tasks by CPU time. Plain C23, libc only, no allocation: the tables are static.
+// `smith build ci-times` (issue #360): where CI's time goes. It reads a folder with one subfolder per CI run (named by
+// the ids on its command line), each holding what `smith build ci-times` downloaded: `smith-log/test.log` and
+// `check.log` from the `check-log` artifact, and `steps.tsv`, the job's steps in seconds (name, tab, seconds). It
+// prints, for the runs found: the job's steps, the stages of `smith check`, the test tasks by median wall and CPU, the
+// slowest tests the runner listed, and the 2-way split of the tasks by CPU time. Plain C23, libc only, no allocation:
+// the tables are static.
 //
 // Usage: ci_times FOLDER RUN_ID...
 #include <limits.h>
@@ -79,6 +80,28 @@ static double cpu_median(Series *series) {
     return median(series->cpu, series->count);
 }
 
+// The number at the start of *text, after spaces; false when there is none. *text moves past it.
+static bool take_number(const char **text, double *value) {
+    char *end = nullptr;
+    *value = strtod(*text, &end);
+    if (end == *text) return false;
+    *text = end;
+    return true;
+}
+
+// Skips spaces and one word, copying the word to name when it is not null.
+static const char *take_word(const char *text, char *name) {
+    while (*text == ' ')
+        text++;
+    size_t length = strcspn(text, " \n");
+    if (name != nullptr) {
+        length = length < name_size - 1 ? length : name_size - 1;
+        memcpy(name, text, length);
+        name[length] = '\0';
+    }
+    return text + length;
+}
+
 static void read_steps(const char *path) {
     FILE *file = fopen(path, "r");
     if (file == nullptr) return;
@@ -87,7 +110,9 @@ static void read_steps(const char *path) {
         char *tab = strchr(line, '\t');
         if (tab == nullptr) continue;
         *tab = '\0';
-        add(&steps, line, atof(tab + 1), 0);
+        const char *seconds = tab + 1;
+        double value = 0;
+        if (take_number(&seconds, &value)) add(&steps, line, value, 0);
     }
     fclose(file);
 }
@@ -98,9 +123,14 @@ static void read_stage(const char *line) {
     char name[name_size];
     double wall = 0;
     double cpu = 0;
-    const char *times = strchr(line, '(');
-    if (sscanf(line + 13, "%127[a-z]", name) != 1 || times == nullptr) return;
-    if (sscanf(times, "(%lf s wall, %lf s cpu)", &wall, &cpu) == 2) add(&stages, name, wall, cpu);
+    const char *times = strrchr(line, '('); // the prove line has an earlier parenthesis
+    if (times == nullptr) return;
+    take_word(line + 13, name);
+    name[strcspn(name, ":")] = '\0';
+    times++;
+    bool ok = take_number(&times, &wall) && strncmp(times, " s wall, ", 9) == 0;
+    times += 9;
+    if (ok && take_number(&times, &cpu)) add(&stages, name, wall, cpu);
 }
 
 static void read_check_log(const char *path) {
@@ -118,36 +148,42 @@ static void read_task_row(const char *line) {
     double wall = 0;
     double cpu = 0;
     double system = 0;
-    int smiths = 0;
-    if (sscanf(line, " %127s %lf %lf %lf %d", name, &wall, &cpu, &system, &smiths) == 5) add(&tasks, name, wall, cpu);
+    const char *rest = take_word(line, name);
+    if (name[0] != '\0' && take_number(&rest, &wall) && take_number(&rest, &cpu) && take_number(&rest, &system))
+        add(&tasks, name, wall, cpu);
 }
 
 // `     97.56 s  smith::inflate_test::prop_inflate_round_trips_stored_blocks`
 static void read_slowest_row(const char *line) {
     char name[name_size];
     double seconds = 0;
-    if (sscanf(line, " %lf s %127s", &seconds, name) == 2) add(&tests, name, seconds, seconds);
+    const char *rest = line;
+    if (!take_number(&rest, &seconds) || strncmp(rest, " s ", 3) != 0) return;
+    take_word(rest + 3, name);
+    if (name[0] != '\0') add(&tests, name, seconds, seconds);
+}
+
+typedef enum { Section_Other, Section_Table, Section_Slowest } Section;
+
+// Which section a line starts or ends, given the section it is in.
+static Section next_section(Section now, const char *line) {
+    if (strstr(line, "the tasks by wall time") != nullptr) return Section_Table;
+    if (strncmp(line, "slowest:", 8) == 0) return Section_Slowest;
+    if (now == Section_Table && strstr(line, "all tasks") != nullptr) return Section_Other;
+    if (now == Section_Slowest && line[0] == '\n') return Section_Other;
+    return now;
 }
 
 static void read_test_log(const char *path) {
     FILE *file = fopen(path, "r");
     if (file == nullptr) return;
     char line[1024];
-    enum { Other, Table, Slowest } mode = Other;
+    Section section = Section_Other;
     while (fgets(line, sizeof line, file) != nullptr) {
-        if (strstr(line, "the tasks by wall time") != nullptr) {
-            mode = Table;
-        } else if (strncmp(line, "slowest:", 8) == 0) {
-            mode = Slowest;
-        } else if (mode == Table && strstr(line, "all tasks") != nullptr) {
-            mode = Other;
-        } else if (mode == Table && strstr(line, "task ") == nullptr) {
-            read_task_row(line);
-        } else if (mode == Slowest && line[0] == '\n') {
-            mode = Other;
-        } else if (mode == Slowest) {
-            read_slowest_row(line);
-        }
+        Section next = next_section(section, line);
+        if (next == section && section == Section_Table && strstr(line, "task ") == nullptr) read_task_row(line);
+        if (next == section && section == Section_Slowest) read_slowest_row(line);
+        section = next;
     }
     fclose(file);
 }
