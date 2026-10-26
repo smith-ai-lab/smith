@@ -89,6 +89,7 @@ extern "C" {
 typedef struct SmithRandomTap {
     uint64_t (*word)(const struct SmithRandomTap *tap, uint64_t key, uint64_t n, uint64_t bits);
 } SmithRandomTap;
+typedef struct SmithRandomTap SmithRandomTap;
 
 // A key: a 64-bit value that names a stream of random bits, and the tap of the runner that made it, if any. A key is
 // affine: each key is used at most once, a second use is a compile error naming the first, and split(key, keys) is how
