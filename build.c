@@ -1203,9 +1203,14 @@ static int build_enzyme_patched(SmithBuild *b, const char *source, const char *w
     int status = build_remove(b, copy);
     status = status != 0 ? status : build_make_folder(b, copy);
     status = status != 0 ? status : build_copy_tree(b, source, copy);
+    // patch reads -i after -d changes its folder, so each patch is named from the repository's root.
+    char root[PATH_MAX];
+    if (status == 0 && getcwd(root, sizeof root) == nullptr) status = 1;
     const char *const *patches = smith_glob(b, smith_list(b, "patches/enzyme/*.patch", nullptr));
-    for (size_t i = 0; status == 0 && patches[i] != nullptr; i++)
-        status = build_exec(smith_list(b, "patch", "-p1", "-s", "-d", copy, "-i", patches[i], nullptr));
+    for (size_t i = 0; status == 0 && patches[i] != nullptr; i++) {
+        const char *patch = smith_fmt(b, "%s/%s", root, patches[i]);
+        status = build_exec(smith_list(b, "patch", "-p1", "-s", "-d", copy, "-i", patch, nullptr));
+    }
     return status != 0 ? status : build_write_text(patched, "", 0644);
 }
 
