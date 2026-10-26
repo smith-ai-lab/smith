@@ -45,7 +45,9 @@ static bool smith_slots_inherited(void) {
     return kill((pid_t)pid, 0) == 0 || errno == EPERM;
 }
 
-// Whether a CI job is waiting for a slot: it holds a shared lock on `ci-waiting`, so an exclusive one fails.
+// Whether a CI job is waiting for a slot: it holds a shared lock on `ci-waiting`, so an exclusive one fails. This is
+// not atomic: a job that asks just before a CI job starts to wait may still take the free slot (the race), and the CI
+// job gets the next one. A lock held through the whole take would make every local job queue behind each other.
 static bool smith_slots_ci_waiting(const char *folder) {
     char path[PATH_MAX];
     snprintf(path, sizeof path, "%s/ci-waiting", folder);
@@ -136,6 +138,22 @@ static void smith_slots_take(const char *verb) {
     char held[32];
     snprintf(held, sizeof held, "%ld", (long)getpid());
     setenv("SMITH_SLOT_HELD", held, 1);
+}
+
+// The verbs that do heavy work arm the slot instead of taking it: the executor takes it when it starts its first real
+// step (a compile, a link, a test), so an up-to-date build, or one that only runs build.c's functions, never waits.
+static const char *smith_slots_pending;
+
+static void smith_slots_arm(const char *verb) {
+    smith_slots_pending = verb;
+}
+
+// Called by the executor before it starts a step that is not a function of build.c; takes the armed slot, once.
+static void smith_slots_need(void) {
+    const char *verb = smith_slots_pending;
+    if (verb == nullptr) return;
+    smith_slots_pending = nullptr;
+    smith_slots_take(verb);
 }
 
 // The verbs that do heavy work.

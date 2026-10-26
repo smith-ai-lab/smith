@@ -509,6 +509,8 @@ static void smith_run_make_parents(SmithExec *exec, const char *path) {
 static void smith_run_start(SmithExec *exec, SmithJob *job, uint32_t number) {
     SmithEdge *edge = &exec->graph.edges[number];
     edge->want = SmithWant_Running;
+    // a function of build.c or the regeneration is not heavy; the first other step takes the host's slot (slots.c)
+    if (!exec->options.dry_run && strncmp(edge->command, ".smith/program ", 15) != 0) smith_slots_need();
     if (!exec->options.dry_run) {
         for (uint32_t k = 0; k < edge->output_count; k++)
             smith_run_make_parents(exec, exec->graph.nodes[smith_plan_output(exec, edge, k)].path);

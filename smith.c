@@ -3299,6 +3299,6 @@ int main(int argc, char **argv) {
     if (strcmp(argv[1], "--smith-slots") == 0) return smith_slots_main(argc - 2, argv + 2);
     const SmithVerb *verb = smith_find_verb(argv[1]);
     if (verb == nullptr) smith_bare_arguments(argc, argv);
-    if (smith_slots_verb(verb->name)) smith_slots_take(verb->name);
+    if (smith_slots_verb(verb->name)) smith_slots_arm(verb->name);
     return smith_dispatch(verb, argc, argv, self);
 }
