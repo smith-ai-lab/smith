@@ -1218,6 +1218,8 @@ static const SmithLibrary smith_libraries[] = {
 #include "runtime/account.c"
 // Quiet output: the logs, the excerpt of a failure and the line of a stage.
 #include "runtime/quiet.c"
+// The host-wide slots that limit heavy jobs, so that local work cannot starve CI.
+#include "runtime/slots.c"
 // The executor that runs the build graph, in place of ninja.
 #include "runtime/executor.c"
 // The lowering of .smith files, and the header pass that needs no compiler.
@@ -3294,7 +3296,9 @@ int main(int argc, char **argv) {
     }
     if (strcmp(argv[1], "--smith-exec") == 0) return smith_exec_main(argc - 2, argv + 2);
     if (strcmp(argv[1], "--smith-account") == 0) return smith_account_main(argc - 2, argv + 2);
+    if (strcmp(argv[1], "--smith-slots") == 0) return smith_slots_main(argc - 2, argv + 2);
     const SmithVerb *verb = smith_find_verb(argv[1]);
     if (verb == nullptr) smith_bare_arguments(argc, argv);
+    if (smith_slots_verb(verb->name)) smith_slots_take(verb->name);
     return smith_dispatch(verb, argc, argv, self);
 }

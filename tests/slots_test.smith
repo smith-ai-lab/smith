@@ -1,0 +1,78 @@
+// The host-wide slots (issue #360, runtime/slots.c, knowledge/slots.md): `smith build`, `smith check` and `smith test`
+// take a slot of a counter that is a folder of flock'd files, and `smith --smith-slots PROGRAM` takes one the same way
+// for a test. Each case is a shell script in a scratch folder with its own slots folder (SMITH_SLOTS_DIR) and one slot;
+// the jobs meet through files, never through time: a job that must be waiting says so on stderr, which the script waits
+// for, and a job that holds a slot waits for the file `free`.
+module slots_test;
+
+import smith::format;
+import smith::io;
+import smith::test;
+import scratch;
+
+// The commands of every case: `w FILE` waits for a file, `ww FILE TEXT` waits for a text in a file, `hold` is a job
+// that keeps its slot until the file `free` exists.
+constexpr char prelude[] = "unset SMITH_SLOT_HELD SMITH_PRIORITY; export SMITH_SLOTS=1 SMITH_SLOTS_DIR=\"$PWD/slots\"; "
+                           "w() { while [ ! -e \"$1\" ]; do sleep 0.05; done; }; "
+                           "ww() { until grep -q \"$2\" \"$1\" 2>/dev/null; do sleep 0.05; done; }; "
+                           "hold='touch held; while [ ! -e free ]; do sleep 0.05; done'; ";
+
+static const char *slots_case(io::Io *io, const char *script) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Run run = scratch::sh(&p, format::push(&io->arena, prelude, script).data);
+    scratch::expect_status("the case ends", 0, &run);
+    return run.out;
+}
+
+// A job waits while the slot is taken, says why, and runs once it is released.
+export void test_a_job_waits_for_the_slot_and_runs_after_the_release(io::Io *io) {
+    const char *out = slots_case(io, "smith --smith-slots sh -c \"$hold\" & a=$!; w held; "
+                                     "smith --smith-slots sh -c 'touch b_ran' 2>b.err & b=$!; "
+                                     "ww b.err 'waiting for a slot (1 jobs running'; "
+                                     "[ -e b_ran ] && echo early; touch free; wait $a; wait $b; "
+                                     "[ -e b_ran ] && echo ran");
+    scratch::expect_text("the second job waits, then runs", "ran\n", out);
+}
+
+// The OS drops the lock of a process that is killed: the next job takes the slot with no cleanup.
+export void test_a_killed_holder_frees_its_slot(io::Io *io) {
+    const char *out = slots_case(io, "smith --smith-slots sh -c \"$hold\" & a=$!; w held; kill -9 $a; "
+                                     "wait $a 2>/dev/null; smith --smith-slots touch b_ran; "
+                                     "[ -e b_ran ] && echo ran; touch free");
+    scratch::expect_text("the slot is free after a kill", "ran\n", out);
+}
+
+// A waiting CI job (SMITH_PRIORITY=ci) gets the next slot before a local job that waited first.
+export void test_a_waiting_ci_job_takes_the_next_slot_before_a_local_one(io::Io *io) {
+    const char *out = slots_case(io, "smith --smith-slots sh -c \"$hold\" & a=$!; w held; "
+                                     "smith --smith-slots sh -c 'echo L >>order' 2>l.err & l=$!; "
+                                     "ww l.err 'waiting for a slot'; "
+                                     "SMITH_PRIORITY=ci smith --smith-slots sh -c 'echo C >>order' 2>c.err & c=$!; "
+                                     "ww c.err 'waiting for a slot'; touch free; wait $a $l $c; cat order");
+    scratch::expect_text("the CI job runs first", "C\nL\n", out);
+}
+
+// A smith that a smith runs holds no slot of its own (it would wait for its parent's, which is held until it ends).
+export void test_a_child_inherits_the_slot_of_its_parent(io::Io *io) {
+    const char *out = slots_case(io, "smith --smith-slots sh -c 'smith --smith-slots touch inner'; "
+                                     "[ -e inner ] && echo ran");
+    scratch::expect_text("the inner job runs under the one slot", "ran\n", out);
+}
+
+// The variable of a holder that is gone means nothing: the job takes a slot of its own, so it waits here.
+export void test_the_slot_of_a_dead_parent_is_not_inherited(io::Io *io) {
+    const char *out = slots_case(io, "sh -c 'exit 0' & p=$!; wait $p; "
+                                     "smith --smith-slots sh -c \"$hold\" & a=$!; w held; "
+                                     "SMITH_SLOT_HELD=$p smith --smith-slots touch b_ran 2>b.err & b=$!; "
+                                     "ww b.err 'waiting for a slot'; [ -e b_ran ] && echo early; "
+                                     "touch free; wait $a $b; echo done");
+    scratch::expect_text("a stale variable gives no slot", "done\n", out);
+}
+
+// SMITH_SLOTS=0 turns the limit off.
+export void test_zero_slots_means_no_limit(io::Io *io) {
+    const char *out = slots_case(io, "smith --smith-slots sh -c \"$hold\" & a=$!; w held; "
+                                     "SMITH_SLOTS=0 smith --smith-slots touch b_ran; [ -e b_ran ] && echo ran; "
+                                     "touch free; wait $a");
+    scratch::expect_text("no limit, no wait", "ran\n", out);
+}
