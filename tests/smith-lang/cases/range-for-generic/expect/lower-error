@@ -1,0 +1,5 @@
+src/main.smith:17:37: cannot tell the type of `ints_view`, the argument of `sum`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:17:60: cannot tell the type of `reals_view`, the argument of `sum`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:18:42: cannot tell the type of `ints_view`, the argument of `weighted`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:18:74: cannot tell the type of `ints_view`, the argument of `scaled_total`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:19:17: cannot tell the type of `ints_view`, the argument of `bump`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable

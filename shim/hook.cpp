@@ -2746,6 +2746,52 @@ class SmithHook final : public TokenHook, public NameSource {
     // Whether a `[ ]` of the text holds a `:` that is neither `::` nor the `:` of a `? :`: `T xs[:]` or `xs[a:b]`, a
     // run-time array (runtime/lang_slice.c). Comments and strings do not count.
     static bool hasSlice(StringRef text) {
+        return hasSliceBrackets(text) || hasRangeFor(text);
+    }
+
+    // Whether the code has a range `for` (runtime/lang_rfor.c): `for (` and a `:` at the top of its header that is
+    // neither `::` nor the `:` of a `? :`, before any `;`.
+    static bool hasRangeFor(StringRef text) {
+        for (size_t at = 0; at + 3 < text.size(); at++) {
+            size_t after = skipLiteral(text, at);
+            if (after != at) {
+                at = after - 1;
+                continue;
+            }
+            bool before = at > 0 && (isAsciiIdentifierContinue(text[at - 1]));
+            if (before || text.substr(at, 3) != "for") continue;
+            size_t open = at + 3;
+            while (open < text.size() && isWhitespace(text[open]))
+                open += 1;
+            if (open >= text.size() || text[open] != '(') continue;
+            int depth = 0;
+            int conditions = 0;
+            for (size_t scan = open; scan < text.size(); scan++) {
+                size_t next = skipLiteral(text, scan);
+                if (next != scan) {
+                    scan = next - 1;
+                    continue;
+                }
+                char c = text[scan];
+                if (c == '[' || c == '(' || c == '{') depth += 1;
+                if (c == ']' || c == ')' || c == '}') depth -= 1;
+                if (depth <= 0 || (depth == 1 && c == ';')) break;
+                if (depth != 1) continue;
+                if (c == '?') conditions += 1;
+                if (c != ':') continue;
+                if (scan + 1 < text.size() && text[scan + 1] == ':') {
+                    scan += 1;
+                } else if (conditions > 0) {
+                    conditions -= 1;
+                } else {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    static bool hasSliceBrackets(StringRef text) {
         for (size_t at = 0; at < text.size(); at++) {
             size_t after = skipLiteral(text, at);
             if (after != at) {

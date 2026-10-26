@@ -45,8 +45,49 @@ static size_t smith_lang_text_skip(const char *text, size_t length, size_t at) {
     return at < length ? at + 1 : length;
 }
 
+// Whether the code has a range `for` (issue #243): `for (` and, at the top of its header, a `:` that is neither `::`
+// nor the `:` of a `? :`, before any `;`. Comments and strings do not count.
+static bool smith_lang_text_has_range_for(const char *text, size_t length) {
+    for (size_t at = 0; at + 3 < length; at++) { // each place a word could begin
+        size_t after = smith_lang_text_skip(text, length, at);
+        if (after != at) {
+            at = after - 1;
+            continue;
+        }
+        bool before = at > 0 && (isalnum((unsigned char)text[at - 1]) != 0 || text[at - 1] == '_');
+        if (before || memcmp(text + at, "for", 3) != 0) continue;
+        size_t open = at + 3;
+        while (open < length && isspace((unsigned char)text[open]) != 0)
+            open += 1;
+        if (open >= length || text[open] != '(') continue;
+        int depth = 0;
+        int conditions = 0;
+        for (size_t scan = open; scan < length; scan++) { // to the `)`
+            size_t next = smith_lang_text_skip(text, length, scan);
+            if (next != scan) {
+                scan = next - 1;
+                continue;
+            }
+            char c = text[scan];
+            depth += c == '[' || c == '(' || c == '{';
+            depth -= c == ']' || c == ')' || c == '}';
+            if (depth <= 0 || (depth == 1 && c == ';')) break;
+            conditions += depth == 1 && c == '?';
+            if (depth != 1 || c != ':') continue;
+            if (scan + 1 < length && text[scan + 1] == ':') {
+                scan += 1;
+            } else if (conditions > 0) {
+                conditions -= 1;
+            } else {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 // Whether the text has a `[ ]` with a `:` that is neither `::` nor the `:` of a `? :` (the hook's hasSlice), outside
-// comments and strings.
+// comments and strings, or a range `for`.
 static bool smith_lang_text_has_slice(const char *text, size_t length) {
     for (size_t at = 0; at < length; at++) { // each `[` of the code
         size_t after = smith_lang_text_skip(text, length, at);
@@ -78,7 +119,7 @@ static bool smith_lang_text_has_slice(const char *text, size_t length) {
             }
         }
     }
-    return false;
+    return smith_lang_text_has_range_for(text, length);
 }
 
 // Whether the code of the text has the word `str` (the type `const char[:]`, issue #85), outside comments and strings.

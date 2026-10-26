@@ -1,0 +1,8 @@
+src/main.smith:10:5: the index of a range `for` is a `usize`, counted from 0: `for (usize i, T x : xs)`
+src/main.smith:11:5: a range `for` declares an index and an element at most: `for (usize i, T x : xs)`; C's loop walks several slices together
+src/main.smith:12:5: `auto *p` is not C: name the element's type to point at it, `T *p` (`typeof(xs[0]) *p` in a generic), or write `auto x` for a copy
+src/main.smith:13:10: `i32` is not `floating`: the elements have the type `i32`
+src/main.smith:6:5: a range `for` loops over a slice (`T xs[:]`, a cut `xs[a:b]`) or a fixed array (`T xs[N]`) of one dimension; write C's loop for anything else: `for (usize i = 0; i < n; ++i)`
+src/main.smith:7:5: a range `for` loops over a slice (`T xs[:]`, a cut `xs[a:b]`) or a fixed array (`T xs[N]`) of one dimension; write C's loop for anything else: `for (usize i = 0; i < n; ++i)`
+src/main.smith:8:5: a range `for` loops over a slice (`T xs[:]`, a cut `xs[a:b]`) or a fixed array (`T xs[N]`) of one dimension; write C's loop for anything else: `for (usize i = 0; i < n; ++i)`
+src/main.smith:9:5: the body of a range `for` is a block: `for (T x : xs) { ... }`

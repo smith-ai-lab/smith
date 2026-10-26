@@ -5,8 +5,8 @@
 // file's own name, where a program prints it (its extension): __FILE__ is set to one name, and the file's own name with
 // ".smith" in a string is read as ".c" (only its own: other strings that end in ".smith" are code, and must match).
 // Then each program in tests/smith-lang-c/ (array parameters and sizeof of one, a [*] prototype, the language's words
-// as names, ordinary constructs, text arrays and `?:` in brackets, which run-time arrays must leave alone) is built and
-// run as x.c and as x.smith, and both must print what x.out holds.
+// as names, ordinary constructs, C's loops (no range `for`), text arrays and `?:` in brackets, which run-time arrays
+// must leave alone) is built and run as x.c and as x.smith, and both must print what x.out holds.
 module smith_lang_c_test;
 
 import smith::format;
@@ -175,6 +175,10 @@ export void test_the_languages_words_as_names_print_the_same_as_c(io::Io *io) {
 
 export void test_ordinary_constructs_print_the_same_as_c(io::Io *io) {
     behave(io, "ordinary");
+}
+
+export void test_loops_print_the_same_as_c(io::Io *io) {
+    behave(io, "loops");
 }
 
 export void test_sized_names_print_the_same_as_c(io::Io *io) {

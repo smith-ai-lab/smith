@@ -946,7 +946,7 @@ static bool smith_lang_slice_process(SmithLang *lang, const SmithHost *host, con
 }
 
 // What `if constexpr` and the constants it names do with a token (runtime/lang_target.c), then the token's own path.
-static void smith_lang_process(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+static void smith_lang_process_token(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     bool closes = false;
     if (token->replay) { // a function over `type` of an import, defined here: only its type values are lowered
         if (token->synthetic || !smith_lang_ty_token(lang, host, token)) smith_lang_emit_code(lang, host, *token);
@@ -960,6 +960,10 @@ static void smith_lang_process(SmithLang *lang, const SmithHost *host, const Smi
     }
     if (!token->foreign && token->kind == SmithTokenKind_Identifier &&
         (lang->recording || !smith_lang_capturing(lang)) && smith_lang_concept_local(lang, host, token)) {
+        return;
+    }
+    if (!token->foreign && !token->synthetic && smith_lang_ident(token, "for") && lang->cap_frames == 0 &&
+        smith_lang_slice_active(lang, host) && smith_lang_rfor(lang, host, token)) {
         return;
     }
     if (!token->foreign && lang->recording && smith_lang_ident(token, "struct"))
@@ -1004,6 +1008,13 @@ static void smith_lang_process(SmithLang *lang, const SmithHost *host, const Smi
         smith_lang_remember(lang, token); // `t[0]` asks for the tokens before it, and the host may not have them yet
     }
     if (closes) smith_lang_ifc_close(lang, host);
+}
+
+// A token, then the `}` a slice's range `for` adds when its body's ended (runtime/lang_rfor.c).
+static void smith_lang_process(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+    bool ends = smith_lang_rfor_count(lang, token);
+    smith_lang_process_token(lang, host, token);
+    if (ends) smith_lang_rfor_close(lang, token);
 }
 
 // One lowering per process at a time: a fresh one for each file.

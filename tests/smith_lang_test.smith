@@ -389,6 +389,26 @@ export void test_defer_run(io::Io *io) {
     corpus_case(io, "defer-run");
 }
 
+export void test_error_range_for(io::Io *io) {
+    corpus_case(io, "error-range-for");
+}
+
+export void test_generic_for_range(io::Io *io) {
+    corpus_case(io, "generic-for-range");
+}
+
+export void test_generic_for_range_error(io::Io *io) {
+    corpus_case(io, "generic-for-range-error");
+}
+
+export void test_range_for(io::Io *io) {
+    corpus_case(io, "range-for");
+}
+
+export void test_range_for_generic(io::Io *io) {
+    corpus_case(io, "range-for-generic");
+}
+
 export void test_try_run(io::Io *io) {
     corpus_case(io, "try-run");
 }

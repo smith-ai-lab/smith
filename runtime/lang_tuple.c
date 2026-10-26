@@ -672,7 +672,7 @@ static bool smith_lang_tuple_countof(SmithLang *lang, const SmithHost *host, con
     size_t used = 0;
     size_t close = 0;
     int depth = 1;
-    SmithToken span[24];
+    SmithToken span[24] = {};                          // span[0] is read as the token before the operand's first
     for (size_t at = 1; at < 24 && close == 0; at++) { // an operand of a few tokens, as the source has them
         span[at] = *smith_lang_peek(lang, host, at, false);
         const SmithToken *next = &span[at];

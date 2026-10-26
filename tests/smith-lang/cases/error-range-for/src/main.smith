@@ -1,0 +1,15 @@
+module main;
+
+// Each header is wrong in its own way; the loop is replaced by an empty one, so that only the error is reported.
+static i32 errors(const i32 xs[:], i32 *p, i32 n, i32 grid[:][2]) {
+    i32 t = 0;
+    for (i32 x : p) { t += 1; }
+    for (i32 x : n) { t += 1; }
+    for (i32 x : grid) { t += 1; }
+    for (i32 x : xs) t += 1;
+    for (i32 i, i32 x : xs) { t += 1; }
+    for (usize i, usize j, i32 x : xs) { t += 1; }
+    for (auto *p : xs) { t += 1; }
+    for (floating x : xs) { t += 1; }
+    return t;
+}

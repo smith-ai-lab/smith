@@ -1,0 +1,10 @@
+src/main.smith:20:14: `fields(T)` needs the compiler to read the struct: a raw lowering (`smith cc --smith-lower`) cannot write it
+src/main.smith:20:14: in `for constexpr`: the list's length must be a compile-time constant: `fields(T)` needs the compiler to read the struct: a raw lowering (`smith cc --smith-lower`) cannot write it
+src/main.smith:21:14: `fields(T)` needs the compiler to read the struct: a raw lowering (`smith cc --smith-lower`) cannot write it
+src/main.smith:21:14: in `for constexpr`: the list's length must be a compile-time constant: `fields(T)` needs the compiler to read the struct: a raw lowering (`smith cc --smith-lower`) cannot write it
+src/main.smith:22:35: in `for constexpr`: the list's length must be a compile-time constant: `fields(T)` needs the compiler to read the struct: a raw lowering (`smith cc --smith-lower`) cannot write it
+src/main.smith:22:61: in `for constexpr`: the list's length must be a compile-time constant: `fields(T)` needs the compiler to read the struct: a raw lowering (`smith cc --smith-lower`) cannot write it
+src/main.smith:23:41: cannot tell the type of `1`, the argument of `total`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:23:69: cannot tell the type of `10`, the argument of `weighted`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:24:19: cannot tell the type of `1`, the argument of `each`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:25:42: cannot tell the type of `1`, the argument of `all_pairs`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
