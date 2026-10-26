@@ -4892,6 +4892,48 @@
               }
             }
           ]
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "declarator",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_declarator"
+              }
+            },
+            {
+              "type": "SYMBOL",
+              "name": "gnu_asm_expression"
+            },
+            {
+              "type": "STRING",
+              "value": "="
+            },
+            {
+              "type": "FIELD",
+              "name": "value",
+              "content": {
+                "type": "CHOICE",
+                "members": [
+                  {
+                    "type": "SYMBOL",
+                    "name": "initializer_list"
+                  },
+                  {
+                    "type": "SYMBOL",
+                    "name": "expression"
+                  },
+                  {
+                    "type": "SYMBOL",
+                    "name": "try_expression"
+                  }
+                ]
+              }
+            }
+          ]
         }
       ]
     },
@@ -9173,7 +9215,7 @@
             "name": "assembly_code",
             "content": {
               "type": "SYMBOL",
-              "name": "_string"
+              "name": "_asm_text"
             }
           },
           {
@@ -10967,6 +11009,35 @@
           {
             "type": "SYMBOL",
             "name": "argument_list"
+          }
+        ]
+      }
+    },
+    "_asm_text": {
+      "type": "REPEAT1",
+      "content": {
+        "type": "CHOICE",
+        "members": [
+          {
+            "type": "SYMBOL",
+            "name": "string_literal"
+          },
+          {
+            "type": "SYMBOL",
+            "name": "identifier"
+          },
+          {
+            "type": "SEQ",
+            "members": [
+              {
+                "type": "SYMBOL",
+                "name": "identifier"
+              },
+              {
+                "type": "SYMBOL",
+                "name": "argument_list"
+              }
+            ]
           }
         ]
       }

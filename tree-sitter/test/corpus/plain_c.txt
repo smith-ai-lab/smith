@@ -255,3 +255,33 @@ int main(void) {
               (escape_sequence)))))
       (return_statement
         (number_literal)))))
+
+================================================================================
+a register variable with an asm label
+================================================================================
+
+void f(long fd) {
+    register long a0 asm("x0") = fd;
+}
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (function_definition
+    (primitive_type)
+    (function_declarator
+      (identifier)
+      (parameter_list
+        (parameter_declaration
+          (sized_type_specifier)
+          (identifier))))
+    (compound_statement
+      (declaration
+        (storage_class_specifier)
+        (sized_type_specifier)
+        (init_declarator
+          (identifier)
+          (gnu_asm_expression
+            (string_literal
+              (string_content)))
+          (identifier))))))

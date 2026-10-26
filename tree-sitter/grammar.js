@@ -86,9 +86,30 @@ module.exports = grammar(C, {
 
     // int x = try f(); and x = try f();
     init_declarator: ($, original) =>
-      choice(original, seq(field('declarator', $._declarator), '=', field('value', $.try_expression))),
+      choice(original,
+        seq(field('declarator', $._declarator), '=', field('value', $.try_expression)),
+        // register long a0 asm("x0") = fd; (a GNU asm label before the initializer)
+        seq(field('declarator', $._declarator), $.gnu_asm_expression, '=',
+          field('value', choice($.initializer_list, $.expression, $.try_expression)))),
     assignment_expression: ($, original) => choice(original, prec.right(C.PREC.ASSIGNMENT, seq(
       field('left', $._assignment_left_expression), field('operator', '='), field('right', $.try_expression)))),
+
+    // asm("x0"), asm(REGISTER) and asm volatile("bl " SYMBOL(puts) : ...): the text may be a macro's name or a macro call
+    // between string pieces (the grammar reads a file before the preprocessor).
+    gnu_asm_expression: $ => prec(15, seq(
+      choice('asm', '__asm__', '__asm'),
+      repeat($.gnu_asm_qualifier),
+      '(',
+      field('assembly_code', $._asm_text),
+      optional(seq(
+        field('output_operands', $.gnu_asm_output_operand_list),
+        optional(seq(
+          field('input_operands', $.gnu_asm_input_operand_list),
+          optional(seq(
+            field('clobbers', $.gnu_asm_clobber_list),
+            optional(field('goto_labels', $.gnu_asm_goto_list)))))))),
+      ')')),
+    _asm_text: $ => repeat1(choice($.string_literal, $.identifier, seq($.identifier, $.argument_list))),
 
     // Apple blocks: ^(int x) { ... }
     block_expression: $ => prec(1, seq('^', optional(field('type', $.type_specifier)), optional($.parameter_list), $.compound_statement)),

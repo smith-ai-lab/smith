@@ -2284,11 +2284,15 @@
     "named": true,
     "fields": {
       "assembly_code": {
-        "multiple": false,
+        "multiple": true,
         "required": true,
         "types": [
           {
-            "type": "concatenated_string",
+            "type": "argument_list",
+            "named": true
+          },
+          {
+            "type": "identifier",
             "named": true
           },
           {
@@ -2596,6 +2600,16 @@
           }
         ]
       }
+    },
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "gnu_asm_expression",
+          "named": true
+        }
+      ]
     }
   },
   {
