@@ -1,0 +1,3 @@
+status 1
+effects_code.c:6:12: error: smith-effect: `jit_page` is limited to alloc, but it has the effects code: jit_page -> mmap (effects_code.c:6)
+effects_code.c:10:12: error: smith-effect: `seal` is limited to alloc, but it has the effects code: seal -> mprotect (effects_code.c:10)

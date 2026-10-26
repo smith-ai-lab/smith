@@ -2,7 +2,8 @@
 // statement is parsed with LLVM's own assembler (the MC layer smith already links for `-c` on a .s file), the operands
 // replaced first by registers (and the constants they hold by their values), and the instructions are read:
 //
-//   - no system-call instruction and no call or jump out of the block: the block has no effect (SIMD, atomics, counters,
+//   - no system-call instruction and no call or jump out of the block: the block has no effect (SIMD, atomics,
+//   counters,
 //     a compiler barrier);
 //   - a system call (`svc` on ARM, `syscall` on x86-64): the call number is a constant when the block, a register
 //     variable (`register long x8 asm("x8") = 64;`) or an operand ("a"(SYS_write)) puts one in the register the system
@@ -19,6 +20,7 @@
 #include "clang/AST/Decl.h"
 #include "clang/AST/Expr.h"
 #include "clang/AST/Stmt.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCContext.h"
@@ -55,10 +57,10 @@ struct AsmSyscall {
 
 // What a block does that the effects care about.
 struct AsmReading {
-    bool parsed = false;                // the assembler read the block
-    std::vector<AsmSyscall> syscalls;   // the system-call instructions
-    std::vector<std::string> calls;     // the symbols called or jumped to out of the block
-    bool indirect = false;              // a call or jump through a register or memory
+    bool parsed = false;              // the assembler read the block
+    std::vector<AsmSyscall> syscalls; // the system-call instructions
+    std::vector<std::string> calls;   // the symbols called or jumped to out of the block
+    bool indirect = false;            // a call or jump through a register or memory
 };
 
 // The libc function a system call number is, for the targets with a table; "" for a number the table does not have.
@@ -69,40 +71,80 @@ struct SyscallRow {
 
 // Linux x86-64.
 inline constexpr SyscallRow linux_x86_64[] = {
-    {0, "read"},        {1, "write"},     {2, "open"},       {3, "close"},        {4, "stat"},
-    {5, "fstat"},       {6, "lstat"},     {8, "lseek"},      {9, "mmap"},         {10, "mprotect"},
-    {11, "munmap"},     {12, "brk"},      {16, "ioctl"},     {17, "pread"},       {18, "pwrite"},
-    {19, "readv"},      {20, "writev"},   {21, "access"},    {22, "pipe"},        {35, "nanosleep"},
-    {39, "getpid"},     {41, "socket"},   {42, "connect"},   {43, "accept"},      {44, "sendto"},
-    {45, "recvfrom"},   {46, "sendmsg"},  {47, "recvmsg"},   {48, "shutdown"},    {49, "bind"},
-    {50, "listen"},     {57, "fork"},     {59, "execve"},    {60, "_exit"},       {61, "wait4"},
-    {62, "kill"},       {63, "uname"},    {79, "getcwd"},    {80, "chdir"},       {82, "rename"},
-    {83, "mkdir"},      {84, "rmdir"},    {87, "unlink"},    {89, "readlink"},    {96, "gettimeofday"},
-    {201, "time"},      {228, "clock_gettime"}, {230, "clock_nanosleep"}, {231, "_exit"}, {257, "openat"},
+    {0, "read"},
+    {1, "write"},
+    {2, "open"},
+    {3, "close"},
+    {4, "stat"},
+    {5, "fstat"},
+    {6, "lstat"},
+    {8, "lseek"},
+    {9, "mmap"},
+    {10, "mprotect"},
+    {11, "munmap"},
+    {12, "brk"},
+    {16, "ioctl"},
+    {17, "pread"},
+    {18, "pwrite"},
+    {19, "readv"},
+    {20, "writev"},
+    {21, "access"},
+    {22, "pipe"},
+    {35, "nanosleep"},
+    {39, "getpid"},
+    {41, "socket"},
+    {42, "connect"},
+    {43, "accept"},
+    {44, "sendto"},
+    {45, "recvfrom"},
+    {46, "sendmsg"},
+    {47, "recvmsg"},
+    {48, "shutdown"},
+    {49, "bind"},
+    {50, "listen"},
+    {57, "fork"},
+    {59, "execve"},
+    {60, "_exit"},
+    {61, "wait4"},
+    {62, "kill"},
+    {63, "uname"},
+    {79, "getcwd"},
+    {80, "chdir"},
+    {82, "rename"},
+    {83, "mkdir"},
+    {84, "rmdir"},
+    {87, "unlink"},
+    {89, "readlink"},
+    {96, "gettimeofday"},
+    {201, "time"},
+    {228, "clock_gettime"},
+    {230, "clock_nanosleep"},
+    {231, "_exit"},
+    {257, "openat"},
     {318, "getrandom"},
 };
 
 // Linux AArch64 (the generic table).
 inline constexpr SyscallRow linux_aarch64[] = {
-    {17, "getcwd"},   {29, "ioctl"},     {34, "mkdirat"},  {35, "unlinkat"},    {49, "chdir"},
-    {56, "openat"},   {57, "close"},     {62, "lseek"},    {63, "read"},        {64, "write"},
-    {65, "readv"},    {66, "writev"},    {78, "readlinkat"}, {79, "fstatat"},   {80, "fstat"},
-    {93, "_exit"},    {94, "_exit"},     {101, "nanosleep"}, {113, "clock_gettime"}, {129, "kill"},
-    {160, "uname"},   {169, "gettimeofday"}, {172, "getpid"}, {198, "socket"},  {200, "bind"},
-    {201, "listen"},  {202, "accept"},   {203, "connect"}, {206, "sendto"},     {207, "recvfrom"},
-    {210, "shutdown"}, {211, "sendmsg"}, {212, "recvmsg"}, {214, "brk"},        {215, "munmap"},
-    {220, "fork"},    {221, "execve"},   {222, "mmap"},    {226, "mprotect"},   {242, "accept"},
+    {17, "getcwd"},     {29, "ioctl"},         {34, "mkdirat"},    {35, "unlinkat"},       {49, "chdir"},
+    {56, "openat"},     {57, "close"},         {62, "lseek"},      {63, "read"},           {64, "write"},
+    {65, "readv"},      {66, "writev"},        {78, "readlinkat"}, {79, "fstatat"},        {80, "fstat"},
+    {93, "_exit"},      {94, "_exit"},         {101, "nanosleep"}, {113, "clock_gettime"}, {129, "kill"},
+    {160, "uname"},     {169, "gettimeofday"}, {172, "getpid"},    {198, "socket"},        {200, "bind"},
+    {201, "listen"},    {202, "accept"},       {203, "connect"},   {206, "sendto"},        {207, "recvfrom"},
+    {210, "shutdown"},  {211, "sendmsg"},      {212, "recvmsg"},   {214, "brk"},           {215, "munmap"},
+    {220, "fork"},      {221, "execve"},       {222, "mmap"},      {226, "mprotect"},      {242, "accept"},
     {278, "getrandom"},
 };
 
 // macOS arm64 (the BSD numbers, in x16).
 inline constexpr SyscallRow darwin_arm64[] = {
-    {1, "_exit"},   {2, "fork"},    {3, "read"},     {4, "write"},   {5, "open"},      {6, "close"},
-    {7, "wait4"},   {10, "unlink"}, {12, "chdir"},   {20, "getpid"}, {29, "recvfrom"}, {30, "accept"},
-    {33, "access"}, {37, "kill"},   {54, "ioctl"},   {58, "readlink"}, {59, "execve"}, {73, "munmap"},
-    {74, "mprotect"}, {97, "socket"}, {98, "connect"}, {104, "bind"}, {106, "listen"}, {116, "gettimeofday"},
-    {128, "rename"}, {133, "sendto"}, {136, "mkdir"}, {137, "rmdir"}, {188, "stat"},    {197, "mmap"},
-    {199, "lseek"}, {338, "stat"},  {339, "fstat"},  {340, "lstat"}, {463, "openat"},
+    {1, "_exit"},     {2, "fork"},     {3, "read"},     {4, "write"},     {5, "open"},      {6, "close"},
+    {7, "wait4"},     {10, "unlink"},  {12, "chdir"},   {20, "getpid"},   {29, "recvfrom"}, {30, "accept"},
+    {33, "access"},   {37, "kill"},    {54, "ioctl"},   {58, "readlink"}, {59, "execve"},   {73, "munmap"},
+    {74, "mprotect"}, {97, "socket"},  {98, "connect"}, {104, "bind"},    {106, "listen"},  {116, "gettimeofday"},
+    {128, "rename"},  {133, "sendto"}, {136, "mkdir"},  {137, "rmdir"},   {188, "stat"},    {197, "mmap"},
+    {199, "lseek"},   {338, "stat"},   {339, "fstat"},  {340, "lstat"},   {463, "openat"},
 };
 
 // The name of a system call on a target, "" when the table has no row.
@@ -145,14 +187,16 @@ class Collect final : public MCStreamer {
     void emitInstruction(const MCInst &instruction, const MCSubtargetInfo &) override {
         instructions.push_back(instruction);
     }
-    bool emitSymbolAttribute(MCSymbol *, MCSymbolAttr) override { return true; }
+    bool emitSymbolAttribute(MCSymbol *, MCSymbolAttr) override {
+        return true;
+    }
     void emitCommonSymbol(MCSymbol *, uint64_t, Align) override {}
 };
 
 // A register an operand of the block stands for, and what is known of it.
 struct Slot {
-    std::string reg;               // "x9", "rax", "r8"
-    std::optional<int64_t> value;  // a constant the register holds on entry
+    std::string reg;              // "x9", "rax", "r8"
+    std::optional<int64_t> value; // a constant the register holds on entry
 };
 
 struct Operands {
@@ -207,7 +251,7 @@ inline std::string x86Register(const std::string &reg, char modifier, unsigned s
     struct Names {
         const char *r64, *r32, *r16, *r8;
     };
-    static const Names table[] = {{"rax", "eax", "ax", "al"}, {"rbx", "ebx", "bx", "bl"}, {"rcx", "ecx", "cx", "cl"},
+    static const Names table[] = {{"rax", "eax", "ax", "al"}, {"rbx", "ebx", "bx", "bl"},  {"rcx", "ecx", "cx", "cl"},
                                   {"rdx", "edx", "dx", "dl"}, {"rsi", "esi", "si", "sil"}, {"rdi", "edi", "di", "dil"}};
     for (const Names &names : table) {
         if (base != names.r64) continue;
@@ -237,7 +281,7 @@ inline bool substitute(const clang::GCCAsmStmt *statement, clang::ASTContext &co
     for (unsigned i = 0; i < total; i++) {
         bool isOutput = i < outputs;
         exprs[i] = isOutput ? statement->getOutputExpr(i) : statement->getInputExpr(i - outputs);
-        std::string raw = (isOutput ? statement->getOutputConstraint(i) : statement->getInputConstraint(i - outputs)).str();
+        std::string raw = (isOutput ? statement->getOutputConstraint(i) : statement->getInputConstraint(i - outputs));
         for (char c : raw)
             if (std::string("=+&%*#!?").find(c) == std::string::npos) constraints[i] += c;
         sizes[i] = static_cast<unsigned>(context.getTypeSize(exprs[i]->getType()) / 8);
@@ -273,7 +317,11 @@ inline bool substitute(const clang::GCCAsmStmt *statement, clang::ASTContext &co
             scratch++;
             if (arm) {
                 bool scalar = !type->isVectorType() && sizes[i] < 16;
-                text[i] = scalar ? std::string(sizes[i] <= 2 ? "h" : sizes[i] <= 4 ? "s" : "d") + regs[i].substr(1) : regs[i];
+                text[i] = scalar ? std::string(sizes[i] <= 2   ? "h"
+                                               : sizes[i] <= 4 ? "s"
+                                                               : "d") +
+                                       regs[i].substr(1)
+                                 : regs[i];
             } else {
                 text[i] = "%" + regs[i];
             }
@@ -315,7 +363,8 @@ inline bool substitute(const clang::GCCAsmStmt *statement, clang::ASTContext &co
             auto value = valueOf(exprs[number], context);
             out += std::to_string(value.value_or(0));
         } else if (!regs[number].empty() && modifier != 0) {
-            out += arm ? armRegister(regs[number], modifier, sizes[number]) : x86Register(regs[number], modifier, sizes[number]);
+            out += arm ? armRegister(regs[number], modifier, sizes[number])
+                       : x86Register(regs[number], modifier, sizes[number]);
         } else {
             out += text[number];
         }
@@ -358,9 +407,11 @@ class Registers {
         known.push_back({reg, value});
     }
     void forget(MCRegister reg) {
-        std::erase_if(known, [&](const Known &entry) { return overlaps(entry.reg, reg); });
+        llvm::erase_if(known, [&](const Known &entry) { return overlaps(entry.reg, reg); });
     }
-    void clear() { known.clear(); }
+    void clear() {
+        known.clear();
+    }
     std::optional<int64_t> get(MCRegister reg) const {
         if (!reg) return std::nullopt;
         for (const Known &entry : known)
@@ -381,10 +432,18 @@ class Registers {
 };
 
 // Follows the instruction through the registers' constants (the moves a system call's number comes from).
-inline void follow(const MCInst &inst, StringRef name, const MCInstrDesc &desc, const MCRegisterInfo &info, Registers &known) {
-    auto reg = [&](unsigned at) { return at < inst.getNumOperands() && inst.getOperand(at).isReg() ? MCRegister(inst.getOperand(at).getReg()) : MCRegister(); };
-    auto imm = [&](unsigned at) { return at < inst.getNumOperands() && inst.getOperand(at).isImm() ? inst.getOperand(at).getImm() : 0; };
-    auto zero = [&](MCRegister r) { return r && (StringRef(info.getName(r)) == "XZR" || StringRef(info.getName(r)) == "WZR"); };
+inline void follow(const MCInst &inst, StringRef name, const MCInstrDesc &desc, const MCRegisterInfo &info,
+                   Registers &known) {
+    auto reg = [&](unsigned at) {
+        return at < inst.getNumOperands() && inst.getOperand(at).isReg() ? MCRegister(inst.getOperand(at).getReg())
+                                                                         : MCRegister();
+    };
+    auto imm = [&](unsigned at) {
+        return at < inst.getNumOperands() && inst.getOperand(at).isImm() ? inst.getOperand(at).getImm() : 0;
+    };
+    auto zero = [&](MCRegister r) {
+        return r && (StringRef(info.getName(r)) == "XZR" || StringRef(info.getName(r)) == "WZR");
+    };
     MCRegister target = reg(0);
     if ((name == "MOVZXi" || name == "MOVZWi") && target) {
         known.set(target, static_cast<int64_t>(static_cast<uint64_t>(imm(1)) << imm(2)));
@@ -439,13 +498,16 @@ inline AsmReading readAsm(const clang::AsmStmt *statement, clang::ASTContext &co
     MCTargetOptions options;
     std::unique_ptr<MCAsmInfo> asmInfo(registers ? found->createMCAsmInfo(*registers, triple, options) : nullptr);
     std::unique_ptr<MCInstrInfo> instructionInfo(found->createMCInstrInfo());
-    std::unique_ptr<MCSubtargetInfo> subtarget(found->createMCSubtargetInfo(triple, target.getTargetOpts().CPU, features));
+    std::unique_ptr<MCSubtargetInfo> subtarget(
+        found->createMCSubtargetInfo(triple, target.getTargetOpts().CPU, features));
     if (!registers || !asmInfo || !instructionInfo || !subtarget) return reading;
     SourceMgr sources;
     bool failed = false;
-    sources.setDiagHandler([](const SMDiagnostic &diagnostic, void *flag) {
-        if (diagnostic.getKind() == SourceMgr::DK_Error) *static_cast<bool *>(flag) = true;
-    }, &failed);
+    sources.setDiagHandler(
+        [](const SMDiagnostic &diagnostic, void *flag) {
+            if (diagnostic.getKind() == SourceMgr::DK_Error) *static_cast<bool *>(flag) = true;
+        },
+        &failed);
     sources.AddNewSourceBuffer(MemoryBuffer::getMemBufferCopy(text, "asm"), SMLoc());
     MCContext mc(triple, *asmInfo, *registers, *subtarget, &sources);
     MCObjectFileInfo objectInfo;
@@ -477,8 +539,10 @@ inline AsmReading readAsm(const clang::AsmStmt *statement, clang::ASTContext &co
             bool viaRegister = false;
             for (unsigned at = 0; at < inst.getNumOperands(); at++) {
                 const MCOperand &operand = inst.getOperand(at);
-                if (operand.isExpr()) detail::collectSymbols(operand.getExpr(), symbols);
-                else if (operand.isReg() && (desc.isIndirectBranch() || desc.isCall())) viaRegister = true;
+                if (operand.isExpr())
+                    detail::collectSymbols(operand.getExpr(), symbols);
+                else if (operand.isReg() && (desc.isIndirectBranch() || desc.isCall()))
+                    viaRegister = true;
             }
             for (const MCSymbol *symbol : symbols) {
                 if (symbol->isTemporary() || symbol->isDefined()) continue;

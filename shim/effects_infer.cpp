@@ -11,10 +11,11 @@
 // A function that has a body gets the set of the effects of its calls, followed through the functions of the file
 // (and of the headers it includes) to the calls the file cannot see into: a function of libc or libSystem has the set
 // the table gives it (shim/effects_table.h), a declaration with an attribute and no body has that set (a promise smith
-// trusts), and any other function without a body is `c`, every effect. A call through a function pointer is `c`, as are
-// inline assembly and an Objective-C message; writing a global or a function-local static is `globals`. A call that
-// stops the task (a checked index, a contract, `abort`, a trap) is a failure point: `fails` (issue #325). An annotation
-// is a ceiling: an inferred effect beyond it is a compile error naming the chain
+// trusts), and any other function without a body is `c`, every effect. A call through a function pointer is `c`, as is
+// an Objective-C message; inline assembly is read by the assembler (effects_asm.h); writing a global or a
+// function-local static is `globals`. A call that stops the task (a checked index, a contract, `abort`, a trap) is a
+// failure point: `fails` (issue #325). An annotation is a ceiling: an inferred effect beyond it is a compile error
+// naming the chain
 // (`bad -> log_it (log.c:12) -> printf`); the declared set, not the inferred one, is what a caller sees.
 //
 // Linked into smith and run on every compile with no flag, like [[smith::affine]] (shim/affine.cpp): a ParsedAttrInfo
@@ -273,7 +274,8 @@ class Collector {
 
     Collector(Node &node, ASTContext &context, Symbols symbols, Symbols names,
               std::vector<const StaticAssertDecl *> &asserts)
-        : node(node), context(context), sm(context.getSourceManager()), symbols(std::move(symbols)), names(std::move(names)), asserts(asserts) {}
+        : node(node), context(context), sm(context.getSourceManager()), symbols(std::move(symbols)),
+          names(std::move(names)), asserts(asserts) {}
 
     void walk(const Stmt *body) {
         std::vector<const Stmt *> work{body};
@@ -378,10 +380,10 @@ class Collector {
         }
     }
 
-    // An `asm` statement: the assembler reads it (shim/effects_asm.h), and each thing it does is a call: a system call by
-    // its number, a call or jump to a symbol, an indirect call. A block it cannot read is `c`.
+    // An `asm` statement: the assembler reads it (shim/effects_asm.h), and each thing it does is a call: a system call
+    // by its number, a call or jump to a symbol, an indirect call. A block it cannot read is `c`.
     void onAsm(const AsmStmt *assembly) {
-        SourceLocation loc = assembly->getBeginLoc();
+        SourceLocation loc = assembly->getAsmLoc();
         AsmReading reading = readAsm(assembly, context);
         if (!reading.parsed) {
             leaf(loc, C, "inline assembly");
@@ -430,7 +432,7 @@ class Collector {
 
     // Whether a call of mmap or mprotect asks for memory that can run: a constant protection with PROT_EXEC (4).
     static bool executable(llvm::StringRef name, std::optional<int64_t> protection) {
-        return (name == "mmap" || name == "mprotect") && protection && (*protection & 4) != 0;
+        return (name == "mmap" || name == "mprotect") && protection && (static_cast<uint64_t>(*protection) & 4U) != 0;
     }
 
     void leaf(SourceLocation loc, uint32_t set, const std::string &name) {

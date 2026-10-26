@@ -13,6 +13,7 @@ import smith::test;
 import <stdlib.h>;
 import <string.h>;
 import scratch;
+import target;
 
 static typeof(const char[:]) slice_of(const char *text) {
     return text[0:c::strlen(text)];
@@ -381,6 +382,20 @@ export void test_the_fix_it_of_an_effects_error_replaces_the_attribute_and_the_f
     scratch::expect_status("fix-it: a pure function that is right stays pure", 0, &twice);
     scratch::Run single = scratch::sh(&p, "grep -q '^\\[\\[smith::effects(alloc, files)\\]\\] void \\*single' p.c");
     scratch::expect_status("fix-it: a single effect's attribute gets the whole set", 0, &single);
+}
+
+// Inline assembly read by the assembler (issue #396): a block with no system call is pure, a system call has its libc
+// function's effects, an unknown number and a call through a register are `c`. The file is for AArch64 (macOS and
+// Linux); on another target its text is empty.
+export void test_effects_asm_c(io::Io *io) {
+    if constexpr (target::arch == target::aarch64) {
+        effects_case(io, "effects_asm.c");
+    }
+}
+
+// Making memory executable is the effect `code`.
+export void test_effects_code_c(io::Io *io) {
+    effects_case(io, "effects_code.c");
 }
 
 export void test_effects_args_c(io::Io *io) {

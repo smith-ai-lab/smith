@@ -42,7 +42,7 @@ struct Name {
 inline constexpr Name names[] = {
     {"alloc", Alloc},     {"files", Files}, {"net", Net},         {"console", Console}, {"clock", Clock},
     {"process", Process}, {"env", Env},     {"entropy", Entropy}, {"globals", Globals}, {"c", C},
-    {"fails", Fails}, {"code", Code}};
+    {"fails", Fails},     {"code", Code}};
 
 // The names of the bits of a set, in the order of `names`, joined by ", ": "alloc, files". "none" for the empty set.
 inline std::string describe(uint32_t set) {
