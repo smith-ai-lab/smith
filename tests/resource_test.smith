@@ -1,29 +1,55 @@
 // End-to-end tests for the files a smith with clang inside carries and writes on first use (tests/resource.sh): clang's
-// builtin headers, the compiler-rt runtimes, libLTO.dylib, and the bin/clang the driver runs again for -cc1. Every test
-// uses a data folder of its own (XDG_DATA_HOME, in the test's scratch folder, with a cache of its own where the test
-// removes or cleans it), so the real ones are never read or changed. A smith without clang inside (the stage0) has none
-// of this, and the tests do nothing.
+// builtin headers, the compiler-rt runtimes, libLTO.dylib (macOS), and the bin/clang the driver runs again for -cc1.
+// Every test uses a data folder of its own (XDG_DATA_HOME, in the test's scratch folder, with a cache of its own where
+// the test removes or cleans it), so the real ones are never read or changed. A smith without clang inside (the stage0)
+// has none of this, and the tests do nothing. The shell helpers below branch on `uname` where macOS and Linux differ
+// (the header and runtime names, the ld's mark, the way a copy gets another identity); a check with no meaning on Linux
+// (frameworks, ARC, libLTO) runs on macOS only, with a comment where it is.
 module resource_test;
 
 import smith::format;
 import smith::io;
 import smith::test;
 import scratch;
+import target;
 
 // Every command: the data folder, the smith under test, and the shell functions the checks use. A program of the
 // programs folder is a clone of the smith that made it: the same bytes in a file of its own, never a hard link (macOS's
 // policy daemon kills a process when another name of its file is removed; issue #48). `variant` is a copy of smith with
-// another LC_UUID, as a rebuild has.
+// another LC_UUID (on Linux another build-id), as a rebuild has. On Linux a program may also be a hard
+// link, the fallback where the file system cannot clone: no policy daemon names a file there.
 constexpr char prelude[_] =
     "export XDG_DATA_HOME=\"$(cd .. && pwd)/data\"\n"
     "smith=$SMITH_SELF\n"
+    "os=$(uname)\n"
+    "triple=$(uname -m)-unknown-linux-gnu\n"
+    "case $(uname -m) in x86_64) arch_header=immintrin.h;; *) arch_header=arm_neon.h;; esac\n"
+    "if [ \"$os\" = Darwin ]; then seven=\"objc2.m -framework Foundation\"; else seven=seven.c; fi\n"
+    "if [ \"$os\" = Darwin ]; then\n"
+    "    sanitize=-fsanitize=address,undefined; shared_libsan=; runtimes=lib/darwin\n"
+    "    asan_runtime=libclang_rt.asan_osx_dynamic.dylib\n"
+    "else\n"
+    "    shared_libsan='-shared-libsan -frtlib-add-rpath'; sanitize=\"-fsanitize=address,undefined $shared_libsan\"\n"
+    "    runtimes=lib/$triple; asan_runtime=libclang_rt.asan.so\n"
+    "fi\n"
+    "rpath_of() {\n"
+    "    if [ \"$os\" = Darwin ]; then otool -l \"$1\" | sed -n 's/^ *path \\(.*clang.*\\) (offset.*/\\1/p'\n"
+    "    else readelf -d \"$1\" | sed -n 's/.*runpath: \\[\\(.*clang.*\\)\\]/\\1/p'; fi\n"
+    "}\n"
     "clang_folders=$XDG_DATA_HOME/smith/clang\n"
     "program_folders=$XDG_DATA_HOME/smith/programs\n"
-    "is_copy() { cmp -s \"$1\" \"$2\" && [ ! \"$1\" -ef \"$2\" ]; }\n"
+    "is_copy() { cmp -s \"$1\" \"$2\" && { [ \"$os\" != Darwin ] || [ ! \"$1\" -ef \"$2\" ]; }; }\n"
+    "ago_hours() { if [ \"$os\" = Darwin ]; then date -v-\"$1\"H +%Y%m%d%H%M; else date -d \"$1 hours ago\" "
+    "+%Y%m%d%H%M; fi; }\n"
+    "ago_minutes() { if [ \"$os\" = Darwin ]; then date -v-\"$1\"M +%Y%m%d%H%M; else date -d \"$1 minutes ago\" "
+    "+%Y%m%d%H%M; fi; }\n"
+    "lld_mark() { if [ \"$os\" = Darwin ]; then otool -l \"$1\" | sed -n '/LC_BUILD_VERSION/,/version/p' | sed -n 's/^ "
+    "*tool \\(.*\\)/\\1/p'; else readelf -p .comment \"$1\" | grep -c 'Linker: LLD'; fi; }\n"
     "yn() { [ -e \"$1\" ] && echo yes || echo no; }\n"
-    "tool_of() { otool -l \"$1\" | sed -n '/LC_BUILD_VERSION/,/version/p' | sed -n 's/^ *tool \\(.*\\)/\\1/p'; }\n"
-    "variant() { cp \"$smith\" \"../$1\"; perl -0777 -pi -e 's/(\\x1b\\0\\0\\0\\x18\\0\\0\\0)(.{16})/$1 . "
-    "(\"\\x'\"$2\"'\" x 16)/se' \"../$1\"; codesign -f -s - \"../$1\" >/dev/null 2>&1; }\n"
+    "variant() { cp \"$smith\" \"../$1\"; if [ \"$os\" = Darwin ]; then perl -0777 -pi -e "
+    "'s/(\\x1b\\0\\0\\0\\x18\\0\\0\\0)(.{16})/$1 . (\"\\x'\"$2\"'\" x 16)/se' \"../$1\"; "
+    "codesign -f -s - \"../$1\" >/dev/null 2>&1; else perl -0777 -pi -e "
+    "'s/(\\x04\\0\\0\\0\\x10\\0\\0\\0\\x03\\0\\0\\0GNU\\0)(.{16})/$1 . (\"\\x'\"$2\"'\" x 16)/se' \"../$1\"; fi; }\n"
     "folder_of() { for f in \"$program_folders\"/*; do is_copy \"$f/bin/ld\" \"$1\" && echo \"$f\"; done; }\n";
 
 // Where the files are, once a compile has written them.
@@ -34,21 +60,20 @@ constexpr char where[_] = "out=$(\"$smith\" cc -print-resource-dir)\n"
                           "programs=${programs%/bin/clang}\n";
 
 // Eight workers of two smiths, five rounds each, on the one runtime folder: the number of failures.
-constexpr char workers[_] =
-    "for n in 1 2 3 4 5 6 7 8; do\n"
-    "    (for round in 1 2 3 4 5; do\n"
-    "        \"$smith\" cc objc2.m -framework Foundation -o \"objc_a$n\" 2>>\"../mix$n\" && [ "
-    "\"$(./objc_a$n)\" = 7 ] || echo bad >>\"../mix$n.bad\"\n"
-    "        \"../smith_b\" cc objc2.m -framework Foundation -o \"objc_c$n\" 2>>\"../mix$n\" && "
-    "[ \"$(./objc_c$n)\" = 7 ] || echo bad >>\"../mix$n.bad\"\n"
-    "    done) &\n"
-    "done\n"
-    "wait\n"
-    "cat ../mix*.bad 2>/dev/null | wc -l | tr -d ' '\n";
+constexpr char workers[_] = "for n in 1 2 3 4 5 6 7 8; do\n"
+                           "    (for round in 1 2 3 4 5; do\n"
+                           "        \"$smith\" cc $seven -o \"objc_a$n\" 2>>\"../mix$n\" && [ "
+                           "\"$(./objc_a$n)\" = 7 ] || echo bad >>\"../mix$n.bad\"\n"
+                           "        \"../smith_b\" cc $seven -o \"objc_c$n\" 2>>\"../mix$n\" && "
+                           "[ \"$(./objc_c$n)\" = 7 ] || echo bad >>\"../mix$n.bad\"\n"
+                           "    done) &\n"
+                           "done\n"
+                           "wait\n"
+                           "cat ../mix*.bad 2>/dev/null | wc -l | tr -d ' '\n";
 
 // A programs folder whose smith is running, or whose binary exists, stays: what each folder does after a prune.
 constexpr char lock_script[_] =
-    "two_hours_ago=$(date -v-2H +%Y%m%d%H%M)\n"
+    "two_hours_ago=$(ago_hours 2)\n"
     "variant smith_d 11\n"
     "variant smith_e 22\n"
     "../smith_d cc -fsyntax-only hello.c\n"
@@ -172,14 +197,23 @@ export void test_resource_the_runtime_folder_holds_the_files(io::Io *io) {
     first_compile(io, &p);
     // lib/clang/<major>/ is under the folder; libLTO is beside it
     holds(io, &p, "include/stddef.h");
-    holds(io, &p, "include/arm_neon.h");
     holds(io, &p, "share/asan_ignorelist.txt");
-    holds(io, &p, "lib/darwin/libclang_rt.asan_osx_dynamic.dylib");
-    holds(io, &p, "lib/darwin/libclang_rt.ubsan_osx_dynamic.dylib");
-    holds(io, &p, "lib/darwin/libclang_rt.osx.a");
-    holds(io, &p, "lib/darwin/libclang_rt.profile_osx.a");
-    scratch::expect_text("resource: the folder holds lib/libLTO.dylib", "yes",
-                         text_after(io, &p, "yn \"$folder/lib/libLTO.dylib\""));
+    if constexpr (target::os == target::macos) {
+        holds(io, &p, "include/arm_neon.h");
+        holds(io, &p, "lib/darwin/libclang_rt.asan_osx_dynamic.dylib");
+        holds(io, &p, "lib/darwin/libclang_rt.ubsan_osx_dynamic.dylib");
+        holds(io, &p, "lib/darwin/libclang_rt.osx.a");
+        holds(io, &p, "lib/darwin/libclang_rt.profile_osx.a");
+        scratch::expect_text("resource: the folder holds lib/libLTO.dylib", "yes",
+                             text_after(io, &p, "yn \"$folder/lib/libLTO.dylib\""));
+    } else {
+        // the target's own header (immintrin.h, or arm_neon.h on arm64) and the runtimes of its triple; no libLTO
+        holds(io, &p, "include/$arch_header");
+        holds(io, &p, "lib/$triple/libclang_rt.asan.so");
+        holds(io, &p, "lib/$triple/libclang_rt.ubsan_standalone.so");
+        holds(io, &p, "lib/$triple/libclang_rt.builtins.a");
+        holds(io, &p, "lib/$triple/libclang_rt.profile.a");
+    }
 }
 
 static void is_a_copy(io::Io *io, const scratch::Project *p, const char *program) {
@@ -223,7 +257,9 @@ export void test_resource_a_second_compile_rewrites_no_file(io::Io *io) {
         return;
     }
     first_compile(io, &p);
-    constexpr char files[_] = "ls -l \"$folder/lib/clang/$major/include/stddef.h\" \"$folder/lib/libLTO.dylib\"";
+    // libLTO.dylib is the system ld's on macOS; Linux has none
+    constexpr char files[_] = "ls -l \"$folder/lib/clang/$major/include/stddef.h\" $([ \"$os\" = Darwin ] && echo "
+                             "\"$folder/lib/libLTO.dylib\")";
     scratch::Run stamped = run_after(io, &p, format::push(&io->arena, files, " >../stamp").data);
     scratch::expect_status("resource: the stamps", 0, &stamped);
     scratch::sleep(&p, 1000);
@@ -273,13 +309,19 @@ export void test_resource_an_flto_link_needs_no_lib_lto(io::Io *io) {
     scratch::expect_text("resource: an -flto link works", "0 hi",
                          built(io, &p, "\"$smith\" cc -flto hello.c -o lto", "./lto"));
     scratch::expect_text("resource: and the linker prints nothing about libLTO", "", printed(io, &p));
-    scratch::expect_text("resource: an -flto link with the system ld works", "0 hi",
-                         built(io, &p, "SMITH_LINKER=/usr/bin/ld \"$smith\" cc -flto hello.c -o lto_ld", "./lto_ld"));
-    scratch::expect_text("resource: and it prints nothing", "", printed(io, &p));
+    // The system ld loads libLTO.dylib for -flto; Linux's ld needs LLVM's gold plugin instead, which smith does not
+    // carry, so there is no such link to check there.
+    if constexpr (target::os == target::macos) {
+        scratch::expect_text(
+            "resource: an -flto link with the system ld works", "0 hi",
+            built(io, &p, "SMITH_LINKER=/usr/bin/ld \"$smith\" cc -flto hello.c -o lto_ld", "./lto_ld"));
+        scratch::expect_text("resource: and it prints nothing", "", printed(io, &p));
+    }
 }
 
 // The program the driver runs as `ld` is smith, and the link is lld's, in that process. An lld binary says so in its
-// LC_BUILD_VERSION: tool 4 (ld64's LD is 3), with LLVM's version.
+// LC_BUILD_VERSION: tool 4 (ld64's LD is 3), with LLVM's version; on Linux in its .comment, "Linker: LLD" (lld_mark
+// prints the tool, or the count of those lines).
 export void test_resource_the_link_is_lld_in_smiths_process(io::Io *io) {
     scratch::Project p;
     if (!begin(io, &p, false)) {
@@ -288,15 +330,23 @@ export void test_resource_the_link_is_lld_in_smiths_process(io::Io *io) {
     first_compile(io, &p);
     scratch::expect_text("resource: a link works", "0 hi",
                          built(io, &p, "\"$smith\" cc hello.c -o linked", "./linked"));
-    scratch::expect_text("resource: and is lld's", "4", text(io, &p, "tool_of linked"));
-    scratch::expect_text("resource: and is signed, with no codesign step", "0",
-                         text(io, &p, "codesign --verify linked >/dev/null 2>&1; echo $?"));
-    scratch::expect_text("resource: and is signed ad hoc by the linker", "1",
-                         text(io, &p, "codesign -dv linked 2>&1 | grep -c 'linker-signed'"));
-    scratch::expect_text("resource: SMITH_LINKER=/usr/bin/ld links with ld", "0 hi 3",
+    if constexpr (target::os == target::macos) {
+        scratch::expect_text("resource: and is lld's", "4", text(io, &p, "lld_mark linked"));
+        scratch::expect_text("resource: and is signed, with no codesign step", "0",
+                             text(io, &p, "codesign --verify linked >/dev/null 2>&1; echo $?"));
+        scratch::expect_text("resource: and is signed ad hoc by the linker", "1",
+                             text(io, &p, "codesign -dv linked 2>&1 | grep -c 'linker-signed'"));
+    } else {
+        scratch::expect_text("resource: and is lld's", "1", text(io, &p, "lld_mark linked")); // no signing on Linux
+    }
+    const char *linked_by_ld = "0 hi 0"; // the count of lld's marks; macOS prints ld64's tool, 3
+    if constexpr (target::os == target::macos) {
+        linked_by_ld = "0 hi 3";
+    }
+    scratch::expect_text("resource: SMITH_LINKER=/usr/bin/ld links with ld", linked_by_ld,
                          text_after(io, &p,
                                     "SMITH_LINKER=/usr/bin/ld \"$smith\" cc hello.c -o linked_ld 2>../err; "
-                                    "echo \"$? $(./linked_ld) $(tool_of linked_ld)\""));
+                                    "echo \"$? $(./linked_ld) $(lld_mark linked_ld)\""));
 }
 
 export void test_resource_a_missing_linker_and_an_undefined_symbol_fail(io::Io *io) {
@@ -316,6 +366,10 @@ export void test_resource_a_missing_linker_and_an_undefined_symbol_fail(io::Io *
 
 // What ld links today, lld links: frameworks, a dynamic library, -dead_strip, an Objective-C selector stub, a dSYM.
 export void test_resource_lld_links_frameworks_arc_and_dead_strip(io::Io *io) {
+    // Frameworks, ARC (Objective-C), -dead_strip and a dSYM are Mach-O and Apple's: Linux has no such feature to check.
+    if constexpr (target::os != target::macos) {
+        return;
+    }
     scratch::Project p;
     if (!begin(io, &p, false)) {
         return;
@@ -337,13 +391,24 @@ export void test_resource_lld_links_a_dynamic_library_and_a_program_against_it(i
         return;
     }
     first_compile(io, &p);
-    scratch::Run linked = run(io, &p, "\"$smith\" cc -dynamiclib hello.c -o libhello.dylib");
-    scratch::expect_status("resource: a dynamic library links", 0, &linked);
-    scratch::Run library = run(io, &p, "\"$smith\" cc -dynamiclib lib.c -o liblib.dylib");
-    scratch::expect_status("resource: the library to link against", 0, &library);
-    scratch::expect_text(
-        "resource: and a program links against it", "0 lib",
-        built(io, &p, "\"$smith\" cc uselib.c -L. -llib -Wl,-rpath,@loader_path -o uselib", "./uselib"));
+    // A shared library is a .dylib on macOS (-dynamiclib, @loader_path) and a .so on Linux (-shared -fPIC, $ORIGIN).
+    if constexpr (target::os == target::macos) {
+        scratch::Run linked = run(io, &p, "\"$smith\" cc -dynamiclib hello.c -o libhello.dylib");
+        scratch::expect_status("resource: a dynamic library links", 0, &linked);
+        scratch::Run library = run(io, &p, "\"$smith\" cc -dynamiclib lib.c -o liblib.dylib");
+        scratch::expect_status("resource: the library to link against", 0, &library);
+        scratch::expect_text(
+            "resource: and a program links against it", "0 lib",
+            built(io, &p, "\"$smith\" cc uselib.c -L. -llib -Wl,-rpath,@loader_path -o uselib", "./uselib"));
+    } else {
+        scratch::Run linked = run(io, &p, "\"$smith\" cc -shared -fPIC hello.c -o libhello.so");
+        scratch::expect_status("resource: a dynamic library links", 0, &linked);
+        scratch::Run library = run(io, &p, "\"$smith\" cc -shared -fPIC lib.c -o liblib.so");
+        scratch::expect_status("resource: the library to link against", 0, &library);
+        scratch::expect_text(
+            "resource: and a program links against it", "0 lib",
+            built(io, &p, "\"$smith\" cc uselib.c -L. -llib '-Wl,-rpath,$ORIGIN' -o uselib", "./uselib"));
+    }
 }
 
 // Compiling and linking in one command runs the driver again with -cc1: bin/clang is smith. A copy of smith is the same
@@ -375,7 +440,7 @@ export void test_resource_two_smiths_keep_their_own_programs(io::Io *io) {
     scratch::Run made = run(io, &p, "variant smith_b ab");
     scratch::expect_status("resource: a second smith is made", 0, &made);
     scratch::expect_text("resource: a second smith (another LC_UUID) works", "0 7",
-                         built(io, &p, "../smith_b cc objc2.m -framework Foundation -o objc_b", "./objc_b"));
+                         built(io, &p, "../smith_b cc $seven -o objc_b", "./objc_b"));
     scratch::expect_text("resource: and has programs folder of its own", "2",
                          text(io, &p, "ls \"$program_folders\" | wc -l | tr -d ' '"));
     scratch::expect_text(
@@ -468,7 +533,7 @@ export void test_resource_a_folder_younger_than_an_hour_stays(io::Io *io) {
         run(io, &p,
             "variant smith_e 22; ../smith_e cc -fsyntax-only hello.c; folder_e=$(folder_of ../smith_e); "
             "echo \"$folder_e\" >../young; rm ../smith_e; "
-            "touch -t \"$(date -v-30M +%Y%m%d%H%M)\" \"$folder_e\"; variant smith_h 55; "
+            "touch -t \"$(ago_minutes 30)\" \"$folder_e\"; variant smith_h 55; "
             "../smith_h cc -fsyntax-only hello.c");
     scratch::expect_status("resource: a young folder whose binary is gone, and a new one", 0, &staged);
     scratch::expect_text("resource: a folder younger than an hour stays even when its binary is gone", "yes",
@@ -494,20 +559,19 @@ export void test_resource_a_sanitized_program_loads_its_runtime_from_the_folder(
     }
     first_compile(io, &p);
     scratch::expect_text("resource: a sanitized program builds and runs", "0 hi",
-                         built(io, &p, "\"$smith\" cc -fsanitize=address,undefined -g hello.c -o asan", "./asan"));
+                         built(io, &p, "\"$smith\" cc $sanitize -g hello.c -o asan", "./asan"));
     scratch::expect_text("resource: its rpath is the folder's runtime",
-                         text_after(io, &p, "echo \"$folder/lib/clang/$major/lib/darwin\""),
-                         text(io, &p, "otool -l asan | sed -n 's/^ *path \\(.*clang.*\\) (offset.*/\\1/p'"));
+                         text_after(io, &p, "echo \"$folder/lib/clang/$major/$runtimes\""),
+                         text(io, &p, "rpath_of asan"));
     scratch::Run cleaned = run(io, &p, "\"$smith\" cache clean");
     scratch::expect_status("resource: smith cache clean works", 0, &cleaned);
-    scratch::expect_text(
-        "resource: the folder is still there", "yes",
-        text_after(io, &p, "yn \"$folder/lib/clang/$major/lib/darwin/libclang_rt.asan_osx_dynamic.dylib\""));
+    scratch::expect_text("resource: the folder is still there", "yes",
+                         text_after(io, &p, "yn \"$folder/lib/clang/$major/$runtimes/$asan_runtime\""));
     scratch::expect_text("resource: the sanitized program still runs", "hi", text(io, &p, "./asan"));
     scratch::Run removed = run(io, &p, "rm -rf \"$XDG_CACHE_HOME\"");
     scratch::expect_status("resource: the whole cache is removed", 0, &removed);
     scratch::expect_text("resource: with the whole cache removed it still runs", "hi", text(io, &p, "./asan"));
-    scratch::Run bad = run(io, &p, "\"$smith\" cc -fsanitize=address -g bad.c -o bad");
+    scratch::Run bad = run(io, &p, "\"$smith\" cc -fsanitize=address ${shared_libsan:-} -g bad.c -o bad");
     scratch::expect_status("resource: a program that reads out of bounds is built", 0, &bad);
     scratch::expect_text("resource: and still finds the runtime to report an error", "AddressSanitizer",
                          text(io, &p, "./bad 2>&1 | grep -o AddressSanitizer | head -n 1"));

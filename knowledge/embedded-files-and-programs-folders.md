@@ -45,3 +45,9 @@ headers of the C libraries), never the generated headers of the `.smith` modules
 to the project's `.smith/lib/` and, from them, the headers to `.smith/include/smith/` with the same binary (about 80 ms
 once, in parallel, then nothing while its stamp matches), so a header is always in the format of the smith that reads it.
 
+**On Linux** the same folders hold the target's own files: `lib/clang/<major>/lib/<triple>/` (the `.so` and `.a` runtimes) in
+place of `lib/darwin`, and no `libLTO` (the system `ld` would need LLVM's gold plugin, which smith does not carry). A program
+is a `FICLONE` clone where the file system has one (btrfs, XFS), else a hard link (ext4 has no clone), the fallback the
+platform layer has on both systems ([platform-layer](platform-layer.md)). A sanitized program links its runtime statically; with `-shared-libsan
+-frtlib-add-rpath` it records the folder's `lib/<triple>` as its `RUNPATH`. `tests/resource_test.smith` asserts each platform's
+own facts and runs the Mach-O ones (frameworks, ARC, `-dead_strip`) on macOS only.
