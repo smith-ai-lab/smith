@@ -965,6 +965,10 @@ static int smith_check_project(int count, char **args, const char *self) {
         } else {
             fprintf(stderr, "smith check: this smith has no prover, so prove is skipped\n");
         }
+        // The promises are read from the summaries of the project's own compiles, which lint, test and prove need not
+        // have made (a project never built): the default build, a no-op when fresh, makes them.
+        char build_log[PATH_MAX];
+        (void)smith_check_child(self, "build", split, loud, build_log);
     }
     smith_check_promises(every_task);
     if (failed_count == 0) {
