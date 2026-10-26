@@ -33,6 +33,12 @@ smith-debug is the short guide for users; this is how it is built.
   `lldb-argdumper`, which it looks up beside smith; smith is a fourth clone in the programs folder
   (`bin/lldb-argdumper`) and, run under that name, prints `{"arguments": [...]}` as LLVM's does.
 
+**No launch goes through a shell** (#388). lldb's `run` and `r` are aliases of `process launch --shell-expand-args true`,
+whose shell globs what the user quoted and gives up after about 10 s of wall time. `smith dbg` re-aliases both to
+`process launch -X false --` (`-O` commands in `shim/lldb.cpp`, before the user's own); `process launch -X true` still
+expands. `smith dap` and `smith mcp` launch without expansion already (`shellExpandArguments` is false by default).
+`tests/dbg_launch_test.smith` checks an argument with a space and a glob character.
+
 **On Linux** (issue #305) lldb debugs a process through `lldb-server gdbserver`, which LLVM builds. smith is that
 program too: `scripts/llvm_linux.smith` puts lldb-server's objects in `libsmithlldb.a` with its `main` renamed
 `smith_lldb_server_tool_main`, `shim/lldb_server.cpp` runs it, and the programs folder has a fifth clone,

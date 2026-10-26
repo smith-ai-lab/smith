@@ -1,0 +1,45 @@
+// `smith dbg` launches without a shell (#388): lldb's `run` expands the arguments through a shell that globs what the
+// user quoted and gives up after ~10 s of wall time. smith's `run` passes them as they are; `process launch -X true`
+// still expands. smith dbg is in the full smith only, so a smith without it skips these.
+module dbg_launch_test;
+
+import scratch;
+import smith::io;
+import smith::test;
+
+constexpr char program[] = "#include <stdio.h>\n"
+                           "int main(int count, char **arguments) {\n"
+                           "    for (int i = 1; i < count; i++) printf(\"<%s>\\n\", arguments[i]);\n"
+                           "    return 0;\n"
+                           "}\n";
+
+static bool made(scratch::Project *p) {
+    if (scratch::sh(p, "smith dbg --version").status != 0) return false;
+    scratch::write(p, "args.c", program);
+    scratch::write(p, "one.txt", "");
+    scratch::write(p, "two.txt", "");
+    scratch::Run built = scratch::sh(p, "smith cc -g -O0 args.c -o args 2>&1");
+    scratch::expect_status("the program builds", 0, &built);
+    return true;
+}
+
+export void test_dbg_launch_run_passes_arguments_as_they_are(io::Io *io) {
+    scratch::Project p = scratch::project(io, "dbg_run", nullptr);
+    if (!made(&p)) return;
+    scratch::Run run = scratch::sh(&p,
+                                   "smith dbg -b -o 'settings set plugin.process.gdb-remote.packet-timeout 600' "
+                                   "-o run args -- 'a b' '*.txt' 2>&1");
+    scratch::expect_contains("run: an argument with a space stays one", run.out, "<a b>");
+    scratch::expect_contains("run: a glob character stays", run.out, "<*.txt>");
+    scratch::expect_lacks("run: nothing is expanded", run.out, "<one.txt>");
+}
+
+export void test_dbg_launch_process_launch_with_x_true_expands(io::Io *io) {
+    scratch::Project p = scratch::project(io, "dbg_expand", nullptr);
+    if (!made(&p)) return;
+    scratch::Run run = scratch::sh(&p,
+                                   "smith dbg -b -o 'settings set plugin.process.gdb-remote.packet-timeout 600' "
+                                   "-o 'process launch -X true' args -- '*.txt' 2>&1");
+    scratch::expect_contains("-X true: the glob expands", run.out, "<one.txt>");
+    scratch::expect_contains("-X true: ... every match", run.out, "<two.txt>");
+}
