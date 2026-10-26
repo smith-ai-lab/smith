@@ -322,7 +322,7 @@ static bool smith_lang_body_c_name(SmithLang *lang, const SmithHost *host, const
     if (smith_lang_previous(lang, host, 1, &before) && before.kind == SmithTokenKind_Identifier &&
         smith_lang_word(before.text, before.length) == SmithLangWord_Tag) {
         lang->generated_name = token->synthetic;
-        smith_lang_lower_tag(lang, host, token->text, token->length, token->location, &next);
+        smith_lang_lower_tag(lang, host, token->text, token->length, token->location, &next, lang->prev_tag_word);
         lang->generated_name = false;
         return true;
     }

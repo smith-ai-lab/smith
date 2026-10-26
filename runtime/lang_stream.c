@@ -38,6 +38,8 @@ static bool smith_lang_generic_for_constexpr(SmithLang *lang, const SmithHost *h
                                              SmithLangWord word);
 static void smith_lang_for_constexpr_outside(SmithLang *lang, const SmithHost *host, const SmithToken *token);
 
+static void smith_lang_locals_write(SmithLang *lang, const SmithHost *host);
+
 static void smith_lang_stream_identifier(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     SmithLangWord word = smith_lang_word(token->text, token->length);
     if (word == SmithLangWord_Other && lang->statement_typedef) smith_lang_note_own_word(lang, token);
@@ -117,6 +119,7 @@ static void smith_lang_stream_punctuator(SmithLang *lang, const SmithHost *host,
     } else {
         smith_lang_punctuator_state(lang, c);
         smith_lang_emit_kept(lang, host, token);
+        if (c == ';' && lang->local_count > 0 && lang->paren_depth == 0) smith_lang_locals_write(lang, host);
         smith_lang_semicolon_state(lang, c);
     }
     smith_lang_track(lang, token, false);
@@ -311,7 +314,107 @@ static bool smith_lang_c_name_attribute(SmithLang *lang, const SmithHost *host, 
     return true;
 }
 
+// ---- A module's tags are type names
+// ---------------------------------------------------------------------------------------------
+//
+// `struct Node { Node *next; };` in a module: the tag `Node` is a type name too (issue #333). It lowers to plain C: a
+// tag declared at file scope has its typedef (`typedef struct m_Node m_Node;`) written before the next declaration,
+// where the definition is complete (an enum cannot be named before), and in the generated header after an exported
+// tag. Until then, in the declaration's own braces, the bare name is written `struct m_Node`.
+
+static const char *smith_lang_tag_keyword(char word) {
+    return word == 'u' ? "union" : word == 'e' ? "enum" : "struct";
+}
+
+static void smith_lang_typedefs_write(SmithLang *lang, const SmithHost *host) {
+    bool was_exported = lang->export_active;
+    for (uint32_t at = 0; at < lang->due_count; at++) { // each tag the last declaration defined
+        SmithLangName *entry = &lang->names[lang->due[at]];
+        entry->typedef_due = false;
+        char name[smith_lang_name_max];
+        char tag[smith_lang_name_max];
+        const char *prefixed = smith_lang_prefixed(lang, smith_lang_str(entry->name), entry->name.length);
+        snprintf(name, sizeof name, "%s", prefixed);
+        snprintf(tag, sizeof tag, "%s", entry->tag_spelling.length > 0 ? smith_lang_str(entry->tag_spelling) : name);
+        SmithToken like = {};
+        like.location = entry->location;
+        like.handle = smith_token_no_handle;
+        SmithToken made[5];
+        made[0] = smith_lang_tuple_made(SmithTokenKind_Identifier, "typedef", 7, &like, false);
+        made[0].line_start = true;
+        made[1] = smith_lang_tuple_made(SmithTokenKind_Identifier, smith_lang_tag_keyword(entry->tag_word),
+                                        strlen(smith_lang_tag_keyword(entry->tag_word)), &like, true);
+        made[2] = smith_lang_tuple_made(SmithTokenKind_Identifier, tag, strlen(tag), &like, true);
+        made[3] = smith_lang_tuple_made(SmithTokenKind_Identifier, name, strlen(name), &like, true);
+        made[4] = smith_lang_tuple_made(SmithTokenKind_Punctuator, ";", 1, &like, false);
+        lang->export_active = entry->exported;
+        for (size_t i = 0; i < 5; i++) // the five tokens
+            smith_lang_emit(lang, host, made[i]);
+    }
+    lang->export_active = was_exported;
+    lang->due_count = 0;
+}
+
+// The typedef of a block's tag, after the `;` that ends its declaration: `typedef struct Local Local;`.
+static void smith_lang_locals_write(SmithLang *lang, const SmithHost *host) {
+    size_t kept = 0;
+    for (uint32_t at = 0; at < lang->local_count; at++) {
+        if (lang->locals[at].depth != lang->brace_depth) {
+            lang->locals[kept++] = lang->locals[at];
+            continue;
+        }
+        const char *name = smith_lang_str(lang->locals[at].name);
+        SmithToken like = {};
+        like.location = lang->locals[at].location;
+        like.handle = smith_token_no_handle;
+        const char *keyword = smith_lang_tag_keyword(lang->locals[at].word);
+        SmithToken made[5];
+        made[0] = smith_lang_tuple_made(SmithTokenKind_Identifier, "typedef", 7, &like, true);
+        made[1] = smith_lang_tuple_made(SmithTokenKind_Identifier, keyword, strlen(keyword), &like, true);
+        made[2] = smith_lang_tuple_made(SmithTokenKind_Identifier, name, strlen(name), &like, true);
+        made[3] = smith_lang_tuple_made(SmithTokenKind_Identifier, name, strlen(name), &like, true);
+        made[4] = smith_lang_tuple_made(SmithTokenKind_Punctuator, ";", 1, &like, false);
+        for (size_t i = 0; i < 5; i++) // the five tokens
+            smith_lang_emit(lang, host, made[i]);
+    }
+    lang->local_count = (uint32_t)kept;
+}
+
+// A bare tag name inside the braces of the declaration that defined it, before its typedef is written: `struct Tag`.
+static bool smith_lang_tag_bare(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+    if (token->kind != SmithTokenKind_Identifier || token->synthetic || token->foreign || lang->prev_tag ||
+        lang->prev_member || lang->brace_depth == 0 || lang->recording || smith_lang_capturing(lang)) {
+        return false;
+    }
+    const SmithLangName *known = smith_lang_name_find(lang, token->text, token->length);
+    char word = 0;
+    if (known != nullptr && known->typedef_due && known->tag_spelling.length == 0) word = known->tag_word;
+    for (uint32_t at = 0; at < lang->local_count && word == 0; at++) { // a block's tag, inside its own braces
+        if (lang->brace_depth > lang->locals[at].depth &&
+            smith_lang_equals(token->text, token->length, smith_lang_str(lang->locals[at].name))) {
+            word = lang->locals[at].word;
+        }
+    }
+    if (word == 0) return false;
+    if (lang->braces[lang->brace_depth - 1] == SmithLangBrace_Aggregate) { // a member of that name is not the tag
+        const SmithToken *next = smith_lang_peek(lang, host, 0, false);
+        if (smith_lang_punct(next, ";") || smith_lang_punct(next, ",") || smith_lang_punct(next, "[") ||
+            smith_lang_punct(next, ":")) {
+            return false;
+        }
+    }
+    SmithToken made[2];
+    made[0] = smith_lang_tuple_made(SmithTokenKind_Identifier, smith_lang_tag_keyword(word),
+                                    strlen(smith_lang_tag_keyword(word)), token, token->space_before);
+    made[0].line_start = token->line_start;
+    made[1] = *token;
+    made[1].line_start = false;
+    made[1].space_before = true;
+    return smith_lang_tuple_replace(lang, 0, made, 2);
+}
+
 static void smith_lang_start(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+    if (lang->due_count > 0) smith_lang_typedefs_write(lang, host);
     if (token->kind == SmithTokenKind_Identifier) {
         if (smith_lang_ident(token, "module") && smith_lang_is_module_line(lang, host, token)) {
             smith_lang_module_line(lang, host, token);
@@ -821,6 +924,7 @@ static void smith_lang_end_of_file(SmithLang *lang, const SmithHost *host, const
         smith_lang_emit_head(lang, host, true, false);
         smith_lang_end_declaration(lang);
     }
+    if (lang->due_count > 0) smith_lang_typedefs_write(lang, host);
     smith_lang_body_note(lang);
     lang->body_closed = true; // what follows is the instances and the io main: not sections
     smith_lang_generic_instances(lang, host);
@@ -953,6 +1057,7 @@ static void smith_lang_process_token(SmithLang *lang, const SmithHost *host, con
         return;
     }
     if (smith_lang_try_token(lang, host, token)) return;
+    if ((lang->due_count > 0 || lang->local_count > 0) && smith_lang_tag_bare(lang, host, token)) return;
     if (smith_lang_enum_function(lang, host, token)) return; // before the type values: it reads `type f(...)` itself
     if (smith_lang_type_on(lang, host) && !token->foreign && !lang->recording && !lang->decl.generic &&
         smith_lang_ty_token(lang, host, token)) {

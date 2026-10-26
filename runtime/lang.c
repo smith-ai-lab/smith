@@ -15,6 +15,7 @@
 #include "lang.h"
 
 constexpr size_t smith_lang_names_max = 65536;
+constexpr size_t smith_lang_due_max = 32; // tags one declaration defines, each with a typedef to come
 // The module's private declarations the header pass keeps, for the instance section of its header (lang_private.c).
 constexpr size_t smith_lang_priv_text_max = (size_t)1 << 19;
 constexpr size_t smith_lang_priv_ranges_max = 1024;
@@ -159,6 +160,9 @@ typedef struct {
     SmithLangText c_name; // the C name `[[smith::c_name("...")]]` chose for an export (length 0: the prefixed name)
     uint16_t generic;     // 1 + the index of the generic function this name is (0: it is not one)
     bool needed;          // the body of an exported generic names it: it is in the header's instance section
+    char tag_word;        // a tag: 's', 'u' or 'e' for struct, union or enum, or 0
+    bool typedef_due;     // a tag whose typedef is not written yet: it goes before the next declaration
+    SmithLangText tag_spelling; // the tag as C spells it when that is not the name's own (a payload enum's struct)
 } SmithLangName;
 
 // A private declaration, kept as the lowering wrote it (a function or a variable as the declaration that carries its
@@ -329,6 +333,7 @@ typedef struct {
     bool hoisted;   // part of a slice's struct that the code defines at file scope, before the head
     bool after_member;
     bool after_tag;
+    char tag_word; // 's', 'u' or 'e' when after_tag
     bool typeish;
     char before;  // the first character of the token before, when that was a punctuator
     uint16_t via; // the binding the name was written through, 1 + its index (0: none)
@@ -355,6 +360,7 @@ typedef struct {
     bool inline_header;   // an exported inline function: its body goes to the header too
     bool params_next;     // the next ( opens it
     bool last_tag_enum;   // the last struct, union or enum keyword was enum
+    char last_tag_word;   // and its first letter
     bool checking;        // names in this declaration are checked for private types
     uint32_t declared;    // how many names the head declares
     uint32_t last_name;   // the held token of the last one
@@ -536,8 +542,20 @@ struct SmithLang {
     // The token before, and the type tracking.
     bool prev_member;
     bool prev_tag;
+    char prev_tag_word; // 's', 'u' or 'e' for the struct, union or enum that prev_tag says
     bool typeish;
     char prev_char;
+    uint32_t due[smith_lang_due_max]; // the tags (indexes into names) whose typedef goes before the next declaration
+    uint32_t due_count;
+    struct {                // tags a block defined, whose typedef follows the `;` that ends their declaration
+        SmithLangText name; // as written: a block's tag is not the module's, no prefix
+        char word;
+        uint32_t depth; // the brace depth of the declaration
+        uint32_t location;
+    } locals[smith_lang_due_max];
+    uint32_t local_count;
+    uint32_t clash_at; // 1 + where the last tag clash was reported
+    uint32_t due_late; // 1 + the tag whose typedef is due when the declaration being read ends (a payload enum's)
     // Lookahead and the batch.
     SmithToken queue[smith_lang_queue_max];
     size_t queue_head;

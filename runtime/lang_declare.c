@@ -242,7 +242,10 @@ static SmithLangAct smith_lang_head_other_name(SmithLang *lang, const SmithHost 
     if (decl->prev_tag) { // the name after struct, union or enum
         if (!may_peek) return smith_lang_act(SmithLangAct_Slow);
         const SmithToken *next = nullptr;
-        SmithLangLowered lowered = smith_lang_lower_tag(lang, host, token->text, token->length, token->location, &next);
+        lang->generated_name = token->synthetic;
+        SmithLangLowered lowered =
+            smith_lang_lower_tag(lang, host, token->text, token->length, token->location, &next, decl->last_tag_word);
+        lang->generated_name = false;
         decl->prev_tag = false;
         decl->saw_type = true;
         decl->prev_star = false;
@@ -305,6 +308,7 @@ static void smith_lang_head_keyword(SmithLang *lang, const SmithToken *token, Sm
     if (word == SmithLangWord_Tag) {
         decl->aggregate = true;
         decl->last_tag_enum = smith_lang_ident(token, "enum");
+        decl->last_tag_word = token->text[0];
     }
     if (smith_lang_ident(token, "constexpr")) decl->is_constexpr = true;
     if (smith_lang_ident(token, "extern")) decl->is_extern = true;
@@ -559,6 +563,7 @@ SmithLangAct smith_lang_fast(SmithLang *lang, const SmithHost *host, const Smith
         return smith_lang_act(SmithLangAct_Slow); // a tuple, an enum with payloads, is read ahead
     }
     if (lang->is_module && !lang->body_sparse) {
+        if (lang->due_count > 0 && lang->state == SmithLangState_Start) return smith_lang_act(SmithLangAct_Slow);
         // An `if constexpr` around declarations, and every token of its branch (issue #335): the lowering counts the
         // braces and drops the branch's own.
         if (lang->ifc_count > 0 ||

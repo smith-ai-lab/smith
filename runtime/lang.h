@@ -292,6 +292,7 @@ typedef struct {
     bool maybe_generic;
     // Whether the file's text may contain an `if constexpr` (the words in that order): the host then offers every token
     // of a function body, because `if` and `else` are keywords and a sparse host is offered only identifiers.
+    bool maybe_local_tag; // a tag is defined inside braces (a block's struct): the bodies of functions are read whole
     bool maybe_if_constexpr;
     // Whether the file's text may contain a tuple type (`struct {` and a list with no `;` before the `}`): the host
     // then offers every token, because `struct` is a keyword and a tuple's uses (`t[0]`, `countof(t)`) are found among

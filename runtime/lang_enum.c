@@ -134,6 +134,23 @@ static size_t smith_lang_enum_build(SmithLang *lang, const SmithHost *host, cons
     return used;
 }
 
+// `enum Shape { Circle circle; empty; }`: the tag is the type's name, so its typedef (`m_Shape` for the struct
+// `smith_enum_m_Shape`) is written before the next declaration, like a struct's.
+static void smith_lang_enum_tag_name(SmithLang *lang, const SmithHost *host, const SmithToken *name) {
+    if (!lang->is_module || lang->in_function || lang->recording ||
+        smith_lang_name_find(lang, name->text, name->length)) {
+        return;
+    }
+    if (name->length > 11 && memcmp(name->text, "smith_enum_", 11) == 0) return; // a type function's enum
+    if (smith_lang_declare(lang, host, name->text, name->length, name->location, SmithLangName_Tag,
+                           lang->pending_export) == nullptr) {
+        return;
+    }
+    char spelling[smith_lang_name_max];
+    snprintf(spelling, sizeof spelling, "smith_enum_%s", smith_lang_prefixed(lang, name->text, name->length));
+    smith_lang_tag_due(lang, name->text, name->length, 's', spelling, true);
+}
+
 // `enum` is being processed: if its braces hold variants (a `;` among them), the tokens up to the `}` are written as
 // the struct above, and the `enum` itself is dropped. True when it was.
 static bool smith_lang_enum_begin(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
@@ -152,6 +169,7 @@ static bool smith_lang_enum_begin(SmithLang *lang, const SmithHost *host, const 
     static SmithToken made[smith_lang_queue_max];
     size_t used = smith_lang_enum_build(lang, host, token, span, open, close, &name, made, smith_lang_queue_max);
     if (used == 0 || !smith_lang_tuple_replace(lang, close + 1, made, used)) return false;
+    if (open == 1) smith_lang_enum_tag_name(lang, host, &name);
     lang->tuples_seen = true;
     lang->slices_seen = true; // the file's header says so, and its importers read every token
     lang->enums_seen = true;

@@ -47,6 +47,7 @@ static void smith_lang_hold(SmithLang *lang, const SmithToken *token, SmithLangR
     held->via = token->via;
     held->after_member = context->after_member;
     held->after_tag = context->after_tag;
+    held->tag_word = context->tag_word;
     held->typeish = context->typeish;
     held->before = context->before;
     held->location = token->location;
@@ -150,8 +151,11 @@ static void smith_lang_resolve(SmithLang *lang, const SmithHost *host, const Smi
             lang->decl.params_next = true;
         }
     } else if (held->role == SmithLangRole_Plain) {
-        SmithLangContext context = {held->after_member, held->after_tag, held->typeish, false, held->before};
+        SmithLangContext context = {held->after_member, held->after_tag, held->tag_word,
+                                    held->typeish,      false,           held->before};
+        lang->generated_name = lang->generated_name || held->synthetic;
         SmithLangLowered lowered = smith_lang_lower(lang, host, name, length, held->location, &context, next);
+        lang->generated_name = false;
         smith_lang_replace_held(lang, held, &lowered);
         is_type = lowered.is_type;
     }
@@ -177,6 +181,7 @@ static void smith_lang_note_keyword(SmithLang *lang, const SmithHost *host, cons
     if (word == SmithLangWord_Tag) {
         lang->decl.aggregate = true;
         lang->decl.last_tag_enum = smith_lang_ident(token, "enum");
+        lang->decl.last_tag_word = token->text[0];
     }
     if (word == SmithLangWord_Storage && lang->bracket_depth == 0) { // `[static N]` in a parameter is no storage
         if (smith_lang_ident(token, "static") || smith_lang_ident(token, "extern")) lang->decl.storage = true;
@@ -560,6 +565,9 @@ static void smith_lang_declare_variable(SmithLang *lang, const SmithHost *host, 
 static void smith_lang_body_note(SmithLang *lang); // runtime/lang_body.c
 
 static void smith_lang_end_declaration(SmithLang *lang) {
+    if (lang->due_late != 0 && lang->due_count < smith_lang_due_max) lang->due[lang->due_count++] = lang->due_late - 1;
+    lang->due_late = 0;
+    lang->local_count = 0;
     smith_lang_body_note(lang);
     if (lang->decl.c_name.length > 0 && !lang->decl.c_name_used) { // reported by the next token fed (it has the host)
         lang->unnamed_c_name = true;
@@ -598,8 +606,8 @@ static void smith_lang_enter_body(SmithLang *lang, const SmithHost *host, uint32
     if (host->previous != nullptr) {
         if (lang->has_c && !lang->imports_watched) host->watch_imports(host->context);
         lang->imports_watched = true;
-        lang->body_sparse = !lang->body_enabled; // the body file needs every token written
-        host->watch_mode(host->context, host->maybe_if_constexpr || lang->body_enabled ||
+        lang->body_sparse = !lang->body_enabled && !host->maybe_local_tag; // the body file needs every token written
+        host->watch_mode(host->context, host->maybe_if_constexpr || lang->body_enabled || host->maybe_local_tag ||
                                                 smith_lang_type_on(lang, host) || smith_lang_tuples_on(lang, host)
                                             ? SmithWatch_All
                                             : SmithWatch_Braces);

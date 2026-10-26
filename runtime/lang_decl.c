@@ -5,6 +5,7 @@
 typedef struct {
     bool after_member; // after . or ->: a field, never a name in scope
     bool after_tag;    // after struct, union or enum
+    char tag_word;     // 's', 'u' or 'e': which, after a tag word
     bool typeish;      // the tokens before end a type, so a name now is a declarator
     bool lazy;         // typeish is not known yet: ask when it matters (it can take a lookup)
     char before;       // the first character of the token before, if it was a punctuator
@@ -164,6 +165,7 @@ static SmithLangContext smith_lang_context(SmithLang *lang, const SmithHost *hos
     SmithLangContext context = {
         .after_member = lang->prev_member,
         .after_tag = lang->prev_tag,
+        .tag_word = lang->prev_tag_word,
         .typeish = !lazy && smith_lang_typeish(lang, host),
         .lazy = lazy,
         .before = lang->prev_char,
@@ -207,6 +209,7 @@ static void smith_lang_track(SmithLang *lang, const SmithToken *token, bool is_t
         lang->prev_name_length = 0;
         lang->typeish = is_type || word == SmithLangWord_TypeKeyword;
         lang->prev_tag = word == SmithLangWord_Tag;
+        if (lang->prev_tag) lang->prev_tag_word = token->text[0];
         if (word == SmithLangWord_Other && !is_type && token->length < sizeof lang->prev_name) {
             memcpy(lang->prev_name, token->text, token->length);
             lang->prev_name_length = token->length;
@@ -330,6 +333,16 @@ static void smith_lang_declare_new(SmithLang *lang, const SmithHost *host, const
     }
 }
 
+// A tag and an ordinary identifier (a variable, a function, an enum constant) of one name: C keeps them apart, a
+// module's tag is a type name too, so it would hide the other.
+static bool smith_lang_tag_clash(SmithLangNameKind first, SmithLangNameKind second) {
+    bool ordinary_first =
+        first == SmithLangName_Value || first == SmithLangName_Function || first == SmithLangName_Constant;
+    bool ordinary_second =
+        second == SmithLangName_Value || second == SmithLangName_Function || second == SmithLangName_Constant;
+    return (first == SmithLangName_Tag && ordinary_second) || (second == SmithLangName_Tag && ordinary_first);
+}
+
 // A name the module introduces at file scope: the table learns it, and the declaration gets the prefixed one (or the
 // C name chosen for it). Returns null when the name is kept as written (main, and the C symbol an `extern` declares).
 static const char *smith_lang_declare(SmithLang *lang, const SmithHost *host, const char *name, size_t length,
@@ -366,6 +379,15 @@ static const char *smith_lang_declare(SmithLang *lang, const SmithHost *host, co
                              "`%.*s` was declared before with the C name `%s`; a declaration of it names no other",
                              (int)length, name, smith_lang_str(known->c_name));
         }
+    }
+    if (known != nullptr && smith_lang_tag_clash(known->kind, kind) && lang->clash_at != location + 1) {
+        lang->clash_at = location + 1; // the head can declare a name more than once while it resolves it
+        const char *ordinary = "a variable, function or enum constant";
+        smith_lang_error(lang, host, location,
+                         "`%.*s` is %s here and %s above; in a module a tag is also a type name, so the two cannot "
+                         "share a name",
+                         (int)length, name, kind == SmithLangName_Tag ? "a tag" : ordinary,
+                         kind == SmithLangName_Tag ? ordinary : "a tag");
     }
     if (known != nullptr && exported && !known->exported) known->exported = true;
     const char *prefixed = smith_lang_prefixed(lang, name, length);
@@ -591,8 +613,30 @@ static void smith_lang_check_c_tag(SmithLang *lang, const SmithHost *host, const
 // The name after struct, union or enum. A tag the module defines or declares (`struct S {` or `struct S;`) is its own;
 // one it only uses is the module's if it was defined above, else a C header's (and in a module that header must say so
 // with `struct c.S`).
+// A module's tag is also a type name: `struct Point {...};` is `typedef struct m_Point m_Point;` too, written before
+// the next declaration (so the definition is complete when an enum is named; a struct's own body names itself through
+// `struct`, runtime/lang_stream.c). The typedef is due once, where the tag is first declared.
+static void smith_lang_tag_due(SmithLang *lang, const char *name, size_t length, char word, const char *spelling,
+                               bool late) {
+    SmithLangName *entry = smith_lang_name_find(lang, name, length);
+    if (entry == nullptr || word == 0 || lang->due_count >= smith_lang_due_max || lang->recording ||
+        lang->generated_name) {
+        return;
+    }
+    entry->tag_word = word;
+    entry->typedef_due = true;
+    if (spelling != nullptr) entry->tag_spelling = smith_lang_store(lang, spelling, strlen(spelling));
+    uint32_t index = (uint32_t)(entry - lang->names);
+    if (late) {
+        lang->due_late = index + 1;
+    } else {
+        lang->due[lang->due_count++] = index;
+    }
+}
+
 static SmithLangLowered smith_lang_lower_tag(SmithLang *lang, const SmithHost *host, const char *name, size_t length,
-                                             uint32_t location, const SmithToken **next) {
+                                             uint32_t location, const SmithToken **next, char word) {
+    char context_word = word;
     SmithLangLowered kept = smith_lang_keep();
     kept.is_type = true;
     if (length > 12 && memcmp(name, "smith_tuple_", 12) == 0) return kept; // a tuple's tag is no name of the module's
@@ -604,16 +648,35 @@ static SmithLangLowered smith_lang_lower_tag(SmithLang *lang, const SmithHost *h
         return kept;
     }
     SmithLangName *known = smith_lang_name_find(lang, name, length);
+    const SmithToken *after = known == nullptr || known->kind == SmithLangName_Tag || known->kind == SmithLangName_Type
+                                  ? nullptr
+                                  : smith_lang_after(lang, host, next);
+    bool defines_known = after != nullptr && !lang->in_function &&
+                         (smith_lang_punct(after, "{") || smith_lang_punct(after, ";") || smith_lang_punct(after, ":"));
+    if (defines_known) { // `struct stat {` where `stat` is a function or a variable: the declaration reports the clash
+        smith_lang_declare(lang, host, name, length, location, SmithLangName_Tag, lang->decl.exported);
+    }
     if (known != nullptr) {
         if (lang->recording) smith_lang_generic_private_name(lang, host, known, name, length, location);
         return smith_lang_prefix_name(lang, name, length, true);
     }
-    const SmithToken *after = smith_lang_after(lang, host, next);
+    after = smith_lang_after(lang, host, next);
     bool defines = smith_lang_punct(after, "{") || smith_lang_punct(after, ";") || smith_lang_punct(after, ":");
     if (!lang->in_function && defines) {
         const char *prefixed =
             smith_lang_declare(lang, host, name, length, location, SmithLangName_Tag, lang->decl.exported);
-        return prefixed != nullptr ? smith_lang_prefix_name(lang, name, length, true) : kept;
+        if (prefixed == nullptr) return kept;
+        smith_lang_tag_due(lang, name, length, word, nullptr, false);
+        return smith_lang_prefix_name(lang, name, length, true);
+    }
+    if (lang->in_function && defines && !lang->body_sparse && !lang->generated_name && !lang->recording &&
+        lang->local_count < smith_lang_due_max && context_word != 0) {
+        // a block's tag: a type name from here on, as written, with its typedef after the declaration's `;`
+        lang->locals[lang->local_count].name = smith_lang_store(lang, name, length);
+        lang->locals[lang->local_count].word = context_word;
+        lang->locals[lang->local_count].depth = lang->brace_depth;
+        lang->locals[lang->local_count++].location = location;
+        return kept;
     }
     smith_lang_check_c_tag(lang, host, name, length, location);
     return kept;
@@ -654,7 +717,7 @@ static void smith_lang_check_c_name(SmithLang *lang, const SmithHost *host, cons
 static SmithLangLowered smith_lang_lower(SmithLang *lang, const SmithHost *host, const char *name, size_t length,
                                          uint32_t location, const SmithLangContext *context, const SmithToken *next) {
     if (smith_lang_word(name, length) != SmithLangWord_Other || context->after_member) return smith_lang_keep();
-    if (context->after_tag) return smith_lang_lower_tag(lang, host, name, length, location, &next);
+    if (context->after_tag) return smith_lang_lower_tag(lang, host, name, length, location, &next, context->tag_word);
     SmithLangLowered sized = smith_lang_lower_sized(lang, host, name, length, context, &next);
     if (sized.replaced) return sized;
     if (smith_lang_is_member_name(lang, host, context, &next)) return smith_lang_keep();

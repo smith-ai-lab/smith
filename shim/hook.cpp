@@ -661,6 +661,7 @@ class SmithHook final : public TokenHook, public NameSource {
                              SM.getBufferData(MainFile).contains("auto ") ||
                              SM.getBufferData(MainFile).contains("auto...") || namesConcept(SM.getBufferData(MainFile));
         host.maybe_if_constexpr = hasIfConstexpr(SM.getBufferData(MainFile));
+        host.maybe_local_tag = hasNestedTag(SM.getBufferData(MainFile));
         host.maybe_slice = hasSlice(SM.getBufferData(MainFile)) || hasStr(SM.getBufferData(MainFile));
         host.maybe_shape = hasShapeCall(SM.getBufferData(MainFile));
         host.maybe_tuple = host.maybe_slice || hasTuple(SM.getBufferData(MainFile)) ||
@@ -2511,6 +2512,46 @@ class SmithHook final : public TokenHook, public NameSource {
             bool is_for = before >= 3 && text.substr(before - 3, 3) == "for" &&
                           (before == 3 || !isAsciiIdentifierContinue(text[before - 4]));
             if (is_if || is_for) return true;
+        }
+        return false;
+    }
+
+    // Whether the code (not its comments or strings) defines or declares a tag inside braces, `struct Name {` or
+    // `struct Name;`: a struct in a function's block (issue #333). The bodies of such a file are read token by token,
+    // because the typedef a block's tag gets is written after its `;`. A struct nested in a struct counts too: it is
+    // cheaper to read the bodies of that file than to tell the two apart here.
+    static bool hasNestedTag(StringRef text) {
+        int depth = 0;
+        for (size_t at = 0; at < text.size();) {
+            char c = text[at];
+            if (c == '/' && at + 1 < text.size() && (text[at + 1] == '/' || text[at + 1] == '*')) {
+                bool line = text[at + 1] == '/';
+                size_t end = text.find(line ? "\n" : "*/", at + 2);
+                at = end == StringRef::npos ? text.size() : end + (line ? 1 : 2);
+            } else if (c == '"' || c == '\'') {
+                size_t end = at + 1;
+                while (end < text.size() && text[end] != c && text[end] != '\n')
+                    end += text[end] == '\\' ? 2 : 1;
+                at = end + 1;
+            } else if (isAsciiIdentifierStart(c)) {
+                size_t end = at + 1;
+                while (end < text.size() && isAsciiIdentifierContinue(text[end]))
+                    end += 1;
+                StringRef word = text.substr(at, end - at);
+                at = end;
+                if (depth <= 0 || (word != "struct" && word != "union" && word != "enum")) continue;
+                while (end < text.size() && isWhitespace(text[end]))
+                    end += 1;
+                if (end >= text.size() || !isAsciiIdentifierStart(text[end])) continue;
+                while (end < text.size() && isAsciiIdentifierContinue(text[end]))
+                    end += 1;
+                while (end < text.size() && isWhitespace(text[end]))
+                    end += 1;
+                if (end < text.size() && (text[end] == '{' || text[end] == ';')) return true;
+            } else {
+                depth += c == '{' ? 1 : c == '}' ? -1 : 0;
+                at += 1;
+            }
         }
         return false;
     }
