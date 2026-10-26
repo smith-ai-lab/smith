@@ -13,6 +13,7 @@
 extern "C" {
 #endif
 struct grid_Board { uint8_t cells[SIDE * SIDE]; uint32_t n; };
+typedef struct grid_Board grid_Board;
 
 size_t grid_board_size() __asm__("_grid::board_size");
 

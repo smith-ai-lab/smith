@@ -22,6 +22,7 @@ uint32_t flag : 1;
 uint32_t mode : 3;
 struct { int16_t x, y; } point;
 } kit_things_Node;
+typedef struct kit_things_Node kit_things_Node;
 
 constexpr size_t kit_things_capacity = 4;
 

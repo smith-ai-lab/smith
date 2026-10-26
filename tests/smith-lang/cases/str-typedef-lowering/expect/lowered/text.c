@@ -3,6 +3,7 @@ struct text_Pair {
 text_str key;
 text_str value;
 };
+typedef struct text_Pair text_Pair;
 __SIZE_TYPE__ text_total(text_str xs) __asm__("_text::total");
 __SIZE_TYPE__ text_total(text_str xs) {
 return countof(xs);

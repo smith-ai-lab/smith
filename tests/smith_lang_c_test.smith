@@ -231,3 +231,8 @@ export void test_a_constexpr_pointer_into_a_string_is_a_value_in_smith(io::Io *i
     scratch::Run lowered = scratch::sh(&p, "smith cc -std=gnu23 -fsyntax-only x.smith");
     scratch::expect_status("the .smith takes the pointer as a value", 0, &lowered);
 }
+
+// A module's tag is a type name; in a file with no `module` line a tag and an ordinary name of one name are separate.
+export void test_tags_and_ordinary_names_print_the_same_as_c(io::Io *io) {
+    behave(io, "tags");
+}

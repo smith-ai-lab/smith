@@ -1,0 +1,17 @@
+module main;
+
+import <stdio.h>;
+import geo::shapes;
+
+extern i32 user(void); // C names the same types (user.c)
+
+i32 main() {
+    shapes::Point p = shapes::make(1, 2);
+    shapes::Node b = {.value = 3};
+    shapes::Node a = {.next = &b, .value = 4};
+    struct shapes::Point q = p; // the keyword still works
+    shapes::Shape s = shapes::round_at(q);
+    shapes::Color c = shapes::next(shapes::red);
+    c::printf("%g %g %d %d %d\n", p.x, p.y, shapes::sum(&a), s == .circle, (int)c);
+    return user();
+}

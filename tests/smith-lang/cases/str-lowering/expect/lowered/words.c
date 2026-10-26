@@ -2,6 +2,7 @@ struct words_Pair {
 struct smith_array_const_char_n { const char * data; __SIZE_TYPE__ count [1]; } key;
 struct smith_array_const_char_n value;
 };
+typedef struct words_Pair words_Pair;
 __SIZE_TYPE__ words_total(struct smith_array_const_char_n xs) __asm__("_words::total");
 __SIZE_TYPE__ words_total(struct smith_array_const_char_n xs) {
 return countof(xs);

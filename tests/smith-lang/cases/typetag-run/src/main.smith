@@ -1,0 +1,80 @@
+module main;
+
+import <stdio.h>;
+
+// In a module a struct's, union's or enum's tag is also a type name: no typedef beside it.
+
+struct Point {
+    f32 x, y;
+};
+
+struct Node {
+    Node *next; // its own name, inside its own body
+    Point at;
+    i32 value;
+};
+
+union Number {
+    i32 whole;
+    f32 real;
+};
+
+enum Color { red, green, blue };
+
+enum Shape { // a payload enum is named the same way
+    Point circle;
+    empty;
+};
+
+struct Pending; // a forward declaration names the type too
+
+struct Holder {
+    Pending *later;
+};
+
+struct Pending {
+    i32 count;
+};
+
+static Point origin() {
+    return (Point){};
+}
+
+static i32 sum(Node *list) {
+    i32 total = 0;
+    for (Node *n = list; n != nullptr; n = n->next)
+        total += n->value;
+    return total;
+}
+
+// The typedef spellings of before still compile.
+typedef struct Legacy {
+    i32 a;
+} Legacy;
+
+typedef struct {
+    i32 b;
+} Bare;
+
+i32 main() {
+    Point p = origin();
+    Node second = {.value = 2};
+    Node first = {.next = &second, .value = 1, .at = p};
+    Number n = {.whole = 7};
+    Color c = green;
+    Shape s = {.circle = {.x = 1, .y = 2}};
+    Shape e = .empty;
+    Pending pending = {.count = 4};
+    Holder holder = {.later = &pending};
+    Legacy legacy = {.a = 5};
+    Bare bare = {.b = 6};
+    struct Point q = {.x = 3}; // the keyword still works
+    // A block's tag names its type too.
+    struct Local {
+        i32 inner;
+    };
+    Local l = {.inner = 8};
+    c::printf("%d %d %d %d %d %d %d %d %d %d\n", sum(&first), n.whole, (int)c, s == .circle, e == .empty,
+              holder.later->count, legacy.a, bare.b, (int)q.x, l.inner);
+    return 0;
+}

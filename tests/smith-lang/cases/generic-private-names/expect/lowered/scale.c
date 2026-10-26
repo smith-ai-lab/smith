@@ -10,6 +10,7 @@ __INT32_TYPE__ high;
 struct scale_Counter {
 __INT32_TYPE__ calls;
 };
+typedef struct scale_Counter scale_Counter;
 static __INT32_TYPE__ scale_table[scale_slots] = {1, 2, 3, 4, 5};
 static struct scale_Counter scale_counter;
 static scale_Range scale_widen(scale_Range r, FILE *log);

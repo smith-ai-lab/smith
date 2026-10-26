@@ -2,6 +2,7 @@ struct dims_Image {struct smith_array_f32_n_n {
 float * data; __SIZE_TYPE__ count [2]; } pixels;struct smith_array_u8_n_3 {
 __UINT8_TYPE__ * data; __SIZE_TYPE__ count [1]; } rows;
 };
+typedef struct dims_Image dims_Image;
 struct smith_array_f32_n_2 {float * data; __SIZE_TYPE__ count [1]; };
 float dims_at(struct smith_array_f32_n_2 xs, __SIZE_TYPE__ i, __SIZE_TYPE__ j) __asm__("_dims::at");
 float dims_at(struct smith_array_f32_n_2 xs, __SIZE_TYPE__ i, __SIZE_TYPE__ j) {

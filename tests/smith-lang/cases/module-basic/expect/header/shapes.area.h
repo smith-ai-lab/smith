@@ -14,8 +14,10 @@ extern "C" {
 typedef struct { double width; double height; } shapes_area_Rect;
 
 struct shapes_area_Circle { double radius; };
+typedef struct shapes_area_Circle shapes_area_Circle;
 
 enum shapes_area_Kind { shapes_area_Kind_Square, shapes_area_Kind_Round = 5, shapes_area_Kind_Other };
+typedef enum shapes_area_Kind shapes_area_Kind;
 
 constexpr uint32_t shapes_area_sides = 4;
 

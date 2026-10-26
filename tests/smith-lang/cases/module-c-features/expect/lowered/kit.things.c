@@ -9,6 +9,7 @@ __UINT32_TYPE__ flag : 1;
 __UINT32_TYPE__ mode : 3;
 struct { __INT16_TYPE__ x, y; } point;
 } kit_things_Node;
+typedef struct kit_things_Node kit_things_Node;
 constexpr __SIZE_TYPE__ kit_things_capacity = 4;
 extern const char *const kit_things_names[] __asm__("_kit::things::names");
 const char *const kit_things_names[] __asm__("_kit::things::names") = {"zero", "one", "two"};

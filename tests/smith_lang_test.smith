@@ -1572,3 +1572,19 @@ export void test_error_fields_enum_member(io::Io *io) {
 export void test_generic_fields_doc(io::Io *io) {
     corpus_case(io, "generic-fields-doc");
 }
+
+export void test_typetag_run(io::Io *io) {
+    corpus_case(io, "typetag-run");
+}
+
+export void test_typetag_module(io::Io *io) {
+    corpus_case(io, "typetag-module");
+}
+
+export void test_error_typetag_collision(io::Io *io) {
+    corpus_case(io, "error-typetag-collision");
+}
+
+export void test_error_typetag_collision_reverse(io::Io *io) {
+    corpus_case(io, "error-typetag-collision-reverse");
+}

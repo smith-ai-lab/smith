@@ -29,6 +29,7 @@ uint8_t * data; size_t count [1]; };
 #endif
 struct dims_Image {struct smith_array_f32_n_n pixels;struct smith_array_u8_n_3 rows;
 };
+typedef struct dims_Image dims_Image;
 
 #ifndef SMITH_ARRAY_f32_n_2
 #define SMITH_ARRAY_f32_n_2

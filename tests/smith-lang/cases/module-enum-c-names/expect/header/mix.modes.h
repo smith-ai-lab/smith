@@ -22,6 +22,7 @@ enum mix_modes_Level {
 mix_modes_Level_Low,
 mix_modes_Level_High,
 };
+typedef enum mix_modes_Level mix_modes_Level;
 
 int32_t mix_modes_score(MixMode mode, enum mix_modes_Level level) __asm__("_mix::modes::score");
 #ifdef __cplusplus

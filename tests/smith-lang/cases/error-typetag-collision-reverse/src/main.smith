@@ -1,0 +1,11 @@
+module main;
+
+i32 count = 1;
+
+struct count {
+    i32 total;
+};
+
+i32 main() {
+    return count;
+}

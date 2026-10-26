@@ -3,6 +3,7 @@
 struct main_Grid {
 __UINT32_TYPE__ cells[6];
 };
+typedef struct main_Grid main_Grid;
 static __UINT32_TYPE__ main_plain() {
 __UINT32_TYPE__ xs[] = {1, 2, 3};
 return (__UINT32_TYPE__)countof(xs);

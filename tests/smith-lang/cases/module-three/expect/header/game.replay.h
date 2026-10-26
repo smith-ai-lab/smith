@@ -19,8 +19,10 @@ constexpr uint32_t game_replay_version = 3;
 extern uint32_t game_replay_counter __asm__("_game::replay::counter");
 
 typedef struct game_replay_Handle { int32_t fd; } game_replay_Handle;
+typedef struct game_replay_Handle game_replay_Handle;
 
 enum game_replay_Mode { game_replay_Mode_Fast, game_replay_Mode_Slow };
+typedef enum game_replay_Mode game_replay_Mode;
 
 game_replay_Replay game_replay_open(game_replay_Handle *handle, const char *path) __asm__("_game::replay::open");
 

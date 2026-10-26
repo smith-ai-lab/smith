@@ -1,0 +1,13 @@
+module main;
+
+struct stat {
+    i32 size;
+};
+
+i32 stat(i32 fd) {
+    return fd;
+}
+
+i32 main() {
+    return stat(0);
+}

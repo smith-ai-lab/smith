@@ -1,0 +1,41 @@
+module geo::shapes;
+
+export struct Point {
+    f32 x, y;
+};
+
+export struct Node {
+    Node *next;
+    i32 value;
+};
+
+export enum Color { red, green };
+
+export enum Shape {
+    Point circle;
+    empty;
+};
+
+struct Hidden {
+    i32 secret;
+};
+
+export Point make(f32 x, f32 y) {
+    Hidden h = {.secret = 1};
+    return (Point){.x = x + (f32)h.secret - 1, .y = y};
+}
+
+export i32 sum(Node *list) {
+    i32 total = 0;
+    for (Node *n = list; n != nullptr; n = n->next)
+        total += n->value;
+    return total;
+}
+
+export Shape round_at(Point p) {
+    return {.circle = p};
+}
+
+export Color next(Color c) {
+    return c == red ? green : red;
+}

@@ -26,6 +26,7 @@ struct text_Pair {
 text_str key;
 text_str value;
 };
+typedef struct text_Pair text_Pair;
 
 size_t text_total(text_str xs) __asm__("_text::total");
 

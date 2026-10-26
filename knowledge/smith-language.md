@@ -94,6 +94,18 @@ u32 helper(void) { … }                              // private
     header's names under `c::`, in a module or not; `#include` keeps them bare, as in C.
   - `c::` names C only in a file that imports a header; `c` is otherwise any identifier, and `c.x` is a field.
 - **Modules.** The first line, `module a::b;`, makes the file a module; its path must end in `a/b.smith`.
+  - **A tag is a type name** (issue #333, owner, 2026-10-25: "Only in smith modules."): in a file with a `module` line,
+    `struct Point {...};`, `union` and `enum` (a payload enum too) also name the type `Point`, at file scope and in a
+    block, inside the struct's own body (`Node *next;`) and after a forward declaration (`struct Node;`), as C++ does. It
+    lowers to plain C: the typedef (`typedef struct m_Point m_Point;`) is written before the next declaration, where
+    the definition is complete (an enum cannot be named before), after the `;` for a block's tag, and in the generated
+    header after an exported tag, so C callers write `m_Point` or `struct m_Point`; until then the tag's own braces
+    name it `struct m_Point`. C11 accepts a typedef twice, so `typedef struct Point {...} Point;` compiles unchanged.
+    No special case for a collision (C++ lets a variable hide a class): a tag and a variable, function or enum
+    constant of one name at file scope are an error that says so. `c::` tags are the header's, untouched, and a `.c`
+    file or a `.smith` file without a `module` line keeps C's meaning (`struct Point {}; int Point;` is valid there;
+    `tests/smith-lang-c/tags.c`). The hook reads every token of the function bodies of a file that has a tag inside
+    braces (`hasNestedTag`, `maybe_local_tag`), since a block's typedef follows its `;`.
   - Every file-scope name in a module is prefixed with the module's name (`game_replay_open`). `export` makes a
     declaration public; everything else is `static` (functions and variables) and used nowhere else.
   - **A foreign C symbol** is declared with `extern` and no `export`: `extern char **environ;`, `extern u32 counter;`,
