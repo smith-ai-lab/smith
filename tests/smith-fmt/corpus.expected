@@ -2508,12 +2508,6 @@ static i32 errors(const i32 xs[:], i32 *p, i32 n, i32 grid[:][2]) {
     for (usize i, usize j, i32 x : xs) {
         t += 1;
     }
-    for (x : xs) {
-        t += 1;
-    }
-    for (auto [i, x] : xs) {
-        t += 1;
-    }
     for (auto *p : xs) {
         t += 1;
     }
@@ -4895,10 +4889,7 @@ export i32 bad(auto... rest) {
     for constexpr (usize i, usize j, auto x : rest) {
         sum += (i32)x;
     }
-    for constexpr (x : rest) {
-        sum += 1;
-    }
-    for constexpr (auto x :) {
+    for constexpr (usize i, usize j, usize k, auto x : rest) {
         sum += 1;
     }
     return sum;
