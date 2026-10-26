@@ -43,6 +43,7 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include "effects_asm.h"
 #include "effects_table.h"
 #include "names.h"
 
@@ -163,7 +164,7 @@ struct EffectsAttr final : ParsedAttrInfo {
             if (!known) {
                 unsigned id = S.getDiagnostics().getCustomDiagID(
                     DiagnosticsEngine::Error, "smith-effect: an effect is one of alloc, files, net, console, clock, "
-                                              "process, env, entropy, globals, c, fails");
+                                              "process, env, entropy, globals, c, fails, code");
                 S.Diag(Attr.getLoc(), id);
                 return AttributeNotApplied;
             }
@@ -270,9 +271,9 @@ class Collector {
   public:
     using Symbols = std::function<std::string(const FunctionDecl *)>;
 
-    Collector(Node &node, const SourceManager &sm, Symbols symbols, Symbols names,
+    Collector(Node &node, ASTContext &context, Symbols symbols, Symbols names,
               std::vector<const StaticAssertDecl *> &asserts)
-        : node(node), sm(sm), symbols(std::move(symbols)), names(std::move(names)), asserts(asserts) {}
+        : node(node), context(context), sm(context.getSourceManager()), symbols(std::move(symbols)), names(std::move(names)), asserts(asserts) {}
 
     void walk(const Stmt *body) {
         std::vector<const Stmt *> work{body};
@@ -288,6 +289,7 @@ class Collector {
 
   private:
     Node &node;
+    ASTContext &context;
     const SourceManager &sm;
     Symbols symbols;
     Symbols names;                                  // how a function is shown in a chain
@@ -323,8 +325,8 @@ class Collector {
             onCall(call);
         } else if (isa<ObjCMessageExpr>(statement)) {
             leaf(statement->getBeginLoc(), C, "an Objective-C message");
-        } else if (isa<AsmStmt>(statement)) {
-            leaf(statement->getBeginLoc(), C, "inline assembly");
+        } else if (const auto *assembly = dyn_cast<AsmStmt>(statement)) {
+            onAsm(assembly);
         } else if (const auto *op = dyn_cast<BinaryOperator>(statement)) {
             if (op->isAssignmentOp()) global(op->getLHS(), op->getOperatorLoc());
         } else if (const auto *unary = dyn_cast<UnaryOperator>(statement)) {
@@ -353,6 +355,14 @@ class Collector {
         uint32_t set = 0;
         bool builtin = llvm::StringRef(name).starts_with("__builtin_") || callee->getBuiltinID() != 0;
         if (declaredSet(callee, set) || lookup(name, set)) {
+            if ((name == "mmap" || name == "mprotect") && call->getNumArgs() >= 3) {
+                // The protection is the third argument of both.
+                Expr::EvalResult result;
+                const Expr *protection = call->getArg(2);
+                if (!protection->isValueDependent() && protection->EvaluateAsInt(result, context) &&
+                    executable(name, result.Val.getInt().getExtValue()))
+                    set |= Code;
+            }
             leaf(call->getBeginLoc(), set, name);
         } else if (!builtin && !sm.isInSystemHeader(callee->getLocation())) {
             // A function of the project with no body here: another file may define it, and the summary says what it
@@ -366,6 +376,61 @@ class Collector {
         } else {
             leaf(call->getBeginLoc(), builtin ? None : C, name); // a builtin the table does not name has no effect
         }
+    }
+
+    // An `asm` statement: the assembler reads it (shim/effects_asm.h), and each thing it does is a call: a system call by
+    // its number, a call or jump to a symbol, an indirect call. A block it cannot read is `c`.
+    void onAsm(const AsmStmt *assembly) {
+        SourceLocation loc = assembly->getBeginLoc();
+        AsmReading reading = readAsm(assembly, context);
+        if (!reading.parsed) {
+            leaf(loc, C, "inline assembly");
+            return;
+        }
+        llvm::Triple triple = context.getTargetInfo().getTriple();
+        for (const AsmSyscall &call : reading.syscalls) {
+            std::string name = call.number ? syscallName(triple, *call.number) : "";
+            uint32_t set = 0;
+            if (name.empty() || !lookup(name, set)) {
+                leaf(loc, C, "a system call with a number the table does not know");
+                continue;
+            }
+            if (executable(name, call.protection)) set |= Code;
+            leaf(loc, set, "the system call `" + name + "` in inline assembly");
+        }
+        for (const std::string &called : reading.calls)
+            onSymbol(loc, called);
+        if (reading.indirect) leaf(loc, C, "a call through a register in inline assembly");
+    }
+
+    // A call from assembly to the symbol `name`: a function of this file, the table's, or an unknown one.
+    void onSymbol(SourceLocation loc, const std::string &name) {
+        auto found = context.getTranslationUnitDecl()->lookup(&context.Idents.get(name));
+        for (const NamedDecl *decl : found) {
+            const auto *function = dyn_cast<FunctionDecl>(decl);
+            if (function == nullptr) continue;
+            uint32_t set = 0;
+            if (const FunctionDecl *definition = function->getDefinition()) {
+                Edge edge;
+                edge.callee = definition;
+                edge.name = names(definition);
+                edge.loc = loc;
+                edge.symbol = symbols(definition);
+                node.edges.push_back(edge);
+                return;
+            }
+            if (declaredSet(function, set)) {
+                leaf(loc, set, name);
+                return;
+            }
+        }
+        uint32_t set = 0;
+        leaf(loc, lookup(name, set) ? set : C, name);
+    }
+
+    // Whether a call of mmap or mprotect asks for memory that can run: a constant protection with PROT_EXEC (4).
+    static bool executable(llvm::StringRef name, std::optional<int64_t> protection) {
+        return (name == "mmap" || name == "mprotect") && protection && (*protection & 4) != 0;
     }
 
     void leaf(SourceLocation loc, uint32_t set, const std::string &name) {
@@ -586,7 +651,7 @@ class Analysis {
                 node.annotated = declaredSet(function, node.declared);
                 node.symbol = symbolOf(function);
                 Collector(
-                    node, context.getSourceManager(), [this](const FunctionDecl *f) { return symbolOf(f); },
+                    node, context, [this](const FunctionDecl *f) { return symbolOf(f); },
                     [this](const FunctionDecl *f) { return shownName(f); }, asserts)
                     .walk(function->getBody());
                 order.push_back(function);

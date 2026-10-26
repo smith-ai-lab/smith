@@ -30,7 +30,8 @@ enum Effect : uint32_t {
     Globals = 1u << 8,
     C = 1u << 9,
     Fails = 1u << 10,
-    Everything = (1u << 11) - 1,
+    Code = 1u << 11,
+    Everything = (1u << 12) - 1,
 };
 
 struct Name {
@@ -41,7 +42,7 @@ struct Name {
 inline constexpr Name names[] = {
     {"alloc", Alloc},     {"files", Files}, {"net", Net},         {"console", Console}, {"clock", Clock},
     {"process", Process}, {"env", Env},     {"entropy", Entropy}, {"globals", Globals}, {"c", C},
-    {"fails", Fails}};
+    {"fails", Fails}, {"code", Code}};
 
 // The names of the bits of a set, in the order of `names`, joined by ", ": "alloc, files". "none" for the empty set.
 inline std::string describe(uint32_t set) {

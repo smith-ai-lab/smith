@@ -1,6 +1,6 @@
 ---
 name: smith-lang-effects
-description: "Effects in .smith modules and C: what a function does to the world (alloc, files, net, console, clock, process, env, entropy, globals, c, fails) is inferred from its body and its callees, [[smith::pure]] promises nothing at all, [[smith::effects(alloc, net)]] is a ceiling, and a call that breaks the promise is a compile error that names the chain. Load when marking a function [[smith::pure]] or [[smith::effects(...)]], or on 'smith-effect:', 'is [[smith::pure]], but it has the effects' or 'is limited to'."
+description: "Effects in .smith modules and C: what a function does to the world (alloc, files, net, console, clock, process, env, entropy, globals, c, fails, code) is inferred from its body and its callees, [[smith::pure]] promises nothing at all, [[smith::effects(alloc, net)]] is a ceiling, and a call that breaks the promise is a compile error that names the chain. Load when marking a function [[smith::pure]] or [[smith::effects(...)]], or on 'smith-effect:', 'is [[smith::pure]], but it has the effects' or 'is limited to'."
 ---
 
 # Effects

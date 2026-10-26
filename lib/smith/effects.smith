@@ -41,6 +41,8 @@ export constexpr u32 c = 512;
 // <smith/effects.h>: a failure point, a checked index or slice, a contract or an assert, `abort` or a trap, or a call
 // to a function that has one. A proved check is not one.
 export constexpr u32 fails = 1024;
+// <smith/effects.h>: making memory executable (`mmap` or `mprotect` with PROT_EXEC), code smith cannot read.
+export constexpr u32 code = 2048;
 
 // <smith/effects.h>: whether the function `f` has no effect beyond `set`. Written in a `static_assert` (see above).
 export inline bool within(...) {
@@ -51,5 +53,5 @@ export inline bool within(...) {
 // the project that compiles the module.
 [[maybe_unused]] u32 everything() {
     (void)within(none, none);
-    return none | alloc | files | net | console | clock | process | env | entropy | globals | c | fails;
+    return none | alloc | files | net | console | clock | process | env | entropy | globals | c | fails | code;
 }
