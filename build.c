@@ -2246,10 +2246,12 @@ static int build_preflight(SmithRun *run) {
         smith_list(b, "sh", "-c", "grep -Eo '[0-9]+ passed' .smith/preflight-test.log 2>/dev/null | tail -1; true",
                    nullptr));
     bool ok = failed[0] == '\0';
-    const char *description =
-        ok ? smith_fmt(b, "fmt, docs, lint and the changed tests ok (%s%s)",
-                       tests[0] != '\0' ? tests : "no tests selected", test_capped ? ", capped at 10 min" : "")
-           : smith_fmt(b, "failed:%s (smith build preflight)", failed);
+    const char *description = ok ? smith_fmt(b, "fmt, docs, lint and the changed tests ok (%s%s)",
+                                             tests[0] != '\0' ? tests
+                                             : test_capped    ? "no summary before the cap"
+                                                              : "no tests selected",
+                                             test_capped ? ", capped at 10 min" : "")
+                                 : smith_fmt(b, "failed:%s (smith build preflight)", failed);
     int posted = build_spawn(&(BuildSpawn){
         .argv = smith_list(b, "gh", "api", smith_fmt(b, "repos/{owner}/{repo}/statuses/%s", sha), "-f",
                            smith_fmt(b, "state=%s", ok ? "success" : "failure"), "-f", "context=smith/preflight", "-f",
