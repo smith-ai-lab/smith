@@ -189,6 +189,29 @@ export void test_conventions_explicit_the_same_two_calls_in_a_build_c_are_the_sa
                          scratch::capture(&p, commands));
 }
 
+// .checked_allocator (issue #239): Off runs the tests with --unchecked, the default does not.
+export void test_conventions_explicit_checked_allocator_off_runs_the_tests_unchecked(io::Io *io) {
+    scratch::Project p = scratch::project(io, "calc", "conv_calc");
+    scratch::write(&p, "build.c",
+                   "#include <smith/build.h>\n"
+                   "\n"
+                   "void build(SmithBuild *b) {\n"
+                   "    smith_app(b, &(SmithApp){});\n"
+                   "    smith_app_tests(b, &(SmithAppTests){.checked_allocator = SmithSetting_Off});\n"
+                   "}\n");
+    scratch::expect_text("checked_allocator: Off passes --unchecked to the runner", "1",
+                         scratch::capture(&p, "smith build -t commands test | grep -c -e '--unchecked'"));
+    scratch::write(&p, "build.c",
+                   "#include <smith/build.h>\n"
+                   "\n"
+                   "void build(SmithBuild *b) {\n"
+                   "    smith_app(b, &(SmithApp){});\n"
+                   "    smith_app_tests(b, &(SmithAppTests){});\n"
+                   "}\n");
+    scratch::expect_text("checked_allocator: the default does not", "0",
+                         scratch::capture(&p, "smith build -t commands test | grep -c -e '--unchecked' || true"));
+}
+
 // --- 3. smith's libraries need no declaration
 // -------------------------------------------------------------------------
 
