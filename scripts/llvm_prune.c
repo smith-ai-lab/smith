@@ -10,7 +10,6 @@
 //   KEEP_IDENTITY   the contents of the smith-clang.id of the previous release's LLVM ("llvm-23.1.3 <hash>")
 // A folder with no id file (a build in progress, or not an LLVM at all) is never touched. Enzyme's folders are the
 // siblings <cache>/smith/enzyme/<version>-<name>. Prints each folder it removes.
-#define _XOPEN_SOURCE 700
 #include <dirent.h>
 #include <ftw.h>
 #include <limits.h>
