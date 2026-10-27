@@ -1860,7 +1860,14 @@ void run_io(const Test *test, const Options *options, const Command *command) {
     io.key = random::key_make(seed);
     make_scratch(test, options, &io);
     checked_begin(options);
+    // The test's region: what the test gets from mem::alloc (format::push, a library's result) belongs to its io's
+    // arena, which io::close gives back, so it is never freed one object at a time (issue #439).
+    arena::ArenaAllocator region = arena::allocator(&io.arena);
+    // NOLINTBEGIN(smith-module-library): mem by its C names, as checked_begin (issue #405)
+    c::SmithAllocator *inside = c::smith_mem_set_allocator(&region.base);
     test->with_io(&io);
+    c::smith_mem_set_allocator(inside);
+    // NOLINTEND(smith-module-library)
     checked_finish();
     io::close(&io);
 }
