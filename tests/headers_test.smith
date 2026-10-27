@@ -134,7 +134,7 @@ export void test_the_files_header_compiles_alone(io::Io *io) {
 }
 
 export void test_the_process_header_compiles_alone(io::Io *io) {
-    committed(io, "process");
+    generated(io, "process");
 }
 
 export void test_the_format_header_compiles_alone(io::Io *io) {
