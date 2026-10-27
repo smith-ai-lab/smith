@@ -2027,10 +2027,10 @@ End serve(const Options *options, const Command *command) {
     const Test *test = &table[command->test];
     f64 cpu_before = process_cpu();
     i32 jumped = c::sigsetjmp(loop_jump, 1); // NOLINT(smith-preprocessor): a macro of __sigsetjmp in glibc
+    region_end(); // a failed io test unwound with its region's allocator still set; the coverage below allocates
     coverage_begin(test);
     if (jumped == 0) execute(test, options, command);
     coverage_end(test, jumped == 0, process_cpu() - cpu_before);
-    region_end();  // ... and so did a failed io test's region
     failing_end(); // a failed test unwound with its allocators still set
     checked_end();
     disarm();

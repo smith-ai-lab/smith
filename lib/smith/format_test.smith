@@ -340,7 +340,7 @@ export void test_format_push_allocates_only_through_the_current_allocator() {
     test::check(is(number.data, "42"));
     test::check(allocator.base.owns(&allocator.base, number.data));
     test::check(a.used > used);
-    char nothing[:] = format::push();
+    char nothing[:] = format::push("");
     test::check_equal(countof(nothing), 0);
     test::check_equal(nothing.data[0], '\0');
     test::check(allocator.base.owns(&allocator.base, nothing.data));
