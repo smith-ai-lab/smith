@@ -581,11 +581,13 @@ static void smith_changed_report(size_t selected, size_t tests, const char *base
 }
 
 // Reads the changes since `base_name` (or where the branch left main) in the current folder's git repository and
-// decides which tests to run. `filter` gets the value of `--test` for SmithChanged_Some.
-static SmithChangedResult smith_changed_select(const char *base_name, char *filter, size_t size) {
+// decides which tests to run. With `head`, the changes are those of base..head (no untracked files); the files
+// themselves (imports, records) are still read from the working tree. `filter` gets the value of `--test` for
+// SmithChanged_Some.
+static SmithChangedResult smith_changed_select(const char *base_name, const char *head, char *filter, size_t size) {
     char base[256];
     filter[0] = '\0';
-    if (!smith_changed_base(base_name, base, sizeof base)) {
+    if (!smith_changed_base(base_name, base, sizeof base) || (head != nullptr && !smith_changed_name_ok(head))) {
         fprintf(stderr, "smith test --changed: no base: pass --base <ref> (no origin/main or main to compare with)\n");
         return SmithChanged_Failed;
     }
@@ -593,8 +595,9 @@ static SmithChangedResult smith_changed_select(const char *base_name, char *filt
     static const char *const others[] = {"ls-files", "--others", "--exclude-standard", nullptr};
     const char *const diff[] = {"diff", "--name-status", "--no-renames", base, "--", nullptr};
     bool listed = smith_changed_git(list, smith_changed_on_file);
-    bool diffed = smith_changed_git(diff, smith_changed_on_diff);
-    (void)smith_changed_git(others, smith_changed_on_untracked);
+    const char *const range[] = {"diff", "--name-status", "--no-renames", base, head, "--", nullptr};
+    bool diffed = smith_changed_git(head != nullptr ? range : diff, smith_changed_on_diff);
+    if (head == nullptr) (void)smith_changed_git(others, smith_changed_on_untracked);
     if (!listed || !diffed) {
         fprintf(stderr, "smith test --changed: git could not compare with %s\n", base);
         return SmithChanged_Failed;

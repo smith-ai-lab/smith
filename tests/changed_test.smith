@@ -93,6 +93,22 @@ export void test_the_full_check_list_selects_the_whole_suite(io::Io *io) {
     scratch::expect_contains("the list", out, "selects the whole suite");
 }
 
+// `--list` prints the selected tests one per line on stdout and runs nothing; with two refs it reads the diff of
+// base..head, so a commit already made is judged as well as the working tree.
+export void test_list_prints_the_selected_tests_one_per_line(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    const char *edit = "echo '// x' >> lib/a.smith; smith test --changed --list HEAD 2>/dev/null";
+    scratch::Run run = scratch::sh(&p, format::push(&io->arena, repository, edit).data);
+    scratch::expect_status("the list ends", 0, &run);
+    scratch::expect_text("one test file per line", "a_test::\nb_test::\nruns_test::\n",
+                         run.out); // lib/ is part of smith
+    const char *commit = "echo '// x' >> lib/c_test.smith; git add -A; git -c user.name=t -c user.email=t@t commit -q "
+                         "-m c; smith test --changed --list HEAD~1 HEAD 2>/dev/null";
+    scratch::Project q = scratch::project(io, "q", nullptr);
+    run = scratch::sh(&q, format::push(&io->arena, repository, commit).data);
+    scratch::expect_text("the range", "c_test::\n", run.out);
+}
+
 // --dry-run and --base go with --changed.
 export void test_dry_run_without_changed_is_refused(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);

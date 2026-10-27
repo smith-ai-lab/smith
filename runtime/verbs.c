@@ -819,14 +819,39 @@ static void smith_verb_take_keep_going(SmithVerbArgs *split) {
     split->own_count = kept;
 }
 
-// `--changed [--base <ref>] [--dry-run]` (runtime/changed.c): takes them out of the arguments and, unless the whole
-// suite runs, adds `--test <names>` for the tests the change can affect. Returns an exit status when there is nothing
-// to run (nothing selected, a dry run, or a failure), else -1.
+// Whether `--changed` is among the arguments, so `--list` is the selection's and not the runner's.
+static bool smith_test_wants_list(const SmithVerbArgs *split) {
+    for (size_t i = 0; i < split->own_count; i++) {
+        if (strcmp(split->own[i], "--changed") == 0) return true;
+    }
+    return false;
+}
+
+// `--list`: the selected tests on stdout, one per line (a name, or `module::` for a module's tests; `*` when every
+// test runs), and nothing run. The report of why goes to stderr.
+static int smith_test_print_selection(SmithChangedResult result, const char *filter) {
+    if (result == SmithChanged_Full) {
+        puts("*");
+    } else if (result == SmithChanged_Some) {
+        for (const char *at = filter; *at != '\0';) { // bounded by the filter's text
+            size_t length = strcspn(at, ",");
+            if (length > 0) printf("%.*s\n", (int)length, at);
+            at += length + (at[length] == ',' ? 1 : 0);
+        }
+    }
+    return 0;
+}
+
+// `--changed [--base <ref>] [--dry-run | --list [<base> [<head>]]]` (runtime/changed.c): takes them out of the
+// arguments and, unless the whole suite runs, adds `--test <names>` for the tests the change can affect. Returns an
+// exit status when there is nothing to run (nothing selected, a dry run, or a failure), else -1.
 static int smith_test_take_changed(SmithVerbArgs *split, const char *self) {
     static char filter[8192];
     const char *base = nullptr;
     bool changed = false;
     bool dry_run = false;
+    bool list = false;
+    const char *head = nullptr;
     size_t kept = 0;
     for (size_t i = 0; i < split->own_count; i++) { // bounded by smith_build_args_max
         char *arg = split->own[i];
@@ -834,6 +859,14 @@ static int smith_test_take_changed(SmithVerbArgs *split, const char *self) {
             changed = true;
         } else if (strcmp(arg, "--dry-run") == 0) {
             dry_run = true;
+        } else if (strcmp(arg, "--list") == 0 && smith_test_wants_list(split)) {
+            list = true;
+            for (size_t refs = 0; refs < 2 && i + 1 < split->own_count && split->own[i + 1][0] != '-'; refs++) {
+                if (base == nullptr)
+                    base = split->own[++i];
+                else
+                    head = split->own[++i];
+            }
         } else if (strcmp(arg, "--base") == 0 && i + 1 < split->own_count) {
             base = split->own[++i];
         } else {
@@ -846,8 +879,9 @@ static int smith_test_take_changed(SmithVerbArgs *split, const char *self) {
         return -1;
     }
     smith_changed_self = self;
-    SmithChangedResult result = smith_changed_select(base, filter, sizeof filter);
+    SmithChangedResult result = smith_changed_select(base, head, filter, sizeof filter);
     if (result == SmithChanged_Failed) return smith_exit_usage;
+    if (list) return smith_test_print_selection(result, filter);
     if (result == SmithChanged_None) {
         fputs("smith test --changed: no test is affected\n", stderr);
         return 0;
