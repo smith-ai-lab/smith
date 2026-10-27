@@ -1884,7 +1884,7 @@ if constexpr (target::os == target::macos) {
 // not ready there would wait forever and fails with EDEADLK instead.
 void loop_wait(Loop *loop, Op *op) {
     constexpr usize rounds_max = (usize)1 << 24;
-    for (usize round = 0; !op->done && round < rounds_max; round++) {
+    for (usize pass = 0; !op->done && pass < rounds_max; pass++) {
         usize completed = loop_run(loop, forever);
         if (completed == 0 && !op->done && loop->fake != nullptr) {
             loop_unlink(loop, op);

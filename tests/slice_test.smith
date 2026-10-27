@@ -157,8 +157,9 @@ export void test_slice_the_array_of_a_slice_is_evaluated_once() {
 export void test_slice_a_braceless_loop_body_may_call_a_generic() {
     i32 raw[3] = {4, 5, 6};
     i32 all[:] = raw;
-    for (usize i = 0; i < countof(all); i++)
-        test::check_equal(all[i], raw[i]); // the loop head's `(` is no operand, so its body is not read ahead
+    for (usize i = 0; i < countof(all); i++) {
+        test::check_equal(all[i], raw[i]);
+    }
 }
 
 // More dimensions (issue #105): one contiguous block, row-major, built by hand from a fixed array.

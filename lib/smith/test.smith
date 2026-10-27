@@ -2534,8 +2534,8 @@ bool shrink_word(Shrink *shrink, u32 index) {
 // One pass over the best run's draws, in order; the list may change under it after a success.
 bool shrink_pass(Shrink *shrink) {
     bool improved = false;
-    for (u32 index = 0; index < shrink->count && in_budget(shrink); index++)
-        improved = shrink_word(shrink, index) || improved;
+    for (u32 word = 0; word < shrink->count && in_budget(shrink); word++)
+        improved = shrink_word(shrink, word) || improved;
     return improved;
 }
 
