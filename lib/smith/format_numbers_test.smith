@@ -187,37 +187,37 @@ export void test_numbers_integer_edges() {
 
 // Each bad word fails and leaves the result as it was.
 export void test_numbers_failed_parse_writes_nothing() {
-    const char *bad_unsigned[] = {"",
-                                  "-",
-                                  "-1",
-                                  "+1",
-                                  " 1",
-                                  "1 ",
-                                  "1_0",
-                                  "0x10",
-                                  "1.0",
-                                  "18446744073709551616",
-                                  "18446744073709551620",
-                                  "99999999999999999999",
-                                  "184467440737095516150",
-                                  "100000000000000000000000000000000000000",
-                                  nullptr};
+    const char *bad_unsigned[_] = {"",
+                                   "-",
+                                   "-1",
+                                   "+1",
+                                   " 1",
+                                   "1 ",
+                                   "1_0",
+                                   "0x10",
+                                   "1.0",
+                                   "18446744073709551616",
+                                   "18446744073709551620",
+                                   "99999999999999999999",
+                                   "184467440737095516150",
+                                   "100000000000000000000000000000000000000",
+                                   nullptr};
     for (const char **s = bad_unsigned; *s != nullptr; s++) {
         u64 value = 77;
         test::check(!read_u64(test_string(*s), &value));
         test::check_equal(value, 77);
     }
-    const char *bad_signed[] = {"",
-                                "-",
-                                "--1",
-                                "+1",
-                                "- 1",
-                                "1-",
-                                "9223372036854775808",
-                                "-9223372036854775809",
-                                "-18446744073709551615",
-                                "-99999999999999999999999",
-                                nullptr};
+    const char *bad_signed[_] = {"",
+                                 "-",
+                                 "--1",
+                                 "+1",
+                                 "- 1",
+                                 "1-",
+                                 "9223372036854775808",
+                                 "-9223372036854775809",
+                                 "-18446744073709551615",
+                                 "-99999999999999999999999",
+                                 nullptr};
     for (const char **s = bad_signed; *s != nullptr; s++) {
         i64 value = 77;
         test::check(!read_i64(test_string(*s), &value));
@@ -312,37 +312,37 @@ export void test_numbers_f32_double_rounding_cases() {
 }
 
 export void test_numbers_f32_rejects() {
-    const char *bad[] = {"",
-                         "-",
-                         "+",
-                         ".",
-                         "-.",
-                         "e5",
-                         ".e5",
-                         "1e",
-                         "1e+",
-                         "1e-",
-                         "1.2.3",
-                         "inf",
-                         "-inf",
-                         "nan",
-                         "0x10",
-                         "1f",
-                         " 1",
-                         "1 ",
-                         "1,5",
-                         "--1",
-                         "+-1",
-                         "1e5.5",
-                         "1ee5",
-                         "1e5e5",
-                         "3.4028236e38",
-                         "1e39",
-                         "-1e39",
-                         "340282356779733661637539395458142568448",
-                         "1e99999999999",
-                         "0.0000000000000000000000000001e68",
-                         nullptr};
+    const char *bad[_] = {"",
+                          "-",
+                          "+",
+                          ".",
+                          "-.",
+                          "e5",
+                          ".e5",
+                          "1e",
+                          "1e+",
+                          "1e-",
+                          "1.2.3",
+                          "inf",
+                          "-inf",
+                          "nan",
+                          "0x10",
+                          "1f",
+                          " 1",
+                          "1 ",
+                          "1,5",
+                          "--1",
+                          "+-1",
+                          "1e5.5",
+                          "1ee5",
+                          "1e5e5",
+                          "3.4028236e38",
+                          "1e39",
+                          "-1e39",
+                          "340282356779733661637539395458142568448",
+                          "1e99999999999",
+                          "0.0000000000000000000000000001e68",
+                          nullptr};
     for (const char **s = bad; *s != nullptr; s++) {
         f32 value = 12345.0F;
         test::check(!read_f32(test_string(*s), &value));
@@ -537,30 +537,30 @@ export void test_numbers_f64_known_values() {
 }
 
 export void test_numbers_f64_rejects() {
-    const char *bad[] = {"",
-                         "-",
-                         "+",
-                         ".",
-                         "-.",
-                         "e5",
-                         ".e5",
-                         "1e",
-                         "1e+",
-                         "1e-",
-                         "1.2.3",
-                         "inf",
-                         "nan",
-                         "0x10",
-                         " 1",
-                         "1 ",
-                         "--1",
-                         "1e5.5",
-                         "1e309",
-                         "-1e309",
-                         "1.7976931348623159e308",
-                         "1e99999999999",
-                         "0.0000000000000000000000000001e340",
-                         nullptr};
+    const char *bad[_] = {"",
+                          "-",
+                          "+",
+                          ".",
+                          "-.",
+                          "e5",
+                          ".e5",
+                          "1e",
+                          "1e+",
+                          "1e-",
+                          "1.2.3",
+                          "inf",
+                          "nan",
+                          "0x10",
+                          " 1",
+                          "1 ",
+                          "--1",
+                          "1e5.5",
+                          "1e309",
+                          "-1e309",
+                          "1.7976931348623159e308",
+                          "1e99999999999",
+                          "0.0000000000000000000000000001e340",
+                          nullptr};
     for (const char **s = bad; *s != nullptr; s++) {
         f64 value = 12345.0;
         test::check(!read_f64(test_string(*s), &value));
@@ -742,9 +742,9 @@ export void test_numbers_f64_round_trips_seventeen_digits(random::Key key) {
 // The patterns that bound the format: zero, the smallest and largest subnormal and normal, the largest f64, powers
 // of two, and the neighbours of each. Every one is written with %.17g and with %.17e and read back.
 export void test_numbers_f64_round_trips_the_edges() {
-    u64 edges[] = {0x0000000000000000, 0x0000000000000001, 0x0000000000000002, 0x000fffffffffffff, 0x0010000000000000,
-                   0x0010000000000001, 0x3ff0000000000000, 0x3fefffffffffffff, 0x3ff0000000000001, 0x4340000000000000,
-                   0x433fffffffffffff, 0x7fe0000000000000, 0x7fefffffffffffff, 0x7feffffffffffffe};
+    u64 edges[_] = {0x0000000000000000, 0x0000000000000001, 0x0000000000000002, 0x000fffffffffffff, 0x0010000000000000,
+                    0x0010000000000001, 0x3ff0000000000000, 0x3fefffffffffffff, 0x3ff0000000000001, 0x4340000000000000,
+                    0x433fffffffffffff, 0x7fe0000000000000, 0x7fefffffffffffff, 0x7feffffffffffffe};
     char decimal[64];
     for (usize i = 0; i < _Countof edges; i++) {
         for (u64 sign = 0; sign < 2; sign++) {
@@ -934,7 +934,7 @@ export void test_numbers_f32_write_is_shortest_and_round_trips(random::Key key) 
 // NOLINTEND(smith-mem)
 
 export void test_numbers_errors_say_why() {
-    format::I64Result empty = format::parse_i64("");
+    format::I64Result empty = format::parse_i64(test_string(""));
     test::check(empty == .error);
     test::check(empty == .error && empty.error == format::Empty);
     format::I64Result sign = format::parse_i64("-");

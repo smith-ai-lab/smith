@@ -884,9 +884,9 @@ export [[nodiscard]] result(T, Error) parse(const char word[:], constexpr type T
     } else if constexpr (T == f64) {
         return parse_f64(word);
     } else if constexpr (is_integer(T) && is_signed(T)) {
-        constexpr i64 half = (i64)1 << (sizeof(T) * 8 - 2);
-        constexpr i64 low = -half - half;
-        constexpr i64 high = half - 1 + half;
+        constexpr u64 half = (u64)1 << (sizeof(T) * 8 - 2);
+        constexpr i64 low = -(i64)half - (i64)half;
+        constexpr i64 high = (i64)(half - 1) + (i64)half;
         if (signed_fits(word, low, high)) return {.ok = (T)signed_value(word)};
         return {.error = signed_error(word)};
     } else {
