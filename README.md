@@ -189,6 +189,29 @@ export usize body_length(const char line[:]) {
 
 [smith-slice](.agents/skills/smith-slice/SKILL.md), [smith-ascii](.agents/skills/smith-ascii/SKILL.md).
 
+A cursor takes from the front of a slice (`take_until` skips the separator, as `strsep` does), and `format::parse` reads a number as a `result` that says why it refused, where `strtol` left an `errno` and an end pointer:
+
+```smith
+module config;
+
+import smith::ascii;
+import smith::format;
+import smith::slice;
+
+// "port = 8080\n..." as the value of port, or the reason there is none.
+export result(i64, format::Error) port(const char file[:]) {
+    const char rest[:] = file;
+    while (countof(rest) > 0) {
+        const char line[:] = slice::take_until(&rest, '\n');
+        const char key[:] = slice::trim(slice::take_until(&line, '='), ascii::space);
+        if (slice::equal(key, "port")) return format::parse(slice::trim(line, ascii::space), i64);
+    }
+    return {.error = format::Empty};
+}
+```
+
+[smith-format](.agents/skills/smith-format/SKILL.md).
+
 ### Typed memory, not `memcpy`
 
 ```c

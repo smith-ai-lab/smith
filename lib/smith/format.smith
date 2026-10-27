@@ -763,7 +763,13 @@ usize f32_write(char *out, f32 value) {
 } Error;
 // NOLINTEND(readability-identifier-naming)
 
+export typedef result(u8, Error) U8Result;
+export typedef result(u16, Error) U16Result;
+export typedef result(u32, Error) U32Result;
 export typedef result(u64, Error) U64Result;
+export typedef result(i8, Error) I8Result;
+export typedef result(i16, Error) I16Result;
+export typedef result(i32, Error) I32Result;
 export typedef result(i64, Error) I64Result;
 export typedef result(f32, Error) F32Result;
 export typedef result(f64, Error) F64Result;
@@ -868,16 +874,19 @@ Error unsigned_error(const char word[:]) {
     return read_u64(word, &value) ? Range : classify(word, 0);
 }
 
-// The number in word as the type T, in one call: `format::parse(word, i64)` is a `result(i64, format::Error)`. T is any
-// integer or f32 or f64; a whole number that does not fit T is `Range`.
+// The number in word as the type T, in one call: `format::parse(word, i64)` is a `result(i64, format::Error)`. T is an
+// integer or f32 or f64; a whole number that does not fit T is `Range`. The result types of u8 to u64, i8 to i64, f32
+// and f64 are the typedefs above, which keeps an instance from defining a struct of its own (a file that parses a
+// `usize` names `typedef result(usize, format::Error) Size;` first).
 export [[nodiscard]] result(T, Error) parse(const char word[:], constexpr type T) {
     if constexpr (T == f32) {
         return parse_f32(word);
     } else if constexpr (T == f64) {
         return parse_f64(word);
     } else if constexpr (is_integer(T) && is_signed(T)) {
-        constexpr i64 low = 0 - (i64)((u64)1 << (sizeof(T) * 8 - 1));
-        constexpr i64 high = ~low;
+        constexpr i64 half = (i64)1 << (sizeof(T) * 8 - 2);
+        constexpr i64 low = -half - half;
+        constexpr i64 high = half - 1 + half;
         if (signed_fits(word, low, high)) return {.ok = (T)signed_value(word)};
         return {.error = signed_error(word)};
     } else {

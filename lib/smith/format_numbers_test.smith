@@ -50,7 +50,7 @@ static bool read_f64(const char word[:], f64 *value) {
 }
 
 static typeof(const char[:]) test_string(const char *string) {
-    return format::make(string);
+    return format::string(string);
 }
 
 // The next key of a stream: `stream` moves on (the reassignment pattern) and the key returned is for one use.
@@ -936,43 +936,61 @@ export void test_numbers_f32_write_is_shortest_and_round_trips(random::Key key) 
 export void test_numbers_errors_say_why() {
     format::I64Result empty = format::parse_i64("");
     test::check(empty == .error);
-    test::check(empty.error == format::Empty);
+    test::check(empty == .error && empty.error == format::Empty);
     format::I64Result sign = format::parse_i64("-");
-    test::check(sign.error == format::Empty);
+    test::check(sign == .error && sign.error == format::Empty);
     format::I64Result stray = format::parse_i64("+5");
-    test::check(stray.error == format::Invalid);
+    test::check(stray == .error && stray.error == format::Invalid);
     format::I64Result big = format::parse_i64("9223372036854775808");
-    test::check(big.error == format::Range);
+    test::check(big == .error && big.error == format::Range);
     format::U64Result negative = format::parse_u64("-1");
-    test::check(negative.error == format::Invalid);
+    test::check(negative == .error && negative.error == format::Invalid);
     format::F64Result nothing = format::parse_f64(".");
-    test::check(nothing.error == format::Empty);
+    test::check(nothing == .error && nothing.error == format::Empty);
     format::F64Result word = format::parse_f64("1x");
-    test::check(word.error == format::Invalid);
+    test::check(word == .error && word.error == format::Invalid);
     format::F64Result infinite = format::parse_f64("1e999");
-    test::check(infinite.error == format::Range);
+    test::check(infinite == .error && infinite.error == format::Range);
 }
 
 export void test_numbers_generic_parse() {
-    result(i64, format::Error) port = format::parse("8080", i64);
+    const char port_text[:] = "8080";
+    result(i64, format::Error) port = format::parse(port_text, i64);
     test::check(port == .ok);
-    test::check_equal(port.ok, 8080);
-    result(u8, format::Error) byte = format::parse("255", u8);
+    if (port == .ok) {
+        test::check_equal(port.ok, 8080);
+    }
+    const char byte_text[:] = "255";
+    result(u8, format::Error) byte = format::parse(byte_text, u8);
     test::check(byte == .ok);
-    test::check_equal(byte.ok, 255);
-    result(u8, format::Error) too_big = format::parse("256", u8);
-    test::check(too_big.error == format::Range);
-    result(i8, format::Error) low = format::parse("-128", i8);
+    if (byte == .ok) {
+        test::check_equal(byte.ok, 255);
+    }
+    const char too_big_text[:] = "256";
+    result(u8, format::Error) too_big = format::parse(too_big_text, u8);
+    test::check(too_big == .error && too_big.error == format::Range);
+    const char low_text[:] = "-128";
+    result(i8, format::Error) low = format::parse(low_text, i8);
     test::check(low == .ok);
-    test::check_equal(low.ok, -128);
-    result(i8, format::Error) too_low = format::parse("-129", i8);
-    test::check(too_low.error == format::Range);
-    result(i32, format::Error) bad = format::parse("12a", i32);
-    test::check(bad.error == format::Invalid);
-    result(f64, format::Error) half = format::parse("0.5", f64);
+    if (low == .ok) {
+        test::check_equal(low.ok, -128);
+    }
+    const char too_low_text[:] = "-129";
+    result(i8, format::Error) too_low = format::parse(too_low_text, i8);
+    test::check(too_low == .error && too_low.error == format::Range);
+    const char bad_text[:] = "12a";
+    result(i32, format::Error) bad = format::parse(bad_text, i32);
+    test::check(bad == .error && bad.error == format::Invalid);
+    const char half_text[:] = "0.5";
+    result(f64, format::Error) half = format::parse(half_text, f64);
     test::check(half == .ok);
-    test::check_equal(half.ok, 0.5);
-    result(f32, format::Error) quarter = format::parse("0.25", f32);
+    if (half == .ok) {
+        test::check_equal(half.ok, 0.5);
+    }
+    const char quarter_text[:] = "0.25";
+    result(f32, format::Error) quarter = format::parse(quarter_text, f32);
     test::check(quarter == .ok);
-    test::check_equal(quarter.ok, 0.25F);
+    if (quarter == .ok) {
+        test::check_equal(quarter.ok, 0.25F);
+    }
 }
