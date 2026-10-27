@@ -136,7 +136,8 @@ export void test_build_steps_smith_write_accepts_dot_slash_folder_file(io::Io *i
 
 export void test_build_steps_capture_or_gives_the_fallback_for_a_failing_program(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", "steps_capture_or");
-    scratch::Run run = scratch::build(&p, "");
+    // No slot: under load the nested build would print "waiting for a slot" (#433) into the stderr compared below.
+    scratch::Run run = scratch::sh(&p, "env SMITH_SLOTS=0 smith build");
     scratch::expect_status("capture_or: failed, missing, working, noisy, killed and a nullptr fallback", 0, &run);
     scratch::expect_text("capture_or: failed, missing, working, noisy, killed and a nullptr fallback",
                          "fb1|fb2|hi|fb4|fb5|null", scratch::capture(&p, "cat result"));
