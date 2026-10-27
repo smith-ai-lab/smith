@@ -1006,6 +1006,27 @@ static void smith_changed_report(size_t selected, size_t tests, const char *base
     }
 }
 
+// build.c by the functions its diff touches: false when it changed where any test can run (the whole suite).
+static bool smith_changed_build_c_gate(const char *base, const char *head) {
+    for (size_t p = 0; p < smith_changed_path_count; p++) { // bounded by the changed paths
+        if (strcmp(smith_changed_paths[p], "build.c") != 0) continue;
+        if (!smith_changed_build_c_local(base, head)) {
+            fputs("smith test --changed: build.c changed outside the functions of tasks no test runs, so every test "
+                  "runs\n",
+                  stderr);
+            return false;
+        }
+        smith_changed_build_local = true;
+        smith_rec_ignored_input = "build.c";
+        fprintf(stderr,
+                "smith test --changed: build.c changed only in %zu name%s no test runs (%s%s): the tests that name "
+                "one run\n",
+                smith_changed_local_count, smith_changed_local_count == 1 ? "" : "s", smith_changed_local_names[0],
+                smith_changed_local_count > 1 ? ", ..." : "");
+    }
+    return true;
+}
+
 // Reads the changes since `base_name` (or where the branch left main) in the current folder's git repository and
 // decides which tests to run. With `head`, the changes are those of base..head (no untracked files); the files
 // themselves (imports, records) are still read from the working tree. `filter` gets the value of `--test` for
@@ -1033,22 +1054,7 @@ static SmithChangedResult smith_changed_select(const char *base_name, const char
         fprintf(stderr, "smith test --changed: %s selects the whole suite\n", smith_changed_paths[full - 1]);
         return SmithChanged_Full;
     }
-    for (size_t p = 0; p < smith_changed_path_count; p++) { // build.c: by the functions its diff touches
-        if (strcmp(smith_changed_paths[p], "build.c") != 0) continue;
-        if (!smith_changed_build_c_local(base, head)) {
-            fputs("smith test --changed: build.c changed outside the functions of tasks no test runs, so every test "
-                  "runs\n",
-                  stderr);
-            return SmithChanged_Full;
-        }
-        smith_changed_build_local = true;
-        smith_rec_ignored_input = "build.c";
-        fprintf(stderr,
-                "smith test --changed: build.c changed only in %zu name%s no test runs (%s%s): the tests that name "
-                "one run\n",
-                smith_changed_local_count, smith_changed_local_count == 1 ? "" : "s", smith_changed_local_names[0],
-                smith_changed_local_count > 1 ? ", ..." : "");
-    }
+    if (!smith_changed_build_c_gate(base, head)) return SmithChanged_Full;
     smith_changed_build_graph();
     smith_changed_records();
     if (smith_changed_unplaced != nullptr) {
