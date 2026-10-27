@@ -5,8 +5,9 @@
 // `.m`) is scanned for its `module`, `import` and `#include` lines, an edge goes to each project file they name, and
 // the files that import a changed file, transitively, are changed too. A test file is selected when it is one of
 // them, or when it runs smith (`scratch::`, `SMITH_SELF`) and a source of smith changed (an edge from the test to
-// everything compiled into smith). A file the graph does not know selects nothing; the train's full run is the net.
-// A few files select the whole suite (the full-check list below).
+// everything compiled into smith). // A path the graph does not know (nothing imports it, no test is it, and it is not
+// part of smith) selects the whole suite: unknown means run it. A few files select the whole suite too (the full-check
+// list below).
 constexpr size_t smith_changed_files_max = 16384;
 constexpr size_t smith_changed_edges_max = 1U << 17;
 constexpr size_t smith_changed_pool_max = 1U << 21;
@@ -302,6 +303,21 @@ static void smith_changed_judge(size_t test) {
     }
 }
 
+// The first changed path the graph does not know, or -1: not a test, not part of smith, and no file imports or includes
+// it.
+static int smith_changed_unknown(void) {
+    for (size_t p = 0; p < smith_changed_path_count; p++) {
+        const char *path = smith_changed_paths[p];
+        if (smith_changed_is_test(path) || smith_changed_in_smith(path)) continue;
+        int at = smith_changed_find(path);
+        bool imported = false;
+        for (size_t e = 0; at >= 0 && e < smith_changed_edge_count && !imported; e++)
+            imported = smith_changed_to[e] == (uint32_t)at;
+        if (!imported) return (int)p;
+    }
+    return -1;
+}
+
 // ---- The filter
 
 static void smith_changed_filter_add(char *filter, size_t size, const char *name) {
@@ -411,6 +427,12 @@ static SmithChangedResult smith_changed_select(const char *base_name, char *filt
         return SmithChanged_Full;
     }
     smith_changed_build_graph();
+    int unknown = smith_changed_unknown();
+    if (unknown >= 0) {
+        fprintf(stderr, "smith test --changed: %s is an input of no test the graph knows, so every test runs\n",
+                smith_changed_paths[unknown]);
+        return SmithChanged_Full;
+    }
     size_t tests = 0;
     for (size_t i = 0; i < smith_changed_file_count; i++) {
         if (!smith_changed_is_test(smith_changed_files[i])) continue;

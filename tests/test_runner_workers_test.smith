@@ -421,3 +421,15 @@ export void test_runner_workers_smith_test_reads_the_values_without_being_asked(
                            "expected    = 8");
     }
 }
+
+// --stats ends with one line for each test, `cpu<TAB>seconds<TAB>name`: the CPU time it took (the train publishes
+// them).
+export void test_runner_workers_stats_lists_the_cpu_time_of_each_test(io::Io *io) {
+    scratch::Project p = workers_project(io);
+    for (usize mode = 0; mode < 2; mode++) {
+        const char *iso = runner::flag(mode);
+        scratch::Run run = runner::tests(&p, iso, "--test report_ --jobs 1 --stats");
+        runner::expect_has(io, iso, "stats: a line for a test", &run, "cpu\t0.");
+        runner::expect_has(io, iso, "stats: ... with its name", &run, "\treport_1_before\n");
+    }
+}

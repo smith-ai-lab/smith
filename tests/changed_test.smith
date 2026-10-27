@@ -55,16 +55,19 @@ export void test_a_changed_test_file_is_selected(io::Io *io) {
     scratch::expect_lacks("a_test", out, "a_test");
 }
 
-// A source nothing imports affects no test.
-export void test_a_source_no_test_reads_selects_nothing(io::Io *io) {
+// A source nothing imports is unknown too.
+export void test_a_source_nothing_imports_selects_every_test(io::Io *io) {
     const char *out = changed(io, "echo '// x' >> src/lone.smith");
-    scratch::expect_contains("nothing", out, "no test is affected");
+    scratch::expect_contains("every test", out, "src/lone.smith is an input of no test");
 }
 
-// A file the graph does not know (a new .c nothing includes, a text file) selects nothing; the train is the net.
-export void test_a_file_the_graph_does_not_know_selects_nothing(io::Io *io) {
-    const char *out = changed(io, "echo 'int y;' > tests/new.c; echo more >> README.md; echo x > stray.dat");
-    scratch::expect_contains("nothing", out, "no test is affected");
+// A path the graph does not know (a new .c nothing includes, a text file) selects every test: unknown means run it.
+export void test_a_file_the_graph_does_not_know_selects_every_test(io::Io *io) {
+    const char *out = changed(io, "echo 'int y;' > tests/new.c");
+    scratch::expect_contains("the path", out, "tests/new.c is an input of no test the graph knows, so every test runs");
+    scratch::expect_contains("the dry run", out, "every test runs");
+    out = changed(io, "echo more >> README.md");
+    scratch::expect_contains("a text file", out, "README.md is an input of no test");
 }
 
 // An include selects the test that includes the changed header, through a header that includes it.

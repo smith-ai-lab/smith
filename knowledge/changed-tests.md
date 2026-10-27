@@ -1,7 +1,7 @@
 ---
 type: design
 title: smith test --changed runs the tests a change can reach
-description: The tests to run for a diff are the ones the reverse dependency graph reaches from the changed files, no test declares anything, and the train's full run is the net.
+description: The tests to run for a diff are the ones the reverse dependency graph reaches from the changed files, no test declares anything, and a path the graph does not know runs everything.
 tags: [test, ci, machine-load]
 ---
 # smith test --changed runs the tests a change can reach
@@ -12,4 +12,6 @@ Every red batch on the train was a fault in a test the author did not know to ru
 
 **The graph.** Every `.smith`, `.c`, `.h`, `.cpp`, `.hpp` and `.m` file is scanned for `module`, `import` and `#include` lines; each names a project file by the end of its path (`a::b` is `a/b.smith`, `<smith/x.h>` is `smith/x.h`), and the files that import a changed file, transitively, are changed too. No build is needed, so a replay over old commits needs none. A `*_test.smith` or `*_test.c` file is selected when it is changed or reached this way, or when it runs smith (`scratch::`, `SMITH_SELF`) and a source of smith changed (smith.c, `runtime/`, `lib/`, `include/`, `templates/`, `scripts/`, ...): a test that starts smith depends on all that is compiled into it, the flags of module files and the build conventions included.
 
-**What it does not do.** A file the graph does not know (not a source, not part of smith) selects nothing; the train's full run catches what that misses (a test that reads files as data, such as the tree-sitter test that parses every `.c`). Recording what tests read at run time is not built; it becomes an issue if misses are more than rare. The files that select every test: `build.c`, `smith.c`, `runtime/lang*`, `patches/`, `.github/`, `shim/`, `tests/units/`. Conservative is fine.
+**Unknown means run it.** A changed path the graph does not know (not a test, not part of smith, and no file imports or includes it: a new `.c` nothing includes, a fixture read as data, a text file) selects every test, so a change the graph cannot follow is never skipped. The files that select every test too: `build.c`, `smith.c`, `runtime/lang*`, `patches/`, `.github/`, `shim/`, `tests/units/`. Conservative is fine.
+
+**What it weighs.** The runner's `--stats` ends with a line `cpu<TAB>seconds<TAB>name` for each test, its CPU time with the processes it waited for; the train's full run can publish them, so the share of CPU a selection runs is measured, not guessed. Recording what tests read at run time is not built; it becomes an issue if misses are more than rare.

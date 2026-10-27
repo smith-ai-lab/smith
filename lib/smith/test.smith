@@ -512,6 +512,7 @@ typedef struct {
     usize frame_count;
     bool frames_exact; // frames[0] is the instruction a signal stopped at
     bool began;        // the worker armed its clocks for this test: whatever ends it after that is the test's own
+    f64 cpu;           // the CPU seconds the test took, with the processes it waited for (--stats)
 } Shared;
 
 Shared fallback;
@@ -1489,6 +1490,7 @@ typedef struct {
 typedef struct {
     f64 start;
     f64 seconds;
+    f64 cpu; // see Shared
     bool finished;
     Outcome outcome;
     u64 seed; // a property test's key when the test ended, or an io test's seed
@@ -1859,14 +1861,27 @@ void setup(Shared *block, i32 output) {
     c::_exit(0);
 }
 
+// The CPU seconds this process and the children it waited for have used (user and system).
+f64 process_cpu() {
+    struct c::rusage self = {};
+    struct c::rusage children = {};
+    c::getrusage(c::RUSAGE_SELF, &self);         // NOLINT(smith-preprocessor)
+    c::getrusage(c::RUSAGE_CHILDREN, &children); // NOLINT(smith-preprocessor)
+    return (f64)(self.ru_utime.tv_sec + self.ru_stime.tv_sec + children.ru_utime.tv_sec + children.ru_stime.tv_sec) +
+           1e-6 * (f64)(self.ru_utime.tv_usec + self.ru_stime.tv_usec + children.ru_utime.tv_usec +
+                        children.ru_stime.tv_usec);
+}
+
 // A worker's test: the end it came to without the worker ending. The arenas, the note and the alarm are the test's own
 // (execute resets them before each test and each key); a failed check lands back here.
 End serve(const Options *options, const Command *command) {
     const Test *test = &table[command->test];
+    f64 cpu_before = process_cpu();
     i32 jumped = c::sigsetjmp(loop_jump, 1); // NOLINT(smith-preprocessor): a macro of __sigsetjmp in glibc
     if (jumped == 0) execute(test, options, command);
     checked_end(); // a failed test unwound with its allocator still set
     disarm();
+    shared->cpu = process_cpu() - cpu_before;
     c::fflush(nullptr);
     c::setvbuf(c::stdout, nullptr, c::_IONBF, 0); // NOLINT(smith-preprocessor): a test may have buffered stdout
     if (jumped == 0) return End_Passed;
@@ -2157,6 +2172,7 @@ bool retire(usize slot, const Run *run, const Shared *block) {
 // Takes what a finished test left in the shared block into its run.
 void collect(Run *run, const Shared *block) {
     run->seed = block->seed;
+    run->cpu = block->cpu;
     __builtin_memcpy(run->note, block->note, note_capacity);
     __builtin_memcpy(run->detail, block->detail, detail_capacity);
     __builtin_memcpy(run->scratch, block->scratch, path_capacity);
@@ -2720,6 +2736,13 @@ bool listed_after(const Plan *plan, usize i, usize j) {
     return i > j;
 }
 
+// With --stats, one line for each test: `cpu<TAB>seconds<TAB>name`, the CPU time the test took (the train's full run
+// publishes them, so a selection can be weighed by what it costs).
+void print_cpu(const Plan *plan) {
+    for (usize i = 0; i < plan->count; i++)
+        say(plan->options, "cpu\t%.3f\t%s\n", plan->runs[i].cpu, plan->tests[i]->name);
+}
+
 void print_slowest(const Plan *plan) {
     constexpr usize listed = 5;
     if (plan->count == 0) return;
@@ -3030,6 +3053,7 @@ void say_written(const Options *options) {
     say(&options, "\n%zu passed, %zu failed in %.2f s\n", plan->count - failed, failed, seconds(&options) - start);
     say_explained(&options);
     if (options.stats) say(&options, "forks: %ju\n", (c::uintmax_t)*forks);
+    if (options.stats) print_cpu(plan);
     return failed == 0 ? 0 : 1;
 }
 
