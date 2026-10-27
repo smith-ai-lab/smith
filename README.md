@@ -228,20 +228,19 @@ A test can make memory refuse on purpose with `smith::failing`: `failing::make(p
 module main;
 
 import smith::failing;
-import smith::format;
-import smith::io;
+import smith::console;
 import smith::mem;
 import smith::random;
 
 typedef option(i32 *) MaybeInt;
 
-i32 main(io::Io *io) {
+i32 main() {
     failing::Failing f = failing::make(nullptr, random::key_make(1));
     f.one_in = 1; // refuse every allocation
     mem::Allocator *before = mem::set_allocator(&f.base);
     MaybeInt maybe = mem::try_alloc(i32);
     mem::set_allocator(before);
-    format::print(&io->console, "refused ", maybe == .none, " of ", f.calls, "\n");
+    console::print("refused ", maybe == .none, " of ", f.calls, "\n");
     return 0;
 }
 ```

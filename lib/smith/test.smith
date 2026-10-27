@@ -1792,7 +1792,7 @@ void checked_finish() {
 
 random::Tap hooking_tap; // its word is set in setup(), in the process that draws through it
 
-// A test that draws from a key: a property test, or one that also takes a mem::Failing.
+// A test that draws from a key: a property test, or one that also takes a failing::Failing.
 bool keyed(const Test *test) {
     return test->property != nullptr || test->with_failing != nullptr;
 }
