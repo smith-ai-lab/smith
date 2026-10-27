@@ -534,6 +534,9 @@ static bool smith_lang_enum_comparison(SmithLang *lang, const SmithHost *host, c
     return false;
 }
 
+static bool smith_lang_enum_generic_constant(SmithLang *lang, const SmithHost *host, const SmithToken *operand,
+                                             size_t length, const SmithToken *variant, char *out, size_t capacity);
+
 // At the first token of `operand == .v` (a name, `*` or `(` after an operator): written as `(operand).tag == C`.
 static bool smith_lang_enum_compare(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     bool head =
@@ -561,11 +564,16 @@ static bool smith_lang_enum_compare(SmithLang *lang, const SmithHost *host, cons
     if (!smith_lang_enum_comparison(lang, host, token, operand, &length, &taken, &op, &variant)) return false;
     SmithLangEnumType type;
     char constant[smith_lang_enum_name_max + 64];
-    if (!smith_lang_enum_of(lang, host, operand, length, &type)) return false;
     SmithToken dot = *smith_lang_peek(lang, host, taken - 2, false);
     SmithToken name = *variant;
     SmithToken oper = *op;
-    if (!smith_lang_enum_variant(lang, host, &type, &dot, &name, false, constant, sizeof constant)) return false;
+    if (!smith_lang_enum_of(lang, host, operand, length, &type)) { // a call of a generic: typed from its written result
+        if (!smith_lang_enum_generic_constant(lang, host, operand, length, variant, constant, sizeof constant)) {
+            return false;
+        }
+    } else if (!smith_lang_enum_variant(lang, host, &type, &dot, &name, false, constant, sizeof constant)) {
+        return false;
+    }
     char pattern[smith_lang_enum_name_max + 80];
     snprintf(pattern, sizeof pattern, "( @0 ) . tag @1 %s", constant);
     SmithLangSliceSpan spans[2] = {{operand, length}, {&oper, 1}};
@@ -1386,6 +1394,50 @@ static bool smith_lang_eshape_tag(SmithLang *lang, const SmithHost *host, const 
     smith_lang_tuple_tag(joined, hashed, sizeof hashed);
     snprintf(tag, capacity, "smith_enum_%s", hashed + sizeof smith_lang_tuple_prefix - 1);
     return true;
+}
+
+// The constant of a variant of the result of a call of a generic whose result is written `option(usize)` or
+// `result(usize, i32)` with no `auto`, `typeof` or type parameter in it (`finder::find(s, c) == .some`): the compiler
+// cannot type the call until its instance is written, but the struct's name follows from the written result. False
+// when the operand is no such call, or the variant is not one of the language's own.
+static bool smith_lang_enum_generic_constant(SmithLang *lang, const SmithHost *host, const SmithToken *operand,
+                                             size_t length, const SmithToken *variant, char *out, size_t capacity) {
+    if (length < 3 || !smith_lang_punct(&operand[length - 1], ")") || operand[0].kind != SmithTokenKind_Identifier) {
+        return false;
+    }
+    bool qualified = length > 4 && smith_lang_punct(&operand[1], "::");
+    size_t open = qualified ? 3 : 1;
+    if (!smith_lang_punct(&operand[open], "(")) return false;
+    const SmithToken *member = qualified ? &operand[2] : &operand[0];
+    const char *module = lang->module;
+    size_t module_length = strlen(lang->module);
+    if (qualified) {
+        const SmithLangBinding *binding = smith_lang_binding_find(lang, operand[0].text, operand[0].length);
+        if (binding == nullptr || binding->is_c || binding->missing) return false;
+        module = smith_lang_str(binding->module);
+        module_length = binding->module.length;
+    }
+    int found = smith_lang_generic_resolve(lang, host, module, module_length, member->text, member->length);
+    if (found < 0) return false;
+    const SmithLangGeneric *generic = &smith_lang_generics[found];
+    // The head is recorded as lowered: `struct smith_enum_option_usize`, then the name. A result that depends on the
+    // call's arguments is not one token (it holds `auto`, `typeof` or a type parameter) and is not read here.
+    const SmithLangGenToken *first = &smith_lang_gt.tokens[generic->first];
+    if (generic->name_index != 2 || !smith_lang_gt_is(first, SmithTokenKind_Identifier, "struct") ||
+        first[1].kind != SmithTokenKind_Identifier) {
+        return false;
+    }
+    const char *tag = smith_lang_gt_str(&first[1]);
+    size_t tag_length = first[1].length;
+    bool is_option = tag_length > 18 && strncmp(tag, "smith_enum_option_", 18) == 0;
+    bool is_result = tag_length > 18 && strncmp(tag, "smith_enum_result_", 18) == 0;
+    bool known = is_result ? smith_lang_equals(variant->text, variant->length, "ok") ||
+                                 smith_lang_equals(variant->text, variant->length, "err")
+                           : is_option && (smith_lang_equals(variant->text, variant->length, "some") ||
+                                           smith_lang_equals(variant->text, variant->length, "none"));
+    if (!known) return false;
+    int written = snprintf(out, capacity, "%.*s_tag_%.*s", (int)tag_length, tag, (int)variant->length, variant->text);
+    return written > 0 && (size_t)written < capacity;
 }
 
 // The definition of the struct of one call, ready for the queue (`struct tag {...} __attribute__(...);`).
