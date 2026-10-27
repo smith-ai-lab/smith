@@ -4935,6 +4935,11 @@ static bool smith_lang_replay_list(SmithLang *lang, const SmithHost *host, Smith
 static void smith_lang_replay_plain(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
                                     SmithLangGenToken *token) {
     if (token->special != SmithLangGen_Plain) return;
+    // The `_` of a `[_]` in the body is not written (runtime/lang_unused.c): the body was recorded as written.
+    static bool after_open;
+    bool inferred = after_open && smith_lang_gt_is(token, SmithTokenKind_Identifier, "_");
+    after_open = smith_lang_gt_punct(token, "[");
+    if (inferred) return;
     if (smith_lang_gt_punct(token, "{")) replay->braces += 1;
     if (smith_lang_gt_punct(token, "}") && replay->braces > 0) replay->braces -= 1;
     uint32_t place = smith_lang_gen_place(host, replay->generic, token, replay->location);

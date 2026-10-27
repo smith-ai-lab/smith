@@ -1,0 +1,4 @@
+src/main.smith:10:15: a flexible array member has its length apart from its data: use a slice field, `T xs[:]`
+src/main.smith:14:19: `(T[])` is no array in a module: write `(T[_]){...}`
+src/main.smith:4:8: `[]` is no array in a module: write `T xs[_] = {...}` for a fixed array of inferred size, or `T xs[:]` for a slice
+src/main.smith:6:24: an `extern` array needs its size: write `extern T xs[N]`

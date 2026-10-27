@@ -11,6 +11,7 @@
 static unsigned smith_lang_unused_serial;
 static SmithToken smith_lang_unused_last; // the token before, for a lowering with no host record (the raw one)
 static bool smith_lang_unused_has_last;
+static SmithToken smith_lang_unused_last2; // and the one before that, for `[3][_]`
 
 static bool smith_lang_unused_reserved(const SmithToken *token) {
     return token->length >= 2 && (token->text[1] == '_' || (token->text[1] >= 'A' && token->text[1] <= 'Z'));
@@ -62,14 +63,112 @@ static bool smith_lang_unused_write(SmithLang *lang, const SmithToken *token, bo
     return smith_lang_tuple_replace(lang, 0, made, count);
 }
 
+// ---- Brackets with no size (issue #423)
+//
+// In a module `[_]` is a fixed array whose size the initializer gives (C's `[]`, written without the `_`), and `[]`
+// is an error in every position: C's three meanings of it each have a spelling of their own.
+
+// Whether the declaration the `]` closes began with `extern`: seen by every token, since the host's record is short.
+static bool smith_lang_brackets_extern_seen;
+
+static void smith_lang_brackets_track(const SmithToken *token) {
+    if (token->synthetic) return;
+    if (smith_lang_ident(token, "extern")) smith_lang_brackets_extern_seen = true;
+    if (smith_lang_punct(token, ";") || smith_lang_punct(token, "{") || smith_lang_punct(token, "}")) {
+        smith_lang_brackets_extern_seen = false;
+    }
+}
+
+// Whether the tokens after the `]` at `index` (counted from the next token as 0) are more dimensions and then `=`, or
+// the `)` and `{` of a compound literal. `literal` says which.
+static bool smith_lang_brackets_initialized(SmithLang *lang, const SmithHost *host, size_t index, bool *literal) {
+    *literal = false;
+    for (size_t at = index; at < smith_lang_queue_max - 2; at++) { // a few dimensions
+        const SmithToken *next = smith_lang_peek(lang, host, at, false);
+        if (smith_lang_punct(next, "=")) return true;
+        if (smith_lang_punct(next, ")")) {
+            *literal = smith_lang_punct(smith_lang_peek(lang, host, at + 1, false), "{");
+            return *literal;
+        }
+        if (!smith_lang_punct(next, "[")) return false;
+        while (!smith_lang_punct(smith_lang_peek(lang, host, at, false), "]")) { // to the end of the dimension
+            if (smith_lang_peek(lang, host, at, false)->kind == SmithTokenKind_Eof || at + 3 >= smith_lang_queue_max) {
+                return false;
+            }
+            at += 1;
+        }
+    }
+    return false;
+}
+
+// The `_` of `[_]`: the size comes from the initializer, so the `_` is not written to C.
+static bool smith_lang_brackets_inferred(SmithLang *lang, const SmithHost *host, const SmithToken *token,
+                                         const SmithToken *outer) {
+    if (!smith_lang_punct(smith_lang_peek(lang, host, 0, false), "]")) return false; // `[_ + 1]` reads `_`: an error
+    bool literal = false;
+    const char *message = nullptr;
+    if (lang->decl.in_params) {
+        message =
+            "`[_]` takes its size from an initializer, and a parameter has none: write `T xs[N]`, `T xs[:]` for a "
+            "length known at run time, or `T *xs` for a pointer";
+    } else if (smith_lang_punct(outer, "]")) {
+        message = "only the outermost dimension may be `[_]`: write `T m[_][3] = {...}`";
+    } else if (host->previous != nullptr && !smith_lang_brackets_initialized(lang, host, 1, &literal)) {
+        message = "`[_]` takes its size from an initializer: write `T xs[_] = {...}`, or the size, `T xs[N]`";
+    }
+    if (message != nullptr) smith_lang_error(lang, host, token->location, "%s", message);
+    return true; // the `_` is not written: C's `[]` has the size of the initializer
+}
+
+// Whether the token before is a `[`: the lowering's own record of the tokens offered to it, else the host's (a fast
+// path takes some tokens without offering them).
+static bool smith_lang_bracket_before(SmithLang *lang, const SmithHost *host, bool has_own, const SmithToken *own) {
+    if (has_own && smith_lang_punct(own, "[")) return true;
+    SmithToken back = {};
+    return host->previous != nullptr && smith_lang_previous(lang, host, 1, &back) && smith_lang_punct(&back, "[");
+}
+
+// The `]` after a `[`: an error in a module.
+static void smith_lang_brackets_empty(SmithLang *lang, const SmithHost *host, const SmithToken *token,
+                                      bool after_open) {
+    if (!lang->is_module || token->foreign || token->synthetic || token->replay || lang->recording || !after_open ||
+        lang->decl.in_params) {
+        return;
+    }
+    bool literal = false;
+    bool declared_extern = smith_lang_brackets_extern_seen;
+    const char *message =
+        "`[]` is no array in a module: write `T xs[_] = {...}` for a fixed array of inferred size, or `T xs[:]` for a "
+        "slice";
+    if (smith_lang_brackets_initialized(lang, host, 0, &literal)) {
+        if (literal) message = "`(T[])` is no array in a module: write `(T[_]){...}`";
+    } else if (declared_extern) {
+        message = "an `extern` array needs its size: write `extern T xs[N]`";
+    } else if (smith_lang_punct(smith_lang_peek(lang, host, 0, false), ";")) {
+        message = "a flexible array member has its length apart from its data: use a slice field, `T xs[:]`";
+    }
+    smith_lang_error(lang, host, token->location, "%s", message);
+}
+
+// A `]`: after a `_` the host's record shows the `[` (the `_` was dropped), and the lowering's own shows the `_`.
+static void smith_lang_brackets_close(SmithLang *lang, const SmithHost *host, const SmithToken *token, bool has_own,
+                                      const SmithToken *own) {
+    bool dropped = has_own && smith_lang_ident(own, "_");
+    smith_lang_brackets_empty(lang, host, token, !dropped && smith_lang_bracket_before(lang, host, has_own, own));
+}
+
 // A `_` or a name starting with `_` in a module: true when the token was replaced.
 static bool smith_lang_unused_token(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+    smith_lang_brackets_track(token);
     SmithToken own = smith_lang_unused_last;
+    SmithToken own2 = smith_lang_unused_last2;
     bool has_own = smith_lang_unused_has_last;
     if (!token->synthetic) {
+        smith_lang_unused_last2 = smith_lang_unused_last;
         smith_lang_unused_last = *token;
         smith_lang_unused_has_last = true;
     }
+    if (smith_lang_punct(token, "]")) smith_lang_brackets_close(lang, host, token, has_own, &own);
     if (!lang->is_module || token->foreign || token->synthetic || token->replay || lang->recording ||
         token->kind != SmithTokenKind_Identifier || token->length == 0 || token->text[0] != '_' ||
         smith_lang_unused_reserved(token)) {
@@ -84,6 +183,9 @@ static bool smith_lang_unused_token(SmithLang *lang, const SmithHost *host, cons
     if (known &&
         (smith_lang_punct(&before, ".") || smith_lang_punct(&before, "->") || smith_lang_punct(&before, "::"))) {
         return false;
+    }
+    if (token->length == 1 && smith_lang_bracket_before(lang, host, has_own, &own)) {
+        return smith_lang_brackets_inferred(lang, host, token, &own2);
     }
     if (token->length > 1) {
         if (host->lookup == nullptr ||

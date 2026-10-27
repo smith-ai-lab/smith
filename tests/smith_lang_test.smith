@@ -597,6 +597,18 @@ export void test_error_unused_discard_braces(io::Io *io) {
     corpus_case(io, "error-unused-discard-braces");
 }
 
+export void test_array_infer_run(io::Io *io) {
+    corpus_case(io, "array-infer-run");
+}
+
+export void test_error_array_empty(io::Io *io) {
+    corpus_case(io, "error-array-empty");
+}
+
+export void test_error_array_infer(io::Io *io) {
+    corpus_case(io, "error-array-infer");
+}
+
 export void test_error_defer_name(io::Io *io) {
     corpus_case(io, "error-defer-name");
 }

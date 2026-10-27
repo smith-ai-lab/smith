@@ -1,0 +1,10 @@
+module main;
+
+// `[_]` needs an initializer and may only be the outermost dimension (issue #423).
+i32 first[_];
+
+i32 grid[3][_] = {{1}, {2}, {3}};
+
+i32 main() {
+    return first[0] + grid[0][0];
+}

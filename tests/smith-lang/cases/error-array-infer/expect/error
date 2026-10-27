@@ -1,0 +1,3 @@
+src/main.smith:4:11: `[_]` takes its size from an initializer: write `T xs[_] = {...}`, or the size, `T xs[N]`
+src/main.smith:6:13: only the outermost dimension may be `[_]`: write `T m[_][3] = {...}`
+src/main.smith:6:9: array has incomplete element type 'i32[]' (aka 'int[]')

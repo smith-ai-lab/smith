@@ -1343,6 +1343,7 @@ SmithLang *smith_lang_new(void) {
     smith_lang_enum_reset();
     smith_lang_unused_serial = 0;
     smith_lang_unused_has_last = false;
+    smith_lang_brackets_extern_seen = false;
     smith_lang_ty_reset();
     smith_lang_word_buckets();
     lang->started = true;
