@@ -282,6 +282,12 @@ static void check_local(Client *client) {
     (void)format::to(url, sizeof url, "file://", client->source, ".missing");
     result = get(client, url);
     test::check_equal(result.error.code, enoent);
+    // The error message is a fixed buffer, and a message shows only the first 100 characters of a url
+    // (smith_http_shown), which a long scratch path reaches.
+    constexpr usize shown = 100;
+    if (c::strlen(url) > shown) {
+        url[shown] = '\0';
+    }
     test::check(contains(result.error.message, url));
 }
 
