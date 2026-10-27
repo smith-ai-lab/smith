@@ -96,7 +96,7 @@ export void test_autodiff_toy_smith_test_whose_test_differentiates_passes(io::Io
     scratch::Project p = from_dir(io, "toy", "toy");
     scratch::Run run = scratch::sh(&p, "smith test 2>&1");
     scratch::expect_status("autodiff: toy: smith test, whose test differentiates, passes", 0, &run);
-    scratch::expect_contains("autodiff: toy: ... and runs it", run.out, "2 passed");
+    scratch::expect_contains("autodiff: toy: ... and runs it", run.out, "3 passed");
 }
 
 export void test_autodiff_toy_smith_lint_is_clean(io::Io *io) {

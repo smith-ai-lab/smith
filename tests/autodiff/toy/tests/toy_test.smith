@@ -42,7 +42,6 @@ export void test_gradient_and_zeros_allocate_only_through_the_current_allocator(
     arena::Arena a = test::memory(1 << 12);
     arena::ArenaAllocator allocator = arena::allocator(&a);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
-    defer mem::set_allocator(outside);
 
     struct Line line = {.w = mem::alloc_slice(f64, 3), .b = 1.0};
     line.w[0] = 1.0;
@@ -57,4 +56,5 @@ export void test_gradient_and_zeros_allocate_only_through_the_current_allocator(
     test::check_near(z.w[2], 0.0, 0.0);
     test::check_condition(allocator.base.owns(&allocator.base, g.w.data));
     test::check_condition(allocator.base.owns(&allocator.base, z.w.data));
+    mem::set_allocator(outside);
 }
