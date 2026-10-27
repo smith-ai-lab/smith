@@ -1438,6 +1438,7 @@ typedef struct {
     bool full;
     bool update; // --update: test::golden writes its file
     bool list;
+    bool fail_fast; // --fail-fast: no test starts after one has failed; the ones running finish
     bool verbose;
     bool color;
     bool isolate;       // a process for each test, as before the workers
@@ -1497,6 +1498,7 @@ typedef struct {
     f64 seconds;
     f64 cpu; // see Shared
     bool finished;
+    bool skipped; // --fail-fast: never started
     Outcome outcome;
     u64 seed; // a property test's key when the test ended, or an io test's seed
     char note[note_capacity];
@@ -2785,6 +2787,15 @@ bool any_running(const Plan *plan) {
     return false;
 }
 
+// Whether a test that started has finished and failed (--fail-fast).
+bool failed_so_far(const Plan *plan, usize next) {
+    for (usize i = 0; i < next; i++) {
+        const Run *run = &plan->runs[plan->order[i]];
+        if (run->finished && run->outcome.end != End_Passed) return true;
+    }
+    return false;
+}
+
 // Runs the chosen tests, up to jobs at once, printing each result as soon as every test before it (in table order) has
 // finished. A failure that is to be shrunk is held, with everything after it, until every test has finished: shrinking
 // takes seconds, and while it ran nothing would read the other workers' pipes or judge their timeouts, so a result
@@ -2798,6 +2809,11 @@ void run_all(Plan *plan) {
         while (next < plan->count && launch(plan, &next)) {
         }
         if (any_running(plan)) pump(plan);
+        if (plan->options->fail_fast && next < plan->count && failed_so_far(plan, next)) {
+            for (usize i = next; i < plan->count; i++)
+                plan->runs[plan->order[i]].skipped = true;
+            next = plan->count;
+        }
         while (printed < plan->count && plan->runs[printed].finished &&
                !shrinkable(plan->tests[printed], plan->options, &plan->runs[printed])) {
             report(plan->tests[printed], plan->options, &plan->runs[printed]);
@@ -2807,6 +2823,7 @@ void run_all(Plan *plan) {
         contract::assert(round + 1 < rounds_max);
     }
     for (; printed < plan->count; printed++) { // nothing else is running now
+        if (plan->runs[printed].skipped) continue;
         shrink_failure(plan->tests[printed], plan->options, &plan->runs[printed]);
         report(plan->tests[printed], plan->options, &plan->runs[printed]);
     }
@@ -2971,6 +2988,8 @@ bool parse_options(i32 argc, char **argv, Options *options) {
         const char *flag = argv[i];
         if (c::strcmp(flag, "--list") == 0) {
             options->list = true;
+        } else if (c::strcmp(flag, "--fail-fast") == 0) {
+            options->fail_fast = true;
         } else if (c::strcmp(flag, "--verbose") == 0) {
             options->verbose = true;
         } else if (c::strcmp(flag, "--full") == 0) {
@@ -3132,7 +3151,7 @@ static void say_usage(const Options *options, const Runner *runner) {
              "usage: %s [--test <substring>] [--seed <n>] [--seeds <1 to %ju>] [--jobs <1 to %zu>] "
              "[--timeout <cpu seconds>] [--wall-timeout <seconds>] [--shrink 0|1] [--shrink-seconds <seconds>] "
              "[--shuffle <seed>] [--isolate] "
-             "[--in-process] [--full] [--update] [--list] [--verbose] [--stats] [--trace] [--color] "
+             "[--in-process] [--full] [--update] [--list] [--fail-fast] [--verbose] [--stats] [--trace] [--color] "
              "[--explain <smith>] [--explain-max <n>] [--no-explain] [--unchecked]\n",
              runner->argv[0], (c::uintmax_t)seeds_max, jobs_max);
 }
@@ -3159,11 +3178,16 @@ static void prepare_run(Options *options) {
 // The report of a run: the slowest tests, what was written and the count; the number that failed.
 static usize report_run(const Plan *plan, const Options *options, f64 start) {
     usize failed = 0;
-    for (usize i = 0; i < plan->count; i++)
+    usize skipped = 0;
+    for (usize i = 0; i < plan->count; i++) {
         failed += plan->runs[i].outcome.end != End_Passed ? 1 : 0;
+        skipped += plan->runs[i].skipped ? 1 : 0;
+    }
     print_slowest(plan);
     say_written(options);
-    say(options, "\n%zu passed, %zu failed in %.2f s\n", plan->count - failed, failed, seconds(options) - start);
+    say(options, "\n%zu passed, %zu failed in %.2f s\n", plan->count - failed - skipped, failed,
+        seconds(options) - start);
+    if (skipped > 0) say(options, "%zu not run (--fail-fast)\n", skipped);
     say_explained(options);
     if (options->stats) say(options, "forks: %ju\n", (c::uintmax_t)*forks);
     if (options->stats) print_cpu(plan);

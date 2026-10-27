@@ -84,6 +84,27 @@ jobs:
           COVERAGE: "1"
         run: smith build
 
+      - name: Changed tests first
+        if: steps.tree.outputs.skip != 'true'
+        # The tests this batch's changes select, by the records of main's latest green run (smith-records, fetched by
+        # the build file's coverage-fetch task with gh), stopping at the first failure: a broken batch is red in minutes,
+        # not after the full check (#506). Nothing selected is a pass. The Full check below still names every failure.
+        timeout-minutes: 20
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SMITH_OUTPUT: full
+          SMITH_PRIORITY: ci
+          COVERAGE: "1"
+        run: |
+          export PATH="/opt/homebrew/bin:$HOME/.local/bin:$PATH"
+          git fetch -q origin main
+          start=$(date +%s)
+          rc=0
+          build/Darwin-arm64/smith test --changed --base origin/main --fail-fast 2>&1 | tee "$RUNNER_TEMP/changed.log" || rc=${PIPESTATUS[0]}
+          echo "changed tests ended with status $rc after $(( $(date +%s) - start )) s" | tee -a "$GITHUB_STEP_SUMMARY"
+          exit $rc
+
       - name: Full check
         if: steps.tree.outputs.skip != 'true'
         # 45, not 25: the host runs CI beside the lanes' builds, and under that load checks were cut off at 25 minutes with no test failing (#391, #401, #406, #393 on 2026-10-26). #360 brings it back down.
