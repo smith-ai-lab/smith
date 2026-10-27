@@ -16,7 +16,7 @@ import smith::contract;
 import smith::math;
 import smith::random;
 import target;
-import <dlfcn.h>;                    // dladdr: which library a block was allocated in
+import <dlfcn.h>;                    // dladdr (macOS): which library a block was allocated in
 import <sanitizer/asan_interface.h>; // the poisoning calls of mem::checked
 import <smith/handlers.h>;           // SmithAllocator, smith_handlers_set_allocator
 import <smith/trace.h>;              // smith_failure_format, smith_trace_capture
@@ -373,9 +373,36 @@ bool system_path(const char *path) {
            (starts(path, "/usr/lib/") || starts(path, "/System/") || starts(path, "/lib/") || starts(path, "/lib64/"));
 }
 
+// Which image a code address is in (dladdr). <dlfcn.h> declares it on macOS. glibc declares it and Dl_info only under
+// _GNU_SOURCE, which a .smith file cannot define, so Linux declares what it uses: the function under another name
+// bound to the same symbol, so a project that does define _GNU_SOURCE has no second declaration of dladdr to
+// disagree with this one.
+if constexpr (target::os == target::macos) {
+    typedef c::Dl_info Image;
+
+    i32 image_of(const void *address, Image *info) {
+        // NOLINTNEXTLINE(smith-effects): the loader's own table of images, read-only
+        return c::dladdr(address, info);
+    }
+} else {
+    typedef struct {
+        const char *dli_fname;
+        void *dli_fbase;
+        const char *dli_sname;
+        void *dli_saddr;
+    } Image;
+
+    extern i32 loader_image(const void *address, Image *info) __asm__("dladdr");
+
+    i32 image_of(const void *address, Image *info) {
+        // NOLINTNEXTLINE(smith-effects): the loader's own table of images, read-only
+        return loader_image(address, info);
+    }
+}
+
 // A frame of the allocation itself: this module, the handlers runtime and the system's allocator, which sit between
 // the caller and the checked allocator's alloc.
-bool machinery(const c::Dl_info *info) {
+bool machinery(const Image *info) {
     if (info->dli_fname != nullptr && (__builtin_strstr(info->dli_fname, "smith_handlers") != nullptr ||
                                        __builtin_strstr(info->dli_fname, "libsystem_malloc") != nullptr))
         return true;
@@ -391,9 +418,8 @@ bool machinery(const c::Dl_info *info) {
 bool library_held(const CheckedRecord *record) {
     contract::trusted(); // dladdr is the edge
     for (u32 i = 0; i < record->alloc_count; i++) {
-        c::Dl_info info = {};
-        // NOLINTNEXTLINE(smith-effects): the loader's own table of images, read-only
-        if (c::dladdr((const void *)record->alloc_frames[i], &info) == 0) return false;
+        Image info = {};
+        if (image_of((const void *)record->alloc_frames[i], &info) == 0) return false;
         if (machinery(&info)) continue;
         if (!system_path(info.dli_fname) || info.dli_sname == nullptr) return false;
         for (usize name = 0; name < sizeof owning / sizeof owning[0]; name++)

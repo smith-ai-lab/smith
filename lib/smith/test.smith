@@ -28,6 +28,7 @@ import <string.h>;
 import <sys/mman.h>;
 import <sys/resource.h>;
 import <sys/socket.h>;
+import <sys/stat.h>;
 import <sys/time.h>;
 import <sys/wait.h>;
 import <time.h>;

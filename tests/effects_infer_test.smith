@@ -392,6 +392,8 @@ export void test_the_fix_it_of_an_effects_error_replaces_the_attribute_and_the_f
 export void test_effects_asm_c(io::Io *io) {
     if constexpr (target::arch == target::aarch64) {
         effects_case(io, "effects_asm.c");
+    } else {
+        _ = io;
     }
 }
 

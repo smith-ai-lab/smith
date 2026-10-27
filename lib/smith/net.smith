@@ -437,7 +437,6 @@ if constexpr (target::os == target::macos) {
     constexpr i64 tls_version_1_2 = 0x0303;
     constexpr i32 ssl_error_syscall = 5;
     constexpr i32 ssl_error_zero_return = 6;
-    constexpr usize text_max = 120;
     constexpr usize api_spins = 4096;
 
     typedef struct {
@@ -548,7 +547,10 @@ if constexpr (target::os == target::macos) {
     }
 }
 
-// The TLS functions, loaded on the first call (null when the system has none).
+// The TLS functions, loaded on the first call (null when the system has none). A function before a file-scope
+// `if constexpr` is measured with the branch not taken after it (the size check reads the dropped tokens as part of
+// it; on Linux the branch is the macOS one, 190 lines), hence the NOLINT.
+// NOLINTNEXTLINE(readability-function-size)
 const Api *api_get() {
     i32 expected = 0;
     if (__c11_atomic_load(&api_state, __ATOMIC_SEQ_CST) == 0 &&
