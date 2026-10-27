@@ -1,0 +1,350 @@
+// The editor's side of the effects: what the layer does for the cross-file effects (skill smith-lang-effects, issue
+// #246). It tells the plugin which object each source is built into, so a saved source's summary lands where the build
+// keeps it; it has the saved file parsed again (clangd's own `forceRebuild`, no text is sent: the editor's text is
+// clangd's draft); when a summary is written it has the other open files parsed again, so their diagnostics follow; and
+// in the background it compiles, one at a time, each source whose summary is missing or older than the source.
+module runtime::lsp_editor;
+
+import smith::arena;
+import smith::mem;
+import runtime::lsp_frames;
+import runtime::lsp_json;
+import runtime::lsp_layer;
+import runtime::lsp_text;
+import runtime::lsp_world;
+import smith::text;
+import "lsp_edge.h";
+
+typedef lsp_json::Node Node;
+typedef lsp_text::Text Text;
+
+export constexpr usize documents_max = 256; // the open documents the layer follows; more are not followed
+export constexpr usize saved_max = 16;      // the saved files waiting to be parsed again
+export constexpr usize uri_max = 1024;
+constexpr usize path_max = 4096;
+
+// A document the editor has open: its uri and the version the editor last sent.
+export struct Document {
+    char uri[uri_max];
+    usize uri_length;
+    i64 version;
+};
+
+// The editor's documents, guarded by the editor's lock, and the pipe to the server, guarded by the send lock.
+export struct Editor {
+    i32 server;
+    arena::Arena *own; // for what the thread of the editor's messages keeps
+    Document documents[documents_max];
+    usize document_count;
+    Document saved[saved_max];
+    usize saved_count;
+};
+
+export Editor *make(arena::Arena *arena, i32 server) {
+    Editor *editor = arena::push(arena, Editor);
+    editor->server = server;
+    editor->own = arena;
+    return editor;
+}
+
+// The editor the plugin's callback tells, as it has no place to carry one: the layer lives as long as the process.
+Editor *current = nullptr;
+
+export void set_current(Editor *editor) {
+    current = editor;
+}
+
+Text uri_of(const Document *document) {
+    return document->uri[0:document->uri_length];
+}
+
+void set_uri(Document *document, Text uri, i64 version) {
+    usize length = __builtin_elementwise_min(countof(uri), uri_max);
+    mem::copy(document->uri[0:length], uri[0:length]);
+    document->uri_length = length;
+    document->version = version;
+}
+
+// The place of the open document, or none; the editor's lock is held.
+option(usize) find_document(const Editor *editor, Text uri) {
+    for (usize i = 0; i < editor->document_count; i++) {
+        if (lsp_text::equal(uri_of(&editor->documents[i]), uri)) return i;
+    }
+    return .none;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Sending
+
+// Sends a message to the server, one at a time.
+export bool forward(Editor *editor, arena::Arena *arena, lsp_text::Text body) {
+    c::smith_lsp_lock(c::SmithLspLock_Send);
+    defer c::smith_lsp_unlock(c::SmithLspLock_Send);
+    return lsp_frames::send(arena, editor->server, body);
+}
+
+// `textDocument/didChange` with no changes and `forceRebuild`: clangd keeps its draft and parses it again.
+void rebuild(Editor *editor, arena::Arena *arena, Text uri) {
+    c::smith_lsp_lock(c::SmithLspLock_Editor);
+    option(usize) found = find_document(editor, uri);
+    i64 version = 0;
+    if (found == .some) version = editor->documents[found.some].version;
+    c::smith_lsp_unlock(c::SmithLspLock_Editor);
+    if (found != .some) return;
+    Node *document = lsp_json::object(arena);
+    lsp_json::add(arena, document, "uri", lsp_json::string(arena, uri));
+    lsp_json::add(arena, document, "version", lsp_json::integer(arena, version));
+    Node *params = lsp_json::object(arena);
+    lsp_json::add(arena, params, "textDocument", document);
+    lsp_json::add(arena, params, "contentChanges", lsp_json::array(arena));
+    lsp_json::add(arena, params, "forceRebuild", lsp_json::boolean(arena, true));
+    Node *message = lsp_json::object(arena);
+    lsp_json::add(arena, message, "jsonrpc", lsp_json::string(arena, "2.0"));
+    lsp_json::add(arena, message, "method", lsp_json::string(arena, "textDocument/didChange"));
+    lsp_json::add(arena, message, "params", params);
+    _ = forward(editor, arena, lsp_json::write(arena, message));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// What the editor says
+
+// What the background thread needs: the editor, and the project's folder.
+struct Background {
+    Editor *editor;
+    char root[path_max];
+    usize root_length;
+};
+
+void background(void *context);
+
+// The project's folder from `initialize`, and the background compile started on it.
+void initialize(Editor *editor, arena::Arena *arena, Node *params) {
+    Text root = {};
+    Text uri = lsp_json::member_text(params, "rootUri");
+    if (lsp_json::is_string(lsp_json::get(params, "rootUri"))) root = lsp_layer::path_of_uri(arena, uri);
+    if (countof(root) == 0) root = lsp_json::member_text(params, "rootPath");
+    if (countof(root) == 0 || countof(root) >= path_max) return;
+    Background *job = arena::push(editor->own, Background);
+    job->editor = editor;
+    mem::copy(job->root[0:countof(root)], root);
+    job->root_length = countof(root);
+    u64 thread = 0;
+    if (c::smith_lsp_thread_start(&thread, background, job)) c::smith_lsp_thread_detach(thread);
+}
+
+// One editor message, before it goes to clangd.
+export void observe(Editor *editor, arena::Arena *arena, lsp_text::Text body) {
+    Node *message = lsp_json::parse(arena, body);
+    if (!lsp_json::is_object(message)) return;
+    Node *method_node = lsp_json::get(message, "method");
+    Node *params = lsp_json::get_object(message, "params");
+    if (!lsp_json::is_string(method_node) || params == nullptr) return;
+    Text method = method_node->text;
+    if (lsp_text::equal(method, "initialize")) {
+        initialize(editor, arena, params);
+        return;
+    }
+    Node *document = lsp_json::get_object(params, "textDocument");
+    Node *uri_node = lsp_json::get(document, "uri");
+    if (!lsp_json::is_string(uri_node)) return;
+    Text uri = uri_node->text;
+    c::smith_lsp_lock(c::SmithLspLock_Editor);
+    defer c::smith_lsp_unlock(c::SmithLspLock_Editor);
+    option(usize) found = find_document(editor, uri);
+    if (lsp_text::equal(method, "textDocument/didOpen") || lsp_text::equal(method, "textDocument/didChange")) {
+        i64 version = 0;
+        if (found == .some) version = editor->documents[found.some].version;
+        if (lsp_text::equal(method, "textDocument/didOpen")) {
+            version = lsp_json::member_integer(document, "version", 0);
+        } else {
+            version = lsp_json::member_integer(document, "version", version);
+        }
+        if (found == .some) {
+            editor->documents[found.some].version = version;
+        } else if (editor->document_count < documents_max) {
+            set_uri(&editor->documents[editor->document_count], uri, version);
+            editor->document_count += 1;
+        }
+    } else if (lsp_text::equal(method, "textDocument/didClose")) {
+        if (found == .some) {
+            editor->document_count -= 1;
+            editor->documents[found.some] = editor->documents[editor->document_count];
+        }
+    } else if (lsp_text::equal(method, "textDocument/didSave")) {
+        if (editor->saved_count < saved_max) {
+            set_uri(&editor->saved[editor->saved_count], uri, 0);
+            editor->saved_count += 1;
+        }
+    }
+}
+
+// After the saved message went to clangd: the saved file is parsed again, and its parse writes the summary.
+export void after_forward(Editor *editor, arena::Arena *arena) {
+    Text uris[saved_max];
+    usize count = 0;
+    c::smith_lsp_lock(c::SmithLspLock_Editor);
+    for (usize i = 0; i < editor->saved_count; i++) {
+        Text uri = uri_of(&editor->saved[i]);
+        char copy[:] = arena::push_slice(arena, char, countof(uri));
+        mem::copy(copy[0:countof(uri)], uri);
+        uris[count] = copy;
+        count += 1;
+    }
+    editor->saved_count = 0;
+    c::smith_lsp_unlock(c::SmithLspLock_Editor);
+    for (usize i = 0; i < count; i++) {
+        c::smith_effects_editor_saved(lsp_text::terminated(arena, lsp_layer::path_of_uri(arena, uris[i])));
+        rebuild(editor, arena, uris[i]);
+    }
+}
+
+// A summary was written (the plugin's parse of `source` did): the other open files are parsed again.
+export void written(Editor *editor, arena::Arena *arena, lsp_text::Text source) {
+    Text uris[documents_max];
+    usize count = 0;
+    c::smith_lsp_lock(c::SmithLspLock_Editor);
+    for (usize i = 0; i < editor->document_count; i++) {
+        Text uri = uri_of(&editor->documents[i]);
+        Text path = lsp_layer::path_of_uri(arena, uri);
+        char real[path_max];
+        Text same = path;
+        if (c::smith_lsp_real_path(lsp_text::terminated(arena, path), real, sizeof real)) same = text::make(real);
+        if (lsp_text::equal(same, source)) {
+            continue;
+        }
+        char copy[:] = arena::push_slice(arena, char, countof(uri));
+        mem::copy(copy[0:countof(uri)], uri);
+        uris[count] = copy;
+        count += 1;
+    }
+    c::smith_lsp_unlock(c::SmithLspLock_Editor);
+    for (usize i = 0; i < count; i++) {
+        rebuild(editor, arena, uris[i]);
+    }
+}
+
+// What the plugin calls when a summary is written.
+export void summary_written(const char *source) {
+    if (current == nullptr) return;
+    arena::Arena arena = arena::growing(1 << 16, nullptr);
+    defer arena::release(&arena);
+    written(current, &arena, text::make(source));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The background compile
+
+// `.smith/effects/<the object's absolute path, % for />.fx`, the plugin's place (smith_effects_summary_path).
+Text summary_of(arena::Arena *arena, Text object) {
+    lsp_text::Builder path = lsp_text::builder(arena, countof(object) + 32);
+    lsp_text::append(&path, ".smith/effects/");
+    for (char c : object) {
+        if (c == '/') {
+            lsp_text::append_char(&path, '%');
+        } else {
+            lsp_text::append_char(&path, c);
+        }
+    }
+    lsp_text::append(&path, ".fx");
+    return lsp_text::view(&path);
+}
+
+// A path under the folder, unless it is absolute.
+Text under(arena::Arena *arena, Text folder, Text path) {
+    if (lsp_text::starts_with(path, "/")) return path;
+    lsp_text::Builder joined = lsp_text::builder(arena, countof(folder) + countof(path) + 1);
+    lsp_text::append(&joined, folder);
+    lsp_text::append(&joined, "/");
+    lsp_text::append(&joined, path);
+    return lsp_text::view(&joined);
+}
+
+// Room for `count` strings, zeroed. (arena::push_slice of a pointer type converts void * to a multi-level pointer,
+// which the lint reports: the explicit cast is here.)
+const char **strings(arena::Arena *arena, usize count) {
+    void *memory = arena::push_array_raw(arena, sizeof(const char *), count, alignof(const char *));
+    return (const char **)memory;
+}
+
+// The compile command of a source, for the summary only: no object, no depfile, `SMITH_EFFECTS_OBJECT` says whose
+// summary it is. Runs in the project's folder and waits.
+void summarize(arena::Arena *arena, Text directory, Text object, const Node *arguments) {
+    const char **kept = strings(arena, arguments->count + 1);
+    usize count = 0;
+    for (usize i = 0; i < arguments->count; i++) {
+        const Node *argument = arguments->items[i];
+        if (!lsp_json::is_string(argument)) continue;
+        Text text = argument->text;
+        if (lsp_text::equal(text, "-o") || lsp_text::equal(text, "-MF") || lsp_text::equal(text, "-MT") ||
+            lsp_text::equal(text, "-MQ")) {
+            i += 1;
+        } else if (!lsp_text::equal(text, "-MD") && !lsp_text::equal(text, "-MMD") && !lsp_text::equal(text, "-MP") &&
+                   !lsp_text::equal(text, "-c")) {
+            kept[count] = lsp_text::terminated(arena, text);
+            count += 1;
+        }
+    }
+    kept[count] = "-fsyntax-only";
+    count += 1;
+    c::smith_lsp_summarize(lsp_text::terminated(arena, directory), lsp_text::terminated(arena, object), kept, count);
+}
+
+// One entry of the compile commands that is stale: the source's folder, object and arguments.
+struct Job {
+    Text directory;
+    Text object;
+    const Node *arguments;
+};
+
+// The compile commands of the project: each source's object goes to the plugin, and the sources whose summary is
+// missing or older are compiled, one at a time, for the summary only.
+void background(void *context) {
+    Background *job = (Background *)context;
+    Editor *editor = job->editor;
+    arena::Arena arena = arena::growing(1 << 20, nullptr);
+    defer arena::release(&arena);
+    Text root = job->root[0:job->root_length];
+    lsp_text::Builder database_path = lsp_text::builder(&arena, countof(root) + 32);
+    lsp_text::append(&database_path, root);
+    lsp_text::append(&database_path, "/.smith/compile_commands.json");
+    lsp_world::Contents read = lsp_world::read_file(&arena, lsp_text::view(&database_path));
+    if (read != .some) {
+        return;
+    }
+    Node *entries = lsp_json::parse(&arena, read.some);
+    if (!lsp_json::is_array(entries)) {
+        return;
+    }
+    usize total = entries->count;
+    Job stale[:] = arena::push_slice(&arena, Job, total);
+    usize stale_count = 0;
+    for (usize i = 0; i < entries->count; i++) {
+        Node *entry = entries->items[i];
+        Text directory = lsp_json::member_text(entry, "directory");
+        Node *file = lsp_json::get(entry, "file");
+        Node *output = lsp_json::get(entry, "output");
+        Node *arguments = lsp_json::get_array(entry, "arguments");
+        if (!lsp_json::is_object(entry) || !lsp_json::is_string(file) || !lsp_json::is_string(output) ||
+            !lsp_json::is_string(lsp_json::get(entry, "directory")) || arguments == nullptr) {
+            continue;
+        }
+        Text source = under(&arena, directory, file->text);
+        Text object = under(&arena, directory, output->text);
+        const char *source_path = lsp_text::terminated(&arena, source);
+        c::smith_effects_editor_object(source_path, lsp_text::terminated(&arena, object));
+        Text summary = under(&arena, root, summary_of(&arena, object));
+        bool fresh = c::smith_lsp_modified_at_or_after(lsp_text::terminated(&arena, summary), source_path);
+        if (!fresh && lsp_world::exists(&arena, source)) {
+            stale[stale_count] = (Job){.directory = directory, .object = object, .arguments = arguments};
+            stale_count += 1;
+        }
+    }
+    if (stale_count == 0) return;
+    c::smith_effects_editor_pending(1);
+    for (usize i = 0; i < stale_count; i++) {
+        summarize(&arena, stale[i].directory, stale[i].object, stale[i].arguments);
+    }
+    c::smith_effects_editor_pending(0);
+    lsp_text::Text nothing = {};
+    written(editor, &arena, nothing); // every open file is judged again with all the summaries
+}

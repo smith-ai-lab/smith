@@ -1,0 +1,331 @@
+// What `smith lsp` shows of a .smith file, written as the source writes it.
+//
+// clangd names things as the compiler sees them: `geometry_box_area` for the `box::area` the source says. The lowering
+// (runtime/lang_names.c) keeps the way back, as a table of the names it made, and the hook (shim/hook.cpp) hands it
+// over when a parse ends (shim/names.h). This is the layer between the editor and clangd that uses it: clangd reads its
+// standard input and writes its standard output as it always did, and those are a pair of pipes to this layer, which
+// reads the editor's messages and clangd's, and rewrites the names in the answers that show them: hover, the outline,
+// completion (and what `x::` offers), signature help and the hints. It also leaves out of the answers that list places
+// the generated headers (`.smith/include/*.h`), which are no place to go to or to rename in.
+//
+// The editor's own words are never rewritten: positions, ranges and the text of the documents are clangd's and the
+// editor's, and are not names. A message that is not an answer to one of those requests passes as the bytes it came in.
+//
+// This module runs the pieces: runtime/lsp_layer.smith rewrites the answers, runtime/lsp_editor.smith tells the
+// effects plugin what the editor does, runtime/lsp_session.smith and runtime/lsp_query.smith are the client of the
+// queries from the shell (`smith lsp def NAME`), runtime/lsp_frames.smith reads and writes the messages, and
+// runtime/lsp_names.smith, lsp_json.smith and lsp_text.smith are what they stand on. What .smith can not do yet
+// (threads, pipes) is runtime/lsp_edge.c, named in runtime/lsp_edge.h with the issue that closes each gap.
+module runtime::lsp;
+
+import smith::arena;
+import smith::mem;
+import smith::text;
+import runtime::lsp_editor;
+import runtime::lsp_frames;
+import runtime::lsp_layer;
+import runtime::lsp_query;
+import runtime::lsp_session;
+import runtime::lsp_text;
+import runtime::lsp_world;
+import "lsp_edge.h";
+
+typedef lsp_text::Text Text;
+
+// The arguments that are not the protocol on the standard streams: the server prints its version, checks a file or
+// speaks the delimited form of the messages.
+bool protocol_argument(Text argument) {
+    return lsp_text::equal(argument, "-h") || lsp_text::starts_with(argument, "--help") ||
+           lsp_text::starts_with(argument, "--version") || lsp_text::starts_with(argument, "--check") ||
+           lsp_text::starts_with(argument, "--input-style=delimited") || lsp_text::starts_with(argument, "--print-");
+}
+
+// Whether clangd is to talk the protocol on its standard input and output (and not print its version, check a file or
+// speak the delimited form of the messages), and the editor has not asked for the compiler's names.
+bool serves(i32 argc, char **argv) {
+    lsp_text::Text raw = lsp_world::environment("SMITH_LSP_RAW");
+    if (countof(raw) > 0 && raw[0] != '0') {
+        return false;
+    }
+    for (i32 i = 1; i < argc; i++) {
+        if (protocol_argument(text::make(argv[i]))) return false;
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The pipes
+
+// The pipes between the layer and the server in this process: the server's standard input and output become them,
+// and the editor's streams are kept.
+struct Pipes {
+    i32 from_editor; // the process's standard input before
+    i32 to_editor;   // the process's standard output before
+    i32 to_server;   // the write end of the server's input
+    i32 from_server; // the read end of the server's output
+};
+
+typedef option(Pipes) MaybePipes;
+
+// Puts the pipes in place of the standard streams, or none when they can not be made.
+MaybePipes put_pipes() {
+    Pipes pipes = {};
+    i32 in_read = -1;
+    i32 in_write = -1;
+    i32 out_read = -1;
+    i32 out_write = -1;
+    pipes.from_editor = c::smith_lsp_duplicate(0);
+    pipes.to_editor = c::smith_lsp_duplicate(1);
+    if (pipes.from_editor < 0 || pipes.to_editor < 0 || !c::smith_lsp_pipe(&in_read, &in_write) ||
+        !c::smith_lsp_pipe(&out_read, &out_write)) {
+        return .none;
+    }
+    _ = c::smith_lsp_redirect(in_read, 0);
+    _ = c::smith_lsp_redirect(out_write, 1);
+    pipes.to_server = in_write;
+    pipes.from_server = out_read;
+    return {.some = pipes};
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The editor's session
+
+// What the thread that reads the editor's messages keeps.
+struct Reader {
+    lsp_layer::Layer *layer;
+    lsp_editor::Editor *editor;
+    lsp_frames::Frames *frames;
+    i32 server_input;
+};
+
+// The editor's messages: each is noted by the layer and by the editor, and goes on to the server.
+void read_editor(void *context) {
+    Reader *reader = (Reader *)context;
+    arena::Arena scratch = arena::growing(1 << 20, nullptr);
+    for (u64 round = 0; round < 1'000'000'000'000; round++) { // each round takes a message or ends
+        arena::reset(&scratch);
+        lsp_frames::Body body = lsp_frames::next(reader->frames, &scratch);
+        if (body != .some) {
+            break;
+        }
+        lsp_layer::to_server(reader->layer, &scratch, body.some);
+        lsp_editor::observe(reader->editor, &scratch, body.some);
+        if (!lsp_editor::forward(reader->editor, &scratch, body.some)) break;
+        lsp_editor::after_forward(reader->editor, &scratch);
+    }
+    lsp_world::close_descriptor(reader->server_input); // the editor is gone: clangd reads the end of its input
+    arena::release(&scratch);
+}
+
+// What the thread that reads the server's answers keeps.
+struct Answers {
+    lsp_layer::Layer *layer;
+    lsp_frames::Frames *frames;
+    i32 to_editor;
+};
+
+// The server's messages: each goes on to the editor with its names as the source writes them.
+void read_server(void *context) {
+    Answers *answers = (Answers *)context;
+    arena::Arena scratch = arena::growing(1 << 20, nullptr);
+    for (u64 round = 0; round < 1'000'000'000'000; round++) { // each round takes a message or ends
+        arena::reset(&scratch);
+        lsp_frames::Body body = lsp_frames::next(answers->frames, &scratch);
+        if (body != .some) break;
+        if (!lsp_frames::send(&scratch, answers->to_editor, lsp_layer::to_editor(answers->layer, &scratch, body.some)))
+            break;
+    }
+    arena::release(&scratch);
+}
+
+// Runs the server with its input and output behind the layer. Returns its status.
+i32 serve(i32 argc, char **argv, i32 (*server)(i32, char **)) {
+    MaybePipes made = put_pipes();
+    if (made != .some) {
+        return server(argc, argv);
+    }
+    Pipes pipes = made.some;
+    arena::Arena *life = lsp_world::permanent(); // the layer lives as long as the process: the reading of the editor's
+                                                 // messages can outlast clangd
+    lsp_layer::Layer *layer = lsp_layer::make(life);
+    lsp_editor::Editor *editor = lsp_editor::make(life, pipes.to_server);
+    lsp_editor::set_current(editor);
+    Reader *reader = arena::push(life, Reader);
+    *reader = (Reader){.layer = layer,
+                       .editor = editor,
+                       .frames = lsp_frames::reader(life, pipes.from_editor),
+                       .server_input = pipes.to_server};
+    Answers *answers = arena::push(life, Answers);
+    *answers =
+        (Answers){.layer = layer, .frames = lsp_frames::reader(life, pipes.from_server), .to_editor = pipes.to_editor};
+    u64 reading = 0;
+    u64 answering = 0;
+    if (c::smith_lsp_thread_start(&reading, read_editor, reader)) c::smith_lsp_thread_detach(reading);
+    bool answered = c::smith_lsp_thread_start(&answering, read_server, answers);
+    i32 status = server(argc, argv);
+    lsp_world::close_descriptor(1); // clangd's output ends: what is left in the pipe is sent, then the thread ends
+    if (answered) c::smith_lsp_thread_join(answering);
+    return status;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The queries from the shell
+
+// What the thread of the queries keeps: the pipes, the query, and how it went.
+struct Client {
+    lsp_layer::Layer *layer;
+    Pipes pipes;
+    Text word;
+    lsp_text::Piece operands[:];
+    arena::Arena *life;
+    i32 status;
+};
+
+constexpr usize words_max = 64;
+
+// The words of a line of a batch.
+struct Words {
+    lsp_text::Piece items[words_max];
+    usize count;
+};
+
+Words words_of(Text line) {
+    Words words = {};
+    usize at = 0;
+    while (at < countof(line)) { // each round takes a character
+        while (at < countof(line) && lsp_text::is_space(line[at])) {
+            at += 1;
+        }
+        usize start = at;
+        while (at < countof(line) && !lsp_text::is_space(line[at])) {
+            at += 1;
+        }
+        if (at > start && words.count < words_max) {
+            words.items[words.count].text = line[start:at];
+            words.count += 1;
+        }
+    }
+    return words;
+}
+
+// The standard input of the shell, all of it.
+Text read_input(arena::Arena *arena, i32 descriptor) {
+    lsp_text::Builder text = lsp_text::builder(arena, 4096);
+    u8 chunk[4096];
+    u8 piece[:] = chunk;
+    for (u64 round = 0; round < 1'000'000'000; round++) { // each round reads a byte or ends
+        usize got = lsp_world::read_some(descriptor, piece);
+        if (got == 0) {
+            break;
+        }
+        lsp_text::append(&text, lsp_world::as_text(piece[0:got]));
+    }
+    return lsp_text::view(&text);
+}
+
+// Runs the lines of a batch: one query a line.
+void run_batch(lsp_session::Session *session, Text input) {
+    Text rest = input;
+    for (u64 line_number = 0; countof(rest) > 0 && line_number < 1'000'000'000; line_number++) {
+        lsp_text::Index newline = lsp_text::find_char(rest, '\n', 0);
+        Text line = newline == .some ? rest[0:newline.some] : rest;
+        rest = newline == .some ? rest[newline.some + 1:] : rest[countof(rest):];
+        Words words = words_of(line);
+        if (words.count == 0 || words.items[0].text[0] == '#') {
+            continue;
+        }
+        Text first = words.items[0].text;
+        if (!lsp_query::is_query_word(first) || lsp_text::equal(first, "-")) {
+            lsp_session::warn(lsp_session::joined(&session->query,
+                                                  lsp_session::joined(&session->query, "smith lsp -: `", line),
+                                                  "` is not a query (def, refs, hover, diag, symbols)\n"));
+            session->status = 2;
+            continue;
+        }
+        lsp_text::Piece operands[:] = words.items;
+        lsp_query::run(session, first, operands[1:words.count]);
+    }
+}
+
+// The thread of the queries: a client of the server on the pipes, behind the layer.
+void query_client(void *context) {
+    Client *client = (Client *)context;
+    arena::Arena *life = client->life;
+    lsp_session::Session *session = lsp_session::make(life, client->layer, client->pipes.to_server,
+                                                      client->pipes.from_server, client->pipes.to_editor);
+    if (!lsp_session::start(session, lsp_query::first_source(session))) {
+        lsp_session::warn("smith lsp: the language server did not start\n");
+        client->status = 2;
+    } else {
+        if (lsp_text::equal(client->word, "-")) {
+            run_batch(session, read_input(&session->life, client->pipes.from_editor));
+        } else {
+            lsp_query::run(session, client->word, client->operands);
+        }
+        lsp_session::finish(session);
+        client->status = session->status;
+    }
+    lsp_world::close_descriptor(client->pipes.to_server); // clangd reads the end of its input
+}
+
+// Runs the queries of the command line, or of the standard input for `-`, against the server `server` on pipes behind
+// the layer. Returns the status: 0, 1 when a query found nothing or a diagnostic is an error, 2 for a bad query.
+i32 run_queries(i32 argc, char **argv, i32 (*server)(i32, char **)) {
+    arena::Arena *life = lsp_world::permanent();
+    void *flag_memory = arena::push_array_raw(life, sizeof(char *), (usize)argc + 4, alignof(char *));
+    char **flags =
+        (char **)flag_memory; // (arena::push_slice of a pointer type is a multi-level conversion for the lint)
+    lsp_text::Piece operands[:] = arena::push_slice(life, lsp_text::Piece, (usize)argc);
+    usize operand_count = 0;
+    usize flag_count = 1;
+    bool verbose = false;
+    flags[0] = argv[0];
+    for (i32 i = 1; i < argc; i++) {
+        Text argument = text::make(argv[i]);
+        if (lsp_text::equal(argument, "--verbose")) {
+            verbose = true;
+        } else if (lsp_text::starts_with(argument, "--")) {
+            flags[flag_count] = argv[i];
+            flag_count += 1;
+        } else {
+            operands[operand_count].text = argument;
+            operand_count += 1;
+        }
+    }
+    char logging[_] = "--log=error";
+    char verbosely[_] = "--log=verbose";
+    char unlimited[_] = "--limit-results=0"; // a bare name is every module's: all of them, not a hundred
+    char priority[_] = "--background-index-priority=normal"; // the query waits for the index: not at low priority
+    flags[flag_count] = verbose ? verbosely : logging;
+    flags[flag_count + 1] = unlimited;
+    flags[flag_count + 2] = priority;
+    flag_count += 3;
+    Client *client = arena::push(life, Client);
+    if (operand_count > 0) {
+        client->word = operands[0].text;
+        client->operands = operands[1:operand_count];
+    }
+    client->life = life;
+    MaybePipes made = put_pipes();
+    if (made != .some) {
+        return 2;
+    }
+    client->pipes = made.some;
+    client->layer = lsp_layer::make(life); // as long as the process, like the editor's
+    u64 thread = 0;
+    bool started = c::smith_lsp_thread_start(&thread, query_client, client);
+    i32 ended = server((i32)flag_count, flags);
+    if (started) c::smith_lsp_thread_join(thread);
+    return client->status != 0 ? client->status : ended;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The entry
+
+// Runs `server` (clangd's main) with its input and output behind the layer. Returns its status.
+[[smith::c_name("smith_lsp_run")]] export i32 run(i32 argc, char **argv, i32 (*server)(i32, char **)) {
+    c::smith_effects_editor_start(lsp_editor::summary_written);
+    if (argc > 1 && lsp_query::is_query_word(text::make(argv[1]))) return run_queries(argc, argv, server);
+    if (!serves(argc, argv)) return server(argc, argv);
+    return serve(argc, argv, server);
+}

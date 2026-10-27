@@ -1,0 +1,456 @@
+// A client of the server, for the queries of the shell (issue #248): `smith lsp def|refs|hover|diag|symbols NAME...`
+// and `smith lsp -` (one query a line from the standard input) are answered by this client of the same clangd the
+// editor talks to, behind the same layer: clangd runs in this process on a pair of pipes, its answers come back with
+// the names as the source writes them, and what it knows is its own index on disk, shared with the editor. This module
+// is the conversation (the messages, the waiting, the files opened); runtime/lsp_query.smith asks the questions.
+module runtime::lsp_session;
+
+import smith::arena;
+import smith::mem;
+import runtime::lsp_frames;
+import runtime::lsp_json;
+import runtime::lsp_layer;
+import runtime::lsp_text;
+import runtime::lsp_world;
+import "lsp_edge.h";
+
+typedef lsp_json::Node Node;
+typedef lsp_text::Text Text;
+
+export constexpr usize path_max = 4096;
+
+// What the server last published about a file.
+export struct Diagnostic {
+    i64 severity;
+    i64 line;
+    i64 column;
+    lsp_text::Text message;
+};
+
+export struct Published {
+    lsp_text::Text uri;
+    Diagnostic items[:];
+    usize count;
+};
+
+// A file read, to say what a place holds.
+export struct SourceFile {
+    lsp_text::Text path;
+    lsp_text::Text contents;
+};
+
+export struct Session {
+    lsp_layer::Layer *layer;
+    i32 to_server;
+    lsp_frames::Frames *frames;
+    i32 out;
+    i64 next_id;
+    i32 status;
+    arena::Arena life;  // what the session keeps: the opened uris, the diagnostics, the files read
+    arena::Arena query; // the messages of one query: reset when the next begins
+    lsp_text::Piece opened[:];
+    usize opened_count;
+    Published published[:];
+    usize published_count;
+    SourceFile files[:];
+    usize files_count;
+    bool index_begun;
+    bool index_ended;
+    lsp_text::Text index_progress; // the server's last "done/total" of the index
+    lsp_text::Text folder;         // the working folder and a slash: what a path is relative to
+};
+
+// NOLINTBEGIN(readability-identifier-naming)
+export typedef enum { Message, Timeout, Closed } ReadKind;
+// NOLINTEND(readability-identifier-naming)
+
+// What a read of the server brought: a message (null when it was not JSON), a timeout, or the end.
+export struct Read {
+    ReadKind kind;
+    lsp_json::Node *message;
+};
+
+constexpr u64 second = lsp_world::second;
+
+// A session on the pipes: `to_server` is the server's input, `from_server` its output, `out` where the answers go.
+export Session *make(arena::Arena *arena, lsp_layer::Layer *layer, i32 to_server, i32 from_server, i32 out) {
+    Session *s = arena::push(arena, Session);
+    s->layer = layer;
+    s->to_server = to_server;
+    s->out = out;
+    s->next_id = 1;
+    s->life = arena::growing(1 << 20, nullptr);
+    s->query = arena::growing(1 << 20, nullptr);
+    s->frames = lsp_frames::reader(&s->life, from_server);
+    s->opened = arena::push_slice(&s->life, lsp_text::Piece, 16);
+    s->published = arena::push_slice(&s->life, Published, 16);
+    s->files = arena::push_slice(&s->life, SourceFile, 16);
+    char here[path_max];
+    lsp_text::Builder folder = lsp_text::builder(&s->life, path_max);
+    if (c::smith_lsp_working_folder(here, sizeof here)) {
+        lsp_text::append(&folder, lsp_text::of(here));
+    } else {
+        lsp_text::append(&folder, ".");
+    }
+    lsp_text::append(&folder, "/");
+    s->folder = lsp_text::view(&folder);
+    return s;
+}
+
+export void release(Session *s) {
+    arena::release(&s->query);
+    arena::release(&s->life);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// What the session keeps
+
+// A copy of the text that lives as long as the session.
+export lsp_text::Text keep(Session *s, lsp_text::Text text) {
+    char copy[:] = arena::push_slice(&s->life, char, countof(text));
+    mem::copy(copy[0:countof(text)], text);
+    return copy;
+}
+
+// Says a line of the answer.
+export void say(Session *s, lsp_text::Text line) {
+    lsp_text::Builder text = lsp_text::builder(&s->query, countof(line) + 1);
+    lsp_text::append(&text, line);
+    lsp_text::append(&text, "\n");
+    if (!lsp_world::write_all(s->out, lsp_text::view(&text)) && s->status == 0) s->status = 2;
+}
+
+// Says a line on the standard error.
+export void warn(lsp_text::Text line) {
+    lsp_world::warn(line);
+}
+
+export bool is_opened(const Session *s, lsp_text::Text uri) {
+    for (usize i = 0; i < s->opened_count; i++) {
+        if (lsp_text::equal(s->opened[i].text, uri)) return true;
+    }
+    return false;
+}
+
+void add_opened(Session *s, lsp_text::Text uri) {
+    if (s->opened_count == countof(s->opened)) {
+        lsp_text::Piece bigger[:] = arena::push_slice(&s->life, lsp_text::Piece, countof(s->opened) * 2);
+        mem::copy(bigger[0:s->opened_count], s->opened[0:s->opened_count]);
+        s->opened = bigger;
+    }
+    s->opened[s->opened_count].text = keep(s, uri);
+    s->opened_count += 1;
+}
+
+// What the server published about the file, or null.
+export Published *published_of(Session *s, lsp_text::Text uri) {
+    for (usize i = 0; i < s->published_count; i++) {
+        if (lsp_text::equal(s->published[i].uri, uri)) return &s->published[i];
+    }
+    return nullptr;
+}
+
+// The record of a file's diagnostics, made when there is none.
+export Published *published_for(Session *s, lsp_text::Text uri) {
+    Published *found = published_of(s, uri);
+    if (found != nullptr) return found;
+    if (s->published_count == countof(s->published)) {
+        Published bigger[:] = arena::push_slice(&s->life, Published, countof(s->published) * 2);
+        mem::copy(bigger[0:s->published_count], s->published[0:s->published_count]);
+        s->published = bigger;
+    }
+    Published *added = &s->published[s->published_count];
+    added->uri = keep(s, uri);
+    s->published_count += 1;
+    return added;
+}
+
+// The server published diagnostics: what they say is kept.
+void publish(Session *s, Node *params) {
+    Node *uri = lsp_json::get(params, "uri");
+    Node *items = lsp_json::get_array(params, "diagnostics");
+    if (!lsp_json::is_string(uri) || items == nullptr) return;
+    Published *entry = published_for(s, uri->text);
+    entry->items = arena::push_slice(&s->life, Diagnostic, items->count);
+    entry->count = items->count;
+    for (usize i = 0; i < items->count; i++) {
+        Node *item = items->items[i];
+        Diagnostic *kept = &entry->items[i];
+        kept->severity = lsp_json::member_integer(item, "severity", 1);
+        Node *range = lsp_json::get_object(item, "range");
+        Node *start = lsp_json::get_object(range, "start");
+        kept->line = lsp_json::member_integer(start, "line", 0);
+        kept->column = lsp_json::member_integer(start, "character", 0);
+        kept->message = keep(s, lsp_json::member_text(item, "message"));
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Messages
+
+// Sends a message; `through` says the layer notes it, as it notes the editor's.
+export bool send(Session *s, lsp_json::Node *message, bool through) {
+    lsp_json::set(&s->query, message, "jsonrpc", lsp_json::string(&s->query, "2.0"));
+    lsp_text::Text body = lsp_json::write(&s->query, message);
+    if (countof(body) == 0) return false;
+    if (through) lsp_layer::to_server(s->layer, &s->query, body);
+    return lsp_frames::send(&s->query, s->to_server, body);
+}
+
+export void notify(Session *s, const char *method, lsp_json::Node *params) {
+    Node *message = lsp_json::object(&s->query);
+    lsp_json::add(&s->query, message, "method", lsp_json::string(&s->query, lsp_text::of(method)));
+    lsp_json::add(&s->query, message, "params", params);
+    _ = send(s, message, true);
+}
+
+// A message of the server's: its requests are answered, its notifications noted.
+void handle(Session *s, Node *message) {
+    Node *method_node = lsp_json::get(message, "method");
+    if (!lsp_json::is_string(method_node)) return;
+    Text method = method_node->text;
+    Node *id = lsp_json::get(message, "id");
+    if (id != nullptr) {
+        Node *answer = lsp_json::object(&s->query); // a progress token, a registration: accepted
+        lsp_json::add(&s->query, answer, "id", id);
+        lsp_json::add(&s->query, answer, "result", lsp_json::null_value(&s->query));
+        _ = send(s, answer, false);
+        return;
+    }
+    Node *params = lsp_json::get_object(message, "params");
+    if (params == nullptr) return;
+    if (lsp_text::equal(method, "$/progress")) {
+        Node *value = lsp_json::get_object(params, "value");
+        Text kind = lsp_json::member_text(value, "kind");
+        if (lsp_text::equal(kind, "begin")) {
+            s->index_begun = true;
+            warn("smith lsp: bringing the index up to date\n");
+        }
+        if (lsp_text::equal(kind, "report") && value != nullptr) {
+            s->index_progress = keep(s, lsp_json::member_text(value, "message"));
+        }
+        if (lsp_text::equal(kind, "end")) s->index_ended = true;
+    } else if (lsp_text::equal(method, "textDocument/publishDiagnostics")) {
+        publish(s, params);
+    }
+}
+
+// The next message of the server, within the time.
+export Read read(Session *s, i32 milliseconds) {
+    if (!lsp_frames::ready(s->frames, milliseconds)) return (Read){.kind = Timeout, .message = nullptr};
+    lsp_frames::Body body = lsp_frames::next(s->frames, &s->query);
+    if (body != .some) return (Read){.kind = Closed, .message = nullptr};
+    Node *message = lsp_json::parse(&s->query, lsp_layer::to_editor(s->layer, &s->query, body.some));
+    if (message == nullptr) return (Read){.kind = Message, .message = nullptr};
+    handle(s, message);
+    return (Read){.kind = Message, .message = message};
+}
+
+// The answer of a request (a JSON null when the server answered null), or null when the server did not give one in
+// time or refused it.
+export lsp_json::Node *request(Session *s, const char *method, lsp_json::Node *params, u64 seconds, bool through) {
+    i64 id = s->next_id;
+    s->next_id += 1;
+    Node *message = lsp_json::object(&s->query);
+    lsp_json::add(&s->query, message, "id", lsp_json::integer(&s->query, id));
+    lsp_json::add(&s->query, message, "method", lsp_json::string(&s->query, lsp_text::of(method)));
+    lsp_json::add(&s->query, message, "params", params);
+    if (!send(s, message, through)) return nullptr;
+    u64 deadline = lsp_world::now() + seconds * second;
+    for (u64 round = 0; lsp_world::now() < deadline && round < 1'000'000'000; round++) {
+        Read got = read(s, 100);
+        if (got.kind == Closed) return nullptr;
+        bool answer = got.kind == Message && got.message != nullptr &&
+                      lsp_json::get(got.message, "method") == nullptr &&
+                      lsp_json::member_integer(got.message, "id", -1) == id;
+        if (!answer) {
+            continue;
+        }
+        if (lsp_json::get(got.message, "error") != nullptr) return nullptr;
+        Node *result = lsp_json::get(got.message, "result");
+        if (result == nullptr) return lsp_json::null_value(&s->query);
+        return result;
+    }
+    return nullptr;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Files and places
+
+// A path made of the pieces.
+export lsp_text::Text joined(arena::Arena *arena, lsp_text::Text first, lsp_text::Text second) {
+    lsp_text::Builder path = lsp_text::builder(arena, countof(first) + countof(second));
+    lsp_text::append(&path, first);
+    lsp_text::append(&path, second);
+    return lsp_text::view(&path);
+}
+
+// The file at the path, as a `file://` uri.
+export lsp_text::Text uri_of_path(arena::Arena *arena, lsp_text::Text path) {
+    lsp_text::Builder uri = lsp_text::builder(arena, countof(path) + 16);
+    lsp_text::append(&uri, "file://");
+    const lsp_text::Text digits = "0123456789ABCDEF";
+    for (char c : path) {
+        if (c == ' ' || c == '%' || c == '#' || c == '?') {
+            lsp_text::append_char(&uri, '%');
+            lsp_text::append_char(&uri, digits[(usize)((u8)c >> 4)]);
+            lsp_text::append_char(&uri, digits[(usize)((u8)c & 15)]);
+        } else {
+            lsp_text::append_char(&uri, c);
+        }
+    }
+    return lsp_text::view(&uri);
+}
+
+// The path as the shell wrote it, made absolute.
+export lsp_text::Text absolute(Session *s, lsp_text::Text path) {
+    if (countof(path) > 0 && path[0] == '/') return path;
+    if (lsp_text::starts_with(path, "./")) path = lsp_text::drop(path, 2);
+    return joined(&s->query, s->folder, path);
+}
+
+// The path relative to the folder of the shell, when it is under it.
+export lsp_text::Text relative(const Session *s, lsp_text::Text path) {
+    return lsp_text::starts_with(path, s->folder) ? lsp_text::drop(path, countof(s->folder)) : path;
+}
+
+// The folder with the project: the nearest one up from here that has compile commands.
+export lsp_text::Text project_root(Session *s) {
+    lsp_text::Text here = s->folder[0:countof(s->folder) - 1];
+    for (usize round = 0; round < path_max; round++) {
+        if (countof(here) == 0 || lsp_text::equal(here, "/")) break;
+        if (lsp_world::exists(&s->query, joined(&s->query, here, "/.smith/compile_commands.json")) ||
+            lsp_world::exists(&s->query, joined(&s->query, here, "/compile_commands.json"))) {
+            return here;
+        }
+        lsp_text::Index slash = lsp_text::find_last_char(here, '/');
+        if (slash != .some || slash.some == 0) break;
+        here = here[0:slash.some];
+    }
+    return s->folder[0:countof(s->folder) - 1];
+}
+
+// Opens a file in the server, so that it reads the project's compile commands and parses the file; true when the file
+// can be read (and, with `send`, is opened or was).
+export bool open(Session *s, lsp_text::Text path, bool send_it) {
+    Text uri = uri_of_path(&s->query, path);
+    if (is_opened(s, uri)) return true;
+    lsp_world::Contents text = lsp_world::read_file(&s->query, path);
+    if (text != .some) return false;
+    if (!send_it) return true;
+    Node *document = lsp_json::object(&s->query);
+    lsp_json::add(&s->query, document, "uri", lsp_json::string(&s->query, uri));
+    lsp_json::add(&s->query, document, "languageId", lsp_json::string(&s->query, "c"));
+    lsp_json::add(&s->query, document, "version", lsp_json::integer(&s->query, 1));
+    lsp_json::add(&s->query, document, "text", lsp_json::string(&s->query, text.some));
+    Node *params = lsp_json::object(&s->query);
+    lsp_json::add(&s->query, params, "textDocument", document);
+    notify(s, "textDocument/didOpen", params);
+    add_opened(s, uri);
+    return true;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Waiting
+
+// The index is up to date when the server's background indexing has begun and ended; it is not begun when there is
+// nothing to index, which the server does not announce, so a moment with no beginning is "nothing".
+export void wait_for_index(Session *s) {
+    u64 begin = lsp_world::now();
+    u64 told = begin;
+    for (u64 round = 0; round < 1'000'000'000; round++) {
+        u64 now = lsp_world::now();
+        u64 elapsed = now - begin;
+        if (s->index_ended) return;
+        if (elapsed > (u64)30 * 60 * second) { // never an answer from an incomplete index without saying so
+            warn(joined(&s->query, joined(&s->query, "smith lsp: the index is not finished (", s->index_progress),
+                        "): the answer may be incomplete\n"));
+            if (s->status == 0) s->status = 1;
+            return;
+        }
+        if (!s->index_begun && elapsed > 3 * second) return;
+        if (s->index_begun && now - told > 10 * second) {
+            told = now;
+            warn(joined(&s->query, joined(&s->query, "smith lsp: indexing ", s->index_progress), "\n"));
+        }
+        arena::Scope scope = arena::scope_begin(&s->query);
+        defer arena::scope_end(scope);
+        if (read(s, 100).kind == Closed) return;
+    }
+}
+
+// Waits until the server has read the file (its diagnostics are published): the names the lowering made of it are
+// known then.
+export void await_parsed(Session *s, lsp_text::Text path) {
+    Text uri = uri_of_path(&s->query, path);
+    u64 deadline = lsp_world::now() + 30 * second;
+    for (u64 round = 0; published_of(s, uri) == nullptr && lsp_world::now() < deadline && round < 1'000'000'000;
+         round++) {
+        arena::Scope scope = arena::scope_begin(&s->query);
+        defer arena::scope_end(scope);
+        if (read(s, 100).kind == Closed) return;
+    }
+    if (published_of(s, uri) == nullptr) {
+        warn(joined(&s->query, joined(&s->query, "smith lsp: ", relative(s, path)),
+                    ": the server did not read it in 30 s; what it holds is missing\n"));
+        _ = published_for(s, uri); // said once
+        if (s->status == 0) s->status = 1;
+    }
+}
+
+// Waits for the diagnostics of the file for up to `seconds`.
+export void await_diagnostics(Session *s, lsp_text::Text uri, u64 seconds) {
+    u64 deadline = lsp_world::now() + seconds * second;
+    for (u64 round = 0; published_of(s, uri) == nullptr && lsp_world::now() < deadline && round < 1'000'000'000;
+         round++) {
+        arena::Scope scope = arena::scope_begin(&s->query);
+        defer arena::scope_end(scope);
+        if (read(s, 100).kind == Closed) break;
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Starting and ending
+
+// Starts the conversation: the server is told the project, and the index brought up to date.
+export bool start(Session *s, lsp_text::Text first_source) {
+    Text root = project_root(s);
+    Node *workspace = lsp_json::object(&s->query);
+    lsp_json::add(&s->query, workspace, "symbol", lsp_json::object(&s->query));
+    Node *formats = lsp_json::array(&s->query);
+    lsp_json::append(&s->query, formats, lsp_json::string(&s->query, "plaintext"));
+    Node *hover = lsp_json::object(&s->query);
+    lsp_json::add(&s->query, hover, "contentFormat", formats);
+    Node *outline = lsp_json::object(&s->query);
+    lsp_json::add(&s->query, outline, "hierarchicalDocumentSymbolSupport", lsp_json::boolean(&s->query, false));
+    Node *diagnostics = lsp_json::object(&s->query);
+    lsp_json::add(&s->query, diagnostics, "versionSupport", lsp_json::boolean(&s->query, true));
+    Node *text = lsp_json::object(&s->query);
+    lsp_json::add(&s->query, text, "hover", hover);
+    lsp_json::add(&s->query, text, "documentSymbol", outline);
+    lsp_json::add(&s->query, text, "publishDiagnostics", diagnostics);
+    Node *window = lsp_json::object(&s->query);
+    lsp_json::add(&s->query, window, "workDoneProgress", lsp_json::boolean(&s->query, true));
+    Node *capabilities = lsp_json::object(&s->query);
+    lsp_json::add(&s->query, capabilities, "workspace", workspace);
+    lsp_json::add(&s->query, capabilities, "textDocument", text);
+    lsp_json::add(&s->query, capabilities, "window", window);
+    Node *params = lsp_json::object(&s->query);
+    lsp_json::add(&s->query, params, "processId", lsp_json::integer(&s->query, c::smith_lsp_process_id()));
+    lsp_json::add(&s->query, params, "rootUri", lsp_json::string(&s->query, uri_of_path(&s->query, root)));
+    lsp_json::add(&s->query, params, "capabilities", capabilities);
+    if (request(s, "initialize", params, 60, true) == nullptr) return false;
+    notify(s, "initialized", lsp_json::object(&s->query));
+    // The server reads the project's compile commands, and starts its background index, when the first file is
+    // opened: any one of the project's sources.
+    if (countof(first_source) > 0) {
+        _ = open(s, first_source, true);
+    }
+    wait_for_index(s);
+    return true;
+}
+
+export void finish(Session *s) {
+    _ = request(s, "shutdown", lsp_json::null_value(&s->query), 5, true);
+    notify(s, "exit", lsp_json::object(&s->query));
+}

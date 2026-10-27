@@ -1,0 +1,257 @@
+// What `smith lsp` shows of a .smith file, written as the source writes it.
+//
+// clangd names things as the compiler sees them: `geometry_box_area` for the `box::area` the source says. The lowering
+// (runtime/lang_names.c) keeps the way back, as a table of the names it made, and the hook (shim/hook.cpp) hands it
+// over when a parse ends. This module is what turns the compiler's names in a text back into the source's: the names of
+// the table, and the lowering's slices (`smith_array_f32_n` is `f32[:]`).
+module runtime::lsp_names;
+
+import smith::arena;
+import smith::mem;
+import smith::text;
+import runtime::lsp_text;
+import "lsp_edge.h";
+
+// How a name is shown: as the file writes it, as a member of the module it is behind (after `x::`), or with its whole
+// module name (a place that is no file's).
+// NOLINTBEGIN(readability-identifier-naming)
+export typedef enum { Written, Member, Qualified } Style;
+// NOLINTEND(readability-identifier-naming)
+
+// The names of one file, by the handle of the shim: null for a file that has none.
+export typedef c::SmithLspNames Names;
+
+export lsp_text::Text view(c::SmithLspText text) {
+    if (text.length == 0) return {};
+    return text.data[0:text.length];
+}
+
+// A name of the table: the compiler's word, as the file writes it, as a member of its module, and the module.
+export typedef c::SmithLspWritten Name;
+
+export typedef option(Name) Lookup;
+
+// The name of the table the compiler calls `lowered`, or none.
+export Lookup find(const Names *names, lsp_text::Text lowered) {
+    c::SmithLspText word = {.data = lowered.data, .length = countof(lowered)};
+    Name found = {};
+    if (!c::smith_lsp_names_find(names, word, &found)) {
+        return .none;
+    }
+    return {.some = found};
+}
+
+// The name as it is shown in the style.
+export lsp_text::Text shown(const Name *name, Style style, arena::Arena *arena) {
+    lsp_text::Text module = view(name->module);
+    lsp_text::Text member = view(name->member);
+    if (style == Member) return member;
+    if (style == Qualified && countof(module) > 0) {
+        lsp_text::Builder out = lsp_text::builder(arena, countof(module) + countof(member) + 2);
+        lsp_text::append(&out, module);
+        lsp_text::append(&out, "::");
+        lsp_text::append(&out, member);
+        return lsp_text::view(&out);
+    }
+    return view(name->written);
+}
+
+export typedef option(lsp_text::Text) Shown;
+
+// How the word is shown when it is a name of the table (a compiler's name has an underscore), or none.
+export Shown shown_name(const Names *names, lsp_text::Text word, Style style, arena::Arena *arena) {
+    if (!lsp_text::contains(word, "_")) {
+        return .none;
+    }
+    Lookup found = find(names, word);
+    if (found != .some) {
+        return .none;
+    }
+    return {.some = shown(&found.some, style, arena)};
+}
+
+// The most dimensions of a slice's tag.
+constexpr usize dimensions_max = 8;
+
+// The dimensions at the end of a slice's tag, `_n_2` of `f32_n_2`, as written (`[:][2]`), appended to `out`, and taken
+// off `rest`; false when there is no run-time first one. A size left of the first `n` is the element's (`vec_2_n`).
+bool written_dimensions(lsp_text::Builder *out, lsp_text::Text *rest, lsp_text::Text qualifiers) {
+    lsp_text::Text groups[dimensions_max]; // last first
+    usize found = 0;
+    lsp_text::Text left = *rest;
+    usize first_n = 0;
+    while (found < dimensions_max) {
+        lsp_text::Index cut = lsp_text::find_last_char(left, '_');
+        if (cut != .some) break;
+        lsp_text::Text group = left[cut.some + 1:];
+        u64 size = 0;
+        bool runtime = lsp_text::equal(group, "n");
+        if (!runtime && (countof(group) == 0 || !text::parse_u64(group, &size))) break;
+        if (runtime) {
+            groups[found] = ":";
+        } else {
+            groups[found] = group;
+        }
+        found += 1;
+        if (runtime) first_n = found;
+        left = left[0:cut.some];
+    }
+    if (first_n == 0) return false;
+    usize kept = 0; // the length of the groups left of the first `n`, which go back to the element
+    for (usize at = first_n; at < found; at++) {
+        kept += 1 + countof(groups[at]);
+    }
+    *rest = left.data[0:countof(left) + kept];
+    for (usize at = first_n; at > 0; at--) {
+        lsp_text::append_char(out, '[');
+        if (at == first_n && countof(qualifiers) > 0) {
+            lsp_text::append(out, qualifiers);
+            lsp_text::append_char(out, ' ');
+        }
+        lsp_text::append(out, groups[at - 1]);
+        lsp_text::append_char(out, ']');
+    }
+    return true;
+}
+
+// `f32[:]` for the lowering's `smith_array_f32_n`, the struct of a run-time array (runtime/lang_slice.c), appended to
+// `out`; false when the word is another. `smith_array_f32_n_2` is `f32[:][2]`, `smith_array_const_char_n` is
+// `const char[:]`, `smith_array_restrict_u8_n` is `u8[restrict :]`, and `const_slice` (a `const struct ...`) is
+// `[const :]`.
+bool written_slice(lsp_text::Builder *out, lsp_text::Text word, const Names *names, Style style, bool const_slice,
+                   arena::Arena *arena) {
+    if (!lsp_text::starts_with(word, "smith_array_")) return false;
+    word = lsp_text::drop(word, 12);
+    bool restrict_data = lsp_text::starts_with(word, "restrict_");
+    if (restrict_data) word = lsp_text::drop(word, 9);
+    lsp_text::Builder qualifiers = lsp_text::builder(arena, 16);
+    if (const_slice) lsp_text::append(&qualifiers, "const");
+    if (const_slice && restrict_data) lsp_text::append(&qualifiers, " ");
+    if (restrict_data) lsp_text::append(&qualifiers, "restrict");
+    lsp_text::Builder dimensions = lsp_text::builder(arena, 32);
+    if (!written_dimensions(&dimensions, &word, lsp_text::view(&qualifiers))) return false;
+    lsp_text::Builder element_qualifiers = lsp_text::builder(arena, 16);
+    bool more = true;
+    for (usize round = 0; more && round < 16; round++) {
+        more = false;
+        if (lsp_text::starts_with(word, "const_")) {
+            lsp_text::append(&element_qualifiers, "const ");
+            word = lsp_text::drop(word, 6);
+            more = true;
+        }
+        if (lsp_text::starts_with(word, "volatile_")) {
+            lsp_text::append(&element_qualifiers, "volatile ");
+            word = lsp_text::drop(word, 9);
+            more = true;
+        }
+    }
+    if (countof(word) == 0) return false;
+    lsp_text::Text element = word;
+    Shown element_shown = shown_name(names, word, style, arena);
+    if (element_shown == .some) {
+        element = element_shown.some;
+    }
+    lsp_text::append(out, lsp_text::view(&element_qualifiers));
+    lsp_text::append(out, element);
+    lsp_text::append(out, lsp_text::view(&dimensions));
+    return true;
+}
+
+// Where a name changed in the signature help's label, so that the offsets of its parameters follow.
+export struct Move {
+    usize at;  // the old offset of the name
+    i64 delta; // the new length less the old
+};
+
+// The names changed in a text, in order.
+export struct Moves {
+    arena::Arena *arena;
+    Move entries[:];
+    usize count;
+};
+
+export Moves moves(arena::Arena *arena) {
+    Moves moved;
+    moved.arena = arena;
+    moved.entries = arena::push_slice(arena, Move, 8);
+    moved.count = 0;
+    return moved;
+}
+
+void note(Moves *moved, usize at, i64 delta) {
+    if (moved->count == countof(moved->entries)) {
+        Move bigger[:] = arena::push_slice(moved->arena, Move, countof(moved->entries) * 2);
+        mem::copy(bigger[0:moved->count], moved->entries[0:moved->count]);
+        moved->entries = bigger;
+    }
+    moved->entries[moved->count] = (Move){.at = at, .delta = delta};
+    moved->count += 1;
+}
+
+// The text with the names of the table written in `style`. `moved` (when given) gets the old offset of each name
+// changed and the new length less the old.
+export lsp_text::Text rewritten(arena::Arena *arena, lsp_text::Text text, const Names *names, Style style,
+                                Moves *moved) {
+    lsp_text::Builder out = lsp_text::builder(arena, countof(text) + 16);
+    usize at = 0;
+    while (at < countof(text)) { // each round takes at least a character
+        if (!lsp_text::identifier_head(text[at])) {
+            lsp_text::append_char(&out, text[at]);
+            at += 1;
+            continue;
+        }
+        usize end = at + 1;
+        while (end < countof(text) && lsp_text::identifier_body(text[end])) {
+            end += 1;
+        }
+        lsp_text::Text word = text[at:end];
+        bool const_slice = lsp_text::ends_with(lsp_text::view(&out), "const struct ");
+        lsp_text::Builder slice = lsp_text::builder(arena, 32);
+        if (written_slice(&slice, word, names, style, const_slice, arena)) {
+            usize before = 0; // `struct smith_array_f32_n` is just `f32[:]`, `const struct` `[const :]`
+            if (const_slice) {
+                before = 13;
+            } else if (lsp_text::ends_with(lsp_text::view(&out), "struct ")) {
+                before = 7;
+            }
+            lsp_text::shrink(&out, before);
+            if (moved != nullptr) note(moved, at, (i64)slice.length - (i64)countof(word) - (i64)before);
+            lsp_text::append(&out, lsp_text::view(&slice));
+        } else {
+            Shown replacement = shown_name(names, word, style, arena);
+            if (replacement == .some) {
+                if (moved != nullptr) note(moved, at, (i64)countof(replacement.some) - (i64)countof(word));
+                lsp_text::append(&out, replacement.some);
+            } else {
+                lsp_text::append(&out, word);
+            }
+        }
+        at = end;
+    }
+    return lsp_text::view(&out);
+}
+
+// The text without the assembler labels of a module's names (` asm("_foo::f")`, which a generated header gives each
+// export so that C reaches it): no one writes one, and the name above it is the name the source writes. A label of
+// the system's headers (`asm("_fopen$DARWIN_EXTSN")`) has no `::` and stays.
+export lsp_text::Text without_labels(arena::Arena *arena, lsp_text::Text text) {
+    const lsp_text::Text opening = " asm(\"";
+    lsp_text::Builder out = lsp_text::builder(arena, countof(text));
+    while (countof(text) > 0) { // each round takes at least the opening
+        lsp_text::Index found = lsp_text::find(text, opening);
+        if (found != .some) break;
+        usize start = found.some + countof(opening);
+        lsp_text::Index close = lsp_text::find_from(text, "\")", start);
+        usize taken = found.some;
+        usize dropped = start;
+        if (close == .some && lsp_text::contains(text[start:close.some], "::")) {
+            dropped = close.some + 2; // ours: the label goes
+        } else {
+            taken += countof(opening);
+        }
+        lsp_text::append(&out, text[0:taken]);
+        text = text[dropped:];
+    }
+    lsp_text::append(&out, text);
+    return lsp_text::view(&out);
+}

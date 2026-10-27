@@ -1,0 +1,417 @@
+// JSON for the language server's layer (runtime/lsp.smith): a tree the layer can change. smith::json reads a document
+// into a tree that stays as it was read, and the layer rewrites the names in the answers and drops the places nobody
+// means to go to, so it keeps its own: the pull parser of smith::json builds nodes in an arena, the layer edits them,
+// and the writer of smith::json puts the result back into text. Nothing recurses: both walks keep their place in a
+// stack of the deepest nesting the parser allows.
+module runtime::lsp_json;
+
+import smith::arena;
+import smith::mem;
+import smith::text;
+import runtime::lsp_text;
+import <smith/json.h>;
+
+// NOLINTBEGIN(readability-identifier-naming)
+export typedef enum {
+    Null,
+    Boolean, // the text is `true` or `false`
+    Number,  // the text is the number as written
+    String,  // the text is decoded
+    Array,
+    Object,
+} Kind;
+// NOLINTEND(readability-identifier-naming)
+
+// One value. A member of an object has its name in `key`; the children of a container are `items[0:count]`.
+export struct Node {
+    Kind kind;
+    lsp_text::Text key;
+    lsp_text::Text text;
+    usize count;
+    usize capacity;
+    Node **items;
+};
+
+// The deepest nesting the layer reads: an editor's messages are shallow, and a tree a client builds on purpose is not
+// the layer's to hold.
+constexpr usize depth_max = 256;
+
+// The largest string and the most values of one message the layer reads.
+constexpr usize string_max = 1 << 28;
+constexpr usize values_max = 1 << 26;
+
+Node *make(arena::Arena *arena, Kind kind) {
+    Node *node = arena::push(arena, Node);
+    node->kind = kind;
+    return node;
+}
+
+// Room for `count` pointers to nodes, zeroed. (arena::push_slice of a pointer type converts void * to a multi-level
+// pointer, which the lint reports: the explicit cast is here.)
+Node **pointers(arena::Arena *arena, usize count) {
+    void *memory = arena::push_array_raw(arena, sizeof(Node *), count, alignof(Node *));
+    return (Node **)memory;
+}
+
+// Adds `child` to the container.
+void push_child(arena::Arena *arena, Node *parent, Node *child) {
+    if (parent->count == parent->capacity) {
+        usize capacity = parent->capacity == 0 ? 4 : parent->capacity * 2;
+        Node **bigger = pointers(arena, capacity);
+        for (usize i = 0; i < parent->count; i++) {
+            bigger[i] = parent->items[i];
+        }
+        parent->items = bigger;
+        parent->capacity = capacity;
+    }
+    parent->items[parent->count] = child;
+    parent->count += 1;
+}
+
+// The document in `input` as a tree in `arena`; null when it is not JSON, or is deeper or larger than the layer reads.
+// The input must outlive the tree: strings without escapes and numbers point into it.
+export Node *parse(arena::Arena *arena, lsp_text::Text input) {
+    c::SmithJsonLimits limits = {.depth = depth_max, .string_length = string_max, .count = values_max};
+    c::SmithJsonReader reader = c::smith_json_reader_make(input, limits);
+    Node *open[depth_max];
+    usize depth = 0;
+    Node *root = nullptr;
+    lsp_text::Text key = {};
+    const lsp_text::Text empty = {};
+    for (usize step = 0; step <= countof(input) + 1; step++) {
+        c::SmithJsonToken token = c::smith_json_read(&reader);
+        if (token == c::SmithJsonToken_Error) return nullptr;
+        if (token == c::SmithJsonToken_End) return root;
+        if (token == c::SmithJsonToken_Key) {
+            key = c::smith_json_decode(&reader, arena);
+            continue;
+        }
+        if (token == c::SmithJsonToken_ObjectEnd || token == c::SmithJsonToken_ArrayEnd) {
+            depth -= 1;
+            continue;
+        }
+        Node *node = nullptr;
+        if (token == c::SmithJsonToken_ObjectBegin) {
+            node = make(arena, Object);
+        } else if (token == c::SmithJsonToken_ArrayBegin) {
+            node = make(arena, Array);
+        } else if (token == c::SmithJsonToken_String) {
+            node = make(arena, String);
+            node->text = c::smith_json_decode(&reader, arena);
+        } else if (token == c::SmithJsonToken_Number) {
+            node = make(arena, Number);
+            node->text = reader.text;
+        } else if (token == c::SmithJsonToken_True) {
+            node = make(arena, Boolean);
+            node->text = "true";
+        } else if (token == c::SmithJsonToken_False) {
+            node = make(arena, Boolean);
+            node->text = "false";
+        } else {
+            node = make(arena, Null);
+        }
+        node->key = key;
+        key = empty;
+        if (depth == 0) {
+            root = node;
+        } else {
+            push_child(arena, open[depth - 1], node);
+        }
+        if (node->kind == Object || node->kind == Array) {
+            open[depth] = node;
+            depth += 1;
+        }
+    }
+    return nullptr;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Reading
+
+export bool is_object(const Node *node) {
+    return node != nullptr && node->kind == Object;
+}
+
+export bool is_array(const Node *node) {
+    return node != nullptr && node->kind == Array;
+}
+
+export bool is_string(const Node *node) {
+    return node != nullptr && node->kind == String;
+}
+
+// The member of an object by name (the last one, when a name repeats), or null.
+export Node *get(const Node *object, lsp_text::Text key) {
+    if (!is_object(object)) return nullptr;
+    for (usize i = object->count; i > 0; i--) {
+        if (lsp_text::equal(object->items[i - 1]->key, key)) return object->items[i - 1];
+    }
+    return nullptr;
+}
+
+// The member of an object when it is an object, or null.
+export Node *get_object(const Node *object, lsp_text::Text key) {
+    Node *member = get(object, key);
+    return is_object(member) ? member : nullptr;
+}
+
+export Node *get_array(const Node *object, lsp_text::Text key) {
+    Node *member = get(object, key);
+    return is_array(member) ? member : nullptr;
+}
+
+// The text of a string, or `otherwise` when the node is none or is no string.
+export lsp_text::Text text_or(const Node *node, lsp_text::Text otherwise) {
+    return is_string(node) ? node->text : otherwise;
+}
+
+// The member's text, or `otherwise`.
+export lsp_text::Text member_text_or(const Node *object, lsp_text::Text key, lsp_text::Text otherwise) {
+    return text_or(get(object, key), otherwise);
+}
+
+// The member's text, or no text.
+export lsp_text::Text member_text(const Node *object, lsp_text::Text key) {
+    lsp_text::Text none = {};
+    return text_or(get(object, key), none);
+}
+
+// A whole number, or `otherwise` when the node is none or is no whole number.
+export i64 integer_or(const Node *node, i64 otherwise) {
+    i64 value = 0;
+    if (node == nullptr || node->kind != Number || !text::parse_i64(node->text, &value)) return otherwise;
+    return value;
+}
+
+export i64 member_integer(const Node *object, lsp_text::Text key, i64 otherwise) {
+    return integer_or(get(object, key), otherwise);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Making and changing
+
+export Node *string(arena::Arena *arena, lsp_text::Text value) {
+    Node *node = make(arena, String);
+    node->text = value;
+    return node;
+}
+
+export Node *integer(arena::Arena *arena, i64 value) {
+    lsp_text::Builder digits = lsp_text::builder(arena, text::number_capacity);
+    lsp_text::append_i64(&digits, value);
+    Node *node = make(arena, Number);
+    node->text = lsp_text::view(&digits);
+    return node;
+}
+
+export Node *boolean(arena::Arena *arena, bool value) {
+    Node *node = make(arena, Boolean);
+    if (value) {
+        node->text = "true";
+    } else {
+        node->text = "false";
+    }
+    return node;
+}
+
+export Node *null_value(arena::Arena *arena) {
+    return make(arena, Null);
+}
+
+export Node *object(arena::Arena *arena) {
+    return make(arena, Object);
+}
+
+export Node *array(arena::Arena *arena) {
+    return make(arena, Array);
+}
+
+// Adds a member to an object: the node is copied, so that the name is this object's and the same value may be a member
+// of several.
+export void add(arena::Arena *arena, Node *object, lsp_text::Text key, const Node *value) {
+    Node *member = arena::push(arena, Node);
+    *member = *value;
+    member->key = key;
+    push_child(arena, object, member);
+}
+
+// Adds an element to an array.
+export void append(arena::Arena *arena, Node *array, Node *value) {
+    push_child(arena, array, value);
+}
+
+// Makes the node a whole number.
+export void set_integer(arena::Arena *arena, Node *node, i64 value) {
+    lsp_text::Builder digits = lsp_text::builder(arena, text::number_capacity);
+    lsp_text::append_i64(&digits, value);
+    node->kind = Number;
+    node->text = lsp_text::view(&digits);
+}
+
+// Makes the node a string of this text.
+export void set_text(Node *node, lsp_text::Text value) {
+    node->kind = String;
+    node->text = value;
+}
+
+// Replaces what a member holds, or adds the member.
+export void set(arena::Arena *arena, Node *object, lsp_text::Text key, const Node *value) {
+    for (usize i = 0; i < object->count; i++) {
+        if (lsp_text::equal(object->items[i]->key, key)) {
+            Node *member = arena::push(arena, Node);
+            *member = *value;
+            member->key = key;
+            object->items[i] = member;
+            return;
+        }
+    }
+    add(arena, object, key, value);
+}
+
+// Keeps the children whose flag is true, in order.
+export void keep(Node *container, const bool kept[:]) {
+    usize count = 0;
+    for (usize i = 0; i < container->count; i++) {
+        if (kept[i]) {
+            container->items[count] = container->items[i];
+            count += 1;
+        }
+    }
+    container->count = count;
+}
+
+// Takes a member out of an object.
+export void remove(Node *object, lsp_text::Text key) {
+    usize count = 0;
+    for (usize i = 0; i < object->count; i++) {
+        if (!lsp_text::equal(object->items[i]->key, key)) {
+            object->items[count] = object->items[i];
+            count += 1;
+        }
+    }
+    object->count = count;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Writing
+
+// What the writer is in the middle of: a container and the next child to write.
+struct Frame {
+    Node *container;
+    usize next;
+};
+
+// Puts the members of an object in the order of their names, as the layer's first form of JSON (LLVM's) wrote every
+// object; members of one name keep their order.
+void sort_members(Node *object) {
+    for (usize i = 1; i < object->count; i++) {
+        Node *moving = object->items[i];
+        usize at = i;
+        while (at > 0 && lsp_text::compare(object->items[at - 1]->key, moving->key) > 0) {
+            object->items[at] = object->items[at - 1];
+            at -= 1;
+        }
+        object->items[at] = moving;
+    }
+}
+
+// One value: scalars whole, a container's opening.
+void write_node(c::SmithJsonWriter *writer, Node *node) {
+    if (node->kind == Object) {
+        sort_members(node);
+        c::smith_json_write_object_begin(writer);
+    } else if (node->kind == Array) {
+        c::smith_json_write_array_begin(writer);
+    } else if (node->kind == String) {
+        c::smith_json_write_string(writer, node->text);
+    } else if (node->kind == Boolean) {
+        c::smith_json_write_bool(writer, node->text[0] == 't');
+    } else if (node->kind == Number) {
+        i64 whole = 0;
+        u64 big = 0;
+        f64 real = 0;
+        if (text::parse_i64(node->text, &whole)) {
+            c::smith_json_write_i64(writer, whole);
+        } else if (text::parse_u64(node->text, &big)) {
+            c::smith_json_write_u64(writer, big);
+        } else if (text::parse_f64(node->text, &real)) {
+            c::smith_json_write_f64(writer, real);
+        } else {
+            c::smith_json_write_null(writer);
+        }
+    } else {
+        c::smith_json_write_null(writer);
+    }
+}
+
+// The values the tree holds.
+usize values_in(Node *root) {
+    Frame stack[depth_max + 1];
+    usize depth = 0;
+    usize total = 1;
+    if (root->kind != Object && root->kind != Array) return total;
+    stack[0] = (Frame){.container = root, .next = 0};
+    depth = 1;
+    while (depth > 0) {
+        Frame *top = &stack[depth - 1];
+        if (top->next == top->container->count) {
+            depth -= 1;
+            continue;
+        }
+        Node *child = top->container->items[top->next];
+        top->next += 1;
+        total += 1;
+        if ((child->kind == Object || child->kind == Array) && depth < depth_max + 1) {
+            stack[depth] = (Frame){.container = child, .next = 0};
+            depth += 1;
+        }
+    }
+    return total;
+}
+
+// Writes the tree into the writer.
+void write_tree(c::SmithJsonWriter *writer, Node *root) {
+    Frame stack[depth_max + 1];
+    usize depth = 0;
+    write_node(writer, root);
+    if (root->kind != Object && root->kind != Array) return;
+    stack[0] = (Frame){.container = root, .next = 0};
+    depth = 1;
+    usize steps = 2 * values_in(root) + 2;
+    for (usize step = 0; step < steps && depth > 0; step++) {
+        Frame *top = &stack[depth - 1];
+        bool object = top->container->kind == Object;
+        if (top->next == top->container->count) {
+            if (object) {
+                c::smith_json_write_object_end(writer);
+            } else {
+                c::smith_json_write_array_end(writer);
+            }
+            depth -= 1;
+            continue;
+        }
+        Node *child = top->container->items[top->next];
+        top->next += 1;
+        if (object) c::smith_json_write_key(writer, child->key);
+        write_node(writer, child);
+        if ((child->kind == Object || child->kind == Array) && depth < depth_max + 1) {
+            stack[depth] = (Frame){.container = child, .next = 0};
+            depth += 1;
+        }
+    }
+}
+
+// The document as text with no spaces, in the arena.
+export lsp_text::Text write(arena::Arena *arena, Node *root) {
+    usize capacity = 4096;
+    for (usize attempt = 0; attempt < 24; attempt++) {
+        char buffer[:] = arena::push_slice(arena, char, capacity);
+        c::SmithJsonWriter writer = c::smith_json_writer_make(buffer.data, capacity, 0);
+        write_tree(&writer, root);
+        lsp_text::Text document = {};
+        if (c::smith_json_writer_finish(&writer, &document)) return document;
+        if (writer.error.reason != c::SmithJsonReason_Full) return {};
+        capacity *= 4;
+    }
+    return {};
+}

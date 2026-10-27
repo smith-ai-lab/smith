@@ -451,22 +451,47 @@ static SmithObject build_commit_object(SmithBuild *b, const BuildConfig *config,
 
 static void build_tree_sitter_data(SmithBuild *b, const BuildConfig *config, const char *folder, SmithObject *data);
 
+// The language server's layer, linked with the hook (the editor and `smith lsp` need it): runtime/lsp*.smith is the
+// logic, in smith's own language, and runtime/lsp_edge.c what .smith has no module for yet (threads, pipes: the issues
+// are named in runtime/lsp_edge.h). The modules are compiled by the smith that builds smith (the lag rule).
+static const char *const build_lsp_sources[] = {
+    "runtime/lsp_edge.c",      "runtime/lsp_text.smith",   "runtime/lsp_json.smith",   "runtime/lsp_names.smith",
+    "runtime/lsp_layer.smith", "runtime/lsp_frames.smith", "runtime/lsp_editor.smith", "runtime/lsp_session.smith",
+    "runtime/lsp_query.smith", "runtime/lsp_world.smith",  "runtime/lsp.smith",
+};
+
 // Everything smith links beside smith.c when clang is inside: the packed data, the shims of the compiler, the linker
 // and the tools, and the prover when its libraries are there. `list` gets pointers to them, ended by nullptr.
 typedef struct {
     SmithObject objects[22];
+    SmithObject lsp[sizeof build_lsp_sources / sizeof build_lsp_sources[0]];
     BuildProver prove;
 } BuildShims;
+
+static void build_lsp_objects(SmithBuild *b, const BuildConfig *config, const char *folder, SmithObject *objects) {
+    const char *const *flags = smith_cat(
+        b, config->cflags,
+        (const char *[]){"-I", "include", "-I", ".smith/include", "-I", "runtime", "-fdefer-ts", nullptr}, nullptr);
+    for (size_t i = 0; i < sizeof build_lsp_sources / sizeof build_lsp_sources[0]; i++) {
+        objects[i] = (SmithObject){
+            .compiler = config->cc,
+            .source = build_lsp_sources[i],
+            .output = smith_fmt(b, "%s/lsp-%zu.o", folder, i),
+            .flags = flags,
+        };
+        smith_object(b, &objects[i]);
+    }
+}
 
 static void build_shims(SmithBuild *b, const BuildConfig *config, const char *folder, const char *pack,
                         BuildShims *shims, const SmithObject **list) {
     build_pack_data(b, config, folder, pack, &shims->objects[0]);
     const char *const sources[] = {"clang",  "lld",           "format",      "tidy",     "clangd",       "symbolize",
-                                   "hook",   "lsp",           "lldb",        "lldb_dap", "lldb_explain", "lldb_slices",
+                                   "hook",   "lsp_edge",      "lldb",        "lldb_dap", "lldb_explain", "lldb_slices",
                                    "affine", "effects_infer", "lldb_server", "coverage"};
     size_t count = 0;
     for (size_t i = 0; i < sizeof sources / sizeof sources[0]; i++) {
-        bool is_hook = strcmp(sources[i], "hook") == 0 || strcmp(sources[i], "lsp") == 0 ||
+        bool is_hook = strcmp(sources[i], "hook") == 0 || strcmp(sources[i], "lsp_edge") == 0 ||
                        strcmp(sources[i], "affine") == 0 || strcmp(sources[i], "effects_infer") == 0;
         bool is_lldb = strncmp(sources[i], "lldb", 4) == 0;
         bool is_server = strcmp(sources[i], "lldb_server") == 0;
@@ -482,6 +507,11 @@ static void build_shims(SmithBuild *b, const BuildConfig *config, const char *fo
     for (size_t i = 0; i < count + 1; i++) // the packed data, then the shims, then the parser
         list[listed++] = &shims->objects[i];
     count = listed;
+    if (config->hook) {
+        build_lsp_objects(b, config, folder, shims->lsp);
+        for (size_t i = 0; i < sizeof shims->lsp / sizeof shims->lsp[0]; i++)
+            list[count++] = &shims->lsp[i];
+    }
     if (config->prove[0] == '\0') return;
     build_prover(b, config, folder, &shims->prove);
     for (size_t i = 0; i < 4; i++)
@@ -641,7 +671,7 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
     SmithObject commit = build_commit_object(b, config, folder);
     BuildShims shims = {};
     SmithObject libraries[sizeof build_linked_libraries / sizeof build_linked_libraries[0]] = {};
-    const SmithObject *objects[40] = {&object, &commit};
+    const SmithObject *objects[64] = {&object, &commit};
     size_t count = 2;
     for (size_t i = 0; i < sizeof libraries / sizeof libraries[0]; i++) {
         libraries[i] = (SmithObject){

@@ -18,7 +18,7 @@ extern "C" void smith_hook_install();
 extern "C" void smith_hook_editor();
 // shim/tidy.cpp: the module that makes the checks judge a .smith file's names as written.
 extern "C" void smith_tidy_names_register(bool present);
-// shim/lsp.cpp: runs clangd's main with the editor's messages and clangd's behind a layer that rewrites names.
+// runtime/lsp.smith: runs clangd's main with the editor's messages and clangd's behind a layer that rewrites names.
 extern "C" int smith_lsp_run(int argc, char **argv, int (*server)(int, char **));
 #endif
 
@@ -64,9 +64,13 @@ extern "C" int smith_clangd_main(int argc, char **argv) {
     smith_hook_install();
     smith_hook_editor();
     smith_tidy_names_register(false); // clangd's built-in checks judge the names as written, as `smith lint` does
-    // The editor talks to clangd through the layer of shim/lsp.cpp, which shows the names as the source writes them.
-    return smith_lsp_run(argc, argv,
-                         [](int count, char **arguments) { return clang::clangd::clangdMain(count, arguments); });
+    // The editor talks to clangd through the layer of runtime/lsp.smith, which shows the names as the source writes
+    // them. What clangd wrote to its output is sent before the layer ends the pipe.
+    return smith_lsp_run(argc, argv, [](int count, char **arguments) {
+        int status = clang::clangd::clangdMain(count, arguments);
+        llvm::outs().flush();
+        return status;
+    });
 #else
     return clang::clangd::clangdMain(argc, argv);
 #endif

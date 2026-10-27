@@ -1,0 +1,109 @@
+// The messages of the language server protocol on a pipe: `Content-Length: N`, a blank line and N bytes of JSON. A
+// reader keeps the bytes it has read and not used, so that one read may bring several messages, or half of one.
+module runtime::lsp_frames;
+
+import smith::arena;
+import smith::mem;
+import runtime::lsp_text;
+import runtime::lsp_world;
+import "lsp_edge.h";
+
+// The body of a message; none at the end of the input.
+export typedef option(lsp_text::Text) Body;
+
+// The bytes a reader takes at a time. A header is a line or two, so it always fits; a body longer than what is left of
+// the bytes read is read straight into its own memory.
+export constexpr usize chunk_size = 1 << 16;
+
+// The most a message may hold: a client that claims more than this is not one.
+constexpr usize body_max = 1 << 30;
+
+export struct Frames {
+    i32 descriptor;
+    u8 chunk[chunk_size];
+    usize start; // the bytes read and not used are chunk[start:end]
+    usize end;
+};
+
+export Frames *reader(arena::Arena *arena, i32 descriptor) {
+    Frames *frames = arena::push(arena, Frames);
+    frames->descriptor = descriptor;
+    return frames;
+}
+
+// Whether a message can be read within `milliseconds` (one is half read, or the input has bytes or its end).
+export bool ready(Frames *frames, i32 milliseconds) {
+    if (frames->start < frames->end) return true;
+    return c::smith_lsp_wait_readable(frames->descriptor, milliseconds);
+}
+
+// Reads more into the chunk; false at the end of the input, or when the chunk is full.
+bool fill(Frames *frames) {
+    if (frames->start > 0) {
+        usize used = frames->end - frames->start;
+        mem::move(frames->chunk[0:used], frames->chunk[frames->start:frames->end]);
+        frames->start = 0;
+        frames->end = used;
+    }
+    if (frames->end == chunk_size) return false;
+    usize got = lsp_world::read_some(frames->descriptor, frames->chunk[frames->end:chunk_size]);
+    frames->end += got;
+    return got > 0;
+}
+
+// The length a header says, 0 when it says none.
+usize length_of(lsp_text::Text header) {
+    lsp_text::Index at = lsp_text::find(header, "Content-Length:");
+    if (at != .some) return 0;
+    lsp_text::Text rest = lsp_text::drop(header, at.some + 15);
+    usize length = 0;
+    usize i = 0;
+    while (i < countof(rest) && lsp_text::is_space(rest[i])) {
+        i += 1;
+    }
+    while (i < countof(rest) && rest[i] >= '0' && rest[i] <= '9') {
+        length = length * 10 + (usize)(rest[i] - '0');
+        if (length > body_max) return body_max + 1;
+        i += 1;
+    }
+    return length;
+}
+
+// The body of the next message, in the arena; none at the end of the input.
+export Body next(Frames *frames, arena::Arena *arena) {
+    lsp_text::Index header_end = .none;
+    for (usize round = 0; round <= chunk_size; round++) { // each round reads at least a byte or ends
+        header_end = lsp_text::find(lsp_world::as_text(frames->chunk[frames->start:frames->end]), "\r\n\r\n");
+        if (header_end == .some) break;
+        if (!fill(frames)) return .none;
+    }
+    if (header_end != .some) return .none;
+    usize length = length_of(lsp_world::as_text(frames->chunk[frames->start:frames->start + header_end.some]));
+    if (length > body_max) return .none;
+    frames->start += header_end.some + 4;
+    if (length == 0) {
+        lsp_text::Text empty = {};
+        return {.some = empty};
+    }
+    u8 body[:] = arena::push_slice(arena, u8, length);
+    usize have = __builtin_elementwise_min(length, frames->end - frames->start);
+    mem::copy(body[0:have], frames->chunk[frames->start:frames->start + have]);
+    frames->start += have;
+    usize filled = have;
+    for (usize round = 0; filled < length && round <= length; round++) { // each round reads at least a byte or ends
+        usize got = lsp_world::read_some(frames->descriptor, body[filled:length]);
+        if (got == 0) return .none;
+        filled += got;
+    }
+    return {.some = lsp_world::as_text(body)};
+}
+
+// Writes a message: the header and the body in one write.
+export bool send(arena::Arena *arena, i32 descriptor, lsp_text::Text body) {
+    lsp_text::Builder frame = lsp_text::builder(arena, countof(body) + 64);
+    lsp_text::append(&frame, "Content-Length: ");
+    lsp_text::append_i64(&frame, (i64)countof(body));
+    lsp_text::append(&frame, "\r\n\r\n");
+    lsp_text::append(&frame, body);
+    return lsp_world::write_all(descriptor, lsp_text::view(&frame));
+}

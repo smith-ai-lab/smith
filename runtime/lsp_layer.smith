@@ -1,0 +1,559 @@
+// The layer between the editor and clangd (`smith lsp`): it reads the editor's messages and clangd's, and rewrites the
+// names in the answers that show them: hover, the outline, completion (and what `x::` offers), signature help and the
+// hints. It also leaves out of the answers that list places the generated headers (`.smith/include/*.h`), which are
+// no place to go to or to rename in.
+//
+// The editor's own words are never rewritten: positions, ranges and the text of the documents are clangd's and the
+// editor's, and are not names. A message that is not an answer to one of those requests passes as the bytes it came in.
+module runtime::lsp_layer;
+
+import smith::arena;
+import smith::mem;
+import smith::text;
+import runtime::lsp_json;
+import runtime::lsp_names;
+import runtime::lsp_text;
+import "lsp_edge.h";
+
+typedef lsp_json::Node Node;
+typedef lsp_text::Text Text;
+
+// The requests whose answers the layer rewrites.
+// NOLINTBEGIN(readability-identifier-naming)
+export typedef enum {
+    Hover,
+    Completion,
+    DocumentSymbol,
+    SignatureHelp,
+    InlayHint,
+    WorkspaceSymbol,
+    References,
+    Rename,
+    Definition,
+} Method;
+// NOLINTEND(readability-identifier-naming)
+
+export constexpr usize pending_max =
+    1024; // the requests waiting for an answer; an older one is forgotten when there are more
+export constexpr usize uri_max = 1024; // the longest document the layer rewrites an answer for
+export constexpr usize id_max = 64;    // the longest id
+
+// What the editor asked, kept until clangd answers.
+export struct Request {
+    Method method;
+    char id[id_max]; // the id as JSON text: a number and a string with the same characters are not the same id
+    usize id_length;
+    char uri[uri_max];
+    usize uri_length;
+    i64 line;
+    i64 character;
+};
+
+// The requests waiting for an answer, guarded by the layer's lock: the editor's messages go in on one thread, clangd's
+// answers come out on another.
+export struct Layer {
+    Request pending[pending_max];
+    bool used[pending_max];
+    usize oldest;
+};
+
+export Layer *make(arena::Arena *arena) {
+    return arena::push(arena, Layer);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Uris
+
+// The path of a `file://` uri, with its escapes read; empty for another.
+export lsp_text::Text path_of_uri(arena::Arena *arena, lsp_text::Text uri) {
+    if (!lsp_text::starts_with(uri, "file://")) return {};
+    uri = lsp_text::drop(uri, 7);
+    lsp_text::Builder path = lsp_text::builder(arena, countof(uri));
+    for (usize i = 0; i < countof(uri); i++) {
+        if (uri[i] == '%' && i + 2 < countof(uri) && lsp_text::hex_digit(uri[i + 1]) &&
+            lsp_text::hex_digit(uri[i + 2])) {
+            lsp_text::append_char(&path,
+                                  (char)(lsp_text::hex_value(uri[i + 1]) * 16 + lsp_text::hex_value(uri[i + 2])));
+            i += 2;
+        } else {
+            lsp_text::append_char(&path, uri[i]);
+        }
+    }
+    return lsp_text::view(&path);
+}
+
+// The generated headers of a project: places nobody means to go to.
+export bool is_generated(lsp_text::Text uri) {
+    return lsp_text::contains(uri, "/.smith/include/");
+}
+
+// The names of the file at a uri, to close with `close_names`; null for a file that has none.
+lsp_names::Names *names_of(arena::Arena *arena, Text uri) {
+    Text path = path_of_uri(arena, uri);
+    return c::smith_lsp_names_open(lsp_text::terminated(arena, path));
+}
+
+void close_names(lsp_names::Names *names) {
+    if (names != nullptr) c::smith_lsp_names_close(names);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Rewriting
+
+// A field of an object that is a string, rewritten.
+void rewrite_field(arena::Arena *arena, Node *object, Text key, const lsp_names::Names *names, lsp_names::Style style) {
+    Node *value = lsp_json::get(object, key);
+    if (!lsp_json::is_string(value)) return;
+    lsp_json::set_text(value, lsp_names::rewritten(arena, value->text, names, style, nullptr));
+}
+
+// A label or a documentation: a string, or an object with a `value` (markup), or an array of those (inlay hint parts).
+void rewrite_text(arena::Arena *arena, Node *value, const lsp_names::Names *names, lsp_names::Style style) {
+    if (value == nullptr) return;
+    if (lsp_json::is_string(value)) {
+        lsp_json::set_text(value, lsp_names::rewritten(arena, value->text, names, style, nullptr));
+    } else if (lsp_json::is_object(value)) {
+        rewrite_field(arena, value, "value", names, style);
+    } else if (lsp_json::is_array(value)) {
+        for (usize i = 0; i < value->count; i++) {
+            Node *part = value->items[i];
+            if (lsp_json::is_string(part)) {
+                lsp_json::set_text(part, lsp_names::rewritten(arena, part->text, names, style, nullptr));
+            } else if (lsp_json::is_object(part)) {
+                rewrite_field(arena, part, "value", names, style);
+            }
+        }
+    }
+}
+
+// A hover's contents: markup (an object with a `value`), or a string, or an array of those.
+void rewrite_hover(arena::Arena *arena, Node *value, const lsp_names::Names *names) {
+    rewrite_text(arena, value, names, lsp_names::Written);
+    if (lsp_json::is_string(value)) {
+        lsp_json::set_text(value, lsp_names::without_labels(arena, value->text));
+    } else if (lsp_json::is_object(value)) {
+        Node *inner = lsp_json::get(value, "value");
+        if (lsp_json::is_string(inner)) lsp_json::set_text(inner, lsp_names::without_labels(arena, inner->text));
+    }
+}
+
+// The outline (a tree of symbols, or a flat list of them with their containers): the arrays of symbols still to read
+// are kept on a stack, and a tree that is deeper than the stack is read as far as it goes.
+constexpr usize symbols_pending_max = 1024;
+
+void rewrite_symbols(arena::Arena *arena, Node *result, const lsp_names::Names *names, lsp_names::Style style) {
+    if (!lsp_json::is_array(result)) return;
+    Node *pending[symbols_pending_max];
+    usize depth = 1;
+    pending[0] = result;
+    while (depth > 0) { // each round reads one array, and an array is read once
+        depth -= 1;
+        Node *list = pending[depth];
+        for (usize i = 0; i < list->count; i++) {
+            Node *symbol = list->items[i];
+            if (!lsp_json::is_object(symbol)) continue;
+            rewrite_field(arena, symbol, "name", names, style);
+            rewrite_field(arena, symbol, "detail", names, style);
+            rewrite_field(arena, symbol, "containerName", names, style);
+            Node *children = lsp_json::get(symbol, "children");
+            if (lsp_json::is_array(children) && depth < symbols_pending_max) {
+                pending[depth] = children;
+                depth += 1;
+            }
+        }
+    }
+}
+
+// Symbols of the whole project: each named as its file names it, with the module it is in.
+void rewrite_workspace_symbols(arena::Arena *arena, Node *result) {
+    if (!lsp_json::is_array(result)) {
+        return;
+    }
+    bool kept[:] = arena::push_slice(arena, bool, result->count);
+    for (usize i = 0; i < result->count; i++) {
+        Node *symbol = result->items[i];
+        Node *location = lsp_json::is_object(symbol) ? lsp_json::get_object(symbol, "location") : nullptr;
+        Text uri = lsp_json::member_text(location, "uri");
+        kept[i] = !is_generated(uri);
+        if (!kept[i]) continue;
+        lsp_names::Names *names = names_of(arena, uri);
+        if (names != nullptr) rewrite_field(arena, symbol, "name", names, lsp_names::Qualified);
+        close_names(names);
+    }
+    lsp_json::keep(result, kept);
+}
+
+// The places that are not in a generated header.
+void without_generated(arena::Arena *arena, Node *result) {
+    if (!lsp_json::is_array(result)) {
+        return;
+    }
+    bool kept[:] = arena::push_slice(arena, bool, result->count);
+    for (usize i = 0; i < result->count; i++) {
+        Node *location = result->items[i];
+        Text uri = lsp_json::member_text(location, "uri");
+        kept[i] = !is_generated(uri);
+    }
+    lsp_json::keep(result, kept);
+}
+
+// A rename also edits the generated header that declares the name; the next build writes it again.
+void without_generated_edits(arena::Arena *arena, Node *result) {
+    if (!lsp_json::is_object(result)) return;
+    Node *changes = lsp_json::get_object(result, "changes");
+    if (changes != nullptr) {
+        bool kept[:] = arena::push_slice(arena, bool, changes->count);
+        for (usize i = 0; i < changes->count; i++) {
+            kept[i] = !is_generated(changes->items[i]->key);
+        }
+        lsp_json::keep(changes, kept);
+    }
+    Node *documents = lsp_json::get_array(result, "documentChanges");
+    if (documents != nullptr) {
+        bool kept[:] = arena::push_slice(arena, bool, documents->count);
+        for (usize i = 0; i < documents->count; i++) {
+            Node *change = documents->items[i];
+            Node *document = lsp_json::is_object(change) ? lsp_json::get_object(change, "textDocument") : nullptr;
+            kept[i] = !is_generated(lsp_json::member_text(document, "uri"));
+        }
+        lsp_json::keep(documents, kept);
+    }
+}
+
+// Signature help: the labels, and where each parameter is in them when it is given as an offset.
+void rewrite_signature_help(arena::Arena *arena, Node *result, const lsp_names::Names *names) {
+    Node *signatures = lsp_json::get_array(result, "signatures");
+    if (signatures == nullptr) return;
+    for (usize i = 0; i < signatures->count; i++) {
+        Node *signature = signatures->items[i];
+        if (!lsp_json::is_object(signature)) continue;
+        lsp_names::Moves moved = lsp_names::moves(arena);
+        Node *label = lsp_json::get(signature, "label");
+        if (lsp_json::is_string(label)) {
+            lsp_json::set_text(label, lsp_names::rewritten(arena, label->text, names, lsp_names::Written, &moved));
+        }
+        rewrite_text(arena, lsp_json::get(signature, "documentation"), names, lsp_names::Written);
+        Node *parameters = lsp_json::get_array(signature, "parameters");
+        if (parameters == nullptr) continue;
+        for (usize p = 0; p < parameters->count; p++) {
+            Node *parameter = parameters->items[p];
+            Node *parameter_label = lsp_json::is_object(parameter) ? lsp_json::get(parameter, "label") : nullptr;
+            if (parameter_label == nullptr) continue;
+            if (lsp_json::is_array(parameter_label)) {
+                for (usize o = 0; o < parameter_label->count; o++) {
+                    Node *offset = parameter_label->items[o];
+                    i64 old = lsp_json::integer_or(offset, 0);
+                    i64 shift = 0;
+                    for (usize m = 0; m < moved.count; m++) {
+                        if ((i64)moved.entries[m].at < old) shift += moved.entries[m].delta;
+                    }
+                    lsp_json::set_integer(arena, offset, old + shift);
+                }
+            } else if (lsp_json::is_string(parameter_label)) {
+                lsp_json::set_text(parameter_label, lsp_names::rewritten(arena, parameter_label->text, names,
+                                                                         lsp_names::Written, nullptr));
+            }
+        }
+    }
+}
+
+// Whether a subsequence of `member` (any case) is what was typed.
+bool matches(Text typed, Text member) {
+    usize at = 0;
+    for (char c : member) {
+        if (at < countof(typed) && lsp_text::lower(c) == lsp_text::lower(typed[at])) at += 1;
+    }
+    return at == countof(typed);
+}
+
+// The first identifier of the text.
+Text first_name(Text text) {
+    usize start = 0;
+    while (start < countof(text) && !lsp_text::identifier_head(text[start])) {
+        start += 1;
+    }
+    usize end = start;
+    while (end < countof(text) && lsp_text::identifier_body(text[end])) {
+        end += 1;
+    }
+    return text[start:end];
+}
+
+void rewrite_completion_item(arena::Arena *arena, Node *item, const lsp_names::Names *names, lsp_names::Style style) {
+    rewrite_field(arena, item, "label", names, style);
+    rewrite_field(arena, item, "filterText", names, style);
+    rewrite_field(arena, item, "insertText", names, style);
+    rewrite_field(arena, item, "detail", names, style);
+    rewrite_text(arena, lsp_json::get(item, "documentation"), names, style);
+    Node *details = lsp_json::get_object(item, "labelDetails");
+    if (details != nullptr) {
+        rewrite_field(arena, details, "detail", names, style);
+        rewrite_field(arena, details, "description", names, style);
+    }
+    Node *edit = lsp_json::get_object(item, "textEdit");
+    if (edit != nullptr) rewrite_field(arena, edit, "newText", names, style);
+    Node *more = lsp_json::get_array(item, "additionalTextEdits");
+    if (more != nullptr) {
+        for (usize i = 0; i < more->count; i++) {
+            if (lsp_json::is_object(more->items[i])) rewrite_field(arena, more->items[i], "newText", names, style);
+        }
+    }
+}
+
+// Completion. Anywhere, a name is offered as it is written. After `x::` (the lowering took the `x::` away and left
+// the cursor, so the parser offers every name) only the names of the module behind x are offered, each as its
+// member: the text typed is `x::` and a part of the member, and the edit replaces that part.
+void rewrite_completion(arena::Arena *arena, const Request *request, Node *result, const lsp_names::Names *names) {
+    Node *items = result;
+    if (!lsp_json::is_array(items)) items = lsp_json::get_array(result, "items");
+    if (items == nullptr) return;
+    Text uri = request->uri[0:request->uri_length];
+    Text path = path_of_uri(arena, uri);
+    c::SmithLspQualifier *qualifier = c::smith_lsp_qualifier_open(lsp_text::terminated(arena, path));
+    defer if (qualifier != nullptr) c::smith_lsp_qualifier_close(qualifier);
+    if (qualifier != nullptr && c::smith_lsp_qualifier_is_c(qualifier)) return; // C's own names, as they are
+    Text partial = {};
+    Text module = {};
+    bool behind = false;
+    if (qualifier != nullptr) {
+        partial = lsp_names::view(c::smith_lsp_qualifier_partial(qualifier));
+        module = lsp_names::view(c::smith_lsp_qualifier_module(qualifier));
+        i64 column = (i64)c::smith_lsp_qualifier_column(qualifier);
+        i64 size = (i64)countof(partial);
+        behind = (i64)c::smith_lsp_qualifier_line(qualifier) == request->line && request->character >= column - size &&
+                 request->character <= column + size;
+    }
+    if (!behind) {
+        for (usize i = 0; i < items->count; i++) {
+            if (lsp_json::is_object(items->items[i])) {
+                rewrite_completion_item(arena, items->items[i], names, lsp_names::Written);
+            }
+        }
+        return;
+    }
+    bool kept[:] = arena::push_slice(arena, bool, items->count);
+    for (usize i = 0; i < items->count; i++) {
+        Node *item = items->items[i];
+        if (!lsp_json::is_object(item)) continue;
+        Text label = lsp_json::member_text_or(item, "filterText", lsp_json::member_text(item, "label"));
+        lsp_names::Lookup name = lsp_names::find(names, first_name(label));
+        if (name != .some) {
+            continue;
+        }
+        if (!lsp_text::equal(lsp_names::view(name.some.module), module) ||
+            !matches(partial, lsp_names::view(name.some.member))) {
+            continue;
+        }
+        rewrite_completion_item(arena, item, names, lsp_names::Member);
+        kept[i] = true;
+    }
+    lsp_json::keep(items, kept);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Answers
+
+// A position: a line and a character.
+Node *position(arena::Arena *arena, i64 line, i64 character) {
+    Node *at = lsp_json::object(arena);
+    lsp_json::add(arena, at, "line", lsp_json::integer(arena, line));
+    lsp_json::add(arena, at, "character", lsp_json::integer(arena, character));
+    return at;
+}
+
+Node *range(arena::Arena *arena, i64 line, i64 from, i64 to) {
+    Node *both = lsp_json::object(arena);
+    lsp_json::add(arena, both, "start", position(arena, line, from));
+    lsp_json::add(arena, both, "end", position(arena, line, to));
+    return both;
+}
+
+// A hover or go-to-definition on the name in a call to a generic is the lowering's to answer: the compiler sees an
+// instance there, whose declaration is made of the call's own tokens. True when the answer was replaced.
+bool called_generic(arena::Arena *arena, const Request *request, Node *message) {
+    if (request->method != Hover && request->method != Definition) return false;
+    lsp_names::Names *names = names_of(arena, request->uri[0:request->uri_length]);
+    defer close_names(names);
+    if (names == nullptr) return false;
+    for (usize i = 0; i < c::smith_lsp_names_call_count(names); i++) {
+        c::SmithLspCall site = {};
+        if (!c::smith_lsp_names_call(names, i, &site)) continue;
+        i64 column = (i64)site.column;
+        i64 length = (i64)site.length;
+        if (request->line != (i64)site.line || request->character < column || request->character > column + length) {
+            continue;
+        }
+        if (request->method == Hover) {
+            Node *contents = lsp_json::object(arena);
+            lsp_json::add(arena, contents, "kind", lsp_json::string(arena, "plaintext"));
+            lsp_json::add(arena, contents, "value", lsp_json::string(arena, lsp_names::view(site.hover)));
+            Node *answer = lsp_json::object(arena);
+            lsp_json::add(arena, answer, "contents", contents);
+            lsp_json::add(arena, answer, "range", range(arena, (i64)site.line, column, column + length));
+            lsp_json::set(arena, message, "result", answer);
+            return true;
+        }
+        lsp_text::Builder uri = lsp_text::builder(arena, 64);
+        lsp_text::append(&uri, "file://");
+        lsp_text::append(&uri, lsp_names::view(site.file));
+        Node *place = lsp_json::object(arena);
+        lsp_json::add(arena, place, "uri", lsp_json::string(arena, lsp_text::view(&uri)));
+        i64 definition = (i64)site.definition_column;
+        lsp_json::add(arena, place, "range", range(arena, (i64)site.definition_line, definition, definition + length));
+        Node *places = lsp_json::array(arena);
+        lsp_json::append(arena, places, place);
+        lsp_json::set(arena, message, "result", places);
+        return true;
+    }
+    return false;
+}
+
+// Rewrites the answer to a request.
+void answer(arena::Arena *arena, const Request *request, Node *result) {
+    if (request->method == WorkspaceSymbol) {
+        rewrite_workspace_symbols(arena, result);
+        return;
+    }
+    if (request->method == References) {
+        without_generated(arena, result);
+        return;
+    }
+    if (request->method == Rename) {
+        without_generated_edits(arena, result);
+        return;
+    }
+    lsp_names::Names *names = names_of(arena, request->uri[0:request->uri_length]);
+    defer close_names(names);
+    if (names == nullptr) return;
+    if (request->method == Hover) {
+        if (lsp_json::is_object(result)) rewrite_hover(arena, lsp_json::get(result, "contents"), names);
+    } else if (request->method == DocumentSymbol) {
+        rewrite_symbols(arena, result, names, lsp_names::Written);
+    } else if (request->method == Completion) {
+        rewrite_completion(arena, request, result, names);
+    } else if (request->method == SignatureHelp) {
+        rewrite_signature_help(arena, result, names);
+    } else if (request->method == InlayHint) {
+        if (lsp_json::is_array(result)) {
+            for (usize i = 0; i < result->count; i++) {
+                Node *hint = result->items[i];
+                if (lsp_json::is_object(hint))
+                    rewrite_text(arena, lsp_json::get(hint, "label"), names, lsp_names::Written);
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The two directions
+
+option(Method) method_of(Text name) {
+    if (lsp_text::equal(name, "textDocument/hover")) return Hover;
+    if (lsp_text::equal(name, "textDocument/completion")) return Completion;
+    if (lsp_text::equal(name, "textDocument/documentSymbol")) return DocumentSymbol;
+    if (lsp_text::equal(name, "textDocument/signatureHelp")) return SignatureHelp;
+    if (lsp_text::equal(name, "textDocument/inlayHint")) return InlayHint;
+    if (lsp_text::equal(name, "workspace/symbol")) return WorkspaceSymbol;
+    if (lsp_text::equal(name, "textDocument/references")) return References;
+    if (lsp_text::equal(name, "textDocument/rename")) return Rename;
+    if (lsp_text::equal(name, "textDocument/definition")) return Definition;
+    return .none;
+}
+
+// The place of a request with this id, or the one to take over: the same id again, a free place, or the oldest.
+usize slot_for(Layer *layer, Text id) {
+    for (usize i = 0; i < pending_max; i++) {
+        if (layer->used[i] && layer->pending[i].id_length == countof(id) &&
+            lsp_text::equal(layer->pending[i].id[0:layer->pending[i].id_length], id)) {
+            return i;
+        }
+    }
+    for (usize i = 0; i < pending_max; i++) {
+        if (!layer->used[i]) return i;
+    }
+    usize taken = layer->oldest;
+    layer->oldest = (layer->oldest + 1) % pending_max;
+    return taken;
+}
+
+// The id of a message as JSON text, the key of its answer.
+Text key_of(arena::Arena *arena, Node *id) {
+    return lsp_json::write(arena, id);
+}
+
+// Reads one editor message: notes what it asks, so that the answer can be told from the others.
+export void to_server(Layer *layer, arena::Arena *arena, lsp_text::Text body) {
+    Node *message = lsp_json::parse(arena, body);
+    if (!lsp_json::is_object(message)) return;
+    Node *id = lsp_json::get(message, "id");
+    if (id == nullptr) return;
+    Text name = lsp_json::member_text(message, "method");
+    option(Method) method = method_of(name);
+    if (method != .some) return;
+    Request request = {};
+    request.method = method.some;
+    Node *params = lsp_json::get_object(message, "params");
+    Text uri = lsp_json::member_text(lsp_json::get_object(params, "textDocument"), "uri");
+    Node *at = lsp_json::get_object(params, "position");
+    request.line = -1;
+    request.character = -1;
+    if (at != nullptr) {
+        request.line = lsp_json::member_integer(at, "line", -1);
+        request.character = lsp_json::member_integer(at, "character", -1);
+    }
+    Text key = key_of(arena, id);
+    if (countof(key) == 0 || countof(key) > id_max || countof(uri) > uri_max) {
+        return; // the answer passes as it is
+    }
+    mem::copy(request.id[0:countof(key)], key);
+    request.id_length = countof(key);
+    mem::copy(request.uri[0:countof(uri)], uri);
+    request.uri_length = countof(uri);
+    c::smith_lsp_lock(c::SmithLspLock_Layer);
+    defer c::smith_lsp_unlock(c::SmithLspLock_Layer);
+    usize slot = slot_for(layer, key);
+    layer->pending[slot] = request;
+    layer->used[slot] = true;
+}
+
+// The request waiting for this id, taken out.
+option(Request) take(Layer *layer, Text key) {
+    c::smith_lsp_lock(c::SmithLspLock_Layer);
+    defer c::smith_lsp_unlock(c::SmithLspLock_Layer);
+    for (usize i = 0; i < pending_max; i++) {
+        if (layer->used[i] && layer->pending[i].id_length == countof(key) &&
+            lsp_text::equal(layer->pending[i].id[0:layer->pending[i].id_length], key)) {
+            layer->used[i] = false;
+            return layer->pending[i];
+        }
+    }
+    return .none;
+}
+
+// The message as text, or the bytes it came in when it can not be written (a string that is not UTF-8).
+lsp_text::Text rewritten_or(arena::Arena *arena, Node *message, lsp_text::Text body) {
+    lsp_text::Text text = lsp_json::write(arena, message);
+    if (countof(text) == 0) return body;
+    return text;
+}
+
+// One clangd message; the bytes to send on.
+export lsp_text::Text to_editor(Layer *layer, arena::Arena *arena, lsp_text::Text body) {
+    if (!lsp_text::starts_with(body, "{\"id\":")) return body; // a notification, or a request of clangd's
+    lsp_text::Index comma = lsp_text::find_char(body, ',', 0);
+    usize end = comma == .some ? comma.some : countof(body);
+    Node *id = lsp_json::parse(arena, body[6:end]);
+    if (id == nullptr) return body;
+    option(Request) found = take(layer, key_of(arena, id));
+    if (found != .some) return body;
+    Request request = found.some;
+    Node *message = lsp_json::parse(arena, body);
+    if (message == nullptr) return body;
+    Node *result = lsp_json::get(message, "result");
+    if (lsp_json::is_object(message) && result != nullptr && called_generic(arena, &request, message)) {
+        return rewritten_or(arena, message, body);
+    }
+    if (result == nullptr || result->kind == lsp_json::Null) return body;
+    answer(arena, &request, result);
+    return rewritten_or(arena, message, body);
+}

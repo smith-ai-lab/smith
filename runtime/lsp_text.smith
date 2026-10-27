@@ -1,0 +1,215 @@
+// Text for the language server's layer (runtime/lsp.smith): slices of characters, searching in them, and a builder that
+// grows in an arena. The layer reads and writes the editor's and clangd's messages as bytes, so this is the small
+// string toolbox it needs; nothing here touches the world.
+module runtime::lsp_text;
+
+import smith::arena;
+import smith::mem;
+import smith::text;
+
+// Characters that are not terminated: a pointer and a count.
+export typedef typeof(const char[:]) Text;
+
+// A text as an element of a slice (a slice of `Text` would be read as a slice of rows of characters).
+export struct Piece {
+    Text text;
+};
+
+// Where something was found.
+export typedef option(usize) Index;
+
+export bool equal(Text a, Text b) {
+    return mem::equal(a, b);
+}
+
+// -1, 0 or 1 as `a` is before, the same as or after `b`, by bytes.
+export i32 compare(Text a, Text b) {
+    usize shared = __builtin_elementwise_min(countof(a), countof(b));
+    for (usize i = 0; i < shared; i++) {
+        if ((u8)a[i] != (u8)b[i]) return (u8)a[i] < (u8)b[i] ? -1 : 1;
+    }
+    if (countof(a) == countof(b)) return 0;
+    return countof(a) < countof(b) ? -1 : 1;
+}
+
+export bool starts_with(Text text, Text prefix) {
+    return countof(text) >= countof(prefix) && mem::equal(text[0:countof(prefix)], prefix);
+}
+
+export bool ends_with(Text text, Text suffix) {
+    return countof(text) >= countof(suffix) && mem::equal(text[countof(text) - countof(suffix):], suffix);
+}
+
+// The first place `needle` begins in `text` at or after `from`.
+export Index find_from(Text text, Text needle, usize from) {
+    if (countof(needle) > countof(text)) return .none;
+    usize last = countof(text) - countof(needle);
+    for (usize at = from; at <= last; at++) {
+        if (mem::equal(text[at:at + countof(needle)], needle)) return at;
+    }
+    return .none;
+}
+
+export Index find(Text text, Text needle) {
+    return find_from(text, needle, 0);
+}
+
+export bool contains(Text text, Text needle) {
+    return find(text, needle) == .some;
+}
+
+// The last place `needle` begins in `text`.
+export Index find_last(Text text, Text needle) {
+    if (countof(needle) > countof(text)) return .none;
+    for (usize at = countof(text) - countof(needle) + 1; at > 0; at--) {
+        if (mem::equal(text[at - 1:at - 1 + countof(needle)], needle)) return at - 1;
+    }
+    return .none;
+}
+
+export Index find_char(Text text, char c, usize from) {
+    for (usize at = from; at < countof(text); at++) {
+        if (text[at] == c) return at;
+    }
+    return .none;
+}
+
+export Index find_last_char(Text text, char c) {
+    for (usize at = countof(text); at > 0; at--) {
+        if (text[at - 1] == c) return at - 1;
+    }
+    return .none;
+}
+
+export bool is_space(char c) {
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f';
+}
+
+// The whole number a text starts with after its spaces (as C's strtoll reads it), 0 when it starts with none.
+export i64 leading_integer(Text text) {
+    usize at = 0;
+    while (at < countof(text) && is_space(text[at])) {
+        at += 1;
+    }
+    bool negative = at < countof(text) && text[at] == '-';
+    if (at < countof(text) && (text[at] == '-' || text[at] == '+')) at += 1;
+    i64 value = 0;
+    while (at < countof(text) && text[at] >= '0' && text[at] <= '9' && value < 100'000'000'000'000'000) {
+        value = value * 10 + (i64)(text[at] - '0');
+        at += 1;
+    }
+    return negative ? -value : value;
+}
+
+// Without the spaces at either end.
+export Text trim(Text text) {
+    usize start = 0;
+    usize end = countof(text);
+    while (start < end && is_space(text[start])) {
+        start += 1;
+    }
+    while (end > start && is_space(text[end - 1])) {
+        end -= 1;
+    }
+    return text[start:end];
+}
+
+// At most the first `count` characters.
+export Text front(Text text, usize count) {
+    return text[0:__builtin_elementwise_min(count, countof(text))];
+}
+
+// All but the first `count` characters.
+export Text drop(Text text, usize count) {
+    return text[__builtin_elementwise_min(count, countof(text)):];
+}
+
+export bool identifier_head(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+}
+
+export bool identifier_body(char c) {
+    return identifier_head(c) || (c >= '0' && c <= '9');
+}
+
+export char lower(char c) {
+    return c >= 'A' && c <= 'Z' ? (char)(c - 'A' + 'a') : c;
+}
+
+export bool hex_digit(char c) {
+    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+}
+
+export u32 hex_value(char c) {
+    if (c >= '0' && c <= '9') return (u32)(c - '0');
+    return (u32)(lower(c) - 'a') + 10;
+}
+
+// A copy ending in a terminator, for the C functions that take a string.
+export const char *terminated(arena::Arena *arena, Text text) {
+    char copy[:] = arena::push_slice(arena, char, countof(text) + 1);
+    mem::copy(copy[0:countof(text)], text);
+    return copy.data;
+}
+
+// The text of a terminated string.
+export Text of(const char *string) {
+    return text::make(string);
+}
+
+// Characters being written: they grow in the arena, twice as large each time they run out.
+export struct Builder {
+    arena::Arena *arena;
+    char data[:];
+    usize length;
+};
+
+export Builder builder(arena::Arena *arena, usize capacity) {
+    Builder b;
+    b.arena = arena;
+    usize first = __builtin_elementwise_max(capacity, (usize)16);
+    b.data = arena::push_slice(arena, char, first);
+    b.length = 0;
+    return b;
+}
+
+// Makes room for `more` characters.
+void reserve(Builder *b, usize more) {
+    usize needed = b->length + more;
+    if (needed <= countof(b->data)) return;
+    usize capacity = countof(b->data) * 2;
+    while (capacity < needed) {
+        capacity *= 2;
+    }
+    char bigger[:] = arena::push_slice(b->arena, char, capacity);
+    mem::copy(bigger[0:b->length], b->data[0:b->length]);
+    b->data = bigger;
+}
+
+export void append(Builder *b, Text text) {
+    reserve(b, countof(text));
+    mem::copy(b->data[b->length:b->length + countof(text)], text);
+    b->length += countof(text);
+}
+
+export void append_char(Builder *b, char c) {
+    reserve(b, 1);
+    b->data[b->length] = c;
+    b->length += 1;
+}
+
+export void append_i64(Builder *b, i64 value) {
+    char digits[text::number_capacity];
+    char out[:] = digits;
+    usize written = text::write_i64(out, value);
+    append(b, out[0:written]);
+}
+
+// Drops characters from the end.
+export void shrink(Builder *b, usize count) {
+    b->length -= __builtin_elementwise_min(count, b->length);
+}
+
+export Text view(const Builder *b) {
+    return b->data[0:b->length];
+}

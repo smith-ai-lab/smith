@@ -1,0 +1,714 @@
+// The questions of `smith lsp def|refs|hover|diag|symbols` (issue #248), asked of the session's server. The output is
+// grep's shape, `path:line:col: kind: text`, one fact a line.
+//
+// A name is looked up in the index by the compiler's name (`geom_vec_dot` for `geom::vec::dot`, found by
+// `geom_vec_dot`), and each answer in a `.smith` file is written as the lowering's table of that file says (the file is
+// opened and parsed for it), so a bare name or the module path matches.
+module runtime::lsp_query;
+
+import smith::arena;
+import smith::mem;
+import runtime::lsp_frames;
+import runtime::lsp_json;
+import runtime::lsp_layer;
+import runtime::lsp_names;
+import runtime::lsp_session;
+import runtime::lsp_text;
+import runtime::lsp_world;
+import "lsp_edge.h";
+
+typedef lsp_json::Node Node;
+typedef lsp_session::Session Session;
+typedef lsp_text::Text Text;
+
+// A place the index knows: where a name is defined or used.
+export struct Place {
+    lsp_text::Text path;
+    i64 line;
+    i64 column;
+    lsp_text::Text kind;
+    lsp_text::Text name;
+    lsp_text::Text lowered; // the compiler's name, as the index has it
+};
+
+// Places that grow in the arena; a set keeps them in order of path, line and column, once each.
+struct Places {
+    arena::Arena *arena;
+    Place items[:];
+    usize count;
+};
+
+Places places_make(arena::Arena *arena) {
+    Places list;
+    list.arena = arena;
+    list.items = arena::push_slice(arena, Place, 16);
+    list.count = 0;
+    return list;
+}
+
+void places_add(Places *list, Place place) {
+    if (list->count == countof(list->items)) {
+        Place bigger[:] = arena::push_slice(list->arena, Place, countof(list->items) * 2);
+        mem::copy(bigger[0:list->count], list->items[0:list->count]);
+        list->items = bigger;
+    }
+    list->items[list->count] = place;
+    list->count += 1;
+}
+
+i32 compare_places(const Place *a, const Place *b) {
+    i32 order = lsp_text::compare(a->path, b->path);
+    if (order != 0) return order;
+    if (a->line != b->line) return a->line < b->line ? -1 : 1;
+    if (a->column != b->column) return a->column < b->column ? -1 : 1;
+    return 0;
+}
+
+// Adds the place to a set; a place at the same path, line and column is already there and stays.
+void places_insert(Places *list, Place place) {
+    usize at = list->count;
+    for (usize i = 0; i < list->count; i++) {
+        i32 order = compare_places(&place, &list->items[i]);
+        if (order == 0) return;
+        if (order < 0) {
+            at = i;
+            break;
+        }
+    }
+    places_add(list, place);
+    for (usize i = list->count - 1; i > at; i--) {
+        list->items[i] = list->items[i - 1];
+    }
+    list->items[at] = place;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Reading the server's answers
+
+lsp_text::Text kind_name(i64 kind) {
+    const char *names[27] = {"",         "file",        "module",      "namespace", "package",   "class",    "method",
+                             "property", "field",       "constructor", "enum",      "interface", "function", "variable",
+                             "constant", "string",      "number",      "boolean",   "array",     "object",   "key",
+                             "null",     "enum-member", "struct",      "event",     "operator",  "type"};
+    if (kind > 0 && kind < 27) return lsp_text::of(names[kind]);
+    return "symbol";
+}
+
+// A line and a column, from 0.
+struct Position {
+    i64 line;
+    i64 column;
+};
+
+// The position a range starts at; 0 and 0 for none.
+Position start_of(Node *range) {
+    Position at = {};
+    Node *start = lsp_json::get_object(range, "start");
+    if (start != nullptr) {
+        at.line = lsp_json::member_integer(start, "line", 0);
+        at.column = lsp_json::member_integer(start, "character", 0);
+    }
+    return at;
+}
+
+Place place_of(arena::Arena *arena, Node *symbol) {
+    Place place = {};
+    place.name = lsp_json::member_text(symbol, "name");
+    place.kind = kind_name(lsp_json::member_integer(symbol, "kind", 0));
+    Node *location = lsp_json::get_object(symbol, "location");
+    if (location == nullptr) return place;
+    place.path = lsp_layer::path_of_uri(arena, lsp_json::member_text(location, "uri"));
+    Position at = start_of(lsp_json::get_object(location, "range"));
+    place.line = at.line;
+    place.column = at.column;
+    return place;
+}
+
+// What a place says: the line of the file, the way the source wrote it.
+lsp_text::Text source_line(Session *s, lsp_text::Text path, i64 number) {
+    Text contents = {};
+    bool known = false;
+    for (usize i = 0; i < s->files_count; i++) {
+        if (lsp_text::equal(s->files[i].path, path)) {
+            contents = s->files[i].contents;
+            known = true;
+        }
+    }
+    if (!known) {
+        option(lsp_text::Text) read = lsp_world::read_file(&s->life, path);
+        if (read == .some) contents = read.some;
+        if (s->files_count == countof(s->files)) {
+            lsp_session::SourceFile bigger[:] =
+                arena::push_slice(&s->life, lsp_session::SourceFile, s->files_count * 2);
+            mem::copy(bigger[0:s->files_count], s->files[0:s->files_count]);
+            s->files = bigger;
+        }
+        s->files[s->files_count] = (lsp_session::SourceFile){.path = lsp_session::keep(s, path), .contents = contents};
+        s->files_count += 1;
+    }
+    Text rest = contents;
+    for (i64 skipped = 0; skipped < number; skipped++) {
+        lsp_text::Index newline = lsp_text::find_char(rest, '\n', 0);
+        if (newline != .some) return {};
+        rest = rest[newline.some + 1:];
+    }
+    if (countof(rest) == 0) return {}; // past the last line
+    lsp_text::Index end = lsp_text::find_char(rest, '\n', 0);
+    Text line = end == .some ? rest[0:end.some] : rest;
+    return lsp_text::front(lsp_text::trim(line), 160);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The sources of the project
+
+// Puts the text in a list of sorted, different texts.
+void insert_text(Places *list, lsp_text::Text path) {
+    Place place = {};
+    place.path = path;
+    places_insert(list, place);
+}
+
+// The compile commands of the project: the first of `.smith/compile_commands.json` and `compile_commands.json` that is
+// a list.
+Node *compile_commands(Session *s, lsp_text::Text root) {
+    for (usize d = 0; d < 2; d++) {
+        Text database = "/.smith/compile_commands.json";
+        if (d == 1) database = "/compile_commands.json";
+        option(lsp_text::Text) read = lsp_world::read_file(&s->query, lsp_session::joined(&s->query, root, database));
+        if (read != .some) continue;
+        Node *entries = lsp_json::parse(&s->query, read.some);
+        if (lsp_json::is_array(entries)) return entries;
+    }
+    return nullptr;
+}
+
+// The sources of the project's compile commands, without the generated headers, in order and once each (a place for
+// each, with only its path).
+Places project_sources(Session *s) {
+    Places files = places_make(&s->query);
+    Text root = lsp_session::project_root(s);
+    Node *entries = compile_commands(s, root);
+    if (entries == nullptr) return files;
+    for (usize i = 0; i < entries->count; i++) {
+        Node *command = entries->items[i];
+        Text file = lsp_json::member_text(command, "file");
+        if (!lsp_json::is_object(command) || countof(file) == 0) continue;
+        if (file[0] != '/') {
+            Text folder = lsp_json::member_text_or(command, "directory", root);
+            file = lsp_session::joined(&s->query, lsp_session::joined(&s->query, folder, "/"), file);
+        }
+        if (!lsp_layer::is_generated(file)) insert_text(&files, file);
+    }
+    return files;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Where a name is defined
+
+// A name of a symbol in a .smith file as the source writes it, with its module: `smith::arena::push`.
+Text qualified(Session *s, const Place *place) {
+    if (!lsp_session::open(s, place->path, true)) return {};
+    lsp_session::await_parsed(s, place->path);
+    lsp_names::Names *names = c::smith_lsp_names_open(lsp_text::terminated(&s->query, place->path));
+    if (names == nullptr) return {};
+    defer c::smith_lsp_names_close(names);
+    lsp_names::Lookup written = lsp_names::find(names, place->name);
+    if (written != .some) {
+        return {};
+    }
+    Text module = lsp_names::view(written.some.module);
+    if (countof(module) == 0) return lsp_names::view(written.some.written);
+    return lsp_session::joined(&s->query, lsp_session::joined(&s->query, module, "::"),
+                               lsp_names::view(written.some.member));
+}
+
+bool ends_with_name(Text written, Text name) {
+    if (lsp_text::equal(written, name)) return true;
+    return countof(written) > countof(name) + 2 && lsp_text::ends_with(written, name) &&
+           lsp_text::equal(written[countof(written) - countof(name) - 2:countof(written) - countof(name)], "::");
+}
+
+// The name with its `::` made the `_` the compiler writes.
+Text joined_name(arena::Arena *arena, Text name) {
+    lsp_text::Builder joined = lsp_text::builder(arena, countof(name));
+    for (usize i = 0; i < countof(name); i++) {
+        if (name[i] == ':' && i + 1 < countof(name) && name[i + 1] == ':') {
+            lsp_text::append_char(&joined, '_');
+            i += 1;
+        } else {
+            lsp_text::append_char(&joined, name[i]);
+        }
+    }
+    return lsp_text::view(&joined);
+}
+
+// After the last `::`: the name's own; all of it when it has none... as StringRef::rsplit says: the second half is
+// empty.
+Text after_last_scope(Text name) {
+    lsp_text::Index at = lsp_text::find_last(name, "::");
+    if (at != .some) return {};
+    return name[at.some + 2:];
+}
+
+// Before the last `::`, or all of it.
+Text before_last_scope(Text name) {
+    lsp_text::Index at = lsp_text::find_last(name, "::");
+    if (at != .some) return name;
+    return name[0:at.some];
+}
+
+// The last of a path of modules.
+Text last_module(Text path) {
+    lsp_text::Index at = lsp_text::find_last(path, "::");
+    if (at != .some) return path;
+    return path[at.some + 2:];
+}
+
+// What a search of the index found.
+struct Found {
+    Places places;
+    Places headers;
+};
+
+// Asks the index for symbols named `query`; null when the server did not answer.
+Node *search(Session *s, Text query) {
+    Node *params = lsp_json::object(&s->query);
+    lsp_json::add(&s->query, params, "query", lsp_json::string(&s->query, query));
+    return lsp_session::request(s, "workspace/symbol", params, 120, false);
+}
+
+// The places a name is defined: by the name as the source writes it (a bare name, `module::name` or the whole
+// path), or by the C name the compiler calls it. The index is asked for the module path and the name joined with
+// `_`, which is the compiler's name, and the names of the .smith files that hold the answers say what is written.
+// `headers` also gets the generated header's declarations (where C reaches the name) and a generic's instances.
+Found find(Session *s, Text name) {
+    Found result = {.places = places_make(&s->query), .headers = places_make(&s->query)};
+    Places declared = places_make(&s->query);  // the generated header's declarations: where C reaches the name
+    Places instances = places_make(&s->query); // a generic's instances (`<name>__f32`), where its calls are
+    Text joined = joined_name(&s->query, name);
+    // A function with a C name (`[[smith::c_name("smith_arena_push")]] push_raw`) is in the index under the C name,
+    // which the written name does not spell: when the joined name finds nothing, the module's own name is asked for and
+    // every .smith symbol it brings is judged by what the source writes.
+    Text module = last_module(before_last_scope(name));
+    Text member = after_last_scope(name);
+    for (usize pass = 0; pass < 2 && result.places.count == 0; pass++) {
+        if (pass == 1 && (countof(module) == 0 || lsp_text::equal(module, name))) break;
+        Node *list = search(s, pass == 0 ? joined : module);
+        if (!lsp_json::is_array(list))
+            return (Found){.places = places_make(&s->query), .headers = places_make(&s->query)};
+        for (usize i = 0; i < list->count; i++) {
+            Node *symbol = list->items[i];
+            if (!lsp_json::is_object(symbol)) continue;
+            Place place = place_of(&s->query, symbol);
+            place.lowered = place.name;
+            if (countof(place.path) == 0) continue;
+            if (lsp_layer::is_generated(place.path)) {
+                bool seen = false;
+                for (usize d = 0; d < declared.count; d++) {
+                    if (lsp_text::equal(declared.items[d].lowered, place.lowered)) seen = true;
+                }
+                if (!seen) places_add(&declared, place);
+                continue;
+            }
+            if (lsp_text::contains(place.name, "__")) places_add(&instances, place);
+            if (lsp_text::equal(place.name, name)) {
+                places_insert(&result.places, place); // a C name
+                continue;
+            }
+            bool smith = lsp_text::ends_with(place.path, ".smith");
+            bool candidate = pass == 1 || lsp_text::contains(place.name, member);
+            if (!smith || !candidate) continue;
+            Text written = qualified(s, &place);
+            if (countof(written) == 0 || !ends_with_name(written, name)) continue;
+            place.name = written;
+            places_insert(&result.places, place);
+        }
+    }
+    for (usize p = 0; p < result.places.count; p++) {
+        Place place = result.places.items[p];
+        for (usize d = 0; d < declared.count; d++) {
+            if (lsp_text::equal(declared.items[d].lowered, place.lowered)) {
+                places_add(&result.headers, declared.items[d]);
+                break;
+            }
+        }
+        Text prefix = lsp_session::joined(&s->query, place.lowered, "__");
+        for (usize n = 0; n < instances.count; n++) {
+            if (lsp_text::starts_with(instances.items[n].lowered, prefix))
+                places_add(&result.headers, instances.items[n]);
+        }
+    }
+    return result;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The questions
+
+// A failed query leaves its status, unless something worse did.
+void found_nothing(Session *s) {
+    if (s->status == 0) s->status = 1;
+}
+
+// `path:line:col: ` of a place in the file (the places are from 0, the output from 1).
+lsp_text::Builder prefix_of(Session *s, Text path, i64 line, i64 column) {
+    lsp_text::Builder text = lsp_text::builder(&s->query, 128);
+    lsp_text::append(&text, lsp_session::relative(s, path));
+    lsp_text::append_char(&text, ':');
+    lsp_text::append_i64(&text, line + 1);
+    lsp_text::append_char(&text, ':');
+    lsp_text::append_i64(&text, column + 1);
+    lsp_text::append(&text, ": ");
+    return text;
+}
+
+void definitions(Session *s, Text name) {
+    Found found = find(s, name);
+    for (usize i = 0; i < found.places.count; i++) {
+        Place place = found.places.items[i];
+        lsp_text::Builder line = prefix_of(s, place.path, place.line, place.column);
+        lsp_text::append(&line, place.kind);
+        lsp_text::append(&line, ": ");
+        lsp_text::append(&line, place.name);
+        lsp_text::append(&line, ": ");
+        lsp_text::append(&line, source_line(s, place.path, place.line));
+        lsp_session::say(s, lsp_text::view(&line));
+    }
+    if (found.places.count == 0) found_nothing(s);
+}
+
+// The calls of a generic: the compiler sees an instance where one is written, so the index has the instance, not the
+// call. The lowering knows each call (shim/names.h, CallSite) of the files it parsed: the files that write the name are
+// read, and each call that says it is of this generic is a reference.
+void generic_calls(Session *s, const Place *generic, Places *found) {
+    Text member = after_last_scope(generic->name);
+    Text needle = lsp_session::joined(&s->query, member, "(");
+    Places sources = project_sources(s);
+    for (usize i = 0; i < sources.count; i++) {
+        Text path = sources.items[i].path;
+        if (!lsp_text::ends_with(path, ".smith") || !lsp_session::open(s, path, false)) continue;
+        option(lsp_text::Text) text = lsp_world::read_file(&s->query, path);
+        if (text != .some || !lsp_text::contains(text.some, needle)) {
+            continue;
+        }
+        _ = lsp_session::open(s, path, true);
+        lsp_session::await_parsed(s, path);
+        lsp_names::Names *names = c::smith_lsp_names_open(lsp_text::terminated(&s->query, path));
+        if (names == nullptr) continue;
+        for (usize n = 0; n < c::smith_lsp_names_call_count(names); n++) {
+            c::SmithLspCall site = {};
+            if (!c::smith_lsp_names_call(names, n, &site)) continue;
+            if (!lsp_text::equal(lsp_names::view(site.file), generic->path) ||
+                (i64)site.definition_line != generic->line) {
+                continue;
+            }
+            Place use = {};
+            use.path = path;
+            use.line = (i64)site.line;
+            use.column = (i64)site.column;
+            places_insert(found, use);
+        }
+        c::smith_lsp_names_close(names);
+    }
+}
+
+// The server's references to the symbol at the place.
+void place_references(Session *s, const Place *place, Places *found) {
+    Node *document = lsp_json::object(&s->query);
+    lsp_json::add(&s->query, document, "uri",
+                  lsp_json::string(&s->query, lsp_session::uri_of_path(&s->query, place->path)));
+    Node *at = lsp_json::object(&s->query);
+    lsp_json::add(&s->query, at, "line", lsp_json::integer(&s->query, place->line));
+    lsp_json::add(&s->query, at, "character", lsp_json::integer(&s->query, place->column));
+    Node *context = lsp_json::object(&s->query);
+    lsp_json::add(&s->query, context, "includeDeclaration", lsp_json::boolean(&s->query, true));
+    Node *where = lsp_json::object(&s->query);
+    lsp_json::add(&s->query, where, "textDocument", document);
+    lsp_json::add(&s->query, where, "position", at);
+    lsp_json::add(&s->query, where, "context", context);
+    Node *list = lsp_session::request(s, "textDocument/references", where, 120, true);
+    if (!lsp_json::is_array(list)) return;
+    for (usize i = 0; i < list->count; i++) {
+        Node *location = list->items[i];
+        if (!lsp_json::is_object(location)) continue;
+        Place use = {};
+        use.path = lsp_layer::path_of_uri(&s->query, lsp_json::member_text(location, "uri"));
+        Position at = start_of(lsp_json::get_object(location, "range"));
+        use.line = at.line;
+        use.column = at.column;
+        if (countof(use.path) > 0 && !lsp_layer::is_generated(use.path)) places_insert(found, use);
+    }
+}
+
+void references(Session *s, Text name) {
+    Places found = places_make(&s->query);
+    Found defined = find(s, name);
+    for (usize i = 0; i < defined.places.count; i++) {
+        if (lsp_text::ends_with(defined.places.items[i].path, ".smith")) {
+            generic_calls(s, &defined.places.items[i], &found);
+        }
+    }
+    for (usize i = 0; i < defined.headers.count; i++) { // the declaration C code uses is its own symbol
+        places_add(&defined.places, defined.headers.items[i]);
+    }
+    for (usize i = 0; i < defined.places.count; i++) {
+        Place place = defined.places.items[i];
+        if (lsp_session::open(s, place.path, true)) place_references(s, &place, &found);
+    }
+    for (usize i = 0; i < found.count; i++) {
+        lsp_text::Builder line = prefix_of(s, found.items[i].path, found.items[i].line, found.items[i].column);
+        lsp_text::append(&line, "ref: ");
+        lsp_text::append(&line, source_line(s, found.items[i].path, found.items[i].line));
+        lsp_session::say(s, lsp_text::view(&line));
+    }
+    if (found.count == 0) found_nothing(s);
+}
+
+// A file and a place in it, from 0.
+struct Spot {
+    Text file;
+    i64 line;
+    i64 column;
+};
+
+typedef option(Spot) MaybeSpot;
+
+// `FILE:LINE:COL`: the file and the place, from 1; none when the text is not one.
+MaybeSpot spot(Text where) {
+    lsp_text::Index last = lsp_text::find_last_char(where, ':');
+    if (last != .some || last.some == 0) {
+        return .none;
+    }
+    lsp_text::Index before = lsp_text::find_last_char(where[0:last.some], ':');
+    if (before != .some) {
+        return .none;
+    }
+    Spot found = {};
+    found.file = where[0:before.some];
+    found.line = lsp_text::leading_integer(where[before.some + 1:last.some]) - 1;
+    found.column = lsp_text::leading_integer(where[last.some + 1:]) - 1;
+    if (found.line < 0 || found.column < 0) {
+        return .none;
+    }
+    return {.some = found};
+}
+
+// Says the lines of a hover's text, each trimmed, without the blank ones, the code fences and the rules.
+usize say_lines(Session *s, Text text, Text prefix) {
+    usize said = 0;
+    Text rest = text;
+    for (usize round = 0; round <= countof(text); round++) {
+        lsp_text::Index newline = lsp_text::find_char(rest, '\n', 0);
+        Text line = newline == .some ? rest[0:newline.some] : rest;
+        Text trimmed = lsp_text::trim(line);
+        if (countof(trimmed) > 0 && !lsp_text::starts_with(trimmed, "```") && !lsp_text::equal(trimmed, "---")) {
+            lsp_text::Builder said_line = lsp_text::builder(&s->query, countof(prefix) + countof(trimmed));
+            lsp_text::append(&said_line, prefix);
+            lsp_text::append(&said_line, trimmed);
+            lsp_session::say(s, lsp_text::view(&said_line));
+            said += 1;
+        }
+        if (newline != .some) break;
+        rest = rest[newline.some + 1:];
+    }
+    return said;
+}
+
+// One part of a hover's contents: a string, or markup (an object with a `value`).
+usize say_part(Session *s, Node *part, Text prefix) {
+    if (lsp_json::is_string(part)) return say_lines(s, part->text, prefix);
+    if (lsp_json::is_object(part)) return say_lines(s, lsp_json::member_text(part, "value"), prefix);
+    return 0;
+}
+
+// A hover's contents: a part, or an array of parts.
+usize say_contents(Session *s, Node *contents, Text prefix) {
+    if (!lsp_json::is_array(contents)) return say_part(s, contents, prefix);
+    usize said = 0;
+    for (usize i = 0; i < contents->count; i++) {
+        said += say_part(s, contents->items[i], prefix);
+    }
+    return said;
+}
+
+void hover(Session *s, Text where) {
+    MaybeSpot parsed = spot(where);
+    if (parsed != .some) {
+        lsp_session::warn(lsp_session::joined(&s->query, lsp_session::joined(&s->query, "smith lsp hover: `", where),
+                                              "` is not FILE:LINE:COL\n"));
+        s->status = 2;
+        return;
+    }
+    Text file = parsed.some.file;
+    i64 line = parsed.some.line;
+    i64 column = parsed.some.column;
+    Text path = lsp_session::absolute(s, file);
+    if (!lsp_session::open(s, path, true)) {
+        lsp_session::warn(lsp_session::joined(
+            &s->query, lsp_session::joined(&s->query, "smith lsp hover: cannot read ", file), "\n"));
+        s->status = 2;
+        return;
+    }
+    Node *document = lsp_json::object(&s->query);
+    lsp_json::add(&s->query, document, "uri", lsp_json::string(&s->query, lsp_session::uri_of_path(&s->query, path)));
+    Node *at = lsp_json::object(&s->query);
+    lsp_json::add(&s->query, at, "line", lsp_json::integer(&s->query, line));
+    lsp_json::add(&s->query, at, "character", lsp_json::integer(&s->query, column));
+    Node *params = lsp_json::object(&s->query);
+    lsp_json::add(&s->query, params, "textDocument", document);
+    lsp_json::add(&s->query, params, "position", at);
+    Node *answer = lsp_session::request(s, "textDocument/hover", params, 120, true);
+    lsp_text::Builder prefix = prefix_of(s, path, line, column);
+    lsp_text::append(&prefix, "hover: ");
+    usize said = 0;
+    if (lsp_json::is_object(answer)) said = say_contents(s, lsp_json::get(answer, "contents"), lsp_text::view(&prefix));
+    if (said == 0) found_nothing(s);
+}
+
+// What an outline walk is in the middle of: a list of symbols and the next one to say.
+struct Walk {
+    Node *list;
+    usize next;
+};
+
+constexpr usize walk_max = 256;
+
+// Says the symbols of an outline (a tree, or a flat list with their locations) in the order of the file's text:
+// a symbol, then its children.
+void outline_of(Session *s, Node *list, Text path) {
+    Walk stack[walk_max];
+    usize depth = 1;
+    stack[0] = (Walk){.list = list, .next = 0};
+    for (usize step = 0; depth > 0 && step < (1 << 24); step++) {
+        Walk *top = &stack[depth - 1];
+        if (top->next == top->list->count) {
+            depth -= 1;
+            continue;
+        }
+        Node *symbol = top->list->items[top->next];
+        top->next += 1;
+        if (!lsp_json::is_object(symbol)) continue;
+        Place place = place_of(&s->query, symbol);
+        if (lsp_json::get_object(symbol, "location") == nullptr) { // a tree: the range is in the symbol itself
+            Position at = start_of(lsp_json::get_object(symbol, "selectionRange"));
+            place.line = at.line;
+            place.column = at.column;
+        }
+        lsp_text::Builder line = prefix_of(s, path, place.line, place.column);
+        lsp_text::append(&line, place.kind);
+        lsp_text::append(&line, ": ");
+        lsp_text::append(&line, place.name);
+        Text detail = lsp_json::member_text(symbol, "detail");
+        if (countof(detail) > 0) {
+            lsp_text::append(&line, "  ");
+            lsp_text::append(&line, detail);
+        }
+        lsp_session::say(s, lsp_text::view(&line));
+        Node *children = lsp_json::get_array(symbol, "children");
+        if (children != nullptr && depth < walk_max) {
+            stack[depth] = (Walk){.list = children, .next = 0};
+            depth += 1;
+        }
+    }
+}
+
+void outline(Session *s, Text file) {
+    Text path = lsp_session::absolute(s, file);
+    if (!lsp_session::open(s, path, true)) {
+        lsp_session::warn(lsp_session::joined(
+            &s->query, lsp_session::joined(&s->query, "smith lsp symbols: cannot read ", file), "\n"));
+        s->status = 2;
+        return;
+    }
+    Node *document = lsp_json::object(&s->query);
+    lsp_json::add(&s->query, document, "uri", lsp_json::string(&s->query, lsp_session::uri_of_path(&s->query, path)));
+    Node *params = lsp_json::object(&s->query);
+    lsp_json::add(&s->query, params, "textDocument", document);
+    Node *list = lsp_session::request(s, "textDocument/documentSymbol", params, 120, true);
+    if (lsp_json::is_array(list)) outline_of(s, list, path);
+}
+
+// The name of a diagnostic's severity.
+Text severity_name(i64 severity) {
+    if (severity == 2) return "warning";
+    if (severity == 3) return "note";
+    if (severity == 4) return "hint";
+    return "error";
+}
+
+void diagnose(Session *s, Places *files) {
+    Places paths = places_make(&s->query);
+    for (usize i = 0; i < files->count; i++) {
+        places_add(&paths, (Place){.path = lsp_session::absolute(s, files->items[i].path)});
+    }
+    if (paths.count == 0) paths = project_sources(s);
+    for (usize i = 0; i < paths.count; i++) {
+        Text path = paths.items[i].path;
+        if (!lsp_session::open(s, path, true)) {
+            lsp_session::warn(lsp_session::joined(
+                &s->query,
+                lsp_session::joined(&s->query, "smith lsp diag: cannot read ", lsp_session::relative(s, path)), "\n"));
+            s->status = 2;
+            continue;
+        }
+        Text uri = lsp_session::uri_of_path(&s->query, path);
+        lsp_session::await_diagnostics(s, uri, 120);
+        lsp_session::Published *published = lsp_session::published_for(s, uri);
+        for (usize d = 0; d < published->count; d++) {
+            lsp_session::Diagnostic item = published->items[d];
+            lsp_text::Builder line = prefix_of(s, path, item.line, item.column);
+            lsp_text::append(&line, severity_name(item.severity));
+            lsp_text::append(&line, ": ");
+            usize from = line.length;
+            lsp_text::append(&line, item.message);
+            for (usize c = from; c < line.length; c++) {
+                if (line.data[c] == '\n') line.data[c] = ' ';
+            }
+            lsp_session::say(s, lsp_text::view(&line));
+            if (item.severity == 1) s->status = 1;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Asking
+
+// Whether the word begins a query.
+export bool is_query_word(lsp_text::Text word) {
+    return lsp_text::equal(word, "def") || lsp_text::equal(word, "refs") || lsp_text::equal(word, "hover") ||
+           lsp_text::equal(word, "diag") || lsp_text::equal(word, "symbols") || lsp_text::equal(word, "-");
+}
+
+// The first source of the project, which the server is shown to start its index; none for no compile commands.
+export lsp_text::Text first_source(lsp_session::Session *s) {
+    Places sources = project_sources(s);
+    if (sources.count == 0) return {};
+    return sources.items[0].path;
+}
+
+// Runs one query: `word` is def, refs, hover, symbols or diag, and `operands` what it asks about.
+export void run(lsp_session::Session *s, lsp_text::Text word, const lsp_text::Piece operands[:]) {
+    arena::reset(&s->query);
+    if (lsp_text::equal(word, "def")) {
+        for (lsp_text::Piece name : operands) {
+            definitions(s, name.text);
+        }
+    } else if (lsp_text::equal(word, "refs")) {
+        for (lsp_text::Piece name : operands) {
+            references(s, name.text);
+        }
+    } else if (lsp_text::equal(word, "hover")) {
+        for (lsp_text::Piece spot_text : operands) {
+            hover(s, spot_text.text);
+        }
+    } else if (lsp_text::equal(word, "symbols")) {
+        for (lsp_text::Piece file : operands) {
+            outline(s, file.text);
+        }
+    } else if (lsp_text::equal(word, "diag")) {
+        Places files = places_make(&s->query);
+        for (lsp_text::Piece file : operands) {
+            places_add(&files, (Place){.path = file.text});
+        }
+        diagnose(s, &files);
+    }
+}

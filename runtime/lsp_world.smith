@@ -1,0 +1,93 @@
+// What the language server's layer asks of the world: files, descriptors, the clock and the environment, each a call of
+// runtime/lsp_edge.c until the direct-call modules (smith::files, console, clock, env) can be linked into smith itself
+// (issue #564). Everything else of the layer is logic over these.
+module runtime::lsp_world;
+
+import smith::arena;
+import smith::mem;
+import runtime::lsp_text;
+import "lsp_edge.h";
+
+// A whole file in the arena, or none (a file that is not there, or is not a regular file).
+export typedef option(lsp_text::Text) Contents;
+
+export Contents read_file(arena::Arena *arena, lsp_text::Text path) {
+    const char *terminated = lsp_text::terminated(arena, path);
+    i64 size = c::smith_lsp_file_size(terminated);
+    if (size < 0) {
+        return .none;
+    }
+    u8 bytes[:] = arena::push_slice(arena, u8, (usize)size);
+    if (!c::smith_lsp_file_read(terminated, bytes.data, (usize)size)) return .none;
+    if (size == 0) {
+        lsp_text::Text empty = {};
+        return {.some = empty};
+    }
+    const char *data = (const char *)bytes.data;
+    return {.some = data[0:(usize)size]};
+}
+
+// Whether the path is there.
+export bool exists(arena::Arena *arena, lsp_text::Text path) {
+    return c::smith_lsp_exists(lsp_text::terminated(arena, path));
+}
+
+// The bytes as characters.
+export lsp_text::Text as_text(const u8 bytes[:]) {
+    if (countof(bytes) == 0) return {};
+    const char *data = (const char *)bytes.data;
+    return data[0:countof(bytes)];
+}
+
+// The characters as bytes.
+export typeof(const u8[:]) as_bytes(lsp_text::Text text) {
+    if (countof(text) == 0) return {};
+    const u8 *data = (const u8 *)text.data;
+    return data[0:countof(text)];
+}
+
+// Up to the length of the buffer more bytes of the descriptor; none at its end or when it fails.
+export usize read_some(i32 descriptor, u8 buffer[:]) {
+    if (countof(buffer) == 0) return 0;
+    isize got = c::smith_lsp_read(descriptor, buffer.data, countof(buffer));
+    return got > 0 ? (usize)got : 0;
+}
+
+// Writes all of the characters to the descriptor.
+export bool write_all(i32 descriptor, lsp_text::Text data) {
+    if (countof(data) == 0) return true;
+    return c::smith_lsp_write_all(descriptor, (const u8 *)data.data, countof(data));
+}
+
+// Says something on the standard error.
+export void warn(lsp_text::Text line) {
+    _ = write_all(2, line);
+}
+
+export void close_descriptor(i32 descriptor) {
+    c::smith_lsp_close(descriptor);
+}
+
+// Monotonic nanoseconds, and the nanoseconds of a second.
+export [[maybe_unused]] constexpr u64 second = 1'000'000'000;
+
+export u64 now() {
+    return c::smith_lsp_now();
+}
+
+// The text of an environment variable, empty when there is none.
+export lsp_text::Text environment(const char *name) {
+    const char *value = c::smith_lsp_environment(name);
+    if (value == nullptr) return {};
+    return lsp_text::of(value);
+}
+
+// The memory that lasts as long as the process, as an arena that never grows (its own record is the first thing in it).
+export arena::Arena *permanent() {
+    usize size = 0;
+    void *memory = c::smith_lsp_memory(&size);
+    arena::Arena first = arena::fixed(memory, size);
+    arena::Arena *whole = arena::push(&first, arena::Arena);
+    *whole = first;
+    return whole;
+}
