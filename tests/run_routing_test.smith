@@ -193,8 +193,9 @@ static void smith_inputs(io::Io *io, bool link) {
                              language.out);
         scratch::Run kept = go_clang(&r, "", "-x c -c a.smith");
         scratch::expect_text(
-            nm(&r, "-x c is kept, and the standard is C2y as for any .smith input"),
-            format::push(&io->arena, "clang argv0=", r.cl, "\n[-std=gnu2y]\n[-x]\n[c]\n[-c]\n[a.smith]").data,
+            nm(&r, "-x c is kept, and the standard is C2y and defer is on as for any .smith input"),
+            format::push(&io->arena, "clang argv0=", r.cl, "\n[-std=gnu2y]\n[-fdefer-ts]\n[-x]\n[c]\n[-c]\n[a.smith]")
+                .data,
             kept.out);
     } else {
         scratch::Run refused = go_clang(&r, "", "-c a.smith -o out.o");
