@@ -12,13 +12,13 @@ Everything a program does to the world outside it is a value you hold and pass o
 ## One io in main
 
 ```smith
-import smith::format;
+import smith::console;
 import smith::io;
 
 i32 main(io::Io *io) {
     // a format string, as printf's, or typed pieces with none (smith-format)
     (void)io::console_printf(&io->console, "%zu arguments\n", io->args.count);
-    (void)format::print(&io->console, "seed ", io->seed, "\n");
+    (void)console::print("seed ", io->seed, "\n");
     return 0; // the arguments are io->args.count and io->args.values
 }
 ```

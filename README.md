@@ -32,15 +32,14 @@ export typeof(x) clamp(auto x, typeof(x) low, typeof(x) high) {
 // main.smith
 module main;
 
-import smith::format;
-import smith::io;
+import smith::console;
 import stats;
 
-i32 main(io::Io *io) {
+i32 main() {
     i32 raw[_] = {-3, 1, 9, 4};
     i32 readings[:] = raw;
     i32 top = stats::largest(readings[1:]); // a cut: three elements, shared with raw
-    format::print(&io->console, "largest ", top, ", clamped ", stats::clamp(top, 0, 5), "\n");
+    console::print("largest ", top, ", clamped ", stats::clamp(top, 0, 5), "\n");
     return 0;
 }
 ```
@@ -106,8 +105,7 @@ int sum(const int *xs, size_t n); // the length is a second argument, and nothin
 ```smith project=slices run
 module main;
 
-import smith::format;
-import smith::io;
+import smith::console;
 
 i32 sum(const i32 xs[:]) {
     i32 total = 0;
@@ -117,10 +115,10 @@ i32 sum(const i32 xs[:]) {
     return total;
 }
 
-i32 main(io::Io *io) {
+i32 main() {
     i32 raw[_] = {1, 2, 3, 4, 5};
     i32 all[:] = raw;
-    format::print(&io->console, "all ", sum(all), ", middle ", sum(all[1:4]), "\n");
+    console::print("all ", sum(all), ", middle ", sum(all[1:4]), "\n");
     return 0;
 }
 ```
@@ -202,11 +200,10 @@ void copy(float *dst, const float *src, size_t n) {
 ```smith project=memcopy run
 module main;
 
-import smith::format;
-import smith::io;
+import smith::console;
 import smith::mem;
 
-i32 main(io::Io *io) {
+i32 main() {
     f32 raw[4] = {1.5f, 2.5f, 3.5f, 4.5f};
     f32 copy[4] = {};
     f32 from[:] = raw;
@@ -214,7 +211,7 @@ i32 main(io::Io *io) {
     mem::copy(to, from); // two slices of one type and one length, checked
     bool same = mem::equal(to, from);
     mem::zero(to[0:2]);
-    format::print(&io->console, "same ", same, ", copy[1] ", copy[1], ", copy[3] ", copy[3], "\n");
+    console::print("same ", same, ", copy[1] ", copy[1], ", copy[3] ", copy[3], "\n");
     return 0;
 }
 ```
@@ -287,8 +284,7 @@ One function prints any struct, read at compile time:
 ```smith project=reflect run
 module main;
 
-import smith::format;
-import smith::io;
+import smith::console;
 
 struct Particle {
     f64 mass;
@@ -296,14 +292,14 @@ struct Particle {
     f64 charge;
 };
 
-void show(constexpr type T, T *x, io::Console *out) {
+void show(constexpr type T, T *x) {
     for constexpr (usize i = 0; i < countof(fields(T)); i++)
-        format::print(out, fields(T)[i].name, " = ", x->[fields(T)[i]], "\n");
+        console::print(fields(T)[i].name, " = ", x->[fields(T)[i]], "\n");
 }
 
-i32 main(io::Io *io) {
+i32 main() {
     struct Particle p = {1.5, 7, -0.25};
-    show(struct Particle, &p, &io->console);
+    show(struct Particle, &p);
     return 0;
 }
 ```
@@ -352,12 +348,11 @@ export f64 total_of_doubles(auto... args) {
 module main;
 
 import meta;
-import smith::format;
-import smith::io;
+import smith::console;
 
-i32 main(io::Io *io) {
-    format::print(&io->console, meta::mean(1, 2.5f, (i64)3, 3.5), "\n");
-    format::print(&io->console, meta::total_of_doubles(1, 2.5f, (i64)3), "\n");
+i32 main() {
+    console::print(meta::mean(1, 2.5f, (i64)3, 3.5), "\n");
+    console::print(meta::total_of_doubles(1, 2.5f, (i64)3), "\n");
     return 0;
 }
 ```
@@ -521,21 +516,20 @@ The first run builds the tests (and the program they start) with line counters a
 
 ### Capabilities and formatting
 
-A program touches the world only through what `main` passes down, so a function's signature says whether it prints.
+A function's effects are inferred from its body and its callees, so a function that prints says so and a pure one cannot.
 `format` writes its pieces by their types, with no format string to disagree with them.
 
 ```smith
 module report;
 
-import smith::format;
-import smith::io;
+import smith::console;
 
-// it can print: it was given a console
-export void report(io::Console *out, i32 top) {
-    format::print(out, "largest ", top, "\n");
+// it prints: its effects include the console
+export void report(i32 top) {
+    console::print("largest ", top, "\n");
 }
 
-// it cannot: nothing to print with
+// it cannot: it is pure
 export i32 twice(i32 x) {
     return x * 2;
 }
@@ -549,8 +543,7 @@ export i32 twice(i32 x) {
 module main;
 
 import smith::autodiff;
-import smith::format;
-import smith::io;
+import smith::console;
 
 struct Line {
     f64 m;
@@ -562,10 +555,10 @@ f64 loss(struct Line *line, f64 x, f64 y) {
     return error * error;
 }
 
-i32 main(io::Io *io) {
+i32 main() {
     struct Line line = {2, 1};
     struct Line g = autodiff::gradient(loss, &line, 3.0, 5.0);
-    format::print(&io->console, "d/dm = ", g.m, ", d/db = ", g.b, "\n");
+    console::print("d/dm = ", g.m, ", d/db = ", g.b, "\n");
     return 0;
 }
 ```
@@ -648,11 +641,10 @@ int main(void) {
 ```smith project=ported run
 module greet;
 
-import smith::format;
-import smith::io;
+import smith::console;
 
-export void greet(io::Console *out, const char name[:]) {
-    format::print(out, "hello, ", name, "\n");
+export void greet(const char name[:]) {
+    console::print("hello, ", name, "\n");
 }
 ```
 
@@ -665,10 +657,9 @@ hello, smith
 module main;
 
 import greet;
-import smith::io;
 
-i32 main(io::Io *io) {
-    greet::greet(&io->console, "smith");
+i32 main() {
+    greet::greet("smith");
     return 0;
 }
 ```

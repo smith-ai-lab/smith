@@ -20,6 +20,7 @@ module smith::process;
 
 import smith::arena;
 import smith::contract;
+import smith::env;
 import smith::mem;
 import target;
 import <errno.h>;
@@ -526,8 +527,8 @@ void child_open(const Child *child) {
 [[smith::c_name("smith_process_cores")]] export [[nodiscard]] usize cores() {
     c::SmithProcessHandler *handler = c::smith_handlers_process();
     if (handler != nullptr && handler->cores != nullptr) return handler->cores(handler);
-    const char *given = c::getenv("SMITH_CORES"); // the share of a slot (runtime/slots.c), or a fake host in a test
-    i64 count = given != nullptr && given[0] != '\0' ? c::strtol(given, nullptr, 10) : 0;
+    env::Value given = env::get("SMITH_CORES"); // the share of a slot (runtime/slots.c), or a fake host in a test
+    i64 count = given == .some && countof(given.some) > 0 ? c::strtol(given.some.data, nullptr, 10) : 0;
     if (count <= 0) count = c::sysconf(processors_online);
     return count > 0 ? (usize)count : 1;
 }

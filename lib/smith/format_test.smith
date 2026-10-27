@@ -557,28 +557,6 @@ export void test_format_report_rows_match_libc() {
     test::check(is(out, expected));
 }
 
-export void test_format_print_goes_to_the_console() {
-    alignas(arena::align_max) static u8 memory[1 << 20];
-    io::Io io = io::make_test((io::Test){.memory = memory, .capacity = sizeof memory, .seed = 7});
-    io::Error ok = format::print(&io.console, "n = ", 3, ", half = ", format::fixed(0.5, 1), "\n");
-    test::check_equal(ok.code, 0);
-    io::Error bad = format::print_error(&io.console, "row ", format::left("a", 3), "|", format::pad(9, 3));
-    test::check_equal(bad.code, 0);
-    test::check(is(io::test_output(&io), "n = 3, half = 0.5\n"));
-    test::check(is(io::test_errors(&io), "row a  |  9"));
-}
-
-export void test_format_print_too_long_prints_nothing() {
-    alignas(arena::align_max) static u8 memory[1 << 20];
-    io::Io io = io::make_test((io::Test){.memory = memory, .capacity = sizeof memory, .seed = 7});
-    char long_text[5000];
-    mem::fill(long_text[0:sizeof long_text - 1], 'x');
-    long_text[sizeof long_text - 1] = '\0';
-    io::Error error = format::print(&io.console, long_text);
-    test::check(error.code != 0);
-    test::check(is(io::test_output(&io), ""));
-}
-
 // A piece with no rule is a compile-time error that names its position (the instance note lists the types in order).
 export void test_format_no_rule_error_names_the_piece(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", "lang_project");

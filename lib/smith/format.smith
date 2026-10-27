@@ -3,7 +3,6 @@
 module smith::format;
 
 import smith::arena;
-import smith::io;
 import smith::text;
 
 // <smith/format.h>: a type-checked formatter. There is no format string: the arguments are the pieces of the text, in
@@ -727,28 +726,4 @@ export Chars push(arena::Arena *arena, auto... args) {
         arena::push_array_raw(arena, sizeof(char), characters + 1, alignof(char)); // a generic's local has no type yet
     Written written = to(memory, characters + 1, args...);
     return cut(memory, written.length);
-}
-
-constexpr i32 emsgsize = 40; // EMSGSIZE on macOS, which smith runs on
-
-// The text print made, written to stdout or stderr; too long to have fitted is EMSGSIZE and prints nothing.
-[[smith::c_name("smith_format_print_text")]] export io::Error print_text(io::Console *console, bool errors,
-                                                                         const char *characters, Written written) {
-    if (!written.fits) return io::error_make(emsgsize, "print", errors ? "stderr" : "stdout");
-    return errors ? io::console_print_error(console, characters) : io::console_print(console, characters);
-}
-
-// The arguments printed on stdout: print(&io->console, "x = ", x, "\n") is io::console_printf(&io->console, "x = %d\n",
-// x) with the pieces typed. The text is at most 4096 characters, as console_printf's; a longer one prints nothing and
-// is an error (EMSGSIZE). The error is not [[nodiscard]]: a program that prints a report has nowhere else to say that
-// stdout is closed.
-export io::Error print(io::Console *console, auto... args) {
-    char characters[4096];
-    return print_text(console, false, characters, to(characters, sizeof characters, args...));
-}
-
-// As print, on stderr.
-export io::Error print_error(io::Console *console, auto... args) {
-    char characters[4096];
-    return print_text(console, true, characters, to(characters, sizeof characters, args...));
 }
