@@ -20,8 +20,10 @@ constexpr char setup[_] =
     "'[{\"directory\":\"%s\",\"file\":\"main.smith\",\"arguments\":[\"smith-cc\",\"-x\",\"c\",\"-c\",\"main.smith\"]}]"
     "\\n' "
     "\"$d/project\" >project/compile_commands.json && export HOME=$d/home GIT_CONFIG_NOSYSTEM=1 && "
-    "(cd new && smith new --language c hello >/dev/null 2>&1 && smith new --language c broken >/dev/null 2>&1 && "
-    "printf 'this is an error\\n' >>broken/main.c && smith new fresh >/dev/null 2>&1)";
+    "mk() { smith new \"$@\" >new.log 2>&1 || { echo \"smith new $*: failed\" >&2; tail -n 40 new.log >&2; return 1; "
+    "}; }; "
+    "(cd new && mk --language c hello && mk --language c broken && "
+    "printf 'this is an error\\n' >>broken/main.c && mk fresh)";
 
 // A smith that prints a commit of our choosing and is the real one otherwise.
 constexpr char shim[_] =
@@ -52,6 +54,9 @@ static void nvim(io::Io *io, const char *name, const Start *start) {
         return; // the version tests need a git checkout of smith
     }
     scratch::Run made = scratch::sh(&p, setup);
+    if (made.status != 0) {
+        test::note("the setup said: %s", made.err); // `smith new`'s own output, so a failure explains itself (#456)
+    }
     scratch::expect_status("neovim: the scratch home is made", 0, &made);
     const char *path =
         start->bare ? "/usr/bin:/bin" : format::push(&io->arena, start->front, p.tested, ":/usr/bin:/bin").data;
