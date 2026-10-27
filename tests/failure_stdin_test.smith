@@ -1,0 +1,22 @@
+// A failure reports and exits whatever lock another thread holds (#573): smith lsp's reader thread is blocked in a read
+// on stdin, which holds stdin's lock, and the failure path used to flush every FILE and wait for it forever.
+module failure_stdin_test;
+
+import smith::format;
+import smith::io;
+import smith::test;
+import scratch;
+
+constexpr char build[_] = "smith cc -std=gnu23 -I \"$SMITH_REPO/.smith/include\" \"$SMITH_REPO/tests/failure_stdin.c\" "
+                          "\"$SMITH_REPO/lib/trace.c\" -o app";
+
+// The program's stdin is a pipe that stays open (and silent) for longer than the program's own 8 s alarm.
+export void test_failure_stdin_a_failure_reports_while_another_thread_reads_stdin(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Run built = scratch::sh(&p, build);
+    scratch::expect_status("the program builds", 0, &built);
+    scratch::Run run = scratch::sh(&p, "sleep 10 | ./app");
+    scratch::expect_status("the failure aborts, not killed by the alarm", 134, &run);
+    scratch::expect_contains("stdout was flushed first", run.out, "before");
+    scratch::expect_contains("the report is printed", run.err, "check failed");
+}
