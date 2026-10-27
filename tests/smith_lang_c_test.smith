@@ -163,6 +163,10 @@ export void test_arrays_print_the_same_as_c(io::Io *io) {
     behave(io, "arrays");
 }
 
+export void test_null_pointers_and_a_member_named_some_print_the_same_as_c(io::Io *io) {
+    behave(io, "null_pointers");
+}
+
 export void test_a_defer_name_prints_the_same_as_c(io::Io *io) {
     behave(io, "defer_name");
 }

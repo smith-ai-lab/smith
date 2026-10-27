@@ -1,0 +1,2 @@
+src/main.smith:19:16: smith-enum: 'p.some' is read where 'p' may not be a some; test 'p == .some' or switch on 'p'
+src/main.smith:8:12: smith-enum: 'p.some' is read where 'p' may not be a some; test 'p == .some' or switch on 'p'

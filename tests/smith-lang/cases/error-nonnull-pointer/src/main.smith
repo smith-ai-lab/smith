@@ -1,0 +1,30 @@
+module main;
+
+struct Node {
+    i32 value;
+};
+
+struct Holder {
+    Node *must;
+    option(Node *) may;
+    i32 n;
+};
+
+Node *absent(void) {
+    return nullptr;
+}
+
+i32 uses(void) {
+    Node *a = nullptr;
+    Node *b;
+    Node *c = 0;
+    Holder h = {.n = 1};
+    option(Node *) fine = .none;
+    Node n = {.value = 1};
+    Holder ok = {.must = &n, .n = 2};
+    return a == nullptr && b != nullptr && c != fine.some && h.n == ok.n;
+}
+
+i32 main(void) {
+    return 0;
+}

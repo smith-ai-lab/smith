@@ -1976,13 +1976,23 @@ static bool smith_lang_slice_declared_text(SmithLang *lang, const SmithHost *hos
         return false;
     }
     *pointer = smith_lang_punct(&star, "*");
-    SmithToken tokens[9];
+    SmithToken nullable = {};
+    SmithToken mark = {};
+    bool marked = smith_lang_ident(&star, "_Nullable") && smith_lang_tuple_previous(lang, host, 3, &mark) &&
+                  smith_lang_punct(&mark, "*"); // `T * _Nullable name =`, an `option(T *)`
+    if (marked) {
+        nullable = star;
+        star = mark;
+        *pointer = true;
+    }
+    SmithToken tokens[10];
     size_t count = 0;
     tokens[count++] = smith_lang_tuple_made(SmithTokenKind_Punctuator, "(", 1, &name, true);
-    size_t words = smith_lang_slice_type_before(lang, host, *pointer ? 3 : 2, tokens + count);
+    size_t words = smith_lang_slice_type_before(lang, host, marked ? 4 : *pointer ? 3 : 2, tokens + count);
     if (words == 0) return false;
     count += words;
     if (*pointer) tokens[count++] = star;
+    if (marked) tokens[count++] = nullable;
     tokens[count++] = smith_lang_tuple_made(SmithTokenKind_Punctuator, ")", 1, &name, true);
     if (*pointer) {
         tokens[count++] = smith_lang_tuple_made(SmithTokenKind_Number, "0", 1, &name, true);

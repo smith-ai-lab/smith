@@ -2088,7 +2088,7 @@ class SmithHook final : public TokenHook, public NameSource {
         type = self->finishType(type);
         const PrintingPolicy &policy = ast.getPrintingPolicy();
         snprintf(out->written, sizeof out->written, "%s", type.getAsString(policy).c_str());
-        snprintf(out->canonical, sizeof out->canonical, "%s", type.getCanonicalType().getAsString(policy).c_str());
+        snprintf(out->canonical, sizeof out->canonical, "%s", canonicalText(type, ast).c_str());
         return true;
     }
 
@@ -2275,14 +2275,38 @@ class SmithHook final : public TokenHook, public NameSource {
         return true;
     }
 
+    // The canonical spelling of a type, with the nullability mark that canonicalisation drops: a pointer marked
+    // `_Nullable` (what `option(T *)` lowers to) is `T * _Nullable`, in a function type's result and parameters too,
+    // so the lowering tells it from the plain `T *`, which is never null.
+    static std::string canonicalText(QualType type, ASTContext &ast) {
+        auto marked = [](QualType each) {
+            auto kind = each->getNullability();
+            return each->isPointerType() && kind && *kind == NullabilityKind::Nullable;
+        };
+        bool through = type->isPointerType() && type->getPointeeType()->isFunctionProtoType();
+        if (const auto *function = (through ? type->getPointeeType() : type)->getAs<FunctionProtoType>()) {
+            bool any = marked(function->getReturnType());
+            for (QualType each : function->getParamTypes())
+                any = any || marked(each);
+            if (any) {
+                std::string text = canonicalText(function->getReturnType(), ast) + (through ? " (*)(" : " (");
+                for (unsigned at = 0; at < function->getNumParams(); at++)
+                    text += (at > 0 ? ", " : "") + canonicalText(function->getParamType(at), ast);
+                if (function->isVariadic()) text += function->getNumParams() > 0 ? ", ..." : "...";
+                return text + ")";
+            }
+        }
+        std::string text = type.getCanonicalType().getAsString(ast.getPrintingPolicy());
+        return marked(type) ? text + " _Nullable" : text;
+    }
+
     // The return type of the function whose body is being parsed.
     static bool returnType(void *context, char *out, uint32_t capacity) {
         auto *self = static_cast<SmithHook *>(context);
         if (self->sema == nullptr) return false;
         const FunctionDecl *function = self->sema->getCurFunctionDecl(true);
         if (function == nullptr) return false;
-        QualType type = function->getReturnType().getCanonicalType();
-        snprintf(out, capacity, "%s", type.getAsString(self->sema->getASTContext().getPrintingPolicy()).c_str());
+        snprintf(out, capacity, "%s", canonicalText(function->getReturnType(), self->sema->getASTContext()).c_str());
         return true;
     }
 

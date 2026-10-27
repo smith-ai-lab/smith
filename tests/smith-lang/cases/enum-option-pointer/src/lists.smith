@@ -1,0 +1,16 @@
+module lists;
+
+export struct Item {
+    i32 value;
+    option(Item *) next;
+};
+
+// A pointer that may be absent, in an exported signature: the header shows the pointer, marked `_Nullable`.
+export option(Item *) last(option(Item *) first) {
+    option(Item *) at = first;
+    while (at == .some) {
+        if (at.some->next == .none) return at;
+        at = at.some->next;
+    }
+    return .none;
+}

@@ -1,0 +1,48 @@
+module main;
+
+import <stdio.h>;
+import lists;
+
+// `option(T *)` is the pointer itself: no tag, null is `.none`.
+struct Node {
+    i32 value;
+    option(Node *) next;
+};
+
+typedef option(Node *) MaybeNode;
+
+MaybeNode find(Node *head, i32 wanted) {
+    option(Node *) at = head;
+    while (at == .some) {
+        if (at.some->value == wanted) return at;
+        at = at.some->next;
+    }
+    return .none;
+}
+
+i32 sum(option(Node *) list) {
+    i32 total = 0;
+    for (option(Node *) cursor = list; cursor != .none; cursor = cursor.some->next) {
+        total += cursor.some->value;
+    }
+    return total;
+}
+
+static_assert(sizeof(option(Node *)) == sizeof(Node *));
+static_assert(sizeof(MaybeNode) == sizeof(void *));
+
+i32 main(void) {
+    Node c = {.value = 3};
+    Node b = {.value = 2, .next = &c};
+    Node a = {.value = 1, .next = &b};
+    MaybeNode missing = .none;
+    lists::Item tail = {.value = 7};
+    lists::Item head = {.value = 5, .next = &tail};
+    option(lists::Item *) end = lists::last(&head);
+    MaybeNode second = find(&a, 2);
+    c::printf("%d %d %d\n", sum(&a), second == .some, missing == .some);
+    c::printf("%d\n", find(&a, 9) == .none);
+    if (end == .some) c::printf("%d\n", end.some->value);
+    if (second == .some) c::printf("%d\n", second.some->value);
+    return 0;
+}

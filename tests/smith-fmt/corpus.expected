@@ -1091,6 +1091,72 @@ i32 main(void) {
               none == .none ? "empty" : "full");
     return 0;
 }
+==> enum-option-pointer/src/lists.smith <==
+module lists;
+
+export struct Item {
+    i32 value;
+    option(Item *) next;
+};
+
+// A pointer that may be absent, in an exported signature: the header shows the pointer, marked `_Nullable`.
+export option(Item *) last(option(Item *) first) {
+    option(Item *) at = first;
+    while (at == .some) {
+        if (at.some->next == .none) return at;
+        at = at.some->next;
+    }
+    return .none;
+}
+==> enum-option-pointer/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import lists;
+
+// `option(T *)` is the pointer itself: no tag, null is `.none`.
+struct Node {
+    i32 value;
+    option(Node *) next;
+};
+
+typedef option(Node *) MaybeNode;
+
+MaybeNode find(Node *head, i32 wanted) {
+    option(Node *) at = head;
+    while (at == .some) {
+        if (at.some->value == wanted) return at;
+        at = at.some->next;
+    }
+    return .none;
+}
+
+i32 sum(option(Node *) list) {
+    i32 total = 0;
+    for (option(Node *) cursor = list; cursor != .none; cursor = cursor.some->next) {
+        total += cursor.some->value;
+    }
+    return total;
+}
+
+static_assert(sizeof(option(Node *)) == sizeof(Node *));
+static_assert(sizeof(MaybeNode) == sizeof(void *));
+
+i32 main(void) {
+    Node c = {.value = 3};
+    Node b = {.value = 2, .next = &c};
+    Node a = {.value = 1, .next = &b};
+    MaybeNode missing = .none;
+    lists::Item tail = {.value = 7};
+    lists::Item head = {.value = 5, .next = &tail};
+    option(lists::Item *) end = lists::last(&head);
+    MaybeNode second = find(&a, 2);
+    c::printf("%d %d %d\n", sum(&a), second == .some, missing == .some);
+    c::printf("%d\n", find(&a, 9) == .none);
+    if (end == .some) c::printf("%d\n", end.some->value);
+    if (second == .some) c::printf("%d\n", second.some->value);
+    return 0;
+}
 ==> enum-payload-lowering/src/shapes.smith <==
 module shapes;
 
@@ -2810,6 +2876,64 @@ export int f() {
 ==> error-module-syntax/src/syntax.smith <==
 module;
 int x;
+==> error-nonnull-pointer/src/main.smith <==
+module main;
+
+struct Node {
+    i32 value;
+};
+
+struct Holder {
+    Node *must;
+    option(Node *) may;
+    i32 n;
+};
+
+Node *absent(void) {
+    return nullptr;
+}
+
+i32 uses(void) {
+    Node *a = nullptr;
+    Node *b;
+    Node *c = 0;
+    Holder h = {.n = 1};
+    option(Node *) fine = .none;
+    Node n = {.value = 1};
+    Holder ok = {.must = &n, .n = 2};
+    return a == nullptr && b != nullptr && c != fine.some && h.n == ok.n;
+}
+
+i32 main(void) {
+    return 0;
+}
+==> error-option-pointer-narrow/src/main.smith <==
+module main;
+
+struct Node {
+    i32 value;
+};
+
+i32 untested(option(Node *) p) {
+    return p.some->value;
+}
+
+i32 tested(option(Node *) p) {
+    if (p == .none) return 0;
+    return p.some->value;
+}
+
+i32 forgotten(option(Node *) p, option(Node *) q) {
+    if (p == .some) {
+        p = q;
+        return p.some->value;
+    }
+    return 0;
+}
+
+i32 main(void) {
+    return 0;
+}
 ==> error-plain-c-macro/src/main.smith <==
 import <stdio.h>;
 

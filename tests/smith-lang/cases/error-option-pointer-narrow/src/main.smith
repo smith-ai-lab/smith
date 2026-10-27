@@ -1,0 +1,26 @@
+module main;
+
+struct Node {
+    i32 value;
+};
+
+i32 untested(option(Node *) p) {
+    return p.some->value;
+}
+
+i32 tested(option(Node *) p) {
+    if (p == .none) return 0;
+    return p.some->value;
+}
+
+i32 forgotten(option(Node *) p, option(Node *) q) {
+    if (p == .some) {
+        p = q;
+        return p.some->value;
+    }
+    return 0;
+}
+
+i32 main(void) {
+    return 0;
+}

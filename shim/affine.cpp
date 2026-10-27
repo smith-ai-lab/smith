@@ -29,12 +29,14 @@
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendPluginRegistry.h"
 #include "clang/Lex/Lexer.h"
+#include "clang/Lex/Preprocessor.h"
 #include "clang/Sema/ParsedAttr.h"
 #include "clang/Sema/Sema.h"
 
 #include <deque>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <utility>
@@ -494,6 +496,25 @@ class Flow {
 
 constexpr long long derefStep = -2;
 
+// A pointer marked `_Nullable`: what `option(T *)` lowers to (runtime/lang_enum.c). Null is its `.none`, and any other
+// pointer is its `.some`.
+bool nullablePointer(QualType type) {
+    if (!type->isPointerType()) return false;
+    auto kind = type->getNullability();
+    return kind && *kind == NullabilityKind::Nullable;
+}
+
+// `p.some` of an `option(T *)` is written `(T *)__builtin_assume_aligned((p), 1)`: the pointer itself and nothing run.
+// The receiver `p`, else null.
+const Expr *someReceiver(const CallExpr *call) {
+    const FunctionDecl *callee = call->getDirectCallee();
+    if (callee == nullptr || callee->getName() != "__builtin_assume_aligned" || call->getNumArgs() != 2) return nullptr;
+    const auto *one = dyn_cast<IntegerLiteral>(call->getArg(1)->IgnoreParenImpCasts());
+    if (one == nullptr || one->getValue() != 1) return nullptr;
+    const Expr *receiver = call->getArg(0)->IgnoreParenImpCasts();
+    return nullablePointer(receiver->getType()) ? receiver : nullptr;
+}
+
 bool enumRecord(const RecordDecl *record) {
     if (record == nullptr) return false;
     for (const Decl *each : record->redecls())
@@ -599,6 +620,16 @@ bool conditionFact(const Expr *cond, bool wanted, ASTContext &context, Key &plac
         return unary->getOpcode() == UO_LNot && conditionFact(unary->getSubExpr(), !wanted, context, place, variant);
     const auto *binary = dyn_cast<BinaryOperator>(cond);
     if (binary == nullptr || (binary->getOpcode() != BO_EQ && binary->getOpcode() != BO_NE)) return false;
+    for (int side = 0; side < 2; side++) { // `p != nullptr` (`p == .some`) true, or `p == nullptr` false: a `some`
+        const Expr *pointer = (side == 0 ? binary->getLHS() : binary->getRHS())->IgnoreParenImpCasts();
+        const Expr *null = side == 0 ? binary->getRHS() : binary->getLHS();
+        place = Key();
+        if (nullablePointer(pointer->getType()) &&
+            null->isNullPointerConstant(context, Expr::NPC_ValueDependentIsNull) && placeOf(pointer, place)) {
+            variant = "some";
+            return (binary->getOpcode() == BO_NE) == wanted;
+        }
+    }
     if ((binary->getOpcode() == BO_EQ) != wanted) return false;
     for (int side = 0; side < 2; side++) {
         const Expr *tag = side == 0 ? binary->getLHS() : binary->getRHS();
@@ -640,7 +671,7 @@ class NarrowClassifier {
         } else if (const auto *unary = dyn_cast<UnaryOperator>(stmt)) {
             if (unary->isIncrementDecrementOp() || unary->getOpcode() == UO_AddrOf) kill(unary, unary->getSubExpr());
         } else if (const auto *call = dyn_cast<CallExpr>(stmt)) {
-            calls(call);
+            if (!somePointer(call)) calls(call);
         }
         for (const Stmt *child : stmt->children())
             walk(child);
@@ -663,6 +694,20 @@ class NarrowClassifier {
         sites[member] = site;
     }
 
+    // `p.some` of an `option(T *)`: a read of the variant `some` of the place `p`.
+    bool somePointer(const CallExpr *call) {
+        const Expr *receiver = someReceiver(call);
+        if (receiver == nullptr) return false;
+        interesting = true;
+        NarrowSite site;
+        site.action = NarrowAction::Read;
+        site.variant = "some";
+        site.loc = call->getBeginLoc();
+        if (!placeOf(receiver, site.place)) site.place = Key();
+        sites[call] = site;
+        return true;
+    }
+
     void kill(const Stmt *node, const Expr *target) {
         NarrowSite site;
         site.action = NarrowAction::Kill;
@@ -676,6 +721,8 @@ class NarrowClassifier {
         for (const Expr *argument : call->arguments()) {
             Key place;
             if (!argument->getType()->isPointerType() || !placeOf(argument, place)) continue;
+            if (nullablePointer(argument->IgnoreParenImpCasts()->getType()))
+                continue; // the value is passed, not the place
             if (site.place.first == nullptr)
                 site.place = place;
             else
@@ -958,20 +1005,132 @@ class VoidPointerVisitor : public RecursiveASTVisitor<VoidPointerVisitor> {
 };
 // NOLINTEND(bugprone-derived-method-shadowing-base-method)
 
+// ---- A `T *` is never null in a module (issue #86)
+// -------------------------------------------------------------------------------
+//
+// In a file with a `module` line a pointer that may be absent is an `option(T *)` (`T * _Nullable`, whose null is
+// `.none`); a plain `T *` is never null. So three things are errors there: a null pointer constant (`nullptr`, `0`,
+// `NULL`) converted to a `T *` (clang records each as a null-to-pointer cast), a `T *` local with no initializer, and
+// a `T *` member a struct's initializer leaves out. A comparison (`p == nullptr`) converts nothing and is allowed, and
+// so is an argument of a function a system header declares (a C library takes null: that is the foreign rule, not
+// this one). A file without a `module` line is not looked at.
+
+// NOLINTBEGIN(bugprone-derived-method-shadowing-base-method): a CRTP visitor overrides the base's hooks by name
+class NullPointerVisitor : public RecursiveASTVisitor<NullPointerVisitor> {
+  public:
+    explicit NullPointerVisitor(ASTContext &context)
+        : context(context), engine(context.getDiagnostics()), policy(context.getPrintingPolicy()) {
+        policy.SuppressTagKeyword = true;
+        converts = engine.getCustomDiagID(DiagnosticsEngine::Error,
+                                          "a `%0` is never null: write `option(%0)` for a pointer that may be absent, "
+                                          "and `.none` for no value");
+        local = engine.getCustomDiagID(DiagnosticsEngine::Error,
+                                       "the `%0` '%1' has no value, and a `%0` is never null: give it one, or write "
+                                       "`option(%0)` for a pointer that may be absent");
+        member = engine.getCustomDiagID(DiagnosticsEngine::Error,
+                                        "the `%0` member '%1' is left out, and a `%0` is never null: give it a value, "
+                                        "or write `option(%0)` for a pointer that may be absent");
+    }
+
+    bool shouldVisitTemplateInstantiations() const {
+        return false;
+    }
+
+    bool TraverseDecl(Decl *decl) {
+        if (decl != nullptr && !decl->isImplicit() && decl->getLocation().isValid() &&
+            context.getSourceManager().isInSystemHeader(decl->getLocation()))
+            return true;
+        return RecursiveASTVisitor::TraverseDecl(decl);
+    }
+
+    bool VisitBinaryOperator(BinaryOperator *op) {
+        if (op->isComparisonOp()) {
+            exempt.insert(op->getLHS()->IgnoreParens());
+            exempt.insert(op->getRHS()->IgnoreParens());
+        }
+        return true;
+    }
+
+    bool VisitCallExpr(CallExpr *call) {
+        const FunctionDecl *callee = call->getDirectCallee();
+        if (callee == nullptr || !context.getSourceManager().isInSystemHeader(callee->getLocation())) return true;
+        for (const Expr *argument : call->arguments())
+            exempt.insert(argument->IgnoreParens());
+        return true;
+    }
+
+    bool VisitImplicitCastExpr(ImplicitCastExpr *cast) {
+        if (cast->getCastKind() != CK_NullToPointer || exempt.count(cast) != 0) return true;
+        QualType to = cast->getType();
+        if (!to->isPointerType() || nullablePointer(to) || !written(cast->getBeginLoc())) return true;
+        engine.Report(cast->getBeginLoc(), converts) << to.getAsString(policy);
+        return true;
+    }
+
+    bool VisitVarDecl(VarDecl *variable) {
+        QualType type = variable->getType();
+        if (!variable->isLocalVarDecl() || variable->hasInit() || isa<ParmVarDecl>(variable) ||
+            variable->hasExternalStorage() || !type->isPointerType() || nullablePointer(type) ||
+            !written(variable->getLocation()))
+            return true;
+        engine.Report(variable->getLocation(), local) << type.getAsString(policy) << variable->getName();
+        return true;
+    }
+
+    bool VisitInitListExpr(InitListExpr *written_form) {
+        // the syntactic form is the one written (designators in it); the semantic form lists a value for each field
+        InitListExpr *list = written_form->isSemanticForm() ? written_form : written_form->getSemanticForm();
+        if (list == nullptr || !written_form->isSyntacticForm()) return true;
+        const RecordDecl *record = list->getType()->getAsRecordDecl();
+        if (record == nullptr || record->isUnion() || !written(written_form->getBeginLoc())) return true;
+        unsigned at = 0;
+        for (const FieldDecl *field : record->fields()) {
+            QualType type = field->getType();
+            const Expr *given = at < list->getNumInits() ? list->getInit(at) : nullptr;
+            at++;
+            if (!type->isPointerType() || nullablePointer(type) || field->getName().empty()) continue;
+            if (given == nullptr || isa<ImplicitValueInitExpr>(given))
+                engine.Report(written_form->getBeginLoc(), member) << type.getAsString(policy) << field->getName();
+        }
+        return true;
+    }
+
+  private:
+    bool written(SourceLocation loc) const {
+        const SourceManager &sm = context.getSourceManager();
+        return loc.isValid() && sm.isWrittenInMainFile(sm.getExpansionLoc(loc));
+    }
+
+    ASTContext &context;
+    DiagnosticsEngine &engine;
+    PrintingPolicy policy;
+    std::set<const Expr *> exempt;
+    unsigned converts, local, member;
+};
+// NOLINTEND(bugprone-derived-method-shadowing-base-method)
+
 // ---- Every function that has a body
 // ----------------------------------------------------------------------------------
 
 class Consumer : public ASTConsumer {
   public:
-    explicit Consumer(CompilerInstance &) {}
+    explicit Consumer(CompilerInstance &instance) : instance(instance) {}
 
     void HandleTranslationUnit(ASTContext &context) override {
-        if (isModuleFile(context)) VoidPointerVisitor(context).TraverseDecl(context.getTranslationUnitDecl());
+        if (isModuleFile(context)) {
+            VoidPointerVisitor(context).TraverseDecl(context.getTranslationUnitDecl());
+            // Until every pointer of smith's libraries is migrated (issue #86, stage 2) the rule is opt-in: a
+            // compile with `-DSMITH_NONNULL_POINTERS` has it.
+            if (instance.getPreprocessor().isMacroDefined("SMITH_NONNULL_POINTERS"))
+                NullPointerVisitor(context).TraverseDecl(context.getTranslationUnitDecl());
+        }
         Reporter reporter(context);
         visit(context.getTranslationUnitDecl(), context, reporter);
     }
 
   private:
+    CompilerInstance &instance;
+
     static bool skipped(const Decl *decl, ASTContext &context) {
         if (decl->isImplicit()) return true;
         SourceLocation loc = decl->getLocation();

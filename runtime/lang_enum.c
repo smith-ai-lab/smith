@@ -185,11 +185,21 @@ constexpr size_t smith_lang_enum_switch_max = 8;
 typedef struct {
     char type[smith_lang_enum_name_max]; // struct main_Shape
     char name[smith_lang_enum_name_max]; // main_Shape
+    bool pointer; // `option(T *)`: the pointer `T * _Nullable`, whose null is `.none`; `type` is `T *` (no struct)
 } SmithLangEnumType;
 
 // A canonical type that is a payload enum: `struct smith_enum_<name>` with a tag enum `<name>_tag`.
 static bool smith_lang_enum_type(const SmithHost *host, const char *canonical, SmithLangEnumType *out) {
     if (host->lookup == nullptr) return false;
+    static constexpr char nullable[] = " _Nullable";
+    size_t whole = strlen(canonical);
+    if (whole > sizeof nullable && strcmp(canonical + whole - (sizeof nullable - 1), nullable) == 0 &&
+        whole - (sizeof nullable - 1) < sizeof out->type) { // `option(T *)` is the pointer marked `_Nullable`
+        *out = (SmithLangEnumType){.pointer = true};
+        snprintf(out->type, sizeof out->type, "%.*s", (int)(whole - (sizeof nullable - 1)), canonical);
+        return true;
+    }
+    out->pointer = false;
     if (strncmp(canonical, "const ", 6) == 0) canonical += 6;
     if (strncmp(canonical, "struct ", 7) != 0 || strchr(canonical + 7, ' ') != nullptr ||
         strchr(canonical + 7, '*') != nullptr || strlen(canonical + 7) + 8 > sizeof out->name) {
@@ -251,6 +261,10 @@ static bool smith_lang_enum_payload(const SmithHost *host, const SmithLangEnumTy
 
 // Whether `type` is the language's own `result(T, E)` (`*is_result`) or `option(T)`.
 static bool smith_lang_enum_builtin(const SmithLangEnumType *type, bool *is_result) {
+    if (type->pointer) {
+        *is_result = false;
+        return true;
+    }
     *is_result = strncmp(type->type, "struct smith_enum_result_", 25) == 0;
     return *is_result || strncmp(type->type, "struct smith_enum_option_", 25) == 0;
 }
@@ -259,6 +273,22 @@ static bool smith_lang_enum_builtin(const SmithLangEnumType *type, bool *is_resu
 static bool smith_lang_enum_variant(SmithLang *lang, const SmithHost *host, const SmithLangEnumType *type,
                                     const SmithToken *dot, const SmithToken *variant, bool bare, char *constant,
                                     size_t capacity) {
+    if (type->pointer) { // `some` and `none`; the constant is the comparison's: `some` is "not null"
+        bool some = smith_lang_equals(variant->text, variant->length, "some");
+        if (!some && !smith_lang_equals(variant->text, variant->length, "none")) {
+            smith_lang_error(lang, host, dot->location,
+                             "an `option(T *)` has the variants `some` and `none`, not `%.*s`", (int)variant->length,
+                             variant->text);
+            return false;
+        }
+        if (bare && some) {
+            smith_lang_error(lang, host, dot->location,
+                             "`.some` carries a payload: write `{.some = ...}`, as a designated initializer");
+            return false;
+        }
+        snprintf(constant, capacity, "%s", some ? "some" : "none");
+        return true;
+    }
     if (!smith_lang_enum_constant(host, type, variant, constant, capacity)) {
         smith_lang_error(lang, host, dot->location, "`%s` has no variant `%.*s`", type->name + 0, (int)variant->length,
                          variant->text);
@@ -288,7 +318,11 @@ static bool smith_lang_enum_is_braced(const SmithToken *tokens, size_t count) {
 static void smith_lang_enum_blank(const SmithLangEnumType *type, bool literal, const SmithToken *like,
                                   SmithLangSliceCur *cur) {
     char empty[smith_lang_enum_name_max + 16];
-    snprintf(empty, sizeof empty, literal ? "( %s ) { }" : "{ }", type->type);
+    if (type->pointer) {
+        snprintf(empty, sizeof empty, "nullptr");
+    } else {
+        snprintf(empty, sizeof empty, literal ? "( %s ) { }" : "{ }", type->type);
+    }
     SmithLangSliceCur piece = {};
     piece.count = smith_lang_slice_pattern(piece.tokens, 0, smith_lang_slice_cur_max, empty, nullptr, like);
     smith_lang_slice_add(cur, piece.tokens, piece.count);
@@ -336,6 +370,7 @@ static bool smith_lang_enum_wrap(SmithLang *lang, const SmithHost *host, const S
         !host->expr_type(host->context, text, (uint32_t)strlen(text), &given)) {
         return false;
     }
+    if (type->pointer) return false; // a pointer converts as C does: `p` is `.some`, `nullptr` is `.none`
     SmithLangEnumType same;
     if (smith_lang_enum_type(host, given.canonical, &same) && strcmp(same.type, type->type) == 0) return false;
     const char *variant = is_result ? "ok" : "some";
@@ -377,6 +412,20 @@ static bool smith_lang_enum_value(SmithLang *lang, const SmithHost *host, const 
     char constant[smith_lang_enum_name_max + 64];
     if (!smith_lang_enum_variant(lang, host, type, dot, variant, bare, constant, sizeof constant)) {
         smith_lang_enum_blank(type, literal, &tokens[0], cur); // a value of the type, so that nothing else is said
+        return true;
+    }
+    if (type->pointer) { // `.none` is null, `{.some = p}` is `p`
+        SmithLangSliceSpan span[1] = {{tokens + 4, bare ? 0 : count - 5}};
+        const char *pattern = bare ? "nullptr" : "( @0 )";
+        if (!bare && strcmp(constant, "none") == 0) {
+            smith_lang_error(lang, host, dot->location, "`.none` carries nothing: write `.none`");
+            smith_lang_enum_blank(type, literal, &tokens[0], cur);
+            return true;
+        }
+        SmithLangSliceCur piece = {};
+        piece.count = smith_lang_slice_pattern(piece.tokens, 0, smith_lang_slice_cur_max, pattern, span, &tokens[0]);
+        smith_lang_slice_add(cur, piece.tokens, piece.count);
+        cur->changed = true;
         return true;
     }
     char pattern[smith_lang_enum_name_max * 2 + 80];
@@ -422,11 +471,13 @@ static bool smith_lang_enum_equals(SmithLang *lang, const SmithHost *host) {
     bool pointer = false;
     SmithExprType found = {};
     bool declares = smith_lang_slice_declared_text(lang, host, text, sizeof text, &pointer);
-    bool typed = declares ? !pointer && host->expr_type(host->context, text, (uint32_t)strlen(text), &found) &&
-                                smith_lang_enum_type(host, found.canonical, &type)
-                          : smith_lang_tuple_base(lang, host, text, sizeof text) &&
-                                host->expr_type(host->context, text, (uint32_t)strlen(text), &found) &&
-                                smith_lang_enum_type(host, found.canonical, &type);
+    bool nullable = declares && pointer && strstr(text, "_Nullable") != nullptr; // `T * _Nullable x = .none;`
+    bool typed = declares
+                     ? (!pointer || nullable) && host->expr_type(host->context, text, (uint32_t)strlen(text), &found) &&
+                           smith_lang_enum_type(host, found.canonical, &type)
+                     : smith_lang_tuple_base(lang, host, text, sizeof text) &&
+                           host->expr_type(host->context, text, (uint32_t)strlen(text), &found) &&
+                           smith_lang_enum_type(host, found.canonical, &type);
     if (!typed) return false;
     const SmithToken *after = smith_lang_peek(lang, host, count, false);
     if (!dotted && !smith_lang_punct(after, ";") && !(declares && smith_lang_punct(after, ","))) return false;
@@ -537,6 +588,44 @@ static bool smith_lang_enum_comparison(SmithLang *lang, const SmithHost *host, c
 static bool smith_lang_enum_generic_constant(SmithLang *lang, const SmithHost *host, const SmithToken *operand,
                                              size_t length, const SmithToken *variant, char *out, size_t capacity);
 
+// `p == .some` is `p != nullptr` and `p == .none` is `p == nullptr` (`!=` the other way): the operator of the
+// comparison `oper`, as the pointer needs it for the variant (`some` or `none`, what `smith_lang_enum_variant` wrote).
+static void smith_lang_enum_pointer_operator(SmithToken *oper, const char *variant) {
+    bool equal = smith_lang_punct(oper, "==");
+    bool some = strcmp(variant, "some") == 0;
+    bool same = equal != some; // `== .none` and `!= .some` test for null
+    *oper = smith_lang_tuple_made(SmithTokenKind_Punctuator, same ? "==" : "!=", 2, oper, oper->space_before);
+}
+
+// The `.some` of an `option(T *)` inside the operand of a comparison (`at.some->next == .some`): the comparison's own
+// tokens are not lowered again, so each is written here as `smith_lang_enum_some` writes it. `count` is the new count.
+static bool smith_lang_enum_rewrite_somes(SmithLang *lang, const SmithHost *host, SmithToken *tokens, size_t *count) {
+    static SmithToken made[smith_lang_slice_chain_max + 24];
+    bool changed = false;
+    int depth = 0;
+    for (size_t at = 1; at < *count; at++) { // each token that could be the `some`
+        depth += smith_lang_punct(&tokens[at], "(") || smith_lang_punct(&tokens[at], "[");
+        depth -= smith_lang_punct(&tokens[at], ")") || smith_lang_punct(&tokens[at], "]");
+        bool member = at >= 2 && (smith_lang_punct(&tokens[at - 1], ".") || smith_lang_punct(&tokens[at - 1], "->"));
+        SmithLangEnumType type;
+        if (depth != 0 || !member || !smith_lang_ident(&tokens[at], "some") ||
+            !smith_lang_enum_of(lang, host, tokens, at - 1, &type) || !type.pointer) {
+            continue;
+        }
+        char pattern[smith_lang_enum_name_max + 80];
+        snprintf(pattern, sizeof pattern, "( ( %s ) __builtin_assume_aligned ( ( @0 ) , 1 ) )", type.type);
+        SmithLangSliceSpan spans[1] = {{tokens, at - 1}};
+        size_t used = smith_lang_slice_pattern(made, 0, sizeof made / sizeof made[0], pattern, spans, &tokens[0]);
+        if (used + (*count - at - 1) >= smith_lang_slice_chain_max) return changed;
+        memcpy(made + used, tokens + at + 1, (*count - at - 1) * sizeof made[0]);
+        memcpy(tokens, made, (used + *count - at - 1) * sizeof made[0]);
+        *count = used + *count - at - 1;
+        at = used - 1;
+        changed = true;
+    }
+    return changed;
+}
+
 // At the first token of `operand == .v` (a name, `*` or `(` after an operator): written as `(operand).tag == C`.
 static bool smith_lang_enum_compare(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     bool head =
@@ -562,6 +651,7 @@ static bool smith_lang_enum_compare(SmithLang *lang, const SmithHost *host, cons
     const SmithToken *op = nullptr;
     const SmithToken *variant = nullptr;
     if (!smith_lang_enum_comparison(lang, host, token, operand, &length, &taken, &op, &variant)) return false;
+    smith_lang_enum_rewrite_somes(lang, host, operand, &length);
     SmithLangEnumType type;
     char constant[smith_lang_enum_name_max + 64];
     SmithToken dot = *smith_lang_peek(lang, host, taken - 2, false);
@@ -576,6 +666,10 @@ static bool smith_lang_enum_compare(SmithLang *lang, const SmithHost *host, cons
     }
     char pattern[smith_lang_enum_name_max + 80];
     snprintf(pattern, sizeof pattern, "( @0 ) . tag @1 %s", constant);
+    if (type.pointer) { // `p == .some` is `p != nullptr`
+        snprintf(pattern, sizeof pattern, "( @0 ) @1 nullptr");
+        smith_lang_enum_pointer_operator(&oper, constant);
+    }
     SmithLangSliceSpan spans[2] = {{operand, length}, {&oper, 1}};
     static SmithToken made[smith_lang_slice_chain_max + 16];
     size_t used = smith_lang_slice_pattern(made, 0, sizeof made / sizeof made[0], pattern, spans, token);
@@ -608,6 +702,8 @@ static bool smith_lang_enum_compare_first(SmithLang *lang, const SmithHost *host
     }
     SmithLangEnumType type;
     char constant[smith_lang_enum_name_max + 64];
+    size_t taken_operand = length;
+    smith_lang_enum_rewrite_somes(lang, host, operand, &length);
     if (length == 0 || !smith_lang_enum_of(lang, host, operand, length, &type)) return false;
     SmithToken dot = *token;
     SmithToken name = *variant;
@@ -615,11 +711,70 @@ static bool smith_lang_enum_compare_first(SmithLang *lang, const SmithHost *host
     if (!smith_lang_enum_variant(lang, host, &type, &dot, &name, false, constant, sizeof constant)) return false;
     char pattern[smith_lang_enum_name_max + 80];
     snprintf(pattern, sizeof pattern, "%s @1 ( @0 ) . tag", constant);
+    if (type.pointer) {
+        snprintf(pattern, sizeof pattern, "nullptr @1 ( @0 )");
+        smith_lang_enum_pointer_operator(&oper, constant);
+    }
     SmithLangSliceSpan spans[2] = {{operand, length}, {&oper, 1}};
     static SmithToken made[smith_lang_slice_chain_max + 16];
     size_t used = smith_lang_slice_pattern(made, 0, sizeof made / sizeof made[0], pattern, spans, token);
     made[0].space_before = token->space_before;
-    return smith_lang_tuple_replace(lang, 2 + length, made, used);
+    return smith_lang_tuple_replace(lang, 2 + taken_operand, made, used);
+}
+
+// ---- `p.some`: the pointer of an `option(T *)`, where it is known not to be null
+
+// At the first token of a postfix chain that reads `.some` of an `option(T *)` (`p.some`, `node->next.some`): it is
+// written `(T *)__builtin_assume_aligned((p), 1)`, the pointer itself with the type `T *` and nothing run: the call is
+// the mark `smith-enum` (shim/affine.cpp) finds, and it is an error unless `p != nullptr` was tested on every path to
+// it (`p == .some`), as for the payload of any other enum.
+static bool smith_lang_enum_some(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+    if (token->kind != SmithTokenKind_Identifier || token->foreign || token->synthetic || lang->prev_member ||
+        lang->prev_name_length > 0 || smith_lang_word(token->text, token->length) != SmithLangWord_Other) {
+        return false;
+    }
+    SmithToken before = {};
+    if (smith_lang_tuple_previous(lang, host, 1, &before) &&
+        (smith_lang_punct(&before, ")") || smith_lang_punct(&before, "]"))) {
+        return false;
+    }
+    static SmithToken chain[smith_lang_slice_chain_max];
+    size_t length = 1;
+    size_t found = 0;
+    int depth = 0;
+    chain[0] = *token;
+    bool compared = false;
+    for (size_t at = 0; at < 40; at++) { // the chain is a few tokens
+        const SmithToken *next = smith_lang_peek(lang, host, at, false);
+        if (next->kind == SmithTokenKind_Eof || next->foreign) return false;
+        bool open = smith_lang_punct(next, "(") || smith_lang_punct(next, "[");
+        bool close = smith_lang_punct(next, ")") || smith_lang_punct(next, "]");
+        bool part = next->kind == SmithTokenKind_Identifier || next->kind == SmithTokenKind_Number || open || close ||
+                    smith_lang_punct(next, ".") || smith_lang_punct(next, "->") || smith_lang_punct(next, "::") ||
+                    depth > 0;
+        depth += open;
+        depth -= close;
+        if (!part || depth < 0 || length + 1 >= smith_lang_slice_chain_max) {
+            // a chain compared with `.v` is the comparison's operand: smith_lang_enum_compare writes its `.some`
+            compared = depth == 0 && (smith_lang_punct(next, "==") || smith_lang_punct(next, "!=")) &&
+                       smith_lang_punct(smith_lang_peek(lang, host, at + 1, false), ".");
+            break;
+        }
+        bool member = smith_lang_punct(&chain[length - 1], ".") || smith_lang_punct(&chain[length - 1], "->");
+        if (found == 0 && depth == 0 && member && length >= 2 && smith_lang_ident(next, "some")) found = length;
+        chain[length++] = *next;
+    }
+    if (compared) return false;
+    if (found == 0) return false;
+    SmithLangEnumType type;
+    if (!smith_lang_enum_of(lang, host, chain, found - 1, &type) || !type.pointer) return false;
+    char pattern[smith_lang_enum_name_max + 80];
+    snprintf(pattern, sizeof pattern, "( ( %s ) __builtin_assume_aligned ( ( @0 ) , 1 ) )", type.type);
+    SmithLangSliceSpan spans[1] = {{chain, found - 1}};
+    static SmithToken made[smith_lang_slice_chain_max + 24];
+    size_t used = smith_lang_slice_pattern(made, 0, sizeof made / sizeof made[0], pattern, spans, token);
+    made[0].space_before = token->space_before;
+    return smith_lang_tuple_replace(lang, found, made, used);
 }
 
 // ---- `switch (s) { case .v: ... }`
@@ -710,6 +865,8 @@ static bool smith_lang_enum_return_words(SmithLang *lang, const SmithHost *host,
     (void)keyword;
     if (!smith_lang_enum_variant(lang, host, &type, &dot_token, &name_token, bare, constant, sizeof constant)) {
         snprintf(words, capacity, "%s ( %s ) { }", lead, type.type); // a value of the type: nothing else is said
+    } else if (type.pointer) { // `.none` is `(T *){}`, null, and `{.some = p}` is `(T *){p}`, the pointer itself
+        snprintf(words, capacity, bare ? "%s ( %s ) { }" : "%s ( %s ) {", lead, type.type);
     } else if (bare) {
         snprintf(words, capacity, "%s ( %s ) { . tag = %s }", lead, type.type, constant);
     } else {
@@ -1863,6 +2020,27 @@ static uint32_t smith_lang_eshape_instance_call(SmithLang *lang, const SmithHost
     return close + 1 - at;
 }
 
+// `_Pragma ( "text" )` as tokens, after `used` (the text is a string literal's spelling, quotes included).
+static size_t smith_lang_enum_pragma(SmithToken *out, size_t used, const SmithToken *like, const char *literal) {
+    out[used] = smith_lang_tuple_made(SmithTokenKind_Identifier, "_Pragma", 7, like, used > 0);
+    out[used++].expand = true; // the compiler's own macro
+    out[used++] = smith_lang_tuple_made(SmithTokenKind_Punctuator, "(", 1, like, false);
+    out[used++] = smith_lang_tuple_made(SmithTokenKind_String, literal, strlen(literal), like, false);
+    out[used++] = smith_lang_tuple_made(SmithTokenKind_Punctuator, ")", 1, like, false);
+    return used;
+}
+
+// `_Nullable` is a Clang extension that -Wpedantic reports: the pointer of an `option(T *)` is preceded by this, which
+// turns that one warning off from here on.
+static constexpr char smith_lang_nullable_pragma[] = "\"clang diagnostic ignored \\\"-Wnullability-extension\\\"\"";
+
+// Whether the call is the language's `option` of a pointer written as a type (`option(Node *)`, `option(const char
+// *)`): that one has no struct. It is the pointer, marked `_Nullable`, and its null is `.none`.
+static bool smith_lang_eshape_pointer(const SmithLangEnumShape *shape, const SmithLangEnumCall *call) {
+    return shape->builtin && shape->module[0] == 0 && strcmp(shape->name, "option") == 0 && call->count >= 2 &&
+           smith_lang_punct(&call->tokens[call->count - 1], "*");
+}
+
 // The result type of an instance of `option(T) name(...)`: the instance's struct, when the head is a shape call.
 static bool smith_lang_enum_result_shape(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
                                          const SmithLangInstance *instance, SmithLangEnumType *type, bool *is_shape) {
@@ -1881,6 +2059,13 @@ static bool smith_lang_enum_result_shape(SmithLang *lang, const SmithHost *host,
         return false;
     }
     *is_shape = true;
+    if (smith_lang_eshape_pointer(shape, &call)) { // `option(T *)`: the pointer, written as the call spells it
+        *type = (SmithLangEnumType){.pointer = true};
+        for (size_t at = 0, used = 0; at < call.count && used + call.tokens[at].length + 2 < sizeof type->type; at++)
+            used += (size_t)snprintf(type->type + used, sizeof type->type - used, "%s%.*s", at > 0 ? " " : "",
+                                     (int)call.tokens[at].length, call.tokens[at].text);
+        return true;
+    }
     char canonical[smith_lang_tuple_name_max + 8];
     snprintf(canonical, sizeof canonical, "struct %s", tag);
     return smith_lang_enum_type(host, canonical, type);
@@ -1959,7 +2144,7 @@ static void smith_lang_instance_define_enums(SmithLang *lang, const SmithHost *h
         uint32_t length = smith_lang_eshape_instance_call(lang, host, generic, instance, at, end, place, &shape, &call,
                                                           tag, sizeof tag);
         if (length == 0) continue;
-        if (!smith_lang_eshape_defined(host, tag)) {
+        if (!smith_lang_eshape_pointer(shape, &call) && !smith_lang_eshape_defined(host, tag)) {
             smith_lang_eshape_put_slices(lang, host, place, instance_id);
             smith_lang_eshape_put_definition(lang, host, shape, &call, tag, place, instance_id);
             smith_lang_eshape_note_defined(tag);
@@ -1979,6 +2164,19 @@ static uint32_t smith_lang_eshape_put_call(SmithLang *lang, const SmithHost *hos
     uint32_t length =
         smith_lang_eshape_instance_call(lang, host, generic, instance, at, end, place, &shape, &call, tag, sizeof tag);
     if (length == 0) return 0;
+    if (smith_lang_eshape_pointer(shape, &call)) { // `option(T *)` is `T * _Nullable`: no struct
+        smith_lang_gen_put_expanding(lang, host, SmithTokenKind_Identifier, "_Pragma", place, instance_id, true);
+        smith_lang_gen_put(lang, host, SmithTokenKind_Punctuator, "(", place, instance_id);
+        smith_lang_gen_put(lang, host, SmithTokenKind_String, smith_lang_nullable_pragma, place, instance_id);
+        smith_lang_gen_put(lang, host, SmithTokenKind_Punctuator, ")", place, instance_id);
+        for (size_t each = 0; each < call.count; each++) {
+            char word[smith_lang_name_max];
+            snprintf(word, sizeof word, "%.*s", (int)call.tokens[each].length, call.tokens[each].text);
+            smith_lang_gen_put(lang, host, call.tokens[each].kind, word, place, instance_id);
+        }
+        smith_lang_gen_put(lang, host, SmithTokenKind_Identifier, "_Nullable", place, instance_id);
+        return length;
+    }
     if (!smith_lang_eshape_defined(host, tag)) {
         if (define) {
             smith_lang_eshape_put_slices(lang, host, place, instance_id);
@@ -2185,6 +2383,7 @@ static bool smith_lang_eshape_define_ahead(SmithLang *lang, const SmithHost *hos
             return false; // said where the call is replaced
         }
         at += call.close - at;
+        if (smith_lang_eshape_pointer(shape, &call)) continue; // a pointer: nothing to define
         SmithLangEnumDefined *entry = smith_lang_eshape_defined(host, tag) ? smith_lang_eshape_entry(tag) : nullptr;
         if (entry == nullptr) { // in a block the struct is defined there, which C23 makes the file-scope one
             size_t added = smith_lang_eshape_define(lang, host, token, shape, &call, tag, made + used,
@@ -2219,6 +2418,18 @@ static bool smith_lang_eshape_rewrite(SmithLang *lang, const SmithHost *host, co
         if (close == 0) return false;
         made[0] = smith_lang_tuple_made(SmithTokenKind_Identifier, "int", 3, token, token->space_before); // so that the
         return smith_lang_tuple_replace(lang, close, made, 1); // declaration still reads, and says no more
+    }
+    if (smith_lang_eshape_pointer(shape, &call)) { // `option(T *)` is `T * _Nullable`
+        static SmithToken pointer[smith_lang_eshape_tokens_max + 8];
+        if (call.count + 8 > sizeof pointer / sizeof pointer[0]) return false;
+        size_t used = smith_lang_enum_pragma(pointer, 0, token, smith_lang_nullable_pragma);
+        pointer[0].space_before = token->space_before;
+        pointer[0].line_start = token->line_start;
+        memcpy(pointer + used, call.tokens, call.count * sizeof pointer[0]);
+        pointer[used].space_before = true;
+        used += call.count;
+        pointer[used++] = smith_lang_tuple_made(SmithTokenKind_Identifier, "_Nullable", 9, token, true);
+        return smith_lang_tuple_replace(lang, call.close, pointer, used);
     }
     if (!smith_lang_eshape_defined(host, tag)) {
         char written[smith_lang_tuple_name_max];
@@ -2314,16 +2525,6 @@ static bool smith_lang_enum_function(SmithLang *lang, const SmithHost *host, con
     }
     if (shape == nullptr) return false;
     return smith_lang_eshape_rewrite(lang, host, token, shape, open);
-}
-
-// `_Pragma ( "text" )` as tokens, after `used` (the text is a string literal's spelling, quotes included).
-static size_t smith_lang_enum_pragma(SmithToken *out, size_t used, const SmithToken *like, const char *literal) {
-    out[used] = smith_lang_tuple_made(SmithTokenKind_Identifier, "_Pragma", 7, like, used > 0);
-    out[used++].expand = true; // the compiler's own macro
-    out[used++] = smith_lang_tuple_made(SmithTokenKind_Punctuator, "(", 1, like, false);
-    out[used++] = smith_lang_tuple_made(SmithTokenKind_String, literal, strlen(literal), like, false);
-    out[used++] = smith_lang_tuple_made(SmithTokenKind_Punctuator, ")", 1, like, false);
-    return used;
 }
 
 // `switch` is being lowered: when the first label of its body is `case .name` the value switched is a payload enum: it
@@ -2441,7 +2642,7 @@ static bool smith_lang_enum_token(SmithLang *lang, const SmithHost *host, const 
         smith_lang_enum_untyped(lang, host, token);
         return false;
     }
-    return !token->synthetic && smith_lang_enum_compare(lang, host, token);
+    return !token->synthetic && (smith_lang_enum_some(lang, host, token) || smith_lang_enum_compare(lang, host, token));
 }
 
 // An argument `.v` or `{.v = ...}` for the parameter number `index` of the function whose type the compiler printed as

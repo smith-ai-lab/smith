@@ -649,6 +649,18 @@ export void test_error_enum_payload(io::Io *io) {
     corpus_case(io, "error-enum-payload");
 }
 
+export void test_enum_option_pointer(io::Io *io) {
+    corpus_case(io, "enum-option-pointer");
+}
+
+export void test_error_option_pointer_narrow(io::Io *io) {
+    corpus_case(io, "error-option-pointer-narrow");
+}
+
+export void test_error_nonnull_pointer(io::Io *io) {
+    corpus_case(io, "error-nonnull-pointer");
+}
+
 export void test_error_enum_builtin_redeclare(io::Io *io) {
     corpus_case(io, "error-enum-builtin-redeclare");
 }

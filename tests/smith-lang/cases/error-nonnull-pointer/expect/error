@@ -1,0 +1,6 @@
+src/main.smith:14:12: a `Node *` is never null: write `option(Node *)` for a pointer that may be absent, and `.none` for no value
+src/main.smith:18:15: a `Node *` is never null: write `option(Node *)` for a pointer that may be absent, and `.none` for no value
+src/main.smith:19:11: the `Node *` 'b' has no value, and a `Node *` is never null: give it one, or write `option(Node *)` for a pointer that may be absent
+src/main.smith:20:15: a `Node *` is never null: write `option(Node *)` for a pointer that may be absent, and `.none` for no value
+src/main.smith:21:16: the `Node *` member 'must' is left out, and a `Node *` is never null: give it a value, or write `option(Node *)` for a pointer that may be absent
+src/main.smith:25:49: smith-enum: 'fine.some' is read where 'fine' may not be a some; test 'fine == .some' or switch on 'fine'
