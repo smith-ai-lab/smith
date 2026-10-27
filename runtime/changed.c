@@ -328,7 +328,7 @@ static const char *smith_changed_unnamed(void) {
     const char *unknown = nullptr;
     for (size_t p = 0; p < smith_changed_path_count; p++) {
         const char *name = smith_changed_paths[p];
-        if (smith_changed_is_test(name) || smith_rec_mentioned(name)) continue;
+        if (smith_changed_is_test(name) || smith_rec_mentioned(name) || smith_changed_ends(name, ".md")) continue;
         int at = smith_changed_find(name);
         bool imported = false;
         for (size_t e = 0; at >= 0 && e < smith_changed_edge_count && !imported; e++)
@@ -461,6 +461,13 @@ static void smith_changed_judge(size_t test) {
         smith_changed_choose(test, dependency == (int)test ? "it changed" : "it depends on %s",
                              smith_changed_files[dependency]);
     if (smith_changed_chosen[test] || smith_changed_read(smith_changed_files[test]) == 0) return;
+    if (strstr(smith_changed_text, ".md") != nullptr) { // a test that names Markdown files reads them (skills, docs)
+        for (size_t p = 0; p < smith_changed_path_count; p++) {
+            if (!smith_changed_ends(smith_changed_paths[p], ".md")) continue;
+            smith_changed_choose(test, "it reads Markdown, and %s changed", smith_changed_paths[p]);
+            return;
+        }
+    }
     if (smith_changed_coverage_judge(test) || !smith_changed_runs_smith(smith_changed_text)) return;
     for (size_t p = 0; p < smith_changed_path_count; p++) {
         if (smith_changed_in_smith(smith_changed_paths[p])) {
@@ -475,7 +482,7 @@ static void smith_changed_judge(size_t test) {
 static int smith_changed_unknown(void) {
     for (size_t p = 0; p < smith_changed_path_count; p++) {
         const char *path = smith_changed_paths[p];
-        if (smith_changed_is_test(path) || smith_changed_in_smith(path)) continue;
+        if (smith_changed_is_test(path) || smith_changed_in_smith(path) || smith_changed_ends(path, ".md")) continue;
         if (smith_changed_covered && smith_rec_mentioned(path)) continue; // a record names it: its tests judge it
         int at = smith_changed_find(path);
         bool imported = false;

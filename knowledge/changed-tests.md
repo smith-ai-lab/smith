@@ -14,6 +14,8 @@ Every red batch on the train was a fault in a test the author did not know to ru
 
 **Unknown means run it.** A changed path the graph does not know (not a test, not part of smith, and no file imports or includes it: a new `.c` nothing includes, a fixture read as data, a text file) selects every test, so a change the graph cannot follow is never skipped. The files that select every test too: `build.c`, `smith.c`, `runtime/lang*`, `patches/`, `.github/`, `shim/`, `tests/units/`. Conservative is fine.
 
+**Markdown is placed.** A changed `.md` file (a skill, a concept, the README) is not unknown: it selects the test files whose source names `.md` (skills, readme and docs tests, goldens of Markdown), "it reads Markdown", and no more (#506).
+
 **Records first.** When per-test records exist (`.smith/records`), a test that runs smith is selected when its record is stale instead of by the graph's "all of smith" edge, and the graph decides whatever no record names: [coverage-selection](coverage-selection.md).
 
 **What it weighs.** The runner's `--stats` ends with a line `cpu<TAB>seconds<TAB>name` for each test, its CPU time with the processes it waited for; the train's full run can publish them, so the share of CPU a selection runs is measured, not guessed. Recording what tests read at run time is not built; it becomes an issue if misses are more than rare.

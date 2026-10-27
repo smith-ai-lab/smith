@@ -66,8 +66,16 @@ export void test_a_file_the_graph_does_not_know_selects_every_test(io::Io *io) {
     const char *out = changed(io, "echo 'int y;' > tests/new.c");
     scratch::expect_contains("the path", out, "tests/new.c is an input of no test the graph knows, so every test runs");
     scratch::expect_contains("the dry run", out, "every test runs");
-    out = changed(io, "echo more >> README.md");
-    scratch::expect_contains("a text file", out, "README.md is an input of no test");
+    out = changed(io, "echo more >> docs/guide.txt");
+    scratch::expect_contains("a text file", out, "docs/guide.txt is an input of no test");
+}
+
+// A Markdown file selects the tests that name Markdown files, not every test.
+export void test_a_markdown_file_selects_the_tests_that_read_markdown(io::Io *io) {
+    const char *out = changed(io, "echo more >> README.md");
+    scratch::expect_contains("the reader", out, "tests/docs_test.smith: it reads Markdown, and README.md changed");
+    scratch::expect_lacks("a pure test", out, "c_test");
+    scratch::expect_lacks("not every test", out, "every test runs");
 }
 
 // An include selects the test that includes the changed header, through a header that includes it.

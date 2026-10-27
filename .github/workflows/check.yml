@@ -113,9 +113,12 @@ jobs:
             exit 0
           fi
           start=$(date +%s)
+          # job control: the background job is a process group of its own, so the watchdog ends every process the
+          # tests started (an orphan once held a slot for 10 hours)
+          set -m
           $smith test --changed --base origin/main --fail-fast >"$RUNNER_TEMP/changed.log" 2>&1 &
           pid=$!
-          ( sleep 300; kill "$pid" 2>/dev/null ) &
+          ( sleep 300; kill -TERM -- "-$pid" 2>/dev/null; sleep 5; kill -KILL -- "-$pid" 2>/dev/null ) &
           dog=$!
           rc=0
           wait "$pid" || rc=$?
