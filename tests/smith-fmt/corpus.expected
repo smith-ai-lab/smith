@@ -7232,6 +7232,37 @@ i32 main() {
     c::printf("%zu %zu\n", conv::read_only(read), conv::restricted(res));
     return 0;
 }
+==> generic-slice-option-typedef/src/cursor.smith <==
+module cursor;
+
+// A generic's `option(slice)` result is named by a caller through a typedef of the slice.
+
+export option(typeof((*xs)[0:0])) take_until(const auto (*xs)[:], typeof((*xs)[0]) stop) {
+    for (usize i = 0; i < countof(*xs); i++) {
+        if ((*xs)[i] == stop) {
+            typeof((*xs)[0:0]) head = (*xs)[0:i];
+            *xs = (*xs)[i + 1:];
+            return {.some = head};
+        }
+    }
+    return .none;
+}
+==> generic-slice-option-typedef/src/main.smith <==
+module main;
+
+import cursor;
+import <stdio.h>;
+
+typedef const char Text[:];
+
+i32 main() {
+    Text rest = "ab cd";
+    option(Text) word = cursor::take_until(&rest, ' ');
+    if (word == .some) c::printf("%zu %zu\n", countof(word.some), countof(rest));
+    option(Text) none = cursor::take_until(&rest, '!');
+    if (none != .some) c::printf("none\n");
+    return 0;
+}
 ==> generic-slice-pointer-auto/src/cursor.smith <==
 module cursor;
 
@@ -7301,6 +7332,39 @@ i32 main() {
     copy::copy(to, from);
     c::printf("%zu %zu\n", copy::sum(to), copy::sum(from[1:3]));
     return 0;
+}
+==> generic-slice-restrict/src/main.smith <==
+module main;
+
+import pair;
+import <stdio.h>;
+
+i32 main() {
+    u8 raw[4] = {1, 2, 3, 4};
+    u8 out[4] = {};
+    u8 a[:] = raw;
+    u8 b[:] = out;
+    pair::copy(b, a);
+    c::printf("%d %d %d\n", pair::is_restrict(a), pair::is_plain(a), out[3]);
+    return 0;
+}
+==> generic-slice-restrict/src/pair.smith <==
+module pair;
+
+// `restrict` on an `auto` slice parameter is in the instance: it has the same qualifiers as the non-generic form, so
+// `smith prove` relies on no overlap and checks it at each call.
+
+export bool is_restrict(auto dst[restrict :]) {
+    return _Generic(dst, struct smith_array_restrict_u8_n: true, default: false);
+}
+
+export bool is_plain(auto dst[:]) {
+    return _Generic(dst, struct smith_array_u8_n: true, default: false);
+}
+
+export void copy(auto dst[restrict :], const auto src[const restrict :]) {
+    for (usize i = 0; i < countof(dst) && i < countof(src); i++)
+        dst[i] = src[i];
 }
 ==> generic-slice-type-argument/src/main.smith <==
 module main;
@@ -7465,6 +7529,34 @@ export const void *start(auto xs) {
 
 export usize element_size(auto xs) {
     return sizeof(xs[0]);
+}
+==> generic-some-operand/src/finder.smith <==
+module finder;
+
+export option(usize) find(const auto xs[:], typeof(xs[0]) v) {
+    for (usize i = 0; i < countof(xs); i++)
+        if (xs[i] == v) return {.some = i};
+    return .none;
+}
+
+export option(usize) find_plain(const char xs[:], char v) {
+    for (usize i = 0; i < countof(xs); i++)
+        if (xs[i] == v) return i;
+    return .none;
+}
+==> generic-some-operand/src/main.smith <==
+module main;
+
+import finder;
+import <stdio.h>;
+
+// `== .some` and `!= .some` with a generic's call directly as the operand type as they do for a plain function's.
+i32 main() {
+    const char s[:] = "banana";
+    if (finder::find(s, 'n') == .some) c::printf("some\n");
+    if (finder::find(s, 'z') != .some) c::printf("none\n");
+    if (finder::find_plain(s, 'n') == .some) c::printf("plain\n");
+    return 0;
 }
 ==> generic-static-assert/src/main.smith <==
 import sa;
