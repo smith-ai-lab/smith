@@ -289,8 +289,9 @@ static void smith_slots_give(int token) {
     if (token >= 0) close(token);
 }
 
-// The verbs that do heavy work arm the pool instead of taking a token: the executor takes it when it starts its first real
-// step (a compile, a link, a test), so an up-to-date build, or one that only runs build.c's functions, never waits.
+// The verbs that do heavy work arm the pool instead of taking a token: the executor takes it when it starts its first
+// real step (a compile, a link, a test), so an up-to-date build, or one that only runs build.c's functions, never
+// waits.
 static const char *smith_slots_pending;
 
 static void smith_slots_arm(const char *verb) {

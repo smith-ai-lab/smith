@@ -122,12 +122,11 @@ export void test_a_run_starts_while_all_but_one_token_are_held(io::Io *io) {
 }
 
 // The manifest of three steps that each say they started (r1 to r3) and wait for the file `go`.
-constexpr char three_steps[_] =
-    "printf 'rule step\n  command = $cmd\n"
-    "build o1: step\n  cmd = touch r1; while [ ! -e go ]; do sleep 0.05; done; touch o1\n"
-    "build o2: step\n  cmd = touch r2; while [ ! -e go ]; do sleep 0.05; done; touch o2\n"
-    "build o3: step\n  cmd = touch r3; while [ ! -e go ]; do sleep 0.05; done; touch o3\n"
-    "default o1 o2 o3\n' >m.ninja; ";
+constexpr char three_steps[_] = "printf 'rule step\n  command = $cmd\n"
+                                "build o1: step\n  cmd = touch r1; while [ ! -e go ]; do sleep 0.05; done; touch o1\n"
+                                "build o2: step\n  cmd = touch r2; while [ ! -e go ]; do sleep 0.05; done; touch o2\n"
+                                "build o3: step\n  cmd = touch r3; while [ ! -e go ]; do sleep 0.05; done; touch o3\n"
+                                "default o1 o2 o3\n' >m.ninja; ";
 
 // A run that got fewer tokens than its steps wanted starts with what it got and grows as tokens free up: three steps
 // in a pool of four where three tokens are held, so the base token runs one; each token released starts a step.
@@ -138,19 +137,21 @@ export void test_a_running_run_grows_as_tokens_free_up(io::Io *io) {
                          "while [ ! -e free$n ]; do sleep 0.05; done\" & done; w held1; w held2; w held3; "
                          "smith --smith-exec m.ninja >/dev/null 2>b.err & e=$!; w r1; sleep 1; "
                          "[ -e r2 ] && echo early; touch free1; w r2; [ -e r3 ] && echo early; touch free2; w r3; "
-                         "touch go free3; wait $e; wait; echo done").data);
+                         "touch go free3; wait $e; wait; echo done")
+                .data);
     scratch::expect_text("each released token starts a step", "done\n", out);
 }
 
 // While a CI run holds a token, a local run leaves a quarter of the pool (one of four) free for it: of three steps in
 // a pool of four the local run runs two, and the third starts once the CI run is gone.
 export void test_a_ci_holder_leaves_a_local_run_fewer_cores(io::Io *io) {
-    const char *out = slots_case(
-        io, format::push(&io->arena, "export SMITH_CORES=4; ", three_steps,
-                         "SMITH_PRIORITY=ci smith --smith-slots sh -c \"touch held; "
-                         "while [ ! -e free ]; do sleep 0.05; done\" & c=$!; w held; "
-                         "smith --smith-exec m.ninja >/dev/null 2>b.err & e=$!; w r1; w r2; sleep 1; "
-                         "[ -e r3 ] && echo early; touch free; w r3; touch go; wait $e; wait $c; "
-                         "[ -e o3 ] && echo done").data);
+    const char *out =
+        slots_case(io, format::push(&io->arena, "export SMITH_CORES=4; ", three_steps,
+                                    "SMITH_PRIORITY=ci smith --smith-slots sh -c \"touch held; "
+                                    "while [ ! -e free ]; do sleep 0.05; done\" & c=$!; w held; "
+                                    "smith --smith-exec m.ninja >/dev/null 2>b.err & e=$!; w r1; w r2; sleep 1; "
+                                    "[ -e r3 ] && echo early; touch free; w r3; touch go; wait $e; wait $c; "
+                                    "[ -e o3 ] && echo done")
+                           .data);
     scratch::expect_text("the CI run keeps a core while it runs", "done\n", out);
 }
