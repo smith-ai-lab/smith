@@ -1,0 +1,26 @@
+module main;
+option(u64) find(i32 key) {
+  if (key > 0) {
+    return 42;
+  }
+  return .none;
+}
+result(i32, i32) divide(i32 a, i32 b) {
+  if (b == 0) {
+    return {.error = 7};
+  }
+  return {.ok = a / b};
+}
+i32 total(const i32 xs[:], str label) {
+  i32 sum = (i32)countof(xs);
+  return sum + (i32)countof(label);
+}
+int main() {
+  option(u64) some = find(1);
+  option(u64) none = find(0);
+  result(i32, i32) ok = divide(4, 2);
+  result(i32, i32) bad = divide(4, 0);
+  i32 raw[3] = {1, 2, 3};
+  i32 sum = total(raw, "hello");
+  return sum == 8 ? 0 : 1;
+}

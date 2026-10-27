@@ -242,6 +242,27 @@ export void test_dap_dbg_a_slice(io::Io *io) {
     scratch::expect_contains("dbg indexes a slice", out, "(i32) xs[2] = 6");
 }
 
+// option and result read as the language writes them (issue #536), a slice parameter and a str as before.
+export void test_dap_dbg_option_result_and_str(io::Io *io) {
+    scratch::Project root;
+    if (!make(io, &root) || !has_hook(&root)) {
+        return;
+    }
+    scratch::Project p = folder(&root, "optres");
+    scratch::Run built = scratch::sh(&p, "smith cc -g -O0 -c main.smith -o main.o && smith cc -g main.o -o optres");
+    scratch::expect_status("the option and result program builds", 0, &built);
+    const char *out = dbg(&p, io,
+                          "-o 'b main.smith:16' -o 'b main.smith:25' -o run -o 'frame variable xs label' -o continue "
+                          "-o 'frame variable some none ok bad' optres")
+                          .out;
+    scratch::expect_contains("dbg shows a slice parameter", out, "(const i32[:]) xs = count=3 {");
+    scratch::expect_contains("dbg shows a str as text", out, "(const char[:]) label = \"hello\" count=5");
+    scratch::expect_contains("dbg shows an option's value", out, "(option(u64)) some = .some = 42");
+    scratch::expect_contains("dbg shows an empty option", out, "(option(u64)) none = .none");
+    scratch::expect_contains("dbg shows a result's value", out, "(result(i32, i32)) ok = .ok = 2");
+    scratch::expect_contains("dbg shows a result's error", out, "(result(i32, i32)) bad = .error = 7");
+}
+
 export void test_dap_a_slice_session(io::Io *io) {
     scratch::Project root;
     if (!make(io, &root) || !has_hook(&root)) {

@@ -268,9 +268,55 @@ std::string active_variant(ValueObject &value) {
     if (!tag) return "";
     const char *written = tag->GetValueAsCString();
     if (written == nullptr) return "";
+    // a user's enum keeps `<module>_<Name>_tag_<variant>`, the library's option and result
+    // `smith_enum_<name>_tag_<variant>`
     std::string prefix = type.str() + "_tag_";
     llvm::StringRef name(written);
+    if (name.consume_front("smith_enum_")) return name.consume_front(prefix) ? name.str() : "";
     return name.consume_front(prefix) ? name.str() : "";
+}
+
+// `option(u64)` and `result(i32, i32)`: the struct names `smith_enum_option_u64` and `smith_enum_result_i32__i32` (the
+// lowering joins the arguments with `__`), told from a user's enum by their variants. Empty for any other enum.
+std::string library_name(ValueObject &value) {
+    std::string canonical = value.GetCompilerType().GetCanonicalType().GetTypeName().GetString();
+    llvm::StringRef type = canonical;
+    type.consume_front("const ");
+    type.consume_front("struct ");
+    if (!type.consume_front("smith_enum_")) return "";
+    std::string variant = active_variant(value);
+    std::string name;
+    if (type.consume_front("option_") && (variant == "some" || variant == "none"))
+        name = "option(";
+    else if (type.consume_front("result_") && (variant == "ok" || variant == "error"))
+        name = "result(";
+    else
+        return "";
+    std::string arguments = type.str();
+    for (size_t at = arguments.find("__"); at != std::string::npos; at = arguments.find("__", at + 2))
+        arguments.replace(at, 2, ", ");
+    return name + arguments + ")";
+}
+
+// The payload as one piece of text, when it is a value or has a summary of its own (`42`, `"abc" count=3`).
+std::string payload_text(ValueObject &payload) {
+    if (const char *summary = payload.GetSummaryAsCString()) return summary;
+    size_t count = payload.GetNumChildrenIgnoringErrors();
+    if (count == 0) {
+        const char *value = payload.GetValueAsCString();
+        return value != nullptr ? value : "";
+    }
+    // a struct: one level, `(x = 1, y = 2)`
+    std::string text = "(";
+    for (size_t at = 0; at < count; at++) {
+        lldb::ValueObjectSP child = payload.GetChildAtIndex(at);
+        if (!child) continue;
+        const char *shown = child->GetSummaryAsCString();
+        if (shown == nullptr) shown = child->GetValueAsCString();
+        text += (at == 0 ? "" : ", ") + child->GetName().GetStringRef().str() + " = " +
+                (shown != nullptr ? shown : "{...}");
+    }
+    return text + ")";
 }
 
 class EnumFrontEnd : public SyntheticChildrenFrontEnd {
@@ -280,18 +326,25 @@ class EnumFrontEnd : public SyntheticChildrenFrontEnd {
     }
 
     // The active variant's payload only; a variant with no payload has no child.
+    // An `option` or `result` whose payload is a value the summary shows (`.some = 42`) has no child.
     llvm::Expected<uint32_t> CalculateNumChildren() override {
-        return payload ? 1 : 0;
+        return payload && !inline_payload ? 1 : 0;
     }
 
     lldb::ValueObjectSP GetChildAtIndex(uint32_t index) override {
-        return index == 0 ? payload : lldb::ValueObjectSP();
+        return index == 0 && payload && !inline_payload ? payload : lldb::ValueObjectSP();
     }
 
     lldb::ChildCacheState Update() override {
         std::string variant = active_variant(m_backend);
         payload = variant.empty() ? nullptr : m_backend.GetChildMemberWithName(variant);
+        library = library_name(m_backend);
+        inline_payload = !library.empty();
         return lldb::ChildCacheState::eRefetch;
+    }
+
+    ConstString GetSyntheticTypeName() override {
+        return library.empty() ? ConstString() : ConstString(library);
     }
 
     bool MightHaveChildren() override {
@@ -305,6 +358,8 @@ class EnumFrontEnd : public SyntheticChildrenFrontEnd {
 
   private:
     lldb::ValueObjectSP payload;
+    std::string library;
+    bool inline_payload = false;
 };
 
 SyntheticChildrenFrontEnd *make_enum_front_end(CXXSyntheticChildren *, lldb::ValueObjectSP backend) {
@@ -316,7 +371,15 @@ bool enum_summary(ValueObject &shown, Stream &stream, const TypeSummaryOptions &
     lldb::ValueObjectSP real = shown.GetNonSyntheticValue();
     std::string variant = active_variant(real ? *real : shown);
     if (variant.empty()) return false;
-    stream.PutCString(variant);
+    if (library_name(real ? *real : shown).empty()) {
+        stream.PutCString(variant);
+        return true;
+    }
+    // option and result read as the language writes them: `.some = 42`, `.none`, `.error = 1`
+    stream.PutCString("." + variant);
+    lldb::ValueObjectSP payload = (real ? real : shown.GetSP())->GetChildMemberWithName(variant);
+    std::string text = payload ? payload_text(*payload) : "";
+    if (!text.empty()) stream << " = " << text;
     return true;
 }
 
@@ -341,4 +404,12 @@ extern "C" void smith_lldb_slice_formatters(void) {
                                 "^(const )?(struct )?smith_enum_.+$", synthetic, true);
     formatters::AddCXXSummary(category, enum_summary, "smith payload enum: the active variant",
                               "^(const )?(struct )?smith_enum_.+$", summary, true);
+    // option(T) and result(T, E) show all of it in the summary, `.some = 42`, with no braces after it
+    const char *library = "^(const )?(struct )?smith_enum_(option|result)_.+$";
+    TypeSummaryImpl::Flags whole = summary;
+    whole.SetDontShowChildren(true);
+    formatters::AddCXXSynthetic(category, make_enum_front_end, "smith option and result: no children", library,
+                                synthetic, true);
+    formatters::AddCXXSummary(category, enum_summary, "smith option and result: the variant and its payload", library,
+                              whole, true);
 }

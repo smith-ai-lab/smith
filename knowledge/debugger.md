@@ -139,6 +139,17 @@ union (garbage, and once a summary parse error) and the raw tag are hidden: `(ma
 affine plugin reads the struct's constants as `<name>_tag_<variant>` with `smith_enum_` taken off the tag
 (`variantOf`, shim/affine.cpp). Tests: `tests/dap_test.smith`.
 
+## `option(T)` and `result(T, E)`
+
+Both lower to payload enums (`smith_enum_option_u64`, `smith_enum_result_i32__i32`; their tag constants are
+`smith_enum_..._tag_some`, not the module form), so `shim/lldb_slices.cpp` registers, for `smith_enum_(option|result)_`,
+the same synthetic provider with no children and a summary that carries everything, with the type named as written:
+`(option(u64)) r = .some = 42`, `.none`, `(result(i32, i32)) d = .ok = 2`, `.error = 7`. A payload that is a struct shows one
+level, `.some = (x = 1, y = 2)`. A user's enum that happens to start `option_` is told apart by its variants.
+Owner-visible choice (issue #536): a slice keeps `count=3 { [0] = 1 ... }` (lldb's own children layout, and `xs[i]`
+works) instead of `3 { 1, 2, 3 }`; `str` is `const char[:]`, so it shows as text with its count. Test:
+`test_dap_dbg_option_result_and_str`. Names as written in backtraces for generic instances are not done.
+
 ## Reading a failed check
 
 `smith --smith-explain --pid <pid>` (`runtime/explain.c`, `shim/lldb_explain.cpp`) uses lldb's SB API in smith's process
