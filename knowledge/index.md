@@ -26,7 +26,7 @@ What smith is and the contracts its code keeps. Read only the concepts your task
 - [smith prove checks LLVM IR with Alive2, Bitwuzla and Z3](prover.md): smith prove proves each function with a contract in a process of its own, assumes functions marked smith_trusted, and uses no list.
 - [smith::slice and smith::ascii replace text's slice operations](slice-library.md): A slice library generic over the element does what text did for chars, with no allocation, option for a search that may find nothing, and a character test that reads no locale.
 - [The .smith language](smith-language.md): A .smith file is C with modules, lowered to C as clang reads it by a token hook, with sized types, the rules, one command, and what the language does not do yet.
-- [Named arguments](named-arguments.md): A call's trailing .name = value arguments become the compound literal of the function's last struct parameter, zero by default; no overloading, no default-argument machinery.
+- [Named arguments are a designated initializer of the last parameter](named-arguments.md): A call's trailing .name = value arguments become the compound literal of the function's last struct parameter, so options are named, optional and zero by default, with no overloading and no default-argument machinery.
 
 ## Conventions
 

@@ -174,11 +174,10 @@ static void smith_lang_sparse_imports_done(SmithLang *lang, const SmithHost *hos
     if (token->kind == SmithTokenKind_Identifier && smith_lang_ident(token, "import")) return;
     host->watch_imports(host->context);
     lang->imports_watched = true;
-    host->watch_mode(host->context,
-                     host->maybe_if_constexpr || host->maybe_named || smith_lang_type_on(lang, host) ||
-                             smith_lang_tuples_on(lang, host)
-                         ? SmithWatch_All
-                         : SmithWatch_Names);
+    host->watch_mode(host->context, host->maybe_if_constexpr || host->maybe_named || smith_lang_type_on(lang, host) ||
+                                            smith_lang_tuples_on(lang, host)
+                                        ? SmithWatch_All
+                                        : SmithWatch_Names);
 }
 
 // `countof(xs)` where xs is an array parameter of the function being read (`countof(m[0])` for the next dimension): the

@@ -2869,8 +2869,8 @@ class SmithHook final : public TokenHook, public NameSource {
         return next < text.size() && text[next] == ']';
     }
 
-    // Whether the code has a named argument (runtime/lang_named.c): `. name =` right after the `(` of a call or a `,` that
-    // the innermost open bracket is a `(` encloses (a designated initializer's `{ .a = 1, .b = 2 }` is not one).
+    // Whether the code has a named argument (runtime/lang_named.c): `. name =` right after the `(` of a call or a `,`
+    // that the innermost open bracket is a `(` encloses (a designated initializer's `{ .a = 1, .b = 2 }` is not one).
     static bool hasNamedArgument(StringRef text) {
         char open[64];
         size_t depth = 0;

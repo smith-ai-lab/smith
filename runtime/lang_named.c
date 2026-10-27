@@ -15,12 +15,12 @@
 constexpr size_t smith_lang_named_span_max = smith_lang_queue_max - 16;
 
 typedef struct {
-    size_t open;        // the span index of the call's `(`
-    size_t close;       // of its `)`
-    size_t first;       // of the first named argument's `.`
-    size_t positional;  // arguments before the first named one
-    size_t stray;       // a positional argument after a named one (its first token), else 0
-    size_t callee_end;  // the tokens of the callee: 0 to callee_end
+    size_t open;       // the span index of the call's `(`
+    size_t close;      // of its `)`
+    size_t first;      // of the first named argument's `.`
+    size_t positional; // arguments before the first named one
+    size_t stray;      // a positional argument after a named one (its first token), else 0
+    size_t callee_end; // the tokens of the callee: 0 to callee_end
     bool found_named;
 } SmithLangNamed;
 
@@ -33,7 +33,8 @@ static bool smith_lang_named_starts(const SmithToken *span, size_t at) {
 // Makes span[0 .. to) hold the token and what follows it: one more token is peeked for each. The queue ends early at
 // the end of the file or at a token from another file. Never reads past what the call needs: a question to the
 // compiler must not meet a statement the parser has not reached.
-static size_t smith_lang_named_fill(SmithLang *lang, const SmithHost *host, SmithToken *span, size_t filled, size_t to) {
+static size_t smith_lang_named_fill(SmithLang *lang, const SmithHost *host, SmithToken *span, size_t filled,
+                                    size_t to) {
     while (filled < to && filled < smith_lang_named_span_max) {
         const SmithToken *next = smith_lang_peek(lang, host, filled - 1, false);
         if (next->kind == SmithTokenKind_Eof || next->foreign || next->length == 0) break;
@@ -264,4 +265,14 @@ static void smith_lang_named_call(SmithLang *lang, const SmithHost *host, const 
     } else if (!smith_lang_named_write(lang, span, &call, words, word_count)) {
         smith_lang_error(lang, host, span[call.first].location, "this call is too long to lower");
     }
+}
+
+// Every token of the file passes here: only a name in a file that has a named argument, outside a generic's recording
+// and its captured arguments, is read.
+static void smith_lang_named_token(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+    if (!host->maybe_named || token->kind != SmithTokenKind_Identifier || token->foreign || token->replay ||
+        lang->recording || smith_lang_capturing(lang)) {
+        return;
+    }
+    smith_lang_named_call(lang, host, token);
 }

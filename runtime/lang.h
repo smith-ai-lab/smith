@@ -298,8 +298,8 @@ typedef struct {
     // then offers every token, because `struct` is a keyword and a tuple's uses (`t[0]`, `countof(t)`) are found among
     // them.
     bool maybe_tuple;
-    // Whether the file's text may have a named argument (`, .name =` or `(.name =`, runtime/lang_named.c): the host offers
-    // every token, as for a tuple.
+    // Whether the file's text may have a named argument (`, .name =` or `(.name =`, runtime/lang_named.c): the host
+    // offers every token, as for a tuple.
     bool maybe_named;
     // Whether the file's text may declare something of type `type` (runtime/lang_type.c): the host then offers every
     // token, because a type value is found by the tokens around a type name.

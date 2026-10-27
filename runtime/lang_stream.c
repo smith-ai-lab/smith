@@ -1273,10 +1273,6 @@ static void smith_lang_process_token(SmithLang *lang, const SmithHost *host, con
         if (token->synthetic || !smith_lang_ty_token(lang, host, token)) smith_lang_emit_code(lang, host, *token);
         return;
     }
-    if (host->maybe_named && token->kind == SmithTokenKind_Identifier && !token->foreign && !lang->recording &&
-        !smith_lang_capturing(lang)) {
-        smith_lang_named_call(lang, host, token);
-    }
     if (smith_lang_try_token(lang, host, token)) return;
     if (smith_lang_unused_token(lang, host, token)) return;
     if ((lang->due_count > 0 || lang->local_count > 0) && smith_lang_tag_bare(lang, host, token)) return;
@@ -1345,6 +1341,7 @@ static void smith_lang_process_token(SmithLang *lang, const SmithHost *host, con
 // A token, then the `}` a slice's range `for` adds when its body's ended (runtime/lang_rfor.c).
 static void smith_lang_process(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     bool ends = smith_lang_rfor_count(lang, token);
+    smith_lang_named_token(lang, host, token);
     smith_lang_process_token(lang, host, token);
     if (ends) smith_lang_rfor_close(lang, token);
 }
