@@ -1441,7 +1441,7 @@ static bool smith_lang_enum_generic_constant(SmithLang *lang, const SmithHost *h
     size_t module_length = strlen(lang->module);
     if (qualified) {
         const SmithLangBinding *binding = smith_lang_binding_find(lang, operand[0].text, operand[0].length);
-        if (binding == nullptr || binding->is_c || binding->missing) return false;
+        if (binding == nullptr || binding->is_c || binding->is_objc || binding->missing) return false;
         module = smith_lang_str(binding->module);
         module_length = binding->module.length;
     }

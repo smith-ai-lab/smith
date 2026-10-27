@@ -5362,7 +5362,7 @@ static bool smith_lang_generic_call_core(SmithLang *lang, const SmithHost *host,
 static bool smith_lang_generic_call(SmithLang *lang, const SmithHost *host, const SmithToken *name,
                                     const SmithLangBinding *binding, const SmithToken *member) {
     (void)name;
-    if (binding->is_c || binding->missing || (lang->generics_count == 0 && !lang->recording)) return false;
+    if (binding->is_c || binding->is_objc || binding->missing || (lang->generics_count == 0 && !lang->recording)) return false;
     const char *module = smith_lang_str(binding->module);
     int found = smith_lang_generic_find(lang, module, binding->module.length, member->text, member->length);
     return smith_lang_generic_call_core(lang, host, module, binding->module.length, member->text, member->length,

@@ -20,6 +20,7 @@
 #include "clang/Basic/TargetInfo.h"
 #include "clang/CodeGen/ModuleBuilder.h"
 #include "clang/Lex/HeaderSearch.h"
+#include "clang/Lex/HeaderSearchOptions.h"
 #include "clang/Lex/Lexer.h"
 #include "clang/Lex/MacroInfo.h"
 #include "clang/Lex/PPCallbacks.h"
@@ -37,6 +38,7 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/VirtualFileSystem.h"
+#include "llvm/Support/xxhash.h"
 
 extern "C" {
 #include "../runtime/lang.h"
@@ -647,6 +649,7 @@ class SmithHook final : public TokenHook, public NameSource {
         host.types_place = &SmithHook::typesPlace;
         host.mentions = &SmithHook::mentionsName;
         host.read_body = &SmithHook::readBody;
+        host.objc_index = &SmithHook::objcIndex;
         host.include_text = &SmithHook::includeText;
         host.field = &SmithHook::fieldOf;
         host.type_field = &SmithHook::typeField;
@@ -659,6 +662,8 @@ class SmithHook final : public TokenHook, public NameSource {
             mainName = entry->getName().str();
         }
         host.main_file = mainName.c_str();
+        host.main_text = SM.getBufferData(MainFile).data();
+        host.main_text_length = static_cast<uint32_t>(SM.getBufferData(MainFile).size());
         host.maybe_main = SM.getBufferData(MainFile).contains("main");
         host.maybe_generic = SM.getBufferData(MainFile).contains("type ") ||
                              SM.getBufferData(MainFile).contains("auto ") ||
@@ -3288,6 +3293,135 @@ class SmithHook final : public TokenHook, public NameSource {
         *length = static_cast<uint32_t>(known->second.text.size());
         *path = known->second.path.empty() ? nullptr : known->second.path.c_str();
         return true;
+    }
+
+    // ---- Objective-C headers (issue #318, runtime/lang_objc.c, shim/objc_index.cpp)
+    //
+    // `import <AppKit/AppKit.h>;` names a framework's header. When the SDK has that framework, a compile of a file that
+    // imports the header in Objective-C mode (this binary again, with SMITH_OBJC_INDEX set) writes the C file of its
+    // types and the index of its methods into .smith/objc/<key>/; the key is the header, the SDK, the flags and this
+    // binary, so a new SDK or a new smith makes them again. A framework header with no class in it is a C header.
+    struct ObjcIndex {
+        bool ok = false;
+        std::string types;
+        std::string text;
+    };
+    std::map<std::string, ObjcIndex> objcIndexes; // by header; the entries stay for the whole compile
+
+    static bool objcIndex(void *context, const char *header, const char **types, const char **index, uint32_t *length) {
+        auto *self = static_cast<SmithHook *>(context);
+        auto known = self->objcIndexes.find(header);
+        if (known == self->objcIndexes.end()) known = self->objcIndexes.emplace(header, self->findObjc(header)).first;
+        if (!known->second.ok) return false;
+        *types = known->second.types.c_str();
+        *index = known->second.text.c_str();
+        *length = static_cast<uint32_t>(known->second.text.size());
+        return true;
+    }
+
+    bool hasFramework(StringRef name) {
+        const HeaderSearchOptions &options = PP.getHeaderSearchInfo().getHeaderSearchOpts();
+        std::vector<std::string> folders;
+        if (!options.Sysroot.empty()) folders.push_back(options.Sysroot + "/System/Library/Frameworks");
+        for (const HeaderSearchOptions::Entry &entry : options.UserEntries)
+            if (entry.IsFramework) folders.push_back(entry.Path);
+        for (const std::string &folder : folders)
+            if (llvm::sys::fs::is_directory(folder + "/" + name.str() + ".framework/Headers")) return true;
+        return false;
+    }
+
+    static std::string hex(uint64_t value) {
+        static const char digits[] = "0123456789abcdef";
+        std::string text(16, '0');
+        for (int i = 15; i >= 0; i--, value >>= 4)
+            text[static_cast<size_t>(i)] = digits[value & 15];
+        return text;
+    }
+
+    ObjcIndex findObjc(const std::string &header) {
+        ObjcIndex found;
+        size_t slash = header.find('/');
+        if (slash == std::string::npos || slash == 0 || !hasFramework(StringRef(header).substr(0, slash))) return found;
+        const char *named = std::getenv("SMITH_LANG_SELF");
+        std::string self =
+            named != nullptr
+                ? named
+                : llvm::sys::fs::getMainExecutable("smith", reinterpret_cast<void *>(&SmithHook::objcIndex));
+        std::string key = header + '\n' + PP.getHeaderSearchInfo().getHeaderSearchOpts().Sysroot + '\n' +
+                          PP.getTargetInfo().getTriple().str() + '\n';
+        std::vector<std::string> flags;
+        for (std::string &flag : bodyFlags())
+            if (!flag.empty() && !StringRef(flag).starts_with("-std=")) flags.push_back(flag);
+        for (const std::string &flag : flags)
+            key += flag + '\n';
+        llvm::sys::fs::file_status binary;
+        if (!llvm::sys::fs::status(self, binary))
+            key += std::to_string(binary.getSize()) + ' ' +
+                   std::to_string(binary.getLastModificationTime().time_since_epoch().count());
+        llvm::SmallString<256> folder;
+        if (llvm::sys::fs::current_path(folder)) return found;
+        llvm::sys::path::append(folder, ".smith", "objc", hex(llvm::xxh3_64bits(key)));
+        std::string indexFile = std::string(folder) + "/methods.idx";
+        if (!llvm::sys::fs::exists(indexFile)) {
+            if (inEditor || llvm::sys::fs::create_directories(folder)) return found;
+            std::string source = std::string(folder) + "/import." + std::to_string(::getpid()) + ".m";
+            {
+                std::error_code failure;
+                llvm::raw_fd_ostream out(source, failure);
+                if (failure) return found;
+                out << "#import <" << header << ">\n";
+            }
+            std::vector<std::string> keep = {self, "cc", "-x", "objective-c", "-fsyntax-only", "-w"};
+            keep.insert(keep.end(), flags.begin(), flags.end());
+            keep.push_back(source);
+            std::vector<StringRef> args(keep.begin(), keep.end());
+            std::vector<std::string> environment;
+            for (char **entry = environ; entry != nullptr && *entry != nullptr; entry++)
+                if (!StringRef(*entry).starts_with("SMITH_OBJC_INDEX=")) environment.push_back(*entry);
+            environment.push_back("SMITH_OBJC_INDEX=" + std::string(folder));
+            environment.push_back("SMITH_OBJC_FRAMEWORK=" + header.substr(0, slash));
+            std::vector<StringRef> env(environment.begin(), environment.end());
+            std::optional<StringRef> redirects[] = {std::nullopt, StringRef("/dev/null"), StringRef("/dev/null")};
+            llvm::sys::ExecuteAndWait(self, args, env, redirects);
+            std::error_code removed = llvm::sys::fs::remove(source);
+            (void)removed;
+        }
+        auto buffer = llvm::MemoryBuffer::getFile(indexFile);
+        if (!buffer || !StringRef((*buffer)->getBuffer()).starts_with("objc\t1\n")) return found;
+        found.types = std::string(folder) + "/types.h";
+        found.text = (*buffer)->getBuffer().str();
+        found.ok = llvm::sys::fs::exists(found.types) && !readsAsC(self, header, flags, std::string(folder));
+        return found;
+    }
+
+    // A header that C can read stays a C header, whatever Objective-C is behind it (Network.framework has classes, and
+    // a C API that `import <Network/Network.h>;` is used for). The answer is kept in the folder: `c.yes` or `c.no`.
+    bool readsAsC(const std::string &self, const std::string &header, const std::vector<std::string> &flags,
+                  const std::string &folder) {
+        if (llvm::sys::fs::exists(folder + "/c.yes")) return true;
+        if (llvm::sys::fs::exists(folder + "/c.no")) return false;
+        if (inEditor) return false;
+        std::string source = folder + "/import." + std::to_string(::getpid()) + ".c";
+        {
+            std::error_code failure;
+            llvm::raw_fd_ostream out(source, failure);
+            if (failure) return false;
+            out << "#include <" << header << ">\n";
+        }
+        std::vector<std::string> keep = {self, "cc", "-x", "c", "-fsyntax-only", "-w"};
+        keep.insert(keep.end(), flags.begin(), flags.end());
+        keep.push_back(source);
+        std::vector<StringRef> args(keep.begin(), keep.end());
+        std::vector<std::string> environment;
+        for (char **entry = environ; entry != nullptr && *entry != nullptr; entry++)
+            if (!StringRef(*entry).starts_with("SMITH_OBJC_")) environment.push_back(*entry);
+        std::vector<StringRef> env(environment.begin(), environment.end());
+        std::optional<StringRef> redirects[] = {std::nullopt, StringRef("/dev/null"), StringRef("/dev/null")};
+        bool reads = llvm::sys::ExecuteAndWait(self, args, env, redirects) == 0;
+        std::error_code removed = llvm::sys::fs::remove(source);
+        (void)removed;
+        llvm::raw_fd_ostream(folder + (reads ? "/c.yes" : "/c.no"), removed);
+        return reads;
     }
 
     // The source a header was generated from: the second line says (`// Generated by smith from <file>. Do not edit.`).
