@@ -1,0 +1,57 @@
+// The host side of smith::gpu (issue #554, knowledge/gpu-metal.md): the program in tests/build_fixtures/gpu_host is
+// .smith only, with no .m or .metal file. It opens the GPU, takes shared memory, launches three kernels in one batch
+// and checks the gelu, a scaled copy and a sum against the CPU. The kernels are found by the table the build links into
+// the program, so they are found in a stripped program, and the library is the .metallib the build wrote beside it or,
+// when there was no `metal`, the Metal source it compiles. Each test does nothing off macOS and ends when there is no
+// GPU (the program exits 77).
+module gpu_host_test;
+
+import smith::io;
+import smith::test;
+import scratch;
+
+static bool macos(const scratch::Project *p) {
+    return scratch::sh(p, "[ \"$(uname)\" = Darwin ]").status == 0;
+}
+
+// The program exits 0 and says what it measured; 77 is no GPU, which these tests accept.
+static void expect_runs(const char *name, const scratch::Run *run) {
+    if (run->status == 77) return;
+    scratch::expect_status(name, 0, run);
+    scratch::expect_contains(name, run->out, "gelu worst");
+}
+
+export void test_gpu_host_kernels_run_from_smith_and_match_the_cpu(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "gpu_host");
+    if (!macos(&p)) return;
+    scratch::Run built = scratch::build(&p, "");
+    scratch::expect_status("host: the program builds", 0, &built);
+    scratch::expect_text("host: the table of kernels is a build output beside the library", "yes",
+                         scratch::sh(&p, "[ -s build/debug/kernels.kernels.c ] && echo yes || echo no").out);
+    scratch::Run run = scratch::sh(&p, "build/debug/p");
+    expect_runs("host: gelu, the scaled copy and the sum match the CPU", &run);
+}
+
+export void test_gpu_host_finds_the_kernels_in_a_stripped_program(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "gpu_host");
+    if (!macos(&p)) return;
+    scratch::Run built = scratch::build(&p, "");
+    scratch::expect_status("host: the program builds", 0, &built);
+    scratch::Run stripped = scratch::sh(&p, "cp build/debug/p build/debug/stripped && strip build/debug/stripped && "
+                                            "build/debug/stripped");
+    expect_runs("host: with no symbols the table still finds the kernels", &stripped);
+}
+
+export void test_gpu_host_compiles_the_source_when_the_library_is_the_source(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "gpu_host");
+    if (!macos(&p)) return;
+    scratch::Run built = scratch::build(&p, "");
+    scratch::expect_status("host: the program builds", 0, &built);
+    scratch::Run bare = scratch::sh(&p, "PATH=\"$(dirname \"$(command -v smith)\")\" smith cc --smith-metal "
+                                        "kernels.smith -o build/debug/kernels.metallib && "
+                                        "head -c 4 build/debug/kernels.metallib");
+    scratch::expect_status("host: the library is made without Apple's metal", 0, &bare);
+    scratch::expect_text("host: and is the source", "#inc", bare.out);
+    scratch::Run run = scratch::sh(&p, "build/debug/p");
+    expect_runs("host: the program compiles the source with safe math and gets the same answers", &run);
+}

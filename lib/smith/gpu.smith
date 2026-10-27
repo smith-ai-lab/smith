@@ -1,9 +1,11 @@
-// smith::gpu, <smith/gpu.h>: the kernel's side of the GPU (issue #18). A kernel is a plain function whose first
-// parameter is a `gpu::Thread *`; `smith cc --smith-metal` writes it as Metal source (knowledge/gpu-metal.md). The
-// subset a kernel is written in is C's: sized types, arithmetic, `if`, `for`, the float functions of <math.h>
-// (`c::tanhf`, `c::fmaf`, `c::sqrtf`, ...), file-scope `constexpr`, other functions of the same file (helpers, written
-// once for each kernel that calls them), and the calls below. A pointer parameter is a buffer (`device`, or `constant`
-// for a `const` pointer to a struct: the uniforms), any other parameter is a value.
+// smith::gpu, <smith/gpu.h>: the GPU from .smith (issue #18, #554). Two sides.
+//
+// The kernel's side: a kernel is a plain function whose first parameter is a `gpu::Thread *`; `smith cc --smith-metal`
+// writes it as Metal source (knowledge/gpu-metal.md). The subset a kernel is written in is C's: sized types,
+// arithmetic, `if`, `for`, the float functions of <math.h> (`c::tanhf`, `c::fmaf`, `c::sqrtf`, ...), file-scope
+// `constexpr`, other functions of the same file (helpers, written once for each kernel that calls them), and the calls
+// below. A pointer parameter is a buffer (`device`, or `constant` for a `const` pointer to a struct: the uniforms), any
+// other parameter is a value.
 //
 //   export void scale(gpu::Thread *t, u32 count, const f32 *a, f32 *out) {
 //       if (t->index < count) out[t->index] = 2.0f * a[t->index];
@@ -11,7 +13,31 @@
 //
 // On a CPU the same function can be called, once for a thread, with a Thread the caller fills: that thread is a
 // threadgroup and a SIMD group of one, so `barrier` does nothing and `simd_sum` is its argument.
+//
+// The host's side, from the end of this file: the device, a queue, shared memory and the launch of a kernel, written on
+// Objective-C calls (`objc::`, no `.m` file):
+//
+//   option(gpu::Device) opened = gpu::open();
+//   if (opened != .some) return 1;                        // no GPU
+//   gpu::Device device = opened.some;
+//   defer gpu::close(&device);
+//   gpu::Queue q = gpu::queue(&device);
+//   gpu::Arena memory = gpu::arena(&device, 1 << 20);     // memory the CPU and the GPU both see
+//   f32 xs[:] = gpu::alloc_slice(&memory, f32, n);        // (the caller imports smith::arena too)
+//   defer gpu::wait(&q);
+//   gpu::run(&q, (gpu::Launch){.groups = (n + 255) / 256, .threads = 256}, scale::scale, n, xs, ys);
+//
+// Its C API is not generated: the host is for .smith. Kernels are trusted code (#436).
 module smith::gpu;
+
+import smith::arena;
+import smith::contract;
+import <Foundation/Foundation.h>;
+import <Metal/Metal.h>;
+import <dispatch/dispatch.h>;
+import <mach-o/dyld.h>;
+import <mach-o/getsect.h>;
+import <smith/trace.h>;
 
 // The thread a kernel runs as: its place in the grid, in its threadgroup and in its SIMD group. The grid has two
 // dimensions (a 1-D dispatch has `y` 0 and one group in `y`). `index` is the thread's position in the grid, `local`
@@ -47,4 +73,357 @@ export void barrier(Thread *_) {}
 // The sum of x over the threads of the SIMD group, the same in each, added in a fixed order.
 export f32 simd_sum(Thread *_, f32 x) {
     return x;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The host.
+
+// The size of a launch: how many threadgroups and how many threads in each, in `x` and, for a grid of two dimensions,
+// in `y` (left 0 it is 1): `(gpu::Launch){.groups = g, .threads = t}`. Named arguments (#317) will give `.groups = g`
+// at the call.
+export struct Launch {
+    u32 groups;
+    u32 threads;
+    u32 groups_y;
+    u32 threads_y;
+};
+
+// One kernel of the table the build links into the program (`<file>.kernels.c`, from `smith cc --smith-metal`): the
+// function's address, its name in the Metal library and the library's file name.
+struct Kernel {
+    const void *function;
+    const char *name;
+    const char *library;
+};
+
+// A range of shared memory the GPU and the CPU both see (an arena's), to find the buffer a pointer is in.
+export struct Range {
+    void *buffer; // an objc::MTLBuffer *
+    u8 *base;
+    usize bytes;
+};
+
+// A kernel that has been made into a pipeline for this device.
+export struct Pipeline {
+    const void *function;
+    void *state; // an objc::MTLComputePipelineState *
+};
+
+// A library loaded from its file beside the program.
+export struct Library {
+    const char *name;
+    void *library; // an objc::MTLLibrary *
+};
+
+// The GPU: the system's default device, the libraries loaded from beside the program, the pipelines made from them
+// and the shared memory handed out. Keep it where it is (queues and arenas point at it) and `close` it.
+export struct Device {
+    void *metal; // an objc::MTLDevice *
+    char folder[1024];
+    Library libraries[8];
+    usize library_count;
+    Pipeline pipelines[64];
+    usize pipeline_count;
+    Range ranges[8];
+    usize range_count;
+    void *queues[4]; // objc::MTLCommandQueue *
+    usize queue_count;
+};
+
+export struct Queue {
+    Device *device;
+    void *metal;    // an objc::MTLCommandQueue *
+    void *commands; // the open batch: an objc::MTLCommandBuffer *, null when none
+    void *encoder;  // its objc::MTLComputeCommandEncoder *
+};
+
+export struct Arena {
+    Device *device;
+    u8 *base;
+    usize bytes;
+    usize used;
+};
+
+[[noreturn]] static void fail(const char *what, const char *detail) {
+    c::smith_failure_format(c::SmithFailure_Capacity, "gpu: %s: %s", what, detail);
+}
+
+// The folder of the program, where the build wrote its libraries.
+static void find_folder(Device *device) {
+    contract::trusted();
+    u32 size = sizeof device->folder;
+    // NOLINTBEGIN(smith-effects): the edge of the GPU, as the calls of every function of this module
+    i32 found = c::_NSGetExecutablePath(device->folder, &size);
+    // NOLINTEND(smith-effects)
+    if (found != 0) fail("the path of the program is too long", "");
+    usize end = c::strlen(device->folder);
+    while (end > 0 && device->folder[end - 1] != '/')
+        end--;
+    device->folder[end > 0 ? end - 1 : 0] = '\0';
+}
+
+// The system's default GPU, or `.none` when there is none.
+export option(Device) open() {
+    contract::trusted();
+    // NOLINTBEGIN(smith-effects): the edge of the GPU
+    objc::MTLDevice *metal = objc::MTLCreateSystemDefaultDevice();
+    // NOLINTEND(smith-effects)
+    if (metal == nullptr) return .none;
+    Device device = {};
+    device.metal = metal;
+    find_folder(&device);
+    return device;
+}
+
+static objc::MTLDevice *metal_of(const Device *device) {
+    return (objc::MTLDevice *)device->metal;
+}
+
+// Gives back everything the device made: its queues, memory, pipelines and libraries, then the device.
+export void close(Device *device) {
+    contract::trusted();
+    for (usize i = 0; i < device->queue_count; i++)
+        objc::MTLCommandQueue::release((objc::MTLCommandQueue *)device->queues[i]);
+    for (usize i = 0; i < device->range_count; i++)
+        objc::MTLBuffer::release((objc::MTLBuffer *)device->ranges[i].buffer);
+    for (usize i = 0; i < device->pipeline_count; i++)
+        objc::MTLComputePipelineState::release((objc::MTLComputePipelineState *)device->pipelines[i].state);
+    for (usize i = 0; i < device->library_count; i++)
+        objc::MTLLibrary::release((objc::MTLLibrary *)device->libraries[i].library);
+    objc::MTLDevice::release(metal_of(device));
+    *device = (Device){};
+}
+
+static objc::NSString *text(const char *chars) {
+    return objc::NSString::stringWithUTF8String(chars);
+}
+
+static const char *describe(objc::NSError *error) {
+    return error == nullptr ? "" : objc::NSString::UTF8String(objc::NSError::localizedDescription(error));
+}
+
+// The library `name` beside the program: Apple's .metallib when the build had `metal`, and the Metal source itself
+// when it did not, compiled here without fast math (what `metal -fno-fast-math` builds).
+static objc::MTLLibrary *load_library(Device *device, const char *name) {
+    for (usize i = 0; i < device->library_count; i++) {
+        if (c::strcmp(device->libraries[i].name, name) == 0) return (objc::MTLLibrary *)device->libraries[i].library;
+    }
+    if (device->library_count == 8) fail("more than 8 libraries", name);
+    objc::NSString *base = objc::NSString::stringByAppendingPathComponent(text(device->folder), text(name));
+    objc::NSString *path = objc::NSString::stringByAppendingPathExtension(base, text("metallib"));
+    objc::NSData *data = objc::NSData::dataWithContentsOfFile(path);
+    if (data == nullptr) fail("cannot read the kernel library", objc::NSString::UTF8String(path));
+    const char *bytes = (const char *)objc::NSData::bytes(data);
+    usize length = objc::NSData::length(data);
+    objc::NSError *error = nullptr;
+    objc::MTLLibrary *library = nullptr;
+    if (length > 4 && c::strncmp(bytes, "MTLB", 4) == 0) {
+        // NOLINTBEGIN(smith-effects): the edge of the GPU
+        c::dispatch_data_t contents = c::dispatch_data_create(bytes, length, nullptr, nullptr);
+        // NOLINTEND(smith-effects)
+        library =
+            objc::MTLDevice::newLibraryWithData_error(metal_of(device), (objc::NSObject *)(void *)contents, &error);
+    } else {
+        objc::MTLCompileOptions *options = objc::MTLCompileOptions::new();
+        objc::MTLCompileOptions::setMathMode(options, objc::MTLMathModeSafe);
+        objc::MTLCompileOptions::setMathFloatingPointFunctions(options, objc::MTLMathFloatingPointFunctionsPrecise);
+        objc::NSString *source =
+            objc::NSString::initWithData_encoding(objc::NSString::alloc(), data, objc::NSUTF8StringEncoding);
+        library = objc::MTLDevice::newLibraryWithSource_options_error(metal_of(device), source, options, &error);
+    }
+    if (library == nullptr) fail("cannot load the kernel library", describe(error));
+    device->libraries[device->library_count++] = (Library){name, library};
+    return library;
+}
+
+// The kernel at `function` in the table of the program, found by its address.
+static const Kernel *find_kernel(const void *function) {
+    usize size = 0;
+    // NOLINTBEGIN(smith-effects): the edge of the GPU
+    const struct c::mach_header_64 *header = (const struct c::mach_header_64 *)c::_dyld_get_image_header(0);
+    const Kernel *table = (const Kernel *)c::getsectiondata(header, "__DATA", "__smith_gpu", &size);
+    // NOLINTEND(smith-effects)
+    for (usize i = 0; table != nullptr && i < size / sizeof(Kernel); i++) {
+        if (table[i].function == function) return &table[i];
+    }
+    return nullptr;
+}
+
+// The pipeline of a kernel, made once.
+static objc::MTLComputePipelineState *pipeline_of(Device *device, const void *function) {
+    for (usize i = 0; i < device->pipeline_count; i++) {
+        if (device->pipelines[i].function == function)
+            return (objc::MTLComputePipelineState *)device->pipelines[i].state;
+    }
+    const Kernel *kernel = find_kernel(function);
+    if (kernel == nullptr)
+        fail("not a kernel of this program", "a kernel is a function whose first parameter is gpu::Thread *");
+    if (device->pipeline_count == 64) fail("more than 64 kernels", kernel->name);
+    objc::MTLLibrary *library = load_library(device, kernel->library);
+    objc::MTLFunction *entry = objc::MTLLibrary::newFunctionWithName(library, text(kernel->name));
+    if (entry == nullptr) fail("the library has no kernel", kernel->name);
+    objc::NSError *error = nullptr;
+    objc::MTLComputePipelineState *state =
+        objc::MTLDevice::newComputePipelineStateWithFunction_error(metal_of(device), entry, &error);
+    objc::MTLFunction::release(entry);
+    if (state == nullptr) fail(kernel->name, describe(error));
+    device->pipelines[device->pipeline_count++] = (Pipeline){function, state};
+    return state;
+}
+
+// A queue of commands for the device. Kernels launched on it run in order; `wait` ends the batch.
+export Queue queue(Device *device) {
+    contract::trusted();
+    if (device->queue_count == 4) fail("more than 4 queues", "");
+    objc::MTLCommandQueue *metal = objc::MTLDevice::newCommandQueue(metal_of(device));
+    device->queues[device->queue_count++] = metal;
+    return (Queue){.device = device, .metal = metal};
+}
+
+// `bytes` of memory the CPU and the GPU both see (Metal's shared storage), zeroed. Slices of it go to kernels.
+export Arena arena(Device *device, usize bytes) {
+    contract::trusted();
+    if (device->range_count == 8) fail("more than 8 arenas", "");
+    objc::MTLBuffer *buffer =
+        objc::MTLDevice::newBufferWithLength_options(metal_of(device), bytes, objc::MTLResourceStorageModeShared);
+    if (buffer == nullptr) fail("the device refused memory", "");
+    u8 *base = (u8 *)objc::MTLBuffer::contents(buffer);
+    device->ranges[device->range_count++] = (Range){buffer, base, bytes};
+    return (Arena){device, base, bytes, 0};
+}
+
+// Reserves `bytes` of the arena, 16-aligned; where they start.
+static usize take(Arena *memory, usize bytes) {
+    usize start = (memory->used + 15) & ~(usize)15;
+    if (start > memory->bytes || bytes > memory->bytes - start) fail("the arena is full", "");
+    memory->used = start + bytes;
+    return start;
+}
+
+// A zeroed array of T with a size for each `[:]` of the result, as a slice, from the arena: `alloc_slice(&memory,
+// f32, n)` is `f32[:]`. The arena running out is a checked failure.
+export [[nodiscard]] arena::slice_of(T, countof(dims)) alloc_slice(Arena *memory, constexpr type T, auto... dims) {
+    contract::trusted();
+    static_assert(countof(dims) > 0,
+                  "alloc_slice needs a size for each `[:]` of the result: alloc_slice(&memory, T, n)");
+    struct smith_array_T_n result = {};
+    usize total = 1;
+    for constexpr (usize i = 0; i < countof(dims); i++) {
+        result.count[i] = (usize)dims[i];
+        total *= (usize)dims[i];
+    }
+    usize start = take(memory, total * sizeof(T));
+    result.data = (T *)(memory->base + start);
+    return result;
+}
+
+// Opens the batch the next launch goes into, if none is open. Its objects are made in a pool of their own and kept.
+static void begin(Queue *q) {
+    if (q->commands != nullptr) return;
+    objc::NSAutoreleasePool *pool = objc::NSAutoreleasePool::new();
+    objc::MTLCommandBuffer *commands = objc::MTLCommandQueue::commandBuffer((objc::MTLCommandQueue *)q->metal);
+    objc::MTLComputeCommandEncoder *encoder = objc::MTLCommandBuffer::computeCommandEncoder(commands);
+    q->commands = objc::NSObject::retain((objc::NSObject *)commands);
+    q->encoder = objc::NSObject::retain((objc::NSObject *)encoder);
+    objc::NSAutoreleasePool::drain(pool);
+}
+
+static objc::MTLComputeCommandEncoder *encoder_of(const Queue *q) {
+    return (objc::MTLComputeCommandEncoder *)q->encoder;
+}
+
+// The shared range that holds `pointer`, or null.
+static const Range *range_of(const Device *device, const void *pointer) {
+    const u8 *at = (const u8 *)pointer;
+    for (usize i = 0; i < device->range_count; i++) {
+        const Range *range = &device->ranges[i];
+        if (at >= range->base && at < range->base + range->bytes) return range;
+    }
+    return nullptr;
+}
+
+// Passes the shared memory at `pointer` as the kernel's buffer `slot`; false when the pointer is not in any.
+static bool bind_memory(Queue *q, usize slot, const void *pointer) {
+    contract::trusted();
+    const Range *range = range_of(q->device, pointer);
+    if (range == nullptr) return false;
+    objc::MTLComputeCommandEncoder::setBuffer_offset_atIndex(encoder_of(q), (objc::MTLBuffer *)range->buffer,
+                                                             (usize)((const u8 *)pointer - range->base), slot);
+    return true;
+}
+
+static void bind_bytes(Queue *q, usize slot, const void *bytes, usize length) {
+    contract::trusted();
+    objc::MTLComputeCommandEncoder::setBytes_length_atIndex(encoder_of(q), bytes, length, slot);
+}
+
+// Starts a launch of the kernel at `function`: opens the batch and sets its pipeline.
+static void prepare(Queue *q, const void *function) {
+    contract::trusted();
+    begin(q);
+    objc::MTLComputeCommandEncoder::setComputePipelineState(encoder_of(q), pipeline_of(q->device, function));
+}
+
+static objc::MTLSize size_of(u32 x, u32 y) {
+    return (objc::MTLSize){x, y != 0 ? y : 1, 1};
+}
+
+static void dispatch(Queue *q, Launch launch) {
+    contract::trusted();
+    objc::MTLComputeCommandEncoder::dispatchThreadgroups_threadsPerThreadgroup(
+        encoder_of(q), size_of(launch.groups, launch.groups_y), size_of(launch.threads, launch.threads_y));
+}
+
+// Passes a slice as the kernel's buffer `slot` (what `run` does for a slice argument). An empty slice has no memory
+// to pass.
+export void bind_slice(Queue *q, usize slot, auto xs) {
+    if (!bind_memory(q, slot, &xs[0]))
+        fail("a slice argument is not in the memory of this device", "use gpu::alloc_slice");
+}
+
+// Passes a pointer as the kernel's buffer `slot`: shared memory is that memory, a pointer to a struct anywhere else
+// is the bytes of the struct (the uniforms), as `run` does for a pointer argument.
+export void bind_pointer(Queue *q, usize slot, const auto *pointer) {
+    if (bind_memory(q, slot, pointer)) {
+        return;
+    }
+    if constexpr (is_record(typeof(*pointer))) {
+        bind_bytes(q, slot, pointer, sizeof(*pointer));
+    } else {
+        fail("a pointer argument is not in the memory of this device", "use gpu::alloc_slice");
+    }
+}
+
+// Launches `kernel` (a function whose first parameter is a gpu::Thread *) with the arguments after its thread: a
+// slice or pointer into the arena is a buffer, a pointer to a struct elsewhere is its bytes, any other argument is
+// its bytes. It runs after what was launched before it on the queue; `wait` waits for them.
+export void run(Queue *q, Launch launch, constexpr auto kernel, auto... args) {
+    prepare(q, (const void *)kernel);
+    for constexpr (usize i, auto value : args) {
+        if constexpr (is_slice(typeof(value))) {
+            bind_slice(q, i, value);
+        } else if constexpr (is_pointer(typeof(value))) {
+            bind_pointer(q, i, value);
+        } else {
+            bind_bytes(q, i, &value, sizeof value);
+        }
+    }
+    dispatch(q, launch);
+}
+
+// Waits until everything launched on the queue has run. A launch that failed is a checked failure.
+export void wait(Queue *q) {
+    contract::trusted();
+    if (q->commands == nullptr) return;
+    objc::MTLCommandBuffer *commands = (objc::MTLCommandBuffer *)q->commands;
+    objc::MTLComputeCommandEncoder::endEncoding(encoder_of(q));
+    objc::MTLCommandBuffer::commit(commands);
+    objc::MTLCommandBuffer::waitUntilCompleted(commands);
+    bool completed = objc::MTLCommandBuffer::status(commands) == objc::MTLCommandBufferStatusCompleted;
+    const char *detail = completed ? "" : describe(objc::MTLCommandBuffer::error(commands));
+    objc::NSObject::release((objc::NSObject *)q->encoder);
+    objc::NSObject::release((objc::NSObject *)commands);
+    q->encoder = nullptr;
+    q->commands = nullptr;
+    if (!completed) fail("a launch failed", detail);
 }

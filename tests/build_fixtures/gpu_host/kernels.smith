@@ -1,0 +1,39 @@
+// Kernels for the host test (tests/gpu_host_test.smith): a nonlinearity, a scaled copy that takes a plain value, and a
+// sum in two steps (a partial sum for each threadgroup).
+module kernels;
+
+import smith::gpu;
+import <math.h>;
+
+export struct Uniforms {
+    u32 count;
+};
+
+constexpr u32 threads = 256;
+constexpr u32 simds_max = 32;
+
+// out = gelu(a), the tanh form.
+export void gelu(gpu::Thread *t, const Uniforms *u, const f32 *a, f32 *out) {
+    if (t->index >= u->count) return;
+    f32 x = a[t->index];
+    out[t->index] = 0.5f * x * (1.0f + c::tanhf(0.7978845608028654f * (x + 0.044715f * x * x * x)));
+}
+
+// out = alpha a: alpha is a value, not a buffer.
+export void scale(gpu::Thread *t, u32 count, f32 alpha, const f32 *a, f32 *out) {
+    if (t->index < count) out[t->index] = alpha * a[t->index];
+}
+
+// partials[group] = the sum of the group's share of a, added in a fixed order (no atomics).
+export void sum(gpu::Thread *t, const Uniforms *u, const f32 *a, f32 *partials) {
+    f32 *sums = gpu::shared(t, f32, simds_max);
+    f32 total = 0.0f;
+    for (u32 i = t->group * threads + t->local; i < u->count; i += t->groups * threads)
+        total += a[i];
+    total = gpu::simd_sum(t, total);
+    if (t->lane == 0) sums[t->simd] = total;
+    gpu::barrier(t);
+    if (t->simd != 0) return;
+    f32 all = gpu::simd_sum(t, t->lane < t->simds ? sums[t->lane] : 0.0f);
+    if (t->lane == 0) partials[t->group] = all;
+}

@@ -653,6 +653,32 @@ i32 main(io::Io *io) {
 3 6
 ```
 
+The host is `.smith` too, on Objective-C calls with no `.m` file: `gpu::open()`, `gpu::queue(&device)`, `gpu::arena(&device, bytes)` (memory the CPU and the GPU both see), `gpu::run(&q, launch, kernel, args...)` and `gpu::wait(&q)`.
+
+```smith project=gpu_kernel
+module host;
+
+import scale;
+import smith::arena;
+import smith::gpu;
+
+export f32 doubled_first() {
+    option(gpu::Device) opened = gpu::open();
+    if (opened != .some) return 0.0f;
+    gpu::Device device = opened.some;
+    defer gpu::close(&device);
+    gpu::Queue q = gpu::queue(&device);
+    gpu::Arena memory = gpu::arena(&device, 1 << 16);
+    f32 a[:] = gpu::alloc_slice(&memory, f32, 64);
+    f32 out[:] = gpu::alloc_slice(&memory, f32, 64);
+    a[0] = 3.0f;
+    scale::Uniforms uniforms = {.count = 64, .alpha = 2.0f};
+    gpu::run(&q, (gpu::Launch){.groups = 1, .threads = 64}, scale::scale, &uniforms, a, out);
+    gpu::wait(&q);
+    return out[0] / 3.0f;
+}
+```
+
 [smith-gpu](.agents/skills/smith-gpu/SKILL.md).
 
 ## A module has no warnings

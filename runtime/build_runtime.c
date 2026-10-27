@@ -2289,6 +2289,7 @@ static const char *const *smith_program_handlers(SmithBuild *b, const SmithProgr
 // file is the Metal source, which the program compiles when it starts).
 constexpr size_t smith_gpu_libraries_max = 64;
 static const char *smith_gpu_made[smith_gpu_libraries_max];
+static const char *smith_gpu_objects[smith_gpu_libraries_max];
 static size_t smith_gpu_made_count;
 
 static bool smith_imports_gpu(const char *source) {
@@ -2306,43 +2307,71 @@ static bool smith_imports_gpu(const char *source) {
     return imported && strstr(text, "(gpu::Thread *") != nullptr;
 }
 
-// The step that writes the library of one source, once for each output.
+// The kernels of the programs' sources: the library (what Metal loads) and the object with the table of their
+// functions' addresses, which the link adds.
+typedef struct {
+    const char *const *libraries;
+    const char *const *objects;
+} SmithGpuOutputs;
+
+// The steps that write the library of one source and compile its table, once for each output; the table's object.
 static const char *smith_gpu_library(SmithBuild *b, const SmithObject *row, const char *folder) {
     const char *base = strrchr(row->source, '/');
     base = base != nullptr ? base + 1 : row->source;
     const char *dot = strrchr(base, '.');
-    const char *output = smith_text("%s/%.*s.metallib", folder, (int)(dot - base), base);
+    const char *stem = smith_text("%s/%.*s", folder, (int)(dot - base), base);
+    const char *output = smith_text("%s.metallib", stem);
+    const char *table = smith_text("%s.kernels.c", stem);
+    const char *object = smith_text("%s.kernels.o", stem);
     for (size_t i = 0; i < smith_gpu_made_count; i++) {
-        if (strcmp(smith_gpu_made[i], output) == 0) return smith_gpu_made[i];
+        if (strcmp(smith_gpu_made[i], output) == 0) return smith_gpu_objects[i];
     }
     if (smith_gpu_made_count >= smith_gpu_libraries_max) smith_too_many("kernel libraries", smith_gpu_libraries_max);
-    smith_gpu_made[smith_gpu_made_count++] = output;
+    smith_gpu_made[smith_gpu_made_count] = output;
+    smith_gpu_objects[smith_gpu_made_count++] = object;
     SmithStep step = {
         .command = smith_list(b, smith_copy_string(row->compiler), "--smith-metal", row->source, "-I", ".smith/include",
                               "-o", output, nullptr),
         .inputs = smith_one(row->source),
         .implicit_inputs = smith_one(smith_compiler_file(row->compiler)),
         .order_only_inputs = smith_one(smith_lang_stamp),
-        .outputs = smith_one(output),
+        .outputs = smith_cat(b, smith_one(output), smith_one(table), nullptr),
         .description = smith_text("metal %s", output),
     };
     smith_step(b, &step);
-    return output;
+    SmithStep compile = {
+        .command = smith_list(b, smith_copy_string(row->compiler), "-c", table, "-o", object, nullptr),
+        .inputs = smith_one(table),
+        .implicit_inputs = smith_one(smith_compiler_file(row->compiler)),
+        .outputs = smith_one(object),
+        .description = smith_text("compile %s", object),
+    };
+    smith_step(b, &compile);
+    return object;
 }
 
-// The libraries of the kernels the program links; the link waits for them.
-static const char *const *smith_program_gpu(SmithBuild *b, const SmithProgram *program, const SmithObject *const *rows,
-                                            size_t count) {
+// The libraries and table objects of the kernels the program links; the link waits for the libraries and links the
+// objects.
+static SmithGpuOutputs smith_program_gpu(SmithBuild *b, const SmithProgram *program, const SmithObject *const *rows,
+                                         size_t count) {
     const char *slash = strrchr(program->output, '/');
     const char *folder = slash != nullptr ? smith_text("%.*s", (int)(slash - program->output), program->output) : ".";
-    const char **outputs = smith_new_list(count);
+    const char **objects = smith_new_list(count);
     size_t used = 0;
     for (size_t i = 0; i < count; i++) {
         if (!smith_imports_gpu(rows[i]->source)) continue;
-        outputs[used++] = smith_gpu_library(b, rows[i], folder);
+        objects[used++] = smith_gpu_library(b, rows[i], folder);
     }
-    outputs[used] = nullptr;
-    return outputs;
+    objects[used] = nullptr;
+    const char **libraries = smith_new_list(used);
+    for (size_t i = 0; i < used; i++) {
+        size_t made = 0;
+        while (smith_gpu_objects[made] != objects[i]) // each object is one of the table
+            made++;
+        libraries[i] = smith_gpu_made[made];
+    }
+    libraries[used] = nullptr;
+    return (SmithGpuOutputs){.libraries = libraries, .objects = objects};
 }
 
 void smith_program(SmithBuild *b, SmithProgram *program) {
@@ -2366,7 +2395,7 @@ void smith_program(SmithBuild *b, SmithProgram *program) {
         outputs[i] = rows[i]->output;
         sources[i] = rows[i]->source;
     }
-    const char *const *gpu_libraries = smith_program_gpu(b, program, rows, count);
+    const SmithGpuOutputs gpu = smith_program_gpu(b, program, rows, count);
     SmithProgram copy = *program;
     copy.linker = smith_copy_string(program->linker);
     copy.output = smith_copy_string(program->output);
@@ -2386,12 +2415,12 @@ void smith_program(SmithBuild *b, SmithProgram *program) {
     const char *const *handlers_files = nullptr;
     const char *const *handlers = smith_program_handlers(b, &copy, &handlers_files);
     copy.step = (SmithStep){
-        .command = smith_cat(b, smith_one(copy.linker), copy.flags, (const char *const *)outputs, copy.libraries,
-                             handlers, tail, nullptr),
-        .inputs = (const char *const *)outputs,
+        .command = smith_cat(b, smith_one(copy.linker), copy.flags, (const char *const *)outputs, gpu.objects,
+                             copy.libraries, handlers, tail, nullptr),
+        .inputs = smith_cat(b, (const char *const *)outputs, gpu.objects, nullptr),
         .implicit_inputs =
             smith_cat(b, smith_library_files(copy.libraries), smith_one(smith_compiler_file(copy.linker)), summaries,
-                      handlers_files, gpu_libraries, nullptr),
+                      handlers_files, gpu.libraries, nullptr),
         .outputs = smith_one(copy.output),
         .description = smith_text("link %s", copy.output),
     };

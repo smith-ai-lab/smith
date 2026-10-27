@@ -713,9 +713,53 @@ static size_t smith_metal_source(FILE *out, const char *text, size_t length) {
 // What `--smith-lower` would print, taken by `--smith-metal` instead (runtime/lang_lex.c, smith_lang_dump_sink).
 static FILE *smith_metal_out;
 static size_t smith_metal_kernels;
+static FILE *smith_metal_table;      // the table of kernels (<library>.kernels.c), when a library is built
+static const char *smith_metal_stem; // the name of the library without its folder and suffix
+
+// The label of the symbol of the function `name` in the lowered text: the string of the `__asm__("...")` that follows
+// its first declaration (`_elementwise::gelu_kernel`), or null.
+static const char *smith_metal_label(const char *text, size_t length, SmithMetalSpan name, size_t *size) {
+    for (size_t i = 0; i + name.length < length; i++) { // bounded by the text
+        if (strncmp(text + i, name.text, name.length) != 0 || text[i + name.length] != '(') continue;
+        if (i > 0 && smith_metal_word_char(text[i - 1])) continue;
+        const char *label = strstr(text + i, "__asm__(\"");
+        const char *end = label != nullptr ? strchr(label + 9, '"') : nullptr;
+        if (end == nullptr) return nullptr;
+        *size = (size_t)(end - (label + 9));
+        return label + 9;
+    }
+    return nullptr;
+}
+
+// The table of the kernels the program finds by their address (knowledge/gpu-metal.md): for each kernel its function,
+// its name in the Metal library and the library's name, in a section the program reads whatever its symbols are
+// (stripped, LTO). The table is C, compiled and linked into the program by smith_program.
+static void smith_metal_write_table(const char *text, size_t length) {
+    fprintf(smith_metal_table,
+            "// The kernels of %s: the address of each function, its name in the Metal library and the library's.\n"
+            "// Written by `smith cc --smith-metal` (a build output), read by smith::gpu.\n"
+            "typedef struct {\n    const void *function;\n    const char *name;\n    const char *library;\n} "
+            "SmithGpuKernel;\n\n",
+            smith_metal_stem);
+    size_t number = 0;
+    for (size_t i = 0; i < smith_metal_item_count; i++) { // bounded by the table
+        const SmithMetalItem *item = &smith_metal_items[i];
+        size_t size = 0;
+        const char *label =
+            item->kind == SmithMetalItem_Kernel ? smith_metal_label(text, length, item->name, &size) : nullptr;
+        if (label == nullptr) continue;
+        fprintf(smith_metal_table,
+                "extern void smith_gpu_function_%zu(void) __asm__(\"%.*s\");\n"
+                "[[gnu::used, gnu::retain, gnu::section(\"__DATA,__smith_gpu\")]] static const SmithGpuKernel "
+                "smith_gpu_kernel_%zu = {(const void *)smith_gpu_function_%zu, \"%.*s\", \"%s\"};\n",
+                number, (int)size, label, number, number, (int)item->name.length, item->name.text, smith_metal_stem);
+        number++;
+    }
+}
 
 static void smith_metal_sink(const char *text, size_t length) {
     smith_metal_kernels = smith_metal_source(smith_metal_out, text, length);
+    if (smith_metal_table != nullptr) smith_metal_write_table(text, length);
 }
 
 static bool smith_metal_has_suffix(const char *text, const char *suffix) {
@@ -803,6 +847,18 @@ static int smith_metal_main(int count, char **args, const char *self) {
     const char *written = library ? source : output;
     smith_metal_out = written != nullptr ? fopen(written, "w") : stdout;
     if (smith_metal_out == nullptr) smith_die(smith_exit_missing, "cannot write", written);
+    char table[PATH_MAX];
+    char stem[PATH_MAX];
+    smith_metal_table = nullptr;
+    if (library) {
+        const char *slash = strrchr(output, '/');
+        snprintf(stem, sizeof stem, "%s", slash != nullptr ? slash + 1 : output);
+        stem[strlen(stem) - strlen(".metallib")] = '\0';
+        snprintf(table, sizeof table, "%.*s.kernels.c", (int)(strlen(output) - strlen(".metallib")), output);
+        smith_metal_stem = stem;
+        smith_metal_table = fopen(table, "w");
+        if (smith_metal_table == nullptr) smith_die(smith_exit_missing, "cannot write", table);
+    }
     smith_lang_dump_sink = smith_metal_sink;
     smith_metal_failed = false;
     int status = smith_lang_run_raw(file, nullptr, true);
@@ -813,6 +869,8 @@ static int smith_metal_main(int count, char **args, const char *self) {
         status = 1;
     }
     if (written != nullptr) fclose(smith_metal_out);
+    if (smith_metal_table != nullptr) fclose(smith_metal_table);
+    if (status != 0 && library) remove(table);
     if (status == 0 && library) {
         status =
             smith_metal_toolchain(self) ? smith_metal_build(self, source, output) : smith_metal_copy(source, output);

@@ -1,0 +1,52 @@
+// Runs the kernels of kernels.smith on the GPU through smith::gpu, with no .m or .metal file, and checks them against
+// the same arithmetic on the CPU. Exits 77 when there is no GPU.
+module main;
+
+import kernels;
+import smith::arena;
+import smith::format;
+import smith::gpu;
+import smith::io;
+import <math.h>;
+
+constexpr u32 count = 5000;
+constexpr u32 groups = 8;
+
+static f32 gelu_cpu(f32 x) {
+    return 0.5f * x * (1.0f + c::tanhf(0.7978845608028654f * (x + 0.044715f * x * x * x)));
+}
+
+i32 main(io::Io *io) {
+    option(gpu::Device) opened = gpu::open();
+    if (opened != .some) return 77;
+    gpu::Device device = opened.some;
+    defer gpu::close(&device);
+    gpu::Queue q = gpu::queue(&device);
+    gpu::Arena memory = gpu::arena(&device, 1 << 20);
+    f32 a[:] = gpu::alloc_slice(&memory, f32, count);
+    f32 activated[:] = gpu::alloc_slice(&memory, f32, count);
+    f32 scaled[:] = gpu::alloc_slice(&memory, f32, count);
+    f32 partials[:] = gpu::alloc_slice(&memory, f32, groups);
+    for (u32 i = 0; i < count; i++) {
+        a[i] = (f32)(i % 17) - 8.0f; // whole numbers, so a sum is exact in any order
+    }
+    kernels::Uniforms uniforms = {.count = count};
+    gpu::Launch elementwise = {.groups = (count + 255) / 256, .threads = 256};
+    gpu::run(&q, elementwise, kernels::gelu, &uniforms, a, activated);
+    gpu::run(&q, elementwise, kernels::scale, count, 0.5f, a, scaled); // in the same batch as the first
+    gpu::run(&q, (gpu::Launch){.groups = groups, .threads = 256}, kernels::sum, &uniforms, a, partials);
+    gpu::wait(&q);
+    f32 worst = 0.0f;
+    f32 expected = 0.0f;
+    f32 total = 0.0f;
+    for (u32 i = 0; i < count; i++) {
+        worst = c::fmaxf(worst, c::fabsf(activated[i] - gelu_cpu(a[i])));
+        if (scaled[i] != 0.5f * a[i]) return 1;
+        expected += a[i];
+    }
+    for (u32 g = 0; g < groups; g++) {
+        total += partials[g];
+    }
+    format::print(&io->console, "gelu worst ", (f64)worst, " sum ", (f64)total, " expected ", (f64)expected, "\n");
+    return worst < 1e-5f && total == expected ? 0 : 1;
+}
