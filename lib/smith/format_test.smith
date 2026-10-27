@@ -320,24 +320,29 @@ export void test_format_cut_in_a_number(random::Key key) {
     }
 }
 
-export void test_format_push_on_an_arena() {
+// push allocates only through the allocator in force: with an arena installed, every byte comes from it.
+export void test_format_push_allocates_only_through_the_current_allocator() {
     static struct {
         alignas(arena::align_max) u8 bytes[1024];
     } memory;
     arena::Arena a = arena::fixed(memory.bytes, sizeof memory.bytes);
-    char path[:] = format::push(&a, "build/meshes/", "ship", ".mesh");
+    arena::ArenaAllocator allocator = arena::allocator(&a);
+    mem::Allocator *before = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(before);
+    char path[:] = format::push("build/meshes/", "ship", ".mesh");
     test::check_equal(countof(path), 22);
-    test::check(is(path.data, "build/meshes/ship.mesh")); // terminated after its length
+    test::check(is(path.data, "build/meshes/ship.mesh"));         // terminated after its length
+    test::check(allocator.base.owns(&allocator.base, path.data)); // from the arena, not the heap
     usize used = a.used;
-    char number[:] = format::push(&a, (u64)42);
+    char number[:] = format::push((u64)42);
     test::check_equal(countof(number), 2);
     test::check(is(number.data, "42"));
+    test::check(allocator.base.owns(&allocator.base, number.data));
     test::check(a.used > used);
-    char nothing[:] = format::push(&a);
+    char nothing[:] = format::push();
     test::check_equal(countof(nothing), 0);
     test::check_equal(nothing.data[0], '\0');
-    arena::reset(&a);
-    test::check_equal(a.used, 0);
+    test::check(allocator.base.owns(&allocator.base, nothing.data));
 }
 
 // What the callers of snprintf wrote, as pieces. Each pair is the old call and the new one.
