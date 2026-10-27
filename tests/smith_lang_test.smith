@@ -401,6 +401,10 @@ export void test_defer_run(io::Io *io) {
     corpus_case(io, "defer-run");
 }
 
+export void test_error_objc_argument(io::Io *io) {
+    corpus_case(io, "error-objc-argument");
+}
+
 export void test_error_range_for(io::Io *io) {
     corpus_case(io, "error-range-for");
 }
@@ -411,6 +415,22 @@ export void test_generic_for_range(io::Io *io) {
 
 export void test_generic_for_range_error(io::Io *io) {
     corpus_case(io, "generic-for-range-error");
+}
+
+export void test_objc_c_unchanged(io::Io *io) {
+    corpus_case(io, "objc-c-unchanged");
+}
+
+export void test_objc_call(io::Io *io) {
+    corpus_case(io, "objc-call");
+}
+
+export void test_objc_naming(io::Io *io) {
+    corpus_case(io, "objc-naming");
+}
+
+export void test_objc_window(io::Io *io) {
+    corpus_case(io, "objc-window");
 }
 
 export void test_range_for(io::Io *io) {

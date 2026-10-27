@@ -1,0 +1,20 @@
+import <Foundation/Foundation.h>;
+import <stdio.h>;
+
+// A class method takes no receiver, an instance method takes it first.
+i32 main(void) {
+    objc::NSString *text = objc::NSString::stringWithUTF8String("hello from smith");
+    c::printf("%s\n", objc::NSString::UTF8String(text));
+    c::printf("length %lu\n", (unsigned long)objc::NSString::length(text));
+
+    objc::NSMutableArray *list = objc::NSMutableArray::array();
+    objc::NSMutableArray::addObject(list, text);
+    objc::NSMutableArray::addObject(list, objc::NSString::stringWithUTF8String("second"));
+    c::printf("count %lu\n", (unsigned long)objc::NSArray::count((objc::NSArray *)list));
+
+    // Constants and types of the header are objc:: names too.
+    objc::NSRange range = {6, 4};
+    objc::NSString *part = objc::NSString::substringWithRange(text, range);
+    c::printf("%s %d\n", objc::NSString::UTF8String(part), (int)objc::NSOrderedAscending);
+    return 0;
+}

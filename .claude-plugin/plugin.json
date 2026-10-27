@@ -103,6 +103,7 @@
     "./.agents/skills/smith-lang-reflection-field/",
     "./.agents/skills/smith-lang-affine/",
     "./.agents/skills/smith-lang-modules/",
+    "./.agents/skills/smith-lang-objc/",
     "./.agents/skills/smith-lang-modules-errors/",
     "./.agents/skills/smith-lang-tools/",
     "./.agents/skills/smith-lang-sized-types/",
