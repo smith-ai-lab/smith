@@ -514,6 +514,7 @@ static const char *const build_smith_inputs[] = {
     "runtime/xz.c",
     "runtime/untar.c",
     "runtime/cache.c",
+    "runtime/run_record.c",
     "runtime/symbolize.c",
     "runtime/explain.c",
     "runtime/platform_macos.c",
@@ -1796,12 +1797,157 @@ static void build_llvm(SmithBuild *b) {
 // `smith build friction -Dsince=2026-10-24` (AGENTS.md, How to work): the friction sections of merged pull requests,
 // for the lead's review across PRs. Each pull request's body ends with `## Friction`; this prints that section of every
 // PR merged since a date, newest first, each under its PR's number and title.
+// The run records (knowledge/run-records.md): `*.jsonl` in $SMITH_RECORDS_DIR, else ~/.local/share/smith-records, one
+// line a smith run. Attempts to fix: for a diagnostic id in a project and verb, the runs from the first that showed it
+// to the first later run of that verb in that project without it. The report ranks the ids by attempts. Lines older
+// than `since` are skipped.
+constexpr size_t friction_ids_max = 512;
+constexpr size_t friction_open_max = 256;
+constexpr size_t friction_seen_max = 32;
+
+typedef struct {
+    char id[96];
+    unsigned episodes;
+    unsigned attempts;
+    unsigned worst;
+} FrictionId;
+
+typedef struct {
+    char project[64];
+    char verb[24];
+    size_t id; // index into the ids
+    unsigned attempts;
+} FrictionOpen;
+
+static FrictionId friction_ids[friction_ids_max];
+static size_t friction_id_count;
+static FrictionOpen friction_opens[friction_open_max];
+static size_t friction_open_count;
+
+// The string value of "key":"..." in a line, cut at its closing quote (ids and names hold no escaped quote); false
+// when the key is missing.
+static bool friction_field(const char *line, const char *key, char *out, size_t capacity) {
+    char pattern[48];
+    snprintf(pattern, sizeof pattern, "\"%s\":\"", key);
+    const char *at = strstr(line, pattern);
+    if (at == nullptr) return false;
+    at += strlen(pattern);
+    size_t used = 0;
+    while (*at != '\0' && *at != '"' && used + 1 < capacity) out[used++] = *at++;
+    out[used] = '\0';
+    return true;
+}
+
+static size_t friction_id_of(const char *id) {
+    for (size_t i = 0; i < friction_id_count; i++) {
+        if (strcmp(friction_ids[i].id, id) == 0) return i;
+    }
+    if (friction_id_count == friction_ids_max) return friction_ids_max - 1;
+    snprintf(friction_ids[friction_id_count].id, sizeof friction_ids[0].id, "%s", id);
+    return friction_id_count++;
+}
+
+static void friction_close(size_t slot) {
+    const FrictionOpen *item = &friction_opens[slot];
+    FrictionId *id = &friction_ids[item->id];
+    id->episodes += 1;
+    id->attempts += item->attempts;
+    if (item->attempts > id->worst) id->worst = item->attempts;
+    friction_opens[slot] = friction_opens[--friction_open_count];
+}
+
+static bool friction_has(const char (*seen)[96], size_t count, const char *id) {
+    for (size_t i = 0; i < count; i++) {
+        if (strcmp(seen[i], id) == 0) return true;
+    }
+    return false;
+}
+
+static void friction_line(const char *line) {
+    char project[64];
+    char verb[24];
+    if (!friction_field(line, "project", project, sizeof project) || !friction_field(line, "verb", verb, sizeof verb))
+        return;
+    const char *end = strstr(line, "],\"failed\"");
+    char seen[friction_seen_max][96];
+    size_t seen_count = 0;
+    const char *at = strstr(line, "\"diagnostics\":[");
+    while (at != nullptr && end != nullptr && seen_count < friction_seen_max) {
+        at = strstr(at + 1, "{\"id\":\"");
+        if (at == nullptr || at > end) break;
+        friction_field(at, "id", seen[seen_count], sizeof seen[0]);
+        seen_count++;
+    }
+    // a diagnostic gone from this run closes its episode; one in it counts an attempt (or opens an episode)
+    for (size_t slot = 0; slot < friction_open_count;) {
+        FrictionOpen *item = &friction_opens[slot];
+        bool same = strcmp(item->project, project) == 0 && strcmp(item->verb, verb) == 0;
+        bool present = friction_has(seen, seen_count, friction_ids[item->id].id);
+        if (same && present) item->attempts += 1;
+        if (same && !present) {
+            friction_close(slot);
+            continue;
+        }
+        slot++;
+    }
+    for (size_t i = 0; i < seen_count; i++) {
+        size_t id = friction_id_of(seen[i]);
+        bool known = false;
+        for (size_t slot = 0; slot < friction_open_count; slot++) {
+            const FrictionOpen *item = &friction_opens[slot];
+            known = known || (item->id == id && strcmp(item->project, project) == 0 && strcmp(item->verb, verb) == 0);
+        }
+        if (known || friction_open_count == friction_open_max) continue;
+        FrictionOpen *item = &friction_opens[friction_open_count++];
+        snprintf(item->project, sizeof item->project, "%s", project);
+        snprintf(item->verb, sizeof item->verb, "%s", verb);
+        item->id = id;
+        item->attempts = 1;
+    }
+}
+
+static void friction_records(SmithBuild *b, const char *since) {
+    const char *dir =
+        smith_env(b, "SMITH_RECORDS_DIR", smith_fmt(b, "%s/.local/share/smith-records", smith_env(b, "HOME", "")));
+    const char *const *files = smith_glob(b, smith_list(b, smith_fmt(b, "%s/*.jsonl", dir), nullptr));
+    size_t lines = 0;
+    for (size_t f = 0; files[f] != nullptr; f++) {
+        FILE *file = fopen(files[f], "r");
+        if (file == nullptr) continue;
+        static char text[1 << 16];
+        while (fgets(text, sizeof text, file) != nullptr) {
+            char when[32];
+            if (!friction_field(text, "time", when, sizeof when) || strncmp(when, since, strlen(since)) < 0) continue;
+            friction_line(text);
+            lines++;
+        }
+        fclose(file);
+    }
+    while (friction_open_count > 0) friction_close(friction_open_count - 1); // unresolved: counted as they stand
+    printf("== run records since %s: %zu runs in %s\n", since, lines, dir);
+    printf("%8s %8s %6s  %s\n", "attempts", "episodes", "worst", "diagnostic (runs from first seen to gone, summed)");
+    for (size_t shown = 0; shown < 15; shown++) {
+        size_t best = friction_ids_max;
+        for (size_t i = 0; i < friction_id_count; i++) {
+            if (friction_ids[i].episodes == 0) continue;
+            if (best == friction_ids_max || friction_ids[i].attempts > friction_ids[best].attempts) best = i;
+        }
+        if (best == friction_ids_max) break;
+        const FrictionId *id = &friction_ids[best];
+        printf("%8u %8u %6u  %s\n", id->attempts, id->episodes, id->worst, id->id);
+        friction_ids[best].episodes = 0;
+    }
+    printf("\n");
+}
+
 static int build_friction(SmithRun *run) {
     const char *since = run->args[0];
     if (since[0] == '\0') {
         fputs("usage: smith build friction -Dsince=YYYY-MM-DD\n", stderr);
         return 2;
     }
+    friction_records(run->b, since);
+    fflush(stdout);
     const char *filter = ".[] | select(.body | test(\"(?m)^## Friction\")) | \"#\\(.number) \\(.title)\\n\\(.body | "
                          "split(\"## Friction\")[1] | split(\"\\n## \")[0] | ltrimstr(\"\\n\"))\\n\"";
     return build_exec(smith_list(run->b, "gh", "pr", "list", "--state", "merged", "--limit", "200", "--search",

@@ -63,6 +63,7 @@ What smith is and the contracts its code keeps. Read only the concepts your task
 - [Two layers of the build API](build-layers.md): The high-level smith_app calls and the low-level object and program calls are one API at two levels.
 - [build.smith, the module smith::build, and --dump-config](build-smith-and-dump-config.md): build.smith is a build file in .smith over the module smith::build, and --dump-config writes the build file the conventions imply.
 - [Tests, smith_tests and smith::test](build-tests.md): smith_tests links the test files with the libraries they import into a runner whose workers run the tests, with seeds, shrinking and isolation.
+- [The run records](run-records.md): With SMITH_RECORD set, smith appends one JSON line for each run (verb, arguments, exit, time, diagnostic ids, failed names), and smith build friction ranks the diagnostics by attempts to fix.
 - [The caches and smith cache](caches.md): Modules and packages are cached under one rule, an entry unused for 31 days is removed, and smith cache shows and cleans them.
 - [Clang modules, smith_modules](clang-modules.md): Clang modules are implicit, one per header, opt-in, and cached once per machine.
 - [The executor](executor.md): The executor reads the subset of ninja's language that smith writes, schedules and decides rebuilds itself, and keeps its state in .smith.

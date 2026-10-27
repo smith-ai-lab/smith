@@ -1,0 +1,36 @@
+// The run record (issue #535, knowledge/run-records.md): with SMITH_RECORD naming a file a smith that fails writes one
+// JSON line with the diagnostic's id; with it unset nothing is written.
+module run_record_test;
+
+import smith::io;
+import smith::test;
+import scratch;
+
+constexpr char bad_source[_] = "printf 'int main(void) { return undefined_thing; }\\n' >bad.c; ";
+
+export void test_run_record_a_failing_cc_writes_one_line_with_the_diagnostic_id(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    char command[512];
+    __builtin_snprintf(command, sizeof command,
+                       "%sSMITH_RECORD=\"$PWD/records/run.jsonl\" smith cc -c bad.c -o bad.o >/dev/null 2>&1; "
+                       "echo \"exit $?\"; wc -l <records/run.jsonl | tr -d ' '; cat records/run.jsonl",
+                       bad_source);
+    (void)scratch::sh(&p, "mkdir records");
+    scratch::Run run = scratch::sh(&p, command);
+    scratch::expect_contains("record: the exit is the smith's", run.out, "exit 1\n1\n");
+    scratch::expect_contains("record: the verb and the diagnostic id", run.out, "\"verb\":\"cc\"");
+    scratch::expect_contains("record: the id", run.out, "\"id\":\"use of undeclared identifier _\"");
+    scratch::expect_contains("record: the place", run.out, "\"at\":\"bad.c:1:");
+    scratch::expect_contains("record: the exit status in the line", run.out, "\"exit\":1");
+}
+
+export void test_run_record_unset_writes_nothing(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    char command[512];
+    __builtin_snprintf(command, sizeof command,
+                       "%sunset SMITH_RECORD; smith cc -c bad.c -o bad.o >/dev/null 2>&1; echo \"exit $?\"; "
+                       "ls | grep -c jsonl",
+                       bad_source);
+    scratch::Run run = scratch::sh(&p, command);
+    scratch::expect_contains("record: unset, the smith runs as before", run.out, "exit 1\n0");
+}

@@ -1180,6 +1180,8 @@ static const SmithLibrary smith_libraries[] = {
 #include "runtime/package.c"
 // `smith cache`, and the lock a build holds on the caches.
 #include "runtime/cache.c"
+// The run record, `SMITH_RECORD` (knowledge/run-records.md).
+#include "runtime/run_record.c"
 // What a run costs: the wall and CPU time of each task, and the smith processes it started.
 #include "runtime/account.c"
 // Quiet output: the logs, the excerpt of a failure and the line of a stage.
@@ -3402,6 +3404,8 @@ int main(int argc, char **argv) {
     if (!smith_self_path(self)) smith_die(smith_exit_missing, "cannot determine the path of this executable", nullptr);
 
     const char *name = smith_base_name(argv[0]);
+    int recorded = smith_run_record_run(argc, argv, self, name);
+    if (recorded >= 0) return recorded;
     if (strcmp(name, "ld") == 0) return smith_route_linker(argc, argv);
     if (strcmp(name, "lldb-argdumper") == 0) return smith_argdumper(argc, argv);
 #if defined(__linux__) && defined(SMITH_LLDB)
