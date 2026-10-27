@@ -8,6 +8,7 @@
 // What the state calls undefined behaviour besides the points (an invalid access, say) is one more query: some input
 // reaches neither a return nor a failing point.
 #include "prove.hpp"
+#include "prove_report.h"
 
 #include "ir/function.h"
 #include "ir/instr.h"
@@ -263,20 +264,22 @@ Shape shape_of(const llvm::DIType *type) {
     return Shape::Signed;
 }
 
+// A value of the model as the source's type shows it (runtime/prove_report.smith says how); the model decides whether
+// there is a number to show.
 std::string render(const smt::Model *model_or_none, const IR::StateValue &value, unsigned bits, Shape shape) {
-    if (model_or_none == nullptr) return "?";
-    const smt::Model &model = *model_or_none;
-    smt::expr poison = model.eval(value.non_poison, true);
-    if (poison.isFalse()) return "poison";
-    smt::expr number = model.eval(value.value, true);
+    int status = 0; // no model, or no number of 64 bits or fewer
     uint64_t unsigned_value = 0;
-    if (bits > 64 || !number.isUInt(unsigned_value)) return "?";
-    if (shape == Shape::Boolean) return unsigned_value != 0 ? "true" : "false";
-    if (shape == Shape::Signed && bits < 64 && (unsigned_value >> (bits - 1)) != 0) {
-        return std::to_string(static_cast<int64_t>(unsigned_value | (~0ULL << bits)));
+    if (model_or_none != nullptr) {
+        const smt::Model &model = *model_or_none;
+        if (model.eval(value.non_poison, true).isFalse()) {
+            status = 1;
+        } else if (bits <= 64 && model.eval(value.value, true).isUInt(unsigned_value)) {
+            status = 2;
+        }
     }
-    if (shape == Shape::Signed && bits == 64) return std::to_string(static_cast<int64_t>(unsigned_value));
-    return std::to_string(unsigned_value);
+    return prove::report::said([&](char *out, size_t size) {
+        return smith_prove_render(status, bits, static_cast<int>(shape), unsigned_value, out, size);
+    });
 }
 
 } // namespace

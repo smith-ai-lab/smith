@@ -322,6 +322,7 @@ static void build_shim(SmithBuild *b, const BuildConfig *config, const char *fol
 // the linker would merge the two.
 typedef struct {
     SmithObject objects[4];
+    SmithObject report; // runtime/prove_report.smith: the words of the report, in smith's own language
     const char *const *libraries;
 } BuildProver;
 
@@ -352,10 +353,22 @@ static void build_prover(SmithBuild *b, const BuildConfig *config, const char *f
             .source = smith_fmt(b, "shim/%s.cpp", names[i]),
             .output = smith_fmt(b, "%s/%s.o", folder, names[i]),
             .flags = flags,
-            .implicit_inputs = (const char *[]){"shim/prove.hpp", nullptr},
+            .implicit_inputs =
+                (const char *[]){"shim/prove.hpp", "shim/prove_report.h", "runtime/prove_edge.h", nullptr},
         };
         smith_object(b, &prover->objects[i]);
     }
+    // The words of the report are modules of smith's own language, compiled by the smith that builds smith (the lag
+    // rule); the C++ above asks them through runtime/prove_edge.h and shim/prove_report.h.
+    prover->report = (SmithObject){
+        .compiler = config->cc,
+        .source = "runtime/prove_report.smith",
+        .output = smith_fmt(b, "%s/prove_report.o", folder),
+        .flags = smith_cat(
+            b, config->cflags,
+            (const char *[]){"-I", "include", "-I", ".smith/include", "-I", "runtime", "-fdefer-ts", nullptr}, nullptr),
+    };
+    smith_object(b, &prover->report);
     const char *const alive[] = {"llvm_util", "tools", "ir", "smt", "util"};
     const char *const solver[] = {"bitwuzla", "bitwuzlabv", "bitwuzlabb", "bitwuzlals",
                                   "bzlarng",  "bzlautil",   "cadical"};
@@ -486,6 +499,7 @@ static void build_shims(SmithBuild *b, const BuildConfig *config, const char *fo
     build_prover(b, config, folder, &shims->prove);
     for (size_t i = 0; i < 4; i++)
         list[count++] = &shims->prove.objects[i];
+    list[count++] = &shims->prove.report;
 }
 
 // The links to smith, and with them the outputs of the build: the program, smith-cc and smith-c++.
@@ -639,7 +653,7 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
     SmithObject commit = build_commit_object(b, config, folder);
     BuildShims shims = {};
     SmithObject libraries[sizeof build_linked_libraries / sizeof build_linked_libraries[0]] = {};
-    const SmithObject *objects[40] = {&object, &commit};
+    const SmithObject *objects[64] = {&object, &commit};
     size_t count = 2;
     for (size_t i = 0; i < sizeof libraries / sizeof libraries[0]; i++) {
         libraries[i] = (SmithObject){
@@ -700,17 +714,19 @@ static const char *const *build_test_modules(SmithBuild *b, const BuildConfig *c
         };
         smith_step(b, &write);
         SmithStep compile = {
-            .command = smith_cat(b, smith_list(b, smith_cc, nullptr), flags,
-                                 smith_list(b, "-I", ".smith/include", "-c", tests[i], "-o", object, nullptr), nullptr),
+            .command = smith_cat(
+                b, smith_list(b, smith_cc, nullptr), flags,
+                smith_list(b, "-I", ".smith/include", "-I", "runtime", "-c", tests[i], "-o", object, nullptr), nullptr),
             .inputs = smith_list(b, tests[i], nullptr),
             .implicit_inputs = smith_list(b, smith_cc, header, nullptr),
             .outputs = smith_list(b, object, nullptr),
             .description = smith_fmt(b, "compile %s", tests[i]),
         };
         smith_step(b, &compile);
-        smith_compile_command(
-            b, smith_cc, tests[i],
-            smith_cat(b, flags, smith_list(b, "-I", ".smith/include", "-fdefer-ts", nullptr), nullptr));
+        smith_compile_command(b, smith_cc, tests[i],
+                              smith_cat(b, flags,
+                                        smith_list(b, "-I", ".smith/include", "-I", "runtime", "-fdefer-ts", nullptr),
+                                        nullptr));
         needs = smith_cat(b, needs, write.outputs, nullptr);
     }
     return needs;

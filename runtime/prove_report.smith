@@ -1,0 +1,563 @@
+// The words of `smith prove`'s report that need no LLVM type: how a function and a type are named as the source
+// writes them, how an instruction, a loop that has no bound, a cost and a value of a counterexample are told, and the
+// lines that head the IR `--emit-ir` prints. shim/prove_ir.cpp and shim/prove_alive.cpp walk the IR and Alive2's
+// states; what they decide to say is said here, from plain facts (runtime/prove_edge.h), so the sentences are written
+// once, in smith's own language. Every function writes into a buffer the caller gives and returns the length of the
+// whole text (more than the capacity when the text did not fit), so the C++ side asks again with a larger buffer.
+module runtime::prove_report;
+
+import smith::mem;
+import smith::text;
+import "prove_edge.h";
+
+typedef typeof(const char[:]) Text;
+
+// The characters being written: the buffer, and how long the text is so far, kept characters or not.
+struct Out {
+    char buffer[:];
+    usize length;
+};
+
+static Text view(c::SmithProveText text) {
+    if (text.length == 0) return {};
+    return text.data[0:text.length];
+}
+
+static void put(Out *out, Text text) {
+    usize room = countof(out->buffer) > out->length ? countof(out->buffer) - out->length : 0;
+    usize kept = __builtin_elementwise_min(room, countof(text));
+    if (kept > 0) {
+        mem::copy(out->buffer[out->length:out->length + kept], text[0:kept]);
+    }
+    out->length += countof(text);
+}
+
+static void put_char(Out *out, char c) {
+    char one[1] = {c};
+    Text text = one;
+    put(out, text);
+}
+
+static void put_unsigned(Out *out, u64 value) {
+    char digits[20];
+    usize count = 0;
+    u64 rest = value;
+    do {
+        digits[count] = (char)('0' + rest % 10);
+        count += 1;
+        rest /= 10;
+    } while (rest != 0);
+    for (usize i = count; i > 0; i--) {
+        put_char(out, digits[i - 1]);
+    }
+}
+
+static void put_signed(Out *out, i64 value) {
+    if (value < 0) {
+        put_char(out, '-');
+        put_unsigned(out, 0 - (u64)value);
+    } else {
+        put_unsigned(out, (u64)value);
+    }
+}
+
+static Out start(char *buffer, usize capacity) {
+    Out out = {};
+    if (capacity > 0) {
+        out.buffer = buffer[0:capacity];
+    }
+    return out;
+}
+
+static bool is_word(Text text, usize index) {
+    if (index >= countof(text)) return false;
+    char c = text[index];
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Names
+
+struct Sized {
+    const char *written;
+    const char *sized;
+};
+
+// C's types as clang names them in an instance, and as the source writes them. The longer name comes first.
+static const Sized sized_types[14] = {
+    {"unsigned long long", "u64"},
+    {"long long", "i64"},
+    {"unsigned long", "usize"},
+    {"unsigned short", "u16"},
+    {"unsigned char", "u8"},
+    {"unsigned int", "u32"},
+    {"signed char", "i8"},
+    {"unsigned", "u32"},
+    {"long", "isize"},
+    {"short", "i16"},
+    {"int", "i32"},
+    {"float", "f32"},
+    {"double", "f64"},
+    {"_Float16", "f16"},
+};
+
+// The sized type that starts `name` at `at`, as a whole word, or none: its index in the table.
+static option(usize) sized_at(Text name, usize at) {
+    if (at > 0 && is_word(name, at - 1)) return .none;
+    for (usize i = 0; i < 14; i++) {
+        Text written = text::make(sized_types[i].written);
+        if (at + countof(written) > countof(name)) continue;
+        if (!mem::equal(name[at:at + countof(written)], written)) continue;
+        if (is_word(name, at + countof(written))) continue;
+        return i;
+    }
+    return .none;
+}
+
+static void put_as_written(Out *out, Text name) {
+    usize open = 0;
+    while (open < countof(name) && name[open] != '<') {
+        open += 1;
+    }
+    if (open == countof(name)) {
+        put(out, name);
+        return;
+    }
+    put(out, name[0:open]);
+    usize at = open;
+    while (at < countof(name)) {
+        option(usize) found = sized_at(name, at);
+        if (found == .some) {
+            put(out, text::make(sized_types[found.some].sized));
+            at += countof(text::make(sized_types[found.some].written));
+        } else {
+            put_char(out, name[at]);
+            at += 1;
+        }
+    }
+}
+
+// The name of a function as the source writes it: a generic's instance is named by clang with C's types
+// (`clamp<int>`), and in smith with the sized ones (`clamp<i32>`).
+[[smith::c_name("smith_prove_as_written")]] export usize as_written(c::SmithProveText name, char *buffer,
+                                                                    usize capacity) {
+    Out out = start(buffer, capacity);
+    put_as_written(&out, view(name));
+    return out.length;
+}
+
+// The text of an LLVM function without the numbers of its attribute groups (" #3"), which depend on the other
+// functions of the module.
+[[smith::c_name("smith_prove_strip_group_numbers")]] export usize strip_group_numbers(c::SmithProveText text,
+                                                                                      char *buffer, usize capacity) {
+    Out out = start(buffer, capacity);
+    Text all = view(text);
+    usize i = 0;
+    while (i < countof(all)) {
+        bool group = all[i] == '#' && i > 0 && all[i - 1] == ' ' && i + 1 < countof(all) && all[i + 1] >= '0' &&
+                     all[i + 1] <= '9';
+        if (!group) {
+            put_char(&out, all[i]);
+            i += 1;
+            continue;
+        }
+        out.length -= 1; // the space before the number
+        i += 1;
+        while (i < countof(all) && all[i] >= '0' && all[i] <= '9') {
+            i += 1;
+        }
+    }
+    return out.length;
+}
+
+// What a proof point is, by the order of prove::Kind in shim/prove.hpp.
+[[smith::c_name("smith_prove_kind_name")]] export usize kind_name(i32 kind, char *buffer, usize capacity) {
+    static const char *const names[9] = {
+        "smith_requires of a callee, proved at the call",
+        "smith_ensures, proved",
+        "smith_invariant, proved",
+        "assert, proved",
+        "undefined behaviour, proved absent",
+        "abort or trap, proved not reached",
+        "smith_requires, assumed",
+        "a write inside the ranges smith_modifies names, proved",
+        "the objects of a restrict call do not overlap, proved",
+    };
+    Out out = start(buffer, capacity);
+    if (kind >= 0 && kind < 9) {
+        put(&out, text::make(names[kind]));
+    }
+    return out.length;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// An instruction for a message
+
+static bool is_blank(char c) {
+    return c == ' ' || c == '\t' || c == '\n';
+}
+
+// Where it is in the source, what the instruction is (printed form without its metadata, at most 90 characters), and,
+// when it came from a helper that was inlined, which helper.
+[[smith::c_name("smith_prove_instruction_line")]] export usize instruction_line(const c::SmithProveInstruction *facts,
+                                                                                char *buffer, usize capacity) {
+    Out out = start(buffer, capacity);
+    Text text = view(facts->printed);
+    usize start_at = 0;
+    while (start_at < countof(text) && is_blank(text[start_at])) {
+        start_at += 1;
+    }
+    if (start_at < countof(text)) {
+        text = text[start_at:];
+    }
+    for (usize at = 0; at + 3 <= countof(text); at++) {
+        if (text[at] == ',' && text[at + 1] == ' ' && text[at + 2] == '!') {
+            text = text[0:at];
+            break;
+        }
+    }
+    bool cut = countof(text) > 90;
+    if (cut) {
+        text = text[0:87];
+    }
+    Text where = view(facts->where);
+    if (countof(where) > 0) {
+        put(&out, where);
+    } else if (facts->near_where.length > 0) {
+        put(&out, "near ");
+        put(&out, view(facts->near_where));
+    } else {
+        put(&out, "no line");
+    }
+    put(&out, ": `");
+    put(&out, text);
+    if (cut) {
+        put(&out, "...");
+    }
+    put(&out, "`");
+    if (facts->inlined) {
+        put(&out, " (in ");
+        put_as_written(&out, view(facts->inlined_in));
+        put(&out, ")");
+    }
+    return out.length;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// A loop the prover could not bound
+
+// The variables that decide the count, each ended by a newline, as `a`, `b`.
+static void put_controls(Out *out, Text controls) {
+    usize start_at = 0;
+    bool first = true;
+    for (usize at = 0; at < countof(controls); at++) {
+        if (controls[at] != '\n') continue;
+        if (first) {
+            put(out, "`");
+        } else {
+            put(out, ", `");
+        }
+        put(out, controls[start_at:at]);
+        put(out, "`");
+        first = false;
+        start_at = at + 1;
+    }
+}
+
+// The first of them.
+static Text first_control(Text controls) {
+    for (usize at = 0; at < countof(controls); at++) {
+        if (controls[at] == '\n') return controls[0:at];
+    }
+    return {};
+}
+
+static void loop_what(Out *out, const c::SmithProveLoop *loop) {
+    Text controls = view(loop->controls);
+    bool named = countof(controls) > 0;
+    put(out, "the loop has no bound the prover can see");
+    if (!loop->known) return;
+    if (loop->not_cut.length > 0) {
+        put(out, ", and its smith_invariant cannot be proved by induction: ");
+        put(out, view(loop->not_cut));
+    } else if (loop->counted && named) {
+        put(out, ": it runs ");
+        put_controls(out, controls);
+        put(out, " times");
+    } else if (loop->shrink_passes != 0) {
+        put(out, ": it ends when ");
+        if (named) {
+            put_controls(out, controls);
+        } else {
+            put(out, "a value");
+        }
+        put(out, " reaches zero, and ");
+        put(out, view(loop->shrink_what));
+        put(out, " each pass is not a count LLVM can derive, so no requires gives one");
+    } else if (named) {
+        put(out, ": its exit depends on ");
+        put_controls(out, controls);
+    }
+}
+
+static void loop_fix(Out *out, const c::SmithProveLoop *loop) {
+    Text controls = view(loop->controls);
+    bool named = countof(controls) > 0;
+    if (loop->known && loop->not_cut.length > 0) {
+        put(out, "give the loop a bound (contract::requires(count <= ...)), or write what the loop changes so that "
+                 "the prover can name it");
+    } else if (loop->known && loop->counted && named) {
+        put(out, "state its worst case, contract::requires(");
+        put(out, first_control(controls));
+        put(out, " <= ...), which callers then prove (a loop's count comes from a constant or from a requires "
+                 "that bounds it)");
+    } else if (loop->known && loop->shrink_passes != 0) {
+        put(out, "count the passes in a variable that a constant bounds: at most ");
+        put_unsigned(out, loop->shrink_passes);
+        put(out, " (a loop `for (usize pass = 0; pass < ");
+        put_unsigned(out, loop->shrink_passes);
+        put(out, "; pass++)` that breaks when the value is zero)");
+    } else if (loop->known && named) {
+        put(out, "state the worst case, contract::requires(");
+        put(out, first_control(controls));
+        put(out, " <= ...), which callers then prove; if the loop still fails, its exit is not a step by a "
+                 "constant, so count the passes in a variable that a constant bounds");
+    } else {
+        put(out, "give it a count: a constant (for (int i = 0; i < 8; i++)) or a variable that "
+                 "contract::requires(count <= ...) bounds");
+    }
+}
+
+// What is wrong with a loop that has no bound.
+[[smith::c_name("smith_prove_loop_what")]] export usize loop_what_text(const c::SmithProveLoop *loop, char *buffer,
+                                                                       usize capacity) {
+    Out out = start(buffer, capacity);
+    loop_what(&out, loop);
+    return out.length;
+}
+
+// What to do about it.
+[[smith::c_name("smith_prove_loop_fix")]] export usize loop_fix_text(const c::SmithProveLoop *loop, char *buffer,
+                                                                     usize capacity) {
+    Out out = start(buffer, capacity);
+    loop_fix(&out, loop);
+    return out.length;
+}
+
+// What to do about a call the prover cannot read: the program's edge is a trusted function, whose contract the callers
+// use. `alternative` is the other way out, when there is one.
+[[smith::c_name("smith_prove_boundary_fix")]] export usize boundary_fix(c::SmithProveText who,
+                                                                        c::SmithProveText alternative, char *buffer,
+                                                                        usize capacity) {
+    Out out = start(buffer, capacity);
+    put(&out, "this is the edge of the program: put smith_trusted() as the first statement of ");
+    put(&out, view(who));
+    put(&out, ", so that its callers use its smith_requires and smith_ensures and its body is not proved");
+    if (alternative.length > 0) {
+        put(&out, "; or ");
+        put(&out, view(alternative));
+    }
+    return out.length;
+}
+
+// Why a body writes memory the function was not given. `kind`: 0 a store to a global (`name`), 1 a store through a
+// pointer it was not given, 2 a call of `name`, 3 a call through a function pointer, 4 any other instruction that
+// writes. `line` is the source line, 0 when there is none.
+[[smith::c_name("smith_prove_write_reason")]] export usize write_reason(i32 kind, c::SmithProveText name, u32 line,
+                                                                        char *buffer, usize capacity) {
+    Out out = start(buffer, capacity);
+    put(&out, "LLVM found ");
+    if (kind == 0) {
+        put(&out, "a store to the global ");
+        put(&out, view(name));
+    } else if (kind == 1) {
+        put(&out, "a store through a pointer it was not given");
+    } else if (kind == 2) {
+        put(&out, "a call of ");
+        put(&out, view(name));
+    } else if (kind == 3) {
+        put(&out, "a call through a function pointer");
+    } else {
+        put(&out, "an instruction that writes memory");
+    }
+    if (line != 0) {
+        put(&out, " at line ");
+        put_unsigned(&out, line);
+    }
+    put(&out, " in the body");
+    return out.length;
+}
+
+// What LLVM could say of no instruction of the body.
+[[smith::c_name("smith_prove_write_unknown")]] export usize write_unknown(char *buffer, usize capacity) {
+    Out out = start(buffer, capacity);
+    put(&out, "LLVM could not infer what the body writes, so it takes it as any memory");
+    return out.length;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// What a proof costs the solver
+
+// A division or remainder by a variable, or a multiplication of two variables, of that many bits.
+[[smith::c_name("smith_prove_cost_arithmetic")]] export usize cost_arithmetic(u32 bits, bool product, bool is_signed,
+                                                                              bool remainder, char *buffer,
+                                                                              usize capacity) {
+    Out out = start(buffer, capacity);
+    put_unsigned(&out, bits);
+    put(&out, "-bit ");
+    if (product) {
+        put(&out, "multiplication of two variables");
+    } else {
+        if (is_signed) {
+            put(&out, "signed ");
+        } else {
+            put(&out, "unsigned ");
+        }
+        if (remainder) {
+            put(&out, "remainder");
+        } else {
+            put(&out, "division");
+        }
+        put(&out, " by a variable");
+    }
+    return out.length;
+}
+
+// A copy or a fill of memory: of a known number of bytes, or of a variable size.
+[[smith::c_name("smith_prove_cost_copy")]] export usize cost_copy(bool fill, bool known, u64 bytes, char *buffer,
+                                                                  usize capacity) {
+    Out out = start(buffer, capacity);
+    if (fill) {
+        put(&out, "memset");
+    } else {
+        put(&out, "memcpy");
+    }
+    put(&out, " of ");
+    if (known) {
+        put_unsigned(&out, bytes);
+        put(&out, " bytes");
+    } else {
+        put(&out, "a variable size");
+    }
+    return out.length;
+}
+
+[[smith::c_name("smith_prove_cost_object")]] export usize cost_object(u64 bytes, char *buffer, usize capacity) {
+    Out out = start(buffer, capacity);
+    put(&out, "a local object of ");
+    put_unsigned(&out, bytes);
+    put(&out, " bytes");
+    return out.length;
+}
+
+// A loop of the function: proved by induction, unrolled with an invariant that induction could not prove, or unrolled.
+[[smith::c_name("smith_prove_cost_loop")]] export usize cost_loop(bool induction, c::SmithProveText not_cut, u32 passes,
+                                                                  char *buffer, usize capacity) {
+    Out out = start(buffer, capacity);
+    if (induction) {
+        put(&out, "a loop proved by induction: one pass of its body, whatever its bound");
+    } else if (not_cut.length > 0) {
+        put(&out, "a loop unrolled into ");
+        put_unsigned(&out, passes);
+        put(&out, " passes, its invariant checked in each (");
+        put(&out, view(not_cut));
+        put(&out, ", so not proved by induction)");
+    } else if (passes != 0) {
+        put(&out, "a loop unrolled into ");
+        put_unsigned(&out, passes);
+        put(&out, " passes");
+    } else {
+        put(&out, "a loop unrolled (its pass count is not a constant LLVM reads before unrolling)");
+    }
+    return out.length;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The IR that --emit-ir prints
+
+static void put_place(Out *out, c::SmithProveText file, u32 line) {
+    put(out, view(file));
+    put_char(out, ':');
+    put_unsigned(out, line);
+}
+
+// The lines that head the IR of a function, before its proof points.
+[[smith::c_name("smith_prove_ir_header")]] export usize ir_header(c::SmithProveText name, c::SmithProveText file,
+                                                                  u32 line, char *buffer, usize capacity) {
+    Out out = start(buffer, capacity);
+    put(&out, "; ");
+    put(&out, view(name));
+    put(&out, " (");
+    put_place(&out, file, line);
+    put(&out, "), as `smith prove` checks it:\n");
+    put(&out, "; callees with a smith_ensures are replaced by their contracts (the smith_requires slice before the "
+              "call, the\n; smith_ensures slice after it), the other callees are inlined, loops are unrolled, and "
+              "each contract, assert\n; and undefined behaviour is a call of smith_point(id, condition) listed "
+              "here:\n");
+    return out.length;
+}
+
+// A proof point of the function.
+[[smith::c_name("smith_prove_ir_point")]] export usize ir_point(u32 id, i32 kind, c::SmithProveText text,
+                                                                c::SmithProveText file, u32 line, char *buffer,
+                                                                usize capacity) {
+    Out out = start(buffer, capacity);
+    put(&out, ";   point ");
+    put_unsigned(&out, id);
+    put(&out, ": ");
+    usize used = out.length;
+    if (used < capacity) {
+        used = kind_name(kind, buffer + used, capacity - used);
+    } else {
+        used = kind_name(kind, buffer, 0);
+    }
+    out.length += used;
+    put(&out, ": ");
+    put(&out, view(text));
+    put(&out, "  (");
+    put_place(&out, file, line);
+    put(&out, ")\n");
+    return out.length;
+}
+
+// Why the function could not be proved, and where.
+[[smith::c_name("smith_prove_ir_unprovable")]] export usize ir_unprovable(c::SmithProveText what,
+                                                                          c::SmithProveText file, u32 line,
+                                                                          char *buffer, usize capacity) {
+    Out out = start(buffer, capacity);
+    put(&out, "; cannot be proved: ");
+    put(&out, view(what));
+    put(&out, " (");
+    put_place(&out, file, line);
+    put(&out, "); this is the IR as far as the prover got\n");
+    return out.length;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// A value of a counterexample
+
+// A value Alive2's model gave, as the source's type shows it. `status`: 0 there is no model or no number, 1 poison,
+// 2 a number of `bits` bits in `value`. `shape`: 0 signed, 1 unsigned, 2 boolean, 3 character.
+[[smith::c_name("smith_prove_render")]] export usize render(i32 status, u32 bits, i32 shape, u64 value, char *buffer,
+                                                            usize capacity) {
+    Out out = start(buffer, capacity);
+    if (status == 1) {
+        put(&out, "poison");
+    } else if (status != 2) {
+        put(&out, "?");
+    } else if (shape == 2) {
+        if (value != 0) {
+            put(&out, "true");
+        } else {
+            put(&out, "false");
+        }
+    } else if (shape == 0 && bits > 0 && bits < 64 && (value >> (bits - 1)) != 0) {
+        u64 extended = value | ((u64)0xFFFFFFFFFFFFFFFF << bits);
+        put_signed(&out, (i64)extended);
+    } else if (shape == 0 && bits == 64) {
+        put_signed(&out, (i64)value);
+    } else {
+        put_unsigned(&out, value);
+    }
+    return out.length;
+}

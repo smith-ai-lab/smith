@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <tuple>
 #include "prove.hpp"
+#include "prove_report.h"
 
 #include <cctype>
 #include <chrono>
@@ -1323,27 +1324,23 @@ std::string location_of(const Instruction *instruction) {
 // An instruction for a message: where it is in the source, what the instruction is, and, when it came from a helper
 // that was inlined, which helper.
 std::string describe_instruction(const Instruction *instruction) {
-    std::string text;
-    raw_string_ostream stream(text);
+    std::string printed;
+    raw_string_ostream stream(printed);
     instruction->print(stream);
     stream.flush();
-    size_t start = text.find_first_not_of(" \t\n");
-    text = start == std::string::npos ? text : text.substr(start);
-    size_t metadata = text.find(", !");
-    if (metadata != std::string::npos) text.resize(metadata);
-    if (text.size() > 90) text = text.substr(0, 87) + "...";
     std::string where = location_of(instruction);
+    std::string nearest;
     if (where.empty()) {
         // an instruction a pass made has no line; the nearest one before it in its block says where it is near
-        for (const Instruction *before = instruction->getPrevNode(); before != nullptr && where.empty();
+        for (const Instruction *before = instruction->getPrevNode(); before != nullptr && nearest.empty();
              before = before->getPrevNode())
-            where = location_of(before);
-        where = where.empty() ? "no line" : "near " + where;
+            nearest = location_of(before);
     }
-    std::string result = where + ": `" + text + "`";
-    if (instruction->getDebugLoc() && instruction->getDebugLoc()->getInlinedAt() != nullptr)
-        result += " (in " + subprogram_name(instruction->getDebugLoc()->getScope()->getSubprogram()) + ")";
-    return result;
+    bool inlined = instruction->getDebugLoc() && instruction->getDebugLoc()->getInlinedAt() != nullptr;
+    std::string helper = inlined ? subprogram_name(instruction->getDebugLoc()->getScope()->getSubprogram()) : "";
+    SmithProveInstruction facts = {report::text(printed), report::text(where), report::text(nearest), inlined,
+                                   report::text(helper)};
+    return report::said([&](char *out, size_t size) { return smith_prove_instruction_line(&facts, out, size); });
 }
 
 // Collects what `roots` depend on. `stop` becomes a parameter of the slice, so what computes it is not needed;
@@ -1652,44 +1649,7 @@ bool known_library_function(StringRef name) {
 // The name of a function as the source writes it. A generic's instance is named by clang with C's types
 // (`clamp<int>`); in smith it is written with the sized types (`clamp<i32>`), so the arguments of the instance are.
 std::string as_written(const std::string &name) {
-    static const std::pair<const char *, const char *> types[] = {
-        {"unsigned long long", "u64"},
-        {"long long", "i64"},
-        {"unsigned long", "usize"},
-        {"unsigned short", "u16"},
-        {"unsigned char", "u8"},
-        {"unsigned int", "u32"},
-        {"signed char", "i8"},
-        {"unsigned", "u32"},
-        {"long", "isize"},
-        {"short", "i16"},
-        {"int", "i32"},
-        {"float", "f32"},
-        {"double", "f64"},
-        {"_Float16", "f16"},
-    };
-    size_t open = name.find('<');
-    if (open == std::string::npos) return name;
-    std::string result = name.substr(0, open);
-    for (size_t at = open; at < name.size();) { // bounded by the name
-        auto is_word = [&](size_t index) {
-            return index < name.size() && (isalnum(static_cast<unsigned char>(name[index])) != 0 || name[index] == '_');
-        };
-        bool replaced = false;
-        if (!is_word(at - 1)) {
-            for (const auto &[written, sized] : types) {
-                size_t length = strlen(written);
-                if (name.compare(at, length, written) == 0 && !is_word(at + length)) {
-                    result += sized;
-                    at += length;
-                    replaced = true;
-                    break;
-                }
-            }
-        }
-        if (!replaced) result += name[at++];
-    }
-    return result;
+    return report::as_written(name); // runtime/prove_report.smith
 }
 
 std::string subprogram_name(const DISubprogram *subprogram) {
@@ -1714,10 +1674,9 @@ std::string writer_of(const UnitContext &context, const Instruction *call) {
 // use. `alternative` is the other way out, when there is one.
 std::string boundary_fix(const UnitContext &context, const Instruction *call, const std::string &alternative) {
     std::string who = writer_of(context, call);
-    std::string fix = "this is the edge of the program: put smith_trusted() as the first statement of " + who +
-                      ", so that its callers use its smith_requires and smith_ensures and its body is not proved";
-    if (!alternative.empty()) fix += "; or " + alternative;
-    return fix;
+    return report::said([&](char *out, size_t size) {
+        return smith_prove_boundary_fix(report::text(who), report::text(alternative), out, size);
+    });
 }
 
 bool inline_slice(UnitContext &context, CallBase &call, int call_site) {
@@ -2051,26 +2010,26 @@ void note_call_writes(UnitContext &context, CallBase &call, Function &callee, bo
 std::string why_it_writes(const Function &callee) {
     for (const Instruction &instruction : instructions(callee)) {
         if (!instruction.mayWriteToMemory()) continue;
-        std::string what;
+        int kind = 4; // an instruction that writes memory
+        std::string name;
         if (const auto *store = dyn_cast<StoreInst>(&instruction)) {
             const Value *object = getUnderlyingObject(store->getPointerOperand());
             if (isa<AllocaInst>(object)) continue;
-            what = isa<GlobalVariable>(object) ? "a store to the global " + object->getName().str()
-                                               : "a store through a pointer it was not given";
+            kind = isa<GlobalVariable>(object) ? 0 : 1;
+            if (kind == 0) name = object->getName().str();
         } else if (const auto *call = dyn_cast<CallBase>(&instruction)) {
             if (call->doesNotAccessMemory() || call->onlyReadsMemory()) continue;
             Function *called = call->getCalledFunction();
             if (called != nullptr && called->isIntrinsic()) continue; // a trap writes nothing the caller can see
-            what = called == nullptr ? "a call through a function pointer" : "a call of " + source_name(*called);
-        } else {
-            what = "an instruction that writes memory";
+            kind = called == nullptr ? 3 : 2;
+            if (called != nullptr) name = source_name(*called);
         }
-        std::string line;
-        if (instruction.getDebugLoc() && instruction.getDebugLoc().getLine() != 0)
-            line = " at line " + std::to_string(instruction.getDebugLoc().getLine());
-        return "LLVM found " + what + line + " in the body";
+        unsigned line = instruction.getDebugLoc() ? instruction.getDebugLoc().getLine() : 0;
+        return report::said([&](char *out, size_t size) {
+            return smith_prove_write_reason(kind, report::text(name), line, out, size);
+        });
     }
-    return "LLVM could not infer what the body writes, so it takes it as any memory";
+    return report::said([](char *out, size_t size) { return smith_prove_write_unknown(out, size); });
 }
 
 // Replaces a call of `callee` by its contract: the slices inlined around the call.
@@ -3044,40 +3003,20 @@ void describe_unbounded_loop(const Unit &unit, int index, Unprovable &failure) {
         failure.file = info->file;
         failure.line = info->line;
     }
-    std::string names;
+    std::string controls; // each ended by a newline
     if (info != nullptr) {
         for (const std::string &name : info->controls)
-            names += (names.empty() ? "`" : ", `") + name + "`";
+            controls += name + "\n";
     }
-    if (info != nullptr && !info->not_cut.empty()) {
-        failure.what =
-            "the loop has no bound the prover can see, and its smith_invariant cannot be proved by induction: " +
-            info->not_cut;
-        failure.fix =
-            "give the loop a bound (contract::requires(count <= ...)), or write what the loop changes so that "
-            "the prover can name it";
-    } else if (info != nullptr && info->counted && !info->controls.empty()) {
-        failure.what = "the loop has no bound the prover can see: it runs " + names + " times";
-        failure.fix = "state its worst case, contract::requires(" + info->controls.front() +
-                      " <= ...), which callers then prove (a loop's count comes from a constant or from a requires "
-                      "that bounds it)";
-    } else if (info != nullptr && info->shrink_passes != 0) {
-        failure.what = "the loop has no bound the prover can see: it ends when " +
-                       (info->controls.empty() ? std::string("a value") : names) + " reaches zero, and " +
-                       info->shrink_what + " each pass is not a count LLVM can derive, so no requires gives one";
-        failure.fix = "count the passes in a variable that a constant bounds: at most " +
-                      std::to_string(info->shrink_passes) + " (a loop `for (usize pass = 0; pass < " +
-                      std::to_string(info->shrink_passes) + "; pass++)` that breaks when the value is zero)";
-    } else if (info != nullptr && !info->controls.empty()) {
-        failure.what = "the loop has no bound the prover can see: its exit depends on " + names;
-        failure.fix = "state the worst case, contract::requires(" + info->controls.front() +
-                      " <= ...), which callers then prove; if the loop still fails, its exit is not a step by a "
-                      "constant, so count the passes in a variable that a constant bounds";
-    } else {
-        failure.what = "the loop has no bound the prover can see";
-        failure.fix = "give it a count: a constant (for (int i = 0; i < 8; i++)) or a variable that "
-                      "contract::requires(count <= ...) bounds";
-    }
+    static const std::string none;
+    SmithProveLoop loop = {info != nullptr,
+                           info != nullptr && info->counted,
+                           info != nullptr ? info->shrink_passes : 0,
+                           report::text(info != nullptr ? info->shrink_what : none),
+                           report::text(info != nullptr ? info->not_cut : none),
+                           report::text(controls)};
+    failure.what = report::said([&](char *out, size_t size) { return smith_prove_loop_what(&loop, out, size); });
+    failure.fix = report::said([&](char *out, size_t size) { return smith_prove_loop_fix(&loop, out, size); });
 }
 
 // The function's own smith_requires are premises of its proof, so a loop's worst case may come from one:
@@ -3749,15 +3688,11 @@ void collect_costs(Function &function, Unit &unit) {
                                     !isa<Constant>(operation->getOperand(0)) &&
                                     !isa<Constant>(operation->getOperand(1));
             if (!variable_divisor && !variable_product) continue;
-            std::string what = std::to_string(bits) + "-bit ";
-            if (variable_product) {
-                what += "multiplication of two variables";
-            } else {
-                bool is_signed = opcode == Instruction::SDiv || opcode == Instruction::SRem;
-                bool remainder = opcode == Instruction::URem || opcode == Instruction::SRem;
-                what += std::string(is_signed ? "signed " : "unsigned ") + (remainder ? "remainder" : "division") +
-                        " by a variable";
-            }
+            bool is_signed = opcode == Instruction::SDiv || opcode == Instruction::SRem;
+            bool remainder = opcode == Instruction::URem || opcode == Instruction::SRem;
+            std::string what = report::said([&](char *out, size_t size) {
+                return smith_prove_cost_arithmetic(bits, variable_product, is_signed, remainder, out, size);
+            });
             Cost &cost = arithmetic[{file + ":" + std::to_string(line), what}];
             if (cost.instructions.empty()) {
                 cost.what = what;
@@ -3772,8 +3707,10 @@ void collect_costs(Function &function, Unit &unit) {
             auto *length = dyn_cast<ConstantInt>(memory_call->getLength());
             if (length != nullptr && length->getZExtValue() < 32) continue;
             Cost cost;
-            cost.what = std::string(isa<MemSetInst>(memory_call) ? "memset" : "memcpy") + " of " +
-                        (length != nullptr ? std::to_string(length->getZExtValue()) + " bytes" : "a variable size");
+            cost.what = report::said([&](char *out, size_t size) {
+                return smith_prove_cost_copy(isa<MemSetInst>(memory_call), length != nullptr,
+                                             length != nullptr ? length->getZExtValue() : 0, out, size);
+            });
             cost.file = file;
             cost.line = line;
             cost.weight = length != nullptr ? 2 : 3;
@@ -3798,7 +3735,8 @@ void collect_costs(Function &function, Unit &unit) {
         Cost cost;
         const Instruction *user = object->user_empty() ? object : cast<Instruction>(*object->user_begin());
         auto [file, line] = source_line_of(user);
-        cost.what = "a local object of " + std::to_string(size->getFixedValue()) + " bytes";
+        cost.what = report::said(
+            [&](char *out, size_t length) { return smith_prove_cost_object(size->getFixedValue(), out, length); });
         cost.file = file;
         cost.line = line;
         cost.weight = 2;
@@ -3807,15 +3745,9 @@ void collect_costs(Function &function, Unit &unit) {
     }
     for (const UnrolledLoop &loop : unit.loops) {
         Cost cost;
-        if (loop.induction) {
-            cost.what = "a loop proved by induction: one pass of its body, whatever its bound";
-        } else if (!loop.not_cut.empty()) {
-            cost.what = "a loop unrolled into " + std::to_string(loop.passes) +
-                        " passes, its invariant checked in each (" + loop.not_cut + ", so not proved by induction)";
-        } else
-            cost.what = loop.passes != 0
-                            ? "a loop unrolled into " + std::to_string(loop.passes) + " passes"
-                            : "a loop unrolled (its pass count is not a constant LLVM reads before unrolling)";
+        cost.what = report::said([&](char *out, size_t size) {
+            return smith_prove_cost_loop(loop.induction, report::text(loop.not_cut), loop.passes, out, size);
+        });
         cost.file = loop.file;
         cost.line = loop.line;
         cost.count = loop.induction ? 1 : loop.passes;
@@ -3994,49 +3926,25 @@ std::set<const Instruction *> data_cone(const Instruction *root) {
     return cone;
 }
 
-namespace {
-const char *kind_name(Kind kind) {
-    switch (kind) {
-    case Kind::Requires:
-        return "smith_requires of a callee, proved at the call";
-    case Kind::Ensures:
-        return "smith_ensures, proved";
-    case Kind::Invariant:
-        return "smith_invariant, proved";
-    case Kind::Assert:
-        return "assert, proved";
-    case Kind::Trap:
-        return "undefined behaviour, proved absent";
-    case Kind::Abort:
-        return "abort or trap, proved not reached";
-    case Kind::Premise:
-        return "smith_requires, assumed";
-    case Kind::Write:
-        return "a write inside the ranges smith_modifies names, proved";
-    case Kind::Restrict:
-        return "the objects of a restrict call do not overlap, proved";
-    }
-    return "";
-}
-} // namespace
-
 std::string program_ir_text(const Prepared &prepared) {
-    std::string text;
-    raw_string_ostream stream(text);
-    stream << "; " << prepared.unit.name << " (" << prepared.unit.file << ":" << prepared.unit.line
-           << "), as `smith prove` checks it:\n";
-    stream
-        << "; callees with a smith_ensures are replaced by their contracts (the smith_requires slice before the call, "
-           "the\n; smith_ensures slice after it), the other callees are inlined, loops are unrolled, and each "
-           "contract, assert\n; and undefined behaviour is a call of smith_point(id, condition) listed here:\n";
+    std::string text = report::said([&](char *out, size_t size) {
+        return smith_prove_ir_header(report::text(prepared.unit.name), report::text(prepared.unit.file),
+                                     prepared.unit.line, out, size);
+    });
     for (const Point &point : prepared.unit.points) {
-        stream << ";   point " << point.id << ": " << kind_name(point.kind) << ": " << point.text << "  (" << point.file
-               << ":" << point.line << ")\n";
+        text += report::said([&](char *out, size_t size) {
+            return smith_prove_ir_point(point.id, static_cast<int>(point.kind), report::text(point.text),
+                                        report::text(point.file), point.line, out, size);
+        });
     }
     if (prepared.unprovable != nullptr) {
-        stream << "; cannot be proved: " << prepared.unprovable->what << " (" << prepared.unprovable->file << ":"
-               << prepared.unprovable->line << "); this is the IR as far as the prover got\n";
+        text += report::said([&](char *out, size_t size) {
+            return smith_prove_ir_unprovable(report::text(prepared.unprovable->what),
+                                             report::text(prepared.unprovable->file), prepared.unprovable->line, out,
+                                             size);
+        });
     }
+    raw_string_ostream stream(text);
     prepared.function->print(stream);
     stream << "\n";
     stream.flush();
@@ -4045,22 +3953,9 @@ std::string program_ir_text(const Prepared &prepared) {
 
 namespace {
 
-// Removes " #<digits>" (the number of an attribute group, which depends on the other functions of the module).
 std::string without_group_numbers(const std::string &text) {
-    std::string out;
-    for (size_t i = 0; i < text.size(); i++) {
-        if (text[i] == '#' && i > 0 && text[i - 1] == ' ' && i + 1 < text.size() &&
-            isdigit(static_cast<unsigned char>(text[i + 1]))) {
-            size_t end = i + 1;
-            while (end < text.size() && isdigit(static_cast<unsigned char>(text[end])))
-                end++;
-            out.pop_back(); // the space before it
-            i = end - 1;
-            continue;
-        }
-        out += text[i];
-    }
-    return out;
+    return report::said(
+        [&](char *out, size_t size) { return smith_prove_strip_group_numbers(report::text(text), out, size); });
 }
 
 void attributes_text(raw_string_ostream &stream, const AttributeList &attributes) {

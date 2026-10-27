@@ -1,0 +1,164 @@
+// Tests of the words of `smith prove`'s report (runtime/prove_report.smith): the names, the sentences about a loop with
+// no bound, a cost, an instruction and a value, and the buffer's rule (the length of the whole text comes back, the
+// buffer gets what fits). What `smith prove` prints with them is checked by tests/prove_*_test.smith.
+module prove_report_test;
+
+import smith::test;
+import runtime::prove_report;
+import "prove_edge.h";
+
+typedef c::SmithProveText Chars;
+typedef typeof(const char[:]) Text;
+
+static Chars chars(Text text) {
+    Chars made = {};
+    if (countof(text) > 0) {
+        made.data = text.data;
+        made.length = countof(text);
+    }
+    return made;
+}
+
+static Chars nothing() {
+    Chars made = {};
+    return made;
+}
+
+// Whether what a call wrote, of `length` characters, is the text.
+static bool wrote(const char *buffer, usize length, usize capacity, Text expected) {
+    if (length != countof(expected) || length > capacity) return false;
+    for (usize i = 0; i < length; i++) {
+        if (buffer[i] != expected[i]) return false;
+    }
+    return true;
+}
+
+export void test_prove_report_names_a_generic_as_the_source_writes_it() {
+    char out[64];
+    usize n = prove_report::as_written(chars("clamp<int>"), out, 64);
+    test::check_condition(wrote(out, n, 64, "clamp<i32>"));
+    n = prove_report::as_written(chars("pair<unsigned long long, unsigned>"), out, 64);
+    test::check_condition(wrote(out, n, 64, "pair<u64, u32>"));
+    n = prove_report::as_written(chars("box<interval, int_t, long>"), out, 64);
+    test::check_condition(wrote(out, n, 64, "box<interval, int_t, isize>"));
+    n = prove_report::as_written(chars("plain"), out, 64);
+    test::check_condition(wrote(out, n, 64, "plain"));
+}
+
+export void test_prove_report_gives_the_whole_length_when_the_buffer_is_small() {
+    char out[4];
+    usize n = prove_report::as_written(chars("clamp<int>"), out, 4);
+    test::check_equal(n, 10);
+    test::check_condition(out[0] == 'c' && out[3] == 'm');
+    test::check_equal(prove_report::as_written(chars("clamp<int>"), out, 0), 10);
+}
+
+export void test_prove_report_strips_the_numbers_of_attribute_groups() {
+    char out[64];
+    usize n = prove_report::strip_group_numbers(chars("call void @f() #12, !x #3 y #a"), out, 64);
+    test::check_condition(wrote(out, n, 64, "call void @f(), !x y #a"));
+}
+
+export void test_prove_report_tells_an_instruction() {
+    char out[256];
+    c::SmithProveInstruction facts = {};
+    facts.printed = chars("  %x = add i32 %a, %b, !dbg !12");
+    facts.where = chars("f.c:3");
+    usize n = prove_report::instruction_line(&facts, out, 256);
+    test::check_condition(wrote(out, n, 256, "f.c:3: `%x = add i32 %a, %b`"));
+    facts.where = nothing();
+    n = prove_report::instruction_line(&facts, out, 256);
+    test::check_condition(wrote(out, n, 256, "no line: `%x = add i32 %a, %b`"));
+    facts.near_where = chars("f.c:2");
+    facts.inlined = true;
+    facts.inlined_in = chars("helper<int>");
+    n = prove_report::instruction_line(&facts, out, 256);
+    test::check_condition(wrote(out, n, 256, "near f.c:2: `%x = add i32 %a, %b` (in helper<i32>)"));
+}
+
+export void test_prove_report_cuts_a_long_instruction_at_ninety_characters() {
+    char out[256];
+    char long_text[121];
+    for (usize i = 0; i < 120; i++) {
+        long_text[i] = 'a';
+    }
+    long_text[120] = '\0';
+    c::SmithProveInstruction facts = {};
+    facts.printed.data = long_text;
+    facts.printed.length = 120;
+    facts.where = chars("f.c:1");
+    usize n = prove_report::instruction_line(&facts, out, 256);
+    test::check_equal(n, 5 + 3 + 87 + 3 + 1);
+    test::check_condition(out[n - 1] == '`' && out[n - 2] == '.');
+}
+
+export void test_prove_report_tells_a_loop_with_no_bound() {
+    char what[512];
+    char fix[512];
+    c::SmithProveLoop loop = {};
+    usize w = prove_report::loop_what_text(&loop, what, 512);
+    test::check_condition(wrote(what, w, 512, "the loop has no bound the prover can see"));
+    loop.known = true;
+    loop.counted = true;
+    loop.controls = chars("count\nrows\n");
+    w = prove_report::loop_what_text(&loop, what, 512);
+    test::check_condition(
+        wrote(what, w, 512, "the loop has no bound the prover can see: it runs `count`, `rows` times"));
+    usize f = prove_report::loop_fix_text(&loop, fix, 512);
+    test::check_condition(wrote(fix, f, 512,
+                                "state its worst case, contract::requires(count <= ...), which callers then prove (a "
+                                "loop's count comes from a constant or from a requires that bounds it)"));
+    loop.counted = false;
+    loop.shrink_passes = 64;
+    loop.shrink_what = chars("a 64-bit value divided by 10");
+    w = prove_report::loop_what_text(&loop, what, 512);
+    test::check_condition(wrote(what, w, 512,
+                                "the loop has no bound the prover can see: it ends when `count`, `rows` reaches "
+                                "zero, and a 64-bit value divided by 10 each pass is not a count LLVM can derive, so "
+                                "no requires gives one"));
+    f = prove_report::loop_fix_text(&loop, fix, 512);
+    test::check_condition(wrote(fix, f, 512,
+                                "count the passes in a variable that a constant bounds: at most 64 (a loop `for "
+                                "(usize pass = 0; pass < 64; pass++)` that breaks when the value is zero)"));
+}
+
+export void test_prove_report_tells_what_a_proof_costs() {
+    char out[128];
+    usize n = prove_report::cost_arithmetic(32, false, true, true, out, 128);
+    test::check_condition(wrote(out, n, 128, "32-bit signed remainder by a variable"));
+    n = prove_report::cost_arithmetic(16, true, false, false, out, 128);
+    test::check_condition(wrote(out, n, 128, "16-bit multiplication of two variables"));
+    n = prove_report::cost_copy(true, true, 64, out, 128);
+    test::check_condition(wrote(out, n, 128, "memset of 64 bytes"));
+    n = prove_report::cost_copy(false, false, 0, out, 128);
+    test::check_condition(wrote(out, n, 128, "memcpy of a variable size"));
+    n = prove_report::cost_object(256, out, 128);
+    test::check_condition(wrote(out, n, 128, "a local object of 256 bytes"));
+    n = prove_report::cost_loop(false, nothing(), 5, out, 128);
+    test::check_condition(wrote(out, n, 128, "a loop unrolled into 5 passes"));
+}
+
+export void test_prove_report_shows_a_value_as_its_type_does() {
+    char out[32];
+    usize n = prove_report::render(2, 8, 0, 255, out, 32);
+    test::check_condition(wrote(out, n, 32, "-1"));
+    n = prove_report::render(2, 8, 1, 255, out, 32);
+    test::check_condition(wrote(out, n, 32, "255"));
+    n = prove_report::render(2, 64, 0, 0xFFFFFFFFFFFFFFFE, out, 32);
+    test::check_condition(wrote(out, n, 32, "-2"));
+    n = prove_report::render(2, 1, 2, 1, out, 32);
+    test::check_condition(wrote(out, n, 32, "true"));
+    n = prove_report::render(1, 32, 0, 0, out, 32);
+    test::check_condition(wrote(out, n, 32, "poison"));
+    n = prove_report::render(0, 32, 0, 0, out, 32);
+    test::check_condition(wrote(out, n, 32, "?"));
+}
+
+export void test_prove_report_heads_the_ir_of_a_function() {
+    char out[512];
+    usize n = prove_report::ir_point(3, 1, chars("total <= 28"), chars("f.c"), 9, out, 512);
+    test::check_condition(wrote(out, n, 512, ";   point 3: smith_ensures, proved: total <= 28  (f.c:9)\n"));
+    n = prove_report::ir_unprovable(chars("the loop"), chars("f.c"), 4, out, 512);
+    test::check_condition(
+        wrote(out, n, 512, "; cannot be proved: the loop (f.c:4); this is the IR as far as the prover got\n"));
+}

@@ -31,12 +31,25 @@ void build(SmithBuild *b) {
         .flags = flags,
     };
     smith_object(b, &http);
+    // runtime/prove_report.smith is a module of smith itself and not a library (the prover's C++ stands on it), so
+    // tests/prove_report_test.smith reaches it here, from the same repository.
+    SmithObject report = {
+        .compiler = "smith-cc",
+        .source = smith_fmt(b, "%s/runtime/prove_report.smith", repo != nullptr ? repo : ".."),
+        .output = "build/tests_objects/prove_report.o",
+        .flags = smith_cat(
+            b, flags,
+            smith_list(b, "-I", smith_fmt(b, "%s/runtime", repo != nullptr ? repo : ".."), "-fdefer-ts", nullptr),
+            nullptr),
+    };
+    smith_object(b, &report);
     SmithTests tests = {
-        .objects = (const SmithObject *[]){&http, nullptr},
+        .objects = (const SmithObject *[]){&http, &report, nullptr},
         .sources =
             smith_glob(b, smith_list(b, "lib/smith/*_test.smith", "lib/*_test.smith", "tests/*_test.smith",
                                      "tests/scratch.smith", "tests/runner.smith", "tests/prove_cases.smith", nullptr)),
-        .flags = flags,
+        .flags = smith_cat(
+            b, flags, smith_list(b, "-I", smith_fmt(b, "%s/runtime", repo != nullptr ? repo : ".."), nullptr), nullptr),
         .link_flags = smith_list(b, "-fsanitize=address,undefined", nullptr),
     };
     smith_tests(b, &tests);
