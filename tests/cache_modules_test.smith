@@ -43,7 +43,7 @@ export void test_cache_modules_the_second_clone_does_not_rebuild_the_sdk_modules
     const char *before = text(&p, "sdk_signature");
     builds_and_runs(&p, "two", "modules: the second clone builds", "7");
     scratch::expect_text("modules: clang keeps its pruning timestamp in the shared cache", "yes",
-                         text(&p, "exists \"$modules/modules.timestamp\""));
+                         text(&p, "exists \"$(ls -d $modules/*/modules.timestamp | head -1)\""));
     scratch::expect_text("modules: the second clone's cold build did not rebuild the SDK modules (names and times "
                          "unchanged)",
                          before, text(&p, "sdk_signature"));
@@ -70,4 +70,28 @@ export void test_cache_modules_worktrees_with_different_headers_do_not_collide(i
     scratch::expect_status("modules: a clean build of the second still works", 0, &second);
     scratch::expect_text("modules: a clean build of the second still works (it runs)", "7",
                          scratch::capture(&p, "cd ../two && ./build/app"));
+}
+
+// Two smiths that share one cache (issue #575): the module cache is a folder of each smith's LC_UUID, so neither reads
+// the modules the other built (a stddef.h of another resource folder is not this one's). The second smith is a copy of
+// the first with its LC_UUID changed and the signature made again.
+export void test_cache_modules_two_smiths_sharing_a_cache_use_a_folder_each(io::Io *io) {
+    scratch::Project p = modules_project(io);
+    scratch::Run second = scratch::sh(
+        &p, "S=$(command -v smith) && mkdir -p ../other && cp -c \"$S\" ../other/smith 2>/dev/null || cp \"$S\" "
+            "../other/smith; id=$(dwarfdump --uuid ../other/smith | sed -n '1s/UUID: \\([0-9A-F-]*\\).*/\\1/p' | tr -d "
+            "- | tr A-F a-f); [ -n \"$id\" ] && head -c 16384 ../other/smith | xxd -p | tr -d '\\n' | sed "
+            "\"s/$id/0123456789abcdef0123456789abcdef/\" | xxd -r -p | dd of=../other/smith conv=notrunc bs=1 "
+            "2>/dev/null && codesign -f -s - ../other/smith 2>/dev/null; ln -sf smith ../other/smith-cc; echo done");
+    scratch::expect_text("two smiths: the copy is made", "done\n", second.out);
+    scratch::Run first_build = scratch::build(&p, "");
+    scratch::expect_status("two smiths: the first smith builds", 0, &first_build);
+    scratch::Run other_build = scratch::sh(&p, "rm -rf build .smith && ../other/smith build");
+    scratch::expect_status("two smiths: the second smith builds into the same cache", 0, &other_build);
+    scratch::expect_text("two smiths: and the program runs", "7", scratch::capture(&p, "./build/app"));
+    scratch::expect_text("two smiths: one module folder each", "2",
+                         text(&p, "ls -d \"$modules\"/*/ | wc -l | tr -d ' '"));
+    scratch::expect_text("two smiths: each folder holds modules", "2",
+                         text(&p, "for d in \"$modules\"/*/; do find \"$d\" -name '*.pcm' | head -1; done | wc -l | "
+                                  "tr -d ' '"));
 }

@@ -36,7 +36,7 @@ void build(SmithBuild *b) {
   them) the depfile lists exactly the headers a source imports, directly and through other headers, and a rebuild is
   what the build already does without modules. Each module is `module <name> { header "<absolute path>" export * }`; `export
   *` makes a header's own includes visible to its users, as textual inclusion did.
-- **The flags:** `-fmodules -fmodules-cache-path=<cache>/smith/modules -fmodules-prune-interval=604800
+- **The flags:** `-fmodules -fmodules-cache-path=<cache>/smith/modules/<smith LC_UUID> -fmodules-prune-interval=604800
   -fmodules-prune-after=2678400` and one `-fmodule-map-file=<map>` per map. `<cache>` is `$XDG_CACHE_HOME`, or
   `~/.cache`, as for packages. The cache is clang's own (implicit modules), so clang does the locking when many compiles
   fill it at once. A sanitized compile and a plain one hash differently, so each has its own folder inside the cache.

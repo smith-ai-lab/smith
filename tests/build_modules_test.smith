@@ -18,8 +18,10 @@ export void test_build_modules_a_header_is_a_module_with_its_flags_maps_and_depe
     char text[2048];
     scratch::Run built = scratch::build(&p, "-v");
     scratch::expect_status("modules: the project builds", 0, &built);
-    (void)format::to(text, sizeof text, "cc -fmodules -fmodules-cache-path=", p.cache,
-                     "/smith/modules -fmodules-prune-interval=604800 -fmodules-prune-after=2678400 "
+    const char *id =
+        scratch::capture(&p, "ls \"$XDG_CACHE_HOME/smith/modules\" | grep -v '^[.]' | head -1 | tr -d '\\n'");
+    (void)format::to(text, sizeof text, "cc -fmodules -fmodules-cache-path=", p.cache, "/smith/modules/", id,
+                     " -fmodules-prune-interval=604800 -fmodules-prune-after=2678400 "
                      "-fmodule-map-file=.smith/modules/inc.modulemap -fmodule-map-file=.smith/modules/smith.modulemap "
                      "-std=gnu23");
     scratch::expect_contains("modules: the compile has -fmodules", built.out, text);
@@ -84,7 +86,7 @@ export void test_build_modules_edits_rebuild_what_reaches_them_and_the_cache_is_
     scratch::Run cleaned = scratch::build(&p, "");
     scratch::expect_status("modules: the cache survives a clean of build/ and is reused", 0, &cleaned);
     scratch::expect_contains("modules: the cache is the shared one",
-                             scratch::sh(&p, "ls \"$XDG_CACHE_HOME/smith/modules\"").out, "modules.timestamp");
+                             scratch::sh(&p, "ls \"$XDG_CACHE_HOME\"/smith/modules/*").out, "modules.timestamp");
     scratch::expect_text("modules: and nothing is cached under .smith", "no",
                          scratch::exists(&p, ".smith/cache") ? "yes" : "no");
     if (scratch::sh(&p, "smith lsp --version").status == 0) {

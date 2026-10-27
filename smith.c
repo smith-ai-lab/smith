@@ -2097,6 +2097,11 @@ static int smith_build_main(int count, char **args, const char *self, const char
     setenv("SMITH_ENZYME", smith_can_differentiate() ? "yes" : "no",
            1);                     // whether smith::autodiff programs can be built
     setenv("SMITH_SELF", self, 1); // the build program finds smith here: `smith symbolize` for the tests' failures
+    {
+        char id[33];
+        smith_platform_self_id(id, sizeof id);
+        setenv("SMITH_BUILD_ID", id, 1); // the module cache is this smith's (smith_modules, knowledge/caches.md)
+    }
 #ifdef SMITH_HOOK
     // Whether a compile writes an effect summary (the plugin runs in smith's own clang, not in an external one): the
     // build declares it an output of the compile only then.

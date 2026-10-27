@@ -1453,6 +1453,41 @@ static void smith_modules_check_overlap(const char *const *folders, size_t count
     }
 }
 
+// The module cache of the smith that runs this build: <cache>/smith/modules/<LC_UUID of that smith>. clang keys a
+// module by its flags and paths, not by the compiler and resource folder that built it, so two smiths sharing one
+// folder read each other's modules (a stddef.h of another resource folder: issue #575). A folder is stamped (.used,
+// touched at most once a day) and the folders of other smiths unused for 31 days are removed when this one is stamped,
+// so the 31-day rule holds for the folders as clang's pruning holds inside one.
+static bool smith_modules_cache_folder(char *out, SmithPackageFault *error) {
+    char base[PATH_MAX];
+    if (!smith_cache_folder(SmithCache_Modules, base, error)) return false;
+    const char *id = getenv("SMITH_BUILD_ID");
+    const char *name = id != nullptr && id[0] != '\0' ? id : "unknown";
+    int written = snprintf(out, PATH_MAX, "%s/%s", base, name);
+    if (written <= 0 || written >= PATH_MAX - 64) return smith_package_fail(error, "the cache path is too long");
+    char stamp[PATH_MAX];
+    snprintf(stamp, sizeof stamp, "%s/.used", out);
+    struct stat info;
+    if (stat(stamp, &info) == 0 && time(nullptr) - info.st_mtime < (time_t)24 * 3600) return true;
+    if (!smith_package_make_folders(out)) return true; // clang reports a cache it cannot write
+    (void)smith_cache_touch(stamp);
+    DIR *dir = opendir(base);
+    if (dir == nullptr) return true;
+    for (size_t guard = 0; guard < smith_entries_max; guard++) { // bounded by the entries
+        const struct dirent *entry = readdir(dir);
+        if (entry == nullptr) break;
+        if (entry->d_name[0] == '.' || strcmp(entry->d_name, name) == 0) continue;
+        char path[PATH_MAX];
+        snprintf(path, sizeof path, "%s/%s", base, entry->d_name);
+        char used[PATH_MAX + 8];
+        snprintf(used, sizeof used, "%s/.used", path);
+        if (stat(used, &info) != 0 && stat(path, &info) != 0) continue;
+        if (time(nullptr) - info.st_mtime > smith_cache_prune_after) smith_package_remove(path);
+    }
+    closedir(dir);
+    return true;
+}
+
 void smith_modules(SmithBuild *b, const SmithModules *modules) {
     SMITH_ASSERT(b != nullptr && modules != nullptr);
     smith_context = nullptr;
@@ -1465,7 +1500,7 @@ void smith_modules(SmithBuild *b, const SmithModules *modules) {
     smith_modules_check_overlap(folders, count);
     char cache[PATH_MAX];
     SmithPackageFault error;
-    if (!smith_cache_folder(SmithCache_Modules, cache, &error)) smith_fail("smith_modules: %s", error.text);
+    if (!smith_modules_cache_folder(cache, &error)) smith_fail("smith_modules: %s", error.text);
     const char **flags = smith_new_list(count + 5);
     flags[0] = "-fmodules";
     flags[1] = smith_text("-fmodules-cache-path=%s", cache); // one cache for every project and worktree

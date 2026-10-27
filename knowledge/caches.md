@@ -18,7 +18,11 @@ smith keeps two caches under `$XDG_CACHE_HOME/smith/` (or `~/.cache/smith/`), ea
 from either is simply fetched or built again:
 
 - `packages/<hex>/`: what `smith_package` extracted (above).
-- `modules/`: clang's module cache for `smith_modules` (below). It is one cache for every project and worktree, not one
+- `modules/<LC_UUID of the smith>/`: clang's module cache for `smith_modules` (below), one folder for each smith binary
+  (issue #575): clang keys a module by its flags and paths, not by the compiler and resource folder that built it, so two
+  smiths on one cache (CI's, a lane's, the installed one) would read each other's modules. A folder carries a `.used`
+  stamp (touched at most once a day); when a smith stamps its folder, the folders of other smiths unused for 31 days are
+  removed, and clang prunes inside a folder as below. It is one cache for every project and worktree, not one
   per project, so Apple's SDK and framework modules are built once per machine and a new clone or worktree starts warm.
   clang keys a module file by the module, its path and the hash of the compile's flags, so two worktrees whose headers
   differ (different paths) never share or overwrite one another's module files, and a sanitized compile never reuses a
