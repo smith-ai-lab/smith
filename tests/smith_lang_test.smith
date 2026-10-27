@@ -593,6 +593,10 @@ export void test_unused_run(io::Io *io) {
     corpus_case(io, "unused-run");
 }
 
+export void test_unused_param_twice(io::Io *io) {
+    corpus_case(io, "unused-param-twice");
+}
+
 export void test_error_unused_read_name(io::Io *io) {
     corpus_case(io, "error-unused-read-name");
 }

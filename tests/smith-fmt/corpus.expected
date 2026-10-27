@@ -11686,6 +11686,22 @@ i32 main() {
               holder.later->count, legacy.a, bare.b, (int)q.x, l.inner);
     return 0;
 }
+==> unused-param-twice/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+// A parameter `_t` in two functions of a module (issue #600): the first `_t` is no variable in scope of the second.
+export void first(i32 *_t) {}
+
+export void second(i32 *_t, i32 x) {
+    c::printf("%d\n", x);
+}
+
+i32 main() {
+    second(nullptr, 3);
+    return 0;
+}
 ==> unused-run/src/main.smith <==
 module main;
 
