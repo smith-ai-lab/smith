@@ -67,8 +67,8 @@ export void test_prove_checks_a_proved_check_is_left_out_of_an_optimized_build_o
     scratch::expect_status("`kept` has a check it cannot prove, so the run fails", 1, &run);
     scratch::expect_contains("the proof file is written", scratch::read(&p, ".smith/proved/edges.smith.pts"),
                              "smith-proved ");
-    scratch::expect_contains("the proved checks (two indexes, two ensures) are gone, the unproved index stays", report(&p, "-O2"),
-                             "4 removed (proved), 1 kept");
+    scratch::expect_contains("the proved checks (two indexes, two ensures) are gone, the unproved index stays",
+                             report(&p, "-O2"), "4 removed (proved), 1 kept");
     scratch::expect_contains("debug keeps every check", report(&p, "-O0"), "0 removed (proved), 5 kept");
 }
 
@@ -252,10 +252,11 @@ export void test_prove_checks_a_proved_contract_check_is_left_out_of_an_optimize
                              "0 removed (proved), 4 kept");
     scratch::Run run = scratch::sh(&p, "smith prove 2>&1");
     scratch::expect_status("`unsure`'s assert cannot be proved", 1, &run);
-    scratch::expect_contains("the assert of `sure`, the invariant and the ensures of `count` are gone, `unsure`'s stays",
-                             report_of(&p, "contracts.smith"), "3 removed (proved), 1 kept");
-    scratch::Run debug = scratch::sh(
-        &p, "SMITH_PROVED_REPORT=1 smith cc -c contracts.smith -O0 -I .smith/include -o x.o 2>&1");
+    scratch::expect_contains(
+        "the assert of `sure`, the invariant and the ensures of `count` are gone, `unsure`'s stays",
+        report_of(&p, "contracts.smith"), "3 removed (proved), 1 kept");
+    scratch::Run debug =
+        scratch::sh(&p, "SMITH_PROVED_REPORT=1 smith cc -c contracts.smith -O0 -I .smith/include -o x.o 2>&1");
     scratch::expect_contains("debug keeps every check", debug.out, "0 removed (proved), 4 kept");
 }
 

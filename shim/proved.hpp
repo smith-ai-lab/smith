@@ -1,6 +1,7 @@
 // The proof file of a `.smith` source (issue #221): `smith prove` writes, for each source, the lines whose index and
-// cut checks and whose `contract::ensures`, `invariant` and `assert` checks (issue #325) it proved can never fail, and the lowering of a release build (-O1 or more; debug is -O0) leaves those
-// checks out. Both sides are in this header, so they cannot disagree about the file, its name or its key.
+// cut checks and whose `contract::ensures`, `invariant` and `assert` checks (issue #325) it proved can never fail, and
+// the lowering of a release build (-O1 or more; debug is -O0) leaves those checks out. Both sides are in this header,
+// so they cannot disagree about the file, its name or its key.
 //
 //   .smith/proved/<source's path from the project folder>.pts
 //     smith-proved <key>           the key: SHA-256 of the prover's identity, the source's bytes and the bytes of every

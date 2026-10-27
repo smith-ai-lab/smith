@@ -42,7 +42,7 @@ struct Point {
     const llvm::Instruction *where = nullptr; // the call that was replaced, for the values visible there
     int induction_loop = -1;                  // a loop proved by induction: its index in Unit::loops
     bool induction_step = false;              // ... and this is its check at the back edge (else: on entry)
-    bool contract_check = false;              // an ensures, invariant or assert call: a run-time check the lowering can omit
+    bool contract_check = false; // an ensures, invariant or assert call: a run-time check the lowering can omit
 };
 
 // A call of a function whose contract replaced it.

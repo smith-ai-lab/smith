@@ -529,3 +529,25 @@ export void test_fails_a_callee_in_another_file_reaches_a_pure_caller_at_the_lin
         "fails: an assert of another file", run.out,
         "`main::asserts` is [[smith::pure]], but it has the effects fails: main::asserts -> fx4::lib::checked");
 }
+
+// A proved contract check is not a failure point (issue #325): after `smith prove`, an optimized build leaves out the
+// assert, so the function that only had it is [[smith::pure]]; with no proof, or in debug (which keeps every check),
+// the assert makes it `fails`.
+export void test_fails_a_proved_assert_adds_no_fails_in_an_optimized_build(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::write(&p, "sure.smith",
+                   "module sure;\nimport smith::contract;\n"
+                   "export [[smith::pure]] i32 low(i32 x) { i32 y = x & 7; contract::assert(y < 8); return y; }\n");
+    scratch::write(&p, "main.smith", "module main;\nimport sure;\ni32 main() { return sure::low(8); }\n");
+    scratch::Run before = scratch::sh(&p, "smith build release 2>&1");
+    scratch::expect_contains("no proof: the assert is a failure point", before.out,
+                             "`sure::low` is [[smith::pure]], but it has the effects fails");
+    scratch::Run proved = scratch::sh(&p, "smith prove 2>&1");
+    scratch::expect_status("the assert is proved", 0, &proved);
+    scratch::Run release = scratch::sh(&p, "smith build release 2>&1");
+    scratch::expect_status("proved: the optimized build has no `fails` there", 0, &release);
+    scratch::expect_lacks("and says nothing", release.out, "smith-effect");
+    scratch::Run debug = scratch::sh(&p, "smith build 2>&1");
+    scratch::expect_contains("debug keeps the check, so `fails` stays", debug.out,
+                             "`sure::low` is [[smith::pure]], but it has the effects fails");
+}

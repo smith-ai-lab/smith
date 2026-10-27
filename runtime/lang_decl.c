@@ -474,7 +474,8 @@ static bool smith_lang_proved_check(const SmithLang *lang, const SmithHost *host
                                     uint32_t location) {
     if (host->proved == nullptr || !lang->in_function || lang->recording) return false;
     bool contract = smith_lang_equals(name, length, "smith_ensures") ||
-                    smith_lang_equals(name, length, "smith_invariant") || smith_lang_equals(name, length, "smith_assert");
+                    smith_lang_equals(name, length, "smith_invariant") ||
+                    smith_lang_equals(name, length, "smith_assert");
     return contract && host->proved(host->context, location);
 }
 
