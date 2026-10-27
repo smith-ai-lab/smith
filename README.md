@@ -616,7 +616,8 @@ i32 main(io::Io *io) {
     objc::Owned(objc::NSString) title = objc::string("smith");
     defer objc::release(title);
     str back = objc::str(title.object);
-    format::print(&io->console, "length ", (u64)objc::NSString::length(title.object), ", bytes ", (u64)countof(back), "\n");
+    format::print(&io->console, "length ", (u64)objc::NSString::length(title.object), ", bytes ", (u64)countof(back),
+                  "\n");
     return 0;
 }
 ```

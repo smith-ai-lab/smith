@@ -40,11 +40,11 @@ i32 main(io::Io *io) {
 `alloc`, `new`, `copy`, `mutableCopy` and a method marked `ns_returns_retained` return `objc::Owned(objc::NSMutableArray)` (a struct `{object, token}`, interim until [#572](https://github.com/adam-r-kowalski/smith/issues/572): then `Owned` becomes one affine value); everything else stays borrowed. Read the pointer as `.object` as often as you like; release once with `defer objc::release(x);`, and a second release of `x` is a compile error from the affine check (`'x.token' is used again`). `objc::retain(p)` turns a borrowed `p` into an owned one. A forgotten release is not found yet (#438); `init...` returns the same object, borrowed, so release the `alloc` result.
 
 ```smith
-module main;
+module owned;
 
 import <Foundation/Foundation.h>;
 
-i32 main(void) {
+export i32 run() {
     objc::Pool pool = objc::pool_begin();                       // a pool is a scope
     defer objc::pool_end(pool);
     objc::Owned(objc::NSMutableArray) list = objc::NSMutableArray::new();
