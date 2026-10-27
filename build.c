@@ -767,8 +767,10 @@ static void build_other_objects(SmithBuild *b, const BuildConfig *config, const 
 // Sources the build never compiles on their own, which `smith lint` (and the editor) still read with the flags the
 // scripts give them: the libraries and their tests. tests/stub.c is built (build_other_objects) with its -D.
 static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
-    const char *const *flags =
-        smith_cat(b, config->cflags, smith_list(b, "-I", "include", "-I", ".smith/include", nullptr), nullptr);
+    const char *const *flags = smith_cat(b, config->cflags,
+                                         smith_list(b, "-I", "include", "-I", ".smith/include", "-I", ".smith/protocol",
+                                                    "-I", "runtime/protocol", nullptr),
+                                         nullptr);
     const char *const *sources =
         smith_glob(b, smith_list(b, "lib/*.c", "tests/*.c", "scripts/defer_init.c", "scripts/header_tool.c", nullptr));
     for (size_t i = 0; sources[i] != nullptr; i++) {
@@ -2146,10 +2148,10 @@ void build(SmithBuild *b) {
     config.headers = build_header_steps(b, &config);
     config.protocol = build_protocol_steps(b, &config, folder);
     SmithStep smith = build_programs(b, &config, folder);
-    build_other_objects(
-        b, &config, folder,
-        build_template_modules(b, &config, folder,
-                               smith_cat(b, build_test_modules(b, &config, folder), config.headers, nullptr)));
+    build_other_objects(b, &config, folder,
+                        build_template_modules(b, &config, folder,
+                                               smith_cat(b, build_test_modules(b, &config, folder), config.headers,
+                                                         config.protocol, nullptr)));
     build_unbuilt_sources(b, &config);
     config.binary = smith.outputs[0];
     const char *const *tested = build_test(b, &config, config.binary, folder);
