@@ -29,7 +29,8 @@ static void effects_case(io::Io *io, const char *file) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     const char *command =
         format::push(&io->arena,
-                     "cd \"$SMITH_REPO/tests/effects\" && { smith cc -std=gnu2y -I \"$SMITH_REPO/.smith/include\" -c ", file,
+                     "cd \"$SMITH_REPO/tests/effects\" && { smith cc -std=gnu2y -I \"$SMITH_REPO/.smith/include\" -c ",
+                     file,
                      " -o /dev/null >\"$TMPDIR/out\" 2>&1; echo \"status $?\"; grep -E '^[^ ]+:[0-9]+:[0-9]+: "
                      "(error|note|warning):' "
                      "\"$TMPDIR/out\"; }")

@@ -186,12 +186,12 @@ export void test_library_modes_text_c_and_smith_share_one_header(io::Io *io) {
 // compiler's own calls for a big struct).
 static void compiles_as(io::Io *io, const char *source, const char *standard) {
     scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run built =
-        scratch::sh(&p, format::push(&io->arena, "smith cc -std=", standard,
-                                     " -Wall -Wextra -Wpedantic -Wconversion -Werror -O2 -I \"$SMITH_REPO/.smith/include\" -c "
-                                     "\"$SMITH_REPO/",
-                                     source, "\" -o library.o")
-                            .data);
+    scratch::Run built = scratch::sh(
+        &p, format::push(&io->arena, "smith cc -std=", standard,
+                         " -Wall -Wextra -Wpedantic -Wconversion -Werror -O2 -I \"$SMITH_REPO/.smith/include\" -c "
+                         "\"$SMITH_REPO/",
+                         source, "\" -o library.o")
+                .data);
     scratch::expect_status(format::push(&io->arena, "library: compiles as ", standard).data, 0, &built);
 }
 

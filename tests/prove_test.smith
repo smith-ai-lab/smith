@@ -228,7 +228,8 @@ export void test_prove_budget_a_proof_out_of_time_fails_saying_what_it_used_and_
 // A leftover is never killed here: once its parent is gone it is launchd's, and its pid can already be another
 // process's (another test's compile). A proof also ends by its own deadline (its alarm), so it cannot run on for ever.
 constexpr char orphan_script[] =
-    "smith prove --budget=30 \"$SMITH_REPO/tests/prove/division.c\" -- -I \"$SMITH_REPO/.smith/include\" >/dev/null 2>&1 & "
+    "smith prove --budget=30 \"$SMITH_REPO/tests/prove/division.c\" -- -I \"$SMITH_REPO/.smith/include\" >/dev/null "
+    "2>&1 & "
     "parent=$!; children=; "
     "for _ in $(seq 1 300); do children=$(pgrep -P \"$parent\"); [ -n \"$children\" ] && break; sleep 0.1; done; "
     "kill -9 \"$parent\"; wait \"$parent\" 2>/dev/null; alive=; "

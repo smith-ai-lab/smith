@@ -29,8 +29,8 @@ static scratch::Project lowered_project(io::Io *io) {
 
 // Builds tests/random.c with the flags into `name`.
 static scratch::Run compile(const scratch::Project *p, const char *warnings, const char *flags, const char *name) {
-    return scratch::sh(p, format::push(&p->io->arena, "smith cc ", warnings, " -I \"$SMITH_REPO/.smith/include\" ", flags, " ",
-                                       sources, " -o ", name)
+    return scratch::sh(p, format::push(&p->io->arena, "smith cc ", warnings, " -I \"$SMITH_REPO/.smith/include\" ",
+                                       flags, " ", sources, " -o ", name)
                               .data);
 }
 

@@ -21,9 +21,10 @@ constexpr char sources[] = "\"$SMITH_REPO/tests/io.c\" \"$SMITH_REPO/lib/smith/i
 // Compiles tests/io.c into `name` in the project: "asan" (-O0, sanitized) or "fast" (-O2).
 static void compile(const scratch::Project *p, const char *name) {
     const char *extra = c::strcmp(name, "asan") == 0 ? "-O0 -g -fsanitize=address,undefined" : "-O2";
-    scratch::Run built = scratch::sh(p, format::push(&p->io->arena, "smith cc -std=gnu23 ", warn,
-                                                     " -I \"$SMITH_REPO/.smith/include\" ", extra, " ", sources, " -o ", name)
-                                            .data);
+    scratch::Run built =
+        scratch::sh(p, format::push(&p->io->arena, "smith cc -std=gnu23 ", warn, " -I \"$SMITH_REPO/.smith/include\" ",
+                                    extra, " ", sources, " -o ", name)
+                           .data);
     scratch::expect_status(format::push(&p->io->arena, "the ", name, " program builds").data, 0, &built);
 }
 

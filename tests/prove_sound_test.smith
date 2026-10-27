@@ -120,9 +120,9 @@ static void sound(io::Io *io, const char *name) {
     for (usize i = 0; word(io, prove_files, i) != nullptr; i++) {
         arguments = format::push(&io->arena, arguments, " \"$SMITH_REPO/", word(io, prove_files, i), "\"").data;
     }
-    scratch::Run proved = scratch::sh(
-        &p,
-        format::push(&io->arena, "smith prove -v", arguments, " -- -I \"$SMITH_REPO/.smith/include\" -I lowered 2>&1").data);
+    scratch::Run proved = scratch::sh(&p, format::push(&io->arena, "smith prove -v", arguments,
+                                                       " -- -I \"$SMITH_REPO/.smith/include\" -I lowered 2>&1")
+                                              .data);
     for (usize i = 0; word(io, proves, i) != nullptr; i++) {
         const char *fn = word(io, proves, i);
         if (!scratch::contains(proved.out, format::push(&io->arena, "ok    ", fn, "  (").data)) {
@@ -154,9 +154,9 @@ static void unsound(io::Io *io, const char *name) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     const char *source = format::push(&io->arena, "tests/prove/unsound/", name, ".c").data;
     const char *text = scratch::capture(&p, format::push(&io->arena, "cat \"$SMITH_REPO/", source, "\"").data);
-    scratch::Run proved = scratch::sh(
-        &p, format::push(&io->arena, "smith prove -v \"$SMITH_REPO/", source, "\" -- -I \"$SMITH_REPO/.smith/include\" 2>&1")
-                .data);
+    scratch::Run proved = scratch::sh(&p, format::push(&io->arena, "smith prove -v \"$SMITH_REPO/", source,
+                                                       "\" -- -I \"$SMITH_REPO/.smith/include\" 2>&1")
+                                              .data);
     scratch::Run built = scratch::sh(&p, format::push(&io->arena, "smith cc ", cc_flags, " \"$SMITH_REPO/", source,
                                                       "\" ", cc_common, " -o claims 2>&1")
                                              .data);
