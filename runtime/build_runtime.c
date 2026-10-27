@@ -669,7 +669,8 @@ const char *const *smith_args(SmithBuild *b) {
 // build that makes no tests ignores it, and it is not a variable of the project's, so it is never listed or refused.
 // Not the environment: that is inherited by every smith a test starts, and they must not be instrumented.
 static bool smith_record_mode(SmithBuild *b) {
-    return smith_option_value(b, "SMITH_RECORD", "", "smith test --changed: count the lines the tests run")[0] != '\0';
+    SMITH_ASSERT(b != nullptr);
+    return smith_find_given("SMITH_RECORD") != nullptr; // never declared: a build with no options still declares none
 }
 
 // `flags` of a debug compile (or link) with the counters added when `smith test --changed` records, unless they have
@@ -705,7 +706,6 @@ static void smith_check_given(void) {
             fprintf(stderr, "%s declares no options\n", smith_build_file_label());
         for (size_t j = 0; j < smith_declared_count; j++) {
             const SmithDeclared *option = &smith_declared[j];
-            if (strcmp(option->name, "SMITH_RECORD") == 0) continue;
             fprintf(stderr, "  -D%s%s  %s\n", option->name, option->flag ? "" : "=value", option->description);
         }
         exit(smith_exit_usage);
