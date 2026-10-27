@@ -1333,7 +1333,7 @@ export void test_keyword_names_fine(io::Io *io) {
     corpus_case(io, "keyword-names-fine");
 }
 
-export void test_library_smith_text(io::Io *io) {
+export void test_library_smith_slice(io::Io *io) {
     corpus_case(io, "library-smith-slice");
 }
 
