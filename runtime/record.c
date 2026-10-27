@@ -28,6 +28,27 @@ static bool smith_rec_source_ok;
 static const char *smith_rec_seen[smith_rec_seen_max];
 static size_t smith_rec_seen_count;
 
+// Judged elsewhere (runtime/changed.c, issue #456): functions a change reaches through an `#embed` (file, name), and an
+// input whose change is not a reason by itself (build.c, when its diff touches only functions no test runs).
+constexpr size_t smith_rec_touched_max = 64;
+static const char *smith_rec_touched_file[smith_rec_touched_max];
+static const char *smith_rec_touched_name[smith_rec_touched_max];
+static size_t smith_rec_touched_count;
+static const char *smith_rec_ignored_input;
+
+static bool smith_rec_touched(const char *file, const char *name) {
+    size_t length = strlen(name);
+    for (size_t i = 0; i < smith_rec_touched_count; i++) { // bounded by the touched functions
+        if (strcmp(smith_rec_touched_file[i], file) != 0) continue;
+        const char *want = smith_rec_touched_name[i];
+        size_t tail = strlen(want);
+        if (length >= tail && strcmp(name + length - tail, want) == 0 &&
+            (length == tail || name[length - tail - 1] == ':'))
+            return true;
+    }
+    return false;
+}
+
 static uint64_t smith_rec_fnv(const void *data, size_t size, uint64_t hash) {
     const unsigned char *bytes = data;
     for (size_t i = 0; i < size; i++) { // bounded by the data
@@ -328,6 +349,7 @@ static const char *smith_rec_stale_line(char *const *field, size_t count) {
         if (!smith_rec_load_source(field[1])) return "a file it executed is gone";
         bool found = smith_rec_find(strtoull(field[5], nullptr, 16), strtoul(field[3], nullptr, 10),
                                     strtoull(field[4], nullptr, 16));
+        if (found && smith_rec_touched(field[1], field[2])) return smith_cov_copy(field[2]);
         return found ? nullptr : smith_cov_copy(field[2]);
     }
     if (count >= 3 && strcmp(field[0], "outside") == 0) {
@@ -337,6 +359,7 @@ static const char *smith_rec_stale_line(char *const *field, size_t count) {
     }
     if (count >= 3 && (strcmp(field[0], "input") == 0 || strcmp(field[0], "read") == 0)) {
         smith_rec_mention(field[1]);
+        if (smith_rec_ignored_input != nullptr && strcmp(field[1], smith_rec_ignored_input) == 0) return nullptr;
         bool same = smith_rec_file_hash(field[1], &hash) && hash == strtoull(field[2], nullptr, 16);
         smith_rec_source_path[0] = '\0';
         return same ? nullptr : smith_cov_copy(field[1]);

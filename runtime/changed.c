@@ -35,7 +35,7 @@ static char smith_changed_text[smith_changed_text_max + 1];
 
 // The files that select the whole suite: the build file (every record has it as an input), the driver, the lowering,
 // the patches, the shims and the runner's own build. CI's files (.github/) select the tests that name them.
-static const char *const smith_changed_full[] = {"build.c", "smith.c",      "runtime/lang", "patches/",
+static const char *const smith_changed_full[] = {"smith.c", "runtime/lang", "patches/",
                                                  "shim/",   "tests/units/", nullptr};
 // What is compiled into smith: a test that runs smith depends on all of it.
 static const char *const smith_changed_smith[] = {"smith.c",      "runtime/", "shim/",      "patches/",
@@ -320,6 +320,296 @@ static const char *smith_changed_names[smith_changed_files_max]; // the tests of
 // Set when a changed file is named by no record and no file imports it: every test runs.
 static const char *smith_changed_unplaced;
 
+// ---- Changes inside one function (issue #456)
+//
+// Two files select fewer tests than their path says, by what in them changed. A file another file `#embed`s (the
+// build program's runtime, embedded into smith.c) reaches only the functions of the includer that use the embedded
+// array: the tests whose records ran one of them. And build.c, which every record has as an input: its diff is read
+// by function. A change outside any function, in a function a task's `.test` step runs, in one that registration
+// calls, or in a task another task names, selects every test (the safe answer); a change only in functions that run
+// when a task of no `smith test` runs (`.run = F` of a step without `.test`, and what only those call) selects the
+// tests whose source names the function or the task, because no test can run the task unless it says so.
+
+constexpr size_t smith_changed_functions_max = 512;
+constexpr size_t smith_changed_hunks_max = 512;
+constexpr size_t smith_changed_local_max = 32;
+
+static size_t smith_changed_hunk_first[smith_changed_hunks_max];
+static size_t smith_changed_hunk_lines[smith_changed_hunks_max];
+static size_t smith_changed_hunk_count;
+static bool smith_changed_hunk_overflow;
+
+// The names (function, task) of a build.c diff confined to functions no test runs; the tests naming one are selected.
+static char smith_changed_local_names[smith_changed_local_max][64];
+static size_t smith_changed_local_count;
+static bool smith_changed_build_local; // the diff of build.c was judged local
+
+static void smith_changed_on_hunk(char *text) {
+    if (strncmp(text, "@@ ", 3) != 0) return;
+    const char *plus = strchr(text, '+');
+    if (plus == nullptr) return;
+    char *end = nullptr;
+    size_t first = strtoul(plus + 1, &end, 10);
+    size_t lines = *end == ',' ? strtoul(end + 1, nullptr, 10) : 1;
+    if (smith_changed_hunk_count >= smith_changed_hunks_max) {
+        smith_changed_hunk_overflow = true;
+        return;
+    }
+    smith_changed_hunk_first[smith_changed_hunk_count] = first;
+    smith_changed_hunk_lines[smith_changed_hunk_count++] = lines;
+}
+
+typedef struct {
+    size_t open[smith_changed_functions_max];  // first line of each function
+    size_t close[smith_changed_functions_max]; // last line
+    char name[smith_changed_functions_max][64];
+    char task[smith_changed_functions_max][64]; // the task whose step runs it, when one does
+    size_t callers[smith_changed_functions_max][8];
+    uint8_t caller_count[smith_changed_functions_max];
+    uint8_t run_refs[smith_changed_functions_max];
+    bool bad[smith_changed_functions_max]; // referenced in a way that is not a run-only use
+    size_t count;
+} SmithChangedFunctions;
+
+static SmithChangedFunctions smith_changed_functions;
+static size_t smith_changed_line_offset[smith_cov_lines_max + 2]; // where each line of the loaded file starts
+
+// The functions of the loaded source: a function opens at brace depth 0 on a line ending in `) {` and closes before
+// the next line at depth 0.
+static void smith_changed_find_functions(SmithChangedFunctions *all) {
+    all->count = 0;
+    size_t offset = 0;
+    for (size_t line = 1; line <= smith_rec_line_count; line++) { // bounded by the lines
+        smith_changed_line_offset[line] = offset;
+        const char *end = strchr(smith_rec_source + offset, '\n');
+        offset = end != nullptr ? (size_t)(end - smith_rec_source) + 1 : strlen(smith_rec_source);
+    }
+    smith_changed_line_offset[smith_rec_line_count + 1] = offset;
+    for (size_t line = 1; line <= smith_rec_line_count && all->count < smith_changed_functions_max; line++) {
+        if (!smith_rec_line_opens[line]) continue;
+        size_t last = line;
+        while (last < smith_rec_line_count && smith_rec_line_depth[last + 1] != 0) // bounded by the lines
+            last++;
+        const char *text = smith_rec_source + smith_changed_line_offset[line];
+        const char *paren = memchr(text, '(', smith_changed_line_offset[line + 1] - smith_changed_line_offset[line]);
+        if (paren == nullptr) continue;
+        const char *start = paren;
+        while (start > text && smith_changed_word(start[-1])) // the identifier before the parenthesis
+            start--;
+        size_t at = all->count++;
+        all->open[at] = line;
+        all->close[at] = last;
+        snprintf(all->name[at], sizeof all->name[at], "%.*s", (int)(paren - start), start);
+        all->task[at][0] = '\0';
+        all->caller_count[at] = 0;
+        all->run_refs[at] = 0;
+        all->bad[at] = false;
+        line = last;
+    }
+}
+
+static size_t smith_changed_line_of(size_t offset) {
+    size_t low = 1;
+    size_t high = smith_rec_line_count;
+    for (size_t step = 0; low < high && step < 32; step++) { // a binary search over at most 2^15 lines
+        size_t middle = (low + high + 1) / 2;
+        if (smith_changed_line_offset[middle] <= offset)
+            low = middle;
+        else
+            high = middle - 1;
+    }
+    return low;
+}
+
+static int smith_changed_function_at(const SmithChangedFunctions *all, size_t line) {
+    for (size_t i = 0; i < all->count; i++) { // bounded by the functions
+        if (line >= all->open[i] && line <= all->close[i]) return (int)i;
+    }
+    return -1;
+}
+
+// Whether the text before `offset` is `.run = ` (a task's step names its function).
+static bool smith_changed_is_run_ref(size_t offset) {
+    static const char tail[] = ".run = ";
+    return offset >= sizeof tail - 1 &&
+           memcmp(smith_rec_source + offset - (sizeof tail - 1), tail, sizeof tail - 1) == 0;
+}
+
+// For the step initializer around `offset` (`SmithStep x = {... .run = F ...};` then `smith_task(b, "name", &x)`):
+// writes the task's name and returns true when the step is no part of `smith test`: no `.test`, no `.outputs`, and the
+// task's name is written nowhere else in the file (nothing depends on it).
+static bool smith_changed_task_of(size_t offset, char *name, size_t size) {
+    size_t back = offset > 1500 ? offset - 1500 : 0;
+    const char *begin = nullptr;
+    for (const char *at = smith_rec_source + back;
+         (at = strstr(at, "SmithStep ")) != nullptr && at < smith_rec_source + offset; at++)
+        begin = at;
+    if (begin == nullptr) return false;
+    const char *end = strstr(smith_rec_source + offset, "};");
+    if (end == nullptr) return false;
+    char block[2048];
+    size_t length = (size_t)(end - begin);
+    if (length >= sizeof block) return false;
+    memcpy(block, begin, length);
+    block[length] = '\0';
+    if (strstr(block, ".test") != nullptr || strstr(block, ".outputs") != nullptr) return false;
+    char variable[64];
+    const char *named = begin + strlen("SmithStep ");
+    snprintf(variable, sizeof variable, "&%.*s)", (int)strcspn(named, " ="), named);
+    const char *registered = strstr(end, variable);
+    if (registered == nullptr || registered - end > 400) return false;
+    const char *quote = registered;
+    while (quote > end && *quote != '"') // the closing quote of the name
+        quote--;
+    const char *open = quote - 1;
+    while (open > end && *open != '"')
+        open--;
+    if (quote <= open + 1 || (size_t)(quote - open) >= size) return false;
+    snprintf(name, size, "%.*s", (int)(quote - open - 1), open + 1);
+    char quoted[80];
+    snprintf(quoted, sizeof quoted, "\"%s\"", name);
+    size_t seen = 0;
+    for (const char *at = smith_rec_source; (at = strstr(at, quoted)) != nullptr && seen < 3; at++)
+        seen++;
+    return seen == 1;
+}
+
+// How each function is mentioned: as a task's step (`.run = F`, of a step that is no part of `smith test`), in the body
+// of another function (its callers), or any other way (a global, a table, a test step: bad).
+static void smith_changed_mentions(SmithChangedFunctions *all) {
+    for (size_t f = 0; f < all->count; f++) { // bounded by the functions
+        size_t length = strlen(all->name[f]);
+        for (const char *at = smith_rec_source; (at = strstr(at, all->name[f])) != nullptr; at += length) {
+            bool word = !smith_changed_word(at[length]) && (at == smith_rec_source || !smith_changed_word(at[-1]));
+            if (!word) continue;
+            size_t offset = (size_t)(at - smith_rec_source);
+            size_t line = smith_changed_line_of(offset);
+            if (line == all->open[f]) continue; // its own definition
+            int caller = smith_changed_function_at(all, line);
+            char task[64];
+            if (smith_changed_is_run_ref(offset) && smith_changed_task_of(offset, task, sizeof task)) {
+                all->run_refs[f]++;
+                snprintf(all->task[f], sizeof all->task[f], "%s", task);
+            } else if (caller >= 0 && caller != (int)f && all->caller_count[f] < 8) {
+                all->callers[f][all->caller_count[f]++] = (size_t)caller;
+            } else if (caller != (int)f) {
+                all->bad[f] = true;
+            }
+        }
+        if (all->run_refs[f] == 0 && all->caller_count[f] == 0) all->bad[f] = true; // registration or an entry
+    }
+}
+
+// The functions that run only when a task of no `smith test` runs: not bad, and every caller is one too.
+static void smith_changed_run_only(SmithChangedFunctions *all) {
+    for (size_t pass = 0; pass <= all->count; pass++) { // a chain of callers is as long as the functions
+        bool changed = false;
+        for (size_t f = 0; f < all->count; f++) {
+            for (size_t c = 0; !all->bad[f] && c < all->caller_count[f]; c++) {
+                if (all->bad[all->callers[f][c]]) {
+                    all->bad[f] = true;
+                    changed = true;
+                }
+            }
+        }
+        if (!changed) break;
+    }
+}
+
+static void smith_changed_local_name(const char *name) {
+    if (name[0] == '\0' || smith_changed_local_count >= smith_changed_local_max) return;
+    for (size_t i = 0; i < smith_changed_local_count; i++) { // bounded by the names
+        if (strcmp(smith_changed_local_names[i], name) == 0) return;
+    }
+    snprintf(smith_changed_local_names[smith_changed_local_count++], sizeof smith_changed_local_names[0], "%s", name);
+}
+
+// Whether the diff of build.c (`base`..`head`, or the working tree) is confined to functions no test can run.
+static bool smith_changed_build_c_local(const char *base, const char *head) {
+    if (getcwd(smith_cov_root, sizeof smith_cov_root) == nullptr) return false;
+    smith_changed_hunk_count = 0;
+    smith_changed_hunk_overflow = false;
+    const char *const diff[] = {"diff", "-U0", "--no-color", "--no-ext-diff", base, "--", "build.c", nullptr};
+    const char *const range[] = {"diff", "-U0", "--no-color", "--no-ext-diff", base, head, "--", "build.c", nullptr};
+    if (!smith_changed_git(head != nullptr ? range : diff, smith_changed_on_hunk) || smith_changed_hunk_overflow ||
+        smith_changed_hunk_count == 0)
+        return false;
+    smith_rec_source_path[0] = '\0';
+    if (!smith_rec_load_source("build.c")) return false;
+    SmithChangedFunctions *all = &smith_changed_functions;
+    smith_changed_find_functions(all);
+    smith_changed_mentions(all);
+    smith_changed_run_only(all);
+    smith_changed_local_count = 0;
+    for (size_t h = 0; h < smith_changed_hunk_count; h++) {
+        size_t first = smith_changed_hunk_first[h];
+        size_t last = smith_changed_hunk_lines[h] == 0 ? first + 1 : first + smith_changed_hunk_lines[h] - 1;
+        for (size_t line = first; line <= last; line++) { // bounded by the hunk
+            int f = smith_changed_function_at(all, line);
+            if (f < 0 || all->bad[f]) return false;
+            smith_changed_local_name(all->name[f]);
+            smith_changed_local_name(all->task[f]);
+        }
+    }
+    return true;
+}
+
+// The functions of `includer` that use the array an `#embed "path"` fills, as touched ones for the records. True when
+// the file is embedded somewhere and every use is in a function (else the caller keeps it unplaced).
+static bool smith_changed_embed_touch(const char *includer, const char *path) {
+    smith_rec_source_path[0] = '\0';
+    if (!smith_rec_load_source(includer)) return false;
+    char want[PATH_MAX + 16];
+    snprintf(want, sizeof want, "#embed \"%s\"", path);
+    const char *embed = strstr(smith_rec_source, want);
+    if (embed == nullptr) return false;
+    const char *open = embed;
+    while (open > smith_rec_source && open[-1] != '[') // the `[]` of `unsigned char name[] = {`
+        open--;
+    if (open == smith_rec_source) return false;
+    const char *start = open - 1;
+    while (start > smith_rec_source && smith_changed_word(start[-1]))
+        start--;
+    char symbol[64];
+    snprintf(symbol, sizeof symbol, "%.*s", (int)(open - 1 - start), start);
+    SmithChangedFunctions *all = &smith_changed_functions;
+    smith_changed_find_functions(all);
+    size_t found = 0;
+    size_t length = strlen(symbol);
+    for (const char *at = smith_rec_source; length > 0 && (at = strstr(at, symbol)) != nullptr; at += length) {
+        if (smith_changed_word(at[length]) || (at > smith_rec_source && smith_changed_word(at[-1]))) continue;
+        size_t line = smith_changed_line_of((size_t)(at - smith_rec_source));
+        int f = smith_changed_function_at(all, line);
+        if (at >= start && at < embed) continue; // the declaration itself
+        if (f < 0) return false;                // used outside a function: not understood
+        if (smith_rec_touched_count >= smith_rec_touched_max) return false;
+        smith_rec_touched_file[smith_rec_touched_count] = smith_cov_copy(includer);
+        smith_rec_touched_name[smith_rec_touched_count++] = smith_cov_copy(all->name[f]);
+        found++;
+    }
+    return found > 0;
+}
+
+constexpr size_t smith_changed_embedded_max = 16;
+static const char *smith_changed_embedded[smith_changed_embedded_max]; // changed files placed through their includer
+static size_t smith_changed_embedded_count;
+
+// For each changed source of smith some file `#embed`s: the includer's functions that use it are touched, and the file
+// is placed (the tests whose records ran one of those functions are the ones it reaches).
+static void smith_changed_embeds(void) {
+    for (size_t p = 0; p < smith_changed_path_count; p++) {
+        const char *path = smith_changed_paths[p];
+        if (!smith_changed_is_source(path) || smith_changed_is_test(path) || !smith_changed_in_smith(path)) continue;
+        for (size_t i = 0; i < smith_changed_file_count && smith_changed_embedded_count < smith_changed_embedded_max;
+             i++) {
+            if (!smith_changed_ends(smith_changed_files[i], ".c") || strcmp(smith_changed_files[i], path) == 0)
+                continue;
+            if (smith_changed_embed_touch(smith_changed_files[i], path))
+                smith_changed_embedded[smith_changed_embedded_count++] = path;
+        }
+    }
+}
+
 static bool smith_changed_records_folder(char *out, size_t size) {
     const char *given = getenv("SMITH_RECORDS_DIR");
     if (given != nullptr && given[0] != '\0')
@@ -346,6 +636,10 @@ static bool smith_changed_read_by_a_test(const char *path);
 // A file no test can be affected by unless its source names it: CI's own configuration (the workflow is exercised by
 // CI running) and the profiles of a run under coverage (generated, never committed). Placed, and selecting nothing.
 static bool smith_changed_inert(const char *path) {
+    if (smith_changed_build_local && strcmp(path, "build.c") == 0) return true; // judged by function
+    for (size_t i = 0; i < smith_changed_embedded_count; i++) { // placed through the file that embeds it
+        if (strcmp(smith_changed_embedded[i], path) == 0) return true;
+    }
     return smith_changed_starts(path, ".github/") || smith_changed_ends(path, ".profraw") ||
            smith_changed_ends(path, ".profdata");
 }
@@ -407,6 +701,7 @@ static void smith_changed_records(void) {
     char folder[PATH_MAX];
     smith_changed_find_recording();
     if (getcwd(smith_cov_root, sizeof smith_cov_root) == nullptr) return;
+    smith_changed_embeds();
     if (!smith_changed_records_folder(folder, sizeof folder)) {
         smith_changed_fetch();
         if (!smith_changed_records_folder(folder, sizeof folder)) {
@@ -540,6 +835,11 @@ static void smith_changed_judge(size_t test) {
             smith_changed_choose(test, "it reads Markdown, and %s changed", smith_changed_paths[p]);
             return;
         }
+    }
+    for (size_t n = 0; smith_changed_build_local && n < smith_changed_local_count; n++) { // a task it names
+        if (strstr(smith_changed_text, smith_changed_local_names[n]) == nullptr) continue;
+        smith_changed_choose(test, "it names %s, which build.c changed", smith_changed_local_names[n]);
+        return;
     }
     for (size_t p = 0; p < smith_changed_path_count; p++) { // a test that names a data file reads it
         if (!smith_changed_is_data(smith_changed_paths[p]) ||
@@ -732,6 +1032,22 @@ static SmithChangedResult smith_changed_select(const char *base_name, const char
     if (full > 0) {
         fprintf(stderr, "smith test --changed: %s selects the whole suite\n", smith_changed_paths[full - 1]);
         return SmithChanged_Full;
+    }
+    for (size_t p = 0; p < smith_changed_path_count; p++) { // build.c: by the functions its diff touches
+        if (strcmp(smith_changed_paths[p], "build.c") != 0) continue;
+        if (!smith_changed_build_c_local(base, head)) {
+            fputs("smith test --changed: build.c changed outside the functions of tasks no test runs, so every test "
+                  "runs\n",
+                  stderr);
+            return SmithChanged_Full;
+        }
+        smith_changed_build_local = true;
+        smith_rec_ignored_input = "build.c";
+        fprintf(stderr,
+                "smith test --changed: build.c changed only in %zu name%s no test runs (%s%s): the tests that name "
+                "one run\n",
+                smith_changed_local_count, smith_changed_local_count == 1 ? "" : "s", smith_changed_local_names[0],
+                smith_changed_local_count > 1 ? ", ..." : "");
     }
     smith_changed_build_graph();
     smith_changed_records();
