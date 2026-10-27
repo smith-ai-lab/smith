@@ -214,3 +214,22 @@ SmithEntropyHandler *smith_handlers_set_entropy(SmithEntropyHandler *entropy);
 
 // The entropy of the calling thread, null when none is set.
 SmithEntropyHandler *smith_handlers_entropy(void);
+
+// Every table of the calling thread, so that a task has its own: smith::task saves the tables of the task it leaves and
+// loads those of the one it enters. A new task starts with a copy of its spawner's.
+typedef struct {
+    SmithAllocator *allocator;
+    SmithFileHandler *files;
+    SmithConsoleHandler *console;
+    SmithEnvHandler *env;
+    SmithClockHandler *clock;
+    SmithEntropyHandler *entropy;
+    SmithNetHandler *net;
+    SmithProcessHandler *process;
+} SmithHandlerTables;
+
+// Writes the tables of the calling thread to `tables`.
+void smith_handlers_tables_save(SmithHandlerTables *tables);
+
+// Makes `tables` the tables of the calling thread.
+void smith_handlers_tables_load(const SmithHandlerTables *tables);

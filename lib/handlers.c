@@ -261,6 +261,31 @@ SmithProcessHandler *smith_handlers_process(void) {
     return smith_handlers_process_current();
 }
 
+// All the tables of the thread at once, for a task switch: loading goes through the setters so the counters stay right.
+void smith_handlers_tables_save(SmithHandlerTables *tables) {
+    *tables = (SmithHandlerTables){
+        .allocator = smith_handlers_table,
+        .files = smith_handlers_files_table,
+        .console = smith_handlers_console_table,
+        .env = smith_handlers_env_table,
+        .clock = smith_handlers_clock_table,
+        .entropy = smith_handlers_entropy_table,
+        .net = smith_handlers_net_table,
+        .process = smith_handlers_process_table,
+    };
+}
+
+void smith_handlers_tables_load(const SmithHandlerTables *tables) {
+    smith_handlers_set_allocator(tables->allocator);
+    smith_handlers_set_files(tables->files);
+    smith_handlers_set_console(tables->console);
+    smith_handlers_set_env(tables->env);
+    smith_handlers_set_clock(tables->clock);
+    smith_handlers_set_entropy(tables->entropy);
+    smith_handlers_set_net(tables->net);
+    smith_handlers_set_process(tables->process);
+}
+
 static bool smith_handlers_has(int flags, int bit) {
     return ((unsigned)flags & (unsigned)bit) != 0;
 }
