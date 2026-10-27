@@ -283,3 +283,41 @@ export void test_prove_write_note_a_callee_that_stores_to_a_global_says_so(io::I
     has("write note: a callee that stores to a global is said to write memory it was not given", &run,
         "bump may write memory it was not given (LLVM found a store to the global counter at line 8 in the body)");
 }
+
+// 11g. A program that prints through console::print and a module with contracts (issue #508): the snapshot of a
+// modular function drops the branches to a trap, and a phi in the trap block (the file name a failure reports) must
+// lose its entry for the dropped edge, or the linked module does not verify.
+constexpr char printing_stats[_] = "module stats;\n"
+                                   "\n"
+                                   "import smith::contract;\n"
+                                   "\n"
+                                   "export i32 largest(i32 xs[:]) {\n"
+                                   "    contract::requires(countof(xs) > 0);\n"
+                                   "    i32 best = xs[0];\n"
+                                   "    for (usize i = 1; i < countof(xs); i++) {\n"
+                                   "        contract::invariant(1 <= i && i <= countof(xs));\n"
+                                   "        best = xs[i] > best ? xs[i] : best;\n"
+                                   "    }\n"
+                                   "    return best;\n"
+                                   "}\n";
+
+constexpr char printing_main[_] = "module main;\n"
+                                  "\n"
+                                  "import smith::console;\n"
+                                  "import stats;\n"
+                                  "\n"
+                                  "i32 main() {\n"
+                                  "    i32 raw[_] = {-3, 1, 9, 4};\n"
+                                  "    i32 readings[:] = raw;\n"
+                                  "    console::print(\"largest \", stats::largest(readings[1:]), \"\\n\");\n"
+                                  "    return 0;\n"
+                                  "}\n";
+
+export void test_prove_a_program_that_prints_proves_a_module_with_contracts(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::write(&p, "stats.smith", printing_stats);
+    scratch::write(&p, "main.smith", printing_main);
+    scratch::Run run = scratch::sh(&p, "smith prove 2>&1");
+    scratch::expect_status("a program that prints, with a module with contracts, proves", 0, &run);
+    scratch::expect_lacks("the linked module verifies", run.out, "does not verify");
+}
