@@ -525,6 +525,7 @@ static const char *const *build_links(SmithBuild *b, const SmithStep *program, c
 // What smith.c embeds or includes, which its depfile may not list: a change to any recompiles it.
 static const char *const build_smith_inputs[] = {
     "lib/smith/build.smith",
+    "runtime/base.h",
     "runtime/build_runtime.c",
     "runtime/package.c",
     "runtime/gzip.c",

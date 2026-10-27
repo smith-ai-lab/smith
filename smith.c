@@ -40,6 +40,7 @@
 
 extern char **environ;
 
+#include "runtime/base.h"
 #include "scripts/pack.h"
 
 #include <dirent.h>
@@ -86,20 +87,10 @@ constexpr bool smith_has_lldb = false;
 #include <stdint.h>
 #endif
 
-// On in every build. A failure is a bug: report where and stop.
-#define SMITH_ASSERT(condition) \
-    do { \
-        if (!(condition)) smith_assert_fail(#condition, __FILE__, __LINE__); \
-    } while (0)
-
 // Sizes. libc takes int, size_t and char *, so these are plain size_t and int, not the u32 and u64 of game's base.h.
 constexpr size_t smith_metal_args_max = 4096; // arguments the metal route can forward; the clang route has no limit
 constexpr size_t smith_metal_prefix_max = 4;  // xcrun -sdk macosx metal
 constexpr size_t smith_metal_slack = 8;       // room in the argument vector beyond the limit
-
-// Exit statuses are values for exit() and main's return, not alternatives of one type, so they are not an enum.
-constexpr int smith_exit_usage = 2;
-constexpr int smith_exit_missing = 127;
 
 typedef enum {
     SmithRoute_Clang,
@@ -113,27 +104,6 @@ typedef enum {
     //     status and signals are the compiler's. Running two would need a parent process to wait and combine them.
     SmithRoute_Mixed,
 } SmithRoute;
-
-[[noreturn]] static void smith_assert_fail(const char *condition, const char *file, int line) {
-    fprintf(stderr, "smith: assertion failed: %s (%s:%d)\n", condition, file, line);
-    fflush(stderr);
-    abort();
-}
-
-[[noreturn]] static void smith_die(int status, const char *message, const char *detail) {
-    if (detail != nullptr) {
-        fprintf(stderr, "smith: %s: %s\n", message, detail);
-    } else {
-        fprintf(stderr, "smith: %s\n", message);
-    }
-    exit(status);
-}
-
-// Copies `size` bytes and no terminator: a piece of text put inside a longer one. memcpy says the same, but a char
-// copy of a string's length reads to clang-tidy (bugprone-not-null-terminated-result) as a string left unterminated.
-static void smith_copy_bytes(void *to, const void *from, size_t size) {
-    memcpy(to, from, size);
-}
 
 static bool smith_ends_with(const char *text, const char *suffix) {
     SMITH_ASSERT(text != nullptr && suffix != nullptr);
@@ -1666,13 +1636,11 @@ static void smith_write_lang_headers(const char *self) {
     char identity[64];
     bool named = smith_binary_identity(self, identity, sizeof identity);
     bool current = named && smith_file_has_bytes(smith_headers_stamp, (const unsigned char *)identity, strlen(identity));
-    size_t started = 0;
     bool good = true;
     for (size_t i = 0; i < count; i++) {
         jobs[i].pid = 0;
         if (current && access(jobs[i].header, R_OK) == 0) continue;
         good = smith_header_job_start(&jobs[i], self) && good;
-        started += jobs[i].pid != 0;
     }
     for (size_t i = 0; i < count; i++) {
         if (jobs[i].pid != 0) good = smith_header_job_finish(&jobs[i]) && good;

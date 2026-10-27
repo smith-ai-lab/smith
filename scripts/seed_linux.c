@@ -9,11 +9,13 @@
 // and 15 GB the first time (LLVM). The stages, each in .smith/seed/:
 //   1. LLVM 23.1.3, pinned by SHA-256, built by scripts/llvm_linux.c into the package cache (as `smith build
 //      llvm` does), unless that install is there already;
-//   2. stage A: smith.c, its shims and that LLVM, linked with weak stand-ins for the six libraries, which are .smith
+//   2. the libraries' headers, which are build outputs and not in git: scripts/header_tool.c, the writer of
+//      `smith cc --smith-header` as a program of its own, built with this compiler and run on lib/smith/*.smith;
+//   3. stage A: smith.c, its shims and that LLVM, linked with weak stand-ins for the six libraries, which are .smith
 //      and need a smith to compile. Stage A has clang and the token hook, so it compiles .smith; any call into a
 //      stand-in stops it with a message;
-//   3. the six libraries, compiled by stage A;
-//   4. stage B: the same link with the libraries, a whole smith, which then runs `smith build` with the arguments
+//   4. the six libraries, compiled by stage A;
+//   5. stage B: the same link with the libraries, a whole smith, which then runs `smith build` with the arguments
 //      given, as stage0's release would.
 #include <errno.h>
 #include <glob.h>
@@ -37,6 +39,8 @@ static const char llvm_url[] =
     "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.3/llvm-project-23.1.3.src.tar.xz";
 static const char llvm_sha256[] = "c44186a7762ed28954be72e5ff6df9808e0779d4f1bf014ecc4e7e211d31ee34";
 static const char *const libraries[] = {"arena", "contract", "inflate", "io", "random", "text"}; // build.c's list
+// The modules whose headers smith.c includes: the libraries it links, and smith::build's, which build_runtime.c reads.
+static const char *const header_modules[] = {"arena", "contract", "inflate", "io", "random", "text", "build"};
 static const char *const shims[] = {"clang",        "lld",         "format", "tidy",          "clangd",
                                     "symbolize",    "hook",        "lsp",    "lldb",          "lldb_dap",
                                     "lldb_explain", "lldb_slices", "affine", "effects_infer", "lldb_server"};
@@ -130,6 +134,18 @@ static bool read_text(const char *file, char *into, size_t capacity) {
     return true;
 }
 
+// Stage 2: the headers of the .smith modules smith.c includes, written by scripts/header_tool.c (a plain C program, no
+// smith needed) into .smith/seed/include/smith/, where stage A's compiles and stand-ins read them.
+static void write_headers(const char *cc) {
+    run((const char *[]){"mkdir", "-p", ".smith/seed/include/smith", nullptr});
+    run((const char *[]){cc, "-std=gnu2x", "-O1", "-x", "c", "scripts/header_tool.c", "-o", ".smith/seed/header_tool",
+                         nullptr});
+    for (size_t i = 0; i < sizeof header_modules / sizeof header_modules[0]; i++) {
+        run((const char *[]){".smith/seed/header_tool", path("lib/smith/%s.smith", header_modules[i], ""), "-o",
+                             path(".smith/seed/include/smith/%s.h", header_modules[i], ""), nullptr});
+    }
+}
+
 // Stage 1: the LLVM install, built by scripts/llvm_linux.c from the pinned source unless it is there.
 static void build_llvm(const char *cc) {
     const char *cache = getenv("XDG_CACHE_HOME");
@@ -188,8 +204,9 @@ static void smith_flags(Args *flags) {
     static char id_flag[text_max + 32];
     snprintf(id_flag, sizeof id_flag, "-DSMITH_CLANG_ID=\"%s\"", identity);
     add_all(flags, cflags, sizeof cflags / sizeof cflags[0]);
-    static const char *const more[] = {"-I",          "include",      "-DSMITH_COMMIT_LINKED", "-DSMITH_IN_PROCESS",
-                                       "-DSMITH_MCP", "-DSMITH_LLDB", "-DSMITH_HOOK"};
+    static const char *const more[] = {"-I",           "include",     "-I",         ".smith/seed/include",
+                                       "-DSMITH_COMMIT_LINKED", "-DSMITH_IN_PROCESS", "-DSMITH_MCP", "-DSMITH_LLDB",
+                                       "-DSMITH_HOOK"};
     add_all(flags, more, sizeof more / sizeof more[0]);
     add(flags, id_flag);
 }
@@ -246,7 +263,7 @@ static void compile_smith(Args *objects) {
 // `smith-bodies` line, by the C name its `smith-names` line gives it), a weak function that stops with a message.
 static void write_stand_ins(FILE *out, const char *library) {
     static char header[text_max];
-    if (!read_text(path("include/smith/%s.h", library, ""), header, sizeof header))
+    if (!read_text(path(".smith/seed/include/smith/%s.h", library, ""), header, sizeof header))
         die("cannot read the header of", library);
     const char *names = strstr(header, "// smith-names: ");
     const char *bodies = strstr(header, "// smith-bodies: ");
@@ -334,6 +351,7 @@ int main(int argc, char **argv) {
     FILE *ignore = fopen(".smith/.gitignore", "w"); // as smith writes it: nothing in .smith/ is committed
     if (ignore == nullptr || fputs("*\n", ignore) < 0 || fclose(ignore) != 0) die("cannot write", ".smith/.gitignore");
     build_llvm(cc);
+    write_headers(cc);
     printf("seed: stage A with %s\n", identity);
     fflush(stdout);
     Args objects = {};
