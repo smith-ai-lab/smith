@@ -164,3 +164,33 @@ export void test_build_lang_the_helpers_are_under_the_compiler(io::Io *io) {
     scratch::Run lowered = scratch::sh(&p, "smith cc --smith-lower src/lib/text.smith");
     scratch::expect_contains("modules: smith cc --smith-lower prints the lowering", lowered.out, "lib_text_make");
 }
+
+// A stage-1 build (issue #619, knowledge/smith-bootstrap.md): a bootstrap object whose compile fails leaves an empty
+// object and a message, and a lenient program links; without the options a failed compile fails the build.
+static scratch::Project bootstrap_project(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "bootstrap");
+    (void)scratch::sh(
+        &p, "mkdir bin && { cp -c \"$SMITH_SELF\" bin/smith-cc 2>/dev/null || cp \"$SMITH_SELF\" bin/smith-cc; }");
+    return p;
+}
+
+export void test_build_lang_bootstrap_a_source_the_compiler_lacks_fails_the_build_by_default(io::Io *io) {
+    scratch::Project p = bootstrap_project(io);
+    scratch::Run built = scratch::sh(&p, "smith build 2>&1");
+    scratch::expect_failure("bootstrap: without the option a compile that fails fails the build", &built);
+    scratch::expect_lacks("bootstrap: and says nothing of stage 1", built.out, "stage 1 leaves");
+}
+
+export void test_build_lang_bootstrap_stage_1_leaves_the_source_out_and_links(io::Io *io) {
+    scratch::Project p = bootstrap_project(io);
+    scratch::Run built = scratch::sh(&p, "smith build -Dstage1 2>&1");
+    scratch::expect_status("bootstrap: with -Dstage1 the build succeeds", 0, &built);
+    scratch::expect_contains("bootstrap: and says which source it left out", built.out,
+                             "stage 1 leaves src/late/value.smith out");
+    scratch::expect_text("bootstrap: the program runs where it does not reach the missing symbol", "main",
+                         scratch::sh(&p, "./build/app 2>&1").out);
+    scratch::Run called = scratch::sh(&p, "./build/app 1 >/dev/null 2>&1");
+    scratch::expect_status("bootstrap: calling the missing symbol is what fails (SIGSEGV)", 139, &called);
+    scratch::Run second = scratch::build(&p, "-Dstage1");
+    scratch::expect_contains("bootstrap: the second build does nothing", second.out, "no work to do");
+}
