@@ -321,3 +321,7 @@ void smith_failure_format(SmithFailureKind kind, const char *format, ...) {
 void smith_failure(SmithFailureKind kind) {
     smith_failure_detail(kind, nullptr);
 }
+
+void smith_failure_proved(SmithFailureKind kind) {
+    smith_failure_detail(kind, nullptr);
+}

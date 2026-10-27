@@ -1942,9 +1942,9 @@ static void smith_lang_header_step(SmithBuild *b, const SmithObject *object, con
 
 // What `smith prove` proved of a `.smith` source reaches a release compile through the graph (issue #221): the proof
 // file `.smith/proved/<source>.pts` is an input of the compile, and a `-DSMITH_PROVED=<hash of its bytes>` makes the
-// command a function of it too, so a proof written, changed or removed rebuilds the object and nothing else does. Only
-// an optimized compile (-O1 or more: release and fast) leaves checks out, so only it depends on the file; debug never
-// does. The path is the one shim/proved.hpp names. The files the proof read besides the source (its `dep` lines: the
+// command a function of it too, so a proof written, changed or removed rebuilds the object and nothing else does. Every
+// build depends on the file: an optimized compile leaves the checks out, and the others still read what is proved, so
+// that the verdict of a `fails` ceiling is the same in every build. The path is the one shim/proved.hpp names. The files the proof read besides the source (its `dep` lines: the
 // callees whose contracts it assumed) are inputs too, so a change to a callee compiles the caller again, and the
 // lowering, finding the key stale, puts its checks back. Sets `*inputs` to the proof file and those (empty when there
 // is no proof file) and returns the flag.
@@ -1953,10 +1953,7 @@ static const char *const *smith_proved_flags(SmithBuild *b, const SmithObject *o
     const char *source = object->source;
     while (strncmp(source, "./", 2) == 0)
         source += 2;
-    bool release = false;
-    for (size_t i = 0; object->flags != nullptr && object->flags[i] != nullptr; i++)
-        release = release || (strncmp(object->flags[i], "-O", 2) == 0 && strcmp(object->flags[i], "-O0") != 0);
-    if (!release || !smith_ends_with(source, ".smith") || source[0] == '/' || strstr(source, "..") != nullptr)
+    if (!smith_ends_with(source, ".smith") || source[0] == '/' || strstr(source, "..") != nullptr)
         return smith_list(b, nullptr);
     const char *path = smith_text(".smith/proved/%s.pts", source);
     char *text = nullptr;

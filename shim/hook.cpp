@@ -265,7 +265,7 @@ class Presenter final : public DiagnosticConsumer {
         if (call.starts_with("smith_contract_invariant(")) return "invariant failed";
         if (call.starts_with("smith_contract_assert(")) return "assert failed";
         if (call.starts_with("smith_test_check_condition(")) return "check failed";
-        if (call.starts_with("smith_failure(")) {
+        if (call.starts_with("smith_failure(") || call.starts_with("smith_failure_proved(")) {
             static const std::pair<StringRef, StringRef> kinds[] = {
                 {"SmithFailure_Requires", "requires failed"},       {"SmithFailure_Ensures", "ensures failed"},
                 {"SmithFailure_Invariant", "invariant failed"},     {"SmithFailure_Assert", "assert failed"},
@@ -3543,18 +3543,21 @@ class SmithHook final : public TokenHook, public NameSource {
     // The uses of a module that could not be imported are kept out of the diagnostics.
     // ---- The checks `smith prove` proved (issue #221, shim/proved.hpp)
     //
-    // An optimized build (release and fast, not the -O0 debug one) leaves out the checks of an index or a cut on a line
-    // that `.smith/proved/<source>.pts` says is proved, for exactly this source text and this smith. Debug, the
-    // prover's own compile and the editor keep every check, and so does a build with no file, or with one of another
-    // key.
+    // A line that `.smith/proved/<source>.pts` says is proved, for exactly this source text and this smith, is known in
+    // every build and in the editor (issue #325), so that the verdict of an effects ceiling does not depend on the
+    // build. An optimized build (release and fast) leaves the checks on it out; debug, the prover's own compile and
+    // the editor write them under a name that is no failure point. A build with no file, or with one of another key,
+    // keeps every check as a failure point.
     bool provedLoaded = false;
     std::set<unsigned> provedLines;
     unsigned provedRemoved = 0, provedKept = 0;
 
     void loadProved() {
         provedLoaded = true;
-        if (!PP.isMacroDefined("__OPTIMIZE__") || getenv("SMITH_PROVING") != nullptr || inEditor || mainName.empty())
-            return;
+        // read when the first proved check is asked, once the command line's macros are defined
+        host.omit_proved = PP.isMacroDefined("__OPTIMIZE__") && getenv("SMITH_PROVING") == nullptr && !inEditor;
+        // the prover's own compile keeps every check as a point, and reads no proof
+        if (getenv("SMITH_PROVING") != nullptr || mainName.empty()) return;
         std::string path = proved::path_of(mainName);
         if (!path.empty()) provedLines = proved::read(path, SM.getBufferData(MainFile).str());
     }
@@ -3567,11 +3570,12 @@ class SmithHook final : public TokenHook, public NameSource {
             SourceLocation at = SourceLocation::getFromRawEncoding(location);
             proved = self->provedLines.count(self->SM.getPresumedLineNumber(self->SM.getExpansionLoc(at))) > 0;
         }
-        (proved ? self->provedRemoved : self->provedKept)++;
+        (proved && self->host.omit_proved ? self->provedRemoved : self->provedKept)++;
         return proved;
     }
 
-    // SMITH_PROVED_REPORT=1: how many checks of this file the release build left out and how many it kept.
+    // SMITH_PROVED_REPORT=1: how many checks of this file the build left out (an optimized one, for the proved) and how many
+    // it wrote.
     void reportProved() {
         if (provedRemoved + provedKept == 0 || getenv("SMITH_PROVED_REPORT") == nullptr) return;
         fprintf(stderr, "smith: checks %s: %u removed (proved), %u kept\n", mainName.c_str(), provedRemoved,

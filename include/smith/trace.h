@@ -81,6 +81,11 @@ typedef enum : unsigned char {
 // standard error and calls abort(), so a log holds what `smith symbolize` needs.
 [[noreturn, clang::annotate("smith_compile_error")]] void smith_failure(SmithFailureKind kind);
 
+// What a debug build writes for a check that `smith prove` proved (issue #325): the same failure, a name the effects
+// check knows is no failure point, because the proof says it cannot happen, so the verdict of a `fails` ceiling is the
+// same in every build while the check stays as a safety net. The lowering writes it, never you.
+[[noreturn]] void smith_failure_proved(SmithFailureKind kind);
+
 // smith_failure with one line of what was wrong (`smith-trace detail <text>`), which the report prints under the source
 // line: the arena's out-of-capacity stop says what was asked and what was left. The text is copied before anything
 // else runs; in a test the hook fails the test with the heading, as for smith_failure.

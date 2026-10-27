@@ -485,8 +485,12 @@ static size_t smith_lang_chosen_name(SmithLang *lang, const SmithHost *host, con
     size_t total = chosen->c_name.length;
     memcpy(lang->tmp, smith_lang_str(chosen->c_name), total + 1);
     if (smith_lang_proved_check(lang, host, lang->tmp, total, location)) {
-        total = sizeof "smith_proved" - 1;
-        memcpy(lang->tmp, "smith_proved", total + 1);
+        // an optimized build leaves the check out; any other keeps it under a name that is no failure point
+        char kept[48];
+        snprintf(kept, sizeof kept, "smith_contract_proved_%s", lang->tmp + sizeof "smith_" - 1);
+        const char *name = host->omit_proved ? "smith_proved" : kept;
+        total = strlen(name);
+        memcpy(lang->tmp, name, total + 1);
     }
     return total;
 }

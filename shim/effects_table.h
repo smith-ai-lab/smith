@@ -404,6 +404,7 @@ inline constexpr Entry effect_functions[] = {
     {"__assert_fail", Fails},
     {"__builtin_trap", Fails},
     {"__builtin_abort", Fails},
+    {"smith_failure_proved", None},
     {"smith_failure", Fails},
     {"smith_failure_detail", Fails},
     {"smith_failure_format", Fails},

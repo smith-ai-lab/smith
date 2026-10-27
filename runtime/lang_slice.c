@@ -994,12 +994,15 @@ static bool smith_lang_slice_text(SmithLang *lang, const SmithToken *tokens, siz
 // host says so for the source `location` of the index or the cut (the host has the proof file; 0 asks for no proof).
 static void smith_lang_slice_check(const SmithHost *host, uint32_t location, const char *condition, char *out,
                                    size_t capacity) {
+    const char *name = "smith_failure";
     if (location != 0 && host->proved != nullptr && host->proved(host->context, location)) {
-        out[0] = '\0';
-        return;
+        if (host->omit_proved) {
+            out[0] = '\0';
+            return;
+        }
+        name = "smith_failure_proved"; // kept as a safety net, and no failure point (issue #325)
     }
-    snprintf(out, capacity, "extern void smith_failure ( unsigned char ) ; if ( ! ( %s ) ) smith_failure ( 4 ) ;",
-             condition);
+    snprintf(out, capacity, "extern void %s ( unsigned char ) ; if ( ! ( %s ) ) %s ( 4 ) ;", name, condition, name);
 }
 
 // ---- A postfix chain
