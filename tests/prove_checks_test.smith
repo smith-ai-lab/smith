@@ -266,7 +266,7 @@ export void test_prove_checks_a_proved_contract_check_is_left_out_of_an_optimize
 export void test_prove_checks_an_edited_source_keeps_its_contract_checks(io::Io *io) {
     scratch::Project p = with_contracts(io);
     scratch::sh(&p, "smith prove 2>&1");
-    scratch::write(&p, "contracts.smith", format::push(&p.io->arena, "// edited\n", contracts_source).data);
+    scratch::write(&p, "contracts.smith", format::push("// edited\n", contracts_source).data);
     scratch::expect_contains("stale: every check is back", report_of(&p, "contracts.smith"),
                              "0 removed (proved), 4 kept");
 }
