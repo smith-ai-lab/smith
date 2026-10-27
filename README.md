@@ -611,15 +611,14 @@ d/dm = 12, d/db = 4
 module main;
 
 import <Foundation/Foundation.h>;
-import smith::format;
-import smith::io;
+import smith::console;
 
-i32 main(io::Io *io) {
+i32 main() {
     objc::NSString *text = objc::NSString::stringWithUTF8String("hello from smith");
     objc::NSMutableArray *list = objc::NSMutableArray::array();
     objc::NSMutableArray::addObject(list, text);
-    format::print(&io->console, "length ", (u64)objc::NSString::length(text), ", count ",
-                  (u64)objc::NSArray::count((objc::NSArray *)list), "\n");
+    console::print("length ", (u64)objc::NSString::length(text), ", count ",
+                   (u64)objc::NSArray::count((objc::NSArray *)list), "\n");
     return 0;
 }
 ```

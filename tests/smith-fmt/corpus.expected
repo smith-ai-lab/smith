@@ -2810,6 +2810,19 @@ export int f() {
 ==> error-module-syntax/src/syntax.smith <==
 module;
 int x;
+==> error-objc-argument/src/main.smith <==
+import <Foundation/Foundation.h>;
+
+// Each call is objc_msgSend cast to the method's own type: an argument of another type is an error.
+void wrong(objc::NSString *text, objc::NSArray *list) {
+    objc::NSString::isEqualToString(text, list);
+    objc::NSString::isEqualToString(text, 3);
+    objc::NSString::isEqualToString(list, text);
+}
+
+i32 main(void) {
+    return 0;
+}
 ==> error-plain-c-macro/src/main.smith <==
 import <stdio.h>;
 
@@ -9110,6 +9123,93 @@ export usize length(const char *s) {
     while (s[n] != 0)
         n += 1;
     return n;
+}
+==> objc-c-unchanged/src/main.smith <==
+import <AppKit/AppKit.h>;
+import <stdio.h>;
+
+// Objective-C is read apart from this file: the names Objective-C gives (id, SEL, BOOL, YES, nil, Class) are the
+// program's own, and mean what they mean in C.
+typedef int BOOL;
+enum { NO, YES };
+typedef struct {
+    int id;
+    int SEL;
+} Class;
+
+static BOOL flip(BOOL value) {
+    return value == YES ? NO : YES;
+}
+
+i32 main(void) {
+    Class nil = {.id = 3, .SEL = 4};
+    BOOL yes = flip(NO);
+    c::printf("%d %d %d %d\n", nil.id, nil.SEL, yes, (int)sizeof(Class));
+    return 0;
+}
+==> objc-call/src/main.smith <==
+import <Foundation/Foundation.h>;
+import <stdio.h>;
+
+// A class method takes no receiver, an instance method takes it first.
+i32 main(void) {
+    objc::NSString *text = objc::NSString::stringWithUTF8String("hello from smith");
+    c::printf("%s\n", objc::NSString::UTF8String(text));
+    c::printf("length %lu\n", (unsigned long)objc::NSString::length(text));
+
+    objc::NSMutableArray *list = objc::NSMutableArray::array();
+    objc::NSMutableArray::addObject(list, text);
+    objc::NSMutableArray::addObject(list, objc::NSString::stringWithUTF8String("second"));
+    c::printf("count %lu\n", (unsigned long)objc::NSArray::count((objc::NSArray *)list));
+
+    // Constants and types of the header are objc:: names too.
+    objc::NSRange range = {6, 4};
+    objc::NSString *part = objc::NSString::substringWithRange(text, range);
+    c::printf("%s %d\n", objc::NSString::UTF8String(part), (int)objc::NSOrderedAscending);
+    return 0;
+}
+==> objc-naming/src/main.smith <==
+import <Foundation/Foundation.h>;
+import <stdio.h>;
+
+// A selector with several parts joins them with `_`. A class method has the `class_` prefix only where an instance
+// method has its name: `description` is both, `alloc` and `stringWithUTF8String` are not.
+i32 main(void) {
+    objc::NSString *text = objc::NSString::stringWithUTF8String("a-b-c");
+    objc::NSString *plus = objc::NSString::stringByReplacingOccurrencesOfString_withString(
+        text, objc::NSString::stringWithUTF8String("-"), objc::NSString::stringWithUTF8String("+"));
+    c::printf("%s\n", objc::NSString::UTF8String(plus));
+    c::printf("%s\n", objc::NSString::UTF8String(objc::NSObject::class_description()));
+    c::printf("%s\n", objc::NSString::UTF8String(objc::NSObject::description((objc::NSObject *)text)));
+    return 0;
+}
+==> objc-window/src/main.smith <==
+import <AppKit/AppKit.h>;
+import <Metal/Metal.h>;
+import <stdio.h>;
+
+// A titled window, the main screen's name and a Metal device, with no Objective-C file. The program does not run the
+// loop: the window is closed at once, so a test never waits on it. A machine with no screen or GPU prints the same
+// lines.
+i32 main(void) {
+    objc::NSApplication::sharedApplication();
+    objc::NSScreen *screen = objc::NSScreen::mainScreen();
+    // The names are the machine's own: the program prints that it read one, or that there was none to read.
+    bool screen_named = screen == nullptr || objc::NSString::length(objc::NSScreen::localizedName(screen)) > 0;
+    c::printf("screen: %s\n", screen_named ? "ok" : "no name");
+    objc::NSRect frame = {{100, 100}, {400, 300}};
+    objc::NSWindow *window = objc::NSWindow::alloc();
+    window = objc::NSWindow::initWithContentRect_styleMask_backing_defer(
+        window, frame, objc::NSWindowStyleMaskTitled | objc::NSWindowStyleMaskClosable, objc::NSBackingStoreBuffered,
+        false);
+    objc::NSWindow::setTitle(window, objc::NSString::stringWithUTF8String("smith"));
+    c::printf("title: %s\n", objc::NSString::UTF8String(objc::NSWindow::title(window)));
+    objc::NSWindow::close(window);
+    objc::NSWindow::release(window);
+    objc::MTLDevice *device = objc::MTLCreateSystemDefaultDevice();
+    bool device_named = device == nullptr || objc::NSString::length(objc::MTLDevice::name(device)) > 0;
+    c::printf("device: %s\n", device_named ? "ok" : "no name");
+    return 0;
 }
 ==> one-command-three-modules/src/main.smith <==
 module main;
