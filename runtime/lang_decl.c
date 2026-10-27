@@ -479,6 +479,18 @@ static bool smith_lang_proved_check(const SmithLang *lang, const SmithHost *host
     return contract && host->proved(host->context, location);
 }
 
+// The C name a module chose for an export, in `lang->tmp`; a check the prover proved is named `smith_proved` instead.
+static size_t smith_lang_chosen_name(SmithLang *lang, const SmithHost *host, const SmithLangCName *chosen,
+                                     uint32_t location) {
+    size_t total = chosen->c_name.length;
+    memcpy(lang->tmp, smith_lang_str(chosen->c_name), total + 1);
+    if (smith_lang_proved_check(lang, host, lang->tmp, total, location)) {
+        total = sizeof "smith_proved" - 1;
+        memcpy(lang->tmp, "smith_proved", total + 1);
+    }
+    return total;
+}
+
 // `name::member` where name is an import binding. The member is read unexpanded: for `c::X` it is a macro to expand
 // then, and for a module it is part of a name, so it must not be expanded at all. Anything else with that name (a
 // variable called io, say) is just a name, and so is `gnu` in [[gnu::unused]].
@@ -540,14 +552,7 @@ static bool smith_lang_namespace_read(SmithLang *lang, const SmithHost *host, co
         const SmithLangCName *chosen = lang->cnames_count > 0 ? smith_lang_cname_find(lang, lang->tmp, total) : nullptr;
         if (chosen == nullptr) smith_lang_check_listed(lang, host, binding, &taken, total);
         smith_lang_check_hidden(lang, host, binding, &taken, total);
-        if (chosen != nullptr) { // the module chose this export's C name
-            total = chosen->c_name.length;
-            memcpy(lang->tmp, smith_lang_str(chosen->c_name), total + 1);
-        }
-        if (chosen != nullptr && smith_lang_proved_check(lang, host, lang->tmp, total, taken.location)) {
-            total = sizeof "smith_proved" - 1; // `smith prove` proved this check: an optimized build leaves it out
-            memcpy(lang->tmp, "smith_proved", total + 1);
-        }
+        if (chosen != nullptr) total = smith_lang_chosen_name(lang, host, chosen, taken.location);
         *result = smith_lang_made(name, lang->tmp, total, false);
         if (smith_lang_is_io_binding(binding)) smith_lang_note_io_use(lang, &taken, total);
         result->location = taken.location;
