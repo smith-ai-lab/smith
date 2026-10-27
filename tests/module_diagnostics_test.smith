@@ -26,6 +26,17 @@ static const char *padded = "module main;\n"
                             "    return (i32)p.n;\n"
                             "}\n";
 
+static const char *mismatched_function_cast = "module main;\n"
+                                              "\n"
+                                              "i32 one(i32 x) {\n"
+                                              "    return x;\n"
+                                              "}\n"
+                                              "\n"
+                                              "i32 main() {\n"
+                                              "    i32 (*f)(void) = (i32 (*)(void))one;\n"
+                                              "    return f == nullptr;\n"
+                                              "}\n";
+
 // What the build printed, on either stream.
 static const char *both(const scratch::Run *run) {
     static char text[16384];
@@ -48,6 +59,14 @@ export void test_module_diagnostics_a_module_fails_on_the_baseline(io::Io *io) {
     scratch::Run run = scratch::build(&p, "");
     scratch::expect_failure("a cast that drops const fails in a module", &run);
     scratch::expect_contains("the message names the diagnostic", both(&run), "-Wcast-qual");
+}
+
+export void test_module_diagnostics_a_mismatched_function_cast_fails(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::write(&p, "main.smith", mismatched_function_cast);
+    scratch::Run run = scratch::build(&p, "");
+    scratch::expect_failure("a function pointer cast to another type fails in a module", &run);
+    scratch::expect_contains("the message names the diagnostic", both(&run), "-Wcast-function-type-strict");
 }
 
 export void test_module_diagnostics_a_c_file_keeps_its_flags(io::Io *io) {

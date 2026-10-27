@@ -26,7 +26,7 @@ build stays quiet.
 | `unsequenced` | `i++ + i++` | separate statements |
 | `implicit-fallthrough` | a case falling through | `[[fallthrough]];` |
 | `return-type`, `return-stack-address`, `dangling` | a path with no return, a local's address returned | fix the code |
-| `incompatible-pointer-types`, `int-conversion`, `cast-qual`, `cast-function-type` | pointer and integer mixing, casting away `const`, the wrong function type | fix the code |
+| `incompatible-pointer-types`, `int-conversion`, `cast-qual`, `cast-function-type-strict` | pointer and integer mixing, casting away `const` (explicit casts too), a function pointer cast to a type that differs at all (calling through it is undefined) | fix the code |
 | `sizeof-pointer-memaccess`, `sizeof-array-argument` | `sizeof(p)` meant `sizeof(*p)` | fix the code |
 
 Widening conversions that lose nothing and a constant that fits stay implicit.

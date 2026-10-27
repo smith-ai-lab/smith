@@ -3613,7 +3613,7 @@ static const char *const smith_module_baseline[] = {"conversion",
                                                     "incompatible-pointer-types",
                                                     "int-conversion",
                                                     "cast-qual",
-                                                    "cast-function-type",
+                                                    "cast-function-type-strict",
                                                     "sizeof-pointer-memaccess",
                                                     "sizeof-array-argument",
                                                     nullptr};
