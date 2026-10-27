@@ -83,3 +83,33 @@ export void reverse(auto xs[:]) {
         xs[j] = held;
     }
 }
+
+// The index of the first element for which pred is true, or `.none`.
+export option(usize) find_if(const auto xs[:], constexpr auto pred) {
+    for (usize i = 0; i < countof(xs); i++) {
+        if (pred(xs[i])) return {.some = i};
+    }
+    return .none;
+}
+
+// The index where needle first occurs in xs as a run of elements, or `.none`. An empty needle is at 0.
+export option(usize) find_slice(const auto xs[:], typeof(xs) needle) {
+    if (countof(needle) > countof(xs)) return .none;
+    for (usize i = 0; i + countof(needle) <= countof(xs); i++) {
+        if (equal(xs[i:i + countof(needle)], needle)) return {.some = i};
+    }
+    return .none;
+}
+
+// xs without the elements at both ends for which pred is true: a cut of xs, nothing is copied.
+export typeof(xs) trim(const auto xs[:], constexpr auto pred) {
+    usize start = 0;
+    while (start < countof(xs) && pred(xs[start])) {
+        start += 1;
+    }
+    usize end = countof(xs);
+    while (end > start && pred(xs[end - 1])) {
+        end -= 1;
+    }
+    return xs[start:end];
+}

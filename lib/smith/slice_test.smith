@@ -158,3 +158,37 @@ export void test_ascii() {
     test::check_equal(ascii::alpha('Q'), true);
     test::check_equal(ascii::alpha('1'), false);
 }
+
+export void test_find_if_slice() {
+    const char s[:] = "  key=value ";
+    Index digit_at = slice::find_if(s, ascii::digit);
+    bool no_digit = digit_at == .none;
+    test::check_equal(no_digit, true);
+    Index alpha_at = slice::find_if(s, ascii::alpha);
+    if (alpha_at == .some) test::check_equal(alpha_at.some, 2);
+    bool has_alpha = alpha_at == .some;
+    test::check_equal(has_alpha, true);
+    const char needle[:] = "=val";
+    Index at = slice::find_slice(s, needle);
+    if (at == .some) test::check_equal(at.some, 5);
+    bool found = at == .some;
+    test::check_equal(found, true);
+    const char missing[:] = "zzz";
+    Index none = slice::find_slice(s, missing);
+    bool absent = none == .none;
+    test::check_equal(absent, true);
+    const char empty[:] = s[0:0];
+    Index zero = slice::find_slice(s, empty);
+    if (zero == .some) test::check_equal(zero.some, 0);
+}
+
+export void test_trim() {
+    const char s[:] = "  key=value \n";
+    const char cut[:] = slice::trim(s, ascii::space);
+    const char want[:] = "key=value";
+    bool same = slice::equal(cut, want);
+    test::check_equal(same, true);
+    const char blank[:] = "   ";
+    const char none[:] = slice::trim(blank, ascii::space);
+    test::check_equal(countof(none), 0);
+}
