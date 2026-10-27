@@ -1,0 +1,7 @@
+module main;
+
+// `_` declares and discards; it is never read (issue #413).
+i32 main() {
+    i32 _ = 3;
+    return _;
+}

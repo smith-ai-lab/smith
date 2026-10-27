@@ -3197,6 +3197,34 @@ i32 stat(i32 fd) {
 i32 main() {
     return stat(0);
 }
+==> error-unused-discard-braces/src/main.smith <==
+module main;
+
+i32 compute(void) {
+    return 1;
+}
+
+// `_ = expr;` is a statement of its own (issue #413).
+i32 main() {
+    if (compute() > 0) _ = compute();
+    return 0;
+}
+==> error-unused-read-name/src/main.smith <==
+module main;
+
+// A name that starts with `_` is never read (issue #413).
+i32 main() {
+    i32 _count = 3;
+    return _count - 3;
+}
+==> error-unused-read-underscore/src/main.smith <==
+module main;
+
+// `_` declares and discards; it is never read (issue #413).
+i32 main() {
+    i32 _ = 3;
+    return _;
+}
 ==> error-value-query/src/main.smith <==
 module main;
 
@@ -10655,6 +10683,42 @@ i32 main() {
     Local l = {.inner = 8};
     c::printf("%d %d %d %d %d %d %d %d %d %d\n", sum(&first), n.whole, (int)c, s == .circle, e == .empty,
               holder.later->count, legacy.a, bare.b, (int)q.x, l.inner);
+    return 0;
+}
+==> unused-run/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+// `_` and `_name` mean unused in a module (issue #413): several parameters may be `_`, `_ = expr;` discards a value
+// (a [[nodiscard]] result too), and `_name` keeps a name as documentation.
+typedef struct {
+    i32 _reserved;
+    i32 value;
+} Item;
+
+[[nodiscard]] i32 compute(i32 x) {
+    return x * 2;
+}
+
+export i32 pick(i32 _, i32 _, i32 third) {
+    return third;
+}
+
+void on_key(i32 *_window, i32 key) {
+    c::printf("key %d\n", key);
+}
+
+i32 main() {
+    i32 window = 0;
+    Item item = {.value = 4};
+    _ = compute(3);
+    _ = compute(4);
+    on_key(&window, item.value + item._reserved);
+    i32 _spare = 1;
+    i32 _ = 5;
+    i32 _ = 6;
+    c::printf("%d\n", pick(1, 2, 3));
     return 0;
 }
 ==> value-query-for/src/loop.smith <==

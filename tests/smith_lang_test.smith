@@ -565,6 +565,22 @@ export void test_error_countof_pointer(io::Io *io) {
     corpus_case(io, "error-countof-pointer");
 }
 
+export void test_unused_run(io::Io *io) {
+    corpus_case(io, "unused-run");
+}
+
+export void test_error_unused_read_name(io::Io *io) {
+    corpus_case(io, "error-unused-read-name");
+}
+
+export void test_error_unused_read_underscore(io::Io *io) {
+    corpus_case(io, "error-unused-read-underscore");
+}
+
+export void test_error_unused_discard_braces(io::Io *io) {
+    corpus_case(io, "error-unused-discard-braces");
+}
+
 export void test_error_defer_name(io::Io *io) {
     corpus_case(io, "error-defer-name");
 }

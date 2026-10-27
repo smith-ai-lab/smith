@@ -906,6 +906,9 @@ static const char *smith_lang_str(SmithLangText text) {
 // `try` and `errdefer` for `result` and `option`.
 #include "lang_try.c"
 
+// `_` and `_name` mean unused; `_ = expr;` discards a value.
+#include "lang_unused.c"
+
 // Run-time arrays: `T xs[:]`, `xs[i]`, `xs[a:b]`.
 #include "lang_slice.c"
 

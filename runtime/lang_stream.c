@@ -1057,6 +1057,7 @@ static void smith_lang_process_token(SmithLang *lang, const SmithHost *host, con
         return;
     }
     if (smith_lang_try_token(lang, host, token)) return;
+    if (smith_lang_unused_token(lang, host, token)) return;
     if ((lang->due_count > 0 || lang->local_count > 0) && smith_lang_tag_bare(lang, host, token)) return;
     if (smith_lang_enum_function(lang, host, token)) return; // before the type values: it reads `type f(...)` itself
     if (smith_lang_type_on(lang, host) && !token->foreign && !lang->recording && !lang->decl.generic &&
@@ -1133,6 +1134,8 @@ SmithLang *smith_lang_new(void) {
     memset(lang, 0, sizeof *lang);
     smith_lang_tuple_used = 0;
     smith_lang_enum_reset();
+    smith_lang_unused_serial = 0;
+    smith_lang_unused_has_last = false;
     smith_lang_ty_reset();
     smith_lang_word_buckets();
     lang->started = true;

@@ -1,0 +1,11 @@
+module main;
+
+i32 compute(void) {
+    return 1;
+}
+
+// `_ = expr;` is a statement of its own (issue #413).
+i32 main() {
+    if (compute() > 0) _ = compute();
+    return 0;
+}

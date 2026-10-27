@@ -694,6 +694,7 @@ class SmithHook final : public TokenHook, public NameSource {
         link->source = this;
         installPresenter();
         smith_lang_watch_basics(&host);
+        watchUnusedNames(SM.getBufferData(MainFile));
         PP.addPPCallbacks(std::make_unique<Macros>(*this));
         for (unsigned i = 0; i < 13; i++) {
             sizedInfos[i] = PP.getIdentifierInfo(sizedTable[i].name);
@@ -2732,6 +2733,20 @@ class SmithHook final : public TokenHook, public NameSource {
             if (before && after) return true;
         }
         return false;
+    }
+
+    // `_` and `_name` mean unused in a module (runtime/lang_unused.c): the lowering is offered every such name the text
+    // spells (comments and strings count), and not the names C reserves (`__x`, `_X`).
+    void watchUnusedNames(StringRef text) {
+        for (size_t at = text.find('_'); at != StringRef::npos; at = text.find('_', at)) {
+            size_t end = at;
+            while (end < text.size() && isAsciiIdentifierContinue(text[end]))
+                end += 1;
+            bool word = at == 0 || !isAsciiIdentifierContinue(text[at - 1]);
+            bool reserved = end - at >= 2 && (text[at + 1] == '_' || (text[at + 1] >= 'A' && text[at + 1] <= 'Z'));
+            if (word && !reserved) PP.getIdentifierInfo(text.substr(at, end - at))->setHookWatched(true);
+            at = end;
+        }
     }
 
     // Whether the text has `struct {` and, before the matching `}`, no `;`: a tuple type (comments and strings count).

@@ -1,0 +1,35 @@
+module main;
+
+import <stdio.h>;
+
+// `_` and `_name` mean unused in a module (issue #413): several parameters may be `_`, `_ = expr;` discards a value
+// (a [[nodiscard]] result too), and `_name` keeps a name as documentation.
+typedef struct {
+    i32 _reserved;
+    i32 value;
+} Item;
+
+[[nodiscard]] i32 compute(i32 x) {
+    return x * 2;
+}
+
+export i32 pick(i32 _, i32 _, i32 third) {
+    return third;
+}
+
+void on_key(i32 *_window, i32 key) {
+    c::printf("key %d\n", key);
+}
+
+i32 main() {
+    i32 window = 0;
+    Item item = {.value = 4};
+    _ = compute(3);
+    _ = compute(4);
+    on_key(&window, item.value + item._reserved);
+    i32 _spare = 1;
+    i32 _ = 5;
+    i32 _ = 6;
+    c::printf("%d\n", pick(1, 2, 3));
+    return 0;
+}

@@ -1,0 +1,2 @@
+src/main.smith:9:24: `_ = expr;` is a statement of its own; put it in braces after the condition
+src/main.smith:9:24: use of undeclared identifier '_'

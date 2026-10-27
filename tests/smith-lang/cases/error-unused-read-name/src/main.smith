@@ -1,0 +1,7 @@
+module main;
+
+// A name that starts with `_` is never read (issue #413).
+i32 main() {
+    i32 _count = 3;
+    return _count - 3;
+}

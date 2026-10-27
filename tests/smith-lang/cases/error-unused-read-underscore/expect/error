@@ -1,0 +1,2 @@
+src/main.smith:6:12: `_` is marked unused: declare it (a parameter or a local) or discard a value with `_ = expr;`, but it is never read
+src/main.smith:6:12: use of undeclared identifier '_'
