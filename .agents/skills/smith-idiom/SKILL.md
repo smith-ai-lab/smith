@@ -46,7 +46,9 @@ Each rule says what enforces it today. "Review" means nothing checks it: you and
     - Enforced by: review.
 15. **No jumps, no run-time-sized stack arrays.** `setjmp` and `longjmp` skip every `defer`, so return a `result`; `i32 xs[n]` and `alloca` overflow the stack unchecked, so `arena::push_slice(&a, i32, n)`, or a fixed array when `n` has a maximum. An array parameter keeps its size (`i32 xs[4]`, checked), and one the lowering cannot check (`i32 a[n]`, `i32 a[const 4]`, a typedef'd array) is a slice `i32 a[:]` instead.
     - Enforced by: `smith lint` and the editor, through `smith-unsafe` (modules only).
-16. **Report friction.** When a skill was wrong, unclear or contradicted another, or something was hard to find, say so in one line at the end of your report, as smith's own agents do.
+16. **Unused on purpose is `_`.** A parameter or local you do not read is `_` (several may repeat) or `_name` when the name documents it; a value you drop is `_ = f();`, never `(void)f();` (`smith-lang-unused`).
+    - Enforced by: the compiler: reading a name that starts with `_` is an error in a module; the choice between `_` and a name is review.
+17. **Report friction.** When a skill was wrong, unclear or contradicted another, or something was hard to find, say so in one line at the end of your report, as smith's own agents do.
 
 ## Examples in skills are compiled
 
