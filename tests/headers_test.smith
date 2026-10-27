@@ -137,6 +137,10 @@ export void test_the_process_header_compiles_alone(io::Io *io) {
     generated(io, "process");
 }
 
+export void test_the_net_header_compiles_alone(io::Io *io) {
+    generated(io, "net");
+}
+
 export void test_the_format_header_compiles_alone(io::Io *io) {
     generated(io, "format");
 }

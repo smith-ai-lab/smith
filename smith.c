@@ -1078,6 +1078,9 @@ static constexpr unsigned char smith_math_source[] = {
 static constexpr unsigned char smith_mem_source[] = {
 #embed "lib/smith/mem.smith"
 };
+static constexpr unsigned char smith_net_source[] = {
+#embed "lib/smith/net.smith"
+};
 
 static constexpr unsigned char smith_ascii_source[] = {
 #embed "lib/smith/ascii.smith"
@@ -1159,6 +1162,7 @@ static const SmithLibrary smith_libraries[] = {
     SMITH_LIBRARY(math, true),
     SMITH_LIBRARY(mem, true),
     SMITH_LIBRARY(process, true),
+    SMITH_LIBRARY(net, true),
     SMITH_LIBRARY_FLAGS(random, true, "-ffp-contract=off\n"),
     SMITH_LIBRARY(slice, true),
     SMITH_LIBRARY(test, true),

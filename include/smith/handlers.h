@@ -159,6 +159,47 @@ SmithProcessHandler *smith_handlers_set_process(SmithProcessHandler *process);
 // The processes of the calling thread, null when the real ones are in force.
 SmithProcessHandler *smith_handlers_process(void);
 
+// The network of the calling thread: smith::net (lib/smith/net.smith) calls these members itself, with no libc function
+// behind them, so a thread with a handler never opens a real socket. A connection or a listener is an id the handler
+// chooses (greater than 0). Calls return an id, a count or 0 for success and -1 with errno set, as the libc calls do.
+// No net handler set is the real sockets, with TLS from the system's stack. Issue #240; knowledge/net.md.
+typedef struct SmithNetHandler SmithNetHandler;
+
+// Why a TLS connection was refused: `connect` sets *reason to one of these (it is 0 otherwise) and errno to EPROTO.
+enum SmithNetworkTls {
+    SmithNetworkTls_Failed = 1,    // the handshake failed, for a reason not named below
+    SmithNetworkTls_Expired = 2,   // the certificate has expired
+    SmithNetworkTls_NotYet = 3,    // the certificate is not valid yet
+    SmithNetworkTls_Host = 4,      // the certificate is not for this host
+    SmithNetworkTls_Untrusted = 5, // self-signed, or its root is not trusted
+    SmithNetworkTls_Invalid = 6    // the chain is not valid, or the certificate was rejected
+};
+
+struct SmithNetHandler {
+    // Connects to host (a name or an address) and port, with TLS when `tls`: the id of the connection, or -1 (errno
+    // EPROTO with *reason set when the certificate or the handshake was refused).
+    int (*connect)(SmithNetHandler *self, const char *host, unsigned short port, bool tls, int *reason);
+    // Listens on host (null: every address) and port (0: one the system chooses): the id of the listener, or -1.
+    int (*listen)(SmithNetHandler *self, const char *host, unsigned short port);
+    // The port a listener is bound to.
+    int (*port)(SmithNetHandler *self, int listener);
+    // Blocks until a client has connected to the listener: the id of the connection, or -1.
+    int (*accept)(SmithNetHandler *self, int listener);
+    // Reads up to size bytes, blocking until there is something: the count, 0 when the peer has finished, -1 on an
+    // error.
+    ssize_t (*read)(SmithNetHandler *self, int connection, void *buffer, size_t size);
+    // Writes up to size bytes: the count (maybe less than size), or -1 (EPIPE when the peer has closed).
+    ssize_t (*write)(SmithNetHandler *self, int connection, const void *buffer, size_t size);
+    // Closes a connection or a listener. Called once; the handler may refuse a second time.
+    int (*close)(SmithNetHandler *self, int id);
+};
+
+// Sets the network of the calling thread (null: the real one), returning the one it had.
+SmithNetHandler *smith_handlers_set_net(SmithNetHandler *net);
+
+// The network of the calling thread, null when the real one is in force.
+SmithNetHandler *smith_handlers_net(void);
+
 // The entropy of the calling thread: the random bytes getentropy fills (smith::random::seed asks it). `fill` writes
 // `size` bytes of buffer and never fails (a fake writes the bytes of a number it holds, so a test scripts the seed). No
 // entropy handler set is the system's. arc4random and getrandom are not reached.

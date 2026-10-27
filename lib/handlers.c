@@ -209,6 +209,32 @@ static int smith_handlers_clock_sleep(SmithClockHandler *clock, uint64_t nanosec
     return 0;
 }
 
+// The network, found the same way (no libc function is interposed: smith::net calls the handler).
+static atomic_uint smith_handlers_net_active;
+static thread_local SmithNetHandler *smith_handlers_net_table;
+
+__attribute__((noinline)) static SmithNetHandler *smith_handlers_net_get(void) {
+    return smith_handlers_net_table;
+}
+
+__attribute__((noinline)) static SmithNetHandler *smith_handlers_net_current(void) {
+    if (atomic_load_explicit(&smith_handlers_net_active, memory_order_relaxed) == 0) return nullptr;
+    if (!atomic_load_explicit(&smith_handlers_ready, memory_order_relaxed)) return nullptr;
+    return smith_handlers_net_get();
+}
+
+SmithNetHandler *smith_handlers_set_net(SmithNetHandler *net) {
+    SmithNetHandler *previous = smith_handlers_net_table;
+    smith_handlers_net_table = net;
+    if (previous == nullptr && net != nullptr) atomic_fetch_add(&smith_handlers_net_active, 1);
+    if (previous != nullptr && net == nullptr) atomic_fetch_sub(&smith_handlers_net_active, 1);
+    return previous;
+}
+
+SmithNetHandler *smith_handlers_net(void) {
+    return smith_handlers_net_current();
+}
+
 // The child processes, found the same way (no libc function is interposed: smith::process calls the handler).
 static atomic_uint smith_handlers_process_active;
 static thread_local SmithProcessHandler *smith_handlers_process_table;

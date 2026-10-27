@@ -116,6 +116,7 @@
     "./.agents/skills/smith-metal/",
     "./.agents/skills/smith-modules-cache/",
     "./.agents/skills/smith-neovim/",
+    "./.agents/skills/smith-net/",
     "./.agents/skills/smith-new/",
     "./.agents/skills/smith-packages/",
     "./.agents/skills/smith-prove/",
