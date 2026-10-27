@@ -593,6 +593,10 @@ export void test_unused_run(io::Io *io) {
     corpus_case(io, "unused-run");
 }
 
+export void test_if_constexpr_for_constexpr(io::Io *io) {
+    corpus_case(io, "if-constexpr-for-constexpr");
+}
+
 export void test_error_unused_read_name(io::Io *io) {
     corpus_case(io, "error-unused-read-name");
 }
