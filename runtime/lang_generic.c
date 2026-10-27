@@ -322,6 +322,7 @@ typedef struct {
     uint32_t name_at; // the parameter's name
     unsigned stars;   // `auto **p`: 2
     unsigned dims;    // `auto m[:][:]`: 2
+    bool is_const;    // `const auto xs[:]`: the elements are read-only
 } SmithLangShape;
 
 static bool smith_lang_qualifier_token(const SmithLangGenToken *token) {
@@ -336,8 +337,11 @@ static bool smith_lang_qualifier_token(const SmithLangGenToken *token) {
 static bool smith_lang_param_shape(const SmithLangParam *param, SmithLangShape *shape) {
     *shape = (SmithLangShape){};
     uint32_t at = param->start;
-    while (at < param->end && smith_lang_qualifier_token(&smith_lang_gt.tokens[at]))
+    while (at < param->end && smith_lang_qualifier_token(&smith_lang_gt.tokens[at])) {
+        shape->is_const =
+            shape->is_const || smith_lang_gt_is(&smith_lang_gt.tokens[at], SmithTokenKind_Identifier, "const");
         at += 1;
+    }
     if (at >= param->end || !smith_lang_gt_is(&smith_lang_gt.tokens[at], SmithTokenKind_Identifier, "auto")) {
         return false;
     }
@@ -3534,6 +3538,11 @@ typedef struct {
     uint32_t first[smith_lang_entries_max]; // the staged types, in smith_lang_it
     uint32_t count[smith_lang_entries_max];
     size_t entries;
+    // `const auto xs[:]` given a slice of non-const elements: the argument at this position is converted to the const
+    // slice the instance takes (the tags of both)
+    bool convert[smith_lang_call_params_max];
+    char from[smith_lang_call_params_max][96];
+    char to[smith_lang_call_params_max][96];
 } SmithLangCallTypes;
 
 // An `auto` parameter written with a concept (`arithmetic x`): the argument's type must be of it, else the error is at
@@ -3619,6 +3628,46 @@ static bool smith_lang_shape_check(SmithLang *lang, const SmithHost *host, Smith
     return false;
 }
 
+// `const auto xs[:]` takes the slice with read-only elements, as `const T *` takes a `T *` in C: a slice of non-const
+// elements is the argument, and the instance's type is the const slice (the call converts the argument).
+static void smith_lang_shape_constify(const SmithHost *host, const SmithLangGeneric *generic, size_t slot,
+                                      SmithLangCallTypes *types, uint32_t location) {
+    SmithLangParam params[smith_lang_call_params_max];
+    size_t total = smith_lang_generic_params(generic, params, smith_lang_call_params_max);
+    size_t position = generic->type_position[slot];
+    SmithLangShape shape;
+    if (slot >= generic->type_count || generic->type_kind[slot] != SmithLangSlot_Auto || total == SIZE_MAX ||
+        position >= total || !smith_lang_param_shape(&params[position], &shape) || shape.kind != SmithLangShape_Slice ||
+        !shape.is_const) {
+        return;
+    }
+    char spelling[512];
+    smith_lang_it_spelling(types->first[slot], types->count[slot], spelling, sizeof spelling);
+    SmithTypeQuery query = {};
+    static const char prefix[] = "smith_array_";
+    if (host->type_query == nullptr || !host->type_query(host->context, spelling, (uint32_t)strlen(spelling), &query) ||
+        strncmp(query.canonical, "struct ", 7) != 0 || strncmp(query.canonical + 7, prefix, sizeof prefix - 1) != 0) {
+        return;
+    }
+    char from[96];
+    snprintf(from, sizeof from, "%.*s", (int)strcspn(query.canonical + 7, " "), query.canonical + 7);
+    const char *element = from + sizeof prefix - 1;
+    if (strncmp(element, "restrict_", 9) == 0) element += 9;
+    if (strncmp(element, "const_", 6) == 0 || strstr(element, "_ptr") != nullptr) return; // read-only, or a pointer
+    char to[96];
+    snprintf(to, sizeof to, "%.*sconst_%s", (int)(element - from), from, element);
+    char text[128];
+    snprintf(text, sizeof text, "struct %s", to);
+    uint32_t first = 0;
+    uint32_t count = 0;
+    if (!smith_lang_infer_stage(text, location, &first, &count)) return;
+    types->first[slot] = first;
+    types->count[slot] = count;
+    types->convert[position] = true;
+    snprintf(types->from[position], sizeof types->from[position], "%s", from);
+    snprintf(types->to[position], sizeof types->to[position], "%s", to);
+}
+
 // The types of a call: each slot's, then the arguments of `auto... rest`, staged in smith_lang_it, and the check that a
 // later argument converts to the type of an `auto` parameter. False after the error.
 static bool smith_lang_call_types(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
@@ -3628,6 +3677,7 @@ static bool smith_lang_call_types(SmithLang *lang, const SmithHost *host, SmithL
     size_t fixed = generic->param_count - (has_pack ? 1U : 0U);
     size_t slots = generic->type_count - (has_pack ? 1U : 0U);
     types->entries = slots + (has_pack ? count - fixed : 0U);
+    memset(types->convert, 0, sizeof types->convert);
     bool good = true;
     for (size_t k = 0; good && k < types->entries; k++) { // the types: the slots, then the list's
         uint8_t kind = smith_lang_entry_kind(generic, k);
@@ -3639,6 +3689,7 @@ static bool smith_lang_call_types(SmithLang *lang, const SmithHost *host, SmithL
                                             &types->count[k]) &&
                    smith_lang_shape_check(lang, host, replay, generic, k, span, location, &types->first[k],
                                           &types->count[k]);
+            if (good) smith_lang_shape_constify(host, generic, k, types, location);
         } else if (kind == SmithLangSlot_Function) {
             good = smith_lang_infer_function(lang, host, replay, generic, k, span, location, &types->first[k],
                                              &types->count[k]);
@@ -3697,6 +3748,10 @@ static bool smith_lang_typed_compact(SmithLangReplay *replay) {
     return smith_lang_junk_add(replay, first, smith_lang_gt.count);
 }
 
+static void smith_lang_slice_replay_argument(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                             uint32_t place, const char *from_tag, const char *to_tag, uint32_t first,
+                                             uint32_t last);
+
 // A call to a generic: `args` is the `( ... )` with its parentheses, in smith_lang_gt at [first, last). The types are
 // taken out of the arguments (a `constexpr type T` is passed; an `auto` parameter's is its argument's) and asked for,
 // and the start of the call is written; what follows it (the other arguments and the end) is left in the replay for it
@@ -3754,7 +3809,12 @@ static bool smith_lang_call_finish(SmithLang *lang, const SmithHost *host, Smith
     for (size_t i = count; i > 0; i--) { // the arguments that are no type, last first
         if (smith_lang_position_is_static(generic, i - 1)) continue;
         if (more) smith_lang_replay_literal(replay, ',', location);
-        smith_lang_replay_push(replay, spans[i - 1].start, spans[i - 1].end, 0);
+        if (types.convert[i - 1]) {
+            smith_lang_slice_replay_argument(lang, host, replay, location, types.from[i - 1], types.to[i - 1],
+                                             spans[i - 1].start, spans[i - 1].end);
+        } else {
+            smith_lang_replay_push(replay, spans[i - 1].start, spans[i - 1].end, 0);
+        }
         more = true;
     }
     return true;

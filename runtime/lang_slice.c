@@ -3162,6 +3162,18 @@ static bool smith_lang_slice_replay_words(SmithLang *lang, const SmithHost *host
     return true;
 }
 
+// An argument of slice type `from_tag` written where the slice of `to_tag` is wanted (issue #193: `const auto xs[:]`
+// takes a slice of non-const elements): the replay frames of the argument's own tokens [first, last) between the words
+// that convert it. Pushed where the argument itself would be.
+static void smith_lang_slice_replay_argument(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                             uint32_t place, const char *from_tag, const char *to_tag, uint32_t first,
+                                             uint32_t last) {
+    static char texts[2][640];
+    bool wraps = smith_lang_slice_replay_words(lang, host, place, from_tag, to_tag, texts);
+    SmithLangSlicePart parts[3] = {{texts[0], 0, 0}, {nullptr, first, last}, {texts[1], 0, 0}};
+    smith_lang_slice_parts(replay, place, parts, wraps ? 3 : 1);
+}
+
 // The call at the frame's position, written again with its converted arguments (the parts), or false when none is.
 static bool smith_lang_slice_replay_write(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
                                           uint32_t place, const SmithLangSliceReplayArgs *args,

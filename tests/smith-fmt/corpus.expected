@@ -2171,6 +2171,23 @@ if constexpr (true) {
 i32 main(void) {
     return 0;
 }
+==> error-generic-auto-const/src/main.smith <==
+module main;
+
+import stats;
+
+i32 main() {
+    i32 raw[3] = {1, 2, 3};
+    i32 xs[:] = raw;
+    stats::clear(xs);
+    return 0;
+}
+==> error-generic-auto-const/src/stats.smith <==
+module stats;
+
+export void clear(const auto xs[:]) {
+    xs[0] = 0;
+}
 ==> error-generic-auto-element/src/main.smith <==
 module main;
 
@@ -3844,6 +3861,37 @@ export typeof(value) twice(auto value) {
 export typeof(a) zero_like(auto a) {
     (void)a;
     return (typeof(a)){0};
+}
+==> generic-auto-const/src/main.smith <==
+module main;
+
+import stats;
+import <stdio.h>;
+
+i32 main() {
+    i32 raw[3] = {1, 2, 3};
+    i32 xs[:] = raw;
+    const i32 read[:] = xs;
+    c::printf("%lld %lld\n", stats::total(xs), stats::total(read));
+    stats::fill(xs, 5);
+    c::printf("%lld %lld\n", stats::total(xs), stats::total(xs[1:3]));
+    return 0;
+}
+==> generic-auto-const/src/stats.smith <==
+module stats;
+
+// `const auto xs[:]` takes a slice of any elements and reads them; the instance is the const slice.
+export i64 total(const auto xs[:]) {
+    i64 sum = 0;
+    for (usize i = 0; i < countof(xs); i++)
+        sum += xs[i];
+    return sum;
+}
+
+// A slice of non-const elements is written through `auto xs[:]`.
+export void fill(auto xs[:], typeof(xs[0]) v) {
+    for (usize i = 0; i < countof(xs); i++)
+        xs[i] = v;
 }
 ==> generic-auto-constants-error/src/main.smith <==
 import pick;

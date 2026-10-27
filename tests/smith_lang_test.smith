@@ -661,6 +661,10 @@ export void test_error_filescope_if(io::Io *io) {
     corpus_case(io, "error-filescope-if");
 }
 
+export void test_error_generic_auto_const(io::Io *io) {
+    corpus_case(io, "error-generic-auto-const");
+}
+
 export void test_error_generic_auto_element(io::Io *io) {
     corpus_case(io, "error-generic-auto-element");
 }
@@ -951,6 +955,10 @@ export void test_generic_auto_constants(io::Io *io) {
 
 export void test_generic_auto_constants_error(io::Io *io) {
     corpus_case(io, "generic-auto-constants-error");
+}
+
+export void test_generic_auto_const(io::Io *io) {
+    corpus_case(io, "generic-auto-const");
 }
 
 export void test_generic_auto_element(io::Io *io) {

@@ -1,0 +1,5 @@
+module stats;
+
+export void clear(const auto xs[:]) {
+    xs[0] = 0;
+}
