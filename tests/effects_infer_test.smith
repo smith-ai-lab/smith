@@ -106,6 +106,21 @@ export void test_across_files_in_c_one_command_that_compiles_and_links_names_the
                          linked.out);
 }
 
+// A link of more objects than any fixed count the check once had (it skipped the objects past 128, so a function of the
+// last one had no source and was `c`): the object that defines `noisy` comes last, after 200 others.
+export void test_across_files_in_c_a_link_of_many_objects_reads_every_summary(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    write_cross(&p);
+    scratch::Run compiled =
+        scratch::sh(&p, "smith cc -c b.c -o b.o && smith cc -c a.c -o a.o && list= && for i in $(seq 1 200); do "
+                        "echo \"int filler_$i(void) { return $i; }\" > f$i.c && smith cc -c f$i.c -o f$i.o && "
+                        "list=\"$list f$i.o\"; done && echo \"$list\" > list.txt");
+    scratch::expect_status("many objects: the objects", 0, &compiled);
+    scratch::Run linked = scratch::sh(&p, "smith cc a.o $(cat list.txt) b.o -o program 2>&1 | grep -E 'smith-effect'");
+    scratch::expect_text("many objects: the link still names the chain through the last object", cross_expected,
+                         linked.out);
+}
+
 constexpr char loud_error[_] = "error: smith-effect: `bad` is [[smith::pure]], but it has the effects console: bad -> "
                                "fx::lib::noisy (main.smith:4) "
                                "-> printf (lib.smith:4)";

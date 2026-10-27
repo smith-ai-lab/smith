@@ -33,6 +33,7 @@
 #include <string.h>
 #include <sys/file.h>
 #include <sys/ioctl.h>
+#include <sys/mman.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
 #ifdef __APPLE__
@@ -759,8 +760,6 @@ bool smith_effects_summary_path(const char *object, char *out, size_t capacity) 
     return written > 0 && (size_t)written < capacity;
 }
 
-constexpr size_t smith_effects_files_max = 128;
-
 // Whether a path is in the folder of temporary files (the objects clang makes for `smith cc a.c b.c -o p` are there,
 // with their summaries beside them, and are removed after the link).
 static bool smith_in_temp_folder(const char *path) {
@@ -777,9 +776,19 @@ static bool smith_in_temp_folder(const char *path) {
 // driver starts (`smith cc a.c b.c -o p` makes its objects in the temporary folder); the first leaves
 // SMITH_EFFECTS_CHECKED for the second. Returns the status to exit with, or -1 for a command that is no such link.
 static int smith_check_effects(int count, char **args) {
-    static char paths[smith_effects_files_max][PATH_MAX];
-    char *files[smith_effects_files_max];
-    const char *objects[smith_effects_files_max];
+    // Sized from the command: every object with a summary is read, however many there are (a cap here once skipped the
+    // objects past it, and a function of a skipped one looked like a function with no source).
+    size_t candidates = 0;
+    for (int i = 0; i < count; i++) {
+        if (args[i][0] != '-' && smith_ends_with(args[i], ".o")) candidates += 1;
+    }
+    if (candidates == 0) return -1;
+    size_t room = candidates * (PATH_MAX + 2 * sizeof(char *));
+    void *block = mmap(nullptr, room, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    if (block == MAP_FAILED) smith_die(smith_exit_missing, "cannot allocate the effect summaries of the link", args[0]);
+    char **file_list = block;
+    const char **objects = (const char **)(file_list + candidates);
+    char (*paths)[PATH_MAX] = (char (*)[PATH_MAX])(objects + candidates);
     size_t found = 0;
     const char *program = "a.out";
     for (int i = 0; i < count; i++) {
@@ -792,20 +801,24 @@ static int smith_check_effects(int count, char **args) {
             program = args[i];
             continue;
         }
-        if (args[i][0] == '-' || !smith_ends_with(args[i], ".o") || found >= smith_effects_files_max) continue;
+        if (args[i][0] == '-' || !smith_ends_with(args[i], ".o")) continue;
         if (!smith_effects_summary_path(args[i], paths[found], PATH_MAX) || access(paths[found], R_OK) != 0) continue;
-        files[found] = paths[found];
+        file_list[found] = paths[found];
         objects[found] = args[i];
         found += 1;
     }
-    if (found == 0) return -1;
+    if (found == 0) {
+        munmap(block, room);
+        return -1;
+    }
     char stack[PATH_MAX]; // the worst-case stack of the program's functions, beside it: `<program>.stack`
     int written = snprintf(stack, sizeof stack, "%s.stack", program);
     int status =
-        smith_effects_check((int)found, files, written > 0 && (size_t)written < sizeof stack ? stack : nullptr);
+        smith_effects_check((int)found, file_list, written > 0 && (size_t)written < sizeof stack ? stack : nullptr);
     for (size_t i = 0; i < found; i++) { // the summary of a temporary object goes with it
-        if (smith_in_temp_folder(objects[i])) unlink(files[i]);
+        if (smith_in_temp_folder(objects[i])) unlink(file_list[i]);
     }
+    munmap(block, room);
     return status;
 }
 #endif
