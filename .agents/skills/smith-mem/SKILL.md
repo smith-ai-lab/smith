@@ -38,8 +38,8 @@ export void fill(arena::Arena *a) {
 
 `checked_leaks(&c)` (count, bytes and first site of the leaks), `checked_leak(&c, after)` (the next leak's site, in order of allocation), `checked_live`, `checked_live_bytes`. A block used after an arena's `reset` is `use-after-poison` already: the arena poisons what is past its cursor. Details: knowledge/checked-allocator.md.
 
-## Refusing on purpose: mem::failing
-`mem::failing(parent, key)` (`smith_mem_failing`; `parent` null is the system's) is an allocator that refuses one allocation in `f.one_in` (8 at first; 1 every one, 0 none) by a draw from `key`: the same key and the same calls refuse the same allocations, so a failure replays from its seed. `try_alloc` then answers `.none`; `mem::alloc` stops with a checked failure naming `mem::failing` and the size. A test gets one from the runner: `void test_x(random::Key key, mem::Failing *failing)` ([smith-test](../smith-test/SKILL.md)).
+## Refusing on purpose
+The allocator that refuses by chance is its own module, [smith-failing](../smith-failing/SKILL.md): `failing::make(parent, key)`, built on `random`, over this interface.
 
 ## Copies, fills and comparisons: typed, in place of memcpy and friends
 ```smith

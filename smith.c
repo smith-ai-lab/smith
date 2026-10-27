@@ -1073,6 +1073,9 @@ static constexpr unsigned char smith_autodiff_source[] = {
 static constexpr unsigned char smith_effects_source[] = {
 #embed "lib/smith/effects.smith"
 };
+static constexpr unsigned char smith_failing_source[] = {
+#embed "lib/smith/failing.smith"
+};
 static constexpr unsigned char smith_files_source[] = {
 #embed "lib/smith/files.smith"
 };
@@ -1176,6 +1179,7 @@ static const SmithLibrary smith_libraries[] = {
     SMITH_LIBRARY(contract, true),
     SMITH_LIBRARY(effects, true),
     SMITH_LIBRARY(entropy, true),
+    SMITH_LIBRARY(failing, true),
     SMITH_LIBRARY(env, true),
     SMITH_LIBRARY(files, true),
     SMITH_LIBRARY(format, true),

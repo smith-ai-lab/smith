@@ -177,6 +177,10 @@ export void test_the_mem_header_compiles_alone(io::Io *io) {
     generated(io, "mem");
 }
 
+export void test_the_failing_header_compiles_alone(io::Io *io) {
+    generated(io, "failing");
+}
+
 export void test_the_option_header_compiles_alone(io::Io *io) {
     generated(io, "option");
 }

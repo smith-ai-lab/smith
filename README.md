@@ -222,6 +222,34 @@ same true, copy[1] 0, copy[3] 4.5
 
 `mem::copy`, `mem::move`, `mem::zero`, `mem::fill`, `mem::equal`, `mem::bytes(&x)` and `mem::view(bytes, f32)` take slices, so a length that does not match is a checked failure, and they lower to the C functions. In a file with a `module` line the raw `memcpy`, `memmove`, `memset` and `memcmp` are a `smith-mem` finding that names the replacement (`smith lint --fix` applies the mechanical ones); a function that implements a wrapper says `contract::trusted()`. A `.c` file is untouched. [smith-mem](.agents/skills/smith-mem/SKILL.md).
 
+A test can make memory refuse on purpose with `smith::failing`: `failing::make(parent, key)` is an allocator that refuses one allocation in eight by a draw from a `random::Key`, so a failure replays from its seed ([smith-failing](.agents/skills/smith-failing/SKILL.md)).
+
+```smith project=refuse run
+module main;
+
+import smith::failing;
+import smith::format;
+import smith::io;
+import smith::mem;
+import smith::random;
+
+typedef option(i32 *) MaybeInt;
+
+i32 main(io::Io *io) {
+    failing::Failing f = failing::make(nullptr, random::key_make(1));
+    f.one_in = 1; // refuse every allocation
+    mem::Allocator *before = mem::set_allocator(&f.base);
+    MaybeInt maybe = mem::try_alloc(i32);
+    mem::set_allocator(before);
+    format::print(&io->console, "refused ", maybe == .none, " of ", f.calls, "\n");
+    return 0;
+}
+```
+
+```output project=refuse
+refused 1 of 1
+```
+
 ### No preprocessor
 
 ```c
