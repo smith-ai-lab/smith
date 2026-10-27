@@ -937,10 +937,11 @@ static bool smith_lang_result_text(SmithLangCx *cx, uint32_t first, uint32_t las
     return true;
 }
 
-// Asks the compiler for the instance's result type and keeps its spelling in the instance. False, reported at the call
-// that asked for the instance, when the call is not a type or cannot be computed.
-static bool smith_lang_result_ask(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
-                                  SmithLangInstance *instance) {
+// Asks the compiler for the type that the call in the generic's tokens `first` to `last` computes (`slice_of(T, 1)`)
+// for the instance: its spelling and handle. Null when it is a type, else why it is not.
+static const char *smith_lang_type_call_ask(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
+                                            SmithLangInstance *instance, uint32_t first, uint32_t last, char *spelling,
+                                            size_t capacity, uint64_t *handle) {
     static SmithLangReplay replay;
     static SmithLangCx cx;
     static SmithValue nodes[4];
@@ -948,36 +949,48 @@ static bool smith_lang_result_ask(SmithLang *lang, const SmithHost *host, const 
     replay = (SmithLangReplay){.instance = instance, .generic = generic};
     cx = (SmithLangCx){
         .lang = lang, .host = host, .instance = instance, .replay = &replay, .location = instance->call_location};
+    char tokens[1024];
+    query = (SmithValueQuery){.nodes = nodes, .capacity = 4};
+    if (host->value_query == nullptr) { // the raw lowering has no compiler to run it
+        snprintf(spelling, capacity, "int");
+        *handle = 0;
+        return nullptr;
+    }
+    if (!smith_lang_result_text(&cx, first, last, tokens, sizeof tokens)) {
+        return "its arguments cannot be written for the compiler";
+    }
+    if (!host->value_query(host->context, tokens, (uint32_t)strlen(tokens), &query)) {
+        return query.why != nullptr ? query.why : "the compiler cannot evaluate it";
+    }
+    const char *found =
+        query.root.kind == SmithValue_Int ? smith_lang_ty_spelling_of(lang, query.root.magnitude) : nullptr;
+    if (found == nullptr) {
+        return query.root.kind == SmithValue_Int && query.root.magnitude == 0
+                   ? "the pointee of a pointee is not known: a type function reads a pointer's pointee one level "
+                     "deep (`typeof(*(t)nullptr)` of `T **` is a pointer, whose own pointee it cannot read)"
+                   : "its value is not a type (declare it to return `type`)";
+    }
+    snprintf(spelling, capacity, "%s", found);
+    *handle = query.root.magnitude;
+    return nullptr;
+}
+
+// Asks the compiler for the instance's result type and keeps its spelling in the instance. False, reported at the call
+// that asked for the instance, when the call is not a type or cannot be computed.
+static bool smith_lang_result_ask(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
+                                  SmithLangInstance *instance) {
     uint32_t first = generic->first + smith_lang_generic_skip_attributes(generic);
     uint32_t last = generic->first + generic->name_index;
-    char tokens[1024];
-    const char *why = nullptr;
     char call[smith_lang_message_max];
     snprintf(call, sizeof call, "%.*s", (int)(smith_lang_cx_token(first)->length),
              smith_lang_gt_str(smith_lang_cx_token(first)));
-    query = (SmithValueQuery){.nodes = nodes, .capacity = 4};
-    if (host->value_query == nullptr) {
-        snprintf(instance->result, sizeof instance->result, "int"); // the raw lowering has no compiler to run it
+    uint64_t handle = 0;
+    const char *why = smith_lang_type_call_ask(lang, host, generic, instance, first, last, instance->result,
+                                               sizeof instance->result, &handle);
+    if (why == nullptr) {
+        instance->result_handle = handle;
         return true;
     }
-    if (!smith_lang_result_text(&cx, first, last, tokens, sizeof tokens)) {
-        why = "its arguments cannot be written for the compiler";
-    } else if (!host->value_query(host->context, tokens, (uint32_t)strlen(tokens), &query)) {
-        why = query.why != nullptr ? query.why : "the compiler cannot evaluate it";
-    } else {
-        const char *spelling =
-            query.root.kind == SmithValue_Int ? smith_lang_ty_spelling_of(lang, query.root.magnitude) : nullptr;
-        if (spelling == nullptr) {
-            why = query.root.kind == SmithValue_Int && query.root.magnitude == 0
-                      ? "the pointee of a pointee is not known: a type function reads a pointer's pointee one level "
-                        "deep (`typeof(*(t)nullptr)` of `T **` is a pointer, whose own pointee it cannot read)"
-                      : "its value is not a type (declare it to return `type`)";
-        } else {
-            snprintf(instance->result, sizeof instance->result, "%s", spelling);
-            instance->result_handle = query.root.magnitude;
-        }
-    }
-    if (why == nullptr) return true;
     smith_lang_error(lang, host, instance->call_location,
                      "the result type `%s(...)` of `%s::%s` for %s is not a type the compiler can compute: %s", call,
                      smith_lang_str(generic->module), smith_lang_str(generic->member),
@@ -988,8 +1001,8 @@ static bool smith_lang_result_ask(SmithLang *lang, const SmithHost *host, const 
 // A result that is a slice: its struct, defined here unless an earlier declaration at file scope has (the same as
 // `T xs[:]` writes it, so the call's and the instance's types are one). The tokens are written to the parser as they
 // are, so a sized name is the compiler's own.
-static void smith_lang_gen_put_slice_result(SmithLang *lang, const SmithHost *host, const SmithLangInstance *instance,
-                                            uint32_t location, uint32_t instance_id) {
+static void smith_lang_gen_put_slice_result(SmithLang *lang, const SmithHost *host, uint64_t handle, uint32_t location,
+                                            uint32_t instance_id) {
     static SmithToken tokens[256];
     SmithToken like = {};
     like.location = location;
@@ -1000,7 +1013,7 @@ static void smith_lang_gen_put_slice_result(SmithLang *lang, const SmithHost *ho
     uint32_t saved_count = lang->slice.tag_count;
     memcpy(saved, lang->slice.tags, sizeof saved);
     lang->slice.tag_count = 0;
-    size_t count = smith_lang_ty_type_tokens(lang, instance->result_handle, &like, tokens, 256, false);
+    size_t count = smith_lang_ty_type_tokens(lang, handle, &like, tokens, 256, false);
     memcpy(lang->slice.tags, saved, sizeof saved);
     lang->slice.tag_count = saved_count;
     for (size_t at = 0; at < count; at++) { // the struct's tokens
@@ -1029,7 +1042,7 @@ static void smith_lang_gen_put_result(SmithLang *lang, const SmithHost *host, co
     if (kept->result_state == 0) kept->result_state = smith_lang_result_ask(lang, host, generic, kept) ? 1 : 2;
     const char *spelling = kept->result_state == 1 ? kept->result : "int"; // after an error, the build fails anyway
     if (kept->result_state == 1 && smith_lang_ty_depth_of(kept->result_handle) > 0) {
-        smith_lang_gen_put_slice_result(lang, host, kept, location, instance_id);
+        smith_lang_gen_put_slice_result(lang, host, kept->result_handle, location, instance_id);
         return;
     }
     for (size_t at = 0; spelling[at] != 0;) { // words, and each other character by itself

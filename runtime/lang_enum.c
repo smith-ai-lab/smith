@@ -744,6 +744,7 @@ static bool smith_lang_enum_replay(SmithLang *lang, const SmithHost *host, Smith
     replay->braces += braced ? 1 : 0; // the `{` is written here, and the generic's `}` closes it
     SmithLangSlicePart parts[] = {{words, 0, 0}};
     smith_lang_slice_parts(replay, place, parts, 1);
+    replay->frames[replay->count - 1].line_start = (keyword->flags & smith_lang_gen_flag_line_start) != 0;
     return true;
 }
 
@@ -1696,6 +1697,71 @@ static uint32_t smith_lang_eshape_cut_type(SmithLangEnumCall *call, const SmithL
     return cut;
 }
 
+// The slice types that the type-function calls of the shape call being read computed (`option(slice_of(T, 1))`): the
+// struct of each is defined before the enum struct that holds it.
+static uint64_t smith_lang_eshape_slices[4];
+static size_t smith_lang_eshape_slice_count;
+
+// `slice_of(T, 1)` (a call of a function that returns `type`) as a whole argument of a shape call: the compiler is
+// asked for the type it computes for the instance and its spelling is the argument's tokens. The index of the call's
+// closing `)`, or 0 when the tokens are no such call (or no type), which the other readings then try.
+static uint32_t smith_lang_eshape_type_call(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
+                                            const SmithLangInstance *instance, uint32_t at, uint32_t end,
+                                            SmithLangEnumCall *call) {
+    const SmithLangGenToken *name = &smith_lang_gt.tokens[at];
+    if (name->kind != SmithTokenKind_Identifier || name->param != 0 || name->special != SmithLangGen_Plain ||
+        at + 3 >= end || !smith_lang_gt_punct(name + 1, "(") || smith_lang_cx_word(name, "typeof") ||
+        smith_lang_cx_word(name, "__typeof__")) {
+        return 0;
+    }
+    SmithToken written = smith_lang_gt_token(&smith_lang_gt, name);
+    if (smith_lang_word(written.text, written.length) != SmithLangWord_Other ||
+        smith_lang_find_sized(written.text, written.length) != nullptr) {
+        return 0;
+    }
+    uint32_t stop = smith_lang_cx_skip_group(at + 1, end); // one past the call's `)`
+    if (stop >= end || stop <= at + 2 ||
+        !(smith_lang_gt_punct(&smith_lang_gt.tokens[stop], ",") ||
+          smith_lang_gt_punct(&smith_lang_gt.tokens[stop], ")"))) {
+        return 0;
+    }
+    char spelling[smith_lang_tuple_name_max];
+    uint64_t handle = 0;
+    SmithLangInstance *kept = &smith_lang_instances[instance - smith_lang_instances];
+    if (smith_lang_type_call_ask(lang, host, generic, kept, at, stop, spelling, sizeof spelling, &handle) != nullptr ||
+        call->count + strlen(spelling) >= smith_lang_eshape_tokens_max) {
+        return 0;
+    }
+    if (smith_lang_ty_depth_of(handle) > 0 && smith_lang_eshape_slice_count < 4)
+        smith_lang_eshape_slices[smith_lang_eshape_slice_count++] = handle;
+    for (size_t used = 0; spelling[used] != 0;) { // words, and each other character by itself
+        if (spelling[used] == ' ') {
+            used += 1;
+            continue;
+        }
+        size_t length = 1;
+        bool word = isalnum((unsigned char)spelling[used]) || spelling[used] == '_';
+        while (word && (isalnum((unsigned char)spelling[used + length]) || spelling[used + length] == '_'))
+            length += 1;
+        call->tokens[call->count++] = smith_lang_tuple_made(
+            word ? SmithTokenKind_Identifier : SmithTokenKind_Punctuator, spelling + used, length, &written, true);
+        used += length;
+    }
+    return stop - 1;
+}
+
+// The comma between two arguments, kept in the call (the spelling joins the arguments by it); the next argument begins.
+static bool smith_lang_eshape_comma(SmithLangEnumCall *call, const SmithLangGenToken *token, size_t argument) {
+    if (call->count >= smith_lang_eshape_tokens_max) return false;
+    call->end[argument] = call->count;
+    SmithToken comma = smith_lang_gt_token(&smith_lang_gt, token);
+    comma.text = smith_lang_tuple_keep(comma.text, comma.length);
+    comma.handle = smith_token_no_handle;
+    call->tokens[call->count++] = comma;
+    call->begin[argument + 1] = call->count;
+    return true;
+}
+
 // The shape call at `at` of a generic's tokens, read for `instance`: how many tokens it takes (0 when the tokens are
 // no call of a shape), its shape, arguments and struct. An error is said at `place`.
 static uint32_t smith_lang_eshape_instance_call(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
@@ -1712,6 +1778,7 @@ static uint32_t smith_lang_eshape_instance_call(SmithLang *lang, const SmithHost
     const SmithLangEnumShape *shape = smith_lang_eshape_find(&as_token);
     if (shape == nullptr) return 0;
     call->count = 0;
+    smith_lang_eshape_slice_count = 0;
     size_t argument = 0;
     call->begin[0] = 0;
     int depth = 0;
@@ -1722,14 +1789,8 @@ static uint32_t smith_lang_eshape_instance_call(SmithLang *lang, const SmithHost
         depth += smith_lang_gt_punct(token, "(") || smith_lang_gt_punct(token, "[");
         depth -= smith_lang_gt_punct(token, ")") || smith_lang_gt_punct(token, "]");
         if (depth == 0 && smith_lang_gt_punct(token, ",")) {
-            if (argument + 1 >= shape->param_count) return 0;
-            if (call->count >= smith_lang_eshape_tokens_max) return 0;
-            call->end[argument] = call->count;
-            SmithToken comma = smith_lang_gt_token(&smith_lang_gt, token); // the spelling joins the arguments by it
-            comma.text = smith_lang_tuple_keep(comma.text, comma.length);
-            comma.handle = smith_token_no_handle;
-            call->tokens[call->count++] = comma;
-            call->begin[++argument] = call->count;
+            if (argument + 1 >= shape->param_count || !smith_lang_eshape_comma(call, token, argument)) return 0;
+            argument += 1;
             continue;
         }
         bool typeof_x = (smith_lang_gt_is(token, SmithTokenKind_Identifier, "typeof") ||
@@ -1740,6 +1801,13 @@ static uint32_t smith_lang_eshape_instance_call(SmithLang *lang, const SmithHost
         if (typeof_x && own >= 0) {
             if (!smith_lang_eshape_instance_type(call, instance, (size_t)own)) return 0;
             close += 3;
+            continue;
+        }
+        uint32_t made = call->count == call->begin[argument]
+                            ? smith_lang_eshape_type_call(lang, host, generic, instance, close, end, call)
+                            : 0;
+        if (made != 0) { // `slice_of(T, 1)`: the type the compiler computes
+            close = made;
             continue;
         }
         uint32_t cut = smith_lang_eshape_cut_type(call, instance, token, close, end);
@@ -1842,6 +1910,16 @@ static void smith_lang_eshape_put_definition(SmithLang *lang, const SmithHost *h
     smith_lang_gen_put(lang, host, SmithTokenKind_Punctuator, ";", place, instance_id);
 }
 
+// The definitions of the slice structs that the last shape call read computed, in front of the enum struct that holds
+// them.
+static void smith_lang_eshape_put_slices(SmithLang *lang, const SmithHost *host, uint32_t place, uint32_t instance_id) {
+    for (size_t i = 0; i < smith_lang_eshape_slice_count; i++) { // at most 4
+        smith_lang_gen_note_break(lang);
+        smith_lang_gen_put_slice_result(lang, host, smith_lang_eshape_slices[i], place, instance_id);
+        smith_lang_gen_put(lang, host, SmithTokenKind_Punctuator, ";", place, instance_id);
+    }
+}
+
 // Before an instance's definition is written at file scope: the struct of each shape call in the generic's tokens that
 // no scope defines.
 static void smith_lang_instance_define_enums(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
@@ -1855,6 +1933,7 @@ static void smith_lang_instance_define_enums(SmithLang *lang, const SmithHost *h
                                                           tag, sizeof tag);
         if (length == 0) continue;
         if (!smith_lang_eshape_defined(host, tag)) {
+            smith_lang_eshape_put_slices(lang, host, place, instance_id);
             smith_lang_eshape_put_definition(lang, host, shape, &call, tag, place, instance_id);
             smith_lang_eshape_note_defined(tag);
         }
@@ -1875,6 +1954,7 @@ static uint32_t smith_lang_eshape_put_call(SmithLang *lang, const SmithHost *hos
     if (length == 0) return 0;
     if (!smith_lang_eshape_defined(host, tag)) {
         if (define) {
+            smith_lang_eshape_put_slices(lang, host, place, instance_id);
             smith_lang_eshape_put_definition(lang, host, shape, &call, tag, place, instance_id);
             smith_lang_eshape_note_defined(tag);
         } else {

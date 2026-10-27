@@ -1492,6 +1492,10 @@ static void smith_lang_gen_note_break(SmithLang *lang) {
     lang->gen_prev = 0;
 }
 
+// Set before the first token of a statement the lowering writes in place of the generic's tokens (`return .none;`): it
+// begins its line as the generic's token did (-Wmisleading-indentation reads the lines).
+static bool smith_lang_gen_begin_line;
+
 // Writes a token of the lowering's own: no source has it, and `instance` says whose body it is in (0: none).
 static void smith_lang_gen_put_expanding(SmithLang *lang, const SmithHost *host, SmithTokenKind kind, const char *text,
                                          uint32_t location, uint32_t instance, bool expand) {
@@ -1505,6 +1509,8 @@ static void smith_lang_gen_put_expanding(SmithLang *lang, const SmithHost *host,
     token.location = location;
     token.synthetic = true;
     token.instance = instance;
+    token.line_start = smith_lang_gen_begin_line && instance != 0 && host->type_query != nullptr;
+    smith_lang_gen_begin_line = false;
     token.space_before = smith_lang_gen_space(lang, kind, text, token.length);
     smith_lang_gen_note(lang, kind, text, token.length);
     smith_lang_emit_code(lang, host, token);
@@ -2344,6 +2350,7 @@ typedef struct {
     char literal;
     char words[640]; // words to write, separated by spaces (a slice's index in an instance, issue #119)
     uint32_t place;  // of a punctuator to write (0: the call that asked for the instance)
+    bool line_start; // the words begin a line, as the generic's token they stand for does
     uint32_t begin;  // where the frame's tokens began (an empty `rest...` looks at the token before it)
     uint8_t action;  // SmithLangFrameAction
     bool started;    // TypedFinish: the typing flag to restore
@@ -2411,6 +2418,7 @@ static void smith_lang_replay_words(SmithLang *lang, const SmithHost *host, cons
     frame->words[0] = 0;
     frame->literal = 0;
     frame->pos = frame->end;
+    smith_lang_gen_begin_line = frame->line_start;
     for (char *word = text; *word != 0;) { // each word
         while (*word == ' ')
             word += 1;

@@ -47,3 +47,5 @@ export i32 demo() {
 - ``a pointer is no slice: say how many elements it points at, `p[0:n]` `` (also slicing a pointer or an array with one bound)
 - a slice where a pointer is wanted is clang's own ``initializing 'i32 *' with an expression of incompatible type 'struct smith_array_i32_n'``: pass it to a slice parameter or a `c::` function
 - a slice across rows: `smith-lang-array-dims`
+
+A slice may be the `some` of an `option`: a generic returns `option(slice_of(T, 1))`, a caller writes `typedef i32 Row[:]; typedef option(Row) MaybeRow;` (`smith-option`).
