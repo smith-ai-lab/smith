@@ -411,6 +411,9 @@ class C23Check final : public ClangTidyCheck {
         if (list->getNumInits() != 1 || list->getLBraceLoc().isInvalid() || sm.isInSystemHeader(list->getBeginLoc()))
             return; // an invalid brace is the list that brace elision made
         if (!list->getType()->isRecordType() && !list->getType()->isConstantArrayType()) return;
+        bool invalid = false; // a brace the lowering wrote (the count of a slice made of `""`) sits on other text
+        const char *brace = sm.getCharacterData(sm.getSpellingLoc(list->getLBraceLoc()), &invalid);
+        if (invalid || brace == nullptr || *brace != '{') return;
         const auto *zero = dyn_cast<IntegerLiteral>(list->getInit(0)->IgnoreParenImpCasts());
         if (zero == nullptr || !zero->getValue().isZero()) return;
         if (!seen.insert(sm.getExpansionLoc(list->getBeginLoc()).getRawEncoding()).second) return;

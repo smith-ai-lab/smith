@@ -13,5 +13,6 @@ export u32 f(const u8 *p) {
     Pair pair = {};
     Pair one = {1};
     u8 bytes[4] = {};
-    return pair.a + one.a + bytes[0] + flag;
+    const char empty[:] = ""; // the lowering counts it as {0}, which the source does not say
+    return pair.a + one.a + bytes[0] + flag + countof(empty);
 }
