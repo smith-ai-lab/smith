@@ -1665,6 +1665,14 @@ export void test_type_value(io::Io *io) {
     corpus_case(io, "type-value");
 }
 
+export void test_type_value_declarator(io::Io *io) {
+    corpus_case(io, "type-value-declarator");
+}
+
+export void test_type_value_header(io::Io *io) {
+    corpus_case(io, "type-value-header");
+}
+
 export void test_type_value_generic(io::Io *io) {
     corpus_case(io, "type-value-generic");
 }

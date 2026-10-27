@@ -11089,6 +11089,53 @@ typedef enum Color Paint;
 int main() {
     return 0;
 }
+==> type-value-declarator/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+struct Request {
+    i32 id;
+};
+
+struct Response {
+    i32 code;
+};
+
+// A type value written as a full C type, in the abstract-declarator form of a cast: a function pointer, an array, a
+// pointer to an array, an array of pointers.
+constexpr type Handler = Response (*)(Request *, i32);
+constexpr type Callback = void (*)(void);
+constexpr type Block = u8[16];
+constexpr type Grid = f32[2][3];
+constexpr type Row = i32 (*)[4];
+constexpr type Pointers = Request *[4];
+
+static_assert(is_pointer(Handler) && is_pointer(Callback) && is_pointer(Row));
+static_assert(is_array(Block) && is_array(Grid) && is_array(Pointers));
+static_assert(sizeof(Block) == 16 && sizeof(Grid) == 24 && sizeof(Pointers) == 32 && sizeof(Row) == 8);
+static_assert(Handler != Callback && Block != Grid);
+
+Response answer(Request *request, i32 extra) {
+    return (Response){request->id + extra};
+}
+
+void nothing(void) {}
+
+i32 main() {
+    Handler handler = answer; // `t x;` declares a variable of the type the value holds
+    Callback callback = nothing;
+    Block block = {1, 2, 3};
+    Grid grid = {{1, 2, 3}, {4, 5, 6}};
+    i32 numbers[4] = {10, 20, 30, 40};
+    Row row = &numbers;
+    Request request = {5};
+    Pointers pointers = {&request};
+    callback();
+    c::printf("%d %d %d %d %d %d\n", handler(&request, 2).code, (i32)sizeof(block), block[2], (i32)grid[1][2],
+              (*row)[3], pointers[0]->id);
+    return 0;
+}
 ==> type-value-generic/src/main.smith <==
 import size;
 #include <stdio.h>
@@ -11118,6 +11165,51 @@ i32 choose(constexpr type T) {
 
 export i32 run() {
     return choose(u8) * 100 + choose(Big) * 10 + choose(f64);
+}
+==> type-value-header/src/geo/units.smith <==
+module geo::units;
+
+// A struct is exported by name; the aliases below are `constexpr type` and reach C as typedefs.
+export struct Request {
+    i32 id;
+};
+
+/// A length in meters.
+export constexpr type Meters = f64;
+export constexpr type Handler = i32 (*)(Request *);
+export constexpr type Block = u8[4];
+export constexpr type Row = i32 (*)[4];
+export constexpr type Pointers = Request *[2];
+[[smith::c_name("geo_feet")]] export constexpr type Feet = f32;
+
+export Meters add(Meters a, Meters b) {
+    return a + b;
+}
+
+export i32 identify(Request *request) {
+    return request->id;
+}
+
+export Handler handler() {
+    return identify;
+}
+==> type-value-header/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import geo::units;
+
+extern i32 user(void); // C names the same aliases (user.c)
+
+i32 main() {
+    units::Meters m = units::add(1.5, 2.5);
+    units::Handler h = units::handler();
+    units::Block b = {1, 2};
+    units::Request r = {7};
+    units::Pointers p = {&r};
+    units::Feet f = 0.5f;
+    c::printf("%g %d %d %d %g\n", m, h(&r), b[1], p[0]->id, (f64)f);
+    return user();
 }
 ==> type-value-import/src/main.smith <==
 module main;

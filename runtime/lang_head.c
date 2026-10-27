@@ -122,6 +122,18 @@ static void smith_lang_replace_held(SmithLang *lang, SmithLangHeld *held, const 
         held->header_text = smith_lang_scratch_store(lang, lowered->header, lowered->header_length);
 }
 
+// Whether the name held at `index` is the `Y` of `constexpr type Y = X;`, a type alias: a module's type name, as a
+// typedef's is.
+static bool smith_lang_alias_name(const SmithLang *lang, size_t index, const SmithToken *next) {
+    if (!lang->is_module || !lang->decl.is_constexpr || lang->decl.in_params || index == 0 ||
+        !smith_lang_punct(next, "=")) {
+        return false;
+    }
+    const SmithLangHeld *before = &lang->head[index - 1];
+    return before->kind == SmithTokenKind_Identifier &&
+           smith_lang_equals(smith_lang_scratch_str(before->original), before->original.length, "type");
+}
+
 static void smith_lang_resolve(SmithLang *lang, const SmithHost *host, const SmithToken *next) {
     if (lang->pending == SIZE_MAX) return;
     SmithLangHeld *held = &lang->head[lang->pending];
@@ -133,9 +145,11 @@ static void smith_lang_resolve(SmithLang *lang, const SmithHost *host, const Smi
     bool declared = false;
     if (held->role == SmithLangRole_Plain && smith_lang_word(name, length) == SmithLangWord_Other &&
         smith_lang_declares_here(lang, held, next)) {
-        SmithLangNameKind kind = lang->decl.is_typedef         ? SmithLangName_Type
-                                 : smith_lang_punct(next, "(") ? SmithLangName_Function
-                                                               : SmithLangName_Value;
+        bool alias = smith_lang_alias_name(lang, index, next);
+        lang->decl.is_alias = alias;
+        SmithLangNameKind kind = lang->decl.is_typedef || alias ? SmithLangName_Type
+                                 : smith_lang_punct(next, "(")  ? SmithLangName_Function
+                                                                : SmithLangName_Value;
         const char *prefixed = smith_lang_declare(lang, host, name, length, held->location, kind, lang->decl.exported);
         if (prefixed != nullptr) {
             SmithLangLowered lowered = {.replaced = true, .text = prefixed, .length = lang->tmp_length};
@@ -564,7 +578,77 @@ static void smith_lang_declare_variable(SmithLang *lang, const SmithHost *host, 
 
 static void smith_lang_body_note(SmithLang *lang); // runtime/lang_body.c
 
+// An exported `constexpr type Y = X;` is `typedef X Y;` in the header, so C callers see the name. What was written to
+// the header after the `typedef` keyword is the initializer, as the lowering spelled it (`double;`, `uint8_t[16];`,
+// `void (*)(int32_t);`): the name goes where C's declarator has it, inside the `(*` of a function pointer or a pointer
+// to an array, before the `[` of an array, else after the type. An initializer that is no type (a call of a function
+// over types) has no C spelling: nothing is written for it.
+static bool smith_lang_alias_declarator(const char *init, size_t length, const char *name, char *out, size_t capacity) {
+    size_t at = 0;
+    size_t insert = length;
+    bool after_star = false;
+    int depth = 0;
+    for (size_t i = 0; i < length; i++) { // an initializer is a type: its `(` is a declarator's or a parameter list's
+        if (init[i] == '(') {
+            size_t k = i + 1;
+            while (k < length && init[k] == ' ')
+                k++;
+            size_t before = i;
+            while (before > 0 && init[before - 1] == ' ')
+                before--;
+            bool declarator = k < length && init[k] == '*';
+            bool params = before > 0 && init[before - 1] == ')';
+            if (!declarator && !params && depth == 0) return false;
+            if (declarator && !after_star && insert == length) {
+                while (k < length && (init[k] == '*' || init[k] == ' '))
+                    k++;
+                if (k < length && init[k] == ')') {
+                    insert = k;
+                    after_star = true;
+                }
+            }
+            depth += 1;
+        } else if (init[i] == ')') {
+            depth -= 1;
+        } else if (init[i] == '[' && insert == length && depth == 0) {
+            insert = i;
+        }
+    }
+    at = insert;
+    while (at > 0 && init[at - 1] == ' ')
+        at--;
+    bool glue = after_star || (at > 0 && init[at - 1] == '*');
+    int written = snprintf(out, capacity, "%.*s%s%s%.*s", (int)at, init, glue ? "" : " ", name, (int)(length - insert),
+                           init + insert);
+    return written > 0 && (size_t)written < capacity;
+}
+
+static void smith_lang_alias_finish(SmithLang *lang) {
+    char *body = smith_lang_header_body;
+    size_t start = lang->decl.alias_mark;
+    size_t end = lang->header_used;
+    lang->decl.alias_header = false;
+    if (start == 0 || end < start) return;
+    while (start < end && body[start] == ' ')
+        start++;
+    while (end > start && (body[end - 1] == ';' || body[end - 1] == ' ' || body[end - 1] == '\n'))
+        end--;
+    char declarator[smith_lang_name_max * 2];
+    size_t keyword = lang->decl.alias_mark - (sizeof "typedef" - 1);
+    if (end > start && memchr(body + start, '/', end - start) == nullptr &&
+        smith_lang_alias_declarator(body + start, end - start, lang->decl.alias_name, declarator, sizeof declarator)) {
+        lang->header_used = lang->decl.alias_mark;
+        lang->header_used +=
+            (size_t)snprintf(body + lang->header_used, smith_lang_header_max - lang->header_used, " %s;", declarator);
+        return;
+    }
+    lang->header_used = keyword; // no C spelling: the typedef is dropped
+    while (lang->header_used > 0 && (body[lang->header_used - 1] == '\n' || body[lang->header_used - 1] == ' '))
+        lang->header_used -= 1;
+}
+
 static void smith_lang_end_declaration(SmithLang *lang) {
+    if (lang->decl.alias_header) smith_lang_alias_finish(lang);
     if (lang->due_late != 0 && lang->due_count < smith_lang_due_max) lang->due[lang->due_count++] = lang->due_late - 1;
     lang->due_late = 0;
     lang->local_count = 0;
@@ -627,7 +711,11 @@ static void smith_lang_after_head(SmithLang *lang, const SmithHost *host, const 
         smith_lang_end_declaration(lang);
         return;
     }
-    smith_lang_emit(lang, host, *terminator);
+    if (lang->decl.alias_header) {
+        smith_lang_emit_code(lang, host, *terminator); // the header has the initializer only
+    } else {
+        smith_lang_emit(lang, host, *terminator);
+    }
     lang->head_count = 0;
     lang->scratch_used = 0;
     lang->pending = SIZE_MAX;
@@ -778,6 +866,34 @@ static void smith_lang_body_listed_add(SmithLang *lang, bool is_main) {
         smith_lang_store(lang, smith_lang_scratch_str(held->original), held->original.length);
 }
 
+// The head of an exported alias: the module's code has it as written; the header begins `typedef`, and its end
+// (smith_lang_alias_finish) puts the name where the declarator has it.
+static void smith_lang_alias_begin(SmithLang *lang, const SmithHost *host, const SmithToken *like) {
+    (void)host;
+    const SmithLangHeld *name = &lang->head[lang->decl.last_name];
+    snprintf(lang->decl.alias_name, sizeof lang->decl.alias_name, "%.*s", (int)name->text.length,
+             smith_lang_scratch_str(name->text));
+    SmithToken keyword = smith_lang_synth(SmithTokenKind_Identifier, "typedef", 7, like);
+    keyword.line_start = true;
+    keyword.space_before = false;
+    smith_lang_emit_header(lang, keyword);
+    lang->decl.alias_mark = lang->header_used;
+    lang->decl.alias_header = true;
+}
+
+// The head of a declaration that has no symbol of its own to declare: written to the module and its header, but an
+// exported alias, which has a `typedef` in the header instead.
+static void smith_lang_emit_plain_head(SmithLang *lang, const SmithHost *host, const SmithToken *terminator,
+                                       bool with_static) {
+    if (lang->decl.is_alias && lang->decl.exported && smith_lang_punct(terminator, "=")) {
+        SmithToken like = smith_lang_last_of_head(lang);
+        smith_lang_alias_begin(lang, host, &like);
+        smith_lang_emit_head(lang, host, false, false);
+        return;
+    }
+    smith_lang_emit_head(lang, host, true, with_static);
+}
+
 // The head is complete: the terminator says what follows. Writes the head, then the terminator, and picks the state.
 static void smith_lang_flush_head(SmithLang *lang, const SmithHost *host, const SmithToken *terminator) {
     if (lang->decl.generic) { // recorded, not written
@@ -843,7 +959,7 @@ static void smith_lang_flush_head(SmithLang *lang, const SmithHost *host, const 
         smith_lang_emit_head(lang, host, false, false);
         if (!has_c_name) smith_lang_emit_label(lang, host, &like, false);
     } else {
-        smith_lang_emit_head(lang, host, true, private_static);
+        smith_lang_emit_plain_head(lang, host, terminator, private_static);
     }
     smith_lang_after_head(lang, host, terminator, form, proto_written);
 }

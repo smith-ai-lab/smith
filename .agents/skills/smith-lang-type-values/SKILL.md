@@ -16,11 +16,12 @@ typedef struct {
 } Column;
 
 constexpr type count = u32;                        // a type is a value
+constexpr type Block = u8[16];                     // a full C type, as in a cast
 constexpr type kinds[2] = {i32, f64};
 constexpr Column length = {"length", usize};
 
 static_assert(count == u32 && sizeof(count) == 4 && is_integer(count));   // == and != compare types
-static_assert(alignof(length.of) == 8);
+static_assert(alignof(length.of) == 8 && sizeof(Block) == 16);
 
 bool small(type t) {                               // an ordinary function: it runs in the compiler
     return sizeof(t) <= 8;
@@ -45,6 +46,8 @@ export usize demo() {
 
 - **Where a type name is a value:** after the `=` of a declaration of a `type` or of a struct that holds one, in the arguments of a call to a function that takes a type, in the `return` of one that returns a type, and beside `==` or `!=`. Elsewhere `i32` is the type, as in C (`sizeof(i32)`, `(i32)x`). `type` is a keyword only where a declaration begins (`int type;` still works).
 - **`t x;`, `(t)y`, `sizeof(t)`, `alignof(t)`, `integer(t)`, `floating`, `signed_integer`, `unsigned_integer`, `arithmetic`, `boolean`, `pointer`, `enumeration`, `structure`, `array`, `slice` (the C standard's nouns; `is_integer`, `is_float`, `is_signed`, `is_bool`, `is_enum`, `is_record`, `is_pointer`, `is_array`, `is_slice` still work, until a release has the nouns):** `t` is a name or a chain (`foo.of`, `kinds[1]`). A `constexpr type` read from an array or a member is known only from the next statement on. As the argument of a generic call it stands for the type (`pool::width(t)`).
+- **A type value may be any C type**, written as C writes it in a cast: `Response (*)(Request *)`, `u8[16]`, `f32[2][3]`, `i32 (*)[4]`, `Request *[4]`. `t x;` declares it (`Handler h = f;`, `Block b = {};`, lowered to `typeof(...) x`). A name of another alias inside the type is not read: write the type.
+- **`export constexpr type Meters = f64;`** is `typedef double geo_Meters;` in the module's header, so C callers and importers write it as a type (`geo::Meters x`); `[[smith::c_name("X")]]` names the typedef. A function pointer is `typedef void (*geo_Handler)(int32_t);`, an array `typedef uint8_t geo_Block[16];`. An export computed by a call (`= wider(u8, i64)`) has no C spelling: it stays out of the header. Not yet: `constexpr type t = geo::Meters;` (a qualified name as a type value).
 - **A type exists only at compile time**: `type x = i32;` or `Column c = {...};` without `constexpr` is an error naming the field that holds the type, except in the body of a function that takes or returns `type` (it runs in the compiler only). Such functions serve `constexpr` initializers, a generic's result type and `if constexpr (small(T))`.
 - `static_assert(small(i32))` and `static_assert(sizeof(kinds[1]) == 8)` build under `-Wpedantic -Werror`. Not yet: a type value as a generic's parameter (`i32 f(constexpr type T, type t)`), a type-returning call where a type is written (`List(f32)`).
 

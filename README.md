@@ -415,6 +415,19 @@ constexpr type big = wider(u8, i64);
 static_assert(sizeof(big) == 8);
 ```
 
+A type value may be any C type, written as in a cast, and an exported one is a typedef in the module's C header
+(`geo_meters`, `geo_handler` and `geo_block` to a C caller):
+
+```smith
+module geo;
+
+export constexpr type meters = f64;
+export constexpr type handler = i32 (*)(i32);
+export constexpr type block = u8[16];
+
+static_assert(sizeof(block) == 16);
+```
+
 [smith-lang-type-values](.agents/skills/smith-lang-type-values/SKILL.md).
 
 ### Contracts, and a proof that refuses a call
