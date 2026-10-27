@@ -11,12 +11,13 @@
 //      llvm` does), unless that install is there already;
 //   2. the libraries' headers, which are build outputs and not in git: scripts/header_tool.c, the writer of
 //      `smith cc --smith-header` as a program of its own, built with this compiler and run on lib/smith/*.smith;
-//   3. stage A: smith.c, its shims and that LLVM, linked with weak stand-ins for the six libraries, which are .smith
-//      and need a smith to compile. Stage A has clang and the token hook, so it compiles .smith; any call into a
-//      stand-in stops it with a message;
-//   4. the six libraries, compiled by stage A;
-//   5. stage B: the same link with the libraries, a whole smith, which then runs `smith build` with the arguments
-//      given, as stage0's release would.
+//   3. stage A: smith.c without `smith mcp` (no -DSMITH_MCP: the protocol code does not exist yet), its shims and that
+//      LLVM, linked with weak stand-ins for the six libraries, which are .smith and need a smith to compile. Stage A
+//      has clang and the token hook, so it compiles .smith; any call into a stand-in stops it with a message;
+//   4. the six libraries, compiled by stage A, and the protocol code (DAP's and MCP's, which are build outputs and not
+//      in git): scripts/protocol.c, built with stage A's smith-cc and the libraries, run on schemas/;
+//   5. stage B: smith.c again, now with `smith mcp` and the protocol code, linked with the libraries, a whole smith,
+//      which then runs `smith build` with the arguments given, as stage0's release would.
 #include <errno.h>
 #include <glob.h>
 #include <spawn.h>
@@ -200,20 +201,18 @@ static const char *compile(const char *compiler, const char *source, const char 
 }
 
 // smith.c's flags, as build.c gives them (and the libraries the same, so that `smith prove` finds their bodies).
-static void smith_flags(Args *flags) {
+static void smith_flags(Args *flags, bool mcp) {
     static char id_flag[text_max + 32];
     snprintf(id_flag, sizeof id_flag, "-DSMITH_CLANG_ID=\"%s\"", identity);
     add_all(flags, cflags, sizeof cflags / sizeof cflags[0]);
-    static const char *const more[] = {"-I",
-                                       "include",
-                                       "-I",
-                                       ".smith/seed/include",
-                                       "-DSMITH_COMMIT_LINKED",
-                                       "-DSMITH_IN_PROCESS",
-                                       "-DSMITH_MCP",
-                                       "-DSMITH_LLDB",
-                                       "-DSMITH_HOOK"};
+    static const char *const more[] = {
+        "-I",           "include",     "-I", ".smith/seed/include", "-DSMITH_COMMIT_LINKED", "-DSMITH_IN_PROCESS",
+        "-DSMITH_LLDB", "-DSMITH_HOOK"};
     add_all(flags, more, sizeof more / sizeof more[0]);
+    if (mcp) { // stage B: the protocol code is in .smith/seed/protocol by then
+        static const char *const protocol[] = {"-DSMITH_MCP", "-I", ".smith/seed/protocol", "-I", "runtime/protocol"};
+        add_all(flags, protocol, sizeof protocol / sizeof protocol[0]);
+    }
     add(flags, id_flag);
 }
 
@@ -239,9 +238,6 @@ static void compile_smith(Args *objects) {
     add(&data, resource);
     add(objects, compile(clang, "runtime/pack_data.c", "a", "pack_data", &data));
     add(objects, compile(clang, "runtime/commit.c", "a", "commit", &base));
-    Args flags = {};
-    smith_flags(&flags);
-    add(objects, compile(clang, "smith.c", "a", "smith", &flags));
     static const char *const cxx[] = {"-std=c++17",
                                       "-O1",
                                       "-g",
@@ -262,6 +258,42 @@ static void compile_smith(Args *objects) {
     for (size_t i = 0; i < sizeof shims / sizeof shims[0]; i++) {
         add(objects, compile(path("%s/bin/clang++", llvm, ""), path("shim/%s.cpp", shims[i], ""), "a",
                              path("%s_shim", shims[i], ""), &shim_flags));
+    }
+}
+
+// The generated protocol code: scripts/protocol.c with stage A's smith-cc for the modules it stands on (arena,
+// contract, text), and the plain C of lib/json.c and lib/trace.c, run on the vendored schemas into
+// .smith/seed/protocol/.
+static void write_protocol(void) {
+    const char *clang = path("%s/bin/clang", llvm, "");
+    run((const char *[]){"mkdir", "-p", ".smith/seed/protocol", ".smith/seed/p", nullptr});
+    Args flags = {};
+    smith_flags(&flags, false);
+    Args objects = {};
+    static const char *const c_sources[][2] = {
+        {"scripts/protocol.c", "protocol"}, {"lib/json.c", "json"}, {"lib/trace.c", "trace"}};
+    for (size_t i = 0; i < sizeof c_sources / sizeof c_sources[0]; i++)
+        add(&objects, compile(clang, c_sources[i][0], "p", c_sources[i][1], &flags));
+    static const char *const modules[] = {"arena", "contract", "text"};
+    for (size_t i = 0; i < sizeof modules / sizeof modules[0]; i++)
+        add(&objects,
+            compile(".smith/seed/a/bin/smith-cc", path("lib/smith/%s.smith", modules[i], ""), "p", modules[i], &flags));
+    Args link = {};
+    add(&link, clang);
+    add(&link, "-o");
+    add(&link, ".smith/seed/p/protocol_tool");
+    add_all(&link, objects.items, objects.count);
+    add(&link, "-lm");
+    run(link.items);
+    static const char *const schemas[][3] = {
+        {"dap", "schemas/dap/debugAdapterProtocol.json",
+         "debugAdapterProtocol.json of microsoft/debug-adapter-protocol v1.71.0"},
+        {"mcp", "schemas/mcp/schema.json",
+         "schema/2026-07-28/schema.json of modelcontextprotocol/modelcontextprotocol, release 2026-07-28"}};
+    for (size_t i = 0; i < sizeof schemas / sizeof schemas[0]; i++) {
+        run((const char *[]){".smith/seed/p/protocol_tool", schemas[i][0], schemas[i][1],
+                             path("schemas/%s/LICENSE", schemas[i][0], ""), schemas[i][2], ".smith/seed/protocol",
+                             ".smith/seed/protocol", nullptr});
     }
 }
 
@@ -362,18 +394,23 @@ int main(int argc, char **argv) {
     fflush(stdout);
     Args objects = {};
     compile_smith(&objects);
+    Args flags = {};
+    smith_flags(&flags, false);
     Args stage_a = objects;
+    add(&stage_a, compile(path("%s/bin/clang", llvm, ""), "smith.c", "a", "smith", &flags));
     add(&stage_a, compile_stand_ins());
     link_smith(&stage_a, ".smith/seed/a/smith");
     make_bin(".smith/seed/a/bin", ".smith/seed/a/smith");
     printf("seed: the libraries, compiled by stage A\n");
     fflush(stdout);
-    Args flags = {};
-    smith_flags(&flags);
+    write_protocol();
+    Args flags_b = {};
+    smith_flags(&flags_b, true);
     Args stage_b = objects;
+    add(&stage_b, compile(path("%s/bin/clang", llvm, ""), "smith.c", "b", "smith", &flags_b));
     for (size_t i = 0; i < sizeof libraries / sizeof libraries[0]; i++) {
         add(&stage_b, compile(".smith/seed/a/bin/smith-cc", path("lib/smith/%s.smith", libraries[i], ""), "b",
-                              libraries[i], &flags));
+                              libraries[i], &flags_b));
     }
     link_smith(&stage_b, ".smith/seed/b/smith");
     make_bin(".smith/seed/b/bin", ".smith/seed/b/smith");
