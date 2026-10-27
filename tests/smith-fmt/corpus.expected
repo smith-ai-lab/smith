@@ -3242,6 +3242,38 @@ i32 broken(constexpr type T) {
 export i32 call() {
     return broken(i32);
 }
+==> error-void-pointer/src/main.smith <==
+module main;
+
+typedef struct Ball {
+    i32 size;
+} Ball;
+
+static void *erase(Ball *ball) {
+    return ball;
+}
+
+static void take(Ball *ball) {
+    (void)ball;
+}
+
+// In a module `void *` never becomes `T *` silently, in any position (issue #398).
+static Ball *returned(void *data) {
+    return data;
+}
+
+static void positions(void *data) {
+    Ball *initialized = data;
+    Ball *assigned;
+    assigned = erase(initialized);
+    take(data);
+    take((Ball *)data);
+    take(nullptr);
+}
+
+i32 main() {
+    return 0;
+}
 ==> export-inline-attributes/src/hint.smith <==
 module hint;
 
@@ -10861,5 +10893,66 @@ static i32 twice(i32 n) {
 
 int main() {
     printf("%d\n", twice(21));
+    return 0;
+}
+==> void-pointer-cast/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+typedef struct Ball {
+    i32 size;
+} Ball;
+
+static i32 read_size(void *data) {
+    Ball *ball = (Ball *)data;
+    return ball->size;
+}
+
+static const Ball *view(const void *data) {
+    return (const Ball *)data;
+}
+
+static void *erase(Ball *ball) {
+    return ball;
+}
+
+static void take(void *data, const void *constant) {
+    (void)data;
+    (void)constant;
+}
+
+// A written cast is fine, `T *` goes to `void *` with none, and `nullptr` is not a `void *` value.
+i32 main() {
+    Ball ball = {.size = 7};
+    void *data = &ball;
+    const void *constant = &ball;
+    take(&ball, &ball);
+    Ball *none = nullptr;
+    c::printf("%d %d %d %d\n", read_size(data), view(constant)->size, read_size(erase(&ball)), none == nullptr);
+    return 0;
+}
+==> void-pointer-plain/src/main.smith <==
+import <stdio.h>;
+
+typedef struct Ball {
+    i32 size;
+} Ball;
+
+static void *erase(Ball *ball) {
+    return ball;
+}
+
+static Ball *unerase(void *data) {
+    return data;
+}
+
+// No module line: `void *` converts to `T *` exactly as in C, in every position.
+i32 main(i32 argc, char *argv[]) {
+    Ball ball = {.size = 7};
+    Ball *a = erase(&ball);
+    Ball *b;
+    b = erase(&ball);
+    c::printf("%d %d %d\n", a->size, b->size, unerase(&ball)->size);
     return 0;
 }

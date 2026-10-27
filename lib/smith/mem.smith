@@ -262,7 +262,7 @@ void *checked_alloc(Allocator *self, usize size, usize align) {
     usize span = size > 0 ? size : 1;
     CheckedRecord **buckets = table(checked_self);
     if (buckets == nullptr) return nullptr;
-    u8 *block = parent_alloc(checked_self, span, align);
+    u8 *block = (u8 *)parent_alloc(checked_self, span, align);
     CheckedRecord *record = (CheckedRecord *)parent_alloc(checked_self, sizeof(CheckedRecord), 16);
     if (block == nullptr || record == nullptr) {
         if (block != nullptr) parent_free(checked_self, block);

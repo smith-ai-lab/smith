@@ -149,7 +149,7 @@ bool measure(const Arena *arena, usize size, usize align, usize *padding) {
 [[smith::c_name("smith_arena_fixed")]] export [[nodiscard]] Arena fixed(void *memory, usize capacity) {
     contract::requires(((usize)memory & (align_max - 1)) == 0);
     contract::requires(capacity > 0);
-    return (Arena){.memory = memory, .capacity = capacity}; // nothing is poisoned until the first push
+    return (Arena){.memory = (u8 *)memory, .capacity = capacity}; // nothing is poisoned until the first push
 }
 
 // A chunk's header, a multiple of align_max so the memory after it is aligned as an arena's must be. A chunk is one
@@ -188,7 +188,7 @@ Chunk *chunk_new(const Arena *arena, usize size) {
         if (memory == (void *)-1) memory = nullptr;                     // NOLINT(performance-no-int-to-ptr): MAP_FAILED
     }
     if (memory == nullptr) return nullptr;
-    Chunk *chunk = memory;
+    Chunk *chunk = (Chunk *)memory;
     *chunk = (Chunk){.size = size};
     return chunk;
 }
@@ -537,7 +537,7 @@ void *allocator_alloc(c::SmithAllocator *self, usize size, usize align) {
     usize header = align > sizeof(Block) ? align : sizeof(Block);
     if (size > math::max(usize) - header) return nullptr;
     u8 *start =
-        try_push_raw(arena, header + size, align); // a growing arena takes a chunk; null when the backing refuses
+        (u8 *)try_push_raw(arena, header + size, align); // a growing arena takes a chunk; null when the backing refuses
     if (start == nullptr) return nullptr;
     Block *block = (Block *)(start + header - sizeof(Block));
     block->size = size;

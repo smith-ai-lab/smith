@@ -23,13 +23,13 @@ export void test_arena_pushes_are_zeroed() {
     static Memory memory;
     mem::fill(memory.bytes[0:sizeof memory.bytes], 0xAA);
     arena::Arena a = arena::fixed(memory.bytes, sizeof memory.bytes);
-    u8 *bytes = arena::push_raw(&a, 100, 1);
+    u8 *bytes = (u8 *)arena::push_raw(&a, 100, 1);
     for (usize i = 0; i < 100; i++) {
         test::check_equal(bytes[i], 0);
     }
     mem::fill(bytes[0:100], 0xBB);
     arena::reset(&a);
-    u8 *again = arena::push_raw(&a, 100, 1);
+    u8 *again = (u8 *)arena::push_raw(&a, 100, 1);
     for (usize i = 0; i < 100; i++) {
         test::check_equal(again[i], 0); // a push after a reset is zeroed too
     }
@@ -39,7 +39,7 @@ export void test_arena_pushes_are_aligned() {
     static Memory memory;
     arena::Arena a = arena::fixed(memory.bytes, sizeof memory.bytes);
     for (usize align = 1; align <= arena::align_max; align *= 2) {
-        u8 *odd = arena::push_raw(&a, 1, 1); // knock the cursor off every alignment
+        u8 *odd = (u8 *)arena::push_raw(&a, 1, 1); // knock the cursor off every alignment
         test::check_condition(odd != nullptr);
         void *aligned = arena::push_raw(&a, 3, align);
         test::check_equal((usize)aligned & (align - 1), 0);
@@ -90,12 +90,12 @@ export void test_arena_fits_asks_without_pushing() {
     test::check_condition(arena::fits(&a, 128, 1));
     test::check_condition(!arena::fits(&a, 129, 1));
     test::check_condition(!arena::fits(&a, math::max(usize), 1)); // no overflow in the sum
-    u8 *head = arena::push_raw(&a, 8, 8); // leaves the cursor on a granule, with or without ASan
+    u8 *head = (u8 *)arena::push_raw(&a, 8, 8); // leaves the cursor on a granule, with or without ASan
     test::check_condition(head != nullptr);
     usize left = a.capacity - a.used;
     test::check_condition(arena::fits(&a, left, 1));
     test::check_condition(!arena::fits(&a, left + 1, 1));
-    u8 *rest = arena::push_raw(&a, left, 1); // exactly the room that fits
+    u8 *rest = (u8 *)arena::push_raw(&a, left, 1); // exactly the room that fits
     test::check_condition(rest != nullptr);
     test::check_equal(a.used, a.capacity);
     test::check_condition(arena::fits(&a, 0, 1));
@@ -105,21 +105,21 @@ export void test_arena_fits_asks_without_pushing() {
 export void test_arena_reset_and_scopes_give_memory_back() {
     static Memory memory;
     arena::Arena a = arena::fixed(memory.bytes, sizeof memory.bytes);
-    u8 *base = arena::push_raw(&a, 10, 1);
+    u8 *base = (u8 *)arena::push_raw(&a, 10, 1);
     test::check_condition(base != nullptr);
     usize base_used = a.used;
     arena::Scope outer = arena::scope_begin(&a);
-    u8 *first = arena::push_raw(&a, 20, 1);
+    u8 *first = (u8 *)arena::push_raw(&a, 20, 1);
     test::check_condition(first != nullptr);
     usize outer_used = a.used;
     arena::Scope inner = arena::scope_begin(&a);
     test::check_equal(a.scopes, 2);
-    u8 *second = arena::push_raw(&a, 30, 1);
+    u8 *second = (u8 *)arena::push_raw(&a, 30, 1);
     test::check_condition(second != nullptr);
     arena::scope_end(inner);
     test::check_equal(a.used, outer_used);
     test::check_equal(a.scopes, 1);
-    u8 *third = arena::push_raw(&a, 30, 1);
+    u8 *third = (u8 *)arena::push_raw(&a, 30, 1);
     test::check_equal(third, second); // the inner scope's memory is handed out again
     arena::scope_end(outer);
     test::check_equal(a.used, base_used);
@@ -137,8 +137,8 @@ export void test_arena_layout_is_deterministic() {
     const usize sizes[] = {1, 7, 64, 3, 100, 8};
     const usize aligns[] = {1, 4, 64, 2, 16, 8};
     for (usize i = 0; i < _Countof(sizes); i++) {
-        u8 *a = arena::push_raw(&first, sizes[i], aligns[i]);
-        u8 *b = arena::push_raw(&second, sizes[i], aligns[i]);
+        u8 *a = (u8 *)arena::push_raw(&first, sizes[i], aligns[i]);
+        u8 *b = (u8 *)arena::push_raw(&second, sizes[i], aligns[i]);
         test::check_equal(a - first.memory, b - second.memory);
     }
     test::check_equal(first.used, second.used);
@@ -148,10 +148,10 @@ export void test_arena_layout_is_deterministic() {
 export void test_arena_carve_makes_separate_arenas() {
     static Memory memory;
     arena::Arena parent = arena::fixed(memory.bytes, sizeof memory.bytes);
-    u8 *before = arena::push_raw(&parent, 10, 1);
+    u8 *before = (u8 *)arena::push_raw(&parent, 10, 1);
     arena::Arena first = arena::carve(&parent, 1000);
     arena::Arena second = arena::carve(&parent, 2000);
-    u8 *after = arena::push_raw(&parent, 10, 1);
+    u8 *after = (u8 *)arena::push_raw(&parent, 10, 1);
     test::check_equal(first.capacity, 1000);
     test::check_equal(second.capacity, 2000);
     test::check_equal(first.used, 0);
@@ -243,7 +243,7 @@ constexpr usize chunk_first = 16 << 10;
 // Pushes `count` blocks of 1000 bytes, each written with `fill`, and checks they arrived zeroed.
 void fill_blocks(arena::Arena *a, usize count, u8 fill) {
     for (usize i = 0; i < count; i++) {
-        u8 *block = arena::push_array_raw(a, 1, 1000, 1);
+        u8 *block = (u8 *)arena::push_array_raw(a, 1, 1000, 1);
         test::check_condition(block != nullptr);
         for (usize j = 0; j < 1000; j += 97) {
             test::check_equal(block[j], 0); // zeroed, though a chunk reused after a reset held `fill`
@@ -321,7 +321,7 @@ export void test_arena_growing_from_a_backing_allocator() {
 export void test_arena_try_push_is_null_where_a_push_would_fail() {
     static Memory memory;
     arena::Arena fixed = arena::fixed(memory.bytes, sizeof memory.bytes);
-    u8 *fits = arena::try_push_raw(&fixed, 100, 8);
+    u8 *fits = (u8 *)arena::try_push_raw(&fixed, 100, 8);
     test::check_condition(fits != nullptr);
     usize used = fixed.used;
     test::check_condition(arena::try_push_raw(&fixed, 2 * capacity, 8) == nullptr); // a fixed arena never grows

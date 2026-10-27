@@ -13,7 +13,7 @@ import <string.h>;
 
 // The bytes of a buffer, for the calls of io that take a slice.
 static typeof(const u8[:]) test_io_bytes(const void *data, usize size) {
-    const u8 *bytes = data;
+    const u8 *bytes = (const u8 *)data;
     return bytes[0:size];
 }
 

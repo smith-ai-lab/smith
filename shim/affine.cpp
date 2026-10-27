@@ -896,6 +896,7 @@ bool isPostfix(const std::string &text) {
            std::string::npos;
 }
 
+// NOLINTBEGIN(bugprone-derived-method-shadowing-base-method): a CRTP visitor overrides the base's hooks by name
 class VoidPointerVisitor : public RecursiveASTVisitor<VoidPointerVisitor> {
   public:
     explicit VoidPointerVisitor(ASTContext &context)
@@ -917,8 +918,18 @@ class VoidPointerVisitor : public RecursiveASTVisitor<VoidPointerVisitor> {
         return RecursiveASTVisitor::TraverseDecl(decl);
     }
 
+    // `p == data` with a `T *` and a `void *`: clang casts the `void *` side to `T *`. That compares two addresses and
+    // reads nothing as a `T`, so a comparison is not a position of the rule.
+    bool VisitBinaryOperator(BinaryOperator *op) {
+        if (op->isComparisonOp()) {
+            compared.insert(op->getLHS()->IgnoreParens());
+            compared.insert(op->getRHS()->IgnoreParens());
+        }
+        return true;
+    }
+
     bool VisitImplicitCastExpr(ImplicitCastExpr *cast) {
-        if (cast->getCastKind() != CK_BitCast) return true;
+        if (cast->getCastKind() != CK_BitCast || compared.count(cast) != 0) return true;
         QualType to = cast->getType();
         const Expr *from = cast->getSubExpr();
         QualType source = from->getType();
@@ -942,8 +953,10 @@ class VoidPointerVisitor : public RecursiveASTVisitor<VoidPointerVisitor> {
     ASTContext &context;
     DiagnosticsEngine &engine;
     PrintingPolicy policy;
+    std::set<const Expr *> compared;
     unsigned error;
 };
+// NOLINTEND(bugprone-derived-method-shadowing-base-method)
 
 // ---- Every function that has a body
 // ----------------------------------------------------------------------------------

@@ -780,7 +780,7 @@ void grow_reserve(Grow *grow, usize extra) {
     usize wanted = grow->capacity * 2;
     if (wanted < grow->size + extra + 1) wanted = grow->size + extra + 1;
     if (wanted < 256) wanted = 256;
-    u8 *bigger = arena::push_array_raw(grow->arena, sizeof(u8), wanted, alignof(u8));
+    u8 *bigger = (u8 *)arena::push_array_raw(grow->arena, sizeof(u8), wanted, alignof(u8));
     if (grow->size > 0) __builtin_memcpy(bigger, grow->data, grow->size);
     grow->data = bigger;
     grow->capacity = wanted;
@@ -797,7 +797,7 @@ void grow_append(Grow *grow, const void *bytes, usize size) {
 
 // Writes all size bytes. Each pass writes at least one byte or fails, so the loop is bounded by size.
 i32 write_all(i32 descriptor, const void *data, usize size) {
-    const u8 *bytes = data;
+    const u8 *bytes = (const u8 *)data;
     usize done = 0;
     for (usize passes = 0; done < size && passes <= size + 64; passes++) {
         isize n = c::write(descriptor, bytes + done, size - done);
@@ -838,7 +838,7 @@ Error fake_capture(Fake *fake, bool errors, const char *text) {
 
 // What a read produced: the n bytes at bytes, as the op's data.
 void op_data(Op *op, const void *bytes, usize n) {
-    const u8 *first = bytes;
+    const u8 *first = (const u8 *)bytes;
     op->data = first[0:n];
 }
 
@@ -846,7 +846,7 @@ Error fake_read_file(Fake *fake, arena::Arena *arena, const char *path, Read *re
     FakeFile *file = fake_find(fake, path);
     if (file == nullptr) return error_make(enoent, "open", path);
     if (file->folder) return error_make(eisdir, "read", path);
-    u8 *copy = arena::push_array_raw(arena, sizeof(u8), file->size + 1, alignof(u8));
+    u8 *copy = (u8 *)arena::push_array_raw(arena, sizeof(u8), file->size + 1, alignof(u8));
     if (file->size > 0) __builtin_memcpy(copy, file->data, file->size);
     const u8 *contents = copy;
     result->data = contents[0:file->size];
@@ -860,7 +860,7 @@ FakeFile *fake_entry(Fake *fake, const char *path) {
     if (fake->file_count == fake_files_max) return nullptr;
     file = &fake->files[fake->file_count++];
     *file = (FakeFile){};
-    char *name = arena::push_array_raw(&fake->storage, sizeof(char), c::strlen(path) + 1, alignof(char));
+    char *name = (char *)arena::push_array_raw(&fake->storage, sizeof(char), c::strlen(path) + 1, alignof(char));
     __builtin_memcpy(name, path, c::strlen(path));
     file->path = name;
     return file;
@@ -869,7 +869,7 @@ FakeFile *fake_entry(Fake *fake, const char *path) {
 Error fake_write_file(Fake *fake, const char *path, const void *data, usize size) {
     FakeFile *file = fake_entry(fake, path);
     if (file == nullptr) return error_make(enospc, "create", path);
-    file->data = arena::push_array_raw(&fake->storage, sizeof(u8), size + 1, alignof(u8));
+    file->data = (u8 *)arena::push_array_raw(&fake->storage, sizeof(u8), size + 1, alignof(u8));
     if (size > 0) __builtin_memcpy(file->data, data, size);
     file->size = size;
     file->capacity = size + 1;
@@ -883,7 +883,7 @@ Error fake_append_file(Fake *fake, const char *path, const void *data, usize siz
     if (file->folder) return error_make(eisdir, "open", path);
     if (file->data == nullptr || file->size + size + 1 > file->capacity) { // grows by doubling
         usize wanted = file->capacity * 2 > file->size + size + 1 ? file->capacity * 2 : file->size + size + 1;
-        u8 *bigger = arena::push_array_raw(&fake->storage, sizeof(u8), wanted, alignof(u8));
+        u8 *bigger = (u8 *)arena::push_array_raw(&fake->storage, sizeof(u8), wanted, alignof(u8));
         if (file->size > 0) __builtin_memcpy(bigger, file->data, file->size);
         file->data = bigger;
         file->capacity = wanted;
@@ -982,7 +982,7 @@ void fake_list_add(arena::Arena *arena, FileList *list, FileEntry *entries, cons
         if (c::strncmp(entries[at].name, rest, name_length) == 0 && entries[at].name[name_length] == 0) break;
     }
     if (at == list->count) {
-        char *name = arena::push_array_raw(arena, sizeof(char), name_length + 1, alignof(char));
+        char *name = (char *)arena::push_array_raw(arena, sizeof(char), name_length + 1, alignof(char));
         __builtin_memcpy(name, rest, name_length);
         entries[list->count++].name = name;
     }
@@ -997,7 +997,8 @@ FileList fake_list(Fake *fake, arena::Arena *arena, const char *folder) {
         return list;
     }
     usize length = fake_folder_length(folder);
-    FileEntry *entries = arena::push_array_raw(arena, sizeof(FileEntry), fake_files_max + 1, alignof(FileEntry));
+    FileEntry *entries =
+        (FileEntry *)arena::push_array_raw(arena, sizeof(FileEntry), fake_files_max + 1, alignof(FileEntry));
     for (usize i = 0; i < fake->file_count; i++) {
         const FakeFile *file = &fake->files[i];
         if (length > 0 && !(c::strncmp(file->path, folder, length) == 0 && file->path[length] == '/')) continue;
@@ -1051,14 +1052,14 @@ bool fake_child_waiting(Fake *fake, const Op *op) {
         return child != nullptr && !fake_child_ended(child);
     }
     if (op->internal.kind == PipeRead && op->internal.child != nullptr) {
-        const FakeChild *child = op->internal.child;
+        const FakeChild *child = (const FakeChild *)op->internal.child;
         return child->output_position == child->output_size && !fake_child_ended(child);
     }
     return false;
 }
 
 void fake_child_read(Op *op) {
-    FakeChild *child = op->internal.child;
+    FakeChild *child = (FakeChild *)op->internal.child;
     usize left = child->output_size - child->output_position;
     usize n = left < op->internal.capacity ? left : op->internal.capacity;
     if (child->chunk != 0 && n > child->chunk) n = child->chunk;
@@ -1069,7 +1070,7 @@ void fake_child_read(Op *op) {
 }
 
 void fake_child_write(Op *op) {
-    FakeChild *child = op->internal.child;
+    FakeChild *child = (FakeChild *)op->internal.child;
     usize size = op->internal.capacity;
     if (fake_child_ended(child)) {
         op->error = error_make(epipe, "write", "child stdin");
@@ -1180,7 +1181,7 @@ FileInfo real_info(const char *path) {
 // Grows the entries array by doubling, the old block staying behind in the arena.
 FileEntry *real_entries_grow(arena::Arena *arena, FileEntry *entries, usize count, usize *capacity) {
     usize wanted = *capacity == 0 ? 64 : *capacity * 2;
-    FileEntry *bigger = arena::push_array_raw(arena, sizeof(FileEntry), wanted, alignof(FileEntry));
+    FileEntry *bigger = (FileEntry *)arena::push_array_raw(arena, sizeof(FileEntry), wanted, alignof(FileEntry));
     if (count > 0) __builtin_memcpy(bigger, entries, count * sizeof *entries);
     *capacity = wanted;
     return bigger;
@@ -1204,7 +1205,7 @@ FileList real_list(arena::Arena *arena, const char *folder) {
         bool known = c::fstatat(c::dirfd(directory), item->d_name, &status, 0) == 0;
         bool is_folder = known && mode_is(status.st_mode, mode_folder);
         usize length = c::strlen(item->d_name);
-        char *name = arena::push_array_raw(arena, sizeof(char), length + 1, alignof(char));
+        char *name = (char *)arena::push_array_raw(arena, sizeof(char), length + 1, alignof(char));
         __builtin_memcpy(name, item->d_name, length);
         entries[list.count++] = (FileEntry){
             .name = name,
@@ -1289,8 +1290,8 @@ FakeServer *net_server_find(FakeNet *net, const char *host, u16 port, usize n, b
 // A receive on a scripted connection whose server has sent everything and stalls.
 bool net_stalled(const Op *op) {
     if (op->internal.kind != NetReceive) return false;
-    const Connection *connection = op->internal.connection;
-    const FakeServer *server = connection->internal.script;
+    const Connection *connection = (const Connection *)op->internal.connection;
+    const FakeServer *server = (const FakeServer *)connection->internal.script;
     return server != nullptr && server->stall && connection->internal.position == server->response_size &&
            !__c11_atomic_load(&connection->internal.closed, seq_cst);
 }
@@ -1312,7 +1313,7 @@ void net_scripted_connect(Loop *loop, Op *op, Connection *connection) {
 }
 
 void net_scripted_receive(Op *op, Connection *connection) {
-    FakeServer *server = connection->internal.script;
+    FakeServer *server = (FakeServer *)connection->internal.script;
     usize left = server->response_size - connection->internal.position;
     usize take = left < op->internal.capacity ? left : op->internal.capacity;
     if (server->chunk > 0 && take > server->chunk) take = server->chunk;
@@ -1327,7 +1328,7 @@ void net_scripted_receive(Op *op, Connection *connection) {
 }
 
 void net_scripted_send(Op *op, Connection *connection) {
-    FakeServer *server = connection->internal.script;
+    FakeServer *server = (FakeServer *)connection->internal.script;
     if (server->request_size + op->taken > request_max) {
         op->error = error_make(enospc, "send", connection->internal.name);
         return;
@@ -1338,7 +1339,7 @@ void net_scripted_send(Op *op, Connection *connection) {
 }
 
 void net_complete_scripted(Loop *loop, Op *op) {
-    Connection *connection = op->internal.connection;
+    Connection *connection = (Connection *)op->internal.connection;
     if (op->internal.kind == NetConnect) {
         net_scripted_connect(loop, op, connection);
         return;
@@ -1485,7 +1486,7 @@ if constexpr (target::os == target::macos) {
 void loop_submit(Loop *loop, Op *op) {
     check(op->internal.kind != None);
     Fake *fake = loop->fake;
-    Console *console = op->internal.console;
+    Console *console = (Console *)op->internal.console;
     bool buffered = console != nullptr && console->end > console->start && !op->internal.fill;
     op->internal.loop = loop;
     if (fake != nullptr) {
@@ -1516,7 +1517,7 @@ void loop_finish_file(Loop *loop, Op *op) {
 
 // Serves a console read from what is buffered, else from the source; a fill goes to the console's own buffer.
 void loop_finish_console(Loop *loop, Op *op) {
-    Console *console = op->internal.console;
+    Console *console = (Console *)op->internal.console;
     usize size = 0;
     if (!op->internal.fill && console->end > console->start) {
         size = console->end - console->start;
@@ -1852,7 +1853,7 @@ if constexpr (target::os == target::macos) {
                 net_drain(loop, &completed);
                 continue;
             }
-            Op *op = events[i].udata;
+            Op *op = (Op *)events[i].udata;
             check(!op->done);
             if (loop_complete(loop, op)) completed += 1;
         }
@@ -2061,7 +2062,7 @@ console_read_async(Console *console, Op *op, arena::Arena *arena, usize max) {
     op->internal.console = console;
     op->internal.arena = arena;
     op->internal.descriptor = stdin_fd;
-    op->internal.destination = arena::push_array_raw(arena, sizeof(u8), max + 1, alignof(u8));
+    op->internal.destination = (u8 *)arena::push_array_raw(arena, sizeof(u8), max + 1, alignof(u8));
     op->internal.capacity = max;
     loop_submit(console->loop, op);
 }
@@ -2097,7 +2098,7 @@ console_read_line(Console *console, arena::Arena *arena) {
     for (usize rounds = 0; !newline && rounds <= arena->capacity; rounds++) { // each round consumes or ends
         const u8 *start = console->buffer + console->start;
         usize available = console->end - console->start;
-        const u8 *found = available > 0 ? c::memchr(start, '\n', available) : nullptr;
+        const u8 *found = available > 0 ? (const u8 *)c::memchr(start, '\n', available) : nullptr;
         usize take = found != nullptr ? (usize)(found - start) : available;
         if (available > 0) any = true;
         grow_append(&line, start, take);
@@ -2512,10 +2513,10 @@ processes_run(Processes *processes, arena::Arena *arena, const char *const *argv
     }
     result.exit_status = program->status;
     result.output_size = c::strlen(program->output);
-    char *copy = arena::push_array_raw(arena, sizeof(char), result.output_size + 1, alignof(char));
+    char *copy = (char *)arena::push_array_raw(arena, sizeof(char), result.output_size + 1, alignof(char));
     __builtin_memcpy(copy, program->output, result.output_size);
     result.output = copy;
-    result.errors = arena::push_array_raw(arena, sizeof(char), 1, alignof(char));
+    result.errors = (const char *)arena::push_array_raw(arena, sizeof(char), 1, alignof(char));
     return result;
 }
 
@@ -2676,7 +2677,7 @@ if constexpr (target::os == target::macos) {
     // is pending when it fails, and on the last state (cancelled) finishes the rest and the close.
     void net_on_state(Loop *loop, Connection *connection, c::nw_connection_state_t state, c::nw_error_t error) {
         const NetApi *api = &loop->net_api;
-        c::nw_connection_t handle = connection->internal.handle;
+        c::nw_connection_t handle = (c::nw_connection_t)connection->internal.handle;
         if (state == c::nw_connection_state_ready) {
             net_finish_slot(loop, connection, NetConnect, (Error){});
         } else if (error != nullptr &&
@@ -2759,7 +2760,7 @@ if constexpr (target::os == target::macos) {
         }
         __c11_atomic_store(&connection->internal.waiting[NetReceive - NetConnect], op, seq_cst);
         api->receive(
-            connection->internal.handle, 1, (u32)op->internal.capacity,
+            (c::nw_connection_t)connection->internal.handle, 1, (u32)op->internal.capacity,
             ^(c::dispatch_data_t content, c::nw_content_context_t context, bool complete, c::nw_error_t error) {
                 (void)context;
                 net_received(loop, connection, content, complete, error);
@@ -2770,11 +2771,13 @@ if constexpr (target::os == target::macos) {
         const NetApi *api = &loop->net_api;
         __c11_atomic_store(&connection->internal.waiting[NetSend - NetConnect], op, seq_cst);
         c::dispatch_data_t data = c::dispatch_data_create(op->internal.input, op->taken, loop->net_queue, nullptr);
-        api->send(connection->internal.handle, data, *api->context_message, true, ^(c::nw_error_t error) {
-            Error failure = {};
-            if (error != nullptr) failure = net_error(&loop->net_api, error, "write", connection->internal.name);
-            net_finish_slot(loop, connection, NetSend, failure);
-        });
+        api->send((c::nw_connection_t)connection->internal.handle, data, *api->context_message, true,
+                  ^(c::nw_error_t error) {
+                      Error failure = {};
+                      if (error != nullptr)
+                          failure = net_error(&loop->net_api, error, "write", connection->internal.name);
+                      net_finish_slot(loop, connection, NetSend, failure);
+                  });
         c::dispatch_release(data);
     }
 } else {
@@ -3353,7 +3356,7 @@ net_close_async(Net *net, Op *op, Connection *connection) {
         }
         __c11_atomic_store(&connection->internal.waiting[NetClose - NetConnect], op, seq_cst);
         const NetApi *api = &net->loop->net_api;
-        api->cancel(connection->internal.handle);
+        api->cancel((c::nw_connection_t)connection->internal.handle);
         if (__c11_atomic_load(&connection->internal.closed, seq_cst))
             net_finish_slot(net->loop, connection, NetClose, (Error){});
     }
@@ -3404,13 +3407,14 @@ test_add_server(Io *io, NetServer server) {
     FakeNet *net = loop->servers;
     if (net->count == fake_servers_max) return error_make(enospc, "script", server.host);
     FakeServer *entry = &net->servers[net->count++];
-    char *host = arena::push_array_raw(&io->arena, sizeof(char), c::strlen(server.host) + 1, alignof(char));
+    char *host = (char *)arena::push_array_raw(&io->arena, sizeof(char), c::strlen(server.host) + 1, alignof(char));
     __builtin_memcpy(host, server.host, c::strlen(server.host));
-    u8 *response = arena::push_array_raw(&io->arena, sizeof(u8), server.response_size + 1, alignof(u8));
+    u8 *response = (u8 *)arena::push_array_raw(&io->arena, sizeof(u8), server.response_size + 1, alignof(u8));
     if (server.response_size > 0) __builtin_memcpy(response, server.response, server.response_size);
     char *tls_failure = nullptr;
     if (server.tls_failure != nullptr) {
-        tls_failure = arena::push_array_raw(&io->arena, sizeof(char), c::strlen(server.tls_failure) + 1, alignof(char));
+        tls_failure =
+            (char *)arena::push_array_raw(&io->arena, sizeof(char), c::strlen(server.tls_failure) + 1, alignof(char));
         __builtin_memcpy(tls_failure, server.tls_failure, c::strlen(server.tls_failure));
     }
     *entry = (FakeServer){.host = host,
@@ -3421,7 +3425,8 @@ test_add_server(Io *io, NetServer server) {
                           .error = server.error,
                           .tls_failure = tls_failure,
                           .stall = server.stall,
-                          .request = arena::push_array_raw(&io->arena, sizeof(char), request_max + 1, alignof(char))};
+                          .request =
+                              (char *)arena::push_array_raw(&io->arena, sizeof(char), request_max + 1, alignof(char))};
     return (Error){};
 }
 
@@ -3461,7 +3466,7 @@ Error capture_fake(Fake *fake, arena::Arena *arena, const char *const *argv, Cap
     if (program == nullptr) return error_make(enoent, "run", argv[0]);
     capture->exit_status = program->status;
     capture->output_size = c::strlen(program->output);
-    char *copy = arena::push_array_raw(arena, sizeof(char), capture->output_size + 1, alignof(char));
+    char *copy = (char *)arena::push_array_raw(arena, sizeof(char), capture->output_size + 1, alignof(char));
     __builtin_memcpy(copy, program->output, capture->output_size + 1);
     capture->output = copy;
     capture->done = true;
@@ -3597,8 +3602,8 @@ Loop *loop_make(arena::Arena *arena, bool fake) {
     loop->queue = -1;
     if (fake) {
         loop->fake = arena::push(arena, Fake);
-        loop->fake->output = arena::push_array_raw(arena, sizeof(char), fake_capture_size, alignof(char));
-        loop->fake->errors = arena::push_array_raw(arena, sizeof(char), fake_capture_size, alignof(char));
+        loop->fake->output = (char *)arena::push_array_raw(arena, sizeof(char), fake_capture_size, alignof(char));
+        loop->fake->errors = (char *)arena::push_array_raw(arena, sizeof(char), fake_capture_size, alignof(char));
         usize storage = (arena->capacity - arena->used) / 4 / arena::align_max * arena::align_max;
         loop->fake->storage = arena::fixed(arena::push_raw(arena, storage, arena::align_max), storage);
     } else {
@@ -3696,7 +3701,7 @@ make_test(Test test) {
     Fake *fake = io.loop->fake;
     if (test.input != nullptr) {
         fake->input_size = c::strlen(test.input);
-        char *copy = arena::push_array_raw(&io.arena, sizeof(char), fake->input_size + 1, alignof(char));
+        char *copy = (char *)arena::push_array_raw(&io.arena, sizeof(char), fake->input_size + 1, alignof(char));
         __builtin_memcpy(copy, test.input, fake->input_size);
         fake->input = copy;
     }
@@ -3730,9 +3735,9 @@ test_add_program(Io *io, const char *program, const char *output, i32 status) {
     Fake *fake = fake_of(io->loop);
     if (fake->program_count == fake_programs_max) return error_make(enospc, "script", program);
     FakeProgram *entry = &fake->programs[fake->program_count++];
-    char *name = arena::push_array_raw(&fake->storage, sizeof(char), c::strlen(program) + 1, alignof(char));
+    char *name = (char *)arena::push_array_raw(&fake->storage, sizeof(char), c::strlen(program) + 1, alignof(char));
     __builtin_memcpy(name, program, c::strlen(program));
-    char *text = arena::push_array_raw(&fake->storage, sizeof(char), c::strlen(output) + 1, alignof(char));
+    char *text = (char *)arena::push_array_raw(&fake->storage, sizeof(char), c::strlen(output) + 1, alignof(char));
     __builtin_memcpy(text, output, c::strlen(output));
     *entry = (FakeProgram){.program = name, .output = text, .status = status};
     return (Error){};
@@ -3747,17 +3752,19 @@ test_add_child(Io *io, ChildScript script) {
     if (fake->child_count == fake_children_max) return error_make(enospc, "script", script.program);
     FakeChild *entry = &fake->children[fake->child_count++];
     usize output_size = script.output != nullptr ? c::strlen(script.output) : 0;
-    char *name = arena::push_array_raw(&fake->storage, sizeof(char), c::strlen(script.program) + 1, alignof(char));
+    char *name =
+        (char *)arena::push_array_raw(&fake->storage, sizeof(char), c::strlen(script.program) + 1, alignof(char));
     __builtin_memcpy(name, script.program, c::strlen(script.program));
-    u8 *output = arena::push_array_raw(&fake->storage, sizeof(u8), output_size + 1, alignof(u8));
+    u8 *output = (u8 *)arena::push_array_raw(&fake->storage, sizeof(u8), output_size + 1, alignof(u8));
     if (output_size > 0) __builtin_memcpy(output, script.output, output_size);
-    *entry = (FakeChild){.program = name,
-                         .output = output,
-                         .output_size = output_size,
-                         .chunk = script.chunk,
-                         .exit_on = script.exit_on,
-                         .status = script.status,
-                         .input = arena::push_array_raw(&fake->storage, sizeof(u8), child_input_max + 1, alignof(u8))};
+    *entry =
+        (FakeChild){.program = name,
+                    .output = output,
+                    .output_size = output_size,
+                    .chunk = script.chunk,
+                    .exit_on = script.exit_on,
+                    .status = script.status,
+                    .input = (u8 *)arena::push_array_raw(&fake->storage, sizeof(u8), child_input_max + 1, alignof(u8))};
     return (Error){};
 }
 
