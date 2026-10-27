@@ -789,8 +789,10 @@ static void build_other_objects(SmithBuild *b, const BuildConfig *config, const 
 // Sources the build never compiles on their own, which `smith lint` (and the editor) still read with the flags the
 // scripts give them: the libraries and their tests. tests/stub.c is built (build_other_objects) with its -D.
 static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
-    const char *const *flags = smith_cat(b, config->cflags, smith_list(b, "-I", "include", "-I", ".smith/include", nullptr), nullptr);
-    const char *const *sources = smith_glob(b, smith_list(b, "lib/*.c", "tests/*.c", "scripts/defer_init.c", nullptr));
+    const char *const *flags =
+        smith_cat(b, config->cflags, smith_list(b, "-I", "include", "-I", ".smith/include", nullptr), nullptr);
+    const char *const *sources =
+        smith_glob(b, smith_list(b, "lib/*.c", "tests/*.c", "scripts/defer_init.c", "scripts/header_tool.c", nullptr));
     for (size_t i = 0; sources[i] != nullptr; i++) {
         // stub.c is built (build_other_objects) with its -D, tree_sitter.c is the grammar's, and random.c includes the
         // raw lowering of random.smith, which tests/random_c_test.smith writes when it runs
