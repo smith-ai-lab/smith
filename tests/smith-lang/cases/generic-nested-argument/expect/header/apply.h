@@ -3,9 +3,9 @@
 // smith-module: apply
 // smith-imports:
 // smith-names: twice four five
-// smith-generic: apply twice apply_twice src/apply.smith - 1 2 9 10 | iP2w@3:8=typeof(x) iw@3:18=apply_twice p@3:23=( i@3:24=constexpr iw@3:34=auto iP1w@3:39=f p@3:40=, iP2w@3:42=auto iw@3:47=x p@3:48=) pw@3:50={ iw@4:5=return iP1w@4:12=f p@4:13=( iP1@4:14=f p@4:15=( i@4:16=x p@4:17=) p@4:18=) p@4:19=; p@5:1=}
-// smith-generic: apply four apply_four src/apply.smith - 1 2 9 10 | iP2w@8:8=typeof(x) iw@8:18=apply_four p@8:22=( i@8:23=constexpr iw@8:33=auto iP1w@8:38=f p@8:39=, iP2w@8:41=auto iw@8:46=x p@8:47=) pw@8:49={ iw@9:5=return B@9:12=apply::twice p@9:17=( iP1@9:18=f p@9:19=, B@9:21=apply::twice p@9:26=( iP1@9:27=f p@9:28=, iw@9:30=x p@9:31=) E@9:21= p@9:32=) E@9:12= p@9:33=; p@10:1=}
-// smith-generic: apply five apply_five src/apply.smith - 1 2 9 10 | iP2w@13:8=typeof(x) iw@13:18=apply_five p@13:22=( i@13:23=constexpr iw@13:33=auto iP1w@13:38=f p@13:39=, iP2w@13:41=auto iw@13:46=x p@13:47=) pw@13:49={ iw@14:5=return B@14:12=apply::twice p@14:17=( iP1@14:18=f p@14:19=, B@14:21=apply::twice p@14:26=( iP1@14:27=f p@14:28=, iw@14:30=x p@14:31=) E@14:21= pw@14:33=+ nw@14:35=1 p@14:36=) E@14:12= p@14:37=; p@15:1=}
+// smith-generic: apply twice apply_twice src/apply.smith -@3 1 2 9 10 | iP2w@0:8=typeof(x) iw@0:18=apply_twice p@0:23=( i@0:24=constexpr iw@0:34=auto iP1w@0:39=f p@0:40=, iP2w@0:42=auto iw@0:47=x p@0:48=) pw@0:50={ iw@1:5=return iP1w@1:12=f p@1:13=( iP1@1:14=f p@1:15=( i@1:16=x p@1:17=) p@1:18=) p@1:19=; p@2:1=}
+// smith-generic: apply four apply_four src/apply.smith -@8 1 2 9 10 | iP2w@0:8=typeof(x) iw@0:18=apply_four p@0:22=( i@0:23=constexpr iw@0:33=auto iP1w@0:38=f p@0:39=, iP2w@0:41=auto iw@0:46=x p@0:47=) pw@0:49={ iw@1:5=return B@1:12=apply::twice p@1:17=( iP1@1:18=f p@1:19=, B@1:21=apply::twice p@1:26=( iP1@1:27=f p@1:28=, iw@1:30=x p@1:31=) E@1:21= p@1:32=) E@1:12= p@1:33=; p@2:1=}
+// smith-generic: apply five apply_five src/apply.smith -@13 1 2 9 10 | iP2w@0:8=typeof(x) iw@0:18=apply_five p@0:22=( i@0:23=constexpr iw@0:33=auto iP1w@0:38=f p@0:39=, iP2w@0:41=auto iw@0:46=x p@0:47=) pw@0:49={ iw@1:5=return B@1:12=apply::twice p@1:17=( iP1@1:18=f p@1:19=, B@1:21=apply::twice p@1:26=( iP1@1:27=f p@1:28=, iw@1:30=x p@1:31=) E@1:21= pw@1:33=+ nw@1:35=1 p@1:36=) E@1:12= p@1:37=; p@2:1=}
 // clang-format on
 #pragma once
 #include <stddef.h>

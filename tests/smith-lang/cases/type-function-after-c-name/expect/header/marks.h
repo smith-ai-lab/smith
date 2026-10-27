@@ -4,8 +4,8 @@
 // smith-imports:
 // smith-names: marker=marks_const at
 // smith-types: leaf_of
-// smith-generic: marks leaf_of marks_leaf_of src/marks.smith g 2 3 6 7 | i@6:1=static iw@6:8=type iw@6:13=marks_leaf_of p@6:20=( i@6:21=type iw@6:26=t p@6:27=) pw@6:29={ iw@7:5=if pw@7:8=( i@7:9=is_pointer p@7:19=( i@7:20=t p@7:21=) p@7:22=) iw@7:24=return iw@7:31=typeof p@7:37=( p@7:38=* p@7:39=( i@7:40=t p@7:41=) i@7:42=nullptr p@7:49=) p@7:50=; iw@8:5=return iw@8:12=t p@8:13=; p@9:1=}
-// smith-generic: marks at marks_at src/marks.smith - 4 5 8 9 | iw@11:8=marks_leaf_of p@11:15=( iP1@11:16=typeof(x) p@11:25=) iw@11:27=marks_at p@11:29=( iP1@11:30=auto iw@11:35=x p@11:36=) pw@11:38={ X@12:5=if pw@12:18=( i@12:19=is_pointer p@12:29=( iP1@12:30=typeof(x) p@12:39=) p@12:40=) pw@12:42={ iw@13:9=return iw@13:16=x p@13:17=[ n@13:18=0 p@13:19=] p@13:20=; pw@14:5=} iw@14:7=else pw@14:12={ iw@15:9=return iw@15:16=x p@15:17=; pw@16:5=} p@17:1=}
+// smith-generic: marks leaf_of marks_leaf_of src/marks.smith g@6 2 3 6 7 | i@0:1=static iw@0:8=type iw@0:13=marks_leaf_of p@0:20=( i@0:21=type iw@0:26=t p@0:27=) pw@0:29={ iw@1:5=if pw@1:8=( i@1:9=is_pointer p@1:19=( i@1:20=t p@1:21=) p@1:22=) iw@1:24=return iw@1:31=typeof p@1:37=( p@1:38=* p@1:39=( i@1:40=t p@1:41=) i@1:42=nullptr p@1:49=) p@1:50=; iw@2:5=return iw@2:12=t p@2:13=; p@3:1=}
+// smith-generic: marks at marks_at src/marks.smith -@11 4 5 8 9 | iw@0:8=marks_leaf_of p@0:15=( iP1@0:16=typeof(x) p@0:25=) iw@0:27=marks_at p@0:29=( iP1@0:30=auto iw@0:35=x p@0:36=) pw@0:38={ X@1:5=if pw@1:18=( i@1:19=is_pointer p@1:29=( iP1@1:30=typeof(x) p@1:39=) p@1:40=) pw@1:42={ iw@2:9=return iw@2:16=x p@2:17=[ n@2:18=0 p@2:19=] p@2:20=; pw@3:5=} iw@3:7=else pw@3:12={ iw@4:9=return iw@4:16=x p@4:17=; pw@5:5=} p@6:1=}
 // clang-format on
 #pragma once
 #include <stddef.h>

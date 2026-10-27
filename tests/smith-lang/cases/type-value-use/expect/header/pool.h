@@ -3,7 +3,7 @@
 // smith-module: pool
 // smith-imports:
 // smith-names: width
-// smith-generic: pool width pool_width src/pool.smith - 1 2 6 7 | ixw@4:8=__SIZE_TYPE__ iw@4:14=pool_width p@4:19=( i@4:20=constexpr iw@4:30=type iP1w@4:35=T p@4:36=) pw@4:38={ iw@5:5=return iw@5:12=sizeof p@5:18=( iP1@5:19=T p@5:20=) p@5:21=; p@6:1=}
+// smith-generic: pool width pool_width src/pool.smith -@4 1 2 6 7 | ixw@0:8=__SIZE_TYPE__ iw@0:14=pool_width p@0:19=( i@0:20=constexpr iw@0:30=type iP1w@0:35=T p@0:36=) pw@0:38={ iw@1:5=return iw@1:12=sizeof p@1:18=( iP1@1:19=T p@1:20=) p@1:21=; p@2:1=}
 // clang-format on
 #pragma once
 #include <stddef.h>

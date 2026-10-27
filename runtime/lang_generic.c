@@ -1127,8 +1127,17 @@ static size_t smith_lang_generic_serialize(const SmithLangGeneric *generic, char
     const char *kinds = generic->exported ? "-i" : "pq";
     char kind = kinds[generic->is_inline ? 1U : 0U];
     if (generic->plain) kind = generic->exported ? 'f' : 'g';
-    used = smith_lang_append(out, capacity, used, "%c %u %u %u %u |", kind, generic->name_index, generic->open_index,
-                             generic->close_index, generic->body_index);
+    // The lines of the tokens are written relative to the generic's first line, which is stored once (`i@399`), so an
+    // edit above the generic changes that number and no other byte of the line.
+    size_t base = SIZE_MAX;
+    for (uint32_t i = 0; i < generic->count; i++) { // the first line of the generic
+        const SmithLangGenToken *token = &smith_lang_gt.tokens[generic->first + i];
+        size_t line = smith_lang_lines_known() ? smith_lang_line_of(token->location) : 0;
+        base = line < base ? line : base;
+    }
+    base = base == SIZE_MAX ? 0 : base;
+    used = smith_lang_append(out, capacity, used, "%c@%zu %u %u %u %u |", kind, base, generic->name_index,
+                             generic->open_index, generic->close_index, generic->body_index);
     for (uint32_t i = 0; i < generic->count; i++) { // the head, then the body
         const SmithLangGenToken *token = &smith_lang_gt.tokens[generic->first + i];
         used = smith_lang_append(out, capacity, used, " %c", smith_lang_kind_letter(token));
@@ -1138,7 +1147,7 @@ static size_t smith_lang_generic_serialize(const SmithLangGeneric *generic, char
         if ((token->flags & smith_lang_gen_flag_slice) != 0) used = smith_lang_append(out, capacity, used, "g");
         size_t line = smith_lang_lines_known() ? smith_lang_line_of(token->location) : 0;
         size_t column = smith_lang_lines_known() ? smith_lang_column_of(token->location) : 0;
-        used = smith_lang_append(out, capacity, used, "@%zu:%zu=", line, column);
+        used = smith_lang_append(out, capacity, used, "@%zu:%zu=", line - base, column);
         used = smith_lang_escape(out, capacity, used, smith_lang_gt_str(token), token->length);
     }
     return smith_lang_append(out, capacity, used, "\n");
@@ -1199,9 +1208,9 @@ static bool smith_lang_generic_line_split(const char *line, size_t length, Smith
     return false;
 }
 
-// One token of a line: `i`, `P1`, `x`, `w`, `@line:column=text`.
-static bool smith_lang_generic_read_token(const char *word, size_t length, SmithLangGenToken *out, char *text,
-                                          size_t capacity, size_t *text_length) {
+// One token of a line: `i`, `P1`, `x`, `w`, `@line:column=text`, the line relative to the generic's first.
+static bool smith_lang_generic_read_token(const char *word, size_t length, uint32_t base, SmithLangGenToken *out,
+                                          char *text, size_t capacity, size_t *text_length) {
     *out = (SmithLangGenToken){};
     out->location = UINT32_MAX;
     size_t at = 0;
@@ -1255,14 +1264,15 @@ static bool smith_lang_generic_read_token(const char *word, size_t length, Smith
     }
     const char *equals = memchr(word + at, '=', length - at);
     if (at >= length || equals == nullptr) return false;
-    out->line = (uint32_t)strtoul(word + at + 1, nullptr, 10);
+    out->line = base + (uint32_t)strtoul(word + at + 1, nullptr, 10);
     const char *colon = memchr(word + at, ':', (size_t)(equals - (word + at)));
     out->column = colon != nullptr ? (uint32_t)strtoul(colon + 1, nullptr, 10) : 0;
     *text_length = smith_lang_unescape(equals + 1, length - (size_t)(equals + 1 - word), text, capacity);
     return true;
 }
 
-static bool smith_lang_generic_read_tokens(const SmithLangGenericLine *parsed, SmithLangGeneric *generic) {
+static bool smith_lang_generic_read_tokens(const SmithLangGenericLine *parsed, uint32_t base,
+                                           SmithLangGeneric *generic) {
     const char *at = parsed->tokens;
     const char *end = parsed->tokens + parsed->tokens_length;
     char text[1024];
@@ -1277,7 +1287,7 @@ static bool smith_lang_generic_read_tokens(const SmithLangGenericLine *parsed, S
         if (at == start) break;
         SmithLangGenToken token;
         size_t length = 0;
-        if (!smith_lang_generic_read_token(start, (size_t)(at - start), &token, text, sizeof text, &length)) {
+        if (!smith_lang_generic_read_token(start, (size_t)(at - start), base, &token, text, sizeof text, &length)) {
             return false;
         }
         // The header says where each token was, not whether it began a line. The parser needs it (clang's
@@ -1328,7 +1338,10 @@ static void smith_lang_generics_read(SmithLang *lang, const char *text, size_t l
             bool good = smith_lang_generic_line_split(text + at + marker, end - at - marker, &parsed);
             for (size_t i = 0; good && i < 4; i++) // module, member, lowered name, source file
                 smith_lang_unescape(parsed.words[i], parsed.lengths[i], words[i], sizeof words[i]);
-            good = good && smith_lang_generic_read_tokens(&parsed, generic);
+            uint32_t base = 0; // the kind word is `i@<first line>`
+            if (good && parsed.lengths[4] > 2 && parsed.words[4][1] == '@')
+                base = (uint32_t)strtoul(parsed.words[4] + 2, nullptr, 10);
+            good = good && smith_lang_generic_read_tokens(&parsed, base, generic);
             if (good) {
                 generic->module = smith_lang_store(lang, words[0], strlen(words[0]));
                 generic->member = smith_lang_store(lang, words[1], strlen(words[1]));

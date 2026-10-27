@@ -3,10 +3,10 @@
 // smith-module: pick
 // smith-imports:
 // smith-names: larger size_of_value twice zero_like
-// smith-generic: pick larger pick_larger src/pick.smith - 1 2 8 9 | iP1w@4:8=typeof(a) iw@4:18=pick_larger p@4:24=( iP1@4:25=auto iw@4:30=a p@4:31=, iP1w@4:33=typeof(a) iw@4:43=b p@4:44=) pw@4:46={ iw@5:5=return iw@5:12=a pw@5:14=> iw@5:16=b pw@5:18=? iw@5:20=a pw@5:22=: iw@5:24=b p@5:25=; p@6:1=}
-// smith-generic: pick size_of_value pick_size_of_value src/pick.smith - 1 2 5 6 | ixw@8:8=__SIZE_TYPE__ iw@8:14=pick_size_of_value p@8:27=( iP1@8:28=auto iw@8:33=value p@8:38=) pw@8:40={ pw@9:5=( i@9:6=void p@9:10=) i@9:11=value p@9:16=; iw@10:5=return iw@10:12=sizeof p@10:18=( iP1@10:19=typeof(value) p@10:32=) p@10:33=; p@11:1=}
-// smith-generic: pick twice pick_twice src/pick.smith - 1 2 5 6 | iP1w@14:8=typeof(value) iw@14:22=pick_twice p@14:27=( iP1@14:28=auto iw@14:33=value p@14:38=) pw@14:40={ iw@15:5=return B@15:12=pick::larger p@15:18=( i@15:19=value p@15:24=, iw@15:26=value p@15:31=) E@15:12= p@15:32=; p@16:1=}
-// smith-generic: pick zero_like pick_zero_like src/pick.smith - 1 2 5 6 | iP1w@18:8=typeof(a) iw@18:18=pick_zero_like p@18:27=( iP1@18:28=auto iw@18:33=a p@18:34=) pw@18:36={ pw@19:5=( i@19:6=void p@19:10=) i@19:11=a p@19:12=; iw@20:5=return pw@20:12=( iP1@20:13=typeof(a) p@20:22=) p@20:23={ n@20:24=0 p@20:25=} p@20:26=; p@21:1=}
+// smith-generic: pick larger pick_larger src/pick.smith -@4 1 2 8 9 | iP1w@0:8=typeof(a) iw@0:18=pick_larger p@0:24=( iP1@0:25=auto iw@0:30=a p@0:31=, iP1w@0:33=typeof(a) iw@0:43=b p@0:44=) pw@0:46={ iw@1:5=return iw@1:12=a pw@1:14=> iw@1:16=b pw@1:18=? iw@1:20=a pw@1:22=: iw@1:24=b p@1:25=; p@2:1=}
+// smith-generic: pick size_of_value pick_size_of_value src/pick.smith -@8 1 2 5 6 | ixw@0:8=__SIZE_TYPE__ iw@0:14=pick_size_of_value p@0:27=( iP1@0:28=auto iw@0:33=value p@0:38=) pw@0:40={ pw@1:5=( i@1:6=void p@1:10=) i@1:11=value p@1:16=; iw@2:5=return iw@2:12=sizeof p@2:18=( iP1@2:19=typeof(value) p@2:32=) p@2:33=; p@3:1=}
+// smith-generic: pick twice pick_twice src/pick.smith -@14 1 2 5 6 | iP1w@0:8=typeof(value) iw@0:22=pick_twice p@0:27=( iP1@0:28=auto iw@0:33=value p@0:38=) pw@0:40={ iw@1:5=return B@1:12=pick::larger p@1:18=( i@1:19=value p@1:24=, iw@1:26=value p@1:31=) E@1:12= p@1:32=; p@2:1=}
+// smith-generic: pick zero_like pick_zero_like src/pick.smith -@18 1 2 5 6 | iP1w@0:8=typeof(a) iw@0:18=pick_zero_like p@0:27=( iP1@0:28=auto iw@0:33=a p@0:34=) pw@0:36={ pw@1:5=( i@1:6=void p@1:10=) i@1:11=a p@1:12=; iw@2:5=return pw@2:12=( iP1@2:13=typeof(a) p@2:22=) p@2:23={ n@2:24=0 p@2:25=} p@2:26=; p@3:1=}
 // clang-format on
 #pragma once
 #include <stddef.h>

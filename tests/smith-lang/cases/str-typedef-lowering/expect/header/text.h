@@ -6,7 +6,7 @@
 // smith-tuples
 // smith-slices
 // smith-bodies: total first_word pop
-// smith-generic: text count_of text_count_of src/text.smith - 1 2 5 6 | ixw@26:8=__SIZE_TYPE__ iw@26:14=text_count_of p@26:22=( iP1@26:23=auto iw@26:28=x p@26:29=) pw@26:31={ X@27:5=if pw@27:18=( i@27:19=is_slice p@27:27=( iP1@27:28=typeof(x) p@27:37=) p@27:38=) iw@27:40=return iw@27:47=countof p@27:54=( i@27:55=x p@27:56=) p@27:57=; iw@28:5=return nw@28:12=0 p@28:13=; p@29:1=}
+// smith-generic: text count_of text_count_of src/text.smith -@26 1 2 5 6 | ixw@0:8=__SIZE_TYPE__ iw@0:14=text_count_of p@0:22=( iP1@0:23=auto iw@0:28=x p@0:29=) pw@0:31={ X@1:5=if pw@1:18=( i@1:19=is_slice p@1:27=( iP1@1:28=typeof(x) p@1:37=) p@1:38=) iw@1:40=return iw@1:47=countof p@1:54=( i@1:55=x p@1:56=) p@1:57=; iw@2:5=return nw@2:12=0 p@2:13=; p@3:1=}
 // clang-format on
 #pragma once
 #include <stddef.h>

@@ -3,7 +3,7 @@
 // smith-module: kind
 // smith-imports:
 // smith-names: of
-// smith-generic: kind of kind_of src/kind.smith - 1 2 5 6 | ixw@6:8=__INT32_TYPE__ iw@6:12=kind_of p@6:14=( iP1@6:15=auto iw@6:20=value p@6:25=) pw@6:27={ pw@7:5=( i@7:6=void p@7:10=) i@7:11=value p@7:16=; X@8:5=if pw@8:18=( iP1@8:19=typeof(value) pw@8:33=== ixw@8:39=V2 p@8:41=) pw@8:43={ iw@9:9=return nw@9:16=2 p@9:17=; pw@10:5=} iw@10:7=else X@10:12=if pw@10:25=( iP1@10:26=typeof(value) pw@10:40=== ixw@10:46=F4 p@10:48=) pw@10:50={ iw@11:9=return nw@11:16=4 p@11:17=; pw@12:5=} iw@12:7=else X@12:12=if pw@12:25=( iP1@12:26=typeof(value) pw@12:40=== iw@12:43=const ixw@12:52=V2 pw@12:55=* p@12:56=) pw@12:58={ iw@13:9=return nw@13:16=20 p@13:18=; pw@14:5=} iw@14:7=else pw@14:12={ iw@15:9=return nw@15:16=0 p@15:17=; pw@16:5=} p@17:1=}
+// smith-generic: kind of kind_of src/kind.smith -@6 1 2 5 6 | ixw@0:8=__INT32_TYPE__ iw@0:12=kind_of p@0:14=( iP1@0:15=auto iw@0:20=value p@0:25=) pw@0:27={ pw@1:5=( i@1:6=void p@1:10=) i@1:11=value p@1:16=; X@2:5=if pw@2:18=( iP1@2:19=typeof(value) pw@2:33=== ixw@2:39=V2 p@2:41=) pw@2:43={ iw@3:9=return nw@3:16=2 p@3:17=; pw@4:5=} iw@4:7=else X@4:12=if pw@4:25=( iP1@4:26=typeof(value) pw@4:40=== ixw@4:46=F4 p@4:48=) pw@4:50={ iw@5:9=return nw@5:16=4 p@5:17=; pw@6:5=} iw@6:7=else X@6:12=if pw@6:25=( iP1@6:26=typeof(value) pw@6:40=== iw@6:43=const ixw@6:52=V2 pw@6:55=* p@6:56=) pw@6:58={ iw@7:9=return nw@7:16=20 p@7:18=; pw@8:5=} iw@8:7=else pw@8:12={ iw@9:9=return nw@9:16=0 p@9:17=; pw@10:5=} p@11:1=}
 // clang-format on
 #pragma once
 #include <stddef.h>

@@ -3,7 +3,7 @@
 // smith-module: size
 // smith-imports:
 // smith-names: bytes_of
-// smith-generic: size bytes_of size_bytes_of src/size.smith - 1 2 8 9 | ixw@4:8=__UINT32_TYPE__ iw@4:12=size_bytes_of p@4:20=( iP1@4:21=auto iw@4:26=x p@4:27=, iP1w@4:29=typeof(x) iw@4:39=y p@4:40=) pw@4:42={ pw@5:5=( i@5:6=void p@5:10=) i@5:11=y p@5:12=; iw@6:5=return pw@6:12=( ix@6:13=__UINT32_TYPE__ p@6:16=) i@6:17=sizeof p@6:23=( i@6:24=x p@6:25=) pw@6:27=+ pw@6:29=( ix@6:30=__UINT32_TYPE__ p@6:33=) i@6:34=sizeof iw@6:41=y p@6:42=; p@7:1=}
+// smith-generic: size bytes_of size_bytes_of src/size.smith -@4 1 2 8 9 | ixw@0:8=__UINT32_TYPE__ iw@0:12=size_bytes_of p@0:20=( iP1@0:21=auto iw@0:26=x p@0:27=, iP1w@0:29=typeof(x) iw@0:39=y p@0:40=) pw@0:42={ pw@1:5=( i@1:6=void p@1:10=) i@1:11=y p@1:12=; iw@2:5=return pw@2:12=( ix@2:13=__UINT32_TYPE__ p@2:16=) i@2:17=sizeof p@2:23=( i@2:24=x p@2:25=) pw@2:27=+ pw@2:29=( ix@2:30=__UINT32_TYPE__ p@2:33=) i@2:34=sizeof iw@2:41=y p@2:42=; p@3:1=}
 // clang-format on
 #pragma once
 #include <stddef.h>

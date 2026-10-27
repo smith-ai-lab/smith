@@ -298,3 +298,40 @@ export void test_more_modules_than_the_limit_is_an_error_that_names_it(io::Io *i
     scratch::expect_failure("deep: more modules than the limit fails", &run);
     scratch::expect_contains("deep: and the error names the limit", run.err, "smith_raw_modules_max");
 }
+
+// 4. The lines of a generic's record are relative to its first line (knowledge/smith-module-headers.md).
+
+static const char *generic_source =
+    "module g::gen;\n\nexport T twice(constexpr type T, T x) {\n    T y = x + x;\n    return y + \"oops\";\n}\n";
+
+// Adding lines above a generic changes no byte of its header but the one stored first line.
+export void test_lines_added_above_a_generic_change_only_its_stored_first_line(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Run made = scratch::sh(&p, "mkdir g");
+    scratch::expect_status("the folder is made", 0, &made);
+    scratch::write(&p, "g/gen.smith", generic_source);
+    scratch::Run first = scratch::sh(&p, "smith cc --smith-header g/gen.smith -o first.h");
+    scratch::expect_status("the first header is written", 0, &first);
+    scratch::write(&p, "g/gen.smith", format::push(&io->arena, "// one\n// two\n// three\n\n", generic_source).data);
+    scratch::Run second = scratch::sh(&p, "smith cc --smith-header g/gen.smith -o second.h");
+    scratch::expect_status("the second header is written", 0, &second);
+    scratch::expect_text("one line differs", "1", scratch::capture(&p, "diff first.h second.h | grep -c '^<'"));
+    scratch::expect_text("the differing line is the record, with its first line stored",
+                         "// smith-generic: g::gen twice g_gen_twice g/gen.smith -@7 1 2 9 10 |",
+                         scratch::capture(&p, "grep -o '^// smith-generic: [^|]*|' second.h"));
+}
+
+// An error in a generic's body still points at its line of the source, whatever the lines above it.
+export void test_an_error_in_a_generic_body_points_at_its_line(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Run made = scratch::sh(&p, "mkdir g");
+    scratch::expect_status("the folder is made", 0, &made);
+    scratch::write(&p, "g/gen.smith", format::push(&io->arena, "// one\n// two\n// three\n\n", generic_source).data);
+    scratch::write(&p, "u.smith", "import g::gen;\ni32 main(void) { return gen::twice(i32, 1); }\n");
+    scratch::Run header =
+        scratch::sh(&p, "mkdir -p include/g && smith cc --smith-header g/gen.smith -o include/g/gen.h");
+    scratch::expect_status("the header is written", 0, &header);
+    const char *text = scratch::capture(&p, "smith cc -fsyntax-only -I include u.smith 2>&1");
+    scratch::expect_contains("the error is at line 9", text, "g/gen.smith:9:12: error:");
+    scratch::expect_contains("the request is at line 2", text, "u.smith:2:30: note: in instance g::gen::twice(i32)");
+}

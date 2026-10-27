@@ -43,6 +43,7 @@ Point *p = arena::push(&a, Point);                  // the type is the argument 
   (`[[clang::unavailable]] void arena_push(void);`), and the module's header carries the record of the generic in a
   `// smith-generic:` comment line, which an importer reads (so a header on the include path, as `smith build` writes,
   or the module's source read in memory, both work).
+  Each token is `@line:column=text` with the line relative to the generic's first line, which is stored once in the kind word (`-@399`, `i@399`, ...), so an edit above a generic changes only that number and the header's other bytes stay (issue #466); a diagnostic's line is the sum.
 - **A call** passes every parameter the function declares: a `constexpr type` parameter takes the type where it stands
   (`arena::push(&a, Point)`, `list::make_two(arena, i32)`), and leaving it out is the error ``"`push` is called without
   its type `T`; pass the type: arena::push(&a, T)"``. A call is read whole, so it may be an argument of another call,

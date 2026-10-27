@@ -7,7 +7,7 @@
 // smith-slices
 // smith-enums
 // smith-bodies: run
-// smith-generic: docs show docs_show src/docs.smith - 1 2 6 7 | iw@30:8=void iw@30:13=docs_show p@30:17=( i@30:18=constexpr iw@30:28=type iP1w@30:33=T p@30:34=) pw@30:36={ ixw@31:8=printf p@31:14=( s@31:15="[%25s]\n" p@31:23=, iw@31:25=doc p@31:28=( iP1@31:29=T p@31:30=) p@31:31=) p@31:32=; Y@32:5=for pw@32:19=( ix@32:20=__SIZE_TYPE__ iw@32:26=i pw@32:28== nw@32:30=0 p@32:31=; iw@32:33=i pw@32:35=< iw@32:37=countof p@32:44=( i@32:45=fields p@32:51=( iP1@32:52=T p@32:53=) p@32:54=) p@32:55=; iw@32:57=i p@32:58=++ p@32:60=) pw@32:62={ ixw@33:12=printf p@33:18=( s@33:19="%25s:%20[%25s]\n" p@33:31=, iw@33:33=fields p@33:39=( iP1@33:40=T p@33:41=) p@33:42=[ i@33:43=i p@33:44=] p@33:45=. i@33:46=name p@33:50=, iw@33:52=fields p@33:58=( iP1@33:59=T p@33:60=) p@33:61=[ i@33:62=i p@33:63=] p@33:64=. i@33:65=doc p@33:68=) p@33:69=; pw@34:5=} p@35:1=}
+// smith-generic: docs show docs_show src/docs.smith -@30 1 2 6 7 | iw@0:8=void iw@0:13=docs_show p@0:17=( i@0:18=constexpr iw@0:28=type iP1w@0:33=T p@0:34=) pw@0:36={ ixw@1:8=printf p@1:14=( s@1:15="[%25s]\n" p@1:23=, iw@1:25=doc p@1:28=( iP1@1:29=T p@1:30=) p@1:31=) p@1:32=; Y@2:5=for pw@2:19=( ix@2:20=__SIZE_TYPE__ iw@2:26=i pw@2:28== nw@2:30=0 p@2:31=; iw@2:33=i pw@2:35=< iw@2:37=countof p@2:44=( i@2:45=fields p@2:51=( iP1@2:52=T p@2:53=) p@2:54=) p@2:55=; iw@2:57=i p@2:58=++ p@2:60=) pw@2:62={ ixw@3:12=printf p@3:18=( s@3:19="%25s:%20[%25s]\n" p@3:31=, iw@3:33=fields p@3:39=( iP1@3:40=T p@3:41=) p@3:42=[ i@3:43=i p@3:44=] p@3:45=. i@3:46=name p@3:50=, iw@3:52=fields p@3:58=( iP1@3:59=T p@3:60=) p@3:61=[ i@3:62=i p@3:63=] p@3:64=. i@3:65=doc p@3:68=) p@3:69=; pw@4:5=} p@5:1=}
 // clang-format on
 #pragma once
 #include <stddef.h>

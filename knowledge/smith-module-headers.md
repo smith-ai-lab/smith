@@ -89,7 +89,7 @@ What the header keeps of the source (written by the plain lexer, `runtime/lang_t
   when there is none) and gives those functions and variables the symbol `_m::helper` instead of `static` (and drops
   `inline`); every other private name stays `static`. An importer's `m::helper` is an error (``is private to its module
   ... export it``), since it is in `// smith-hidden:`. A private generic that an exported one calls has its record in
-  the header too, marked private in its `// smith-generic:` line (`p`, `q` if inline); an importer cannot call it, and
+  the header too, marked private in its `// smith-generic:` line (`p`, `q` if inline); the lines of a generic's tokens are relative to its first line, stored once after the kind letter (`p@399`); an importer cannot call it, and
   nothing else of it is written. An exported declaration may still not name a private type, and a private constant its
   array bound or initializer needs must be exported.
 - An interface read in memory (`import foo` with no header) keeps the conditionals on the module's own lines, and no

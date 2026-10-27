@@ -4,7 +4,7 @@
 // smith-imports:
 // smith-names: arch_name opaque nested describe
 // smith-bodies: arch_name opaque nested
-// smith-generic: kind describe kind_describe src/kind.smith - 1 2 9 10 | ixw@58:8=__INT32_TYPE__ iw@58:12=kind_describe p@58:20=( i@58:21=constexpr iw@58:31=type iP1w@58:36=T p@58:37=, iP1w@58:39=T iw@58:41=value p@58:46=) pw@58:48={ pw@59:5=( i@59:6=void p@59:10=) i@59:11=value p@59:16=; X@60:5=if pw@60:18=( iP1@60:19=T pw@60:21=== ixw@60:24=float p@60:27=) pw@60:29={ iw@61:9=return nw@61:16=1 p@61:17=; pw@62:5=} iw@62:7=else X@62:12=if pw@62:25=( i@62:26=sizeof p@62:32=( iP1@62:33=T p@62:34=) pw@62:36=== nw@62:39=8 p@62:40=) pw@62:42={ iw@63:9=return nw@63:16=2 p@63:17=; pw@64:5=} iw@64:7=else pw@64:12={ iw@65:9=return nw@65:16=3 p@65:17=; pw@66:5=} p@67:1=}
+// smith-generic: kind describe kind_describe src/kind.smith -@58 1 2 9 10 | ixw@0:8=__INT32_TYPE__ iw@0:12=kind_describe p@0:20=( i@0:21=constexpr iw@0:31=type iP1w@0:36=T p@0:37=, iP1w@0:39=T iw@0:41=value p@0:46=) pw@0:48={ pw@1:5=( i@1:6=void p@1:10=) i@1:11=value p@1:16=; X@2:5=if pw@2:18=( iP1@2:19=T pw@2:21=== ixw@2:24=float p@2:27=) pw@2:29={ iw@3:9=return nw@3:16=1 p@3:17=; pw@4:5=} iw@4:7=else X@4:12=if pw@4:25=( i@4:26=sizeof p@4:32=( iP1@4:33=T p@4:34=) pw@4:36=== nw@4:39=8 p@4:40=) pw@4:42={ iw@5:9=return nw@5:16=2 p@5:17=; pw@6:5=} iw@6:7=else pw@6:12={ iw@7:9=return nw@7:16=3 p@7:17=; pw@8:5=} p@9:1=}
 // clang-format on
 #pragma once
 #include <stddef.h>
