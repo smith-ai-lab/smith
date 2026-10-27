@@ -256,7 +256,8 @@ static SmithStep build_header_step(SmithBuild *b, const BuildConfig *config, con
     return (SmithStep){
         .command = smith_list(b, "sh", "-c",
                               smith_fmt(b,
-                                        "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && status=0 && "
+                                        "dir=${TMPDIR:-/tmp}/smith-headers-$$.noindex && mkdir \"$dir\" && trap 'rm "
+                                        "-rf \"$dir\"' EXIT && status=0 && "
                                         "for name in %s; do "
                                         "\"$0\" cc --smith-header lib/smith/$name.smith -o \"$dir/$name.h\" || exit 1; "
                                         "\"$0\" fmt --style=file:.clang-format -i \"$dir/$name.h\" || exit 1; "
@@ -949,7 +950,8 @@ static const char *const *build_test(SmithBuild *b, const BuildConfig *config, c
     SmithStep exhaustive = {
         .command =
             (const char *[]){"sh", "-c",
-                             "work=$(mktemp -d); trap 'rm -rf \"$work\"' EXIT; export XDG_CACHE_HOME=$work/xdg-cache; "
+                             "work=${TMPDIR:-/tmp}/smith-text-$$.noindex; mkdir \"$work\"; trap 'rm -rf \"$work\"' "
+                             "EXIT; export XDG_CACHE_HOME=$work/xdg-cache; "
                              "\"$0\" cc -std=gnu23 -O2 -Wall -Wextra -Werror -I include tests/text_exhaustive.c "
                              "lib/smith/text.smith -pthread -o \"$work/exhaustive\" || exit 1; start=$(date +%s); "
                              "\"$work/exhaustive\"; status=$?; "
@@ -1220,8 +1222,8 @@ static int build_ninja_bootstrap(SmithBuild *b, const char *src, const char *pyt
 static int build_ninja_make(SmithRun *run, const char *src, const char *python, const char *out) {
     if (access(out, X_OK) == 0) return 0;
     char work[1024];
-    snprintf(work, sizeof work, "%s/ninja.XXXXXX", smith_env(run->b, "TMPDIR", "/tmp"));
-    if (mkdtemp(work) == nullptr) return 1;
+    snprintf(work, sizeof work, "%s/ninja-%d.noindex", smith_env(run->b, "TMPDIR", "/tmp"), (int)getpid());
+    if (mkdir(work, 0700) != 0) return 1;
     int status = build_ninja_bootstrap(run->b, src, python, work, out);
     build_remove(run->b, work);
     return status;
@@ -1940,8 +1942,9 @@ static int build_gate_commit(const char *dir, const char *path, const char *subj
 // makes it pass, a base that cannot be resolved passes.
 static int build_docs_gate_test(SmithRun *run) {
     char dir[PATH_MAX];
-    snprintf(dir, sizeof dir, "%s/smith-gate-XXXXXX", getenv("TMPDIR") != nullptr ? getenv("TMPDIR") : "/tmp");
-    if (mkdtemp(dir) == nullptr) return 1;
+    snprintf(dir, sizeof dir, "%s/smith-gate-%d.noindex", getenv("TMPDIR") != nullptr ? getenv("TMPDIR") : "/tmp",
+             (int)getpid());
+    if (mkdir(dir, 0700) != 0) return 1;
     int status = build_gate_scratch(dir, (const char *[]){"init", "-q", "-b", "main", nullptr});
     status = status != 0 ? status : build_gate_commit(dir, "a.txt", "chore: start");
     status = status != 0 ? status : build_gate_scratch(dir, (const char *[]){"checkout", "-q", "-b", "work", nullptr});

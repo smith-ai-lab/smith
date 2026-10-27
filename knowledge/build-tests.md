@@ -90,7 +90,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
 - **A test that takes `SmithIo *io`** is run with a real io the runner makes for that test alone, in the worker: its key
   and `seed` come from the run's seed (`--seed N` replays it; without `--seed` the seed is the runner's own, printed by
   a failure as `with seed N` and `rerun: smith test --test name --seed N`), its arena is fresh, and it has a scratch
-  folder of its own, `test::scratch(io)` (`smith_test_scratch` in C), named by the runner's pid and the test's row under
+  folder of its own, `test::scratch(io)` (`smith_test_scratch` in C), named `smith-test-<pid>-<row>.noindex` (Spotlight skips `.noindex`) by the runner's pid and the test's row under
   `$TMPDIR` (else `/tmp`) and also set as `$TMPDIR` and `$SMITH_TEST_SCRATCH` while the test runs. The runner removes
   the folder (with `rm -rf`, through its io's `processes`) when the test passed and keeps it, printing
   `scratch folder (kept): <path>` under the failure, when it failed. The working directory stays the project root, so

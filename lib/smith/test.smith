@@ -1811,17 +1811,19 @@ void run_key(const Test *test, const Options *options, u64 seed) {
 constexpr usize scratch_tries = 1000; // the names tried for a scratch folder
 
 // The scratch folder of an io test: made under the runner's temporary folder, named by the runner's pid and the test's
-// row, and made $TMPDIR and $SMITH_TEST_SCRATCH while the test runs. A folder already there under that name is a run
-// before's (a failed test keeps its folder, and a pid comes round again), so it is never reused: the name gets a
-// suffix until it is a folder nothing is in. Its path goes to the shared block, where the runner finds it after the
-// test: removed when the test passed, kept and printed when it failed.
+// row (`smith-test-<pid>-<row>.noindex`), and made $TMPDIR and $SMITH_TEST_SCRATCH while the test runs. A folder
+// already there under that name is a run before's (a failed test keeps its folder, and a pid comes round again), so it
+// is never reused: the name gets a suffix before `.noindex` until it is a folder nothing is in. Its path goes to the
+// shared block, where the runner finds it after the test: removed when the test passed, kept and printed when it
+// failed.
 void make_scratch(const Test *test, const Options *options, io::Io *io) {
-    __builtin_snprintf(shared->scratch, path_capacity, "%s/smith-test-%d-%zu", options->scratch_base,
+    // `.noindex` keeps Spotlight (mds) from indexing the many files a test makes and removes.
+    __builtin_snprintf(shared->scratch, path_capacity, "%s/smith-test-%d-%zu.noindex", options->scratch_base,
                        options->runner_pid, (usize)(test - table));
-    usize base_length = c::strlen(shared->scratch);
     for (usize attempt = 1; attempt < scratch_tries && io::files_info(&io->files, shared->scratch).error.code == 0;
          attempt++) {
-        __builtin_snprintf(shared->scratch + base_length, path_capacity - base_length, "-%zu", attempt);
+        __builtin_snprintf(shared->scratch, path_capacity, "%s/smith-test-%d-%zu-%zu.noindex", options->scratch_base,
+                           options->runner_pid, (usize)(test - table), attempt);
     }
     io::Error made = io::files_make_folder(&io->files, shared->scratch);
     if (made.code != 0) {
