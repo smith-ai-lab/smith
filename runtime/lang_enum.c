@@ -2413,7 +2413,7 @@ static void smith_lang_enum_untyped(SmithLang *lang, const SmithHost *host, cons
     SmithToken before = {};
     bool postfix = smith_lang_tuple_previous(lang, host, 1, &before) &&
                    ((before.kind == SmithTokenKind_Identifier && !smith_lang_slice_statement_word(&before)) ||
-                    smith_lang_punct(&before, ")") || smith_lang_punct(&before, "]"));
+                    smith_lang_punct(&before, ")") || smith_lang_punct(&before, "]") || smith_lang_punct(&before, "}"));
     if (name->kind != SmithTokenKind_Identifier || smith_lang_punct(after, "=") || smith_lang_punct(after, ".") ||
         smith_lang_punct(after, "[") || postfix) {
         return;
