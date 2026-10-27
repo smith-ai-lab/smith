@@ -638,7 +638,7 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
     SmithObject commit = build_commit_object(b, config, folder);
     BuildShims shims = {};
     SmithObject libraries[sizeof build_linked_libraries / sizeof build_linked_libraries[0]] = {};
-    const SmithObject *objects[32] = {&object, &commit};
+    const SmithObject *objects[40] = {&object, &commit};
     size_t count = 2;
     for (size_t i = 0; i < sizeof libraries / sizeof libraries[0]; i++) {
         libraries[i] = (SmithObject){
