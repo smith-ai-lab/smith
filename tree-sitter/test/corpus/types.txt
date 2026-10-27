@@ -726,3 +726,35 @@ void bump(integer *p, floating m[:][:], arithmetic a[4]);
           (array_declarator
             (identifier)
             (number_literal)))))))
+================================================================================
+type values written as full C types
+================================================================================
+
+constexpr type Handler = Response (*)(Request *);
+constexpr type Block = u8[16];
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (declaration
+    (type_qualifier)
+    (type_identifier)
+    (init_declarator
+      (identifier)
+      (type_descriptor
+        (type_identifier)
+        (abstract_function_declarator
+          (abstract_parenthesized_declarator
+            (abstract_pointer_declarator))
+          (parameter_list
+            (parameter_declaration
+              (type_identifier)
+              (abstract_pointer_declarator)))))))
+  (declaration
+    (type_qualifier)
+    (type_identifier)
+    (init_declarator
+      (identifier)
+      (subscript_expression
+        (identifier)
+        (number_literal)))))

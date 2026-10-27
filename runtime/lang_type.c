@@ -696,6 +696,33 @@ static size_t smith_lang_ty_array_suffix(SmithLang *lang, const SmithHost *host,
     return added;
 }
 
+// The pointer declarator that C's abstract declarator puts after a type, `(*)(Request *)` (a function pointer) or
+// `(*)[16]` (a pointer to an array), after the type of `length` tokens that begin with the token being lowered: the
+// tokens it adds, 0 when none follows.
+static size_t smith_lang_ty_pointer_suffix(SmithLang *lang, const SmithHost *host, size_t length) {
+    size_t at = length - 1; // the queue index of the token after the type
+    if (!smith_lang_punct(smith_lang_peek(lang, host, at, false), "(")) return 0;
+    size_t stars = 0;
+    while (smith_lang_punct(smith_lang_peek(lang, host, at + 1 + stars, false), "*"))
+        stars += 1;
+    if (stars == 0 || !smith_lang_punct(smith_lang_peek(lang, host, at + 1 + stars, false), ")")) return 0;
+    size_t end = at + 2 + stars; // after `(*)`
+    const SmithToken *next = smith_lang_peek(lang, host, end, false);
+    if (smith_lang_punct(next, "[")) { // a pointer to an array: `[16]`
+        size_t added = smith_lang_ty_array_suffix(lang, host, end + 1);
+        return added == 0 ? 0 : end + added - at;
+    }
+    if (!smith_lang_punct(next, "(")) return 0;
+    int depth = 0;
+    for (size_t k = end; k < smith_lang_ty_typeof_max; k++) { // the parameters
+        const SmithToken *token = smith_lang_peek(lang, host, k, false);
+        if (token->kind == SmithTokenKind_Eof) return 0;
+        depth += smith_lang_punct(token, "(") ? 1 : smith_lang_punct(token, ")") ? -1 : 0;
+        if (depth == 0) return k + 1 - at;
+    }
+    return 0;
+}
+
 static size_t smith_lang_ty_run(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     size_t typeof_length = smith_lang_ty_typeof_run(lang, host, token);
     if (typeof_length != 0) return typeof_length;
@@ -724,6 +751,7 @@ static size_t smith_lang_ty_run(SmithLang *lang, const SmithHost *host, const Sm
         }
         if (!part) break;
     }
+    length += smith_lang_ty_pointer_suffix(lang, host, length);
     return length + smith_lang_ty_array_suffix(lang, host, length);
 }
 
@@ -894,8 +922,8 @@ static size_t smith_lang_ty_spelling_tokens(const char *spelling, const SmithTok
             continue;
         }
         size_t end = at + 1;
-        if (spelling[at] != '*') {
-            while (spelling[end] != 0 && spelling[end] != ' ' && spelling[end] != '*')
+        if (strchr("*[]()", spelling[at]) == nullptr) {
+            while (spelling[end] != 0 && spelling[end] != ' ' && strchr("*[]()", spelling[end]) == nullptr)
                 end += 1;
         }
         char piece[smith_lang_ty_spelling_max];
@@ -906,9 +934,7 @@ static size_t smith_lang_ty_spelling_tokens(const char *spelling, const SmithTok
                 break;
             }
         }
-        out[count++] =
-            smith_lang_tuple_made(spelling[at] == '*' ? SmithTokenKind_Punctuator : SmithTokenKind_Identifier, piece,
-                                  strlen(piece), like, space);
+        out[count++] = smith_lang_tuple_made(smith_lang_ty_piece_kind(piece), piece, strlen(piece), like, space);
         space = true;
         at = end;
     }
@@ -1045,12 +1071,25 @@ static bool smith_lang_ty_pointee(SmithLang *lang, const SmithHost *host, const 
 
 // The tokens of the type a handle names, written where a type is: the spelling's, or for a slice its struct (defined
 // there when no earlier declaration at file scope has, as `T xs[:]` does).
+// The tokens that name a type where a declaration begins. An array or function pointer type cannot stand before the
+// name it declares, so it is C23's `typeof(...)`, which can: `typeof(u8[16]) b;`.
+static size_t smith_lang_ty_declared_tokens(const char *base, const SmithToken *like, SmithToken *out,
+                                            size_t capacity) {
+    if (strpbrk(base, "[(") == nullptr) return smith_lang_ty_spelling_tokens(base, like, out, capacity);
+    if (capacity < smith_lang_ty_spelling_max / 2) return 0;
+    out[0] = smith_lang_tuple_made(SmithTokenKind_Identifier, "typeof", 6, like, like->space_before);
+    out[1] = smith_lang_tuple_made(SmithTokenKind_Punctuator, "(", 1, like, false);
+    size_t count = smith_lang_ty_spelling_tokens(base, like, out + 2, capacity - 3);
+    out[2 + count] = smith_lang_tuple_made(SmithTokenKind_Punctuator, ")", 1, like, false);
+    return count + 3;
+}
+
 static size_t smith_lang_ty_type_tokens(SmithLang *lang, uint64_t handle, const SmithToken *like, SmithToken *out,
                                         size_t capacity, bool bare) {
     unsigned depth = 0;
     const char *base = smith_lang_ty_split(handle, &depth);
     if (base == nullptr) return 0;
-    if (depth == 0) return smith_lang_ty_spelling_tokens(base, like, out, capacity);
+    if (depth == 0) return smith_lang_ty_declared_tokens(base, like, out, capacity);
     static SmithToken elem[48];
     char tag[smith_lang_ty_spelling_max - 8];
     size_t count = 0;

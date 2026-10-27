@@ -90,6 +90,9 @@ module.exports = grammar(C, {
     init_declarator: ($, original) =>
       choice(original,
         seq(field('declarator', $._declarator), '=', field('value', $.try_expression)),
+        // constexpr type Handler = Response (*)(Request *);  and  constexpr type Block = u8[16];  (a type value
+        // written as a full C type, in the abstract-declarator form of a cast)
+        seq(field('declarator', $._declarator), '=', field('value', prec.dynamic(-3, $.type_descriptor))),
         // register long a0 asm("x0") = fd; (a GNU asm label before the initializer)
         seq(field('declarator', $._declarator), $.gnu_asm_expression, '=',
           field('value', choice($.initializer_list, $.expression, $.try_expression)))),
