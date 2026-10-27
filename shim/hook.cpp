@@ -3420,7 +3420,7 @@ class SmithHook final : public TokenHook, public NameSource {
         bool reads = llvm::sys::ExecuteAndWait(self, args, env, redirects) == 0;
         std::error_code removed = llvm::sys::fs::remove(source);
         (void)removed;
-        llvm::raw_fd_ostream(folder + (reads ? "/c.yes" : "/c.no"), removed);
+        llvm::raw_fd_ostream answer(folder + (reads ? "/c.yes" : "/c.no"), removed);
         return reads;
     }
 
