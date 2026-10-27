@@ -1369,6 +1369,7 @@ class SmithHook final : public TokenHook, public NameSource {
     void flush() {
         closeTokens();
         relocate();
+        checkIncludeChains();
         for (size_t i = actions.size(); i > 0; i--) {
             Action &action = actions[i - 1];
             if (action.include) {
@@ -1457,13 +1458,14 @@ class SmithHook final : public TokenHook, public NameSource {
         FileID id;
         for (auto &[name, entry] : interfaces) {
             if (entry.ok && entry.source == path) {
-                id = SM.createFileID(llvm::MemoryBuffer::getMemBufferCopy(entry.content, path), SrcMgr::C_User);
+                id = SM.createFileID(llvm::MemoryBuffer::getMemBufferCopy(entry.content, path), SrcMgr::C_User, 0, 0,
+                                     SM.getLocForStartOfFile(MainFile));
                 break;
             }
         }
         if (id.isInvalid()) {
             if (auto file = PP.getFileManager().getFileRef(path)) {
-                id = SM.getOrCreateFileID(*file, SrcMgr::C_User);
+                id = SM.createFileID(*file, SM.getLocForStartOfFile(MainFile), SrcMgr::C_User);
             } else {
                 llvm::consumeError(file.takeError());
             }
@@ -1513,7 +1515,7 @@ class SmithHook final : public TokenHook, public NameSource {
             StringRef data = SM.getBufferData(source);
             FileID file = SM.createFileID(
                 llvm::MemoryBuffer::getMemBuffer(data, SM.getBufferName(SM.getLocForStartOfFile(source)), false),
-                SrcMgr::C_User);
+                SrcMgr::C_User, 0, 0, SM.getLocForStartOfFile(MainFile));
             SourceLocation start = SM.getLocForStartOfFile(file);
             unsigned fallback = SM.getFileOffset(definition);
             for (Token *token : tokens) {
@@ -1521,10 +1523,75 @@ class SmithHook final : public TokenHook, public NameSource {
                 bool inSource = origin.isFileID() && SM.getFileID(origin) == source;
                 token->setLocation(
                     start.getLocWithOffset(static_cast<int>(inSource ? SM.getFileOffset(origin) : fallback)));
+                checkLocation(*token, "an instance of a generic", id);
             }
             instanceFiles[file.getHashValue()] = id;
             instanceSources[file.getHashValue()] = source;
         }
+    }
+
+    // A location the hook made must reach a file location through its expansions in a few steps, and that file
+    // location is in a file of the source manager. A tool that walks a chain (coverage, clangd's token buffer, the
+    // debug info) loops or crashes on one that does not (#523, #531), and says nothing of which token it was, so the
+    // hook is the first to find it. On in every build: the walk is a few steps per lowered token.
+    void checkLocation(const Token &token, const char *what, size_t step) {
+        SourceLocation at = token.getLocation();
+        bool ok = at.isValid();
+        for (int depth = 0; ok && !at.isFileID(); depth++) {
+            at = SM.getImmediateExpansionRange(at).getBegin();
+            ok = depth < 16 && at.isValid();
+        }
+        ok = ok && SM.getFileID(at).isValid() && SM.getFileOffset(at) <= SM.getBufferData(SM.getFileID(at)).size();
+        if (ok) return;
+        std::string spelled = token.isLiteral() ? std::string("a literal") : PP.getSpelling(token);
+        fprintf(stderr,
+                "smith: assertion failed: a location the token hook made does not reach a file (token '%s', %s, "
+                "lowering step %zu)\n",
+                spelled.c_str(), what, step);
+        fflush(stderr);
+        abort();
+    }
+
+    // Every file the hook made (its buffers: the import's, the copies of a generic) has an include chain that ends at
+    // a file with no includer in a few steps: the coverage mapping loops for ever on one that comes back to itself.
+    unsigned checkedEntries = 0;
+    void checkIncludeChains() {
+        unsigned count = SM.local_sloc_entry_size();
+        for (unsigned index = checkedEntries; index < count; index++) {
+            bool invalid = false;
+            const SrcMgr::SLocEntry &entry = SM.getLocalSLocEntry(index);
+            if (!entry.isFile()) continue;
+            FileID id = SM.getFileID(SourceLocation::getFromRawEncoding(entry.getOffset()));
+            // A file with no includer is the main file, one of the compiler's own buffers, or the text a macro
+            // expansion of the hook's is spelled in (a copy, the types). Any other is one the hook made with nowhere to
+            // be reached from: a walk up from a token in it ends at an invalid place, and the coverage mapping loops
+            // there for ever (#531).
+            StringRef name = SM.getBufferName(SM.getLocForStartOfFile(id));
+            if (entry.getFile().getIncludeLoc().isInvalid() && id != MainFile && !SM.getFileEntryRefForID(id) &&
+                !name.starts_with("<built-in>") && !name.starts_with("<command line>") &&
+                !name.starts_with("<scratch space>") && !name.starts_with("<smith-copy") && name != "<smith-types>" &&
+                name != "<smith>" && index != 0) {
+                fprintf(stderr, "smith: assertion failed: the hook made the file '%s' with no includer (file %u)\n",
+                        name.str().c_str(), index);
+                fflush(stderr);
+                abort();
+            }
+            SourceLocation up = entry.getFile().getIncludeLoc();
+            int depth = 0;
+            while (up.isValid() && depth < 64) {
+                up = SM.getIncludeLoc(SM.getFileID(up));
+                depth += 1;
+            }
+            if (up.isValid() || invalid) {
+                fprintf(stderr,
+                        "smith: assertion failed: the include chain of '%s' does not end (file %u of the source "
+                        "manager)\n",
+                        SM.getBufferName(SM.getLocForStartOfFile(id)).str().c_str(), index);
+                fflush(stderr);
+                abort();
+            }
+        }
+        checkedEntries = count;
     }
 
     void relocate() {
@@ -1561,6 +1628,8 @@ class SmithHook final : public TokenHook, public NameSource {
         for (auto &[token, offset, origin] : spots) {
             list.emplace_back(offset, origin);
             token->setLocation(start.getLocWithOffset(static_cast<int>(offset)));
+            if (getenv("SMITH_LANG_BREAK_LOCATIONS") != nullptr) token->setLocation(SourceLocation());
+            checkLocation(*token, "a copy of the source", 0);
         }
     }
 
@@ -3137,15 +3206,20 @@ class SmithHook final : public TokenHook, public NameSource {
         return true;
     }
 
-    FileID typesFile;
-    // A place that is no file of the program: the start of a buffer of its own (issue #107).
+    SourceLocation typesLoc;
+    // A place that is no file of the program: the start of a buffer of its own (issue #107). It is the expansion of
+    // the start of the main file, so that a walk up from it (the coverage mapping's, for a function whose head the
+    // lowering wrote there) reaches the program's file and ends (#531).
     static uint32_t typesPlace(void *context) {
         auto *self = static_cast<SmithHook *>(context);
-        if (!self->typesFile.isValid()) {
+        if (!self->typesLoc.isValid()) {
             auto buffer = llvm::MemoryBuffer::getMemBufferCopy(" ", "<smith-types>");
-            self->typesFile = self->SM.createFileID(std::move(buffer), SrcMgr::C_User);
+            FileID file = self->SM.createFileID(std::move(buffer), SrcMgr::C_User);
+            SourceLocation top = self->SM.getLocForStartOfFile(self->MainFile);
+            self->typesLoc = self->SM.createExpansionLoc(self->SM.getLocForStartOfFile(file), top, top, 1,
+                                                         /*ExpansionIsTokenRange=*/false);
         }
-        return self->SM.getLocForStartOfFile(self->typesFile).getRawEncoding();
+        return self->typesLoc.getRawEncoding();
     }
 
     // ---- The functions of the imports that the file runs at compile time (issue #107, runtime/lang_body.c)

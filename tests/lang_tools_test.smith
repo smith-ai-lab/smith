@@ -1,0 +1,68 @@
+// The tools that walk the locations of a token (issues #523, #531, #533) on the lowering's output: the coverage mapping
+// (`-fprofile-instr-generate -fcoverage-mapping`, which looped for ever on a function whose head the lowering put in a
+// file no include chain led from), and the debug line tables (`-g`). A tool that never ends fails the test in seconds,
+// and the hook itself checks every place it makes (shim/hook.cpp, `checkLocation`, `checkIncludeChains`), so a bad one
+// is a message that names the token or the file. Each file is compiled with a limit of 40 s of wall time.
+module lang_tools_test;
+
+import smith::format;
+import smith::io;
+import smith::test;
+import scratch;
+
+// `limited seconds command...` runs the command and kills it (only it, by its pid) when the time is up: status 137.
+constexpr char prelude[_] =
+    "limited() { s=$1; shift; \"$@\" & p=$!; ( sleep $s; kill -9 $p 2>/dev/null ) >/dev/null 2>&1 & w=$!; "
+    "wait $p; r=$?; kill $w 2>/dev/null; return $r; }; "
+    "flags=\"-std=gnu23 -O1 -I $SMITH_REPO/.smith/include -I $SMITH_REPO/include\"; ";
+
+// A module that imports arena (whose type function `slice_of` the lowering defines in the importer after its last
+// import) and has more than one constant: the function is a static one nothing calls, so the coverage mapping writes
+// an empty mapping for it, and walked up from its head, which the hook had put in a buffer with no includer, for ever.
+constexpr char module_source[_] =
+    "module smith::tools;\\nimport smith::arena;\\nexport constexpr usize a = 20;\\nexport constexpr usize b = 32;\\n";
+
+export void test_coverage_of_a_module_that_imports_arena_ends(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    const char *command = format::push(&io->arena, prelude, "mkdir -p smith; printf '", module_source,
+                                       "' > smith/tools.smith; limited 40 smith cc $flags -g "
+                                       "-fprofile-instr-generate -fcoverage-mapping -c smith/tools.smith -o tools.o; "
+                                       "echo \"status=$?\"")
+                              .data;
+    scratch::Run run = scratch::sh(&p, command);
+    scratch::expect_contains("the compile ends", run.out, "status=0");
+}
+
+// Every library of smith through the coverage mapping and the debug line tables: each ends in time, and its line table
+// is the .smith file's.
+export void test_every_library_compiles_with_coverage_and_lines(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    const char *command = format::push(&io->arena, prelude,
+                                       "mkdir -p smith; bad=; for f in \"$SMITH_REPO\"/lib/smith/[a-z]*.smith; do "
+                                       "case $f in *_test.smith) continue;; esac; n=$(basename $f); "
+                                       "cp $f smith/$n; "
+                                       "limited 60 smith cc $flags -fprofile-instr-generate -fcoverage-mapping -c "
+                                       "smith/$n -o /dev/null >/dev/null 2>&1 || bad=\"$bad coverage:$n\"; "
+                                       "out=$(limited 60 smith cc $flags -g -S smith/$n -o - 2>/dev/null); "
+                                       "case $out in *.loc*) case $out in *'.file'*'.smith'*) ;; "
+                                       "*) bad=\"$bad lines:$n\";; esac;; esac; "
+                                       "done; echo \"bad=[$bad]\"")
+                              .data;
+    scratch::Run run = scratch::sh(&p, command);
+    scratch::expect_contains("every library", run.out, "bad=[]");
+}
+
+// The hook's own check: a lowering that makes a place no file can be reached from stops smith with a message that names
+// the token (SMITH_LANG_BREAK_LOCATIONS makes the lowering do it), where a tool would loop.
+export void test_a_bad_location_stops_the_hook_with_the_token(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    const char *command = format::push(&io->arena, prelude,
+                                       "mkdir -p smith; printf 'module smith::broken;\\nexport i32 f(i32 x) { return "
+                                       "x; }\\n' > smith/broken.smith; "
+                                       "SMITH_LANG_BREAK_LOCATIONS=1 limited 40 smith cc $flags -c "
+                                       "smith/broken.smith -o broken.o 2>&1 | head -3; echo done")
+                              .data;
+    scratch::Run run = scratch::sh(&p, command);
+    scratch::expect_contains("the check fired", run.out, "a location the token hook made does not reach a file");
+    scratch::expect_contains("and names the token", run.out, "token '");
+}

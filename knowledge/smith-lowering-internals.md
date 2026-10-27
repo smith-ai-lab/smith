@@ -130,3 +130,7 @@ tags: [lowering, internals]
   writer (`smith_lang_hoist_slice_structs`, runtime/lang_head.c) writes each definition once before the head and
   registers the tag, so both prototype and definition name it; the generated header keeps the definition in the
   prototype. Corpus: `slice-export-sanitize`; the template's `primes::total` runs it in debug.
+
+## Every place the hook makes leads to a file
+
+A tool that walks a location up (the coverage mapping's `getIncludeOrExpansionLoc`, clangd's token buffer, the debug info) loops for ever on a place that never reaches a file, and says nothing about which token it was (issues #523, #531). So every buffer the hook makes has an includer in the main file (a module's source read for a place, a generic's copy, `<smith-import>`), or is the text of an expansion that starts in the main file (`<smith-types>`), or is a prototype's copy (`<smith-copy-N>`), included where its first token is. The hook checks this itself (`checkIncludeChains`, after each flush) and checks that each place it gives a token reaches a file (`checkLocation`); a failure stops smith with a message naming the file or the token. `SMITH_LANG_BREAK_LOCATIONS=1` makes it fail on purpose (`tests/lang_tools_test.smith`, which also compiles the libraries with coverage and line tables). Making the copies expansions of the definition instead of included files was tried: clangd then lists each copy's declaration at the definition's place (the outline and references twice), so copies stay files.
