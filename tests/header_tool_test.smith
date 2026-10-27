@@ -4,20 +4,20 @@
 // byte for byte what `smith cc --smith-header` of the smith under test writes.
 module header_tool_test;
 
+import smith::io;
 import smith::test;
 import scratch;
 
 export void test_the_standalone_writer_builds_with_the_host_compiler(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run run =
-        scratch::sh(&p, "cc -std=gnu23 -Wall -Wextra -Werror -x c \"$SMITH_REPO/scripts/header_tool.c\" -o header_tool");
+    scratch::Run run = scratch::sh(
+        &p, "cc -std=gnu23 -Wall -Wextra -Werror -x c \"$SMITH_REPO/scripts/header_tool.c\" -o header_tool");
     scratch::expect_status("scripts/header_tool.c compiles with the host cc, with no warning", 0, &run);
 }
 
 export void test_the_standalone_writer_writes_the_bytes_smith_writes(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run built =
-        scratch::sh(&p, "cc -std=gnu23 -x c \"$SMITH_REPO/scripts/header_tool.c\" -o header_tool");
+    scratch::Run built = scratch::sh(&p, "cc -std=gnu23 -x c \"$SMITH_REPO/scripts/header_tool.c\" -o header_tool");
     scratch::expect_status("the writer is built", 0, &built);
     scratch::Run run = scratch::sh(
         &p, "mkdir tool smith && status=0 && for f in \"$SMITH_REPO\"/lib/smith/*.smith; do "

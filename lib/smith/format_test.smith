@@ -590,7 +590,8 @@ export void test_format_no_rule_error_names_the_piece(io::Io *io) {
                    "    (void)format::to(buffer, sizeof buffer, \"a\", 1, point, 2);\n"
                    "    return 0;\n"
                    "}\n");
-    scratch::Run run = scratch::sh(&p, "\"$SMITH_SELF\" cc -I \"$SMITH_REPO/.smith/include\" -fsyntax-only bad.smith 2>&1");
+    scratch::Run run =
+        scratch::sh(&p, "\"$SMITH_SELF\" cc -I \"$SMITH_REPO/.smith/include\" -fsyntax-only bad.smith 2>&1");
     scratch::expect_contains("format: a piece with no rule is an error", run.out, "static assertion failed");
     scratch::expect_contains("format: and it names the third piece", run.out,
                              "format: no rule for the type of piece 3; the note lists the types in order");

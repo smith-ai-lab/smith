@@ -72,7 +72,7 @@ static void generated(io::Io *io, const char *name) {
             "esac; done");
     scratch::expect_status("the headers are written", 0, &made);
     const char *header = format::push(&io->arena, "generated/", name, ".h").data;
-    standalone(&p, join(&p, name, ".h"), header, "-I generated");
+    standalone(&p, join(&p, name, ".h"), header, "-I generated -I \"$SMITH_REPO/include\"");
 }
 
 // 1. The headers of the libraries, which are build outputs and not in git.
@@ -89,9 +89,9 @@ export void test_every_library_module_has_a_header_test(io::Io *io) {
 // because their headers are not in git: the generated headers must say the same.
 export void test_the_shapes_the_lowering_carries_are_the_ones_the_headers_write(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run made = scratch::sh(
-        &p, "\"$SMITH_SELF\" cc --smith-header \"$SMITH_REPO/lib/smith/option.smith\" -o option.h && "
-            "\"$SMITH_SELF\" cc --smith-header \"$SMITH_REPO/lib/smith/result.smith\" -o result.h");
+    scratch::Run made =
+        scratch::sh(&p, "\"$SMITH_SELF\" cc --smith-header \"$SMITH_REPO/lib/smith/option.smith\" -o option.h && "
+                        "\"$SMITH_SELF\" cc --smith-header \"$SMITH_REPO/lib/smith/result.smith\" -o result.h");
     scratch::expect_status("the headers are written", 0, &made);
     has(&p, "option", "option.h", "// smith-eshape: option(T) { T some ; none ; }", true);
     has(&p, "result", "result.h", "// smith-eshape: result(T,E) { T ok ; E error ; }", true);

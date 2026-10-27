@@ -204,8 +204,14 @@ static void smith_flags(Args *flags) {
     static char id_flag[text_max + 32];
     snprintf(id_flag, sizeof id_flag, "-DSMITH_CLANG_ID=\"%s\"", identity);
     add_all(flags, cflags, sizeof cflags / sizeof cflags[0]);
-    static const char *const more[] = {"-I",           "include",     "-I",         ".smith/seed/include",
-                                       "-DSMITH_COMMIT_LINKED", "-DSMITH_IN_PROCESS", "-DSMITH_MCP", "-DSMITH_LLDB",
+    static const char *const more[] = {"-I",
+                                       "include",
+                                       "-I",
+                                       ".smith/seed/include",
+                                       "-DSMITH_COMMIT_LINKED",
+                                       "-DSMITH_IN_PROCESS",
+                                       "-DSMITH_MCP",
+                                       "-DSMITH_LLDB",
                                        "-DSMITH_HOOK"};
     add_all(flags, more, sizeof more / sizeof more[0]);
     add(flags, id_flag);

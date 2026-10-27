@@ -1594,9 +1594,8 @@ static bool smith_binary_identity(const char *self, char *out, size_t capacity) 
 // Starts `self cc --smith-header source -o scratch`, quietly except for its errors.
 static bool smith_header_job_start(SmithHeaderJob *job, const char *self) {
     snprintf(job->scratch, sizeof job->scratch, "%s.%d.tmp", job->header, (int)getpid());
-    char *const args[] = {(char *)self,        (char *)"cc",         (char *)"--smith-header",
-                          job->source,         (char *)"-o",         job->scratch,
-                          nullptr};
+    char *const args[] = {(char *)self, (char *)"cc", (char *)"--smith-header", job->source, (char *)"-o",
+                          job->scratch, nullptr};
     return posix_spawn(&job->pid, self, nullptr, nullptr, args, environ) == 0;
 }
 
@@ -1635,7 +1634,8 @@ static void smith_write_lang_headers(const char *self) {
     smith_header_job_add(jobs, &count, "build", ".smith/internal");
     char identity[64];
     bool named = smith_binary_identity(self, identity, sizeof identity);
-    bool current = named && smith_file_has_bytes(smith_headers_stamp, (const unsigned char *)identity, strlen(identity));
+    bool current =
+        named && smith_file_has_bytes(smith_headers_stamp, (const unsigned char *)identity, strlen(identity));
     bool good = true;
     for (size_t i = 0; i < count; i++) {
         jobs[i].pid = 0;
@@ -1645,8 +1645,10 @@ static void smith_write_lang_headers(const char *self) {
     for (size_t i = 0; i < count; i++) {
         if (jobs[i].pid != 0) good = smith_header_job_finish(&jobs[i]) && good;
     }
-    if (!good) smith_die(smith_exit_usage, "cannot write the headers of smith's libraries (smith cc --smith-header)", nullptr);
-    if (named && !current) smith_write_if_changed(smith_headers_stamp, (const unsigned char *)identity, strlen(identity));
+    if (!good)
+        smith_die(smith_exit_usage, "cannot write the headers of smith's libraries (smith cc --smith-header)", nullptr);
+    if (named && !current)
+        smith_write_if_changed(smith_headers_stamp, (const unsigned char *)identity, strlen(identity));
 }
 
 // Writes each library's header to .smith/include/smith/<name>.h and its source to .smith/lib/<name>.c, or for a .smith
