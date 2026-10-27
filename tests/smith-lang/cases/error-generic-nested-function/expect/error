@@ -1,0 +1,4 @@
+src/later.smith:14:5: `typeof(rest)` is a struct of the arguments, and there are none
+src/later.smith:5:33: function definition is not allowed here
+src/later.smith:5:9: a function defined in a generic goes in the outermost block of its body: it is written once for the instance, not where it stands
+src/later.smith:8:16: use of undeclared identifier 'helper'

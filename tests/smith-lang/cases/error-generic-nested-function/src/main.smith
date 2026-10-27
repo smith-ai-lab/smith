@@ -1,0 +1,7 @@
+module main;
+
+import later;
+
+i32 main() {
+    return later::empty() + later::inside(1);
+}

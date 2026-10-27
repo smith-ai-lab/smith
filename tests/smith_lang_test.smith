@@ -1165,6 +1165,14 @@ export void test_generic_nested(io::Io *io) {
     corpus_case(io, "generic-nested");
 }
 
+export void test_generic_nested_function(io::Io *io) {
+    corpus_case(io, "generic-nested-function");
+}
+
+export void test_error_generic_nested_function(io::Io *io) {
+    corpus_case(io, "error-generic-nested-function");
+}
+
 export void test_generic_nested_argument(io::Io *io) {
     corpus_case(io, "generic-nested-argument");
 }

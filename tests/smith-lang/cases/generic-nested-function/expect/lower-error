@@ -1,0 +1,6 @@
+src/main.smith:18:22: cannot tell what `main_show`, the argument of `defer`, is: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); the parameter `f` is `constexpr auto` and takes the name of a function
+src/main.smith:19:22: cannot tell what `main_scale`, the argument of `defer`, is: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); the parameter `f` is `constexpr auto` and takes the name of a function
+src/main.smith:20:22: cannot tell what `main_show`, the argument of `defer`, is: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); the parameter `f` is `constexpr auto` and takes the name of a function
+src/main.smith:24:103: cannot tell the type of `1`, the argument of `pair`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:24:38: in `if constexpr`: this condition has too many types, or the compiler cannot answer for them
+src/main.smith:24:71: in `if constexpr`: this condition has too many types, or the compiler cannot answer for them

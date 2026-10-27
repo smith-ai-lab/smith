@@ -447,6 +447,10 @@ export void test_skill_smith_lang_reflection_field(io::Io *io) {
     skill_case(io, "smith-lang-reflection-field");
 }
 
+export void test_skill_smith_lang_generic_entry(io::Io *io) {
+    skill_case(io, "smith-lang-generic-entry");
+}
+
 export void test_skill_smith_lang_rest(io::Io *io) {
     skill_case(io, "smith-lang-rest");
 }

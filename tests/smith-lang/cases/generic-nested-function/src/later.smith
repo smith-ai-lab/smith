@@ -1,0 +1,47 @@
+module later;
+
+import <stdio.h>;
+
+// A function defined in a generic's body is written once for each instance, at file scope. Its address is the pointer a
+// `void (*)(void *)` asks for, and the user of `defer` never writes a `void *`.
+export typedef void (*Entry)(void *);
+
+export typedef struct {
+    Entry entry;
+    alignas(16) u8 data[64];
+} Slot;
+
+// `typeof(rest)` is the struct of the arguments, `a->[rest]...` its members as the arguments of a call.
+export void defer(Slot *slot, constexpr auto f, auto... rest) {
+    static_assert(sizeof(typeof(rest)) <= sizeof slot->data, "defer: too many arguments");
+    static void entry(void *raw) {
+        typeof(rest) *a = raw;
+        f(a->[rest]...);
+    }
+    typeof(rest) args = {rest...};
+    *(typeof(rest) *)slot->data = args;
+    slot->entry = entry;
+}
+
+// The function sees the generic's compile-time names: its type, and the branch of an `if constexpr`.
+export T doubled(constexpr type T, T x) {
+    static T twice(T v) {
+        if constexpr (T == f32) {
+            return v * 2.0f;
+        } else {
+            return v + v;
+        }
+    }
+    return twice(x);
+}
+
+// Two functions in one body.
+export i32 pair(auto a, auto b) {
+    static i32 first(void) {
+        return (i32)sizeof(typeof(a));
+    }
+    static i32 second(void) {
+        return (i32)sizeof(typeof(b));
+    }
+    return first() * 10 + second();
+}

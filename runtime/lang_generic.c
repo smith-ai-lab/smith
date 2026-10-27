@@ -3046,6 +3046,8 @@ static int smith_lang_pack_pattern_open(SmithLang *lang, const SmithHost *host, 
 }
 
 // The pattern at `start` written once for each element, in new tokens at the pool's end, a comma between the copies.
+static bool smith_lang_nested_member_at(const SmithLangReplay *replay, uint32_t at, uint32_t limit);
+
 static bool smith_lang_pack_pattern_copies(const SmithLangReplay *replay, uint32_t start,
                                            const SmithLangPattern *pattern, bool indexed) {
     size_t count = smith_lang_pack_size(replay->generic, replay->instance);
@@ -3059,7 +3061,11 @@ static bool smith_lang_pack_pattern_copies(const SmithLangReplay *replay, uint32
             const SmithLangGenToken *like = &smith_lang_gt.tokens[at];
             char text[smith_lang_name_max];
             bool good = false;
-            if (smith_lang_pack_whole_at(replay, at, pattern->dots) && indexed) {
+            if (smith_lang_nested_member_at(replay, at, pattern->dots)) { // `x->[rest]`: the member `x->_k`
+                snprintf(text, sizeof text, "_%zu", element);
+                good = smith_lang_pack_push(like, SmithTokenKind_Identifier, text, false);
+                at += 2;
+            } else if (smith_lang_pack_whole_at(replay, at, pattern->dots) && indexed) {
                 // to be typed: `rest[k]`, which the replay writes as a value of the element's type
                 snprintf(text, sizeof text, "%zu", element);
                 good = smith_lang_pack_push(like, (SmithTokenKind)like->kind, smith_lang_gt_str(like), true) &&
@@ -4971,12 +4977,15 @@ static bool smith_lang_replay_special(SmithLang *lang, const SmithHost *host, Sm
     return true;
 }
 
+#include "lang_nested.c"
+
 // The replays of what an instance's body writes differently from the generic's tokens. True when one took the frame.
 static bool smith_lang_replay_rewritten(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
                                         SmithLangFrame *frame) {
-    return smith_lang_fields_replay(lang, host, replay, frame) || smith_lang_slice_replay(lang, host, replay, frame) ||
-           smith_lang_try_replay(lang, host, replay, frame) || smith_lang_enum_replay(lang, host, replay, frame) ||
-           smith_lang_replay_shape(lang, host, replay, frame) || smith_lang_list_gone(lang, host, replay, frame);
+    return smith_lang_nested_replay(lang, host, replay, frame) || smith_lang_fields_replay(lang, host, replay, frame) ||
+           smith_lang_slice_replay(lang, host, replay, frame) || smith_lang_try_replay(lang, host, replay, frame) ||
+           smith_lang_enum_replay(lang, host, replay, frame) || smith_lang_replay_shape(lang, host, replay, frame) ||
+           smith_lang_list_gone(lang, host, replay, frame);
 }
 
 // The argument list at the frame's position (`rest...`, `rest[i]`, `countof(rest)`). True when it took tokens.
@@ -5053,6 +5062,17 @@ static void smith_lang_replay_numbers(SmithLangReplay *replay, const SmithLangGe
     }
 }
 
+// A replay of the instance's tokens, from the start.
+static void smith_lang_replay_begin(SmithLangReplay *replay, const SmithLangGeneric *generic,
+                                    const SmithLangInstance *instance, uint32_t id, uint32_t location) {
+    *replay = (SmithLangReplay){};
+    replay->instance = instance;
+    replay->instance_id = id;
+    replay->generic = generic;
+    replay->location = location;
+    smith_lang_replay_numbers(replay, generic, instance);
+}
+
 static void smith_lang_instance_emit(SmithLang *lang, const SmithHost *host, size_t index) {
     const SmithLangInstance *instance = &smith_lang_instances[index];
     const SmithLangGeneric *generic = &smith_lang_generics[instance->generic];
@@ -5071,6 +5091,8 @@ static void smith_lang_instance_emit(SmithLang *lang, const SmithHost *host, siz
     smith_lang_fields_declare(lang, host, generic, instance, id, location);
     smith_lang_instance_define_slices(lang, host, instance, location, id);
     smith_lang_instance_define_enums(lang, host, generic, instance, location, id);
+    smith_lang_replay_begin(&smith_lang_replay, generic, instance, id, location);
+    (void)smith_lang_nested_write(lang, host, &smith_lang_replay, instance, location, id);
     smith_lang_gen_declaration(lang, host, generic, instance, location, id);
     static const SmithLangPiece weak[] = {{SmithTokenKind_Punctuator, "["},    {SmithTokenKind_Punctuator, "["},
                                           {SmithTokenKind_Identifier, "gnu"},  {SmithTokenKind_Punctuator, "::"},
@@ -5096,14 +5118,11 @@ static void smith_lang_instance_emit(SmithLang *lang, const SmithHost *host, siz
     if (generic->is_inline) smith_lang_gen_puts(lang, host, inlined, sizeof inlined / sizeof inlined[0], location, id);
     smith_lang_gen_signature(lang, host, generic, instance, true, location, id);
     SmithLangReplay *replay = &smith_lang_replay;
-    *replay = (SmithLangReplay){};
-    replay->instance = instance;
-    replay->instance_id = id;
-    replay->generic = generic;
-    replay->location = location;
-    smith_lang_replay_numbers(replay, generic, instance);
+    smith_lang_replay_begin(replay, generic, instance, id, location);
     smith_lang_replay_push(replay, generic->first + generic->body_index, generic->first + generic->count, 0);
     smith_lang_replay_run(lang, host, replay);
+    smith_lang_nested.count = 0;
+    smith_lang_nested.pack_tag[0] = 0;
 }
 
 // At the end of the file: the code of each instance asked for, and of those they ask for in turn.

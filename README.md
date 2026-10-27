@@ -402,6 +402,31 @@ A concept stands where `auto` does there too (`const arithmetic xs[:]`, `integer
 
 [smith-lang-generics](.agents/skills/smith-lang-generics/SKILL.md).
 
+A generic may define a function in its body: it is written once for each instance, at file scope, so its address is an ordinary function pointer that knows the instance's types. `typeof(rest)` is the struct of the arguments and `a->[rest]...` its members, so a callback with a typed argument list needs no `void *` in the user's code:
+
+```smith
+module later;
+
+export typedef void (*Entry)(void *);
+
+export typedef struct {
+    Entry entry;
+    alignas(16) u8 data[64];
+} Slot;
+
+export void defer(Slot *slot, constexpr auto f, auto... rest) {
+    static void entry(void *raw) { // one for each list of argument types
+        typeof(rest) *a = raw;
+        f(a->[rest]...);
+    }
+    typeof(rest) args = {rest...};
+    *(typeof(rest) *)slot->data = args;
+    slot->entry = entry;
+}
+```
+
+[smith-lang-generic-entry](.agents/skills/smith-lang-generic-entry/SKILL.md).
+
 Types are values too, so a function over types runs in the compiler like any other:
 
 ```smith

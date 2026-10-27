@@ -1,0 +1,16 @@
+module later;
+
+export i32 inside(auto x) {
+    if (x > 0) {
+        static i32 helper(void) {
+            return 1;
+        }
+        return helper();
+    }
+    return 0;
+}
+
+export i32 empty(auto... rest) {
+    typeof(rest) *a = nullptr;
+    return a != nullptr;
+}

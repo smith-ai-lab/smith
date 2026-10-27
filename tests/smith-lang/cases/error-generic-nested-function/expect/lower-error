@@ -1,0 +1,2 @@
+src/main.smith:6:19: `typeof(rest)` is a struct of the arguments, and there are none
+src/main.smith:6:43: cannot tell the type of `1`, the argument of `inside`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
