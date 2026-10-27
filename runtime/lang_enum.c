@@ -1255,6 +1255,46 @@ typedef struct {
     size_t close;
 } SmithLangEnumCall;
 
+// An argument that is a typedef of a slice (`option(Text)`, `typedef const char Text[:]`) is the slice's struct, as
+// `option(struct smith_array_const_char_n)` writes it, so the struct is the one a generic's `option(typeof(xs[0:0]))`
+// result has: a caller names that result through the typedef.
+static void smith_lang_eshape_slice_names(SmithLang *lang, const SmithHost *host, const SmithLangEnumShape *shape,
+                                          SmithLangEnumCall *call) {
+    static const char tag[] = "struct smith_array_";
+    if (host->type_query == nullptr) return;
+    for (size_t p = shape->param_count; p > 0; p--) { // the last first: a longer argument shifts the ones after it
+        size_t begin = call->begin[p - 1];
+        const SmithToken *name = &call->tokens[begin];
+        SmithTypeQuery query = {};
+        char written[smith_lang_name_max]; // the name as the module's file spells it (`main_Text`)
+        written[0] = 0;
+        if (call->end[p - 1] == begin + 1 && name->kind == SmithTokenKind_Identifier)
+            (void)smith_lang_tuple_resolve(lang, call->tokens, begin, begin + 1, written, sizeof written);
+        if (call->end[p - 1] != begin + 1 || name->kind != SmithTokenKind_Identifier ||
+            smith_lang_word(name->text, name->length) != SmithLangWord_Other ||
+            smith_lang_find_sized(name->text, name->length) != nullptr ||
+            call->count + 1 >= smith_lang_eshape_tokens_max || written[0] == 0 ||
+            !host->type_query(host->context, written, (uint32_t)strlen(written), &query) ||
+            strncmp(query.canonical, tag, sizeof tag - 1) != 0 || strchr(query.canonical, '*') != nullptr) {
+            continue;
+        }
+        size_t length = strcspn(query.canonical + 7, " ");
+        SmithToken like = *name;
+        SmithToken made[2];
+        made[0] = smith_lang_tuple_made(SmithTokenKind_Identifier, "struct", 6, &like, name->space_before);
+        made[1] = smith_lang_tuple_made(SmithTokenKind_Identifier, query.canonical + 7, length, &like, true);
+        memmove(&call->tokens[begin + 2], &call->tokens[begin + 1], (call->count - begin - 1) * sizeof call->tokens[0]);
+        call->tokens[begin] = made[0];
+        call->tokens[begin + 1] = made[1];
+        call->count += 1;
+        call->end[p - 1] += 1;
+        for (size_t q = p; q < shape->param_count; q++) {
+            call->begin[q] += 1;
+            call->end[q] += 1;
+        }
+    }
+}
+
 static bool smith_lang_eshape_call(SmithLang *lang, const SmithHost *host, const SmithToken *first, size_t open,
                                    const SmithLangEnumShape *shape, SmithLangEnumCall *call, bool report) {
     call->count = 0;
@@ -1287,6 +1327,7 @@ static bool smith_lang_eshape_call(SmithLang *lang, const SmithHost *host, const
         if (comma) call->begin[++argument] = call->count;
     }
     if (argument < shape->param_count) call->end[argument] = call->count;
+    if (argument + 1 == shape->param_count) smith_lang_eshape_slice_names(lang, host, shape, call);
     if (argument + 1 != shape->param_count) {
         if (report)
             smith_lang_error(

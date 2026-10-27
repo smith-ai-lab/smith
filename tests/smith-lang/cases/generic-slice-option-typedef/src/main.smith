@@ -1,0 +1,15 @@
+module main;
+
+import cursor;
+import <stdio.h>;
+
+typedef const char Text[:];
+
+i32 main() {
+    Text rest = "ab cd";
+    option(Text) word = cursor::take_until(&rest, ' ');
+    if (word == .some) c::printf("%zu %zu\n", countof(word.some), countof(rest));
+    option(Text) none = cursor::take_until(&rest, '!');
+    if (none != .some) c::printf("none\n");
+    return 0;
+}

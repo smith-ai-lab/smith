@@ -1700,3 +1700,7 @@ export void test_error_typetag_collision_reverse(io::Io *io) {
 export void test_generic_slice_restrict(io::Io *io) {
     corpus_case(io, "generic-slice-restrict");
 }
+
+export void test_generic_slice_option_typedef(io::Io *io) {
+    corpus_case(io, "generic-slice-option-typedef");
+}

@@ -43,3 +43,5 @@ export usize count_lines(const char all[:]) {
 - ``converting a pointer to a slice of `const char` to a pointer to a slice of `char` discards qualifiers``
 
 Slices: `smith-lang-arrays`; qualifiers: `smith-lang-slice-qualifiers`.
+
+A generic's `option(typeof((*xs)[0:0]))` result is named by a caller as `option(Text)` for a `typedef const char Text[:]`.
