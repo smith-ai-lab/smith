@@ -1,0 +1,31 @@
+module main;
+
+typedef struct Ball {
+    i32 size;
+} Ball;
+
+static void *erase(Ball *ball) {
+    return ball;
+}
+
+static void take(Ball *ball) {
+    (void)ball;
+}
+
+// In a module `void *` never becomes `T *` silently, in any position (issue #398).
+static Ball *returned(void *data) {
+    return data;
+}
+
+static void positions(void *data) {
+    Ball *initialized = data;
+    Ball *assigned;
+    assigned = erase(initialized);
+    take(data);
+    take((Ball *)data);
+    take(nullptr);
+}
+
+i32 main() {
+    return 0;
+}

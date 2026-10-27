@@ -429,6 +429,18 @@ export void test_error_enum_convert(io::Io *io) {
     corpus_case(io, "error-enum-convert");
 }
 
+export void test_void_pointer_cast(io::Io *io) {
+    corpus_case(io, "void-pointer-cast");
+}
+
+export void test_void_pointer_plain(io::Io *io) {
+    corpus_case(io, "void-pointer-plain");
+}
+
+export void test_error_void_pointer(io::Io *io) {
+    corpus_case(io, "error-void-pointer");
+}
+
 export void test_try_generic(io::Io *io) {
     corpus_case(io, "try-generic");
 }

@@ -53,6 +53,9 @@ A C toolchain and a modern standard library for C, written in C. Each fact has o
 - C's raw memory functions are an error in a module: `memcpy`, `memmove`, `memset` and `memcmp` are reported by `smith-mem` with the typed `mem::` replacement, and a function that implements a wrapper says `contract::trusted()` (owner, 2026-10-26: "I like our type safe APIs on top of unsafe C APIs"). [mem-typed-functions](knowledge/mem-typed-functions.md)
 - Allocation never returns null in .smith: arenas grow from a backing allocator, a fixed arena's budget or the OS refusing is a checked failure; `try_push`/`try_alloc` return option for code that refuses (owner, 2026-10-25). [handlers](knowledge/handlers.md)
 - Prefer inputs to outputs: a function returns what it computes, allocated through the current allocator, instead of filling an out parameter; a pointer parameter that the function updates because updating that thing is the point (an optimizer's step, an arena) is not an out parameter (owner, 2026-10-25).
+- Two values that are logically one travel as one: slices, payload enums, `option`, `result`, lambdas and closures. When code can't make them travel as one, the agent stops and files an issue naming the gap; the language is fixed, not worked around (owner, 2026-10-26).
+- A name is short only when it's written in nearly every declaration and has one obvious meaning (`i32`, `f32`, `usize`, `str`); every other name is a full word, the C standard's term first, then the term the major languages agree on (`option`, `result`, `arithmetic`, `lambda`, `closure`) (owner, 2026-10-26).
+- An unsafe C API that smith wraps is called through the typed wrapper; in a module, calling the raw one is a compile error naming the wrapper (#399) (owner, 2026-10-26). In a module `void *` never converts to `T *` without a written cast (#398). [smith-language](knowledge/smith-language.md)
 
 ## How to work
 

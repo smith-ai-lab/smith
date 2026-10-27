@@ -1,0 +1,36 @@
+module main;
+
+import <stdio.h>;
+
+typedef struct Ball {
+    i32 size;
+} Ball;
+
+static i32 read_size(void *data) {
+    Ball *ball = (Ball *)data;
+    return ball->size;
+}
+
+static const Ball *view(const void *data) {
+    return (const Ball *)data;
+}
+
+static void *erase(Ball *ball) {
+    return ball;
+}
+
+static void take(void *data, const void *constant) {
+    (void)data;
+    (void)constant;
+}
+
+// A written cast is fine, `T *` goes to `void *` with none, and `nullptr` is not a `void *` value.
+i32 main() {
+    Ball ball = {.size = 7};
+    void *data = &ball;
+    const void *constant = &ball;
+    take(&ball, &ball);
+    Ball *none = nullptr;
+    c::printf("%d %d %d %d\n", read_size(data), view(constant)->size, read_size(erase(&ball)), none == nullptr);
+    return 0;
+}

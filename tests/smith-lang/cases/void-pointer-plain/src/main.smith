@@ -1,0 +1,23 @@
+import <stdio.h>;
+
+typedef struct Ball {
+    i32 size;
+} Ball;
+
+static void *erase(Ball *ball) {
+    return ball;
+}
+
+static Ball *unerase(void *data) {
+    return data;
+}
+
+// No module line: `void *` converts to `T *` exactly as in C, in every position.
+i32 main(i32 argc, char *argv[]) {
+    Ball ball = {.size = 7};
+    Ball *a = erase(&ball);
+    Ball *b;
+    b = erase(&ball);
+    c::printf("%d %d %d\n", a->size, b->size, unerase(&ball)->size);
+    return 0;
+}

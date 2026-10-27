@@ -1,0 +1,4 @@
+src/main.smith:17:12: `void *` doesn't convert to `Ball *` silently; write `(Ball *)data`, or use a typed API (`mem::view`, a lambda)
+src/main.smith:21:25: `void *` doesn't convert to `Ball *` silently; write `(Ball *)data`, or use a typed API (`mem::view`, a lambda)
+src/main.smith:23:16: `void *` doesn't convert to `Ball *` silently; write `(Ball *)erase(initialized)`, or use a typed API (`mem::view`, a lambda)
+src/main.smith:24:10: `void *` doesn't convert to `Ball *` silently; write `(Ball *)data`, or use a typed API (`mem::view`, a lambda)

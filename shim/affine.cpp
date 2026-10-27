@@ -22,11 +22,13 @@
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/Expr.h"
+#include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/AST/Stmt.h"
 #include "clang/Analysis/CFG.h"
 #include "clang/Basic/ParsedAttrInfo.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendPluginRegistry.h"
+#include "clang/Lex/Lexer.h"
 #include "clang/Sema/ParsedAttr.h"
 #include "clang/Sema/Sema.h"
 
@@ -870,6 +872,79 @@ class Reporter {
     unsigned again, first, loop, index, advice, narrow;
 };
 
+// ---- `void *` does not convert to `T *` in a module (issue #398)
+// ------------------------------------------------------
+//
+// C converts `void *` to any `T *` with no cast. In a file with a `module` line it is an error at every position
+// (assignment, initialization, argument, return, a `?:` arm): clang records each as an implicit pointer cast whose
+// operand is a `void *`, which is what the visitor looks for. `T *` to `void *` loses nothing and stays implicit, a
+// null pointer constant is not a `void *` value (clang makes it a null-to-pointer cast), and a written cast is an
+// explicit cast, not an implicit one. A file without a `module` line is not looked at: a module may reject C, never
+// change it.
+
+bool isModuleFile(const ASTContext &context) {
+    const SourceManager &sm = context.getSourceManager();
+    llvm::StringRef text = sm.getBufferData(sm.getMainFileID());
+    for (size_t at = text.find("module "); at != llvm::StringRef::npos; at = text.find("module ", at + 1))
+        if (at == 0 || text[at - 1] == '\n') return true;
+    return false;
+}
+
+// Whether `(T *)` can be written in front of the text as it is: a name with members, indexes and calls, no operator.
+bool isPostfix(const std::string &text) {
+    return text.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.>-[](), ") ==
+           std::string::npos;
+}
+
+class VoidPointerVisitor : public RecursiveASTVisitor<VoidPointerVisitor> {
+  public:
+    explicit VoidPointerVisitor(ASTContext &context)
+        : context(context), engine(context.getDiagnostics()), policy(context.getPrintingPolicy()) {
+        policy.SuppressTagKeyword = true;
+        error = engine.getCustomDiagID(DiagnosticsEngine::Error,
+                                       "`void *` doesn't convert to `%0` silently; write `(%0)%1`, or use a typed API "
+                                       "(`mem::view`, a lambda)");
+    }
+
+    bool shouldVisitTemplateInstantiations() const {
+        return false;
+    }
+
+    bool TraverseDecl(Decl *decl) {
+        if (decl != nullptr && !decl->isImplicit() && decl->getLocation().isValid() &&
+            context.getSourceManager().isInSystemHeader(decl->getLocation()))
+            return true;
+        return RecursiveASTVisitor::TraverseDecl(decl);
+    }
+
+    bool VisitImplicitCastExpr(ImplicitCastExpr *cast) {
+        if (cast->getCastKind() != CK_BitCast) return true;
+        QualType to = cast->getType();
+        const Expr *from = cast->getSubExpr();
+        QualType source = from->getType();
+        if (!to->isPointerType() || !source->isPointerType()) return true;
+        if (!source->getPointeeType()->isVoidType() || to->getPointeeType()->isVoidType()) return true;
+        if (from->isNullPointerConstant(context, Expr::NPC_ValueDependentIsNull)) return true; // `p == NULL`
+        SourceManager &sm = context.getSourceManager();
+        SourceLocation loc = from->getExprLoc();
+        if (loc.isInvalid() || !sm.isWrittenInMainFile(sm.getExpansionLoc(loc))) return true;
+        SourceRange range = from->getSourceRange();
+        std::string text = Lexer::getSourceText(CharSourceRange::getTokenRange(range), sm, context.getLangOpts()).str();
+        if (text.empty() || text.size() > 60 || text.find('\n') != std::string::npos)
+            text = "(...)";
+        else if (!isPostfix(text))
+            text = "(" + text + ")";
+        engine.Report(loc, error) << to.getAsString(policy) << text;
+        return true;
+    }
+
+  private:
+    ASTContext &context;
+    DiagnosticsEngine &engine;
+    PrintingPolicy policy;
+    unsigned error;
+};
+
 // ---- Every function that has a body
 // ----------------------------------------------------------------------------------
 
@@ -878,6 +953,7 @@ class Consumer : public ASTConsumer {
     explicit Consumer(CompilerInstance &) {}
 
     void HandleTranslationUnit(ASTContext &context) override {
+        if (isModuleFile(context)) VoidPointerVisitor(context).TraverseDecl(context.getTranslationUnitDecl());
         Reporter reporter(context);
         visit(context.getTranslationUnitDecl(), context, reporter);
     }
