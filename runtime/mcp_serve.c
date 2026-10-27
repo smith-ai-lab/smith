@@ -22,7 +22,7 @@ static constexpr char smith_mcp_instructions[] =
 // The version to answer an `initialize` that asked for `asked`: that one when it is ours, else the newest legacy one.
 static const char *smith_mcp_negotiate(struct smith_array_const_char_n asked) {
     for (size_t i = 0; i < sizeof smith_mcp_versions / sizeof smith_mcp_versions[0]; i++) { // bounded by the table
-        if (smith_text_is(asked, smith_mcp_versions[i])) return smith_mcp_versions[i];
+        if (smith_format_is(asked, smith_mcp_versions[i])) return smith_mcp_versions[i];
     }
     return smith_mcp_legacy_newest;
 }
@@ -53,7 +53,7 @@ static void smith_mcp_emit(SmithMcpServer *server, SmithJsonWriter *writer) {
 
 static void smith_mcp_send_error(SmithMcpServer *server, const SmithMcpRequestId *id, int64_t code,
                                  const char *message) {
-    SmithMcpJSONRPCErrorResponse response = {.error = {.code = code, .message = smith_text_make(message)}};
+    SmithMcpJSONRPCErrorResponse response = {.error = {.code = code, .message = smith_format_string(message)}};
     if (id != nullptr) {
         response.has_id = true;
         response.id = *id;
@@ -80,41 +80,41 @@ static void smith_mcp_send_initialize(SmithMcpServer *server, const SmithMcpRequ
                                                .tools = {.has_listChanged = true, .listChanged = false}};
     SmithJsonWriter capabilities_writer = smith_mcp_message_writer(server);
     smith_mcp_server_capabilities_write(&capabilities_writer, &capabilities);
-    SmithMcpImplementation info = {.name = smith_text_make(smith_mcp_name),
-                                   .version = smith_text_make(smith_mcp_version)};
+    SmithMcpImplementation info = {.name = smith_format_string(smith_mcp_name),
+                                   .version = smith_format_string(smith_mcp_version)};
     SmithJsonWriter info_writer = smith_mcp_message_writer(server);
     smith_mcp_implementation_write(&info_writer, &info);
-    struct smith_array_const_char_n keys[] = {smith_text_make("protocolVersion"), smith_text_make("capabilities"),
-                                              smith_text_make("serverInfo"), smith_text_make("instructions")};
-    SmithProtocolAny values[] = {smith_mcp_json_string(&server->scratch, smith_text_make(version)),
+    struct smith_array_const_char_n keys[] = {smith_format_string("protocolVersion"), smith_format_string("capabilities"),
+                                              smith_format_string("serverInfo"), smith_format_string("instructions")};
+    SmithProtocolAny values[] = {smith_mcp_json_string(&server->scratch, smith_format_string(version)),
                                  smith_mcp_tree(server, &capabilities_writer), smith_mcp_tree(server, &info_writer),
-                                 smith_mcp_json_string(&server->scratch, smith_text_make(smith_mcp_instructions))};
+                                 smith_mcp_json_string(&server->scratch, smith_format_string(smith_mcp_instructions))};
     SmithMcpJSONRPCResultResponse response = {
-        .id = *id, .result = {.resultType = smith_text_make("complete"), .additionalProperties = {keys, values, 4}}};
+        .id = *id, .result = {.resultType = smith_format_string("complete"), .additionalProperties = {keys, values, 4}}};
     SmithJsonWriter writer = smith_mcp_message_writer(server);
     smith_mcp_jsonrpc_result_response_write(&writer, &response);
     smith_mcp_emit(server, &writer);
 }
 
 static void smith_mcp_send_ping(SmithMcpServer *server, const SmithMcpRequestId *id) {
-    SmithMcpJSONRPCResultResponse response = {.id = *id, .result = {.resultType = smith_text_make("complete")}};
+    SmithMcpJSONRPCResultResponse response = {.id = *id, .result = {.resultType = smith_format_string("complete")}};
     SmithJsonWriter writer = smith_mcp_message_writer(server);
     smith_mcp_jsonrpc_result_response_write(&writer, &response);
     smith_mcp_emit(server, &writer);
 }
 
 static void smith_mcp_send_discover(SmithMcpServer *server, const SmithMcpRequestId *id) {
-    struct smith_array_const_char_n versions[] = {smith_text_make("2026-07-28")};
+    struct smith_array_const_char_n versions[] = {smith_format_string("2026-07-28")};
     SmithMcpDiscoverResultResponse response = {
         .id = *id,
         .result = {.has__meta = true,
                    ._meta = {.has_io_modelcontextprotocol_serverInfo = true,
-                             .io_modelcontextprotocol_serverInfo = {.name = smith_text_make(smith_mcp_name),
-                                                                    .version = smith_text_make(smith_mcp_version)}},
+                             .io_modelcontextprotocol_serverInfo = {.name = smith_format_string(smith_mcp_name),
+                                                                    .version = smith_format_string(smith_mcp_version)}},
                    .capabilities = {.has_tools = true, .tools = {.has_listChanged = true, .listChanged = false}},
                    .has_instructions = true,
-                   .instructions = smith_text_make(smith_mcp_instructions),
-                   .resultType = smith_text_make("complete"),
+                   .instructions = smith_format_string(smith_mcp_instructions),
+                   .resultType = smith_format_string("complete"),
                    .supportedVersions = {versions, 1}}};
     SmithJsonWriter writer = smith_mcp_message_writer(server);
     smith_mcp_discover_result_response_write(&writer, &response);
@@ -127,7 +127,7 @@ static void smith_mcp_tool_make(SmithMcpServer *server, const SmithMcpToolEntry 
     const SmithJsonValue *schema = nullptr;
     SmithJsonError error;
     SmithJsonLimits limits = {.depth = 16, .string_length = (size_t)1 << 14, .count = (size_t)1 << 12};
-    bool ok = smith_json_parse(&server->scratch, smith_text_make(entry->schema), limits, &schema, &error);
+    bool ok = smith_json_parse(&server->scratch, smith_format_string(entry->schema), limits, &schema, &error);
     SMITH_ASSERT(ok && schema->kind == SmithJsonKind_Object);
     struct smith_array_const_char_n *keys =
         smith_arena_push_array(&server->scratch, sizeof(struct smith_array_const_char_n), schema->count,
@@ -137,14 +137,14 @@ static void smith_mcp_tool_make(SmithMcpServer *server, const SmithMcpToolEntry 
     SMITH_ASSERT(keys != nullptr && values != nullptr);
     size_t count = 0;
     for (size_t i = 0; i < schema->count; i++) {                    // bounded by the schema's members
-        if (smith_text_is(schema->items[i]->key, "type")) continue; // the generated inputSchema writes "type": "object"
+        if (smith_format_is(schema->items[i]->key, "type")) continue; // the generated inputSchema writes "type": "object"
         keys[count] = schema->items[i]->key;
         values[count++] = schema->items[i];
     }
     *tool = (SmithMcpTool){.has_description = true,
-                           .description = smith_text_make(entry->description),
+                           .description = smith_format_string(entry->description),
                            .inputSchema = {.additionalProperties = {keys, values, count}},
-                           .name = smith_text_make(entry->name)};
+                           .name = smith_format_string(entry->name)};
     if (entry->read_only) {
         tool->has_annotations = true;
         tool->annotations.has_readOnlyHint = true;
@@ -159,7 +159,7 @@ static void smith_mcp_send_tools(SmithMcpServer *server, const SmithMcpRequestId
     for (size_t i = 0; i < smith_mcp_tool_count; i++)
         smith_mcp_tool_make(server, &smith_mcp_tool_table[i], &tools[i]);
     SmithMcpListToolsResultResponse response = {
-        .id = *id, .result = {.resultType = smith_text_make("complete"), .tools = {tools, smith_mcp_tool_count}}};
+        .id = *id, .result = {.resultType = smith_format_string("complete"), .tools = {tools, smith_mcp_tool_count}}};
     SmithJsonWriter writer = smith_mcp_message_writer(server);
     smith_mcp_list_tools_result_response_write(&writer, &response);
     smith_mcp_emit(server, &writer);
@@ -175,7 +175,7 @@ static void smith_mcp_send_tool_result(SmithMcpServer *server, const SmithMcpReq
                    .as = {.call_tool_result = {.content = {&block, 1},
                                                .has_isError = true,
                                                .isError = error,
-                                               .resultType = smith_text_make("complete")}}}};
+                                               .resultType = smith_format_string("complete")}}}};
     SmithJsonWriter writer = smith_mcp_message_writer(server);
     smith_mcp_call_tool_result_response_write(&writer, &response);
     smith_mcp_emit(server, &writer);
@@ -194,7 +194,7 @@ static void smith_mcp_call_tool(SmithMcpServer *server, const SmithMcpJSONRPCReq
     }
     const SmithMcpToolEntry *entry = nullptr;
     for (size_t i = 0; i < smith_mcp_tool_count; i++) { // bounded by the table
-        if (smith_text_is(name->text, smith_mcp_tool_table[i].name)) entry = &smith_mcp_tool_table[i];
+        if (smith_format_is(name->text, smith_mcp_tool_table[i].name)) entry = &smith_mcp_tool_table[i];
     }
     if (entry == nullptr) {
         smith_mcp_send_error(server, &request->id, -32602, "unknown tool");
@@ -208,18 +208,18 @@ static void smith_mcp_call_tool(SmithMcpServer *server, const SmithMcpJSONRPCReq
 }
 
 static void smith_mcp_handle_request(SmithMcpServer *server, const SmithMcpJSONRPCRequest *request) {
-    if (smith_text_is(request->method, "initialize")) {
+    if (smith_format_is(request->method, "initialize")) {
         const SmithJsonValue *asked = smith_mcp_argument(request->has_params ? request->params : nullptr,
                                                          "protocolVersion", SmithJsonKind_String);
         smith_mcp_send_initialize(server, &request->id,
                                   asked != nullptr ? smith_mcp_negotiate(asked->text) : smith_mcp_legacy_newest);
-    } else if (smith_text_is(request->method, "server/discover")) {
+    } else if (smith_format_is(request->method, "server/discover")) {
         smith_mcp_send_discover(server, &request->id);
-    } else if (smith_text_is(request->method, "ping")) {
+    } else if (smith_format_is(request->method, "ping")) {
         smith_mcp_send_ping(server, &request->id);
-    } else if (smith_text_is(request->method, "tools/list")) {
+    } else if (smith_format_is(request->method, "tools/list")) {
         smith_mcp_send_tools(server, &request->id);
-    } else if (smith_text_is(request->method, "tools/call")) {
+    } else if (smith_format_is(request->method, "tools/call")) {
         smith_mcp_call_tool(server, request);
     } else {
         smith_mcp_send_error(server, &request->id, -32601, "method not found");

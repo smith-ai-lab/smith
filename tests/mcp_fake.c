@@ -237,13 +237,17 @@ static const char *test_reply(int id, bool *is_error) {
         SMITH_ASSERT(parsed);
         int64_t found = -1;
         const SmithJsonValue *number = smith_json_member(tree, "id");
-        if (number != nullptr && number->kind == SmithJsonKind_Number) (void)smith_text_parse_i64(number->text, &found);
+        if (number != nullptr && number->kind == SmithJsonKind_Number) {
+            smith_format_I64Result parsed = smith_format_parse_i64(number->text);
+            if (parsed.tag == smith_enum_result_i64__SmithFormatError_tag_ok) found = parsed.ok;
+        }
         if (found == id) {
             const SmithJsonValue *result = smith_json_member(tree, "result");
             const SmithJsonValue *failure = smith_json_member(tree, "error");
             if (failure != nullptr) {
                 int64_t code = 0;
-                (void)smith_text_parse_i64(smith_json_member(failure, "code")->text, &code);
+                smith_format_I64Result parsed = smith_format_parse_i64(smith_json_member(failure, "code")->text);
+                if (parsed.tag == smith_enum_result_i64__SmithFormatError_tag_ok) code = parsed.ok;
                 snprintf(test_text, sizeof test_text, "error %lld: %.*s", (long long)code,
                          (int)smith_json_member(failure, "message")->text.count[0],
                          smith_json_member(failure, "message")->text.data);

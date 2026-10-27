@@ -15,7 +15,7 @@
 // recurses nowhere either); and the types are put in dependency order.
 #include <smith/arena.h>
 #include <smith/json.h>
-#include <smith/text.h>
+#include <smith/format.h>
 
 #include <ctype.h>
 #include <stdarg.h>
@@ -233,7 +233,7 @@ static const SmithJsonValue *gen_get(const SmithJsonValue *node, const char *key
 }
 
 static bool gen_is_string(const SmithJsonValue *value, const char *string) {
-    return value != nullptr && value->kind == SmithJsonKind_String && smith_text_is(value->text, string);
+    return value != nullptr && value->kind == SmithJsonKind_String && smith_format_is(value->text, string);
 }
 
 static bool gen_list_has(const SmithJsonValue *list, const char *string) {
@@ -389,8 +389,10 @@ static void gen_build_enum(Generator *g, int id) {
     if (constant != nullptr) {
         if (constant->kind == SmithJsonKind_Number) {
             t->kind = GenKind_ConstInteger;
-            if (!smith_text_parse_i64(constant->text, &t->constant))
+            smith_format_I64Result parsed = smith_format_parse_i64(constant->text);
+            if (parsed.tag != smith_enum_result_i64__SmithFormatError_tag_ok)
                 gen_die("a const at byte %zu is not an integer", constant->offset);
+            t->constant = parsed.ok;
             return;
         }
         const char **one = gen_string_block(g, 1);
@@ -1245,7 +1247,7 @@ static void gen_write_member(Generator *g, Sink *s, const GenField *f) {
     if (!f->required && constant == 0) gen_emit(s, "    if (value->has_%s) {\n", f->ident);
     gen_emit(s, "%ssmith_protocol_key(writer, \"%s\");\n", indent, f->json);
     if (constant == 1) {
-        gen_emit(s, "%ssmith_json_write_string(writer, smith_text_make(", indent);
+        gen_emit(s, "%ssmith_json_write_string(writer, smith_format_string(", indent);
         gen_literal(s, gen_constant_value(g, f));
         gen_emit(s, "));\n");
     } else if (constant == 2) {
@@ -1339,12 +1341,12 @@ static void gen_source_enum(Generator *g, Sink *s, int id) {
     if (open) {
         gen_emit(s, "    if ((size_t)value->known < %zu) {\n", t->value_count);
         gen_emit(s,
-                 "        smith_json_write_string(writer, smith_text_make(%s_names[value->known]));\n        return;\n "
+                 "        smith_json_write_string(writer, smith_format_string(%s_names[value->known]));\n        return;\n "
                  "   }\n",
                  t->stem);
         gen_emit(s, "    smith_json_write_string(writer, value->text);\n}\n\n");
     } else {
-        gen_emit(s, "    smith_json_write_string(writer, smith_text_make(%s_names[*value]));\n}\n\n", t->stem);
+        gen_emit(s, "    smith_json_write_string(writer, smith_format_string(%s_names[*value]));\n}\n\n", t->stem);
     }
     gen_head(g, s, id, "equal", true);
     if (open)
@@ -1357,7 +1359,7 @@ static void gen_source_enum(Generator *g, Sink *s, int id) {
         gen_emit(s, "    out->known = (%sKnown)pick;\n", t->name);
         gen_emit(
             s,
-            "    out->text = pick < %zu ? smith_text_make(%s_names[pick]) : smith_protocol_name(arena, pick);\n}\n\n",
+            "    out->text = pick < %zu ? smith_format_string(%s_names[pick]) : smith_protocol_name(arena, pick);\n}\n\n",
             t->value_count, t->stem);
     } else {
         gen_emit(s, "    *out = (%s)smith_protocol_pick(smith_protocol_take(stream), %zu);\n}\n\n", t->name,

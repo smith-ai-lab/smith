@@ -70,7 +70,7 @@ bool smith_protocol_present(const SmithJsonValue *member) {
 }
 
 bool smith_protocol_text_is(struct smith_array_const_char_n text, const char *string) {
-    return smith_text_is(text, string);
+    return smith_format_is(text, string);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -147,8 +147,10 @@ void smith_protocol_string_random(SmithArena *arena, SmithKey key, struct smith_
 
 bool smith_protocol_integer_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, int64_t *out,
                                   SmithProtocolError *error) {
-    if (value->kind != SmithJsonKind_Number || !smith_text_parse_i64(value->text, out))
-        return smith_protocol_fail(error, SmithProtocolReason_WrongType, value);
+    if (value->kind != SmithJsonKind_Number) return smith_protocol_fail(error, SmithProtocolReason_WrongType, value);
+    smith_format_I64Result parsed = smith_format_parse_i64(value->text);
+    if (parsed.tag != smith_enum_result_i64__SmithFormatError_tag_ok) return smith_protocol_fail(error, SmithProtocolReason_WrongType, value);
+    *out = parsed.ok;
     return true;
 }
 
@@ -170,8 +172,10 @@ void smith_protocol_integer_random([[maybe_unused]] SmithArena *arena, SmithKey 
 
 bool smith_protocol_number_parse([[maybe_unused]] SmithArena *arena, const SmithJsonValue *value, double *out,
                                  SmithProtocolError *error) {
-    if (value->kind != SmithJsonKind_Number || !smith_text_parse_f64(value->text, out))
-        return smith_protocol_fail(error, SmithProtocolReason_WrongType, value);
+    if (value->kind != SmithJsonKind_Number) return smith_protocol_fail(error, SmithProtocolReason_WrongType, value);
+    smith_format_F64Result parsed = smith_format_parse_f64(value->text);
+    if (parsed.tag != smith_enum_result_f64__SmithFormatError_tag_ok) return smith_protocol_fail(error, SmithProtocolReason_WrongType, value);
+    *out = parsed.ok;
     return true;
 }
 
@@ -380,9 +384,9 @@ static const SmithJsonValue *smith_protocol_random_tree(SmithArena *arena, Smith
         }
         top->remaining--;
         if (top->object) {
-            char name[smith_text_number_capacity + 1];
-            size_t at = (size_t)(smith_text_write_u64(
-                (struct smith_array_char_n){.data = name + 1, .count = {smith_text_number_capacity}}, step));
+            char name[smith_format_number_capacity + 1];
+            size_t at = (size_t)(smith_format_write_u64(
+                (struct smith_array_char_n){.data = name + 1, .count = {smith_format_number_capacity}}, step));
             name[0] = 'k';
             smith_json_write_key(&writer, (struct smith_array_const_char_n){.data = name, .count = {at + 1}});
         }
@@ -421,7 +425,7 @@ bool smith_protocol_expect_object(const SmithJsonValue *value, SmithProtocolErro
 
 static bool smith_protocol_known(struct smith_array_const_char_n key, const char *const *known, size_t known_count) {
     for (size_t i = 0; i < known_count; i++) { // bounded by the schema's list of members
-        if (smith_text_is(key, known[i])) return true;
+        if (smith_format_is(key, known[i])) return true;
     }
     return false;
 }
@@ -529,14 +533,15 @@ bool smith_protocol_map_parse(SmithArena *arena, const SmithJsonValue *value, si
 
 bool smith_protocol_const_text(const SmithJsonValue *value, const char *expected, SmithProtocolError *error) {
     if (value->kind != SmithJsonKind_String) return smith_protocol_fail(error, SmithProtocolReason_WrongType, value);
-    if (!smith_text_is(value->text, expected)) return smith_protocol_fail(error, SmithProtocolReason_BadValue, value);
+    if (!smith_format_is(value->text, expected)) return smith_protocol_fail(error, SmithProtocolReason_BadValue, value);
     return true;
 }
 
 bool smith_protocol_const_integer(const SmithJsonValue *value, int64_t expected, SmithProtocolError *error) {
-    int64_t integer;
-    if (value->kind != SmithJsonKind_Number || !smith_text_parse_i64(value->text, &integer))
-        return smith_protocol_fail(error, SmithProtocolReason_WrongType, value);
+    if (value->kind != SmithJsonKind_Number) return smith_protocol_fail(error, SmithProtocolReason_WrongType, value);
+    smith_format_I64Result parsed = smith_format_parse_i64(value->text);
+    if (parsed.tag != smith_enum_result_i64__SmithFormatError_tag_ok) return smith_protocol_fail(error, SmithProtocolReason_WrongType, value);
+    int64_t integer = parsed.ok;
     if (integer != expected) return smith_protocol_fail(error, SmithProtocolReason_BadValue, value);
     return true;
 }
@@ -546,7 +551,7 @@ bool smith_protocol_enum_lookup(const SmithJsonValue *value, const char *const *
     if (value->kind != SmithJsonKind_String) return smith_protocol_fail(error, SmithProtocolReason_WrongType, value);
     *index = count;
     for (size_t i = 0; i < count; i++) { // bounded by the enum's values
-        if (smith_text_is(value->text, names[i])) {
+        if (smith_format_is(value->text, names[i])) {
             *index = i;
             break;
         }
@@ -555,13 +560,13 @@ bool smith_protocol_enum_lookup(const SmithJsonValue *value, const char *const *
 }
 
 void smith_protocol_key(SmithJsonWriter *writer, const char *name) {
-    smith_json_write_key(writer, smith_text_make(name));
+    smith_json_write_key(writer, smith_format_string(name));
 }
 
 struct smith_array_const_char_n smith_protocol_name(SmithArena *arena, size_t i) {
     char *name = smith_arena_push_array(arena, 1, 24, 1);
     name[0] = '~';
     name[1] = 'k';
-    size_t length = smith_text_write_u64((struct smith_array_char_n){.data = name + 2, .count = {22}}, i);
+    size_t length = smith_format_write_u64((struct smith_array_char_n){.data = name + 2, .count = {22}}, i);
     return (struct smith_array_const_char_n){.data = name, .count = {length + 2}};
 }

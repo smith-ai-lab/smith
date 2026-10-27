@@ -8,7 +8,7 @@
 // The verbs (smith test, smith check, smith fmt, smith lint, smith docs, smith prove, smith run) mean the same here as
 // in every project and read what this file declares: the tests below are the tests, the compiles are what lint and
 // prove look at (sources that are never built but should be linted are declared with smith_compile_command). Targets of
-// smith build: the default, text-exhaustive, headers, install (-DCC=...,
+// smith build: the default, format-exhaustive, headers, install (-DCC=...,
 // -DPREFIX=...), release (CI only), llvm and clean.
 #include <smith/build.h>
 
@@ -168,15 +168,15 @@ static const BuildProtocol build_protocols[] = {
 constexpr size_t build_protocol_count = sizeof build_protocols / sizeof build_protocols[0];
 
 // The generator is a program of smith's own C (scripts/protocol.c, on lib/json.c), built here and not shipped: like
-// scripts/pack.c, a tool of the build. arena, contract and text are the modules of smith, compiled from their sources.
+// scripts/pack.c, a tool of the build. arena, contract, format, io and random are the modules of smith, compiled from their sources.
 // Returns the program's step.
 static SmithStep build_protocol_program(SmithBuild *b, const BuildConfig *config, const char *folder) {
     const char *const sources[] = {
-        "scripts/protocol.c", "lib/smith/arena.smith", "lib/smith/contract.smith", "lib/smith/text.smith", "lib/json.c",
-        "lib/trace.c"};
-    SmithObject objects[6] = {};
-    const SmithObject *linked[7] = {};
-    for (size_t i = 0; i < 6; i++) {
+        "scripts/protocol.c", "lib/smith/arena.smith", "lib/smith/contract.smith", "lib/smith/format.smith", "lib/smith/io.smith",
+        "lib/smith/random.smith", "lib/json.c", "lib/trace.c"};
+    SmithObject objects[8] = {};
+    const SmithObject *linked[9] = {};
+    for (size_t i = 0; i < 8; i++) {
         objects[i] = (SmithObject){
             .compiler = config->cc,
             .source = sources[i],
@@ -226,8 +226,8 @@ static const char *const *build_protocol_steps(SmithBuild *b, const BuildConfig 
 // smith_object compiles (build_linked_libraries) has its header step from smith_object; the others are made here, and
 // are inputs of smith.c, which includes them. The installed smith writes the headers of its own embedded sources
 // first (`smith build` does, before this file runs), so a first build has them for build.c itself.
-static const char *const build_header_modules[] = {"ascii", "autodiff", "build", "effects", "format",
-                                                   "math",  "mem",      "slice", "test",    nullptr};
+static const char *const build_header_modules[] = {"ascii", "autodiff", "build", "effects", "math",
+                                                   "mem",   "slice",    "test",  nullptr};
 
 // The compiler's own file, which a header step lists as an input: it is the smith that writes the header.
 static const char *build_compiler_file(SmithBuild *b, const BuildConfig *config) {
@@ -547,7 +547,6 @@ static const char *const build_smith_inputs[] = {
     "lib/smith/result.smith",
     "lib/smith/slice.smith",
     "lib/smith/ascii.smith",
-    "lib/smith/text.smith",
     "include/smith/json.h",
     "lib/json.c",
     "include/smith/handlers.h",
@@ -594,8 +593,8 @@ static const char *const build_smith_inputs[] = {
 // every start against every image loaded, which cost 4 ms in the smith without lldb, and 9 ms more with the frameworks
 // lldb loads.
 // The libraries smith links, .smith modules compiled by the smith that runs this build (smith.c and the runtime see
-// only their headers); text is its own object beside them.
-static const char *const build_linked_libraries[] = {"arena", "contract", "inflate", "io", "random", "text"};
+// only their headers).
+static const char *const build_linked_libraries[] = {"arena", "contract", "format", "inflate", "io", "random"};
 
 // The step that stops the build when the LLVM install is not there, and says what to run: an input of what links it.
 // Only the default target runs it, so `smith build llvm` works on a smith with no LLVM install.
@@ -810,7 +809,6 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
     smith_compile_command(b, config->cc, "lib/smith/slice.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/ascii.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/test.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/text.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/build.smith", smith_flags);
     // The protocol code's hand-written base and its tests' support; the generated files are not linted.
     smith_compile_command(b, config->cc, "runtime/protocol/protocol.c", flags);
@@ -951,16 +949,16 @@ static const char *const *build_test(SmithBuild *b, const BuildConfig *config, c
         .command =
             (const char *[]){
                 "sh", "-c",
-                "work=${TMPDIR:-/tmp}/smith-text-$$.noindex; mkdir \"$work\"; trap 'rm -rf \"$work\"' "
+                "work=${TMPDIR:-/tmp}/smith-format-$$.noindex; mkdir \"$work\"; trap 'rm -rf \"$work\"' "
                 "EXIT; export XDG_CACHE_HOME=$work/xdg-cache; "
-                "\"$0\" cc -std=gnu23 -O2 -Wall -Wextra -Werror -I include -I .smith/include tests/text_exhaustive.c "
-                "lib/smith/text.smith -pthread -o \"$work/exhaustive\" || exit 1; start=$(date +%s); "
+                "\"$0\" cc -std=gnu23 -O2 -Wall -Wextra -Werror -I include -I .smith/include tests/format_exhaustive.c "
+                "lib/smith/format.smith lib/smith/io.smith lib/smith/arena.smith lib/smith/contract.smith lib/smith/random.smith -pthread -o \"$work/exhaustive\" || exit 1; start=$(date +%s); "
                 "\"$work/exhaustive\"; status=$?; "
                 "echo \"exhaustive: exit $status in $(($(date +%s) - start)) s\"; exit $status",
                 binary, nullptr},
         .inputs = (const char *[]){binary, nullptr},
     };
-    smith_task(b, "text-exhaustive", &exhaustive);
+    smith_task(b, "format-exhaustive", &exhaustive);
     // The soundness harnesses of `smith prove` on 8 seeds of 50000 inputs each (issue #64).
     SmithStep sound_full = {
         .run = build_prove_sound_full,

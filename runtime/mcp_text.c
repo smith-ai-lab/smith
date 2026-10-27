@@ -74,8 +74,9 @@ static const char *smith_mcp_argument_string(SmithArena *arena, const SmithJsonV
 
 static int64_t smith_mcp_argument_integer(const SmithJsonValue *arguments, const char *name, int64_t fallback) {
     const SmithJsonValue *member = smith_mcp_argument(arguments, name, SmithJsonKind_Number);
-    int64_t value = 0;
-    return member != nullptr && smith_text_parse_i64(member->text, &value) ? value : fallback;
+    if (member == nullptr) return fallback;
+    smith_format_I64Result parsed = smith_format_parse_i64(member->text);
+    return parsed.tag == smith_enum_result_i64__SmithFormatError_tag_ok ? parsed.ok : fallback;
 }
 
 static bool smith_mcp_argument_bool(const SmithJsonValue *arguments, const char *name, bool fallback) {

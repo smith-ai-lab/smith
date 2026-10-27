@@ -1,6 +1,6 @@
 // Tests of smith::format, in smith's own test library (the units runner links every *_test.smith). The C library's
 // snprintf in the C locale is the reference for integers, hexadecimal and fixed places (this program never sets a
-// locale); the shortest float text is checked by reading it back with smith::text and against known strings.
+// locale); the shortest float text is checked by reading it back with smith::format and against known strings.
 module smith::format_test;
 
 import smith::arena;
@@ -9,7 +9,6 @@ import smith::io;
 import smith::math;
 import smith::random;
 import smith::test;
-import smith::text;
 import scratch;
 import <stdint.h>;
 import smith::mem;
@@ -172,7 +171,7 @@ export void test_format_hex_known() {
     test::check(is(out, "0xff 00ff 0 ffffffffffffffff abc"));
 }
 
-// The shortest text that reads back as the same value, and the strings smith::text documents.
+// The shortest text that reads back as the same value, and the strings smith::format documents.
 export void test_format_floats_known() {
     char out[capacity];
     f64 tiny = 5e-324;
@@ -197,8 +196,14 @@ export void test_format_floats_read_back(random::Key key) {
     char out[capacity];
     format::Written written = format::to(out, sizeof out, value);
     f64 back = 0;
-    test::check(text::parse_f64(out[0:written.length], &back));
+    test::check(parsed_back(out[0:written.length], &back));
     test::check_same_bits(back, value);
+}
+
+static bool parsed_back(const char text[:], f64 *value) {
+    format::F64Result r = format::parse_f64(text);
+    if (r == .ok) *value = r.ok;
+    return r == .ok;
 }
 
 static void check_fixed(f64 value, u32 places) {
@@ -207,7 +212,7 @@ static void check_fixed(f64 value, u32 places) {
     (void)format::to(out, sizeof out, format::fixed(value, places));
     __builtin_snprintf(expected, sizeof expected, "%.*f", (i32)places, value);
     if (!is(out, expected)) {
-        test::check_equal(countof(text::make(out)), countof(text::make(expected))); // the failure shows both lengths
+        test::check_equal(countof(format::make(out)), countof(format::make(expected))); // the failure shows both lengths
         test::check(is(out, expected));
     }
 }
@@ -398,7 +403,7 @@ static void check_general(f64 value, u32 digits) {
     __builtin_snprintf(expected, sizeof expected, "%.*g", (i32)(digits == 0 ? 1 : (digits < 40 ? digits : 40)), value);
     remove_trailing_zeros(expected);
     if (!is(out, expected)) {
-        test::check_equal(countof(text::make(out)), countof(text::make(expected))); // the failure shows both lengths
+        test::check_equal(countof(format::make(out)), countof(format::make(expected))); // the failure shows both lengths
         test::check(is(out, expected));
     }
 }
@@ -409,7 +414,7 @@ static void check_scientific(f64 value, u32 places) {
     (void)format::to(out, sizeof out, format::scientific(value, places));
     __builtin_snprintf(expected, sizeof expected, "%.*e", (i32)(places < 40 ? places : 40), value);
     if (!is(out, expected)) {
-        test::check_equal(countof(text::make(out)), countof(text::make(expected)));
+        test::check_equal(countof(format::make(out)), countof(format::make(expected)));
         test::check(is(out, expected));
     }
 }

@@ -75,7 +75,7 @@ static const SmithJsonValue *smith_mcp_json_strings(SmithArena *arena, const cha
         arena, sizeof(const SmithJsonValue *), count + 1, alignof(const SmithJsonValue *));
     SMITH_ASSERT(array != nullptr && items != nullptr);
     for (size_t i = 0; i < count; i++)
-        items[i] = smith_mcp_json_string(arena, smith_text_make(strings[i]));
+        items[i] = smith_mcp_json_string(arena, smith_format_string(strings[i]));
     *array = (SmithJsonValue){.kind = SmithJsonKind_Array, .count = count, .items = items, .span = count + 1};
     return array;
 }
@@ -95,11 +95,11 @@ static bool smith_mcp_breakpoints_send(SmithMcpServer *server, SmithMcpSession *
         list[count].line = breakpoint->line;
         if (breakpoint->condition[0] != '\0') {
             list[count].has_condition = true;
-            list[count].condition = smith_text_make(breakpoint->condition);
+            list[count].condition = smith_format_string(breakpoint->condition);
         }
         index[count++] = i;
     }
-    SmithDapSetBreakpointsRequest request = {.arguments = {.source = {.has_path = true, .path = smith_text_make(path)},
+    SmithDapSetBreakpointsRequest request = {.arguments = {.source = {.has_path = true, .path = smith_format_string(path)},
                                                            .has_breakpoints = true,
                                                            .breakpoints = {list, count}}};
     SmithMcpReply reply;
@@ -148,7 +148,7 @@ static SmithMcpBreakpoint *smith_mcp_breakpoint_add(SmithMcpSession *session, co
 static void smith_mcp_breakpoint_show(const SmithMcpSession *session, const SmithMcpBreakpoint *breakpoint,
                                       SmithMcpText *out) {
     smith_mcp_text_add(out, "breakpoint %lld: ", (long long)breakpoint->id);
-    smith_mcp_path_add(out, session, smith_text_make(breakpoint->path));
+    smith_mcp_path_add(out, session, smith_format_string(breakpoint->path));
     smith_mcp_text_add(out, ":%lld", (long long)breakpoint->line);
     if (breakpoint->condition[0] != '\0') smith_mcp_text_add(out, " if %s", breakpoint->condition);
     if (breakpoint->verified)
@@ -299,10 +299,10 @@ static bool smith_mcp_launch_breakpoints(SmithMcpServer *server, SmithMcpSession
 static bool smith_mcp_launch_initialize(SmithMcpServer *server, SmithMcpSession *session, SmithMcpText *out) {
     SmithDapInitializeRequest request = {
         .arguments = {.has_clientID = true,
-                      .clientID = smith_text_make("smith-mcp"),
+                      .clientID = smith_format_string("smith-mcp"),
                       .has_clientName = true,
-                      .clientName = smith_text_make("smith mcp"),
-                      .adapterID = smith_text_make("smith"),
+                      .clientName = smith_format_string("smith mcp"),
+                      .adapterID = smith_format_string("smith"),
                       .has_linesStartAt1 = true,
                       .linesStartAt1 = true,
                       .has_columnsStartAt1 = true,
@@ -322,11 +322,11 @@ static bool smith_mcp_launch_initialize(SmithMcpServer *server, SmithMcpSession 
 static bool smith_mcp_launch_send(SmithMcpServer *server, SmithMcpSession *session, const char *program,
                                   const char *const *list, size_t count, bool stop_on_entry, int64_t *seq,
                                   SmithMcpText *out) {
-    struct smith_array_const_char_n keys[] = {smith_text_make("program"), smith_text_make("args"),
-                                              smith_text_make("cwd"), smith_text_make("stopOnEntry")};
-    SmithProtocolAny values[] = {smith_mcp_json_string(&server->scratch, smith_text_make(program)),
+    struct smith_array_const_char_n keys[] = {smith_format_string("program"), smith_format_string("args"),
+                                              smith_format_string("cwd"), smith_format_string("stopOnEntry")};
+    SmithProtocolAny values[] = {smith_mcp_json_string(&server->scratch, smith_format_string(program)),
                                  smith_mcp_json_strings(&server->scratch, list, count),
-                                 smith_mcp_json_string(&server->scratch, smith_text_make(session->cwd)),
+                                 smith_mcp_json_string(&server->scratch, smith_format_string(session->cwd)),
                                  stop_on_entry ? smith_mcp_json_true(&server->scratch) : nullptr};
     SmithDapLaunchRequest request = {.arguments = {.additionalProperties = {keys, values, stop_on_entry ? 4 : 3}}};
     bool sent = false;
@@ -671,7 +671,7 @@ static bool smith_mcp_tool_evaluate(SmithMcpServer *server, const SmithJsonValue
     if (!smith_mcp_frame_id(server, session, smith_mcp_argument_integer(arguments, "frame", 0), &frame, out))
         return false;
     SmithDapEvaluateRequest request = {
-        .arguments = {.expression = smith_text_make(expression),
+        .arguments = {.expression = smith_format_string(expression),
                       .has_frameId = true,
                       .frameId = frame,
                       .has_context = true,

@@ -1,6 +1,6 @@
 // <smith/json.h>: reading and writing JSON (RFC 8259) in memory, with every loop bounded and no malloc. Text is a
 // slice, `struct smith_array_const_char_n` (`.data`, `.count[0]`), so a file read into memory is read where it lies.
-// Numbers go through <smith/text.h>, which calls no C library function, so a double written here reads back as the same
+// Numbers go through <smith/format.h>, which calls no C library function, so a double written here reads back as the same
 // bits on any machine.
 //
 // Reading has two layers. The reader is a pull parser that walks values without building anything:
@@ -17,14 +17,14 @@
 // Both refuse what RFC 8259 refuses, and a few things it permits that no UTF-8 text can hold: a lone surrogate escape,
 // and a byte order mark. A bad document is a value: a byte offset and a reason, never an exit. Strings are decoded
 // (escapes, surrogate pairs) and their UTF-8 validated; a string needing no decoding is a slice of the input. A
-// number is kept as its text, and read with smith_text_parse_i64, _u64 or _f64 on it, which refuse what does not fit.
+// number is kept as its text, and read with smith_format_parse_i64, _u64 or _f64 on it, which refuse what does not fit.
 //
 // The writer puts values into a buffer, handling commas, escaping, nesting and an optional indent, and fails (once,
 // stickily) on data it cannot write, and stops on a call that cannot be right.
 #pragma once
 
 #include <smith/arena.h>
-#include <smith/text.h>
+#include <smith/format.h>
 
 #include <stddef.h>
 #include <stdint.h>

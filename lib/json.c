@@ -721,7 +721,7 @@ bool smith_json_parse(SmithArena *arena, struct smith_array_const_char_n input, 
 const SmithJsonValue *smith_json_member(const SmithJsonValue *object, const char *key) {
     if (object->kind != SmithJsonKind_Object) return nullptr;
     for (size_t i = object->count; i-- > 0;) {
-        if (smith_text_is(object->items[i]->key, key)) return object->items[i];
+        if (smith_format_is(object->items[i]->key, key)) return object->items[i];
     }
     return nullptr;
 }
@@ -938,15 +938,15 @@ static void smith_json_write_number(SmithJsonWriter *writer, const char *text, s
 }
 
 void smith_json_write_u64(SmithJsonWriter *writer, uint64_t value) {
-    char text[smith_text_number_capacity];
+    char text[smith_format_number_capacity];
     smith_json_write_number(
-        writer, text, smith_text_write_u64((struct smith_array_char_n){.data = text, .count = {sizeof text}}, value));
+        writer, text, smith_format_write_u64((struct smith_array_char_n){.data = text, .count = {sizeof text}}, value));
 }
 
 void smith_json_write_i64(SmithJsonWriter *writer, int64_t value) {
-    char text[smith_text_number_capacity];
+    char text[smith_format_number_capacity];
     smith_json_write_number(
-        writer, text, smith_text_write_i64((struct smith_array_char_n){.data = text, .count = {sizeof text}}, value));
+        writer, text, smith_format_write_i64((struct smith_array_char_n){.data = text, .count = {sizeof text}}, value));
 }
 
 void smith_json_write_f64(SmithJsonWriter *writer, double value) {
@@ -954,9 +954,9 @@ void smith_json_write_f64(SmithJsonWriter *writer, double value) {
     if (((bits >> 52) & 0x7ff) == 0x7ff) {
         smith_json_misuse("json writer: infinity and nan have no JSON text");
     }
-    char text[smith_text_f64_capacity];
+    char text[smith_format_f64_capacity];
     smith_json_write_number(
-        writer, text, smith_text_write_f64((struct smith_array_char_n){.data = text, .count = {sizeof text}}, value));
+        writer, text, smith_format_write_f64((struct smith_array_char_n){.data = text, .count = {sizeof text}}, value));
 }
 
 void smith_json_write_bool(SmithJsonWriter *writer, bool value) {

@@ -18,12 +18,12 @@
 #include <smith/arena.h>
 #include <smith/json.h>
 #include <smith/random.h>
-#include <smith/text.h>
+#include <smith/format.h>
 #else
 #include "../../include/smith/arena.h"
 #include "../../include/smith/json.h"
 #include "../../include/smith/random.h"
-#include "../../include/smith/text.h"
+#include "../../include/smith/format.h"
 #endif
 
 #include <stddef.h>

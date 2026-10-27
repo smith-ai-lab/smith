@@ -1047,9 +1047,6 @@ static constexpr unsigned char smith_random_source[] = {
 #embed "lib/smith/random.smith"
 };
 
-static constexpr unsigned char smith_text_source[] = {
-#embed "lib/smith/text.smith"
-};
 // The HTTPS client is smith's own for now, not a library a build.c can ask for: it goes to .smith/include/smith/ and
 // .smith/internal/, where the runtime's package.c finds it, and not to .smith/lib/ (which smith_library lists).
 static constexpr unsigned char smith_autodiff_source[] = {
@@ -1167,7 +1164,6 @@ static const SmithLibrary smith_libraries[] = {
     SMITH_LIBRARY_FLAGS(random, true, "-ffp-contract=off\n"),
     SMITH_LIBRARY(slice, true),
     SMITH_LIBRARY(test, true),
-    SMITH_LIBRARY(text, true),
     SMITH_LIBRARY(trace, false),
 };
 // clang-format on
@@ -3232,8 +3228,8 @@ static bool smith_project_arguments(const char *verb, int count, char **args) {
 
 // `smith mcp`: the debugger server of issue #22. A feature of the full smith (-DSMITH_MCP, which `smith build` passes
 // with clang inside), as the prover and the debugger are: a smith built without it has the verb and says so. It stands
-// on the JSON, text and protocol code (knowledge/protocol-generation.md; text is the module smith::text, linked as its
-// own object), and on the io module.
+// on the JSON, format and protocol code (knowledge/protocol-generation.md; format is the module smith::format, linked as
+// its own object), and on the io module.
 #ifdef SMITH_MCP
 #include "dap.c"
 #include "lib/json.c"

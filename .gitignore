@@ -25,7 +25,6 @@ compile_commands.json
 /include/smith/slice.h
 /include/smith/ascii.h
 /include/smith/test.h
-/include/smith/text.h
 /include/smith/random.body
 # The protocol code scripts/protocol.c writes from schemas/ (knowledge/protocol-generation.md), which `smith build` puts in
 # .smith/protocol/; these paths guard a copy put back where it used to be committed.

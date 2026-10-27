@@ -1,4 +1,4 @@
-// Every float, through <smith/text.h>'s parser: run by `smith build text-exhaustive`.
+// Every float, through <smith/format.h>'s parser: run by `smith build format-exhaustive`.
 // For each of the 2^32 bit patterns that is a finite float, the float is formatted twice, as %.9g
 // (the shortest that round-trips, which the fast path handles) and as %.17e (18 digits, which only the exact path
 // handles), and each text is parsed back. The parser must give strtof's float, in the C locale (this program never sets
@@ -6,10 +6,10 @@
 // exits 1 on any mismatch.
 //
 // Then a sample of the doubles, 2^24 patterns spread over the whole range by an odd stride (every 2^40th, so every
-// exponent and many mantissas), each formatted as %.17g (which smith_text_parse_f64 must read back to the same bits)
+// exponent and many mantissas), each formatted as %.17g (which smith_format_parse_f64 must read back to the same bits)
 // and as %.25e (26 digits, past what the fast path takes), and each parsed against strtod; and each written by
-// smith_text_write_f64 and read back by both parsers.
-#include <smith/text.h>
+// smith_format_write_f64 and read back by both parsers.
+#include <smith/format.h>
 
 #include <float.h>
 #include <inttypes.h>
@@ -31,8 +31,9 @@ typedef struct {
 } Work;
 
 static bool exhaustive_agrees(const char *text, float expected_from_strtof, float original, bool compare_original) {
-    float parsed = 0;
-    if (!smith_text_parse_f32(smith_text_make(text), &parsed)) return false;
+    smith_format_F32Result result = smith_format_parse_f32(smith_format_string(text));
+    if (result.tag != smith_enum_result_f32__SmithFormatError_tag_ok) return false;
+    float parsed = result.ok;
     uint32_t parsed_bits = __builtin_bit_cast(uint32_t, parsed);
     if (parsed_bits != __builtin_bit_cast(uint32_t, expected_from_strtof)) return false;
     return !compare_original || parsed_bits == __builtin_bit_cast(uint32_t, original);
@@ -61,16 +62,17 @@ constexpr uint64_t exhaustive_double_stride = 0x0000010000000001ULL; // odd; 2^2
 
 static bool exhaustive_agrees_f64(const char *text, double original, bool compare_original) {
     double expected = strtod(text, nullptr);
-    double parsed = 0;
-    if (!smith_text_parse_f64(smith_text_make(text), &parsed)) return false;
+    smith_format_F64Result result = smith_format_parse_f64(smith_format_string(text));
+    if (result.tag != smith_enum_result_f64__SmithFormatError_tag_ok) return false;
+    double parsed = result.ok;
     uint64_t parsed_bits = __builtin_bit_cast(uint64_t, parsed);
     if (parsed_bits != __builtin_bit_cast(uint64_t, expected)) return false;
     return !compare_original || parsed_bits == __builtin_bit_cast(uint64_t, original);
 }
 
 static bool exhaustive_written(double d) {
-    char out[smith_text_f64_capacity + 1];
-    size_t length = smith_text_write_f64((struct smith_array_char_n){.data = out, .count = {sizeof out}}, d);
+    char out[smith_format_f64_capacity + 1];
+    size_t length = smith_format_write_f64((struct smith_array_char_n){.data = out, .count = {sizeof out}}, d);
     out[length] = '\0';
     return exhaustive_agrees_f64(out, d, true);
 }

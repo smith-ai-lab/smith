@@ -138,10 +138,10 @@ static void smith_mcp_event_output(SmithMcpSession *session, SmithArena *arena, 
     SmithProtocolError error;
     if (!smith_dap_output_event_parse(arena, tree, &output, &error)) return;
     struct smith_array_const_char_n category =
-        output.body.has_category ? output.body.category.text : smith_text_make("console");
+        output.body.has_category ? output.body.category.text : smith_format_string("console");
     // The program's own output and the adapter's important messages; the debugger's console talk is noise here.
-    if (!smith_text_is(category, "stdout") && !smith_text_is(category, "stderr") &&
-        !smith_text_is(category, "important"))
+    if (!smith_format_is(category, "stdout") && !smith_format_is(category, "stderr") &&
+        !smith_format_is(category, "important"))
         return;
     SmithMcpEvent event = {.kind = SmithMcpEvent_Output};
     smith_mcp_copy(event.category, sizeof event.category, category);
@@ -156,14 +156,14 @@ static void smith_mcp_event_other(SmithMcpSession *session, SmithArena *arena, s
                                   const SmithJsonValue *tree) {
     SmithProtocolError error;
     SmithMcpEvent event = {};
-    if (smith_text_is(name, "exited")) {
+    if (smith_format_is(name, "exited")) {
         SmithDapExitedEvent exited;
         if (!smith_dap_exited_event_parse(arena, tree, &exited, &error)) return;
         event.kind = SmithMcpEvent_Exited;
         event.code = exited.body.exitCode;
-    } else if (smith_text_is(name, "terminated")) {
+    } else if (smith_format_is(name, "terminated")) {
         event.kind = SmithMcpEvent_Terminated;
-    } else if (smith_text_is(name, "initialized")) {
+    } else if (smith_format_is(name, "initialized")) {
         event.kind = SmithMcpEvent_Initialized;
     } else {
         return; // module, thread, breakpoint, continued, capabilities, process...: nothing an agent acts on
@@ -218,9 +218,9 @@ static void smith_mcp_dap_ingest(SmithMcpServer *server, SmithMcpSession *sessio
         } else if (message.type.known == SmithDapProtocolMessageTypeKnown_Event) {
             SmithDapEvent envelope;
             if (smith_dap_event_parse(arena, tree, &envelope, &error)) {
-                if (smith_text_is(envelope.event, "stopped"))
+                if (smith_format_is(envelope.event, "stopped"))
                     smith_mcp_event_stopped(session, arena, tree);
-                else if (smith_text_is(envelope.event, "output"))
+                else if (smith_format_is(envelope.event, "output"))
                     smith_mcp_event_output(session, arena, tree);
                 else
                     smith_mcp_event_other(session, arena, envelope.event, tree);
@@ -251,10 +251,11 @@ static size_t smith_mcp_header_length(const unsigned char *header, size_t size) 
         size_t used = 0;
         while (used < digits.count[0] && digits.data[used] >= '0' && digits.data[used] <= '9')
             used++;
-        uint64_t value = 0;
-        if (used == 0 ||
-            !smith_text_parse_u64((struct smith_array_const_char_n){.data = digits.data, .count = {used}}, &value))
-            return SIZE_MAX;
+        if (used == 0) return SIZE_MAX;
+        smith_format_U64Result parsed =
+            smith_format_parse_u64((struct smith_array_const_char_n){.data = digits.data, .count = {used}});
+        if (parsed.tag != smith_enum_result_u64__SmithFormatError_tag_ok) return SIZE_MAX;
+        uint64_t value = parsed.ok;
         return value < SIZE_MAX ? (size_t)value : SIZE_MAX;
     }
     return SIZE_MAX;
