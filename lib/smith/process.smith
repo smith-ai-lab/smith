@@ -63,9 +63,9 @@ constexpr i32 sig_pipe = c::SIGPIPE;
 constexpr i32 sig_block = c::SIG_BLOCK;
 constexpr i32 sig_setmask = c::SIG_SETMASK;
 constexpr i16 poll_in = c::POLLIN;
-constexpr i32 mode_inherit = c::SMITH_PROCESS_INHERIT;
-constexpr i32 mode_piped = c::SMITH_PROCESS_PIPED;
-constexpr i32 mode_captured = c::SMITH_PROCESS_CAPTURED;
+constexpr i32 mode_inherit = c::SmithProcessMode_Inherit;
+constexpr i32 mode_piped = c::SmithProcessMode_Piped;
+constexpr i32 mode_captured = c::SmithProcessMode_Captured;
 // NOLINTEND(smith-preprocessor, bugprone-signed-bitwise)
 constexpr usize chunk = 4096;
 constexpr usize argv_max = 255;

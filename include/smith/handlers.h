@@ -126,10 +126,10 @@ SmithClockHandler *smith_handlers_clock(void);
 typedef struct SmithProcessHandler SmithProcessHandler;
 
 // How a child's standard streams are connected.
-enum {
-    SMITH_PROCESS_INHERIT = 0, // no stdin; stdout and stderr are the program's own
-    SMITH_PROCESS_PIPED = 1,   // a pipe to its stdin and from its stdout; stderr is the program's own
-    SMITH_PROCESS_CAPTURED = 2 // no stdin; pipes from its stdout and from its stderr (stream 1 and 2 of read)
+enum SmithProcessMode {
+    SmithProcessMode_Inherit = 0, // no stdin; stdout and stderr are the program's own
+    SmithProcessMode_Piped = 1,   // a pipe to its stdin and from its stdout; stderr is the program's own
+    SmithProcessMode_Captured = 2 // no stdin; pipes from its stdout and from its stderr (stream 1 and 2 of read)
 };
 
 struct SmithProcessHandler {
