@@ -1,0 +1,8 @@
+// The last parameter is no struct.
+static i32 open(i32 id, i32 width) {
+    return id + width;
+}
+
+i32 main() {
+    return open(1, .width = 3);
+}

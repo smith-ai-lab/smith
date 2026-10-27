@@ -1,0 +1,32 @@
+// Named arguments: the trailing `.name = value` arguments of a call are the designated initializer of the last
+// parameter, a struct; what they leave out is zero.
+module main;
+
+import <stdio.h>;
+import <string.h>;
+import options;
+
+typedef struct {
+    i32 retries;
+    bool verbose;
+} Run;
+
+static i32 attempts(const char *name, Run run) {
+    return (i32)c::strlen(name) + run.retries + (run.verbose ? 100 : 0);
+}
+
+static i32 only(Run run) {
+    return run.retries;
+}
+
+i32 main() {
+    c::printf("%d\n", options::area(2, .title = "a"));
+    c::printf("%d\n", options::area(2, .width = 10));
+    c::printf("%d\n", options::area(2, .height = 5, .width = 10));
+    c::printf("%d\n", options::area(2, (options::Window){.width = 3, .height = 3}));
+    c::printf("%d\n", options::area(2, .title = "a", .width = 1 + 2, .height = attempts("ab", .retries = 1)));
+    c::printf("%d %d\n", attempts("abc", .retries = 0), attempts("abc", .verbose = true));
+    c::printf("%d %d\n", only(.retries = 7), only((Run){.retries = 2}));
+    c::printf("%d\n", attempts("x", (Run){.retries = 1, .verbose = true}));
+    return 0;
+}

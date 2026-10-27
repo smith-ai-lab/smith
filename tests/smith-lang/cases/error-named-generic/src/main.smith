@@ -1,0 +1,10 @@
+// A generic function does not take named arguments yet.
+module main;
+
+export i32 pick(auto value, i32 other) {
+    return other;
+}
+
+i32 main() {
+    return pick(1, .other = 3);
+}

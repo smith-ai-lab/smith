@@ -909,6 +909,9 @@ static const char *smith_lang_str(SmithLangText text) {
 // Tuples: `struct { i32, f32 }`, `t[0]`, `countof(t)`.
 #include "lang_tuple.c"
 
+// Named arguments: `f(a, .name = value)`.
+#include "lang_named.c"
+
 // `try` and `errdefer` for `result` and `option`.
 #include "lang_try.c"
 

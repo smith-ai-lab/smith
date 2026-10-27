@@ -20,7 +20,7 @@ Foo *foos = smith_arena_push_array(&arena, sizeof(Foo), count, alignof(Foo));   
 Write `sizeof(T)` and `alignof(T)` from the same `T`. `smith_arena_fits(&arena, size, align)` asks whether a push would fit; a scope is `SmithArenaScope scope = smith_arena_scope_begin(&arena); ...; smith_arena_scope_end(scope);` and `smith_arena_reset(&arena)`.
 
 ## Growing, and returning null
-`SmithArena arena = smith_arena_growing(1 << 20, nullptr);` (first chunk, backing: null is the OS, or a `SmithAllocator *`) takes another chunk when full: `smith_arena_push` never returns null, `arena.grown` is the bytes beyond the first chunk, chunks are kept across `smith_arena_reset` and scope ends, and `smith_arena_release(&arena)` gives them back. `smith_arena_try_push` and `smith_arena_try_push_array` (same arguments) return `NULL` for a full fixed arena or a refused chunk, for code that refuses.
+`SmithArena arena = smith_arena_make((SmithArenaOptions){.first = 1 << 20});` (first chunk, 0 for 1 MiB; `.backing` is a `SmithAllocator *`, null for the OS) takes another chunk when full: `smith_arena_push` never returns null, `arena.grown` is the bytes beyond the first chunk, chunks are kept across `smith_arena_reset` and scope ends, and `smith_arena_release(&arena)` gives them back. `smith_arena_try_push` and `smith_arena_try_push_array` (same arguments) return `NULL` for a full fixed arena or a refused chunk, for code that refuses.
 
 ## Carve arenas out of a reservation
 

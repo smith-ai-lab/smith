@@ -1,0 +1,43 @@
+================================================================================
+named arguments
+================================================================================
+
+i32 main() {
+    window::open(&w, .title = "game", .width = 1280);
+    return connect(.timeout = 5);
+}
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (function_definition
+    (primitive_type)
+    (function_declarator
+      (identifier)
+      (parameter_list))
+    (compound_statement
+      (expression_statement
+        (call_expression
+          (scoped_identifier
+            (identifier)
+            (identifier))
+          (argument_list
+            (pointer_expression
+              (identifier))
+            (named_argument
+              (field_designator
+                (field_identifier))
+              (string_literal
+                (string_content)))
+            (named_argument
+              (field_designator
+                (field_identifier))
+              (number_literal)))))
+      (return_statement
+        (call_expression
+          (identifier)
+          (argument_list
+            (named_argument
+              (field_designator
+                (field_identifier))
+              (number_literal))))))))

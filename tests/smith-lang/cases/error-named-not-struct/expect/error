@@ -1,0 +1,2 @@
+src/main.smith:7:20: named arguments fill the last parameter of `open`, which must be a struct: it is `i32`
+src/main.smith:7:30: too few arguments to function call, expected 2, have 1

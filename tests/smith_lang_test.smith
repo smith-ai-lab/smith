@@ -1613,6 +1613,30 @@ export void test_target_facts_thread(io::Io *io) {
     corpus_case(io, "target-facts-thread");
 }
 
+export void test_named_arguments(io::Io *io) {
+    corpus_case(io, "named-arguments");
+}
+
+export void test_error_named_misspelled(io::Io *io) {
+    corpus_case(io, "error-named-misspelled");
+}
+
+export void test_error_named_stray(io::Io *io) {
+    corpus_case(io, "error-named-stray");
+}
+
+export void test_error_named_count(io::Io *io) {
+    corpus_case(io, "error-named-count");
+}
+
+export void test_error_named_not_struct(io::Io *io) {
+    corpus_case(io, "error-named-not-struct");
+}
+
+export void test_error_named_generic(io::Io *io) {
+    corpus_case(io, "error-named-generic");
+}
+
 export void test_tuple_basic(io::Io *io) {
     corpus_case(io, "tuple-basic");
 }

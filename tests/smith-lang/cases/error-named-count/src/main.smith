@@ -1,0 +1,12 @@
+// Named arguments fill the last parameter, so every parameter before it is given.
+typedef struct {
+    i32 width;
+} Options;
+
+static i32 open(i32 id, i32 size, Options options) {
+    return id + size + options.width;
+}
+
+i32 main() {
+    return open(1, .width = 3);
+}

@@ -1,0 +1,18 @@
+module options;
+
+// The last parameter of a function with options is a struct: what a call leaves out is zero.
+
+export typedef struct {
+    /// the width, 0 for 80
+    i32 width;
+    /// the height, 0 for 24
+    i32 height;
+    /// the title
+    const char *title;
+} Window;
+
+export i32 area(i32 scale, Window window) {
+    i32 width = window.width == 0 ? 80 : window.width;
+    i32 height = window.height == 0 ? 24 : window.height;
+    return scale * width * height;
+}

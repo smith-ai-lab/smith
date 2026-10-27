@@ -668,6 +668,7 @@ class SmithHook final : public TokenHook, public NameSource {
         host.maybe_slice = hasSlice(SM.getBufferData(MainFile)) || hasStr(SM.getBufferData(MainFile));
         host.maybe_brackets = hasEmptyBrackets(SM.getBufferData(MainFile));
         host.maybe_shape = hasShapeCall(SM.getBufferData(MainFile));
+        host.maybe_named = hasNamedArgument(SM.getBufferData(MainFile));
         host.maybe_tuple = host.maybe_slice || hasTuple(SM.getBufferData(MainFile)) ||
                            hasPayloadEnum(SM.getBufferData(MainFile)) || host.maybe_shape ||
                            hasTryWord(SM.getBufferData(MainFile));
@@ -957,7 +958,7 @@ class SmithHook final : public TokenHook, public NameSource {
     // The declarations of a module, as they stream by: the lowering decides each token without looking ahead, or says
     // it must (Slow).
     Fast tryFast(Token &tok) {
-        if (host.maybe_slice || host.maybe_brackets || smith_lang_slices_on(lang))
+        if (host.maybe_slice || host.maybe_brackets || host.maybe_named || smith_lang_slices_on(lang))
             return Fast::No; // the lowering reads every token
         // A name of the module may hold a type (`constexpr type big = u32;`, then `big x = 1;`): the lowering reads its
         // neighbours, so it is not renamed here (issue #165).
@@ -2866,6 +2867,45 @@ class SmithHook final : public TokenHook, public NameSource {
         while (next < text.size() && isWhitespace(text[next]))
             next += 1;
         return next < text.size() && text[next] == ']';
+    }
+
+    // Whether the code has a named argument (runtime/lang_named.c): `. name =` right after the `(` of a call or a `,` that
+    // the innermost open bracket is a `(` encloses (a designated initializer's `{ .a = 1, .b = 2 }` is not one).
+    static bool hasNamedArgument(StringRef text) {
+        char open[64];
+        size_t depth = 0;
+        char last = 0; // the last character of code that is not a space
+        for (size_t at = 0; at < text.size(); at++) {
+            size_t after = skipLiteral(text, at);
+            if (after != at) {
+                at = after - 1;
+                last = 'x';
+                continue;
+            }
+            char c = text[at];
+            if (c == '(' || c == '[' || c == '{') {
+                if (depth < sizeof open) open[depth] = c;
+                depth += 1;
+            } else if ((c == ')' || c == ']' || c == '}') && depth > 0) {
+                depth -= 1;
+            } else if (c == '.' && (last == '(' || last == ',') && depth > 0 && depth <= sizeof open &&
+                       open[depth - 1] == '(') {
+                size_t next = at + 1;
+                while (next < text.size() && isWhitespace(text[next]))
+                    next += 1;
+                size_t name = next;
+                while (next < text.size() && isAsciiIdentifierContinue(text[next]))
+                    next += 1;
+                size_t equals = next;
+                while (equals < text.size() && isWhitespace(text[equals]))
+                    equals += 1;
+                if (next > name && equals + 1 < text.size() && text[equals] == '=' && text[equals + 1] != '=') {
+                    return true;
+                }
+            }
+            if (!isWhitespace(c)) last = c;
+        }
+        return false;
     }
 
     static bool hasEmptyBrackets(StringRef text) {

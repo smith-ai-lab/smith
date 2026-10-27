@@ -1,0 +1,2 @@
+src/main.smith:11:20: named arguments fill the last parameter, which is parameter 3 of `open`; this call gives 1 argument before them
+src/main.smith:11:30: too few arguments to function call, expected 3, have 2

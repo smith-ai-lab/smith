@@ -1,0 +1,2 @@
+src/main.smith:9:12: `pick` takes 2 arguments, and the call has 1
+src/main.smith:9:20: `pick` is a generic function: it does not take named arguments yet

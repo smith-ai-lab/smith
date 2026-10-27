@@ -17,7 +17,7 @@ import <sys/mman.h>; // mmap and munmap: the operating system as the default bac
 // a reset frees everything, and a scope frees what was pushed since it began.
 //
 // Two kinds (owner, 2026-10-25). A fixed arena (arena::fixed) is over memory the caller gives and never
-// grows: a push that does not fit is a checked failure naming the budget. A growing arena (arena::growing) takes
+// grows: a push that does not fit is a checked failure naming the budget. A growing arena (arena::make) takes
 // another chunk from its backing allocator (the operating system by default) when the current one is full, so a push
 // never fails; the chunks are kept across scopes and resets (a second pass over the same work reuses them), `grown` is
 // the bytes beyond the first chunk, and the operating system refusing is a checked failure naming the size.
@@ -281,12 +281,24 @@ bool grow(Arena *arena, usize size, usize align) {
     return true;
 }
 
-// A growing arena over chunks from backing (null: the operating system), the first holding at least `first` bytes. A
-// push never fails: when a chunk is full the arena takes another, and keeps them for the next pass. The first chunk is
-// taken here; the backing refusing it is a checked failure. release gives the chunks back.
-[[smith::c_name("smith_arena_growing")]] export [[nodiscard]] Arena growing(usize first, c::SmithAllocator *backing) {
+// The options of arena::make; a field left out is zero, which is the usual.
+export typedef struct {
+    /// the size of the first chunk in bytes, 0 for 1 MiB; a chunk twice the size is taken when it is full
+    usize first;
+    /// where the chunks come from: an allocator (`&allocator.base`), null for the operating system
+    c::SmithAllocator *backing;
+} Options;
+
+constexpr usize first_default = 1 << 20;
+
+// A growing arena over chunks from `options.backing` (null: the operating system), the first holding at least
+// `options.first` bytes (`arena::make(.first = 1 << 20)`). A push never fails: when a chunk is full the arena takes
+// another, and keeps them for the next pass. The first chunk is taken here; the backing refusing it is a checked
+// failure. release gives the chunks back.
+[[smith::c_name("smith_arena_make")]] export [[nodiscard]] Arena make(Options options) {
     contract::trusted(); // the first chunk comes from the backing
-    contract::requires(first > 0);
+    usize first = options.first == 0 ? first_default : options.first;
+    c::SmithAllocator *backing = options.backing;
     Arena arena = {.growing = true, .backing = backing};
     bool overflow = first > math::max(usize) - chunk_header - chunk_round;
     usize size = overflow ? 0 : (first + chunk_header + chunk_round - 1) & ~(chunk_round - 1);

@@ -1,0 +1,2 @@
+src/main.smith:11:29: a positional argument after a named one: the named arguments (`.name = value`) come last
+src/main.smith:11:30: too few arguments to function call, expected 2, have 0

@@ -294,6 +294,8 @@ module.exports = grammar(C, {
       )),
       ')',
     ),
+    // `open(.width = 640)`: a named argument, the designated initializer of the last parameter (issue #317)
+    named_argument: $ => seq($.field_designator, '=', choice($.expression, $.initializer_list)),
     // rest...: the arguments of a list, expanded
     pack_expansion: $ => seq($.expression, '...'),
     // (a call such as `c::strlen(path)` is an expression, not a type with a function declarator)
@@ -301,6 +303,7 @@ module.exports = grammar(C, {
       prec.dynamic(3, $.expression),
       prec.dynamic(3, $.pack_expansion),
       $.designated_list,
+      $.named_argument,
       $.compound_statement,
       prec.dynamic(-1, $.type_descriptor),
       alias(choice('==', '!=', '<', '>', '<=', '>=', '&&', '||'), $.operator),

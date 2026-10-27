@@ -1,0 +1,12 @@
+// A positional argument after a named one.
+typedef struct {
+    i32 width;
+} Options;
+
+static i32 open(i32 id, Options options) {
+    return id + options.width;
+}
+
+i32 main() {
+    return open(.width = 3, 1);
+}

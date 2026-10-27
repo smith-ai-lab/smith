@@ -222,6 +222,46 @@ same true, copy[1] 0, copy[3] 4.5
 
 `mem::copy`, `mem::move`, `mem::zero`, `mem::fill`, `mem::equal`, `mem::bytes(&x)` and `mem::view(bytes, f32)` take slices, so a length that does not match is a checked failure, and they lower to the C functions. In a file with a `module` line the raw `memcpy`, `memmove`, `memset` and `memcmp` are a `smith-mem` finding that names the replacement (`smith lint --fix` applies the mechanical ones); a function that implements a wrapper says `contract::trusted()`. A `.c` file is untouched. [smith-mem](.agents/skills/smith-mem/SKILL.md).
 
+### Named arguments, and zero is the default
+
+```c
+void connect(int port, int retries, int timeout, int verbose);
+void run(void) { connect(80, 0, 5, 1); } // which one is the timeout?
+```
+
+```smith project=named run
+module main;
+
+import smith::console;
+
+typedef struct {
+    /// seconds, 0 for none
+    i32 timeout;
+    /// 0 for the usual 3
+    i32 retries;
+    bool verbose;
+} Options;
+
+static i32 connect(i32 port, Options options) {
+    i32 retries = options.retries == 0 ? 3 : options.retries;
+    return port + options.timeout * retries + (options.verbose ? 1 : 0);
+}
+
+i32 main() {
+    i32 a = connect(80, .timeout = 5); // the rest is zero
+    i32 b = connect(80, .timeout = 5, .verbose = true);
+    i32 c = connect(80, (Options){.retries = 1}); // the struct, written out
+    console::print(a, " ", b, " ", c, "\n");
+    return 0;
+}
+```
+
+```output project=named
+95 96 80
+```
+
+The trailing `.name = value` arguments of a call become the designated initializer of the function's last parameter, which is a struct, so what a call leaves out is zero (design the struct so that zero means the usual). `.name = value` is invalid C as an argument, so the C rule holds; a misspelled name is C's own "no member named" error, and a positional argument after a named one is an error. [smith-lang-named-arguments](.agents/skills/smith-lang-named-arguments/SKILL.md).
+
 ### No preprocessor
 
 ```c

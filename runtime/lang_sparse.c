@@ -20,7 +20,8 @@ void smith_lang_watch_basics(const SmithHost *host) {
     for (size_t i = 0; i < sizeof smith_lang_sized / sizeof smith_lang_sized[0]; i++) // 13 entries
         host->watch(host->context, smith_lang_sized[i].name, (uint32_t)strlen(smith_lang_sized[i].name));
     // `if` and `else` are keywords, which a host offers only in its all-tokens mode.
-    if (host->maybe_if_constexpr || host->maybe_tuple || host->maybe_type_value || host->maybe_brackets)
+    if (host->maybe_if_constexpr || host->maybe_tuple || host->maybe_type_value || host->maybe_brackets ||
+        host->maybe_named)
         host->watch_mode(host->context, SmithWatch_All);
 }
 
@@ -174,7 +175,8 @@ static void smith_lang_sparse_imports_done(SmithLang *lang, const SmithHost *hos
     host->watch_imports(host->context);
     lang->imports_watched = true;
     host->watch_mode(host->context,
-                     host->maybe_if_constexpr || smith_lang_type_on(lang, host) || smith_lang_tuples_on(lang, host)
+                     host->maybe_if_constexpr || host->maybe_named || smith_lang_type_on(lang, host) ||
+                             smith_lang_tuples_on(lang, host)
                          ? SmithWatch_All
                          : SmithWatch_Names);
 }

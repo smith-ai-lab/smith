@@ -253,7 +253,7 @@ void fill_blocks(arena::Arena *a, usize count, u8 fill) {
 }
 
 export void test_arena_growing_takes_chunks_and_keeps_them_across_a_reset() {
-    arena::Arena a = arena::growing(chunk_first, nullptr);
+    arena::Arena a = arena::make(.first = chunk_first);
     defer arena::release(&a);
     usize first = a.capacity;
     test::check_condition(first >= chunk_first);
@@ -269,7 +269,7 @@ export void test_arena_growing_takes_chunks_and_keeps_them_across_a_reset() {
 }
 
 export void test_arena_growing_scopes_end_across_chunks() {
-    arena::Arena a = arena::growing(chunk_first, nullptr);
+    arena::Arena a = arena::make(.first = chunk_first);
     defer arena::release(&a);
     fill_blocks(&a, 3, 1);
     usize used = a.used;
@@ -289,7 +289,7 @@ export void test_arena_growing_scopes_end_across_chunks() {
 }
 
 export void test_arena_growing_serves_a_push_bigger_than_a_chunk() {
-    arena::Arena a = arena::growing(chunk_first, nullptr);
+    arena::Arena a = arena::make(.first = chunk_first);
     defer arena::release(&a);
     u8 big[:] = arena::push_slice(&a, u8, 5 * chunk_first);
     test::check_equal(countof(big), 5 * chunk_first);
@@ -308,7 +308,7 @@ export void test_arena_growing_from_a_backing_allocator() {
     static Parent memory;
     arena::Arena parent = arena::fixed(memory.bytes, sizeof memory.bytes);
     arena::ArenaAllocator backing = arena::allocator(&parent);
-    arena::Arena a = arena::growing(chunk_first, &backing.base);
+    arena::Arena a = arena::make(.first = chunk_first, .backing = &backing.base);
     test::check_condition(parent.used >= chunk_first); // the first chunk is the backing's
     usize before = parent.used;
     fill_blocks(&a, 40, 7);
@@ -332,7 +332,7 @@ export void test_arena_try_push_is_null_where_a_push_would_fail() {
     static Parent parent_memory;
     arena::Arena parent = arena::fixed(parent_memory.bytes, 40 << 10);
     arena::ArenaAllocator backing = arena::allocator(&parent);
-    arena::Arena growing = arena::growing(chunk_first, &backing.base);
+    arena::Arena growing = arena::make(.first = chunk_first, .backing = &backing.base);
     test::check_condition(arena::try_push_raw(&growing, 8 * chunk_first, 8) == nullptr); // the backing is out of memory
     test::check_condition(arena::try_push_raw(&growing, 100, 8) != nullptr);             // and the arena still works
 }
@@ -370,7 +370,7 @@ export void test_arena_try_push_is_none_where_a_push_would_fail() {
 }
 
 export void test_arena_try_push_takes_chunks_of_a_growing_arena() {
-    arena::Arena a = arena::growing(chunk_first, nullptr);
+    arena::Arena a = arena::make(.first = chunk_first);
     fill_block(&a);
     test::check_equal(a.grown, 0);
     test::check_condition(is_some_record(try_record(&a))); // the record comes from another chunk
@@ -380,14 +380,14 @@ export void test_arena_try_push_takes_chunks_of_a_growing_arena() {
     static Parent parent_memory;
     arena::Arena parent = arena::fixed(parent_memory.bytes, 40 << 10);
     arena::ArenaAllocator backing = arena::allocator(&parent);
-    arena::Arena refused = arena::growing(chunk_first, &backing.base);
+    arena::Arena refused = arena::make(.first = chunk_first, .backing = &backing.base);
     fill_block(&refused);
     test::check_condition(!is_some_record(try_record(&refused))); // the backing refuses the next chunk: none
     test::check_equal(refused.grown, 0);                          // and nothing was taken
 }
 
 export void test_arena_allocator_serves_a_growing_arena() {
-    arena::Arena a = arena::growing(chunk_first, nullptr);
+    arena::Arena a = arena::make(.first = chunk_first);
     defer arena::release(&a);
     arena::ArenaAllocator allocator = arena::allocator(&a);
     typeof(allocator.base) *base = &allocator.base;

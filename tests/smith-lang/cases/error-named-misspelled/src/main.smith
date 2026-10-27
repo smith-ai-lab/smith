@@ -1,0 +1,14 @@
+// A misspelled name is C's own error.
+import <stdio.h>;
+
+typedef struct {
+    i32 width;
+} Options;
+
+static i32 open(i32 id, Options options) {
+    return id + options.width;
+}
+
+i32 main() {
+    return open(1, .widht = 3);
+}
