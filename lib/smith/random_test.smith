@@ -5,9 +5,11 @@
 module smith::random_test;
 
 import smith::arena;
+import smith::effects;
 import smith::random;
 import smith::test;
 import <math.h>;
+import <smith/handlers.h>; // SmithEntropyHandler, smith_handlers_set_entropy
 
 constexpr u64 seed = 20260101;
 constexpr usize draws = 10000; // per key: a hundred keys make the million draws the C program made once
@@ -704,4 +706,57 @@ export void test_random_bernoulli_under_a_tap() {
     test::check(random::bernoulli_sample(tapped(&low), (random::Bernoulli){1.0}));
     ConstantTap high = {.tap = {tap_constant}, .word = 18446744073709551615ULL};
     test::check(random::bernoulli_sample(tapped(&high), (random::Bernoulli){0.5}));
+}
+
+// A fake entropy: it writes the bytes of the number it holds, so a test scripts what `seed()` returns.
+typedef struct {
+    c::SmithEntropyHandler base; // first: &fake.base is what smith_handlers_set_entropy takes
+    u64 number;
+    usize asked;
+} FakeEntropy;
+
+void fake_fill(c::SmithEntropyHandler *self, u8 *buffer, usize size) {
+    FakeEntropy *fake = (FakeEntropy *)self;
+    fake->asked += 1;
+    for (usize i = 0; i < size; i++)
+        buffer[i] = (u8)(fake->number >> (8 * (i % 8)));
+}
+
+FakeEntropy make_fake_entropy(u64 number) {
+    FakeEntropy fake = {};
+    fake.base.fill = fake_fill;
+    fake.number = number;
+    return fake;
+}
+
+// The fake is what seed() draws from, and the key is key_make of the 64 bits it wrote.
+export void test_random_seed_draws_from_the_entropy_handler() {
+    FakeEntropy fake = make_fake_entropy(0x0123456789abcdefULL);
+    c::SmithEntropyHandler *before = c::smith_handlers_set_entropy(&fake.base);
+    defer c::smith_handlers_set_entropy(before);
+    random::Key key = random::seed();
+    test::check_equal(key.bits, 0x0123456789abcdefULL);
+    test::check_equal(fake.asked, (usize)1);
+}
+
+// With no handler set, the system answers: two seeds differ, and the handler of the thread is null again.
+export void test_random_seed_without_a_handler_is_the_systems() {
+    FakeEntropy fake = make_fake_entropy(7);
+    c::SmithEntropyHandler *before = c::smith_handlers_set_entropy(&fake.base);
+    c::SmithEntropyHandler *scripted = c::smith_handlers_set_entropy(before);
+    test::check(scripted == &fake.base);
+    random::Key first = random::seed();
+    random::Key second = random::seed();
+    test::check(first.bits != second.bits);
+    test::check_equal(fake.asked, (usize)0);
+}
+
+// seed() has the entropy effect and no other: a ceiling that lists it holds. (The `fails` of its checked failure is
+// part of it.)
+void seed_stays_within(constexpr auto f) {
+    static_assert(effects::within(f, effects::entropy | effects::fails), "seed: entropy and a checked failure only");
+}
+
+export void test_random_seed_has_the_entropy_effect() {
+    seed_stays_within(random::seed);
 }

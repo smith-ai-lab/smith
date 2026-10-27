@@ -42,6 +42,10 @@ for (usize i = 0; i < count; i++) {
 
 `random::key_bits(key)` is 64 random bits, `random::key_unit_float(key)` a real in [0, 1) on a grid of 2^-24, `random::key_unit_double(key)` on 2^-53. A key is one draw. `1 - unit` is exact and in (0, 1], the safe way to take a log: `random::log_double(1.0 - random::key_unit_double(key))`.  The same numbers twice: make the key twice from the seed.
 
+## A fresh key from the system
+
+`random::seed()` returns a new `random::Key` from the system's entropy (`getentropy`), a different one on every call (C: `smith_random_seed()`); it has the `entropy` effect (`smith-lang-effects`), so a `[[smith::pure]]` function cannot call it. Print `key.bits` to replay a run: `random::key_make(bits)` is the same key. A test scripts it by setting the thread's entropy handler, `c::smith_handlers_set_entropy(&fake.base)` (`SmithEntropyHandler {fill}` from `<smith/handlers.h>`, restore the previous one with `defer`); see `lib/smith/random_test.smith`. `io.key` and `io.seed` stay until io goes.
+
 ## The guarantees, and their limits
 
 - **The numbers never change.** (`split` gives the keys `key_derive` gave and a draw is the old draw 0, so every distribution still gives what it gave for a key.) They are part of the API: the Philox4x32-10 generator, the key and counter mapping and every distribution's algorithm are pinned by tests, so a change to any of them is a breaking change.

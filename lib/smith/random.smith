@@ -8,6 +8,7 @@ import smith::arena;
 import target;
 import smith::contract;
 import smith::math;
+import <sys/random.h>; // getentropy: the function the handler of the thread answers
 
 // <smith/random.h>: random numbers from keys, as in JAX. A key is an immutable value, and every draw is a pure function
 // of a key: the same key gives the same numbers on every platform, in any thread and in any order. There is no global
@@ -298,6 +299,19 @@ u64 philox_high(Block counter, u32 key_0, u32 key_1) {
 // The key for a seed. Seeds that differ in one bit give unrelated streams.
 [[smith::c_name("smith_key_make")]] export [[nodiscard]] Key key_make(u64 seed) {
     return (Key){.bits = seed};
+}
+
+// A fresh key from the system's entropy (getentropy): 64 random bits, a different key on every call, so a program that
+// wants a run it can repeat prints `key.bits` or builds its keys with key_make(seed) instead. It has the `entropy`
+// effect. A test scripts it with the entropy handler of the thread (include/smith/handlers.h, `SmithEntropyHandler`,
+// `smith_handlers_set_entropy`), which answers getentropy; this module does not name it, so a program that only
+// builds keys links no runtime. A system that cannot give 64 bits of entropy is a checked failure.
+[[smith::c_name("smith_random_seed")]] export [[nodiscard]] Key seed() {
+    contract::trusted(); // a call into the system, the edge a proof cannot read
+    u64 bits = 0;
+    i32 status = c::getentropy(&bits, sizeof bits); // NOLINT(smith-effects): the edge, as the handler answers it
+    contract::assert(status == 0);
+    return key_make(bits);
 }
 
 // Counter word 2 separates split's domain (1) from the words' domain (0). The key for part i of key (JAX's fold_in).

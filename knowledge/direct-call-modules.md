@@ -16,3 +16,5 @@ Issue #240 removes `io::Io`: the world is called directly and a test stands in f
 - **Not here.** The program's arguments are `main(str args[:])` (#240 phase 2); async reads and timers (`io::Op`) wait for the task runtime (#241); `gettimeofday`, `time` and the Mach clocks are not reached by the clock handler.
 
 Tests: `lib/smith/console_test.smith`, `env_test.smith`, `clock_test.smith` (fake handlers) and `tests/handlers/envclock.c` (the runtime). Skills: smith-console, smith-env, smith-clock.
+
+`random::seed()` (issue #240) is the same idea for randomness: a fresh `random::Key` from `getentropy`, which `SmithEntropyHandler {fill}` answers per thread (so a test scripts the bytes), with the `entropy` effect inferred from the call. The module names no handler, so a program that only makes keys links no runtime; a test sets the handler with `smith_handlers_set_entropy`. `SMITH_SEED` replay stays in `io::make`.
