@@ -455,6 +455,7 @@ static void build_tree_sitter_data(SmithBuild *b, const BuildConfig *config, con
 // and the tools, and the prover when its libraries are there. `list` gets pointers to them, ended by nullptr.
 typedef struct {
     SmithObject objects[22];
+    SmithObject idiom; // runtime/idiom.smith: the words and tables of the idiom checks, in smith's own language
     BuildProver prove;
 } BuildShims;
 
@@ -482,6 +483,21 @@ static void build_shims(SmithBuild *b, const BuildConfig *config, const char *fo
     for (size_t i = 0; i < count + 1; i++) // the packed data, then the shims, then the parser
         list[listed++] = &shims->objects[i];
     count = listed;
+    if (config->hook) {
+        // The idiom checks (shim/idiom.h) ask their words and tables of a module compiled by the smith that builds
+        // smith (the lag rule), through shim/idiom_words.h.
+        shims->idiom = (SmithObject){
+            .compiler = config->cc,
+            .source = "runtime/idiom.smith",
+            .output = smith_fmt(b, "%s/idiom.o", folder),
+            .flags = smith_cat(
+                b, config->cflags,
+                (const char *[]){"-I", "include", "-I", ".smith/include", "-I", "runtime", "-fdefer-ts", nullptr},
+                nullptr),
+        };
+        smith_object(b, &shims->idiom);
+        list[count++] = &shims->idiom;
+    }
     if (config->prove[0] == '\0') return;
     build_prover(b, config, folder, &shims->prove);
     for (size_t i = 0; i < 4; i++)
@@ -640,7 +656,7 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
     SmithObject commit = build_commit_object(b, config, folder);
     BuildShims shims = {};
     SmithObject libraries[sizeof build_linked_libraries / sizeof build_linked_libraries[0]] = {};
-    const SmithObject *objects[40] = {&object, &commit};
+    const SmithObject *objects[64] = {&object, &commit};
     size_t count = 2;
     for (size_t i = 0; i < sizeof libraries / sizeof libraries[0]; i++) {
         libraries[i] = (SmithObject){
@@ -701,17 +717,19 @@ static const char *const *build_test_modules(SmithBuild *b, const BuildConfig *c
         };
         smith_step(b, &write);
         SmithStep compile = {
-            .command = smith_cat(b, smith_list(b, smith_cc, nullptr), flags,
-                                 smith_list(b, "-I", ".smith/include", "-c", tests[i], "-o", object, nullptr), nullptr),
+            .command = smith_cat(
+                b, smith_list(b, smith_cc, nullptr), flags,
+                smith_list(b, "-I", ".smith/include", "-I", "runtime", "-c", tests[i], "-o", object, nullptr), nullptr),
             .inputs = smith_list(b, tests[i], nullptr),
             .implicit_inputs = smith_list(b, smith_cc, header, nullptr),
             .outputs = smith_list(b, object, nullptr),
             .description = smith_fmt(b, "compile %s", tests[i]),
         };
         smith_step(b, &compile);
-        smith_compile_command(
-            b, smith_cc, tests[i],
-            smith_cat(b, flags, smith_list(b, "-I", ".smith/include", "-fdefer-ts", nullptr), nullptr));
+        smith_compile_command(b, smith_cc, tests[i],
+                              smith_cat(b, flags,
+                                        smith_list(b, "-I", ".smith/include", "-I", "runtime", "-fdefer-ts", nullptr),
+                                        nullptr));
         needs = smith_cat(b, needs, write.outputs, nullptr);
     }
     return needs;

@@ -15,6 +15,8 @@
 // `// NOLINT(smith-sized-types)` and the others opt a line out.
 #pragma once
 
+#include "idiom_words.h"
+
 #include "clang-tidy/ClangTidyCheck.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/Expr.h"
@@ -31,7 +33,6 @@
 #include <map>
 #include <memory>
 #include <set>
-#include <sstream>
 #include <string>
 #include <vector>
 
@@ -76,36 +77,6 @@ inline bool is_generated(const SourceManager &sm, FileID file) {
 
 // ---- smith-sized-types ----------------------------------------------------------------------------------------------
 
-inline const char *sized_type(llvm::StringRef name) {
-    static const std::map<std::string, const char *> table = {
-        {"uint8_t", "u8"},  {"uint16_t", "u16"}, {"uint32_t", "u32"}, {"uint64_t", "u64"}, {"int8_t", "i8"},
-        {"int16_t", "i16"}, {"int32_t", "i32"},  {"int64_t", "i64"},  {"size_t", "usize"}, {"ptrdiff_t", "isize"},
-    };
-    auto found = table.find(name.str());
-    return found == table.end() ? nullptr : found->second;
-}
-
-// The sized type for a run of C's integer keywords (`unsigned long long`): empty for `char` alone, which stays char.
-inline std::string sized_integer(const std::vector<std::string> &run) {
-    int longs = 0;
-    bool is_unsigned = false, is_signed = false, is_short = false, is_char = false, is_double = false, is_float = false;
-    for (const std::string &word : run) {
-        if (word == "long") longs++;
-        if (word == "double") is_double = true;
-        if (word == "float") is_float = true;
-        if (word == "unsigned") is_unsigned = true;
-        if (word == "signed") is_signed = true;
-        if (word == "short") is_short = true;
-        if (word == "char") is_char = true;
-    }
-    if (is_double) return "f64";
-    if (is_float) return "f32";
-    if (is_char) return is_unsigned ? "u8" : is_signed ? "i8" : "";
-    if (is_short) return is_unsigned ? "u16" : "i16";
-    if (longs > 0) return is_unsigned ? "u64" : "i64";
-    return is_unsigned ? "u32" : "i32";
-}
-
 class SizedTypesCheck final : public ClangTidyCheck {
   public:
     SizedTypesCheck(llvm::StringRef Name, ClangTidyContext *Context) : ClangTidyCheck(Name, Context) {}
@@ -128,21 +99,22 @@ class SizedTypesCheck final : public ClangTidyCheck {
                 if (lexed.in_directive[i] || !tokens[i].is(tok::raw_identifier)) continue;
                 if (i > 0 && (tokens[i - 1].is(tok::period) || tokens[i - 1].is(tok::arrow))) continue;
                 llvm::StringRef name = tokens[i].getRawIdentifier();
-                if (const char *sized = sized_type(name)) {
-                    report(tokens[i], name.str(), sized);
+                std::string standard = smith_idiom_words::sized_type(name);
+                if (!standard.empty()) {
+                    report(tokens[i], name.str(), standard);
                     continue;
                 }
-                if (!is_keyword(name)) continue;
+                if (!smith_idiom_words::is_type_keyword(name)) continue;
                 std::vector<std::string> run;
                 size_t j = i;
                 while (j < tokens.size() && !lexed.in_directive[j] && tokens[j].is(tok::raw_identifier) &&
-                       is_keyword(tokens[j].getRawIdentifier())) {
+                       smith_idiom_words::is_type_keyword(tokens[j].getRawIdentifier())) {
                     run.push_back(tokens[j].getRawIdentifier().str());
                     j++;
                 }
                 bool ok =
                     j < tokens.size() && is_name(tokens[j], "_BitInt"); // `unsigned _BitInt(128)` has no sized name
-                std::string sized = sized_integer(run);
+                std::string sized = smith_idiom_words::sized_integer(join(run));
                 if (!sized.empty() && !ok) report(tokens[i], join(run), sized);
                 i = j - 1;
             }
@@ -153,11 +125,6 @@ class SizedTypesCheck final : public ClangTidyCheck {
         const SourceManager &sm;
         Preprocessor &pp;
 
-        static bool is_keyword(llvm::StringRef name) {
-            return name == "unsigned" || name == "signed" || name == "short" || name == "long" || name == "int" ||
-                   name == "char" || name == "float" || name == "double";
-        }
-
         static std::string join(const std::vector<std::string> &words) {
             std::string result;
             for (const std::string &word : words)
@@ -166,10 +133,7 @@ class SizedTypesCheck final : public ClangTidyCheck {
         }
 
         void report(const Token &token, const std::string &spelled, const std::string &sized) {
-            check.diag(token.getLocation(),
-                       "`%0` is a C type, and a .smith file has the sized types: write `%1` (u8 u16 u32 u64, i8 i16 "
-                       "i32 i64, usize, isize, f32, f64)")
-                << spelled << sized;
+            check.diag(token.getLocation(), "%0") << smith_idiom_words::sized_message(spelled, sized);
         }
     };
 };
@@ -179,39 +143,6 @@ class SizedTypesCheck final : public ClangTidyCheck {
 // A library that is a module has `// smith-module: smith::arena` in its generated header, and `// smith-names:
 // push_raw= smith_arena_push ...` pairs the module's names with the C names. Headers are read as the file includes
 // them.
-struct ModuleHeader {
-    std::string module;
-    std::string binding;
-    std::map<std::string, std::string> c_names; // C name -> the module's name
-    std::set<std::string> generics;             // the module's generic functions
-};
-
-inline bool parse_module_header(llvm::StringRef text, ModuleHeader &out) {
-    bool found = false;
-    for (int line = 0; line < 4096 && !text.empty(); line++) {
-        llvm::StringRef current;
-        std::tie(current, text) = text.split('\n');
-        if (line >= 8 && !current.starts_with("// smith-generic: ")) continue;
-        if (current.consume_front("// smith-generic: ")) {
-            std::istringstream words(current.str());
-            std::string module, member;
-            if (words >> module >> member) out.generics.insert(member);
-        } else if (current.consume_front("// smith-module: ")) {
-            out.module = current.str();
-            out.binding = current.substr(current.rfind(':') + 1).str();
-            found = true;
-        } else if (current.consume_front("// smith-names: ")) {
-            std::istringstream words(current.str());
-            std::string word;
-            while (words >> word) {
-                size_t equals = word.find('=');
-                if (equals != std::string::npos) out.c_names[word.substr(equals + 1)] = word.substr(0, equals);
-            }
-        }
-    }
-    return found;
-}
-
 class ModuleLibraryCheck final : public ClangTidyCheck {
   public:
     ModuleLibraryCheck(llvm::StringRef Name, ClangTidyContext *Context) : ClangTidyCheck(Name, Context) {}
@@ -231,9 +162,8 @@ class ModuleLibraryCheck final : public ClangTidyCheck {
                                 SrcMgr::CharacteristicKind) override {
             if (!File || !is_smith_file(sm, sm.getMainFileID())) return;
             auto buffer = pp.getFileManager().getBufferForFile(*File);
-            ModuleHeader header;
-            if (!buffer || !parse_module_header((*buffer)->getBuffer(), header)) return;
-            by_name[FileName.str()] = header;
+            if (!buffer || smith_idiom_words::header_module((*buffer)->getBuffer()).empty()) return;
+            by_name[FileName.str()] = (*buffer)->getBuffer().str();
         }
 
         void EndOfMainFile() override {
@@ -254,7 +184,7 @@ class ModuleLibraryCheck final : public ClangTidyCheck {
         ModuleLibraryCheck &check;
         const SourceManager &sm;
         Preprocessor &pp;
-        std::map<std::string, ModuleHeader> by_name;
+        std::map<std::string, std::string> by_name; // the include name -> the text of a header that is a module's
 
         void header(const std::vector<Token> &tokens, size_t i) {
             size_t end = i + 2;
@@ -267,49 +197,18 @@ class ModuleLibraryCheck final : public ClangTidyCheck {
             std::string written = text.substr(from, to - from).str();
             auto found = by_name.find(written);
             if (found == by_name.end()) return;
-            check.diag(tokens[i].getLocation(),
-                       "`import <%0>;` reads %1, a module, through its C header: write `import %1;` and call it as "
-                       "`%2::name(...)`%3")
-                << written << found->second.module << found->second.binding << example(found->second);
+            check.diag(tokens[i].getLocation(), "%0")
+                << smith_idiom_words::library_import_message(found->second, written);
         }
 
         void name(const Token &token) {
             llvm::StringRef spelled = token.getRawIdentifier();
             for (const auto &entry : by_name) {
-                const ModuleHeader &module = entry.second;
-                auto found = module.c_names.find(spelled.str());
-                if (found == module.c_names.end()) continue;
-                check.diag(token.getLocation(),
-                           "`c::%0` is `%2::%3` of the module %1, reached through its C header: write `import %1;` "
-                           "and `%2::%3`%4")
-                    << spelled << module.module << module.binding << found->second
-                    << (example(module) + generic_of(module, found->second));
+                std::string message = smith_idiom_words::library_name_message(entry.second, spelled);
+                if (message.empty()) continue;
+                check.diag(token.getLocation(), "%0") << message;
                 return;
             }
-        }
-
-        static std::string example(const ModuleHeader &module) {
-            if (module.module == "smith::arena") return " (a typed push is `arena::push(&a, T)`)";
-            return "";
-        }
-
-        // `check_equal_i32` is the named instance of the generic `check_equal` for one type: the call to write is the
-        // generic's, which takes the type from its first argument.
-        static std::string generic_of(const ModuleHeader &module, const std::string &name) {
-            static const char *const types[] = {"bool", "char", "i8",  "i16",   "i32", "i64", "isize",   "u8",
-                                                "u16",  "u32",  "u64", "usize", "f32", "f64", "pointer", "ptr"};
-            for (const char *type : types) {
-                std::string suffix = std::string("_") + type;
-                if (name.size() <= suffix.size() ||
-                    name.compare(name.size() - suffix.size(), suffix.size(), suffix) != 0)
-                    continue;
-                std::string base = name.substr(0, name.size() - suffix.size());
-                if (module.generics.count(base) != 0) {
-                    return " (or, better, the generic `" + module.binding + "::" + base +
-                           "(a, b)`, which takes the type from its first argument)";
-                }
-            }
-            return "";
         }
     };
 };
@@ -335,29 +234,26 @@ class BoundedLoopCheck final : public ClangTidyCheck {
     void check(const ast_matchers::MatchFinder::MatchResult &Result) override {
         const SourceManager &sm = *Result.SourceManager;
         const Stmt *loop = nullptr;
-        const char *spelled = "";
+        int kind = 0;
         bool unbounded = false;
         if (const auto *f = Result.Nodes.getNodeAs<ForStmt>("for")) {
             loop = f;
-            spelled = f->getCond() == nullptr ? "`for (;;)`" : "a `for` with a constant condition";
+            kind = f->getCond() == nullptr ? 0 : 1;
             unbounded = f->getCond() == nullptr || always(f->getCond(), *Result.Context);
         } else if (const auto *w = Result.Nodes.getNodeAs<WhileStmt>("while")) {
             loop = w;
-            spelled = "a `while` with a constant condition";
+            kind = 2;
             unbounded = always(w->getCond(), *Result.Context);
         } else if (const auto *d = Result.Nodes.getNodeAs<DoStmt>("do")) {
             loop = d;
-            spelled = "a `do ... while` with a constant condition";
+            kind = 3;
             unbounded = always(d->getCond(), *Result.Context);
         }
         if (loop == nullptr || !unbounded) return;
         if (sm.isInSystemHeader(sm.getExpansionLoc(loop->getBeginLoc())) || sm.isInSystemMacro(loop->getBeginLoc()))
             return;
         if (!seen.insert(sm.getExpansionLoc(loop->getBeginLoc()).getRawEncoding()).second) return;
-        diag(loop->getBeginLoc(),
-             "%0 never ends on its own: bound the loop by a count (`for (usize i = 0; i < limit; i++)`); only `main` "
-             "runs forever")
-            << spelled;
+        diag(loop->getBeginLoc(), "%0") << smith_idiom_words::loop_message(kind);
     }
 
     void onEndOfTranslationUnit() override {
@@ -374,17 +270,6 @@ class BoundedLoopCheck final : public ClangTidyCheck {
 };
 
 // ---- smith-c23 ------------------------------------------------------------------------------------------------------
-
-inline const char *standard_attribute(llvm::StringRef name) {
-    name.consume_front("__");
-    name.consume_back("__");
-    if (name == "noreturn") return "[[noreturn]]";
-    if (name == "unused") return "[[maybe_unused]]";
-    if (name == "warn_unused_result") return "[[nodiscard]]";
-    if (name == "deprecated") return "[[deprecated]]";
-    if (name == "fallthrough") return "[[fallthrough]]";
-    return nullptr;
-}
 
 class C23Check final : public ClangTidyCheck {
   public:
@@ -417,7 +302,7 @@ class C23Check final : public ClangTidyCheck {
         const auto *zero = dyn_cast<IntegerLiteral>(list->getInit(0)->IgnoreParenImpCasts());
         if (zero == nullptr || !zero->getValue().isZero()) return;
         if (!seen.insert(sm.getExpansionLoc(list->getBeginLoc()).getRawEncoding()).second) return;
-        diag(list->getBeginLoc(), "`{0}` is C's way to zero a whole object: write `{}`");
+        diag(list->getBeginLoc(), "%0") << smith_idiom_words::zero_braces_message();
     }
 
     void onEndOfTranslationUnit() override {
@@ -462,50 +347,41 @@ class C23Check final : public ClangTidyCheck {
                 bool member = i > 0 && (tokens[i - 1].is(tok::period) || tokens[i - 1].is(tok::arrow));
                 if (member) continue;
                 if (module && name == "void" && void_parameter_list(tokens, i)) {
-                    check.diag(tokens[i].getLocation(),
-                               "`(void)` is C's way to say no parameters: in C23 `()` means that, write `()`")
-                        << FixItHint::CreateRemoval(
-                               CharSourceRange::getCharRange(tokens[i].getLocation(), tokens[i].getEndLoc()));
+                    check.diag(tokens[i].getLocation(), "%0") << smith_idiom_words::void_message()
+                                                              << FixItHint::CreateRemoval(CharSourceRange::getCharRange(
+                                                                     tokens[i].getLocation(), tokens[i].getEndLoc()));
                     continue;
                 }
-                if (name == "NULL" && !conditional_directive(lexed, i)) {
-                    check.diag(tokens[i].getLocation(), "`NULL` is a macro: write `nullptr`");
-                } else if (name == "_Bool") {
-                    check.diag(tokens[i].getLocation(), "`_Bool` is C99's spelling: write `bool`, a keyword in C23");
-                } else if (name == "_Static_assert" || name == "_Alignas" || name == "_Alignof") {
-                    std::string keyword = name.drop_front(1).lower();
-                    check.diag(tokens[i].getLocation(), "`%0` is C11's spelling: write `%1`, a keyword in C23")
-                        << name << llvm::StringRef(keyword);
-                } else if (name == "_Noreturn") {
-                    check.diag(tokens[i].getLocation(), "`_Noreturn` is C11's spelling: write `[[noreturn]]`");
-                } else if (name == "stdbool" && i + 1 < tokens.size() && tokens[i + 1].is(tok::period)) {
-                    check.diag(tokens[i].getLocation(),
-                               "`<stdbool.h>` is not needed: `bool`, `true` and `false` are keywords in C23");
-                } else if (name == "__attribute__") {
+                if (name == "__attribute__") {
                     attribute(tokens, i);
+                    continue;
                 }
+                bool in_condition = name == "NULL" && conditional_directive(lexed, i);
+                bool next_is_period = i + 1 < tokens.size() && tokens[i + 1].is(tok::period);
+                std::string message = smith_idiom_words::c23_message(name, next_is_period, in_condition);
+                if (!message.empty()) check.diag(tokens[i].getLocation(), "%0") << message;
             }
         }
 
         // `void` at i is the whole parameter list `(void)` of a declaration, a definition or a function type, and not
-        // the cast `(void)x;` (an expression follows it) or the type of `sizeof(void)`.
+        // the cast `(void)x;` (an expression follows it) or the type of `sizeof(void)`: the tokens around it are
+        // handed to the table (runtime/idiom.smith) as the name before, the name after and the punctuation after.
         static bool void_parameter_list(const std::vector<Token> &tokens, size_t i) {
             if (i == 0 || i + 2 >= tokens.size() || !tokens[i - 1].is(tok::l_paren) || !tokens[i + 1].is(tok::r_paren))
                 return false;
-            if (i >= 2 && tokens[i - 2].is(tok::raw_identifier)) {
-                llvm::StringRef before = tokens[i - 2].getRawIdentifier();
-                if (before == "sizeof" || before == "alignof" || before == "_Alignof" || before == "typeof" ||
-                    before == "typeof_unqual" || before == "__typeof__" || before == "_Generic" || before == "return" ||
-                    before == "case" || before == "else") {
-                    return false;
-                }
-            }
+            llvm::StringRef before;
+            if (i >= 2 && tokens[i - 2].is(tok::raw_identifier)) before = tokens[i - 2].getRawIdentifier();
             const Token &next = tokens[i + 2];
-            if (next.is(tok::raw_identifier)) {
-                llvm::StringRef word = next.getRawIdentifier();
-                return word == "__attribute__" || word == "__asm__" || word == "asm";
-            }
-            return next.isOneOf(tok::semi, tok::l_brace, tok::r_paren, tok::comma, tok::l_square, tok::equal);
+            llvm::StringRef word;
+            if (next.is(tok::raw_identifier)) word = next.getRawIdentifier();
+            char punctuation = next.is(tok::semi)       ? ';'
+                               : next.is(tok::l_brace)  ? '{'
+                               : next.is(tok::r_paren)  ? ')'
+                               : next.is(tok::comma)    ? ','
+                               : next.is(tok::l_square) ? '['
+                               : next.is(tok::equal)    ? '='
+                                                        : '\0';
+            return smith_idiom_words::void_parameter_list(before, word, punctuation);
         }
 
         static bool conditional_directive(const Lexed &lexed, size_t i) {
@@ -517,8 +393,7 @@ class C23Check final : public ClangTidyCheck {
             llvm::StringRef directive = lexed.tokens[start + 1].is(tok::raw_identifier)
                                             ? lexed.tokens[start + 1].getRawIdentifier()
                                             : llvm::StringRef();
-            return directive == "ifdef" || directive == "ifndef" || directive == "undef" || directive == "if" ||
-                   directive == "elif" || directive == "include";
+            return smith_idiom_words::conditional_directive(directive);
         }
 
         // `__attribute__((noreturn, unused))`: each name that has a standard spelling.
@@ -530,9 +405,8 @@ class C23Check final : public ClangTidyCheck {
                 if (tokens[j].is(tok::r_paren) && --depth == 0) break;
                 if (depth != 2 || !tokens[j].is(tok::raw_identifier)) continue;
                 if (!tokens[j - 1].is(tok::l_paren) && !tokens[j - 1].is(tok::comma)) continue;
-                if (const char *standard = standard_attribute(tokens[j].getRawIdentifier()))
-                    check.diag(tokens[j].getLocation(), "`__attribute__((%0))` has a standard spelling: write `%1`")
-                        << tokens[j].getRawIdentifier() << standard;
+                std::string message = smith_idiom_words::attribute_message(tokens[j].getRawIdentifier());
+                if (!message.empty()) check.diag(tokens[j].getLocation(), "%0") << message;
             }
         }
     };
@@ -570,8 +444,8 @@ class ConstexprCheck final : public ClangTidyCheck {
         if (!var->getType().isConstQualified() || !constexpr_type(var->getType(), context, 0)) return;
         if (!var->getInit()->isConstantInitializer(context, false)) return;
         if (!seen.insert(sm.getExpansionLoc(var->getLocation()).getRawEncoding()).second) return;
-        diag(var->getLocation(), "`const` %0 `%1` has a constant initializer: write `constexpr`")
-            << (var->getType()->isArrayType() ? "array" : "object") << var->getName();
+        diag(var->getLocation(), "%0") << smith_idiom_words::constexpr_message(var->getType()->isArrayType(),
+                                                                               var->getName());
     }
 
     void onEndOfTranslationUnit() override {
@@ -643,9 +517,7 @@ class DesignatedInitCheck final : public ClangTidyCheck {
                 name = typedef_name->getName().str();
             }
         }
-        diag(at, "this initializes `%0`, which another file defines, by position: name the fields (`{.field = value, "
-                 "...}`), so that a field added to it cannot shift the values")
-            << name;
+        diag(at, "%0") << smith_idiom_words::designated_message(name);
     }
 
     void onEndOfTranslationUnit() override {
@@ -657,30 +529,6 @@ class DesignatedInitCheck final : public ClangTidyCheck {
 };
 
 // ---- smith-module ---------------------------------------------------------------------------------------------------
-
-// The module a file at `path` is, by the rule of the layout: its path from the project's root (the folder the check
-// runs in), without `.smith`, `::` for `/`, and `tests/` is a root of its own (tests/primes_test.smith is primes_test).
-inline std::string module_of(llvm::StringRef path, llvm::StringRef root) {
-    std::string relative = path.str();
-    if (!root.empty() && path.starts_with(root) && path.size() > root.size() && path[root.size()] == '/')
-        relative = path.substr(root.size() + 1).str();
-    if (llvm::StringRef(relative).starts_with("./")) relative = relative.substr(2);
-    if (llvm::StringRef(relative).starts_with("/") || llvm::StringRef(relative).starts_with("../")) {
-        size_t slash = relative.rfind('/');
-        relative = relative.substr(slash + 1);
-    }
-    if (llvm::StringRef(relative).ends_with(".smith")) relative.resize(relative.size() - 6);
-    if (llvm::StringRef(relative).starts_with("tests/") && relative.size() > 6) relative = relative.substr(6);
-    std::string module;
-    for (char c : relative) {
-        if (c == '/') {
-            module += "::";
-        } else {
-            module += c;
-        }
-    }
-    return module;
-}
 
 class ModuleCheck final : public ClangTidyCheck {
   public:
@@ -708,12 +556,8 @@ class ModuleCheck final : public ClangTidyCheck {
             if (auto directory = sm.getFileManager().getVirtualFileSystem().getCurrentWorkingDirectory())
                 root = *directory;
             OptionalFileEntryRef entry = sm.getFileEntryRefForID(main);
-            std::string module = module_of(entry->getName(), root);
             SourceLocation at = sm.getLocForStartOfFile(main);
-            check.diag(at, "this file has no `module` line, and every .smith file is a module: write `module %0;` at "
-                           "the top (its path from the project's root, `tests/` being a root of its own), and `export` "
-                           "what other files use")
-                << module;
+            check.diag(at, "%0") << smith_idiom_words::module_message(entry->getName(), root);
         }
 
       private:

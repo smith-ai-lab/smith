@@ -125,7 +125,7 @@ class SmithNaming final : public RenamerClangTidyCheck {
   private:
     // A generic instance is written `push_array<f64>`; the name the rules judge is the generic's, `push_array`.
     static StringRef judgedName(StringRef member) {
-        return member.substr(0, member.find('<'));
+        return smith_idiom_words::judged_name(member);
     }
 
     // A tuple `struct { i32, f32 }` is lowered to a struct named for its fields (`smith_tuple_i32__f32`) whose fields
@@ -137,10 +137,7 @@ class SmithNaming final : public RenamerClangTidyCheck {
     }
 
     static bool isTuplePart(const NamedDecl *Decl) {
-        auto made = [](StringRef name) {
-            return name.starts_with("smith_tuple_") || name.starts_with("smith_array_") ||
-                   name.starts_with("smith_enum_") || name == "smith_field";
-        };
+        auto made = [](StringRef name) { return smith_idiom_words::lowering_name(name); };
         if (const auto *record = dyn_cast<RecordDecl>(Decl)) return made(record->getName());
         if (const auto *field = dyn_cast<FieldDecl>(Decl)) return made(field->getParent()->getName());
         return false;

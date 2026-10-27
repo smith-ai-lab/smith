@@ -1,0 +1,527 @@
+// The words and tables of smith's idiom checks (shim/idiom.h) and of the names clang-tidy judges (shim/tidy.cpp): which
+// C spelling has which sized type, what each finding says, which `__attribute__` has a standard spelling, how a module
+// header pairs a library's C names with the module's, and the module a path implies. The C++ keeps the edge of
+// clang-tidy (the registered checks, the matchers over the AST, the raw lexer, the fix-its) and hands this module plain
+// text: a name, a header's characters, a path. Every function writes into a buffer the caller gives and returns the
+// length of the whole text (more than the capacity when it did not fit), or reads its arguments and answers; text
+// comes as a pointer and a count, never terminated. A finding's text is exactly what the check said before the move.
+module runtime::idiom;
+
+import smith::mem;
+import smith::text;
+
+typedef typeof(const char[:]) Text;
+
+// The characters being written: the buffer, and how long the text is so far, kept characters or not.
+struct Out {
+    char buffer[:];
+    usize length;
+};
+
+static Text view(const char *data, usize length) {
+    if (length == 0) return {};
+    return data[0:length];
+}
+
+static Out start(char *buffer, usize capacity) {
+    Out out = {};
+    if (capacity > 0) {
+        out.buffer = buffer[0:capacity];
+    }
+    return out;
+}
+
+static void put(Out *out, Text text) {
+    usize room = countof(out->buffer) > out->length ? countof(out->buffer) - out->length : 0;
+    usize kept = __builtin_elementwise_min(room, countof(text));
+    if (kept > 0) {
+        mem::copy(out->buffer[out->length:out->length + kept], text[0:kept]);
+    }
+    out->length += countof(text);
+}
+
+static bool same(Text a, Text b) {
+    return countof(a) == countof(b) && (countof(a) == 0 || mem::equal(a, b));
+}
+
+static bool starts_with(Text text, Text prefix) {
+    return countof(text) >= countof(prefix) && same(text[0:countof(prefix)], prefix);
+}
+
+static bool ends_with(Text text, Text suffix) {
+    return countof(text) >= countof(suffix) && same(text[countof(text) - countof(suffix):countof(text)], suffix);
+}
+
+// The index of the last `c` in the text, or none.
+static option(usize) last_index(Text text, char c) {
+    for (usize i = countof(text); i > 0; i--) {
+        if (text[i - 1] == c) return i - 1;
+    }
+    return .none;
+}
+
+// ---- smith-sized-types ------------------------------------------------------------------------------------------
+
+struct Sized {
+    const char *written;
+    const char *sized;
+};
+
+static const Sized standard_names[10] = {
+    {"uint8_t", "u8"},  {"uint16_t", "u16"}, {"uint32_t", "u32"}, {"uint64_t", "u64"}, {"int8_t", "i8"},
+    {"int16_t", "i16"}, {"int32_t", "i32"},  {"int64_t", "i64"},  {"size_t", "usize"}, {"ptrdiff_t", "isize"},
+};
+
+// The sized type of a name from <stdint.h> and <stddef.h> (`uint32_t` is `u32`), or none.
+[[smith::c_name("smith_idiom_sized_type")]] export usize sized_type(const char *name, usize length, char *buffer,
+                                                                    usize capacity) {
+    Out out = start(buffer, capacity);
+    Text written = view(name, length);
+    for (usize i = 0; i < 10; i++) {
+        if (same(written, text::make(standard_names[i].written))) {
+            put(&out, text::make(standard_names[i].sized));
+        }
+    }
+    return out.length;
+}
+
+// Whether the word is one of C's integer and floating keywords, which together spell a type (`unsigned long long`).
+[[smith::c_name("smith_idiom_is_type_keyword")]] export bool is_type_keyword(const char *name, usize length) {
+    Text word = view(name, length);
+    const char *const keywords[8] = {"unsigned", "signed", "short", "long", "int", "char", "float", "double"};
+    for (usize i = 0; i < 8; i++) {
+        if (same(word, text::make(keywords[i]))) return true;
+    }
+    return false;
+}
+
+// The sized type for a run of C's keywords, the words separated by spaces (`unsigned long long` is `u64`): nothing for
+// `char` alone, which stays char.
+[[smith::c_name("smith_idiom_sized_integer")]] export usize sized_integer(const char *run, usize length, char *buffer,
+                                                                          usize capacity) {
+    Out out = start(buffer, capacity);
+    Text words = view(run, length);
+    usize longs = 0;
+    bool is_unsigned = false;
+    bool is_signed = false;
+    bool is_short = false;
+    bool is_char = false;
+    bool is_double = false;
+    bool is_float = false;
+    Text rest = words;
+    Text word = {};
+    while (text::take_word(&rest, &word)) {
+        if (text::is(word, "long")) longs += 1;
+        if (text::is(word, "double")) is_double = true;
+        if (text::is(word, "float")) is_float = true;
+        if (text::is(word, "unsigned")) is_unsigned = true;
+        if (text::is(word, "signed")) is_signed = true;
+        if (text::is(word, "short")) is_short = true;
+        if (text::is(word, "char")) is_char = true;
+    }
+    if (is_double) {
+        put(&out, "f64");
+    } else if (is_float) {
+        put(&out, "f32");
+    } else if (is_char) {
+        if (is_unsigned) put(&out, "u8");
+        if (!is_unsigned && is_signed) put(&out, "i8");
+    } else if (is_short) {
+        if (is_unsigned) {
+            put(&out, "u16");
+        } else {
+            put(&out, "i16");
+        }
+    } else if (longs > 0) {
+        if (is_unsigned) {
+            put(&out, "u64");
+        } else {
+            put(&out, "i64");
+        }
+    } else {
+        if (is_unsigned) {
+            put(&out, "u32");
+        } else {
+            put(&out, "i32");
+        }
+    }
+    return out.length;
+}
+
+[[smith::c_name("smith_idiom_sized_message")]] export usize sized_message(const char *spelled, usize spelled_length,
+                                                                          const char *sized, usize sized_length,
+                                                                          char *buffer, usize capacity) {
+    Out out = start(buffer, capacity);
+    put(&out, "`");
+    put(&out, view(spelled, spelled_length));
+    put(&out, "` is a C type, and a .smith file has the sized types: write `");
+    put(&out, view(sized, sized_length));
+    put(&out, "` (u8 u16 u32 u64, i8 i16 i32 i64, usize, isize, f32, f64)");
+    return out.length;
+}
+
+// ---- smith-module-library ---------------------------------------------------------------------------------------
+
+// A library that is a module has `// smith-module: smith::arena` in its generated header, and `// smith-names:
+// push_raw= smith_arena_push ...` pairs the module's names with the C names; `// smith-generic: smith::test
+// check_equal` lists the module's generic functions. The header's text is read as the file includes it: the first 4096
+// lines, and from the eighth only the generic lines.
+struct Header {
+    Text module;
+    Text binding;
+    Text names;
+    bool found;
+};
+
+// The next line of the text, without its newline; the text is left after it.
+static Text take_header_line(Text *rest) {
+    usize end = 0;
+    while (end < countof(*rest) && (*rest)[end] != '\n') {
+        end += 1;
+    }
+    Text line = (*rest)[0:end];
+    *rest = end < countof(*rest) ? (*rest)[end + 1:countof(*rest)] : (*rest)[end:end];
+    return line;
+}
+
+static Header read_header(Text text) {
+    Header header = {};
+    Text module_tag = "// smith-module: ";
+    Text names_tag = "// smith-names: ";
+    Text rest = text;
+    for (usize number = 0; number < 4096 && countof(rest) > 0; number++) {
+        Text line = take_header_line(&rest);
+        if (number >= 8) continue;
+        if (starts_with(line, module_tag)) {
+            header.module = line[countof(module_tag):countof(line)];
+            option(usize) colon = last_index(header.module, ':');
+            header.binding = colon == .some ? header.module[colon.some + 1:countof(header.module)] : header.module;
+            header.found = true;
+        } else if (starts_with(line, names_tag)) {
+            header.names = line[countof(names_tag):countof(line)];
+        }
+    }
+    return header;
+}
+
+// Whether the header lists `member` as a generic function of its module: `// smith-generic: smith::test check_equal`,
+// on any of its first 4096 lines.
+static bool is_generic(Text text, Text member) {
+    Text tag = "// smith-generic: ";
+    Text rest = text;
+    for (usize number = 0; number < 4096 && countof(rest) > 0; number++) {
+        Text line = take_header_line(&rest);
+        if (!starts_with(line, tag)) continue;
+        Text words = line[countof(tag):countof(line)];
+        Text module = {};
+        Text listed = {};
+        if (text::take_word(&words, &module) && text::take_word(&words, &listed) && same(listed, member)) return true;
+    }
+    return false;
+}
+
+// The module's name for a C name in the header's `smith-names` line (`push_raw=smith_arena_push`: the word after the
+// equals sign is the C name); the last pair that names it wins, and an empty text is no pair.
+static Text module_name_of(const Header *header, Text c_name) {
+    Text found = {};
+    Text rest = header->names;
+    Text word = {};
+    while (text::take_word(&rest, &word)) {
+        usize equals = 0;
+        while (equals < countof(word) && word[equals] != '=') {
+            equals += 1;
+        }
+        if (equals == countof(word)) continue;
+        if (same(word[equals + 1:countof(word)], c_name)) found = word[0:equals];
+    }
+    return found;
+}
+
+// The module a header is (`smith::arena`), or nothing when the header is not a module's.
+[[smith::c_name("smith_idiom_header_module")]] export usize header_module(const char *text, usize length, char *buffer,
+                                                                          usize capacity) {
+    Out out = start(buffer, capacity);
+    Header header = read_header(view(text, length));
+    if (header.found) put(&out, header.module);
+    return out.length;
+}
+
+static void put_example(Out *out, const Header *header) {
+    if (same(header->module, "smith::arena")) put(out, " (a typed push is `arena::push(&a, T)`)");
+}
+
+// The finding for `import <arena.h>;`, when the header is a module's: written is the name between the brackets.
+[[smith::c_name("smith_idiom_library_import_message")]] export usize library_import_message(
+    const char *text, usize length, const char *written, usize written_length, char *buffer, usize capacity) {
+    Out out = start(buffer, capacity);
+    Header header = read_header(view(text, length));
+    put(&out, "`import <");
+    put(&out, view(written, written_length));
+    put(&out, ">;` reads ");
+    put(&out, header.module);
+    put(&out, ", a module, through its C header: write `import ");
+    put(&out, header.module);
+    put(&out, ";` and call it as `");
+    put(&out, header.binding);
+    put(&out, "::name(...)`");
+    put_example(&out, &header);
+    return out.length;
+}
+
+static const char *const instance_types[16] = {"bool", "char", "i8",  "i16",   "i32", "i64", "isize",   "u8",
+                                               "u16",  "u32",  "u64", "usize", "f32", "f64", "pointer", "ptr"};
+
+// `check_equal_i32` is the named instance of the generic `check_equal` for one type: the call to write is the
+// generic's, which takes the type from its first argument.
+static void put_generic_of(Out *out, const Header *header, Text text, Text name) {
+    for (usize i = 0; i < 16; i++) {
+        usize type_length = countof(text::make(instance_types[i]));
+        if (countof(name) <= type_length + 1) continue;
+        usize split = countof(name) - type_length - 1;
+        if (name[split] != '_' || !same(name[split + 1:countof(name)], text::make(instance_types[i]))) continue;
+        if (!is_generic(text, name[0:split])) continue;
+        put(out, " (or, better, the generic `");
+        put(out, header->binding);
+        put(out, "::");
+        put(out, name[0:split]);
+        put(out, "(a, b)`, which takes the type from its first argument)");
+        return;
+    }
+}
+
+// The finding for `c::name`, when the header pairs the C name with one of the module's: nothing when it does not.
+[[smith::c_name("smith_idiom_library_name_message")]] export usize library_name_message(const char *text, usize length,
+                                                                                        const char *spelled,
+                                                                                        usize spelled_length,
+                                                                                        char *buffer, usize capacity) {
+    Out out = start(buffer, capacity);
+    Header header = read_header(view(text, length));
+    Text found = module_name_of(&header, view(spelled, spelled_length));
+    if (countof(found) == 0) return 0;
+    put(&out, "`c::");
+    put(&out, view(spelled, spelled_length));
+    put(&out, "` is `");
+    put(&out, header.binding);
+    put(&out, "::");
+    put(&out, found);
+    put(&out, "` of the module ");
+    put(&out, header.module);
+    put(&out, ", reached through its C header: write `import ");
+    put(&out, header.module);
+    put(&out, ";` and `");
+    put(&out, header.binding);
+    put(&out, "::");
+    put(&out, found);
+    put(&out, "`");
+    put_example(&out, &header);
+    put_generic_of(&out, &header, view(text, length), found);
+    return out.length;
+}
+
+// ---- smith-bounded-loop -----------------------------------------------------------------------------------------
+
+// What the loop is called in the finding: 0 `for (;;)`, 1 a `for` with a constant condition, 2 a `while`, 3 a
+// `do ... while`.
+[[smith::c_name("smith_idiom_loop_message")]] export usize loop_message(i32 kind, char *buffer, usize capacity) {
+    Out out = start(buffer, capacity);
+    if (kind == 0) put(&out, "`for (;;)`");
+    if (kind == 1) put(&out, "a `for` with a constant condition");
+    if (kind == 2) put(&out, "a `while` with a constant condition");
+    if (kind == 3) put(&out, "a `do ... while` with a constant condition");
+    put(&out, " never ends on its own: bound the loop by a count (`for (usize i = 0; i < limit; i++)`); only `main` "
+              "runs forever");
+    return out.length;
+}
+
+// ---- smith-c23 --------------------------------------------------------------------------------------------------
+
+[[smith::c_name("smith_idiom_zero_braces_message")]] export usize zero_braces_message(char *buffer, usize capacity) {
+    Out out = start(buffer, capacity);
+    put(&out, "`{0}` is C's way to zero a whole object: write `{}`");
+    return out.length;
+}
+
+[[smith::c_name("smith_idiom_void_message")]] export usize void_message(char *buffer, usize capacity) {
+    Out out = start(buffer, capacity);
+    put(&out, "`(void)` is C's way to say no parameters: in C23 `()` means that, write `()`");
+    return out.length;
+}
+
+// Whether `void` is the whole parameter list `(void)` of a declaration, a definition or a function type, and not the
+// cast `(void)x;` or the type of `sizeof(void)`. `before` is the word two tokens before `void` (empty when it is not a
+// name), `next_word` the name two tokens after it (empty when it is not one) and `next` the punctuation there, one of
+// `; { ) , [ =` or zero.
+[[smith::c_name("smith_idiom_void_parameter_list")]] export bool
+void_parameter_list(const char *before, usize before_length, const char *next_word, usize next_word_length, char next) {
+    const char *const not_lists[10] = {"sizeof",     "alignof",  "_Alignof", "typeof", "typeof_unqual",
+                                       "__typeof__", "_Generic", "return",   "case",   "else"};
+    Text word = view(before, before_length);
+    for (usize i = 0; i < 10; i++) {
+        if (same(word, text::make(not_lists[i]))) return false;
+    }
+    Text after = view(next_word, next_word_length);
+    if (countof(after) > 0) return same(after, "__attribute__") || same(after, "__asm__") || same(after, "asm");
+    return next == ';' || next == '{' || next == ')' || next == ',' || next == '[' || next == '=';
+}
+
+// Whether a preprocessor directive (`ifdef`) is one where `NULL` is a name being tested and not a use.
+[[smith::c_name("smith_idiom_conditional_directive")]] export bool conditional_directive(const char *name,
+                                                                                         usize length) {
+    const char *const directives[6] = {"ifdef", "ifndef", "undef", "if", "elif", "include"};
+    Text word = view(name, length);
+    for (usize i = 0; i < 6; i++) {
+        if (same(word, text::make(directives[i]))) return true;
+    }
+    return false;
+}
+
+// What a name says in a .smith file that is C's older spelling: nothing for any other name. `next_is_period` is
+// whether `.` follows it (`stdbool.h`), `in_condition` whether it is on the line of a directive that tests a name.
+[[smith::c_name("smith_idiom_c23_message")]] export usize c23_message(const char *name, usize length,
+                                                                      bool next_is_period, bool in_condition,
+                                                                      char *buffer, usize capacity) {
+    Out out = start(buffer, capacity);
+    Text word = view(name, length);
+    if (same(word, "NULL") && !in_condition) {
+        put(&out, "`NULL` is a macro: write `nullptr`");
+    } else if (same(word, "_Bool")) {
+        put(&out, "`_Bool` is C99's spelling: write `bool`, a keyword in C23");
+    } else if (same(word, "_Static_assert") || same(word, "_Alignas") || same(word, "_Alignof")) {
+        put(&out, "`");
+        put(&out, word);
+        put(&out, "` is C11's spelling: write `");
+        for (usize i = 1; i < countof(word); i++) {
+            char c = word[i];
+            char lower[1] = {(c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c};
+            Text one = lower;
+            put(&out, one);
+        }
+        put(&out, "`, a keyword in C23");
+    } else if (same(word, "_Noreturn")) {
+        put(&out, "`_Noreturn` is C11's spelling: write `[[noreturn]]`");
+    } else if (same(word, "stdbool") && next_is_period) {
+        put(&out, "`<stdbool.h>` is not needed: `bool`, `true` and `false` are keywords in C23");
+    }
+    return out.length;
+}
+
+// The standard spelling of a GNU attribute (`noreturn` is `[[noreturn]]`), or an empty text.
+static Text standard_attribute(Text name) {
+    Text bare = name;
+    if (starts_with(bare, "__")) bare = bare[2:countof(bare)];
+    if (ends_with(bare, "__")) bare = bare[0:countof(bare) - 2];
+    if (same(bare, "noreturn")) return text::make("[[noreturn]]");
+    if (same(bare, "unused")) return text::make("[[maybe_unused]]");
+    if (same(bare, "warn_unused_result")) return text::make("[[nodiscard]]");
+    if (same(bare, "deprecated")) return text::make("[[deprecated]]");
+    if (same(bare, "fallthrough")) return text::make("[[fallthrough]]");
+    return {};
+}
+
+// The finding for one name inside `__attribute__((...))`, nothing when the name has no standard spelling.
+[[smith::c_name("smith_idiom_attribute_message")]] export usize attribute_message(const char *name, usize length,
+                                                                                  char *buffer, usize capacity) {
+    Out out = start(buffer, capacity);
+    Text standard = standard_attribute(view(name, length));
+    if (countof(standard) == 0) return 0;
+    put(&out, "`__attribute__((");
+    put(&out, view(name, length));
+    put(&out, "))` has a standard spelling: write `");
+    put(&out, standard);
+    put(&out, "`");
+    return out.length;
+}
+
+// ---- smith-constexpr and smith-designated-init ------------------------------------------------------------------
+
+[[smith::c_name("smith_idiom_constexpr_message")]] export usize constexpr_message(bool is_array, const char *name,
+                                                                                  usize length, char *buffer,
+                                                                                  usize capacity) {
+    Out out = start(buffer, capacity);
+    put(&out, "`const` ");
+    if (is_array) {
+        put(&out, "array");
+    } else {
+        put(&out, "object");
+    }
+    put(&out, " `");
+    put(&out, view(name, length));
+    put(&out, "` has a constant initializer: write `constexpr`");
+    return out.length;
+}
+
+[[smith::c_name("smith_idiom_designated_message")]] export usize designated_message(const char *name, usize length,
+                                                                                    char *buffer, usize capacity) {
+    Out out = start(buffer, capacity);
+    put(&out, "this initializes `");
+    put(&out, view(name, length));
+    put(&out, "`, which another file defines, by position: name the fields (`{.field = value, ...}`), so that a field "
+              "added to it cannot shift the values");
+    return out.length;
+}
+
+// ---- smith-module -----------------------------------------------------------------------------------------------
+
+// The module a file at `path` is, by the rule of the layout: its path from the project's root (the folder the check
+// runs in), without `.smith`, `::` for `/`, and `tests/` is a root of its own (tests/primes_test.smith is primes_test).
+static void put_module_of(Out *out, Text path, Text root) {
+    Text relative = path;
+    if (countof(root) > 0 && starts_with(path, root) && countof(path) > countof(root) && path[countof(root)] == '/') {
+        relative = path[countof(root) + 1:countof(path)];
+    }
+    if (starts_with(relative, "./")) relative = relative[2:countof(relative)];
+    if (starts_with(relative, "/") || starts_with(relative, "../")) {
+        option(usize) slash = last_index(relative, '/');
+        if (slash == .some) relative = relative[slash.some + 1:countof(relative)];
+    }
+    if (ends_with(relative, ".smith")) relative = relative[0:countof(relative) - 6];
+    if (starts_with(relative, "tests/") && countof(relative) > 6) relative = relative[6:countof(relative)];
+    for (usize i = 0; i < countof(relative); i++) {
+        if (relative[i] == '/') {
+            put(out, "::");
+        } else {
+            put(out, relative[i:i + 1]);
+        }
+    }
+}
+
+[[smith::c_name("smith_idiom_module_of")]] export usize module_of(const char *path, usize path_length, const char *root,
+                                                                  usize root_length, char *buffer, usize capacity) {
+    Out out = start(buffer, capacity);
+    put_module_of(&out, view(path, path_length), view(root, root_length));
+    return out.length;
+}
+
+// The finding for a file with no `module` line, with the module its path implies.
+[[smith::c_name("smith_idiom_module_message")]] export usize module_message(const char *path, usize path_length,
+                                                                            const char *root, usize root_length,
+                                                                            char *buffer, usize capacity) {
+    Out out = start(buffer, capacity);
+    put(&out, "this file has no `module` line, and every .smith file is a module: write `module ");
+    put_module_of(&out, view(path, path_length), view(root, root_length));
+    put(&out, ";` at the top (its path from the project's root, `tests/` being a root of its own), and `export` what "
+              "other files use");
+    return out.length;
+}
+
+// ---- the names clang-tidy judges (shim/tidy.cpp) ----------------------------------------------------------------
+
+// Whether a struct or a field's struct is one the lowering made and the program never wrote: a tuple `struct { i32,
+// f32 }` is lowered to `smith_tuple_i32__f32` with the fields `_0`, `_1`, a slice `T xs[:]` to `smith_array_i32_n`
+// with `data` and `count`, a payload enum to `smith_enum_...`, and `Field` to `smith_field`. No rule of naming applies
+// to them.
+[[smith::c_name("smith_idiom_lowering_name")]] export bool lowering_name(const char *name, usize length) {
+    Text written = view(name, length);
+    return starts_with(written, "smith_tuple_") || starts_with(written, "smith_array_") ||
+           starts_with(written, "smith_enum_") || same(written, "smith_field");
+}
+
+// A generic instance is written `push_array<f64>`; the name the rules judge is the generic's, `push_array`: the length
+// of that name.
+[[smith::c_name("smith_idiom_judged_name_length")]] export usize judged_name_length(const char *name, usize length) {
+    Text written = view(name, length);
+    for (usize i = 0; i < countof(written); i++) {
+        if (written[i] == '<') return i;
+    }
+    return countof(written);
+}
