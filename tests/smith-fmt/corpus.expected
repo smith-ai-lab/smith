@@ -4423,6 +4423,54 @@ module num;
 export T add(type T, T a, T b) {
     return a + b;
 }
+==> generic-braceless-head/src/heads.smith <==
+module heads;
+
+import <math.h>;
+import same;
+
+// The file names `option`, so the lowering reads each statement ahead for it. A name declared in the head of a
+// braceless `for`, `if` or `while` is still declared when the call in the body is typed (issue #475).
+
+static option(usize) first_odd(usize *xs, usize n) {
+    for (usize i = 0; i < n; i++)
+        if (xs[i] % 2 == 1) return {.some = xs[i]};
+    return .none;
+}
+
+static bool fifth(option(usize) at) {
+    if (at == .some) return at.some == 5;
+    return false;
+}
+
+export i32 run(void) {
+    usize xs[4] = {2, 4, 5, 6};
+    usize total = 0;
+    for (usize i = 0; i < 4; i++)
+        if (same::equal(i, xs[i] - 4)) total += i;
+    for (usize i = 0; i < 4; i++)
+        total += same::equal(xs[i], xs[i]) ? 1u : 0u;
+    for (usize i = 0; i < 4; i++)
+        total += same::equal(i, i) ? 1u : 0u;
+    for (usize i = 0; i < 2; i++)
+        for (usize j = 0; j < 2; j++)
+            if (same::equal(i, j)) total += 10;
+    // A variable named like a C function: the clauses of the head are lowered after the parser declared it.
+    for (i32 log = 0; log < 3; log++) {
+        total += (usize)log;
+    }
+    usize n = 3;
+    while (same::equal(n, 3))
+        n = 4;
+    return fifth(first_odd(xs, 4)) && total == 31 && n == 4 ? 0 : 1;
+}
+==> generic-braceless-head/src/same.smith <==
+module same;
+
+// A generic whose first argument's type is read from the call.
+export bool equal(auto a, typeof(a) b) {
+    return a == b;
+}
 ==> generic-braceless/src/main.smith <==
 import twice;
 #include <stdio.h>
