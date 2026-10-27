@@ -581,7 +581,7 @@ static bool smith_changed_embed_touch(const char *includer, const char *path) {
         size_t line = smith_changed_line_of((size_t)(at - smith_rec_source));
         int f = smith_changed_function_at(all, line);
         if (at >= start && at < embed) continue; // the declaration itself
-        if (f < 0) return false;                // used outside a function: not understood
+        if (f < 0) return false;                 // used outside a function: not understood
         if (smith_rec_touched_count >= smith_rec_touched_max) return false;
         smith_rec_touched_file[smith_rec_touched_count] = smith_cov_copy(includer);
         smith_rec_touched_name[smith_rec_touched_count++] = smith_cov_copy(all->name[f]);

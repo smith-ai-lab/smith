@@ -94,6 +94,28 @@ export void test_a_workflow_no_test_names_selects_no_test(io::Io *io) {
     scratch::expect_lacks("not unknown", out, "an input of no test");
 }
 
+// A build.c with one task whose step is a function, and the registering function (committed in the case).
+constexpr char build_file[_] =
+    "build_c() { printf 'static int build_chore(SmithRun *run) {\\n    return %s;\\n}\\n"
+    "void build(SmithBuild *b) {\\n    SmithStep chore = {.run = build_chore};\\n    smith_task(b, \"chore\", "
+    "&chore);\\n"
+    "    int %s = 0;\\n}\\n' \"$1\" \"$2\" > build.c; }; build_c 0 unused && "
+    "printf 'module chore_test;\\nexport void test_chore() { /* smith build chore */ }\\n' > tests/chore_test.smith && "
+    "git add -A && git -c user.name=t -c user.email=t@t commit -q -m build; ";
+
+// build.c is read by function: a change in the function a task's step runs selects only the tests that name the task;
+// a change in the function that registers (every build runs it) selects every test.
+export void test_a_build_file_change_in_a_task_function_selects_the_tests_that_name_it(io::Io *io) {
+    const char *out = changed(io, format::push(&io->arena, build_file, "build_c 1 unused").data);
+    scratch::expect_contains("local", out, "build.c changed only in 2 names no test runs (build_chore");
+    scratch::expect_contains("the test that names the task", out,
+                             "tests/chore_test.smith: it names chore, which build.c changed");
+    scratch::expect_lacks("not the others", out, "c_test.smith:");
+    out = changed(io, format::push(&io->arena, build_file, "build_c 0 other").data);
+    scratch::expect_contains("the registering function", out,
+                             "build.c changed outside the functions of tasks no test runs, so every test runs");
+}
+
 // The selection has no size at which it becomes `*`: three thousand tests in one file are listed one by one (far past
 // the 8 KiB filter and the 1.5 KiB per-file buffer of #456), and a run says when the names are longer than one
 // argument instead of silently running everything.
