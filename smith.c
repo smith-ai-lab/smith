@@ -3471,6 +3471,12 @@ int main(int argc, char **argv) {
     if (strcmp(argv[1], "--smith-slots") == 0) return smith_slots_main(argc - 2, argv + 2);
     const SmithVerb *verb = smith_find_verb(argv[1]);
     if (verb == nullptr) smith_bare_arguments(argc, argv);
-    if (smith_slots_verb(verb->name)) smith_slots_arm(verb->name);
+    // `smith build preflight` takes its slot at once and holds it for the whole check: its build, fmt, lint and test
+    // are children that inherit SMITH_SLOT_HELD and take none, so only cores / 4 preflights run at once and the rest
+    // wait.
+    if (strcmp(verb->name, "build") == 0 && argc > 2 && strcmp(argv[2], "preflight") == 0)
+        smith_slots_take("preflight");
+    else if (smith_slots_verb(verb->name))
+        smith_slots_arm(verb->name);
     return smith_dispatch(verb, argc, argv, self);
 }

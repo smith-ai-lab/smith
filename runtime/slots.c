@@ -199,7 +199,11 @@ static bool smith_slots_wait(const char *folder, int count, const char *label, b
     bool behind_ci = false;
     for (long waited = 0; waited < smith_slots_wait_max_ms; waited += smith_slots_poll_ms) { // bounded by the backstop
         behind_ci = !ci && smith_slots_ci_waiting(folder);
-        if (!behind_ci && smith_slots_try(folder, count, label, holders, &running)) {
+        // The last slot is CI's: a local job tries only the first count - 1, so a CI job never waits behind local work.
+        // With one slot nothing can be reserved: the job tries it, and the CI job's `ci-waiting` mark makes local jobs
+        // take no slot while it waits.
+        int usable = !ci && count > 1 ? count - 1 : count;
+        if (!behind_ci && smith_slots_try(folder, usable, label, holders, &running)) {
             got = true;
             break;
         }

@@ -127,3 +127,39 @@ export void test_a_ci_holder_lowers_the_share_of_a_local_holder(io::Io *io) {
                                      "touch free; wait $a; cat order");
     scratch::expect_text("CI keeps 8, the local holder drops to 1", "ci 8\nlocal 1\n", out);
 }
+
+// The last slot is CI's: with two slots and one taken, a second local job waits though a slot is free, and a CI job
+// takes the free one at once.
+export void test_local_jobs_cannot_take_the_last_slot_and_a_ci_job_can(io::Io *io) {
+    const char *out = slots_case(io, "export SMITH_SLOTS=2; "
+                                     "smith --smith-slots sh -c \"$hold\" & a=$!; w held; "
+                                     "smith --smith-slots touch b_ran 2>b.err & b=$!; "
+                                     "ww b.err 'waiting for a slot'; "
+                                     "SMITH_PRIORITY=ci smith --smith-slots touch c_ran; "
+                                     "[ -e c_ran ] && echo ci_ran; [ -e b_ran ] && echo early; "
+                                     "touch free; wait $a $b; echo done");
+    scratch::expect_text("the local job waits, the CI job runs", "ci_ran\ndone\n", out);
+}
+
+// `smith build preflight` holds one slot for its whole run: a second one waits for it at once, and what the first runs
+// (an inner executor here, standing for its build, fmt, lint and test) inherits the slot and takes none, with the one
+// slot there is. The project's task holds until `free` exists.
+export void test_preflight_holds_one_slot_for_its_whole_run(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::write(&p, "build.c",
+                   "#include <smith/build.h>\n"
+                   "void build(SmithBuild *b) {\n"
+                   "    SmithStep step = {.command = (const char *[]){\"sh\", \"-c\", \"touch held; while [ ! -e "
+                   "free ]; do sleep 0.05; done; smith --smith-exec m.ninja\", nullptr}};\n"
+                   "    smith_task(b, \"preflight\", &step);\n"
+                   "}\n");
+    const char *script =
+        "printf 'rule step\\n  command = $cmd\\nbuild out: step\\n  cmd = touch out\\n' >m.ninja; "
+        "mkdir two && cp build.c m.ninja two/; "
+        "smith build preflight 2>a.err >/dev/null & a=$!; w held; "
+        "(cd two && smith build preflight 2>../b.err >/dev/null) & b=$!; "
+        "ww b.err 'waiting for a slot'; [ -e two/out ] && echo early; "
+        "touch free; wait $a $b; echo done; grep -c 'waiting for a slot' a.err; [ -e out ] && echo inner-built";
+    scratch::Run run = scratch::sh(&p, format::push(&io->arena, prelude, script).data);
+    scratch::expect_text("the second waits, the first's inner build takes no slot", "done\n0\ninner-built\n", run.out);
+}

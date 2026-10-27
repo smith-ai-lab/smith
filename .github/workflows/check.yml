@@ -80,9 +80,13 @@ jobs:
       - name: Build smith
         if: steps.tree.outputs.skip != 'true'
         # normally 20-75 s (the last 25 runs); a hang (run 40546445282 sat in a compile) is cut off here and the train
-        # reads GitHub's "The action 'Build smith' has timed out" as `timeout Build smith`
-        timeout-minutes: 10
+        # reads GitHub's "The action 'Build smith' has timed out" as `timeout Build smith`. The build is CI's: it takes
+        # the slot reserved for CI and goes before local jobs (knowledge/slots.md), so it waits only behind another CI
+        # job; the timeout counts that wait too (a slot cannot be taken in a step of its own: it is held by a process),
+        # so it is the 10 minutes of the build plus up to 15 of the other CI job's check.
+        timeout-minutes: 25
         env:
+          SMITH_PRIORITY: ci
           # the checked smith counts the lines it runs, per test (knowledge/coverage-selection.md, #456)
           COVERAGE: "1"
         run: smith build
