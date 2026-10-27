@@ -112,5 +112,6 @@ allocator; `checked` (D2a), `failing` and the profiles (D2b).
 - **Network (issue #240):** `SmithNetHandler {connect, listen, port, accept, read, write, close}` is called by `smith::net` itself (no libc function is interposed); per thread, with a setter returning the previous handler, and none set is the real sockets and TLS. See [net](net.md).
 - **Entropy (issue #240):** `SmithEntropyHandler {fill}` answers `getentropy` (per thread, setter returns the previous
   one, none set is the system's; `fill` writes the bytes and never fails). `arc4random` and `getrandom` are not reached.
-  `random::seed()` is the one caller in smith's libraries; it has the `entropy` effect (`getentropy` is `entropy` in
-  `shim/effects_table.h`). A test scripts it with a fake whose `fill` writes the bytes of a number.
+  `entropy::seed()` (`smith::entropy`) is the one caller in smith's libraries; it has the `entropy` effect
+  (`getentropy` is `entropy` in `shim/effects_table.h`), and `smith::random` stays pure. A test scripts it with
+  `entropy::fake(number)`, whose `fill` writes the bytes of a number.

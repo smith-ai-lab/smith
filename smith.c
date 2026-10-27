@@ -1072,6 +1072,9 @@ static constexpr unsigned char smith_clock_source[] = {
 static constexpr unsigned char smith_console_source[] = {
 #embed "lib/smith/console.smith"
 };
+static constexpr unsigned char smith_entropy_source[] = {
+#embed "lib/smith/entropy.smith"
+};
 static constexpr unsigned char smith_env_source[] = {
 #embed "lib/smith/env.smith"
 };
@@ -1155,6 +1158,7 @@ static const SmithLibrary smith_libraries[] = {
     SMITH_LIBRARY(console, true),
     SMITH_LIBRARY(contract, true),
     SMITH_LIBRARY(effects, true),
+    SMITH_LIBRARY(entropy, true),
     SMITH_LIBRARY(env, true),
     SMITH_LIBRARY(files, true),
     SMITH_LIBRARY(format, true),

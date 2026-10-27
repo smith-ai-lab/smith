@@ -506,6 +506,27 @@ export void test_clamp_always_lands_inside(random::Key key) { // a property test
 
 An `(io::Io *io)` test gets a real io in a scratch folder of its own. [smith-test](.agents/skills/smith-test/SKILL.md).
 
+### Randomness is pure; the system's entropy is one effect
+
+A `random::Key` is a value: the same key gives the same numbers on every build, so `smith::random` touches nothing. A key from the system comes from `smith::entropy`, the one place that asks for randomness, and its signature shows it.
+
+```smith
+module fresh;
+
+import smith::entropy;
+import smith::random;
+
+export random::Key replayable(u64 seed) { // pure: the same seed, the same key
+    return random::key_make(seed);
+}
+
+export random::Key fresh() { // the `entropy` effect: a different key on every call
+    return entropy::seed();
+}
+```
+
+A test puts `entropy::fake(number)` in force with `entropy::set_handler(&fake.base)`. [smith-entropy](.agents/skills/smith-entropy/SKILL.md), [smith-random](.agents/skills/smith-random/SKILL.md).
+
 ### Run only the tests a change can affect
 
 ```sh
