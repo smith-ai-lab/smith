@@ -786,7 +786,7 @@ static int smith_check_effects(int count, char **args) {
     size_t room = candidates * (PATH_MAX + 2 * sizeof(char *));
     void *block = mmap(nullptr, room, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
     if (block == MAP_FAILED) smith_die(smith_exit_missing, "cannot allocate the effect summaries of the link", args[0]);
-    char **file_list = block;
+    char **file_list = (char **)block;
     const char **objects = (const char **)(file_list + candidates);
     char (*paths)[PATH_MAX] = (char (*)[PATH_MAX])(objects + candidates);
     size_t found = 0;
