@@ -1,0 +1,191 @@
+// Tests of coverage-based test selection (issue #456, runtime/coverage.c, knowledge/coverage-selection.md): the record
+// of a test (`smith test --coverage merge`), the table (`join`), the report of changed lines no test ran (`report`),
+// and `smith test --changed` reading a table. The first three run a program built with
+// `-fprofile-instr-generate -fcoverage-mapping` under the LLVM tools smith links; the selection tests write the table
+// by hand on a scratch git repository (never this checkout).
+module coverage_test;
+
+import smith::format;
+import smith::io;
+import smith::test;
+import scratch;
+
+// The folder of llvm-profdata and llvm-cov of the LLVM smith links, or exit status 77 (the test is skipped).
+constexpr char find_tools[] =
+    "id=$(smith cc --smith-which -c prog.c | sed -n 's/^identity //p'); tools=; "
+    "for d in \"$HOME\"/.cache/smith/llvm/*/install; do "
+    "[ -n \"$id\" ] && [ \"$(cat \"$d/lib/smith-clang.id\" 2>/dev/null)\" = \"$id\" ] && tools=$d/bin; done; "
+    "[ -x \"$tools/llvm-cov\" ] || exit 77; ";
+
+// A program with three functions on known lines; `prog` runs `first`, and `prog x` runs `second`. A repository when
+// `commit` is true.
+constexpr char program[] =
+    "static int first(int x) {\\n    return x + 1;\\n}\\nstatic int second(int x) {\\n    return x * 2;\\n}\\n"
+    "int main(int argc, char **argv) {\\n    (void)argv;\\n    return (argc > 1 ? second(argc) : first(argc)) > "
+    "100;\\n}\\n";
+
+// Compiles the program with coverage and merges one record for each run named in `runs` ("one" runs first, "two"
+// runs second), then joins them into cov/table.tsv.
+static const char *make_table(io::Io *io, const char *runs) {
+    return format::push(&io->arena, "set -e; r=$(pwd -P); printf '", program, "' > prog.c; ", find_tools,
+                        "smith cc -fprofile-instr-generate -fcoverage-mapping \"$r/prog.c\" -o prog; "
+                        "export SMITH_COVERAGE_DIR=$r/cov SMITH_COVERAGE_TOOLS=$tools SMITH_COVERAGE_BINARY=$r/prog "
+                        "SMITH_REPO=$r; mkdir -p cov/raw/t__one cov/raw/t__two; ",
+                        runs,
+                        "smith test --coverage join cov abc123 cov/table.tsv; "
+                        "echo \"raw: $(find cov -name '*.profraw' | wc -l | tr -d ' ')\"; cat cov/table.tsv")
+        .data;
+}
+
+constexpr char run_one[] =
+    "LLVM_PROFILE_FILE=$r/cov/raw/t__one/%p.profraw ./prog; smith test --coverage merge t::one; ";
+constexpr char run_two[] =
+    "LLVM_PROFILE_FILE=$r/cov/raw/t__two/%p.profraw ./prog x; smith test --coverage merge t::two; ";
+
+// Each test's record holds the functions it ran; the table lists the functions, the lines, and a bit for each; the raw
+// profiles are gone.
+export void test_a_record_is_the_functions_a_test_ran(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Run run = scratch::sh(&p, make_table(io, format::push(&io->arena, run_one, run_two).data));
+    if (run.status == 77) {
+        test::note("coverage: skipped, no LLVM tools of the smith in ~/.cache/smith/llvm");
+        return;
+    }
+    scratch::expect_status("the run", 0, &run);
+    scratch::expect_contains("the profiles are deleted", run.out, "raw: 0");
+    scratch::expect_contains("a function", run.out, "fn\tprog.c\t1\t3\tprog.c:first");
+    scratch::expect_contains("main", run.out, "fn\tprog.c\t7\t10\tmain");
+    scratch::expect_contains("the lines", run.out, "inst\tprog.c\t1-10");
+    scratch::expect_contains("the first test ran first and main", run.out, "test\tt::one\t05");
+    scratch::expect_contains("the second ran second and main", run.out, "test\tt::two\t06");
+    scratch::expect_contains("the commit", run.out, "commit\tabc123");
+}
+
+// A changed line no test ran is reported, with the function it is in, and the totals are.
+export void test_the_report_names_the_changed_lines_no_test_ran(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    const char *edit =
+        "; git init -q -b main . && git add prog.c && git -c user.name=t -c user.email=t@t commit -q -m a "
+        "&& sed 's/x \\* 2/x * 3/' prog.c > next.c && mv next.c prog.c && "
+        "git -c user.name=t -c user.email=t@t commit -q -am b && "
+        "smith test --coverage report cov/table.tsv HEAD~1 cov/report.txt; cat cov/report.txt";
+    scratch::Run run = scratch::sh(&p, format::push(&io->arena, make_table(io, run_one), edit).data);
+    if (run.status == 77) return;
+    scratch::expect_status("the run", 0, &run);
+    scratch::expect_contains("the totals", run.out, "coverage\tabc123\tlines\t");
+    scratch::expect_contains("the uncovered line", run.out, "uncovered\tprog.c\t5\tprog.c:second");
+    scratch::expect_contains("the count", run.out, "changed\t1\t1");
+}
+
+// ---- Selection by records
+
+// A repository with a module of three tests that run smith, a pure test, and runtime/prog.c, a program of two functions
+// (lines 1 to 3 and 4 to 6) and main. `runs_test::a` ran the first function and `runs_test::b` the second, each
+// under coverage and merged into a record; `runs_test::c` has none.
+constexpr char repository[] =
+    "export SMITH_OUTPUT=full SMITH_COVERAGE_NO_FETCH=1; git init -q -b main . && mkdir -p lib tests runtime .smith && "
+    "printf '.smith\\n' > .gitignore && "
+    "printf 'module runs_test;\\nimport scratch;\\nexport void test_a() { scratch::sh(); }\\n"
+    "export void test_b() { scratch::sh(); }\\nexport void test_c() { scratch::sh(); }\\n' > tests/runs_test.smith && "
+    "printf 'module scratch;\\n' > tests/scratch.smith && "
+    "printf 'module pure_test;\\nexport void test_p() {}\\n' > lib/pure_test.smith && "
+    "printf '#include \"helper.h\"\\nstatic int first(int x) {\\n    return x + 1;\\n}\\nstatic int second(int x) "
+    "{\\n    return x * 2;\\n}\\n"
+    "int main(int argc, char **argv) {\\n    (void)argv;\\n    return (argc > 1 ? "
+    "second(argc) : first(argc)) > "
+    "100;\\n}\\n'"
+    " > runtime/prog.c && printf '#define K 1\\n' > runtime/helper.h && git add -A && "
+    "git -c user.name=t -c user.email=t@t commit -q -m base; ";
+
+// Runs the program under coverage as the tests a and b, and merges a record for each; `result` is what a's run was.
+static const char *recorded(io::Io *io, const char *result) {
+    return format::
+        push(&io->arena, find_tools,
+             "r=$(pwd -P); smith cc -fprofile-instr-generate -fcoverage-mapping \"$r/runtime/prog.c\" -o .smith/prog; "
+             "export SMITH_COVERAGE_DIR=$r/.smith/cov SMITH_COVERAGE_TOOLS=$tools SMITH_COVERAGE_BINARY=$r/.smith/prog "
+             "SMITH_REPO=$r; mkdir -p .smith/cov/raw/runs_test__a .smith/cov/raw/runs_test__b; "
+             "LLVM_PROFILE_FILE=$r/.smith/cov/raw/runs_test__a/%p.profraw .smith/prog; "
+             "smith test --coverage merge runs_test::a ",
+             result,
+             "; LLVM_PROFILE_FILE=$r/.smith/cov/raw/runs_test__b/%p.profraw .smith/prog x; "
+             "smith test --coverage merge runs_test::b pass; unset SMITH_REPO; ")
+            .data;
+}
+
+static const char *changed_with(io::Io *io, const char *result, const char *edit) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Run run = scratch::sh(&p, format::push(&io->arena, repository, recorded(io, result), edit,
+                                                    "; smith test --changed --base HEAD --dry-run 2>&1")
+                                           .data);
+    if (run.status == 77) return "";
+    scratch::expect_status("the dry run ends", 0, &run);
+    return run.out;
+}
+
+static const char *changed(io::Io *io, const char *edit) {
+    return changed_with(io, "pass", edit);
+}
+
+// A change inside a function selects the tests that ran it, and the test with no record, and not the others.
+export void test_a_change_selects_the_tests_that_ran_it(io::Io *io) {
+    const char *out = changed(io, "sed 's/x \\* 2/x * 3/' runtime/prog.c > n && mv n runtime/prog.c");
+    scratch::expect_contains("the test that ran it", out, "its record is stale: runs_test::b");
+    scratch::expect_contains("the filter", out, "runs_test::b,runs_test::c");
+    scratch::expect_lacks("the other", out, "runs_test::a");
+    scratch::expect_lacks("a test that does not run smith", out, "pure_test");
+}
+
+// A function that moved but did not change is the same function, and a comment outside the functions changes nothing.
+export void test_a_moved_function_and_a_comment_change_nothing(io::Io *io) {
+    const char *out = changed(io, "{ printf '// a comment\\n\\n'; cat runtime/prog.c; printf '// the end\\n'; } > n && "
+                                  "mv n runtime/prog.c");
+    scratch::expect_lacks("a", out, "runs_test::a");
+    scratch::expect_lacks("b", out, "runs_test::b");
+    scratch::expect_contains("only the test with no record", out, "no record of runs_test::c");
+}
+
+// Code outside the functions (a global) reruns every test that ran the file.
+export void test_a_global_reruns_the_tests_that_ran_the_file(io::Io *io) {
+    const char *out = changed(io, "printf 'int g = 1;\\n' >> runtime/prog.c");
+    scratch::expect_contains("a", out, "code outside functions changed");
+    scratch::expect_contains("a", out, "runs_test::a");
+    scratch::expect_contains("a", out, "runs_test::a");
+    scratch::expect_contains("b", out, "runs_test::b");
+    scratch::expect_contains("c", out, "runs_test::c");
+}
+
+// A test that failed last time reruns whatever changed.
+export void test_a_failed_test_reruns(io::Io *io) {
+    const char *out = changed_with(io, "fail", "echo '// x' >> runtime/prog.c");
+    scratch::expect_contains("it failed", out, "it failed last time");
+    scratch::expect_contains("the filter", out, "runs_test::a");
+}
+
+// A changed file that no record names and no file imports is unknown: every test runs.
+export void test_a_file_nothing_places_selects_every_test(io::Io *io) {
+    const char *out = changed(io, "printf 'int z(void);\\n' > runtime/new.c");
+    scratch::expect_contains("the message", out, "runtime/new.c is named by no record and no file imports it");
+    scratch::expect_contains("every test", out, "every test runs");
+}
+
+// A changed file no record names, but that the executed file includes, selects the tests whose program is built from
+// it.
+export void test_a_file_the_graph_places_selects_the_tests_built_from_it(io::Io *io) {
+    const char *out = changed(io, "printf '#define K 2\\n' > runtime/helper.h");
+    scratch::expect_contains("the reason", out,
+                             "its program is built from a changed file no record names (through runtime/prog.c)");
+    scratch::expect_contains("a", out, "runs_test::a");
+    scratch::expect_contains("b", out, "runs_test::b");
+    scratch::expect_contains("c", out, "runs_test::c");
+}
+
+// Without records the graph decides, and the message says so.
+export void test_no_records_means_the_graph_decides(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Run run = scratch::sh(&p, format::push(&io->arena, repository,
+                                                    "echo '// x' >> runtime/prog.c; smith test --changed --base HEAD "
+                                                    "--dry-run 2>&1")
+                                           .data);
+    scratch::expect_contains("the reason", run.out, "no records of tests");
+    scratch::expect_contains("the graph's choice", run.out, "tests/runs_test.smith: it runs smith");
+}

@@ -286,6 +286,161 @@ static void smith_changed_choose(size_t test, const char *format, const char *pa
     smith_changed_why[test] = smith_changed_copy(reason, strlen(reason));
 }
 
+// ---- Records (runtime/record.c, issue #456)
+
+// A test that ran under coverage keeps a record in `.smith/records/<test>.rec` of what it executed, its inputs and what
+// it read, all by content hash. `--changed` reruns a test whose record is stale (a hash differs, it failed, or it has
+// no record), and runs every test when a changed file is named by no record names and the graph does not place either
+// (a fixture, a new file): unknown means run it. A changed file no record names but the graph places selects the tests
+// whose recorded program is built from it. With no records the graph decides.
+static const char *smith_changed_self;
+static bool smith_changed_covered; // records are read and every changed source of smith is named by one
+static const char *smith_changed_names[smith_changed_files_max]; // the tests of a file that records selected
+
+// Set when a changed file is named by no record and no file imports it: every test runs.
+static const char *smith_changed_unplaced;
+
+static bool smith_changed_records_folder(char *out, size_t size) {
+    const char *given = getenv("SMITH_RECORDS_DIR");
+    if (given != nullptr && given[0] != '\0')
+        snprintf(out, size, "%s", given);
+    else
+        snprintf(out, size, "%s/.smith/records", smith_cov_root);
+    return access(out, R_OK) == 0;
+}
+
+// Runs the project's task `coverage-fetch` when its build.c defines one: it brings shared records into the folder (from
+// CI, say). smith itself never talks to the network.
+static void smith_changed_fetch(void) {
+    if (smith_changed_self == nullptr || getenv("SMITH_COVERAGE_NO_FETCH") != nullptr) return;
+    if (smith_changed_read("build.c") == 0 || strstr(smith_changed_text, "\"coverage-fetch\"") == nullptr) return;
+    const char *const fetch[] = {smith_changed_self, "build", "coverage-fetch", nullptr};
+    (void)smith_cov_spawn(fetch, nullptr, true);
+}
+
+static bool smith_changed_unnamed_seed[smith_changed_files_max];  // changed files no record names
+static bool smith_changed_unnamed_reach[smith_changed_files_max]; // and the files built from them
+
+// Marks the changed files no record names, and everything that imports or includes them, transitively (the graph:
+// whatever is built from them). Returns the first such file that no file imports or includes either (the graph does
+// not place it: unknown means run every test), or nullptr.
+static const char *smith_changed_unnamed(void) {
+    const char *unknown = nullptr;
+    for (size_t p = 0; p < smith_changed_path_count; p++) {
+        const char *name = smith_changed_paths[p];
+        if (smith_changed_is_test(name) || smith_rec_mentioned(name)) continue;
+        int at = smith_changed_find(name);
+        bool imported = false;
+        for (size_t e = 0; at >= 0 && e < smith_changed_edge_count && !imported; e++)
+            imported = smith_changed_to[e] == (uint32_t)at;
+        if (at >= 0) smith_changed_unnamed_seed[at] = true;
+        if (!imported && unknown == nullptr) unknown = name;
+    }
+    memcpy(smith_changed_unnamed_reach, smith_changed_unnamed_seed, sizeof smith_changed_unnamed_reach);
+    bool grew = true;
+    for (size_t pass = 0; grew && pass < smith_changed_file_count + 1; pass++) { // a chain is as long as the files
+        grew = false;
+        for (size_t e = 0; e < smith_changed_edge_count; e++) {
+            if (smith_changed_unnamed_reach[smith_changed_to[e]] &&
+                !smith_changed_unnamed_reach[smith_changed_from[e]]) {
+                smith_changed_unnamed_reach[smith_changed_from[e]] = true;
+                grew = true;
+            }
+        }
+    }
+    return unknown;
+}
+
+// The first file of the record's program that is built from a changed file no record names, or nullptr.
+static const char *smith_changed_built_from(const SmithRecResult *record) {
+    for (size_t i = 0; i < record->named_count; i++) { // bounded by the files of the record
+        int at = smith_changed_find(smith_rec_named[record->named_first + i]);
+        if (at >= 0 && smith_changed_unnamed_reach[at]) return smith_rec_named[record->named_first + i];
+    }
+    return nullptr;
+}
+
+// Reads the records and decides whether they judge this change. Prints why not.
+static void smith_changed_records(void) {
+    char folder[PATH_MAX];
+    if (getcwd(smith_cov_root, sizeof smith_cov_root) == nullptr) return;
+    if (!smith_changed_records_folder(folder, sizeof folder)) {
+        smith_changed_fetch();
+        if (!smith_changed_records_folder(folder, sizeof folder)) {
+            fputs("smith test --changed: no records of tests, the graph decides\n", stderr);
+            return;
+        }
+    }
+    if (smith_rec_check_folder(folder) == 0) {
+        fputs("smith test --changed: no records of tests, the graph decides\n", stderr);
+        return;
+    }
+    smith_changed_unplaced = smith_changed_unnamed();
+    smith_changed_covered = smith_changed_unplaced == nullptr;
+}
+
+// The `module` a test file declares, as a prefix of its tests' names (`name::`); false for a file with none.
+static bool smith_changed_module_of(const char *text, char *out, size_t size) {
+    const char *module = strstr(text, "\nmodule ");
+    if (module != nullptr)
+        module += 8;
+    else if (strncmp(text, "module ", 7) == 0)
+        module = text + 7;
+    if (module == nullptr) return false;
+    snprintf(out, size, "%.*s::", (int)strcspn(module, " ;\n"), module);
+    return true;
+}
+
+static const SmithRecResult *smith_changed_record_of(const char *name) {
+    for (size_t r = 0; r < smith_rec_result_count; r++) { // bounded by the records
+        if (strcmp(smith_rec_results[r].name, name) == 0) return &smith_rec_results[r];
+    }
+    return nullptr;
+}
+
+static void smith_changed_filter_add(char *filter, size_t size, const char *name);
+
+// The runs-smith rule by records: the tests of the file with a stale record, and the ones with none (a new test). True
+// when the records decided, even for no test; false when the file has no record at all.
+static bool smith_changed_coverage_judge(size_t test) {
+    static char names[1536];
+    char module[256];
+    if (!smith_changed_covered || !smith_changed_module_of(smith_changed_text, module, sizeof module)) return false;
+    size_t prefix = strlen(module);
+    char reason[400] = "";
+    bool known = false;
+    names[0] = '\0';
+    for (size_t r = 0; r < smith_rec_result_count; r++) { // bounded by the records
+        const SmithRecResult *record = &smith_rec_results[r];
+        if (strncmp(record->name, module, prefix) != 0) continue;
+        known = true;
+        const char *built = smith_changed_built_from(record);
+        if (!record->stale && built == nullptr) continue;
+        smith_changed_filter_add(names, sizeof names, record->name);
+        if (reason[0] != '\0') continue;
+        if (record->stale)
+            snprintf(reason, sizeof reason, "its record is stale: %.150s, %.150s", record->name, record->why);
+        else
+            snprintf(reason, sizeof reason,
+                     "%.150s: its program is built from a changed file no record names (through %.150s)", record->name,
+                     built);
+    }
+    if (!known) return false;
+    char *at = smith_changed_text;
+    for (size_t guard = 0; (at = strstr(at, "void test_")) != nullptr && guard < smith_changed_text_max; guard++) {
+        at += 10; // the runner's name for a test has no test_ prefix
+        char full[300];
+        snprintf(full, sizeof full, "%s%.*s", module, (int)strcspn(at, "("), at);
+        if (smith_changed_record_of(full) != nullptr) continue;
+        smith_changed_filter_add(names, sizeof names, full);
+        if (reason[0] == '\0') snprintf(reason, sizeof reason, "no record of %.300s", full);
+    }
+    if (reason[0] == '\0') return true;
+    smith_changed_choose(test, "%s", reason);
+    smith_changed_names[test] = smith_changed_overflow ? nullptr : smith_changed_copy(names, strlen(names));
+    return true;
+}
+
 // One test file: selected when the graph reaches it from a changed file, or when it runs smith and a source of smith
 // changed (an edge from the test to everything compiled into smith).
 static void smith_changed_judge(size_t test) {
@@ -295,6 +450,7 @@ static void smith_changed_judge(size_t test) {
                              smith_changed_files[dependency]);
     if (smith_changed_chosen[test] || smith_changed_read(smith_changed_files[test]) == 0) return;
     if (!smith_changed_runs_smith(smith_changed_text)) return;
+    if (smith_changed_coverage_judge(test)) return;
     for (size_t p = 0; p < smith_changed_path_count; p++) {
         if (smith_changed_in_smith(smith_changed_paths[p])) {
             smith_changed_choose(test, "it runs smith, and %s is part of smith", smith_changed_paths[p]);
@@ -327,6 +483,17 @@ static void smith_changed_filter_add(char *filter, size_t size, const char *name
         return;
     }
     snprintf(filter + used, size - used, "%s%s", used > 0 ? "," : "", name);
+}
+
+// The exact names coverage chose (comma separated) onto the filter.
+static void smith_changed_filter_names(const char *names, char *filter, size_t size) {
+    char name[320];
+    for (const char *at = names; *at != '\0';) { // bounded by the names
+        size_t length = strcspn(at, ",");
+        snprintf(name, sizeof name, "%.*s", (int)length, at);
+        smith_changed_filter_add(filter, size, name);
+        at += length + (at[length] == ',' ? 1 : 0);
+    }
 }
 
 // What `--test` needs to run the tests of a file: `module::` for a module, else the names of its `test_` functions.
@@ -427,6 +594,12 @@ static SmithChangedResult smith_changed_select(const char *base_name, char *filt
         return SmithChanged_Full;
     }
     smith_changed_build_graph();
+    smith_changed_records();
+    if (smith_changed_unplaced != nullptr) {
+        fprintf(stderr, "smith test --changed: %s is named by no record and no file imports it, so every test runs\n",
+                smith_changed_unplaced);
+        return SmithChanged_Full;
+    }
     int unknown = smith_changed_unknown();
     if (unknown >= 0) {
         fprintf(stderr, "smith test --changed: %s is an input of no test the graph knows, so every test runs\n",
@@ -445,7 +618,11 @@ static SmithChangedResult smith_changed_select(const char *base_name, char *filt
     smith_changed_report(selected, tests, base);
     if (selected == 0) return SmithChanged_None;
     for (size_t i = 0; i < smith_changed_file_count; i++) {
-        if (smith_changed_chosen[i]) smith_changed_filter_file(smith_changed_files[i], filter, size);
+        if (!smith_changed_chosen[i]) continue;
+        if (smith_changed_names[i] != nullptr)
+            smith_changed_filter_names(smith_changed_names[i], filter, size);
+        else
+            smith_changed_filter_file(smith_changed_files[i], filter, size);
     }
     return smith_changed_overflow ? SmithChanged_Full : selected == tests ? SmithChanged_Full : SmithChanged_Some;
 }

@@ -79,6 +79,9 @@ jobs:
 
       - name: Build smith
         if: steps.tree.outputs.skip != 'true'
+        env:
+          # the checked smith counts the lines it runs, per test (knowledge/coverage-selection.md, #456)
+          COVERAGE: "1"
         run: smith build
 
       - name: Full check
@@ -93,6 +96,7 @@ jobs:
           SMITH_ACCOUNT: all
           # a waiting CI job gets the next host-wide slot before any local job (knowledge/slots.md)
           SMITH_PRIORITY: ci
+          COVERAGE: "1"
         run: |
           ci="$RUNNER_TEMP/ci"
           mkdir -p "$ci"
@@ -126,6 +130,45 @@ jobs:
       - name: Record the checked tree
         if: success() && steps.tree.outputs.skip != 'true'
         run: sh scripts/ci-tree.sh record "${{ steps.tree.outputs.tree }}" "$RUNNER_TEMP/tree"
+
+      - name: Record the coverage
+        id: coverage
+        if: success() && steps.tree.outputs.skip != 'true'
+        run: |
+          # the table of which functions each test ran (.smith/coverage/coverage.tsv) and the report of the lines this batch
+          # changed that no test ran; a flag in the job summary, never a failure
+          dir="$RUNNER_TEMP/coverage"
+          mkdir -p "$dir"
+          if [ -s .smith/coverage/coverage.tsv ]; then
+            cp .smith/coverage/coverage.tsv "$dir/coverage.tsv"
+            git fetch -q origin main || true
+            build/Darwin-arm64/smith test --coverage report "$dir/coverage.tsv" origin/main "$dir/coverage-report.txt" || true
+            {
+              echo '### coverage'
+              echo '```'
+              grep -E '^(coverage|changed)' "$dir/coverage-report.txt" || true
+              grep -c '^uncovered' "$dir/coverage-report.txt" | sed 's/$/ changed lines no test ran/' || true
+              echo '```'
+            } >>"$GITHUB_STEP_SUMMARY"
+            echo "have=true" >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload the records
+        if: success() && steps.coverage.outputs.have == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          # shared records (knowledge/coverage-selection.md): any clone brings them in with its coverage-fetch task
+          name: smith-records
+          path: .smith/records
+          retention-days: 7
+
+      - name: Upload the coverage
+        if: success() && steps.coverage.outputs.have == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ github.sha }}
+          path: ${{ runner.temp }}/coverage
+          retention-days: 7
 
       - name: Upload the checked tree
         if: success() && steps.tree.outputs.skip != 'true'

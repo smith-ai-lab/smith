@@ -36,10 +36,11 @@ typedef struct {
     const char *llvm;    // the LLVM install smith links clang from, so that it compiles in its own process; else ""
     const char *llvm_id; // the identity of that clang (scripts/llvm.sh): its version and a hash of what is linked
     const char *cxx;     // compiles the shims
-    bool lldb;           // the install has lldb (scripts/llvm.sh, the lldb step): smith has `smith dbg` and `smith dap`
-    const char *prove;   // the folder with Z3 and Alive2 beside the LLVM install (build_prove_libs_make), else ""
-    bool linkable;       // the install has what smith links (else the default target stops and says `smith build llvm`)
-    bool hook;           // the install has the token hook (patches/clang-token-hook.patch): smith compiles .smith files
+    bool coverage; // COVERAGE=1: smith.c and the linked libraries count the lines they run (the train's check, #456)
+    bool lldb;     // the install has lldb (scripts/llvm.sh, the lldb step): smith has `smith dbg` and `smith dap`
+    const char *prove; // the folder with Z3 and Alive2 beside the LLVM install (build_prove_libs_make), else ""
+    bool linkable;     // the install has what smith links (else the default target stops and says `smith build llvm`)
+    bool hook;         // the install has the token hook (patches/clang-token-hook.patch): smith compiles .smith files
     const char
         *enzyme; // the folder with libEnzymeStatic-23.a (build_enzyme_make): smith differentiates at link time, else ""
 } BuildConfig;
@@ -649,7 +650,9 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
         smith_when(b, config->prove[0] != '\0', (const char *[]){"-DSMITH_PROVE", nullptr}),
         smith_when(b, config->lldb, (const char *[]){"-DSMITH_LLDB", nullptr}),
         smith_when(b, config->hook, (const char *[]){"-DSMITH_HOOK", nullptr}),
-        smith_when(b, config->enzyme[0] != '\0', (const char *[]){"-DSMITH_ENZYME", nullptr}), nullptr);
+        smith_when(b, config->enzyme[0] != '\0', (const char *[]){"-DSMITH_ENZYME", nullptr}),
+        smith_when(b, config->coverage, (const char *[]){"-fprofile-instr-generate", "-fcoverage-mapping", nullptr}),
+        nullptr);
     // The libraries have smith.c's flags: `smith prove` proves sources whose compile flags are alike together, so a
     // call in smith.c into a library finds the library's body.
     SmithObject object = {
@@ -680,10 +683,11 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
     SmithProgram program = {
         .linker = config->cc,
         .output = smith_fmt(b, "%s/smith", folder),
-        .flags = smith_cat(b, config->platform->link_flags,
-                           smith_when(b, config->enzyme[0] != '\0',
-                                      (const char *[]){"-Wl,-exported_symbol,_llvmGetPassPluginInfo", nullptr}),
-                           nullptr),
+        .flags =
+            smith_cat(b, config->platform->link_flags,
+                      smith_when(b, config->enzyme[0] != '\0',
+                                 (const char *[]){"-Wl,-exported_symbol,_llvmGetPassPluginInfo", nullptr}),
+                      smith_when(b, config->coverage, (const char *[]){"-fprofile-instr-generate", nullptr}), nullptr),
         .objects = objects,
         .libraries = smith_cat(b, shims.prove.libraries != nullptr ? shims.prove.libraries : smith_list(b, nullptr),
                                build_enzyme_libraries(b, config), build_clang_libraries(b, config),
@@ -861,7 +865,7 @@ constexpr size_t build_test_script_count = sizeof build_test_scripts / sizeof bu
 // that), `test-units` runs it with `smith test`. Needs a smith that compiles
 // `.smith` (the stage0 has none). A test that needs a build or a process of its own (a stop, a sanitizer's catch) stays
 // in its script. Returns the runner's path.
-static const char *build_units(SmithBuild *b, const char *binary, const char *folder) {
+static const char *build_units(SmithBuild *b, const BuildConfig *config, const char *binary, const char *folder) {
     static const char setup[] =
         "repo=$PWD; p=$1/units-project; mkdir -p \"$p\" && ln -sfn \"$repo/tests\" \"$p/tests\" && ln -sfn "
         "\"$repo/lib\" \"$p/lib\" && "
@@ -869,6 +873,16 @@ static const char *build_units(SmithBuild *b, const char *binary, const char *fo
     const char *self = smith_fmt(b, "$repo/%s", binary);
     const char *environment =
         smith_fmt(b, "PATH=\"$repo/%s:$PATH\" SMITH_SELF=\"%s\" SMITH_REPO=\"$repo\"", folder, self);
+    // The train's run (COVERAGE=1, #456): the runner gives every test a folder of profiles, merges them as the test
+    // ends, and the records are joined into .smith/coverage/coverage.tsv when the run is over, red or green.
+    const char *measure =
+        smith_fmt(b, "%s SMITH_COVERAGE_DIR=\"$repo/.smith/coverage\" SMITH_COVERAGE_TOOLS=\"%s/bin\"", environment,
+                  config->llvm);
+    measure = smith_fmt(b, "%s SMITH_COVERAGE_BINARY=\"%s\"", measure, self);
+    const char *join = smith_fmt(b,
+                                 "; rc=$?; cd \"$repo\" && \"%s\" test --coverage join .smith/coverage "
+                                 "\"$(git rev-parse HEAD)\" .smith/coverage/coverage.tsv; exit $rc",
+                                 self);
     const char *inputs[] = {binary, smith_fmt(b, "%s/smith-cc", folder), nullptr};
     SmithStep build_step = {
         .command =
@@ -886,8 +900,10 @@ static const char *build_units(SmithBuild *b, const char *binary, const char *fo
     quoted[quoted_count] = nullptr;
     SmithStep run = {
         .command = (const char *[]){"sh", "-c",
-                                    smith_fmt(b, "%s env %s \"%s\" test %s", setup, environment, self,
-                                              smith_join(b, quoted, " ")),
+                                    smith_fmt(b, "%s%s env %s \"%s\" test %s%s",
+                                              config->coverage ? "rm -rf \"$PWD/.smith/coverage\"; " : "", setup,
+                                              config->coverage ? measure : environment, self,
+                                              smith_join(b, quoted, " "), config->coverage ? join : ""),
                                     "sh", folder, nullptr},
         .inputs = (const char *[]){"units-build", nullptr},
         .test = true,
@@ -924,7 +940,7 @@ static int build_prove_sound_full(SmithRun *run) {
 // scripts read the full output of the smith under test, so `smith build install` (which sets nothing) runs the same
 // tests as `smith check`. The quiet form is tested with the variable unset (tests/run_routing_test.smith).
 static const char *const *build_test(SmithBuild *b, const BuildConfig *config, const char *binary, const char *folder) {
-    const char *units = config->hook ? build_units(b, binary, folder) : "";
+    const char *units = config->hook ? build_units(b, config, binary, folder) : "";
     const char *names[build_test_script_count + 1];
     for (size_t i = 0; i < build_test_script_count; i++)
         names[i] = smith_fmt(b, "test-%s", build_test_scripts[i].task);
@@ -2016,6 +2032,34 @@ static int build_ci_times(SmithRun *run) {
     return build_exec(smith_cat(b, smith_list(b, tool, root, nullptr), ids, nullptr));
 }
 
+// `smith build coverage-fetch` (issue #456), run by `smith test --changed` when it finds no records and this build file
+// defines the task: brings the records of the last green run of the train (the artifact `smith-records`) into
+// .smith/records, keeping any record already there. Records are keyed by content, so one from CI is valid wherever its
+// hashes match. Nothing found is not an error: the build graph decides.
+static int build_coverage_fetch(SmithRun *run) {
+    SmithBuild *b = run->b;
+    const char *found = ".smith/coverage-fetch.txt";
+    if (build_make_folder(b, ".smith") != 0) return 1;
+    int status = build_spawn(&(BuildSpawn){
+        .argv = smith_list(b, "gh", "run", "list", "--workflow", "check.yml", "--branch", "main", "--status", "success",
+                           "--limit", "1", "--json", "databaseId", "--jq", ".[].databaseId", nullptr),
+        .log = found,
+        .stdout_only = true,
+        .tail = 5});
+    const char *const *ids = status == 0 ? build_lines(b, found) : nullptr;
+    if (ids == nullptr || ids[0] == nullptr) return 0; // no run: the graph decides
+    const char *download = ".smith/records-download";
+    if (build_make_folder(b, ".smith/records") != 0 || build_make_folder(b, download) != 0) return 1;
+    status = build_spawn(&(BuildSpawn){
+        .argv = smith_list(b, "gh", "run", "download", ids[0], "-n", "smith-records", "-D", download, nullptr),
+        .log = ".smith/coverage-fetch.log"});
+    if (status == 0)
+        (void)build_spawn(&(BuildSpawn){
+            .argv = smith_list(b, "sh", "-c", "cp -n .smith/records-download/*.rec .smith/records/ 2>/dev/null; true",
+                               nullptr)});
+    return 0;
+}
+
 static void build_developer_tasks(SmithBuild *b) {
     SmithStep friction = {
         .run = build_friction,
@@ -2023,6 +2067,8 @@ static void build_developer_tasks(SmithBuild *b) {
             smith_list(b, smith_option_value(b, "since", "", "friction: the first merge date, YYYY-MM-DD"), nullptr),
     };
     smith_task(b, "friction", &friction);
+    SmithStep coverage_fetch = {.run = build_coverage_fetch};
+    smith_task(b, "coverage-fetch", &coverage_fetch);
     SmithStep ci_times = {
         .run = build_ci_times,
         .args = smith_list(b, smith_option_value(b, "n", "10", "ci-times: how many of the last green runs"),
@@ -2118,6 +2164,8 @@ void build(SmithBuild *b) {
     config.prove = build_prove_folder(b, config.llvm);
     config.hook = build_has_hook(b, config.llvm);
     config.enzyme = build_enzyme_install(b);
+    config.coverage =
+        build_variable(b, "COVERAGE", "", "COVERAGE=1: count the lines smith runs (the train's check)")[0] != '\0';
     config.lldb = access(smith_fmt(b, "%s/lib/libsmithlldb.a", config.llvm), R_OK) == 0;
     config.cflags = smith_cat(
         b, (const char *[]){smith_fmt(b, "-std=%s", std), "-O1", "-g", "-Wall", "-Wextra", "-Wpedantic", nullptr},

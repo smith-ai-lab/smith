@@ -1851,6 +1851,63 @@ void run_io(const Test *test, const Options *options, const Command *command) {
     io::close(&io);
 }
 
+// A test's name as a folder name (runtime/coverage.c cleans a name the same way): what is not a letter, a digit or `_`
+// becomes `_`.
+void coverage_name(const char *name, char *out, usize size) {
+    usize used = 0;
+    for (; name[used] != '\0' && used + 1 < size; used++) {
+        char letter = name[used];
+        bool word = (letter >= 'a' && letter <= 'z') || (letter >= 'A' && letter <= 'Z') ||
+                    (letter >= '0' && letter <= '9') || letter == '_';
+        out[used] = word ? letter : '_';
+    }
+    out[used] = '\0';
+}
+
+// With SMITH_COVERAGE_DIR set (the train's full run, issue #456) the smith processes a test starts write their
+// profiles to <dir>/raw/<test>/<pid>.profraw: LLVM_PROFILE_FILE is inherited by every child, `scratch::` ones too.
+void coverage_begin(const Test *test) {
+    const char *dir = c::getenv("SMITH_COVERAGE_DIR");
+    if (dir == nullptr || dir[0] == '\0') return;
+    char clean[256];
+    char path[path_capacity];
+    coverage_name(test->name, clean, sizeof clean);
+    c::mkdir(dir, 0o755);
+    __builtin_snprintf(path, sizeof path, "%s/raw", dir);
+    c::mkdir(path, 0o755);
+    __builtin_snprintf(path, sizeof path, "%s/raw/%s", dir, clean);
+    c::mkdir(path, 0o755);
+    __builtin_snprintf(path, sizeof path, "%s/raw/%s/%%p.profraw", dir, clean);
+    c::setenv("LLVM_PROFILE_FILE", path, 1);
+}
+
+// When the test is over: `smith test --coverage merge <test>` makes its record and deletes its profiles, so a full
+// run never holds 11 GB of them.
+void coverage_end(const Test *test, bool passed) {
+    const char *dir = c::getenv("SMITH_COVERAGE_DIR");
+    const char *self = c::getenv("SMITH_SELF");
+    if (dir == nullptr || dir[0] == '\0' || self == nullptr) return;
+    c::unsetenv("LLVM_PROFILE_FILE");
+    c::fflush(nullptr);
+    c::pid_t merger = c::fork();
+    if (merger == 0) {
+        char program[path_capacity];
+        char name[256];
+        char verb[] = "test";
+        char option[] = "--coverage";
+        char action[] = "merge";
+        char result[5] = {};
+        __builtin_snprintf(result, sizeof result, "%s", passed ? "pass" : "fail");
+        __builtin_snprintf(program, sizeof program, "%s", self);
+        __builtin_snprintf(name, sizeof name, "%s", test->name);
+        char *arguments[] = {program, verb, option, action, name, result, nullptr};
+        c::execv(program, arguments);
+        c::_exit(127);
+    }
+    i32 status = 0;
+    if (merger > 0) c::waitpid(merger, &status, 0);
+}
+
 // Runs the test: once, or a property test on its one key or on all of them. A failure's stack ends in this function's
 // frame (smith_trace_stop), so it is the same whichever way the runner reached it, which shrinking compares.
 [[gnu::noinline]] void execute(const Test *test, const Options *options, const Command *command) {
@@ -1893,7 +1950,9 @@ void setup(Shared *block, i32 output) {
 // --isolate: the process runs its one test and exits 0 if it returns.
 [[noreturn]] void child(const Test *test, const Options *options, Shared *block, i32 output, const Command *command) {
     setup(block, output);
+    coverage_begin(test);
     execute(test, options, command);
+    coverage_end(test, true);
     c::fflush(nullptr);
     c::_exit(0);
 }
@@ -1916,7 +1975,9 @@ End serve(const Options *options, const Command *command) {
     const Test *test = &table[command->test];
     f64 cpu_before = process_cpu();
     i32 jumped = c::sigsetjmp(loop_jump, 1); // NOLINT(smith-preprocessor): a macro of __sigsetjmp in glibc
+    coverage_begin(test);
     if (jumped == 0) execute(test, options, command);
+    coverage_end(test, jumped == 0);
     failing_end(); // a failed test unwound with its allocators still set
     checked_end();
     disarm();

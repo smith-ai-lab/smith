@@ -816,7 +816,7 @@ static void smith_verb_take_keep_going(SmithVerbArgs *split) {
 // `--changed [--base <ref>] [--dry-run]` (runtime/changed.c): takes them out of the arguments and, unless the whole
 // suite runs, adds `--test <names>` for the tests the change can affect. Returns an exit status when there is nothing
 // to run (nothing selected, a dry run, or a failure), else -1.
-static int smith_test_take_changed(SmithVerbArgs *split) {
+static int smith_test_take_changed(SmithVerbArgs *split, const char *self) {
     static char filter[8192];
     const char *base = nullptr;
     bool changed = false;
@@ -839,6 +839,7 @@ static int smith_test_take_changed(SmithVerbArgs *split) {
         if (dry_run || base != nullptr) smith_die(smith_exit_usage, "--dry-run and --base go with --changed", "test");
         return -1;
     }
+    smith_changed_self = self;
     SmithChangedResult result = smith_changed_select(base, filter, sizeof filter);
     if (result == SmithChanged_Failed) return smith_exit_usage;
     if (result == SmithChanged_None) {
@@ -861,6 +862,7 @@ static int smith_test_take_changed(SmithVerbArgs *split) {
 
 // `smith test`: builds and runs the tests smith_tests declares; the arguments go to the runner.
 static int smith_test_project(int count, char **args, const char *self) {
+    if (count > 0 && strcmp(args[0], "--coverage") == 0) return smith_coverage_main(count - 1, args + 1); // #456
     int quiet = smith_quiet_verb("test", count, args, self, true);
     if (quiet >= 0) return quiet;
     SmithVerbArgs *split = smith_verb_split(count, args);
@@ -868,7 +870,7 @@ static int smith_test_project(int count, char **args, const char *self) {
         if (strcmp(split->own[i], "-v") == 0) split->own[i] = (char *)"--verbose";
     }
     smith_verb_take_keep_going(split);
-    int changed = smith_test_take_changed(split);
+    int changed = smith_test_take_changed(split, self);
     if (changed >= 0) return changed;
     const char *const targets[] = {"smith_tests", nullptr};
     // Each task's wall and CPU time and smith starts (runtime/account.c), unless SMITH_ACCOUNT=no; =all lists every
