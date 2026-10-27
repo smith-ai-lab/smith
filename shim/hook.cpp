@@ -3574,8 +3574,8 @@ class SmithHook final : public TokenHook, public NameSource {
         return proved;
     }
 
-    // SMITH_PROVED_REPORT=1: how many checks of this file the build left out (an optimized one, for the proved) and how many
-    // it wrote.
+    // SMITH_PROVED_REPORT=1: how many checks of this file the build left out (an optimized one, for the proved) and how
+    // many it wrote.
     void reportProved() {
         if (provedRemoved + provedKept == 0 || getenv("SMITH_PROVED_REPORT") == nullptr) return;
         fprintf(stderr, "smith: checks %s: %u removed (proved), %u kept\n", mainName.c_str(), provedRemoved,

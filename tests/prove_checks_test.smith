@@ -1,7 +1,8 @@
 // The checks `smith prove` proved can never fail are left out of an optimized build (issue #221): the proof file
 // `.smith/proved/<source>.pts` (shim/proved.hpp), keyed by the source's text and the proving smith, is read by the
-// lowering of a release build and is an input of its compile; the debug build keeps every check (under a name that is no failure point), and so does an edited
-// source or a source nothing proved. The report of a compile is `SMITH_PROVED_REPORT=1`.
+// lowering of a release build and is an input of its compile; the debug build keeps every check (under a name that is
+// no failure point), and so does an edited source or a source nothing proved. The report of a compile is
+// `SMITH_PROVED_REPORT=1`.
 module prove_checks_test;
 
 import smith::format;

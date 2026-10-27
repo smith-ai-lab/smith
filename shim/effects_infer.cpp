@@ -985,8 +985,8 @@ class Analysis {
 
     void check(const Node &node) {
         uint32_t extra = node.inferred & ~node.declared;
-        // The prover's own compile (SMITH_PROVING) keeps every check as a point to prove: a `fails` ceiling is judged by
-        // the build that reads the proof, or the function the ceiling holds could never be proved (issue #325).
+        // The prover's own compile (SMITH_PROVING) keeps every check as a point to prove: a `fails` ceiling is judged
+        // by the build that reads the proof, or the function the ceiling holds could never be proved (issue #325).
         if (getenv("SMITH_PROVING") != nullptr) extra &= ~Fails;
         if (extra == 0) return;
         const Edge *first = nullptr;
