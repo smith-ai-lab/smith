@@ -1,0 +1,1 @@
+src/lib/shape.smith:11:23: cannot tell the type of `count`, the argument of `twice`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable

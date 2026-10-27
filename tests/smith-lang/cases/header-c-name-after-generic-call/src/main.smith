@@ -1,0 +1,9 @@
+import lib::shape;
+import lib::user;
+#include <stdio.h>
+
+int main() {
+    shape::Box box = {.size = 4};
+    printf("%zu %zu\n", user::size_of(&box), shape::doubled(&box, 3));
+    return 0;
+}

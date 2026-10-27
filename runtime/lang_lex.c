@@ -673,6 +673,7 @@ static SmithLang *smith_lang_run_interface(const char *file, const char *text, s
         .lookup = smith_raw_lookup,
         .read_header = smith_raw_read_header,
         .main_file = file,
+        .declarations_only = true, // an importer reads the names, not the bodies: a call there needs no instance
         .maybe_generic = true,
         .maybe_if_constexpr = true,
         .maybe_slice = smith_lang_text_has_slice(smith_lang_source, raw.length) ||

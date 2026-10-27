@@ -2,6 +2,6 @@
 #include <stdio.h>
 
 int main() {
-printf("%d %.1f %d\n", shape_framed(10), shape_framed(1.5), shape_plain(7));
+printf("%d %.1f %d\n",smith_call_failed,smith_call_failed, shape_plain(7));
 return 0;
 }

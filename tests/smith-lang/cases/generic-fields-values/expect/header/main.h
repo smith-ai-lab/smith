@@ -3,6 +3,7 @@
 // smith-module: main
 // smith-imports: walk
 // smith-names:
+// smith-tuples
 // clang-format on
 #pragma once
 #include <stddef.h>

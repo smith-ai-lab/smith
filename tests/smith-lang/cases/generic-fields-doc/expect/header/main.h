@@ -3,6 +3,9 @@
 // smith-module: main
 // smith-imports: docs
 // smith-names:
+// smith-tuples
+// smith-slices
+// smith-enums
 // clang-format on
 #pragma once
 #include <stddef.h>

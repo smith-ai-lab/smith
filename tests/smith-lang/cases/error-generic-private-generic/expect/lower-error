@@ -1,1 +1,3 @@
+src/main.smith:6:19: `padded` is private to its module (an exported generic calls it); export it to call it
+src/main.smith:6:45: cannot tell the type of `2`, the argument of `framed`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
 src/shape.smith:20:19: cannot tell the type of `x`, the argument of `unused`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable

@@ -1253,6 +1253,10 @@ export void test_import_c_header(io::Io *io) {
     corpus_case(io, "import-c-header");
 }
 
+export void test_header_c_name_after_generic_call(io::Io *io) {
+    corpus_case(io, "header-c-name-after-generic-call");
+}
+
 export void test_import_smith_module(io::Io *io) {
     corpus_case(io, "import-smith-module");
 }

@@ -7281,6 +7281,43 @@ module num;
 export T add(constexpr type T, i32 short, i32 long, T a, T b) {
     return a + b;
 }
+==> header-c-name-after-generic-call/src/lib/gen.smith <==
+module lib::gen;
+
+export usize twice(auto n) {
+    return n + n;
+}
+==> header-c-name-after-generic-call/src/lib/shape.smith <==
+module lib::shape;
+
+import lib::gen;
+
+[[smith::c_name("ShapeBox")]] export typedef struct {
+    usize size;
+} Box;
+
+// A call of a generic on a variable in a body: an importer's header must still name Box by its C name.
+export usize doubled(Box *box, usize count) {
+    return gen::twice(count) + box->size;
+}
+==> header-c-name-after-generic-call/src/lib/user.smith <==
+module lib::user;
+
+import lib::shape;
+
+export usize size_of(shape::Box *box) {
+    return box->size;
+}
+==> header-c-name-after-generic-call/src/main.smith <==
+import lib::shape;
+import lib::user;
+#include <stdio.h>
+
+int main() {
+    shape::Box box = {.size = 4};
+    printf("%zu %zu\n", user::size_of(&box), shape::doubled(&box, 3));
+    return 0;
+}
 ==> header-conditional-define/src/cfg/mode.smith <==
 module cfg::mode;
 
