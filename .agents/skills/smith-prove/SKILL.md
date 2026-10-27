@@ -12,7 +12,7 @@ import smith::contract;
 
 export i32 sum(usize count) {
     contract::requires(count <= 5);              // assumed here, proved at every call
-    constexpr i32 first[] = {2, 3, 5, 7, 11};
+    constexpr i32 first[_] = {2, 3, 5, 7, 11};
     i32 total = 0;
     for (usize i = 0; i < count; i++) {
         total += first[i];

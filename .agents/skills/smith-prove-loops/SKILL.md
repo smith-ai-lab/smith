@@ -12,7 +12,7 @@ import smith::contract;
 
 export i32 squares_sum(usize count) {
     contract::requires(count <= 5);              // the worst case: the loop is unrolled into at most 5 passes
-    constexpr i32 squares[] = {0, 1, 4, 9, 16};
+    constexpr i32 squares[_] = {0, 1, 4, 9, 16};
     i32 total = 0;
     for (usize i = 0; i < count; i++) {
         total += squares[i];

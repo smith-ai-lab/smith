@@ -16,7 +16,7 @@ export i32 status_of_echo(arena::Arena *a) {
     arena::ArenaAllocator allocator = arena::allocator(a);
     mem::Allocator *before = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(before);
-    const char *const argv[] = {"echo", "hi"};
+    const char *const argv[_] = {"echo", "hi"};
     process::OutputResult done = process::run(argv[0:2]);
     switch (done) {
     case .ok: return done.ok.exit.status;
@@ -49,7 +49,7 @@ export usize lines_built(arena::Arena *a) {
     process::fake_add(&fake, (process::Script){.program = "build", .output = "ok\n", .status = 0});
     process::Handler *before = process::set_handler(&fake.base);
     defer process::set_handler(before);
-    const char *const argv[] = {"build"};
+    const char *const argv[_] = {"build"};
     process::OutputResult done = process::run(argv[0:1]);
     switch (done) {
     case .ok: return countof(done.ok.output);

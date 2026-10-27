@@ -37,7 +37,7 @@ import smith::io;
 import stats;
 
 i32 main(io::Io *io) {
-    i32 raw[] = {-3, 1, 9, 4};
+    i32 raw[_] = {-3, 1, 9, 4};
     i32 readings[:] = raw;
     i32 top = stats::largest(readings[1:]); // a cut: three elements, shared with raw
     format::print(&io->console, "largest ", top, ", clamped ", stats::clamp(top, 0, 5), "\n");
@@ -118,7 +118,7 @@ i32 sum(const i32 xs[:]) {
 }
 
 i32 main(io::Io *io) {
-    i32 raw[] = {1, 2, 3, 4, 5};
+    i32 raw[_] = {1, 2, 3, 4, 5};
     i32 all[:] = raw;
     format::print(&io->console, "all ", sum(all), ", middle ", sum(all[1:4]), "\n");
     return 0;
@@ -128,6 +128,8 @@ i32 main(io::Io *io) {
 ```output project=slices
 all 15, middle 9
 ```
+
+In a module an array's brackets say what it is: `i32 xs[3]` has the size written, `i32 xs[_] = {1, 2, 3}` takes it from the initializer (`char s[_] = "abc"`, `i32 m[_][3]` too), and `i32 xs[:]` is a slice; a bare `[]` is an error that names these ([smith-lang-arrays](.agents/skills/smith-lang-arrays/SKILL.md)).
 
 `for (i32 x : xs)` visits each element, `for (usize i, i32 x : xs)` adds its position, and `i32 *p` points at the element; C's `for` stays for a step or a reverse walk ([smith-lang-for](.agents/skills/smith-lang-for/SKILL.md)). A cut `xs[a:b]` is a view of the same elements. `const i32 xs[:]` makes the elements read-only, and `u8 dst[restrict :]`
 is C's `restrict`. A parameter written `i32 xs[4]` keeps its 4, where C throws it away:
@@ -337,7 +339,7 @@ export f64 mean(auto... args) {
 }
 
 export f64 total_of_doubles(auto... args) {
-    f64 doubled[] = {(f64)twice(args)...}; // one element per argument
+    f64 doubled[_] = {(f64)twice(args)...}; // one element per argument
     f64 total = 0;
     for (usize i = 0; i < countof(args); i++)
         total += doubled[i];

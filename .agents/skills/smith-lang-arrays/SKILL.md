@@ -22,10 +22,18 @@ export i32 demo() {
     i32 mid[:] = all[1:4];          // a view that shares the elements: 2, 3, 4 (xs[:b], xs[a:] too)
     i32 *p = raw;
     i32 view[:] = p[2:5];           // a pointer becomes a slice by saying how many: the one unsafe spot
-    char word[:] = "abc";           // count 3, no terminating zero (`char s[] = "abc"` is C's: count 4)
+    char word[:] = "abc";           // count 3, no terminating zero (`char s[_] = "abc"` is count 4)
     return sum(mid) + sum(view) + (i32)countof(word);
 }
 ```
+
+## Fixed arrays: `[3]` and `[_]`
+
+In a module an array's brackets say what it is, and a bare `[]` is an error.
+
+`i32 xs[3]` has its size written; `i32 xs[_] = {1, 2, 3}` takes it from the initializer (C's `[]`; `char s[_] = "abc"` is 4, `i32 m[_][3] = {...}` and `(i32[_]){1, 2}` work); `i32 xs[:]` is a slice.
+
+`[_]` needs an initializer and is only the outermost dimension. The errors: `[]` with an initializer (write `[_]` or `[:]`), a compound literal `(T[]){...}` (write `(T[_]){...}`), `extern T xs[]` (write the size), a flexible array member (use a slice field `T xs[:]`), a parameter `T xs[]` (`smith-lang-array-params`). A `.c` file or a `.smith` file with no `module` line is C's, unchanged.
 
 ## Rules
 

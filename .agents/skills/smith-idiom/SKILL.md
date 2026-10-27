@@ -49,7 +49,9 @@ Each rule says what enforces it today. "Review" means nothing checks it: you and
     - Enforced by: `smith lint` and the editor, through `smith-unsafe` (modules only).
 16. **Unused on purpose is `_`.** A parameter or local you do not read is `_` (several may repeat) or `_name` when the name documents it; a value you drop is `_ = f();`, never `(void)f();` (`smith-lang-unused`).
     - Enforced by: the compiler: reading a name that starts with `_` is an error in a module; the choice between `_` and a name is review.
-17. **Report friction.** When a skill was wrong, unclear or contradicted another, or something was hard to find, say so in one line at the end of your report, as smith's own agents do.
+17. **An array's brackets say what it is.** `i32 xs[3]` (size written), `i32 xs[_] = {1, 2, 3}` (size from the initializer), `i32 xs[:]` (a slice); a bare `[]` is an error in a module, also as a compound literal `(T[_]){...}`, an `extern` and a flexible member (`smith-lang-arrays`).
+    - Enforced by: the compiler.
+18. **Report friction.** When a skill was wrong, unclear or contradicted another, or something was hard to find, say so in one line at the end of your report, as smith's own agents do.
 
 ## Examples in skills are compiled
 
