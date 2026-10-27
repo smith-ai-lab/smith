@@ -25,7 +25,7 @@
 // by the tests of tests/mcp_test.smith.
 #include "protocol/mcp.h"
 #include <smith/io.h>
-#include "../include/smith/json.h"
+#include <smith/json.h>
 #include "protocol/dap.h"
 
 #include <errno.h>

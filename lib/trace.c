@@ -1,7 +1,7 @@
 // smith's stack traces: the walk by frame pointers and the text that smith reads. The design is in
 // include/smith/trace.h. Everything here that a signal handler may call uses write(2) and no allocator, formatting
 // numbers by hand.
-#include "../include/smith/trace.h"
+#include <smith/trace.h>
 
 #include <signal.h>
 #include <stdarg.h>

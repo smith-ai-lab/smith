@@ -1,8 +1,8 @@
-#include "../include/smith/json.h"
+#include <smith/json.h>
 
 #include <smith/contract.h>
+#include <smith/trace.h>
 #include <stdint.h>
-#include "../include/smith/trace.h"
 
 // A check that stays in every build: an invariant of this file, not a contract a proof of a caller should read.
 // Trusted, its body is never read, so the assert is a run-time check that writes the failure report (the call's line

@@ -1,4 +1,4 @@
-#include "../include/smith/http.h"
+#include <smith/http.h>
 
 #include <errno.h>
 #include <stdarg.h>

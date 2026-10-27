@@ -15,7 +15,8 @@ import smith::test;
 import <string.h>;
 import scratch;
 
-constexpr char flags[] = "-std=gnu23 -O1 -g0 -Wno-builtin-macro-redefined -D'__FILE__=\"unit\"' -I include";
+constexpr char flags[] =
+    "-std=gnu23 -O1 -g0 -Wno-builtin-macro-redefined -D'__FILE__=\"unit\"' -I include -I .smith/include";
 constexpr char in_process[] =
     "-DSMITH_IN_PROCESS -D'SMITH_CLANG_RESOURCE=\"tests/stub.c\"' -D'SMITH_CLANG_ID=\"llvm-0 0\"'";
 
@@ -32,7 +33,8 @@ static scratch::Project tree_project(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     scratch::Run copied = scratch::sh(
         &p, "mkdir tree && for item in smith.c build.c include lib runtime scripts templates tests shim; do "
-            "cp -R \"$SMITH_REPO/$item\" tree/; done");
+            "cp -R \"$SMITH_REPO/$item\" tree/; done && mkdir -p tree/.smith && "
+            "cp -R \"$SMITH_REPO/.smith/include\" tree/.smith/");
     scratch::expect_status("the tree is copied", 0, &copied);
     return p;
 }
