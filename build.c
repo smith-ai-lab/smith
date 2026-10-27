@@ -248,8 +248,8 @@ static void build_protocol(SmithBuild *b, const BuildConfig *config, const char 
 // makes it and formatted with the repository's .clang-format (smith fmt keeps it so; the stage0 formats with Homebrew's
 // clang-format, the same version), so it reads like one written by hand.
 static const char *const build_generated_headers[] = {
-    "arena",   "autodiff", "build", "clock",  "console", "contract", "effects", "env",    "files", "format",
-    "inflate", "io",       "math",  "mem",    "option",  "random",   "result",  "test",   "text",  nullptr};
+    "arena",   "autodiff", "build", "clock", "console", "contract", "effects", "env",  "files", "format",
+    "inflate", "io",       "math",  "mem",   "option",  "random",   "result",  "test", "text",  nullptr};
 
 // Generates each module's header into a scratch folder and runs `action` (sh, with $name and $dir) on it.
 static SmithStep build_header_step(SmithBuild *b, const BuildConfig *config, const char *action) {
