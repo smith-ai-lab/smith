@@ -8,8 +8,8 @@ constexpr long smith_slots_report_ms = 30'000;
 constexpr long smith_slots_wait_max_ms = 4L * 60 * 60 * 1000; // a backstop: after it the job runs without a slot
 constexpr size_t smith_slots_text_max = 1024;
 
-static int smith_slots_fd = -1; // the slot this process holds; closed by the OS when the process ends
-static bool smith_slots_ci;     // this process runs for CI (SMITH_PRIORITY=ci)
+static int smith_slots_fd = -1;        // the slot this process holds; closed by the OS when the process ends
+static bool smith_slots_ci;            // this process runs for CI (SMITH_PRIORITY=ci)
 static char smith_slots_dir[PATH_MAX]; // the slots folder, once a slot is held
 
 // The cores smith may use: SMITH_CORES (a holder sets it for its children; a test sets it as a fake host), else the
@@ -98,13 +98,14 @@ static size_t smith_slots_meta(char *out, size_t size) {
 }
 
 // Whether the holder a slot file names no longer deserves its slot: its process is gone (the lock outlived it in a
-// child), the pid was recycled (another start time), or its parent is gone (it is reparented, an orphan: its parent is now pid 1, or not the one it had). A file whose
-// first line cannot be read is never stale.
+// child), the pid was recycled (another start time), or its parent is gone (it is reparented, an orphan: its parent is
+// now pid 1, or not the one it had). A file whose first line cannot be read is never stale.
 static bool smith_slots_stale(const char *text) {
-    long pid = 0;
-    long parent = 0;
-    long start = 0;
-    if (sscanf(text, "%ld %ld %ld", &pid, &parent, &start) != 3 || pid <= 0) return false;
+    char *end = nullptr;
+    long pid = strtol(text, &end, 10);
+    long parent = strtol(end, &end, 10);
+    long start = strtol(end, &end, 10);
+    if (pid <= 0 || *end != '\n') return false;
     long now_start = 0;
     long now_parent = 0;
     if (!smith_slots_proc((pid_t)pid, &now_start, &now_parent)) return true;

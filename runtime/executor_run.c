@@ -489,7 +489,8 @@ static size_t smith_run_pick(const SmithExec *exec) {
 
 static SmithJob *smith_run_free_job(SmithExec *exec) {
     size_t active = 0;
-    for (size_t i = 0; i < (size_t)exec->options.jobs; i++) active += exec->jobs[i].active ? 1 : 0;
+    for (size_t i = 0; i < (size_t)exec->options.jobs; i++)
+        active += exec->jobs[i].active ? 1 : 0;
     if (active >= smith_slots_limit((size_t)exec->options.jobs)) return nullptr; // the slot's share of the cores
     for (size_t i = 0; i < (size_t)exec->options.jobs; i++) {
         if (!exec->jobs[i].active) return &exec->jobs[i];
