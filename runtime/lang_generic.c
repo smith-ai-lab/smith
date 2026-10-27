@@ -3648,6 +3648,71 @@ static bool smith_lang_call_arity(SmithLang *lang, const SmithHost *host, const 
     return true;
 }
 
+// One integer literal of the raw lowering (decimal, hex, octal or binary, with C's suffixes), in `*out`.
+static bool smith_lang_raw_literal(const char *text, int64_t *out) {
+    int base = 10;
+    if (text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) {
+        base = 16;
+        text += 2;
+    } else if (text[0] == '0' && (text[1] == 'b' || text[1] == 'B')) {
+        base = 2;
+        text += 2;
+    } else if (text[0] == '0' && text[1] != 0) {
+        base = 8;
+    }
+    char *end = nullptr;
+    errno = 0;
+    unsigned long long value = strtoull(text, &end, base);
+    while (*end == 'u' || *end == 'U' || *end == 'l' || *end == 'L')
+        end += 1;
+    if (end == text || *end != 0 || errno != 0 || value > INT64_MAX) return false;
+    *out = (int64_t)value;
+    return true;
+}
+
+// The value of an argument with no compiler to fold it (the raw lowering): integer literals joined by `+`, `-` and
+// `*`, as `tokens` (the argument's tokens separated by \x1f) has them. False when it is anything else.
+static bool smith_lang_raw_number(const char *tokens, SmithLangLiteral *out) {
+    int64_t total = 0;
+    int64_t term = 0;
+    bool plus = true;    // the sign of the term being read
+    bool factor = true;  // a literal is expected (the start, or after an operator)
+    bool negate = false; // a unary `-` is waiting for its literal
+    bool times = false;  // the literal multiplies the term
+    for (const char *at = tokens; *at != 0;) {
+        size_t length = strcspn(at, "\x1f");
+        char token[48];
+        if (length == 0 || length >= sizeof token) return false;
+        memcpy(token, at, length);
+        token[length] = 0;
+        at += length + (at[length] == 0 ? 0 : 1);
+        if (factor && strcmp(token, "-") == 0) {
+            negate = !negate;
+        } else if (factor) {
+            int64_t value = 0;
+            if (token[0] < '0' || token[0] > '9' || !smith_lang_raw_literal(token, &value)) return false;
+            if (negate) value = -value;
+            if (times && __builtin_mul_overflow(term, value, &term)) return false;
+            if (!times) term = value;
+            negate = false;
+            times = false;
+            factor = false;
+        } else if (strcmp(token, "*") == 0) {
+            times = true;
+            factor = true;
+        } else if (strcmp(token, "+") == 0 || strcmp(token, "-") == 0) {
+            if (__builtin_add_overflow(total, plus ? term : -term, &total)) return false;
+            plus = token[0] == '+';
+            factor = true;
+        } else {
+            return false;
+        }
+    }
+    if (factor || __builtin_add_overflow(total, plus ? term : -term, &total)) return false;
+    *out = (SmithLangLiteral){.negative = total < 0, .magnitude = total < 0 ? (uint64_t)-total : (uint64_t)total};
+    return true;
+}
+
 // The number passed to `constexpr usize i` at `span`, staged in smith_lang_it as its decimal text: the compiler must
 // fold the argument to an integer. False after the error, which names the argument.
 static bool smith_lang_infer_number(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
@@ -3659,7 +3724,15 @@ static bool smith_lang_infer_number(SmithLang *lang, const SmithHost *host, Smit
     uint32_t place = smith_lang_infer_place(host, replay, span, location);
     SmithLangArgType type = {};
     const char *why = nullptr;
-    bool known = smith_lang_arg_type(lang, host, replay, span, location, &type, &why, true);
+    bool known = false;
+    char tokens[1024];
+    if (host->expr_type == nullptr && smith_lang_infer_text(span, replay->instance, location, tokens, sizeof tokens) &&
+        smith_lang_raw_number(tokens, &type.value)) {
+        known = true; // the raw lowering folds literals itself
+        type.constant = true;
+    } else {
+        known = smith_lang_arg_type(lang, host, replay, span, location, &type, &why, true);
+    }
     if (!known || !type.constant || type.value.is_float || type.value.overflow || type.value.magnitude > INT64_MAX) {
         smith_lang_error(lang, host, place,
                          "the argument `%s` of `%s` is not a constant integer: the parameter `%.*s` is `constexpr` and "

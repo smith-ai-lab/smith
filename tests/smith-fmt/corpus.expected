@@ -6381,6 +6381,25 @@ export i32 sum_all(auto p) {
 export i32 over_pack(auto p, auto... rest) {
     return scaled(2, (i32)(*p)) + scaled(countof(rest), 0);
 }
+==> generic-number-raw/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+// The raw lowering (`smith cc --smith-lower`, what `--smith-metal` reads) has no compiler, and folds the numbers given
+// to a `constexpr usize` itself (issue #599): a literal, a sum or a product of literals.
+export T first(constexpr type T, constexpr usize count, T x) {
+    T cells[count];
+    for (usize i = 0; i < count; i++) {
+        cells[i] = x;
+    }
+    return cells[count - 1];
+}
+
+i32 main() {
+    c::printf("%d %d\n", first(i32, 4, 7), first(i32, 2 * 8 + 0x10, 9));
+    return 0;
+}
 ==> generic-option-slice-of/src/main.smith <==
 module main;
 

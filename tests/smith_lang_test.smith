@@ -597,6 +597,10 @@ export void test_if_constexpr_for_constexpr(io::Io *io) {
     corpus_case(io, "if-constexpr-for-constexpr");
 }
 
+export void test_generic_number_raw(io::Io *io) {
+    corpus_case(io, "generic-number-raw");
+}
+
 export void test_error_unused_read_name(io::Io *io) {
     corpus_case(io, "error-unused-read-name");
 }
