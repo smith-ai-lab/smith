@@ -15,9 +15,9 @@
 #include <smith/random.h>
 #include "../lib/json.c"
 #include "../lib/trace.c"
-#include "../runtime/protocol/dap.c"
-#include "../runtime/protocol/mcp.c"
 #include "../runtime/protocol/protocol.c"
+#include "dap.c"
+#include "mcp.c"
 
 // The server's own checks stay on in every build, as smith's do (assert would go with NDEBUG).
 #define SMITH_ASSERT(condition) \

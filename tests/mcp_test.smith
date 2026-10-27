@@ -31,7 +31,10 @@ static void check_fake(io::Io *io, const char *mode, const char *flags) {
     scratch::Project p = scratch::project(io, "fake", nullptr);
     scratch::Run built = scratch::sh(
         &p, format::push(&io->arena, "smith cc -std=gnu23 -g -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror ",
-                         flags, " -I \"$SMITH_REPO/.smith/include\" ", fake_sources, " -o mcp_fake 2>build.log")
+                         flags,
+                         " -I \"$SMITH_REPO/.smith/include\" -I \"$SMITH_REPO/.smith/protocol\" -I "
+                         "\"$SMITH_REPO/runtime/protocol\" ",
+                         fake_sources, " -o mcp_fake 2>build.log")
                 .data);
     if (built.status != 0) {
         test::note("%s", scratch::read(&p, "build.log"));

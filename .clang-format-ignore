@@ -6,13 +6,6 @@ tree-sitter/src/tree_sitter/*
 tests/smith-lang/cases/**
 tests/tree_sitter_cases/*
 tests/prove/**
-# Generated from DAP's and MCP's schemas (scripts/protocol.c, smith build protocol).
-runtime/protocol/dap.c
-runtime/protocol/dap.h
-runtime/protocol/mcp.c
-runtime/protocol/mcp.h
-tests/protocol/test_protocol_dap.c
-tests/protocol/test_protocol_mcp.c
 # The owner's scan reference, copied as it is (the hash of each file is in tests/autodiff/scan/COPIED.sha256).
 tests/autodiff/scan/**
 tests/build_fixtures/**

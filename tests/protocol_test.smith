@@ -1,5 +1,6 @@
 // Tests of the generated protocol code (knowledge/protocol-generation.md, from tests/protocol.sh):
-// runtime/protocol/dap.[ch] and mcp.[ch], which scripts/protocol.c writes from DAP's and MCP's schemas, and the tests
+// .smith/protocol/dap.[ch] and mcp.[ch], which the build writes with scripts/protocol.c from DAP's and MCP's schemas
+// (schemas/), and the tests
 // it writes with them (tests/protocol/test_protocol_*.c: a round trip for every type and a refusal for every missing
 // required member). They are built in a scratch project with smith_tests (tests/build_fixtures/protocol/build.c), in
 // two builds: -O0 under AddressSanitizer and UBSan, and -O2 -DNDEBUG (which also stands for -O2: the optimizer's own
@@ -15,9 +16,10 @@ import scratch;
 // The scratch project: smith's libraries the protocol code needs (build.c), the protocol code, and the runner.
 constexpr char setup[] =
     "mkdir -p tests protocol && cp \"$SMITH_REPO\"/runtime/protocol/*.c \"$SMITH_REPO\"/runtime/protocol/*.h protocol/ "
+    "&& cp \"$SMITH_REPO\"/.smith/protocol/*.c \"$SMITH_REPO\"/.smith/protocol/*.h protocol/ "
     "&& cp \"$SMITH_REPO\"/tests/protocol/*.c \"$SMITH_REPO\"/tests/protocol/*.h protocol/ && rm "
     "protocol/test_protocol_*.c "
-    "&& cp \"$SMITH_REPO\"/tests/protocol/test_protocol_*.c tests/";
+    "&& cp \"$SMITH_REPO\"/.smith/protocol/test_protocol_*.c tests/";
 
 // The generated code and its tests build in a mode and every test of them passes.
 static void check_mode(io::Io *io, const char *mode) {

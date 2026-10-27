@@ -36,7 +36,8 @@ typedef struct {
     const char *llvm;    // the LLVM install smith links clang from, so that it compiles in its own process; else ""
     const char *llvm_id; // the identity of that clang (scripts/llvm.sh): its version and a hash of what is linked
     const char *cxx;     // compiles the shims
-    const char *const *headers; // the headers no smith_object makes (build_header_steps), which smith.c includes
+    const char *const *headers;  // the headers no smith_object makes (build_header_steps), which smith.c includes
+    const char *const *protocol; // the generated protocol code (build_protocol_steps), which smith.c includes
     bool coverage; // COVERAGE=1: smith.c and the linked libraries count the lines they run (the train's check, #456)
     bool lldb;     // the install has lldb (scripts/llvm.sh, the lldb step): smith has `smith dbg` and `smith dap`
     const char *prove; // the folder with Z3 and Alive2 beside the LLVM install (build_prove_libs_make), else ""
@@ -148,65 +149,28 @@ static const char *const *build_smith_flags(SmithBuild *b, const BuildConfig *co
 }
 
 // The protocol code smith's debugger server stands on, generated from the official schemas (scripts/protocol.c,
-// knowledge/protocol-generation.md): DAP's and MCP's, each a package pinned by hash. The generated files are committed,
-// so a build never needs the network; `smith build protocol` writes them again from the packages, and `smith check`
-// runs check-protocol (a test), which fails when a committed file is not what the generator writes now.
+// knowledge/protocol-generation.md): DAP's and MCP's, vendored under schemas/ with their licenses. The generated files
+// are build outputs, never committed: each protocol is a step of the build graph that writes them into
+// .smith/protocol/, and every compile that includes them waits for it.
 typedef struct {
     const char *name;    // dap or mcp: the prefix of the generated names and files
-    const char *url;     // the package: the project's release, a tag
-    const char *hash;    // `smith fetch <url>` prints this line
-    const char *schema;  // the schema's path in the package
-    const char *license; // and the license's
+    const char *schema;  // the vendored schema
+    const char *license; // and its license
     const char *source;  // for the header of every generated file
 } BuildProtocol;
 
 static const BuildProtocol build_protocols[] = {
-    {"dap", "https://github.com/microsoft/debug-adapter-protocol/archive/refs/tags/v1.71.0.tar.gz",
-     "sha256:2b314bf3f3baec7a86401b8e25c2cedf6d6b9faaf1f1ec42ce844628ea7d1f9d", "debugAdapterProtocol.json",
-     "License-code.txt", "debugAdapterProtocol.json of microsoft/debug-adapter-protocol v1.71.0"},
-    {"mcp", "https://github.com/modelcontextprotocol/modelcontextprotocol/archive/refs/tags/2026-07-28.tar.gz",
-     "sha256:7df4915b4a5cdc999876f5a80b7af9912bdea21490827224e8c7a10f2c81470a", "schema/2026-07-28/schema.json",
-     "LICENSE", "schema/2026-07-28/schema.json of modelcontextprotocol/modelcontextprotocol, release 2026-07-28"},
+    {"dap", "schemas/dap/debugAdapterProtocol.json", "schemas/dap/LICENSE",
+     "debugAdapterProtocol.json of microsoft/debug-adapter-protocol v1.71.0"},
+    {"mcp", "schemas/mcp/schema.json", "schemas/mcp/LICENSE",
+     "schema/2026-07-28/schema.json of modelcontextprotocol/modelcontextprotocol, release 2026-07-28"},
 };
 constexpr size_t build_protocol_count = sizeof build_protocols / sizeof build_protocols[0];
 
-// Whether the package is in the cache already, which is all -DOFFLINE allows.
-static bool build_protocol_cached(SmithBuild *b, const BuildProtocol *protocol) {
-    const char *cache = smith_env(b, "XDG_CACHE_HOME", smith_fmt(b, "%s/.cache", smith_env(b, "HOME", "")));
-    return access(smith_fmt(b, "%s/smith/packages/%s", cache, protocol->hash + strlen("sha256:")), R_OK) == 0;
-}
-
-// args: "write" or "check", and "offline" or "online". The package is fetched once per machine (the cache keeps it);
-// offline, a package that is not there is skipped and said so, since the committed files cannot be checked without it.
-static int build_protocol_run(SmithRun *run) {
-    bool check = strcmp(run->args[0], "check") == 0;
-    bool offline = strcmp(run->args[1], "offline") == 0;
-    for (size_t i = 0; i < build_protocol_count; i++) { // bounded by the table
-        const BuildProtocol *protocol = &build_protocols[i];
-        if (offline && !build_protocol_cached(run->b, protocol)) {
-            printf("protocol: %s is not in the package cache and -DOFFLINE forbids fetching it: not %s\n",
-                   protocol->name, check ? "checked" : "written");
-            continue;
-        }
-        const char *folder = build_package_path(run->b, &(SmithPackage){.url = protocol->url, .hash = protocol->hash});
-        const char *const argv[] = {run->inputs[0],
-                                    protocol->name,
-                                    smith_fmt(run->b, "%s/%s", folder, protocol->schema),
-                                    smith_fmt(run->b, "%s/%s", folder, protocol->license),
-                                    protocol->source,
-                                    "runtime/protocol",
-                                    "tests/protocol",
-                                    check ? "--check" : nullptr,
-                                    nullptr};
-        int status = smith_run_program(run, argv, nullptr);
-        if (status != 0) return status;
-    }
-    return 0;
-}
-
 // The generator is a program of smith's own C (scripts/protocol.c, on lib/json.c), built here and not shipped: like
 // scripts/pack.c, a tool of the build. arena, contract and text are the modules of smith, compiled from their sources.
-static void build_protocol(SmithBuild *b, const BuildConfig *config, const char *folder) {
+// Returns the program's step.
+static SmithStep build_protocol_program(SmithBuild *b, const BuildConfig *config, const char *folder) {
     const char *const sources[] = {
         "scripts/protocol.c", "lib/smith/arena.smith", "lib/smith/contract.smith", "lib/smith/text.smith", "lib/json.c",
         "lib/trace.c"};
@@ -226,22 +190,34 @@ static void build_protocol(SmithBuild *b, const BuildConfig *config, const char 
     }
     SmithProgram program = {.linker = config->cc, .output = smith_fmt(b, "%s/protocol", folder), .objects = linked};
     smith_program(b, &program);
-    bool offline = smith_option(b, "OFFLINE", "a package missing from the cache is an error instead of a fetch");
-    SmithStep write = {
-        .run = build_protocol_run,
-        .description = "writing the protocol code from the pinned schemas",
-        .inputs = program.step.outputs,
-        .args = smith_list(b, "write", offline ? "offline" : "online", nullptr),
-    };
-    smith_task(b, "protocol", &write);
-    SmithStep check = {
-        .run = build_protocol_run,
-        .description = "checking the protocol code against the pinned schemas",
-        .inputs = program.step.outputs,
-        .args = smith_list(b, "check", offline ? "offline" : "online", nullptr),
-        .test = true,
-    };
-    smith_task(b, "check-protocol", &check);
+    return program.step;
+}
+
+// The steps that write .smith/protocol/<name>.[ch], LICENSE-<name>.txt and test_protocol_<name>.c from the vendored
+// schema; returns their outputs, which smith.c and the tests that include the code wait for. The generator writes a
+// file only when its bytes change, so a build that regenerates nothing rebuilds nothing.
+static const char *const *build_protocol_steps(SmithBuild *b, const BuildConfig *config, const char *folder) {
+    SmithStep program = build_protocol_program(b, config, folder);
+    const char *const *outputs = smith_list(b, nullptr);
+    for (size_t i = 0; i < build_protocol_count; i++) {
+        const BuildProtocol *protocol = &build_protocols[i];
+        const char *name = protocol->name;
+        SmithStep step = {
+            .command = smith_list(b, program.outputs[0], name, protocol->schema, protocol->license, protocol->source,
+                                  ".smith/protocol", ".smith/protocol", nullptr),
+            .inputs = smith_list(b, protocol->schema, protocol->license, nullptr),
+            .implicit_inputs = program.outputs,
+            .outputs =
+                smith_list(b, smith_fmt(b, ".smith/protocol/%s.h", name), smith_fmt(b, ".smith/protocol/%s.c", name),
+                           smith_fmt(b, ".smith/protocol/LICENSE-%s.txt", name),
+                           smith_fmt(b, ".smith/protocol/test_protocol_%s.c", name), nullptr),
+            .description = smith_fmt(b, "protocol code %s", name),
+            .restat = true,
+        };
+        smith_step(b, &step);
+        outputs = smith_cat(b, outputs, step.outputs, nullptr);
+    }
+    return outputs;
 }
 
 // The headers of the libraries written in .smith (lib/smith/<name>.smith, the module smith::<name>) and of smith::build
@@ -547,10 +523,6 @@ static const char *const build_smith_inputs[] = {
     "runtime/mcp_serve.c",
     "runtime/protocol/protocol.h",
     "runtime/protocol/protocol.c",
-    "runtime/protocol/dap.h",
-    "runtime/protocol/dap.c",
-    "runtime/protocol/mcp.h",
-    "runtime/protocol/mcp.c",
     "lib/smith/arena.smith",
     "lib/smith/autodiff.smith",
     "lib/smith/inflate.smith",
@@ -636,8 +608,8 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
     const char *pack = build_resource_pack(b, config, folder);
     const char *const *flags = smith_cat(
         b, config->cflags,
-        (const char *[]){"-I", "include", "-I", ".smith/include", "-DSMITH_COMMIT_LINKED", "-DSMITH_IN_PROCESS",
-                         nullptr},
+        (const char *[]){"-I", "include", "-I", ".smith/include", "-I", ".smith/protocol", "-I", "runtime/protocol",
+                         "-DSMITH_COMMIT_LINKED", "-DSMITH_IN_PROCESS", nullptr},
         (const char *[]){smith_fmt(b, "-DSMITH_CLANG_ID=\"%s\"", config->llvm_id), "-DSMITH_MCP", nullptr},
         smith_when(b, config->prove[0] != '\0', (const char *[]){"-DSMITH_PROVE", nullptr}),
         smith_when(b, config->lldb, (const char *[]){"-DSMITH_LLDB", nullptr}),
@@ -653,7 +625,7 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
         .output = smith_fmt(b, "%s/smith.o", folder),
         .flags = flags,
         .implicit_inputs = smith_cat(b, (const char *[]){"scripts/pack.h", nullptr}, build_smith_inputs,
-                                     config->headers, build_llvm_required(b, config), nullptr),
+                                     config->headers, config->protocol, build_llvm_required(b, config), nullptr),
     };
     smith_object(b, &object);
     SmithObject commit = build_commit_object(b, config, folder);
@@ -2172,13 +2144,13 @@ void build(SmithBuild *b) {
         smith_when(b, werror[0] != '\0', (const char *[]){werror, nullptr}), nullptr);
 
     config.headers = build_header_steps(b, &config);
+    config.protocol = build_protocol_steps(b, &config, folder);
     SmithStep smith = build_programs(b, &config, folder);
     build_other_objects(
         b, &config, folder,
         build_template_modules(b, &config, folder,
                                smith_cat(b, build_test_modules(b, &config, folder), config.headers, nullptr)));
     build_unbuilt_sources(b, &config);
-    build_protocol(b, &config, folder);
     config.binary = smith.outputs[0];
     const char *const *tested = build_test(b, &config, config.binary, folder);
     build_install(b, &config, config.binary, tested);

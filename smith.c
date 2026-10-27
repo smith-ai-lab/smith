@@ -3152,10 +3152,10 @@ static bool smith_project_arguments(const char *verb, int count, char **args) {
 // on the JSON, text and protocol code (knowledge/protocol-generation.md; text is the module smith::text, linked as its
 // own object), and on the io module.
 #ifdef SMITH_MCP
+#include "dap.c"
 #include "lib/json.c"
+#include "mcp.c"
 #include "runtime/mcp.c"
-#include "runtime/protocol/dap.c"
-#include "runtime/protocol/mcp.c"
 #include "runtime/protocol/protocol.c"
 #endif
 
