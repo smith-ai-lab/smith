@@ -37,6 +37,10 @@ count fall.
 on each, so a fix shows up in the next week's numbers. The lanes' worktrees set `SMITH_RECORD` to one shared file under
 `~/.local/share/smith-records/`.
 
-**Not built yet.** The analysis does not read the agents' transcripts or the train's log, and the idiom findings and
-the train's rejections by cause are not separate sections (their `smith-*` ids are in the ranking); it is C in `build.c`,
-not a `.smith` program.
+**The train's log.** The report then reads the train's log (`~/Library/Logs/smith-train.log`, else
+`$SMITH_TRAIN_LOG`): the pull requests rejected for conflicts and for a failed check, the tests those rejections name
+(most often first), the load-sensitive reruns and how many went green, and the merge batches. The log lines carry a
+time of day and no date, so the whole file is read, not only since the date. The idiom findings (`smith-*` ids) are their
+own section of the report, ranked by episodes (first drafts that hit them), apart from the other diagnostics.
+
+**Not built yet.** The analysis does not read the agents' transcripts; it is C in `build.c`, not a `.smith` program.

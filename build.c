@@ -1833,7 +1833,8 @@ static bool friction_field(const char *line, const char *key, char *out, size_t 
     if (at == nullptr) return false;
     at += strlen(pattern);
     size_t used = 0;
-    while (*at != '\0' && *at != '"' && used + 1 < capacity) out[used++] = *at++;
+    while (*at != '\0' && *at != '"' && used + 1 < capacity)
+        out[used++] = *at++;
     out[used] = '\0';
     return true;
 }
@@ -1906,6 +1907,29 @@ static void friction_line(const char *line) {
     }
 }
 
+// The top 15 of the diagnostics (those of the idiom checks, `smith-*`, when `idiom`; the others when not), by attempts.
+static void friction_print(const char *title, bool idiom) {
+    printf("%s\n%8s %8s %6s  %s\n", title, "attempts", "episodes", "worst", "id");
+    for (size_t shown = 0; shown < 15; shown++) {
+        size_t best = friction_ids_max;
+        for (size_t i = 0; i < friction_id_count; i++) {
+            if (friction_ids[i].episodes == 0 || (strncmp(friction_ids[i].id, "smith-", 6) == 0) != idiom) continue;
+            if (best == friction_ids_max) {
+                best = i;
+                continue;
+            }
+            bool better = idiom ? friction_ids[i].episodes > friction_ids[best].episodes
+                                : friction_ids[i].attempts > friction_ids[best].attempts;
+            if (better) best = i;
+        }
+        if (best == friction_ids_max) break;
+        const FrictionId *id = &friction_ids[best];
+        printf("%8u %8u %6u  %s\n", id->attempts, id->episodes, id->worst, id->id);
+        friction_ids[best].episodes = 0;
+    }
+    printf("\n");
+}
+
 static void friction_records(SmithBuild *b, const char *since) {
     const char *dir =
         smith_env(b, "SMITH_RECORDS_DIR", smith_fmt(b, "%s/.local/share/smith-records", smith_env(b, "HOME", "")));
@@ -1923,20 +1947,103 @@ static void friction_records(SmithBuild *b, const char *since) {
         }
         fclose(file);
     }
-    while (friction_open_count > 0) friction_close(friction_open_count - 1); // unresolved: counted as they stand
+    while (friction_open_count > 0)
+        friction_close(friction_open_count - 1); // unresolved: counted as they stand
     printf("== run records since %s: %zu runs in %s\n", since, lines, dir);
-    printf("%8s %8s %6s  %s\n", "attempts", "episodes", "worst", "diagnostic (runs from first seen to gone, summed)");
-    for (size_t shown = 0; shown < 15; shown++) {
-        size_t best = friction_ids_max;
-        for (size_t i = 0; i < friction_id_count; i++) {
-            if (friction_ids[i].episodes == 0) continue;
-            if (best == friction_ids_max || friction_ids[i].attempts > friction_ids[best].attempts) best = i;
+    friction_print("diagnostics: attempts to fix (runs from first seen to gone, summed)", false);
+    friction_print("idiom findings (smith-*) on first drafts: episodes, then attempts", true);
+}
+
+// The train's log (~/Library/Logs/smith-train.log, $SMITH_TRAIN_LOG; lines carry a time of day and no date, so the
+// whole file is read): the rejections by cause, the failed tests the rejections name, and the load-sensitive reruns.
+constexpr size_t friction_names_max = 256;
+
+typedef struct {
+    char name[160];
+    unsigned count;
+} FrictionName;
+
+static FrictionName friction_names[friction_names_max];
+static size_t friction_name_count;
+
+static void friction_name(const char *name) {
+    for (size_t i = 0; i < friction_name_count; i++) {
+        if (strcmp(friction_names[i].name, name) == 0) {
+            friction_names[i].count += 1;
+            return;
         }
-        if (best == friction_ids_max) break;
-        const FrictionId *id = &friction_ids[best];
-        printf("%8u %8u %6u  %s\n", id->attempts, id->episodes, id->worst, id->id);
-        friction_ids[best].episodes = 0;
     }
+    if (friction_name_count == friction_names_max) return;
+    snprintf(friction_names[friction_name_count].name, sizeof friction_names[0].name, "%s", name);
+    friction_names[friction_name_count++].count = 1;
+}
+
+static void friction_names_print(const char *title) {
+    printf("%s\n", title);
+    for (size_t shown = 0; shown < 10; shown++) {
+        size_t best = friction_names_max;
+        for (size_t i = 0; i < friction_name_count; i++) {
+            if (friction_names[i].count > 0 &&
+                (best == friction_names_max || friction_names[i].count > friction_names[best].count))
+                best = i;
+        }
+        if (best == friction_names_max) break;
+        printf("%8u  %s\n", friction_names[best].count, friction_names[best].name);
+        friction_names[best].count = 0;
+    }
+    friction_name_count = 0;
+}
+
+// The words of `list` that name a test or a part (`a_test::name`, `proof`, `step lint` are kept whole by the caller).
+static void friction_words(const char *list) {
+    char word[160];
+    size_t used = 0;
+    for (const char *at = list; at <= list + strlen(list); at++) { // bounded by the text and its terminator
+        if (*at == ' ' || *at == '\0' || *at == ')') {
+            if (used > 0) {
+                word[used] = '\0';
+                if (strstr(word, "::") != nullptr) friction_name(word);
+                used = 0;
+            }
+            if (*at == '\0' || *at == ')') break;
+        } else if (used + 1 < sizeof word) {
+            word[used++] = *at;
+        }
+    }
+}
+
+static void friction_train(SmithBuild *b) {
+    const char *path =
+        smith_env(b, "SMITH_TRAIN_LOG", smith_fmt(b, "%s/Library/Logs/smith-train.log", smith_env(b, "HOME", "")));
+    FILE *file = fopen(path, "r");
+    if (file == nullptr) return;
+    static char text[1 << 14];
+    unsigned conflicts = 0;
+    unsigned failed = 0;
+    unsigned reruns = 0;
+    unsigned rerun_green = 0;
+    unsigned merged = 0;
+    while (fgets(text, sizeof text, file) != nullptr) {
+        if (strstr(text, " rejected: it conflicts") != nullptr) {
+            conflicts++;
+        } else if (strstr(text, " rejected: its check failed on the train") != nullptr) {
+            failed++;
+            const char *list = strstr(text, "): ");
+            if (list != nullptr) friction_words(list + 3);
+        } else if (strstr(text, "all load-sensitive; rerunning once") != nullptr) {
+            reruns++;
+        } else if (strstr(text, " rerun: success") != nullptr) {
+            rerun_green++;
+        } else if (strstr(text, " merged #") != nullptr) {
+            merged++;
+        }
+    }
+    fclose(file);
+    printf("== the train (%s)\n", path);
+    printf("%8u rejected for conflicts, %u rejected because their check failed on the train, %u load-sensitive reruns "
+           "(%u went green), %u merge batches\n",
+           conflicts, failed, reruns, rerun_green, merged);
+    friction_names_print("tests the rejections name:");
     printf("\n");
 }
 
@@ -1947,6 +2054,7 @@ static int build_friction(SmithRun *run) {
         return 2;
     }
     friction_records(run->b, since);
+    friction_train(run->b);
     fflush(stdout);
     const char *filter = ".[] | select(.body | test(\"(?m)^## Friction\")) | \"#\\(.number) \\(.title)\\n\\(.body | "
                          "split(\"## Friction\")[1] | split(\"\\n## \")[0] | ltrimstr(\"\\n\"))\\n\"";
