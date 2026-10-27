@@ -437,6 +437,15 @@ export void test_objc_strings(io::Io *io) {
     corpus_case(io, "objc-strings");
 }
 
+// objc::str allocates through the allocator in force (#318): a project (the corpus has no smith::arena) sets an arena
+// with mem::set_allocator around it and finds the bytes in the arena.
+export void test_objc_arena(io::Io *io) {
+    scratch::Project p = scratch::project(io, "objc_arena", "conv_objc_arena");
+    scratch::Run run = scratch::sh(&p, "smith run");
+    scratch::expect_status("objc::str reaches the arena", 0, &run);
+    scratch::expect_contains("the bytes are in the arena, and not after it is restored", run.out, "1 1 0 5\n");
+}
+
 export void test_objc_window(io::Io *io) {
     corpus_case(io, "objc-window");
 }

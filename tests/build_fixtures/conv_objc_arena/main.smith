@@ -1,0 +1,29 @@
+module main;
+
+import <Foundation/Foundation.h>;
+import <stdio.h>;
+import smith::arena;
+import smith::mem;
+
+// objc::str allocates through the allocator in force: with an arena set by mem::set_allocator, the bytes of the copy
+// are inside the arena (its cursor moved and the pointer lies in its memory); with the system's allocator restored,
+// the arena stays where it was.
+alignas(64) static u8 memory[4096];
+
+i32 main(void) {
+    objc::Owned(objc::NSString) text = objc::string("smith");
+    defer objc::release(text);
+
+    arena::Arena a = arena::fixed(memory, sizeof memory);
+    arena::ArenaAllocator allocator = arena::allocator(&a);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    str inside = objc::str(text.object);
+    mem::set_allocator(outside);
+    bool in_arena = (const u8 *)inside.data >= memory && (const u8 *)inside.data < memory + sizeof memory;
+    usize used = a.used;
+
+    str elsewhere = objc::str(text.object);
+    bool in_arena_after = (const u8 *)elsewhere.data >= memory && (const u8 *)elsewhere.data < memory + sizeof memory;
+    c::printf("%d %d %d %lu\n", (int)in_arena, (int)(used > 0), (int)in_arena_after, (unsigned long)countof(inside));
+    return 0;
+}
