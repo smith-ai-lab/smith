@@ -136,6 +136,8 @@ jobs:
         env:
           # the per-task table (wall, cpu, processes) goes to .smith/log/test.log, kept in the artifact
           SMITH_ACCOUNT: all
+          # the runner's --stats: a cpu<TAB>seconds<TAB>name line for each test, in .smith/log/test.log (#360)
+          SMITH_TEST_STATS: "1"
           # a waiting CI job gets the next host-wide slot before any local job (knowledge/slots.md)
           SMITH_PRIORITY: ci
           COVERAGE: "1"

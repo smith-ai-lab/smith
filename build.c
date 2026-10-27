@@ -877,6 +877,8 @@ static const char *build_units(SmithBuild *b, const BuildConfig *config, const c
     const char *const *given = smith_args(b);
     const char *quoted[256];
     size_t quoted_count = 0;
+    // SMITH_TEST_STATS=1 (CI) adds the runner's --stats: a line for each test's CPU time, in the log (#360).
+    if (getenv("SMITH_TEST_STATS") != nullptr) quoted[quoted_count++] = "'--stats'";
     for (size_t i = 0; given[i] != nullptr && quoted_count < 255; i++)
         quoted[quoted_count++] = smith_fmt(b, "'%s'", given[i]);
     quoted[quoted_count] = nullptr;
