@@ -144,7 +144,7 @@ static void walk_blocks(io::Io *io, const scratch::Project *p, const char *name,
 
 // The headers of the skill's modules, twice: the second pass has the headers the first made.
 constexpr char headers_script[] =
-    "mkdir -p .smith/include; flags=\"-I $SMITH_REPO/include -I $PWD/.smith/include -I $PWD\"; "
+    "mkdir -p .smith/include; flags=\"-I $SMITH_REPO/.smith/include -I $PWD/.smith/include -I $PWD\"; "
     "for pass in 1 2; do while read -r path; do "
     "module=$(sed -n 's/^module \\([A-Za-z0-9_:]*\\);.*/\\1/p' \"$path\" | head -n 1); [ -n \"$module\" ] || continue; "
     "header=$PWD/.smith/include/$(printf '%s' \"$module\" | sed 's|::|/|g').h; mkdir -p \"$(dirname \"$header\")\"; "
@@ -155,7 +155,7 @@ constexpr char headers_script[] =
 static void check_module(io::Io *io, const scratch::Project *p, const char *name, const char *path, usize line) {
     const char *strict = c::strncmp(path, "example-", 8) == 0 ? "-Wno-missing-prototypes" : "-Wmissing-prototypes";
     const char *command =
-        format::push(&io->arena, "flags=\"-I $SMITH_REPO/include -I $PWD/.smith/include -I $PWD\"; ",
+        format::push(&io->arena, "flags=\"-I $SMITH_REPO/.smith/include -I $PWD/.smith/include -I $PWD\"; ",
                      "smith cc -fsyntax-only -std=gnu2y ", strict,
                      " -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough "
                      "-Wstrict-prototypes -Wvla -Werror $flags '",

@@ -11,7 +11,7 @@ import smith::test;
 import scratch;
 import <string.h>;
 
-constexpr char flags[] = "-std=gnu23 -Wall -Wextra -Wpedantic -Werror -I \"$SMITH_REPO/include\"";
+constexpr char flags[] = "-std=gnu23 -Wall -Wextra -Wpedantic -Werror -I \"$SMITH_REPO/.smith/include\"";
 constexpr char sources[] = "\"$SMITH_REPO/tests/arena.c\" \"$SMITH_REPO/lib/smith/arena.smith\" "
                            "\"$SMITH_REPO/lib/smith/contract.smith\" \"$SMITH_REPO/lib/trace.c\"";
 
@@ -100,8 +100,8 @@ static void compiles_as(io::Io *io, const char *standard) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     scratch::Run built = scratch::sh(
         &p, format::push(&io->arena, "smith cc -std=", standard,
-                         " -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror -I \"$SMITH_REPO/include\" "
-                         "-iquote \"$SMITH_REPO/include/smith\" -c \"$SMITH_REPO/lib/smith/arena.smith\" -o a.o")
+                         " -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror -I \"$SMITH_REPO/.smith/include\" "
+                         "-iquote \"$SMITH_REPO/.smith/include/smith\" -c \"$SMITH_REPO/lib/smith/arena.smith\" -o a.o")
                 .data);
     scratch::expect_status(
         format::push(&io->arena, "library: compiles as -std=", standard, " with the new project's warnings").data, 0,

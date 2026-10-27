@@ -22,7 +22,7 @@ constexpr char sources[] = "\"$SMITH_REPO/tests/io.c\" \"$SMITH_REPO/lib/smith/i
 static void compile(const scratch::Project *p, const char *name) {
     const char *extra = c::strcmp(name, "asan") == 0 ? "-O0 -g -fsanitize=address,undefined" : "-O2";
     scratch::Run built = scratch::sh(p, format::push(&p->io->arena, "smith cc -std=gnu23 ", warn,
-                                                     " -I \"$SMITH_REPO/include\" ", extra, " ", sources, " -o ", name)
+                                                     " -I \"$SMITH_REPO/.smith/include\" ", extra, " ", sources, " -o ", name)
                                             .data);
     scratch::expect_status(format::push(&p->io->arena, "the ", name, " program builds").data, 0, &built);
 }
@@ -59,7 +59,7 @@ export void test_io_c_checks_pass_at_o2(io::Io *io) {
 static void module_compiles(io::Io *io, const char *standard, const char *name, const char *flags) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     scratch::Run built = scratch::sh(&p, format::push(&io->arena, "smith cc -std=", standard, " ", warn, " ", flags,
-                                                      " -I \"$SMITH_REPO/include\" -c "
+                                                      " -I \"$SMITH_REPO/.smith/include\" -c "
                                                       "\"$SMITH_REPO/lib/smith/io.smith\" -o io.o")
                                              .data);
     scratch::expect_status(name, 0, &built);

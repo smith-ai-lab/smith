@@ -29,7 +29,7 @@ static void effects_case(io::Io *io, const char *file) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     const char *command =
         format::push(&io->arena,
-                     "cd \"$SMITH_REPO/tests/effects\" && { smith cc -std=gnu2y -I \"$SMITH_REPO/include\" -c ", file,
+                     "cd \"$SMITH_REPO/tests/effects\" && { smith cc -std=gnu2y -I \"$SMITH_REPO/.smith/include\" -c ", file,
                      " -o /dev/null >\"$TMPDIR/out\" 2>&1; echo \"status $?\"; grep -E '^[^ ]+:[0-9]+:[0-9]+: "
                      "(error|note|warning):' "
                      "\"$TMPDIR/out\"; }")
@@ -368,7 +368,7 @@ export void test_the_fix_it_of_an_effects_error_replaces_the_attribute_and_the_f
         "[[smith::pure]] int twice(int x) { return x * 2; }\n"
         "[[smith::pure]] int noisy(int x) { puts(\"x\"); return x; }\n"
         "[[smith::alloc]] void *single(unsigned n) { FILE *f = fopen(\"d\", \"r\"); (void)f; return malloc(n); }\n");
-    const char *flags = "-std=gnu2y -I \"$SMITH_REPO/include\" -include stdio.h -include stdlib.h";
+    const char *flags = "-std=gnu2y -I \"$SMITH_REPO/.smith/include\" -include stdio.h -include stdlib.h";
     for (usize i = 0; i < 2; i++) {
         const char *file = i == 0 ? "c.c" : "p.c";
         (void)scratch::sh(&p, join(&p, "smith cc ", flags, " -Xclang -fixit -fsyntax-only ", file));

@@ -28,7 +28,7 @@
 
 #include <stddef.h>
 
-#include "io.h"
+#include <smith/io.h>
 
 typedef struct {
     SmithError error; // code 0 when the body was written

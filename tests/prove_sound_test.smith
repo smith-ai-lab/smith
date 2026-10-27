@@ -23,7 +23,7 @@ import smith::mem;
 // The flags of the harnesses: the sanitizers, the includes of the library and of the raw lowering of two modules, and
 // the files every harness links.
 constexpr char cc_flags[] = "-std=gnu23 -g -O0 -fsanitize=address,undefined -fno-sanitize-recover=all "
-                            "-ftrivial-auto-var-init=pattern -I \"$SMITH_REPO/include\" -I lowered -w";
+                            "-ftrivial-auto-var-init=pattern -I \"$SMITH_REPO/.smith/include\" -I lowered -w";
 constexpr char cc_common[] = "\"$SMITH_REPO/lib/trace.c\" \"$SMITH_REPO/lib/smith/contract.smith\"";
 
 // Two harnesses reach the modules' static functions by including their raw lowering (`smith cc --smith-lower`).
@@ -122,7 +122,7 @@ static void sound(io::Io *io, const char *name) {
     }
     scratch::Run proved = scratch::sh(
         &p,
-        format::push(&io->arena, "smith prove -v", arguments, " -- -I \"$SMITH_REPO/include\" -I lowered 2>&1").data);
+        format::push(&io->arena, "smith prove -v", arguments, " -- -I \"$SMITH_REPO/.smith/include\" -I lowered 2>&1").data);
     for (usize i = 0; word(io, proves, i) != nullptr; i++) {
         const char *fn = word(io, proves, i);
         if (!scratch::contains(proved.out, format::push(&io->arena, "ok    ", fn, "  (").data)) {
@@ -155,7 +155,7 @@ static void unsound(io::Io *io, const char *name) {
     const char *source = format::push(&io->arena, "tests/prove/unsound/", name, ".c").data;
     const char *text = scratch::capture(&p, format::push(&io->arena, "cat \"$SMITH_REPO/", source, "\"").data);
     scratch::Run proved = scratch::sh(
-        &p, format::push(&io->arena, "smith prove -v \"$SMITH_REPO/", source, "\" -- -I \"$SMITH_REPO/include\" 2>&1")
+        &p, format::push(&io->arena, "smith prove -v \"$SMITH_REPO/", source, "\" -- -I \"$SMITH_REPO/.smith/include\" 2>&1")
                 .data);
     scratch::Run built = scratch::sh(&p, format::push(&io->arena, "smith cc ", cc_flags, " \"$SMITH_REPO/", source,
                                                       "\" ", cc_common, " -o claims 2>&1")

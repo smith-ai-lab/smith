@@ -9,7 +9,7 @@ import smith::io;
 import smith::test;
 import scratch;
 
-constexpr char prelude[] = "flags=\"-std=gnu2y -I. -I.smith/include -I$SMITH_REPO/include\"; "
+constexpr char prelude[] = "flags=\"-std=gnu2y -I. -I.smith/include -I$SMITH_REPO/.smith/include\"; "
                            "run() { smith lint --quiet --checks='-*,smith-mem' \"$@\" -- $flags 2>&1; }; ";
 
 static scratch::Run lint(const scratch::Project *p, const char *body) {

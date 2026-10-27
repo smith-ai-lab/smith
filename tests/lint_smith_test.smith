@@ -24,7 +24,7 @@ constexpr char prelude[] =
     "flags='-I. -I.smith/include'; "
     "run() { smith lint --quiet \"$@\" -- $flags 2>&1; }; "
     "idiom() { check=$1; shift; smith lint --quiet --checks=\"-*,$check\" \"$@\" -- -std=gnu2y $flags "
-    "-I\"$SMITH_REPO/include\" 2>&1; }; "
+    "-I\"$SMITH_REPO/.smith/include\" 2>&1; }; "
     "idiom_findings() { findings | sed -e 's/ \\[smith-[a-z0-9-]*,-warnings-as-errors\\]$//'; }; ";
 
 // The project: the fixture with the template's .clang-tidy. smith-module has its own tests below, so `full` is for
@@ -416,7 +416,7 @@ export void test_lint_smith_c23_fix_deletes_the_void_of_each_parameter_list_and_
     scratch::Project p = prepared(io, false);
     scratch::Run run = lint(&p, "mkdir -p voidfix/idiom && cp idiom/void_list.smith voidfix/idiom/void_list.smith && "
                                 "(cd voidfix && smith lint --fix --checks=\"-*,smith-c23\" idiom/void_list.smith -- "
-                                "-std=gnu2y $flags -I\"$SMITH_REPO/include\" >/dev/null 2>&1); "
+                                "-std=gnu2y $flags -I\"$SMITH_REPO/.smith/include\" >/dev/null 2>&1); "
                                 "cat voidfix/idiom/void_list.smith");
     golden_of(io, "void_list_fixed", run.out);
 }

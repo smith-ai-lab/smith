@@ -23,8 +23,8 @@
 // stickily) on data it cannot write, and stops on a call that cannot be right.
 #pragma once
 
-#include "arena.h"
-#include "text.h"
+#include <smith/arena.h>
+#include <smith/text.h>
 
 #include <stddef.h>
 #include <stdint.h>

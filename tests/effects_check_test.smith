@@ -35,7 +35,7 @@ static const char *findings(const scratch::Project *p, const char *files, const 
     return scratch::capture(p, command);
 }
 
-constexpr char flags[] = "-I\"$SMITH_REPO/include\" -I. -std=gnu2y";
+constexpr char flags[] = "-I\"$SMITH_REPO/.smith/include\" -I. -std=gnu2y";
 
 // A case whose findings are a golden file.
 static void golden(io::Io *io, const char *name, const char *files, const char *extra) {
@@ -75,7 +75,7 @@ export void test_effects_a_file_that_merely_uses_the_capability_is_not_its_imple
 export void test_effects_src_dev_c_beside_include_proj_dev_h_is_the_implementation_of_dev(io::Io *io) {
     scratch::Project p = project(io, only_effects);
     scratch::expect_text("effects: src/dev.c beside include/proj/dev.h is the implementation of Dev", "",
-                         findings(&p, "src/dev.c", "-I\"$SMITH_REPO/include\" -I. -std=gnu2y -Iinclude"));
+                         findings(&p, "src/dev.c", "-I\"$SMITH_REPO/.smith/include\" -I. -std=gnu2y -Iinclude"));
 }
 
 // --- rule 5: a main-only constructor ---

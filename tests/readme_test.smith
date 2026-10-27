@@ -338,7 +338,7 @@ static void check_compiled_smith(io::Io *io, const scratch::Project *p, const Bl
     scratch::expect_status(label, 0, &placed);
     const char *command =
         format::push(&io->arena, "cd '", folder,
-                     "' && flags=\"-I $SMITH_REPO/include -I $PWD/.smith/include -I $PWD\"; ",
+                     "' && flags=\"-I $SMITH_REPO/.smith/include -I $PWD/.smith/include -I $PWD\"; ",
                      "module=$(sed -n 's/^module \\([A-Za-z0-9_:]*\\);.*/\\1/p' '", path, "' | head -n 1); ",
                      "if [ -n \"$module\" ]; then header=$PWD/.smith/include/$(printf '%s' \"$module\" | "
                      "sed 's|::|/|g').h; mkdir -p \"$(dirname \"$header\")\"; for pass in 1 2; do "

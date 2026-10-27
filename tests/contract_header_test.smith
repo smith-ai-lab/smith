@@ -10,7 +10,7 @@ import smith::io;
 import smith::test;
 import scratch;
 
-constexpr char flags[] = "f='-std=gnu23 -Wall -Wextra -Wpedantic -Wconversion -Werror -I '$SMITH_REPO/include; "
+constexpr char flags[] = "f='-std=gnu23 -Wall -Wextra -Wpedantic -Wconversion -Werror -I '$SMITH_REPO/.smith/include; "
                          "lib=$SMITH_REPO/lib; ";
 
 static scratch::Project programs(io::Io *io) {
@@ -150,7 +150,7 @@ static void library_compiles(io::Io *io, const char *standard) {
     scratch::Project p = programs(io);
     must(&p, format::push(&io->arena, "contract: library: compiles as ", standard).data,
          format::push(&io->arena, "smith cc -std=", standard,
-                      " -Wall -Wextra -Wpedantic -Wconversion -Werror -O2 -I $SMITH_REPO/include -c "
+                      " -Wall -Wextra -Wpedantic -Wconversion -Werror -O2 -I $SMITH_REPO/.smith/include -c "
                       "$lib/smith/contract.smith -o contract.o")
              .data);
 }
@@ -211,7 +211,7 @@ static void analyzer_reports_only_the_unbounded_index(io::Io *io, const char *mo
     scratch::Run run = scratch::sh(
         &p, format::push(&io->arena,
                          "smith lint --checks='-*,clang-analyzer-*' bounded.c -- -std=gnu2y -I "
-                         "\"$SMITH_REPO/include\" ",
+                         "\"$SMITH_REPO/.smith/include\" ",
                          mode,
                          " 2>&1 | grep 'ArrayBound' | sed -e 's/^[^:]*:\\([0-9]*\\):.*/\\1/' | tr '\\n' ' ' | "
                          "sed 's| *$||'")

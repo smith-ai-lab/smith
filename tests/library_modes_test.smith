@@ -188,7 +188,7 @@ static void compiles_as(io::Io *io, const char *source, const char *standard) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     scratch::Run built =
         scratch::sh(&p, format::push(&io->arena, "smith cc -std=", standard,
-                                     " -Wall -Wextra -Wpedantic -Wconversion -Werror -O2 -I \"$SMITH_REPO/include\" -c "
+                                     " -Wall -Wextra -Wpedantic -Wconversion -Werror -O2 -I \"$SMITH_REPO/.smith/include\" -c "
                                      "\"$SMITH_REPO/",
                                      source, "\" -o library.o")
                             .data);
@@ -200,7 +200,7 @@ static void names_no_libc_function(io::Io *io, const char *source, const char *a
     scratch::Run built =
         scratch::sh(&p, format::push(&io->arena,
                                      "smith cc -std=gnu23 -O2 -DNDEBUG -ffreestanding -fno-stack-protector -I "
-                                     "\"$SMITH_REPO/include\" -c \"$SMITH_REPO/",
+                                     "\"$SMITH_REPO/.smith/include\" -c \"$SMITH_REPO/",
                                      source, "\" -o library.o")
                             .data);
     scratch::expect_status("the library compiles freestanding", 0, &built);
@@ -242,7 +242,7 @@ static void http_compiles(io::Io *io, const char *standard, const char *extra, c
         &p, format::push(&io->arena, "smith cc -std=", standard,
                          " -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wmissing-prototypes "
                          "-Wstrict-prototypes -Wvla -Werror ",
-                         extra, " -I \"$SMITH_REPO/include\" -c \"$SMITH_REPO/lib/http.c\" -o http.o")
+                         extra, " -I \"$SMITH_REPO/.smith/include\" -c \"$SMITH_REPO/lib/http.c\" -o http.o")
                 .data);
     scratch::expect_status(name, 0, &built);
 }

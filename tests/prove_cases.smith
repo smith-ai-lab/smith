@@ -14,7 +14,7 @@ import smith::mem;
 // `smith prove args -- -I include`, both streams together. $c in args is tests/prove.
 export scratch::Run prove(const scratch::Project *p, const char *args) {
     return scratch::sh(p, format::push(&p->io->arena, "c=\"$SMITH_REPO/tests/prove\"; smith prove ", args,
-                                       " -- -I \"$SMITH_REPO/include\" 2>&1")
+                                       " -- -I \"$SMITH_REPO/.smith/include\" 2>&1")
                               .data);
 }
 

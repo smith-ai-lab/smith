@@ -24,7 +24,7 @@
 // It is included by smith.c after lib/text.c, lib/json.c and the protocol code, and compiled alone, with those linked,
 // by the tests of tests/mcp_test.smith.
 #include "protocol/mcp.h"
-#include "../include/smith/io.h"
+#include <smith/io.h>
 #include "../include/smith/json.h"
 #include "protocol/dap.h"
 

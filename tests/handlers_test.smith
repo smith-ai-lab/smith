@@ -11,7 +11,7 @@ import smith::test;
 import scratch;
 import <string.h>;
 
-constexpr char flags[] = "f='-std=gnu23 -Wall -Wextra -Wpedantic -Werror -I '$SMITH_REPO/include; "
+constexpr char flags[] = "f='-std=gnu23 -Wall -Wextra -Wpedantic -Werror -I '$SMITH_REPO/.smith/include; "
                          "h=$SMITH_REPO/tests/handlers; ";
 
 static bool darwin(const scratch::Project *p) {

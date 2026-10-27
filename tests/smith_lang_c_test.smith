@@ -146,7 +146,7 @@ static void behave(io::Io *io, const char *name) {
     for (usize i = 0; i < 2; i++) {
         const char *build = format::push(&io->arena,
                                          "smith cc -std=gnu23 -O1 -g0 -Wno-builtin-macro-redefined "
-                                         "-D'__FILE__=\"unit\"' -I \"$SMITH_REPO/include\" -w ",
+                                         "-D'__FILE__=\"unit\"' -I \"$SMITH_REPO/.smith/include\" -w ",
                                          name, ".", kinds[i], " -o ", name, ".", kinds[i], ".bin")
                                 .data;
         scratch::Run built = scratch::sh(&p, build);

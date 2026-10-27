@@ -182,7 +182,7 @@ static void check_library_compiles(io::Io *io, const char *source) {
                 "flags=\"$flags -Wdouble-promotion -Wundef -Wpointer-arith -Wcast-qual -Wformat=2 "
                 "-Wmissing-variable-declarations -Wcomma -Wunreachable-code\"; "
                 "smith cc -std=",
-                standards[i], " $flags -I \"$SMITH_REPO/include\" -c \"$SMITH_REPO/", source, "\" -o out.o 2>&1")
+                standards[i], " $flags -I \"$SMITH_REPO/.smith/include\" -c \"$SMITH_REPO/", source, "\" -o out.o 2>&1")
                 .data;
         scratch::Run run = scratch::sh(&p, command);
         if (run.status != 0) test::note("%s under %s:\n%s", source, standards[i], run.out);

@@ -29,7 +29,7 @@ static scratch::Project lowered_project(io::Io *io) {
 
 // Builds tests/random.c with the flags into `name`.
 static scratch::Run compile(const scratch::Project *p, const char *warnings, const char *flags, const char *name) {
-    return scratch::sh(p, format::push(&p->io->arena, "smith cc ", warnings, " -I \"$SMITH_REPO/include\" ", flags, " ",
+    return scratch::sh(p, format::push(&p->io->arena, "smith cc ", warnings, " -I \"$SMITH_REPO/.smith/include\" ", flags, " ",
                                        sources, " -o ", name)
                               .data);
 }
@@ -54,7 +54,7 @@ export void test_random_c_checks_pass_at_o2(io::Io *io) {
 static void compiles_as(io::Io *io, const char *standard) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     scratch::Run built = scratch::sh(&p, format::push(&io->arena, "smith cc -std=", standard, " ", warn,
-                                                      " -I \"$SMITH_REPO/include\" -c "
+                                                      " -I \"$SMITH_REPO/.smith/include\" -c "
                                                       "\"$SMITH_REPO/lib/smith/random.smith\" -o r.o")
                                              .data);
     scratch::expect_status(
@@ -109,7 +109,7 @@ export void test_random_c_digest_o3_march_native_fp_contract_fast(io::Io *io) {
 
 export void test_random_c_refusal_ffast_math_fails_to_compile(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run built = scratch::sh(&p, "smith cc -std=gnu23 -I \"$SMITH_REPO/include\" -ffast-math -c "
+    scratch::Run built = scratch::sh(&p, "smith cc -std=gnu23 -I \"$SMITH_REPO/.smith/include\" -ffast-math -c "
                                          "\"$SMITH_REPO/lib/smith/random.smith\" -o r.o");
     scratch::expect_failure("refusal: -ffast-math fails to compile", &built);
     scratch::expect_contains("refusal: ... with the reason", built.err, "-ffast-math changes floating-point results");
@@ -117,7 +117,7 @@ export void test_random_c_refusal_ffast_math_fails_to_compile(io::Io *io) {
 
 export void test_random_c_refusal_ofast_fails_to_compile(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run built = scratch::sh(&p, "smith cc -std=gnu23 -I \"$SMITH_REPO/include\" -Ofast -c "
+    scratch::Run built = scratch::sh(&p, "smith cc -std=gnu23 -I \"$SMITH_REPO/.smith/include\" -Ofast -c "
                                          "\"$SMITH_REPO/lib/smith/random.smith\" -o r.o");
     scratch::expect_failure("refusal: -Ofast fails to compile", &built);
 }
