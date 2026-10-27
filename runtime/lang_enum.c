@@ -1397,6 +1397,33 @@ static bool smith_lang_eshape_tag(SmithLang *lang, const SmithHost *host, const 
     return true;
 }
 
+// The constant of a variant of the result of a call of a generic whose result is built from its arguments
+// (`option(typeof(xs[0]))`): the instance's struct has no name until the call is written, but a shape's variants are
+// numbered in the order the shape writes them, so the variant is its number (`option`: `some` 0, `none` 1).
+static bool smith_lang_enum_derived_constant(const SmithLangGeneric *generic, const SmithToken *variant, char *out,
+                                             size_t capacity) {
+    const SmithLangGenToken *head = &smith_lang_gt.tokens[generic->first + smith_lang_generic_skip_attributes(generic)];
+    const SmithLangGenToken *open = head + 1;
+    if (head->kind != SmithTokenKind_Identifier || !smith_lang_gt_punct(open, "(")) return false;
+    for (size_t i = 0; i < smith_lang_eshape_count; i++) { // at most 16
+        const SmithLangEnumShape *shape = &smith_lang_eshapes[i];
+        if (!smith_lang_equals(smith_lang_gt_str(head), head->length, shape->name)) continue;
+        size_t number = 0;
+        for (size_t at = 1; at <= shape->token_count; at++) { // a variant ends at its `;`; its name is the token before
+            if (at < shape->token_count && !smith_lang_punct(&shape->tokens[at], ";")) continue;
+            const SmithToken *name = &shape->tokens[at - 1];
+            if (!smith_lang_punct(name, ";") && smith_lang_equals(variant->text, variant->length, name->text) &&
+                name->length == variant->length) {
+                int written = snprintf(out, capacity, "%zu", number);
+                return written > 0 && (size_t)written < capacity;
+            }
+            number += !smith_lang_punct(name, ";");
+        }
+        return false;
+    }
+    return false;
+}
+
 // The constant of a variant of the result of a call of a generic whose result is written `option(usize)` or
 // `result(usize, i32)` with no `auto`, `typeof` or type parameter in it (`finder::find(s, c) == .some`): the compiler
 // cannot type the call until its instance is written, but the struct's name follows from the written result. False
@@ -1426,7 +1453,7 @@ static bool smith_lang_enum_generic_constant(SmithLang *lang, const SmithHost *h
     const SmithLangGenToken *first = &smith_lang_gt.tokens[generic->first];
     if (generic->name_index != 2 || !smith_lang_gt_is(first, SmithTokenKind_Identifier, "struct") ||
         first[1].kind != SmithTokenKind_Identifier) {
-        return false;
+        return smith_lang_enum_derived_constant(generic, variant, out, capacity);
     }
     const char *tag = smith_lang_gt_str(&first[1]);
     size_t tag_length = first[1].length;

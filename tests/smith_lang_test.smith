@@ -1712,3 +1712,7 @@ export void test_generic_slice_option_typedef(io::Io *io) {
 export void test_generic_some_operand(io::Io *io) {
     corpus_case(io, "generic-some-operand");
 }
+
+export void test_generic_some_operand_derived(io::Io *io) {
+    corpus_case(io, "generic-some-operand-derived");
+}

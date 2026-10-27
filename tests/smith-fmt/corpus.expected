@@ -7565,6 +7565,27 @@ export const void *start(auto xs) {
 export usize element_size(auto xs) {
     return sizeof(xs[0]);
 }
+==> generic-some-operand-derived/src/finder.smith <==
+module finder;
+
+export option(typeof(v)) maybe(auto v, bool keep) {
+    if (keep) return {.some = v};
+    return .none;
+}
+==> generic-some-operand-derived/src/main.smith <==
+module main;
+
+import finder;
+import <stdio.h>;
+
+typedef option(i32) O;
+
+// `== .some` and `!= .some` on a generic whose result is `option(typeof(v))`.
+i32 main() {
+    if (finder::maybe(7, true) == .some) c::printf("some\n");
+    if (finder::maybe(7, false) != .some) c::printf("none\n");
+    return 0;
+}
 ==> generic-some-operand/src/finder.smith <==
 module finder;
 

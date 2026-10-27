@@ -1,0 +1,6 @@
+module finder;
+
+export option(typeof(v)) maybe(auto v, bool keep) {
+    if (keep) return {.some = v};
+    return .none;
+}
