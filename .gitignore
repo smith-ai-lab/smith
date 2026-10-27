@@ -37,3 +37,6 @@ compile_commands.json
 /tests/protocol/test_protocol_mcp.c
 # The tree-sitter parser (`smith build` generates it from tree-sitter/grammar.js).
 /tree-sitter/src/
+# Profiles of a run under coverage are generated files, never committed (tests/generated_files_test.smith).
+*.profraw
+*.profdata

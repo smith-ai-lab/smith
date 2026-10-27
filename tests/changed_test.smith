@@ -66,8 +66,55 @@ export void test_a_file_the_graph_does_not_know_selects_every_test(io::Io *io) {
     const char *out = changed(io, "echo 'int y;' > tests/new.c");
     scratch::expect_contains("the path", out, "tests/new.c is an input of no test the graph knows, so every test runs");
     scratch::expect_contains("the dry run", out, "every test runs");
-    out = changed(io, "echo more >> docs/guide.txt");
-    scratch::expect_contains("a text file", out, "docs/guide.txt is an input of no test");
+    out = changed(io, "echo more >> docs/unread.txt");
+    scratch::expect_contains("a text file", out, "docs/unread.txt is an input of no test");
+}
+
+// A data file that a test names (a fixture, a corpus) selects the tests that name it, not every test; a workflow
+// likewise (.github/ no longer selects the whole suite).
+export void test_a_data_file_selects_the_tests_that_name_it(io::Io *io) {
+    const char *out = changed(io, "echo more >> docs/guide.txt");
+    scratch::expect_contains("the reader", out, "tests/docs_test.smith: it names docs/guide.txt, and it changed");
+    scratch::expect_lacks("not every test", out, "every test runs");
+    scratch::expect_lacks("a pure test", out, "c_test");
+    out = changed(io,
+                  "mkdir -p .github/workflows; echo a > .github/workflows/check.yml; "
+                  "printf 'module ci_test;\\nexport void test_ci() { read(\"check.yml\"); }\\n' > tests/ci_test.smith; "
+                  "git add -A; git -c user.name=t -c user.email=t@t commit -q -m ci; "
+                  "echo b >> .github/workflows/check.yml");
+    scratch::expect_contains("the workflow's reader", out, "tests/ci_test.smith: it names .github/workflows/check.yml");
+    scratch::expect_lacks("not every test", out, "selects the whole suite");
+    scratch::expect_lacks("a pure test", out, "c_test");
+}
+
+// The selection has no size at which it becomes `*`: three thousand tests in one file are listed one by one (far past
+// the 8 KiB filter and the 1.5 KiB per-file buffer of #456), and a run says when the names are longer than one
+// argument instead of silently running everything.
+export void test_a_selection_of_thousands_of_tests_is_listed_whole(io::Io *io) {
+    const char *big = "printf '#include <base.h>\\n' > tests/big_test.c; i=0; while [ $i -lt 3000 ]; do "
+                      "echo \"void test_a_long_name_for_the_overflow_check_number_$i(void) {}\" >> tests/big_test.c; "
+                      "i=$((i+1)); done; echo 'int z;' > tests/base.h; git add -A; "
+                      "git -c user.name=t -c user.email=t@t commit -q -m big; echo 'int w;' >> tests/base.h; ";
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Run run = scratch::sh(&p, format::push(&io->arena, repository, big,
+                                                    "smith test --changed --list HEAD 2>/dev/null | wc -l | tr -d ' '")
+                                           .data);
+    scratch::expect_text("every test of the file is listed", "3000", run.out);
+    scratch::Project q = scratch::project(io, "q", nullptr);
+    run = scratch::sh(&q, format::push(&io->arena, repository, big, "smith test --changed --dry-run 2>&1").data);
+    scratch::expect_contains("the names are longer than an argument", run.out,
+                             "longer than one argument, so every test runs");
+}
+
+// `--list` says on stderr, without -v, what it selected.
+export void test_list_says_what_it_selected_on_stderr(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Run run = scratch::sh(&p, format::push(&io->arena, repository,
+                                                    "echo '// x' >> lib/c_test.smith; smith test --changed --list HEAD "
+                                                    "2>&1 >/dev/null")
+                                           .data);
+    scratch::expect_contains("the summary", run.out, "selects the tests listed on stdout");
+    scratch::expect_contains("the count", run.out, "1 entries");
 }
 
 // A Markdown file selects the tests that name Markdown files, not every test.

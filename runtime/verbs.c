@@ -263,11 +263,14 @@ static SmithCheckClock smith_check_clock(void) {
                                        smith_account_ms(children.ru_utime) + smith_account_ms(children.ru_stime)};
 }
 
-// Whether the run prints everything as it happens: `-v` (and `--verbose` for the tests), or SMITH_OUTPUT=full.
+// Whether the run prints everything as it happens: `-v` (and `--verbose`, `--list`, `--dry-run` for the tests), or
+// SMITH_OUTPUT=full.
 static bool smith_quiet_loud(int count, char **args, bool runner_verbose) {
     if (smith_quiet_full()) return true;
     for (int i = 0; i < count; i++) {
         if (strcmp(args[i], "-v") == 0 || (runner_verbose && strcmp(args[i], "--verbose") == 0)) return true;
+        // A listing is the answer, not progress: --list and --dry-run print it (issue #456).
+        if (runner_verbose && (strcmp(args[i], "--list") == 0 || strcmp(args[i], "--dry-run") == 0)) return true;
     }
     return false;
 }
@@ -829,6 +832,15 @@ static bool smith_test_wants_list(const SmithVerbArgs *split) {
 // `--list`: the selected tests on stdout, one per line (a name, or `module::` for a module's tests; `*` when every
 // test runs), and nothing run. The report of why goes to stderr.
 static int smith_test_print_selection(SmithChangedResult result, const char *filter) {
+    size_t count = 0;
+    for (const char *at = filter; result == SmithChanged_Some && *at != '\0'; at++) // bounded by the filter's text
+        count += (at == filter || at[-1] == ',') ? 1 : 0;
+    // One line on stderr, with or without -v: what the selection is.
+    fprintf(stderr, "smith test --changed: %s\n",
+            result == SmithChanged_Full   ? "selects every test (*)"
+            : result == SmithChanged_None ? "selects no test"
+                                          : "selects the tests listed on stdout");
+    if (result == SmithChanged_Some) fprintf(stderr, "smith test --changed: %zu entries\n", count);
     if (result == SmithChanged_Full) {
         puts("*");
     } else if (result == SmithChanged_Some) {
@@ -845,7 +857,7 @@ static int smith_test_print_selection(SmithChangedResult result, const char *fil
 // arguments and, unless the whole suite runs, adds `--test <names>` for the tests the change can affect. Returns an
 // exit status when there is nothing to run (nothing selected, a dry run, or a failure), else -1.
 static int smith_test_take_changed(SmithVerbArgs *split, const char *self) {
-    static char filter[8192];
+    SmithChangedBuffer selection = {};
     const char *base = nullptr;
     bool changed = false;
     bool dry_run = false;
@@ -882,9 +894,18 @@ static int smith_test_take_changed(SmithVerbArgs *split, const char *self) {
         return -1;
     }
     smith_changed_self = self;
-    SmithChangedResult result = smith_changed_select(base, head, filter, sizeof filter);
+    SmithChangedResult result = smith_changed_select(base, head, &selection);
     if (result == SmithChanged_Failed) return smith_exit_usage;
+    const char *filter = smith_changed_buffer_text(&selection);
     if (list) return smith_test_print_selection(result, filter);
+    // The selection is one argument of the runner; an argument has a limit (128 KiB on Linux), so a longer one runs
+    // everything, and says so (never silently).
+    if (result == SmithChanged_Some && selection.used > smith_changed_argument_max) {
+        fprintf(stderr,
+                "smith test --changed: the selection (%zu bytes) is longer than one argument, so every test runs\n",
+                selection.used);
+        result = SmithChanged_Full;
+    }
     static char costs[PATH_MAX + 16];
     if (cheapest && smith_changed_write_costs(costs, sizeof costs) && split->own_count + 2 <= smith_build_args_max) {
         split->own[split->own_count++] = (char *)"--costs";
@@ -896,7 +917,7 @@ static int smith_test_take_changed(SmithVerbArgs *split, const char *self) {
     }
     if (result == SmithChanged_Some && split->own_count + 2 <= smith_build_args_max) {
         split->own[split->own_count++] = (char *)"--test";
-        split->own[split->own_count++] = filter;
+        split->own[split->own_count++] = (char *)filter;
     }
     if (dry_run) {
         fprintf(stderr, "smith test --changed: %s\n",
