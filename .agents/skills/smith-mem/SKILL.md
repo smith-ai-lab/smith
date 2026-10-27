@@ -26,23 +26,22 @@ export void fill(arena::Arena *a) {
     i32 *one = mem::alloc(i32);                                   // zeroed, from the arena
     f32 grid[:][:] = mem::alloc_slice(f32, 3, 4);                 // one block, row-major
     MaybeInt maybe = mem::try_alloc(i32);                         // .some = p, or .none when refused
-    *one = or_zero(maybe) + 2;
-    mem::free(one); // the arena takes back its last block only; any other waits for a reset
+    *one = or_zero(maybe) + 2; // mem::free(one) gives back the arena's last block only
 }
 ```
 
 - The calls: `mem::alloc(T)`, `mem::alloc_slice(T, sizes...)` (as `arena::push_slice`), `mem::try_alloc(T)`, `mem::free(p)`, `mem::set_allocator(a)` (returns the previous; null is the system's) and `mem::allocator()`. For C and sizes known at run time: `mem::alloc_raw(size, align)` (`smith_mem_alloc`), `alloc_array_raw`, `try_alloc_raw` (null when refused).
-- An `Allocator` is a struct whose first member is a `SmithAllocator` (`alloc`, `realloc`, `free`, `owns`, optional `size`, `<smith/handlers.h>`); the setter is per thread. `arena::allocator` makes one over an arena (a growing arena never refuses until its backing does); how `malloc` reaches it is in knowledge/handlers.md. Set the previous one back before the allocator's memory goes away.
+- An `Allocator` is a struct whose first member is a `SmithAllocator` (`alloc`, `realloc`, `free`, `owns`, optional `size`, `<smith/handlers.h>`); the setter is per thread. `arena::allocator` makes one over an arena (a growing arena never refuses until its backing does); how `malloc` reaches it is in knowledge/handlers.md. 
 
 ## Finding mistakes: mem::checked
-
 `mem::checked(parent)` (`smith_mem_checked`; a `null` parent is the system's), used as `set_allocator(&c.base)`, then `checked_report(&c)` and `checked_release(&c)` when done, wraps an allocator: each block records the stack of its allocation, `mem::free` of a block it already freed (a double free) or never made stops with `memory error` naming both sites, a freed block is kept and poisoned (ASan: `use-after-poison`), and a leak is listed with where it was allocated. `smith test` sets one around every test: a test that returns with a live block fails with `memory leaked` at the line that allocated it (`--unchecked` for a run that must not). It costs nothing in a program that never makes one.
 
+`checked_leaks(&c)` (count, bytes and first site of the leaks), `checked_leak(&c, after)` (the next leak's site, in order of allocation), `checked_live`, `checked_live_bytes`. A block used after an arena's `reset` is `use-after-poison` already: the arena poisons what is past its cursor. Details: knowledge/checked-allocator.md.
 
-`checked_leaks(&c)` (count, bytes and first site of the leaks), `checked_leak(&c, after)` (the next leak's site, in order of allocation), `checked_live`, `checked_live_bytes`. A block the C library keeps for itself (its number-printing cache) is not a leak. A block used after an arena's `reset` is `use-after-poison` already: the arena poisons what is past its cursor. Details: knowledge/checked-allocator.md.
+## Refusing on purpose: mem::failing
+`mem::failing(parent, key)` (`smith_mem_failing`; `parent` null is the system's) is an allocator that refuses one allocation in `f.one_in` (8 at first; 1 every one, 0 none) by a draw from `key`: the same key and the same calls refuse the same allocations, so a failure replays from its seed. `try_alloc` then answers `.none`; `mem::alloc` stops with a checked failure naming `mem::failing` and the size. A test gets one from the runner: `void test_x(random::Key key, mem::Failing *failing)` ([smith-test](../smith-test/SKILL.md)).
 
 ## Copies, fills and comparisons: typed, in place of memcpy and friends
-
 ```smith
 module copies;
 import smith::mem;

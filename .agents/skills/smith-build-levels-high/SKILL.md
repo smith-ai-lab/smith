@@ -38,7 +38,7 @@ Edit the fields; each applies to all three profiles:
 | `.libraries` | after the objects: `-lm`, `-framework Metal` |
 | `.tool` | a program `smith build` does not build by default (`smith build tools`, `release`, `fast` do) |
 
-A second program is a second `build::app` with its own `.entry` and `.name`; a source both reach is compiled once per profile. Flags every program and test shares, and flags for a folder, go in one call before them:
+`build::AppTests` has `.checked_allocator = build::Off` to run the tests without `mem::checked` (`--unchecked`; on by default). A second program is a second `build::app` with its own `.entry` and `.name`; a source both reach is compiled once per profile. Flags every program and test shares, and flags for a folder, go in one call before them:
 
 ```c
 build::defaults(b, &(build::Defaults){

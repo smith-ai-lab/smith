@@ -44,5 +44,29 @@ any allocator, `mem::set_allocator(&checked.base)`, so `malloc`, `mem::alloc` an
   ends, so a test that allocates and frees in a long loop holds all of them. A block a program hands to the C library to
   keep (`setenv`) is reported as a leak: that is what `--unchecked` is for.
 
-Not here yet: `mem::failing` (an allocator that refuses on a key), the `.checked_allocator` field of build.c and the
-profiles are step D2b.
+## The failing allocator (step D2b)
+
+`mem::failing(parent, key)` (`lib/smith/mem.smith`, C: `smith_mem_failing`) is an allocator over a parent (null: the
+system's) that refuses some allocations, so a test reaches every allocation-failure path of the code under test and a
+failure replays from its seed.
+
+- **The decision is a draw from the key.** The key is used once, at creation (`key_bits`); after that the allocator holds
+  a `u64` chain: each allocation or reallocation splits it with `random::split` into the decision and the next link. The
+  decision for call n therefore depends on the key and n alone (it draws even when `one_in` is 0), and the same key with
+  the same sequence of calls refuses the same allocations. There is no `key_derive`.
+- **The schedule is `one_in`:** a field, 8 at creation (one allocation in eight), 1 for every one, 0 for none; `calls` and
+  `refused` count. Free passes to the parent; `owns` and `size` ask it (a null parent owns nothing, so libc frees).
+- **A refusal is a null from `alloc`:** `mem::try_alloc` and `try_alloc_raw` answer `.none` / null; `mem::alloc` stops
+  with a checked failure naming the allocator ("mem::failing") and the size. Until tasks (#324) that aborts the process
+  (the test runner ends the test); #324 makes it fail the task and unwind through `defer`.
+- **The runner gives a test one:** `void test_x(random::Key key, mem::Failing *failing)` (`SmithKey key, struct
+  SmithFailing *failing` in C) runs on `--seeds` keys like a property test. The key is split in two: the test gets the
+  first half, the failing allocator the second, over the checked allocator (so what was not refused is still leak
+  checked), installed as the thread's allocator for the call of the test alone. `--seed` replays it. `tests_list.h`
+  declares `struct SmithFailing;` and does not include `<smith/mem.h>`, because a plain include before a `.smith` file
+  that imports `smith::mem` hides the module's instance section.
+- **`.checked_allocator`** is a `build::Setting` (`Default`, `On`, `Off`; zero is the default) on `build::AppTests` and
+  `build::Tests`: `Off` passes `--unchecked` to the runner, so the tests run without `mem::checked` (and the
+  `Failing` of a failing test then has the system's allocator as its parent). Tests are built in the debug profile,
+  where the default is on; release and fast programs never make a checked allocator, so there is nothing to turn off
+  there.
