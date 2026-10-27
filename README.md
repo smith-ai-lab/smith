@@ -4,7 +4,7 @@
 
 One binary: compiler, build, tests, proofs, formatter, linter, debugger and editor support, from one LLVM.
 
-```smith project=first run prove test
+```smith project=first run test
 // stats.smith
 module stats;
 
