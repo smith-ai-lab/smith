@@ -562,7 +562,7 @@ f64 loss(struct Line *line, f64 x, f64 y) {
 
 i32 main(io::Io *io) {
     struct Line line = {2, 1};
-    struct Line g = autodiff::gradient(&io->arena, loss, &line, 3.0, 5.0);
+    struct Line g = autodiff::gradient(loss, &line, 3.0, 5.0);
     format::print(&io->console, "d/dm = ", g.m, ", d/db = ", g.b, "\n");
     return 0;
 }

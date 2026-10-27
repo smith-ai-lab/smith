@@ -161,7 +161,7 @@ i32 main(io::Io *io) {
     // 1. A model of two f32 numbers: the gradient of sum (m x + b - y)^2, nothing but numbers to allocate.
     Model model = {.m = 0.5f, .b = -0.25f};
     Points points = {.x = {1.0f, 2.0f, 3.0f, 4.0f}, .y = {1.0f, 0.0f, 2.5f, 3.0f}};
-    Model mg = autodiff::gradient(arena, model_loss, &model, &points);
+    Model mg = autodiff::gradient(model_loss, &model, &points);
     f32 dm = 0.0f;
     f32 db = 0.0f;
     for (usize i = 0; i < 4; i++) {
@@ -180,7 +180,7 @@ i32 main(io::Io *io) {
     f64 data[2] = {1.25, -0.75};
     Batch batch = {};
     batch.x = data;
-    Net g = autodiff::gradient(arena, net_loss, &net, &batch);
+    Net g = autodiff::gradient(net_loss, &net, &batch);
     f64 want[numbers] = {};
     f64 inner = 0.0;
     usize n = 0;
@@ -230,14 +230,14 @@ i32 main(io::Io *io) {
 
     // 4. Adam, five steps, with the gradient of the current parameters each time; the loop keeps its own moments.
     Net q = make_net(arena, 0.0);
-    Net m = autodiff::zeros(arena, q);
-    Net v = autodiff::zeros(arena, q);
+    Net m = autodiff::zeros(q);
+    Net v = autodiff::zeros(q);
     f64 ref[numbers] = {};
     f64 ref_m[numbers] = {};
     f64 ref_v[numbers] = {};
     (void)flatten(&q, ref);
     for (i32 step = 1; step <= 5; step++) {
-        Net gq = autodiff::gradient(arena, net_loss, &q, &batch);
+        Net gq = autodiff::gradient(net_loss, &q, &batch);
         f64 gflat[numbers] = {};
         (void)flatten(&gq, gflat);
         f64 correct1 = 1.0 / (1.0 - c::pow(beta1, (f64)step));
@@ -263,7 +263,7 @@ i32 main(io::Io *io) {
         in[j] = make_net(arena, 0.1 * (f64)(j + 1));
         (void)flatten(&in[j], flat[j]);
     }
-    Net o = autodiff::zeros(arena, in[0]);
+    Net o = autodiff::zeros(in[0]);
     (void)io::console_printf(console, "map with 1 to 6 inputs and 2 numbers:\n");
     for (usize inputs = 1; inputs <= 6; inputs++) {
         if (inputs == 1) autodiff::map(sum1, &o, &in[0], 2.0, 0.5);

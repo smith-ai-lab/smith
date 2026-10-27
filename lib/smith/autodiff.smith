@@ -31,9 +31,9 @@
 // promoted to double by C's rules for variadic calls: pass the types the function takes (a double for a double).
 module smith::autodiff;
 
-import smith::arena;
 import smith::contract;
 import smith::effects;
+import smith::mem;
 
 // The type of one argument's leaf: what a pointer points to, the type itself for anything else (a number `map` passes
 // through). A type function (it runs in the compiler), used as the result type of `map_at`. Written before the markers:
@@ -66,27 +66,26 @@ static type down_of(type t, type down) {
 [[smith::c_name("enzyme_interleave")]] export extern i32 interleave;
 
 // The shape of a gradient: the `n` values `p` points to, in a row, are all set to zero, and each `[:]` field given a
-// new block of the same length from the arena (a `[:]` of structs is walked element by element, a fixed array of
-// structs too).
-void shadow_walk(arena::Arena *a, auto p, usize n) {
-    (void)a;
+// new block of the same length from the current allocator (a `[:]` of structs is walked element by element, a fixed
+// array of structs too).
+void shadow_walk(auto p, usize n) {
     if constexpr (is_record(typeof(*p))) {
         for (; n > 0; n--) {
             for constexpr (usize i = 0; i < countof(fields(typeof(*p))); i++) {
                 constexpr Field f = fields(typeof(*p))[i];
                 (void)f;
                 if constexpr (is_array(typeof(p->[f]))) {
-                    shadow_walk(a, &p->[f][0], sizeof(p->[f]) / sizeof(p->[f][0]));
+                    shadow_walk(&p->[f][0], sizeof(p->[f]) / sizeof(p->[f][0]));
                 } else if constexpr (is_slice(typeof(p->[f]))) {
                     if (countof(p->[f]) > 0) { // an empty slice has no element to read
                         typeof(p->[f].data) old = p->[f].data;
                         p->[f].data =
-                            (typeof(old))arena::push_array_raw(a, sizeof(*old), countof(p->[f]), alignof(typeof(*old)));
+                            (typeof(old))mem::alloc_array_raw(sizeof(*old), countof(p->[f]), alignof(typeof(*old)));
                         __builtin_memcpy(p->[f].data, old, countof(p->[f]) * sizeof(*old));
-                        shadow_walk(a, p->[f].data, countof(p->[f]));
+                        shadow_walk(p->[f].data, countof(p->[f]));
                     }
                 } else {
-                    shadow_walk(a, &p->[f], 1);
+                    shadow_walk(&p->[f], 1);
                 }
             }
             p += 1;
@@ -98,28 +97,29 @@ void shadow_walk(arena::Arena *a, auto p, usize n) {
     }
 }
 
-// `autodiff::zeros(&arena, params)` is a copy of `params` in the shape of a gradient: every number zero, every `[:]`
-// field a new array of the same length from the arena. It is what an optimizer's state (momentum, Adam's moments)
+// `autodiff::zeros(params)` is a copy of `params` in the shape of a gradient: every number zero, every `[:]` field a
+// new array of the same length from the current allocator, which is the caller's region (nothing is freed one block at
+// a time). It is what an optimizer's state (momentum, Adam's moments)
 // starts as, and what `gradient` starts from. Takes the struct by value (a copy of its header, never of what a `[:]`
 // holds).
-export typeof(v) zeros(arena::Arena *a, auto v) {
-    shadow_walk(a, &v, 1);
+export typeof(v) zeros(auto v) {
+    shadow_walk(&v, 1);
     return v;
 }
 
-// The gradient of `f` with respect to `*x`, with every other argument held constant: `autodiff::gradient(&arena, loss,
-// &params, &batch)` is the derivative of `loss(&params, &batch)` with respect to what `&params` points to, a value of
-// the type of `*x`. The arena comes first even when nothing is allocated. The result has the shape of `*x`: a float
+// The gradient of `f` with respect to `*x`, with every other argument held constant: `autodiff::gradient(loss, &params,
+// &batch)` is the derivative of `loss(&params, &batch)` with respect to what `&params` points to, a value of
+// the type of `*x`. The result has the shape of `*x`: a float
 // field is differentiated, an integer, bool or enum field comes back zero, a fixed array of floats is filled, a nested
-// struct is walked, and a `[:]` field (one dimension) gets a new array of the same length from the arena, as does each
-// element of a `[:]` of structs. A pointer field is an error that says to use `[:]`. `f` is the name of a function (a
-// compile time argument), `x` a pointer, and `rest` anything `f` takes after it; a pointer in `rest` is read, never
-// differentiated. A call `f` does not accept is an error at the call. A generic function: only .smith calls it (C
-// writes `__enzyme_autodiff` with `enzyme_interleave`).
-export typeof(*x) gradient(arena::Arena *a, constexpr auto f, auto x, auto... rest) {
+// struct is walked, and a `[:]` field (one dimension) gets a new array of the same length from the current allocator,
+// as does each element of a `[:]` of structs. A pointer field is an error that says to use `[:]`. `f` is the name of a
+// function (a compile time argument), `x` a pointer, and `rest` anything `f` takes after it; a pointer in `rest` is
+// read, never differentiated. A call `f` does not accept is an error at the call. A generic function: only .smith calls
+// it (C writes `__enzyme_autodiff` with `enzyme_interleave`).
+export typeof(*x) gradient(constexpr auto f, auto x, auto... rest) {
     static_assert(effects::within(f, effects::alloc | effects::fails), "gradient: f may only allocate or fail");
     (void)sizeof(f(x, rest...));
-    typeof_unqual(*x) dx = zeros(a, *x);
+    typeof_unqual(*x) dx = zeros(*x);
     if constexpr (countof(rest) == 0) {
         reverse((void *)f, dup, x, interleave, &dx);
     } else {

@@ -1,7 +1,6 @@
 // A template: tests/autodiff_test.smith replaces CALL with calls of autodiff::gradient that must not compile.
 module main;
 
-import smith::arena;
 import smith::autodiff;
 
 typedef struct {
@@ -23,7 +22,6 @@ f64 total(Data *d, f64 scale) {
 i32 main() {
     Data d = {};
     Pointers ptr = {};
-    arena::Arena a = {};
     (void)d;
     (void)ptr;
     CALL;

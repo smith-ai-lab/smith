@@ -3,6 +3,7 @@ module toy_test;
 
 import smith::arena;
 import smith::autodiff;
+import smith::mem;
 import smith::test;
 import toy;
 
@@ -17,11 +18,43 @@ export void test_loss_gradient() {
 export void test_gradient() {
     toy::Params p = {.w = {1.0, 2.0, 3.0}, .b = 0.0};
     toy::Batch batch = {.x = {1.0, 1.0, 1.0}, .scale = 1.0};
-    alignas(arena::align_max) u8 memory[256];
-    arena::Arena a = arena::fixed(memory, sizeof memory);
-    toy::Params g = autodiff::gradient(&a, toy::model, &p, &batch);
+    toy::Params g = autodiff::gradient(toy::model, &p, &batch);
     test::check_near(g.w[0], 2.0, 1e-12);
     test::check_near(g.w[1], 4.0, 1e-12);
     test::check_near(g.w[2], 6.0, 1e-12);
     test::check_near(g.b, 1.0, 1e-12);
+}
+
+struct Line {
+    f64 w[:];
+    f64 b;
+};
+
+f64 line_loss(struct Line *line, f64 x) {
+    f64 sum = line->b;
+    for (usize i = 0; i < countof(line->w); i++) sum += line->w[i] * x;
+    return sum * sum;
+}
+
+// A gradient with a `[:]` field and zeros allocate through the current allocator and only through it: an arena is
+// installed, and every block is inside it (the test runner's checked allocator, outside, saw none).
+export void test_gradient_and_zeros_allocate_only_through_the_current_allocator() {
+    arena::Arena a = test::memory(1 << 12);
+    arena::ArenaAllocator allocator = arena::allocator(&a);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+
+    struct Line line = {.w = mem::alloc_slice(f64, 3), .b = 1.0};
+    line.w[0] = 1.0;
+    line.w[1] = 2.0;
+    line.w[2] = 3.0;
+    struct Line g = autodiff::gradient(line_loss, &line, 2.0);
+    struct Line z = autodiff::zeros(line);
+    test::check_equal(countof(g.w), 3);
+    test::check_near(g.w[1], 2.0 * 13.0 * 2.0, 1e-12);
+    test::check_near(g.b, 2.0 * 13.0, 1e-12);
+    test::check_equal(countof(z.w), 3);
+    test::check_near(z.w[2], 0.0, 0.0);
+    test::check_condition(allocator.base.owns(&allocator.base, g.w.data));
+    test::check_condition(allocator.base.owns(&allocator.base, z.w.data));
 }

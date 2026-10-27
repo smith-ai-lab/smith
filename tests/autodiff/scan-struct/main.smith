@@ -95,7 +95,7 @@ i32 main(io::Io *io) {
     fill(seeds.dy.data, 36, -1.0, 1.0);
     fill(seeds.dse.data, 48, -1.0, 1.0);
 
-    Scan g = autodiff::gradient(arena, scan_loss, &scan, &seeds);
+    Scan g = autodiff::gradient(scan_loss, &scan, &seeds);
 
     c::ReferenceScanShape shape = {2, 3, 2, 3, 4};
     c::ReferenceScanInputs in = {scan.x.data, scan.dt.data, scan.a.data, scan.b.data, scan.c.data, scan.keep.data};

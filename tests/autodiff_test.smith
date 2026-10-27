@@ -267,24 +267,20 @@ static const char *wrong_call(io::Io *io, const char *call) {
 }
 
 export void test_autodiff_wrong_a_gradient_with_one_pointer_and_no_seed_is_refused(io::Io *io) {
-    wrong_call(io, "autodiff::gradient(&a, total, &d)");
+    wrong_call(io, "autodiff::gradient(total, &d)");
 }
 
 export void test_autodiff_wrong_a_gradient_with_two_pointers_is_refused(io::Io *io) {
-    wrong_call(io, "autodiff::gradient(&a, total, &d, &d)");
+    wrong_call(io, "autodiff::gradient(total, &d, &d)");
 }
 
 export void test_autodiff_wrong_a_gradient_with_two_numbers_is_refused(io::Io *io) {
-    wrong_call(io, "autodiff::gradient(&a, total, 1.0, 2.0)");
-}
-
-export void test_autodiff_wrong_a_gradient_with_the_function_first_is_refused(io::Io *io) {
-    wrong_call(io, "autodiff::gradient(total, &d, 1.0)");
+    wrong_call(io, "autodiff::gradient(total, 1.0, 2.0)");
 }
 
 export void test_autodiff_wrong_a_pointer_field_says_to_use_a_slice(io::Io *io) {
     scratch::expect_contains("autodiff: wrong: a pointer field says to use a [:] slice",
-                             wrong_call(io, "autodiff::gradient(&a, through, &ptr)"),
+                             wrong_call(io, "autodiff::gradient(through, &ptr)"),
                              "a field is a pointer; use a [:] slice");
 }
 
