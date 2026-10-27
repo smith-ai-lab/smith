@@ -7,6 +7,7 @@
 
 #include <stddef.h>
 #include <sys/types.h>
+#include <time.h>
 
 typedef struct SmithAllocator SmithAllocator;
 
@@ -87,3 +88,34 @@ SmithConsoleHandler *smith_handlers_set_console(SmithConsoleHandler *console);
 
 // The console of the calling thread, null when none is set.
 SmithConsoleHandler *smith_handlers_console(void);
+
+// The environment of the calling thread: getenv reaches it while one is set. `get` returns the value of a variable, or
+// null when it is not set; the handler owns the string. No env handler set is libc's.
+typedef struct SmithEnvHandler SmithEnvHandler;
+
+struct SmithEnvHandler {
+    char *(*get)(SmithEnvHandler *self, const char *name);
+};
+
+// Sets the environment of the calling thread (null: libc's), returning the one it had.
+SmithEnvHandler *smith_handlers_set_env(SmithEnvHandler *env);
+
+// The environment of the calling thread, null when none is set.
+SmithEnvHandler *smith_handlers_env(void);
+
+// The clock of the calling thread: the time clock_gettime reads and the sleeping that nanosleep, usleep and sleep do.
+// `now` fills the time of the clock `which` (CLOCK_MONOTONIC, CLOCK_REALTIME...) and returns 0; `sleep` waits for the
+// duration and returns 0 (a fake advances its time and returns at once). No clock handler set is libc's. gettimeofday,
+// time and the Mach clocks are not reached.
+typedef struct SmithClockHandler SmithClockHandler;
+
+struct SmithClockHandler {
+    int (*now)(SmithClockHandler *self, clockid_t which, struct timespec *time);
+    int (*sleep)(SmithClockHandler *self, const struct timespec *duration);
+};
+
+// Sets the clock of the calling thread (null: libc's), returning the one it had.
+SmithClockHandler *smith_handlers_set_clock(SmithClockHandler *clock);
+
+// The clock of the calling thread, null when none is set.
+SmithClockHandler *smith_handlers_clock(void);

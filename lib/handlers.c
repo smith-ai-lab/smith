@@ -27,6 +27,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/syscall.h>
+#include <time.h>
 #include <unistd.h>
 
 static atomic_bool smith_handlers_ready;
@@ -109,6 +110,61 @@ SmithConsoleHandler *smith_handlers_set_console(SmithConsoleHandler *console) {
 
 SmithConsoleHandler *smith_handlers_console(void) {
     return smith_handlers_console_current();
+}
+
+// The environment and the clock, found the same way.
+static atomic_uint smith_handlers_env_active;
+static atomic_uint smith_handlers_clock_active;
+static thread_local SmithEnvHandler *smith_handlers_env_table;
+static thread_local SmithClockHandler *smith_handlers_clock_table;
+
+__attribute__((noinline)) static SmithEnvHandler *smith_handlers_env_get(void) {
+    return smith_handlers_env_table;
+}
+
+__attribute__((noinline)) static SmithClockHandler *smith_handlers_clock_get(void) {
+    return smith_handlers_clock_table;
+}
+
+__attribute__((noinline)) static SmithEnvHandler *smith_handlers_env_current(void) {
+    if (atomic_load_explicit(&smith_handlers_env_active, memory_order_relaxed) == 0) return nullptr;
+    if (!atomic_load_explicit(&smith_handlers_ready, memory_order_relaxed)) return nullptr;
+    return smith_handlers_env_get();
+}
+
+__attribute__((noinline)) static SmithClockHandler *smith_handlers_clock_current(void) {
+    if (atomic_load_explicit(&smith_handlers_clock_active, memory_order_relaxed) == 0) return nullptr;
+    if (!atomic_load_explicit(&smith_handlers_ready, memory_order_relaxed)) return nullptr;
+    return smith_handlers_clock_get();
+}
+
+SmithEnvHandler *smith_handlers_set_env(SmithEnvHandler *env) {
+    SmithEnvHandler *previous = smith_handlers_env_table;
+    smith_handlers_env_table = env;
+    if (previous == nullptr && env != nullptr) atomic_fetch_add(&smith_handlers_env_active, 1);
+    if (previous != nullptr && env == nullptr) atomic_fetch_sub(&smith_handlers_env_active, 1);
+    return previous;
+}
+
+SmithEnvHandler *smith_handlers_env(void) {
+    return smith_handlers_env_current();
+}
+
+SmithClockHandler *smith_handlers_set_clock(SmithClockHandler *clock) {
+    SmithClockHandler *previous = smith_handlers_clock_table;
+    smith_handlers_clock_table = clock;
+    if (previous == nullptr && clock != nullptr) atomic_fetch_add(&smith_handlers_clock_active, 1);
+    if (previous != nullptr && clock == nullptr) atomic_fetch_sub(&smith_handlers_clock_active, 1);
+    return previous;
+}
+
+SmithClockHandler *smith_handlers_clock(void) {
+    return smith_handlers_clock_current();
+}
+
+// The duration of a sleep, as a timespec; the clock handler's sleep takes that.
+static struct timespec smith_handlers_duration(unsigned long long seconds, unsigned long nanoseconds) {
+    return (struct timespec){.tv_sec = (time_t)seconds, .tv_nsec = (long)nanoseconds};
 }
 
 static bool smith_handlers_has(int flags, int bit) {
@@ -499,6 +555,39 @@ static FILE *smith_handlers_freopen(const char *path, const char *mode, FILE *st
     return smith_handlers_fopen(path, mode);
 }
 
+// ---- The environment and the clock: getenv, clock_gettime, nanosleep, usleep and sleep.
+
+static char *smith_handlers_getenv(const char *name) {
+    SmithEnvHandler *env = smith_handlers_env_current();
+    return env != nullptr ? env->get(env, name) : getenv(name);
+}
+
+static int smith_handlers_clock_gettime(clockid_t which, struct timespec *time) {
+    SmithClockHandler *clock = smith_handlers_clock_current();
+    return clock != nullptr ? clock->now(clock, which, time) : clock_gettime(which, time);
+}
+
+static int smith_handlers_nanosleep(const struct timespec *duration, struct timespec *remaining) {
+    SmithClockHandler *clock = smith_handlers_clock_current();
+    if (clock == nullptr) return nanosleep(duration, remaining);
+    if (remaining != nullptr) *remaining = (struct timespec){};
+    return clock->sleep(clock, duration);
+}
+
+static int smith_handlers_usleep(useconds_t microseconds) {
+    SmithClockHandler *clock = smith_handlers_clock_current();
+    if (clock == nullptr) return usleep(microseconds);
+    struct timespec duration = smith_handlers_duration(microseconds / 1000000U, (microseconds % 1000000U) * 1000UL);
+    return clock->sleep(clock, &duration);
+}
+
+static unsigned smith_handlers_sleep(unsigned seconds) {
+    SmithClockHandler *clock = smith_handlers_clock_current();
+    if (clock == nullptr) return sleep(seconds);
+    struct timespec duration = smith_handlers_duration(seconds, 0);
+    return clock->sleep(clock, &duration) == 0 ? 0 : seconds;
+}
+
 typedef struct {
     uintptr_t replacement;
     uintptr_t replacee;
@@ -555,6 +644,11 @@ __attribute__((used, section("__DATA,__interpose"))) static const SmithInterpose
     {(uintptr_t)&smith_handlers_fseek, (uintptr_t)&fseek},
     {(uintptr_t)&smith_handlers_fdopen, (uintptr_t)&fdopen},
     {(uintptr_t)&smith_handlers_freopen, (uintptr_t)&freopen},
+    {(uintptr_t)&smith_handlers_getenv, (uintptr_t)&getenv},
+    {(uintptr_t)&smith_handlers_clock_gettime, (uintptr_t)&clock_gettime},
+    {(uintptr_t)&smith_handlers_nanosleep, (uintptr_t)&nanosleep},
+    {(uintptr_t)&smith_handlers_usleep, (uintptr_t)&usleep},
+    {(uintptr_t)&smith_handlers_sleep, (uintptr_t)&sleep},
 };
 // clang-format on
 #pragma clang diagnostic pop
@@ -654,6 +748,11 @@ typedef void (*SmithHandlersFunction)(void);
 [[gnu::weak]] extern void ___interceptor_fseek(void);
 [[gnu::weak]] extern void ___interceptor_fdopen(void);
 [[gnu::weak]] extern void ___interceptor_freopen(void);
+[[gnu::weak]] extern void ___interceptor_getenv(void);
+[[gnu::weak]] extern void ___interceptor_clock_gettime(void);
+[[gnu::weak]] extern void ___interceptor_nanosleep(void);
+[[gnu::weak]] extern void ___interceptor_usleep(void);
+[[gnu::weak]] extern void ___interceptor_sleep(void);
 // NOLINTEND(bugprone-reserved-identifier,readability-identifier-naming)
 
 // The next definition of a function after this program's: AddressSanitizer's interceptor when the program has it,
@@ -679,6 +778,11 @@ static SmithHandlersFunction smith_handlers_find(SmithHandlersNext *next) {
 static SmithHandlersNext smith_handlers_next_open = {"open", ___interceptor_open, nullptr};
 static SmithHandlersNext smith_handlers_next_read = {"read", ___interceptor_read, nullptr};
 static SmithHandlersNext smith_handlers_next_write = {"write", ___interceptor_write, nullptr};
+static SmithHandlersNext smith_handlers_next_getenv = {"getenv", ___interceptor_getenv, nullptr};
+static SmithHandlersNext smith_handlers_next_clock_gettime = {"clock_gettime", ___interceptor_clock_gettime, nullptr};
+static SmithHandlersNext smith_handlers_next_nanosleep = {"nanosleep", ___interceptor_nanosleep, nullptr};
+static SmithHandlersNext smith_handlers_next_usleep = {"usleep", ___interceptor_usleep, nullptr};
+static SmithHandlersNext smith_handlers_next_sleep = {"sleep", ___interceptor_sleep, nullptr};
 static SmithHandlersNext smith_handlers_next_close = {"close", ___interceptor_close, nullptr};
 static SmithHandlersNext smith_handlers_next_syscall = {"syscall", ___interceptor_syscall, nullptr};
 static SmithHandlersNext smith_handlers_next_fwrite = {"fwrite", ___interceptor_fwrite, nullptr};
@@ -1097,5 +1201,41 @@ FILE *freopen(const char *path, const char *mode, FILE *stream) {
                     smith_handlers_find(&smith_handlers_next_freopen))(path, mode, stream);
     if (stream != stdin && stream != stdout && stream != stderr) smith_handlers_raw_fclose(stream);
     return fopen(path, mode);
+}
+// ---- The environment and the clock: getenv, clock_gettime, nanosleep, usleep and sleep.
+
+char *getenv(const char *name) {
+    SmithEnvHandler *env = smith_handlers_env_current();
+    if (env != nullptr) return env->get(env, name);
+    return ((char *(*)(const char *))smith_handlers_find(&smith_handlers_next_getenv))(name);
+}
+
+int clock_gettime(clockid_t which, struct timespec *time) {
+    SmithClockHandler *clock = smith_handlers_clock_current();
+    if (clock != nullptr) return clock->now(clock, which, time);
+    return ((int (*)(clockid_t, struct timespec *))smith_handlers_find(&smith_handlers_next_clock_gettime))(which, time);
+}
+
+int nanosleep(const struct timespec *duration, struct timespec *remaining) {
+    SmithClockHandler *clock = smith_handlers_clock_current();
+    if (clock == nullptr)
+        return ((int (*)(const struct timespec *, struct timespec *))
+                    smith_handlers_find(&smith_handlers_next_nanosleep))(duration, remaining);
+    if (remaining != nullptr) *remaining = (struct timespec){};
+    return clock->sleep(clock, duration);
+}
+
+int usleep(useconds_t microseconds) {
+    SmithClockHandler *clock = smith_handlers_clock_current();
+    if (clock == nullptr) return ((int (*)(useconds_t))smith_handlers_find(&smith_handlers_next_usleep))(microseconds);
+    struct timespec duration = smith_handlers_duration(microseconds / 1000000U, (microseconds % 1000000U) * 1000UL);
+    return clock->sleep(clock, &duration);
+}
+
+unsigned sleep(unsigned seconds) {
+    SmithClockHandler *clock = smith_handlers_clock_current();
+    if (clock == nullptr) return ((unsigned (*)(unsigned))smith_handlers_find(&smith_handlers_next_sleep))(seconds);
+    struct timespec duration = smith_handlers_duration(seconds, 0);
+    return clock->sleep(clock, &duration) == 0 ? 0 : seconds;
 }
 #endif
