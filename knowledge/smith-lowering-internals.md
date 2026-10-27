@@ -108,7 +108,7 @@ tags: [lowering, internals]
   `compile_commands.json`, for its flags and include paths. The module headers are
   read through the file manager's file system, so a relative `-I .smith/include` means the command's directory. Because a
   module starts with code, clangd's preamble for it is empty, and the "translation unit with no declaration" extension
-  warning that C gives for that is turned off for an empty main buffer. The messages go through `shim/lsp.cpp`:
+  warning that C gives for that is turned off for an empty main buffer. The messages go through `runtime/lsp.smith`:
   `smith_lsp_run` runs clangd's main with its input and output behind a pair of pipes, and a thread each way reads the
   protocol's messages, notes the requests (hover, completion, outline, signature help, hints, references, rename,
   workspace symbols) and rewrites the names in their answers with the table of the file asked about; a message that is

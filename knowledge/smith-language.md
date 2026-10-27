@@ -261,7 +261,7 @@ path is settled.
   are keywords of C23 and need no `c::` even where a header defines them as macros (`<assert.h>` does `static_assert`).
 - Variables declared with a struct in one declaration (`export struct S {…} s;`) are not given a symbol.
 - A hover in an importer shows the declaration as the header gives it (`int32_t foo::f(int32_t x)`, from the header's
-  standard C types, where the module says `i32`); the `asm("_foo::f")` label of the symbol is left out (`shim/lsp.cpp`).
+  standard C types, where the module says `i32`); the `asm("_foo::f")` label of the symbol is left out (`runtime/lsp_names.smith`).
 - A rename of an exported name edits what clangd knows of (the module, and the importers its index has seen); it does
   not edit the generated headers. Like any cross-file rename in clangd it misses an importer the index has not read yet.
 - A fix-it that a mistyped `x::name` offers puts in the member alone (`f`), so it makes `foo::f`.

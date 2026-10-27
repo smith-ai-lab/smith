@@ -15,7 +15,7 @@ asked by `createInvocation`) to the one rule of `smith cc` for `.smith` inputs (
 folder with no compile database included (a single file or a few modules need no build.c). Names are shown as written (`box::area`, `area` in
 the module), never guessed from underscores: the lowering keeps a table of the names it made, a diagnostic consumer in
 the hook rewrites messages, notes and fix-its (`smith cc` too) and sends a note into a generated header to the
-declaration in the module's `.smith`, and a layer between the editor and clangd (`shim/lsp.cpp`, in process, pipes on
+declaration in the module's `.smith`, and a layer between the editor and clangd (`runtime/lsp.smith`, in process, pipes on
 clangd's stdin and stdout; `SMITH_LSP_RAW=1` turns it off) rewrites hover, symbols, completion (`box::` offers the
 module's exports), signature help and hints. A module's header has a `// smith-names:` line of its exports, which depends
 on them only, so an edit to a body does not rebuild importers. A `c::name` that is no macro stays a plain token in the
@@ -51,7 +51,7 @@ a table the lowering keeps of the names it made (`runtime/lang_names.c`, `smith_
 underscores (`a_b` can be a real C name): the module's own declarations, the exports of each imported module (from the
 `// smith-names:` line of its header) and of the modules those import (written with their whole module name, as the
 file has no name for them), and every `x::name` the file wrote, declared or not. `smith lsp` takes the table from the
-hook when a parse ends (`shim/names.h`) and a layer between the editor and clangd (`shim/lsp.cpp`) rewrites the answers
+hook when a parse ends (`shim/names.h`) and a layer between the editor and clangd (`runtime/lsp_layer.smith`) rewrites the answers
 (`SMITH_LSP_RAW=1` turns the layer off: the compiler's names). In an editor, after `box::` the module's exports are
 offered, each as its member, and the edit replaces only what comes after the `::` (`box::` + `area`). The layer also
 leaves out of references and renames the generated headers (`.smith/include/*.h`), which are no place to go to or edit.
