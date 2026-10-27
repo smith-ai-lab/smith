@@ -95,3 +95,23 @@ export void test_cache_modules_two_smiths_sharing_a_cache_use_a_folder_each(io::
                          text(&p, "for d in \"$modules\"/*/; do find \"$d\" -name '*.pcm' | head -1; done | wc -l | "
                                   "tr -d ' '"));
 }
+
+// Pruning on use (issue #575): of the folders of other smiths the three most recently used stay, the others go once
+// idle for a day, and a folder a running smith holds stays whatever its age. Hours ago: r1 1, f1 30, f2 50, f3 70, f4
+// 90, f5 110 (f5 held by a process that has its lock).
+export void test_cache_modules_old_folders_of_other_smiths_are_pruned_on_use(io::Io *io) {
+    scratch::Project p = modules_project(io);
+    scratch::Run made = scratch::sh(
+        &p, "m=$XDG_CACHE_HOME/smith/modules; mkdir -p $m; ago() { touch -t \"$(date -v-$1H +%Y%m%d%H%M 2>/dev/null "
+            "|| date -d \"$1 hours ago\" +%Y%m%d%H%M)\" \"$2\"; }; for f in r1:1 f1:30 f2:50 f3:70 f4:90 f5:110; do "
+            "mkdir -p $m/${f%:*}; : >$m/${f%:*}/.used; ago ${f#*:} $m/${f%:*}/.used; done; "
+            "perl -MFcntl=:flock -e 'open F, \">>\", $ARGV[0]; flock F, LOCK_SH; sleep 40' $m/f5/.in-use & "
+            "holder=$!; sleep 1; smith build >/dev/null 2>&1; echo \"built $?\"; kill $holder");
+    scratch::expect_text("pruning: the build runs while the lock is held", "built 0\n", made.out);
+    scratch::expect_text("pruning: the recent three and the held one stay, the rest go", "f1 f2 f5 r1",
+                         scratch::capture(&p, "cd $XDG_CACHE_HOME/smith/modules && ls -d */ | tr -d "
+                                              "/ | grep -v '^[0-9a-f]\\{32\\}$' | tr '\\n' ' ' | sed 's/ $//'"));
+    scratch::expect_text(
+        "pruning: this smith's folder is there", "1",
+        scratch::capture(&p, "ls -d $XDG_CACHE_HOME/smith/modules/*/ | grep -c '/[0-9a-f]\\{32\\}/$'"));
+}

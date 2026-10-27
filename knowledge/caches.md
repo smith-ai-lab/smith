@@ -20,9 +20,14 @@ from either is simply fetched or built again:
 - `packages/<hex>/`: what `smith_package` extracted (above).
 - `modules/<LC_UUID of the smith>/`: clang's module cache for `smith_modules` (below), one folder for each smith binary
   (issue #575): clang keys a module by its flags and paths, not by the compiler and resource folder that built it, so two
-  smiths on one cache (CI's, a lane's, the installed one) would read each other's modules. A folder carries a `.used`
-  stamp (touched at most once a day); when a smith stamps its folder, the folders of other smiths unused for 31 days are
-  removed, and clang prunes inside a folder as below. It is one cache for every project and worktree, not one
+  smiths on one cache (CI's, a lane's, the installed one) would read each other's modules. The folders are pruned sooner than the
+  31 days, on use (the train installs after every green merge, 20 or more smiths a day, so a month of folders would be
+  gigabytes): each build that opens the cache stamps its folder (`.used`, touched when an hour old) and holds it with a
+  shared lock on `.in-use` for the build's life, its compiles included; of the other folders the **3** most recently
+  used stay (a lane's smith, CI's and the installed one swap in turn), and any other idle for **a day** goes, unless a
+  running smith holds it (the pruner takes the exclusive lock without waiting, so a folder in use is never removed).
+  It costs one `readdir` and a `stat` for each folder. Inside a folder clang prunes by the 31-day rule as below. It is
+  one cache for every project and worktree, not one
   per project, so Apple's SDK and framework modules are built once per machine and a new clone or worktree starts warm.
   clang keys a module file by the module, its path and the hash of the compile's flags, so two worktrees whose headers
   differ (different paths) never share or overwrite one another's module files, and a sanitized compile never reuses a

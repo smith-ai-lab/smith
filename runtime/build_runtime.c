@@ -22,6 +22,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/utsname.h>
 #include <sys/wait.h>
@@ -1455,9 +1456,69 @@ static void smith_modules_check_overlap(const char *const *folders, size_t count
 
 // The module cache of the smith that runs this build: <cache>/smith/modules/<LC_UUID of that smith>. clang keys a
 // module by its flags and paths, not by the compiler and resource folder that built it, so two smiths sharing one
-// folder read each other's modules (a stddef.h of another resource folder: issue #575). A folder is stamped (.used,
-// touched at most once a day) and the folders of other smiths unused for 31 days are removed when this one is stamped,
-// so the 31-day rule holds for the folders as clang's pruning holds inside one.
+// folder read each other's modules (a stddef.h of another resource folder: issue #575). Every install is a new smith,
+// so the folders are pruned on use, each time a build opens the cache: this smith's folder is stamped (`.used`, touched
+// when an hour old) and held (a shared lock on `.in-use` for the build's life, inherited by its compiles); of the
+// other folders the smith_modules_keep_recent most recently used stay, and any other idle for a day goes, unless a
+// running smith holds it (the pruner takes the exclusive lock without waiting, and removes while it has it).
+constexpr size_t smith_modules_keep_recent = 3;
+constexpr time_t smith_modules_idle_seconds = (time_t)24 * 3600;
+constexpr time_t smith_modules_touch_seconds = 3600;
+constexpr size_t smith_modules_folders_max = 256;
+
+typedef struct {
+    char name[96];
+    time_t used;
+} SmithModulesFolder;
+
+static void smith_modules_remove_if_free(const char *path) {
+    char lock[PATH_MAX + 16];
+    snprintf(lock, sizeof lock, "%s/.in-use", path);
+    int fd = open(lock, O_RDWR | O_CREAT | O_CLOEXEC, 0666);
+    if (fd < 0) return;
+    if (flock(fd, LOCK_EX | LOCK_NB) == 0) smith_package_remove(path);
+    close(fd);
+}
+
+static void smith_modules_prune(const char *base, const char *name) {
+    static SmithModulesFolder folders[smith_modules_folders_max];
+    size_t count = 0;
+    DIR *dir = opendir(base);
+    if (dir == nullptr) return;
+    for (size_t guard = 0; guard < smith_modules_folders_max; guard++) { // bounded by the entries
+        const struct dirent *entry = readdir(dir);
+        if (entry == nullptr) break;
+        if (entry->d_name[0] == '.' || strcmp(entry->d_name, name) == 0 ||
+            strlen(entry->d_name) >= sizeof folders[0].name)
+            continue;
+        char path[PATH_MAX];
+        char used[PATH_MAX + 8];
+        struct stat info;
+        snprintf(path, sizeof path, "%s/%s", base, entry->d_name);
+        snprintf(used, sizeof used, "%s/.used", path);
+        if (stat(used, &info) != 0 && stat(path, &info) != 0) continue; // an old layout's entry: its own time
+        snprintf(folders[count].name, sizeof folders[0].name, "%s", entry->d_name);
+        folders[count++].used = info.st_mtime;
+    }
+    closedir(dir);
+    for (size_t i = 1; i < count; i++) { // newest first, by insertion
+        SmithModulesFolder held = folders[i];
+        size_t at = i;
+        while (at > 0 && folders[at - 1].used < held.used) {
+            folders[at] = folders[at - 1];
+            at--;
+        }
+        folders[at] = held;
+    }
+    time_t now = time(nullptr);
+    for (size_t i = smith_modules_keep_recent; i < count; i++) {
+        if (now - folders[i].used <= smith_modules_idle_seconds) continue;
+        char path[PATH_MAX];
+        snprintf(path, sizeof path, "%s/%s", base, folders[i].name);
+        smith_modules_remove_if_free(path);
+    }
+}
+
 static bool smith_modules_cache_folder(char *out, SmithPackageFault *error) {
     char base[PATH_MAX];
     if (!smith_cache_folder(SmithCache_Modules, base, error)) return false;
@@ -1465,26 +1526,16 @@ static bool smith_modules_cache_folder(char *out, SmithPackageFault *error) {
     const char *name = id != nullptr && id[0] != '\0' ? id : "unknown";
     int written = snprintf(out, PATH_MAX, "%s/%s", base, name);
     if (written <= 0 || written >= PATH_MAX - 64) return smith_package_fail(error, "the cache path is too long");
+    if (!smith_package_make_folders(out)) return true; // clang reports a cache it cannot write
     char stamp[PATH_MAX];
     snprintf(stamp, sizeof stamp, "%s/.used", out);
     struct stat info;
-    if (stat(stamp, &info) == 0 && time(nullptr) - info.st_mtime < (time_t)24 * 3600) return true;
-    if (!smith_package_make_folders(out)) return true; // clang reports a cache it cannot write
-    (void)smith_cache_touch(stamp);
-    DIR *dir = opendir(base);
-    if (dir == nullptr) return true;
-    for (size_t guard = 0; guard < smith_entries_max; guard++) { // bounded by the entries
-        const struct dirent *entry = readdir(dir);
-        if (entry == nullptr) break;
-        if (entry->d_name[0] == '.' || strcmp(entry->d_name, name) == 0) continue;
-        char path[PATH_MAX];
-        snprintf(path, sizeof path, "%s/%s", base, entry->d_name);
-        char used[PATH_MAX + 8];
-        snprintf(used, sizeof used, "%s/.used", path);
-        if (stat(used, &info) != 0 && stat(path, &info) != 0) continue;
-        if (time(nullptr) - info.st_mtime > smith_cache_prune_after) smith_package_remove(path);
-    }
-    closedir(dir);
+    if (stat(stamp, &info) != 0 || time(nullptr) - info.st_mtime >= smith_modules_touch_seconds)
+        (void)smith_cache_touch(stamp);
+    snprintf(stamp, sizeof stamp, "%s/.in-use", out);
+    int held = open(stamp, O_RDWR | O_CREAT, 0666); // not close-on-exec: the compiles of the build hold it too
+    if (held >= 0 && flock(held, LOCK_SH) != 0) close(held);
+    smith_modules_prune(base, name);
     return true;
 }
 
