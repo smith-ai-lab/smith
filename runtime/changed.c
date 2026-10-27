@@ -14,7 +14,8 @@ constexpr size_t smith_changed_files_max = 16384;
 constexpr size_t smith_changed_edges_max = 1U << 17;
 constexpr size_t smith_changed_pool_max = 1U << 21;
 constexpr size_t smith_changed_text_max = 1U << 21;
-constexpr size_t smith_changed_argument_max = 120000; // one runner argument, under Linux's 128 KiB
+constexpr size_t smith_changed_argument_max =
+    12000; // the runner's arguments travel as -DSMITH_ARGS (16384 bytes in all)
 constexpr size_t smith_changed_paths_max = 4096;
 
 static char smith_changed_pool[smith_changed_pool_max];

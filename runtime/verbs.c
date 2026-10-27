@@ -916,8 +916,8 @@ static int smith_test_take_changed(SmithVerbArgs *split, const char *self) {
     if (result == SmithChanged_Failed) return smith_exit_usage;
     const char *filter = smith_changed_buffer_text(&selection);
     if (list) return smith_test_print_selection(result, filter);
-    // The selection is one argument of the runner; an argument has a limit (128 KiB on Linux), so a longer one runs
-    // everything, and says so (never silently).
+    // The selection is one argument of the runner; the arguments of a verb travel to build.c in 16384 bytes
+    // (smith_verb_args_max), so a longer one runs everything, and says so (never silently).
     if (result == SmithChanged_Some && selection.used > smith_changed_argument_max) {
         fprintf(stderr,
                 "smith test --changed: the selection (%zu bytes) is longer than one argument, so every test runs\n",
