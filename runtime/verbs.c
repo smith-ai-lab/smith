@@ -430,8 +430,7 @@ static char *const *smith_lint_job(size_t job, void *context) {
 }
 
 static size_t smith_verbs_jobs(void) {
-    long cores = sysconf(_SC_NPROCESSORS_ONLN);
-    if (cores < 1) return 1;
+    long cores = smith_slots_cores();
     return (size_t)cores > smith_verbs_jobs_max ? smith_verbs_jobs_max : (size_t)cores;
 }
 

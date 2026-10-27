@@ -35,6 +35,7 @@
 #include <sys/ioctl.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
+#include <sys/sysctl.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -1831,7 +1832,7 @@ static bool smith_build_compiler(const char *self, char *out) {
 constexpr int smith_build_jobs_max = (int)smith_exec_jobs_max;
 
 static int smith_build_default_jobs(void) {
-    long cpus = sysconf(_SC_NPROCESSORS_ONLN);
+    long cpus = smith_slots_cores();
     int jobs = cpus <= 1 ? 2 : cpus == 2 ? 3 : (int)cpus + 2; // ninja's own default
     return jobs > smith_build_jobs_max ? smith_build_jobs_max : jobs;
 }

@@ -2275,7 +2275,9 @@ child_wait_async(Child *child, Op *op) {
 [[smith::c_name("smith_processes_cores")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] usize
 processes_cores(const Processes *processes) {
     if (processes->loop->fake != nullptr) return processes->loop->fake->cores;
-    i64 cores = c::sysconf(processors_online);
+    const char *given = c::getenv("SMITH_CORES"); // the share of a slot (runtime/slots.c), or a fake host in a test
+    i64 cores = given != nullptr && given[0] != '\0' ? c::strtol(given, nullptr, 10) : 0;
+    if (cores <= 0) cores = c::sysconf(processors_online);
     return cores > 0 ? (usize)cores : 1;
 }
 

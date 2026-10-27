@@ -93,3 +93,37 @@ export void test_the_executor_takes_its_slot_at_the_first_step_and_an_up_to_date
     scratch::Run run = scratch::sh(&p, format::push(&io->arena, prelude, script).data);
     scratch::expect_text("the first run waits, the second does not", "built\nstatus 0\n0\n", run.out);
 }
+
+// A holder whose parent is gone (reparented, an orphan) loses its slot: the next job takes it without a release. The
+// holder here is started in a subshell that ends at once, and it would keep the slot until `free`.
+export void test_the_slot_of_an_orphan_is_reclaimed(io::Io *io) {
+    const char *out = slots_case(io, "(smith --smith-slots sh -c \"$hold\" &); w held; "
+                                     "smith --smith-slots touch b_ran; [ -e b_ran ] && echo ran; touch free");
+    scratch::expect_text("the orphan's slot is free", "ran\n", out);
+}
+
+// The slot file of a holder that is still alive and has its parent is not touched: the second job waits.
+export void test_the_slot_of_a_live_holder_with_its_parent_is_kept(io::Io *io) {
+    const char *out = slots_case(io, "smith --smith-slots sh -c \"$hold\" & a=$!; w held; "
+                                     "smith --smith-slots touch b_ran 2>b.err & b=$!; "
+                                     "ww b.err 'waiting for a slot'; sleep 1; [ -e b_ran ] && echo early; "
+                                     "touch free; wait $a $b; echo done");
+    scratch::expect_text("a live holder keeps its slot", "done\n", out);
+}
+
+// A slot holder runs cores / slots workers: its children see the share in SMITH_CORES (a fake host of 16 cores here).
+export void test_a_slot_holder_gets_cores_divided_by_slots(io::Io *io) {
+    const char *out = slots_case(io, "SMITH_CORES=16 SMITH_SLOTS=4 smith --smith-slots sh -c 'echo $SMITH_CORES'; "
+                                     "SMITH_CORES=2 SMITH_SLOTS=4 smith --smith-slots sh -c 'echo $SMITH_CORES'");
+    scratch::expect_text("16 / 4 workers, and at least 1", "4\n1\n", out);
+}
+
+// While a CI job holds a slot, a local holder gets one worker; CI itself keeps its share.
+export void test_a_ci_holder_lowers_the_share_of_a_local_holder(io::Io *io) {
+    const char *out = slots_case(io, "export SMITH_CORES=16 SMITH_SLOTS=2; "
+                                     "SMITH_PRIORITY=ci smith --smith-slots sh -c \"echo ci \\$SMITH_CORES >>order; "
+                                     "$hold\" & a=$!; w held; "
+                                     "smith --smith-slots sh -c 'echo local $SMITH_CORES >>order'; "
+                                     "touch free; wait $a; cat order");
+    scratch::expect_text("CI keeps 8, the local holder drops to 1", "ci 8\nlocal 1\n", out);
+}

@@ -28,6 +28,7 @@ import <poll.h>;
 import <signal.h>;
 import <smith/handlers.h>;
 import <smith/trace.h>;
+import <stdlib.h>;
 import <spawn.h>;
 import <string.h>;
 import <sys/wait.h>;
@@ -525,7 +526,9 @@ void child_open(const Child *child) {
 [[smith::c_name("smith_process_cores")]] export [[nodiscard]] usize cores() {
     c::SmithProcessHandler *handler = c::smith_handlers_process();
     if (handler != nullptr && handler->cores != nullptr) return handler->cores(handler);
-    i64 count = c::sysconf(processors_online);
+    const char *given = c::getenv("SMITH_CORES"); // the share of a slot (runtime/slots.c), or a fake host in a test
+    i64 count = given != nullptr && given[0] != '\0' ? c::strtol(given, nullptr, 10) : 0;
+    if (count <= 0) count = c::sysconf(processors_online);
     return count > 0 ? (usize)count : 1;
 }
 
