@@ -1,0 +1,14 @@
+// smith::gpu, <smith/gpu.h>: the kernel's side of the GPU (issue #18). A kernel is a plain function whose first
+// parameter is a `gpu::Thread *`; `smith cc --smith-metal` writes it as Metal source, and the same function runs on the
+// CPU by calling it once for each thread. Today a kernel is one thread for each element, with the C subset that is the
+// same in Metal (sized types, arithmetic, `if`, `for`, `c::tanhf` and the other float functions).
+//
+//   export void scale(gpu::Thread *t, u32 count, const f32 *a, f32 *out) {
+//       if (t->index < count) out[t->index] = 2.0f * a[t->index];
+//   }
+module smith::gpu;
+
+// The thread a kernel runs as: its position in the grid.
+export struct Thread {
+    u32 index;
+};

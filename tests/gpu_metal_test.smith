@@ -1,0 +1,50 @@
+// The Metal path of a GPU kernel (issue #18, knowledge/gpu-metal.md): `smith cc --smith-metal` turns the learner's gelu
+// kernel, written as a .smith function, into Metal source, and the source runs on the GPU. The fixture
+// tests/build_fixtures/gpu_metal holds the kernel, a copy of the learner's handwritten one and a small Objective-C
+// host that runs both and checks them against gelu in double precision.
+module gpu_metal_test;
+
+import smith::io;
+import smith::test;
+import scratch;
+
+constexpr char write_command[_] = "smith cc --smith-metal gelu_kernel.smith -o gelu.metal";
+
+export void test_gpu_metal_a_kernel_is_written_as_a_metal_entry_point(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "gpu_metal");
+    scratch::Run run = scratch::sh(&p, write_command);
+    scratch::expect_status("metal: a file with a kernel is written", 0, &run);
+    const char *source = scratch::read(&p, "gelu.metal");
+    scratch::expect_contains("metal: the entry takes the thread's position", source,
+                             "kernel void gelu_kernel_gelu(uint smith_position [[thread_position_in_grid]]");
+    scratch::expect_contains("metal: a scalar is a constant buffer", source, "constant uint &count [[buffer(0)]]");
+    scratch::expect_contains("metal: a pointer is a device buffer", source, "device const float *a [[buffer(1)]]");
+    scratch::expect_contains("metal: the output is the next buffer", source, "device float *out [[buffer(2)]]");
+    scratch::expect_contains("metal: the float functions have Metal's names", source, "tanh(fmin(fmax(");
+    scratch::expect_lacks("metal: and no C spelling is left", source, "__UINT32_TYPE__");
+}
+
+export void test_gpu_metal_a_file_with_no_kernel_is_refused(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "gpu_metal");
+    scratch::write(&p, "plain.smith", "module plain;\n\nexport i32 twice(i32 x) {\n    return 2 * x;\n}\n");
+    scratch::Run run = scratch::sh(&p, "smith cc --smith-metal plain.smith -o plain.metal");
+    scratch::expect_failure("metal: a file with no kernel fails", &run);
+    scratch::expect_contains("metal: and says what a kernel is", run.err, "first parameter is `gpu::Thread *`");
+    scratch::expect_text("metal: and writes no file", "no",
+                         scratch::sh(&p, "[ -f plain.metal ] && echo yes || echo no").out);
+}
+
+// The source runs on the GPU and matches both gelu in double precision and the learner's handwritten kernel. Does
+// nothing off macOS or with no Metal device (the host exits 77).
+export void test_gpu_metal_the_gelu_kernel_runs_and_matches_the_handwritten_one(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "gpu_metal");
+    if (scratch::sh(&p, "[ \"$(uname)\" = Darwin ]").status != 0) return;
+    scratch::Run written = scratch::sh(&p, write_command);
+    scratch::expect_status("metal: the kernel is written", 0, &written);
+    scratch::Run host = scratch::sh(&p, "smith cc host.m -fobjc-arc -framework Metal -framework Foundation -o host");
+    scratch::expect_status("metal: the host builds", 0, &host);
+    scratch::Run run = scratch::sh(&p, "./host gelu.metal handwritten.metal gelu_kernel_gelu 2>&1");
+    if (run.status == 77) return;
+    scratch::expect_status("metal: the host finds the output right", 0, &run);
+    scratch::expect_contains("metal: and says so", run.out, "ok 1048576 elements");
+}

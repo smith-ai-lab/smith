@@ -1083,6 +1083,9 @@ static constexpr unsigned char smith_net_source[] = {
 #embed "lib/smith/net.smith"
 };
 
+static constexpr unsigned char smith_gpu_source[] = {
+#embed "lib/smith/gpu.smith"
+};
 static constexpr unsigned char smith_ascii_source[] = {
 #embed "lib/smith/ascii.smith"
 };
@@ -1156,6 +1159,7 @@ static const SmithLibrary smith_libraries[] = {
     SMITH_LIBRARY(env, true),
     SMITH_LIBRARY(files, true),
     SMITH_LIBRARY(format, true),
+    SMITH_LIBRARY(gpu, true),
     SMITH_LIBRARY(handlers, false),
     SMITH_LIBRARY(inflate, true),
     SMITH_LIBRARY(io, true),
@@ -1191,6 +1195,8 @@ static const SmithLibrary smith_libraries[] = {
 // The lowering of .smith files, and the header pass that needs no compiler.
 #include "runtime/lang.c"
 #include "runtime/lang_lex.c"
+// The Metal source of a GPU kernel, `smith cc --smith-metal` (issue #18).
+#include "runtime/gpu_metal.c"
 // The rule for the command of a .smith file, shared with `smith lsp`.
 #include "runtime/lang_command.c"
 // A Makefile read as GNU make reads it and written as a build.c: `smith build --dump-config` (issue #44).
@@ -3161,6 +3167,8 @@ static int smith_compile_main(int argc, char **argv, int at, bool plus, const ch
         return smith_lang_main(argc - first - 1, argv + first + 1, true);
     if (first < argc && strcmp(argv[first], "--smith-lower") == 0)
         return smith_lang_main(argc - first - 1, argv + first + 1, false);
+    if (first < argc && strcmp(argv[first], "--smith-metal") == 0)
+        return smith_metal_main(argc - first - 1, argv + first + 1);
     if (first < argc && strcmp(argv[first], "--smith-tree-sitter") == 0) return smith_tree_sitter_main(self);
 #ifdef SMITH_HOOK
     if (first < argc && strcmp(argv[first], "--smith-effects") == 0)
