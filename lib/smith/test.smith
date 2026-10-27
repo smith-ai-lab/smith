@@ -1737,6 +1737,17 @@ c::SmithChecked checked_state;
 c::SmithAllocator *checked_outside;
 bool checked_active;
 
+// The io test's region (below): a failed test jumps out of run_io with the region's allocator still set, and its frame
+// is gone, so the runner puts the allocator that was there back before it reports.
+c::SmithAllocator *region_outside;
+bool region_active;
+
+void region_end() {
+    if (!region_active) return;
+    region_active = false;
+    c::smith_mem_set_allocator(region_outside); // NOLINT(smith-module-library): mem by its C names (issue #405)
+}
+
 void checked_begin(const Options *options) {
     if (options->unchecked) return;
     checked_state = c::smith_mem_checked(nullptr);
@@ -1864,9 +1875,10 @@ void run_io(const Test *test, const Options *options, const Command *command) {
     // arena, which io::close gives back, so it is never freed one object at a time (issue #439).
     arena::ArenaAllocator region = arena::allocator(&io.arena);
     // NOLINTBEGIN(smith-module-library): mem by its C names, as checked_begin (issue #405)
-    c::SmithAllocator *inside = c::smith_mem_set_allocator(&region.base);
+    region_outside = c::smith_mem_set_allocator(&region.base);
+    region_active = true;
     test->with_io(&io);
-    c::smith_mem_set_allocator(inside);
+    region_end();
     // NOLINTEND(smith-module-library)
     checked_finish();
     io::close(&io);
@@ -2018,6 +2030,7 @@ End serve(const Options *options, const Command *command) {
     coverage_begin(test);
     if (jumped == 0) execute(test, options, command);
     coverage_end(test, jumped == 0, process_cpu() - cpu_before);
+    region_end();  // ... and so did a failed io test's region
     failing_end(); // a failed test unwound with its allocators still set
     checked_end();
     disarm();
