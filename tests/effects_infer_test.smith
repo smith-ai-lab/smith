@@ -39,6 +39,16 @@ static void effects_case(io::Io *io, const char *file) {
     test::golden(io, slice_of(format::push(&io->arena, "tests/effects/", file, ".expected").data), slice_of(run.out));
 }
 
+// The report-only pointer rule: the lines SMITH_EFFECTS_POINTERS gets, a call with the effects its type states.
+export void test_effects_pointers_report(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Run run = scratch::sh(
+        &p, "cd \"$SMITH_REPO/tests/effects_pointers\" && SMITH_EFFECTS_POINTERS=\"$TMPDIR/report\" smith cc "
+            "-std=gnu2y -I \"$SMITH_REPO/.smith/include\" -c pointers.c -o /dev/null >\"$TMPDIR/out\" 2>&1; "
+            "echo \"status $?\"; cat \"$TMPDIR/report\"");
+    test::golden(io, slice_of("tests/effects_pointers/pointers.c.expected"), slice_of(run.out));
+}
+
 export void test_every_file_has_a_test(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     scratch::Run run =

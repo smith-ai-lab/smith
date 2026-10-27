@@ -81,6 +81,38 @@ llvm::StringRef plain_name(const NamedDecl *decl) {
 
 constexpr const char *prefix = "smith::effects:";
 
+// The effects a function type states after its parameter list (#396), read from the type of a callee: clang keeps
+// `[[clang::annotate_type("smith::effects:alloc")]]` as sugar through a typedef, a field, a parameter and a call.
+bool statedByType(QualType type, uint32_t &set) {
+    bool found = false;
+    set = 0;
+    if (const auto *pointer = type->getAs<PointerType>()) type = pointer->getPointeeType();
+    for (;;) {
+        const Type *node = type.getTypePtr();
+        if (const auto *attributed = dyn_cast<AttributedType>(node)) {
+            if (const auto *note = dyn_cast_or_null<AnnotateTypeAttr>(attributed->getAttr())) {
+                llvm::StringRef text = note->getAnnotation();
+                if (text.consume_front(prefix)) {
+                    found = true;
+                    while (!text.empty()) {
+                        auto [word, rest] = text.split(',');
+                        for (const Name &name : names)
+                            if (word == name.text) set |= name.bit;
+                        text = rest;
+                    }
+                }
+            }
+            type = attributed->getModifiedType();
+        } else if (const auto *named = dyn_cast<TypedefType>(node)) {
+            type = named->desugar();
+        } else if (const auto *paren = dyn_cast<ParenType>(node)) {
+            type = paren->getInnerType();
+        } else {
+            return found;
+        }
+    }
+}
+
 // ---- The hover table -----------------------------------------------------------------------------------------------
 
 // The line the editor's hover shows for a function with no attribute, by USR: filled at the end of each unit the editor
@@ -246,6 +278,9 @@ struct Edge {
 struct PointerUse {
     SourceLocation loc;
     const FunctionDecl *target = nullptr;
+    bool stated =
+        false; // a call whose function type states its effects: `[[clang::annotate_type("smith::effects:...")]]`
+    uint32_t statedSet = 0; // the set it states (none for `smith::effects:`)
 };
 
 struct Node {
@@ -363,7 +398,9 @@ class Collector {
     void onCall(const CallExpr *call) {
         const FunctionDecl *callee = call->getDirectCallee();
         if (callee == nullptr) {
-            node.pointers.push_back({call->getBeginLoc(), nullptr});
+            PointerUse use{call->getBeginLoc(), nullptr};
+            use.stated = statedByType(call->getCallee()->getType(), use.statedSet);
+            node.pointers.push_back(use);
             leaf(call->getBeginLoc(), C, "a call through a function pointer");
             return;
         }
@@ -729,7 +766,12 @@ class Analysis {
                 text += std::string(use.target == nullptr ? "call" : "make") + "\t" + presumed.getFilename() + ":" +
                         std::to_string(presumed.getLine()) + "\t" + where + "\t";
                 text += use.target == nullptr ? "-" : use.target->getNameAsString();
-                text += "\t" + (use.target == nullptr ? std::string("c") : describe(pointedEffects(use.target))) + "\n";
+                text += "\t" + (use.target == nullptr ? std::string("c") : describe(pointedEffects(use.target)));
+                // The last column: the effects the pointer's type states, `-` for a type that states none (it is `c`).
+                text += "\t" +
+                        (use.stated ? (use.statedSet == 0 ? std::string("pure") : describe(use.statedSet))
+                                    : std::string("-")) +
+                        "\n";
             }
         };
         for (const FunctionDecl *function : order)
