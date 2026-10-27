@@ -187,6 +187,27 @@ export usize body_length(const char line[:]) {
 
 [smith-slice](.agents/skills/smith-slice/SKILL.md), [smith-ascii](.agents/skills/smith-ascii/SKILL.md).
 
+A pointer that may be absent is an `option(T *)`: the pointer itself, the size of a pointer, with null as `.none` and `.some` readable only where `== .some` was tested, so a null that C lets through at run time is a compile error:
+
+```smith
+module chain;
+
+export struct Link {
+    i32 value;
+    option(Link *) next;
+};
+
+export i32 total(option(Link *) list) {
+    i32 sum = 0;
+    for (option(Link *) at = list; at == .some; at = at.some->next) {
+        sum += at.some->value;
+    }
+    return sum;
+}
+```
+
+[smith-option](.agents/skills/smith-option/SKILL.md).
+
 ### Typed memory, not `memcpy`
 
 ```c

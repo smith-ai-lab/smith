@@ -26,6 +26,7 @@ In C you `#include` and the names are bare; here `import <h>;` (or `import "h";`
 - **Bare C names are errors** in every `.smith` file, a module or not. An import always puts the header's names under `c::`. Names from `#include`d headers stay bare, as in C, so plain C in a `.smith` file means what it means in a `.c` file; a file with no `module` line lowers nothing else (no prefix, nothing `static`).
 - **Inside an attribute** (`[[gnu::format(printf, 1, 2)]]`, `__attribute__((format(printf, 1, 2)))`) a word is the attribute's own and needs no `c::`.
 - **A symbol no header declares** (macOS's `<unistd.h>` has no `environ`), or one a project's C file defines, is declared in the module with `extern` and no `export`: `extern char **environ;`, `extern u32 triple(u32 x);`. It keeps its C name, is private and not in the header, and links to the C definition. A header's own variables work with `c::` (`c::optind`, `c::stdout`, `c::errno`). `export extern` is another thing (`smith-lang-exports`).
+- **A pointer a C header marks `_Nullable`** (macOS's `FILE * _Nullable`) is an `option(FILE *)` in a `.smith` file: test it with `== .some` before `.some`; passing a `T *` or `nullptr` to one needs nothing. An unmarked C pointer is a plain `T *` for now (every foreign pointer as an `option` is planned, issue #86).
 - **The sized types** (`u32`) are typedefs only in the `.smith` file; a generated header says `uint32_t`. A project's `typedef uint32_t u32;` in a C header is fine in a `.smith` file that includes it.
 
 ## Errors
