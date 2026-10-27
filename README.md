@@ -576,6 +576,33 @@ d/dm = 12, d/db = 4
 
 [smith-autodiff](.agents/skills/smith-autodiff/SKILL.md).
 
+### Apple's frameworks, no Objective-C file
+
+`import <Foundation/Foundation.h>;` reads the header as Objective-C, apart from your C, and its classes and methods are `objc::` names: a message is a call whose arguments are checked, and the import links the framework.
+
+```smith project=objc run
+module main;
+
+import <Foundation/Foundation.h>;
+import smith::format;
+import smith::io;
+
+i32 main(io::Io *io) {
+    objc::NSString *text = objc::NSString::stringWithUTF8String("hello from smith");
+    objc::NSMutableArray *list = objc::NSMutableArray::array();
+    objc::NSMutableArray::addObject(list, text);
+    format::print(&io->console, "length ", (u64)objc::NSString::length(text), ", count ",
+                  (u64)objc::NSArray::count((objc::NSArray *)list), "\n");
+    return 0;
+}
+```
+
+```output project=objc
+length 16, count 1
+```
+
+[smith-lang-objc](.agents/skills/smith-lang-objc/SKILL.md).
+
 ## A module has no warnings
 
 In a module (a `.smith` file with a `module` line) every warning of a fixed baseline is an error, and each has a written way to say you meant it, so there is no disable comment: a lossy implicit conversion, `if (x = y)`, a case that falls through without `[[fallthrough]];`, a cast that drops `const`, a missing return. A `.c` file keeps its flags. Other checks (`padded`, `shadow`) are yours to opt into with `.warnings` or `.errors` in `build::defaults`.

@@ -1,0 +1,12 @@
+import <Foundation/Foundation.h>;
+
+// Each call is objc_msgSend cast to the method's own type: an argument of another type is an error.
+void wrong(objc::NSString *text, objc::NSArray *list) {
+    objc::NSString::isEqualToString(text, list);
+    objc::NSString::isEqualToString(text, 3);
+    objc::NSString::isEqualToString(list, text);
+}
+
+i32 main(void) {
+    return 0;
+}

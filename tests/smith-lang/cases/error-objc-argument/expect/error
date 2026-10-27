@@ -1,0 +1,3 @@
+src/main.smith:5:43: incompatible pointer types passing 'objc_NSArray *' (aka 'struct objc_NSArray *') to parameter of type 'objc_NSString *' (aka 'struct objc_NSString *') [-Wincompatible-pointer-types]
+src/main.smith:6:43: incompatible integer to pointer conversion passing 'int' to parameter of type 'objc_NSString *' (aka 'struct objc_NSString *') [-Wint-conversion]
+src/main.smith:7:37: incompatible pointer types passing 'objc_NSArray *' (aka 'struct objc_NSArray *') to parameter of type 'objc_NSString *' (aka 'struct objc_NSString *') [-Wincompatible-pointer-types]
