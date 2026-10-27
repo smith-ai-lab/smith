@@ -553,3 +553,39 @@ export void test_fails_a_proved_assert_adds_no_fails_in_any_build(io::Io *io) {
     scratch::expect_status("debug has the same verdict as release", 0, &debug);
     scratch::expect_lacks("and says nothing", debug.out, "smith-effect");
 }
+
+// A proved index is no failure point in any build (issue #325): the contract lets the prover prove `xs[i]`, so after
+// `smith prove` a [[smith::pure]] function that only indexes passes in debug as well, where the check is still
+// emitted, under the name `smith_failure_proved` that the effects table reads as no failure.
+export void test_fails_a_proved_index_adds_no_fails_in_debug(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::write(&p, "pick.smith",
+                   "module pick;\nimport bounds;\nimport smith::contract;\n"
+                   "export [[smith::pure]] i32 at(usize i) {\n"
+                   "    i32 buffer[8] = {1, 2, 3, 4, 5, 6, 7, 8};\n"
+                   "    i32 window[:] = buffer;\n"
+                   "    usize j = bounds::clamp(i);\n"
+                   "    contract::ensures(true);\n"
+                   "    return window[j];\n"
+                   "}\n");
+    scratch::write(&p, "bounds.smith",
+                   "module bounds;\nimport smith::contract;\n"
+                   "export [[smith::pure]] usize clamp(usize n) {\n"
+                   "    usize r = n < 8 ? n : 7;\n"
+                   "    contract::ensures(r < 8);\n"
+                   "    return r;\n"
+                   "}\n");
+    scratch::write(&p, "main.smith", "module main;\nimport pick;\ni32 main() { return pick::at(1) - 2; }\n");
+    scratch::Run before = scratch::sh(&p, "smith build 2>&1");
+    scratch::expect_contains("no proof: the index is a failure point", before.out,
+                             "`at` is [[smith::pure]], but it has the effects fails");
+    scratch::Run proved = scratch::sh(&p, "smith prove 2>&1");
+    scratch::expect_status("the index is proved", 0, &proved);
+    scratch::Run debug = scratch::sh(&p, "smith build 2>&1");
+    scratch::expect_status("proved: the debug build adds no `fails`", 0, &debug);
+    scratch::expect_lacks("and says nothing", debug.out, "smith-effect");
+    scratch::Run object = scratch::sh(&p, "smith cc -c pick.smith -O0 -I .smith/include -o pick.o 2>&1; nm pick.o");
+    scratch::expect_contains("debug still emits the check, as a name that is no failure point", object.out,
+                             "smith_failure_proved");
+    scratch::expect_lacks("and no other failure call", object.out, "U _smith_failure\n");
+}

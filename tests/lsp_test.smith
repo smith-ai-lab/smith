@@ -1056,3 +1056,42 @@ export void test_lsp_effects_hover_on_a_call_into_another_file(io::Io *io) {
         "hover a.c:2:41: function noisy |  | → int |  | Parameters: |  | - int x |  | effects: console |  | int "
         "noisy(int x)");
 }
+
+// A proved index is no failure point in the editor either (issue #325): the hover of a function whose index `smith
+// prove` proved does not say `effects: fails`, and the same function before the proof does.
+export void test_lsp_hover_has_no_fails_for_a_proved_index(io::Io *io) {
+    scratch::Project root;
+    if (!make(io, &root, true)) {
+        return;
+    }
+    scratch::sh(&root, "mkdir -p proof");
+    scratch::Project p = folder(&root, "proof");
+    scratch::write(&p, "pick.smith",
+                   "module pick;\nimport bounds;\nimport smith::contract;\n"
+                   "export i32 at(usize i) {\n"
+                   "    i32 buffer[8] = {1, 2, 3, 4, 5, 6, 7, 8};\n"
+                   "    i32 window[:] = buffer;\n"
+                   "    usize j = bounds::clamp(i);\n"
+                   "    contract::ensures(true);\n"
+                   "    return window[j];\n"
+                   "}\n");
+    scratch::write(&p, "bounds.smith",
+                   "module bounds;\nimport smith::contract;\n"
+                   "export usize clamp(usize n) {\n"
+                   "    usize r = n < 8 ? n : 7;\n"
+                   "    contract::ensures(r < 8);\n"
+                   "    return r;\n"
+                   "}\n");
+    scratch::write(&p, "main.smith", "module main;\nimport pick;\ni32 main() { return pick::at(1) - 2; }\n");
+    scratch::Run built = scratch::build(&p, "");
+    scratch::expect_status("the project builds", 0, &built);
+    const char *before = session(io, &p, "open pick.smith -- hover pick.smith 4 12");
+    scratch::expect_contains("before the proof the hover says fails", before, "effects: fails");
+    scratch::Run proved = scratch::sh(&p, "smith prove 2>&1");
+    scratch::expect_status("the index is proved", 0, &proved);
+    scratch::Run rebuilt = scratch::build(&p, ""); // the editor reads the summaries a build writes
+    scratch::expect_status("the project builds again", 0, &rebuilt);
+    const char *after = session(io, &p, "open pick.smith -- hover pick.smith 4 12");
+    scratch::expect_contains("the hover is of the function", after, "function at");
+    scratch::expect_lacks("after the proof it does not", after, "effects: fails");
+}
