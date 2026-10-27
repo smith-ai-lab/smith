@@ -343,6 +343,13 @@ static bool smith_changed_unnamed_reach[smith_changed_files_max]; // and the fil
 
 static bool smith_changed_read_by_a_test(const char *path);
 
+// A file no test can be affected by unless its source names it: CI's own configuration (the workflow is exercised by
+// CI running) and the profiles of a run under coverage (generated, never committed). Placed, and selecting nothing.
+static bool smith_changed_inert(const char *path) {
+    return smith_changed_starts(path, ".github/") || smith_changed_ends(path, ".profraw") ||
+           smith_changed_ends(path, ".profdata");
+}
+
 // Marks the changed files no record names, and everything that imports or includes them, transitively (the graph:
 // whatever is built from them). Returns the first such file that no file imports or includes either (the graph does
 // not place it: unknown means run every test), or nullptr.
@@ -351,7 +358,7 @@ static const char *smith_changed_unnamed(void) {
     for (size_t p = 0; p < smith_changed_path_count; p++) {
         const char *name = smith_changed_paths[p];
         if (smith_changed_is_test(name) || smith_rec_mentioned(name) || smith_changed_ends(name, ".md") ||
-            smith_changed_read_by_a_test(name))
+            smith_changed_inert(name) || smith_changed_read_by_a_test(name))
             continue;
         int at = smith_changed_find(name);
         bool imported = false;
@@ -557,7 +564,7 @@ static int smith_changed_unknown(void) {
         const char *path = smith_changed_paths[p];
         if (smith_changed_is_test(path) || smith_changed_in_smith(path) || smith_changed_ends(path, ".md")) continue;
         if (smith_changed_covered && smith_rec_mentioned(path)) continue; // a record names it: its tests judge it
-        if (smith_changed_read_by_a_test(path)) continue;                 // a test names it: those tests judge it
+        if (smith_changed_inert(path) || smith_changed_read_by_a_test(path)) continue; // placed: its readers judge it
         int at = smith_changed_find(path);
         bool imported = false;
         for (size_t e = 0; at >= 0 && e < smith_changed_edge_count && !imported; e++)

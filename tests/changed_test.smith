@@ -87,6 +87,13 @@ export void test_a_data_file_selects_the_tests_that_name_it(io::Io *io) {
     scratch::expect_lacks("a pure test", out, "c_test");
 }
 
+// A workflow that no test names is CI's own configuration: it selects no test (the workflow is exercised by CI itself).
+export void test_a_workflow_no_test_names_selects_no_test(io::Io *io) {
+    const char *out = changed(io, "mkdir -p .github/workflows; echo b > .github/workflows/other.yml");
+    scratch::expect_contains("no test file", out, "0 of 6 test files selected");
+    scratch::expect_lacks("not unknown", out, "an input of no test");
+}
+
 // The selection has no size at which it becomes `*`: three thousand tests in one file are listed one by one (far past
 // the 8 KiB filter and the 1.5 KiB per-file buffer of #456), and a run says when the names are longer than one
 // argument instead of silently running everything.
