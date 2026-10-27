@@ -56,7 +56,7 @@ const SmithJsonValue *protocol_test_without(SmithArena *arena, const SmithJsonVa
     SmithJsonWriter writer = protocol_test_writer(arena);
     smith_json_write_object_begin(&writer);
     for (size_t i = 0; i < tree->count; i++) { // bounded by the members
-        if (smith_text_is(tree->items[i]->key, name)) continue;
+        if (smith_format_is(tree->items[i]->key, name)) continue;
         smith_json_write_key(&writer, tree->items[i]->key);
         smith_json_write_value(&writer, tree->items[i]);
     }

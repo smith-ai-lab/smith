@@ -11,7 +11,7 @@
 #include <string.h>
 
 static const SmithJsonValue *test_samples_tree(SmithArena *arena, const char *json) {
-    return protocol_test_parse(arena, smith_text_make(json));
+    return protocol_test_parse(arena, smith_format_string(json));
 }
 
 static bool test_samples_has(struct smith_array_const_char_n text, const char *needle) {
@@ -47,7 +47,7 @@ void test_samples_dap_a_reason_the_schema_does_not_list_is_kept(void) {
     SmithProtocolError error = {};
     protocol_test_accepted(smith_dap_stopped_event_parse(&arena, tree, &event, &error), &error);
     smith_check(event.body.reason.known == SmithDapStoppedEventBodyReasonKnown_Other);
-    smith_check(smith_text_is(event.body.reason.text, "signal SIGSEGV"));
+    smith_check(smith_format_is(event.body.reason.text, "signal SIGSEGV"));
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_dap_stopped_event_write(&writer, &event);
     struct smith_array_const_char_n text = protocol_test_text(&writer);
@@ -86,7 +86,7 @@ void test_samples_dap_initialize_response_with_capabilities(void) {
     smith_check(response.body.has_supportsConfigurationDoneRequest && response.body.supportsConfigurationDoneRequest);
     smith_check(response.body.has_exceptionBreakpointFilters);
     smith_check_equal_u64(response.body.exceptionBreakpointFilters.count, 1);
-    smith_check(smith_text_is(response.body.exceptionBreakpointFilters.items[0].filter, "cpp_throw"));
+    smith_check(smith_format_is(response.body.exceptionBreakpointFilters.items[0].filter, "cpp_throw"));
     smith_check_equal_u64(response.body.additionalProperties.count, 1); // the adapter's own member
 }
 
@@ -100,7 +100,7 @@ void test_samples_dap_a_failure_response_with_a_message_of_its_own(void) {
     protocol_test_accepted(smith_dap_launch_response_parse(&arena, tree, &response, &error), &error);
     smith_check(!response.success && response.has_message);
     smith_check(response.message.known == SmithDapResponseMessageKnown_Other);
-    smith_check(smith_text_is(response.message.text, "program not found"));
+    smith_check(smith_format_is(response.message.text, "program not found"));
 }
 
 void test_samples_dap_a_wrong_event_name_and_a_wrong_type_are_refused_where_they_are(void) {
@@ -137,12 +137,12 @@ void test_samples_mcp_a_tool_call_request_with_either_kind_of_id(void) {
     protocol_test_accepted(smith_mcp_jsonrpc_request_parse(&arena, tree, &request, &error), &error);
     smith_check(request.id.kind == SmithMcpRequestIdKind_Integer);
     smith_check_equal_i64(request.id.as.integer, 7);
-    smith_check(smith_text_is(request.method, "tools/call"));
+    smith_check(smith_format_is(request.method, "tools/call"));
     smith_check(request.has_params && request.params->kind == SmithJsonKind_Object);
     tree = test_samples_tree(&arena, "{\"jsonrpc\":\"2.0\",\"id\":\"abc\",\"method\":\"tools/list\"}");
     protocol_test_accepted(smith_mcp_jsonrpc_request_parse(&arena, tree, &request, &error), &error);
     smith_check(request.id.kind == SmithMcpRequestIdKind_String);
-    smith_check(smith_text_is(request.id.as.string, "abc"));
+    smith_check(smith_format_is(request.id.as.string, "abc"));
     smith_check(!request.has_params);
     tree = test_samples_tree(&arena, "{\"jsonrpc\":\"1.0\",\"id\":1,\"method\":\"x\"}");
     smith_check(!smith_mcp_jsonrpc_request_parse(&arena, tree, &request, &error));
@@ -158,8 +158,8 @@ void test_samples_mcp_a_tool_keeps_its_own_input_schema(void) {
     SmithMcpTool tool;
     SmithProtocolError error = {};
     protocol_test_accepted(smith_mcp_tool_parse(&arena, tree, &tool, &error), &error);
-    smith_check(smith_text_is(tool.name, "breakpoint"));
-    smith_check(tool.has_description && smith_text_is(tool.description, "Set one"));
+    smith_check(smith_format_is(tool.name, "breakpoint"));
+    smith_check(tool.has_description && smith_format_is(tool.description, "Set one"));
     smith_check_equal_u64(tool.inputSchema.additionalProperties.count, 2); // properties and required
     SmithJsonWriter writer = protocol_test_writer(&arena);
     smith_mcp_tool_write(&writer, &tool);
@@ -180,7 +180,7 @@ void test_samples_mcp_a_tool_result_of_text(void) {
     protocol_test_accepted(smith_mcp_call_tool_result_parse(&arena, tree, &result, &error), &error);
     smith_check_equal_u64(result.content.count, 1);
     smith_check(result.content.items[0].kind == SmithMcpContentBlockKind_TextContent);
-    smith_check(smith_text_is(result.content.items[0].as.text_content.text, "stopped at main"));
+    smith_check(smith_format_is(result.content.items[0].as.text_content.text, "stopped at main"));
     smith_check(result.has_isError && !result.isError);
     tree = test_samples_tree(&arena, "{\"resultType\":\"complete\",\"content\":[{\"type\":\"video\"}]}");
     smith_check(!smith_mcp_call_tool_result_parse(&arena, tree, &result, &error));
