@@ -192,3 +192,69 @@ export void test_trim() {
     const char none[:] = slice::trim(blank, ascii::space);
     test::check_equal(countof(none), 0);
 }
+
+// Whether s holds the characters of word.
+bool same(const char s[:], const char word[:]) {
+    return slice::equal(s, word);
+}
+
+export void test_copy() {
+    u8 raw[4] = {9, 9, 9, 9};
+    u8 dst[:] = raw;
+    const u8 source[3] = {1, 2, 3};
+    const u8 src[:] = source;
+    slice::copy(dst, src);
+    test::check_equal(raw[0], 1);
+    test::check_equal(raw[2], 3);
+    test::check_equal(raw[3], 9);
+}
+
+export void test_take() {
+    const char s[:] = "abcde";
+    const char text[:] = s;
+    const char head[:] = slice::take(&text, 2);
+    test::check(same(head, "ab"));
+    test::check_equal(countof(text), 3);
+    const char all[:] = slice::take(&text, 3);
+    test::check_equal(countof(all), 3);
+    test::check_equal(countof(text), 0);
+}
+
+export void test_take_until() {
+    const char all[:] = "key=a=b";
+    const char text[:] = all;
+    const char key[:] = slice::take_until(&text, '=');
+    test::check(same(key, "key"));
+    const char value[:] = slice::take_until(&text, '=');
+    test::check(same(value, "a"));
+    const char rest[:] = slice::take_until(&text, '=');
+    test::check(same(rest, "b"));
+    test::check_equal(countof(text), 0);
+    const char none[:] = slice::take_until(&text, '=');
+    test::check_equal(countof(none), 0);
+}
+
+export void test_take_while() {
+    const char all[:] = "123abc";
+    const char text[:] = all;
+    const char digits[:] = slice::take_while(&text, ascii::digit);
+    test::check(same(digits, "123"));
+    test::check(same(text, "abc"));
+}
+
+export void test_lines_and_pairs() {
+    const char all[:] = "port = 80\nname=smith\n";
+    const char text[:] = all;
+    usize lines = 0;
+    while (countof(text) > 0) {
+        const char line[:] = slice::take_until(&text, '\n');
+        const char key[:] = slice::trim(slice::take_until(&line, '='), ascii::space);
+        const char value[:] = slice::trim(line, ascii::space);
+        if (lines == 0) {
+            test::check(same(key, "port"));
+            test::check(same(value, "80"));
+        }
+        lines += 1;
+    }
+    test::check_equal(lines, 2);
+}

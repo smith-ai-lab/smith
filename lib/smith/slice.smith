@@ -113,3 +113,43 @@ export typeof(xs) trim(const auto xs[:], constexpr auto pred) {
     }
     return xs[start:end];
 }
+
+// Writes src over the start of dst; the rest of dst is left alone. The slices do not overlap (restrict) and dst has
+// room for all of src.
+export void copy(auto dst[restrict :], const typeof(dst[0]) src[restrict :]) {
+    contract::requires(countof(src) <= countof(dst));
+    for (usize i = 0; i < countof(src); i++) {
+        dst[i] = src[i];
+    }
+}
+
+// The first n elements of *xs, which the caller's slice then no longer holds: a cursor, nothing is copied.
+export typeof((*xs)[0:0]) take(const auto (*xs)[:], usize n) {
+    contract::requires(n <= countof(*xs));
+    typeof((*xs)[0:0]) head = (*xs)[0:n];
+    *xs = (*xs)[n:countof(*xs)];
+    return head;
+}
+
+// The elements of *xs before the first v, and the caller's slice then starts after that v, as strsep does. With no v
+// it returns all of *xs and leaves it empty.
+export typeof((*xs)[0:0]) take_until(const auto (*xs)[:], typeof((*xs)[0]) v) {
+    usize n = 0;
+    while (n < countof(*xs) && (*xs)[n] != v) {
+        n += 1;
+    }
+    typeof((*xs)[0:0]) head = (*xs)[0:n];
+    *xs = (*xs)[n < countof(*xs) ? n + 1 : n:countof(*xs)];
+    return head;
+}
+
+// The leading elements of *xs for which pred is true; the caller's slice then starts at the first one that is not.
+export typeof((*xs)[0:0]) take_while(const auto (*xs)[:], constexpr auto pred) {
+    usize n = 0;
+    while (n < countof(*xs) && pred((*xs)[n])) {
+        n += 1;
+    }
+    typeof((*xs)[0:0]) head = (*xs)[0:n];
+    *xs = (*xs)[n:countof(*xs)];
+    return head;
+}
