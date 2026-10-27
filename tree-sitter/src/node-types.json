@@ -1667,6 +1667,26 @@
     }
   },
   {
+    "type": "element_parameter",
+    "named": true,
+    "fields": {
+      "declarator": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "array_declarator",
+            "named": true
+          },
+          {
+            "type": "pointer_declarator",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "else_clause",
     "named": true,
     "fields": {},
@@ -3069,6 +3089,10 @@
         },
         {
           "type": "attribute_specifier",
+          "named": true
+        },
+        {
+          "type": "element_parameter",
           "named": true
         },
         {

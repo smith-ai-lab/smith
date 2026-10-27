@@ -6455,6 +6455,14 @@
             "type": "SYMBOL",
             "name": "pack_parameter"
           }
+        },
+        {
+          "type": "PREC_DYNAMIC",
+          "value": 2,
+          "content": {
+            "type": "SYMBOL",
+            "name": "element_parameter"
+          }
         }
       ]
     },
@@ -11442,6 +11450,44 @@
         }
       ]
     },
+    "element_parameter": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "STRING",
+              "value": "const"
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "STRING",
+          "value": "auto"
+        },
+        {
+          "type": "FIELD",
+          "name": "declarator",
+          "content": {
+            "type": "CHOICE",
+            "members": [
+              {
+                "type": "SYMBOL",
+                "name": "pointer_declarator"
+              },
+              {
+                "type": "SYMBOL",
+                "name": "array_declarator"
+              }
+            ]
+          }
+        }
+      ]
+    },
     "type_parameter": {
       "type": "SEQ",
       "members": [
@@ -12285,6 +12331,14 @@
     [
       "type_qualifier",
       "auto_declaration"
+    ],
+    [
+      "storage_class_specifier",
+      "element_parameter"
+    ],
+    [
+      "type_qualifier",
+      "element_parameter"
     ],
     [
       "_declaration_modifiers",

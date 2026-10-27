@@ -40,6 +40,8 @@ module.exports = grammar(C, {
     [$._declarator, $._declaration_declarator],
     [$.storage_class_specifier, $.range_variable],
     [$.type_qualifier, $.auto_declaration],
+    [$.storage_class_specifier, $.element_parameter],
+    [$.type_qualifier, $.element_parameter],
     [$._declaration_modifiers, $.attributed_statement, $.export_declaration],
     [$.pointer_field_declarator, $.tuple_field],
     [$.type_specifier, $.payload_variant],
@@ -208,7 +210,14 @@ module.exports = grammar(C, {
 
     // T max(constexpr type T, T a, T b)
     // and, for argument lists, auto... rest
-    parameter_declaration: ($, original) => choice(original, prec.dynamic(1, $.type_parameter), prec.dynamic(1, $.pack_parameter)),
+    // and `auto` as the element of a declarator (issue #193): const auto xs[:], auto *p, auto xs[4]
+    parameter_declaration: ($, original) => choice(
+      original,
+      prec.dynamic(1, $.type_parameter),
+      prec.dynamic(1, $.pack_parameter),
+      prec.dynamic(2, $.element_parameter),
+    ),
+    element_parameter: $ => seq(optional('const'), 'auto', field('declarator', choice($.pointer_declarator, $.array_declarator))),
     type_parameter: $ => seq('constexpr', 'type', field('name', $.identifier)),
     pack_parameter: $ => seq('auto', '...', field('name', $.identifier)),
 
