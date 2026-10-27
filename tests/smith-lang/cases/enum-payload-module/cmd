@@ -1,1 +1,1 @@
--I @REPO@/include main.smith @REPO@/tests/smith-lang/cases/enum-payload-module/src/shapes.smith -o @OUT@/program
+-I @REPO@/.smith/include main.smith @REPO@/tests/smith-lang/cases/enum-payload-module/src/shapes.smith -o @OUT@/program

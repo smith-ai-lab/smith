@@ -1,1 +1,1 @@
--fmodules -fmodules-cache-path=@OUT@/modules -I @REPO@/include main.smith @REPO@/lib/smith/contract.smith @REPO@/lib/trace.c -o @OUT@/program
+-fmodules -fmodules-cache-path=@OUT@/modules -I @REPO@/.smith/include main.smith @REPO@/lib/smith/contract.smith @REPO@/lib/trace.c -o @OUT@/program

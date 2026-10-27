@@ -74,7 +74,7 @@ flip() { # file, offset, output
 # tests/untar.c under AddressSanitizer and UndefinedBehaviorSanitizer, as ./untar.
 build_untar() {
     smith cc -std=gnu23 -g -O1 -fsanitize=address,undefined -fno-sanitize-recover=undefined -Wall -Wextra -Werror \
-        -Wno-unused-function -I "$here/include" "$here/tests/untar.c" "$here/lib/smith/arena.smith" \
+        -Wno-unused-function -I "$here/.smith/include" "$here/tests/untar.c" "$here/lib/smith/arena.smith" \
         "$here/lib/smith/contract.smith" "$here/lib/smith/inflate.smith" "$here/lib/smith/io.smith" \
         "$here/lib/smith/random.smith" -o "$PWD/untar"
 }

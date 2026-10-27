@@ -1,1 +1,1 @@
--fmodules -fmodules-cache-path=@OUT@/modules -I @REPO@/include -c main.smith -o @OUT@/main.o
+-fmodules -fmodules-cache-path=@OUT@/modules -I @REPO@/.smith/include -c main.smith -o @OUT@/main.o

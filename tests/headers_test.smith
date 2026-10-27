@@ -72,7 +72,7 @@ static void generated(io::Io *io, const char *name) {
             "esac; done");
     scratch::expect_status("the headers are written", 0, &made);
     const char *header = format::push(&io->arena, "generated/", name, ".h").data;
-    standalone(&p, join(&p, name, ".h"), header, "-I generated -I \"$SMITH_REPO/include\"");
+    standalone(&p, join(&p, name, ".h"), header, "-I generated -I \"$SMITH_REPO/.smith/include\"");
 }
 
 // 1. The headers of the libraries, which are build outputs and not in git.

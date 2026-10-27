@@ -1,1 +1,1 @@
--I @REPO@/include -c main.smith -o @OUT@/main.o
+-I @REPO@/.smith/include -c main.smith -o @OUT@/main.o

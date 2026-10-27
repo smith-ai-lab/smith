@@ -4,7 +4,7 @@
 
 void build(SmithBuild *b) {
     const char *repo = getenv("SMITH_REPO");
-    const char *include = smith_fmt(b, "%s/include", repo != nullptr ? repo : "..");
+    const char *include = smith_fmt(b, "%s/.smith/include", repo != nullptr ? repo : "..");
     SmithObject hot = {.compiler = "smith-cc",
                        .source = "hot.c",
                        .output = "build/hot.o",

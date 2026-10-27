@@ -959,7 +959,9 @@ void check_part(const char *path, auto a, typeof(a) b, usize count) {
 // and every element is as check_part compares one, through the pointers to the first elements. The first that differs
 // is named, the count (`a.count = 3`) or the index (`a[1] = 5`, `b[1] = 6`).
 void check_slices(auto a, typeof(a) b) {
-    if (countof(a) != countof(b)) fail_field("count", value_usize(countof(a)), value_usize(countof(b)));
+    if (countof(a) != countof(b)) {
+        fail_field("count", value_usize(countof(a)), value_usize(countof(b)));
+    }
     check_part("", countof(a) ? &a[0] : nullptr, countof(b) ? &b[0] : nullptr, countof(a));
 }
 
