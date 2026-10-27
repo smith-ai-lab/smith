@@ -219,6 +219,24 @@ static void restrict_slice_fails(io::Io *io, const char *function, const char *l
             .data);
 }
 
+// 7c4c. `restrict` on an `auto` slice parameter is in the generic's instance (#484): the call is checked as a
+// fixed-element slice's is.
+export void test_prove_restrict_generic_apart_ranges_are_proved(io::Io *io) {
+    scratch::Project p = fresh(io);
+    prove_cases::each_proved(&p, "restrict generic: apart is proved", "\"$c/geometry/restrict_generic.smith\"",
+                             "geometry::restrict_generic::", "apart");
+}
+
+export void test_prove_restrict_generic_overlapping_fails_at_the_call(io::Io *io) {
+    scratch::Project p = fresh(io);
+    scratch::Run run = refuted(&p, "restrict generic: shifted fails",
+                               "--function=geometry::restrict_generic::shifted \"$c/geometry/restrict_generic.smith\"");
+    has("restrict generic: ... at the call, naming both", &run,
+        "restrict_generic.smith:21: the call of geometry::restrict_generic::copy");
+    has("restrict generic: ... dst and src", &run,
+        "passes `dst` (restrict) and `src` slices or ranges that may overlap");
+}
+
 export void test_prove_restrict_slice_shifted_fails(io::Io *io) {
     restrict_slice_fails(io, "shifted", "34", "copy");
 }

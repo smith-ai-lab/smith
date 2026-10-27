@@ -1,0 +1,22 @@
+// `restrict` on an `auto` slice parameter is in the generic's instance, so the call proves the two ranges apart as for a
+// slice of a fixed element type (restrict_slices.smith).
+module geometry::restrict_generic;
+import <smith/contract.h>;
+
+void copy(auto dst[restrict :], const auto src[const restrict :]) {
+    c::smith_requires(countof(dst) <= countof(src));
+    c::smith_ensures(true);
+    for (usize i = 0; i < countof(dst) && i < 4; i++) dst[i] = src[i];
+}
+
+export void apart() {
+    c::smith_ensures(true);
+    u8 b[8] = {0};
+    copy(b[0:4], b[4:8]);
+}
+
+export void shifted() {
+    c::smith_ensures(true);
+    u8 b[8] = {0};
+    copy(b[1:5], b[0:4]);
+}
