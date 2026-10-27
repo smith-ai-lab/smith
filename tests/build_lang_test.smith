@@ -120,7 +120,7 @@ export void test_build_lang_a_plain_smith_file_builds_with_no_header(io::Io *io)
 
 // A folder of headers (SMITH_HEADERS_FROM) stamped by this smith is copied, not generated: the marked copy of arena.h
 // shows which. Unset, the project generates its own, as before.
-constexpr char headers_marked[_] = "rm -rf marked && cp -R \"$SMITH_REPO/.smith/include/smith\" marked && "
+constexpr char headers_marked[_] = "rm -rf marked && cp -R \"$SMITH_HEADERS_FROM\" marked && "
                                    "printf '// marker\\n' >>marked/arena.h && ";
 
 export void test_build_lang_headers_from_a_folder_are_copied(io::Io *io) {
