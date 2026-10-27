@@ -1197,6 +1197,22 @@ export void test_generic_slice_const(io::Io *io) {
     corpus_case(io, "generic-slice-const");
 }
 
+export void test_generic_slice_qualifiers_auto(io::Io *io) {
+    corpus_case(io, "generic-slice-qualifiers-auto");
+}
+
+export void test_generic_slice_pointer_auto(io::Io *io) {
+    corpus_case(io, "generic-slice-pointer-auto");
+}
+
+export void test_generic_slice_derived(io::Io *io) {
+    corpus_case(io, "generic-slice-derived");
+}
+
+export void test_generic_slice_typedef(io::Io *io) {
+    corpus_case(io, "generic-slice-typedef");
+}
+
 export void test_generic_slice_convert(io::Io *io) {
     corpus_case(io, "generic-slice-convert");
 }

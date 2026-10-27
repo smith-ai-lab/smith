@@ -1539,6 +1539,63 @@ static bool smith_lang_eshape_instance_type(SmithLangEnumCall *call, const Smith
     return true;
 }
 
+// Whether the tokens at `at` are `typeof ( xs [ a : b ] )` or `typeof ( ( * xs ) [ a : b ] )` with `xs` a parameter of
+// the generic whose type is a slice (a pointer to one): the index of the closing `)`, else 0. `deref` says which.
+static uint32_t smith_lang_eshape_cut_end(const SmithLangGenToken *token, uint32_t at, uint32_t end, bool *deref) {
+    if (!(smith_lang_gt_is(token, SmithTokenKind_Identifier, "typeof") ||
+          smith_lang_gt_is(token, SmithTokenKind_Identifier, "__typeof__")) ||
+        at + 6 >= end || !smith_lang_gt_punct(token + 1, "(")) {
+        return 0;
+    }
+    *deref = smith_lang_gt_punct(token + 2, "(") && smith_lang_gt_punct(token + 3, "*");
+    uint32_t name = *deref ? 4U : 2U;
+    uint32_t open = name + (*deref ? 2U : 1U);
+    if (at + open >= end || token[name].kind != SmithTokenKind_Identifier || token[name].param == 0 ||
+        (*deref && !smith_lang_gt_punct(token + name + 1, ")")) || !smith_lang_gt_punct(token + open, "[")) {
+        return 0;
+    }
+    bool colon = false;
+    int depth = 0;
+    for (uint32_t i = open; at + i < end; i++) { // the subscript
+        depth += smith_lang_gt_punct(token + i, "[") ? 1 : smith_lang_gt_punct(token + i, "]") ? -1 : 0;
+        colon = colon || (depth == 1 && smith_lang_gt_punct(token + i, ":"));
+        if (depth == 0) {
+            return colon && smith_lang_gt_punct(token + i + 1, ")") ? at + i + 1 : 0;
+        }
+    }
+    return 0;
+}
+
+// A token of an argument that names no parameter, as it is (`i32` was lowered: `int` again). False when the call is
+// full.
+static bool smith_lang_eshape_plain(SmithLangEnumCall *call, const SmithLangGenToken *token) {
+    if (call->count >= smith_lang_eshape_tokens_max) return false;
+    SmithToken plain = smith_lang_gt_token(&smith_lang_gt, token);
+    for (size_t k = 0; k < sizeof smith_lang_sized / sizeof smith_lang_sized[0]; k++) {
+        if (smith_lang_equals(plain.text, plain.length, smith_lang_sized[k].standard)) {
+            plain.text = smith_lang_sized[k].name;
+            plain.length = (uint32_t)strlen(smith_lang_sized[k].name);
+        }
+    }
+    plain.text = smith_lang_tuple_keep(plain.text, plain.length);
+    plain.handle = smith_token_no_handle;
+    call->tokens[call->count++] = plain;
+    return true;
+}
+
+// `typeof(xs[a:b])` or `typeof((*xs)[a:b])` as an argument: the slice's struct is the argument (the pointer's star
+// taken off). The index of the closing `)`, 0 when the tokens are no such cut, UINT32_MAX when the type is too long.
+static uint32_t smith_lang_eshape_cut_type(SmithLangEnumCall *call, const SmithLangInstance *instance,
+                                           const SmithLangGenToken *token, uint32_t at, uint32_t end) {
+    bool deref = false;
+    uint32_t cut = smith_lang_eshape_cut_end(token, at, end, &deref);
+    if (cut == 0) return 0;
+    const SmithLangGenToken *named = &smith_lang_gt.tokens[at + (deref ? 4U : 2U)];
+    if (!smith_lang_eshape_instance_type(call, instance, (size_t)named->param - 1)) return UINT32_MAX;
+    if (deref && call->count > 0) call->count -= 1; // the pointer's star
+    return cut;
+}
+
 // The shape call at `at` of a generic's tokens, read for `instance`: how many tokens it takes (0 when the tokens are
 // no call of a shape), its shape, arguments and struct. An error is said at `place`.
 static uint32_t smith_lang_eshape_instance_call(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
@@ -1585,21 +1642,17 @@ static uint32_t smith_lang_eshape_instance_call(SmithLang *lang, const SmithHost
             close += 3;
             continue;
         }
+        uint32_t cut = smith_lang_eshape_cut_type(call, instance, token, close, end);
+        if (cut == UINT32_MAX) return 0;
+        if (cut != 0) { // `typeof(xs[a:b])`: the slice's struct
+            close = cut;
+            continue;
+        }
         if (token->param != 0 && token->kind == SmithTokenKind_Identifier) {
             if (!smith_lang_eshape_instance_type(call, instance, (size_t)token->param - 1)) return 0;
             continue;
         }
-        if (call->count >= smith_lang_eshape_tokens_max) return 0;
-        SmithToken plain = smith_lang_gt_token(&smith_lang_gt, token);
-        for (size_t k = 0; k < sizeof smith_lang_sized / sizeof smith_lang_sized[0]; k++) { // `i32` was lowered
-            if (smith_lang_equals(plain.text, plain.length, smith_lang_sized[k].standard)) {
-                plain.text = smith_lang_sized[k].name;
-                plain.length = (uint32_t)strlen(smith_lang_sized[k].name);
-            }
-        }
-        plain.text = smith_lang_tuple_keep(plain.text, plain.length);
-        plain.handle = smith_token_no_handle;
-        call->tokens[call->count++] = plain;
+        if (!smith_lang_eshape_plain(call, token)) return 0;
     }
     if (close >= end) return 0;
     call->end[argument] = call->count;

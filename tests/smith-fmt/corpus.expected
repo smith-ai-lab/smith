@@ -1248,6 +1248,34 @@ i32 main() {
     c::printf("%d %d\n", t == .full, flip(t) == .empty);
     return 0;
 }
+==> enum-some-first/src/lib.smith <==
+module lib;
+
+export usize one(auto x) {
+    return 1;
+}
+
+export option(usize) pos(usize n) {
+    if (n == 0) return .none;
+    return n;
+}
+==> enum-some-first/src/main.smith <==
+module main;
+
+import lib;
+import <stdio.h>;
+
+typedef option(i32) Opt;
+
+// `== .some` after a call of a generic, as the first mention in the function; and on a call of an import.
+i32 main() {
+    usize k = lib::one(3);
+    Opt q = {.some = 3};
+    if (q == .some) c::printf("some %zu\n", k);
+    if (lib::pos(2) == .some) c::printf("pos\n");
+    if (lib::pos(0) != .some) c::printf("none\n");
+    return 0;
+}
 ==> enum-type-function-export/src/main.smith <==
 module main;
 
@@ -7006,6 +7034,40 @@ i32 main() {
     c::printf("%zu\n", through_restrict(xs));
     return 0;
 }
+==> generic-slice-derived/src/main.smith <==
+module main;
+
+import same;
+import <stdio.h>;
+
+i32 main() {
+    const char name[:] = "main";
+    c::printf("%d %d\n", same::equal(name, "main"), same::equal(name, "mai"));
+    u8 from_raw[3] = {1, 2, 3};
+    u8 to_raw[3] = {};
+    u8 to[:] = to_raw;
+    same::copy(to, from_raw);
+    u8 from[:] = from_raw;
+    same::copy(to[0:2], from[1:3]);
+    c::printf("%d %d %d\n", to[0], to[1], to[2]);
+    return 0;
+}
+==> generic-slice-derived/src/same.smith <==
+module same;
+
+// A second slice of the first one's element: `typeof(a[0]) b[:]`. A string literal or an array converts to it.
+
+export bool equal(const auto a[:], const typeof(a[0]) b[:]) {
+    if (countof(a) != countof(b)) return false;
+    for (usize i = 0; i < countof(a); i++)
+        if (a[i] != b[i]) return false;
+    return true;
+}
+
+export void copy(auto dst[restrict :], const typeof(dst[0]) src[const :]) {
+    for (usize i = 0; i < countof(dst) && i < countof(src); i++)
+        dst[i] = src[i];
+}
 ==> generic-slice-init-error/src/conv.smith <==
 module conv;
 
@@ -7170,6 +7232,76 @@ i32 main() {
     c::printf("%zu %zu\n", conv::read_only(read), conv::restricted(res));
     return 0;
 }
+==> generic-slice-pointer-auto/src/cursor.smith <==
+module cursor;
+
+// A pointer to a slice with `auto` as its element, as `const char (*text)[:]`: a cursor that takes from the front.
+
+export usize skip(const auto (*xs)[:], typeof((*xs)[0]) stop) {
+    usize i = 0;
+    while (i < countof(*xs) && (*xs)[i] != stop)
+        i++;
+    *xs = (*xs)[i:];
+    return i;
+}
+
+export typeof((*xs)[0:0]) take(const auto (*xs)[:], usize n) {
+    typeof((*xs)[0:0]) head = (*xs)[0:n];
+    *xs = (*xs)[n:];
+    return head;
+}
+
+export typeof((*xs)[0]) front(const auto (*xs)[:]) {
+    return (*xs)[0];
+}
+==> generic-slice-pointer-auto/src/main.smith <==
+module main;
+
+import cursor;
+import <stdio.h>;
+
+typedef const char Text[:];
+
+i32 main() {
+    Text line = "key=value";
+    usize skipped = cursor::skip(&line, '=');
+    c::printf("%zu %zu %c\n", skipped, countof(line), cursor::front(&line));
+    Text head = cursor::take(&line, 2);
+    c::printf("%zu %zu\n", countof(head), countof(line));
+    return 0;
+}
+==> generic-slice-qualifiers-auto/src/copy.smith <==
+module copy;
+
+// The qualifiers of a slice parameter written with `auto` are C's: `restrict` and `const` in the first bracket belong
+// to the slice, `const` before `auto` to its elements.
+
+export void copy(auto dst[restrict :], const auto src[const restrict :]) {
+    for (usize i = 0; i < countof(dst) && i < countof(src); i++)
+        dst[i] = src[i];
+}
+
+export usize sum(const auto xs[const :]) {
+    usize total = 0;
+    for (usize i = 0; i < countof(xs); i++)
+        total += xs[i];
+    return total;
+}
+==> generic-slice-qualifiers-auto/src/main.smith <==
+module main;
+
+import copy;
+import <stdio.h>;
+
+i32 main() {
+    u8 from_raw[4] = {1, 2, 3, 4};
+    u8 to_raw[4] = {};
+    u8 from[:] = from_raw;
+    u8 to[:] = to_raw;
+    copy::copy(to, from);
+    c::printf("%zu %zu\n", copy::sum(to), copy::sum(from[1:3]));
+    return 0;
+}
 ==> generic-slice-type-argument/src/main.smith <==
 module main;
 
@@ -7193,6 +7325,31 @@ module probe;
 
 export bool same_size(auto x, constexpr type T) {
     return sizeof(typeof(x)) == sizeof(T);
+}
+==> generic-slice-typedef/src/counting.smith <==
+module counting;
+
+// A slice named by a typedef is the same slice to a generic as an unnamed one: `typeof(xs[0])` is its element.
+
+export usize count(auto xs, typeof(xs[0]) v) {
+    usize n = 0;
+    for (usize i = 0; i < countof(xs); i++)
+        if (xs[i] == v) n++;
+    return n;
+}
+==> generic-slice-typedef/src/main.smith <==
+module main;
+
+import counting;
+import <stdio.h>;
+
+typedef const char Text[:];
+
+i32 main() {
+    Text t = "banana";
+    const char u[:] = "banana";
+    c::printf("%zu %zu\n", counting::count(t, 'a'), counting::count(u, 'n'));
+    return 0;
 }
 ==> generic-slice/src/main.smith <==
 module main;

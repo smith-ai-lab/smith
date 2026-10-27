@@ -1,0 +1,15 @@
+module main;
+
+import cursor;
+import <stdio.h>;
+
+typedef const char Text[:];
+
+i32 main() {
+    Text line = "key=value";
+    usize skipped = cursor::skip(&line, '=');
+    c::printf("%zu %zu %c\n", skipped, countof(line), cursor::front(&line));
+    Text head = cursor::take(&line, 2);
+    c::printf("%zu %zu\n", countof(head), countof(line));
+    return 0;
+}

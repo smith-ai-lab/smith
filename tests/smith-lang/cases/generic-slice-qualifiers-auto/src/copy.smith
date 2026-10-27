@@ -1,0 +1,14 @@
+module copy;
+
+// The qualifiers of a slice parameter written with `auto` are C's: `restrict` and `const` in the first bracket belong to
+// the slice, `const` before `auto` to its elements.
+
+export void copy(auto dst[restrict :], const auto src[const restrict :]) {
+    for (usize i = 0; i < countof(dst) && i < countof(src); i++) dst[i] = src[i];
+}
+
+export usize sum(const auto xs[const :]) {
+    usize total = 0;
+    for (usize i = 0; i < countof(xs); i++) total += xs[i];
+    return total;
+}

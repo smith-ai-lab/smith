@@ -1,0 +1,14 @@
+module same;
+
+// A second slice of the first one's element: `typeof(a[0]) b[:]`. A string literal or an array converts to it.
+
+export bool equal(const auto a[:], const typeof(a[0]) b[:]) {
+    if (countof(a) != countof(b)) return false;
+    for (usize i = 0; i < countof(a); i++)
+        if (a[i] != b[i]) return false;
+    return true;
+}
+
+export void copy(auto dst[restrict :], const typeof(dst[0]) src[const :]) {
+    for (usize i = 0; i < countof(dst) && i < countof(src); i++) dst[i] = src[i];
+}
