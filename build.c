@@ -2126,7 +2126,75 @@ static int build_coverage_fetch(SmithRun *run) {
     return 0;
 }
 
+// `smith build preflight` (issue #578): the whole local check of the commit checked out, with a verdict the train
+// reads. It needs a clean tree, builds with the running smith, then runs fmt, docs, lint (the whole project: a change
+// anywhere can break a rule elsewhere) and `test --changed` (the tests the diff against origin/main can reach) with the
+// smith it built, and posts the commit status `smith/preflight` on the head's SHA: success with the counts, or failure
+// naming the steps. A push makes a new head with no status, so the train takes only what was checked as it is. smith
+// never runs gh itself: this task does, like coverage-fetch. Logs are .smith/preflight-<step>.log.
+static int build_preflight_step(SmithBuild *b, const char *name, const char *const *argv) {
+    int status =
+        build_spawn(&(BuildSpawn){.argv = argv, .log = smith_fmt(b, ".smith/preflight-%s.log", name), .tail = 12});
+    fprintf(stderr, "preflight: %s %s\n", name, status == 0 ? "ok" : "FAILED");
+    return status;
+}
+
+static const char *build_preflight_capture(SmithBuild *b, const char *name, const char *const *argv) {
+    const char *log = smith_fmt(b, ".smith/preflight-%s.out", name);
+    int status = build_spawn(&(BuildSpawn){.argv = argv, .log = log, .stdout_only = true});
+    const char *const *lines = status == 0 ? build_lines(b, log) : nullptr;
+    return lines != nullptr && lines[0] != nullptr ? lines[0] : "";
+}
+
+static int build_preflight(SmithRun *run) {
+    SmithBuild *b = run->b;
+    if (build_make_folder(b, ".smith") != 0) return 1;
+    const char *sha = build_preflight_capture(b, "sha", smith_list(b, "git", "rev-parse", "HEAD", nullptr));
+    if (sha[0] == '\0') {
+        fputs("preflight: not in a git checkout with a commit\n", stderr);
+        return 2;
+    }
+    if (build_preflight_capture(b, "dirty", smith_list(b, "git", "status", "--porcelain", nullptr))[0] != '\0') {
+        fputs("preflight: the tree has uncommitted changes; commit them first (the status is for a commit)\n", stderr);
+        return 2;
+    }
+    const char *self = getenv("SMITH_SELF");
+    if (self == nullptr) self = "smith";
+    const char *system = build_preflight_capture(b, "uname", smith_list(b, "uname", "-s", nullptr));
+    const char *machine = build_preflight_capture(b, "machine", smith_list(b, "uname", "-m", nullptr));
+    const char *built = smith_fmt(b, "build/%s-%s/smith", system, machine);
+    const char *failed = "";
+    if (build_preflight_step(b, "build", smith_list(b, self, "build", nullptr)) != 0) {
+        failed = "build";
+    } else {
+        const char *const names[] = {"fmt", "docs", "lint", "test"};
+        const char *const *commands[] = {smith_list(b, built, "fmt", nullptr), smith_list(b, built, "docs", nullptr),
+                                         smith_list(b, built, "lint", nullptr),
+                                         smith_list(b, built, "test", "--changed", nullptr)};
+        for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
+            if (build_preflight_step(b, names[i], commands[i]) != 0) failed = smith_fmt(b, "%s %s", failed, names[i]);
+        }
+    }
+    const char *tests = build_preflight_capture(
+        b, "count",
+        smith_list(b, "sh", "-c", "grep -Eo '[0-9]+ passed' .smith/preflight-test.log 2>/dev/null | tail -1; true",
+                   nullptr));
+    bool ok = failed[0] == '\0';
+    const char *description = ok ? smith_fmt(b, "fmt, docs, lint and the changed tests ok (%s)",
+                                             tests[0] != '\0' ? tests : "no tests selected")
+                                 : smith_fmt(b, "failed:%s (smith build preflight)", failed);
+    int posted =
+        build_exec(smith_list(b, "gh", "api", smith_fmt(b, "repos/{owner}/{repo}/statuses/%s", sha), "-f",
+                              smith_fmt(b, "state=%s", ok ? "success" : "failure"), "-f", "context=smith/preflight",
+                              "-f", smith_fmt(b, "description=%.140s", description), nullptr));
+    fprintf(stderr, "preflight: %s on %.12s: %s%s\n", ok ? "success" : "failure", sha, description,
+            posted == 0 ? "" : " (the status could not be posted: gh api failed)");
+    return ok && posted == 0 ? 0 : 1;
+}
+
 static void build_developer_tasks(SmithBuild *b) {
+    SmithStep preflight = {.run = build_preflight};
+    smith_task(b, "preflight", &preflight);
     SmithStep friction = {
         .run = build_friction,
         .args =
