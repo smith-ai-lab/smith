@@ -12,7 +12,7 @@ import scratch;
 // Every command: the stub gh first on PATH, its releases in ../gh and its log in ../gh.log, the script, and the file
 // name of the package. The package is xz of a 235 MB program: level 6 is 56 s of CPU, level 1 is 9 s, and the test is
 // not about the ratio (#116).
-constexpr char prelude[] =
+constexpr char prelude[_] =
     "export PATH=\"$PWD/../bin:$PATH\" RELEASE_XZ_LEVEL=1 GH_LOG=\"$PWD/../gh.log\" GH_DIR=\"$PWD/../gh\" "
     "GITHUB_ACTIONS=; script=\"$SMITH_REPO/scripts/release.sh\"; smith=\"$SMITH_SELF\"; head=$(git rev-parse HEAD); "
     "name=smith-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m).tar.xz; ";

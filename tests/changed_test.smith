@@ -10,7 +10,7 @@ import scratch;
 
 // A repository: a module a, tests of it, a test of b that imports a, a test of c that imports nothing, a test that runs
 // smith and a test that lists the tree. Committed on main.
-constexpr char repository[] =
+constexpr char repository[_] =
     "export SMITH_OUTPUT=full; git init -q -b main . && "
     "mkdir -p lib tests docs runtime src && "
     "printf 'module a;\\nexport i32 one() { return 1; }\\n' > lib/a.smith && "

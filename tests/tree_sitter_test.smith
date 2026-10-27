@@ -17,8 +17,8 @@ import scratch;
 
 // The tree-sitter runtime, pinned by the hash of its archive (v0.27.1, which reads parsers of ABI 15, the one
 // parser is generated with).
-constexpr char runtime_url[] = "https://github.com/tree-sitter/tree-sitter/archive/refs/tags/v0.27.1.tar.gz";
-constexpr char runtime_hash[] = "sha256:982cd3d4d9eb7be18c243240a622423fd2e4ecb4bec2cd98832c2f3fa1f0f333";
+constexpr char runtime_url[_] = "https://github.com/tree-sitter/tree-sitter/archive/refs/tags/v0.27.1.tar.gz";
+constexpr char runtime_hash[_] = "sha256:982cd3d4d9eb7be18c243240a622423fd2e4ecb4bec2cd98832c2f3fa1f0f333";
 
 // The driver and the runtime, compiled by smith into ./driver (the driver loads the parser by
 // `smith cc --smith-tree-sitter`). False when the runtime is not available.
@@ -92,7 +92,7 @@ static void check_wrong_on_purpose(const scratch::Project *p) {
 // field's name goes after `short` (error-keyword-module), are expected to fail. The grammar is tree-sitter-c's, which
 // has neither C23's `auto` as a type nor C2y's `_Countof`: the three cases that use them are left out until the grammar
 // learns them.
-constexpr char lang_files[] =
+constexpr char lang_files[_] =
     "lang=${SMITH_LANG_CASES:-$SMITH_REPO/tests/smith-lang/cases}; "
     "bad='/error-import-eof/src/main\\.smith$|/error-tuple-field/src/main\\.smith$|/error-try-expression/src/"
     "main\\.smith$|"
@@ -127,7 +127,7 @@ export void test_tree_sitter_the_grammar_parses_its_corpus_and_samples(io::Io *i
 
 // smith's own C: plain C stays C (the expected outputs of the language corpus are generated and not always C), with
 // the C23 and clang spellings smith uses.
-constexpr char own_c_files[] =
+constexpr char own_c_files[_] =
     "w=$PWD; cd \"$SMITH_REPO\" && find . \\( -path ./build -o -path ./shim -o -path ./tree-sitter -o -path ./.git -o "
     "-path ./.smith -o -path ./.cache -o -path ./.claude -o -path ./tests/build_fixtures -o -path "
     "'./tests/smith-lang/cases/*/expect' \\) -prune -o \\( -name '*.c' -o -name '*.h' \\) -print | sort | "

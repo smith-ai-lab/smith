@@ -68,7 +68,7 @@ export void test_lsp_effects_chain_smith(io::Io *io) {
 // Across files: each compile leaves a summary beside its object (`x.o.fx`), and the link of objects that have one
 // checks the calls that cross files (smith-cc runs `--smith-effects`): an unannotated function of another file is
 // inferred, a function nobody defines is `c`, in C and in modules (a build).
-constexpr char cross_expected[] =
+constexpr char cross_expected[_] =
     "a.c:3:52: error: smith-effect: `bad` is [[smith::pure]], but it has the effects console: bad -> noisy (a.c:3) -> "
     "printf (b.c:4)\n"
     "a.c:4:41: error: smith-effect: `lost` is [[smith::pure]], but it has the effects c: lost -> ghost (a.c:4)";
@@ -106,13 +106,13 @@ export void test_across_files_in_c_one_command_that_compiles_and_links_names_the
                          linked.out);
 }
 
-constexpr char loud_error[] = "error: smith-effect: `bad` is [[smith::pure]], but it has the effects console: bad -> "
-                              "fx::lib::noisy (main.smith:4) "
-                              "-> printf (lib.smith:4)";
-constexpr char lib_loud[] = "module fx::lib;\nimport <stdio.h>;\nexport i32 plain(i32 x) { return x + 1; }\n"
-                            "export i32 noisy(i32 x) { c::printf(\"%d\\n\", x); return x; }\n";
-constexpr char lib_quiet[] = "module fx::lib;\nimport <stdio.h>;\nexport i32 plain(i32 x) { return x + 1; }\nexport "
-                             "i32 noisy(i32 x) { return x; }\n";
+constexpr char loud_error[_] = "error: smith-effect: `bad` is [[smith::pure]], but it has the effects console: bad -> "
+                               "fx::lib::noisy (main.smith:4) "
+                               "-> printf (lib.smith:4)";
+constexpr char lib_loud[_] = "module fx::lib;\nimport <stdio.h>;\nexport i32 plain(i32 x) { return x + 1; }\n"
+                             "export i32 noisy(i32 x) { c::printf(\"%d\\n\", x); return x; }\n";
+constexpr char lib_quiet[_] = "module fx::lib;\nimport <stdio.h>;\nexport i32 plain(i32 x) { return x + 1; }\nexport "
+                              "i32 noisy(i32 x) { return x; }\n";
 
 static void write_modules(const scratch::Project *p) {
     scratch::Run made = scratch::sh(p, "mkdir -p fx");
@@ -155,7 +155,7 @@ export void test_an_incremental_build_gives_the_verdict_of_a_clean_one(io::Io *i
 // packages), so there is no cached object that could miss its summary: an object whose summary is gone is rebuilt.
 export void test_a_c_build_gives_the_verdict_of_a_clean_one_when_lib_c_changes(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
-    constexpr char loud[] =
+    constexpr char loud[_] =
         "#include <stdio.h>\n#include \"lib.h\"\nint noisy(int x) { printf(\"%d\\n\", x); return x; }\n";
     scratch::write(&p, "lib.h", "int noisy(int);\n");
     scratch::write(&p, "lib.c", loud);
@@ -185,13 +185,13 @@ export void test_a_c_build_gives_the_verdict_of_a_clean_one_when_lib_c_changes(i
 // The worst-case stack: `<program>.stack` beside a program linked from objects that have summaries, the frames from the
 // backend (the numbers `-fstack-usage` gives), summed along the deepest call, a recursion unbounded, a tail call cycle
 // not, a call of code with no source an "at least N + unknown" row.
-constexpr char stack_a[] =
+constexpr char stack_a[_] =
     "#include <stdio.h>\nint g(int *);\nstatic int h(int x) { int a[100]; for (int i = 0; i < 100; i++) a[i] = x + i; "
     "return g(a); }\nint f(int x) { return h(x) + 1; }\nint rec(int n) { return n ? rec(n - 1) + 1 : 0; }\n"
     "int even(int n);\nint odd(int n) { if (n == 0) return 0; [[clang::musttail]] return even(n - 1); }\n"
     "int even(int n) { if (n == 0) return 1; [[clang::musttail]] return odd(n - 1); }\n"
     "int main(void) { printf(\"%d\\n\", f(1) + even(4)); return rec(3); }\n";
-constexpr char stack_a_without_rec[] =
+constexpr char stack_a_without_rec[_] =
     "#include <stdio.h>\nint g(int *);\nstatic int h(int x) { int a[100]; for (int i = 0; i < 100; i++) a[i] = x + i; "
     "return g(a); }\nint f(int x) { return h(x) + 1; }\n\n"
     "int even(int n);\nint odd(int n) { if (n == 0) return 0; [[clang::musttail]] return even(n - 1); }\n"

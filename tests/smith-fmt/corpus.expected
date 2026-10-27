@@ -1,3 +1,28 @@
+==> array-infer-run/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+// `[_]` is a fixed array whose size the initializer gives (issue #423): one dimension, the outermost of two, a string
+// literal, a compound literal, and an exported one.
+export const i32 primes[_] = {2, 3, 5, 7};
+
+static i32 sum(const i32 *xs, usize n) {
+    i32 total = 0;
+    for (usize i = 0; i < n; i++)
+        total += xs[i];
+    return total;
+}
+
+i32 main() {
+    i32 xs[_] = {1, 2, 3};
+    i32 m[_][3] = {{1, 2, 3}, {4, 5, 6}};
+    char s[_] = "abc";
+    c::printf("%zu %zu %zu %zu\n", sizeof xs / sizeof xs[0], sizeof m / sizeof m[0], sizeof s,
+              sizeof primes / sizeof primes[0]);
+    c::printf("%d %d\n", sum(xs, 3), sum((const i32[_]){10, 20}, 2));
+    return 0;
+}
 ==> array-param-export/src/arr.smith <==
 module arr;
 
@@ -598,7 +623,7 @@ struct Grid {
 };
 
 u32 plain() {
-    u32 xs[] = {1, 2, 3};
+    u32 xs[_] = {1, 2, 3};
     return (u32)countof(xs);
 }
 
@@ -612,7 +637,7 @@ u32 shaped(u32 xs[4]) {
 }
 
 export u32 pack(auto... args) {
-    u32 xs[] = {(u32)args...};
+    u32 xs[_] = {(u32)args...};
     return (u32)countof(xs);
 }
 
@@ -1328,7 +1353,7 @@ i32 main(void) {
     Maybe a = opt::first(usize, xs, 2);
     Maybe n = opt::first(usize, xs, 0);
     Maybe f = opt::find("key=value", '=');
-    MaybeF w = opt::first(f64, (f64[]){2.5}, 1);
+    MaybeF w = opt::first(f64, (f64[_]){2.5}, 1);
     Maybe p = other::pick(5);
     c::printf("%zu\n", or_else(p, 0));
     c::printf("%zu %zu %zu %g\n", or_else(a, 0), or_else(n, 99), or_else(f, 99), or_zero(w));
@@ -1649,6 +1674,34 @@ i32 main() {
     show("block ok", block_scope(2));
     show("block fails", block_scope(-2));
     return 0;
+}
+==> error-array-empty/src/main.smith <==
+module main;
+
+// `[]` is an error in a module, in every position (issue #423).
+i32 xs[] = {1, 2, 3};
+
+extern const i32 table[];
+
+typedef struct {
+    i32 count;
+    i32 items[];
+} Bag;
+
+i32 main() {
+    i32 *p = (i32[]){1, 2};
+    return xs[0] + p[0];
+}
+==> error-array-infer/src/main.smith <==
+module main;
+
+// `[_]` needs an initializer and may only be the outermost dimension (issue #423).
+i32 first[_];
+
+i32 grid[3][_] = {{1}, {2}, {3}};
+
+i32 main() {
+    return first[0] + grid[0][0];
 }
 ==> error-array-param-index/src/main.smith <==
 module main;
@@ -6188,7 +6241,7 @@ export typeof_unqual(*x) shifted(auto x, auto... rest) {
 
 // `rest...` in an initializer list: the elements of the argument list, in order.
 export i32 table_sum(auto... rest) {
-    i32 table[] = {rest..., 100};
+    i32 table[_] = {rest..., 100};
     i32 sum = 0;
     for (usize i = 0; i < sizeof table / sizeof table[0]; i++)
         sum += table[i];
@@ -6197,7 +6250,7 @@ export i32 table_sum(auto... rest) {
 
 // `rest...` in an initializer with other elements, and `countof(rest)` beside it.
 export i32 nested(auto... rest) {
-    i32 table[] = {rest..., 5, 1};
+    i32 table[_] = {rest..., 5, 1};
     return table[0] + table[sizeof table / sizeof table[0] - 1] + (i32)countof(rest) + 1;
 }
 ==> generic-pack-error/src/args.smith <==
@@ -6402,8 +6455,8 @@ export i32 rest_empty(auto... rest) {
 
 // A braced initializer, the pack named several times in the pattern, and the bare `rest...` as it was.
 export i32 table(auto... rest) {
-    i32 xs[] = {sq(rest)..., 0};
-    i32 ys[] = {plus(rest, sq(rest))..., 1, rest...};
+    i32 xs[_] = {sq(rest)..., 0};
+    i32 ys[_] = {plus(rest, sq(rest))..., 1, rest...};
     i32 sum = 0;
     constexpr usize nx = sizeof xs / sizeof xs[0];
     constexpr usize ny = sizeof ys / sizeof ys[0];
@@ -6802,7 +6855,7 @@ export i32 total(auto... rest) {
 
 // `rest[i]` mixes with ordinary run-time values; the weights are an ordinary array.
 export i32 weighted(auto... rest) {
-    i32 weights[] = {1, 2, 3, 4};
+    i32 weights[_] = {1, 2, 3, 4};
     static_assert(sizeof weights / sizeof weights[0] == 4);
     i32 sum = 0;
     for constexpr (usize i = 0; i < countof(rest); i++) {
@@ -6814,7 +6867,7 @@ export i32 weighted(auto... rest) {
 // `rest...` spreads the arguments into a call's arguments or an initializer, and `countof(rest)` is a constant.
 export i32 spread(auto... rest) {
     static_assert(countof(rest) <= 4);
-    i32 table[] = {100, rest..., 7};
+    i32 table[_] = {100, rest..., 7};
     if constexpr (countof(rest) == 2) {
         char text[64];
         c::snprintf(text, sizeof text, "%d %d", rest...);
@@ -8519,7 +8572,7 @@ export typedef struct Node {
 } Node;
 
 export constexpr usize capacity = 4;
-export const char *const names[] = {"zero", "one", "two"};
+export const char *const names[_] = {"zero", "one", "two"};
 static_assert(sizeof(Word) == 4, "a word is four bytes");
 
 [[nodiscard]] static inline int square(int value) {
@@ -8552,7 +8605,7 @@ export int by_type(int value) {
 }
 
 export u32 pick(u32 index) {
-    static const u32 table[] = {10, 20, 30, 40};
+    static const u32 table[_] = {10, 20, 30, 40};
     typeof(index) clamped = index < capacity ? index : capacity - 1;
     return table[clamped];
 }
@@ -9397,8 +9450,8 @@ import r;
 import <stdio.h>;
 
 i32 main() {
-    i32 a[] = {4, 5, 6};
-    i32 b[] = {10};
+    i32 a[_] = {4, 5, 6};
+    i32 b[_] = {10};
     c::printf("%d %d\n", r::first(a[0:3]), r::total(a[0:3], b[0:1]));
     return 0;
 }
@@ -9779,7 +9832,7 @@ i32 main() {
     i32 *p = raw;
     i32 view[:] = p[2:5];
     char word[:] = "abc";
-    char with_zero[] = "abc";
+    char with_zero[_] = "abc";
     char zero[:] = with_zero;
     struct Bag bag = {};
     bag.items = all;

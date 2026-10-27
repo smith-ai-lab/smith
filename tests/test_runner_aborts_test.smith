@@ -306,7 +306,7 @@ export void test_runner_aborts_smith_test_runs_the_runner_and_passes_its_options
 
 // The task prints the values under the failing line, named by their text (x = 700, 500); the runner on its own prints
 // them as a and b. The seed, the first value and the rerun line are the same either way.
-constexpr char digest[] =
+constexpr char digest[_] =
     " | sed -n '/^FAIL prop_fails/,/rerun/p' | grep -E '^FAIL|^ +[ax] = |rerun' | sed -e 's/^ *//' "
     "-e 's/^[ax] = \\([0-9]*\\).*/first \\1/'";
 

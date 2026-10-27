@@ -14,7 +14,7 @@ import scratch;
 // programs folder is a clone of the smith that made it: the same bytes in a file of its own, never a hard link (macOS's
 // policy daemon kills a process when another name of its file is removed; issue #48). `variant` is a copy of smith with
 // another LC_UUID, as a rebuild has.
-constexpr char prelude[] =
+constexpr char prelude[_] =
     "export XDG_DATA_HOME=\"$(cd .. && pwd)/data\"\n"
     "smith=$SMITH_SELF\n"
     "clang_folders=$XDG_DATA_HOME/smith/clang\n"
@@ -27,26 +27,27 @@ constexpr char prelude[] =
     "folder_of() { for f in \"$program_folders\"/*; do is_copy \"$f/bin/ld\" \"$1\" && echo \"$f\"; done; }\n";
 
 // Where the files are, once a compile has written them.
-constexpr char where[] = "out=$(\"$smith\" cc -print-resource-dir)\n"
-                         "major=${out##*/}\n"
-                         "folder=${out%/lib/clang/*}\n"
-                         "programs=$(\"$smith\" cc --smith-which -c hello.c | head -n 1 | cut -d ' ' -f 3)\n"
-                         "programs=${programs%/bin/clang}\n";
+constexpr char where[_] = "out=$(\"$smith\" cc -print-resource-dir)\n"
+                          "major=${out##*/}\n"
+                          "folder=${out%/lib/clang/*}\n"
+                          "programs=$(\"$smith\" cc --smith-which -c hello.c | head -n 1 | cut -d ' ' -f 3)\n"
+                          "programs=${programs%/bin/clang}\n";
 
 // Eight workers of two smiths, five rounds each, on the one runtime folder: the number of failures.
-constexpr char workers[] = "for n in 1 2 3 4 5 6 7 8; do\n"
-                           "    (for round in 1 2 3 4 5; do\n"
-                           "        \"$smith\" cc objc2.m -framework Foundation -o \"objc_a$n\" 2>>\"../mix$n\" && [ "
-                           "\"$(./objc_a$n)\" = 7 ] || echo bad >>\"../mix$n.bad\"\n"
-                           "        \"../smith_b\" cc objc2.m -framework Foundation -o \"objc_c$n\" 2>>\"../mix$n\" && "
-                           "[ \"$(./objc_c$n)\" = 7 ] || echo bad >>\"../mix$n.bad\"\n"
-                           "    done) &\n"
-                           "done\n"
-                           "wait\n"
-                           "cat ../mix*.bad 2>/dev/null | wc -l | tr -d ' '\n";
+constexpr char workers[_] =
+    "for n in 1 2 3 4 5 6 7 8; do\n"
+    "    (for round in 1 2 3 4 5; do\n"
+    "        \"$smith\" cc objc2.m -framework Foundation -o \"objc_a$n\" 2>>\"../mix$n\" && [ "
+    "\"$(./objc_a$n)\" = 7 ] || echo bad >>\"../mix$n.bad\"\n"
+    "        \"../smith_b\" cc objc2.m -framework Foundation -o \"objc_c$n\" 2>>\"../mix$n\" && "
+    "[ \"$(./objc_c$n)\" = 7 ] || echo bad >>\"../mix$n.bad\"\n"
+    "    done) &\n"
+    "done\n"
+    "wait\n"
+    "cat ../mix*.bad 2>/dev/null | wc -l | tr -d ' '\n";
 
 // A programs folder whose smith is running, or whose binary exists, stays: what each folder does after a prune.
-constexpr char lock_script[] =
+constexpr char lock_script[_] =
     "two_hours_ago=$(date -v-2H +%Y%m%d%H%M)\n"
     "variant smith_d 11\n"
     "variant smith_e 22\n"
@@ -222,7 +223,7 @@ export void test_resource_a_second_compile_rewrites_no_file(io::Io *io) {
         return;
     }
     first_compile(io, &p);
-    constexpr char files[] = "ls -l \"$folder/lib/clang/$major/include/stddef.h\" \"$folder/lib/libLTO.dylib\"";
+    constexpr char files[_] = "ls -l \"$folder/lib/clang/$major/include/stddef.h\" \"$folder/lib/libLTO.dylib\"";
     scratch::Run stamped = run_after(io, &p, format::push(&io->arena, files, " >../stamp").data);
     scratch::expect_status("resource: the stamps", 0, &stamped);
     scratch::sleep(&p, 1000);

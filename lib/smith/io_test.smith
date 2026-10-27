@@ -127,7 +127,7 @@ export void test_io_fake_clock_moves_only_when_told() {
 
 export void test_io_fake_arguments_seed_and_programs() {
     alignas(arena::align_max) static u8 memory[1 << 20];
-    const char *const argv[] = {"prog", "--flag", nullptr};
+    const char *const argv[_] = {"prog", "--flag", nullptr};
     io::Io fake =
         io::make_test((io::Test){.memory = memory, .capacity = sizeof memory, .seed = 99, .argv = argv, .argc = 2});
     test::check_equal(fake.seed, 99);
@@ -136,7 +136,7 @@ export void test_io_fake_arguments_seed_and_programs() {
     test::check(is(io::args_get(&fake.args, 1), "--flag"));
     test::check(io::args_get(&fake.args, 2) == nullptr);
     test::check_equal(io::test_add_program(&fake, "tool", "tool output\n", 5).code, 0);
-    const char *const run[] = {"tool", nullptr};
+    const char *const run[_] = {"tool", nullptr};
     io::ProcessResult result = io::processes_run(&fake.processes, &fake.arena, run);
     test::check_equal(result.exit_status, 5);
     test::check(is(result.output, "tool output\n"));
@@ -146,7 +146,7 @@ export void test_io_fake_arguments_seed_and_programs() {
     io::processes_wait_async(&fake.processes, &wait, process);
     test::check_equal(io::run(&fake, 0), 1);
     test::check_equal(wait.exit_status, 5);
-    const char *const absent[] = {"absent", nullptr};
+    const char *const absent[_] = {"absent", nullptr};
     test::check_equal(io::processes_run(&fake.processes, &fake.arena, absent).error.code, enoent);
     io::Capture capture = {};
     test::check_equal(io::processes_capture_async(&fake.processes, &fake.arena, run, &capture).code, 0);
@@ -158,7 +158,7 @@ export void test_io_fake_arguments_seed_and_programs() {
 
 export void test_io_fake_environment_and_cores() {
     alignas(arena::align_max) static u8 memory[1 << 20];
-    const char *const environment[] = {"HOME=/home/test", "EMPTY=", "A=B=C", nullptr};
+    const char *const environment[_] = {"HOME=/home/test", "EMPTY=", "A=B=C", nullptr};
     io::Io fake =
         io::make_test((io::Test){.memory = memory, .capacity = sizeof memory, .environment = environment, .cores = 12});
     test::check(is(io::args_env(&fake.args, "HOME"), "/home/test"));
@@ -193,7 +193,7 @@ export void test_io_fake_printf_and_a_text_longer_than_the_buffer() {
 export void test_io_fake_files_write_and_read_back() {
     alignas(arena::align_max) static u8 memory[1 << 20];
     io::Io fake = io::make_test((io::Test){.memory = memory, .capacity = sizeof memory});
-    const char text[] = "alpha\nbeta\ngamma\n";
+    const char text[_] = "alpha\nbeta\ngamma\n";
     test::check_equal(io::test_add_file(&fake, "same.txt", text).code, 0);
     io::Read read = io::files_read(&fake.files, &fake.arena, "same.txt");
     test::check_equal(read.error.code, 0);
@@ -506,12 +506,12 @@ export void test_io_fake_child_output_input_and_exit() {
     alignas(arena::align_max) static u8 memory[1 << 20];
     io::Io fake = io::make_test((io::Test){.memory = memory, .capacity = sizeof memory, .seed = 3});
     test::check_equal(io::test_add_child(&fake, dap_script()).code, 0);
-    const char *const dap_argv[] = {"smith-dap", nullptr};
-    const char *const unknown[] = {"nope", nullptr};
+    const char *const dap_argv[_] = {"smith-dap", nullptr};
+    const char *const unknown[_] = {"nope", nullptr};
     io::Child first = {};
     test::check_equal(io::processes_start_piped(&fake.processes, unknown, &first).code, enoent);
     test::check_equal(io::processes_start_piped(&fake.processes, dap_argv, &first).code, 0);
-    const char *const pieces[] = {"Content-", "Length: ", "2\r\n\r\n{}"};
+    const char *const pieces[_] = {"Content-", "Length: ", "2\r\n\r\n{}"};
     io::Op read = {};
     char buffer[32];
     for (usize i = 0; i < 3; i++) { // in pieces of 8
@@ -555,7 +555,7 @@ export void test_io_fake_two_children_of_one_program_and_kill() {
     io::Io fake = io::make_test((io::Test){.memory = memory, .capacity = sizeof memory, .seed = 3});
     test::check_equal(io::test_add_child(&fake, dap_script()).code, 0);
     test::check_equal(io::test_add_child(&fake, (io::ChildScript){.program = "smith-dap", .output = "second"}).code, 0);
-    const char *const dap_argv[] = {"smith-dap", nullptr};
+    const char *const dap_argv[_] = {"smith-dap", nullptr};
     io::Child first = {};
     io::Child second = {};
     io::Child third = {};
@@ -587,7 +587,7 @@ export void test_io_fake_child_that_exited_at_start() {
     io::Io fake = io::make_test((io::Test){.memory = memory, .capacity = sizeof memory, .seed = 3});
     io::ChildScript quick = {.program = "true", .output = "bye\n", .exit_on = io::Start};
     test::check_equal(io::test_add_child(&fake, quick).code, 0);
-    const char *const quick_argv[] = {"true", nullptr};
+    const char *const quick_argv[_] = {"true", nullptr};
     io::Child dead = {};
     test::check_equal(io::processes_start_piped(&fake.processes, quick_argv, &dead).code, 0);
     io::Op write = {};

@@ -67,7 +67,7 @@ export void test_slice_an_empty_slice_has_a_null_pointer() {
 export void test_slice_a_text_literal_has_no_terminating_zero() {
     char word[:] = "abc";
     test::check_equal(countof(word), 3);
-    char with_zero[] = "abc";
+    char with_zero[_] = "abc";
     char again[:] = with_zero;
     test::check_equal(countof(again), 4);
 }

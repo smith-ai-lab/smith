@@ -26,7 +26,7 @@ i32 main(void) {
     Maybe a = opt::first(usize, xs, 2);
     Maybe n = opt::first(usize, xs, 0);
     Maybe f = opt::find("key=value", '=');
-    MaybeF w = opt::first(f64, (f64[]){2.5}, 1);
+    MaybeF w = opt::first(f64, (f64[_]){2.5}, 1);
     Maybe p = other::pick(5);
     c::printf("%zu\n", or_else(p, 0));
     c::printf("%zu %zu %zu %g\n", or_else(a, 0), or_else(n, 99), or_else(f, 99), or_zero(w));

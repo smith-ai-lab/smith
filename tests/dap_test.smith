@@ -119,7 +119,7 @@ export void test_dap_a_session_on_a_c_program(io::Io *io) {
 // .smith names as written (issue #27): the debugger shows `geometry::box::area` and `geometry::box::Box`, never the C
 // spelling `geometry_box_area`. A module's functions and variables are named so at the top; its types are `Box` in the
 // namespaces `geometry` and `box`, so that an expression can name them.
-constexpr char build_lang[] =
+constexpr char build_lang[_] =
     "mkdir -p include && smith cc --smith-header geometry/box.smith -o include/box.h && smith cc -g -O0 -I include -c "
     "geometry/box.smith -o box.o && smith cc -g -O0 -I include -c main.smith -o main.o && smith cc -g box.o main.o -o "
     "lang";
@@ -223,7 +223,7 @@ export void test_dap_dbg_an_argument_list_and_for_constexpr(io::Io *io) {
 
 // A run-time array `T xs[:]` (issue #106) is shown as its elements with its count and the type as written, by dbg and
 // by the variables request of dap, not as a pointer and a count array. The formatters are lldb's own C++ ones.
-constexpr char build_slice[] = "smith cc -g -O0 -c main.smith -o main.o && smith cc -g main.o -o slice";
+constexpr char build_slice[_] = "smith cc -g -O0 -c main.smith -o main.o && smith cc -g main.o -o slice";
 
 export void test_dap_dbg_a_slice(io::Io *io) {
     scratch::Project root;

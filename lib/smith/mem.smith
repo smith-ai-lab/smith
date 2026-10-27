@@ -358,11 +358,11 @@ usize checked_size(Allocator *self, const void *block) {
 // Names of the C library's functions that give the caller a block to free: a block made inside one of these is the
 // caller's to free (a leak if it does not). A block made in any other function of a system library is that library's
 // own bookkeeping (the cache of its number printing, its locale tables), which it keeps for the life of the process.
-const char *const machinery_names[] = {"smith_mem_", "smith::mem::",   "smith_handlers_", "malloc", "calloc",
-                                       "realloc",    "posix_memalign", "aligned_alloc",   "valloc", "reallocf"};
+const char *const machinery_names[10] = {"smith_mem_", "smith::mem::",   "smith_handlers_", "malloc", "calloc",
+                                         "realloc",    "posix_memalign", "aligned_alloc",   "valloc", "reallocf"};
 
-const char *const owning[] = {"strdup",  "strndup",   "asprintf", "vasprintf", "fopen",   "fdopen",   "freopen",
-                              "opendir", "fdopendir", "getline",  "getdelim",  "scandir", "realpath", "getcwd"};
+const char *const owning[14] = {"strdup",  "strndup",   "asprintf", "vasprintf", "fopen",   "fdopen",   "freopen",
+                                "opendir", "fdopendir", "getline",  "getdelim",  "scandir", "realpath", "getcwd"};
 
 bool starts(const char *text, const char *prefix) {
     return __builtin_strncmp(text, prefix, __builtin_strlen(prefix)) == 0;

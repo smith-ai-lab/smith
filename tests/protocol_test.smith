@@ -14,7 +14,7 @@ import smith::test;
 import scratch;
 
 // The scratch project: smith's libraries the protocol code needs (build.c), the protocol code, and the runner.
-constexpr char setup[] =
+constexpr char setup[_] =
     "mkdir -p tests protocol && cp \"$SMITH_REPO\"/runtime/protocol/*.c \"$SMITH_REPO\"/runtime/protocol/*.h protocol/ "
     "&& cp \"$SMITH_REPO\"/.smith/protocol/*.c \"$SMITH_REPO\"/.smith/protocol/*.h protocol/ "
     "&& cp \"$SMITH_REPO\"/tests/protocol/*.c \"$SMITH_REPO\"/tests/protocol/*.h protocol/ && rm "

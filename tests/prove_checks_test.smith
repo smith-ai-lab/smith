@@ -9,35 +9,35 @@ import smith::io;
 import smith::test;
 import scratch;
 
-constexpr char edges[] = "module edges;\n"
-                         "\n"
-                         "import smith::contract;\n"
-                         "\n"
-                         "export i32 first(const i32 xs[:]) {\n"
-                         "    contract::requires(countof(xs) >= 1);\n"
-                         "    contract::ensures(true);\n"
-                         "    return xs[0];\n"
-                         "}\n"
-                         "\n"
-                         "export i32 loose(const i32 xs[:], usize i) {\n"
-                         "    contract::requires(i < countof(xs));\n"
-                         "    contract::ensures(true);\n"
-                         "    return xs[i];\n"
-                         "}\n"
-                         "\n"
-                         "export i32 kept(const i32 xs[:], usize i) {\n"
-                         "    return xs[i];\n"
-                         "}\n";
+constexpr char edges[_] = "module edges;\n"
+                          "\n"
+                          "import smith::contract;\n"
+                          "\n"
+                          "export i32 first(const i32 xs[:]) {\n"
+                          "    contract::requires(countof(xs) >= 1);\n"
+                          "    contract::ensures(true);\n"
+                          "    return xs[0];\n"
+                          "}\n"
+                          "\n"
+                          "export i32 loose(const i32 xs[:], usize i) {\n"
+                          "    contract::requires(i < countof(xs));\n"
+                          "    contract::ensures(true);\n"
+                          "    return xs[i];\n"
+                          "}\n"
+                          "\n"
+                          "export i32 kept(const i32 xs[:], usize i) {\n"
+                          "    return xs[i];\n"
+                          "}\n";
 
-constexpr char main_source[] = "module main;\n"
-                               "\n"
-                               "import edges;\n"
-                               "\n"
-                               "i32 main() {\n"
-                               "    i32 xs[3] = {1, 2, 3};\n"
-                               "    i32 all[:] = xs;\n"
-                               "    return edges::first(all) + edges::loose(all, 1) + edges::kept(all, 2) - 6;\n"
-                               "}\n";
+constexpr char main_source[_] = "module main;\n"
+                                "\n"
+                                "import edges;\n"
+                                "\n"
+                                "i32 main() {\n"
+                                "    i32 xs[3] = {1, 2, 3};\n"
+                                "    i32 all[:] = xs;\n"
+                                "    return edges::first(all) + edges::loose(all, 1) + edges::kept(all, 2) - 6;\n"
+                                "}\n";
 
 static scratch::Project fresh(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
@@ -115,48 +115,48 @@ export void test_prove_checks_the_proof_file_is_an_input_of_the_compile_in_a_rel
 
 // A proof assumes what a callee in another file promises: `user::at`'s check passes because `bounds::pick` ensures
 // `r < 3`. The proof file's key covers that file, so changing the promise puts the check back (issue #221).
-constexpr char bounds_source[] = "module bounds;\n"
+constexpr char bounds_source[_] = "module bounds;\n"
+                                  "\n"
+                                  "import smith::contract;\n"
+                                  "\n"
+                                  "export usize pick(usize n) {\n"
+                                  "    contract::requires(n < 3);\n"
+                                  "    usize r = n;\n"
+                                  "    contract::ensures(r < 3);\n"
+                                  "    return r;\n"
+                                  "}\n";
+
+constexpr char bounds_loose[_] = "module bounds;\n"
                                  "\n"
                                  "import smith::contract;\n"
                                  "\n"
                                  "export usize pick(usize n) {\n"
                                  "    contract::requires(n < 3);\n"
                                  "    usize r = n;\n"
-                                 "    contract::ensures(r < 3);\n"
+                                 "    contract::ensures(r < 5);\n"
                                  "    return r;\n"
                                  "}\n";
 
-constexpr char bounds_loose[] = "module bounds;\n"
+constexpr char user_source[_] = "module user;\n"
                                 "\n"
+                                "import bounds;\n"
                                 "import smith::contract;\n"
                                 "\n"
-                                "export usize pick(usize n) {\n"
-                                "    contract::requires(n < 3);\n"
-                                "    usize r = n;\n"
-                                "    contract::ensures(r < 5);\n"
-                                "    return r;\n"
+                                "export i32 at(const i32 xs[:]) {\n"
+                                "    contract::requires(countof(xs) == 3);\n"
+                                "    contract::ensures(true);\n"
+                                "    return xs[bounds::pick(1)];\n"
                                 "}\n";
 
-constexpr char user_source[] = "module user;\n"
-                               "\n"
-                               "import bounds;\n"
-                               "import smith::contract;\n"
-                               "\n"
-                               "export i32 at(const i32 xs[:]) {\n"
-                               "    contract::requires(countof(xs) == 3);\n"
-                               "    contract::ensures(true);\n"
-                               "    return xs[bounds::pick(1)];\n"
-                               "}\n";
-
-constexpr char user_main[] = "module main;\n"
-                             "\n"
-                             "import user;\n"
-                             "\n"
-                             "i32 main() {\n"
-                             "    i32 xs[3] = {1, 2, 3};\n"
-                             "    i32 all[:] = xs;\n"
-                             "    return user::at(all) - 2;\n"
-                             "}\n";
+constexpr char user_main[_] = "module main;\n"
+                              "\n"
+                              "import user;\n"
+                              "\n"
+                              "i32 main() {\n"
+                              "    i32 xs[3] = {1, 2, 3};\n"
+                              "    i32 all[:] = xs;\n"
+                              "    return user::at(all) - 2;\n"
+                              "}\n";
 
 static scratch::Project across_files(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);

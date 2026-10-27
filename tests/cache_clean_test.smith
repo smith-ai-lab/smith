@@ -7,7 +7,7 @@ import smith::io;
 import smith::test;
 import scratch;
 
-constexpr char busy_build[] =
+constexpr char busy_build[_] =
     "#include <smith/build.h>\n\nvoid build(SmithBuild *b) {\n"
     "    SmithStep wait = {.command = (const char *[]){\"sh\", \"-c\", \"touch started; while [ ! -e release ]; do "
     "sleep 0.1; done; touch finished\", nullptr}};\n"

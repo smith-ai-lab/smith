@@ -231,8 +231,9 @@ static usize first_line_of(const Blocks *blocks, const char *name) {
 // --- the checks of a project ---------------------------------------------------------------------------------------
 
 // The lines of the project's output block that are not in the command's output.
-constexpr char missing_script[] = "while IFS= read -r wanted; do [ -n \"$wanted\" ] || continue; "
-                                  "grep -qF -- \"$wanted\" out || echo \"not in the output: $wanted\"; done <.expected";
+constexpr char missing_script[_] =
+    "while IFS= read -r wanted; do [ -n \"$wanted\" ] || continue; "
+    "grep -qF -- \"$wanted\" out || echo \"not in the output: $wanted\"; done <.expected";
 
 static void check_port(io::Io *io, const scratch::Project *p, const char *label) {
     scratch::Run run =

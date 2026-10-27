@@ -13,7 +13,7 @@ import <string.h>;
 import scratch;
 
 // The runner's output without the timings: the slowest list is dropped and the summary's seconds are masked.
-constexpr char plain_filter[] = "sed -e '/^slowest:/,/^$/d' -e 's/ in [0-9.]* s$//' | sed '/./,$!d'";
+constexpr char plain_filter[_] = "sed -e '/^slowest:/,/^$/d' -e 's/ in [0-9.]* s$//' | sed '/./,$!d'";
 
 // The shell filter that drops the timings from the runner's output.
 export const char *plain_pipe() {

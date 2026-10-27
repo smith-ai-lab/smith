@@ -7,7 +7,7 @@ struct Grid {
 };
 
 u32 plain() {
-    u32 xs[] = {1, 2, 3};
+    u32 xs[_] = {1, 2, 3};
     return (u32)countof(xs);
 }
 
@@ -21,7 +21,7 @@ u32 shaped(u32 xs[4]) {
 }
 
 export u32 pack(auto... args) {
-    u32 xs[] = {(u32)args...};
+    u32 xs[_] = {(u32)args...};
     return (u32)countof(xs);
 }
 

@@ -100,7 +100,7 @@ export void test_untar_sanitizers_sha256_tar_xz(io::Io *io) {
 }
 
 // The AppleDouble tar, as in the section 3 tests, when this tar writes AppleDouble entries.
-constexpr char make_apple[] =
+constexpr char make_apple[_] =
     "mkdir -p apple/pkg-1.0 apple-plain/pkg-1.0; echo first >apple/pkg-1.0/a; echo second >apple/pkg-1.0/b; "
     "printf 'a plain file that only has a name like metadata\\n' >apple-plain/pkg-1.0/dot_plain; "
     "printf 'tiny\\n' >apple-plain/pkg-1.0/dot_tiny; "
@@ -168,7 +168,7 @@ export void test_untar_no_tar_nothing_in_smith_names_it(io::Io *io) {
                                               "grep -c 'bin/tar\\|\"tar\"'"));
 }
 
-constexpr char sandbox_profile[] =
+constexpr char sandbox_profile[_] =
     "profile='(version 1)(allow default)(deny process-exec (literal \"/usr/bin/tar\") (literal \"/usr/bin/bsdtar\") "
     "(literal \"/usr/bin/gzip\") (literal \"/usr/bin/gunzip\") (literal \"/opt/homebrew/bin/xz\") "
     "(literal \"/usr/bin/xz\"))'; export XDG_CACHE_HOME=$PWD/cache-sandbox; ";

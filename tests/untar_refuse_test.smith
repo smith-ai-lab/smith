@@ -140,7 +140,7 @@ export void test_untar_hostile_archives_write_nothing_beside_the_caches_folders(
               "tar -cf \"$arc/absolute.tar\" -P -s \",^pkg-1.0/a.txt\\$,$abs,\" pkg-1.0/a.txt && "
               "tar -cf \"$arc/through.tar\" -P -s ',^pkg-1.0/a.txt$,pkg-1.0/self/under,' pkg-1.0/self pkg-1.0/a.txt");
     for (usize i = 0; i < 4; i++) {
-        const char *names[] = {"up", "up-deep", "absolute", "through"};
+        const char *names[_] = {"up", "up-deep", "absolute", "through"};
         const char *package = nullptr;
         scratch::Run fetched = fetch(&p, names[i], join(&p, join(&p, "arc/", names[i]), ".tar"), &package);
         scratch::expect_failure(join(&p, "hostile: refused: ", names[i]), &fetched);
@@ -151,7 +151,7 @@ export void test_untar_hostile_archives_write_nothing_beside_the_caches_folders(
 
 // A symlink that stays in its top-level folder is fine, and one that reaches the folder above it is refused only when
 // the package is that one folder, since it then leaves the package.
-constexpr char make_top[] =
+constexpr char make_top[_] =
     "mkdir -p top/pkg-1.0/a/b top/other; echo data >top/pkg-1.0/a/data; ln -s ../data top/pkg-1.0/a/b/inside; "
     "ln -s ../../../other top/pkg-1.0/a/b/sibling; ";
 
@@ -205,7 +205,7 @@ export void test_untar_hard_links_both_names_have_the_bytes(io::Io *io) {
 // macOS tar writes extended attributes as "._name" entries in the AppleDouble format and bsdtar turns them back into
 // attributes, so they never become files, and the package is still one folder. smith drops them too, by the format's
 // magic number; a "._" file of anything else is a file like any other.
-constexpr char make_apple[] =
+constexpr char make_apple[_] =
     "mkdir -p apple/pkg-1.0 apple-plain/pkg-1.0; echo first >apple/pkg-1.0/a; echo second >apple/pkg-1.0/b; "
     "printf 'a plain file that only has a name like metadata\\n' >apple-plain/pkg-1.0/dot_plain; "
     "printf 'tiny\\n' >apple-plain/pkg-1.0/dot_tiny; "
@@ -280,9 +280,9 @@ export void test_untar_refuses_a_bzip2(io::Io *io) {
     refuse(&p, "a bzip2", "arc/a.tar.bz2", "bzip2 archives are not supported");
 }
 
-constexpr char make_gz[] =
+constexpr char make_gz[_] =
     "make_a_tar; gzip -c \"$arc/a.tar\" >\"$arc/a.tar.gz\"; size=$(wc -c <\"$arc/a.tar.gz\" | tr -d ' '); ";
-constexpr char make_xz[] =
+constexpr char make_xz[_] =
     "make_a_tar; xz -c \"$arc/a.tar\" >\"$arc/a.tar.xz\"; size=$(wc -c <\"$arc/a.tar.xz\" | tr -d ' '); ";
 
 export void test_untar_refuses_a_truncated_gzip(io::Io *io) {
@@ -317,7 +317,7 @@ export void test_untar_refuses_a_truncated_tar(io::Io *io) {
 
 // A .gz of one file that is no tar (a release binary, as tree-sitter's): the package is a folder holding that file,
 // named after the URL without ".gz", with the bytes as they were and mode 0644. A gzip of a tar is still a tar.
-constexpr char make_single[] =
+constexpr char make_single[_] =
     "mkdir -p single; head -c 200000 /dev/urandom >single/tool-bin; "
     "awk 'BEGIN { for (i = 0; i < 3000; i++) printf \"line %d of a text that repeats\\n\", i % 11 }' >single/text; "
     "printf 'tiny\\n' >single/tiny; : >single/nothing; "
@@ -377,7 +377,7 @@ export void test_untar_a_gz_of_a_tar_is_still_a_tar(io::Io *io) {
                          text(&p, join(&p, join(&p, "[ -f \"", package), "/hello.txt\" ] && echo yes || echo no")));
 }
 
-constexpr char make_single_size[] = "size=$(wc -c <\"$arc/tool-bin.gz\" | tr -d ' '); ";
+constexpr char make_single_size[_] = "size=$(wc -c <\"$arc/tool-bin.gz\" | tr -d ' '); ";
 
 export void test_untar_refuses_a_truncated_single_gz(io::Io *io) {
     scratch::Project p = untar_project(io);

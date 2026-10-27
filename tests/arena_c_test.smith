@@ -11,9 +11,9 @@ import smith::test;
 import scratch;
 import <string.h>;
 
-constexpr char flags[] = "-std=gnu23 -Wall -Wextra -Wpedantic -Werror -I \"$SMITH_REPO/.smith/include\"";
-constexpr char sources[] = "\"$SMITH_REPO/tests/arena.c\" \"$SMITH_REPO/lib/smith/arena.smith\" "
-                           "\"$SMITH_REPO/lib/smith/contract.smith\" \"$SMITH_REPO/lib/trace.c\"";
+constexpr char flags[_] = "-std=gnu23 -Wall -Wextra -Wpedantic -Werror -I \"$SMITH_REPO/.smith/include\"";
+constexpr char sources[_] = "\"$SMITH_REPO/tests/arena.c\" \"$SMITH_REPO/lib/smith/arena.smith\" "
+                            "\"$SMITH_REPO/lib/smith/contract.smith\" \"$SMITH_REPO/lib/trace.c\"";
 
 // Compiles tests/arena.c into `name` in the project: "plain", "asan" (sanitized) or "fast" (NDEBUG, -O2).
 static void compile(const scratch::Project *p, const char *name) {

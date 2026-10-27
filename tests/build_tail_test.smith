@@ -77,7 +77,7 @@ export void test_build_tail_cc_smith_cc_still_builds(io::Io *io) {
 
 // 13y2. A smith builds with its own smith-cc, the link beside it, and never with the one earlier on PATH (issue #191):
 // a copy of smith whose smith-cc leaves a marker is the one that compiles, with another smith-cc first on PATH.
-constexpr char own_link_setup[] =
+constexpr char own_link_setup[_] =
     "mkdir own other && cp \"$SMITH_SELF\" own/smith && for kind in own other; do "
     "printf '#!/bin/sh\\necho %s >>\"%s/marker\"\\nexec \"%s\" cc \"$@\"\\n' \"$kind\" \"$PWD\" \"$SMITH_SELF\" "
     ">$kind/smith-cc; chmod +x $kind/smith-cc; done";

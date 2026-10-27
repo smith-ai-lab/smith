@@ -15,7 +15,7 @@ import smith::test;
 import scratch;
 
 // $real: $SMITH_REAL, else the install smith links; empty when there is none.
-constexpr char find_real[] =
+constexpr char find_real[_] =
     "real=${SMITH_REAL:-}; if [ -z \"$real\" ]; then "
     "id=$(smith cc --smith-which -c a.c | sed -n 's/^identity //p'); "
     "for d in \"$HOME\"/.cache/smith/llvm/*/install; do "
@@ -34,7 +34,7 @@ constexpr char find_real[] =
 // `<program>.stack` (the worst-case stack, issue #207) is no file a compiler writes. A linked program with debug info
 // holds the time of each object it was linked from (the debug map), so only its size is compared against ld's.
 // The result is `ok`, or `differs in:` the outputs that differ, and the start of each diff.
-constexpr char compare_case[] =
+constexpr char compare_case[_] =
     "smith=$SMITH_SELF\n"
     "realdir=$(dirname \"$real\")\n"
     "realname=$(basename \"$real\")\n"

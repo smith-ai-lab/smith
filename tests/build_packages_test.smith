@@ -18,7 +18,7 @@ typedef struct {
     const char *hex;  // without the prefix
 } Fixture;
 
-constexpr char make_archives[] =
+constexpr char make_archives[_] =
     "mkdir -p pk/src/pkg-1.0/bin && printf 'hello package\\n' >pk/src/pkg-1.0/hello.txt && "
     "printf '#!/bin/sh\\necho tool ran\\n' >pk/src/pkg-1.0/bin/tool && chmod +x pk/src/pkg-1.0/bin/tool && "
     "cd pk/src && tar -czf ../pkg.tar.gz pkg-1.0 && tar -cJf ../pkg.tar.xz pkg-1.0 && zip -qr ../pkg.zip pkg-1.0";

@@ -179,7 +179,7 @@ export void test_conventions_explicit_the_same_two_calls_in_a_build_c_are_the_sa
                    "    smith_app(b, &(SmithApp){});\n"
                    "    smith_app_tests(b, &(SmithAppTests){});\n"
                    "}\n");
-    constexpr char commands[] =
+    constexpr char commands[_] =
         "smith build -t commands build/debug/calc build/release/calc build/fast/calc build/tests";
     const char *explicit_commands = scratch::capture(&p, commands);
     scratch::Run run = scratch::sh(&p, "smith test");

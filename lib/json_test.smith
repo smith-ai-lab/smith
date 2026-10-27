@@ -59,7 +59,7 @@ typedef struct {
 export void test_json_reader_tokens_of_a_document() {
     const char input[:] = test_json_text("{\"a\": [1, true, null, \"x\"],\n \"b\": {}}");
     c::SmithJsonReader reader = c::smith_json_reader_make(input, test_json_wide);
-    const TestJsonStep expected[] = {
+    const TestJsonStep expected[_] = {
         {c::SmithJsonToken_ObjectBegin, 0},  {c::SmithJsonToken_Key, 1},        {c::SmithJsonToken_ArrayBegin, 6},
         {c::SmithJsonToken_Number, 7},       {c::SmithJsonToken_True, 10},      {c::SmithJsonToken_Null, 16},
         {c::SmithJsonToken_String, 22},      {c::SmithJsonToken_ArrayEnd, 25},  {c::SmithJsonToken_Key, 29},
@@ -160,7 +160,7 @@ static void test_json_check_errors(const TestJsonError *cases, usize count) {
 }
 
 export void test_json_structure_errors() {
-    const TestJsonError cases[] = {
+    const TestJsonError cases[_] = {
         {"", c::SmithJsonReason_UnexpectedEnd, 0},
         {"   ", c::SmithJsonReason_UnexpectedEnd, 3},
         {"[", c::SmithJsonReason_UnexpectedEnd, 1},
@@ -192,7 +192,7 @@ export void test_json_structure_errors() {
 }
 
 export void test_json_string_errors() {
-    const TestJsonError cases[] = {
+    const TestJsonError cases[_] = {
         {"\"abc", c::SmithJsonReason_UnexpectedEnd, 4},
         {"\"a\nb\"", c::SmithJsonReason_ControlCharacter, 2},
         {"\"a\tb\"", c::SmithJsonReason_ControlCharacter, 2},
@@ -222,7 +222,7 @@ export void test_json_string_errors() {
 }
 
 export void test_json_number_errors() {
-    const TestJsonError cases[] = {
+    const TestJsonError cases[_] = {
         {"-", c::SmithJsonReason_BadNumber, 1},
         {"-a", c::SmithJsonReason_BadNumber, 1},
         {"+1", c::SmithJsonReason_UnexpectedCharacter, 0},
@@ -246,7 +246,7 @@ export void test_json_number_errors() {
 }
 
 export void test_json_accepts_the_grammar() {
-    const char *good[] = {
+    const char *good[_] = {
         "0",
         "-0",
         "1",
@@ -624,7 +624,7 @@ export void test_json_writer_escapes() {
 }
 
 export void test_json_writer_refuses_invalid_utf8() {
-    const char *bad[] = {"\xff", "\xc0\x80", "\xed\xa0\x80", "\xe2\x82", "ok\x80"};
+    const char *bad[_] = {"\xff", "\xc0\x80", "\xed\xa0\x80", "\xe2\x82", "ok\x80"};
     for (usize i = 0; i < _Countof bad; i++) {
         char buffer[64];
         c::SmithJsonWriter writer = c::smith_json_writer_make(buffer, sizeof buffer, 0);
@@ -1210,7 +1210,7 @@ export void test_json_any_integer_round_trips_exactly(random::Key key) {
 // Damages the bytes in place and returns the new length; every byte comes from the key.
 static usize test_json_damage(random::Key key, char *bytes, usize length, usize capacity) {
     random::Key *stream = &key;
-    static const char interesting[] = "[]{},:\"\\ \n-+.eE0123456789tfnu\xff\xc3\xed\xf4\x80";
+    static const char interesting[_] = "[]{},:\"\\ \n-+.eE0123456789tfnu\xff\xc3\xed\xf4\x80";
     usize edits = (usize)test_json_uniform(take(stream), 1, 4);
     for (usize e = 0; e < edits && length > 0; e++) {
         random::Key edit = take(stream);
@@ -1328,7 +1328,7 @@ typedef struct {
     bool accepted;
 } TestJsonImplementationDefined;
 
-static const TestJsonImplementationDefined test_json_implementation_defined[] = {
+static const TestJsonImplementationDefined test_json_implementation_defined[_] = {
     // Numbers are syntax only: the library keeps the text, and the conversion to a f64 refuses what is out of range.
     {"i_number_double_huge_neg_exp.json", true},
     {"i_number_huge_exp.json", true},

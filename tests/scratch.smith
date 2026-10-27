@@ -43,14 +43,14 @@ static const char *text_of(const char *data) {
 // real one. The data folder (the embedded files and the programs) is the test's own, in its scratch folder and removed
 // with it: a smith that another test removes or rebuilds can never prune the programs this test runs.
 // A command with no shell feature in it is run in place of the shell that starts it.
-constexpr char run_script[] =
+constexpr char run_script[_] =
     "unset SMITH_ACCOUNT_FILE; repo=${SMITH_REPO:-$PWD}; cd \"$0\" || exit 97; "
     "cache=$3; [ -n \"$cache\" ] || cache=${SMITH_TEST_CACHE:-$HOME/.cache/smith-tests}/xdg; "
     "data=${2%/*}/data; mkdir -p \"$cache\"; "
     "export PATH=\"$2:$PATH\" XDG_CACHE_HOME=\"$cache\" XDG_DATA_HOME=\"$data\" SMITH_REPO=\"$repo\" "
     "SMITH_TEST_CACHE=\"${SMITH_TEST_CACHE:-$HOME/.cache/smith-tests}\"; "
     "case $1 in *[!A-Za-z0-9_./:=@%+,\\ -]*) eval \"$1\" ;; *) exec $1 ;; esac";
-constexpr char setup_script[] =
+constexpr char setup_script[_] =
     "mkdir -p \"$0/tested\" \"$1\" && for n in smith smith-cc smith-c++; do ln -sf "
     "\"$SMITH_SELF\" \"$0/tested/$n\"; done; "
     "if [ \"$(uname -s)\" != Darwin ]; then printf '#!/bin/sh\\nunset SMITH_CLANG\\nexec smith-cc \"$@\"\\n' "
@@ -61,7 +61,7 @@ constexpr char setup_script[] =
 // (never the real one) and the repository as $SMITH_REPO (where the runner was started). Nothing is set in this
 // process: the environment is made by the shell that runs the command.
 static Run run_in(const Project *p, const char *command) {
-    const char *argv[] = {"sh", "-c", run_script, p->dir, command, p->tested, p->cache, nullptr};
+    const char *argv[_] = {"sh", "-c", run_script, p->dir, command, p->tested, p->cache, nullptr};
     io::ProcessResult result = io::processes_run(&p->io->processes, &p->io->arena, argv);
     test::check_equal(result.error.code, 0);
     return (Run){
@@ -86,7 +86,7 @@ static const char *join(io::Io *io, const char *folder, const char *name) {
 export Project project(io::Io *io, const char *name, const char *fixture) {
     const char *scratch = test::scratch(io);
     Project p = {.io = io, .dir = join(io, scratch, name), .tested = join(io, scratch, "tested"), .cache = ""};
-    const char *argv[] = {"sh", "-c", setup_script, scratch, p.dir, fixture != nullptr ? fixture : "", nullptr};
+    const char *argv[_] = {"sh", "-c", setup_script, scratch, p.dir, fixture != nullptr ? fixture : "", nullptr};
     io::ProcessResult made = io::processes_run(&io->processes, &io->arena, argv);
     if (made.exit_status != 0) {
         test::note("the project could not be made: %s", text_of(made.errors));

@@ -232,9 +232,9 @@ export void test_format_fixed_ties_match_libc() {
 }
 
 export void test_format_fixed_places_up_to_the_limit() {
-    f64 values[] = {0.0,   1.0,        0.1,    0.2,          0.3,   1.0 / 3.0, 2.0 / 3.0,          1e-5,
-                    1e-10, 123456.789, 99.995, 0.9999999999, 4.35,  1e15,      4503599627370496.5, 9007199254740993.0,
-                    1e18,  9.2e18,     3e-20,  2e-20,        4e-21, 5.5e-300};
+    f64 values[_] = {0.0,   1.0,        0.1,    0.2,          0.3,   1.0 / 3.0, 2.0 / 3.0,          1e-5,
+                     1e-10, 123456.789, 99.995, 0.9999999999, 4.35,  1e15,      4503599627370496.5, 9007199254740993.0,
+                     1e18,  9.2e18,     3e-20,  2e-20,        4e-21, 5.5e-300};
     for (usize v = 0; v < sizeof values / sizeof values[0]; v++) {
         for (u32 places = 0; places <= 20; places++) {
             check_fixed(values[v], places);
@@ -436,7 +436,8 @@ export void test_format_scientific_known() {
 export void test_format_general_and_scientific_ties_match_libc() {
     for (u32 digits = 0; digits <= 12; digits++) {
         for (u32 k = 0; k < 2048; k++) {
-            f64 values[] = {(f64)k / 1024.0, (f64)k / 8.0 + 0.5, (f64)k * 125.0, (f64)k / 64.0 / 1024.0, (f64)k * 1e15};
+            f64 values[_] = {(f64)k / 1024.0, (f64)k / 8.0 + 0.5, (f64)k * 125.0, (f64)k / 64.0 / 1024.0,
+                             (f64)k * 1e15};
             for (usize v = 0; v < sizeof values / sizeof values[0]; v++) {
                 check_general(values[v], digits);
                 check_general(-values[v], digits);
@@ -447,24 +448,24 @@ export void test_format_general_and_scientific_ties_match_libc() {
 }
 
 export void test_format_general_and_scientific_extremes_match_libc() {
-    f64 values[] = {0.0,
-                    1.0,
-                    0.1,
-                    1.0 / 3.0,
-                    1e-5,
-                    99999.95,
-                    999999.5,
-                    1e15,
-                    1e22,
-                    1.7976931348623157e308,
-                    2.2250738585072014e-308,
-                    5e-324,
-                    4.9406564584124654e-324,
-                    123456789.0,
-                    0.5,
-                    9.5,
-                    0.95,
-                    4.35};
+    f64 values[_] = {0.0,
+                     1.0,
+                     0.1,
+                     1.0 / 3.0,
+                     1e-5,
+                     99999.95,
+                     999999.5,
+                     1e15,
+                     1e22,
+                     1.7976931348623157e308,
+                     2.2250738585072014e-308,
+                     5e-324,
+                     4.9406564584124654e-324,
+                     123456789.0,
+                     0.5,
+                     9.5,
+                     0.95,
+                     4.35};
     for (usize v = 0; v < sizeof values / sizeof values[0]; v++) {
         for (u32 digits = 0; digits <= 42; digits++) {
             check_general(values[v], digits);
@@ -523,7 +524,7 @@ export void test_format_padding_matches_libc(random::Key key) {
     i64 number = (i64)(random::key_bits(take(key_stream)) >> (random::key_bits(take(key_stream)) % 64));
     u64 unsigned_number = random::key_bits(take(key_stream)) >> (random::key_bits(take(key_stream)) % 64);
     f64 value = (f64)(random::key_bits(take(key_stream)) % 2000000) / 1000.0 - 1000.0;
-    const char *words[] = {"", "a", "knight", "a longer name than most"};
+    const char *words[_] = {"", "a", "knight", "a longer name than most"};
     const char *word = words[random::key_bits(take(key_stream)) % 4];
     __builtin_snprintf(expected, sizeof expected, "[%*jd|%-*jd|%*ju|%*s|%-*s|%*.2f|%*.0f|%*g]", (i32)width,
                        (c::intmax_t)number, (i32)width, (c::intmax_t)number, (i32)width, (c::uintmax_t)unsigned_number,

@@ -43,7 +43,7 @@ i32 main() {
     i32 *p = raw;
     i32 view[:] = p[2:5];
     char word[:] = "abc";
-    char with_zero[] = "abc";
+    char with_zero[_] = "abc";
     char zero[:] = with_zero;
     struct Bag bag = {};
     bag.items = all;

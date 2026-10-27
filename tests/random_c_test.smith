@@ -12,11 +12,11 @@ import smith::test;
 import scratch;
 
 // The same bits everywhere: the digest of a large batch of draws, which is part of the API, in every configuration.
-constexpr char expected_digest[] = "0453abcbd4531af9";
-constexpr char warn[] = "-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wmissing-prototypes "
-                        "-Wstrict-prototypes -Wvla -Werror";
-constexpr char sources[] = "-I lowered \"$SMITH_REPO/tests/random.c\" \"$SMITH_REPO/lib/smith/arena.smith\" "
-                           "\"$SMITH_REPO/lib/smith/contract.smith\" \"$SMITH_REPO/lib/trace.c\"";
+constexpr char expected_digest[_] = "0453abcbd4531af9";
+constexpr char warn[_] = "-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wmissing-prototypes "
+                         "-Wstrict-prototypes -Wvla -Werror";
+constexpr char sources[_] = "-I lowered \"$SMITH_REPO/tests/random.c\" \"$SMITH_REPO/lib/smith/arena.smith\" "
+                            "\"$SMITH_REPO/lib/smith/contract.smith\" \"$SMITH_REPO/lib/trace.c\"";
 
 static scratch::Project lowered_project(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);

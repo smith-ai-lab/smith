@@ -143,7 +143,7 @@ export void test_untar_tar_xz_many_blocks(io::Io *io) {
 }
 
 // Members and streams one after the other: cat a.gz b.gz, and xz streams with the padding xz allows between them.
-constexpr char split_a_tar[] =
+constexpr char split_a_tar[_] =
     "make_a_tar; head -c 40960 \"$arc/a.tar\" >\"$arc/first\"; tail -c +40961 \"$arc/a.tar\" >\"$arc/second\"; ";
 
 export void test_untar_tar_gz_of_two_members(io::Io *io) {
@@ -217,7 +217,7 @@ export void test_untar_several_top_level_folders_are_kept_under_their_names(io::
 }
 
 // 2. Long names: a ustar name split over its prefix and name fields, a pax path, a GNU long name, and non-ASCII names.
-constexpr char make_long[] =
+constexpr char make_long[_] =
     "d=pkg-1.0/$(printf 'a%.0s' $(seq 80))/$(printf 'b%.0s' $(seq 80))/$(printf 'c%.0s' $(seq 80)); "
     "mkdir -p \"long/$d\" long/pkg-1.0/ü; echo deep >\"long/$d/file.txt\"; echo accent >long/pkg-1.0/ü/é.txt; ";
 

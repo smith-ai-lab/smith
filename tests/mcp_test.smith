@@ -22,7 +22,7 @@ static scratch::Project folder(const scratch::Project *root, const char *name) {
 
 // --- the server on the fake io ---------------------------------------------------------------------------------------
 
-constexpr char fake_sources[] =
+constexpr char fake_sources[_] =
     "\"$SMITH_REPO/tests/mcp_fake.c\" \"$SMITH_REPO/lib/smith/text.smith\" \"$SMITH_REPO/lib/smith/arena.smith\" "
     "\"$SMITH_REPO/lib/smith/contract.smith\" \"$SMITH_REPO/lib/smith/io.smith\" "
     "\"$SMITH_REPO/lib/smith/random.smith\"";
@@ -60,7 +60,7 @@ export void test_mcp_fake_io_optimized_without_assertions(io::Io *io) {
 
 // --- the stage0 -----------------------------------------------------------------------------------------------------
 
-constexpr char clang_inside[] =
+constexpr char clang_inside[_] =
     "[ \"$(smith cc --smith-which -c a.c | head -n 1 | cut -d ' ' -f 1,2)\" = 'clang in-process' ]";
 
 export void test_mcp_the_stage0_says_smith_mcp_needs_the_full_smith(io::Io *io) {
@@ -265,7 +265,7 @@ export void test_mcp_a_smith_program_session_has_names_as_written(io::Io *io) {
 // --- a test of a project, launched by its name
 // ------------------------------------------------------------------------
 
-constexpr char build_project[] = "env CC=smith-cc CXX=smith-c++ smith build >build.log 2>&1";
+constexpr char build_project[_] = "env CC=smith-cc CXX=smith-c++ smith build >build.log 2>&1";
 
 static const char *project_calls(io::Io *io) {
     const char *calls = "";

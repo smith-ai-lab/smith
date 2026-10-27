@@ -13,7 +13,7 @@ import <string.h>;
 import smith::mem;
 
 // The environment make and smith are compared in.
-constexpr char clean[] = "unset CC CXX MAKEFLAGS MFLAGS; ";
+constexpr char clean[_] = "unset CC CXX MAKEFLAGS MFLAGS; ";
 
 static scratch::Run run(const scratch::Project *p, const char *command) {
     char text[4096];

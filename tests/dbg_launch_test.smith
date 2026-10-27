@@ -7,11 +7,11 @@ import scratch;
 import smith::io;
 import smith::test;
 
-constexpr char program[] = "#include <stdio.h>\n"
-                           "int main(int count, char **arguments) {\n"
-                           "    for (int i = 1; i < count; i++) printf(\"<%s>\\n\", arguments[i]);\n"
-                           "    return 0;\n"
-                           "}\n";
+constexpr char program[_] = "#include <stdio.h>\n"
+                            "int main(int count, char **arguments) {\n"
+                            "    for (int i = 1; i < count; i++) printf(\"<%s>\\n\", arguments[i]);\n"
+                            "    return 0;\n"
+                            "}\n";
 
 static bool made(scratch::Project *p) {
     if (scratch::sh(p, "smith dbg --version").status != 0) return false;

@@ -227,7 +227,7 @@ export void test_prove_budget_a_proof_out_of_time_fails_saying_what_it_used_and_
 // proof runs and the process of the proof must be gone a moment later, not run on for ever with the parent's pid 1.
 // A leftover is never killed here: once its parent is gone it is launchd's, and its pid can already be another
 // process's (another test's compile). A proof also ends by its own deadline (its alarm), so it cannot run on for ever.
-constexpr char orphan_script[] =
+constexpr char orphan_script[_] =
     "smith prove --budget=30 \"$SMITH_REPO/tests/prove/division.c\" -- -I \"$SMITH_REPO/.smith/include\" >/dev/null "
     "2>&1 & "
     "parent=$!; children=; "

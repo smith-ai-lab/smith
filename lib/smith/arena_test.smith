@@ -134,8 +134,8 @@ export void test_arena_layout_is_deterministic() {
     static Memory second_memory;
     arena::Arena first = arena::fixed(first_memory.bytes, sizeof first_memory.bytes);
     arena::Arena second = arena::fixed(second_memory.bytes, sizeof second_memory.bytes);
-    const usize sizes[] = {1, 7, 64, 3, 100, 8};
-    const usize aligns[] = {1, 4, 64, 2, 16, 8};
+    const usize sizes[_] = {1, 7, 64, 3, 100, 8};
+    const usize aligns[_] = {1, 4, 64, 2, 16, 8};
     for (usize i = 0; i < _Countof(sizes); i++) {
         u8 *a = (u8 *)arena::push_raw(&first, sizes[i], aligns[i]);
         u8 *b = (u8 *)arena::push_raw(&second, sizes[i], aligns[i]);

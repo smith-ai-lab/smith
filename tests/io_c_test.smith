@@ -10,13 +10,13 @@ import smith::test;
 import scratch;
 import <string.h>;
 
-constexpr char warn[] = "-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wmissing-prototypes "
-                        "-Wstrict-prototypes -Wvla -Werror";
-constexpr char game[] = "-Wdouble-promotion -Wundef -Wpointer-arith -Wcast-qual -Wformat=2 "
-                        "-Wmissing-variable-declarations -Wcomma -Wunreachable-code";
-constexpr char sources[] = "\"$SMITH_REPO/tests/io.c\" \"$SMITH_REPO/lib/smith/io.smith\" "
-                           "\"$SMITH_REPO/lib/smith/arena.smith\" \"$SMITH_REPO/lib/smith/random.smith\" "
-                           "\"$SMITH_REPO/lib/smith/contract.smith\" \"$SMITH_REPO/lib/trace.c\"";
+constexpr char warn[_] = "-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wmissing-prototypes "
+                         "-Wstrict-prototypes -Wvla -Werror";
+constexpr char game[_] = "-Wdouble-promotion -Wundef -Wpointer-arith -Wcast-qual -Wformat=2 "
+                         "-Wmissing-variable-declarations -Wcomma -Wunreachable-code";
+constexpr char sources[_] = "\"$SMITH_REPO/tests/io.c\" \"$SMITH_REPO/lib/smith/io.smith\" "
+                            "\"$SMITH_REPO/lib/smith/arena.smith\" \"$SMITH_REPO/lib/smith/random.smith\" "
+                            "\"$SMITH_REPO/lib/smith/contract.smith\" \"$SMITH_REPO/lib/trace.c\"";
 
 // Compiles tests/io.c into `name` in the project: "asan" (-O0, sanitized) or "fast" (-O2).
 static void compile(const scratch::Project *p, const char *name) {

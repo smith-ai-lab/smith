@@ -41,7 +41,7 @@ static void builds(const scratch::Project *p, const char *name, const char *argu
 }
 
 // The lines "<name> <derivative> <analytic>" a program prints agree to 1e-9 relative: how many do not.
-constexpr char disagree[] =
+constexpr char disagree[_] =
     "awk '/^(reverse|forward|loss|gradient)/ { d = $(NF-1); a = $NF; e = d - a; if (e < 0) e = -e; s = a < 0 ? -a : a; "
     "if (e > 1e-9 * (s > 1 ? s : 1)) bad++ } END { print bad + 0 }'";
 
@@ -183,8 +183,8 @@ export void test_autodiff_structs_gradients_sgd_and_adam_equal_their_references(
 // ---- 4. AddressSanitizer runs after Enzyme: an out-of-bounds read is reported at its line in the function as called
 // and in its gradient, the same program inside the array passes, and release has no ASan. ----
 
-constexpr char symbolizer[] = "ln -sf \"$(command -v smith)\" llvm-symbolizer; export "
-                              "ASAN_SYMBOLIZER_PATH=\"$PWD/llvm-symbolizer\"; ";
+constexpr char symbolizer[_] = "ln -sf \"$(command -v smith)\" llvm-symbolizer; export "
+                               "ASAN_SYMBOLIZER_PATH=\"$PWD/llvm-symbolizer\"; ";
 
 static const char *oob_run(io::Io *io, const scratch::Project *p, const char *command) {
     return scratch::sh(p, format::push(&io->arena, symbolizer, command).data).err;

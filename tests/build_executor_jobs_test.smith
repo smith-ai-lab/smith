@@ -68,7 +68,7 @@ export void test_build_executor_a_console_job_keeps_stdin_and_stdout(io::Io *io)
 // and pgrep sees every process), and are long enough that only the interrupt can end them: the test is "ended far
 // before the sleep did", not a number of seconds that a loaded machine could pass. Only the build this shell started
 // is signalled.
-constexpr char interrupt_script[] =
+constexpr char interrupt_script[_] =
     "nap=$((600 + $$ % 3000)); sed -i.bak \"s/NAP/$nap/g\" build.ninja; "
     "smith --smith-exec build.ninja >o 2>e & pid=$!; n=0; "
     "while [ \"$(wc -l <started 2>/dev/null | tr -d ' ')\" != 2 ] && [ $n -lt 12000 ]; do n=$((n+1)); sleep 0.05; "

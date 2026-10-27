@@ -8,7 +8,7 @@ import smith::test;
 import scratch;
 
 // Every command: the stub gh first on PATH, the script, and the trees of the two commits.
-constexpr char prelude[] =
+constexpr char prelude[_] =
     "export PATH=\"$PWD/../bin:$PATH\" GITHUB_REPOSITORY=o/r; script=\"$SMITH_REPO/scripts/ci-tree.sh\"; "
     "tree1=$(git rev-parse HEAD~1^{tree}); tree2=$(git rev-parse HEAD^{tree}); ";
 

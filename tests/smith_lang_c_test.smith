@@ -15,9 +15,9 @@ import smith::test;
 import <string.h>;
 import scratch;
 
-constexpr char flags[] =
+constexpr char flags[_] =
     "-std=gnu23 -O1 -g0 -Wno-builtin-macro-redefined -D'__FILE__=\"unit\"' -I include -I .smith/include";
-constexpr char in_process[] =
+constexpr char in_process[_] =
     "-DSMITH_IN_PROCESS -D'SMITH_CLANG_RESOURCE=\"tests/stub.c\"' -D'SMITH_CLANG_ID=\"llvm-0 0\"'";
 
 static typeof(const char[:]) slice_of(const char *text) {

@@ -27,8 +27,8 @@ typedef struct {
 } Placed;
 
 // The idiom a complete block follows: no preprocessor line, no standard C type name (no match is the pass).
-constexpr char c_renamed[] = "grep -nE '^[[:space:]]*#[[:space:]]*(include|define)|"
-                             "\\<(u?int(8|16|32|64)_t|size_t|ptrdiff_t)\\>' raw";
+constexpr char c_renamed[_] = "grep -nE '^[[:space:]]*#[[:space:]]*(include|define)|"
+                              "\\<(u?int(8|16|32|64)_t|size_t|ptrdiff_t)\\>' raw";
 
 // What a block is, from its info string.
 typedef enum { Block_Smith, Block_Fragment, Block_C, Block_Bad, Block_Other } Block;
@@ -143,7 +143,7 @@ static void walk_blocks(io::Io *io, const scratch::Project *p, const char *name,
 }
 
 // The headers of the skill's modules, twice: the second pass has the headers the first made.
-constexpr char headers_script[] =
+constexpr char headers_script[_] =
     "mkdir -p .smith/include; flags=\"-I $SMITH_REPO/.smith/include -I $PWD/.smith/include -I $PWD\"; "
     "for pass in 1 2; do while read -r path; do "
     "module=$(sed -n 's/^module \\([A-Za-z0-9_:]*\\);.*/\\1/p' \"$path\" | head -n 1); [ -n \"$module\" ] || continue; "

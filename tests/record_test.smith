@@ -11,9 +11,9 @@ import smith::test;
 import scratch;
 
 // A repository of the fixture, committed on main. SMITH_OUTPUT=full for the messages of the nested smith.
-constexpr char repository[] = "export SMITH_OUTPUT=full; git init -q -b main . && printf "
-                              "'build\\n.smith\\n*.profraw\\n' > .gitignore && git add -A && "
-                              "git -c user.name=t -c user.email=t@t commit -q -m base; ";
+constexpr char repository[_] = "export SMITH_OUTPUT=full; git init -q -b main . && printf "
+                               "'build\\n.smith\\n*.profraw\\n' > .gitignore && git add -A && "
+                               "git -c user.name=t -c user.email=t@t commit -q -m base; ";
 
 // No records yet: every test runs once, instrumented, and each leaves its record, which names the functions it ran
 // (the program's too) and not the other test's.

@@ -11,11 +11,11 @@ import smith::test;
 import scratch;
 
 // Exit status 77 (the test is skipped) for a smith with no LLVM inside (the stage0), which cannot read profiles.
-constexpr char find_tools[] = "smith symbolize --available || exit 77; ";
+constexpr char find_tools[_] = "smith symbolize --available || exit 77; ";
 
 // A program with three functions on known lines; `prog` runs `first`, and `prog x` runs `second`. A repository when
 // `commit` is true.
-constexpr char program[] =
+constexpr char program[_] =
     "static int first(int x) {\\n    return x + 1;\\n}\\nstatic int second(int x) {\\n    return x * 2;\\n}\\n"
     "int main(int argc, char **argv) {\\n    (void)argv;\\n    return (argc > 1 ? second(argc) : first(argc)) > "
     "100;\\n}\\n";
@@ -33,9 +33,9 @@ static const char *make_table(io::Io *io, const char *runs) {
         .data;
 }
 
-constexpr char run_one[] =
+constexpr char run_one[_] =
     "LLVM_PROFILE_FILE=$r/cov/raw/t__one/%p.profraw ./prog; smith test --coverage merge t::one; ";
-constexpr char run_two[] =
+constexpr char run_two[_] =
     "LLVM_PROFILE_FILE=$r/cov/raw/t__two/%p.profraw ./prog x; smith test --coverage merge t::two; ";
 
 // Each test's record holds the functions it ran; the table lists the functions, the lines, and a bit for each; the raw
@@ -78,7 +78,7 @@ export void test_the_report_names_the_changed_lines_no_test_ran(io::Io *io) {
 // A repository with a module of three tests that run smith, a pure test, and runtime/prog.c, a program of two functions
 // (lines 1 to 3 and 4 to 6) and main. `runs_test::a` ran the first function and `runs_test::b` the second, each
 // under coverage and merged into a record; `runs_test::c` has none.
-constexpr char repository[] =
+constexpr char repository[_] =
     "export SMITH_OUTPUT=full SMITH_COVERAGE_NO_FETCH=1; git init -q -b main . && mkdir -p lib tests runtime .smith && "
     "printf '.smith\\n' > .gitignore && printf '// a build with its own test task\\n' > build.c && "
     "printf 'module runs_test;\\nimport scratch;\\nexport void test_a() { scratch::sh(); }\\n"

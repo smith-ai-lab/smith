@@ -8,7 +8,7 @@ import smith::io;
 // `smith prove` proves the promise from the precondition, and every caller must meet the precondition.
 export i32 sum(usize count) {
     contract::requires(count <= 5);
-    constexpr i32 first[] = {2, 3, 5, 7, 11};
+    constexpr i32 first[_] = {2, 3, 5, 7, 11};
     i32 total = 0;
     for (usize i = 0; i < count; i++) {
         total += first[i];

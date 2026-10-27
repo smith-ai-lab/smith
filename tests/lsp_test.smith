@@ -23,7 +23,7 @@ static scratch::Project folder(const scratch::Project *root, const char *name) {
 }
 
 // Whether this smith can run the tests: clang inside, clangd inside, the token hook.
-constexpr char probe_script[] =
+constexpr char probe_script[_] =
     "[ \"$(smith cc --smith-which -c a.c | head -n 1 | cut -d ' ' -f 1,2)\" = 'clang in-process' ] && "
     "smith lsp --version >/dev/null 2>&1 && printf 'int main(void) { return 0; }\\n' >probe.smith && "
     "! smith cc --smith-lower probe.smith 2>&1 | grep -q 'token hook'";
@@ -524,7 +524,7 @@ static const char *query(const scratch::Project *p, const char *arguments, io::I
     return scratch::sh(p, format::push(&io->arena, "smith lsp ", arguments, " 2>/dev/null").data).out;
 }
 
-constexpr char dot_definition[] = "geom/vec.smith:8:12: function: geom::vec::dot: export f32 dot(Vec a, Vec b) {";
+constexpr char dot_definition[_] = "geom/vec.smith:8:12: function: geom::vec::dot: export f32 dot(Vec a, Vec b) {";
 
 export void test_lsp_query_the_first_query_says_it_waits_for_the_index(io::Io *io) {
     scratch::Project root, p;
@@ -785,7 +785,7 @@ export void test_lsp_modules_completion_after_a_module_name(io::Io *io) {
 // `c::` names of every kind, in a folder with no database: a function, a function of a local header, a type, a macro
 // for a variable, a function-like macro and a constant macro. Each hover finds the declaration it names, and
 // go-to-definition has exactly one answer. The columns are those of the fixture's main.smith.
-constexpr char cinterop_hovers[] =
+constexpr char cinterop_hovers[_] =
     "open main.smith -- hover main.smith 7 19 -- hover main.smith 9 8 -- hover main.smith 9 21 -- hover main.smith 10 "
     "8 "
     "-- hover main.smith 10 58 -- hover main.smith 10 104 -- hover main.smith 10 112 -- definitions main.smith 7 19 -- "
@@ -884,7 +884,7 @@ export void test_lsp_a_database_naming_only_a_c_file(io::Io *io) {
 
 // A project with only .smith/compile_commands.json (issue #43): clangd reads that one, so the define its command has
 // reaches the source; a root compile_commands.json, when there is one, is clangd's own choice and wins.
-constexpr char needs_database[] =
+constexpr char needs_database[_] =
     "mkdir -p .smith && printf '[{\"directory\": \"%s\", \"command\": \"smith-cc -c needs.c -o needs.o -DNEEDED=1\", "
     "\"file\": \"needs.c\"}]\\n' \"$(pwd -P)\" >.smith/compile_commands.json";
 
@@ -1002,7 +1002,7 @@ export void test_lsp_editor_a_payload_enum_is_read(io::Io *io) {
 // a.c's pure function calls noisy, which b.c defines and prints in. The summary of b.c is the build's (made here by the
 // compile), the editor reads it, and a.c shows the link's error with the chain. Saving b.c without the print rewrites
 // its summary and a.c's diagnostics are published again without the error, with a.c untouched.
-constexpr char effects_database[] =
+constexpr char effects_database[_] =
     "mkdir -p .smith && d=$(pwd -P) && printf "
     "'[{\"directory\":\"%s\",\"file\":\"a.c\",\"output\":\"a.o\",\"arguments\":"
     "[\"smith-cc\",\"-std=gnu2y\",\"-c\",\"a.c\",\"-o\",\"a.o\"]},\\n "

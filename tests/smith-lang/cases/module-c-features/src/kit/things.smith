@@ -12,7 +12,7 @@ export typedef struct Node {
 } Node;
 
 export constexpr usize capacity = 4;
-export const char *const names[] = {"zero", "one", "two"};
+export const char *const names[_] = {"zero", "one", "two"};
 static_assert(sizeof(Word) == 4, "a word is four bytes");
 
 [[nodiscard]] static inline int square(int value) {
@@ -45,7 +45,7 @@ export int by_type(int value) {
 }
 
 export u32 pick(u32 index) {
-    static const u32 table[] = {10, 20, 30, 40};
+    static const u32 table[_] = {10, 20, 30, 40};
     typeof(index) clamped = index < capacity ? index : capacity - 1;
     return table[clamped];
 }

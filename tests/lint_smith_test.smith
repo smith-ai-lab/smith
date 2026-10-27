@@ -19,7 +19,7 @@ static typeof(const char[:]) slice_of(const char *text) {
 // The shell functions every command uses: the findings of a run, one line each as the tool prints them (the rest of its
 // output is the carets and the fixes), with the project's folder left off; `run` is `smith lint` on files; `idiom` is
 // one check alone, and `idiom_findings` a finding without the check's name.
-constexpr char prelude[] =
+constexpr char prelude[_] =
     "findings() { grep -E '^/.*:[0-9]+:[0-9]+: (error|warning):' | sed -e \"s|^$PWD/||\" -e \"s|^$(pwd -P)/||\"; }; "
     "flags='-I. -I.smith/include'; "
     "run() { smith lint --quiet \"$@\" -- $flags 2>&1; }; "
@@ -56,12 +56,12 @@ static void findings_are(io::Io *io, const scratch::Project *p, const char *name
     golden_of(io, name, lint(p, body).out);
 }
 
-constexpr char plain_findings[] = "plain.c:1:5: error: invalid case style for function 'geometry_box_Odd' "
-                                  "[readability-identifier-naming,-warnings-as-errors]\n"
-                                  "plain.c:1:26: error: invalid case style for parameter 'Bad_Arg' "
-                                  "[readability-identifier-naming,-warnings-as-errors]";
-constexpr char bad_local[] = "main.smith:5:9: error: invalid case style for variable 'BadLocal' "
-                             "[readability-identifier-naming,-warnings-as-errors]";
+constexpr char plain_findings[_] = "plain.c:1:5: error: invalid case style for function 'geometry_box_Odd' "
+                                   "[readability-identifier-naming,-warnings-as-errors]\n"
+                                   "plain.c:1:26: error: invalid case style for parameter 'Bad_Arg' "
+                                   "[readability-identifier-naming,-warnings-as-errors]";
+constexpr char bad_local[_] = "main.smith:5:9: error: invalid case style for variable 'BadLocal' "
+                              "[readability-identifier-naming,-warnings-as-errors]";
 
 // --- a module and its importer, in memory (no generated header yet) ------------------------------------------------
 
@@ -76,8 +76,8 @@ export void test_lint_findings_are_at_the_sources_lines_with_the_names_as_writte
 
 // --- with the headers `smith build` writes -------------------------------------------------------------------------
 
-constexpr char make_header[] = "mkdir -p .smith/include/geometry; "
-                               "smith cc --smith-header geometry/box.smith -o .smith/include/geometry/box.h; ";
+constexpr char make_header[_] = "mkdir -p .smith/include/geometry; "
+                                "smith cc --smith-header geometry/box.smith -o .smith/include/geometry/box.h; ";
 
 export void test_lint_the_same_findings_with_the_generated_header_on_disk(io::Io *io) {
     scratch::Project p = prepared(io, false);
@@ -251,7 +251,7 @@ export void test_lint_a_module_with_tuples_lints_clean(io::Io *io) {
 
 // --- smith-preprocessor (issue #46): a .smith file has no preprocessor ----------------------------------------------
 
-constexpr char preprocessor_only[] =
+constexpr char preprocessor_only[_] =
     "preprocessor_only() { findings | grep -E 'smith-preprocessor' | sed -e 's/ "
     "\\[smith-preprocessor,-warnings-as-errors\\]$//' "
     "-e 's/: \\(`[^`]*`\\) is the preprocessor, and a .smith file has none: .*/: \\1/' "

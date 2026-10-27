@@ -9,11 +9,11 @@ import smith::io;
 import smith::test;
 import scratch;
 
-constexpr char expected_output[] =
+constexpr char expected_output[_] =
     "frames=15 name=last.replay length=11 version=3 mode=1 root=4.0 eof=-1\ncounter=8\nchecksum=1026";
 
 // What a -v build ran: the objects it compiled, as a sorted list of the sources.
-constexpr char compiled_command[] =
+constexpr char compiled_command[_] =
     "smith build -v 2>&1 | sed -n 's/.* -c \\(src\\/[^ ]*\\) -o .*/\\1/p' | sort | tr '\\n' ' '";
 
 // Copies the corpus case's sources and the program that builds them, with a smith-cc of its own next to them.

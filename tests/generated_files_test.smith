@@ -14,7 +14,7 @@ import smith::test;
 import scratch;
 
 // The tracked files that break the rule, one a line; the repository is its first argument.
-constexpr char guard_script[] =
+constexpr char guard_script[_] =
     "cd \"$1\" || exit 97; { git ls-files -ci --exclude-standard; git ls-files | grep '^[.]smith/'; "
     "git ls-files | grep -v -e '^tests/smith-lang/cases/[^/]*/expect/' -e '^tests/smith-fmt/' -e "
     "'^tests/smith-lang/cases/error-stale-header/src/' "

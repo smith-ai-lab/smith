@@ -193,8 +193,8 @@ export void test_random_unit_values_are_on_their_grid(random::Key key) {
 export void test_random_uniform_real_stays_below_high_when_rounding_reaches_it() {
     random::Key root = random::key_make(seed + 3);
     random::Key *stream = &root;
-    const f32 lows[] = {1.0F, -0x1p-30F, 16777216.0F, -1.0F, 0.0F};
-    const f32 highs[] = {1.0000001F, 0.0F, 16777218.0F, -0.99999994F, 0x1p-149F};
+    const f32 lows[_] = {1.0F, -0x1p-30F, 16777216.0F, -1.0F, 0.0F};
+    const f32 highs[_] = {1.0000001F, 0.0F, 16777218.0F, -0.99999994F, 0x1p-149F};
     usize reached = 0;
     for (usize r = 0; r < 5; r++) {
         for (u64 i = 0; i < 200000; i++) {
@@ -206,8 +206,8 @@ export void test_random_uniform_real_stays_below_high_when_rounding_reaches_it()
         }
     }
     test::check_greater(reached, 0); // the rounding case happened, and was handled
-    const f64 dlows[] = {1.0, -0x1p-60, 9007199254740992.0, -1.0};
-    const f64 dhighs[] = {1.0000000000000002, 0.0, 9007199254740994.0, -0.9999999999999999};
+    const f64 dlows[_] = {1.0, -0x1p-60, 9007199254740992.0, -1.0};
+    const f64 dhighs[_] = {1.0000000000000002, 0.0, 9007199254740994.0, -0.9999999999999999};
     for (usize r = 0; r < 4; r++) {
         for (u64 i = 0; i < 200000; i++) {
             f64 value = random::uniform_double_sample(take(stream), (random::UniformDouble){dlows[r], dhighs[r]});
@@ -269,7 +269,7 @@ export void test_random_bernoulli_frequency(random::Key key) {
 export void test_random_categorical(random::Key key) {
     random::Key *stream = &key;
     arena::Arena a = test::memory(1 << 14);
-    const f64 weights[] = {1.0, 2.0, 3.0, 0.0, 4.0, 0.5, 9.5};
+    const f64 weights[_] = {1.0, 2.0, 3.0, 0.0, 4.0, 0.5, 9.5};
     constexpr usize count = 7;
     random::Categorical categorical = random::categorical_make(&a, weights, count);
     test::check_equal(categorical.count, count);
@@ -292,7 +292,7 @@ export void test_random_categorical(random::Key key) {
         cells[used++] = observed[i];
     }
     test::check_less(chi_square(cells, expected, used), chi_limit(used - 1));
-    random::Categorical one = random::categorical_make(&a, (const f64[]){3.5}, 1);
+    random::Categorical one = random::categorical_make(&a, (const f64[_]){3.5}, 1);
     for (u64 i = 0; i < 100; i++) {
         test::check_equal(random::categorical_sample(take(stream), one), 0);
     }
@@ -301,7 +301,7 @@ export void test_random_categorical(random::Key key) {
         test::check_equal(same.probability[i], categorical.probability[i]);
         test::check_equal(same.alias[i], categorical.alias[i]);
     }
-    random::Categorical tiny = random::categorical_make(&a, (const f64[]){0.0, 1.0}, 2);
+    random::Categorical tiny = random::categorical_make(&a, (const f64[_]){0.0, 1.0}, 2);
     for (u64 i = 0; i < 1000; i++) {
         test::check_equal(random::categorical_sample(take(stream), tiny), 1);
     }
@@ -457,7 +457,7 @@ export void test_random_log_special_values() {
 // The pinned values: bits of key_bits for seeds 0, 1 and UINT64_MAX, split, and every distribution for one key (floats
 // as their bits). The numbers are part of the API: a change to any of them is a breaking change.
 
-static constexpr u64 pinned_values[] = {
+static constexpr u64 pinned_values[_] = {
     0xe169c58d6627e8d5, // bits
     0xf08d6eaa844515e1, // split
     0xd9c77dedca7cf69e, // split
@@ -555,7 +555,7 @@ static u64 double_bits(f64 value) {
 
 export void test_random_pinned_values() {
     Pins pins = {};
-    const u64 seeds[] = {0, 1, 18446744073709551615ULL};
+    const u64 seeds[_] = {0, 1, 18446744073709551615ULL};
     for (usize s = 0; s < 3; s++) {
         pin(&pins, random::key_bits(random::key_make(seeds[s])));
         random::Key parts[3];
@@ -565,7 +565,7 @@ export void test_random_pinned_values() {
         }
     }
     arena::Arena a = test::memory(1 << 12);
-    const f64 weights[] = {1.0, 2.0, 3.0, 0.0, 4.0};
+    const f64 weights[_] = {1.0, 2.0, 3.0, 0.0, 4.0};
     random::Categorical categorical = random::categorical_make(&a, weights, 5);
     for (usize i = 0; i < 5; i++) {
         pin(&pins, double_bits(categorical.probability[i]));
@@ -628,7 +628,7 @@ static u64 word_for_index(u64 index, u64 span) {
 export void test_random_zero_word_gives_the_simplest_value() {
     ConstantTap zero = {.tap = {tap_constant}, .word = 0};
     arena::Arena a = test::memory(1 << 12);
-    random::Categorical categorical = random::categorical_make(&a, (const f64[]){1.0, 2.0, 3.0}, 3);
+    random::Categorical categorical = random::categorical_make(&a, (const f64[_]){1.0, 2.0, 3.0}, 3);
     test::check_equal(random::uniform_int64_sample(tapped(&zero), range(-3, 6)), 0);
     test::check_equal(random::uniform_int64_sample(tapped(&zero), range(5, 9)), 5);
     test::check_equal(random::uniform_int64_sample(tapped(&zero), range(-9, -5)), -5);
@@ -677,8 +677,8 @@ export void test_random_one_step_off_the_identity_moves_a_position() {
 
 // Words 1, 2 and 3 move the integer away from the simplest value in the zigzag order.
 export void test_random_small_words_walk_out_from_zero() {
-    const u64 words[] = {0, 1, 2, 3, 4};
-    const i64 full[] = {0, -1, 1, -2, 2};
+    const u64 words[_] = {0, 1, 2, 3, 4};
+    const i64 full[_] = {0, -1, 1, -2, 2};
     for (usize i = 0; i < 5; i++) {
         ConstantTap full_tap = {.tap = {tap_constant}, .word = words[i]};
         test::check_equal(random::uniform_int64_sample(tapped(&full_tap), range(i64_min, i64_max)), full[i]);

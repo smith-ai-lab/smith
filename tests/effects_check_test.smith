@@ -14,7 +14,7 @@ import smith::test;
 import <string.h>;
 import scratch;
 
-constexpr char only_effects[] = "Checks: \"-*,smith-effects\"\nWarningsAsErrors: \"*\"\n";
+constexpr char only_effects[_] = "Checks: \"-*,smith-effects\"\nWarningsAsErrors: \"*\"\n";
 
 static scratch::Project project(io::Io *io, const char *clang_tidy) {
     scratch::Project p = scratch::project(io, "proj", "effects_check");
@@ -35,7 +35,7 @@ static const char *findings(const scratch::Project *p, const char *files, const 
     return scratch::capture(p, command);
 }
 
-constexpr char flags[] = "-I\"$SMITH_REPO/.smith/include\" -I. -std=gnu2y";
+constexpr char flags[_] = "-I\"$SMITH_REPO/.smith/include\" -I. -std=gnu2y";
 
 // A case whose findings are a golden file.
 static void golden(io::Io *io, const char *name, const char *files, const char *extra) {

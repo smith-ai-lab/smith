@@ -12,10 +12,11 @@ import scratch;
 
 // The commands of every case: `w FILE` waits for a file, `ww FILE TEXT` waits for a text in a file, `hold` is a job
 // that keeps its slot until the file `free` exists.
-constexpr char prelude[] = "unset SMITH_SLOT_HELD SMITH_PRIORITY; export SMITH_SLOTS=1 SMITH_SLOTS_DIR=\"$PWD/slots\"; "
-                           "w() { while [ ! -e \"$1\" ]; do sleep 0.05; done; }; "
-                           "ww() { until grep -q \"$2\" \"$1\" 2>/dev/null; do sleep 0.05; done; }; "
-                           "hold='touch held; while [ ! -e free ]; do sleep 0.05; done'; ";
+constexpr char prelude[_] =
+    "unset SMITH_SLOT_HELD SMITH_PRIORITY; export SMITH_SLOTS=1 SMITH_SLOTS_DIR=\"$PWD/slots\"; "
+    "w() { while [ ! -e \"$1\" ]; do sleep 0.05; done; }; "
+    "ww() { until grep -q \"$2\" \"$1\" 2>/dev/null; do sleep 0.05; done; }; "
+    "hold='touch held; while [ ! -e free ]; do sleep 0.05; done'; ";
 
 static const char *slots_case(io::Io *io, const char *script) {
     scratch::Project p = scratch::project(io, "p", nullptr);

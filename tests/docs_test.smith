@@ -227,13 +227,13 @@ export void test_docs_declared_types_require_replaces_the_indexs_requirements(io
 }
 
 // A build.c changes nothing: the verb is the check whatever the build declares, and it needs no task.
-constexpr char other_build[] = "#include <smith/build.h>\n"
-                               "\n"
-                               "void build(SmithBuild *b) {\n"
-                               "    SmithStep other = {.command = smith_list(b, \"true\", nullptr)};\n"
-                               "    smith_task(b, \"other\", &other);\n"
-                               "    smith_default(b, other.outputs);\n"
-                               "}\n";
+constexpr char other_build[_] = "#include <smith/build.h>\n"
+                                "\n"
+                                "void build(SmithBuild *b) {\n"
+                                "    SmithStep other = {.command = smith_list(b, \"true\", nullptr)};\n"
+                                "    smith_task(b, \"other\", &other);\n"
+                                "    smith_default(b, other.outputs);\n"
+                                "}\n";
 
 static scratch::Project with_build_file(io::Io *io) {
     scratch::Project p = fixtures(io);

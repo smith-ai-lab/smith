@@ -11,10 +11,10 @@ import smith::test;
 import scratch;
 
 // runtime/package.c sees the libraries through their headers; the modules are linked.
-constexpr char compile_prefix[] =
+constexpr char compile_prefix[_] =
     "smith cc -std=gnu23 -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wmissing-prototypes "
     "-Wstrict-prototypes -Wvla -Werror -Wno-unused-function -I \"$SMITH_REPO/.smith/include\" ";
-constexpr char libraries[] =
+constexpr char libraries[_] =
     " \"$SMITH_REPO/lib/smith/arena.smith\" \"$SMITH_REPO/lib/smith/contract.smith\" "
     "\"$SMITH_REPO/lib/smith/inflate.smith\" \"$SMITH_REPO/lib/smith/io.smith\" \"$SMITH_REPO/lib/smith/random.smith\"";
 

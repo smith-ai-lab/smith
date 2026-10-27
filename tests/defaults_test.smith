@@ -9,11 +9,11 @@ import smith::io;
 import smith::test;
 import scratch;
 
-constexpr char c_file[] = "int main(void) {\nif (1) {\nreturn 0;\n}\n}\n";
-constexpr char smith_second_line[] = "    if (1) {";
-constexpr char llvm_second_line[] = "  if (1) {";
-constexpr char eight_second_line[] = "        if (1) {";
-constexpr char llvm_two[] = "BasedOnStyle: LLVM\nIndentWidth: 2\n";
+constexpr char c_file[_] = "int main(void) {\nif (1) {\nreturn 0;\n}\n}\n";
+constexpr char smith_second_line[_] = "    if (1) {";
+constexpr char llvm_second_line[_] = "  if (1) {";
+constexpr char eight_second_line[_] = "        if (1) {";
+constexpr char llvm_two[_] = "BasedOnStyle: LLVM\nIndentWidth: 2\n";
 
 // A project with a.c written and an XDG_DATA_HOME of its own.
 static scratch::Project bare(io::Io *io) {
@@ -184,7 +184,7 @@ export void test_defaults_fmt_the_project_verb_with_no_style_file_formats_in_smi
 
 // --- lint -----------------------------------------------------------------------------------------------------------
 
-constexpr char bad_name[] = "int BadName(void) {\n    return 0;\n}\n";
+constexpr char bad_name[_] = "int BadName(void) {\n    return 0;\n}\n";
 
 static scratch::Project tidy(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);

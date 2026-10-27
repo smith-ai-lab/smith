@@ -14,7 +14,7 @@ import scratch;
 // The scratch home: the fixture (a project, a folder with a .smith file alone, and a nvim-dap that is only a table),
 // the compile database of the project, and the projects smith new writes (no build file; the plugin finds them by
 // their main): a C one that builds, a C one whose main.c does not compile, and one of the default language.
-constexpr char setup[] =
+constexpr char setup[_] =
     "d=$PWD; mkdir -p data config state cache home new empty-data && "
     "printf "
     "'[{\"directory\":\"%s\",\"file\":\"main.smith\",\"arguments\":[\"smith-cc\",\"-x\",\"c\",\"-c\",\"main.smith\"]}]"
@@ -24,11 +24,11 @@ constexpr char setup[] =
     "printf 'this is an error\\n' >>broken/main.c && smith new fresh >/dev/null 2>&1)";
 
 // A smith that prints a commit of our choosing and is the real one otherwise.
-constexpr char shim[] =
+constexpr char shim[_] =
     "shim() { mkdir -p \"$1\"; printf '#!/bin/sh\\nif [ \"$1\" = version ]; then echo \"%s\"; exit 0; fi\\n"
     "exec \"%s\" \"$@\"\\n' \"$2\" \"$SMITH_SELF\" >\"$1/smith\"; chmod +x \"$1/smith\"; }; ";
 
-constexpr char fakedap[] = "--cmd \"set runtimepath+=$d/fakedap\"";
+constexpr char fakedap[_] = "--cmd \"set runtimepath+=$d/fakedap\"";
 
 // How Neovim is started: the shell that runs first (the shim of smith), the PATH in front of the smith under test,
 // whether the smith under test is on the PATH at all, the data folder (relative to the scratch home) and more

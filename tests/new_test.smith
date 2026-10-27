@@ -12,14 +12,14 @@ import smith::io;
 import smith::test;
 import scratch;
 
-constexpr char git_environment[] =
+constexpr char git_environment[_] =
     "export HOME=\"$PWD/.home\" GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=Tester GIT_AUTHOR_EMAIL=tester@example.com "
     "GIT_COMMITTER_NAME=Tester GIT_COMMITTER_EMAIL=tester@example.com SMITH_OUTPUT=full; mkdir -p \"$HOME\"; ";
 
 // `generate <name> [flags]` puts a copy of the project `smith new` makes in the folder, as `smith new` leaves it
 // (built, committed): it is made once for each smith under test, in the tests' cache, so the tests that only need a
 // project to work on do not each make one. The tests of `smith new` itself run it.
-constexpr char generate_function[] =
+constexpr char generate_function[_] =
     "generate() { name=$1; shift; key=$(stat -c %Y-%s \"$SMITH_SELF\" 2>/dev/null || stat -f %m-%z \"$SMITH_SELF\"); "
     "t=$SMITH_TEST_CACHE/new-$key/$name; "
     "if [ ! -d \"$t\" ]; then find \"$SMITH_TEST_CACHE\" -maxdepth 1 -name 'new-*' -mtime +1 -exec rm -rf {} + "
@@ -79,10 +79,10 @@ static const char *named(const char *format, const char *a, const char *b) {
     return text;
 }
 
-constexpr char smith_files[] =
+constexpr char smith_files[_] =
     ".agents/skills/hello-docs/SKILL.md .claude/settings.json .claude/skills .gitignore AGENTS.md knowledge/index.md "
     "knowledge/program.md main.smith primes.smith primes_test.smith";
-constexpr char c_files[] =
+constexpr char c_files[_] =
     ".agents/skills/hellc-docs/SKILL.md .claude/settings.json .claude/skills .gitignore AGENTS.md knowledge/index.md "
     "knowledge/program.md main.c primes.c primes.h primes_test.c";
 
@@ -91,16 +91,16 @@ export void test_new_hello_a_smith_project_is_written_and_committed(io::Io *io) 
     scratch::Project p = fresh(io);
     scratch::Run created = run(&p, "smith new hello");
     scratch::expect_status("new hello: exits 0", 0, &created);
-    const char *files[] = {"main.smith",         "primes.smith",          "primes_test.smith",
-                           ".gitignore",         ".claude/settings.json", "AGENTS.md",
-                           "knowledge/index.md", "knowledge/program.md",  ".agents/skills/hello-docs/SKILL.md"};
+    const char *files[_] = {"main.smith",         "primes.smith",          "primes_test.smith",
+                            ".gitignore",         ".claude/settings.json", "AGENTS.md",
+                            "knowledge/index.md", "knowledge/program.md",  ".agents/skills/hello-docs/SKILL.md"};
     for (usize i = 0; i < _Countof(files); i++) {
         char path[256];
         __builtin_snprintf(path, sizeof path, "hello/%s", files[i]);
         expect_exists(&p, named("new hello: creates %s%s", files[i], ""), path, "yes");
     }
-    const char *absent[] = {"build.c", "build.smith", ".clang-format", ".clang-tidy", "compile_commands.json",
-                            "main.c",  "primes.c",    "primes.h"};
+    const char *absent[_] = {"build.c", "build.smith", ".clang-format", ".clang-tidy", "compile_commands.json",
+                             "main.c",  "primes.c",    "primes.h"};
     for (usize i = 0; i < _Countof(absent); i++) {
         char path[256];
         __builtin_snprintf(path, sizeof path, "hello/%s", absent[i]);
@@ -299,7 +299,7 @@ static void profiles_of_a_new_project(const scratch::Project *p, const char *dir
     }
     scratch::Run built = run_in(p, dir, "smith build release fast");
     scratch::expect_status(say(label, "smith build release fast exits 0"), 0, &built);
-    const char *modes[] = {"debug", "release", "fast"};
+    const char *modes[_] = {"debug", "release", "fast"};
     for (usize i = 0; i < _Countof(modes); i++) {
         __builtin_snprintf(command, sizeof command, "[ -e build/%s/$(basename \"$PWD\") ] && echo yes || echo no",
                            modes[i]);
@@ -357,23 +357,23 @@ export void test_new_language_c_a_c_project_is_written_and_committed(io::Io *io)
     scratch::Project p = fresh(io);
     scratch::Run created = run(&p, "smith new --language c hellc");
     scratch::expect_status("new --language c: exits 0", 0, &created);
-    const char *files[] = {"main.c",
-                           "primes.c",
-                           "primes.h",
-                           "primes_test.c",
-                           ".gitignore",
-                           ".claude/settings.json",
-                           "AGENTS.md",
-                           "knowledge/index.md",
-                           "knowledge/program.md",
-                           ".agents/skills/hellc-docs/SKILL.md"};
+    const char *files[_] = {"main.c",
+                            "primes.c",
+                            "primes.h",
+                            "primes_test.c",
+                            ".gitignore",
+                            ".claude/settings.json",
+                            "AGENTS.md",
+                            "knowledge/index.md",
+                            "knowledge/program.md",
+                            ".agents/skills/hellc-docs/SKILL.md"};
     for (usize i = 0; i < _Countof(files); i++) {
         char path[256];
         __builtin_snprintf(path, sizeof path, "hellc/%s", files[i]);
         expect_exists(&p, named("new --language c: creates %s%s", files[i], ""), path, "yes");
     }
-    const char *absent[] = {"build.c",    "build.smith", ".clang-format", ".clang-tidy", "compile_commands.json",
-                            "main.smith", "primes.smith"};
+    const char *absent[_] = {"build.c",    "build.smith", ".clang-format", ".clang-tidy", "compile_commands.json",
+                             "main.smith", "primes.smith"};
     for (usize i = 0; i < _Countof(absent); i++) {
         char path[256];
         __builtin_snprintf(path, sizeof path, "hellc/%s", absent[i]);
@@ -443,9 +443,9 @@ static void assert_false_stops(io::Io *io, const char *dir, const char *language
     scratch::Run built = run_in(&p, dir, "smith build && smith build release fast");
     __builtin_snprintf(label, sizeof label, "assert(false) in %s: the three build", extension);
     scratch::expect_status(label, 0, &built);
-    const char *modes[] = {"debug", "release", "fast"};
-    const char *statuses[] = {"134", "134", "134"};
-    const char *meanings[] = {"debug stops", "release stops", "fast stops"};
+    const char *modes[_] = {"debug", "release", "fast"};
+    const char *statuses[_] = {"134", "134", "134"};
+    const char *meanings[_] = {"debug stops", "release stops", "fast stops"};
     for (usize i = 0; i < _Countof(modes); i++) {
         __builtin_snprintf(command, sizeof command, "build/%s/%s >/dev/null 2>&1; echo $?", modes[i], dir);
         __builtin_snprintf(label, sizeof label, "assert(false) in %s: %s", extension, meanings[i]);
@@ -471,7 +471,7 @@ export void test_new_the_libraries_build_under_the_conventions_flags(io::Io *io)
         "cp \"$SMITH_REPO/tests/build_fixtures/new_libs/main.c\" libs/main.c");
     scratch::Run built = run_in(&p, "libs", "smith build && smith build release fast");
     scratch::expect_status("libraries: the three build under the conventions' flags", 0, &built);
-    const char *modes[] = {"debug", "release", "fast"};
+    const char *modes[_] = {"debug", "release", "fast"};
     for (usize i = 0; i < _Countof(modes); i++) {
         char command[256];
         char label[256];
@@ -847,7 +847,7 @@ export void test_new_breaking_each_docs_rule_fails_smith_docs(io::Io *io) {
 // 12. The template's rules stay smith's: every rule and option of smith's own files is in the template's. Allowed
 // differences: smith-only assert macro, typedef names, unity-build include check, and smith-effects.CFiles (smith's C
 // is being ported to .smith, so smith checks .smith only; the template checks C files too).
-constexpr char tidy_functions[] =
+constexpr char tidy_functions[_] =
     "tidy_items() { awk '/^Checks:/ { mode = \"checks\"; next } /^[A-Za-z]+:/ && !/^CheckOptions:/ { mode = \"\"; next "
     "} "
     "/^CheckOptions:/ { mode = \"options\"; next } mode == \"checks\" && /^  [^ #]/ { gsub(/[ ,]/, \"\"); print "

@@ -23,7 +23,7 @@ typedef struct {
     u32 block_type; // the BTYPE of the first block of the gzip file
 } Vector;
 
-const Vector vectors[] = {
+const Vector vectors[_] = {
     {"fixed", 1},
     {"dynamic", 2},
     {"stored", 0},
@@ -193,9 +193,9 @@ static usize store_gzip(const u8 *input, usize size, u32 block, u8 *output) {
 // Checksums
 
 export void test_inflate_checksums_match_known_values() {
-    const u8 wikipedia[] = "Wikipedia";
+    const u8 wikipedia[_] = "Wikipedia";
     test::check_equal(inflate::adler32(1, wikipedia, 9), 0x11e60398U);
-    const u8 digits[] = "123456789";
+    const u8 digits[_] = "123456789";
     test::check_equal(inflate::crc32(0, digits, 9), 0xcbf43926U);
     test::check_equal(inflate::adler32(1, digits, 0), 1U);
     test::check_equal(inflate::crc32(0, digits, 0), 0U);
@@ -420,7 +420,7 @@ export void test_inflate_refuses_output_that_is_too_small_or_checksums_that_disa
 }
 
 export void test_inflate_refuses_a_stored_block_whose_length_check_is_wrong() {
-    u8 stream[] = {1, 3, 0, 0xfc, 0xff, 'a', 'b', 'c'}; // should be 3, ~3 = 0xfffc
+    u8 stream[_] = {1, 3, 0, 0xfc, 0xff, 'a', 'b', 'c'}; // should be 3, ~3 = 0xfffc
     u8 output[8];
     usize used = 0;
     usize produced = 0;
@@ -430,7 +430,7 @@ export void test_inflate_refuses_a_stored_block_whose_length_check_is_wrong() {
     stream[3] = 0xfd;
     expect(inflate::decode(inflate::Raw, stream, sizeof stream, output, sizeof output, &used, &produced),
            inflate::Corrupt);
-    const u8 reserved[] = {7, 0, 0}; // block type 3
+    const u8 reserved[_] = {7, 0, 0}; // block type 3
     expect(inflate::decode(inflate::Raw, reserved, sizeof reserved, output, sizeof output, &used, &produced),
            inflate::Corrupt);
 }
@@ -438,7 +438,7 @@ export void test_inflate_refuses_a_stored_block_whose_length_check_is_wrong() {
 export void test_inflate_refuses_a_distance_before_the_start() {
     // A fixed block: the literal 'a' (0x61, code 0x91), then length 3 (code 257, 7 bits 0000001) at distance 2
     // (code 1, 5 bits 00001), which reaches before the start.
-    const u8 stream[] = {0x4b, 0x04, 0x42, 0x00};
+    const u8 stream[_] = {0x4b, 0x04, 0x42, 0x00};
     u8 output[16];
     usize used = 0;
     usize produced = 0;

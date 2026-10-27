@@ -39,8 +39,8 @@ export i32 rest_empty(auto... rest) {
 
 // A braced initializer, the pack named several times in the pattern, and the bare `rest...` as it was.
 export i32 table(auto... rest) {
-    i32 xs[] = {sq(rest)..., 0};
-    i32 ys[] = {plus(rest, sq(rest))..., 1, rest...};
+    i32 xs[_] = {sq(rest)..., 0};
+    i32 ys[_] = {plus(rest, sq(rest))..., 1, rest...};
     i32 sum = 0;
     constexpr usize nx = sizeof xs / sizeof xs[0];
     constexpr usize ny = sizeof ys / sizeof ys[0];

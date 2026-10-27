@@ -3,7 +3,7 @@
 // smith-module: main
 // smith-imports:
 // smith-names: pack member
-// smith-generic: main pack main_pack src/main.smith -@23 1 2 6 7 | ixw@0:8=__UINT32_TYPE__ iw@0:12=main_pack p@0:16=( i@0:17=auto p@0:21=... iP1w@0:25=args p@0:29=) pw@0:31={ ixw@1:5=__UINT32_TYPE__ iw@1:9=xs p@1:11=[ p@1:12=] pw@1:14== pw@1:16={ p@1:17=( ix@1:18=__UINT32_TYPE__ p@1:21=) iP1@1:22=args p@1:26=... p@1:29=} p@1:30=; iw@2:5=return pw@2:12=( ix@2:13=__UINT32_TYPE__ p@2:16=) i@2:17=countof p@2:24=( i@2:25=xs p@2:27=) p@2:28=; p@3:1=}
+// smith-generic: main pack main_pack src/main.smith -@23 1 2 6 7 | ixw@0:8=__UINT32_TYPE__ iw@0:12=main_pack p@0:16=( i@0:17=auto p@0:21=... iP1w@0:25=args p@0:29=) pw@0:31={ ixw@1:5=__UINT32_TYPE__ iw@1:9=xs p@1:11=[ i@1:12=_ p@1:13=] pw@1:15== pw@1:17={ p@1:18=( ix@1:19=__UINT32_TYPE__ p@1:22=) iP1@1:23=args p@1:27=... p@1:30=} p@1:31=; iw@2:5=return pw@2:12=( ix@2:13=__UINT32_TYPE__ p@2:16=) i@2:17=countof p@2:24=( i@2:25=xs p@2:27=) p@2:28=; p@3:1=}
 // smith-generic: main member main_member src/main.smith -@28 1 2 5 6 | ixw@0:8=__UINT32_TYPE__ iw@0:12=main_member p@0:18=( iP1@0:19=auto iw@0:24=g p@0:25=) pw@0:27={ iw@1:5=return pw@1:12=( ix@1:13=__UINT32_TYPE__ p@1:16=) i@1:17=countof p@1:24=( i@1:25=g p@1:26=. i@1:27=cells p@1:32=) p@1:33=; p@2:1=}
 // clang-format on
 #pragma once

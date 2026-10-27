@@ -31,7 +31,7 @@ typedef struct {
     const char *form; // verb or link
 } Rig;
 
-constexpr char stubs_script[] =
+constexpr char stubs_script[_] =
     "mkdir -p bin driver && for n in $STUBS; do ${CC:-cc} -std=gnu23 -DNAME=\"\\\"$n\\\"\" "
     "\"$SMITH_REPO/tests/stub.c\" "
     "-o bin/$n || exit 1; done; ln -s \"$SMITH_SELF\" smith-cc && ln -s \"$SMITH_SELF\" smith-c++ && "
@@ -573,7 +573,7 @@ export void test_run_the_names_clang_and_clang_plus_plus_act_as_the_compiler(io:
 
 // ---- the verbs that read the build need a build.c ----
 
-constexpr char no_build[] = "smith: no build.c in this folder, and no main.smith or main.c to build by convention";
+constexpr char no_build[_] = "smith: no build.c in this folder, and no main.smith or main.c to build by convention";
 
 static void needs_a_build(io::Io *io, const char *verb) {
     scratch::Project p = scratch::project(io, "empty", nullptr);
