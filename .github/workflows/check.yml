@@ -79,6 +79,9 @@ jobs:
 
       - name: Build smith
         if: steps.tree.outputs.skip != 'true'
+        # normally 20-75 s (the last 25 runs); a hang (run 40546445282 sat in a compile) is cut off here and the train
+        # reads GitHub's "The action 'Build smith' has timed out" as `timeout Build smith`
+        timeout-minutes: 10
         env:
           # the checked smith counts the lines it runs, per test (knowledge/coverage-selection.md, #456)
           COVERAGE: "1"
