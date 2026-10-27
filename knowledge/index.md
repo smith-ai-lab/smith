@@ -39,7 +39,7 @@ What smith is and the contracts its code keeps. Read only the concepts your task
 - [The checked allocator](checked-allocator.md): mem::checked wraps an allocator and records the stack of every block, so a leak names its allocation site and a double free, a free of a foreign block and a use after free are reported; the test runner sets one around each test (issue #239, step D2a).
 - [smith's libraries are a modern standard library for C](libraries.md): smith is batteries included, so a project needs no third-party library; each library does one thing, uses standard types, defines no macros, and is compiled from source by the project through smith_library.
 - [The SDK is chosen through the environment](sdk-rule.md): On macOS smith sets CLANG_NO_DEFAULT_CONFIG and SDKROOT for the caller that has not, and never adds a flag.
-- [smith's own code](smith-own-code.md): smith's own code is C23, libc only, with no malloc, and the only C++ is the thin shims to LLVM.
+- [smith's own code](smith-own-code.md): smith's own code is .smith modules and C23, libc only, with no malloc; C++ is only the edges to LLVM.
 - [smith's top level is only verbs, with fixed meanings](verbs.md): The verbs cc, c++, build, new, fetch, cache, docs, version, fmt, lint, lsp, run, test, check, prove and dbg each have one fixed meaning read from what the project declares.
 
 ## Contracts

@@ -30,7 +30,7 @@ A C toolchain and a modern standard library for C, written in C. Each fact has o
 - Clang modules are implicit, one per header, opt-in; there are two caches; the module cache is per smith (its LC_UUID) and keeps the three most recently used, anything idle a day goes; everything else follows one 31-day rule; packages are a URL and a hash, and smith reads its archives itself. [clang-modules](knowledge/clang-modules.md), [caches](knowledge/caches.md), [packages](knowledge/packages.md), [archives](knowledge/archives.md)
 
 **Language and checks**
-- smith's own code is C23, libc only, no malloc; the only C++ is the thin shims in `shim/`. [smith-own-code](knowledge/smith-own-code.md)
+- smith's own code is `.smith` modules and C23, libc only, no malloc; new logic is `.smith`, and C++ is only the edges to LLVM in `shim/` (owner, 2026-10-27: "we only have to talk to LLVM at the edges through C++, but we get to write nice Smith code most of the time"; #540). [smith-own-code](knowledge/smith-own-code.md)
 - A failure's report is read from its call stack, so checks and contracts are plain functions; a test's signature says what it may touch. [failure-reports-and-tests](knowledge/failure-reports-and-tests.md)
 - `.smith` files are C with modules, lowered to C as clang reads them through a token hook; modules use `::`, never dots. [smith-language](knowledge/smith-language.md), [smith-lowering-internals](knowledge/smith-lowering-internals.md)
 - In a module a tag is a type name (`struct Point {...};` is the type `Point`); `typedef` stays valid as C's (owner, 2026-10-25). [smith-language](knowledge/smith-language.md)
