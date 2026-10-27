@@ -1,0 +1,2 @@
+status 1
+affine_borrow_exclusive_not_replaced.smith:25:17: error: smith-affine: the value 'stream' points to is used up here and not replaced before the function ends; the caller would be left with a used value (assign `*stream = ...;` on every path)

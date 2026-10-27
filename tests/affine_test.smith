@@ -247,3 +247,67 @@ export void test_enum_read_unchecked_smith(io::Io *io) {
 export void test_enum_tagged_c(io::Io *io) {
     affine_case(io, "enum_tagged.c");
 }
+
+export void test_affine_borrow_after_consume_smith(io::Io *io) {
+    affine_case(io, "affine_borrow_after_consume.smith");
+}
+
+export void test_affine_borrow_c_c(io::Io *io) {
+    affine_case(io, "affine_borrow_c.c");
+}
+
+export void test_affine_borrow_callee_consumes_smith(io::Io *io) {
+    affine_case(io, "affine_borrow_callee_consumes.smith");
+}
+
+export void test_affine_borrow_callee_drops_twice_smith(io::Io *io) {
+    affine_case(io, "affine_borrow_callee_drops_twice.smith");
+}
+
+export void test_affine_borrow_callee_reads_ok_smith(io::Io *io) {
+    affine_case(io, "affine_borrow_callee_reads_ok.smith");
+}
+
+export void test_affine_borrow_escape_return_smith(io::Io *io) {
+    affine_case(io, "affine_borrow_escape_return.smith");
+}
+
+export void test_affine_borrow_escape_store_smith(io::Io *io) {
+    affine_case(io, "affine_borrow_escape_store.smith");
+}
+
+export void test_affine_borrow_exclusive_overlap_smith(io::Io *io) {
+    affine_case(io, "affine_borrow_exclusive_overlap.smith");
+}
+
+export void test_affine_borrow_loop_ok_smith(io::Io *io) {
+    affine_case(io, "affine_borrow_loop_ok.smith");
+}
+
+export void test_affine_borrow_member_smith(io::Io *io) {
+    affine_case(io, "affine_borrow_member.smith");
+}
+
+export void test_affine_borrow_ok_smith(io::Io *io) {
+    affine_case(io, "affine_borrow_ok.smith");
+}
+
+export void test_affine_borrow_pointer_local_smith(io::Io *io) {
+    affine_case(io, "affine_borrow_pointer_local.smith");
+}
+
+export void test_affine_borrow_shared_ok_smith(io::Io *io) {
+    affine_case(io, "affine_borrow_shared_ok.smith");
+}
+
+export void test_affine_borrow_then_consume_twice_smith(io::Io *io) {
+    affine_case(io, "affine_borrow_then_consume_twice.smith");
+}
+
+export void test_affine_borrow_exclusive_take_ok_smith(io::Io *io) {
+    affine_case(io, "affine_borrow_exclusive_take_ok.smith");
+}
+
+export void test_affine_borrow_exclusive_not_replaced_smith(io::Io *io) {
+    affine_case(io, "affine_borrow_exclusive_not_replaced.smith");
+}

@@ -1,0 +1,25 @@
+module affine_borrow_ok;
+
+export [[smith::affine]] typedef struct {
+    u64 bits;
+} Key;
+export typedef struct {
+    Key key;
+    u64 n;
+} Holder;
+export u64 draw(Key key) {
+    return key.bits;
+}
+export u64 peek(const Key *key) {
+    return key->bits;
+}
+export void bump(Key *key) {
+    key->bits += 1;
+}
+
+export u64 demo(Key key) {
+    bump(&key);
+    u64 a = peek(&key);
+    u64 b = peek(&key);
+    return a + b + draw(key);
+}

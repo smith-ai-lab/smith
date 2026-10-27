@@ -1,0 +1,3 @@
+status 1
+affine_borrow_escape_store.smith:22:13: error: smith-affine: 'key' is borrowed; it cannot outlive the call
+affine_borrow_escape_store.smith:22:13: note: the caller still owns the value: read a member that is not affine, write through the pointer, or pass 'key' on to a pointer parameter

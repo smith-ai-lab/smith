@@ -14,8 +14,10 @@
 // the place of its first use. A place is a variable, a member path (`o.key`), and a constant index or the counter of a
 // plain loop (`keys[0]`, `keys[i]`) for an array. A slice (`Key keys[:]`) is lowered by .smith to a statement
 // expression over a temporary copy of the slice; its shape is recognised below (slicePlace), which needs no marker
-// from the lowering. Reading a place is a use, `&key` included; an assignment to a place makes it fresh; passing a
-// whole array or slice to a call (`random::split(key, keys)`) makes its elements fresh; a join is a union.
+// from the lowering. Reading a place is a use, `&key` included, except `&key` written as the argument of a pointer
+// parameter to an affine type, which is a borrow for the length of the call (issue #572, BorrowCheck is the callee); an
+// assignment to a place makes it fresh; passing a whole array or slice to a call (`random::split(key, keys)`) makes its
+// elements fresh; a join is a union.
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/Attr.h"
@@ -96,8 +98,19 @@ bool holdsAffine(QualType type) {
 using Step = std::pair<const void *, long long>;
 using Key = std::pair<const VarDecl *, std::vector<Step>>;
 constexpr long long counterIndex = -1;
+constexpr long long parameterStep = -3; // the value an exclusive pointer parameter points to: `*k`, `k->m`
 
-enum class Action { Use, Assign, AssignAll, Reset, BadIndex };
+// `k`, a parameter that is a `T *` (not `const T *`) of an affine T: its pointee is a place, used up and replaced.
+const ParmVarDecl *exclusiveParameter(const Expr *expr) {
+    const auto *ref = dyn_cast<DeclRefExpr>(expr->IgnoreParenImpCasts());
+    const auto *parameter = ref == nullptr ? nullptr : dyn_cast<ParmVarDecl>(ref->getDecl());
+    if (parameter == nullptr || !parameter->getType()->isPointerType() || parameter->getOriginalType()->isArrayType())
+        return nullptr; // `Key keys[3]` is an array, which is its own place
+    QualType pointee = parameter->getType()->getPointeeType();
+    return affineType(pointee) && !pointee.isConstQualified() ? parameter : nullptr;
+}
+
+enum class Action { Use, Peek, Overlap, Assign, AssignAll, Reset, BadIndex };
 
 struct Site {
     Action action;
@@ -105,6 +118,8 @@ struct Site {
     const VarDecl *variable = nullptr; // Reset: the variable that changed (a counter may be indexed by it)
     std::string text;
     SourceLocation loc;
+    std::string other; // Overlap: the other argument of the call
+    SourceLocation otherLoc;
 };
 
 bool isPrefix(const std::vector<Step> &prefix, const std::vector<Step> &path) {
@@ -164,6 +179,12 @@ class Classifier {
         if (const auto *call = dyn_cast<CallExpr>(stmt)) {
             for (const Expr *argument : call->arguments())
                 wholeArray(argument);
+            std::set<const Stmt *> borrowed = borrows(call);
+            if (!borrowed.empty()) {
+                for (const Stmt *child : stmt->children())
+                    if (borrowed.count(child) == 0) walk(child);
+                return;
+            }
         }
         if (const auto *loop = dyn_cast<ForStmt>(stmt)) {
             loops.push_back(loop);
@@ -197,6 +218,71 @@ class Classifier {
         }
         reset(binary, binary->getLHS());
         return false;
+    }
+
+    struct Argument {
+        Site site;
+        bool exclusive = false; // a borrow through `T *`
+    };
+
+    // `&x` written as the argument of a pointer parameter to an affine type is a borrow for the length of the call:
+    // not a use. Returns the arguments that are borrows (not walked: walking them would make them uses).
+    std::set<const Stmt *> borrows(const CallExpr *call) {
+        std::set<const Stmt *> handled;
+        if (isa<CXXOperatorCallExpr>(call)) return handled;
+        std::vector<Argument> arguments;
+        for (unsigned at = 0; at < call->getNumArgs(); at++) {
+            Argument argument;
+            const Expr *written = call->getArg(at);
+            if (borrowArgument(call, at, argument)) {
+                handled.insert(written);
+                interesting = true;
+                arguments.push_back(argument);
+            } else if (const Expr *value = written->IgnoreParenImpCasts(); affineType(value->getType()) &&
+                                                                           place(value, argument.site) &&
+                                                                           argument.site.action == Action::Use) {
+                argument.site.loc = value->getBeginLoc();
+                arguments.push_back(argument);
+            }
+        }
+        overlap(call, arguments);
+        return handled;
+    }
+
+    bool borrowArgument(const CallExpr *call, unsigned at, Argument &out) {
+        const FunctionDecl *callee = call->getDirectCallee();
+        if (callee == nullptr || at >= callee->getNumParams()) return false;
+        QualType parameter = callee->getParamDecl(at)->getType();
+        if (!parameter->isPointerType() || !affineType(parameter->getPointeeType())) return false;
+        const auto *address = dyn_cast<UnaryOperator>(call->getArg(at)->IgnoreParenImpCasts());
+        if (address == nullptr || address->getOpcode() != UO_AddrOf || !affineType(address->getSubExpr()->getType()) ||
+            !place(address->getSubExpr(), out.site) || out.site.action != Action::Use)
+            return false;
+        out.site.action = Action::Peek;
+        out.site.loc = address->getOperatorLoc();
+        out.exclusive = !parameter->getPointeeType().isConstQualified();
+        sites[address] = out.site;
+        return true;
+    }
+
+    // Two arguments naming overlapping places, one through a `T *`: an exclusive borrow shares with nothing.
+    void overlap(const CallExpr *call, const std::vector<Argument> &arguments) {
+        for (size_t a = 0; a < arguments.size(); a++)
+            for (size_t b = a + 1; b < arguments.size(); b++) {
+                const Key &x = arguments[a].site.key;
+                const Key &y = arguments[b].site.key;
+                if (!(arguments[a].exclusive || arguments[b].exclusive) || x.first != y.first ||
+                    !(isPrefix(x.second, y.second) || isPrefix(y.second, x.second)))
+                    continue;
+                Site found;
+                found.action = Action::Overlap;
+                found.text = arguments[a].site.text;
+                found.loc = arguments[a].site.loc;
+                found.other = arguments[b].site.text;
+                found.otherLoc = arguments[b].site.loc;
+                sites[call] = found;
+                return;
+            }
     }
 
     // `v.a.b = ...` or `v.a[0] = ...` where v holds affine values: a write to a part of a variable, which is no use.
@@ -260,10 +346,29 @@ class Classifier {
             return true;
         }
         if (const auto *member = dyn_cast<MemberExpr>(expr)) {
-            if (member->isArrow() || !place(member->getBase(), out)) return false;
+            const ParmVarDecl *through = member->isArrow() ? exclusiveParameter(member->getBase()) : nullptr;
+            if (through != nullptr) {
+                out.action = Action::Use;
+                out.key.first = through;
+                out.key.second.push_back({nullptr, parameterStep});
+                out.text = through->getName().str() + "->";
+            } else if (member->isArrow() || !place(member->getBase(), out)) {
+                return false;
+            } else {
+                out.text += ".";
+            }
             out.key.second.push_back({member->getMemberDecl(), 0});
-            out.text += "." + member->getMemberDecl()->getName().str();
+            out.text += member->getMemberDecl()->getName().str();
             return true;
+        }
+        if (const auto *unary = dyn_cast<UnaryOperator>(expr); unary != nullptr && unary->getOpcode() == UO_Deref) {
+            if (const ParmVarDecl *through = exclusiveParameter(unary->getSubExpr())) {
+                out.action = Action::Use;
+                out.key.first = through;
+                out.key.second.push_back({nullptr, parameterStep});
+                out.text = "*" + through->getName().str();
+                return true;
+            }
         }
         if (const auto *subscript = dyn_cast<ArraySubscriptExpr>(expr)) {
             const auto *base = subscript->getBase()->IgnoreParenImpCasts();
@@ -400,6 +505,11 @@ class Flow {
         }
     }
 
+    // What is used when the function returns (the join of every return).
+    const State &atExit() const {
+        return in[cfg.getExit().getBlockID()];
+    }
+
   private:
     const CFG &cfg;
     const std::map<const Stmt *, Site> &sites;
@@ -462,6 +572,15 @@ class Flow {
             }
             break;
         }
+        case Action::Peek:
+            for (const auto &used : state)
+                if (used.first.first == site.key.first &&
+                    (isPrefix(site.key.second, used.first.second) || isPrefix(used.first.second, site.key.second))) {
+                    if (report && reported.insert(stmt).second) findings.push_back({&site, used.second});
+                    break;
+                }
+            break;
+        case Action::Overlap:
         case Action::BadIndex:
             if (report && reported.insert(stmt).second) findings.push_back({&site, SourceLocation()});
             break;
@@ -814,6 +933,149 @@ class NarrowFlow {
     }
 };
 
+// ---- The callee of a borrow (issue #572) ---------------------------------------------------------------------------
+//
+// A parameter that is a pointer to an affine type is borrowed: the caller keeps the value. The body may read what is
+// not affine (`k->bits`), write through the pointer (`*k = fresh;`) and pass the pointer on to a pointer parameter of
+// that type; it may not read the pointee as a value (`Key y = *k;`, `drop(*k)`, `return *k;`: that would use up a
+// value it does not own) and may not keep the pointer (store, return, convert it): it dies with the call.
+
+struct BorrowFinding {
+    SourceLocation loc;
+    std::string name;
+    bool escape;
+};
+
+class BorrowCheck {
+  public:
+    std::vector<BorrowFinding> findings;
+
+    explicit BorrowCheck(const FunctionDecl *function) {
+        for (const ParmVarDecl *parameter : function->parameters())
+            if (parameter->getType()->isPointerType() && !parameter->getOriginalType()->isArrayType() &&
+                affineType(parameter->getType()->getPointeeType())) {
+                tracked.insert(parameter);
+                if (parameter->getType()->getPointeeType().isConstQualified()) shared.insert(parameter);
+            }
+    }
+
+    bool any() const {
+        return !tracked.empty();
+    }
+
+    void visit(const Stmt *stmt) {
+        if (stmt == nullptr || isa<UnaryExprOrTypeTraitExpr>(stmt)) return;
+        if (const auto *cast = dyn_cast<ImplicitCastExpr>(stmt)) {
+            if (cast->getCastKind() == CK_PointerToBoolean && parameterOf(cast->getSubExpr()) != nullptr) return;
+            const ParmVarDecl *root = cast->getCastKind() == CK_LValueToRValue && affineType(cast->getType())
+                                          ? borrowedRoot(cast->getSubExpr())
+                                          : nullptr;
+            if (root != nullptr && shared.count(root) != 0) {
+                findings.push_back({cast->getBeginLoc(), root->getName().str(), false});
+                return;
+            }
+            if (root != nullptr) { // a `T *` may be used up and replaced: the dataflow checks that
+                visit(cast->getSubExpr());
+                return;
+            }
+        }
+        if (dereference(stmt)) return;
+        if (const auto *call = dyn_cast<CallExpr>(stmt)) {
+            calls(call);
+            return;
+        }
+        if (const auto *binary = dyn_cast<BinaryOperator>(stmt); binary != nullptr && comparison(binary)) return;
+        if (const auto *ref = dyn_cast<DeclRefExpr>(stmt)) {
+            if (const ParmVarDecl *parameter = parameterOf(ref))
+                findings.push_back({ref->getBeginLoc(), parameter->getName().str(), true});
+            return;
+        }
+        for (const Stmt *child : stmt->children())
+            visit(child);
+    }
+
+  private:
+    std::set<const ParmVarDecl *> tracked, shared;
+
+    const ParmVarDecl *parameterOf(const Expr *expr) const {
+        const auto *ref = dyn_cast<DeclRefExpr>(expr->IgnoreParenImpCasts());
+        const auto *parameter = ref == nullptr ? nullptr : dyn_cast<ParmVarDecl>(ref->getDecl());
+        return parameter != nullptr && tracked.count(parameter) != 0 ? parameter : nullptr;
+    }
+
+    // The borrowed parameter a place is read through: `*k`, `k->m`, `k[i]`, `k->m.n`.
+    const ParmVarDecl *borrowedRoot(const Expr *expr) const {
+        for (expr = expr->IgnoreParens();; expr = expr->IgnoreParenImpCasts()) {
+            if (const auto *member = dyn_cast<MemberExpr>(expr)) {
+                if (member->isArrow()) return parameterOf(member->getBase());
+                expr = member->getBase();
+            } else if (const auto *unary = dyn_cast<UnaryOperator>(expr)) {
+                return unary->getOpcode() == UO_Deref ? parameterOf(unary->getSubExpr()) : nullptr;
+            } else if (const auto *subscript = dyn_cast<ArraySubscriptExpr>(expr)) {
+                if (const ParmVarDecl *root = parameterOf(subscript->getBase())) return root;
+                expr = subscript->getBase();
+            } else {
+                return nullptr;
+            }
+        }
+    }
+
+    // The pointer as the operand of `->`, `*`, `[]` or `!`: a read through it, which is no copy of the pointer.
+    void through(const Expr *operand) {
+        if (parameterOf(operand) == nullptr) visit(operand);
+    }
+
+    bool dereference(const Stmt *stmt) {
+        if (const auto *member = dyn_cast<MemberExpr>(stmt); member != nullptr && member->isArrow()) {
+            through(member->getBase());
+            return true;
+        }
+        if (const auto *unary = dyn_cast<UnaryOperator>(stmt);
+            unary != nullptr && (unary->getOpcode() == UO_Deref || unary->getOpcode() == UO_LNot)) {
+            through(unary->getSubExpr());
+            return true;
+        }
+        if (const auto *subscript = dyn_cast<ArraySubscriptExpr>(stmt)) {
+            through(subscript->getBase());
+            visit(subscript->getIdx());
+            return true;
+        }
+        return false;
+    }
+
+    // Passing the pointer to a pointer parameter of an affine type is a reborrow; anywhere else it escapes.
+    void calls(const CallExpr *call) {
+        visit(call->getCallee());
+        const FunctionDecl *callee = call->getDirectCallee();
+        for (unsigned at = 0; at < call->getNumArgs(); at++) {
+            const Expr *argument = call->getArg(at);
+            const ParmVarDecl *parameter = parameterOf(argument);
+            if (parameter == nullptr) {
+                visit(argument);
+                continue;
+            }
+            bool reborrow = callee != nullptr && at < callee->getNumParams() &&
+                            callee->getParamDecl(at)->getType()->isPointerType() &&
+                            affineType(callee->getParamDecl(at)->getType()->getPointeeType());
+            if (!reborrow) findings.push_back({argument->getBeginLoc(), parameter->getName().str(), true});
+        }
+    }
+
+    // `k == nullptr` compares addresses, and `k = other;` drops the borrow: neither keeps the pointer.
+    bool comparison(const BinaryOperator *binary) {
+        if (binary->isComparisonOp()) {
+            through(binary->getLHS());
+            through(binary->getRHS());
+            return true;
+        }
+        if (binary->getOpcode() == BO_Assign && parameterOf(binary->getLHS()) != nullptr) {
+            visit(binary->getRHS());
+            return true;
+        }
+        return false;
+    }
+};
+
 // ---- The messages --------------------------------------------------------------------------------------------------
 
 const char *const hint = "write the plain loop `for (usize i = 0; i < countof(keys); i++)` and use `keys[i]` once in "
@@ -831,6 +1093,25 @@ class Reporter {
                                        "smith-affine: '%0': an element of an array of affine values is used through a "
                                        "constant index or the counter of a plain loop");
         advice = engine.getCustomDiagID(DiagnosticsEngine::Note, "%0");
+        peeked = engine.getCustomDiagID(DiagnosticsEngine::Error,
+                                        "smith-affine: '%0' is borrowed here, but it was already used at line %1");
+        overlapped = engine.getCustomDiagID(
+            DiagnosticsEngine::Error,
+            "smith-affine: '%0' is borrowed through a `T *` by this call, while '%1' names the same value; only "
+            "`const T *` borrows share");
+        otherNote = engine.getCustomDiagID(DiagnosticsEngine::Note, "'%0' is passed here");
+        consumed = engine.getCustomDiagID(DiagnosticsEngine::Error,
+                                          "smith-affine: '%0' is borrowed; it cannot be used up here");
+        escaped = engine.getCustomDiagID(DiagnosticsEngine::Error,
+                                         "smith-affine: '%0' is borrowed; it cannot outlive the call");
+        kept = engine.getCustomDiagID(DiagnosticsEngine::Error,
+                                      "smith-affine: the value '%0' points to is used up here and not replaced before "
+                                      "the function ends; the caller would be left with a used value (assign `*%0 = "
+                                      "...;` on every path)");
+        borrowNote = engine.getCustomDiagID(
+            DiagnosticsEngine::Note,
+            "the caller still owns the value: read a member that is not affine, write through the pointer, or pass "
+            "'%0' on to a pointer parameter");
         narrow = engine.getCustomDiagID(
             DiagnosticsEngine::Error,
             "smith-enum: '%0' is read where '%1' may not be a %2; test '%1 == .%2' or switch on '%1'");
@@ -849,8 +1130,28 @@ class Reporter {
         engine.Report(site.loc, narrow) << access << owner << site.variant;
     }
 
+    void notReplaced(const std::string &name, SourceLocation loc) {
+        engine.Report(loc, kept) << name;
+    }
+
+    void report(const BorrowFinding &finding) {
+        engine.Report(finding.loc, finding.escape ? escaped : consumed) << finding.name;
+        engine.Report(finding.loc, borrowNote) << finding.name;
+    }
+
     void report(const Flow::Finding &finding) {
         const Site &site = *finding.site;
+        if (site.action == Action::Overlap) {
+            engine.Report(site.loc, overlapped) << site.text << site.other;
+            engine.Report(site.otherLoc, otherNote) << site.other;
+            return;
+        }
+        if (site.action == Action::Peek) {
+            unsigned line = context.getSourceManager().getSpellingLineNumber(finding.first);
+            engine.Report(site.loc, peeked) << site.text << line;
+            engine.Report(finding.first, first) << site.text;
+            return;
+        }
         if (site.action == Action::BadIndex) {
             engine.Report(site.loc, index) << site.text;
             engine.Report(site.loc, advice) << hint;
@@ -869,7 +1170,8 @@ class Reporter {
   private:
     ASTContext &context;
     DiagnosticsEngine &engine;
-    unsigned again, first, loop, index, advice, narrow;
+    unsigned again, first, loop, index, advice, narrow, peeked, overlapped, otherNote, consumed, escaped, borrowNote,
+        kept;
 };
 
 // ---- `void *` does not convert to `T *` in a module (issue #398)
@@ -1000,6 +1302,12 @@ class Consumer : public ASTConsumer {
             return;
         const Stmt *body = function->getBody();
         if (body == nullptr) return;
+        BorrowCheck borrowed(function);
+        if (borrowed.any()) {
+            borrowed.visit(body);
+            for (const BorrowFinding &finding : borrowed.findings)
+                reporter.report(finding);
+        }
         Classifier classifier(context);
         classifier.walk(body);
         NarrowClassifier narrowing;
@@ -1016,6 +1324,10 @@ class Consumer : public ASTConsumer {
             flow.run();
             for (const Flow::Finding &finding : flow.findings)
                 reporter.report(finding);
+            for (const auto &used : flow.atExit()) // an exclusive borrow used up must be replaced before the end
+                if (isa<ParmVarDecl>(used.first.first) && !used.first.second.empty() &&
+                    used.first.second.front().second == parameterStep)
+                    reporter.notReplaced(used.first.first->getName().str(), used.second);
         }
         if (narrow) {
             NarrowFlow flow(*cfg, narrowing.sites, context);

@@ -1,0 +1,4 @@
+status 1
+affine_borrow_callee_drops_twice.smith:22:21: error: smith-affine: '*key' is used again; it was already used at line 21
+affine_borrow_callee_drops_twice.smith:21:18: note: '*key' was first used here
+affine_borrow_callee_drops_twice.smith:21:18: error: smith-affine: the value 'key' points to is used up here and not replaced before the function ends; the caller would be left with a used value (assign `*key = ...;` on every path)

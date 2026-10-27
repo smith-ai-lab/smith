@@ -1,0 +1,26 @@
+module affine_borrow_exclusive_not_replaced;
+
+export [[smith::affine]] typedef struct {
+    u64 bits;
+} Key;
+export typedef struct {
+    Key key;
+    u64 n;
+} Holder;
+export u64 draw(Key key) {
+    return key.bits;
+}
+export u64 peek(const Key *key) {
+    return key->bits;
+}
+export void bump(Key *key) {
+    key->bits += 1;
+}
+
+export void split(Key key, Key out[:]) {
+    (void)key;
+    (void)out;
+}
+export u64 drain(Key *stream) {
+    return draw(*stream);
+}

@@ -1,0 +1,3 @@
+status 1
+affine_borrow_pointer_local.smith:23:17: error: smith-affine: 'key' is used again; it was already used at line 21
+affine_borrow_pointer_local.smith:21:15: note: 'key' was first used here

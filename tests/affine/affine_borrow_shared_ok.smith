@@ -1,0 +1,26 @@
+module affine_borrow_shared_ok;
+
+export [[smith::affine]] typedef struct {
+    u64 bits;
+} Key;
+export typedef struct {
+    Key key;
+    u64 n;
+} Holder;
+export u64 draw(Key key) {
+    return key.bits;
+}
+export u64 peek(const Key *key) {
+    return key->bits;
+}
+export void bump(Key *key) {
+    key->bits += 1;
+}
+
+export u64 both(const Key *a, const Key *b) {
+    return a->bits + b->bits;
+}
+export u64 demo(Key key) {
+    u64 sum = both(&key, &key);
+    return sum + draw(key);
+}

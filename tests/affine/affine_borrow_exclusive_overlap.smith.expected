@@ -1,0 +1,3 @@
+status 1
+affine_borrow_exclusive_overlap.smith:24:17: error: smith-affine: 'key' is borrowed through a `T *` by this call, while 'key' names the same value; only `const T *` borrows share
+affine_borrow_exclusive_overlap.smith:24:23: note: 'key' is passed here

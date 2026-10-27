@@ -1,0 +1,5 @@
+status 1
+affine_borrow_callee_consumes.smith:21:17: error: smith-affine: 'key' is borrowed; it cannot be used up here
+affine_borrow_callee_consumes.smith:21:17: note: the caller still owns the value: read a member that is not affine, write through the pointer, or pass 'key' on to a pointer parameter
+affine_borrow_callee_consumes.smith:24:13: error: smith-affine: 'key' is borrowed; it cannot be used up here
+affine_borrow_callee_consumes.smith:24:13: note: the caller still owns the value: read a member that is not affine, write through the pointer, or pass 'key' on to a pointer parameter
