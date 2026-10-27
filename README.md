@@ -362,6 +362,25 @@ in instance meta::mean(int, char *), requested from here
 
 [smith-lang-rest](.agents/skills/smith-lang-rest/SKILL.md), [smith-lang-generics](.agents/skills/smith-lang-generics/SKILL.md).
 
+`auto` also stands for the element of a slice, a pointer or an array: the parameter keeps its shape and each call
+writes its own copy, and `typeof(xs[0])` names the element in the rest of the signature:
+
+```smith
+module search;
+
+export usize find(const auto xs[:], typeof(xs[0]) v) { // find(ints, 3) and find(floats, 2.5f)
+    for (usize i = 0; i < countof(xs); i++)
+        if (xs[i] == v) return i;
+    return countof(xs);
+}
+
+export typeof(*p) first(const auto *p) { // `auto *p` and `auto xs[4]` work the same way
+    return *p;
+}
+```
+
+[smith-lang-generics](.agents/skills/smith-lang-generics/SKILL.md).
+
 Types are values too, so a function over types runs in the compiler like any other:
 
 ```smith
