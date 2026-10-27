@@ -33,7 +33,7 @@ events), `mcp_show.c` (what a stop, a stack and variables look like), `mcp_tools
   its time is up; input that arrives meanwhile is buffered, so a client that pipelines requests is answered in order.
   Nothing is allocated but in arenas (the io's), nothing recurses, every loop has a bound.
 - **No protocol is written by hand.** Every message is a type of the code generated from the official schemas
-  (`runtime/protocol/dap.[ch]` and `mcp.[ch]`, [the protocol code](protocol-generation.md)). What is read from a tree by name is what the
+  (`.smith/protocol/dap.[ch]` and `mcp.[ch]`, build outputs; [the protocol code](protocol-generation.md)). What is read from a tree by name is what the
   schemas do not have: the `initialize` request and result of the MCP revisions before 2026-07-28, and a tool's
   arguments, which are the tool's own schema.
 - **Versions.** It answers `server/discover` (2026-07-28: every request then stands alone) with `supportedVersions:
