@@ -267,6 +267,10 @@ export void test_skill_smith_effects(io::Io *io) {
     skill_case(io, "smith-effects");
 }
 
+export void test_skill_smith_files(io::Io *io) {
+    skill_case(io, "smith-files");
+}
+
 export void test_skill_smith_http(io::Io *io) {
     skill_case(io, "smith-http");
 }

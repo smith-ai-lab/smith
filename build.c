@@ -246,7 +246,7 @@ static void build_protocol(SmithBuild *b, const BuildConfig *config, const char 
 // check`) fails when a committed header differs from what its module generates. The header is written as the generator
 // makes it and formatted with the repository's .clang-format (smith fmt keeps it so; the stage0 formats with Homebrew's
 // clang-format, the same version), so it reads like one written by hand.
-static const char *const build_generated_headers[] = {"arena",   "autodiff", "build", "contract", "effects", "format",
+static const char *const build_generated_headers[] = {"arena",   "autodiff", "build", "contract", "effects", "files",
                                                       "inflate", "io",       "math",  "mem",      "option",  "random",
                                                       "result",  "test",     "text",  nullptr};
 
@@ -562,6 +562,8 @@ static const char *const build_smith_inputs[] = {
     "lib/smith/contract.smith",
     "include/smith/effects.h",
     "lib/smith/effects.smith",
+    "include/smith/files.h",
+    "lib/smith/files.smith",
     "include/smith/format.h",
     "lib/smith/format.smith",
     "include/smith/math.h",
@@ -811,6 +813,7 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
     smith_compile_command(b, config->cc, "lib/smith/autodiff.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/contract.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/effects.smith", smith_flags);
+    smith_compile_command(b, config->cc, "lib/smith/files.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/format.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/inflate.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/io.smith", smith_flags);

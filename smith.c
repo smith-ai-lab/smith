@@ -1108,6 +1108,12 @@ static constexpr unsigned char smith_effects_header[] = {
 static constexpr unsigned char smith_effects_source[] = {
 #embed "lib/smith/effects.smith"
 };
+static constexpr unsigned char smith_files_header[] = {
+#embed "include/smith/files.h"
+};
+static constexpr unsigned char smith_files_source[] = {
+#embed "lib/smith/files.smith"
+};
 static constexpr unsigned char smith_format_header[] = {
 #embed "include/smith/format.h"
 };
@@ -1192,6 +1198,7 @@ static const SmithLibrary smith_libraries[] = {
     SMITH_LIBRARY(autodiff, true),
     SMITH_LIBRARY(contract, true),
     SMITH_LIBRARY(effects, true),
+    SMITH_LIBRARY(files, true),
     SMITH_LIBRARY(format, true),
     SMITH_LIBRARY(handlers, false),
     SMITH_LIBRARY(inflate, true),
