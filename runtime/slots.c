@@ -98,7 +98,7 @@ static size_t smith_slots_meta(char *out, size_t size) {
 }
 
 // Whether the holder a slot file names no longer deserves its slot: its process is gone (the lock outlived it in a
-// child), the pid was recycled (another start time), or its parent is gone (it is reparented, an orphan). A file whose
+// child), the pid was recycled (another start time), or its parent is gone (it is reparented, an orphan: its parent is now pid 1, or not the one it had). A file whose
 // first line cannot be read is never stale.
 static bool smith_slots_stale(const char *text) {
     long pid = 0;
@@ -109,7 +109,7 @@ static bool smith_slots_stale(const char *text) {
     long now_parent = 0;
     if (!smith_slots_proc((pid_t)pid, &now_start, &now_parent)) return true;
     if (start != 0 && now_start != 0 && start != now_start) return true;
-    return parent != 0 && now_parent != 0 && now_parent != parent;
+    return now_parent == 1 || (parent != 0 && now_parent != 0 && now_parent != parent); // 1: init or launchd took it
 }
 
 // Whether a CI job holds a slot: it holds a shared lock on `ci-held`. Looked at most once a second.
