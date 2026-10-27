@@ -37,6 +37,15 @@ prebuilt library's and one loaded with `dlopen`. Owner (2026-10-24): "always int
 - **smith itself is the exception** (its link is named `.../smith`, `smith_is_smith_itself`): its clones, `bin/clang` and
   `bin/ld`, run from the programs folder, which has no dylib beside them. A field of `SmithProgram` replaces the name once a
   release's header has it (the lag rule).
+- **Tables only (issue #240):** smith's own C needs the allocator of the thread (json takes its tree from `smith::mem`, and the
+  runtime puts an arena in force around each parse) but not the interposition. `lib/handlers.c` compiled with
+  `-DSMITH_HANDLERS_TABLES_ONLY` holds the thread-local tables and their setters and getters and none of the functions that
+  replace malloc, write... (the `#ifndef` around the interposition half), and smith links that object
+  (`handlers_tables.o`), so its own malloc, LLVM's included, stays the system's. `smith::mem` therefore asks the table
+  itself (`alloc_raw` calls `allocator->alloc`, `free` asks `owns`) instead of reaching it through `malloc`: the same
+  allocator is reached with the interposition linked or not. The list of what smith links (the `.smith` modules and the
+  tables flag) is `scripts/linked_libraries.h`, included by build.c and by `scripts/seed_linux.c`, the Linux seed, which
+  links the same objects (changed without a Linux machine to run it on).
 - **Linux (issue #305)** has no interpose tuples, but an ELF program's own definitions win over a shared library's: the
   runtime is an object, `<folder>/smith_handlers.o` (one step per folder, never sanitized), linked into every program
   but smith, and `lib/handlers.c`'s Linux half defines `malloc`, `write`, `fwrite`... themselves. Each calls the next
