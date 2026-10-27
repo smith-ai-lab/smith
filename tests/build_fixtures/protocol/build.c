@@ -10,7 +10,7 @@ void build(SmithBuild *b) {
         sanitize ? smith_list(b, "-O0", "-fsanitize=address,undefined", "-fno-sanitize-recover=all", nullptr)
                  : smith_list(b, "-O2", nullptr),
         strcmp(mode, "ndebug") == 0 ? smith_list(b, "-DNDEBUG", nullptr) : smith_list(b, nullptr), nullptr);
-    const char *const libraries[] = {"arena", "random", "text", "json", nullptr};
+    const char *const libraries[] = {"arena", "random", "format", "json", nullptr};
     const char *const sources[] = {"protocol/protocol.c", "protocol/protocol_support.c", "protocol/dap.c", "protocol/mcp.c", nullptr};
     SmithObject objects[8] = {};
     size_t count = 0;

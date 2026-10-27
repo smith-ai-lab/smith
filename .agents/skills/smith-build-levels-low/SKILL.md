@@ -31,6 +31,6 @@ export void build(build::Build *b) {
 }
 ```
 
-This builds and `smith run` runs it (tried). What you now own: the profiles (write a loop over `"debug", "release", "fast"` if you want them), the aliases, `smith_modules` if you want Clang modules, the libraries you use (`build::library(b, "text")` is a path you compile with `build::object`), and the tests: replace `build::app_tests` with `build::tests(b, &(build::Tests){.sources = build::glob(b, build::list(b, "tests/**/*.smith", nullptr)), .objects = ..., .flags = flags})` (`smith-test`). `smith run` runs the one program `default_targets` names; `smith test` runs what `tests` declares.
+This builds and `smith run` runs it (tried). What you now own: the profiles (write a loop over `"debug", "release", "fast"` if you want them), the aliases, `smith_modules` if you want Clang modules, the libraries you use (`build::library(b, "format")` is a path you compile with `build::object`), and the tests: replace `build::app_tests` with `build::tests(b, &(build::Tests){.sources = build::glob(b, build::list(b, "tests/**/*.smith", nullptr)), .objects = ..., .flags = flags})` (`smith-test`). `smith run` runs the one program `default_targets` names; `smith test` runs what `tests` declares.
 
 Also in this family: [smith-build-levels](../smith-build-levels/SKILL.md), [smith-build-levels-high](../smith-build-levels-high/SKILL.md), [smith-build-warnings](../smith-build-warnings/SKILL.md).

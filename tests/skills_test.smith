@@ -575,18 +575,6 @@ export void test_skill_smith_test_modules(io::Io *io) {
     skill_case(io, "smith-test-modules");
 }
 
-export void test_skill_smith_text(io::Io *io) {
-    skill_case(io, "smith-text");
-}
-
-export void test_skill_smith_text_c(io::Io *io) {
-    skill_case(io, "smith-text-c");
-}
-
-export void test_skill_smith_text_numbers(io::Io *io) {
-    skill_case(io, "smith-text-numbers");
-}
-
 export void test_skill_smith_trace(io::Io *io) {
     skill_case(io, "smith-trace");
 }

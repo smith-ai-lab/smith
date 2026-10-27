@@ -1,10 +1,10 @@
-// The libraries json, text and inflate in the builds the units runner does not make, from tests/json.sh, tests/text.sh
-// and tests/inflate.sh (issue #292). Their tests (lib/json_test.smith, lib/smith/text_test.smith,
+// The libraries json, format and inflate in the builds the units runner does not make, from tests/json.sh, tests/format.sh
+// and tests/inflate.sh (issue #292). Their tests (lib/json_test.smith, lib/smith/format_numbers_test.smith,
 // lib/smith/inflate_test.smith) run on smith's own runner under AddressSanitizer and UBSan; here each is built as a
 // scratch project's tests with smith_tests (the fixture tests/build_fixtures/library_units, whose -DMODE is fast, -O2,
 // or ndebug, -O2 -DNDEBUG) and must pass in the runner's workers and with a process per test (--isolate). Also the
 // heavy runs on more keys under the sanitizers, JSONTestSuite (fetched into $SMITH_JSON_SUITE_CACHE, else
-// ~/.cache/smith-tests, pinned by hash; skipped offline), the C and .smith callers of one text header, and each
+// ~/.cache/smith-tests, pinned by hash; skipped offline), the C and .smith callers of one format header, and each
 // library compiled alone under the warnings of a new project and naming no libc function.
 module library_modes_test;
 
@@ -21,8 +21,9 @@ typedef struct {
     bool fixtures;      // tests/fixtures is copied to the project
 } Library;
 
-static const Library json = {"lib/json_test.smith", "json_test.smith", "arena,random,text,json", false};
-static const Library text = {"lib/smith/text_test.smith", "smith/text_test.smith", "arena,random,text", false};
+static const Library json = {"lib/json_test.smith", "json_test.smith", "arena,random,format,json", false};
+static const Library numbers = {"lib/smith/format_numbers_test.smith", "smith/format_numbers_test.smith", "arena,random,format",
+                                false};
 static const Library inflate = {"lib/smith/inflate_test.smith", "smith/inflate_test.smith", "arena,random,inflate",
                                 true};
 
@@ -71,12 +72,12 @@ export void test_library_modes_json_ndebug(io::Io *io) {
     passes_in_mode(io, &json, "ndebug");
 }
 
-export void test_library_modes_text_fast(io::Io *io) {
-    passes_in_mode(io, &text, "fast");
+export void test_library_modes_format_fast(io::Io *io) {
+    passes_in_mode(io, &numbers, "fast");
 }
 
-export void test_library_modes_text_ndebug(io::Io *io) {
-    passes_in_mode(io, &text, "ndebug");
+export void test_library_modes_format_ndebug(io::Io *io) {
+    passes_in_mode(io, &numbers, "ndebug");
 }
 
 export void test_library_modes_inflate_fast(io::Io *io) {
@@ -88,9 +89,9 @@ export void test_library_modes_inflate_ndebug(io::Io *io) {
 }
 
 // The full size of the sweep, in the fast build.
-export void test_library_modes_text_full_sweep_of_the_float_patterns(io::Io *io) {
-    scratch::Project p = units_project(io, &text);
-    scratch::Run built = build_mode(&p, &text, "fast");
+export void test_library_modes_format_full_sweep_of_the_float_patterns(io::Io *io) {
+    scratch::Project p = units_project(io, &numbers);
+    scratch::Run built = build_mode(&p, &numbers, "fast");
     scratch::expect_status("the tests build", 0, &built);
     scratch::expect_text("full: the sweep of the float patterns, sixteen times denser", "1 passed, 0 failed",
                          summary(&p, "./build/tests --full --test f32_sweep"));
@@ -167,11 +168,11 @@ export void test_library_modes_inflate_damaged_input_never_misbehaves(io::Io *io
     }
 }
 
-// One header for C and for .smith: a project with smith_library(b, "text"), a C file that includes <smith/text.h> and
-// a .smith file that does `import smith::text;`. smith writes the header and the module's header step writes the same
+// One header for C and for .smith: a project with smith_library(b, "format"), a C file that includes <smith/format.h> and
+// a .smith file that does `import smith::format;`. smith writes the header and the module's header step writes the same
 // bytes, so neither is "not a header smith wrote" and a second build has nothing to do.
-export void test_library_modes_text_c_and_smith_share_one_header(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "text_both");
+export void test_library_modes_format_c_and_smith_share_one_header(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "format_both");
     scratch::Run built = scratch::build(&p, "");
     scratch::expect_status("both: C and .smith share the header, and the project builds", 0, &built);
     scratch::Run run = scratch::sh(&p, "./build/prog");
@@ -223,16 +224,16 @@ export void test_library_modes_json_names_no_libc_function(io::Io *io) {
     names_no_libc_function(io, "lib/json.c", "-e _memcpy -e _memset -e _bzero -e _memmove -e '_smith_.*'");
 }
 
-export void test_library_modes_text_compiles_as_c23(io::Io *io) {
-    compiles_as(io, "lib/smith/text.smith", "gnu23");
+export void test_library_modes_format_compiles_as_c23(io::Io *io) {
+    compiles_as(io, "lib/smith/format.smith", "gnu23");
 }
 
-export void test_library_modes_text_compiles_as_c2y(io::Io *io) {
-    compiles_as(io, "lib/smith/text.smith", "gnu2y");
+export void test_library_modes_format_compiles_as_c2y(io::Io *io) {
+    compiles_as(io, "lib/smith/format.smith", "gnu2y");
 }
 
-export void test_library_modes_text_names_no_libc_function(io::Io *io) {
-    names_no_libc_function(io, "lib/smith/text.smith", "-e _memcpy -e _memset -e _bzero -e _memmove -e '_smith_.*'");
+export void test_library_modes_format_names_no_libc_function(io::Io *io) {
+    names_no_libc_function(io, "lib/smith/format.smith", "-e _memcpy -e _memset -e _bzero -e _memmove -e '_smith_.*'");
 }
 
 // lib/http.c compiled under the warnings of a new project (its behavior is lib/http_test.smith), from tests/http.sh.

@@ -23,7 +23,7 @@ static scratch::Project folder(const scratch::Project *root, const char *name) {
 // --- the server on the fake io ---------------------------------------------------------------------------------------
 
 constexpr char fake_sources[_] =
-    "\"$SMITH_REPO/tests/mcp_fake.c\" \"$SMITH_REPO/lib/smith/text.smith\" \"$SMITH_REPO/lib/smith/arena.smith\" "
+    "\"$SMITH_REPO/tests/mcp_fake.c\" \"$SMITH_REPO/lib/smith/format.smith\" \"$SMITH_REPO/lib/smith/arena.smith\" "
     "\"$SMITH_REPO/lib/smith/contract.smith\" \"$SMITH_REPO/lib/smith/io.smith\" "
     "\"$SMITH_REPO/lib/smith/random.smith\"";
 

@@ -122,13 +122,13 @@ module smith::build;
 // as an input. `-t clean` leaves it, since no step makes it
 [[smith::c_name("smith_write")]] export void write(Build *b, const char *path, const char *text);
 
-// The path of a smith library's source, such as ".smith/lib/json.c" (a library written in .smith, "text", "arena" or
+// The path of a smith library's source, such as ".smith/lib/json.c" (a library written in .smith, "format", "arena" or
 // "io", is a module,
-// ".smith/lib/smith/text.smith", that a smith with clang inside compiles), which smith writes on every `smith build`
+// ".smith/lib/smith/format.smith", that a smith with clang inside compiles), which smith writes on every `smith build`
 // together with the library's header in .smith/include/smith/. The project compiles the source itself, with its own
 // flags (build::object), and adds -I .smith/include to its compiles to find <smith/arena.h>; nothing is linked unless
 // the build file asks. An unknown name is an error that lists the known names ("arena", "contract", "io", "random",
-// "test", "text", "trace"). Naming a library is enough: build::program also links the libraries that the libraries it
+// "test", "trace"). Naming a library is enough: build::program also links the libraries that the libraries it
 // links need ("io" brings "arena" and "random", "contract" brings "trace"), each as the object the project made of that
 // source or else one compiled with the flags of the library that needs it, <folder of its object>/<name>.o; the
 // libraries are found by scanning the library's header and source, as build::app does. build::tests compiles "test",
@@ -341,7 +341,7 @@ export typedef result(const char *const *, LinesError) Lines; // NOLINT(readabil
 //     <flags...> and linked too, each unless .objects holds the project's own object of it (compiled from
 //     build::library(b, "<name>")), so a test of code that makes contracts links with nothing added. A library the code
 //     under test uses and the test files do not import or include (found as smith_app finds a program's libraries) is
-//     the project's, in .objects; a library a test file imports (text, json, inflate) is compiled and linked here too.
+//     the project's, in .objects; a library a test file imports (format, json, inflate) is compiled and linked here too.
 //   the task <name> (a .run task, on the console, with .test: `smith test` runs it): runs <output> with
 //     the arguments `smith test` was given (build::args), which are the runner's options: --test, --seed, --seeds,
 //     --jobs, --shrink, --shuffle, --full, --isolate and the rest of its header. .inputs are the task's inputs after

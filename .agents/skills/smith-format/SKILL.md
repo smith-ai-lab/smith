@@ -1,11 +1,11 @@
 ---
 name: smith-format
-description: "Using smith::format (import smith::format; format::to, format::push, format::length, format::hex, format::fixed, format::general, format::scientific, format::pad, format::left, format::print, format::bytes): a type-checked formatter in place of snprintf, the pieces of the text as arguments. Load when a .smith file imports smith::format, when a build.c calls smith_library(b, \"format\"), on writing text into a buffer or an arena in .smith, on replacing snprintf or printf, or on 'no rule for the type of an argument'."
+description: "Using smith::format (import smith::format; format::parse, format::to, format::push, format::length, format::hex, format::fixed, format::general, format::scientific, format::pad, format::left, format::print, format::bytes): a type-checked formatter in place of snprintf, the pieces of the text as arguments. Load when a .smith file imports smith::format, on reading a number from text (replacing strtol, atoi or strtod), when a build.c calls smith_library(b, \"format\"), on writing text into a buffer or an arena in .smith, on replacing snprintf or printf, or on 'no rule for the type of an argument'."
 ---
 
 # Formatted text with no format string: smith::format
 
-This skill ships in the smith plugin, from `.agents/skills/smith-format/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there. It uses the generics of `smith-lang-generics` and `smith-lang-rest`, and `smith-text-numbers` and `smith-arena`.
+This skill ships in the smith plugin, from `.agents/skills/smith-format/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there. It uses the generics of `smith-lang-generics` and `smith-lang-rest`, and `smith-arena`.
 
 There is no format string, so none can disagree with its arguments: the arguments are the pieces, in order, and each one's **type picks how it is written, when the call is compiled**. Write `format::to(buf, sizeof buf, "count: ", n, " of ", total)`, never `snprintf(buf, sizeof buf, "count: %d of %zu", ...)`.
 
@@ -25,7 +25,7 @@ usize n = format::length("abc", 12345);                               // 8, writ
 | `bool` | `true` / `false` |
 | `char` | the character (`i8` and `u8` are numbers) |
 | `i8`..`i64`, `u8`..`u64`, `usize`, `isize` | decimal digits, `-` for a negative one |
-| `f32`, `f64` | the shortest digits that read back the same (`0.1`, `1e22`), as `text::write_f64`; `inf`, `-inf`, `nan`; a `f32` as its `f64` value |
+| `f32`, `f64` | the shortest digits that read back the same (`0.1`, `1e22`), as `format::write_f64`; `inf`, `-inf`, `nan`; a `f32` as its `f64` value |
 | `char *`, `const char *` | the terminated string; null is `(null)` |
 | `char[:]`, `const char[:]` | its count of characters (`%.*s`); `format::bytes(p, n)` makes one from a pointer and a length |
 | `format::hex(x, width)` | lowercase hex, zero-padded to `width` (0 for none, at most 16): `%016llx`, `%02x` |
@@ -40,4 +40,6 @@ usize n = format::length("abc", 12345);                               // 8, writ
 - **Up to 30 pieces** in one call (a generic takes 32 parameters).
 - **printf to pieces**: `%-34s %10u %5.1f%%` is `format::left(label, 34), " ", format::pad(a, 10), " ", format::pad(format::fixed(x, 1), 5), "%"`; `%.9g` is `format::general(x, 9)`; `%016llx` is `format::hex(x, 16)`. There is no zero-padded decimal (`%03d`): pad with `hex`, or write the zeros.
 - **C cannot call the generics.** C keeps `snprintf`, and gets the pieces `to` is made of from `<smith/format.h>`: `SmithFormatWriter w = smith_format_make(buf, cap); smith_format_put_string(&w, "n="); smith_format_put_u64(&w, n); SmithFormatWritten r = smith_format_finish(&w);` (also `put_char`, `put_bytes`, `put_i64`, `put_f64`, `put_hex`, `put_fixed`, `put_general`, `put_scientific`, `put_padded`; `smith_format_hex`, `smith_format_fixed`, `smith_format_general`, `smith_format_scientific` and `smith_format_bytes` make the wrappers).
-- **Get the library** with `smith_library(b, "format")`, plus `arena`, `text` and `io`, which it imports; a project built by convention needs nothing more.
+- **Reading a number**: `format::parse(word, i64)` is a `result(i64, format::Error)` (`smith-result`), for any integer type, `f32` or `f64`: `.ok` is the value, `.error` is `Empty` (no digit), `Invalid` (a stray character: `+`, a space, `inf`) or `Range` (it does not fit the type; a float that would round to infinity). Whole numbers are decimal with an optional `-`; a decimal is `-90`, `0.25`, `.5`, `1e-5`, correctly rounded, ties to even, as `strtod` gives in the C locale, for any number of digits. `format::write_u64`, `write_i64`, `write_f32` and `write_f64` put a number into a `char out[:]` with room for `number_capacity` (20), `f32_capacity` (24) or `f64_capacity` (32) characters and return the count; no terminator.
+- **From C** the same, per type, with no out parameter: `smith_format_I64Result r = smith_format_parse_i64(word);` (also `_u64`, `_f32`, `_f64`) and `r.tag == smith_enum_result_i64__SmithFormatError_tag_ok` then `r.ok`, else `r.error` (`SmithFormatError_Range`...); `smith_format_write_*`; `smith_format_string("abc")` is the slice of a terminated string and `smith_format_is(word, "abc")` compares one. Text in C is `struct smith_array_const_char_n` (`.data`, `.count[0]`).
+- **Get the library** with `smith_library(b, "format")` (`smith_object` compiles the `.smith` source as a `.c`); it imports `arena`, `contract` and `io`, which a project built by convention gets with it.

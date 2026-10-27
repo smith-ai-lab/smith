@@ -142,9 +142,6 @@
     "./.agents/skills/smith-test-checks/",
     "./.agents/skills/smith-test-modules/",
     "./.agents/skills/smith-test-workers/",
-    "./.agents/skills/smith-text/",
-    "./.agents/skills/smith-text-c/",
-    "./.agents/skills/smith-text-numbers/",
     "./.agents/skills/smith-trace/"
   ],
   "lspServers": {

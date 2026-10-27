@@ -16,7 +16,7 @@ What smith is and the contracts its code keeps. Read only the concepts your task
 - [smith dbg and smith dap](debugger.md): smith dbg and smith dap are lldb and lldb-dap from smith's LLVM with the system's debugserver, and the doc holds how they are built, their cost, and macOS permissions.
 - [The embedded files and the programs folders](embedded-files-and-programs-folders.md): The files clang looks up beside itself are embedded in smith and written once to a runtime folder that smith never removes, and the programs it runs are clones of smith in a per-binary folder.
 - [clang-format, clang-tidy and clangd, from smith's LLVM](format-lint-and-editor-tools.md): smith fmt, lint and lsp are the LLVM tools linked into smith, with smith's defaults where a project has no file, and .smith is C to clang-format.
-- [smith::format is a type-checked formatter, a library of its own](format-library.md): Formatted text is a generic over its arguments with no format string, each type picks its rule at compile time, numbers go through smith::text, and C gets only the writer it is built from.
+- [smith::format is a type-checked formatter, a library of its own](format-library.md): Formatted text is a generic over its arguments with no format string, each type picks its rule at compile time, numbers are parsed and written in it, and C gets only the writer it is built from.
 - [The linker is lld, in smith's process](linker.md): The driver finds a copy of smith named ld that runs lld's Mach-O linker inside smith, and the system's other tools stay the system's.
 - [smith build llvm](llvm-build.md): smith build llvm builds LLVM 23.1.3 static and pinned into a cache that survives clean, with the libraries smith links.
 - [smith mcp](mcp-server.md): smith mcp is the debugger as an MCP server over stdio, on the fake-able io and the generated protocol types, with eleven tools.
@@ -24,7 +24,7 @@ What smith is and the contracts its code keeps. Read only the concepts your task
 - [One compiler, in smith's own process](one-compiler.md): smith ships upstream LLVM 23.1.3 linked into itself, compiles C, C++ and Objective-C in its own process, and picks other compilers only through environment variables.
 - [The platform layer](platform-layer.md): What smith does differently on macOS and Linux lives in one file per platform, runtime/platform_macos.c and runtime/platform_linux.c, with the same functions, and this table says what differs.
 - [smith prove checks LLVM IR with Alive2, Bitwuzla and Z3](prover.md): smith prove proves each function with a contract in a process of its own, assumes functions marked smith_trusted, and uses no list.
-- [smith::slice and smith::ascii replace text's slice operations](slice-library.md): A slice library generic over the element does what text did for chars, with no allocation, option for a search that may find nothing, and a character test that reads no locale.
+- [smith::slice and smith::ascii replace text's slice operations](slice-library.md): A slice library generic over the element does what text did for chars (text is deleted), with no allocation, option for a search that may find nothing, and a character test that reads no locale.
 - [The .smith language](smith-language.md): A .smith file is C with modules, lowered to C as clang reads it by a token hook, with sized types, the rules, one command, and what the language does not do yet.
 
 ## Conventions

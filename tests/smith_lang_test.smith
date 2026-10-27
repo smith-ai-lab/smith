@@ -1334,7 +1334,7 @@ export void test_keyword_names_fine(io::Io *io) {
 }
 
 export void test_library_smith_text(io::Io *io) {
-    corpus_case(io, "library-smith-text");
+    corpus_case(io, "library-smith-slice");
 }
 
 export void test_lowered_directives(io::Io *io) {

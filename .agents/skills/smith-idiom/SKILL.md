@@ -5,7 +5,7 @@ description: "Idiomatic Smith: how to write, edit or review a .smith file so it 
 
 # Write Smith, not C renamed
 
-A `.smith` file is C, so a renamed `.c` file compiles and means what it meant. That is the first step of a port and never the last: a module that still has the standard C types, an `#include`, a `#define` or a `sizeof`/`alignof` passed to a function is not done. The libraries `lib/smith/arena.smith`, `random.smith`, `text.smith` and `build.smith` in smith's repository are the reference; read one before writing a module.
+A `.smith` file is C, so a renamed `.c` file compiles and means what it meant. That is the first step of a port and never the last: a module that still has the standard C types, an `#include`, a `#define` or a `sizeof`/`alignof` passed to a function is not done. The libraries `lib/smith/arena.smith`, `random.smith`, `format.smith` and `build.smith` in smith's repository are the reference; read one before writing a module.
 
 ## The rules
 

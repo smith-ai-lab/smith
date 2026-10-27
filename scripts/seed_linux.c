@@ -39,9 +39,9 @@ constexpr size_t text_max = 1 << 20;   // a header's first lines, or the identit
 static const char llvm_url[] =
     "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.3/llvm-project-23.1.3.src.tar.xz";
 static const char llvm_sha256[] = "c44186a7762ed28954be72e5ff6df9808e0779d4f1bf014ecc4e7e211d31ee34";
-static const char *const libraries[] = {"arena", "contract", "inflate", "io", "random", "text"}; // build.c's list
+static const char *const libraries[] = {"arena", "contract", "format", "inflate", "io", "random"}; // build.c's list
 // The modules whose headers smith.c includes: the libraries it links, and smith::build's, which build_runtime.c reads.
-static const char *const header_modules[] = {"arena", "contract", "inflate", "io", "random", "text", "build"};
+static const char *const header_modules[] = {"arena", "contract", "format", "inflate", "io", "random", "build"};
 static const char *const shims[] = {"clang",        "lld",         "format", "tidy",          "clangd",
                                     "symbolize",    "hook",        "lsp",    "lldb",          "lldb_dap",
                                     "lldb_explain", "lldb_slices", "affine", "effects_infer", "lldb_server"};
@@ -274,7 +274,7 @@ static void write_protocol(void) {
         {"scripts/protocol.c", "protocol"}, {"lib/json.c", "json"}, {"lib/trace.c", "trace"}};
     for (size_t i = 0; i < sizeof c_sources / sizeof c_sources[0]; i++)
         add(&objects, compile(clang, c_sources[i][0], "p", c_sources[i][1], &flags));
-    static const char *const modules[] = {"arena", "contract", "text"};
+    static const char *const modules[] = {"arena", "contract", "format", "io", "random"};
     for (size_t i = 0; i < sizeof modules / sizeof modules[0]; i++)
         add(&objects,
             compile(".smith/seed/a/bin/smith-cc", path("lib/smith/%s.smith", modules[i], ""), "p", modules[i], &flags));

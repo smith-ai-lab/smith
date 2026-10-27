@@ -1,12 +1,12 @@
 import <stdint.h>;
 import <stdio.h>;
-import smith::text;
+import smith::format;
 
 extern u64 from_c(void);
 
 i32 main(void) {
-    u64 value = 0;
-    u64 parsed = text::parse_u64(text::make("42"), &value) ? value : 0;
+    format::U64Result result = format::parse_u64("42");
+    u64 parsed = result == .ok ? result.ok : 0;
     c::printf("%ju %ju\n", (c::uintmax_t)parsed, (c::uintmax_t)from_c());
     return 0;
 }

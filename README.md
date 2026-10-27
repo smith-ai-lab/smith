@@ -693,7 +693,7 @@ i32 main(io::Io *io) {
 | `smith fetch`, `smith cache` | packages, by URL and hash, and the caches | [smith-packages](.agents/skills/smith-packages/SKILL.md) |
 
 The libraries are [arena](.agents/skills/smith-arena/SKILL.md), [io](.agents/skills/smith-io/SKILL.md),
-[format](.agents/skills/smith-format/SKILL.md), [text](.agents/skills/smith-text/SKILL.md),
+[format](.agents/skills/smith-format/SKILL.md),
 [slice](.agents/skills/smith-slice/SKILL.md), [ascii](.agents/skills/smith-ascii/SKILL.md),
 [json](.agents/skills/smith-json/SKILL.md), [random](.agents/skills/smith-random/SKILL.md),
 [math](.agents/skills/smith-math/SKILL.md), [test](.agents/skills/smith-test/SKILL.md),

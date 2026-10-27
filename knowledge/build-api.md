@@ -129,12 +129,12 @@ const char *smith_capture_or(SmithBuild *b, const char *const *argv, const char 
 // as an input. `-t clean` leaves it, since no step makes it
 void smith_write(SmithBuild *b, const char *path, const char *text);
 
-// The path of a smith library's source, such as ".smith/lib/json.c" (a library written in .smith, "text", "arena" or "io", is a module,
-// ".smith/lib/smith/text.smith", that a smith with clang inside compiles), which smith writes on every `smith build`
+// The path of a smith library's source, such as ".smith/lib/json.c" (a library written in .smith, "format", "arena" or "io", is a module,
+// ".smith/lib/smith/format.smith", that a smith with clang inside compiles), which smith writes on every `smith build`
 // together with the library's header in .smith/include/smith/. The project compiles the source itself, with its own
 // flags (smith_object), and adds -I .smith/include to its compiles to find <smith/arena.h>; nothing is linked unless
 // the build file asks. An unknown name is an error that lists the known names ("arena", "contract", "io", "random",
-// "test", "text", "trace"). Naming a library is enough: smith_program also links the libraries that the libraries it
+// "test", "trace"). Naming a library is enough: smith_program also links the libraries that the libraries it
 // links need ("io" brings "arena" and "random", "contract" brings "trace"), each as the object the project made of that
 // source or else one compiled with the flags of the library that needs it, <folder of its object>/<name>.o; the
 // libraries are found by scanning the library's header and source, as smith_app does. smith_tests compiles "test",

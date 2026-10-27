@@ -1,0 +1,21 @@
+// smith::slice from .smith: its generated header (include/smith/slice.h) is the interface, and the names are written as
+// the module's, slice::take_until, ascii::space.
+import <stdio.h>;
+import smith::ascii;
+import smith::slice;
+
+i32 main() {
+    const char all[:] = "move 3 4 \nturn -90.5\n\nhash 00ff\n";
+    const char input[:] = all;
+    u32 lines = 0;
+    while (countof(input) > 0) {
+        const char line[:] = slice::take_until(&input, '\n');
+        const char word[:] = slice::take_while(&line, ascii::alpha);
+        const char rest[:] = slice::trim(line, ascii::space);
+        if (countof(word) == 0 && countof(rest) == 0) continue;
+        lines += 1;
+        c::printf("%.*s|%.*s\n", (i32)countof(word), word, (i32)countof(rest), rest);
+    }
+    c::printf("%u lines\n", lines);
+    return 0;
+}

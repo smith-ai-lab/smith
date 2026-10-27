@@ -185,10 +185,6 @@ export void test_the_test_header_compiles_alone(io::Io *io) {
     generated(io, "test");
 }
 
-export void test_the_text_header_compiles_alone(io::Io *io) {
-    generated(io, "text");
-}
-
 // 2. The rule.
 
 export void test_an_import_only_a_body_uses_stays_out(io::Io *io) {

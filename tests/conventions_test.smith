@@ -222,9 +222,9 @@ export void test_conventions_library_include_io_links_io(io::Io *io) {
                          scratch::capture(&p, "ls build/debug/smith | tr '\\n' ' ' | sed 's/ $//'"));
 }
 
-export void test_conventions_library_import_smith_text_links_text(io::Io *io) {
-    scratch::Project p = scratch::project(io, "textual", "conv_textual");
-    scratch::expect_text("library: import smith::text links text", "42", last_line(&p, "smith run"));
+export void test_conventions_library_import_smith_format_links_format(io::Io *io) {
+    scratch::Project p = scratch::project(io, "formatted", "conv_format");
+    scratch::expect_text("library: import smith::format links format", "42", last_line(&p, "smith run"));
 }
 
 export void test_conventions_library_import_a_header_in_a_smith_file_links_io(io::Io *io) {

@@ -12,7 +12,6 @@ import smith::io;
 import smith::math;
 import smith::random;
 import smith::test;
-import smith::text;
 import <smith/json.h>;
 import <stdio.h>;
 import <stdlib.h>;
@@ -32,8 +31,27 @@ constexpr f64 f64_max = 0x1.fffffffffffffp+1023;
 
 constexpr c::SmithJsonLimits test_json_wide = {.depth = 64, .string_length = 1 << 16, .count = 1 << 16};
 
+// The parsers return a result; these keep the shape of the tests (a value, or false and the value left alone).
+static bool read_u64(const char word[:], u64 *value) {
+    format::U64Result r = format::parse_u64(word);
+    if (r == .ok) *value = r.ok;
+    return r == .ok;
+}
+
+static bool read_i64(const char word[:], i64 *value) {
+    format::I64Result r = format::parse_i64(word);
+    if (r == .ok) *value = r.ok;
+    return r == .ok;
+}
+
+static bool read_f64(const char word[:], f64 *value) {
+    format::F64Result r = format::parse_f64(word);
+    if (r == .ok) *value = r.ok;
+    return r == .ok;
+}
+
 static typeof(const char[:]) test_json_text(const char *string) {
-    return text::make(string);
+    return format::string(string);
 }
 
 // The next key of a stream: `stream` moves on (the reassignment pattern) and the key returned is for one use.
@@ -85,12 +103,12 @@ export void test_json_reader_keys_and_numbers() {
     test::check(!c::smith_json_is(&reader, "k\xc3\xa9"));
     test::check(!c::smith_json_is(&reader, "k\xc3\xa9yz"));
     test::check(c::smith_json_read(&reader) == c::SmithJsonToken_Number);
-    test::check(text::is(reader.text, "-12.5e+3"));
+    test::check(format::is(reader.text, "-12.5e+3"));
     f64 value = 0;
-    test::check(text::parse_f64(reader.text, &value));
+    test::check(read_f64(reader.text, &value));
     test::check_same_bits(value, -12500.0);
     i64 integer = 0;
-    test::check(!text::parse_i64(reader.text, &integer)); // not an integer as written
+    test::check(!read_i64(reader.text, &integer)); // not an integer as written
 }
 
 export void test_json_reader_skips_values() {
@@ -356,7 +374,7 @@ export void test_json_reader_decodes_into_the_arena() {
     before = arena.used;
     const char second[:] = c::smith_json_decode(&reader, &arena);
     test::check_equal(arena.used, before); // nothing to decode: nothing pushed
-    test::check(text::is(second, "plain"));
+    test::check(format::is(second, "plain"));
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -379,22 +397,22 @@ export void test_json_numbers_are_exact() {
     i64 i = 7;
     u64 u = 7;
     f64 d = 7;
-    test::check(text::parse_i64(root->items[0]->text, &i) && i == 0);
-    test::check(text::parse_i64(root->items[1]->text, &i) && i == 0);
-    test::check(text::parse_i64(root->items[2]->text, &i) && i == i64_max);
-    test::check(text::parse_i64(root->items[3]->text, &i) && i == i64_min);
-    test::check(text::parse_u64(root->items[4]->text, &u) && u == math::max(u64));
-    test::check(!text::parse_u64(root->items[5]->text, &u));
-    test::check(!text::parse_i64(root->items[5]->text, &i));
-    test::check(!text::parse_i64(root->items[6]->text, &i));
-    test::check(!text::parse_i64(root->items[7]->text, &i)); // 1e2 is a f64, not an integer
-    test::check(text::parse_f64(root->items[7]->text, &d));
+    test::check(read_i64(root->items[0]->text, &i) && i == 0);
+    test::check(read_i64(root->items[1]->text, &i) && i == 0);
+    test::check(read_i64(root->items[2]->text, &i) && i == i64_max);
+    test::check(read_i64(root->items[3]->text, &i) && i == i64_min);
+    test::check(read_u64(root->items[4]->text, &u) && u == math::max(u64));
+    test::check(!read_u64(root->items[5]->text, &u));
+    test::check(!read_i64(root->items[5]->text, &i));
+    test::check(!read_i64(root->items[6]->text, &i));
+    test::check(!read_i64(root->items[7]->text, &i)); // 1e2 is a f64, not an integer
+    test::check(read_f64(root->items[7]->text, &d));
     test::check_same_bits(d, 100.0);
-    test::check(text::parse_f64(root->items[5]->text, &d)); // an integer too big for u64 is still a f64
+    test::check(read_f64(root->items[5]->text, &d)); // an integer too big for u64 is still a f64
     test::check_same_bits(d, 18446744073709551616.0);
-    test::check(!text::parse_f64(root->items[9]->text, &d)); // out of range as a f64: refused
-    test::check(!text::parse_f64(root->items[10]->text, &d));
-    test::check(text::parse_f64(root->items[11]->text, &d));
+    test::check(!read_f64(root->items[9]->text, &d)); // out of range as a f64: refused
+    test::check(!read_f64(root->items[10]->text, &d));
+    test::check(read_f64(root->items[11]->text, &d));
     test::check_same_bits(d, 0.0);
 }
 
@@ -478,17 +496,17 @@ export void test_json_tree_of_a_document() {
     test::check_equal(root->offset, 0);
     test::check_equal(root->span, 14);
     const c::SmithJsonValue *name = c::smith_json_member(root, "name");
-    test::check(name != nullptr && name->kind == c::SmithJsonKind_String && text::is(name->text, "smith"));
-    test::check(text::is(name->key, "name"));
+    test::check(name != nullptr && name->kind == c::SmithJsonKind_String && format::is(name->text, "smith"));
+    test::check(format::is(name->key, "name"));
     const c::SmithJsonValue *tags = c::smith_json_member(root, "tags");
     test::check(tags != nullptr && tags->kind == c::SmithJsonKind_Array && tags->count == 2);
-    test::check(text::is(tags->items[1]->text, "json"));
+    test::check(format::is(tags->items[1]->text, "json"));
     const char tag_key[:] = tags->items[1]->key;
     test::check_equal(countof(tag_key), 0);
     test::check(c::smith_json_member(root, "ok")->kind == c::SmithJsonKind_True);
     test::check(c::smith_json_member(root, "no")->kind == c::SmithJsonKind_False);
     test::check(c::smith_json_member(root, "none")->kind == c::SmithJsonKind_Null);
-    test::check(text::is(c::smith_json_member(root, "n")->text, "43")); // the last of a repeated key
+    test::check(format::is(c::smith_json_member(root, "n")->text, "43")); // the last of a repeated key
     test::check(c::smith_json_member(root, "missing") == nullptr);
     test::check(c::smith_json_member(root, "escA") != nullptr); // keys are decoded
     test::check(c::smith_json_member(tags, "x") == nullptr);    // not an object
@@ -532,7 +550,7 @@ export void test_json_a_large_array_keeps_its_order() {
     digits[used++] = '[';
     for (usize i = 0; i < 1000; i++) {
         if (i > 0) digits[used++] = ',';
-        used += text::write_u64(digits[used:sizeof digits], i * i);
+        used += format::write_u64(digits[used:sizeof digits], i * i);
     }
     digits[used++] = ']';
     const c::SmithJsonValue *root = nullptr;
@@ -542,7 +560,7 @@ export void test_json_a_large_array_keeps_its_order() {
     test::check_equal(root->count, 1000);
     for (usize i = 0; i < 1000; i++) {
         u64 value = 0;
-        test::check(text::parse_u64(root->items[i]->text, &value));
+        test::check(read_u64(root->items[i]->text, &value));
         u64 square = i;
         test::check_equal(value, square * square);
     }
@@ -995,14 +1013,14 @@ static void test_json_random_value(c::SmithJsonWriter *writer, TestJsonDocument 
 static bool test_json_number_matches(const char word[:], const TestJsonEvent *event) {
     if (event->number == TestJsonNumber_U64) {
         u64 value = 0;
-        return text::parse_u64(word, &value) && value == event->bits;
+        return read_u64(word, &value) && value == event->bits;
     }
     if (event->number == TestJsonNumber_I64) {
         i64 value = 0;
-        return text::parse_i64(word, &value) && (u64)value == event->bits;
+        return read_i64(word, &value) && (u64)value == event->bits;
     }
     f64 value = 0;
-    return text::parse_f64(word, &value) && __builtin_bit_cast(u64, value) == event->bits;
+    return read_f64(word, &value) && __builtin_bit_cast(u64, value) == event->bits;
 }
 
 // The pull parser sees exactly the events.
@@ -1148,11 +1166,11 @@ export void test_json_write_value_keeps_numbers_and_duplicate_keys() {
     c::smith_json_write_value(&writer, root);
     const char out[:] = {};
     test::check(c::smith_json_writer_finish(&writer, &out));
-    test::check(text::is(out, "{\"a\":1.50,\"a\":[],\"b\xc3\xa9\":[1e2,{},\"x\\ny\"],\"c\":null}"));
+    test::check(format::is(out, "{\"a\":1.50,\"a\":[],\"b\xc3\xa9\":[1e2,{},\"x\\ny\"],\"c\":null}"));
     c::SmithJsonWriter scalar = c::smith_json_writer_make(buffer, sizeof buffer, 0);
     c::smith_json_write_value(&scalar, root->items[0]);
     test::check(c::smith_json_writer_finish(&scalar, &out));
-    test::check(text::is(out, "1.50"));
+    test::check(format::is(out, "1.50"));
     c::SmithJsonWriter tiny = c::smith_json_writer_make(buffer, 5, 0);
     c::smith_json_write_value(&tiny, root);
     test::check(!c::smith_json_writer_finish(&tiny, &out));
@@ -1177,7 +1195,7 @@ export void test_json_any_double_round_trips_bit_for_bit(random::Key key) {
     c::SmithJsonError error = {};
     test::check(c::smith_json_parse(&arena, output, test_json_wide, &root, &error));
     f64 back = 0;
-    test::check(text::parse_f64(root->text, &back));
+    test::check(read_f64(root->text, &back));
     test::check_same_bits(back, d);
 }
 
@@ -1198,8 +1216,8 @@ export void test_json_any_integer_round_trips_exactly(random::Key key) {
     test::check(c::smith_json_parse(&arena, output, test_json_wide, &root, &error));
     u64 u = 0;
     i64 i = 0;
-    test::check(text::parse_u64(root->items[0]->text, &u));
-    test::check(text::parse_i64(root->items[1]->text, &i));
+    test::check(read_u64(root->items[0]->text, &u));
+    test::check(read_i64(root->items[1]->text, &i));
     test::check_equal(u, bits);
     test::check_equal((u64)i, bits);
 }

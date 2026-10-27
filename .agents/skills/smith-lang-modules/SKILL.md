@@ -8,7 +8,7 @@ description: "Modules in .smith files: `module a::b;`, `import a::b::c as x;`, `
 ```smith
 // src/game/replay.smith
 module game::replay;                 // the path must end in game/replay.smith
-import smith::text as tx;            // binds `tx`; `import smith::text;` binds `text`
+import smith::format as fm;          // binds `fm`; `import smith::format;` binds `format`
 export struct Replay { // the tag is the type's name: `Replay`, no typedef
     u64 frames;
     const char name[:];
@@ -18,7 +18,7 @@ u32 helper() { // private
     return 1;
 }
 export Replay open(const char *path) {
-    return (Replay){.frames = version + helper(), .name = tx::make(path)};
+    return (Replay){.frames = version + helper(), .name = fm::string(path)};
 }
 ```
 

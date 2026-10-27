@@ -5,13 +5,12 @@ description: "Reading JSON with smith's json (import smith::json; <smith/json.h>
 
 # JSON: smith's json
 
-**json is C today, used from `.smith` as `import <smith/json.h>;` with every name under `c::`** (`c::SmithJsonValue`, `c::smith_json_parse`); it becomes a module later (the names and what they do stay). Text and the arena are modules already, so its text is `const char[:]` (the header's `struct smith_array_const_char_n`) and the arena is `arena::Arena` (`SmithArena`). The prose below names functions by their C names (`smith_json_parse`); in `.smith` write `c::` before each. The C form is under "From C".
+**json is C today, used from `.smith` as `import <smith/json.h>;` with every name under `c::`** (`c::SmithJsonValue`, `c::smith_json_parse`); it becomes a module later (the names and what they do stay). Text is a slice and the arena a module already, so its text is `const char[:]` (the header's `struct smith_array_const_char_n`) and the arena is `arena::Arena` (`SmithArena`). The prose below names functions by their C names (`smith_json_parse`); in `.smith` write `c::` before each. The C form is under "From C".
 
 ## Read a tree
 
 ```smith
 import smith::arena;
-import smith::text;
 import <smith/json.h>;
 
 // The name of a document's "name" member, or an empty text; the error goes to the console of the caller.
@@ -38,7 +37,7 @@ usize total_items(const c::SmithJsonValue *list) {
 
 ## From C
 
-C includes `<smith/json.h>` and uses the names as they are (`struct smith_array_const_char_n` with `.data` and `.count[0]`, `SmithArena`, `smith_text_make`):
+C includes `<smith/json.h>` and uses the names as they are (`struct smith_array_const_char_n` with `.data` and `.count[0]`, `SmithArena`, `smith_format_string`):
 
 ```c
 #include <smith/json.h>

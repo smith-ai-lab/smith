@@ -36,7 +36,7 @@ export void build(build::Build *b) {
   build.smith`).
 
 **`smith::build` is the same API with module names.** The header `<smith/build.h>` is generated from the module
-`lib/smith/build.smith` (a build output like `random.h` and `text.h`, not in git). Every call there
+`lib/smith/build.smith` (a build output like `random.h` and `format.h`, not in git). Every call there
 has no body: the build runtime (`runtime/build_runtime.c`, C) defines it under its C name (`[[smith::c_name("smith_task")]]`),
 so a build.smith and a build.c call the very same functions and nothing is implemented twice. The C names are unchanged;
 the module names drop the `smith_` and the `Smith`:

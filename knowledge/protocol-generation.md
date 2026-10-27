@@ -112,7 +112,7 @@ Measured on an Apple M-series Mac with the full smith of this tree.
 | object file at `-O2` (`__text`) | 331 KB | 229 KB |
 | added to a stripped executable (everything linked, no dead stripping) | 371 KB | 265 KB |
 
-Both together add 637 KB to an executable with the JSON, text, arena, random and protocol libraries (69 KB). The generator itself takes 0.1 s for
+Both together add 637 KB to an executable with the JSON, format, arena, random and protocol libraries (69 KB). The generator itself takes 0.1 s for
 both. The tests: 846 run in 0.5 s (`-O2`), 1.0 s (asan), 7.9 s (asan, 500 keys each); `tests/protocol_test.smith` as a whole takes about 14 s with its
 four builds. 
 

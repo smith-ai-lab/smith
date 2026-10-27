@@ -133,7 +133,7 @@ u32 helper(void) { … }                              // private
       variable is that name too (no `__asm__` label: `_smith_text_parse_f64` on macOS), so C and C++ call it, define
       an export that has no body in the module, and link against it as against any C function. Other exports keep the
       prefixed name and the `::` symbol.
-    - A `.smith` importer still writes the module's name (`arena::Arena`, `text::parse_f64`) and gets the C name: the
+    - A `.smith` importer still writes the module's name (`arena::Arena`, `format::parse_f64`) and gets the C name: the
       header's `// smith-names:` line lists `Arena=SmithArena`, which is how the importer's lowering, its diagnostics
       and its editor know the pair. In the module itself the name is the C name in the generated code.
     - It goes on the export's first name (the tag, in `export typedef struct S {…} S;`, and the typedef of the same

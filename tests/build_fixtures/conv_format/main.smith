@@ -1,0 +1,9 @@
+import smith::format;
+import <stdio.h>;
+
+int main(void) {
+    format::U64Result result = format::parse_u64("42");
+    if (result != .ok) return 1;
+    c::printf("%llu\n", (unsigned long long)result.ok);
+    return 0;
+}
