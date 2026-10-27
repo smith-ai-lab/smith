@@ -20,4 +20,4 @@ Every red batch on the train was a fault in a test the author did not know to ru
 
 **Records first.** When per-test records exist (`.smith/records`), a test that runs smith is selected when its record is stale instead of by the graph's "all of smith" edge, and the graph decides whatever no record names: [coverage-selection](coverage-selection.md).
 
-**What it weighs.** The runner's `--stats` ends with a line `cpu<TAB>seconds<TAB>name` for each test, its CPU time with the processes it waited for; the train's full run can publish them, so the share of CPU a selection runs is measured, not guessed. Recording what tests read at run time is not built; it becomes an issue if misses are more than rare.
+**What it weighs.** The runner's `--stats` ends with a line `cpu<TAB>seconds<TAB>name` for each test, its CPU time with the processes it waited for, then `wall<TAB>start<TAB>seconds<TAB>name` (when it started and its wall time, for the busy workers over time); the train's full run can publish them, so the share of CPU a selection runs is measured, not guessed. Recording what tests read at run time is not built; it becomes an issue if misses are more than rare.
