@@ -801,7 +801,7 @@ static void smith_lang_body_use(SmithLang *lang, const SmithHost *host, uint32_t
     bool any = false;
     for (size_t b = 0; b < lang->bindings_count; b++) { // the imports whose functions the file runs at compile time
         const SmithLangBinding *binding = &lang->bindings[b];
-        if (binding->is_c || binding->missing || binding->is_target || binding->is_self) continue;
+        if (binding->is_c || binding->is_objc || binding->missing || binding->is_target || binding->is_self) continue;
         any = smith_body_import(host, binding) || any;
     }
     if (!any) return;

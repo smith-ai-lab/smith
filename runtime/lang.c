@@ -303,11 +303,30 @@ typedef struct {
     uint32_t tag_count;
 } SmithLangSliceState;
 
+// Objective-C headers the file imports (runtime/lang_objc.c): the host made their types and method indexes.
+constexpr uint32_t smith_lang_objc_max = 16;
+
+typedef struct {
+    const char *types; // the C file of the types, to include
+    const char *index; // the method index, kept by the host for the whole compile
+    uint32_t length;
+} SmithLangObjcIndex;
+
+typedef struct {
+    SmithLangObjcIndex indexes[smith_lang_objc_max];
+    uint32_t count;
+    char frameworks[smith_lang_objc_max][64];
+    uint32_t frameworks_count;
+    bool bound;   // `objc` is bound
+    bool defined; // the types are included and the wrappers written
+} SmithLangObjc;
+
 typedef struct {
     SmithLangText name;
     SmithLangText prefix; // game_replay_
     SmithLangText module; // game::replay
     bool is_c;
+    bool is_objc;   // `objc`: the names an imported Objective-C header declares (runtime/lang_objc.c)
     bool is_target; // `import target;`: the facts of the target, no module of any file (runtime/lang_target.c)
     bool is_self;   // the module's own last name (`tools::dup` in smith::tools): an import of that name replaces it
     bool missing;   // the module could not be imported: its names are not checked, the import was the one error
@@ -509,6 +528,7 @@ struct SmithLang {
     unsigned errors;
     bool is_module;
     bool has_c;
+    SmithLangObjc objc;
     bool seen_declaration;
     bool seen_module_line;
     uint32_t imports_seen;
@@ -890,6 +910,9 @@ static const char *smith_lang_str(SmithLangText text) {
 
 // The module line and the imports.
 #include "lang_import.c"
+
+// Objective-C: `import <AppKit/AppKit.h>;` and `objc::`.
+#include "lang_objc.c"
 
 // The head of a file-scope declaration.
 #include "lang_head.c"
