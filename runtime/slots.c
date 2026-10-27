@@ -1,18 +1,21 @@
-// Slots (issue #360): a host-wide limit on heavy jobs, so that local builds, checks and tests cannot starve CI. `smith
-// build`, `smith check` and `smith test` take a slot before they start; a slot is a file under a folder of the host
-// that smith holds an flock on, so the OS drops it when the process dies (no pid files, no daemon, no stale lock).
+// Cores as tokens (issue #567): a host-wide pool of core tokens, so that local builds, checks and tests cannot starve
+// CI and a run costs what it uses. A token is a file `core-<i>` under a folder of the host that a process holds an
+// flock on, so the OS drops it when the process dies (no daemon). `smith build`, `check` and `test` take one token at
+// their first heavy step (the base: the run's first worker rides on it); every further worker the run starts (an
+// executor job, a test runner worker) takes one more and gives it back when it ends, so a run grows as tokens free up.
 // knowledge/slots.md. Included by smith.c.
 constexpr int smith_slots_max = 64;
 constexpr long smith_slots_poll_ms = 200;
 constexpr long smith_slots_report_ms = 30'000;
-constexpr long smith_slots_wait_max_ms = 4L * 60 * 60 * 1000; // a backstop: after it the job runs without a slot
+constexpr long smith_slots_wait_max_ms = 4L * 60 * 60 * 1000; // a backstop: after it the job runs without a token
 constexpr size_t smith_slots_text_max = 1024;
+constexpr int smith_slots_denied = -1;    // smith_slots_extra: no token is free for another worker
+constexpr int smith_slots_unlimited = -2; // smith_slots_extra: there is no pool, the worker needs none
 
-static int smith_slots_fd = -1;        // the slot this process holds; closed by the OS when the process ends
-static bool smith_slots_ci;            // this process runs for CI (SMITH_PRIORITY=ci)
-static char smith_slots_dir[PATH_MAX]; // the slots folder, once a slot is held
+static int smith_slots_fd = -1; // the base token this process holds; closed by the OS when the process ends
+static bool smith_slots_ci;     // this process runs for CI (SMITH_PRIORITY=ci)
 
-// The cores smith may use: SMITH_CORES (a holder sets it for its children; a test sets it as a fake host), else the
+// The cores of the host: SMITH_CORES (also the size of the pool, and what a test sets as a fake host), else the
 // machine's. At least 1.
 static int smith_slots_cores(void) {
     const char *text = getenv("SMITH_CORES");
@@ -21,22 +24,27 @@ static int smith_slots_cores(void) {
     return cores < 1 ? 1 : cores > INT_MAX ? INT_MAX : (int)cores;
 }
 
-// The number of slots: SMITH_SLOTS, else a quarter of the cores (at least 1). 0 turns the limit off.
+// The size of the pool: SMITH_CORES, else the old SMITH_SLOTS read as a number of tokens, else the machine's cores.
+// SMITH_SLOTS=0 turns the limit off (0 here).
 static int smith_slots_count(void) {
-    const char *text = getenv("SMITH_SLOTS");
-    if (text != nullptr && text[0] != '\0') {
+    const char *old = getenv("SMITH_SLOTS");
+    const char *cores = getenv("SMITH_CORES");
+    bool given_cores = cores != nullptr && cores[0] != '\0';
+    long value = -1;
+    if (old != nullptr && old[0] != '\0') {
         char *end = nullptr;
         errno = 0;
-        long value = strtol(text, &end, 10);
-        if (*end != '\0' || errno != 0 || value < 0) smith_die(smith_exit_usage, "SMITH_SLOTS needs a number", text);
-        return value > smith_slots_max ? smith_slots_max : (int)value;
+        value = strtol(old, &end, 10);
+        if (*end != '\0' || errno != 0 || value < 0) smith_die(smith_exit_usage, "SMITH_SLOTS needs a number", old);
+        if (value == 0) return 0;
     }
-    long cores = sysconf(_SC_NPROCESSORS_ONLN);
-    return cores < 8 ? 1 : (int)(cores / 4 > smith_slots_max ? smith_slots_max : cores / 4);
+    if (!given_cores && value > 0) return value > smith_slots_max ? smith_slots_max : (int)value;
+    int count = smith_slots_cores();
+    return count > smith_slots_max ? smith_slots_max : count;
 }
 
-// The folder of the slots: SMITH_SLOTS_DIR, else one per user in /tmp (a launchd service and a shell have different
-// $TMPDIR, and the slots are the host's).
+// The folder of the tokens: SMITH_SLOTS_DIR, else one per user in /tmp (a launchd service and a shell have different
+// $TMPDIR, and the tokens are the host's).
 static void smith_slots_folder(char *out, size_t size) {
     const char *given = getenv("SMITH_SLOTS_DIR");
     int written = given != nullptr && given[0] != '\0' ? snprintf(out, size, "%s", given)
@@ -45,8 +53,8 @@ static void smith_slots_folder(char *out, size_t size) {
     if (mkdir(out, 0700) != 0 && errno != EEXIST) smith_die(smith_exit_missing, "cannot make the slots folder", out);
 }
 
-// Whether the process that holds the slot we inherited is still running. A child of a smith that holds a slot has
-// SMITH_SLOT_HELD=<pid of the holder> and takes none; a stale value (the holder is gone) is ignored.
+// Whether the process that holds the pool position we inherited is still running. A child of a smith that holds a
+// token has SMITH_SLOT_HELD=<pid of the holder>; its first worker rides on that token. A stale value is ignored.
 static bool smith_slots_inherited(void) {
     const char *text = getenv("SMITH_SLOT_HELD");
     if (text == nullptr || text[0] == '\0') return false;
@@ -56,17 +64,26 @@ static bool smith_slots_inherited(void) {
     return kill((pid_t)pid, 0) == 0 || errno == EPERM;
 }
 
-// Whether a CI job is waiting for a slot: it holds a shared lock on `ci-waiting`, so an exclusive one fails. This is
-// not atomic: a job that asks just before a CI job starts to wait may still take the free slot (the race), and the CI
-// job gets the next one. A lock held through the whole take would make every local job queue behind each other.
-static bool smith_slots_ci_waiting(const char *folder) {
+// Whether a lock is held on the file `name` of the folder: an exclusive one fails against a shared one.
+static bool smith_slots_marked(const char *folder, const char *name) {
     char path[PATH_MAX];
-    snprintf(path, sizeof path, "%s/ci-waiting", folder);
+    snprintf(path, sizeof path, "%s/%s", folder, name);
     int fd = open(path, O_RDWR | O_CREAT | O_CLOEXEC, 0600);
     if (fd < 0) return false;
-    bool waiting = flock(fd, LOCK_EX | LOCK_NB) != 0;
+    bool marked = flock(fd, LOCK_EX | LOCK_NB) != 0;
     close(fd); // this drops a lock we got, too
-    return waiting;
+    return marked;
+}
+
+// Whether a CI job is waiting for a token: it holds a shared lock on `ci-waiting`. Not atomic: a job that asks just
+// before the CI job starts to wait may still take a free token, and the CI job gets the next one.
+static bool smith_slots_ci_waiting(const char *folder) {
+    return smith_slots_marked(folder, "ci-waiting");
+}
+
+// Whether a CI job holds a token: it holds a shared lock on `ci-held` while it lives.
+static bool smith_slots_ci_held(const char *folder) {
+    return smith_slots_marked(folder, "ci-held");
 }
 
 // What the system says about a process: whether it exists, when it started and its parent. `start` and `parent` are 0
@@ -113,40 +130,30 @@ static bool smith_slots_stale(const char *text) {
     return now_parent == 1 || (parent != 0 && now_parent != 0 && now_parent != parent); // 1: init or launchd took it
 }
 
-// Whether a CI job holds a slot: it holds a shared lock on `ci-held`. Looked at most once a second.
-static bool smith_slots_ci_held(void) {
-    static time_t checked;
-    static bool held;
-    time_t now = time(nullptr);
-    if (smith_slots_dir[0] == '\0' || smith_slots_ci || now == checked) return held;
-    checked = now;
-    char path[PATH_MAX];
-    snprintf(path, sizeof path, "%s/ci-held", smith_slots_dir);
-    int fd = open(path, O_RDWR | O_CREAT | O_CLOEXEC, 0600);
-    if (fd < 0) return held;
-    held = flock(fd, LOCK_EX | LOCK_NB) != 0;
-    close(fd);
-    return held;
+// Who holds the tokens: each distinct label with its count, for the message of a job that waits.
+typedef struct {
+    char text[smith_slots_text_max];
+    int held;
+} SmithSlotsHolders;
+
+static void smith_slots_note(SmithSlotsHolders *holders, const char *line) {
+    const char *name = strchr(line, '\n');
+    name = name != nullptr ? name + 1 : line;
+    size_t length = strlen(name);
+    holders->held += 1;
+    if (strstr(holders->text, name) != nullptr && length > 0) return; // listed; the count says how many
+    size_t used = strlen(holders->text);
+    snprintf(holders->text + used, smith_slots_text_max - used, "%s%s", used > 0 ? "; " : "", name);
 }
 
-// How many jobs a build may run at once, of the `jobs` it asked for: at most the cores SMITH_CORES allows (the share
-// of a slot that a holder gave its children), and one while a CI job holds a slot and this one is not CI's. Asked
-// before every job starts, so a CI job that appears mid-run lowers the rest of it.
-static size_t smith_slots_limit(size_t jobs) {
-    size_t cores = (size_t)smith_slots_cores();
-    if (getenv("SMITH_CORES") != nullptr && cores < jobs) jobs = cores;
-    if (smith_slots_fd >= 0 && smith_slots_ci_held()) jobs = 1;
-    return jobs;
-}
-
-// Tries each slot once. On success the lock is held in smith_slots_fd and the label is written in the file. Otherwise
-// `holders` lists the labels of the slots taken and `*running` counts them.
-static bool smith_slots_try(const char *folder, int count, const char *label, char *holders, int *running) {
-    holders[0] = '\0';
-    *running = 0;
+// Tries each token once; returns the descriptor of the one it locked (the label written in it), or -1 and then
+// `holders` says who holds the others. A token whose holder is dead or orphaned is replaced and tried again.
+static int smith_slots_grab(const char *folder, int count, const char *label, SmithSlotsHolders *holders) {
+    holders->text[0] = '\0';
+    holders->held = 0;
     for (int i = 0; i < count; i++) {
         char path[PATH_MAX];
-        snprintf(path, sizeof path, "%s/slot-%d", folder, i);
+        snprintf(path, sizeof path, "%s/core-%d", folder, i);
         for (int again = 0; again < 2; again++) { // twice: a stale holder's file is replaced and tried once more
             int fd = open(path, O_RDWR | O_CREAT | O_CLOEXEC, 0600);
             if (fd < 0) break;
@@ -156,26 +163,35 @@ static bool smith_slots_try(const char *folder, int count, const char *label, ch
                 char text[512];
                 snprintf(text, sizeof text, "%.*s%s", (int)length, meta, label);
                 if (ftruncate(fd, 0) == 0) (void)!pwrite(fd, text, strlen(text), 0);
-                smith_slots_fd = fd;
-                return true;
+                return fd;
             }
             char line[256];
             ssize_t got = pread(fd, line, sizeof line - 1, 0);
             line[got > 0 ? got : 0] = '\0';
             close(fd);
             if (again == 0 && smith_slots_stale(line)) {
-                unlink(path); // the holder keeps a lock on a file nobody opens again: the slot is free
+                unlink(path); // the holder keeps a lock on a file nobody opens again: the token is free
                 continue;
             }
-            const char *name = strchr(line, '\n');
-            size_t used = strlen(holders);
-            snprintf(holders + used, smith_slots_text_max - used, "%s%s", *running > 0 ? "; " : "",
-                     name != nullptr ? name + 1 : line);
-            *running += 1;
+            smith_slots_note(holders, line);
             break;
         }
     }
-    return false;
+    return -1;
+}
+
+// How many tokens are free right now (each is locked and let go at once).
+static int smith_slots_free(const char *folder, int count) {
+    int free_tokens = 0;
+    for (int i = 0; i < count; i++) {
+        char path[PATH_MAX];
+        snprintf(path, sizeof path, "%s/core-%d", folder, i);
+        int fd = open(path, O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+        if (fd < 0) continue;
+        if (flock(fd, LOCK_EX | LOCK_NB) == 0) free_tokens += 1;
+        close(fd);
+    }
+    return free_tokens;
 }
 
 static void smith_slots_sleep(long milliseconds) {
@@ -183,11 +199,17 @@ static void smith_slots_sleep(long milliseconds) {
     nanosleep(&pause, nullptr);
 }
 
-// Waits for a slot, telling why on stderr at the start and every 30 s. A CI job (SMITH_PRIORITY=ci) marks itself as
-// waiting, and until it has a slot the other jobs do not take one.
-static bool smith_slots_wait(const char *folder, int count, const char *label, bool ci) {
-    char holders[smith_slots_text_max];
-    int running = 0;
+// The label of this process in a token file: "pid smith verb in folder".
+static void smith_slots_label(char *out, size_t size, const char *verb) {
+    char where[PATH_MAX];
+    if (getcwd(where, sizeof where) == nullptr) where[0] = '\0';
+    snprintf(out, size, "%ld smith %s in %s", (long)getpid(), verb, where);
+}
+
+// Waits for the base token, telling why on stderr at the start and every 30 s. A CI job (SMITH_PRIORITY=ci) marks
+// itself as waiting, and until it has a token the other jobs take none.
+static int smith_slots_wait(const char *folder, int count, const char *label, bool ci) {
+    SmithSlotsHolders holders = {};
     int mark = -1;
     if (ci) {
         char path[PATH_MAX];
@@ -195,61 +217,79 @@ static bool smith_slots_wait(const char *folder, int count, const char *label, b
         mark = open(path, O_RDWR | O_CREAT | O_CLOEXEC, 0600);
         if (mark >= 0) flock(mark, LOCK_SH);
     }
-    bool got = false;
+    int got = -1;
     bool behind_ci = false;
     for (long waited = 0; waited < smith_slots_wait_max_ms; waited += smith_slots_poll_ms) { // bounded by the backstop
         behind_ci = !ci && smith_slots_ci_waiting(folder);
-        if (!behind_ci && smith_slots_try(folder, count, label, holders, &running)) {
-            got = true;
-            break;
-        }
+        if (!behind_ci) got = smith_slots_grab(folder, count, label, &holders);
+        if (got >= 0) break;
         if (waited % smith_slots_report_ms == 0)
-            fprintf(stderr, "smith: waiting for a slot (%s%d jobs running: %s)\n",
-                    behind_ci ? "a CI job is waiting; " : "", running, holders);
+            fprintf(stderr, "smith: waiting for a core (%s%d of %d held: %s)\n",
+                    behind_ci ? "a CI job is waiting; " : "", holders.held, count, holders.text);
         smith_slots_sleep(smith_slots_poll_ms);
     }
     if (mark >= 0) close(mark);
     return got;
 }
 
-// Takes a slot for this process unless it has one from its parent (a smith that runs smith) or the limit is off.
-// `label` says who holds it ("pid verb in folder"). The children inherit SMITH_SLOT_HELD and take none.
+// Takes the base token for this process unless it rides on its parent's (a smith that runs smith) or the limit is
+// off. `verb` says who holds it. The children inherit SMITH_SLOT_HELD and take theirs only for their further workers.
 static void smith_slots_take(const char *verb) {
     int count = smith_slots_count();
     if (count == 0 || smith_slots_inherited()) return;
     char folder[PATH_MAX];
     smith_slots_folder(folder, sizeof folder);
-    char where[PATH_MAX];
-    if (getcwd(where, sizeof where) == nullptr) where[0] = '\0';
     char label[256];
-    snprintf(label, sizeof label, "%ld smith %s in %s", (long)getpid(), verb, where);
+    smith_slots_label(label, sizeof label, verb);
     const char *priority = getenv("SMITH_PRIORITY");
     bool ci = priority != nullptr && strcmp(priority, "ci") == 0;
     smith_slots_ci = ci;
-    if (!smith_slots_wait(folder, count, label, ci)) {
-        fprintf(stderr, "smith: no slot after %ld hours; running without one\n", smith_slots_wait_max_ms / 3'600'000);
+    int fd = smith_slots_wait(folder, count, label, ci);
+    if (fd < 0) {
+        fprintf(stderr, "smith: no core after %ld hours; running without one\n", smith_slots_wait_max_ms / 3'600'000);
         return;
     }
+    smith_slots_fd = fd;
     char held[32];
     snprintf(held, sizeof held, "%ld", (long)getpid());
     setenv("SMITH_SLOT_HELD", held, 1);
-    snprintf(smith_slots_dir, sizeof smith_slots_dir, "%s", folder);
-    // A CI holder says so for as long as it lives; a local one gets a share of the cores for what it runs: the host's
-    // cores / slots, and one while a CI job holds a slot.
-    if (ci) {
+    if (ci) { // CI says so for as long as it lives: the others leave it cores
         char path[PATH_MAX];
         snprintf(path, sizeof path, "%s/ci-held", folder);
         int mark = open(path, O_RDWR | O_CREAT | O_CLOEXEC, 0600);
         if (mark >= 0) flock(mark, LOCK_SH); // kept open until the process ends
     }
-    int share = smith_slots_cores() / count;
-    if (share < 1 || (!ci && smith_slots_ci_held())) share = 1;
-    char cores[32];
-    snprintf(cores, sizeof cores, "%d", share);
-    setenv("SMITH_CORES", cores, 1);
 }
 
-// The verbs that do heavy work arm the slot instead of taking it: the executor takes it when it starts its first real
+// A token for one more worker of a run that holds its base (or rides on its parent's): a descriptor to close when the
+// worker ends, smith_slots_denied when none is free (try again later), smith_slots_unlimited when there is no pool.
+// A waiting CI job is served first (a local run takes none meanwhile), and while a CI job holds a token a local run
+// takes one only if a quarter of the pool (at least one) stays free for CI.
+static int smith_slots_extra(void) {
+    int count = smith_slots_count();
+    if (count == 0 || (smith_slots_fd < 0 && !smith_slots_inherited())) return smith_slots_unlimited;
+    char folder[PATH_MAX];
+    smith_slots_folder(folder, sizeof folder);
+    const char *priority = getenv("SMITH_PRIORITY");
+    bool ci = priority != nullptr && strcmp(priority, "ci") == 0;
+    if (!ci && smith_slots_ci_waiting(folder)) return smith_slots_denied;
+    char label[256];
+    smith_slots_label(label, sizeof label, "worker");
+    SmithSlotsHolders holders = {};
+    int fd = smith_slots_grab(folder, count, label, &holders);
+    if (fd < 0 || ci || !smith_slots_ci_held(folder)) return fd < 0 ? smith_slots_denied : fd;
+    int reserve = count / 4 > 0 ? count / 4 : 1;
+    if (smith_slots_free(folder, count) >= reserve) return fd;
+    close(fd);
+    return smith_slots_denied;
+}
+
+// Gives a token back (a descriptor smith_slots_extra returned).
+static void smith_slots_give(int token) {
+    if (token >= 0) close(token);
+}
+
+// The verbs that do heavy work arm the pool instead of taking a token: the executor takes it when it starts its first real
 // step (a compile, a link, a test), so an up-to-date build, or one that only runs build.c's functions, never waits.
 static const char *smith_slots_pending;
 

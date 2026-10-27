@@ -426,6 +426,10 @@ static void smith_run_release(SmithExec *exec, SmithJob *job, const SmithEdge *e
         exec->graph.pools[edge->pool - 1].running -= 1;
     if (edge->pool == smith_exec_pool_console) smith_run_lock(exec, false);
     job->active = false;
+    if (job->heavy) exec->heavy_running -= 1;
+    smith_slots_give(job->token); // the worker's core goes back to the pool
+    job->heavy = false;
+    job->token = -1;
     exec->running -= 1;
 }
 
@@ -554,8 +558,20 @@ static void smith_run_start_ready(SmithExec *exec, uint32_t *stack) {
         size_t pick = smith_run_pick(exec);
         if (job == nullptr || pick == SIZE_MAX) return;
         uint32_t number = exec->ready[pick];
+        // A heavy step is a worker that needs a core of the host's pool: the first rides on the run's base token, each
+        // other takes one more and the step waits (the loop asks again) when none is free (slots.c).
+        bool heavy = !exec->options.dry_run && strncmp(exec->graph.edges[number].command, ".smith/program ", 15) != 0;
+        int token = smith_slots_unlimited;
+        if (heavy) {
+            smith_slots_need();
+            if (exec->heavy_running > 0) token = smith_slots_extra();
+            if (token == smith_slots_denied) return;
+        }
         exec->ready[pick] = exec->ready[--exec->ready_count];
         smith_run_start(exec, job, number);
+        job->heavy = heavy;
+        job->token = token;
+        if (heavy) exec->heavy_running += 1;
         bool could_not_start = job->status != 0 && job->message[0] != '\0';
         if (could_not_start || job->kind->poll(exec, job)) smith_run_finish(exec, job, stack);
     }

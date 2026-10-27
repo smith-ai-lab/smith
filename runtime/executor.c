@@ -214,6 +214,8 @@ typedef struct {
 struct SmithJob {
     const SmithJobKind *kind;
     bool active;
+    bool heavy; // a worker of the host's pool (slots.c)
+    int token;  // its extra core, a descriptor to give back, or negative
     uint32_t edge;
     uint64_t started; // the clock's milliseconds since the build began
     int64_t wall;     // the file system's time (nanoseconds since the epoch) when it started: what the log records
@@ -279,6 +281,7 @@ struct SmithExec {
     uint64_t origin;   // the monotonic clock when the build began
     SmithJob *jobs;
     size_t running;
+    size_t heavy_running; // jobs that hold a core of the pool: the first rides on the base token
 };
 
 // What a message calls the project's build file: build.c, build.smith, or "the build" when it runs by convention.

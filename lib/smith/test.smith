@@ -25,6 +25,7 @@ import <smith/trace.h>;
 import <stdio.h>;
 import <stdlib.h>;
 import <string.h>;
+import <sys/file.h>;
 import <sys/mman.h>;
 import <sys/resource.h>;
 import <sys/socket.h>;
@@ -2729,6 +2730,98 @@ void shrink_failure(const Test *test, const Options *options, Run *run) {
 // ---------------------------------------------------------------------------------------------------------------
 // Running.
 
+// The pool of core tokens (runtime/slots.c, knowledge/slots.md): under `smith test` or `smith build` the runner's first
+// worker rides on the token of the job that runs it, and every further worker takes one token of the host's pool and
+// gives it back when its test ends, so a run grows as tokens free up and a waiting CI run is served first. Started by
+// hand, with no pool, a worker needs none.
+constexpr i32 no_token = -1;   // taking one failed: no token is free
+constexpr i32 no_pool = -2;    // there is no pool: the worker needs none
+constexpr i32 tokens_max = 64;
+constexpr usize path_max = 1024;
+
+// Whether the pool's holder, SMITH_SLOT_HELD=<pid>, is still running.
+static bool pool_alive() {
+    const char *text = c::getenv("SMITH_SLOT_HELD");
+    if (text == nullptr || text[0] == '\0') return false;
+    i64 pid = c::strtol(text, nullptr, 10);
+    return pid > 0 && (c::kill((c::pid_t)pid, 0) == 0 || *errno_place() == c::EPERM);
+}
+
+// The size of the pool: SMITH_CORES, else SMITH_SLOTS as a number of tokens, else the cores; 0 when SMITH_SLOTS=0.
+static i32 pool_size() {
+    const char *old = c::getenv("SMITH_SLOTS");
+    const char *given = c::getenv("SMITH_CORES");
+    i64 slots = old != nullptr && old[0] != '\0' ? c::strtol(old, nullptr, 10) : -1;
+    i64 count = given != nullptr && given[0] != '\0' ? c::strtol(given, nullptr, 10) : 0;
+    if (slots == 0) return 0;
+    if (count <= 0) count = slots > 0 ? slots : c::sysconf(c::_SC_NPROCESSORS_ONLN);
+    return count < 1 ? 1 : count > tokens_max ? tokens_max : (i32)count;
+}
+
+// Whether the file `name` in the folder is locked by someone (the markers `ci-waiting` and `ci-held`).
+static bool pool_marked(const char *folder, const char *name) {
+    char path[path_max];
+    c::snprintf(path, path_max, "%s/%s", folder, name);
+    i32 fd = c::open(path, c::O_RDWR | c::O_CREAT | c::O_CLOEXEC, 384); // 0600
+    if (fd < 0) return false;
+    bool marked = c::flock(fd, c::LOCK_EX | c::LOCK_NB) != 0;
+    c::close(fd);
+    return marked;
+}
+
+// Locks the first free token file and writes "pid parent start\nlabel" in it; -1 when every one is locked.
+static i32 pool_grab(const char *folder, i32 count) {
+    for (i32 i = 0; i < count; i++) {
+        char path[path_max];
+        c::snprintf(path, path_max, "%s/core-%d", folder, i);
+        i32 fd = c::open(path, c::O_RDWR | c::O_CREAT | c::O_CLOEXEC, 384); // 0600
+        if (fd < 0) continue;
+        if (c::flock(fd, c::LOCK_EX | c::LOCK_NB) == 0) {
+            char text[256];
+            i32 length = c::snprintf(text, 256, "%ld %ld 0\n%ld smith worker in test runner", (long)c::getpid(),
+                                     (long)c::getppid(), (long)c::getpid());
+            if (c::ftruncate(fd, 0) == 0 && length > 0) c::pwrite(fd, text, (usize)length, 0);
+            return fd;
+        }
+        c::close(fd);
+    }
+    return -1;
+}
+
+static i32 pool_free(const char *folder, i32 count) {
+    i32 free_tokens = 0;
+    for (i32 i = 0; i < count; i++) {
+        char path[path_max];
+        c::snprintf(path, path_max, "%s/core-%d", folder, i);
+        i32 fd = c::open(path, c::O_RDWR | c::O_CREAT | c::O_CLOEXEC, 384); // 0600
+        if (fd < 0) continue;
+        if (c::flock(fd, c::LOCK_EX | c::LOCK_NB) == 0) free_tokens += 1;
+        c::close(fd);
+    }
+    return free_tokens;
+}
+
+// A token for one more worker: its descriptor, no_token when none may be taken now, no_pool without a pool. Local runs
+// take none while a CI run waits, and while a CI run holds a token only if a quarter of the pool (at least one) stays
+// free.
+static i32 take_token() {
+    i32 count = pool_size();
+    if (count == 0 || !pool_alive()) return no_pool;
+    const char *given = c::getenv("SMITH_SLOTS_DIR");
+    char folder[path_max];
+    if (given != nullptr && given[0] != '\0') c::snprintf(folder, path_max, "%s", given);
+    else c::snprintf(folder, path_max, "/tmp/smith-slots-%u", (unsigned)c::getuid());
+    c::mkdir(folder, 448); // 0700
+    const char *priority = c::getenv("SMITH_PRIORITY");
+    bool ci = priority != nullptr && c::strcmp(priority, "ci") == 0;
+    if (!ci && pool_marked(folder, "ci-waiting")) return no_token;
+    i32 fd = pool_grab(folder, count);
+    if (fd < 0 || ci || !pool_marked(folder, "ci-held")) return fd < 0 ? no_token : fd;
+    if (pool_free(folder, count) >= (count / 4 > 0 ? count / 4 : 1)) return fd;
+    c::close(fd);
+    return no_token;
+}
+
 constexpr usize idle = (usize)-1; // a job with no test
 
 // Everything a run needs: the tests chosen, a run for each, the order they start in, and what each job is running now.
@@ -2739,6 +2832,7 @@ typedef struct {
     usize *order;       // the chosen tests in the order they start: the table's, or shuffled
     usize count;
     usize running[jobs_max]; // the chosen test each job is running, or idle
+    i32 tokens[jobs_max];    // the extra token of each busy job (a descriptor), no_token for the one on the base
     struct c::pollfd polls[2 * jobs_max];
 } Plan;
 
@@ -2752,7 +2846,8 @@ void pump(Plan *plan) {
             (struct c::pollfd){.fd = busy && !process->output_eof ? process->output : -1, .events = poll_in};
         plan->polls[2 * job + 1] = (struct c::pollfd){.fd = busy ? process->control : -1, .events = poll_in};
     }
-    if (c::poll(plan->polls, (c::nfds_t)(2 * jobs), -1) < 0) {
+    // a test waits for a token: look again every second
+    if (c::poll(plan->polls, (c::nfds_t)(2 * jobs), 1000) < 0) {
         if (*errno_place() == interrupted) return;
         die("poll");
     }
@@ -2769,13 +2864,27 @@ void pump(Plan *plan) {
             continue;
         }
         plan->running[job] = idle;
+        if (plan->tokens[job] >= 0) c::close(plan->tokens[job]); // its core goes back to the pool
+        plan->tokens[job] = no_token;
     }
 }
 
-// Starts the next chosen test in a free job. Returns false if every job is busy.
+// How many jobs are busy.
+usize busy_count(const Plan *plan) {
+    usize busy = 0;
+    for (usize job = 0; job < plan->options->jobs; job++)
+        busy += plan->running[job] != idle ? 1 : 0;
+    return busy;
+}
+
+// Starts the next chosen test in a free job. Returns false if every job is busy or no core is free: the first worker
+// rides on the base token, another takes a token of the pool.
 bool launch(Plan *plan, usize *next) {
     for (usize job = 0; job < plan->options->jobs; job++) {
         if (plan->running[job] != idle) continue;
+        i32 token = busy_count(plan) > 0 ? take_token() : no_pool;
+        if (token == no_token) return false;
+        plan->tokens[job] = token >= 0 ? token : no_token;
         usize chosen = plan->order[*next];
         dispatch(plan->options, job, plan->tests[chosen], &plan->runs[chosen]);
         plan->running[job] = chosen;
@@ -2806,8 +2915,10 @@ bool failed_so_far(const Plan *plan, usize next) {
 // takes seconds, and while it ran nothing would read the other workers' pipes or judge their timeouts, so a result
 // would depend on another test. Then the held failures are shrunk and printed in order.
 void run_all(Plan *plan) {
-    for (usize job = 0; job < jobs_max; job++)
+    for (usize job = 0; job < jobs_max; job++) {
         plan->running[job] = idle;
+        plan->tokens[job] = no_token;
+    }
     usize next = 0;
     usize printed = 0;
     for (usize round = 0; round < rounds_max; round++) { // each pass starts a test, finishes one or reads output
