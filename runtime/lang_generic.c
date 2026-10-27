@@ -642,6 +642,37 @@ static bool smith_lang_element_auto_at(SmithLang *lang, const SmithHost *host, s
     return stars > 0 ? smith_lang_punct(after, ",") || smith_lang_punct(after, ")") : smith_lang_punct(after, "[");
 }
 
+// Whether the token at `index`, in a parameter list at depth 1, makes the head generic: a concept or `auto` for a
+// parameter or its element, `constexpr auto f`, `auto... rest`, or `constexpr usize i`.
+static bool smith_lang_parameter_generic_at(SmithLang *lang, const SmithHost *host, const SmithToken *before,
+                                            size_t index) {
+    const SmithToken *token = smith_lang_peek(lang, host, index, false);
+    bool starts_parameter = smith_lang_punct(before, "(") || smith_lang_punct(before, ",");
+    bool after_constexpr = smith_lang_ident(before, "constexpr");
+    if (starts_parameter && smith_lang_concept_word(token) && smith_lang_type_parameter_at(lang, host, index) &&
+        host->lookup(host->context, token->text, token->length, SmithLookup_Type).kind == SmithLookup_None &&
+        host->lookup(host->context, token->text, token->length, SmithLookup_Value).kind == SmithLookup_None) {
+        return true; // `arithmetic x`: a concept for `auto`
+    }
+    if (smith_lang_concept_word(token) && smith_lang_element_auto_at(lang, host, index) &&
+        host->lookup(host->context, token->text, token->length, SmithLookup_Type).kind == SmithLookup_None &&
+        host->lookup(host->context, token->text, token->length, SmithLookup_Value).kind == SmithLookup_None) {
+        return true; // `const arithmetic xs[:]`, `integer *p`: a concept for the element's `auto`
+    }
+    if (smith_lang_ident(token, "auto") && (((starts_parameter || after_constexpr) &&
+                                             (smith_lang_type_parameter_at(lang, host, index) ||
+                                              (starts_parameter && smith_lang_pack_parameter_at(lang, host, index)))) ||
+                                            smith_lang_element_auto_at(lang, host, index))) {
+        return true; // `auto x`, `constexpr auto f`, `auto... rest`, `const auto xs[:]`, `auto *p`
+    }
+    const SmithToken *after = smith_lang_peek(lang, host, index + 1, false);
+    if (starts_parameter && smith_lang_ident(token, "constexpr") && after->kind == SmithTokenKind_Identifier &&
+        !smith_lang_ident(after, "type") && !smith_lang_ident(after, "auto")) {
+        return true; // `constexpr usize i`: a number known at compile time (C has no `constexpr` parameter)
+    }
+    return false;
+}
+
 // Reads ahead, to the end of the parameter list of the function the declaration begins with: is there a `type T` in it.
 // The tokens stay queued; nothing is changed.
 static bool smith_lang_generic_ahead(SmithLang *lang, const SmithHost *host, const SmithToken *first) {
@@ -688,33 +719,7 @@ static bool smith_lang_generic_ahead(SmithLang *lang, const SmithHost *host, con
             (smith_lang_ident(before, "constexpr") || bare) && smith_lang_type_parameter_at(lang, host, index)) {
             return host->lookup(host->context, "type", 4, SmithLookup_Type).kind == SmithLookup_None;
         }
-        bool starts_parameter = smith_lang_punct(before, "(") || smith_lang_punct(before, ",");
-        bool after_constexpr = smith_lang_ident(before, "constexpr");
-        if (in_params && depth == 1 && starts_parameter && smith_lang_concept_word(token) &&
-            smith_lang_type_parameter_at(lang, host, index) &&
-            host->lookup(host->context, token->text, token->length, SmithLookup_Type).kind == SmithLookup_None &&
-            host->lookup(host->context, token->text, token->length, SmithLookup_Value).kind == SmithLookup_None) {
-            return true; // `arithmetic x`: a concept for `auto`
-        }
-        if (in_params && depth == 1 && smith_lang_concept_word(token) &&
-            smith_lang_element_auto_at(lang, host, index) &&
-            host->lookup(host->context, token->text, token->length, SmithLookup_Type).kind == SmithLookup_None &&
-            host->lookup(host->context, token->text, token->length, SmithLookup_Value).kind == SmithLookup_None) {
-            return true; // `const arithmetic xs[:]`, `integer *p`: a concept for the element's `auto`
-        }
-        if (in_params && depth == 1 && smith_lang_ident(token, "auto") &&
-            (((starts_parameter || after_constexpr) &&
-              (smith_lang_type_parameter_at(lang, host, index) ||
-               (starts_parameter && smith_lang_pack_parameter_at(lang, host, index)))) ||
-             smith_lang_element_auto_at(lang, host, index))) {
-            return true; // `auto x`, `constexpr auto f`, `auto... rest`, `const auto xs[:]`, `auto *p`
-        }
-        const SmithToken *after = smith_lang_peek(lang, host, index + 1, false);
-        if (in_params && depth == 1 && starts_parameter && smith_lang_ident(token, "constexpr") &&
-            after->kind == SmithTokenKind_Identifier && !smith_lang_ident(after, "type") &&
-            !smith_lang_ident(after, "auto")) {
-            return true; // `constexpr usize i`: a number known at compile time (C has no `constexpr` parameter)
-        }
+        if (in_params && depth == 1 && smith_lang_parameter_generic_at(lang, host, before, index)) return true;
         before = token;
     }
     return false;
