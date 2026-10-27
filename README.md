@@ -177,6 +177,12 @@ export bool is_setting(const char line[:]) {
     const char prefix[:] = "#";
     return countof(line) > 0 && ascii::alpha(line[0]) && !slice::starts_with(line, prefix);
 }
+
+export usize body_length(const char line[:]) {
+    // A cut of line: nothing is copied.
+    const char body[:] = slice::trim(line, ascii::space);
+    return countof(body);
+}
 ```
 
 [smith-slice](.agents/skills/smith-slice/SKILL.md), [smith-ascii](.agents/skills/smith-ascii/SKILL.md).
