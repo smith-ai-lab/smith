@@ -1,0 +1,21 @@
+// The merge rules of .gitattributes (issue #595): two branches that each add a concept line to knowledge/index.md
+// merge with no conflict, in a scratch repository that carries smith's own .gitattributes and index.
+module gitattributes_test;
+
+import smith::io;
+import smith::test;
+import scratch;
+
+export void test_two_additions_to_the_index_merge_without_a_conflict(io::Io *io) {
+    scratch::Project p = scratch::project(io, "repository", nullptr);
+    scratch::Run run = scratch::sh(
+        &p, "git init -q -b main . && git config user.email t@t && git config user.name t && mkdir knowledge && "
+            "cp \"$SMITH_REPO/.gitattributes\" . && cp \"$SMITH_REPO/knowledge/index.md\" knowledge/ && "
+            "git add -A && git commit -q -m base && "
+            "git checkout -q -b a && printf -- '- [Alpha](alpha.md): a.\\n' >> knowledge/index.md && "
+            "git commit -qam a && git checkout -q main && git checkout -q -b b && "
+            "printf -- '- [Beta](beta.md): b.\\n' >> knowledge/index.md && git commit -qam b && "
+            "git merge a -m merged >merge.log 2>&1; echo status=$?; grep -c '^<<<<<<<' knowledge/index.md; "
+            "grep -c -e 'Alpha' -e 'Beta' knowledge/index.md");
+    scratch::expect_text("the merge", "status=0\n0\n2", run.out);
+}

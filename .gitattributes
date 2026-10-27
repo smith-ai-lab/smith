@@ -1,0 +1,3 @@
+# The index lists one concept a line; two additions to it merge as a union instead of a conflict (issue #595).
+# `smith docs` checks the merged index against the concepts, so a bad merge fails the check.
+knowledge/index.md merge=union
