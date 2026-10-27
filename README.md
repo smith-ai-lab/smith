@@ -540,6 +540,42 @@ export random::Key fresh() { // the `entropy` effect: a different key on every c
 
 A test puts `entropy::fake(number)` in force with `entropy::set_handler(&fake.base)`. [smith-entropy](.agents/skills/smith-entropy/SKILL.md), [smith-random](.agents/skills/smith-random/SKILL.md).
 
+### Tasks live in a group, like memory in an arena
+
+`smith::task` runs work on stacks of their own and waits for it in a group opened in a scope and closed by `defer`. `main` is the first task. A job is a struct whose first member is a `task::Job`, so no `void *` is written; the scheduler is a handler of the thread, and each task keeps its own `errno` and handlers. Today every task runs on the thread that spawned it.
+
+```smith
+module crew;
+
+import smith::task;
+
+typedef struct {
+    task::Job base;
+    u64 *total;
+    u64 amount;
+} Work;
+
+void run(task::Job *self) {
+    Work *work = (Work *)self;
+    *work->total += work->amount;
+    task::yield();
+    *work->total += work->amount;
+}
+
+export u64 sum() {
+    u64 total = 0;
+    Work a = {.base = {.run = run}, .total = &total, .amount = 1};
+    Work b = {.base = {.run = run}, .total = &total, .amount = 10};
+    task::Group group = {};
+    defer task::wait(&group);
+    task::spawn(&group, &a.base);
+    task::spawn(&group, &b.base);
+    return total;
+}
+```
+
+[smith-task](.agents/skills/smith-task/SKILL.md).
+
 ### Run only the tests a change can affect
 
 ```sh

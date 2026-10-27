@@ -283,6 +283,10 @@ export void test_skill_smith_entropy(io::Io *io) {
     skill_case(io, "smith-entropy");
 }
 
+export void test_skill_smith_task(io::Io *io) {
+    skill_case(io, "smith-task");
+}
+
 export void test_skill_smith_env(io::Io *io) {
     skill_case(io, "smith-env");
 }

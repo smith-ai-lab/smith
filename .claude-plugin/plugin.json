@@ -56,6 +56,7 @@
     "./.agents/skills/smith-files/",
     "./.agents/skills/smith-entropy/",
     "./.agents/skills/smith-env/",
+    "./.agents/skills/smith-task/",
     "./.agents/skills/smith-format/",
     "./.agents/skills/smith-idiom/",
     "./.agents/skills/smith-idiom-after/",

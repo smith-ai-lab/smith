@@ -115,3 +115,5 @@ allocator; `checked` (D2a), `failing` and the profiles (D2b).
   `entropy::seed()` (`smith::entropy`) is the one caller in smith's libraries; it has the `entropy` effect
   (`getentropy` is `entropy` in `shim/effects_table.h`), and `smith::random` stays pure. A test scripts it with
   `entropy::fake(number)`, whose `fill` writes the bytes of a number.
+
+- **Tables of a task (issue #241):** `smith_handlers_tables_save` and `smith_handlers_tables_load` read and set all eight tables of the thread at once (through the setters, so the active counters stay right); `smith::task` calls them on every switch, so a task has handlers of its own ([task](task.md)).
