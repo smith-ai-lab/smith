@@ -664,12 +664,33 @@ const char *const *smith_args(SmithBuild *b) {
     return list;
 }
 
+// `smith test --changed` passes -DSMITH_RECORD=1 to every build (issue #456): the tests and the programs of the debug
+// profile count the lines they run, and the runner keeps a record of each test (knowledge/coverage-selection.md). A
+// build that makes no tests ignores it, and it is not a variable of the project's, so it is never listed or refused.
+// Not the environment: that is inherited by every smith a test starts, and they must not be instrumented.
+static bool smith_record_mode(SmithBuild *b) {
+    return smith_option_value(b, "SMITH_RECORD", "", "smith test --changed: count the lines the tests run")[0] != '\0';
+}
+
+// `flags` of a debug compile (or link) with the counters added when `smith test --changed` records, unless they have
+// them already.
+static const char *const *smith_record_flags(SmithBuild *b, const char *const *flags, bool link) {
+    if (!smith_record_mode(b)) return flags;
+    for (size_t i = 0; flags[i] != nullptr; i++) {
+        if (strcmp(flags[i], "-fprofile-instr-generate") == 0) return flags;
+    }
+    return smith_cat(b, flags,
+                     link ? smith_list(b, "-fprofile-instr-generate", nullptr)
+                          : smith_list(b, "-fprofile-instr-generate", "-fcoverage-mapping", nullptr),
+                     nullptr);
+}
+
 static void smith_check_given(void) {
     for (size_t i = 0; i < smith_given_count; i++) {
         bool known = false;
         for (size_t j = 0; j < smith_declared_count; j++)
             known = known || strcmp(smith_declared[j].name, smith_given[i].name) == 0;
-        if (known) continue;
+        if (known || strcmp(smith_given[i].name, "SMITH_RECORD") == 0) continue;
         if (strcmp(smith_given[i].name, "SMITH_ARGS") == 0) {
             fprintf(stderr,
                     "smith: %s: this verb was given arguments, but %s does not read them; "
@@ -684,6 +705,7 @@ static void smith_check_given(void) {
             fprintf(stderr, "%s declares no options\n", smith_build_file_label());
         for (size_t j = 0; j < smith_declared_count; j++) {
             const SmithDeclared *option = &smith_declared[j];
+            if (strcmp(option->name, "SMITH_RECORD") == 0) continue;
             fprintf(stderr, "  -D%s%s  %s\n", option->name, option->flag ? "" : "=value", option->description);
         }
         exit(smith_exit_usage);
@@ -2826,7 +2848,18 @@ static int smith_tests_scan(SmithRun *run) {
         "#include <smith/test.h>\n\n#include \"%s\"\n\n%s"
         "const SmithTest smith_test_table[] = {\n%s    {nullptr, nullptr, nullptr, nullptr, nullptr},\n};\n"
         "const size_t smith_test_count = sizeof smith_test_table / sizeof "
-        "smith_test_table[0] - 1;\n",
+        "smith_test_table[0] - 1;\n\n"
+        // The runner's way to the profile runtime when `smith test --changed` built it with the counters (issue #456):
+        // compiler-rt's functions are hidden, so only code linked with them can name them.
+        "#ifdef SMITH_PROFILING\n"
+        "extern void __llvm_profile_reset_counters(void);\n"
+        "extern void __llvm_profile_set_filename(const char *);\n"
+        "extern int __llvm_profile_write_file(void);\n"
+        "const SmithProfile smith_profile = {__llvm_profile_reset_counters, __llvm_profile_set_filename,\n"
+        "                                    __llvm_profile_write_file};\n"
+        "#else\n"
+        "const SmithProfile smith_profile = {nullptr, nullptr, nullptr};\n"
+        "#endif\n",
         base != nullptr ? base + 1 : run->outputs[0], smith_join(run->b, thunks, ""), smith_join(run->b, rows, ""));
     smith_write(run->b, run->outputs[0], header);
     smith_write(run->b, run->outputs[1], table);
@@ -2867,13 +2900,30 @@ static SmithObject *smith_tests_object(SmithBuild *b, const SmithTests *tests, c
     return object;
 }
 
+// The programs the build makes, as absolute paths separated by `:`, the runner first (the programs a test can run).
+static const char *smith_tests_binaries(SmithBuild *b, const char *runner) {
+    const char *list = smith_text("%s/%s", b->root, runner);
+    for (size_t i = 0; i < smith_program_count; i++) {
+        if (smith_program_is_tests[i]) continue;
+        const char *path =
+            smith_programs[i][0] == '/' ? smith_programs[i] : smith_text("%s/%s", b->root, smith_programs[i]);
+        list = smith_text("%s:%s", list, path);
+    }
+    return list;
+}
+
 // The runner and, after it, the arguments `smith test` was given: the runner's own options (--test, --seed, --seeds,
 // --jobs, --shrink, --shuffle, --full, --isolate and the others its header documents).
 static const char *const *smith_tests_arguments(SmithBuild *b, const char *runner, SmithSetting checked_allocator) {
     const char *program = strchr(runner, '/') != nullptr ? runner : smith_text("./%s", runner);
     const char *const *own = checked_allocator == SmithSetting_Off ? smith_list(b, program, "--unchecked", nullptr)
                                                                    : smith_list(b, program, nullptr);
-    return smith_cat(b, own, smith_args(b), nullptr);
+    // The step sees only its command: `--smith-record <programs>` first says the build counts the lines, and which
+    // programs it made (smith_tests_run).
+    const char *const *marker = smith_record_mode(b)
+                                    ? smith_list(b, "--smith-record", smith_tests_binaries(b, runner), nullptr)
+                                    : smith_list(b, nullptr);
+    return smith_cat(b, marker, own, smith_args(b), nullptr);
 }
 
 static const char *const *smith_tests_imported(SmithBuild *b, const char *const *sources);
@@ -2906,8 +2956,8 @@ void smith_tests(SmithBuild *b, SmithTests *tests) {
     smith_tests_check(tests);
     SmithTests copy = *tests;
     copy.sources = smith_copy_list(tests->sources);
-    copy.flags = smith_copy_list(tests->flags);
-    copy.link_flags = smith_copy_list(tests->link_flags);
+    copy.flags = smith_record_flags(b, smith_copy_list(tests->flags), false);
+    copy.link_flags = smith_record_flags(b, smith_copy_list(tests->link_flags), true);
     copy.inputs = smith_copy_list(tests->inputs);
     copy.compiler = smith_copy_string(tests->compiler != nullptr ? tests->compiler : "smith-cc");
     copy.output = smith_copy_string(tests->output != nullptr ? tests->output : "build/tests");
@@ -2936,7 +2986,11 @@ void smith_tests(SmithBuild *b, SmithTests *tests) {
     for (size_t i = 0; i < count; i++)
         objects[used++] = (const char *)smith_tests_object(b, &copy, copy.sources[i], test_flags,
                                                            smith_list(b, list_header, nullptr));
-    objects[used++] = (const char *)smith_tests_object(b, &copy, list_table, copy.flags, nullptr);
+    objects[used++] = (const char *)smith_tests_object(
+        b, &copy, list_table,
+        smith_record_mode(b) ? smith_cat(b, copy.flags, smith_list(b, "-DSMITH_PROFILING", nullptr), nullptr)
+                             : copy.flags,
+        nullptr);
     objects[used++] = (const char *)smith_tests_object(b, &copy, smith_library(b, "test"), copy.flags, nullptr);
     used = smith_tests_libraries(b, &copy, tests, imported, objects, used);
     for (size_t i = 0; tests->objects != nullptr && tests->objects[i] != nullptr; i++)
@@ -3526,7 +3580,8 @@ static const char *const *smith_app_flags(SmithBuild *b, const char *profile, co
                   smith_when(b, apple_silicon, smith_list(b, "-mcpu=apple-m1", nullptr)),
                   smith_list(b, "-I", ".", "-I", ".smith/include", nullptr), smith_app_profile(profile),
                   smith_or_empty(b, smith_app_state.defaults.flags), folders, smith_or_empty(b, more), nullptr);
-    return smith_app_autodiff ? smith_autodiff_flags(b, flags, true) : flags;
+    if (smith_app_autodiff) return smith_autodiff_flags(b, flags, true);
+    return strcmp(profile, "debug") == 0 ? smith_record_flags(b, flags, false) : flags;
 }
 
 // `output` is the program the link writes (nullptr for none). An autodiff program in debug links bitcode, and its
@@ -3540,7 +3595,7 @@ static const char *const *smith_app_link_flags(SmithBuild *b, const char *profil
         smith_cat(b, smith_when(b, sanitized, smith_list(b, "-fsanitize=address,undefined", nullptr)),
                   smith_when(b, optimized, smith_list(b, "-flto=thin", nullptr)),
                   smith_or_empty(b, smith_app_state.defaults.link_flags), smith_or_empty(b, more), nullptr);
-    if (!smith_app_autodiff) return flags;
+    if (!smith_app_autodiff) return sanitized ? smith_record_flags(b, flags, true) : flags;
     bool keep = sanitized && output != nullptr;
     return smith_cat(
         b, smith_autodiff_flags(b, flags, false),
@@ -4095,9 +4150,29 @@ static const char *smith_tests_symbolizer_link(SmithRun *run, const char *self) 
     return path;
 }
 
-static const char *const *smith_tests_environment(SmithRun *run, const char *self) {
+// `smith test --changed` (issue #456): the runner gives each test a folder of profiles, and merges them into the
+// test's record in .smith/records when it ends (lib/smith/test.smith, runtime/coverage.c). The runner's own exit
+// writes nowhere. SMITH_REPO is this project, not the one of a smith that runs us. `programs` are the paths the build
+// made, the runner first, separated by `:`: those that exist now and were built with the counters are read (llvm-cov
+// ignores one built without them).
+static const char *const *smith_tests_record_environment(SmithRun *run, const char *self, const char *programs) {
+    const char *root = run->b->root;
+    const char *present = "";
+    for (const char *at = programs; *at != '\0';) { // the programs
+        size_t length = strcspn(at, ":");
+        const char *path = smith_text("%.*s", (int)length, at);
+        if (access(path, X_OK) == 0) present = smith_text("%s%s%s", present, present[0] != '\0' ? ":" : "", path);
+        at += length + (at[length] == ':' ? 1 : 0);
+    }
+    return smith_list(run->b, smith_text("SMITH_COVERAGE_DIR=%s/.smith/coverage", root),
+                      smith_text("SMITH_COVERAGE_BINARY=%s", present), smith_text("SMITH_REPO=%s", root),
+                      smith_text("SMITH_SELF=%s", self), "LLVM_PROFILE_FILE=/dev/null", nullptr);
+}
+
+static const char *const *smith_tests_environment(SmithRun *run, const char *self, const char *programs) {
     const char *link = smith_tests_symbolizer_link(run, self);
-    const char *const *environment = smith_list(run->b, nullptr);
+    const char *const *environment =
+        programs != nullptr ? smith_tests_record_environment(run, self, programs) : smith_list(run->b, nullptr);
     static const char *const names[] = {"ASAN_SYMBOLIZER_PATH", "UBSAN_SYMBOLIZER_PATH"};
     for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
         if (getenv(names[i]) != nullptr) continue; // the project's own choice stands
@@ -4122,8 +4197,12 @@ static int smith_tests_exit_code(int status) {
 static int smith_tests_run(SmithRun *run) {
     smith_context = nullptr;
     const char *self = getenv("SMITH_SELF");
-    if (self == nullptr || !smith_tests_can_symbolize(run, self)) return smith_run_program(run, run->args, nullptr);
-    const char *const *runner = smith_cat(run->b, run->args, smith_list(run->b, "--trace", nullptr), nullptr);
+    bool record = run->args != nullptr && run->args[0] != nullptr && strcmp(run->args[0], "--smith-record") == 0 &&
+                  run->args[1] != nullptr;
+    const char *programs = record ? run->args[1] : nullptr;
+    const char *const *args = record ? run->args + 2 : run->args;
+    if (self == nullptr || !smith_tests_can_symbolize(run, self)) return smith_run_program(run, args, nullptr);
+    const char *const *runner = smith_cat(run->b, args, smith_list(run->b, "--trace", nullptr), nullptr);
     if (isatty(STDOUT_FILENO) != 0) runner = smith_cat(run->b, runner, smith_list(run->b, "--color", nullptr), nullptr);
     if (smith_tests_can_explain(run, self))
         runner = smith_cat(run->b, runner, smith_list(run->b, "--explain", self, nullptr), nullptr);
@@ -4148,7 +4227,7 @@ static int smith_tests_run(SmithRun *run) {
     int started = posix_spawn(&symbolizer, self, &from_pipe, nullptr, (char *const *)filter, environ);
     if (started == 0)
         started = posix_spawnp(&program, runner[0], &into_pipe, nullptr, (char *const *)runner,
-                               smith_merge_environment(smith_tests_environment(run, self)));
+                               smith_merge_environment(smith_tests_environment(run, self, programs)));
     close(ends[0]);
     close(ends[1]);
     posix_spawn_file_actions_destroy(&into_pipe);

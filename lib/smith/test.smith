@@ -1866,8 +1866,20 @@ void coverage_name(const char *name, char *out, usize size) {
     out[used] = '\0';
 }
 
-// With SMITH_COVERAGE_DIR set (the train's full run, issue #456) the smith processes a test starts write their
-// profiles to <dir>/raw/<test>/<pid>.profraw: LLVM_PROFILE_FILE is inherited by every child, `scratch::` ones too.
+// The profile runtime of a runner built with -fprofile-instr-generate (`smith test --changed`, issue #456): the
+// generated table (smith_tests) points at compiler-rt's functions, which are hidden, and is null in a runner that has
+// no counters.
+[[smith::c_name("SmithProfile")]] export typedef struct {
+    void (*restart)();
+    void (*set_path)(const char *name);
+    i32 (*dump)();
+} Profile;
+[[smith::c_name("smith_profile")]] export extern const Profile profile;
+
+// With SMITH_COVERAGE_DIR set (`smith test --changed`, issue #456) the processes a test starts write their profiles to
+// <dir>/raw/<test>/<pid>.profraw: LLVM_PROFILE_FILE is inherited by every child, `scratch::` ones too. A runner that
+// is instrumented itself starts counting from zero here, so the profile of a worker that ran other tests before holds
+// this test alone.
 void coverage_begin(const Test *test) {
     const char *dir = c::getenv("SMITH_COVERAGE_DIR");
     if (dir == nullptr || dir[0] == '\0') return;
@@ -1881,6 +1893,10 @@ void coverage_begin(const Test *test) {
     c::mkdir(path, 493); // 0755: an octal literal is an error under gnu23
     __builtin_snprintf(path, sizeof path, "%s/raw/%s/%%p.profraw", dir, clean);
     c::setenv("LLVM_PROFILE_FILE", path, 1);
+    if (profile.restart != nullptr && profile.set_path != nullptr) {
+        profile.restart();
+        profile.set_path(path);
+    }
 }
 
 // When the test is over: `smith test --coverage merge <test>` makes its record and deletes its profiles, so a full
@@ -1889,6 +1905,7 @@ void coverage_end(const Test *test, bool passed) {
     const char *dir = c::getenv("SMITH_COVERAGE_DIR");
     const char *self = c::getenv("SMITH_SELF");
     if (dir == nullptr || dir[0] == '\0' || self == nullptr) return;
+    if (profile.dump != nullptr) profile.dump(); // this process's own counters
     c::unsetenv("LLVM_PROFILE_FILE");
     c::fflush(nullptr);
     c::pid_t merger = c::fork();

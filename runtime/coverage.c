@@ -1,10 +1,10 @@
 // Coverage-based test selection (issue #456, knowledge/coverage-selection.md). Included by smith.c, before
 // runtime/changed.c. The train's full run builds smith with `-fprofile-instr-generate -fcoverage-mapping`; the test
 // runner gives each test a profile folder (LLVM_PROFILE_FILE), and after the test runs
-// `smith test --coverage merge <test>` merges its profiles with llvm-profdata, reads `llvm-cov export -format=lcov`
-// and keeps one small record: the functions the test executed, as a bit for each function of the binary, and the lines
-// it covered. `smith test --coverage join` makes one table of the records; `report` names the changed lines no test
-// ran. `smith test --changed` reads the table (runtime/changed.c).
+// `smith test --coverage merge <test>` merges its profiles and reads them against the programs (shim/coverage.cpp, as
+// llvm-profdata and llvm-cov export -format=lcov would) and keeps one small record: the functions the test executed, as
+// a bit for each function of the binary, and the lines it covered. `smith test --coverage join` makes one table of the
+// records; `report` names the changed lines no test ran. `smith test --changed` reads the table (runtime/changed.c).
 //
 // The table is text, one line each, fields separated by a tab:
 //   smith-coverage 1                          the first line
@@ -403,14 +403,45 @@ static int smith_cov_merge_record(const char *dir, const char *name, const char 
     return smith_cov_close(out, temporary, record) ? 0 : 1;
 }
 
-// `smith test --coverage merge <test name>`: SMITH_COVERAGE_DIR, SMITH_COVERAGE_TOOLS (the folder of llvm-profdata
-// and llvm-cov) and SMITH_COVERAGE_BINARY (the instrumented smith) say where.
+// The profiles of a test as llvm-cov's lcov, in smith's own process (shim/coverage.cpp): `binaries` are the programs
+// that wrote them. The stage0 has no LLVM and makes no records.
+#ifdef SMITH_IN_PROCESS
+int smith_coverage_lcov(const char *list, const char *const *binaries, size_t binary_count, const char *root,
+                        const char *profdata, const char *lcov, char *problem, size_t problem_size);
+#else
+static int smith_coverage_lcov(const char *list, const char *const *binaries, size_t binary_count, const char *root,
+                               const char *profdata, const char *lcov, char *problem, size_t problem_size) {
+    (void)list;
+    (void)binaries;
+    (void)binary_count;
+    (void)root;
+    (void)profdata;
+    (void)lcov;
+    snprintf(problem, problem_size, "this smith has no LLVM inside");
+    return 1;
+}
+#endif
+
+constexpr size_t smith_cov_binaries_max = 16;
+
+// SMITH_COVERAGE_BINARY: the programs the test's processes were built from, separated by `:` (the runner first).
+static size_t smith_cov_binaries(char *text, const char **out) {
+    size_t count = 0;
+    for (char *at = text; at != nullptr && *at != '\0' && count < smith_cov_binaries_max;) { // bounded by the programs
+        out[count++] = at;
+        at = strchr(at, ':');
+        if (at != nullptr) *at++ = '\0';
+    }
+    return count;
+}
+
+// `smith test --coverage merge <test name>`: SMITH_COVERAGE_DIR (where the profiles are) and SMITH_COVERAGE_BINARY (the
+// instrumented programs, separated by `:`) say where.
 static int smith_cov_merge(const char *name, bool pass) {
     const char *dir = smith_cov_env("SMITH_COVERAGE_DIR");
-    const char *tools = smith_cov_env("SMITH_COVERAGE_TOOLS");
     const char *binary = smith_cov_env("SMITH_COVERAGE_BINARY");
-    if (dir == nullptr || tools == nullptr || binary == nullptr) {
-        fputs("smith test --coverage merge: set SMITH_COVERAGE_DIR, _TOOLS and _BINARY\n", stderr);
+    if (dir == nullptr || binary == nullptr) {
+        fputs("smith test --coverage merge: set SMITH_COVERAGE_DIR and SMITH_COVERAGE_BINARY\n", stderr);
         return 1;
     }
     const char *repo = smith_cov_env("SMITH_REPO");
@@ -423,22 +454,18 @@ static int smith_cov_merge(const char *name, bool pass) {
     char list[PATH_MAX];
     char data[PATH_MAX];
     char lcov[PATH_MAX];
-    char profdata[PATH_MAX];
-    char cov[PATH_MAX];
+    char binaries_text[PATH_MAX];
+    const char *binaries[smith_cov_binaries_max];
+    char problem[512] = "";
     smith_cov_clean_name(name, clean, sizeof clean);
     snprintf(raw, sizeof raw, "%s/raw/%s", dir, clean);
     snprintf(list, sizeof list, "%s.list", raw);
     snprintf(data, sizeof data, "%s.profdata", raw);
     snprintf(lcov, sizeof lcov, "%s.lcov", raw);
-    snprintf(profdata, sizeof profdata, "%s/llvm-profdata", tools);
-    snprintf(cov, sizeof cov, "%s/llvm-cov", tools);
-    if (smith_cov_raw_list(raw, list, false) == 0) return 0; // the test ran no instrumented smith
-    char instr[PATH_MAX + 32];
-    snprintf(instr, sizeof instr, "-instr-profile=%s", data);
-    const char *const merge[] = {profdata, "merge", "-sparse", "-f", list, "-o", data, nullptr};
-    const char *const lcov_export[] = {cov, "export", "-format=lcov", instr, binary, nullptr};
-    int status = smith_cov_spawn(merge, nullptr, false);
-    if (status == 0) status = smith_cov_spawn(lcov_export, lcov, false);
+    snprintf(binaries_text, sizeof binaries_text, "%s", binary);
+    size_t binary_count = smith_cov_binaries(binaries_text, binaries);
+    if (smith_cov_raw_list(raw, list, false) == 0) return 0; // the test ran no instrumented program
+    int status = smith_coverage_lcov(list, binaries, binary_count, smith_cov_root, data, lcov, problem, sizeof problem);
     (void)smith_cov_raw_list(raw, list, true);
     (void)rmdir(raw);
     (void)unlink(list);
@@ -446,7 +473,8 @@ static int smith_cov_merge(const char *name, bool pass) {
     bool read = status == 0 && smith_cov_lcov(lcov);
     (void)unlink(lcov);
     if (!read) {
-        fprintf(stderr, "smith test --coverage merge: no record for %s (llvm tools status %d)\n", name, status);
+        if (problem[0] == '\0') snprintf(problem, sizeof problem, "no file below %s was counted", smith_cov_root);
+        fprintf(stderr, "smith test --coverage merge: no record for %s (%s)\n", name, problem);
         return 1;
     }
     if (!smith_rec_write(dir, name, clean, pass))

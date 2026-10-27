@@ -452,16 +452,16 @@ static SmithObject build_commit_object(SmithBuild *b, const BuildConfig *config,
 // Everything smith links beside smith.c when clang is inside: the packed data, the shims of the compiler, the linker
 // and the tools, and the prover when its libraries are there. `list` gets pointers to them, ended by nullptr.
 typedef struct {
-    SmithObject objects[16];
+    SmithObject objects[20];
     BuildProver prove;
 } BuildShims;
 
 static void build_shims(SmithBuild *b, const BuildConfig *config, const char *folder, const char *pack,
                         BuildShims *shims, const SmithObject **list) {
     build_pack_data(b, config, folder, pack, &shims->objects[0]);
-    const char *const sources[] = {"clang",        "lld",         "format", "tidy",          "clangd",
-                                   "symbolize",    "hook",        "lsp",    "lldb",          "lldb_dap",
-                                   "lldb_explain", "lldb_slices", "affine", "effects_infer", "lldb_server"};
+    const char *const sources[] = {"clang",  "lld",           "format",      "tidy",     "clangd",       "symbolize",
+                                   "hook",   "lsp",           "lldb",        "lldb_dap", "lldb_explain", "lldb_slices",
+                                   "affine", "effects_infer", "lldb_server", "coverage"};
     size_t count = 0;
     for (size_t i = 0; i < sizeof sources / sizeof sources[0]; i++) {
         bool is_hook = strcmp(sources[i], "hook") == 0 || strcmp(sources[i], "lsp") == 0 ||
@@ -853,9 +853,7 @@ static const char *build_units(SmithBuild *b, const BuildConfig *config, const c
     // The train's run (COVERAGE=1, #456): the runner gives every test a folder of profiles, merges them as the test
     // ends, and the records are joined into .smith/coverage/coverage.tsv when the run is over, red or green.
     const char *measure =
-        smith_fmt(b, "%s SMITH_COVERAGE_DIR=\"$repo/.smith/coverage\" SMITH_COVERAGE_TOOLS=\"%s/bin\"", environment,
-                  config->llvm);
-    measure = smith_fmt(b, "%s SMITH_COVERAGE_BINARY=\"%s\"", measure, self);
+        smith_fmt(b, "%s SMITH_COVERAGE_DIR=\"$repo/.smith/coverage\" SMITH_COVERAGE_BINARY=\"%s\"", environment, self);
     const char *join = smith_fmt(b,
                                  "; rc=$?; cd \"$repo\" && \"%s\" test --coverage join .smith/coverage "
                                  "\"$(git rev-parse HEAD)\" .smith/coverage/coverage.tsv; exit $rc",

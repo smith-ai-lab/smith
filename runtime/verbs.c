@@ -863,6 +863,10 @@ static int smith_test_take_changed(SmithVerbArgs *split, const char *self) {
         if (result == SmithChanged_Some) fprintf(stderr, "smith test --changed: --test %s\n", filter);
         return 0;
     }
+    // The tests it runs count the lines they run and leave a record each (issue #456): a build option, not the
+    // environment, so the smiths the tests start are not instrumented.
+    static char record[] = "-DSMITH_RECORD=1";
+    if (split->option_count < smith_build_args_max) split->options[split->option_count++] = record;
     return -1;
 }
 

@@ -501,6 +501,14 @@ export void test_clamp_always_lands_inside(random::Key key) { // a property test
 
 An `(io::Io *io)` test gets a real io in a scratch folder of its own. [smith-test](.agents/skills/smith-test/SKILL.md).
 
+### Run only the tests a change can affect
+
+```sh
+smith test --changed    # the tests this diff reaches; the rest are "unchanged"
+```
+
+The first run builds the tests (and the program they start) with line counters and runs every test once. Each test then keeps a record in `.smith/records` of the functions it ran, by hash of their source, so an end-to-end test that runs your command line program is selected exactly when a function it ran changed, with no git history, no CI and nothing declared. A test with no record, a failed one and one whose record no longer matches run again, besides the tests whose imports changed; a plain `smith test` is unchanged. [smith-run-test](.agents/skills/smith-run-test/SKILL.md).
+
 ### Capabilities and formatting
 
 A program touches the world only through what `main` passes down, so a function's signature says whether it prints.

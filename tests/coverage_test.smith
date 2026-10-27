@@ -1,8 +1,8 @@
 // Tests of coverage-based test selection (issue #456, runtime/coverage.c, knowledge/coverage-selection.md): the record
 // of a test (`smith test --coverage merge`), the table (`join`), the report of changed lines no test ran (`report`),
 // and `smith test --changed` reading a table. The first three run a program built with
-// `-fprofile-instr-generate -fcoverage-mapping` under the LLVM tools smith links; the selection tests write the table
-// by hand on a scratch git repository (never this checkout).
+// `-fprofile-instr-generate -fcoverage-mapping` under the profile reader inside smith; the selection tests write the
+// table by hand on a scratch git repository (never this checkout).
 module coverage_test;
 
 import smith::format;
@@ -10,12 +10,8 @@ import smith::io;
 import smith::test;
 import scratch;
 
-// The folder of llvm-profdata and llvm-cov of the LLVM smith links, or exit status 77 (the test is skipped).
-constexpr char find_tools[] =
-    "id=$(smith cc --smith-which -c prog.c | sed -n 's/^identity //p'); tools=; "
-    "for d in \"$HOME\"/.cache/smith/llvm/*/install; do "
-    "[ -n \"$id\" ] && [ \"$(cat \"$d/lib/smith-clang.id\" 2>/dev/null)\" = \"$id\" ] && tools=$d/bin; done; "
-    "[ -x \"$tools/llvm-cov\" ] || exit 77; ";
+// Exit status 77 (the test is skipped) for a smith with no LLVM inside (the stage0), which cannot read profiles.
+constexpr char find_tools[] = "smith symbolize --available || exit 77; ";
 
 // A program with three functions on known lines; `prog` runs `first`, and `prog x` runs `second`. A repository when
 // `commit` is true.
@@ -29,7 +25,7 @@ constexpr char program[] =
 static const char *make_table(io::Io *io, const char *runs) {
     return format::push(&io->arena, "set -e; r=$(pwd -P); printf '", program, "' > prog.c; ", find_tools,
                         "smith cc -fprofile-instr-generate -fcoverage-mapping \"$r/prog.c\" -o prog; "
-                        "export SMITH_COVERAGE_DIR=$r/cov SMITH_COVERAGE_TOOLS=$tools SMITH_COVERAGE_BINARY=$r/prog "
+                        "export SMITH_COVERAGE_DIR=$r/cov SMITH_COVERAGE_BINARY=$r/prog "
                         "SMITH_REPO=$r; mkdir -p cov/raw/t__one cov/raw/t__two; ",
                         runs,
                         "smith test --coverage join cov abc123 cov/table.tsv; "
@@ -48,7 +44,7 @@ export void test_a_record_is_the_functions_a_test_ran(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     scratch::Run run = scratch::sh(&p, make_table(io, format::push(&io->arena, run_one, run_two).data));
     if (run.status == 77) {
-        test::note("coverage: skipped, no LLVM tools of the smith in ~/.cache/smith/llvm");
+        test::note("coverage: skipped, this smith has no LLVM inside");
         return;
     }
     scratch::expect_status("the run", 0, &run);
@@ -84,7 +80,7 @@ export void test_the_report_names_the_changed_lines_no_test_ran(io::Io *io) {
 // under coverage and merged into a record; `runs_test::c` has none.
 constexpr char repository[] =
     "export SMITH_OUTPUT=full SMITH_COVERAGE_NO_FETCH=1; git init -q -b main . && mkdir -p lib tests runtime .smith && "
-    "printf '.smith\\n' > .gitignore && "
+    "printf '.smith\\n' > .gitignore && printf '// a build with its own test task\\n' > build.c && "
     "printf 'module runs_test;\\nimport scratch;\\nexport void test_a() { scratch::sh(); }\\n"
     "export void test_b() { scratch::sh(); }\\nexport void test_c() { scratch::sh(); }\\n' > tests/runs_test.smith && "
     "printf 'module scratch;\\n' > tests/scratch.smith && "
@@ -102,7 +98,7 @@ static const char *recorded(io::Io *io, const char *result) {
     return format::
         push(&io->arena, find_tools,
              "r=$(pwd -P); smith cc -fprofile-instr-generate -fcoverage-mapping \"$r/runtime/prog.c\" -o .smith/prog; "
-             "export SMITH_COVERAGE_DIR=$r/.smith/cov SMITH_COVERAGE_TOOLS=$tools SMITH_COVERAGE_BINARY=$r/.smith/prog "
+             "export SMITH_COVERAGE_DIR=$r/.smith/cov SMITH_COVERAGE_BINARY=$r/.smith/prog "
              "SMITH_REPO=$r; mkdir -p .smith/cov/raw/runs_test__a .smith/cov/raw/runs_test__b; "
              "LLVM_PROFILE_FILE=$r/.smith/cov/raw/runs_test__a/%p.profraw .smith/prog; "
              "smith test --coverage merge runs_test::a ",

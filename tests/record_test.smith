@@ -1,0 +1,84 @@
+// Tests of `smith test --changed` in a project of its own (issue #456, knowledge/coverage-selection.md): it builds the
+// tests and the program they run with the counters on, leaves a record for each test it runs in .smith/records, and
+// the next run picks the tests whose record is stale. The project is the fixture tests/build_fixtures/record_project: a
+// command line program, calc, and two end-to-end tests that each run it (the build graph sees no import between a test
+// and ops.c). Nothing here is specific to smith.
+module record_test;
+
+import smith::format;
+import smith::io;
+import smith::test;
+import scratch;
+
+// A repository of the fixture, committed on main. SMITH_OUTPUT=full for the messages of the nested smith.
+constexpr char repository[] =
+    "export SMITH_OUTPUT=full; git init -q -b main . && printf 'build\\n.smith\\n' > .gitignore && git add -A && "
+    "git -c user.name=t -c user.email=t@t commit -q -m base; ";
+
+// No records yet: every test runs once, instrumented, and each leaves its record, which names the functions it ran
+// (the program's too) and not the other test's.
+export void test_the_first_run_makes_a_record_for_each_test(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "record_project");
+    scratch::Run run =
+        scratch::sh(&p, format::push(&io->arena, repository,
+                                     "smith test --changed --base HEAD 2>&1; "
+                                     "echo ---; ls .smith/records; echo ---; cat .smith/records/add_runs.rec")
+                            .data);
+    scratch::expect_status("the run", 0, &run);
+    scratch::expect_contains("the reason", run.out, "no records yet, so every test runs once to make them");
+    scratch::expect_contains("both ran", run.out, "2 passed");
+    scratch::expect_contains("a record each", run.out, "add_runs.rec\nmul_runs.rec");
+    scratch::expect_contains("the result", run.out, "result\tpass");
+    scratch::expect_contains("the function the test ran", run.out, "fn\tops.c\tops_add");
+    scratch::expect_contains("through the program it started", run.out, "fn\tmain.c\tmain");
+    scratch::expect_contains("its own function", run.out, "fn\ttests/cli_test.c\ttest_add_runs");
+    scratch::expect_contains("the header", run.out, "input\tops.h");
+    scratch::expect_lacks("not the other test's function", run.out, "ops_mul");
+}
+
+// A change inside a function reruns the test that ran it, and the record is rewritten; the other test is unchanged.
+export void test_a_change_reruns_the_test_that_ran_it(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "record_project");
+    const char *edit = "sed 's/a \\* b/a * b + 0/' ops.c > next.c && mv next.c ops.c; ";
+    scratch::Run run =
+        scratch::sh(&p, format::push(&io->arena, repository, "smith test --changed --base HEAD >/dev/null 2>&1; ", edit,
+                                     "smith test --changed --base HEAD --dry-run 2>&1; "
+                                     "smith test --changed --base HEAD 2>&1; "
+                                     "echo ---; cat .smith/records/mul_runs.rec")
+                            .data);
+    scratch::expect_status("the run", 0, &run);
+    scratch::expect_contains("the stale record", run.out, "its record is stale: mul_runs");
+    scratch::expect_contains("only that test", run.out, "--test mul_runs");
+    scratch::expect_lacks("not the other", run.out, "add_runs");
+    scratch::expect_lacks("not every test", run.out, "every test runs");
+    scratch::expect_contains("it ran", run.out, "1 passed");
+    scratch::expect_contains("the record names the new run", run.out, "fn\tops.c\tops_mul");
+}
+
+// A test whose function is untouched by a change to the other is not selected, and a failed test is.
+export void test_a_failed_test_reruns_and_the_rest_do_not(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "record_project");
+    const char *edit =
+        "sed 's/return a \\* b;/return a * b + 1;/' ops.c > next.c && mv next.c ops.c; "
+        "sed 's/mul 3 4 >/mul 3 4 \\&\\& false >/' tests/cli_test.c > next.c && mv next.c tests/cli_test.c; ";
+    scratch::Run run =
+        scratch::sh(&p, format::push(&io->arena, repository, "smith test --changed --base HEAD >/dev/null 2>&1; ", edit,
+                                     "smith test --changed --base HEAD >/dev/null 2>&1; "
+                                     "git checkout -q tests/cli_test.c; "
+                                     "smith test --changed --base HEAD --dry-run 2>&1")
+                            .data);
+    scratch::expect_status("the run", 0, &run);
+    scratch::expect_contains("the failed test is selected", run.out, "mul_runs");
+    scratch::expect_lacks("the other is not", run.out, "add_runs");
+}
+
+// A plain `smith test` builds and records nothing.
+export void test_a_plain_test_leaves_no_record(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "record_project");
+    scratch::Run run = scratch::sh(
+        &p,
+        format::push(&io->arena, repository, "smith test 2>&1; ls .smith/records 2>&1; ls default.profraw 2>&1").data);
+    scratch::expect_contains("both ran", run.out, "2 passed");
+    scratch::expect_lacks("no record", run.out, ".rec");
+    scratch::expect_lacks("no profile left in the project", run.out, "\ndefault.profraw");
+}
