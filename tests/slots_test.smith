@@ -127,3 +127,16 @@ export void test_a_ci_holder_lowers_the_share_of_a_local_holder(io::Io *io) {
                                      "touch free; wait $a; cat order");
     scratch::expect_text("CI keeps 8, the local holder drops to 1", "ci 8\nlocal 1\n", out);
 }
+
+// A smith a test starts counts its slots in a folder of the test's own, never the host's, so a host whose slots CI and
+// the lanes hold cannot hold up a test whose jobs must run at once (#360). A smith that takes a slot leaves its file
+// there.
+export void test_a_scratch_smith_counts_slots_in_the_tests_own_folder(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Run run = scratch::sh(
+        &p, "unset SMITH_SLOT_HELD; SMITH_SLOTS=1 smith --smith-slots true; "
+            "case $SMITH_SLOTS_DIR in /tmp/smith-slots-*) echo host;; *) echo own;; esac; ls \"$SMITH_SLOTS_DIR\" | "
+            "grep -c '^slot-'");
+    scratch::expect_status("the slot is taken and released", 0, &run);
+    scratch::expect_text("a folder beside the project, with the slot's file", "own\n1\n", run.out);
+}
