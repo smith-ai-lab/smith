@@ -523,7 +523,8 @@ static bool smith_lang_enum_comparison(SmithLang *lang, const SmithHost *host, c
             return true;
         }
         bool part = token->kind == SmithTokenKind_Identifier || token->kind == SmithTokenKind_Number || open || close ||
-                    smith_lang_punct(token, ".") || smith_lang_punct(token, "->") || depth > 0;
+                    smith_lang_punct(token, ".") || smith_lang_punct(token, "->") || smith_lang_punct(token, "::") ||
+                    depth > 0;
         if (!part || *length + 1 >= smith_lang_slice_chain_max) return false;
         depth += open;
         depth -= close;
@@ -545,7 +546,13 @@ static bool smith_lang_enum_compare(SmithLang *lang, const SmithHost *host, cons
         smith_lang_word(token->text, token->length) != SmithLangWord_Other) {
         return false;
     }
-    if (lang->prev_char != 0 && strchr(")]", lang->prev_char) != nullptr) return false;
+    // The token before this one is read from the queue, not from `prev_char`: a body held until a generic's instance
+    // is written is lowered after the end of the file, where `prev_char` is the last token the file was tracked to.
+    SmithToken before = {};
+    if (smith_lang_tuple_previous(lang, host, 1, &before) &&
+        (smith_lang_punct(&before, ")") || smith_lang_punct(&before, "]"))) {
+        return false;
+    }
     static SmithToken operand[smith_lang_slice_chain_max];
     size_t length = 0;
     size_t taken = 0;
@@ -584,8 +591,8 @@ static bool smith_lang_enum_compare_first(SmithLang *lang, const SmithHost *host
         bool open = smith_lang_punct(next, "(") || smith_lang_punct(next, "[");
         bool close = smith_lang_punct(next, ")") || smith_lang_punct(next, "]");
         bool part = next->kind == SmithTokenKind_Identifier || next->kind == SmithTokenKind_Number || open || close ||
-                    smith_lang_punct(next, ".") || smith_lang_punct(next, "->") || depth > 0 ||
-                    (length == 0 && smith_lang_punct(next, "*"));
+                    smith_lang_punct(next, ".") || smith_lang_punct(next, "->") || smith_lang_punct(next, "::") ||
+                    depth > 0 || (length == 0 && smith_lang_punct(next, "*"));
         depth += open;
         depth -= close;
         if (!part || depth < 0 || length + 1 >= smith_lang_slice_chain_max) break;

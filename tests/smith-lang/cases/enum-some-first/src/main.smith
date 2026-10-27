@@ -1,0 +1,16 @@
+module main;
+
+import lib;
+import <stdio.h>;
+
+typedef option(i32) Opt;
+
+// `== .some` after a call of a generic, as the first mention in the function; and on a call of an import.
+i32 main() {
+    usize k = lib::one(3);
+    Opt q = {.some = 3};
+    if (q == .some) c::printf("some %zu\n", k);
+    if (lib::pos(2) == .some) c::printf("pos\n");
+    if (lib::pos(0) != .some) c::printf("none\n");
+    return 0;
+}

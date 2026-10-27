@@ -1213,6 +1213,10 @@ export void test_generic_slice_typedef(io::Io *io) {
     corpus_case(io, "generic-slice-typedef");
 }
 
+export void test_enum_some_first(io::Io *io) {
+    corpus_case(io, "enum-some-first");
+}
+
 export void test_generic_slice_convert(io::Io *io) {
     corpus_case(io, "generic-slice-convert");
 }

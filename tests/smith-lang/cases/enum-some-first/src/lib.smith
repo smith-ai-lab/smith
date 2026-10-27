@@ -1,0 +1,10 @@
+module lib;
+
+export usize one(auto x) {
+    return 1;
+}
+
+export option(usize) pos(usize n) {
+    if (n == 0) return .none;
+    return n;
+}
