@@ -167,13 +167,61 @@ static const BuildProtocol build_protocols[] = {
 };
 constexpr size_t build_protocol_count = sizeof build_protocols / sizeof build_protocols[0];
 
+// The libraries are found in the tree: every lib/smith/*.smith but the tests beside them (issue #595), so adding one
+// edits no line of this file. Only the six libraries smith links into itself stay a list (build_linked_libraries),
+// because linking one is a decision about smith's link line, not a fact about a file.
+constexpr char build_library_dir[] = "lib/smith";
+constexpr size_t build_libraries_max = 128;
+
+static const char *const *build_libraries(SmithBuild *b) {
+    static const char *kept[build_libraries_max + 1];
+    static bool found = false;
+    if (found) return kept;
+    const char *const *all = smith_glob(b, smith_list(b, smith_fmt(b, "%s/*.smith", build_library_dir), nullptr));
+    size_t count = 0;
+    for (size_t i = 0; all[i] != nullptr; i++) { // bounded by the files found
+        size_t length = strlen(all[i]);
+        if (length >= 11 && strcmp(all[i] + length - 11, "_test.smith") == 0) continue;
+        if (count >= build_libraries_max) {
+            fprintf(stderr, "build.c: more than %zu libraries in %s\n", build_libraries_max, build_library_dir);
+            exit(1);
+        }
+        kept[count++] = all[i];
+    }
+    kept[count] = nullptr;
+    found = true;
+    return kept;
+}
+
+// A library says in its own first lines what is true of it that a directory listing cannot (issue #595); this one:
+// the module declares no function, so a compile of it is an empty translation unit and has nothing to lint.
+constexpr char build_no_code_mark[] = "// smith: no code";
+
+static bool build_marked(SmithBuild *b, const char *source, const char *mark) {
+    const char *const *lines = build_lines(b, source);
+    for (size_t i = 0; lines[i] != nullptr && i < 8; i++) { // the first lines
+        if (strcmp(lines[i], mark) == 0) return true;
+    }
+    return false;
+}
+
+// The source of the library `name`.
+static const char *build_library(SmithBuild *b, const char *name) {
+    return smith_fmt(b, "%s/%s.smith", build_library_dir, name);
+}
+
+static bool build_is_linked_library(const char *name);
+
 // The generator is a program of smith's own C (scripts/protocol.c, on lib/json.c), built here and not shipped: like
 // scripts/pack.c, a tool of the build. arena, contract and text are the modules of smith, compiled from their sources.
 // Returns the program's step.
 static SmithStep build_protocol_program(SmithBuild *b, const BuildConfig *config, const char *folder) {
-    const char *const sources[] = {
-        "scripts/protocol.c", "lib/smith/arena.smith", "lib/smith/contract.smith", "lib/smith/text.smith", "lib/json.c",
-        "lib/trace.c"};
+    const char *const sources[] = {"scripts/protocol.c",
+                                   build_library(b, "arena"),
+                                   build_library(b, "contract"),
+                                   build_library(b, "text"),
+                                   "lib/json.c",
+                                   "lib/trace.c"};
     SmithObject objects[6] = {};
     const SmithObject *linked[7] = {};
     for (size_t i = 0; i < 6; i++) {
@@ -226,9 +274,6 @@ static const char *const *build_protocol_steps(SmithBuild *b, const BuildConfig 
 // smith_object compiles (build_linked_libraries) has its header step from smith_object; the others are made here, and
 // are inputs of smith.c, which includes them. The installed smith writes the headers of its own embedded sources
 // first (`smith build` does, before this file runs), so a first build has them for build.c itself.
-static const char *const build_header_modules[] = {"ascii", "autodiff", "build", "categorical", "effects", "format",
-                                                   "math",  "mem",      "slice", "test",        nullptr};
-
 // The compiler's own file, which a header step lists as an input: it is the smith that writes the header.
 static const char *build_compiler_file(SmithBuild *b, const BuildConfig *config) {
     if (strchr(config->cc, '/') != nullptr) return config->cc;
@@ -239,10 +284,13 @@ static const char *build_compiler_file(SmithBuild *b, const BuildConfig *config)
 static const char *const *build_header_steps(SmithBuild *b, const BuildConfig *config) {
     const char *compiler = build_compiler_file(b, config);
     const char *const *outputs = smith_list(b, nullptr);
-    for (size_t i = 0; build_header_modules[i] != nullptr; i++) {
-        const char *name = build_header_modules[i];
+    const char *const *libraries = build_libraries(b);
+    for (size_t i = 0; libraries[i] != nullptr; i++) { // bounded by the libraries
+        const char *source = libraries[i];
+        const char *name = smith_fmt(b, "%.*s", (int)(strlen(source) - strlen(build_library_dir) - 7),
+                                     source + strlen(build_library_dir) + 1);
+        if (build_is_linked_library(name)) continue; // smith_object makes its header
         const char *header = smith_fmt(b, ".smith/include/smith/%s.h", name);
-        const char *source = smith_fmt(b, "lib/smith/%s.smith", name);
         SmithStep step = {
             .command = smith_list(b, config->cc, "--smith-header", source, "-o", header, nullptr),
             .inputs = smith_list(b, source, nullptr),
@@ -453,8 +501,10 @@ static void build_tree_sitter_data(SmithBuild *b, const BuildConfig *config, con
 
 // Everything smith links beside smith.c when clang is inside: the packed data, the shims of the compiler, the linker
 // and the tools, and the prover when its libraries are there. `list` gets pointers to them, ended by nullptr.
+constexpr size_t build_shims_max = 22; // the packed data, the shims and what the prover adds
+
 typedef struct {
-    SmithObject objects[22];
+    SmithObject objects[build_shims_max];
     BuildProver prove;
 } BuildShims;
 
@@ -504,9 +554,9 @@ static const char *const *build_links(SmithBuild *b, const SmithStep *program, c
     return outputs;
 }
 
-// What smith.c embeds or includes, which its depfile may not list: a change to any recompiles it.
+// What smith.c embeds or includes, which its depfile may not list: a change to any recompiles it. (The libraries are
+// found in the tree: build_libraries.)
 static const char *const build_smith_inputs[] = {
-    "lib/smith/build.smith",
     "runtime/base.h",
     "runtime/build_runtime.c",
     "runtime/package.c",
@@ -527,36 +577,12 @@ static const char *const build_smith_inputs[] = {
     "runtime/mcp_serve.c",
     "runtime/protocol/protocol.h",
     "runtime/protocol/protocol.c",
-    "lib/smith/arena.smith",
-    "lib/smith/autodiff.smith",
-    "lib/smith/inflate.smith",
-    "lib/smith/io.smith",
-    "lib/smith/random.smith",
-    "lib/smith/contract.smith",
-    "lib/smith/effects.smith",
-    "lib/smith/files.smith",
-    "lib/smith/format.smith",
-    "lib/smith/clock.smith",
-    "lib/smith/console.smith",
-    "lib/smith/entropy.smith",
-    "lib/smith/env.smith",
-    "lib/smith/math.smith",
-    "lib/smith/process.smith",
-    "lib/smith/mem.smith",
-    "lib/smith/net.smith",
-    "lib/smith/option.smith",
-    "lib/smith/result.smith",
-    "lib/smith/slice.smith",
-    "lib/smith/categorical.smith",
-    "lib/smith/ascii.smith",
-    "lib/smith/text.smith",
     "include/smith/json.h",
     "lib/json.c",
     "include/smith/handlers.h",
     "lib/handlers.c",
     "include/smith/http.h",
     "lib/http.c",
-    "lib/smith/test.smith",
     "templates/new-c/main.c",
     "templates/new/gitignore",
     "templates/defaults/clang-format",
@@ -599,6 +625,13 @@ static const char *const build_smith_inputs[] = {
 // only their headers); text is its own object beside them.
 static const char *const build_linked_libraries[] = {"arena", "contract", "inflate", "io", "random", "text"};
 
+static bool build_is_linked_library(const char *name) {
+    for (size_t i = 0; i < sizeof build_linked_libraries / sizeof build_linked_libraries[0]; i++) { // a short list
+        if (strcmp(build_linked_libraries[i], name) == 0) return true;
+    }
+    return false;
+}
+
 // The step that stops the build when the LLVM install is not there, and says what to run: an input of what links it.
 // Only the default target runs it, so `smith build llvm` works on a smith with no LLVM install.
 static const char *const *build_llvm_required(SmithBuild *b, const BuildConfig *config) {
@@ -634,19 +667,21 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
         .source = "smith.c",
         .output = smith_fmt(b, "%s/smith.o", folder),
         .flags = flags,
-        .implicit_inputs = smith_cat(b, (const char *[]){"scripts/pack.h", nullptr}, build_smith_inputs,
-                                     config->headers, config->protocol, build_llvm_required(b, config), nullptr),
+        .implicit_inputs =
+            smith_cat(b, (const char *[]){"scripts/pack.h", nullptr}, build_smith_inputs, build_libraries(b),
+                      config->headers, config->protocol, build_llvm_required(b, config), nullptr),
     };
     smith_object(b, &object);
     SmithObject commit = build_commit_object(b, config, folder);
     BuildShims shims = {};
     SmithObject libraries[sizeof build_linked_libraries / sizeof build_linked_libraries[0]] = {};
-    const SmithObject *objects[40] = {&object, &commit};
+    const SmithObject *objects[2 + sizeof build_linked_libraries / sizeof build_linked_libraries[0] + build_shims_max +
+                               1] = {&object, &commit};
     size_t count = 2;
     for (size_t i = 0; i < sizeof libraries / sizeof libraries[0]; i++) {
         libraries[i] = (SmithObject){
             .compiler = config->cc,
-            .source = smith_fmt(b, "lib/smith/%s.smith", build_linked_libraries[i]),
+            .source = build_library(b, build_linked_libraries[i]),
             .output = smith_fmt(b, "%s/%s.o", folder, build_linked_libraries[i]),
             .flags = flags,
         };
@@ -682,8 +717,8 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
 static const char *const *build_test_modules(SmithBuild *b, const BuildConfig *config, const char *folder) {
     const char *smith_cc = smith_fmt(b, "%s/smith-cc", folder);
     const char *const *flags = build_smith_flags(b, config);
-    const char *const *tests =
-        smith_glob(b, smith_list(b, "tests/*.smith", "lib/*_test.smith", "lib/smith/*_test.smith", nullptr));
+    const char *const *tests = smith_glob(b, smith_list(b, "tests/*.smith", "lib/*_test.smith",
+                                                        smith_fmt(b, "%s/*_test.smith", build_library_dir), nullptr));
     const char *const *needs = smith_list(b, smith_cc, nullptr);
     for (size_t i = 0; tests[i] != nullptr; i++) {
         const char *root_less =
@@ -793,29 +828,11 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
     }
     // The modules are linted as written, and `.smith` is C2y (as `smith cc` compiles it), so `_Countof` works.
     const char *const *smith_flags = smith_cat(b, flags, smith_list(b, "-std=gnu2y", nullptr), nullptr);
-    smith_compile_command(b, config->cc, "lib/smith/arena.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/autodiff.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/contract.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/effects.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/files.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/format.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/inflate.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/io.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/clock.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/console.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/entropy.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/env.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/math.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/mem.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/process.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/net.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/random.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/slice.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/categorical.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/ascii.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/test.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/text.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/build.smith", smith_flags);
+    const char *const *libraries = build_libraries(b);
+    for (size_t i = 0; libraries[i] != nullptr; i++) {                   // bounded by the libraries
+        if (build_marked(b, libraries[i], build_no_code_mark)) continue; // option and result hold no code to lint
+        smith_compile_command(b, config->cc, libraries[i], smith_flags);
+    }
     // The protocol code's hand-written base and its tests' support; the generated files are not linted.
     smith_compile_command(b, config->cc, "runtime/protocol/protocol.c", flags);
     smith_compile_command(b, config->cc, "tests/protocol/protocol_support.c",
@@ -958,10 +975,10 @@ static const char *const *build_test(SmithBuild *b, const BuildConfig *config, c
                 "work=${TMPDIR:-/tmp}/smith-text-$$.noindex; mkdir \"$work\"; trap 'rm -rf \"$work\"' "
                 "EXIT; export XDG_CACHE_HOME=$work/xdg-cache; "
                 "\"$0\" cc -std=gnu23 -O2 -Wall -Wextra -Werror -I include -I .smith/include tests/text_exhaustive.c "
-                "lib/smith/text.smith -pthread -o \"$work/exhaustive\" || exit 1; start=$(date +%s); "
+                "\"$1\" -pthread -o \"$work/exhaustive\" || exit 1; start=$(date +%s); "
                 "\"$work/exhaustive\"; status=$?; "
                 "echo \"exhaustive: exit $status in $(($(date +%s) - start)) s\"; exit $status",
-                binary, nullptr},
+                binary, build_library(b, "text"), nullptr},
         .inputs = (const char *[]){binary, nullptr},
     };
     smith_task(b, "text-exhaustive", &exhaustive);

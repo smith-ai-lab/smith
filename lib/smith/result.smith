@@ -1,3 +1,4 @@
+// smith: no code
 // smith::result, <smith/result.h>: a value or the reason there is none, in place of an out parameter or a sentinel.
 // `result` is in scope in every module with no import (see lib/smith/option.smith).
 //
