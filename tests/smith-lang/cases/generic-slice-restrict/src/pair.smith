@@ -1,0 +1,16 @@
+module pair;
+
+// `restrict` on an `auto` slice parameter is in the instance: it has the same qualifiers as the non-generic form, so
+// `smith prove` relies on no overlap and checks it at each call.
+
+export bool is_restrict(auto dst[restrict :]) {
+    return _Generic(dst, struct smith_array_restrict_u8_n: true, default: false);
+}
+
+export bool is_plain(auto dst[:]) {
+    return _Generic(dst, struct smith_array_u8_n: true, default: false);
+}
+
+export void copy(auto dst[restrict :], const auto src[const restrict :]) {
+    for (usize i = 0; i < countof(dst) && i < countof(src); i++) dst[i] = src[i];
+}

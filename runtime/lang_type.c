@@ -1674,11 +1674,12 @@ static bool smith_lang_slice_tag_definition(const char *tag, char *data, size_t 
     size_t stem = 0;
     size_t prefix = sizeof smith_lang_slice_prefix - 1;
     char element[smith_lang_ty_spelling_max];
-    if (!smith_lang_slice_dims_parse(tag, &dims, &stem) || stem <= prefix ||
-        !smith_lang_ty_stem_spelling(tag + prefix, stem - prefix, element, sizeof element)) {
+    if (!smith_lang_slice_dims_parse(tag, &dims, &stem)) return false;
+    if (dims.restrict_data) prefix += sizeof "restrict_" - 1; // `smith_array_restrict_u8_n`: the element is `u8`
+    if (stem <= prefix || !smith_lang_ty_stem_spelling(tag + prefix, stem - prefix, element, sizeof element)) {
         return false;
     }
     *count = (unsigned long)smith_lang_slice_dims_runtime(&dims);
-    snprintf(data, capacity, "%s *", element);
+    snprintf(data, capacity, "%s * %s", element, dims.restrict_data ? "__restrict" : "");
     return *count > 0;
 }

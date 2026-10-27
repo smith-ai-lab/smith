@@ -325,6 +325,7 @@ typedef struct {
     unsigned dims;      // `auto m[:][:]`: 2
     bool is_const;      // `const auto xs[:]`: the elements are read-only
     bool fixed;         // `auto xs[const :]`: the slice itself is fixed
+    bool restricted;    // `auto xs[restrict :]`: no other pointer overlaps its data
     bool derived;       // `const typeof(a[0]) b[:]`: a slice of the element of `a`; `auto_at` is the `typeof`
     uint32_t source_at; // the `a` of a derived slice
 } SmithLangShape;
@@ -395,6 +396,9 @@ static bool smith_lang_shape_brackets(const SmithLangParam *param, SmithLangShap
         while (shape->dims == 0 && colon + 2 < param->end && smith_lang_qualifier_token(&smith_lang_gt.tokens[colon])) {
             shape->fixed =
                 shape->fixed || smith_lang_gt_is(&smith_lang_gt.tokens[colon], SmithTokenKind_Identifier, "const");
+            shape->restricted = shape->restricted ||
+                                smith_lang_gt_is(&smith_lang_gt.tokens[colon], SmithTokenKind_Identifier, "restrict") ||
+                                smith_lang_gt_is(&smith_lang_gt.tokens[colon], SmithTokenKind_Identifier, "__restrict");
             colon += 1;
         }
         if (!smith_lang_gt_punct(&smith_lang_gt.tokens[colon], ":") ||
@@ -3753,7 +3757,7 @@ static void smith_lang_shape_constify(const SmithHost *host, const SmithLangGene
     SmithLangShape shape;
     if (slot >= generic->type_count || generic->type_kind[slot] != SmithLangSlot_Auto || total == SIZE_MAX ||
         position >= total || !smith_lang_param_shape(&params[position], &shape) || shape.kind != SmithLangShape_Slice ||
-        !shape.is_const) {
+        (!shape.is_const && !shape.restricted)) {
         return;
     }
     char spelling[512];
@@ -3767,10 +3771,16 @@ static void smith_lang_shape_constify(const SmithHost *host, const SmithLangGene
     char from[96];
     snprintf(from, sizeof from, "%.*s", (int)strcspn(query.canonical + 7, " "), query.canonical + 7);
     const char *element = from + sizeof prefix - 1;
-    if (strncmp(element, "restrict_", 9) == 0) element += 9;
-    if (strncmp(element, "const_", 6) == 0 || strstr(element, "_ptr") != nullptr) return; // read-only, or a pointer
-    char to[96];
-    snprintf(to, sizeof to, "%.*sconst_%s", (int)(element - from), from, element);
+    bool was_restrict = strncmp(element, "restrict_", 9) == 0;
+    if (was_restrict) element += 9;
+    if (strstr(element, "_ptr") != nullptr) return; // a pointer
+    bool was_const = strncmp(element, "const_", 6) == 0;
+    if (was_const) element += 6;
+    char to[96]; // the tag with the parameter's qualifiers: `restrict_` first, then `const_`
+    snprintf(to, sizeof to, "%.*s%s%s%s", (int)(sizeof prefix - 1), from,
+             (was_restrict || shape.restricted) ? "restrict_" : "", (was_const || shape.is_const) ? "const_" : "",
+             element);
+    if (strcmp(to, from) == 0) return;
     char text[128];
     snprintf(text, sizeof text, "struct %s", to);
     uint32_t first = 0;
