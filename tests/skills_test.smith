@@ -247,6 +247,14 @@ export void test_skill_smith_build_tests(io::Io *io) {
     skill_case(io, "smith-build-tests");
 }
 
+export void test_skill_smith_clock(io::Io *io) {
+    skill_case(io, "smith-clock");
+}
+
+export void test_skill_smith_console(io::Io *io) {
+    skill_case(io, "smith-console");
+}
+
 export void test_skill_smith_contract(io::Io *io) {
     skill_case(io, "smith-contract");
 }
@@ -261,6 +269,10 @@ export void test_skill_smith_contract_proof(io::Io *io) {
 
 export void test_skill_smith_contract_roles(io::Io *io) {
     skill_case(io, "smith-contract-roles");
+}
+
+export void test_skill_smith_env(io::Io *io) {
+    skill_case(io, "smith-env");
 }
 
 export void test_skill_smith_effects(io::Io *io) {

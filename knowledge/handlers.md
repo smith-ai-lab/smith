@@ -103,3 +103,8 @@ allocator; `checked` (D2a), `failing` and the profiles (D2b).
   returns null. As an allocator (`arena::allocator`) a growing arena answers `owns` for every chunk and null only when
   its backing refuses. `arena::try_push` is the `option` form of `push` (`.none` instead of the stop or the checked failure, nothing
   pushed), built on `try_push_raw` as `mem::try_alloc` is on `try_alloc_raw`; a slice has no `option` form yet.
+
+- **Environment and clock (issue #240):** `SmithEnvHandler {get}` answers `getenv`; `SmithClockHandler {now, sleep}` (nanoseconds)
+  answers `clock_gettime`, `nanosleep`, `usleep` and `sleep`. Each is per thread with a setter that returns the previous
+  handler, and none set is libc's. `gettimeofday`, `time` and the Mach clocks are not reached. A fake clock's `sleep`
+  advances its time and returns, so sleeping on it never blocks. See [direct-call-modules](direct-call-modules.md).

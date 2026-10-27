@@ -6,8 +6,8 @@
 #pragma once
 
 #include <stddef.h>
+#include <stdint.h>
 #include <sys/types.h>
-#include <time.h>
 
 typedef struct SmithAllocator SmithAllocator;
 
@@ -104,14 +104,14 @@ SmithEnvHandler *smith_handlers_set_env(SmithEnvHandler *env);
 SmithEnvHandler *smith_handlers_env(void);
 
 // The clock of the calling thread: the time clock_gettime reads and the sleeping that nanosleep, usleep and sleep do.
-// `now` fills the time of the clock `which` (CLOCK_MONOTONIC, CLOCK_REALTIME...) and returns 0; `sleep` waits for the
-// duration and returns 0 (a fake advances its time and returns at once). No clock handler set is libc's. gettimeofday,
-// time and the Mach clocks are not reached.
+// `now` is the time of the clock `which` (CLOCK_MONOTONIC, CLOCK_REALTIME...) in nanoseconds; `sleep` waits for that
+// many nanoseconds (a fake advances its time and returns at once, so it never blocks and never fails). No clock handler
+// set is libc's. gettimeofday, time and the Mach clocks are not reached.
 typedef struct SmithClockHandler SmithClockHandler;
 
 struct SmithClockHandler {
-    int (*now)(SmithClockHandler *self, clockid_t which, struct timespec *time);
-    int (*sleep)(SmithClockHandler *self, const struct timespec *duration);
+    int64_t (*now)(SmithClockHandler *self, int which);
+    void (*sleep)(SmithClockHandler *self, uint64_t nanoseconds);
 };
 
 // Sets the clock of the calling thread (null: libc's), returning the one it had.

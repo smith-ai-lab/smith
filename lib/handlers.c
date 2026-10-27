@@ -162,9 +162,24 @@ SmithClockHandler *smith_handlers_clock(void) {
     return smith_handlers_clock_current();
 }
 
-// The duration of a sleep, as a timespec; the clock handler's sleep takes that.
-static struct timespec smith_handlers_duration(unsigned long long seconds, unsigned long nanoseconds) {
-    return (struct timespec){.tv_sec = (time_t)seconds, .tv_nsec = (long)nanoseconds};
+// A timespec as nanoseconds, and nanoseconds as a timespec; a duration too long for 64 bits is the longest one.
+static uint64_t smith_handlers_nanoseconds(const struct timespec *duration) {
+    constexpr uint64_t second = 1'000'000'000;
+    if (duration->tv_sec < 0) return 0;
+    if ((uint64_t)duration->tv_sec > UINT64_MAX / second - 1) return UINT64_MAX;
+    return (uint64_t)duration->tv_sec * second + (uint64_t)duration->tv_nsec;
+}
+
+static int smith_handlers_clock_read(SmithClockHandler *clock, clockid_t which, struct timespec *time) {
+    constexpr int64_t second = 1'000'000'000;
+    int64_t nanoseconds = clock->now(clock, (int)which);
+    *time = (struct timespec){.tv_sec = (time_t)(nanoseconds / second), .tv_nsec = (long)(nanoseconds % second)};
+    return 0;
+}
+
+static int smith_handlers_clock_sleep(SmithClockHandler *clock, uint64_t nanoseconds) {
+    clock->sleep(clock, nanoseconds);
+    return 0;
 }
 
 static bool smith_handlers_has(int flags, int bit) {
@@ -564,28 +579,26 @@ static char *smith_handlers_getenv(const char *name) {
 
 static int smith_handlers_clock_gettime(clockid_t which, struct timespec *time) {
     SmithClockHandler *clock = smith_handlers_clock_current();
-    return clock != nullptr ? clock->now(clock, which, time) : clock_gettime(which, time);
+    return clock != nullptr ? smith_handlers_clock_read(clock, which, time) : clock_gettime(which, time);
 }
 
 static int smith_handlers_nanosleep(const struct timespec *duration, struct timespec *remaining) {
     SmithClockHandler *clock = smith_handlers_clock_current();
     if (clock == nullptr) return nanosleep(duration, remaining);
     if (remaining != nullptr) *remaining = (struct timespec){};
-    return clock->sleep(clock, duration);
+    return smith_handlers_clock_sleep(clock, smith_handlers_nanoseconds(duration));
 }
 
 static int smith_handlers_usleep(useconds_t microseconds) {
     SmithClockHandler *clock = smith_handlers_clock_current();
     if (clock == nullptr) return usleep(microseconds);
-    struct timespec duration = smith_handlers_duration(microseconds / 1000000U, (microseconds % 1000000U) * 1000UL);
-    return clock->sleep(clock, &duration);
+    return smith_handlers_clock_sleep(clock, (uint64_t)microseconds * 1000U);
 }
 
 static unsigned smith_handlers_sleep(unsigned seconds) {
     SmithClockHandler *clock = smith_handlers_clock_current();
     if (clock == nullptr) return sleep(seconds);
-    struct timespec duration = smith_handlers_duration(seconds, 0);
-    return clock->sleep(clock, &duration) == 0 ? 0 : seconds;
+    return smith_handlers_clock_sleep(clock, (uint64_t)seconds * 1'000'000'000U) == 0 ? 0 : seconds;
 }
 
 typedef struct {
@@ -1212,30 +1225,29 @@ char *getenv(const char *name) {
 
 int clock_gettime(clockid_t which, struct timespec *time) {
     SmithClockHandler *clock = smith_handlers_clock_current();
-    if (clock != nullptr) return clock->now(clock, which, time);
-    return ((int (*)(clockid_t, struct timespec *))smith_handlers_find(&smith_handlers_next_clock_gettime))(which, time);
+    if (clock != nullptr) return smith_handlers_clock_read(clock, which, time);
+    return ((int (*)(clockid_t, struct timespec *))smith_handlers_find(&smith_handlers_next_clock_gettime))(which,
+                                                                                                            time);
 }
 
 int nanosleep(const struct timespec *duration, struct timespec *remaining) {
     SmithClockHandler *clock = smith_handlers_clock_current();
     if (clock == nullptr)
-        return ((int (*)(const struct timespec *, struct timespec *))
-                    smith_handlers_find(&smith_handlers_next_nanosleep))(duration, remaining);
+        return ((int (*)(const struct timespec *, struct timespec *))smith_handlers_find(
+            &smith_handlers_next_nanosleep))(duration, remaining);
     if (remaining != nullptr) *remaining = (struct timespec){};
-    return clock->sleep(clock, duration);
+    return smith_handlers_clock_sleep(clock, smith_handlers_nanoseconds(duration));
 }
 
 int usleep(useconds_t microseconds) {
     SmithClockHandler *clock = smith_handlers_clock_current();
     if (clock == nullptr) return ((int (*)(useconds_t))smith_handlers_find(&smith_handlers_next_usleep))(microseconds);
-    struct timespec duration = smith_handlers_duration(microseconds / 1000000U, (microseconds % 1000000U) * 1000UL);
-    return clock->sleep(clock, &duration);
+    return smith_handlers_clock_sleep(clock, (uint64_t)microseconds * 1000U);
 }
 
 unsigned sleep(unsigned seconds) {
     SmithClockHandler *clock = smith_handlers_clock_current();
     if (clock == nullptr) return ((unsigned (*)(unsigned))smith_handlers_find(&smith_handlers_next_sleep))(seconds);
-    struct timespec duration = smith_handlers_duration(seconds, 0);
-    return clock->sleep(clock, &duration) == 0 ? 0 : seconds;
+    return smith_handlers_clock_sleep(clock, (uint64_t)seconds * 1'000'000'000U) == 0 ? 0 : seconds;
 }
 #endif
