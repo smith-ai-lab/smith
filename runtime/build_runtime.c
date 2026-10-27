@@ -2614,10 +2614,10 @@ constexpr size_t smith_tests_max = 65536;
 // (`<alias>::Key` for `import smith::random as <alias>;`: `key_type` is that spelling, "random::Key", or nullptr), and
 // its io `c::SmithIo *` or, with `import smith::io;`, `io::Io *` (`<alias>::Io` for an alias). *length is the name's
 // length, test_ not counted; *kind is how the test is called.
-typedef enum { SmithTestKind_Plain, SmithTestKind_Property, SmithTestKind_Io } SmithTestKind;
+typedef enum { SmithTestKind_Plain, SmithTestKind_Property, SmithTestKind_Io, SmithTestKind_Failing } SmithTestKind;
 
 static const char *smith_tests_match(const char *line, bool module, const char *key_type, const char *io_type,
-                                     size_t *length, SmithTestKind *kind) {
+                                     const char *failing_type, size_t *length, SmithTestKind *kind) {
     const char *prefix = "void test_";
     if (module) {
         if (strncmp(line, "export ", strlen("export ")) != 0) return nullptr;
@@ -2653,7 +2653,26 @@ static const char *smith_tests_match(const char *line, bool module, const char *
         return nullptr;
     }
     size_t key_size = strspn(rest, "abcdefghijklmnopqrstuvwxyz_");
-    if (key_size == 0 || strcmp(rest + key_size, ") {") != 0) return nullptr;
+    if (key_size == 0) return nullptr;
+    rest += key_size;
+    if (*kind == SmithTestKind_Property && strncmp(rest, ", ", 2) == 0) { // (random::Key key, mem::Failing *failing)
+        rest += 2;
+        if (strncmp(rest, "SmithFailing *", strlen("SmithFailing *")) == 0) {
+            rest += strlen("SmithFailing *");
+        } else if (strncmp(rest, "c::SmithFailing *", strlen("c::SmithFailing *")) == 0) {
+            rest += strlen("c::SmithFailing *");
+        } else if (failing_type != nullptr && strncmp(rest, failing_type, strlen(failing_type)) == 0 &&
+                   strncmp(rest + strlen(failing_type), " *", 2) == 0) {
+            rest += strlen(failing_type) + 2;
+        } else {
+            return nullptr;
+        }
+        *kind = SmithTestKind_Failing;
+        key_size = strspn(rest, "abcdefghijklmnopqrstuvwxyz_");
+        if (key_size == 0) return nullptr;
+        rest += key_size;
+    }
+    if (strcmp(rest, ") {") != 0) return nullptr;
     return name;
 }
 
@@ -2672,6 +2691,12 @@ static const char *smith_tests_type_of_import(const char *line, const char *modu
 
 static const char *smith_tests_key_type(const char *line) {
     return smith_tests_type_of_import(line, "random", "Key");
+}
+
+// The spelling of smith::mem's failing allocator a `.smith` file's import line gives, "mem::Failing" or
+// "<alias>::Failing", or nullptr.
+static const char *smith_tests_failing_type(const char *line) {
+    return smith_tests_type_of_import(line, "mem", "Failing");
 }
 
 // The spelling of smith::io's type a `.smith` file's import line gives, "io::Io" or "<alias>::Io", or nullptr.
@@ -2728,13 +2753,16 @@ static bool smith_tests_find(SmithRun *run, SmithTestFound *found, size_t *count
         const char *module = nullptr;
         const char *key_type = nullptr;
         const char *io_type = nullptr;
+        const char *failing_type = nullptr;
         for (size_t j = 0; lines[j] != nullptr; j++) { // bounded by smith_split_lines
             if (in_smith && module == nullptr) module = smith_tests_module_line(lines[j]);
             if (in_smith && key_type == nullptr) key_type = smith_tests_key_type(lines[j]);
             if (in_smith && io_type == nullptr) io_type = smith_tests_io_type(lines[j]);
+            if (in_smith && failing_type == nullptr) failing_type = smith_tests_failing_type(lines[j]);
             size_t length = 0;
             SmithTestKind kind = SmithTestKind_Plain;
-            const char *name = smith_tests_match(lines[j], module != nullptr, key_type, io_type, &length, &kind);
+            const char *name =
+                smith_tests_match(lines[j], module != nullptr, key_type, io_type, failing_type, &length, &kind);
             if (name == nullptr) continue;
             const char *test = smith_text("test_%.*s", (int)length, name);
             const char *symbol = smith_tests_symbol(module, test);
@@ -2767,27 +2795,39 @@ static int smith_tests_scan(SmithRun *run) {
     if (!smith_tests_find(run, found, &count)) return 1;
     const char **prototypes = smith_new_list(count);
     const char **rows = smith_new_list(count);
+    const char **thunks = smith_new_list(count);
+    size_t thunk_count = 0;
     for (size_t i = 0; i < count; i++) {
-        const char *argument = found[i].kind == SmithTestKind_Property ? "SmithKey key"
-                               : found[i].kind == SmithTestKind_Io     ? "SmithIo *io"
-                                                                       : "void";
+        const char *argument = found[i].kind == SmithTestKind_Property  ? "SmithKey key"
+                               : found[i].kind == SmithTestKind_Failing ? "SmithKey key, struct SmithFailing *failing"
+                               : found[i].kind == SmithTestKind_Io      ? "SmithIo *io"
+                                                                        : "void";
+        if (found[i].kind == SmithTestKind_Failing)
+            thunks[thunk_count++] = smith_text("static void thunk_%s(SmithKey key, void *failing) {\n"
+                                               "    %s(key, (struct SmithFailing *)failing);\n}\n\n",
+                                               found[i].symbol, found[i].symbol);
         const char *label = found[i].label != nullptr ? smith_text(" __asm__(\"_%s\")", found[i].label) : "";
         prototypes[i] = smith_text("void %s(%s)%s;\n", found[i].symbol, argument, label);
-        const char *slot_names[] = {"nullptr", "nullptr", "nullptr"};
+        const char *slot_names[] = {"nullptr", "nullptr", "nullptr", "nullptr"};
         slot_names[found[i].kind] = found[i].symbol;
-        rows[i] = smith_text("    {\"%s\", %s, %s, %s},\n", found[i].name, slot_names[0], slot_names[1], slot_names[2]);
+        if (found[i].kind == SmithTestKind_Failing) // the table's slot takes the allocator as a void * (test.smith)
+            slot_names[found[i].kind] = smith_text("thunk_%s", found[i].symbol);
+        rows[i] = smith_text("    {\"%s\", %s, %s, %s, %s},\n", found[i].name, slot_names[0], slot_names[1],
+                             slot_names[2], slot_names[3]);
     }
+    // The header declares the allocator's tag and does not include <smith/mem.h>: a test file that imports smith::mem
+    // reads that header's instance section, which an earlier plain include would have skipped.
     const char *header = smith_text("// Generated by smith_tests from the test files; do not edit.\n#pragma once\n\n"
-                                    "#include <smith/io.h>\n#include <smith/random.h>\n\n%s",
+                                    "#include <smith/io.h>\n#include <smith/random.h>\n\nstruct SmithFailing;\n\n%s",
                                     smith_join(run->b, prototypes, ""));
     const char *base = strrchr(run->outputs[0], '/');
-    const char *table =
-        smith_text("// Generated by smith_tests from the test files; do not edit.\n"
-                   "#include <smith/test.h>\n\n#include \"%s\"\n\n"
-                   "const SmithTest smith_test_table[] = {\n%s    {nullptr, nullptr, nullptr, nullptr},\n};\n"
-                   "const size_t smith_test_count = sizeof smith_test_table / sizeof "
-                   "smith_test_table[0] - 1;\n",
-                   base != nullptr ? base + 1 : run->outputs[0], smith_join(run->b, rows, ""));
+    const char *table = smith_text(
+        "// Generated by smith_tests from the test files; do not edit.\n"
+        "#include <smith/test.h>\n\n#include \"%s\"\n\n%s"
+        "const SmithTest smith_test_table[] = {\n%s    {nullptr, nullptr, nullptr, nullptr, nullptr},\n};\n"
+        "const size_t smith_test_count = sizeof smith_test_table / sizeof "
+        "smith_test_table[0] - 1;\n",
+        base != nullptr ? base + 1 : run->outputs[0], smith_join(run->b, thunks, ""), smith_join(run->b, rows, ""));
     smith_write(run->b, run->outputs[0], header);
     smith_write(run->b, run->outputs[1], table);
     return 0;
@@ -2829,9 +2869,11 @@ static SmithObject *smith_tests_object(SmithBuild *b, const SmithTests *tests, c
 
 // The runner and, after it, the arguments `smith test` was given: the runner's own options (--test, --seed, --seeds,
 // --jobs, --shrink, --shuffle, --full, --isolate and the others its header documents).
-static const char *const *smith_tests_arguments(SmithBuild *b, const char *runner) {
+static const char *const *smith_tests_arguments(SmithBuild *b, const char *runner, SmithSetting checked_allocator) {
     const char *program = strchr(runner, '/') != nullptr ? runner : smith_text("./%s", runner);
-    return smith_cat(b, smith_list(b, program, nullptr), smith_args(b), nullptr);
+    const char *const *own = checked_allocator == SmithSetting_Off ? smith_list(b, program, "--unchecked", nullptr)
+                                                                   : smith_list(b, program, nullptr);
+    return smith_cat(b, own, smith_args(b), nullptr);
 }
 
 static const char *const *smith_tests_imported(SmithBuild *b, const char *const *sources);
@@ -2911,7 +2953,7 @@ void smith_tests(SmithBuild *b, SmithTests *tests) {
     SmithStep task = {
         .run = smith_tests_run,
         .inputs = smith_cat(b, program.step.outputs, copy.inputs, nullptr),
-        .args = smith_tests_arguments(b, copy.output),
+        .args = smith_tests_arguments(b, copy.output, copy.checked_allocator),
         .pool = "console",
         .test = true,
     };
@@ -3840,6 +3882,7 @@ void smith_app_tests(SmithBuild *b, SmithAppTests *tests) {
         .flags = flags,
         .link_flags = smith_app_link_flags(b, "debug", copy.link_flags, "build/tests"),
         .inputs = copy.inputs,
+        .checked_allocator = copy.checked_allocator,
     };
     smith_tests(b, &run);
     smith_app_autodiff = false;
