@@ -154,10 +154,9 @@ f64 learning_rate = 0.05;
 f64 beta1 = 0.9;
 f64 beta2 = 0.999;
 
-i32 main(i32 argc, char **argv) {
-    io::Io io = io::make(argc, argv);
-    io::Console *console = &io.console;
-    arena::Arena *arena = &io.arena;
+i32 main(io::Io *io) {
+    io::Console *console = &io->console;
+    arena::Arena *arena = &io->arena;
 
     // 1. A model of two f32 numbers: the gradient of sum (m x + b - y)^2, nothing but numbers to allocate.
     Model model = {.m = 0.5f, .b = -0.25f};
@@ -287,6 +286,5 @@ i32 main(i32 argc, char **argv) {
     }
 
     (void)io::console_printf(console, "worst relative difference %.3e (tolerance %.0e)\n", worst, tolerance);
-    io::close(&io);
     return ok ? 0 : 1;
 }

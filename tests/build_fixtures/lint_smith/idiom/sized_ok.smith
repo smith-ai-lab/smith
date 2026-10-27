@@ -9,6 +9,6 @@ export u64 wide(usize n, u32 x, u64 y, f64 d, f32 f) {
     return n + x + y + (u64)d + (u64)f + byte + (u64)count + (u64)plain + (u64)half + (u64)letter;
 }
 
-i32 main(i32 argc, char **argv) {
-    return argc + (argv == nullptr);
+i32 main(str args[:]) {
+    return (i32)countof(args);
 }

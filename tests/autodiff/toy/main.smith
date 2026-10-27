@@ -37,8 +37,7 @@ i32 gradients(io::Console *console, arena::Arena *arena) {
     return status;
 }
 
-i32 main(i32 argc, char **argv) {
-    io::Io io = io::make(argc, argv);
+i32 main(io::Io *io) {
     f64 x = 1.7;
     f64 y = 0.4;
     f64 dx = autodiff::reverse((void *)toy::f, autodiff::out, x, autodiff::out, y);
@@ -49,13 +48,12 @@ i32 main(i32 argc, char **argv) {
     autodiff::reverse((void *)toy::loss, autodiff::dup, p, dp, autodiff::constant, (usize)3);
     f64 analytic_x = 2.0 * x * c::sin(y) + 3.0 * y;
     f64 analytic_y = x * x * c::cos(y) + 3.0 * x;
-    (void)io::console_printf(&io.console, "reverse dx %.12f %.12f\n", dx, analytic_x);
-    (void)io::console_printf(&io.console, "forward dx %.12f %.12f\n", tx, analytic_x);
-    (void)io::console_printf(&io.console, "forward dy %.12f %.12f\n", ty, analytic_y);
+    (void)io::console_printf(&io->console, "reverse dx %.12f %.12f\n", dx, analytic_x);
+    (void)io::console_printf(&io->console, "forward dx %.12f %.12f\n", tx, analytic_x);
+    (void)io::console_printf(&io->console, "forward dy %.12f %.12f\n", ty, analytic_y);
     for (usize i = 0; i < 3; i++) {
-        (void)io::console_printf(&io.console, "loss dp[%zu] %.12f %.12f\n", i, dp[i], 2.0 * (f64)(i + 1) * p[i]);
+        (void)io::console_printf(&io->console, "loss dp[%zu] %.12f %.12f\n", i, dp[i], 2.0 * (f64)(i + 1) * p[i]);
     }
-    i32 status = gradients(&io.console, &io.arena);
-    io::close(&io);
+    i32 status = gradients(&io->console, &io->arena);
     return status;
 }

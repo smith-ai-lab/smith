@@ -71,8 +71,7 @@ void compare(io::Console *console, const char *name, const f64 *got, const f64 *
     worst = c::fmax(worst, relative);
 }
 
-i32 main(i32 argc, char **argv) {
-    io::Io io = io::make(argc, argv);
+i32 main(io::Io *io) {
     Scan scan = {};
     Seeds seeds = {};
     fill(scan.x, 36, -1.0, 1.0);
@@ -87,7 +86,7 @@ i32 main(i32 argc, char **argv) {
     fill(seeds.dy, 36, -1.0, 1.0);
     fill(seeds.dse, 48, -1.0, 1.0);
 
-    Scan g = autodiff::gradient(&io.arena, scan_loss, &scan, &seeds);
+    Scan g = autodiff::gradient(&io->arena, scan_loss, &scan, &seeds);
 
     c::ReferenceScanShape shape = {2, 3, 2, 3, 4};
     c::ReferenceScanInputs in = {scan.x, scan.dt, scan.a, scan.b, scan.c, scan.keep};
@@ -99,14 +98,13 @@ i32 main(i32 argc, char **argv) {
     c::ReferenceScanGradients hand = {h.x, h.dt, h.a, h.b, h.c, h.state0, nullptr};
     c::reference_scan_backward(&shape, &in, scan.state0, states, seeds.dy, seeds.dse, &hand);
 
-    (void)io::console_printf(&io.console, "gradient vs hand-written backward:\n");
-    compare(&io.console, "dx", g.x, h.x, 36);
-    compare(&io.console, "ddt", g.dt, h.dt, 12);
-    compare(&io.console, "da", g.a, h.a, 2);
-    compare(&io.console, "db", g.b, h.b, 24);
-    compare(&io.console, "dc", g.c, h.c, 24);
-    compare(&io.console, "dstate0", g.state0, h.state0, 48);
-    (void)io::console_printf(&io.console, "worst relative difference %.3e (tolerance %.0e)\n", worst, tolerance);
-    io::close(&io);
+    (void)io::console_printf(&io->console, "gradient vs hand-written backward:\n");
+    compare(&io->console, "dx", g.x, h.x, 36);
+    compare(&io->console, "ddt", g.dt, h.dt, 12);
+    compare(&io->console, "da", g.a, h.a, 2);
+    compare(&io->console, "db", g.b, h.b, 24);
+    compare(&io->console, "dc", g.c, h.c, 24);
+    compare(&io->console, "dstate0", g.state0, h.state0, 48);
+    (void)io::console_printf(&io->console, "worst relative difference %.3e (tolerance %.0e)\n", worst, tolerance);
     return worst <= tolerance ? 0 : 1;
 }

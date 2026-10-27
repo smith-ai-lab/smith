@@ -15,12 +15,10 @@ f64 pick(Data *d, usize n) {
     return d->v[n] * d->v[n];
 }
 
-i32 main(i32 argc, char **argv) {
-    io::Io io = io::make(argc, argv);
+i32 main(io::Io *io) {
     Data d = {.v = {1.0, 2.0, 3.0, 4.0}};
-    usize n = c::strcmp(argv[1], "ok") == 0 ? 3 : 4;
-    Data g = autodiff::gradient(&io.arena, pick, &d, n);
-    (void)io::console_printf(&io.console, "gradient %.3f %.3f\n", g.v[0], g.v[3]);
-    io::close(&io);
+    usize n = c::strcmp(io::args_get(&io->args, 1), "ok") == 0 ? 3 : 4;
+    Data g = autodiff::gradient(&io->arena, pick, &d, n);
+    (void)io::console_printf(&io->console, "gradient %.3f %.3f\n", g.v[0], g.v[3]);
     return 0;
 }

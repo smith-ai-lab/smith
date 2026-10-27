@@ -319,7 +319,7 @@ export void test_lint_smith_sized_types_every_c_type_at_its_place_with_the_sized
 
 export void test_lint_smith_sized_types_sized_types_char_and_main_are_clean(io::Io *io) {
     scratch::Project p = prepared(io, false);
-    scratch::expect_text("smith-sized-types: sized types, char and i32 main(i32 argc, char **argv) are clean", "",
+    scratch::expect_text("smith-sized-types: sized types, char and i32 main(str args[:]) are clean", "",
                          lint_text(&p, "idiom smith-sized-types idiom/sized_ok.smith >sized-ok.out; "
                                        "idiom_findings <sized-ok.out"));
 }

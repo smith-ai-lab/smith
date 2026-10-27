@@ -3162,7 +3162,7 @@ void say_written(const Options *options) {
 i32 main(str args[:]) {
     // The runner's options and io::make read a C argv: these are argv's own characters (not copied), nullptr-ended.
     i32 argc = (i32)countof(args);
-    char *argv[(usize)argc + 1];
+    char **argv = (char **)__builtin_alloca(((usize)argc + 1) * sizeof(char *));
     for (usize i = 0; i < countof(args); i++)
         argv[i] = (char *)(c::uintptr_t)args[i].data;
     argv[argc] = nullptr;

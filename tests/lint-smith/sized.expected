@@ -11,4 +11,4 @@ idiom/sized.smith:10:5: error: `short` is a C type, and a .smith file has the si
 idiom/sized.smith:11:28: error: `uint64_t` is a C type, and a .smith file has the sized types: write `u64`
 idiom/sized.smith:11:45: error: `uint64_t` is a C type, and a .smith file has the sized types: write `u64`
 idiom/sized.smith:18:1: error: `int` is a C type, and a .smith file has the sized types: write `i32`
-idiom/sized.smith:18:10: error: `int` is a C type, and a .smith file has the sized types: write `i32`
+idiom/sized.smith:19:5: error: `int` is a C type, and a .smith file has the sized types: write `i32`

@@ -224,6 +224,7 @@ static const char *const smith_lang_main_head[] = {"main",
                                                    ")",
                                                    "smith_main_str",
                                                    ";",
+                                                   "@push",
                                                    "smith_main_str",
                                                    "smith_main_slots",
                                                    "[",
@@ -280,6 +281,7 @@ static const char *const smith_lang_main_head[] = {"main",
                                                    "}",
                                                    ";",
                                                    "}",
+                                                   "@pop",
                                                    "typeof",
                                                    "(",
                                                    "smith_main_str",
@@ -305,33 +307,44 @@ static const char *const smith_lang_main_head[] = {"main",
                                                    "}",
                                                    ";"};
 
-// The tokens of the words; the empty word is the program's name for `args`.
-static void smith_lang_main_make(const char *const *words, size_t count, const SmithToken *like, const SmithToken *name,
-                                 SmithToken *made) {
+// The tokens of the words; the empty word is the program's name for `args`, `@push` and `@pop` bracket the one VLA with
+// the warning off (`-Wvla` is on in a project that forbids variable-length arrays; this one is the lowering's).
+static size_t smith_lang_main_make(const char *const *words, size_t count, const SmithToken *like,
+                                   const SmithToken *name, SmithToken *made) {
     bool tight = true;
+    size_t used = 0;
     for (size_t at = 0; at < count; at++) {
         const char *text = words[at];
+        if (text[0] == '@') { // @push: the warning off; @pop: back
+            used = smith_lang_enum_pragma(made, used, like,
+                                          text[1] == 'p' && text[2] == 'u' ? "\"clang diagnostic push\""
+                                                                           : "\"clang diagnostic pop\"");
+            if (text[2] == 'u')
+                used = smith_lang_enum_pragma(made, used, like, "\"clang diagnostic ignored \\\"-Wvla\\\"\"");
+            continue;
+        }
         if (text[0] == 0) {
-            made[at] = *name;
-            made[at].space_before = true;
+            made[used] = *name;
+            made[used++].space_before = true;
             tight = false;
             continue;
         }
         bool word = isalnum((unsigned char)text[0]) || text[0] == '_';
-        made[at] = smith_lang_tuple_made(word ? SmithTokenKind_Identifier : SmithTokenKind_Punctuator, text,
-                                         strlen(text), like, !tight && strchr("),;]:[", text[0]) == nullptr);
-        if (isdigit((unsigned char)text[0])) made[at].kind = SmithTokenKind_Number;
-        made[at].synthetic = false; // the slice rewrites read these as the program's
+        made[used] = smith_lang_tuple_made(word ? SmithTokenKind_Identifier : SmithTokenKind_Punctuator, text,
+                                           strlen(text), like, !tight && strchr("),;]:[", text[0]) == nullptr);
+        if (isdigit((unsigned char)text[0])) made[used].kind = SmithTokenKind_Number;
+        made[used++].synthetic = false; // the slice rewrites read these as the program's
         tight = text[0] == '(' || text[0] == '[';
     }
+    return used;
 }
 
 static void smith_lang_main_args_rewrite(SmithLang *lang, const SmithToken *name) {
     constexpr size_t count = sizeof smith_lang_main_head / sizeof smith_lang_main_head[0];
-    static SmithToken made[count];
+    static SmithToken made[count + 16]; // the pragmas are four tokens each
     SmithToken like = lang->queue[lang->queue_head];
-    smith_lang_main_make(smith_lang_main_head, count, &like, name, made);
-    smith_lang_tuple_replace(lang, 9, made, count);
+    size_t used = smith_lang_main_make(smith_lang_main_head, count, &like, name, made);
+    smith_lang_tuple_replace(lang, 9, made, used);
 }
 
 // `main ( )` becomes `main ( void )`.

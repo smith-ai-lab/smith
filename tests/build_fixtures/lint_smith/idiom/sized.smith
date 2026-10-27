@@ -15,6 +15,7 @@ export char first(const char *text) {
     return text[0];
 }
 
-int main(int argc, char **argv) {
-    return argc + (argv == nullptr);
+int main(void) {
+    int status = 0;
+    return status;
 }

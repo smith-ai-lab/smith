@@ -73,9 +73,8 @@ void compare(io::Console *console, const char *name, const f64 *got, const f64 *
     worst = c::fmax(worst, relative);
 }
 
-i32 main(i32 argc, char **argv) {
-    io::Io io = io::make(argc, argv);
-    arena::Arena *arena = &io.arena;
+i32 main(io::Io *io) {
+    arena::Arena *arena = &io->arena;
     Scan scan = {.x = arena::push_slice(arena, f64, 36),
                  .dt = arena::push_slice(arena, f64, 12),
                  .a = arena::push_slice(arena, f64, 2),
@@ -113,14 +112,13 @@ i32 main(i32 argc, char **argv) {
     c::ReferenceScanGradients hand = {hx, hdt, ha, hb, hc, hstate0, nullptr};
     c::reference_scan_backward(&shape, &in, scan.state0.data, states, seeds.dy.data, seeds.dse.data, &hand);
 
-    (void)io::console_printf(&io.console, "gradient vs hand-written backward (a struct of slices):\n");
-    compare(&io.console, "dx", g.x.data, hx, 36);
-    compare(&io.console, "ddt", g.dt.data, hdt, 12);
-    compare(&io.console, "da", g.a.data, ha, 2);
-    compare(&io.console, "db", g.b.data, hb, 24);
-    compare(&io.console, "dc", g.c.data, hc, 24);
-    compare(&io.console, "dstate0", g.state0.data, hstate0, 48);
-    (void)io::console_printf(&io.console, "worst relative difference %.3e (tolerance %.0e)\n", worst, tolerance);
-    io::close(&io);
+    (void)io::console_printf(&io->console, "gradient vs hand-written backward (a struct of slices):\n");
+    compare(&io->console, "dx", g.x.data, hx, 36);
+    compare(&io->console, "ddt", g.dt.data, hdt, 12);
+    compare(&io->console, "da", g.a.data, ha, 2);
+    compare(&io->console, "db", g.b.data, hb, 24);
+    compare(&io->console, "dc", g.c.data, hc, 24);
+    compare(&io->console, "dstate0", g.state0.data, hstate0, 48);
+    (void)io::console_printf(&io->console, "worst relative difference %.3e (tolerance %.0e)\n", worst, tolerance);
     return worst <= tolerance ? 0 : 1;
 }
