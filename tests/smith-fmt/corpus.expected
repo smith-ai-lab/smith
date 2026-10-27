@@ -8263,41 +8263,24 @@ i32 main() {
     printf("%d %d\n", sum, aligned);
     return 0;
 }
-==> library-smith-text/src/main.smith <==
-// smith::text from .smith: its generated header (include/smith/text.h) is the interface, and the names are written as
-// the module's, text::make, though C calls them smith_text_make.
+==> library-smith-slice/src/main.smith <==
+// smith::slice from .smith: its generated header (include/smith/slice.h) is the interface, and the names are written as
+// the module's, slice::take_until, ascii::space.
 import <stdio.h>;
-import smith::text;
+import smith::ascii;
+import smith::slice;
 
 i32 main() {
-    const char input[:] = "move 3 4 # go\nturn -90.5\n\nhash 00ff\n";
-    const char line[:];
-    const char word[:];
+    const char all[:] = "move 3 4 \nturn -90.5\n\nhash 00ff\n";
+    const char input[:] = all;
     u32 lines = 0;
-    while (text::take_line(&input, &line)) {
-        if (!text::take_word(&line, &word)) continue;
+    while (countof(input) > 0) {
+        const char line[:] = slice::take_until(&input, '\n');
+        const char word[:] = slice::take_while(&line, ascii::alpha);
+        const char rest[:] = slice::trim(line, ascii::space);
+        if (countof(word) == 0 && countof(rest) == 0) continue;
         lines += 1;
-        if (text::is(word, "move")) {
-            u64 x = 0;
-            u64 y = 0;
-            if (text::take_word(&line, &word) && text::parse_u64(word, &x) && text::take_word(&line, &word) &&
-                text::parse_u64(word, &y))
-                c::printf("move %llu %llu\n", x, y);
-        } else if (text::is(word, "turn")) {
-            f64 degrees = 0;
-            if (text::take_word(&line, &word) && text::parse_f64(word, &degrees)) {
-                char out[text::f64_capacity];
-                usize n = text::write_f64(out, degrees);
-                c::printf("turn %.*s\n", (i32)n, out);
-            }
-        } else if (text::is(word, "hash")) {
-            u64 h = 0;
-            if (text::take_word(&line, &word) && text::parse_hex(word, &h)) {
-                char out[text::number_capacity];
-                usize n = text::write_hex(out, h);
-                c::printf("hash %.*s\n", (i32)n, out);
-            }
-        }
+        c::printf("%.*s|%.*s\n", (i32)countof(word), word, (i32)countof(rest), rest);
     }
     c::printf("%u lines\n", lines);
     return 0;

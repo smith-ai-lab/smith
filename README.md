@@ -201,10 +201,11 @@ import smith::slice;
 // "port = 8080\n..." as the value of port, or the reason there is none.
 export result(i64, format::Error) port(const char file[:]) {
     const char rest[:] = file;
+    const char name[:] = "port";
     while (countof(rest) > 0) {
         const char line[:] = slice::take_until(&rest, '\n');
         const char key[:] = slice::trim(slice::take_until(&line, '='), ascii::space);
-        if (slice::equal(key, "port")) return format::parse(slice::trim(line, ascii::space), i64);
+        if (slice::equal(key, name)) return format::parse(slice::trim(line, ascii::space), i64);
     }
     return {.error = format::Empty};
 }
