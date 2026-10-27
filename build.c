@@ -2133,8 +2133,13 @@ static int build_coverage_fetch(SmithRun *run) {
 // naming the steps. A push makes a new head with no status, so the train takes only what was checked as it is. smith
 // never runs gh itself: this task does, like coverage-fetch. Logs are .smith/preflight-<step>.log.
 static int build_preflight_step(SmithBuild *b, const char *name, const char *const *argv) {
+    // Each step runs in a session of its own, so a signal to the terminal's or the tool's process group (a hangup after
+    // a timeout: status 129) does not reach the checks.
+    const char *const *wrapped =
+        smith_cat(b, smith_list(b, "perl", "-MPOSIX", "-e", "POSIX::setsid(); exec @ARGV or die \"exec: $!\"", nullptr),
+                  argv, nullptr);
     int status =
-        build_spawn(&(BuildSpawn){.argv = argv, .log = smith_fmt(b, ".smith/preflight-%s.log", name), .tail = 12});
+        build_spawn(&(BuildSpawn){.argv = wrapped, .log = smith_fmt(b, ".smith/preflight-%s.log", name), .tail = 12});
     fprintf(stderr, "preflight: %s %s\n", name, status == 0 ? "ok" : "FAILED");
     return status;
 }
