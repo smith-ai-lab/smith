@@ -217,13 +217,15 @@ export void test_lint_with_no_arguments_lints_the_smith_sources_the_build_does_n
     scratch::expect_status("a finding in a .smith file the build does not compile fails smith lint", 1, &run);
     scratch::expect_text("... it is reported at the source", "1",
                          scratch::capture(&p,
-                                          "cat gate.out gate.err .smith/log/lint.log | "
+                                          "cat gate.out gate.err .smith/log/lint.log 2>/dev/null | "
                                           "grep \"unbuilt.smith:1:.*'Bad_Unbuilt'\" | sed 's|^.*/unbuilt|unbuilt|' | "
                                           "sort -u | grep -c ."));
-    scratch::expect_text("... a file the ignore list names is left alone", "0",
-                         scratch::capture(&p, "cat gate.out gate.err .smith/log/lint.log | grep -c ignored.smith"));
-    scratch::expect_text("... and the number of files linted is printed", "1",
-                         scratch::capture(&p, "cat .smith/log/lint.log | grep -c 'smith lint: linted 3 files'"));
+    scratch::expect_text(
+        "... a file the ignore list names is left alone", "0",
+        scratch::capture(&p, "cat gate.out gate.err .smith/log/lint.log 2>/dev/null | grep -c ignored.smith"));
+    scratch::expect_text("... and the number of files linted is printed", "smith lint: linted 3 files",
+                         scratch::capture(&p, "cat gate.out gate.err .smith/log/lint.log 2>/dev/null | "
+                                              "grep -o 'smith lint: linted [0-9]* files' | sort -u"));
 }
 
 // --- a call to a generic: the instance is judged as the generic's name, not `push_array<f64>` ----------------------
