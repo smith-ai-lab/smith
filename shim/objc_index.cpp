@@ -293,9 +293,10 @@ class Writer {
     }
 
     // The flags: o (the result is +1), s (x86_64 returns it through memory: objc_msgSend_stret), f
-    // (objc_msgSend_fpret).
+    // (objc_msgSend_fpret), r (a method of a protocol that its adopter must implement).
     std::string flags(const ObjCMethodDecl *method, QualType result) {
         std::string out = owned(method) ? "o" : "";
+        if (isa<ObjCProtocolDecl>(method->getDeclContext()) && !method->isOptional()) out += "r";
         if (!arm && result->isRecordType() && context.getTypeSize(result) > 128) out += "s";
         if (!arm && result->isSpecificBuiltinType(BuiltinType::LongDouble)) out += "f";
         return out.empty() ? "-" : out;

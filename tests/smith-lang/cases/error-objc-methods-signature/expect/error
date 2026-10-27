@@ -1,0 +1,1 @@
+src/main.smith:11:76: incompatible function pointer types initializing 'void (*)(App *, objc_NSNotification *)' (aka 'void (*)(struct App *, struct objc_NSNotification *)') with an expression of type 'void (App *, objc_NSWindow *)' (aka 'void (struct App *, struct objc_NSWindow *)') [-Wincompatible-function-pointer-types]

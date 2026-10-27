@@ -32,6 +32,10 @@ constexpr size_t smith_lang_objc_names_max = 256;
 constexpr size_t smith_lang_objc_owners_max = 256;
 constexpr size_t smith_lang_objc_set_size = 16384; // a power of two
 
+// runtime/lang_objc_class.c, which comes after this file
+static bool smith_lang_objc_class_methods(SmithLang *lang, const SmithHost *host, const SmithToken *name,
+                                          const SmithToken *taken, SmithToken *result);
+
 static char smith_lang_objc_text[smith_lang_objc_text_max];
 static uint64_t smith_lang_objc_instance_set[smith_lang_objc_set_size];
 static uint64_t smith_lang_objc_emitted_set[smith_lang_objc_set_size];
@@ -42,6 +46,10 @@ typedef struct {
     size_t used;
     bool full;
 } SmithLangObjcOut;
+
+static void smith_lang_objc_class_define(SmithLang *lang, const SmithHost *host, SmithLangObjcOut *out,
+                                         char names[][96], size_t name_count);
+static void smith_lang_objc_class_prepare(const SmithHost *host, SmithLangObjcOut *out);
 
 static void smith_lang_objc_put(SmithLangObjcOut *out, const char *text, size_t length) {
     if (out->used + length + 1 > smith_lang_objc_text_max) {
@@ -366,7 +374,10 @@ static bool smith_lang_objc_import(SmithLang *lang, const SmithHost *host, const
     }
     if (!lang->objc.bound) {
         lang->objc.bound = true;
-        if (smith_lang_add_binding(lang, host, "objc", 4, location, nullptr, false))
+        SmithLangBinding *module = smith_lang_binding_find(lang, "objc", 4);
+        if (module != nullptr && module->module.length > 0) // `import smith::objc;` came first: the same name
+            module->is_objc = true;
+        else if (smith_lang_add_binding(lang, host, "objc", 4, location, nullptr, false))
             smith_lang_binding_find(lang, "objc", 4)->is_objc = true;
     }
     if (host->watch_mode != nullptr) host->watch_mode(host->context, SmithWatch_All);
@@ -429,6 +440,9 @@ static void smith_lang_objc_name(SmithLang *lang, const SmithHost *host, const S
     }
     if (smith_lang_equals(taken->text, taken->length, "Owned") &&
         smith_lang_objc_owned_type(lang, host, name, taken, result))
+        return;
+    if (smith_lang_equals(taken->text, taken->length, "methods") &&
+        smith_lang_objc_class_methods(lang, host, name, taken, result))
         return;
     const SmithToken *colons = smith_lang_peek(lang, host, 0, false);
     const SmithToken *method = smith_lang_peek(lang, host, 1, false);
@@ -626,6 +640,10 @@ typedef struct {
     size_t type_count;
 } SmithLangObjcMethod;
 
+static void smith_lang_objc_class_super(SmithLangObjcOut *out, const char *self, size_t self_length,
+                                        const SmithLangObjcMethod *method);
+static bool smith_lang_objc_class_wants_super(void);
+
 // A line `m owner kind name selector flags result params...`.
 static bool smith_lang_objc_method(const char *line, const char *end, SmithLangObjcMethod *method) {
     const char *at = line + 2;
@@ -815,8 +833,11 @@ static void smith_lang_objc_class(const SmithLang *lang, SmithLangObjcOut *out, 
                                                                  : 'k',
                                                       (int)method.name_length, method.name);
                             if (key_length > 0 && (size_t)key_length < sizeof key &&
-                                !smith_lang_objc_set_add(smith_lang_objc_emitted_set, key, (size_t)key_length))
+                                !smith_lang_objc_set_add(smith_lang_objc_emitted_set, key, (size_t)key_length)) {
                                 smith_lang_objc_wrapper(out, name, length, &method, !instance, renamed);
+                                if (instance && kind == 'c' && smith_lang_objc_class_wants_super())
+                                    smith_lang_objc_class_super(out, name, length, &method);
+                            }
                         }
                     }
                     if (newline == nullptr) break;
@@ -916,6 +937,7 @@ static void smith_lang_objc_define(SmithLang *lang, const SmithHost *host) {
     smith_lang_objc_puts(&out, "__asm__(\".linker_option \\\"-lobjc\\\"\");\n");
     memset(smith_lang_objc_owned_set, 0, sizeof smith_lang_objc_owned_set);
     smith_lang_objc_puts(&out, smith_lang_objc_prelude);
+    smith_lang_objc_class_prepare(host, &out);
     static char names[smith_lang_objc_names_max][96];
     size_t count = smith_lang_objc_mentions(host, names, smith_lang_objc_names_max);
     SmithLangObjcSpan string_span[1];
@@ -935,6 +957,7 @@ static void smith_lang_objc_define(SmithLang *lang, const SmithHost *host) {
         else if (smith_lang_objc_blocks(lang, 'p', names[i], length, spans, 1) > 0)
             smith_lang_objc_class(lang, &out, 'p', names[i], length);
     }
+    smith_lang_objc_class_define(lang, host, &out, names, count);
     if (has_string) {
         smith_lang_objc_puts(&out, smith_lang_objc_strings);
         // `str` is this struct from here on: the lowering names it and does not define it again.

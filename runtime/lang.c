@@ -908,6 +908,9 @@ static const char *smith_lang_str(SmithLangText text) {
 // Objective-C: `import <AppKit/AppKit.h>;` and `objc::`.
 #include "lang_objc.c"
 
+// Classes and blocks of Objective-C (issue #319)
+#include "lang_objc_class.c"
+
 // The head of a file-scope declaration.
 #include "lang_head.c"
 

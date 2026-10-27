@@ -463,6 +463,10 @@ export void test_skill_smith_lang_objc(io::Io *io) {
     skill_case(io, "smith-lang-objc");
 }
 
+export void test_skill_smith_lang_objc_classes(io::Io *io) {
+    skill_case(io, "smith-lang-objc-classes");
+}
+
 export void test_skill_smith_lang_target(io::Io *io) {
     skill_case(io, "smith-lang-target");
 }

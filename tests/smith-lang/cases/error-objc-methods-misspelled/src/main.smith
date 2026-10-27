@@ -1,0 +1,12 @@
+import <AppKit/AppKit.h>;
+
+struct App { i32 closed; };
+
+void will_close(App *app, objc::NSNotification *note) {
+    app->closed += 1;
+}
+
+i32 main(void) {
+    objc::methods(objc::NSWindowDelegate, App) table = {.windowWillCloze = will_close};
+    return table.windowWillClose == nullptr;
+}

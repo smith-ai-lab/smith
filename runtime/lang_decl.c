@@ -531,6 +531,11 @@ static bool smith_lang_namespace_read(SmithLang *lang, const SmithHost *host, co
         smith_lang_target_use(lang, host, name, &taken, result, digits, sizeof digits);
         return true;
     }
+    if (binding->is_objc && binding->module.length > 0 && !lang->recording && !lang->namespace_done &&
+        smith_lang_generic_call(lang, host, name, binding, &taken)) { // `import smith::objc;`: objc::class_define
+        lang->namespace_done = true;
+        return true;
+    }
     if (binding->is_objc) { // runtime/lang_objc.c: objc_X, or objc_Class_method
         smith_lang_objc_name(lang, host, name, &taken, result);
         return true;

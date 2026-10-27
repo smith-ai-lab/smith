@@ -203,6 +203,13 @@ static bool smith_lang_find_cycle(SmithLang *lang, const SmithHost *host, const 
 static bool smith_lang_add_binding(SmithLang *lang, const SmithHost *host, const char *name, size_t length,
                                    uint32_t location, const SmithLangModuleName *module, bool is_c) {
     SmithLangBinding *binding = smith_lang_binding_find(lang, name, length);
+    if (binding != nullptr && binding->is_objc && module != nullptr && strcmp(module->colons, "smith::objc") == 0) {
+        char prefix[smith_lang_name_max]; // `import smith::objc;` after an Objective-C header: both are `objc::`
+        snprintf(prefix, sizeof prefix, "%s_", module->underscored);
+        binding->prefix = smith_lang_store(lang, prefix, strlen(prefix));
+        binding->module = smith_lang_store(lang, module->colons, strlen(module->colons));
+        return true;
+    }
     if (binding != nullptr && !binding->is_self) {
         smith_lang_error(lang, host, location, "`%.*s` is already the name of an import", (int)length, name);
         return false;

@@ -1,0 +1,13 @@
+import <Foundation/Foundation.h>;
+
+struct Gate { i32 depth; };
+
+void lock(Gate *gate) {
+    gate->depth += 1;
+}
+
+// NSLocking requires lock and unlock; this table sets only lock.
+i32 main(void) {
+    objc::methods(objc::NSLocking, Gate) table = (objc::methods(objc::NSLocking, Gate)){.lock = lock};
+    return table.lock == nullptr;
+}

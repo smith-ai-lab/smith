@@ -413,6 +413,18 @@ export void test_generic_for_range_error(io::Io *io) {
     corpus_case(io, "generic-for-range-error");
 }
 
+export void test_error_objc_methods_signature(io::Io *io) {
+    corpus_case(io, "error-objc-methods-signature");
+}
+
+export void test_error_objc_methods_misspelled(io::Io *io) {
+    corpus_case(io, "error-objc-methods-misspelled");
+}
+
+export void test_error_objc_methods_required(io::Io *io) {
+    corpus_case(io, "error-objc-methods-required");
+}
+
 export void test_objc_c_unchanged(io::Io *io) {
     corpus_case(io, "objc-c-unchanged");
 }
@@ -444,6 +456,24 @@ export void test_objc_arena(io::Io *io) {
     scratch::Run run = scratch::sh(&p, "smith run");
     scratch::expect_status("objc::str reaches the arena", 0, &run);
     scratch::expect_contains("the bytes are in the arena, and not after it is restored", run.out, "1 1 0 5\n");
+}
+
+// Classes and blocks defined in Smith (#319): an app delegate, an NSWindow subclass with a super call, and a block for
+// Metal's addCompletedHandler:. The program closes its window from code, so no test waits on a run loop.
+export void test_objc_class_define(io::Io *io) {
+    scratch::Project p = scratch::project(io, "objc_app", "conv_objc_app");
+    scratch::Run run = scratch::sh(&p, "smith run");
+    scratch::expect_status("the classes are defined and used", 0, &run);
+    scratch::expect_contains("both classes are registered", run.out, "classes: 1 1\n");
+    scratch::expect_contains("the window subclass is asked, and calls super", run.out, "can become key: 1 (asked 1)\n");
+    scratch::expect_contains("the delegate hears the window close", run.out, "closed: 1 launched: 0\n");
+}
+
+export void test_objc_block(io::Io *io) {
+    scratch::Project p = scratch::project(io, "objc_block", "conv_objc_block");
+    scratch::Run run = scratch::sh(&p, "smith run");
+    scratch::expect_status("the block is made and passed", 0, &run);
+    scratch::expect_contains("Metal calls the handler", run.out, "handler called: 1\n");
 }
 
 export void test_objc_window(io::Io *io) {

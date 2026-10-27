@@ -1,6 +1,6 @@
 ---
 name: smith-lang-objc
-description: "Objective-C from a .smith file: import <AppKit/AppKit.h>; and call classes under objc:: (objc::NSWindow::setTitle(w, t)), the _ naming of multi-part selectors, the class_ prefix, typed calls, objc::Owned and objc::release, pools, objc::string and objc::str, linking with no flag, the c effect. macOS only. Load when a .smith file imports a framework header such as Foundation, AppKit, Metal, or writes objc::."
+description: "Objective-C from a .smith file: import <AppKit/AppKit.h>; and call classes under objc:: (objc::NSWindow::setTitle(w, t)), the _ naming of multi-part selectors, the class_ prefix, typed calls, objc::Owned and objc::release, pools, objc::string and objc::str, defining classes with objc::class_define and objc::methods, super_ calls, objc::block, linking with no flag, the c effect. macOS only. Load when a .smith file imports a framework header such as Foundation, AppKit, Metal, or writes objc::."
 ---
 
 # Objective-C from .smith
@@ -33,7 +33,7 @@ i32 main(io::Io *io) {
 - **Linking**: the import writes `-framework X` and `-lobjc` into the object; `smith build` needs nothing in `build.c`.
 - **Effects**: a call has the `c` effect, so `effects::within(f, effects::c)` accepts it and `effects::none` rejects it.
 - **C is C**: the header is read by a separate compile (`SMITH_OBJC_INDEX`, under `.smith/objc/`, made once per header, SDK and smith); the file never sees `id`, `SEL`, `BOOL` or `YES` from Objective-C, so a C name by any of them means what it means in C.
-- **Not yet** (#319): defining classes; blocks wait for lambdas (#316). A framework header with no class in it is read as a C header.
+- **Not yet**: blocks from lambdas (#316; `objc::block` below is the interim form). A framework header with no class in it is read as a C header.
 
 ## Ownership
 
@@ -56,5 +56,7 @@ export i32 run() {
     return (i32)countof(back) - 5;
 }
 ```
+
+Defining classes and blocks: [smith-lang-objc-classes](../smith-lang-objc-classes/SKILL.md).
 
 Reference: [knowledge/objc.md](../../../knowledge/objc.md).

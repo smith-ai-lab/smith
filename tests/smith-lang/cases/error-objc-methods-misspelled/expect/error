@@ -1,0 +1,1 @@
+src/main.smith:10:58: field designator 'windowWillCloze' does not refer to any field in type 'objc_methods_NSWindowDelegate_App' (aka 'struct objc_methods_NSWindowDelegate_App'); did you mean 'windowWillClose'?

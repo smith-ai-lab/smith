@@ -540,6 +540,7 @@ static const char *const build_smith_inputs[] = {
     "lib/smith/console.smith",
     "lib/smith/env.smith",
     "lib/smith/math.smith",
+    "lib/smith/objc.smith",
     "lib/smith/process.smith",
     "lib/smith/mem.smith",
     "lib/smith/net.smith",
@@ -803,6 +804,7 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
     smith_compile_command(b, config->cc, "lib/smith/console.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/env.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/math.smith", smith_flags);
+    smith_compile_command(b, config->cc, "lib/smith/objc.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/mem.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/process.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/net.smith", smith_flags);

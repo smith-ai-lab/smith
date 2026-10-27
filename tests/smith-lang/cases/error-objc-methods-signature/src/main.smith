@@ -1,0 +1,13 @@
+import <AppKit/AppKit.h>;
+
+struct App { i32 closed; };
+
+// A method of the table takes the Data and the arguments Objective-C passes: a notification here, not a window.
+void will_close(App *app, objc::NSWindow *window) {
+    app->closed += 1;
+}
+
+i32 main(void) {
+    objc::methods(objc::NSWindowDelegate, App) table = {.windowWillClose = will_close};
+    return table.windowWillClose == nullptr;
+}

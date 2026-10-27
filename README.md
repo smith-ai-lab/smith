@@ -626,6 +626,41 @@ i32 main(io::Io *io) {
 length 5, bytes 5
 ```
 
+A class you define is a table of functions: `objc::methods(objc::P, Data)` has one field for each method of the class or protocol `P` (named as a call is, `windowWillResize_toSize`), each taking your `Data *` where Objective-C passes the object, and `objc::class_define` registers the class. A wrong signature is C's own type error on the field, a misspelled method is "no member named", and a protocol method that is required and left out is an error. The object keeps one `Data` inline; `objc::self(objc::NSWindow, data)` gives the object back, and `objc::NSWindow::super_canBecomeKeyWindow(w)` sends a message to the superclass.
+
+```smith project=objc_class run
+module main;
+
+import <Foundation/Foundation.h>;
+import smith::format;
+import smith::io;
+import smith::objc;
+
+struct Greeter {
+    const char *name;
+};
+
+objc::NSString *describe(Greeter *greeter) {
+    return objc::NSString::stringWithUTF8String(greeter->name);
+}
+
+i32 main(io::Io *io) {
+    objc::id greeter_class = objc::class_define("Greeter", objc::NSObject, Greeter,
+        (objc::methods(objc::NSObject, Greeter)){.description = describe});
+    objc::NSObject *greeter = objc::NSObject::init((objc::NSObject *)objc::alloc(greeter_class));
+    objc::data(Greeter, greeter)->name = "hello from a class defined in smith";
+    str text = objc::str(objc::NSObject::description(greeter));
+    format::print(&io->console, text, "\n");
+    return 0;
+}
+```
+
+```output project=objc_class
+hello from a class defined in smith
+```
+
+A block is a function and the context it receives, which starts with an `objc::Block` and must outlive the block: `objc::block(done, &context)` is passed where a method takes a block (`addCompletedHandler:`). Until lambdas land this is the form.
+
 [smith-lang-objc](.agents/skills/smith-lang-objc/SKILL.md).
 
 ## A module has no warnings

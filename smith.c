@@ -1070,6 +1070,9 @@ static constexpr unsigned char smith_clock_source[] = {
 static constexpr unsigned char smith_console_source[] = {
 #embed "lib/smith/console.smith"
 };
+static constexpr unsigned char smith_objc_source[] = {
+#embed "lib/smith/objc.smith"
+};
 static constexpr unsigned char smith_env_source[] = {
 #embed "lib/smith/env.smith"
 };
@@ -1164,6 +1167,7 @@ static const SmithLibrary smith_libraries[] = {
     SMITH_LIBRARY(mem, true),
     SMITH_LIBRARY(process, true),
     SMITH_LIBRARY(net, true),
+    SMITH_LIBRARY(objc, true),
     SMITH_LIBRARY_FLAGS(random, true, "-ffp-contract=off\n"),
     SMITH_LIBRARY(slice, true),
     SMITH_LIBRARY(test, true),

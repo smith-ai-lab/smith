@@ -1,0 +1,43 @@
+// smith::objc: classes and blocks for Objective-C, the part of `objc::` that is a library. `import <AppKit/AppKit.h>;`
+// gives the classes of the framework under `objc::`; this module (`import smith::objc;`, also bound to `objc`) adds
+// `objc::class_define`, `objc::self`, `objc::data` and `objc::block`, ordinary generics that are lowered where they
+// are called, so the framework's names are in scope in them. The tables are `objc::methods(objc::P, Data)`, which the
+// import of the header writes (runtime/lang_objc_class.c); nothing here names an Objective-C type.
+//
+//     struct App { Game *game; };
+//     objc::id cls = objc::class_define("MacosApp", objc::NSObject, App,
+//         (objc::methods(objc::NSApplicationDelegate, App)){.applicationDidFinishLaunching = launched});
+module smith::objc;
+
+import <stddef.h>;
+
+// Defines (and registers) the class `name`, a subclass of `Super`, whose objects carry a `Data`; each table is
+// `objc::methods(objc::P, Data)` with the methods that were filled in. A method receives the `Data *` where Objective-C
+// passes the object; `objc::self(objc::NSWindow, data)` gives the object back. Returns the class (`objc::id`), or null
+// when a class of that name exists.
+export void *class_define(const char *name, constexpr type Super, constexpr type Data, auto... tables) {
+    void *created = c::smith_objc_class_begin(name, c::smith_objc_class_of((Super *)nullptr), sizeof(Data), alignof(Data));
+    if (created == nullptr) return nullptr;
+    usize slot = c::smith_objc_slot(created);
+    usize delta = alignof(Data) > 8 ? alignof(Data) : 8;
+    for constexpr (usize i = 0; i < countof(tables); i++)
+        c::smith_objc_add_methods(created, &tables[i], slot, delta);
+    return created;
+}
+
+// The object that owns the `Data` a method received, as a `C *` (`objc::self(objc::NSWindow, data)`).
+export C *self(constexpr type C, auto *data) {
+    return (C *)c::smith_objc_object_of(data, alignof(typeof(*data)));
+}
+
+// The `Data` of an object of a class made by `class_define`, or null for one that is not.
+export Data *data(constexpr type Data, void *object) {
+    return (Data *)c::smith_objc_data_of(object, alignof(Data));
+}
+
+// A block that calls `function(context, arguments...)`: `context` points to a struct whose first member is an
+// `objc::Block` and it must outlive the block. Returns the block, to pass where Objective-C takes one.
+export void *block(auto function, auto *context) {
+    c::smith_objc_block_fill(context, (usize)function, sizeof(*context));
+    return context;
+}

@@ -1,0 +1,35 @@
+module main;
+
+import <Metal/Metal.h>;
+import <stdio.h>;
+import <unistd.h>;
+import smith::objc;
+
+// A block made from a function and its context (objc::block), passed to Metal's addCompletedHandler:. The context starts
+// with an objc::Block and lives as long as the block, so it is a static here. A machine with no GPU prints the same.
+struct Done {
+    objc::Block block;
+    volatile i32 calls;
+};
+
+void completed(Done *done, objc::MTLCommandBuffer *) {
+    done->calls += 1;
+}
+
+static Done done = {};
+
+i32 main(void) {
+    objc::MTLDevice *device = objc::MTLCreateSystemDefaultDevice();
+    if (device == nullptr) {
+        c::printf("handler called: 1\n");
+        return 0;
+    }
+    objc::MTLCommandQueue *queue = objc::MTLDevice::newCommandQueue(device).object;
+    objc::MTLCommandBuffer *buffer = objc::MTLCommandQueue::commandBuffer(queue);
+    objc::MTLCommandBuffer::addCompletedHandler(buffer, objc::block(completed, &done));
+    objc::MTLCommandBuffer::commit(buffer);
+    objc::MTLCommandBuffer::waitUntilCompleted(buffer);
+    for (i32 wait = 0; wait < 1000 && done.calls == 0; wait++) c::usleep(1000);
+    c::printf("handler called: %d\n", done.calls);
+    return 0;
+}

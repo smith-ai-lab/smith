@@ -1,0 +1,1 @@
+src/main.smith:11:88: `objc::methods(objc::NSLocking, ...)` does not set `.unlock`, a method that NSLocking requires

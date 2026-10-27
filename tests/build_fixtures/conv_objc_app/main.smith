@@ -1,0 +1,72 @@
+module main;
+
+import <AppKit/AppKit.h>;
+import <stdio.h>;
+import smith::objc;
+
+// An app delegate and an NSWindow subclass, defined in Smith with no Objective-C file. The program closes its window
+// from code, so a test never waits on a run loop; with an argument it runs the loop, launches, closes the window
+// and the delegate terminates the app.
+struct App {
+    i32 launched;
+    i32 closed;
+    bool quit;
+    objc::NSWindow *window;
+};
+
+struct Win {
+    i32 asked;
+};
+
+void app_launched(App *app, objc::NSNotification *) {
+    app->launched += 1;
+    objc::NSWindow::close(app->window); // the loop is running: closing the window ends the app
+}
+
+bool app_should_quit(App *, objc::NSApplication *) {
+    return true;
+}
+
+void app_will_close(App *app, objc::NSNotification *) {
+    app->closed += 1;
+    if (app->quit) objc::NSApplication::terminate(objc::NSApplication::sharedApplication(), nullptr);
+}
+
+bool win_can_become_key(Win *win) {
+    win->asked += 1;
+    return objc::NSWindow::super_canBecomeKeyWindow(objc::self(objc::NSWindow, win));
+}
+
+i32 main(str args[:]) {
+    objc::NSApplication *app = objc::NSApplication::sharedApplication();
+    objc::NSApplication::setActivationPolicy(app, objc::NSApplicationActivationPolicyProhibited);
+    objc::id app_class = objc::class_define("MacosApp", objc::NSObject, App,
+        (objc::methods(objc::NSApplicationDelegate, App)){
+            .applicationDidFinishLaunching = app_launched,
+            .applicationShouldTerminateAfterLastWindowClosed = app_should_quit,
+        },
+        (objc::methods(objc::NSWindowDelegate, App)){.windowWillClose = app_will_close});
+    objc::id window_class = objc::class_define("MacosWindow", objc::NSWindow, Win,
+        (objc::methods(objc::NSWindow, Win)){.canBecomeKeyWindow = win_can_become_key});
+    c::printf("classes: %d %d\n", app_class != nullptr, window_class != nullptr);
+    objc::NSObject *delegate = objc::NSObject::init((objc::NSObject *)objc::alloc(app_class));
+    App *state = objc::data(App, delegate);
+    objc::NSRect frame = {{100, 100}, {400, 300}};
+    objc::NSWindow *window = objc::NSWindow::initWithContentRect_styleMask_backing_defer(
+        (objc::NSWindow *)objc::alloc(window_class), frame,
+        objc::NSWindowStyleMaskTitled | objc::NSWindowStyleMaskClosable, objc::NSBackingStoreBuffered, false);
+    objc::NSWindow::setReleasedWhenClosed(window, false);
+    objc::NSWindow::setDelegate(window, (objc::NSWindowDelegate *)delegate);
+    objc::NSApplication::setDelegate(app, (objc::NSApplicationDelegate *)delegate);
+    bool key = objc::NSWindow::canBecomeKeyWindow(window);
+    c::printf("can become key: %d (asked %d)\n", key, objc::data(Win, window)->asked);
+    state->window = window;
+    if (countof(args) > 1) {
+        state->quit = true;
+        objc::NSApplication::run(app);
+        return 0;
+    }
+    objc::NSWindow::close(window);
+    c::printf("closed: %d launched: %d\n", state->closed, state->launched);
+    return 0;
+}
