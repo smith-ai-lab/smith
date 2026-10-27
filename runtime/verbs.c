@@ -565,15 +565,17 @@ static bool smith_prove_drops(const char *word, bool *skip_next) {
     for (size_t i = 0; i < sizeof levels / sizeof levels[0]; i++) {
         if (strcmp(word, levels[i]) == 0) return true;
     }
-    static const char *const prefixes[] = {"-MMD",
-                                           "-fsanitize",
-                                           "-fno-sanitize",
-                                           "-fmodule",
-                                           "-fno-omit-frame-pointer",
-                                           "-ftrivial-auto-var-init",
-                                           "-Werror=",
-                                           "-fprofile-instr",
-                                           "-fcoverage-mapping"}; // coverage counters are not part of the proof (#456)
+    static const char *const prefixes[] = {
+        "-MMD",
+        "-fsanitize",
+        "-fno-sanitize",
+        "-fmodule",
+        "-fno-omit-frame-pointer",
+        "-ftrivial-auto-var-init",
+        "-Werror=",
+        "-DSMITH_PROVED=", // the proof file's hash is no part of what is proved (#325)
+        "-fprofile-instr",
+        "-fcoverage-mapping"}; // coverage counters are not part of the proof (#456)
     for (size_t i = 0; i < sizeof prefixes / sizeof prefixes[0]; i++) {
         if (strncmp(word, prefixes[i], strlen(prefixes[i])) == 0) return true;
     }
