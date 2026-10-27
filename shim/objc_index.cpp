@@ -7,6 +7,8 @@
 //   - methods.idx: one tab-separated line per class, protocol and method, which the lowering (runtime/lang_objc.c)
 //     writes the typed wrappers of the classes a file names from.
 // Both are build outputs under .smith/objc/, never committed. The index is made with the SDK the build uses.
+#include "objc_index.h"
+
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/Decl.h"
@@ -14,8 +16,12 @@
 #include "clang/AST/Type.h"
 #include "clang/Basic/IdentifierTable.h"
 #include "clang/Basic/SourceManager.h"
+#include "clang/Basic/TargetInfo.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendPluginRegistry.h"
+#include "clang/Lex/HeaderSearch.h"
+#include "clang/Lex/HeaderSearchOptions.h"
+#include "clang/Lex/Preprocessor.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/raw_ostream.h"
@@ -53,11 +59,11 @@ class Writer {
     // are C and are read in Objective-C mode with Foundation's classes behind them: those are not its API.
     bool sawObjc = false;
     std::string framework; // SMITH_OBJC_FRAMEWORK
-    std::string forward; // typedefs of the opaque structs
-    std::string records; // the records' definitions, each after the ones it holds
-    std::string aliases; // typedefs of scalars, records, enums and objects
-    std::string enums;   // the constants
-    std::string symbols; // functions and globals
+    std::string forward;   // typedefs of the opaque structs
+    std::string records;   // the records' definitions, each after the ones it holds
+    std::string aliases;   // typedefs of scalars, records, enums and objects
+    std::string enums;     // the constants
+    std::string symbols;   // functions and globals
 
   private:
     ASTContext &context;
@@ -434,3 +440,13 @@ struct ObjcIndexPlugin final : PluginASTAction {
 const FrontendPluginRegistry::Add<ObjcIndexPlugin> plugin("smith-objc-index", "the index of an Objective-C header");
 
 } // namespace
+
+const char *smith::objcFacts(Preprocessor &pp, bool inEditor) {
+    static std::string facts;
+    const HeaderSearchOptions &options = pp.getHeaderSearchInfo().getHeaderSearchOpts();
+    facts = "sysroot=" + options.Sysroot + "\ntriple=" + pp.getTargetInfo().getTriple().str() + "\n";
+    for (const HeaderSearchOptions::Entry &entry : options.UserEntries)
+        if (entry.IsFramework) facts += "framework=" + entry.Path + "\n";
+    if (inEditor) facts += "editor=1\n";
+    return facts.c_str();
+}

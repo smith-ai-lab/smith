@@ -11,7 +11,17 @@
 //     file's first declaration, for every method of every class the text names (and of its superclasses and protocols):
 //     a call of objc_msgSend cast to the method's own type, so a wrong argument is an ordinary C error;
 //   - a linker option for each framework and libobjc is written into the object, so a build needs no flag.
-// A host without a compiler (the header pass) has no `objc_index` and reads such an import as a C header.
+// A host without a compiler (the header pass) has no `objc_facts` and reads such an import as a C header.
+
+#include <errno.h>
+#include <fcntl.h>
+#include <spawn.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 constexpr size_t smith_lang_objc_text_max = 8U << 20;
 constexpr size_t smith_lang_objc_names_max = 256;
@@ -42,21 +52,250 @@ static void smith_lang_objc_puts(SmithLangObjcOut *out, const char *text) {
     smith_lang_objc_put(out, text, strlen(text));
 }
 
+// ---- The index of a header: where it is kept, and the compile that makes it
+
+constexpr size_t smith_lang_objc_path_max = 1024;
+constexpr size_t smith_lang_objc_args_max = 256;
+constexpr size_t smith_lang_objc_env_max = 4096;
+
+extern char **environ;
+
+// The value of the first line of the host's facts that begins with `key` (`sysroot=`), or null.
+static const char *smith_lang_objc_fact(const char *facts, const char *key, char *out, size_t capacity) {
+    size_t key_length = strlen(key);
+    for (const char *line = facts; *line != 0;) { // by line
+        const char *end = strchr(line, '\n');
+        size_t length = end != nullptr ? (size_t)(end - line) : strlen(line);
+        if (length >= key_length && memcmp(line, key, key_length) == 0 && length - key_length < capacity) {
+            memcpy(out, line + key_length, length - key_length);
+            out[length - key_length] = 0;
+            return out;
+        }
+        if (end == nullptr) break;
+        line = end + 1;
+    }
+    return nullptr;
+}
+
+static bool smith_lang_objc_is_folder(const char *path) {
+    struct stat info;
+    return stat(path, &info) == 0 && S_ISDIR(info.st_mode);
+}
+
+static bool smith_lang_objc_exists(const char *path) {
+    struct stat info;
+    return stat(path, &info) == 0;
+}
+
+// Whether the SDK (`sysroot=`) or a -F folder (`framework=`) has the framework a header's first name says.
+static bool smith_lang_objc_has_framework(const char *facts, const char *name, size_t length) {
+    char path[smith_lang_objc_path_max];
+    for (const char *line = facts; *line != 0;) { // by line
+        const char *end = strchr(line, '\n');
+        size_t size = end != nullptr ? (size_t)(end - line) : strlen(line);
+        bool sdk = size > 8 && memcmp(line, "sysroot=", 8) == 0;
+        if (sdk || (size > 10 && memcmp(line, "framework=", 10) == 0)) {
+            int written = snprintf(path, sizeof path, "%.*s%s/%.*s.framework/Headers", (int)(size - (sdk ? 8 : 10)),
+                                   line + (sdk ? 8 : 10), sdk ? "/System/Library/Frameworks" : "", (int)length, name);
+            if (written > 0 && (size_t)written < sizeof path && smith_lang_objc_is_folder(path)) return true;
+        }
+        if (end == nullptr) break;
+        line = end + 1;
+    }
+    return false;
+}
+
+static uint64_t smith_lang_objc_mix(uint64_t hash, const char *text, size_t length) {
+    for (size_t i = 0; i < length; i++)
+        hash = (hash ^ (unsigned char)text[i]) * 1099511628211ULL;
+    return (hash ^ 0xff) * 1099511628211ULL; // a separator
+}
+
+typedef struct {
+    char self[smith_lang_objc_path_max];
+    char flags[16384];
+    char *flag[smith_lang_objc_args_max];
+    size_t flag_count;
+} SmithLangObjcCompile;
+
+// The flags the driver passed (SMITH_LANG_FLAGS, a line each; the standard is left out) and this binary.
+static bool smith_lang_objc_compile_flags(SmithLangObjcCompile *compile) {
+    const char *self = getenv("SMITH_LANG_SELF");
+    const char *flags = getenv("SMITH_LANG_FLAGS");
+    if (self == nullptr || strlen(self) >= sizeof compile->self) return false;
+    snprintf(compile->self, sizeof compile->self, "%s", self);
+    snprintf(compile->flags, sizeof compile->flags, "%s", flags != nullptr ? flags : "");
+    compile->flag_count = 0;
+    for (char *line = compile->flags; *line != 0;) { // by line
+        char *end = strchr(line, '\n');
+        if (end != nullptr) *end = 0;
+        if (*line != 0 && strncmp(line, "-std=", 5) != 0 && compile->flag_count < smith_lang_objc_args_max - 8)
+            compile->flag[compile->flag_count++] = line;
+        if (end == nullptr) break;
+        line = end + 1;
+    }
+    return true;
+}
+
+// Runs this binary as `cc -x <language> -fsyntax-only -w <flags> <source>`, quietly, with SMITH_OBJC_INDEX and
+// SMITH_OBJC_FRAMEWORK set when `folder` is (the plugin of shim/objc_index.cpp writes the index then). True if it
+// passed.
+static bool smith_lang_objc_run(const SmithLangObjcCompile *compile, const char *language, const char *source,
+                                const char *folder, const char *framework) {
+    static char *args[smith_lang_objc_args_max + 8];
+    static char *env[smith_lang_objc_env_max];
+    static char index_env[smith_lang_objc_path_max + 24];
+    static char framework_env[256];
+    size_t count = 0;
+    args[count++] = (char *)compile->self;
+    args[count++] = (char *)"cc";
+    args[count++] = (char *)"-x";
+    args[count++] = (char *)language;
+    args[count++] = (char *)"-fsyntax-only";
+    args[count++] = (char *)"-w";
+    for (size_t i = 0; i < compile->flag_count; i++)
+        args[count++] = compile->flag[i];
+    args[count++] = (char *)source;
+    args[count] = nullptr;
+    size_t used = 0;
+    for (char **entry = environ; entry != nullptr && *entry != nullptr && used < smith_lang_objc_env_max - 3; entry++) {
+        if (strncmp(*entry, "SMITH_OBJC_", 11) != 0) env[used++] = *entry;
+    }
+    if (folder != nullptr) {
+        snprintf(index_env, sizeof index_env, "SMITH_OBJC_INDEX=%s", folder);
+        snprintf(framework_env, sizeof framework_env, "SMITH_OBJC_FRAMEWORK=%s", framework);
+        env[used++] = index_env;
+        env[used++] = framework_env;
+    }
+    env[used] = nullptr;
+    posix_spawn_file_actions_t quiet;
+    posix_spawn_file_actions_init(&quiet);
+    posix_spawn_file_actions_addopen(&quiet, 1, "/dev/null", O_WRONLY, 0);
+    posix_spawn_file_actions_addopen(&quiet, 2, "/dev/null", O_WRONLY, 0);
+    pid_t child = 0;
+    int started = posix_spawn(&child, compile->self, &quiet, nullptr, args, env);
+    posix_spawn_file_actions_destroy(&quiet);
+    int status = 0;
+    return started == 0 && waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
+// Writes `#import <header>` (or `#include`) to a file of the folder, for `run`.
+static bool smith_lang_objc_write_source(const char *path, const char *directive, const char *header) {
+    FILE *file = fopen(path, "w");
+    if (file == nullptr) return false;
+    fprintf(file, "#%s <%s>\n", directive, header);
+    return fclose(file) == 0;
+}
+
+// A header that C can read stays a C header, whatever Objective-C is behind it (Network.framework has classes, and a C
+// API that `import <Network/Network.h>;` is used for). The answer is kept in the folder: `c.yes` or `c.no`.
+static bool smith_lang_objc_reads_as_c(const SmithLangObjcCompile *compile, const char *header, const char *folder,
+                                       bool editor) {
+    char path[smith_lang_objc_path_max];
+    snprintf(path, sizeof path, "%s/c.yes", folder);
+    if (smith_lang_objc_exists(path)) return true;
+    char no[smith_lang_objc_path_max];
+    snprintf(no, sizeof no, "%s/c.no", folder);
+    if (smith_lang_objc_exists(no) || editor) return false;
+    char source[smith_lang_objc_path_max];
+    snprintf(source, sizeof source, "%s/import.%d.c", folder, (int)getpid());
+    if (!smith_lang_objc_write_source(source, "include", header)) return false;
+    bool reads = smith_lang_objc_run(compile, "c", source, nullptr, nullptr);
+    unlink(source);
+    int marker = open(reads ? path : no, O_WRONLY | O_CREAT, 0644);
+    if (marker >= 0) close(marker);
+    return reads;
+}
+
+// The folder for a header: .smith/objc/<key> of the working folder, made if it is missing. The key is the header, the
+// SDK, the target, the flags and this binary, so a new SDK or a new smith makes the index again.
+static bool smith_lang_objc_folder(const SmithLangObjcCompile *compile, const char *facts, const char *header,
+                                   char *folder, size_t capacity) {
+    char sysroot[smith_lang_objc_path_max] = "";
+    char triple[128] = "";
+    smith_lang_objc_fact(facts, "sysroot=", sysroot, sizeof sysroot);
+    smith_lang_objc_fact(facts, "triple=", triple, sizeof triple);
+    uint64_t key = smith_lang_objc_mix(1469598103934665603ULL, header, strlen(header));
+    key = smith_lang_objc_mix(key, sysroot, strlen(sysroot));
+    key = smith_lang_objc_mix(key, triple, strlen(triple));
+    for (size_t i = 0; i < compile->flag_count; i++)
+        key = smith_lang_objc_mix(key, compile->flag[i], strlen(compile->flag[i]));
+    struct stat binary;
+    if (stat(compile->self, &binary) == 0) {
+        char identity[64];
+        int length =
+            snprintf(identity, sizeof identity, "%lld %lld", (long long)binary.st_size, (long long)binary.st_mtime);
+        key = smith_lang_objc_mix(key, identity, length > 0 ? (size_t)length : 0);
+    }
+    char here[smith_lang_objc_path_max];
+    if (getcwd(here, sizeof here) == nullptr) return false;
+    int written = snprintf(folder, capacity, "%s/.smith/objc/%016llx", here, (unsigned long long)key);
+    if (written <= 0 || (size_t)written >= capacity) return false;
+    char step[smith_lang_objc_path_max];
+    static const char *const parts[] = {"/.smith", "/.smith/objc"};
+    for (size_t i = 0; i < 2; i++) {
+        snprintf(step, sizeof step, "%s%s", here, parts[i]);
+        if (mkdir(step, 0755) != 0 && errno != EEXIST) return false;
+    }
+    return (mkdir(folder, 0755) == 0 || errno == EEXIST);
+}
+
+// The index of a header: made if the folder has none (not in an editor), mapped read-only for the whole compile. False
+// when the header is no Objective-C one: it is no framework's, has no class of the framework's own, or C reads it.
+static bool smith_lang_objc_index(const char *facts, const char *header, size_t length, char *types, size_t capacity,
+                                  const char **index, uint32_t *index_length) {
+    const char *slash = memchr(header, '/', length);
+    if (slash == nullptr || slash == header || !smith_lang_objc_has_framework(facts, header, (size_t)(slash - header)))
+        return false;
+    static SmithLangObjcCompile shared; // its flags are big, and a compile reads one header at a time
+    SmithLangObjcCompile *compile = &shared;
+    char editor[4];
+    bool in_editor = smith_lang_objc_fact(facts, "editor=", editor, sizeof editor) != nullptr;
+    char folder[smith_lang_objc_path_max];
+    if (!smith_lang_objc_compile_flags(compile) ||
+        !smith_lang_objc_folder(compile, facts, header, folder, sizeof folder))
+        return false;
+    char file[smith_lang_objc_path_max];
+    snprintf(file, sizeof file, "%s/methods.idx", folder);
+    if (!smith_lang_objc_exists(file)) {
+        if (in_editor) return false;
+        snprintf(file, sizeof file, "%s/import.%d.m", folder, (int)getpid());
+        char framework[256];
+        snprintf(framework, sizeof framework, "%.*s", (int)(slash - header), header);
+        bool written = smith_lang_objc_write_source(file, "import", header);
+        if (written) smith_lang_objc_run(compile, "objective-c", file, folder, framework);
+        unlink(file);
+        snprintf(file, sizeof file, "%s/methods.idx", folder);
+    }
+    int descriptor = open(file, O_RDONLY);
+    struct stat info;
+    if (descriptor < 0 || fstat(descriptor, &info) != 0 || info.st_size < 8) {
+        if (descriptor >= 0) close(descriptor);
+        return false;
+    }
+    void *mapped = mmap(nullptr, (size_t)info.st_size, PROT_READ, MAP_PRIVATE, descriptor, 0);
+    close(descriptor);
+    if (mapped == MAP_FAILED || memcmp(mapped, "objc\t1\n", 7) != 0) return false;
+    int made = snprintf(types, capacity, "%s/types.h", folder);
+    if (made <= 0 || (size_t)made >= capacity || !smith_lang_objc_exists(types)) return false;
+    if (smith_lang_objc_reads_as_c(compile, header, folder, in_editor)) return false;
+    *index = mapped;
+    *index_length = (uint32_t)info.st_size;
+    return true;
+}
+
 // ---- The import
 
-// A framework header is an Objective-C one when the host's compile of it found classes. Returns whether this import
-// was taken: then the header is not included as C, and `objc::` names what it declares.
+// A framework header is an Objective-C one when the compile of it found classes C cannot read. Returns whether this
+// import was taken: then the header is not included as C, and `objc::` names what it declares.
 static bool smith_lang_objc_import(SmithLang *lang, const SmithHost *host, const char *header, size_t length,
                                    uint32_t location) {
-    if (host->objc_index == nullptr || lang->objc.count >= smith_lang_objc_max) return false;
-    const char *types = nullptr;
-    const char *index = nullptr;
-    uint32_t index_length = 0;
-    if (!host->objc_index(host->context, header, &types, &index, &index_length)) return false;
-    SmithLangObjcIndex *entry = &lang->objc.indexes[lang->objc.count++];
-    entry->types = types;
-    entry->index = index;
-    entry->length = index_length;
+    if (host->objc_facts == nullptr || lang->objc.count >= smith_lang_objc_max) return false;
+    SmithLangObjcIndex *entry = &lang->objc.indexes[lang->objc.count];
+    if (!smith_lang_objc_index(host->objc_facts(host->context), header, length, entry->types, sizeof entry->types,
+                               &entry->index, &entry->length))
+        return false;
+    lang->objc.count += 1;
     const char *slash = memchr(header, '/', length);
     size_t framework = slash != nullptr ? (size_t)(slash - header) : length;
     bool known = false;

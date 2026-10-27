@@ -307,7 +307,7 @@ typedef struct {
 constexpr uint32_t smith_lang_objc_max = 16;
 
 typedef struct {
-    const char *types; // the C file of the types, to include
+    char types[512];   // the C file of the types, to include
     const char *index; // the method index, kept by the host for the whole compile
     uint32_t length;
 } SmithLangObjcIndex;
