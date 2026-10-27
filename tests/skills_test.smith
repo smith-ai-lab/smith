@@ -495,6 +495,10 @@ export void test_skill_smith_packages(io::Io *io) {
     skill_case(io, "smith-packages");
 }
 
+export void test_skill_smith_process(io::Io *io) {
+    skill_case(io, "smith-process");
+}
+
 export void test_skill_smith_prove(io::Io *io) {
     skill_case(io, "smith-prove");
 }

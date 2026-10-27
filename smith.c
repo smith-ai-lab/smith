@@ -1039,6 +1039,9 @@ static constexpr unsigned char smith_json_source[] = {
 #embed "lib/json.c"
 };
 
+static constexpr unsigned char smith_process_source[] = {
+#embed "lib/smith/process.smith"
+};
 static constexpr unsigned char smith_random_source[] = {
 #embed "lib/smith/random.smith"
 };
@@ -1147,6 +1150,7 @@ static const SmithLibrary smith_libraries[] = {
     SMITH_LIBRARY(json, false),
     SMITH_LIBRARY(math, true),
     SMITH_LIBRARY(mem, true),
+    SMITH_LIBRARY(process, true),
     SMITH_LIBRARY_FLAGS(random, true, "-ffp-contract=off\n"),
     SMITH_LIBRARY(test, true),
     SMITH_LIBRARY(text, true),

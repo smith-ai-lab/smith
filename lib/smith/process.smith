@@ -1,0 +1,836 @@
+// smith::process, <smith/process.h>: child processes by direct calls, with no `io::Io` value: run a program and capture
+// its output, spawn one and wait for it, or start one with pipes to its stdin and from its stdout and talk to it, and
+// the sockets to a child are these pipes (a child's stdio, #240). Its C API is the generated header
+// include/smith/process.h (committed; `smith build headers` regenerates it); the names follow the rule of arena.smith
+// with one difference: the C functions are `smith_process_*` and the types `SmithProcess*`, beside io's
+// `smith_processes_*` and `smith_child_*`, which stay until io goes.
+//
+// Every call goes through the process handler of the calling thread (include/smith/handlers.h): none set is the real
+// posix_spawn, pipes and waitpid, and `process::fake()` is a scripted set of programs a test sets with
+// `process::set_handler`, so the code under test runs unchanged and starts nothing. The calls block (the async form
+// waits for the task runtime, #241).
+//
+// What goes wrong in the world is a value: a call returns `result(T, process::Error)` (a program that is not found, is
+// not allowed, a pipe whose reader is gone, a child that has exited when it is signalled). What is a bug is a checked
+// failure that names the call: a child that is closed twice, used after its close, waited for twice or read from when
+// it has no such pipe, and a fake that would wait forever (a read from a child that waits for input the test never
+// sends). Memory a call returns (the captured output) comes from the current allocator (smith::mem) and belongs to the
+// caller's region: it is never freed one object at a time (#439). Issue #240; knowledge/process.md.
+module smith::process;
+
+import smith::arena;
+import smith::contract;
+import smith::mem;
+import target;
+import <errno.h>;
+import <fcntl.h>;
+import <poll.h>;
+import <signal.h>;
+import <smith/handlers.h>;
+import <smith/trace.h>;
+import <spawn.h>;
+import <string.h>;
+import <sys/wait.h>;
+import <unistd.h>;
+
+// The process capability's own module: its calls into the system are the edge, as smith::mem's are.
+// NOLINTBEGIN(smith-effects)
+
+// The platform's numbers. A C macro is the preprocessor's, and a .smith file has none: each is read once, here.
+// NOLINTBEGIN(smith-preprocessor, bugprone-signed-bitwise)
+constexpr i32 ebadf = c::EBADF;
+constexpr i32 eacces = c::EACCES;
+constexpr i32 eagain = c::EAGAIN;
+constexpr i32 eintr = c::EINTR;
+constexpr i32 einval = c::EINVAL;
+constexpr i32 emfile = c::EMFILE;
+constexpr i32 enfile = c::ENFILE;
+constexpr i32 enoent = c::ENOENT;
+constexpr i32 enoexec = c::ENOEXEC;
+constexpr i32 enomem = c::ENOMEM;
+constexpr i32 eperm = c::EPERM;
+constexpr i32 epipe = c::EPIPE;
+constexpr i32 esrch = c::ESRCH;
+constexpr i32 stdin_fd = c::STDIN_FILENO;
+constexpr i32 stdout_fd = c::STDOUT_FILENO;
+constexpr i32 stderr_fd = c::STDERR_FILENO;
+constexpr i32 o_rdonly = c::O_RDONLY;
+constexpr i32 set_descriptor_flags = c::F_SETFD;
+constexpr i32 fd_cloexec = c::FD_CLOEXEC;
+constexpr i32 spawn_set_group = c::POSIX_SPAWN_SETPGROUP;
+constexpr i32 processors_online = c::_SC_NPROCESSORS_ONLN;
+constexpr i32 sig_pipe = c::SIGPIPE;
+constexpr i32 sig_block = c::SIG_BLOCK;
+constexpr i32 sig_setmask = c::SIG_SETMASK;
+constexpr i16 poll_in = c::POLLIN;
+constexpr i32 mode_inherit = c::SMITH_PROCESS_INHERIT;
+constexpr i32 mode_piped = c::SMITH_PROCESS_PIPED;
+constexpr i32 mode_captured = c::SMITH_PROCESS_CAPTURED;
+// NOLINTEND(smith-preprocessor, bugprone-signed-bitwise)
+constexpr usize chunk = 4096;
+constexpr usize argv_max = 255;
+export constexpr usize fake_scripts_max = 16;
+
+// macOS's <unistd.h> does not declare it.
+extern char **environ;
+
+// errno, which is a macro for the system's function.
+if constexpr (target::os == target::macos) {
+    i32 *errno_slot() {
+        return c::__error();
+    }
+} else {
+    i32 *errno_slot() {
+        return c::__errno_location();
+    }
+}
+
+i32 errno_now() {
+    return *errno_slot();
+}
+
+// NOLINTBEGIN(readability-identifier-naming)
+// An enum's constants are written short in a module (process::NotFound, C's SmithProcessError_NotFound), and the check
+// wants C's Type_Value.
+
+// What the world refused, as a value. The codes of a bug (a bad descriptor, an invalid argument) are not here: they
+// stop the program (see the top of the file).
+[[smith::c_name("SmithProcessError")]] export typedef enum {
+    NotFound, // the program is not there (argv[0] is not on PATH)
+    Denied,   // the program may not be run
+    TooMany,  // the system has no more processes, descriptors or memory
+    Broken,   // a write to a child that has exited or closed its stdin
+    Gone,     // a signal to a child that has exited
+    Other,    // the system said something else
+} Error;
+
+// When a scripted child of the fake has exited.
+[[smith::c_name("SmithProcessExitOn")]] export typedef enum {
+    Start,       // at once, like `true`: its output can be read, and a write is Broken
+    InputClosed, // when its stdin is closed, like `cat`
+    OutputRead,  // when all its output has been read
+    Never,       // never by itself: only process::kill ends it (a debugger waiting for requests)
+} ExitOn;
+// NOLINTEND(readability-identifier-naming)
+
+// How a child ended: its exit status (0 if a signal killed it) and the signal that killed it (0 if it exited).
+[[smith::c_name("SmithProcessExit")]] export typedef struct {
+    i32 status;
+    i32 signal;
+} Exit;
+
+export typedef typeof(u8[:]) Bytes;
+
+// What a finished program wrote: stdout and stderr apart, and how it ended.
+[[smith::c_name("SmithProcessOutput")]] export typedef struct {
+    Exit exit;
+    Bytes output;
+    Bytes errors;
+} Output;
+
+// A child process, which the caller owns and keeps where it is until `close`. `spawn` makes one with no pipes, `start`
+// one with a pipe to its stdin and one from its stdout (its stderr is the program's own: a child that logs there can
+// never block on a full pipe nobody reads). A started child leads a process group of its own, so `kill` reaches its
+// children too. The fields are the module's.
+[[smith::c_name("SmithProcessChild")]] export typedef struct {
+    i32 id;            // the process id (the handler's id under a handler)
+    i32 mode;          // how its streams are connected
+    i32 input;         // the write end of its stdin; -1 once closed or when it has none
+    i32 output;        // the read end of its stdout; -1 once closed or when it has none
+    i32 errors;        // the read end of its stderr, for run's capture; -1 otherwise
+    bool group;        // it leads a group: kill signals the group
+    bool input_closed; // close_input has been called
+    bool reaped;       // wait has completed: the id may be another program's now
+    bool closed;       // close has been called
+    bool handled;      // started under a handler
+} Child;
+
+// What a call that has nothing to return returns on success.
+[[smith::c_name("SmithProcessDone")]] export typedef struct {
+    u8 unused;
+} Done;
+
+export typedef result(Child, Error) ChildResult;
+export typedef result(usize, Error) CountResult;
+export typedef result(Done, Error) DoneResult;
+export typedef result(Exit, Error) ExitResult;
+export typedef result(Output, Error) OutputResult;
+
+// The handler type (the process members of include/smith/handlers.h) and its setter, which returns the one the thread
+// had:
+//   process::Handler *before = process::set_handler(&fake.base);
+//   defer process::set_handler(before);
+[[smith::c_name("SmithProcessHandler")]] export typedef c::SmithProcessHandler Handler;
+
+// Sets the processes of the calling thread (null: the real ones) and returns the ones it had.
+[[smith::c_name("smith_process_set_handler")]] export Handler *set_handler(Handler *handler) {
+    return c::smith_handlers_set_process(handler);
+}
+
+// The processes of the calling thread, null when the real ones are in force.
+[[smith::c_name("smith_process_handler")]] export [[nodiscard]] Handler *current_handler() {
+    return c::smith_handlers_process();
+}
+
+// A bug stops here, in every build, naming the call.
+[[noreturn]] void misuse(const char *message) {
+    contract::trusted(); // it stops the program
+    c::smith_failure_format(c::SmithFailure_Check, "%s", message);
+}
+
+// The value of an errno the world can answer. The codes of a bug stop the program.
+Error error_from(i32 code) {
+    if (code == ebadf)
+        misuse("process: a stream that is not open (a double close, or a stream the child does not have)");
+    if (code == einval) misuse("process: an invalid argument");
+    if (code == enoent) return NotFound;
+    if (code == eacces || code == eperm || code == enoexec) return Denied;
+    if (code == eagain || code == emfile || code == enfile || code == enomem) return TooMany;
+    if (code == epipe) return Broken;
+    if (code == esrch) return Gone;
+    return Other;
+}
+
+// Copies count bytes (the one place bytes behind a pointer become a slice).
+void put(void *to, const void *from, usize count) {
+    contract::trusted(); // it makes slices of the two pointers
+    if (count == 0) {
+        return;
+    }
+    u8 destination[:] = ((u8 *)to)[0:count];
+    const u8 source[:] = ((const u8 *)from)[0:count];
+    mem::copy(destination, source);
+}
+
+// How a wait status says the process ended: the low seven bits are the signal (0: it exited, with the status in the
+// next eight).
+Exit exit_of(i32 wait_status) {
+    u32 bits = (u32)wait_status;
+    u32 low = bits & 0x7f;
+    if (low == 0) return (Exit){.status = (i32)((bits >> 8) & 0xff), .signal = 0};
+    return (Exit){.status = 0, .signal = (i32)low};
+}
+
+// ---------------------------------------------------------------- the system's processes
+
+// A pipe whose ends close on exec; the child gets its copies by dup2.
+bool pipe_make(i32 ends[2]) {
+    if (c::pipe(ends) != 0) return false;
+    c::fcntl(ends[0], set_descriptor_flags, fd_cloexec);
+    c::fcntl(ends[1], set_descriptor_flags, fd_cloexec);
+    return true;
+}
+
+void pipe_close(i32 ends[2]) {
+    for (usize end = 0; end < 2; end++) {
+        if (ends[end] >= 0) c::close(ends[end]);
+        ends[end] = -1;
+    }
+}
+
+// Starts argv as the mode says: 0 on success (the child filled), else the errno.
+i32 spawn_real(const char *const *argv, i32 mode, bool leader, Child *child) {
+    i32 in[2] = {-1, -1};
+    i32 out[2] = {-1, -1};
+    i32 err[2] = {-1, -1};
+    bool made = true;
+    if (mode == mode_piped) made = pipe_make(in) && pipe_make(out);
+    if (mode == mode_captured) made = pipe_make(out) && pipe_make(err);
+    if (!made) {
+        i32 code = errno_now();
+        pipe_close(in);
+        pipe_close(out);
+        pipe_close(err);
+        return code;
+    }
+    c::posix_spawn_file_actions_t actions = {};
+    c::posix_spawn_file_actions_init(&actions);
+    if (mode == mode_piped)
+        c::posix_spawn_file_actions_adddup2(&actions, in[0], stdin_fd);
+    else
+        c::posix_spawn_file_actions_addopen(&actions, stdin_fd, "/dev/null", o_rdonly, 0);
+    if (out[1] >= 0) c::posix_spawn_file_actions_adddup2(&actions, out[1], stdout_fd);
+    if (err[1] >= 0) c::posix_spawn_file_actions_adddup2(&actions, err[1], stderr_fd);
+    c::posix_spawnattr_t attributes = {};
+    c::posix_spawnattr_init(&attributes);
+    if (leader) {
+        c::posix_spawnattr_setflags(&attributes, spawn_set_group);
+        c::posix_spawnattr_setpgroup(&attributes, 0);
+    }
+    c::pid_t pid = 0;
+    // posix_spawnp takes char *const *, though it never writes to the arguments.
+    i32 code = c::posix_spawnp(&pid, argv[0], &actions, &attributes, (char *const *)(usize)argv, environ);
+    c::posix_spawnattr_destroy(&attributes);
+    c::posix_spawn_file_actions_destroy(&actions);
+    // The child has its ends; the parent keeps the other ones.
+    if (in[0] >= 0) c::close(in[0]);
+    if (out[1] >= 0) c::close(out[1]);
+    if (err[1] >= 0) c::close(err[1]);
+    if (code != 0) {
+        if (in[1] >= 0) c::close(in[1]);
+        if (out[0] >= 0) c::close(out[0]);
+        if (err[0] >= 0) c::close(err[0]);
+        return code;
+    }
+    *child = (Child){.id = (i32)pid, .mode = mode, .input = in[1], .output = out[0], .errors = err[0], .group = leader};
+    return 0;
+}
+
+// Waits for the process: 0 and its wait status, or the errno.
+i32 wait_real(i32 id, i32 *wait_status) {
+    for (usize tries = 0; tries < 64; tries++) { // a signal may interrupt the wait
+        if (c::waitpid(id, wait_status, 0) >= 0) return 0;
+        if (errno_now() != eintr) return errno_now();
+    }
+    return eintr;
+}
+
+// Reads from a descriptor: the count (0 at the end) or -1 with the errno in `code`.
+isize read_real(i32 descriptor, void *buffer, usize size, i32 *code) {
+    for (usize tries = 0; tries < 64; tries++) { // a signal may interrupt the read
+        isize count = c::read(descriptor, buffer, size);
+        if (count >= 0) return count;
+        if (errno_now() != eintr) {
+            *code = errno_now();
+            return -1;
+        }
+    }
+    *code = eintr;
+    return -1;
+}
+
+// Writes bytes to a pipe. SIGPIPE is blocked for the call and, when the write raised it, taken off the thread, so a
+// pipe whose reader is gone is the error EPIPE and never a signal. sigset_t is a bit set on macOS (<signal.h> has
+// macros for its operations, which are the preprocessor's): signal n is bit n - 1; on Linux it is a structure.
+if constexpr (target::os == target::macos) {
+    isize write_pipe(i32 descriptor, const void *buffer, usize size) {
+        c::sigset_t pipe_signal = (c::sigset_t)1 << (u32)(sig_pipe - 1);
+        c::sigset_t before = {};
+        c::pthread_sigmask(sig_block, &pipe_signal, &before);
+        isize count = c::write(descriptor, buffer, size);
+        i32 code = errno_now();
+        if (count < 0 && code == epipe) {
+            c::sigset_t pending = {};
+            i32 taken = 0;
+            c::sigpending(&pending);
+            if ((pending & pipe_signal) != 0) c::sigwait(&pipe_signal, &taken);
+        }
+        c::pthread_sigmask(sig_setmask, &before, nullptr);
+        *errno_slot() = code;
+        return count;
+    }
+} else {
+    // NOLINTBEGIN(smith-preprocessor)
+    isize write_pipe(i32 descriptor, const void *buffer, usize size) {
+        c::sigset_t pipe_signal = {};
+        c::sigemptyset(&pipe_signal);
+        c::sigaddset(&pipe_signal, sig_pipe);
+        c::sigset_t before = {};
+        c::pthread_sigmask(sig_block, &pipe_signal, &before);
+        isize count = c::write(descriptor, buffer, size);
+        i32 code = errno_now();
+        if (count < 0 && code == epipe) {
+            c::sigset_t pending = {};
+            i32 taken = 0;
+            c::sigpending(&pending);
+            if (c::sigismember(&pending, sig_pipe) == 1) c::sigwait(&pipe_signal, &taken);
+        }
+        c::pthread_sigmask(sig_setmask, &before, nullptr);
+        *errno_slot() = code;
+        return count;
+    }
+    // NOLINTEND(smith-preprocessor)
+}
+
+// ---------------------------------------------------------------- the calls, real or the handler's
+
+// The null-terminated vector of the arguments that posix_spawn and a handler want.
+typedef struct {
+    const char *items[argv_max + 1];
+} Vector;
+
+Vector vector_make(const char *const argv[:]) {
+    contract::requires(countof(argv) > 0);
+    contract::requires(countof(argv) <= argv_max);
+    Vector result = {};
+    for (usize i, const char *argument : argv) {
+        result.items[i] = argument;
+    }
+    result.items[countof(argv)] = nullptr;
+    return result;
+}
+
+// Starts the program: the child, or an error.
+ChildResult start_child(const char *const argv[:], i32 mode, bool leader) {
+    Vector vector = vector_make(argv);
+    Child child = {};
+    c::SmithProcessHandler *handler = c::smith_handlers_process();
+    if (handler != nullptr) {
+        i32 id = handler->start(handler, vector.items, mode);
+        if (id < 0) {
+            return {.error = error_from(errno_now())};
+        }
+        child =
+            (Child){.id = id, .mode = mode, .input = -1, .output = -1, .errors = -1, .group = leader, .handled = true};
+        return child;
+    }
+    i32 code = spawn_real(vector.items, mode, leader, &child);
+    if (code != 0) {
+        return {.error = error_from(code)};
+    }
+    return child;
+}
+
+// A child that is closed, or waited for when it must not be, is a bug.
+void child_open(const Child *child) {
+    if (child->closed) misuse("process: the child is closed already");
+}
+
+// Starts the program with no stdin (it reads /dev/null) and the program's own stdout and stderr, without waiting.
+[[smith::c_name("smith_process_spawn")]] export [[nodiscard]] ChildResult spawn(const char *const argv[:]) {
+    return start_child(argv, mode_inherit, false);
+}
+
+// Starts the program with a pipe to its stdin and a pipe from its stdout, and returns at once. The pipes carry bytes,
+// not lines: framing is the caller's. Close the child's input to say it has no more.
+[[smith::c_name("smith_process_start")]] export [[nodiscard]] ChildResult start(const char *const argv[:]) {
+    return start_child(argv, mode_piped, true);
+}
+
+// Writes all of data to the child's stdin and returns how many bytes it wrote (all of them, or an error: Broken when
+// the child has exited or closed its stdin). A pipe takes 64 KiB at a time, so a program that sends more must read the
+// child's output as it goes, or the child blocks on it and this call never ends.
+[[smith::c_name("smith_process_write")]] export [[nodiscard]] CountResult write(Child *child, const u8 data[:]) {
+    child_open(child);
+    if (child->mode != mode_piped) misuse("process: write to a child that has no stdin pipe");
+    if (child->input_closed) misuse("process: write after the input was closed");
+    usize done = 0;
+    for (usize tries = 0; done < countof(data) && tries < countof(data) + 64; tries++) { // each round writes or ends
+        const u8 rest[:] = data[done:];
+        isize count = 0;
+        c::SmithProcessHandler *handler = c::smith_handlers_process();
+        if (child->handled) {
+            count = handler->write(handler, child->id, rest.data, countof(rest));
+        } else {
+            count = write_pipe(child->input, rest.data, countof(rest));
+        }
+        if (count > 0) {
+            done += (usize)count;
+        } else if (count < 0 && errno_now() != eintr) {
+            return {.error = error_from(errno_now())};
+        }
+    }
+    return done;
+}
+
+// Reads whatever the child's stdout holds, at least one byte and at most the length of the buffer: the count of bytes
+// read; 0 means the end (the child and every process that kept the pipe have closed it). It blocks until there is
+// something.
+[[smith::c_name("smith_process_read")]] export [[nodiscard]] CountResult read(Child *child, u8 buffer[:]) {
+    child_open(child);
+    contract::requires(countof(buffer) > 0);
+    if (child->mode != mode_piped) misuse("process: read from a child that has no stdout pipe");
+    isize count = 0;
+    i32 code = 0;
+    c::SmithProcessHandler *handler = c::smith_handlers_process();
+    if (child->handled) {
+        count = handler->read(handler, child->id, 1, buffer.data, countof(buffer));
+        code = errno_now();
+    } else {
+        if (child->output < 0) misuse("process: read from a stdout that is closed");
+        count = read_real(child->output, buffer.data, countof(buffer), &code);
+    }
+    if (count < 0) {
+        return {.error = error_from(code)};
+    }
+    return (usize)count;
+}
+
+// Closes the child's stdin, so it sees the end of its input: a child that reads until then, as cat does, exits. A
+// second call does nothing.
+[[smith::c_name("smith_process_close_input")]] export void close_input(Child *child) {
+    child_open(child);
+    if (child->mode != mode_piped) misuse("process: close_input of a child that has no stdin pipe");
+    if (child->input_closed) return;
+    child->input_closed = true;
+    if (child->handled) {
+        c::SmithProcessHandler *handler = c::smith_handlers_process();
+        handler->close_input(handler, child->id);
+        return;
+    }
+    if (child->input >= 0) c::close(child->input);
+    child->input = -1;
+}
+
+// Waits until the child has exited and returns how it ended. Waiting twice is a checked failure: the id may be another
+// program's by then.
+[[smith::c_name("smith_process_wait")]] export [[nodiscard]] ExitResult wait(Child *child) {
+    child_open(child);
+    if (child->reaped) misuse("process: the child was waited for already");
+    Exit ended = {};
+    c::SmithProcessHandler *handler = c::smith_handlers_process();
+    if (child->handled) {
+        i32 status = 0;
+        i32 killed_by = 0;
+        if (handler->wait(handler, child->id, &status, &killed_by) != 0) {
+            return {.error = error_from(errno_now())};
+        }
+        ended = (Exit){.status = status, .signal = killed_by};
+    } else {
+        i32 wait_status = 0;
+        i32 code = wait_real(child->id, &wait_status);
+        if (code != 0) {
+            return {.error = error_from(code)};
+        }
+        ended = exit_of(wait_status);
+    }
+    child->reaped = true;
+    return ended;
+}
+
+// Sends the signal to the child and to the processes of its group (a started child leads one). Gone when there is
+// nothing left to signal: also, with no signal sent, once wait has completed, since the id could then be another
+// program's.
+[[smith::c_name("smith_process_kill")]] export [[nodiscard]] DoneResult kill(Child *child, i32 number) {
+    child_open(child);
+    contract::requires(number > 0);
+    if (child->reaped) {
+        return {.error = Gone};
+    }
+    c::SmithProcessHandler *handler = c::smith_handlers_process();
+    i32 target_id = child->group && !child->handled ? -child->id : child->id;
+    bool sent = child->handled ? handler->kill(handler, child->id, number) == 0 : c::kill(target_id, number) == 0;
+    if (!sent) {
+        return {.error = error_from(errno_now())};
+    }
+    return (Done){};
+}
+
+// Closes what is still open of the child's streams. It does not kill or wait: wait for the exit first (the pipes close
+// with the child anyway). Closing a child twice is a checked failure.
+[[smith::c_name("smith_process_close")]] export void close(Child *child) {
+    child_open(child);
+    child->closed = true;
+    if (child->handled) {
+        c::SmithProcessHandler *handler = c::smith_handlers_process();
+        handler->close(handler, child->id);
+        return;
+    }
+    if (child->input >= 0) c::close(child->input);
+    if (child->output >= 0) c::close(child->output);
+    child->input = child->output = -1;
+}
+
+// How many processes can run at once: the machine's logical cores (the fake has what `fake_cores` set, 1 at first).
+[[smith::c_name("smith_process_cores")]] export [[nodiscard]] usize cores() {
+    c::SmithProcessHandler *handler = c::smith_handlers_process();
+    if (handler != nullptr && handler->cores != nullptr) return handler->cores(handler);
+    i64 count = c::sysconf(processors_online);
+    return count > 0 ? (usize)count : 1;
+}
+
+// ---------------------------------------------------------------- run: start, capture both streams, wait
+
+// A growing block of the current allocator; the old blocks stay in the region.
+typedef struct {
+    u8 data[:];
+    usize size;
+} Grow;
+
+// Room for chunk more bytes.
+void grow_room(Grow *grow) {
+    if (countof(grow->data) - grow->size >= chunk) return;
+    usize capacity = countof(grow->data) == 0 ? chunk * 2 : countof(grow->data) * 2;
+    u8 bigger[:] = mem::alloc_slice(u8, capacity);
+    mem::copy(bigger[0:grow->size], grow->data[0:grow->size]);
+    grow->data = bigger;
+}
+
+// Takes one read of a real stream into the grow: false at its end (or on an error, which ends it).
+bool grow_feed(Grow *grow, i32 descriptor) {
+    grow_room(grow);
+    i32 code = 0;
+    u8 room[:] = grow->data[grow->size:];
+    isize count = read_real(descriptor, room.data, chunk, &code);
+    if (count <= 0) return false;
+    grow->size += (usize)count;
+    return true;
+}
+
+// Reads a real child's two pipes to their ends with poll, so neither fills while the other is read.
+void drain_real(Grow *output, i32 out_fd, Grow *errors, i32 err_fd) {
+    bool out_open = true;
+    bool err_open = true;
+    for (usize rounds = 0; (out_open || err_open) && rounds < ~(usize)0; rounds++) { // each round reads or ends one
+        struct c::pollfd watched[2] = {{.fd = out_open ? out_fd : -1, .events = poll_in},
+                                       {.fd = err_open ? err_fd : -1, .events = poll_in}};
+        if (c::poll(watched, 2, -1) < 0 && errno_now() != eintr) break;
+        if (out_open && watched[0].revents != 0) out_open = grow_feed(output, out_fd);
+        if (err_open && watched[1].revents != 0) err_open = grow_feed(errors, err_fd);
+    }
+}
+
+// Runs the program with no stdin and waits, capturing its stdout and its stderr apart. The output is read in doubling
+// blocks, so it may use up to twice its size. An error is that the program could not start (or the wait failed); one
+// that started and failed is success with its Exit.
+[[smith::c_name("smith_process_run")]] export [[nodiscard]] OutputResult run(const char *const argv[:]) {
+    ChildResult started = start_child(argv, mode_captured, false);
+    switch (started) {
+    case .error:
+        return {.error = started.error};
+    case .ok:
+        Child child = started.ok;
+        Grow output = {};
+        Grow errors = {};
+        if (child.handled) {
+            c::SmithProcessHandler *handler = c::smith_handlers_process();
+            for (i32 stream = 1; stream <= 2; stream++) {
+                Grow *into = stream == 1 ? &output : &errors;
+                for (usize rounds = 0; rounds < ~(usize)0; rounds++) { // each round reads a byte or ends
+                    grow_room(into);
+                    u8 room[:] = into->data[into->size:];
+                    isize count = handler->read(handler, child.id, stream, room.data, chunk);
+                    if (count < 0) {
+                        return {.error = error_from(errno_now())};
+                    }
+                    if (count == 0) break;
+                    into->size += (usize)count;
+                }
+            }
+        } else {
+            drain_real(&output, child.output, &errors, child.errors);
+            c::close(child.output);
+            c::close(child.errors);
+            child.output = child.errors = -1;
+        }
+        ExitResult ended = wait(&child);
+        close(&child);
+        switch (ended) {
+        case .error:
+            return {.error = ended.error};
+        case .ok:
+            Bytes seen = output.data[0:output.size];
+            Bytes failed = errors.data[0:errors.size];
+            return (Output){.exit = ended.ok, .output = seen, .errors = failed};
+        }
+    }
+}
+
+// ---------------------------------------------------------------- the fake, for tests
+
+// What a scripted program does. The first script of a program that no child has used yet is the one a start uses (so
+// two children of one program are two scripts). The child writes `output` to its stdout and `errors` to its stderr,
+// in pieces of at most `chunk` bytes when chunk is not 0, and exits as `exit_on` says, with `status`. A read that
+// finds nothing left from a child that has not exited would wait forever, which a test cannot do: a checked failure.
+[[smith::c_name("SmithProcessScript")]] export typedef struct {
+    const char *program;
+    const char *output;
+    const char *errors;
+    usize chunk;
+    ExitOn exit_on;
+    i32 status;
+} Script;
+
+// A scripted child's state, which the fake keeps.
+[[smith::c_name("SmithProcessFakeChild")]] export typedef struct {
+    bool used;
+    bool closed;
+    bool input_closed;
+    bool killed;
+    i32 signal;
+    i32 mode;
+    usize output_position;
+    usize errors_position;
+    u8 input[:]; // what the program wrote to the child's stdin (a block of the current allocator)
+    usize input_size;
+} FakeChild;
+
+// The handler base is the first member: `&fake.base` is what process::set_handler takes.
+[[smith::c_name("SmithProcessFake")]] export typedef struct {
+    Handler base;
+    Script scripts[fake_scripts_max];
+    FakeChild children[fake_scripts_max];
+    usize count;
+    usize cores;
+} Fake;
+
+void fake_fail(i32 code) {
+    *errno_slot() = code;
+}
+
+// The child of an id, or null (and EBADF) when it is not one that is open.
+FakeChild *fake_child(Fake *fake, i32 id) {
+    if (id < 1 || (usize)id > fake->count || fake->children[(usize)id - 1].closed) {
+        fake_fail(ebadf);
+        return nullptr;
+    }
+    return &fake->children[(usize)id - 1];
+}
+
+// Whether the output the child's streams hold has all been read.
+bool fake_drained(const Fake *fake, const FakeChild *child) {
+    const Script *script = &fake->scripts[(usize)(child - fake->children)];
+    usize output_left = c::strlen(script->output != nullptr ? script->output : "") - child->output_position;
+    usize errors_left = c::strlen(script->errors != nullptr ? script->errors : "") - child->errors_position;
+    if (child->mode == mode_piped) return output_left == 0;
+    if (child->mode == mode_captured) return output_left == 0 && errors_left == 0;
+    return true;
+}
+
+bool fake_exited(const Fake *fake, const FakeChild *child) {
+    if (child->killed) return true;
+    switch (fake->scripts[(usize)(child - fake->children)].exit_on) {
+    case Start:
+        return true;
+    case InputClosed:
+        return child->input_closed;
+    case OutputRead:
+        return fake_drained(fake, child);
+    case Never:
+        return false;
+    }
+}
+
+i32 fake_start(c::SmithProcessHandler *self, const char *const *argv, i32 mode) {
+    Fake *fake = (Fake *)self;
+    for (usize i = 0; i < fake->count; i++) {
+        if (fake->children[i].used || c::strcmp(fake->scripts[i].program, argv[0]) != 0) continue;
+        fake->children[i] = (FakeChild){.used = true, .mode = mode};
+        return (i32)i + 1;
+    }
+    fake_fail(enoent);
+    return -1;
+}
+
+isize fake_read(c::SmithProcessHandler *self, i32 id, i32 stream, void *buffer, usize size) {
+    Fake *fake = (Fake *)self;
+    FakeChild *child = fake_child(fake, id);
+    if (child == nullptr) return -1;
+    if (child->mode == mode_inherit || (stream == 2 && child->mode != mode_captured)) {
+        fake_fail(ebadf);
+        return -1;
+    }
+    const Script *script = &fake->scripts[(usize)id - 1];
+    const char *text = stream == 1 ? script->output : script->errors;
+    usize total = text != nullptr ? c::strlen(text) : 0;
+    usize *position = stream == 1 ? &child->output_position : &child->errors_position;
+    usize count = total - *position;
+    if (count > size) count = size;
+    if (script->chunk != 0 && count > script->chunk) count = script->chunk;
+    if (count > 0) {
+        put(buffer, text + *position, count);
+        *position += count;
+        return (isize)count;
+    }
+    // Nothing left: the end if the child is over, else a read that would wait for ever.
+    if (fake_exited(fake, child) || script->exit_on == OutputRead) return 0;
+    misuse("process fake: a read that would wait for ever (the child has not exited: close its input, or script "
+           "ExitOn::Start or OutputRead)");
+}
+
+isize fake_write(c::SmithProcessHandler *self, i32 id, const void *buffer, usize size) {
+    Fake *fake = (Fake *)self;
+    FakeChild *child = fake_child(fake, id);
+    if (child == nullptr) return -1;
+    if (child->mode != mode_piped) {
+        fake_fail(ebadf);
+        return -1;
+    }
+    if (fake_exited(fake, child)) {
+        fake_fail(epipe);
+        return -1;
+    }
+    if (child->input_size + size > countof(child->input)) {
+        usize capacity = countof(child->input) == 0 ? chunk : countof(child->input) * 2;
+        while (capacity < child->input_size + size) {
+            capacity *= 2;
+        }
+        u8 bigger[:] = mem::alloc_slice(u8, capacity);
+        mem::copy(bigger[0:child->input_size], child->input[0:child->input_size]);
+        child->input = bigger; // the old block stays in the region
+    }
+    put(child->input.data + child->input_size, buffer, size);
+    child->input_size += size;
+    return (isize)size;
+}
+
+i32 fake_close_input(c::SmithProcessHandler *self, i32 id) {
+    FakeChild *child = fake_child((Fake *)self, id);
+    if (child == nullptr) return -1;
+    child->input_closed = true;
+    return 0;
+}
+
+i32 fake_wait(c::SmithProcessHandler *self, i32 id, i32 *status, i32 *killed_by) {
+    Fake *fake = (Fake *)self;
+    FakeChild *child = fake_child(fake, id);
+    if (child == nullptr) return -1;
+    if (!fake_exited(fake, child))
+        misuse("process fake: a wait that would wait for ever (the child has not exited: close its input, read its "
+               "output or kill it)");
+    *status = child->killed ? 0 : fake->scripts[(usize)id - 1].status;
+    *killed_by = child->killed ? child->signal : 0;
+    return 0;
+}
+
+i32 fake_kill(c::SmithProcessHandler *self, i32 id, i32 number) {
+    Fake *fake = (Fake *)self;
+    FakeChild *child = fake_child(fake, id);
+    if (child == nullptr) return -1;
+    if (fake_exited(fake, child)) {
+        fake_fail(esrch);
+        return -1;
+    }
+    child->killed = true;
+    child->signal = number;
+    return 0;
+}
+
+i32 fake_close(c::SmithProcessHandler *self, i32 id) {
+    FakeChild *child = fake_child((Fake *)self, id);
+    if (child == nullptr) return -1;
+    child->closed = true;
+    return 0;
+}
+
+usize fake_cores(c::SmithProcessHandler *self) {
+    return ((Fake *)self)->cores;
+}
+
+// An empty fake: no programs, so every start is NotFound until `fake_add` scripts one. Put it in force with
+// `process::set_handler(&fake.base)`.
+[[smith::c_name("smith_process_fake")]] export [[nodiscard]] Fake fake() {
+    Fake result = {};
+    result.cores = 1;
+    result.base = (c::SmithProcessHandler){
+        .start = fake_start,
+        .read = fake_read,
+        .write = fake_write,
+        .close_input = fake_close_input,
+        .wait = fake_wait,
+        .kill = fake_kill,
+        .close = fake_close,
+        .cores = fake_cores,
+    };
+    return result;
+}
+
+// Scripts a program (up to 16 in a fake).
+[[smith::c_name("smith_process_fake_add")]] export void fake_add(Fake *fake, Script script) {
+    if (fake->count == fake_scripts_max) misuse("process fake: more than 16 scripted programs");
+    fake->scripts[fake->count] = script;
+    fake->children[fake->count] = (FakeChild){};
+    fake->count++;
+}
+
+// How many processes the fake says can run at once.
+[[smith::c_name("smith_process_fake_set_cores")]] export void fake_set_cores(Fake *fake, usize cores) {
+    fake->cores = cores;
+}
+
+// What the program wrote to the stdin of the n-th scripted child (counting from 0), as bytes.
+[[smith::c_name("smith_process_fake_input")]] export [[nodiscard]] Bytes fake_input(const Fake *fake, usize n) {
+    contract::requires(n < fake->count);
+    return fake->children[n].input[0:fake->children[n].input_size];
+}
+// NOLINTEND(smith-effects)

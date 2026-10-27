@@ -125,6 +125,7 @@
     "./.agents/skills/smith-prove-budget/",
     "./.agents/skills/smith-prove-ir/",
     "./.agents/skills/smith-prove-cost/",
+    "./.agents/skills/smith-process/",
     "./.agents/skills/smith-prove-trusted/",
     "./.agents/skills/smith-random/",
     "./.agents/skills/smith-random-c/",
