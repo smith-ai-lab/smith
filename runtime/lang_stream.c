@@ -177,6 +177,199 @@ static void smith_lang_reset_declaration(SmithLang *lang) {
     lang->agg_pending = false;
 }
 
+// ---- `main` in a module
+// ----------------------------------------------------------------------------------------------------
+//
+// In a file with a `module` line `main` is `i32 main()` or `i32 main(str args[:])` (the io form is lang_head.c). The
+// first is `int main(void)`. The second is `int main(int argc, char **argv)` whose body begins with the statements that
+// make `args`: a stack array of argc slices that point into argv's own characters (nothing is allocated or copied, a
+// slice's count is its strlen), written as source, so the rest of the lowering reads them like the program's own.
+
+constexpr char smith_lang_main_wrong[] =
+    "smith-main: main in a module takes no arguments or str args[:]; write i32 main(str args[:]) (the characters are "
+    "not copied)";
+
+// Whether the queue holds `main ( str NAME [ : ] ) {`.
+static bool smith_lang_main_args_ahead(SmithLang *lang, const SmithHost *host) {
+    return smith_lang_ident(smith_lang_peek(lang, host, 2, false), "str") &&
+           smith_lang_peek(lang, host, 3, false)->kind == SmithTokenKind_Identifier &&
+           smith_lang_punct(smith_lang_peek(lang, host, 4, false), "[") &&
+           smith_lang_punct(smith_lang_peek(lang, host, 5, false), ":") &&
+           smith_lang_punct(smith_lang_peek(lang, host, 6, false), "]") &&
+           smith_lang_punct(smith_lang_peek(lang, host, 7, false), ")") &&
+           smith_lang_punct(smith_lang_peek(lang, host, 8, false), "{");
+}
+
+// The words of the C head and of the statements that make `args`, without asking the compiler anything: it reads a
+// batch only at its end, so the lowering cannot type a name this batch declares (a cut `slots[0:argc]` could not).
+static const char *const smith_lang_main_head[] = {"main",
+                                                   "(",
+                                                   "int",
+                                                   "smith_argc",
+                                                   ",",
+                                                   "char",
+                                                   "*",
+                                                   "*",
+                                                   "smith_argv",
+                                                   ")",
+                                                   "{",
+                                                   "typedef",
+                                                   "typeof",
+                                                   "(",
+                                                   "const",
+                                                   "char",
+                                                   "[",
+                                                   ":",
+                                                   "]",
+                                                   ")",
+                                                   "smith_main_str",
+                                                   ";",
+                                                   "smith_main_str",
+                                                   "smith_main_slots",
+                                                   "[",
+                                                   "(",
+                                                   "typeof",
+                                                   "(",
+                                                   "sizeof",
+                                                   "0",
+                                                   ")",
+                                                   ")",
+                                                   "smith_argc",
+                                                   "+",
+                                                   "1",
+                                                   "]",
+                                                   ";",
+                                                   "for",
+                                                   "(",
+                                                   "int",
+                                                   "smith_main_i",
+                                                   "=",
+                                                   "0",
+                                                   ";",
+                                                   "smith_main_i",
+                                                   "<",
+                                                   "smith_argc",
+                                                   ";",
+                                                   "smith_main_i",
+                                                   "++",
+                                                   ")",
+                                                   "{",
+                                                   "smith_main_slots",
+                                                   "[",
+                                                   "smith_main_i",
+                                                   "]",
+                                                   "=",
+                                                   "(",
+                                                   "smith_main_str",
+                                                   ")",
+                                                   "{",
+                                                   "smith_argv",
+                                                   "[",
+                                                   "smith_main_i",
+                                                   "]",
+                                                   ",",
+                                                   "{",
+                                                   "__builtin_strlen",
+                                                   "(",
+                                                   "smith_argv",
+                                                   "[",
+                                                   "smith_main_i",
+                                                   "]",
+                                                   ")",
+                                                   "}",
+                                                   "}",
+                                                   ";",
+                                                   "}",
+                                                   "typeof",
+                                                   "(",
+                                                   "smith_main_str",
+                                                   "[",
+                                                   ":",
+                                                   "]",
+                                                   ")",
+                                                   "",
+                                                   "=",
+                                                   "{",
+                                                   "smith_main_slots",
+                                                   ",",
+                                                   "{",
+                                                   "(",
+                                                   "typeof",
+                                                   "(",
+                                                   "sizeof",
+                                                   "0",
+                                                   ")",
+                                                   ")",
+                                                   "smith_argc",
+                                                   "}",
+                                                   "}",
+                                                   ";"};
+
+// The tokens of the words; the empty word is the program's name for `args`.
+static void smith_lang_main_make(const char *const *words, size_t count, const SmithToken *like, const SmithToken *name,
+                                 SmithToken *made) {
+    bool tight = true;
+    for (size_t at = 0; at < count; at++) {
+        const char *text = words[at];
+        if (text[0] == 0) {
+            made[at] = *name;
+            made[at].space_before = true;
+            tight = false;
+            continue;
+        }
+        bool word = isalnum((unsigned char)text[0]) || text[0] == '_';
+        made[at] = smith_lang_tuple_made(word ? SmithTokenKind_Identifier : SmithTokenKind_Punctuator, text,
+                                         strlen(text), like, !tight && strchr("),;]:[", text[0]) == nullptr);
+        if (isdigit((unsigned char)text[0])) made[at].kind = SmithTokenKind_Number;
+        made[at].synthetic = false; // the slice rewrites read these as the program's
+        tight = text[0] == '(' || text[0] == '[';
+    }
+}
+
+static void smith_lang_main_args_rewrite(SmithLang *lang, const SmithToken *name) {
+    constexpr size_t count = sizeof smith_lang_main_head / sizeof smith_lang_main_head[0];
+    static SmithToken made[count];
+    SmithToken like = lang->queue[lang->queue_head];
+    smith_lang_main_make(smith_lang_main_head, count, &like, name, made);
+    smith_lang_tuple_replace(lang, 9, made, count);
+}
+
+// `main ( )` becomes `main ( void )`.
+static void smith_lang_main_void(SmithLang *lang, const SmithHost *host) {
+    SmithToken made[4];
+    for (size_t at = 0; at < 3; at++)
+        made[at < 2 ? at : 3] = *smith_lang_peek(lang, host, at, false);
+    made[2] = smith_lang_tuple_made(SmithTokenKind_Identifier, "void", 4, &made[1], false);
+    smith_lang_tuple_replace(lang, 3, made, 4);
+}
+
+// The first token of a declaration: when it begins `main` of a module, checks the form and writes the C one.
+static void smith_lang_module_main_begin(SmithLang *lang, const SmithHost *host, const SmithToken *first) {
+    if (!lang->is_module || (host->expr_type != nullptr && !host->maybe_main) || lang->brace_depth != 0 ||
+        lang->recording)
+        return;
+    bool returns = smith_lang_ident(first, "i32") || smith_lang_ident(first, "int");
+    if (!returns && !smith_lang_ident(first, "void")) return;
+    const SmithToken *name = smith_lang_peek(lang, host, 0, false);
+    if (!smith_lang_ident(name, "main") || !smith_lang_punct(smith_lang_peek(lang, host, 1, false), "(")) return;
+    if (smith_lang_io_main_ahead(lang, host, first)) return; // the io form, until the io is gone
+    if (!returns) {
+        smith_lang_error(lang, host, first->location, "smith-main: main returns i32: write i32 main()");
+        return;
+    }
+    const SmithToken *third = smith_lang_peek(lang, host, 2, false);
+    if (smith_lang_punct(third, ")")) {
+        smith_lang_main_void(lang, host);
+    } else if (smith_lang_ident(third, "void") && smith_lang_punct(smith_lang_peek(lang, host, 3, false), ")")) {
+        return;
+    } else if (smith_lang_main_args_ahead(lang, host)) {
+        SmithToken args = *smith_lang_peek(lang, host, 3, false);
+        smith_lang_main_args_rewrite(lang, &args);
+    } else {
+        smith_lang_error(lang, host, name->location, "%s", smith_lang_main_wrong);
+    }
+}
+
 static void smith_lang_begin_declaration(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     // A raw run that writes a header keeps the private declarations (not the one that prints the lowering).
     lang->tee = host->previous == nullptr && host->expr_type == nullptr && !lang->dump_enabled;
@@ -184,6 +377,7 @@ static void smith_lang_begin_declaration(SmithLang *lang, const SmithHost *host,
     lang->generic_plain = false;
     lang->generic_next = smith_lang_generic_candidate(lang, host, token) && smith_lang_generic_ahead(lang, host, token);
     SmithToken shown = *token;
+    smith_lang_module_main_begin(lang, host, token);
     if (smith_lang_io_main_begin(lang, host, token) && !lang->is_module) { // a file's own functions are not static
         smith_lang_emit(lang, host, smith_lang_static_keyword(token));
         shown.line_start = false;

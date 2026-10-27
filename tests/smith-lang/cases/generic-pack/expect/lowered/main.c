@@ -10,7 +10,7 @@ return a + b;
 static __INT32_TYPE__ main_add3(__INT32_TYPE__ a, __INT32_TYPE__ b, __INT32_TYPE__ c) {
 return a + b + c;
 }
-int main() {
+int main(void) {
 __SIZE_TYPE__ n0 =smith_call_failed;
 __SIZE_TYPE__ n1 =smith_call_failed;
 __SIZE_TYPE__ n3 =smith_call_failed;

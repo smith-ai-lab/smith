@@ -21,7 +21,7 @@ for (__SIZE_TYPE__ i = 0; i < countof(xs); i++)
 t += xs[i];
 return t;
 } [ [ clang :: unavailable ( "main::show is a generic function: call it from a .smith module" ) ] ] void main_show ( void ) ; [ [ clang :: unavailable ( "main::first is a generic function: call it from a .smith module" ) ] ] void main_first ( void ) ;
-__INT32_TYPE__ main() {
+__INT32_TYPE__ main(void) {
 double v[4] = {1, 2, 3, 4};
 float r[3][2] = {{1, 2}, {3, 4}, {5, 6}};struct smith_array_f32_n_2 rows = r;
 main_Bag a = {.xs = v[0:4], .fixed = {5, 6, 7}, .grid = {{1, 2}, {3, 4}}, .rows = rows, .n = 1};__extension__({extern void main_show__Bag(main_Bag*x,main_Bag y)__asm__("_main::show(main_Bag)");main_show__Bag(&a,a);});

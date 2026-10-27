@@ -84,7 +84,7 @@ void smith_failure(__UINT8_TYPE__ code);
 void smith_failure(__UINT8_TYPE__ code) {
 exit(code);
 }
-__INT32_TYPE__ main() {
+__INT32_TYPE__ main(void) {
 __INT32_TYPE__ raw[4] = {1, 2, 3, 4};
 __INT32_TYPE__ more[6] = {10, 20, 30, 40, 50, 60};struct smith_array_i32_n {
 __INT32_TYPE__ * data; __SIZE_TYPE__ count [1]; } all = raw;

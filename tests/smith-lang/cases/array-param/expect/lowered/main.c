@@ -25,10 +25,10 @@ total += *xs++;
 }
 return total;
 }
-__INT32_TYPE__ main(__INT32_TYPE__ argc, char **argv) {
+__INT32_TYPE__ main(void) {
 __INT32_TYPE__ xs[main_width] = {1, 2, 3, 4, 5};
 float m[3][2] = {};
 printf("%zu %d %d %d\n", main_sizes(xs, m), main_last(xs), main_pass_on(xs), main_walk(xs, 3));
 memset(xs, 0, sizeof xs);
-return argc - 1;
+return 0;
 }

@@ -36,10 +36,10 @@ i32 walk(i32 *xs, usize count) {
     return total;
 }
 
-i32 main(i32 argc, char **argv) {
+i32 main() {
     i32 xs[width] = {1, 2, 3, 4, 5};
     f32 m[3][2] = {};
     c::printf("%zu %d %d %d\n", sizes(xs, m), last(xs), pass_on(xs), walk(xs, 3));
     c::memset(xs, 0, sizeof xs);
-    return argc - 1;
+    return 0;
 }

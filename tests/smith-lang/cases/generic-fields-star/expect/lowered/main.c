@@ -9,7 +9,7 @@ void smith_failure(__UINT8_TYPE__ code);
 void smith_failure(__UINT8_TYPE__ code) {
 exit(code);
 } [ [ clang :: unavailable ( "main::show is a generic function: call it from a .smith module" ) ] ] void main_show ( void ) ;
-__INT32_TYPE__ main() {
+__INT32_TYPE__ main(void) {
 char *words[2] = {"one", "two"};
 main_Table t = {.names = words[0:2], .n = 2};__extension__({extern void main_show__Table(main_Table*x)__asm__("_main::show(main_Table)");main_show__Table(&t);});
 return 0;

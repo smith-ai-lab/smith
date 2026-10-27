@@ -36,7 +36,7 @@ case .some: printf("some %g\n", o.some); break;
 case .none: printf("none\n"); break;
 }
 }
-__INT32_TYPE__ main() {
+__INT32_TYPE__ main(void) {
 main_show_wide(__extension__({extern struct smith_enum_result_usize__i32 main_twice__usize(__SIZE_TYPE__ x,__INT32_TYPE__ n)__asm__("_main::twice(__SIZE_TYPE__)");main_twice__usize(10,5);}));
 main_show_wide(__extension__({extern struct smith_enum_result_usize__i32 main_twice__usize(__SIZE_TYPE__ x,__INT32_TYPE__ n)__asm__("_main::twice(__SIZE_TYPE__)");main_twice__usize(10,-1);}));
 main_show_wide(__extension__({extern struct smith_enum_result_usize__i32 main_twice__usize(__SIZE_TYPE__ x,__INT32_TYPE__ n)__asm__("_main::twice(__SIZE_TYPE__)");main_twice__usize(10,0);}));

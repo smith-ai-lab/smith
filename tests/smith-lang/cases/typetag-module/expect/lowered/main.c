@@ -2,7 +2,7 @@
 #include "geo/shapes.h"
 
 extern __INT32_TYPE__ user(void);
-__INT32_TYPE__ main() {
+__INT32_TYPE__ main(void) {
 geo_shapes_Point p = geo_shapes_make(1, 2);
 geo_shapes_Node b = {.value = 3};
 geo_shapes_Node a = {.next = &b, .value = 4};

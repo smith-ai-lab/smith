@@ -3159,7 +3159,13 @@ void say_written(const Options *options) {
     return failed == 0 ? 0 : 1;
 }
 
-i32 main(i32 argc, char **argv) {
+i32 main(str args[:]) {
+    // The runner's options and io::make read a C argv: these are argv's own characters (not copied), nullptr-ended.
+    i32 argc = (i32)countof(args);
+    char *argv[(usize)argc + 1];
+    for (usize i = 0; i < countof(args); i++)
+        argv[i] = (char *)(c::uintptr_t)args[i].data;
+    argv[argc] = nullptr;
     io::Io io = io::make(argc, argv);
     Runner runner = {.io = &io, .make_io = io::make, .argc = argc, .argv = argv};
     return run_tests(&runner);

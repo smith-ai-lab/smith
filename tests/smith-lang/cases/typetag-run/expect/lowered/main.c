@@ -45,7 +45,7 @@ typedef struct main_Legacy main_Legacy;
 typedef struct {
 __INT32_TYPE__ b;
 } main_Bare;
-__INT32_TYPE__ main() {
+__INT32_TYPE__ main(void) {
 main_Point p = main_origin();
 main_Node second = {.value = 2};
 main_Node first = {.next = &second, .value = 1, .at = p};

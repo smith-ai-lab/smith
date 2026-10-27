@@ -85,12 +85,12 @@ i32 walk(i32 *xs, usize count) {
     return total;
 }
 
-i32 main(i32 argc, char **argv) {
+i32 main() {
     i32 xs[width] = {1, 2, 3, 4, 5};
     f32 m[3][2] = {};
     c::printf("%zu %d %d %d\n", sizes(xs, m), last(xs), pass_on(xs), walk(xs, 3));
     c::memset(xs, 0, sizeof xs);
-    return argc - 1;
+    return 0;
 }
 ==> attribute-c-names/src/log/fmt.smith <==
 module log::fmt;
@@ -1691,7 +1691,7 @@ export i32 second(const char *names[]) {
     return names[0][0];
 }
 
-i32 main(i32 argc, char *argv[]) {
+i32 mine(i32 argc, char *argv[]) {
     i32 xs[1] = {};
     return first(xs) + argc;
 }
@@ -8128,6 +8128,16 @@ export u32 pair(u32 a, u32 b) {
 export usize name_length() {
     return strlen(machine);
 }
+==> main-args/src/main.smith <==
+module main;
+import <stdio.h>;
+
+// `args` is a slice of the program's arguments: argc slices on the stack that point into argv's own characters.
+i32 main(str args[:]) {
+    str program = args[0];
+    c::printf("%zu argument, the program's name is not empty: %d\n", countof(args), countof(program) > 0);
+    return 5;
+}
 ==> main-io-module/src/main.smith <==
 module main;
 import smith::io as program_io;
@@ -8222,6 +8232,22 @@ import <stdio.h>;
 
 [[smith::c_name("smith_io_close")]] export void close(Io *io) {
     c::printf("closed after %d argument\n", io->count);
+}
+==> main-old-form-error/src/main.smith <==
+module main;
+
+// C's form is an error in a module: the arguments are `str args[:]`.
+int main(int argc, char **argv) {
+    return argc;
+}
+==> main/src/main.smith <==
+module main;
+import <stdio.h>;
+
+// A main in a module takes no arguments: `int main(void)`.
+i32 main() {
+    c::printf("main takes nothing\n");
+    return 3;
 }
 ==> member-after-dot-is-not-a-macro/src/main.smith <==
 import "lens.h";

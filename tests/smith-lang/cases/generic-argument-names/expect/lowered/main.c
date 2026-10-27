@@ -1,7 +1,7 @@
 #include "args.h"
 #include <stdio.h>
 
-int main() {
+int main(void) {
 __INT64_TYPE__ v = 5;
 __INT32_TYPE__ x = 3;
 double y = 4.0;

@@ -47,7 +47,7 @@ case .ok: printf("ok %d\n", r.ok); break;
 case .error: printf("error %d\n", r.error); break;
 }
 }
-__INT32_TYPE__ main() {
+__INT32_TYPE__ main(void) {
 main_show("chain ok", main_chain(1, 2));
 main_show("chain, first fails", main_chain(-1, 2));
 main_show("chain, second fails", main_chain(1, -2));

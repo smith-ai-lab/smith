@@ -9,7 +9,7 @@ main_Inner in;
 main_Inner *link;
 __INT32_TYPE__ count;
 } main_Outer; [ [ clang :: unavailable ( "main::show_pointee is a generic function: call it from a .smith module" ) ] ] void main_show_pointee ( void ) ; [ [ clang :: unavailable ( "main::show_member is a generic function: call it from a .smith module" ) ] ] void main_show_member ( void ) ;
-__INT32_TYPE__ main() {
+__INT32_TYPE__ main(void) {
 main_Outer o = {};smith_call_failed;smith_call_failed;smith_call_failed;
 return 0;
 }

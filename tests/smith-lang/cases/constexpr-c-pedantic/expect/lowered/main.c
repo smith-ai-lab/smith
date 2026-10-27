@@ -18,7 +18,7 @@ __UINT32_TYPE__ high : 3;
 };
 typedef struct main_Flags main_Flags; [ [ clang :: unavailable ( "main::wider is a function over `type`: it exists only at compile time" ) ] ] void main_wider ( void ) ;
 static_assert(main_wider(__UINT8_TYPE__, double) == double);
-__INT32_TYPE__ main() {
+__INT32_TYPE__ main(void) {
 __INT32_TYPE__ n = 13;
 switch (n) {
 case main_fib(7):

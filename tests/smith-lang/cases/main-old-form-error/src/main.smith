@@ -1,0 +1,6 @@
+module main;
+
+// C's form is an error in a module: the arguments are `str args[:]`.
+int main(int argc, char **argv) {
+    return argc;
+}

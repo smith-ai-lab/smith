@@ -5,7 +5,7 @@ __INT32_TYPE__ id;
 float weight;
 __UINT8_TYPE__ flag;
 } main_Sample;
-__INT32_TYPE__ main() {
+__INT32_TYPE__ main(void) {
 main_Sample s = {1, 2.5f, 4};__extension__({extern void lib_show__Sample(main_Sample*x)__asm__("_lib::show(main_Sample)");lib_show__Sample(&s);});
 return 0;
 }

@@ -11,7 +11,7 @@ return x / 2;
 static __INT32_TYPE__ main_plus(__INT32_TYPE__ a, __INT32_TYPE__ b) {
 return a + b;
 }
-int main() {
+int main(void) {
 __INT32_TYPE__ a =smith_call_failed;
 __INT32_TYPE__ b =smith_call_failed;
 double c =smith_call_failed;

@@ -1,7 +1,7 @@
 #include "arguments.h"
 #include <stdio.h>
 
-int main() {
+int main(void) {
 __INT32_TYPE__ a =smith_call_failed;
 __INT32_TYPE__ b =__extension__({extern __INT32_TYPE__ arguments_total__(void)__asm__("_arguments::total()");arguments_total__();});
 __INT32_TYPE__ c =smith_call_failed;

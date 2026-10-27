@@ -1321,6 +1321,14 @@ export void test_lowered_directives(io::Io *io) {
     corpus_case(io, "lowered-directives");
 }
 
+export void test_main(io::Io *io) {
+    corpus_case(io, "main");
+}
+
+export void test_main_args(io::Io *io) {
+    corpus_case(io, "main-args");
+}
+
 export void test_main_io(io::Io *io) {
     corpus_case(io, "main-io");
 }
@@ -1363,6 +1371,10 @@ export void test_module_export_extern(io::Io *io) {
 
 export void test_module_header_conditionals(io::Io *io) {
     corpus_case(io, "module-header-conditionals");
+}
+
+export void test_main_old_form_error(io::Io *io) {
+    corpus_case(io, "main-old-form-error");
 }
 
 export void test_module_main(io::Io *io) {

@@ -6,7 +6,7 @@ void smith_failure(__UINT8_TYPE__ code);
 void smith_failure(__UINT8_TYPE__ code) {
 exit(code);
 }
-__INT32_TYPE__ main() {
+__INT32_TYPE__ main(void) {
 __INT32_TYPE__ ints[4] = {1, 2, 3, 4};
 double reals[3] = {1.5, 2.5, 3.5};struct smith_array_i32_n {
 __INT32_TYPE__ * data; __SIZE_TYPE__ count [1]; } ints_view = ints;struct smith_array_f64_n {

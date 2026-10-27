@@ -14,7 +14,7 @@ goto out;
 out:
 puts("after the jump");
 }
-__INT32_TYPE__ main() {
+__INT32_TYPE__ main(void) {
 {
 defer puts("first deferred, runs last");
 defer puts("second deferred, runs first");

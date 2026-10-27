@@ -38,3 +38,4 @@ C has a header, a `static` and a naming prefix for this; a module has one file, 
 ## Errors
 
 `import cycle`, `cannot find module`, `is private; export it`, a path that does not match the `module` line, `imports come before any declaration`, a stale header: `smith-lang-modules-errors` lists each with its fix. For C names (`import <h>;` puts them under `c::`), `smith-lang-c-interop`.
+- **`main` in a module** is `i32 main()` (C's `int main(void)`) or `i32 main(str args[:])`: `args` is a slice of the program's arguments, argc slices on the stack that point into argv's own characters (nothing is allocated or copied; each count is a `strlen`). `void main`, `int main(int argc, char **argv)` and any other signature are errors (`smith-main:`). A file with no `module` line keeps C's `main`. `i32 main(io::Io *io)` still works while `io` exists.

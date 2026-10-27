@@ -37,7 +37,7 @@ case .ok: printf("ok %d\n", r.ok); break;
 case .error: printf("error %d\n", r.error); break;
 }
 }
-__INT32_TYPE__ main() {
+__INT32_TYPE__ main(void) {
 main_show(main_declared(1, 2));
 main_show(main_declared(-1, 2));
 main_show(main_declared(1, -2));

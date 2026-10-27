@@ -1,0 +1,8 @@
+module main;
+import <stdio.h>;
+
+// A main in a module takes no arguments: `int main(void)`.
+i32 main() {
+    c::printf("main takes nothing\n");
+    return 3;
+}

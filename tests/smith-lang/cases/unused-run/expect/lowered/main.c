@@ -14,7 +14,7 @@ return third;
 static void main_on_key(__INT32_TYPE__ *_window __attribute__((unused)), __INT32_TYPE__ key) {
 printf("key %d\n", key);
 }
-__INT32_TYPE__ main() {
+__INT32_TYPE__ main(void) {
 __INT32_TYPE__ window = 0;
 main_Item item = {.value = 4}; [[maybe_unused]] auto smith_discard_3 = main_compute(3); [[maybe_unused]] auto smith_discard_4 = main_compute(4);
 main_on_key(&window, item.value + item._reserved);

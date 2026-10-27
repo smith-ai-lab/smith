@@ -8,7 +8,7 @@ export i32 second(const char *names[]) {
     return names[0][0];
 }
 
-i32 main(i32 argc, char *argv[]) {
+i32 mine(i32 argc, char *argv[]) {
     i32 xs[1] = {};
     return first(xs) + argc;
 }
