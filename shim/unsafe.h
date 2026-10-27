@@ -196,6 +196,7 @@ class UnsafeCheck final : public ClangTidyCheck {
 
     void on_variable(const VarDecl *variable, const SourceManager &sm) {
         if (isa<ParmVarDecl>(variable) || !variable->getType()->isVariableArrayType()) return;
+        if (variable->getName() == "smith_main_slots") return; // the lowering's own: the slices of `main(str args[:])`
         SourceLocation at = own(variable->getBeginLoc(), sm);
         if (at.isValid()) report_stack(at);
     }

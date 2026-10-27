@@ -3085,9 +3085,8 @@ void say_written(const Options *options) {
     }
 }
 
-// The runner: parses the options, chooses the tests, runs them and prints the report. The exit status is 0 when every
-// test passed. main makes the Runner.
-[[smith::c_name("smith_test_run")]] export i32 run_tests(Runner *runner) {
+// The options before the command line is read.
+static Options default_options(Runner *runner) {
     io::Io *io = runner->io;
     const char *base = io::args_env(&io->args, "TMPDIR");
     Options options = {
@@ -3106,33 +3105,62 @@ void say_written(const Options *options) {
         .explain_max = explain_max_default,
     };
     if (options.jobs > jobs_max) options.jobs = jobs_max;
-    if (!parse_options(runner->argc, runner->argv, &options)) {
-        complain(&options,
-                 "usage: %s [--test <substring>] [--seed <n>] [--seeds <1 to %ju>] [--jobs <1 to %zu>] "
-                 "[--timeout <cpu seconds>] [--wall-timeout <seconds>] [--shrink 0|1] [--shrink-seconds <seconds>] "
-                 "[--shuffle <seed>] [--isolate] "
-                 "[--in-process] [--full] [--update] [--list] [--verbose] [--stats] [--trace] [--color] "
-                 "[--explain <smith>] [--explain-max <n>] [--no-explain] [--unchecked]\n",
-                 runner->argv[0], (c::uintmax_t)seeds_max, jobs_max);
-        return usage_status;
+    return options;
+}
+
+static void say_usage(const Options *options, const Runner *runner) {
+    complain(options,
+             "usage: %s [--test <substring>] [--seed <n>] [--seeds <1 to %ju>] [--jobs <1 to %zu>] "
+             "[--timeout <cpu seconds>] [--wall-timeout <seconds>] [--shrink 0|1] [--shrink-seconds <seconds>] "
+             "[--shuffle <seed>] [--isolate] "
+             "[--in-process] [--full] [--update] [--list] [--verbose] [--stats] [--trace] [--color] "
+             "[--explain <smith>] [--explain-max <n>] [--no-explain] [--unchecked]\n",
+             runner->argv[0], (c::uintmax_t)seeds_max, jobs_max);
+}
+
+// The state the run shares with its workers: what the options decide, the shared counters and the memory block.
+static void prepare_run(Options *options) {
+    if (options->in_process) {
+        options->shrink = false; // shrinking reruns the test in workers of its own
+        if (!options->timeout_given) options->timeout = 0;
     }
-    if (options.in_process) {
-        options.shrink = false; // shrinking reruns the test in workers of its own
-        if (!options.timeout_given) options.timeout = 0;
-    }
-    if (!options.wall_given)
-        options.wall_timeout = options.timeout == 0 ? 0 : wall_default; // a blocked test spends no CPU time
-    f64 start = seconds(&options);
-    full_run = options.full;
-    golden_begin(&options);
-    raise_files(options.jobs);
+    if (!options->wall_given)
+        options->wall_timeout = options->timeout == 0 ? 0 : wall_default; // a blocked test spends no CPU time
+    full_run = options->full;
+    golden_begin(options);
+    raise_files(options->jobs);
     c::signal(sig_pipe, (void (*)(i32))1); // a worker that died while idle is a failed write, not the end of the runner
     forks = (u64 *)map_bytes((1) * sizeof(u64), map_shared);
     explained = (u64 *)map_bytes((explain_stats) * sizeof(u64), map_shared);
-    explain_path = options.explain;
-    explain_limit = options.explain_max;
-
+    explain_path = options->explain;
+    explain_limit = options->explain_max;
     memory_block = (u8 *)map_bytes((memory_capacity) * sizeof(u8), map_private);
+}
+
+// The report of a run: the slowest tests, what was written and the count; the number that failed.
+static usize report_run(const Plan *plan, const Options *options, f64 start) {
+    usize failed = 0;
+    for (usize i = 0; i < plan->count; i++)
+        failed += plan->runs[i].outcome.end != End_Passed ? 1 : 0;
+    print_slowest(plan);
+    say_written(options);
+    say(options, "\n%zu passed, %zu failed in %.2f s\n", plan->count - failed, failed, seconds(options) - start);
+    say_explained(options);
+    if (options->stats) say(options, "forks: %ju\n", (c::uintmax_t)*forks);
+    if (options->stats) print_cpu(plan);
+    return failed;
+}
+
+// The runner: parses the options, chooses the tests, runs them and prints the report. The exit status is 0 when every
+// test passed. main makes the Runner.
+[[smith::c_name("smith_test_run")]] export i32 run_tests(Runner *runner) {
+    Options options = default_options(runner);
+    if (!parse_options(runner->argc, runner->argv, &options)) {
+        say_usage(&options, runner);
+        return usage_status;
+    }
+    f64 start = seconds(&options);
+    prepare_run(&options);
     Plan *plan = make_plan(&options);
     if (options.list) {
         for (usize i = 0; i < plan->count; i++)
@@ -3147,25 +3175,19 @@ void say_written(const Options *options) {
         run_in_process(plan);
     else
         run_all(plan);
-    usize failed = 0;
-    for (usize i = 0; i < plan->count; i++)
-        failed += plan->runs[i].outcome.end != End_Passed ? 1 : 0;
-    print_slowest(plan);
-    say_written(&options);
-    say(&options, "\n%zu passed, %zu failed in %.2f s\n", plan->count - failed, failed, seconds(&options) - start);
-    say_explained(&options);
-    if (options.stats) say(&options, "forks: %ju\n", (c::uintmax_t)*forks);
-    if (options.stats) print_cpu(plan);
-    return failed == 0 ? 0 : 1;
+    return report_run(plan, &options, start) == 0 ? 0 : 1;
 }
+
+constexpr usize arguments_max = 256;
 
 i32 main(str args[:]) {
     // The runner's options and io::make read a C argv: these are argv's own characters (not copied), nullptr-ended.
-    i32 argc = (i32)countof(args);
-    char **argv = (char **)__builtin_alloca(((usize)argc + 1) * sizeof(char *));
+    if (countof(args) > arguments_max) return usage_status;
+    char *argv[arguments_max + 1];
     for (usize i = 0; i < countof(args); i++)
         argv[i] = (char *)(c::uintptr_t)args[i].data;
-    argv[argc] = nullptr;
+    argv[countof(args)] = nullptr;
+    i32 argc = (i32)countof(args);
     io::Io io = io::make(argc, argv);
     Runner runner = {.io = &io, .make_io = io::make, .argc = argc, .argv = argv};
     return run_tests(&runner);
