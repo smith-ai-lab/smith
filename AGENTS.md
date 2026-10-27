@@ -27,7 +27,7 @@ A C toolchain and a modern standard library for C, written in C. Each fact has o
 - `smith docs` checks AGENTS.md, `knowledge/` (OKF) and `.agents/skills/`, and `smith new` starts every project with them. [smith-docs skill](.agents/skills/smith-docs/SKILL.md)
 - `smith build` runs build.c, then its own executor, with no ninja (`SMITH_NINJA` is the way out). [build-file](knowledge/build-file.md), [executor](knowledge/executor.md)
 - A Makefile is translated by smith's own reader of GNU make's common subset; no vendored make (GPLv3, no license forced on smith). [makefile-translation](knowledge/makefile-translation.md)
-- Clang modules are implicit, one per header, opt-in; there are two caches with one 31-day rule; packages are a URL and a hash, and smith reads its archives itself. [clang-modules](knowledge/clang-modules.md), [caches](knowledge/caches.md), [packages](knowledge/packages.md), [archives](knowledge/archives.md)
+- Clang modules are implicit, one per header, opt-in; there are two caches; the module cache is per smith (its LC_UUID) and keeps the three most recently used, anything idle a day goes; everything else follows one 31-day rule; packages are a URL and a hash, and smith reads its archives itself. [clang-modules](knowledge/clang-modules.md), [caches](knowledge/caches.md), [packages](knowledge/packages.md), [archives](knowledge/archives.md)
 
 **Language and checks**
 - smith's own code is C23, libc only, no malloc; the only C++ is the thin shims in `shim/`. [smith-own-code](knowledge/smith-own-code.md)

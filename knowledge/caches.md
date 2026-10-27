@@ -34,7 +34,7 @@ from either is simply fetched or built again:
   plain one's. A module file is checked against its headers when it is used and rebuilt if one changed, so a warm cache
   can only be stale in a way clang detects.
 
-**One rule for both: an entry unused for 31 days is removed, checked at most once a week.** For modules smith states it
+**One rule for what is inside: an entry unused for 31 days is removed, checked at most once a week** (the module folders of smiths are the exception above: they go sooner). For modules smith states it
 in every compile, as `-fmodules-prune-interval=604800 -fmodules-prune-after=2678400`, and clang applies it (named
 constants in `runtime/package.c`). For packages smith applies it:
 
