@@ -211,10 +211,10 @@ static bool smith_lang_countof_parameter(SmithLang *lang, const SmithHost *host,
     }
     for (size_t i = 0; i <= at; i++) // the tokens of the call
         smith_lang_take(lang, host);
-    SmithToken pieces[8 + smith_lang_array_tokens_max];
+    SmithToken pieces[16 + smith_lang_array_tokens_max];
     size_t count = 0;
-    static const char *const head[] = {"(", "(", "__SIZE_TYPE__", ")", "("};
-    for (size_t i = 0; i < 5; i++) { // five pieces
+    static const char *const head[] = {"(", "(", "__SIZE_TYPE__", ")", "(", "("};
+    for (size_t i = 0; i < 6; i++) { // six pieces
         bool word = i == 2;
         pieces[count] = smith_lang_synth(word ? SmithTokenKind_Identifier : SmithTokenKind_Punctuator, head[i],
                                          strlen(head[i]), token);
@@ -228,12 +228,20 @@ static bool smith_lang_countof_parameter(SmithLang *lang, const SmithHost *host,
         pieces[count].space_before = false;
         count += 1;
     }
-    for (size_t i = 0; i < 2; i++) { // two closing
-        pieces[count] = smith_lang_synth(SmithTokenKind_Punctuator, ")", 1, token);
+    // `+ 0 * sizeof(xs)` makes the parameter a use (`&` keeps clang from warning about `sizeof` of an array parameter),
+    // so -Wunused-parameter has nothing to say.
+    static const char *const tail[] = {")", "+", "0", "*", "sizeof", "(", "&", nullptr, ")", ")", ")"};
+    for (size_t i = 0; i < 11; i++) { // eleven pieces
+        const char *text = tail[i] != nullptr ? tail[i] : param->name;
+        bool word = i == 4 || i == 7;
+        pieces[count] = smith_lang_synth(i == 2 ? SmithTokenKind_Number
+                                         : word ? SmithTokenKind_Identifier
+                                                : SmithTokenKind_Punctuator,
+                                         text, strlen(text), token);
         pieces[count].space_before = false;
         count += 1;
     }
-    for (size_t i = 0; i < count; i++) // at most 11
+    for (size_t i = 0; i < count; i++) // at most 20
         smith_lang_emit(lang, host, pieces[i]);
     return true;
 }

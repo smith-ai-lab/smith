@@ -71,6 +71,22 @@ i32 main(i32 argc, char *argv[]) {
     c::printf("%d %d %zu\n", unsized(xs, 4), moves(p), size(p));
     return 0;
 }
+==> array-param-unused/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+// The only use of an array parameter is `countof`: it still counts as a use, so -Wunused-parameter has nothing to say
+// (the conventions make it an error).
+usize cells(f32 m[3][2]) {
+    return countof(m) * countof(m[0]);
+}
+
+i32 main() {
+    f32 m[3][2] = {};
+    c::printf("%zu\n", cells(m));
+    return 0;
+}
 ==> array-param/src/main.smith <==
 module main;
 

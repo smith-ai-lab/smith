@@ -317,6 +317,10 @@ export void test_array_param(io::Io *io) {
     corpus_case(io, "array-param");
 }
 
+export void test_array_param_unused(io::Io *io) {
+    corpus_case(io, "array-param-unused");
+}
+
 export void test_array_param_export(io::Io *io) {
     corpus_case(io, "array-param-export");
 }
