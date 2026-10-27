@@ -1,0 +1,17 @@
+module stats;
+
+export usize count(const auto xs[:]) {
+    return countof(xs);
+}
+
+export usize rows(const auto grid[:][:]) {
+    return countof(grid);
+}
+
+export typeof(*p) read(const auto *p) {
+    return *p;
+}
+
+export typeof(xs[0]) third(auto xs[4]) {
+    return xs[2];
+}

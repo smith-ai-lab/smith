@@ -101,6 +101,7 @@ static bool smith_lang_tuple_spell(SmithLang *lang, const SmithToken *span, size
 static void smith_lang_slice_tag(const char *spelled, char *tag, size_t capacity);
 static bool smith_lang_slice_defined(const SmithLang *lang, const char *tag);
 static bool smith_lang_slice_tag_definition(const char *tag, char *data, size_t capacity, unsigned long *count);
+static bool smith_lang_slice_tag_dims_count(const char *tag, size_t *all, size_t *runtime);
 
 // The type parameter a slice's tag is made of: `smith_array_T_n` in `typeof(T[:]) push_slice(...)`, whose struct is
 // named after its element. The token is marked as a slice tag (the instance spells the tag of the type it was asked
@@ -305,6 +306,72 @@ static bool smith_lang_param_is_auto(const SmithLangParam *param) {
            first[1].kind == SmithTokenKind_Identifier && first[1].special == SmithLangGen_Plain;
 }
 
+// `auto` in the element position of a parameter's declarator (issue #193): `const auto xs[:]`, `auto m[:][:]`,
+// `const auto *p`, `auto xs[4]`. The parameter is an `auto` slot whose type is the argument's, and the declarator keeps
+// its shape: the instance writes the element's type where `auto` stands.
+typedef enum {
+    SmithLangShape_None,
+    SmithLangShape_Slice,
+    SmithLangShape_Pointer,
+    SmithLangShape_Array,
+} SmithLangShapeKind;
+
+typedef struct {
+    SmithLangShapeKind kind;
+    uint32_t auto_at; // the `auto`, an index of smith_lang_gt
+    uint32_t name_at; // the parameter's name
+    unsigned stars;   // `auto **p`: 2
+    unsigned dims;    // `auto m[:][:]`: 2
+} SmithLangShape;
+
+static bool smith_lang_qualifier_token(const SmithLangGenToken *token) {
+    return token->kind == SmithTokenKind_Identifier && token->special == SmithLangGen_Plain &&
+           (smith_lang_gt_is(token, SmithTokenKind_Identifier, "const") ||
+            smith_lang_gt_is(token, SmithTokenKind_Identifier, "volatile") ||
+            smith_lang_gt_is(token, SmithTokenKind_Identifier, "restrict") ||
+            smith_lang_gt_is(token, SmithTokenKind_Identifier, "__restrict"));
+}
+
+// Whether the parameter is written with `auto` as its element (not `auto x`), and its shape.
+static bool smith_lang_param_shape(const SmithLangParam *param, SmithLangShape *shape) {
+    *shape = (SmithLangShape){};
+    uint32_t at = param->start;
+    while (at < param->end && smith_lang_qualifier_token(&smith_lang_gt.tokens[at]))
+        at += 1;
+    if (at >= param->end || !smith_lang_gt_is(&smith_lang_gt.tokens[at], SmithTokenKind_Identifier, "auto")) {
+        return false;
+    }
+    shape->auto_at = at++;
+    while (at < param->end && (smith_lang_gt_punct(&smith_lang_gt.tokens[at], "*") ||
+                               smith_lang_qualifier_token(&smith_lang_gt.tokens[at]))) {
+        shape->stars += smith_lang_gt_punct(&smith_lang_gt.tokens[at], "*") ? 1U : 0U;
+        at += 1;
+    }
+    if (at >= param->end || smith_lang_gt.tokens[at].kind != SmithTokenKind_Identifier ||
+        smith_lang_gt.tokens[at].special != SmithLangGen_Plain) {
+        return false;
+    }
+    shape->name_at = at++;
+    if (at == param->end) {
+        shape->kind = shape->stars > 0 ? SmithLangShape_Pointer : SmithLangShape_None;
+        return shape->stars > 0;
+    }
+    if (shape->stars > 0 || !smith_lang_gt_punct(&smith_lang_gt.tokens[at], "[")) return false;
+    if (param->end - at == 3 && !smith_lang_gt_punct(&smith_lang_gt.tokens[at + 1], ":") &&
+        smith_lang_gt_punct(&smith_lang_gt.tokens[at + 2], "]")) {
+        shape->kind = SmithLangShape_Array; // `[4]`
+        return true;
+    }
+    while (at + 3 <= param->end && smith_lang_gt_punct(&smith_lang_gt.tokens[at], "[") &&
+           smith_lang_gt_punct(&smith_lang_gt.tokens[at + 1], ":") &&
+           smith_lang_gt_punct(&smith_lang_gt.tokens[at + 2], "]")) {
+        shape->dims += 1;
+        at += 3;
+    }
+    shape->kind = SmithLangShape_Slice;
+    return shape->dims > 0 && at == param->end;
+}
+
 // Whether the parameter is `constexpr auto f`: three tokens. The argument is a function known at compile time, and each
 // distinct function is an instance.
 static bool smith_lang_param_is_function(const SmithLangParam *param) {
@@ -359,7 +426,7 @@ static size_t smith_lang_generic_params(const SmithLangGeneric *generic, SmithLa
         if (smith_lang_param_is_type(&out[i]) || smith_lang_param_is_function(&out[i])) {
             out[i].kind = smith_lang_param_is_type(&out[i]) ? SmithLangSlot_Type : SmithLangSlot_Function;
             out[i].type_index = (int8_t)smith_lang_param_named(generic, smith_lang_gt_str(first + 2), first[2].length);
-        } else if (smith_lang_param_is_auto(&out[i])) {
+        } else if (smith_lang_param_is_auto(&out[i]) || smith_lang_param_shape(&out[i], &(SmithLangShape){})) {
             out[i].kind = SmithLangSlot_Auto;
         } else if (smith_lang_param_is_pack(&out[i])) {
             out[i].kind = SmithLangSlot_Pack;
@@ -471,6 +538,34 @@ static bool smith_lang_plain_ahead(SmithLang *lang, const SmithHost *host, const
     return false;
 }
 
+// Whether the `auto` read ahead at `index` is the element of a parameter's declarator (issue #193): only qualifiers
+// before it in the parameter, then (stars and) the name and a `[`, or stars and the name to the end of the parameter.
+static bool smith_lang_element_auto_at(SmithLang *lang, const SmithHost *host, size_t index) {
+    for (size_t back = index; back > 0; back--) { // the qualifiers before `auto`, to the start of the parameter
+        const SmithToken *before = smith_lang_peek(lang, host, back - 1, false);
+        if (smith_lang_punct(before, "(") || smith_lang_punct(before, ",")) break;
+        if (!smith_lang_ident(before, "const") && !smith_lang_ident(before, "volatile") &&
+            !smith_lang_ident(before, "restrict") && !smith_lang_ident(before, "__restrict")) {
+            return false;
+        }
+    }
+    size_t at = index + 1;
+    unsigned stars = 0;
+    for (; at < index + 8; at++) { // the stars and their qualifiers
+        const SmithToken *token = smith_lang_peek(lang, host, at, false);
+        if (smith_lang_punct(token, "*")) {
+            stars += 1;
+        } else if (!smith_lang_ident(token, "const") && !smith_lang_ident(token, "volatile") &&
+                   !smith_lang_ident(token, "restrict")) {
+            break;
+        }
+    }
+    const SmithToken *name = smith_lang_peek(lang, host, at, false);
+    const SmithToken *after = smith_lang_peek(lang, host, at + 1, false);
+    if (name->kind != SmithTokenKind_Identifier || smith_lang_is_word(name)) return false;
+    return stars > 0 ? smith_lang_punct(after, ",") || smith_lang_punct(after, ")") : smith_lang_punct(after, "[");
+}
+
 // Reads ahead, to the end of the parameter list of the function the declaration begins with: is there a `type T` in it.
 // The tokens stay queued; nothing is changed.
 static bool smith_lang_generic_ahead(SmithLang *lang, const SmithHost *host, const SmithToken *first) {
@@ -525,10 +620,12 @@ static bool smith_lang_generic_ahead(SmithLang *lang, const SmithHost *host, con
             host->lookup(host->context, token->text, token->length, SmithLookup_Value).kind == SmithLookup_None) {
             return true; // `arithmetic x`: a concept for `auto`
         }
-        if (in_params && depth == 1 && smith_lang_ident(token, "auto") && (starts_parameter || after_constexpr) &&
-            (smith_lang_type_parameter_at(lang, host, index) ||
-             (starts_parameter && smith_lang_pack_parameter_at(lang, host, index)))) {
-            return true; // `auto x`, `constexpr auto f`, `auto... rest`
+        if (in_params && depth == 1 && smith_lang_ident(token, "auto") &&
+            (((starts_parameter || after_constexpr) &&
+              (smith_lang_type_parameter_at(lang, host, index) ||
+               (starts_parameter && smith_lang_pack_parameter_at(lang, host, index)))) ||
+             smith_lang_element_auto_at(lang, host, index))) {
+            return true; // `auto x`, `constexpr auto f`, `auto... rest`, `const auto xs[:]`, `auto *p`
         }
         const SmithToken *after = smith_lang_peek(lang, host, index + 1, false);
         if (in_params && depth == 1 && starts_parameter && smith_lang_ident(token, "constexpr") &&
@@ -557,14 +654,14 @@ static uint32_t smith_lang_generic_skip_attributes(const SmithLangGeneric *gener
 static void smith_lang_generic_mark_values(const SmithLangGeneric *generic) {
     SmithLangAutoNames autos = smith_lang_auto_names(generic);
     uint32_t end = smith_lang_generic_skip_attributes(generic);
-    for (uint32_t at = end; at + 1 < generic->name_index; at++) { // the result type, to the name
+    for (uint32_t at = end; at + 1 < generic->close_index; at++) { // the result type and the parameters
         SmithLangGenToken *keyword = &smith_lang_gt.tokens[generic->first + at];
         bool is_typeof = smith_lang_gt_is(keyword, SmithTokenKind_Identifier, "typeof") ||
                          smith_lang_gt_is(keyword, SmithTokenKind_Identifier, "typeof_unqual") ||
                          smith_lang_gt_is(keyword, SmithTokenKind_Identifier, "__typeof__");
         if (!is_typeof || !smith_lang_gt_punct(keyword + 1, "(")) continue;
         uint32_t close = at + 1;
-        for (int depth = 0; close < generic->name_index; close++) { // to the matching parenthesis
+        for (int depth = 0; close < generic->close_index; close++) { // to the matching parenthesis
             depth += smith_lang_gt_punct(keyword + (close - at), "(") ? 1 : 0;
             depth -= smith_lang_gt_punct(keyword + (close - at), ")") ? 1 : 0;
             if (depth == 0) break;
@@ -603,8 +700,12 @@ static const char *smith_lang_generic_scan(SmithLangGeneric *generic) {
         if (params[i].kind == SmithLangSlot_Auto) {
             if (generic->type_count >= smith_lang_type_params_max)
                 return "a generic function has at most 32 `constexpr type`, `constexpr auto` and `auto` parameters";
-            smith_lang_gt.tokens[params[i].start].param = (uint8_t)(generic->type_count + 1);
-            generic->type_token[generic->type_count] = (uint8_t)(params[i].start - generic->first);
+            SmithLangShape shape;
+            bool element = smith_lang_param_shape(&params[i], &shape); // `const auto xs[:]`: the name is not next
+            uint32_t marked = element ? shape.auto_at : params[i].start;
+            smith_lang_gt.tokens[marked].param = (uint8_t)(generic->type_count + 1);
+            generic->type_token[generic->type_count] =
+                (uint8_t)((element ? shape.name_at - 1 : params[i].start) - generic->first);
             generic->type_position[generic->type_count] = (uint8_t)i;
             generic->type_kind[generic->type_count] = SmithLangSlot_Auto;
             generic->type_concept[generic->type_count] = (uint8_t)smith_lang_concept_of(first);
@@ -1838,6 +1939,41 @@ static uint32_t smith_lang_eshape_put_call(SmithLang *lang, const SmithHost *hos
 static void smith_lang_instance_define_enums(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
                                              const SmithLangInstance *instance, uint32_t place, uint32_t instance_id);
 
+// `typeof(xs[0])` in a head, where `xs` is a slice (a value of its struct was just written): the element is
+// `.data[0]`, however many indexes were written. Returns how many of the generic's tokens after `at` were taken.
+static uint32_t smith_lang_gen_put_element_index(SmithLang *lang, const SmithHost *host,
+                                                 const SmithLangInstance *instance, const SmithLangGenToken *token,
+                                                 uint32_t at, uint32_t to, uint32_t location, uint32_t instance_id) {
+    if (instance == nullptr || token->param == 0 || (token->flags & smith_lang_gen_flag_value) == 0 ||
+        (size_t)token->param > instance->entries) {
+        return 0;
+    }
+    unsigned slot = (unsigned)token->param - 1;
+    const SmithLangGenToken *tag = &smith_lang_it.tokens[instance->arg_first[slot] + 1];
+    if (instance->arg_count[slot] != 2 || smith_lang_gt_punct(&smith_lang_gt.tokens[at + 1], "[") == false ||
+        !smith_lang_equals(smith_lang_pool_text(&smith_lang_it, &smith_lang_it.tokens[instance->arg_first[slot]]),
+                           smith_lang_it.tokens[instance->arg_first[slot]].length, "struct") ||
+        tag->length < 13 || memcmp(smith_lang_pool_text(&smith_lang_it, tag), "smith_array_", 12) != 0) {
+        return 0;
+    }
+    uint32_t taken = 0;
+    while (at + 1 + taken < to && smith_lang_gt_punct(&smith_lang_gt.tokens[at + 1 + taken], "[")) { // the indexes
+        int depth = 0;
+        do {
+            depth += smith_lang_gt_punct(&smith_lang_gt.tokens[at + 1 + taken], "[") ? 1 : 0;
+            depth -= smith_lang_gt_punct(&smith_lang_gt.tokens[at + 1 + taken], "]") ? 1 : 0;
+            taken += 1;
+        } while (depth > 0 && at + 1 + taken < to);
+    }
+    static const SmithLangPiece element[] = {{SmithTokenKind_Punctuator, "."},
+                                             {SmithTokenKind_Identifier, "data"},
+                                             {SmithTokenKind_Punctuator, "["},
+                                             {SmithTokenKind_Number, "0"},
+                                             {SmithTokenKind_Punctuator, "]"}};
+    smith_lang_gen_puts(lang, host, element, sizeof element / sizeof element[0], location, instance_id);
+    return taken;
+}
+
 // The tokens [from, to) of the generic's head, each with the instance's types for T; a type function that returns an
 // enum, `option(T)`, is the instance's struct (lang_enum.c).
 static void smith_lang_gen_put_run(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
@@ -1851,8 +1987,54 @@ static void smith_lang_gen_put_run(SmithLang *lang, const SmithHost *host, const
         }
         smith_lang_gen_put_subst(lang, host, generic, instance, &smith_lang_gt.tokens[at], location, instance_id,
                                  false);
-        at += 1;
+        at += 1 + smith_lang_gen_put_element_index(lang, host, instance, &smith_lang_gt.tokens[at], at, to, location,
+                                                   instance_id);
     }
+}
+
+// Whether a leading qualifier is already one of the element's tokens (`const auto *p` with a `const char *` argument).
+static bool smith_lang_element_has(const SmithLangInstance *instance, unsigned slot, uint32_t keep,
+                                   const SmithLangGenToken *qualifier) {
+    for (uint32_t i = 0; i < keep; i++) { // the element's tokens
+        const SmithLangGenToken *token = &smith_lang_it.tokens[instance->arg_first[slot] + i];
+        if (token->length == qualifier->length &&
+            memcmp(smith_lang_pool_text(&smith_lang_it, token), smith_lang_gt_str(qualifier), qualifier->length) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// A parameter written with `auto` as its element, for an instance: the declarator as written, with the element of the
+// argument's type where `auto` stands (a slice's struct is the whole of `auto xs[:]`; an array's size is `static`, as
+// for any array parameter).
+static void smith_lang_gen_put_shaped(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
+                                      const SmithLangInstance *instance, const SmithLangParam *param,
+                                      const SmithLangShape *shape, uint32_t location, uint32_t instance_id) {
+    unsigned slot = (unsigned)smith_lang_gt.tokens[shape->auto_at].param - 1;
+    if (shape->kind == SmithLangShape_Slice) {
+        smith_lang_gen_put_arg(lang, host, instance, slot, instance_id);
+        smith_lang_gen_put_run(lang, host, generic, instance, shape->name_at, shape->name_at + 1, location,
+                               instance_id);
+        return;
+    }
+    uint32_t keep = instance->arg_count[slot] - (shape->kind == SmithLangShape_Array ? 1U : shape->stars);
+    for (uint32_t at = param->start; at < shape->auto_at; at++) { // the qualifiers before `auto`
+        if (!smith_lang_element_has(instance, slot, keep, &smith_lang_gt.tokens[at]))
+            smith_lang_gen_put_run(lang, host, generic, instance, at, at + 1, location, instance_id);
+    }
+    for (uint32_t i = 0; i < keep; i++) { // the element
+        const SmithLangGenToken *token = &smith_lang_it.tokens[instance->arg_first[slot] + i];
+        smith_lang_gen_put_token(lang, host, &smith_lang_it, token, token->location, instance_id, false);
+    }
+    smith_lang_gen_put_run(lang, host, generic, instance, shape->auto_at + 1, shape->name_at + 1, location,
+                           instance_id);
+    if (shape->kind != SmithLangShape_Array) return;
+    smith_lang_gen_put_run(lang, host, generic, instance, shape->name_at + 1, shape->name_at + 2, location,
+                           instance_id); // `[`
+    if (!smith_lang_gt_is(&smith_lang_gt.tokens[shape->name_at + 2], SmithTokenKind_Identifier, "static"))
+        smith_lang_gen_put(lang, host, SmithTokenKind_Identifier, "static", location, instance_id);
+    smith_lang_gen_put_run(lang, host, generic, instance, shape->name_at + 2, param->end, location, instance_id);
 }
 
 static void smith_lang_gen_put_result(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
@@ -1889,6 +2071,11 @@ static void smith_lang_gen_signature(SmithLang *lang, const SmithHost *host, con
             continue;
         }
         if (written++ > 0) smith_lang_gen_put(lang, host, SmithTokenKind_Punctuator, ",", location, instance_id);
+        SmithLangShape shape;
+        if (smith_lang_param_shape(&params[i], &shape)) {
+            smith_lang_gen_put_shaped(lang, host, generic, instance, &params[i], &shape, location, instance_id);
+            continue;
+        }
         smith_lang_gen_put_run(lang, host, generic, instance, params[i].start, params[i].end, location, instance_id);
     }
     if (written == 0) smith_lang_gen_put(lang, host, SmithTokenKind_Identifier, "void", location, instance_id);
@@ -2875,6 +3062,17 @@ static int smith_lang_param_type_of(const SmithLangGeneric *generic, const Smith
     size_t count = smith_lang_generic_params(generic, params, smith_lang_call_params_max);
     for (size_t i = 0; i < count && count != SIZE_MAX; i++) { // the parameters
         const SmithLangGenToken *first = &smith_lang_gt.tokens[params[i].start];
+        SmithLangShape shape;
+        if (smith_lang_param_shape(&params[i], &shape)) { // `const auto xs[:]`: the name, and the `auto` that is marked
+            first = &smith_lang_gt.tokens[shape.auto_at];
+            if (first->param == 0) continue;
+            const SmithLangGenToken *named = &smith_lang_gt.tokens[shape.name_at];
+            if (named->length == name->length &&
+                memcmp(smith_lang_gt_str(named), smith_lang_gt_str(name), name->length) == 0) {
+                return (int)first->param - 1;
+            }
+            continue;
+        }
         if (params[i].end - params[i].start != 2 || first->param == 0) continue;
         const SmithLangGenToken *own = first + 1;
         if (own->length == name->length && memcmp(smith_lang_gt_str(own), smith_lang_gt_str(name), name->length) == 0) {
@@ -3360,6 +3558,67 @@ static bool smith_lang_concept_check(SmithLang *lang, const SmithHost *host, Smi
     return false;
 }
 
+// A parameter written with `auto` as its element (`const auto xs[:]`, `auto *p`, `auto xs[4]`): the argument's type
+// must have the shape of the declarator, else the error is at the argument.
+static bool smith_lang_shape_check(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                   const SmithLangGeneric *generic, size_t slot, SmithLangSpan span, uint32_t location,
+                                   const uint32_t *first, const uint32_t *count) {
+    SmithLangParam params[smith_lang_call_params_max];
+    size_t total = smith_lang_generic_params(generic, params, smith_lang_call_params_max);
+    size_t position = generic->type_position[slot];
+    SmithLangShape shape;
+    if (slot >= generic->type_count || generic->type_kind[slot] != SmithLangSlot_Auto) return true;
+    if (total == SIZE_MAX || position >= total || !smith_lang_param_shape(&params[position], &shape)) return true;
+    char spelling[512];
+    smith_lang_it_spelling(*first, *count, spelling, sizeof spelling);
+    SmithTypeQuery query = {};
+    if (host->type_query == nullptr || !host->type_query(host->context, spelling, (uint32_t)strlen(spelling), &query) ||
+        !query.is_pointer) {
+        query.is_pointer = false;
+    }
+    bool fits = false;
+    if (shape.kind == SmithLangShape_Slice) {
+        static const char tag[] = "struct smith_array_";
+        size_t all = 0;
+        size_t runtime = 0;
+        char name[smith_lang_name_max];
+        snprintf(name, sizeof name, "%.*s", (int)strcspn(query.canonical + 7, " "), query.canonical + 7);
+        fits = strncmp(query.canonical, tag, sizeof tag - 1) == 0 &&
+               smith_lang_slice_tag_dims_count(name, &all, &runtime) && all == shape.dims && runtime == shape.dims;
+    } else {
+        unsigned stars = 0;
+        for (uint32_t i = *count; i > 0; i--) { // the stars the type ends with
+            const SmithLangGenToken *last = &smith_lang_it.tokens[*first + i - 1];
+            if (last->kind != SmithTokenKind_Punctuator || smith_lang_pool_text(&smith_lang_it, last)[0] != '*') break;
+            stars += 1;
+        }
+        fits = stars >= (shape.kind == SmithLangShape_Array ? 1U : shape.stars) && query.is_pointer;
+    }
+    if (fits) return true;
+    const SmithLangGenToken *parameter = &smith_lang_gt.tokens[shape.name_at];
+    char shown[256];
+    smith_lang_infer_written(span, shown, sizeof shown);
+    char want[96];
+    if (shape.kind == SmithLangShape_Slice) {
+        char brackets[40] = "";
+        for (unsigned i = 0; i < shape.dims && i < 8; i++) // the dimensions as written
+            snprintf(brackets + strlen(brackets), sizeof brackets - strlen(brackets), "[:]");
+        snprintf(want, sizeof want, "a slice (`auto %.*s%s`)", (int)parameter->length, smith_lang_gt_str(parameter),
+                 brackets);
+    } else if (shape.kind == SmithLangShape_Pointer) {
+        snprintf(want, sizeof want, "a pointer (`auto *%.*s`)", (int)parameter->length, smith_lang_gt_str(parameter));
+    } else {
+        snprintf(want, sizeof want, "a fixed array (`auto %.*s[N]`)", (int)parameter->length,
+                 smith_lang_gt_str(parameter));
+    }
+    smith_lang_error(lang, host, smith_lang_infer_place(host, replay, span, location),
+                     "`%s`, the argument of `%s`, has the type `%s`, but the parameter `%.*s` is %s%s", shown,
+                     smith_lang_str(generic->member), spelling, (int)parameter->length, smith_lang_gt_str(parameter),
+                     want,
+                     shape.kind == SmithLangShape_Slice ? "; pass a slice (`xs[0:n]` makes one of an array)" : "");
+    return false;
+}
+
 // The types of a call: each slot's, then the arguments of `auto... rest`, staged in smith_lang_it, and the check that a
 // later argument converts to the type of an `auto` parameter. False after the error.
 static bool smith_lang_call_types(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
@@ -3377,7 +3636,9 @@ static bool smith_lang_call_types(SmithLang *lang, const SmithHost *host, SmithL
             good = smith_lang_infer_auto(lang, host, replay, generic, span, location, &types->first[k],
                                          &types->count[k]) &&
                    smith_lang_concept_check(lang, host, replay, generic, k, span, location, &types->first[k],
-                                            &types->count[k]);
+                                            &types->count[k]) &&
+                   smith_lang_shape_check(lang, host, replay, generic, k, span, location, &types->first[k],
+                                          &types->count[k]);
         } else if (kind == SmithLangSlot_Function) {
             good = smith_lang_infer_function(lang, host, replay, generic, k, span, location, &types->first[k],
                                              &types->count[k]);

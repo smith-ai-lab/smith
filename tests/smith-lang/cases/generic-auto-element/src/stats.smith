@@ -1,0 +1,35 @@
+module stats;
+
+export usize count(const auto xs[:]) {
+    return countof(xs);
+}
+
+export usize find(const auto xs[:], typeof(xs[0]) v) {
+    for (usize i = 0; i < countof(xs); i++)
+        if (xs[i] == v) return i;
+    return countof(xs);
+}
+
+export usize rows(auto grid[:][:]) {
+    return countof(grid);
+}
+
+export typeof(m[0][0]) zero(const auto m[:][:]) {
+    return 0;
+}
+
+export typeof(*p) read(const auto *p) {
+    return *p;
+}
+
+export void bump(auto *p, typeof(*p) by) {
+    *p += by;
+}
+
+export typeof(xs[0]) third(auto xs[4]) {
+    return xs[2];
+}
+
+export typeof(*p) second(const auto *p) {
+    return p[1];
+}

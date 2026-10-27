@@ -1,0 +1,6 @@
+src/main.smith:10:18: cannot tell the type of `raw`, the argument of `count`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:11:17: cannot tell the type of `xs`, the argument of `rows`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:12:17: cannot tell the type of `n`, the argument of `read`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:13:17: cannot tell the type of `xs`, the argument of `read`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:14:18: cannot tell the type of `n`, the argument of `third`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:9:18: cannot tell the type of `n`, the argument of `count`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable

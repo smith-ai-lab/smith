@@ -241,11 +241,24 @@ static SmithLangSliceDims smith_lang_slice_dims_one(void) {
     return dims;
 }
 
+static bool smith_lang_slice_dims_parse(const char *tag, SmithLangSliceDims *dims, size_t *stem);
+
 static size_t smith_lang_slice_dims_runtime(const SmithLangSliceDims *dims) {
     size_t runtime = 0;
     for (size_t at = 0; at < dims->count; at++) // at most 8
         runtime += dims->runtime[at] ? 1 : 0;
     return runtime;
+}
+
+// How many dimensions a slice's tag names, and how many of them are run-time ones (`smith_array_f32_n_n`: 2 and 2;
+// `smith_array_f32_n_2`: 2 and 1); false for a tag that names none.
+static bool smith_lang_slice_tag_dims_count(const char *tag, size_t *all, size_t *runtime) {
+    SmithLangSliceDims dims;
+    size_t stem = 0;
+    if (!smith_lang_slice_dims_parse(tag, &dims, &stem)) return false;
+    *all = dims.count;
+    *runtime = smith_lang_slice_dims_runtime(&dims);
+    return true;
 }
 
 // `_n_2` for `[:][2]`.
@@ -498,9 +511,12 @@ static size_t smith_lang_slice_bracket(SmithLang *lang, const SmithHost *host, c
 static bool smith_lang_slice_declaration(SmithLang *lang, const SmithHost *host, const SmithToken *first, size_t *name,
                                          size_t *close, SmithLangSliceQuals *quals) {
     if (first->kind != SmithTokenKind_Identifier || smith_lang_slice_statement_word(first)) return false;
+    // A generic's parameter `const auto xs[:]` is recorded as written: its instance writes the slice (issue #193).
+    if (lang->decl.generic && smith_lang_ident(first, "auto")) return false;
     for (size_t at = 1; at < smith_lang_slice_scan_max; at++) { // a declaration's type is a few tokens
         const SmithToken *token = smith_lang_slice_at(lang, host, first, at);
         if (token->kind == SmithTokenKind_Eof || token->foreign) return false;
+        if (lang->decl.generic && smith_lang_ident(token, "auto")) return false;
         if (at == 1 && smith_lang_punct(token, "::")) {
             const SmithLangBinding *named =
                 lang->bindings_count > 0 ? smith_lang_binding_find(lang, first->text, first->length) : nullptr;
