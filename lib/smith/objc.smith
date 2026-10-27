@@ -16,7 +16,8 @@ import <stddef.h>;
 // passes the object; `objc::self(objc::NSWindow, data)` gives the object back. Returns the class (`objc::id`), or null
 // when a class of that name exists.
 export void *class_define(const char *name, constexpr type Super, constexpr type Data, auto... tables) {
-    void *created = c::smith_objc_class_begin(name, c::smith_objc_class_of((Super *)nullptr), sizeof(Data), alignof(Data));
+    void *created =
+        c::smith_objc_class_begin(name, c::smith_objc_class_of((Super *)nullptr), sizeof(Data), alignof(Data));
     if (created == nullptr) return nullptr;
     usize slot = c::smith_objc_slot(created);
     usize delta = alignof(Data) > 8 ? alignof(Data) : 8;
@@ -30,7 +31,7 @@ export C *self(constexpr type C, auto *data) {
     return (C *)c::smith_objc_object_of(data, alignof(typeof(*data)));
 }
 
-// The `Data` of an object of a class made by `class_define`, or null for one that is not.
+// The `Data` of an object of a class made by `class_define` (a trap for any other object).
 export Data *data(constexpr type Data, void *object) {
     return (Data *)c::smith_objc_data_of(object, alignof(Data));
 }

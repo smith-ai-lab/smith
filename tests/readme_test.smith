@@ -447,6 +447,10 @@ export void test_readme_project_objc_owned(io::Io *io) {
     project_case(io, "objc_owned");
 }
 
+export void test_readme_project_objc_class(io::Io *io) {
+    project_case(io, "objc_class");
+}
+
 export void test_readme_project_pack(io::Io *io) {
     project_case(io, "pack");
 }

@@ -33,7 +33,7 @@ i32 main(io::Io *io) {
 - **Linking**: the import writes `-framework X` and `-lobjc` into the object; `smith build` needs nothing in `build.c`.
 - **Effects**: a call has the `c` effect, so `effects::within(f, effects::c)` accepts it and `effects::none` rejects it.
 - **C is C**: the header is read by a separate compile (`SMITH_OBJC_INDEX`, under `.smith/objc/`, made once per header, SDK and smith); the file never sees `id`, `SEL`, `BOOL` or `YES` from Objective-C, so a C name by any of them means what it means in C.
-- **Not yet**: blocks from lambdas (#316; `objc::block` below is the interim form). A framework header with no class in it is read as a C header.
+- **Not yet**: blocks from lambdas (#316). A framework header with no class in it is read as a C header.
 
 ## Ownership
 
@@ -57,6 +57,4 @@ export i32 run() {
 }
 ```
 
-Defining classes and blocks: [smith-lang-objc-classes](../smith-lang-objc-classes/SKILL.md).
-
-Reference: [knowledge/objc.md](../../../knowledge/objc.md).
+Classes and blocks: [smith-lang-objc-classes](../smith-lang-objc-classes/SKILL.md). Reference: [knowledge/objc.md](../../../knowledge/objc.md).

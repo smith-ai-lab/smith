@@ -646,7 +646,7 @@ objc::NSString *describe(Greeter *greeter) {
 
 i32 main(io::Io *io) {
     objc::id greeter_class = objc::class_define("Greeter", objc::NSObject, Greeter,
-        (objc::methods(objc::NSObject, Greeter)){.description = describe});
+                                                (objc::methods(objc::NSObject, Greeter)){.description = describe});
     objc::NSObject *greeter = objc::NSObject::init((objc::NSObject *)objc::alloc(greeter_class));
     objc::data(Greeter, greeter)->name = "hello from a class defined in smith";
     str text = objc::str(objc::NSObject::description(greeter));

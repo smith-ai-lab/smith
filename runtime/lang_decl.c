@@ -491,6 +491,10 @@ static size_t smith_lang_chosen_name(SmithLang *lang, const SmithHost *host, con
     return total;
 }
 
+// runtime/lang_objc_class.c
+static void smith_lang_objc_member(SmithLang *lang, const SmithHost *host, const SmithToken *name,
+                                   const SmithLangBinding *binding, const SmithToken *taken, SmithToken *result);
+
 // runtime/lang_objc.c
 static void smith_lang_objc_name(SmithLang *lang, const SmithHost *host, const SmithToken *name,
                                  const SmithToken *taken, SmithToken *result);
@@ -531,13 +535,8 @@ static bool smith_lang_namespace_read(SmithLang *lang, const SmithHost *host, co
         smith_lang_target_use(lang, host, name, &taken, result, digits, sizeof digits);
         return true;
     }
-    if (binding->is_objc && binding->module.length > 0 && !lang->recording && !lang->namespace_done &&
-        smith_lang_generic_call(lang, host, name, binding, &taken)) { // `import smith::objc;`: objc::class_define
-        lang->namespace_done = true;
-        return true;
-    }
-    if (binding->is_objc) { // runtime/lang_objc.c: objc_X, or objc_Class_method
-        smith_lang_objc_name(lang, host, name, &taken, result);
+    if (binding->is_objc) { // runtime/lang_objc.c: objc_X, or objc_Class_method; `import smith::objc;`: its generics
+        smith_lang_objc_member(lang, host, name, binding, &taken, result);
         return true;
     }
     if (binding->missing && host->suppress != nullptr) host->suppress(host->context, taken.location);

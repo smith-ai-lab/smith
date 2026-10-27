@@ -1,14 +1,14 @@
 // Classes and blocks defined from a .smith file (issue #319, skill smith-lang-objc, knowledge/objc.md). Included by
 // runtime/lang.c, after runtime/lang_objc.c, whose index readers it uses.
 //
-// `objc::methods(objc::P, Data)` is a struct with one function pointer for each instance method of the class or protocol
-// P (and of its superclasses and protocols), named as #318 names a call and taking `Data *` where Objective-C passes the
-// object. The struct, an adapter for each method and a function that adds the methods to a class are C text written in
-// front of the first declaration (the index is read there); a use of the type is the name of that struct. The generic
-// `objc::class_define` (lib/smith/objc.smith) only loops over its tables and calls the function the table's type picks.
-// An object keeps its data in one hidden instance variable, `{self, Data}`: a method receives the `Data *`, and
-// `objc::self` takes the object back from it. Each method is an `imp_implementationWithBlock` of a block that holds the
-// variable's offset and the user's function, so the offset the runtime chooses at registration costs one load.
+// `objc::methods(objc::P, Data)` is a struct with one function pointer for each instance method of the class or
+// protocol P (and of its superclasses and protocols), named as #318 names a call and taking `Data *` where Objective-C
+// passes the object. The struct, an adapter for each method and a function that adds the methods to a class are C text
+// written in front of the first declaration (the index is read there); a use of the type is the name of that struct.
+// The generic `objc::class_define` (lib/smith/objc.smith) only loops over its tables and calls the function the table's
+// type picks. An object keeps its data in one hidden instance variable, `{self, Data}`: a method receives the `Data *`,
+// and `objc::self` takes the object back from it. Each method is an `imp_implementationWithBlock` of a block that holds
+// the variable's offset and the user's function, so the offset the runtime chooses at registration costs one load.
 
 #include <stdarg.h>
 
@@ -37,7 +37,8 @@ constexpr char smith_lang_objc_class_runtime[] =
     "extern long smith_objc_ivar_offset(void *) __asm__(\"_ivar_getOffset\");\n"
     "extern void *smith_objc_instance_method(void *, smith_objc_sel) __asm__(\"_class_getInstanceMethod\");\n"
     "extern const char *smith_objc_method_types(void *) __asm__(\"_method_getTypeEncoding\");\n"
-    "extern _Bool smith_objc_add_method_raw(void *, smith_objc_sel, void *, const char *) __asm__(\"_class_addMethod\");\n"
+    "extern _Bool smith_objc_add_method_raw(void *, smith_objc_sel, void *, const char *) "
+    "__asm__(\"_class_addMethod\");\n"
     "extern void *smith_objc_implementation(void *) __asm__(\"_imp_implementationWithBlock\");\n"
     "extern void *smith_objc_protocol_named(const char *) __asm__(\"_objc_getProtocol\");\n"
     "extern void *smith_objc_open(const char *, int) __asm__(\"_dlopen\");\n"
@@ -51,7 +52,8 @@ constexpr char smith_lang_objc_class_runtime[] =
     "struct smith_objc_super { void *receiver; void *super_class; };\n"
     // Apple's block layout: a header, a descriptor and what the block holds. `objc::Block` is the header with the
     // descriptor inline; a global block is never copied, so the descriptor stays where it is.
-    "typedef struct { void *isa; int flags; int reserved; void *invoke; void *descriptor; unsigned long reserved_size;\n"
+    "typedef struct { void *isa; int flags; int reserved; void *invoke; void *descriptor; unsigned long "
+    "reserved_size;\n"
     "                 unsigned long size; } objc_Block;\n"
     "static inline void smith_objc_block_fill(void *context, unsigned long function, unsigned long size) {\n"
     "    objc_Block *block = (objc_Block *)context;\n"
@@ -62,8 +64,7 @@ constexpr char smith_lang_objc_class_runtime[] =
     "    block->descriptor = &block->reserved_size;\n"
     "    block->reserved_size = 0;\n"
     "    block->size = size;\n"
-    "}\n"
-    ;
+    "}\n";
 
 constexpr char smith_lang_objc_class_runtime_more[] =
     "static inline void *objc_alloc(void *created) {\n"
@@ -71,7 +72,8 @@ constexpr char smith_lang_objc_class_runtime_more[] =
     "}\n"
     "struct smith_objc_literal { void *isa; int flags; int reserved; void *invoke; void *descriptor;\n"
     "                            unsigned long slot; unsigned long delta; void *function; };\n"
-    "static inline void *smith_objc_class_begin(const char *name, void *super, unsigned long size, unsigned long align) {\n"
+    "static inline void *smith_objc_class_begin(const char *name, void *super, unsigned long size, unsigned long "
+    "align) {\n"
     "    unsigned long delta = align > 8 ? align : 8;\n"
     "    void *created = smith_objc_allocate_pair(super, name, 0);\n"
     "    if (created == nullptr) return nullptr;\n"
@@ -91,7 +93,8 @@ constexpr char smith_lang_objc_class_runtime_more[] =
     "static inline void *smith_objc_data_of(void *object, unsigned long align) {\n"
     "    unsigned long delta = align > 8 ? align : 8;\n"
     "    void *variable = smith_objc_ivar_named(smith_objc_class_of_object(object), \"smith_data\");\n"
-    "    return variable == nullptr ? nullptr : (char *)object + smith_objc_ivar_offset(variable) + delta;\n"
+    "    if (variable == nullptr) __builtin_trap();\n" // the object is of no class defined in Smith
+    "    return (char *)object + smith_objc_ivar_offset(variable) + delta;\n"
     "}\n"
     "static inline void smith_objc_add(void *created, const char *selector, void *function, void *adapter,\n"
     "                                  unsigned long slot, unsigned long delta, void *protocol) {\n"
@@ -104,7 +107,8 @@ constexpr char smith_lang_objc_class_runtime_more[] =
     "        if (found.types == nullptr) found = smith_objc_protocol_method(protocol, sel, 0, 1);\n"
     "        types = found.types;\n"
     "    }\n"
-    "    if (types == nullptr) __builtin_trap();\n" // a method nothing declares: the table named a selector it cannot have
+    "    if (types == nullptr) __builtin_trap();\n" // a method nothing declares: the table named a selector it cannot
+                                                    // have
     "    static const struct { unsigned long reserved; unsigned long size; } descriptor = {\n"
     "        0, sizeof(struct smith_objc_literal)};\n"
     "    struct smith_objc_literal literal = {&smith_objc_stack_isa, 0, 0, adapter, (void *)&descriptor, slot, delta,\n"
@@ -189,11 +193,11 @@ static size_t smith_lang_objc_class_uses(const SmithLang *lang, const SmithHost 
 
 static bool smith_lang_objc_class_keyword(const char *name, size_t length) {
     static const char *const words[] = {
-        "auto",     "break",  "case",     "char",     "const",    "continue", "default",       "do",
-        "double",   "else",   "enum",     "extern",   "float",    "for",      "goto",          "if",
-        "inline",   "int",    "long",     "register", "restrict", "return",   "short",         "signed",
-        "sizeof",   "static", "struct",   "switch",   "typedef",  "union",    "unsigned",      "void",
-        "volatile", "while",  "bool",     "true",     "false",    "nullptr",  "constexpr",     "typeof",
+        "auto",     "break",   "case",          "char",        "const",    "continue", "default",   "do",
+        "double",   "else",    "enum",          "extern",      "float",    "for",      "goto",      "if",
+        "inline",   "int",     "long",          "register",    "restrict", "return",   "short",     "signed",
+        "sizeof",   "static",  "struct",        "switch",      "typedef",  "union",    "unsigned",  "void",
+        "volatile", "while",   "bool",          "true",        "false",    "nullptr",  "constexpr", "typeof",
         "alignas",  "alignof", "static_assert", "thread_local"};
     for (size_t i = 0; i < sizeof words / sizeof words[0]; i++) { // 44 words
         if (strlen(words[i]) == length && memcmp(words[i], name, length) == 0) return true;
@@ -259,8 +263,8 @@ static void smith_lang_objc_class_params(SmithLangObjcOut *out, const SmithLangO
     }
 }
 
-// The adapter of field `index` of the owner: the function an Objective-C call reaches, which finds the data in the object
-// and calls the table's function with it.
+// The adapter of field `index` of the owner: the function an Objective-C call reaches, which finds the data in the
+// object and calls the table's function with it.
 static void smith_lang_objc_class_adapter(SmithLangObjcOut *out, const SmithLangObjcUse *use, const char *data,
                                           size_t index, const SmithLangObjcMethod *method) {
     const char *owner = use->owner;
@@ -292,12 +296,12 @@ static void smith_lang_objc_class_owner(const SmithLang *lang, SmithLangObjcOut 
     size_t count = smith_lang_objc_class_collect(lang, use->kind, use->owner, length);
     for (size_t i = 0; i < count; i++)
         smith_lang_objc_class_adapter(out, use, data, i, &smith_lang_objc_fields[i]);
-    smith_lang_objc_class_printf(out,
-                                 "static void smith_objc_add_%s_%s(void *created, void *const *table, unsigned long slot, "
-                                 "unsigned long delta) {\n",
-                                 use->owner, use->data);
-    if (use->kind == 'p')
-    {
+    smith_lang_objc_class_printf(
+        out,
+        "static void smith_objc_add_%s_%s(void *created, void *const *table, unsigned long slot, "
+        "unsigned long delta) {\n",
+        use->owner, use->data);
+    if (use->kind == 'p') {
         // A framework nothing else refers to is not loaded (the linker drops it), and its protocols are not found.
         smith_lang_objc_class_printf(out, "    void *protocol = smith_objc_protocol_named(\"%.*s\");\n", (int)length,
                                      use->owner);
@@ -308,14 +312,14 @@ static void smith_lang_objc_class_owner(const SmithLang *lang, SmithLangObjcOut 
                                          "        protocol = smith_objc_protocol_named(\"%.*s\");\n    }\n",
                                          lang->objc.frameworks[f], lang->objc.frameworks[f], (int)length, use->owner);
         smith_lang_objc_class_printf(out, "    if (protocol != nullptr) smith_objc_add_protocol(created, protocol);\n");
-    }
-    else
+    } else
         smith_lang_objc_puts(out, "    void *protocol = nullptr;\n");
     for (size_t i = 0; i < count; i++) {
         const SmithLangObjcMethod *method = &smith_lang_objc_fields[i];
         smith_lang_objc_class_printf(out, "    if (table[%zu] != nullptr) smith_objc_add(created, \"", i);
         smith_lang_objc_put(out, method->selector, method->selector_length);
-        smith_lang_objc_class_printf(out, "\", table[%zu], (void *)smith_objc_adapter_%s_%s_%zu, slot, delta, protocol);\n",
+        smith_lang_objc_class_printf(out,
+                                     "\", table[%zu], (void *)smith_objc_adapter_%s_%s_%zu, slot, delta, protocol);\n",
                                      i, use->owner, use->data, i);
     }
     smith_lang_objc_puts(out, "}\n");
@@ -343,11 +347,12 @@ static void smith_lang_objc_class_pair(SmithLang *lang, const SmithLangObjcUse *
     }
     smith_lang_objc_class_printf(out, "};\ntypedef struct objc_methods_%s_%s objc_methods_%s_%s;\n", use->owner,
                                  use->data, use->owner, use->data);
-    smith_lang_objc_class_printf(out,
-                                 "static inline __attribute__((overloadable)) void smith_objc_add_methods(void *created, "
-                                 "const objc_methods_%s_%s *table, unsigned long slot, unsigned long delta) {\n"
-                                 "    smith_objc_add_%s_%s(created, (void *const *)table, slot, delta);\n}\n",
-                                 use->owner, use->data, use->owner, use->data);
+    smith_lang_objc_class_printf(
+        out,
+        "static inline __attribute__((overloadable)) void smith_objc_add_methods(void *created, "
+        "const objc_methods_%s_%s *table, unsigned long slot, unsigned long delta) {\n"
+        "    smith_objc_add_%s_%s(created, (void *const *)table, slot, delta);\n}\n",
+        use->owner, use->data, use->owner, use->data);
 }
 
 // ---- Super calls: `objc::NSWindow::super_setTitle(w, t)` sends the message to `w`, starting above NSWindow.
@@ -387,15 +392,17 @@ static bool smith_lang_objc_class_mentions(const SmithHost *host, const char *wo
 
 static bool smith_lang_objc_class_supers;
 static bool smith_lang_objc_class_wanted;
-static bool smith_lang_objc_class_wants_super(void) { return smith_lang_objc_class_supers; }
+static bool smith_lang_objc_class_wants_super(void) {
+    return smith_lang_objc_class_supers;
+}
 
 // Before the wrappers: the runtime of classes and blocks (and super calls) when the file's text uses them.
 static void smith_lang_objc_class_prepare(const SmithHost *host, SmithLangObjcOut *out) {
     smith_lang_objc_class_supers = smith_lang_objc_class_mentions(host, "::super_");
-    smith_lang_objc_class_wanted = smith_lang_objc_class_supers || smith_lang_objc_class_mentions(host, "objc::methods") ||
-                                   smith_lang_objc_class_mentions(host, "objc::class_define") ||
-                                   smith_lang_objc_class_mentions(host, "objc::block") ||
-                                   smith_lang_objc_class_mentions(host, "objc::Block");
+    smith_lang_objc_class_wanted =
+        smith_lang_objc_class_supers || smith_lang_objc_class_mentions(host, "objc::methods") ||
+        smith_lang_objc_class_mentions(host, "objc::class_define") ||
+        smith_lang_objc_class_mentions(host, "objc::block") || smith_lang_objc_class_mentions(host, "objc::Block");
     if (!smith_lang_objc_class_wanted) return;
     smith_lang_objc_puts(out, smith_lang_objc_class_runtime);
     smith_lang_objc_puts(out, smith_lang_objc_class_runtime_more);
@@ -409,10 +416,11 @@ static void smith_lang_objc_class_define(SmithLang *lang, const SmithHost *host,
     for (size_t i = 0; i < name_count; i++) {
         SmithLangObjcSpan spans[1];
         if (smith_lang_objc_blocks(lang, 'c', names[i], strlen(names[i]), spans, 1) == 0) continue;
-        smith_lang_objc_class_printf(out,
-                                     "static inline __attribute__((overloadable)) void *smith_objc_class_of(objc_%s *pointer) "
-                                     "{ (void)pointer; return (void *)&smith_objc_class_symbol_%s; }\n",
-                                     names[i], names[i]);
+        smith_lang_objc_class_printf(
+            out,
+            "static inline __attribute__((overloadable)) void *smith_objc_class_of(objc_%s *pointer) "
+            "{ (void)pointer; return (void *)&smith_objc_class_symbol_%s; }\n",
+            names[i], names[i]);
     }
     static SmithLangObjcUse uses[smith_lang_objc_uses_max];
     size_t count = smith_lang_objc_class_uses(lang, host, uses, smith_lang_objc_uses_max);
@@ -458,11 +466,13 @@ static void smith_lang_objc_class_required(SmithLang *lang, const SmithHost *hos
                 memchr(method.flags, 'r', method.flags_length) != nullptr) {
                 bool given = false;
                 for (size_t i = 0; i < set_count; i++)
-                    given = given || (strlen(set[i]) == method.name_length && memcmp(set[i], method.name, method.name_length) == 0);
+                    given = given || (strlen(set[i]) == method.name_length &&
+                                      memcmp(set[i], method.name, method.name_length) == 0);
                 if (!given) {
-                    smith_lang_error(lang, host, open->location,
-                                     "`objc::methods(objc::%.*s, ...)` does not set `.%.*s`, a method that %.*s requires",
-                                     (int)length, owner, (int)method.name_length, method.name, (int)length, owner);
+                    smith_lang_error(
+                        lang, host, open->location,
+                        "`objc::methods(objc::%.*s, ...)` does not set `.%.*s`, a method that %.*s requires",
+                        (int)length, owner, (int)method.name_length, method.name, (int)length, owner);
                     return;
                 }
             }
@@ -507,9 +517,24 @@ static bool smith_lang_objc_class_methods(SmithLang *lang, const SmithHost *host
     for (int i = 0; i < 7; i++)
         smith_lang_take(lang, host);
     SmithLangObjcSpan spans[1];
-    char kind = smith_lang_objc_blocks(lang, 'p', owner_name, strlen(owner_name), spans, 1) > 0 ? 'p' : 'c';
+    char kind = smith_lang_objc_blocks(lang, 'c', owner_name, strlen(owner_name), spans, 1) > 0
+                    ? 'c'
+                    : 'p'; // a class first, as NSObject is both
     smith_lang_objc_class_required(lang, host, owner_name, strlen(owner_name), kind);
     *result = smith_lang_made(name, lang->tmp, total, false);
     result->location = taken->location;
     return true;
+}
+
+// `objc::member` where `objc` is the Objective-C binding: a generic of `smith::objc` when that module is imported and
+// has one by this name (`objc::class_define`), else the name the header gave (`objc::NSWindow`,
+// `objc::NSWindow::close`).
+static void smith_lang_objc_member(SmithLang *lang, const SmithHost *host, const SmithToken *name,
+                                   const SmithLangBinding *binding, const SmithToken *taken, SmithToken *result) {
+    if (binding->module.length > 0 && !lang->recording && !lang->namespace_done &&
+        smith_lang_generic_call(lang, host, name, binding, taken)) {
+        lang->namespace_done = true;
+        return;
+    }
+    smith_lang_objc_name(lang, host, name, taken, result);
 }
