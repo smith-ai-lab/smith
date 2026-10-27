@@ -660,9 +660,10 @@ class SmithHook final : public TokenHook, public NameSource {
         }
         host.main_file = mainName.c_str();
         host.maybe_main = SM.getBufferData(MainFile).contains("main");
-        host.maybe_generic = SM.getBufferData(MainFile).contains("type ") ||
-                             SM.getBufferData(MainFile).contains("auto ") ||
-                             SM.getBufferData(MainFile).contains("auto...") || namesConcept(SM.getBufferData(MainFile));
+        host.maybe_generic =
+            SM.getBufferData(MainFile).contains("type ") || SM.getBufferData(MainFile).contains("auto ") ||
+            SM.getBufferData(MainFile).contains("auto...") || SM.getBufferData(MainFile).contains("(constexpr ") ||
+            SM.getBufferData(MainFile).contains(", constexpr ") || namesConcept(SM.getBufferData(MainFile));
         host.maybe_if_constexpr = hasIfConstexpr(SM.getBufferData(MainFile));
         host.maybe_local_tag = hasNestedTag(SM.getBufferData(MainFile));
         host.maybe_slice = hasSlice(SM.getBufferData(MainFile)) || hasStr(SM.getBufferData(MainFile));

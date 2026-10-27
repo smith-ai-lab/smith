@@ -8171,6 +8171,32 @@ i32 main() {
     c::printf("%u %.1f\n", chain::length("smith"), chain::root(16.0));
     return 0;
 }
+==> if-constexpr-for-constexpr/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import target;
+
+// A generic with a `for constexpr` loop inside a file-scope `if constexpr` (issue #602): the generic's braces are not
+// the block's, so the block ends at its own last brace.
+if constexpr (target::os == target::macos || target::os != target::macos) {
+    export i32 add_n(constexpr usize n, i32 x) {
+        i32 sum = x;
+        for constexpr (usize i = 0; i < n; i++) {
+            sum += 1;
+        }
+        return sum;
+    }
+
+    i32 after(i32 x) {
+        return add_n(2, x);
+    }
+}
+
+i32 main() {
+    c::printf("%d %d\n", add_n(3, 10), after(1));
+    return 0;
+}
 ==> if-constexpr/src/kind.smith <==
 module kind;
 
