@@ -48,6 +48,7 @@ constexpr char run_script[_] =
     "cache=$3; [ -n \"$cache\" ] || cache=${SMITH_TEST_CACHE:-$HOME/.cache/smith-tests}/xdg; "
     "data=${2%/*}/data; mkdir -p \"$cache\"; "
     "export PATH=\"$2:$PATH\" XDG_CACHE_HOME=\"$cache\" XDG_DATA_HOME=\"$data\" SMITH_REPO=\"$repo\" "
+    "SMITH_HEADERS_FROM=\"${SMITH_HEADERS_FROM:-$repo/.smith/include/smith}\" "
     "SMITH_TEST_CACHE=\"${SMITH_TEST_CACHE:-$HOME/.cache/smith-tests}\"; "
     "case $1 in *[!A-Za-z0-9_./:=@%+,\\ -]*) eval \"$1\" ;; *) exec $1 ;; esac";
 constexpr char setup_script[_] =

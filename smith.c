@@ -1679,6 +1679,34 @@ static void smith_header_job_add(SmithHeaderJob *jobs, size_t *count, const char
     snprintf(job->header, sizeof job->header, ".smith/include/smith/%s.h", name);
 }
 
+// SMITH_HEADERS_FROM names a folder of headers (another project's .smith/include/smith) that a project copies instead
+// of generating its own, when the folder's stamp names this binary: the headers are a function of the binary alone. The
+// tests set it to the repository's (tests/scratch.smith), so a scratch project starts no `--smith-header` process
+// (about 20, 2 s of CPU, for each of the 1300 projects of a run). A folder that is missing a header, or stamped by
+// another binary, is ignored and the headers are generated as usual.
+static bool smith_headers_copy(const SmithHeaderJob *jobs, size_t count, const char *identity) {
+    static unsigned char bytes[smith_header_bytes_max];
+    const char *from = getenv("SMITH_HEADERS_FROM");
+    if (from == nullptr || from[0] != '/') return false;
+    char path[PATH_MAX];
+    snprintf(path, sizeof path, "%s/.written-by", from);
+    if (!smith_file_has_bytes(path, (const unsigned char *)identity, strlen(identity))) return false;
+    for (int pass = 0; pass < 2; pass++) {   // the first pass only checks that all are there
+        for (size_t i = 0; i < count; i++) { // bounded by the jobs
+            const char *slash = strrchr(jobs[i].header, '/');
+            snprintf(path, sizeof path, "%s/%s", from, slash + 1);
+            FILE *file = fopen(path, "rb");
+            if (file == nullptr) return false;
+            size_t size = fread(bytes, 1, sizeof bytes, file);
+            bool whole = feof(file) != 0 && size < sizeof bytes;
+            fclose(file);
+            if (!whole) return false;
+            if (pass == 1) smith_write_if_changed(jobs[i].header, bytes, size);
+        }
+    }
+    return true;
+}
+
 // Writes the headers that are missing, or all of them when the stamp is not this binary's. The sources are written
 // already (the libraries' by smith_build_write_libraries, smith::build's by the caller).
 static void smith_write_lang_headers(const char *self) {
@@ -1692,10 +1720,11 @@ static void smith_write_lang_headers(const char *self) {
     bool named = smith_binary_identity(self, identity, sizeof identity);
     bool current =
         named && smith_file_has_bytes(smith_headers_stamp, (const unsigned char *)identity, strlen(identity));
+    bool copied = named && !current && smith_headers_copy(jobs, count, identity);
     bool good = true;
     for (size_t i = 0; i < count; i++) {
         jobs[i].pid = 0;
-        if (current && access(jobs[i].header, R_OK) == 0) continue;
+        if (copied || (current && access(jobs[i].header, R_OK) == 0)) continue;
         good = smith_header_job_start(&jobs[i], self) && good;
     }
     for (size_t i = 0; i < count; i++) {

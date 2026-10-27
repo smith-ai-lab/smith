@@ -118,6 +118,31 @@ export void test_build_lang_a_plain_smith_file_builds_with_no_header(io::Io *io)
     scratch::expect_text("modules: a plain .smith file builds, with no header", "0 no", status);
 }
 
+// A folder of headers (SMITH_HEADERS_FROM) stamped by this smith is copied, not generated: the marked copy of arena.h
+// shows which. Unset, the project generates its own, as before.
+constexpr char headers_marked[_] = "rm -rf marked && cp -R \"$SMITH_REPO/.smith/include/smith\" marked && "
+                                   "printf '// marker\\n' >>marked/arena.h && ";
+
+export void test_build_lang_headers_from_a_folder_are_copied(io::Io *io) {
+    scratch::Project p = lang_project(io, "module-three");
+    char command[512];
+    __builtin_snprintf(command, sizeof command,
+                       "%sSMITH_HEADERS_FROM=$PWD/marked smith build >/dev/null 2>&1; "
+                       "grep -c marker .smith/include/smith/arena.h",
+                       headers_marked);
+    scratch::expect_text("headers: copied from the folder", "1", scratch::sh(&p, command).out);
+}
+
+export void test_build_lang_headers_are_generated_without_the_folder(io::Io *io) {
+    scratch::Project p = lang_project(io, "module-three");
+    char command[512];
+    __builtin_snprintf(command, sizeof command,
+                       "%sunset SMITH_HEADERS_FROM; smith build >/dev/null 2>&1; "
+                       "grep -c marker .smith/include/smith/arena.h",
+                       headers_marked);
+    scratch::expect_text("headers: generated without it", "0", scratch::sh(&p, command).out);
+}
+
 // The helpers are under the compiler; the top level is only verbs.
 export void test_build_lang_the_helpers_are_under_the_compiler(io::Io *io) {
     scratch::Project p = lang_project(io, "module-three");
