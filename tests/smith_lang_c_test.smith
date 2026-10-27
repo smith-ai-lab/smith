@@ -118,7 +118,7 @@ export void test_the_untar_test_compiles_the_same_as_smith(io::Io *io) {
 }
 
 export void test_the_new_project_main_compiles_the_same_as_smith(io::Io *io) {
-    compare(io, "templates/new/main", "-std=gnu2y", false);
+    compare(io, "templates/new-c/main", "-std=gnu2y", false);
 }
 
 // Where C does not require a constant, the evaluator that runs C functions for .smith
