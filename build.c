@@ -168,12 +168,17 @@ static const BuildProtocol build_protocols[] = {
 constexpr size_t build_protocol_count = sizeof build_protocols / sizeof build_protocols[0];
 
 // The generator is a program of smith's own C (scripts/protocol.c, on lib/json.c), built here and not shipped: like
-// scripts/pack.c, a tool of the build. arena, contract, format, io and random are the modules of smith, compiled from their sources.
-// Returns the program's step.
+// scripts/pack.c, a tool of the build. arena, contract, format, io and random are the modules of smith, compiled from
+// their sources. Returns the program's step.
 static SmithStep build_protocol_program(SmithBuild *b, const BuildConfig *config, const char *folder) {
-    const char *const sources[] = {
-        "scripts/protocol.c", "lib/smith/arena.smith", "lib/smith/contract.smith", "lib/smith/format.smith", "lib/smith/io.smith",
-        "lib/smith/random.smith", "lib/json.c", "lib/trace.c"};
+    const char *const sources[] = {"scripts/protocol.c",
+                                   "lib/smith/arena.smith",
+                                   "lib/smith/contract.smith",
+                                   "lib/smith/format.smith",
+                                   "lib/smith/io.smith",
+                                   "lib/smith/random.smith",
+                                   "lib/json.c",
+                                   "lib/trace.c"};
     SmithObject objects[8] = {};
     const SmithObject *linked[9] = {};
     for (size_t i = 0; i < 8; i++) {
@@ -952,7 +957,8 @@ static const char *const *build_test(SmithBuild *b, const BuildConfig *config, c
                 "work=${TMPDIR:-/tmp}/smith-format-$$.noindex; mkdir \"$work\"; trap 'rm -rf \"$work\"' "
                 "EXIT; export XDG_CACHE_HOME=$work/xdg-cache; "
                 "\"$0\" cc -std=gnu23 -O2 -Wall -Wextra -Werror -I include -I .smith/include tests/format_exhaustive.c "
-                "lib/smith/format.smith lib/smith/io.smith lib/smith/arena.smith lib/smith/contract.smith lib/smith/random.smith -pthread -o \"$work/exhaustive\" || exit 1; start=$(date +%s); "
+                "lib/smith/format.smith lib/smith/io.smith lib/smith/arena.smith lib/smith/contract.smith "
+                "lib/smith/random.smith -pthread -o \"$work/exhaustive\" || exit 1; start=$(date +%s); "
                 "\"$work/exhaustive\"; status=$?; "
                 "echo \"exhaustive: exit $status in $(($(date +%s) - start)) s\"; exit $status",
                 binary, nullptr},

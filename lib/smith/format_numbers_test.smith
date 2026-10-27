@@ -1,8 +1,8 @@
-// Tests of the number parsers and writers of smith::format, in smith's own test library; tests/library_modes_test.smith builds them in a scratch project as
-// lib/smith/format_numbers_test.smith. strtof in the C locale is the reference for the f32 parser (this program never sets a
-// locale), and the halfway cases are also checked against what they must round to, so the reference is not the only
-// witness.
-// NOLINTBEGIN(smith-mem): #421: importing smith::mem breaks the lowering of the `for` loops; convert to mem:: after it
+// Tests of the number parsers and writers of smith::format, in smith's own test library; tests/library_modes_test.smith
+// builds them in a scratch project as lib/smith/format_numbers_test.smith. strtof in the C locale is the reference for
+// the f32 parser (this program never sets a locale), and the halfway cases are also checked against what they must
+// round to, so the reference is not the only witness. NOLINTBEGIN(smith-mem): #421: importing smith::mem breaks the
+// lowering of the `for` loops; convert to mem:: after it
 module smith::format_numbers_test;
 
 import smith::math;

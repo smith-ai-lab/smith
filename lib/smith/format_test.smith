@@ -212,7 +212,8 @@ static void check_fixed(f64 value, u32 places) {
     (void)format::to(out, sizeof out, format::fixed(value, places));
     __builtin_snprintf(expected, sizeof expected, "%.*f", (i32)places, value);
     if (!is(out, expected)) {
-        test::check_equal(countof(format::string(out)), countof(format::string(expected))); // the failure shows both lengths
+        test::check_equal(countof(format::string(out)),
+                          countof(format::string(expected))); // the failure shows both lengths
         test::check(is(out, expected));
     }
 }
@@ -403,7 +404,8 @@ static void check_general(f64 value, u32 digits) {
     __builtin_snprintf(expected, sizeof expected, "%.*g", (i32)(digits == 0 ? 1 : (digits < 40 ? digits : 40)), value);
     remove_trailing_zeros(expected);
     if (!is(out, expected)) {
-        test::check_equal(countof(format::string(out)), countof(format::string(expected))); // the failure shows both lengths
+        test::check_equal(countof(format::string(out)),
+                          countof(format::string(expected))); // the failure shows both lengths
         test::check(is(out, expected));
     }
 }

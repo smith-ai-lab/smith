@@ -14,8 +14,8 @@
 // types are merged; a reference that closes a cycle is cut (that field is kept as raw JSON, so the generated code
 // recurses nowhere either); and the types are put in dependency order.
 #include <smith/arena.h>
-#include <smith/json.h>
 #include <smith/format.h>
+#include <smith/json.h>
 
 #include <ctype.h>
 #include <stdarg.h>
@@ -1340,10 +1340,11 @@ static void gen_source_enum(Generator *g, Sink *s, int id) {
     gen_head(g, s, id, "write", true);
     if (open) {
         gen_emit(s, "    if ((size_t)value->known < %zu) {\n", t->value_count);
-        gen_emit(s,
-                 "        smith_json_write_string(writer, smith_format_string(%s_names[value->known]));\n        return;\n "
-                 "   }\n",
-                 t->stem);
+        gen_emit(
+            s,
+            "        smith_json_write_string(writer, smith_format_string(%s_names[value->known]));\n        return;\n "
+            "   }\n",
+            t->stem);
         gen_emit(s, "    smith_json_write_string(writer, value->text);\n}\n\n");
     } else {
         gen_emit(s, "    smith_json_write_string(writer, smith_format_string(%s_names[*value]));\n}\n\n", t->stem);
@@ -1357,10 +1358,10 @@ static void gen_source_enum(Generator *g, Sink *s, int id) {
     if (open) {
         gen_emit(s, "    size_t pick = smith_protocol_pick(smith_protocol_take(stream), %zu);\n", t->value_count + 1);
         gen_emit(s, "    out->known = (%sKnown)pick;\n", t->name);
-        gen_emit(
-            s,
-            "    out->text = pick < %zu ? smith_format_string(%s_names[pick]) : smith_protocol_name(arena, pick);\n}\n\n",
-            t->value_count, t->stem);
+        gen_emit(s,
+                 "    out->text = pick < %zu ? smith_format_string(%s_names[pick]) : smith_protocol_name(arena, "
+                 "pick);\n}\n\n",
+                 t->value_count, t->stem);
     } else {
         gen_emit(s, "    *out = (%s)smith_protocol_pick(smith_protocol_take(stream), %zu);\n}\n\n", t->name,
                  t->value_count);

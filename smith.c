@@ -3228,8 +3228,8 @@ static bool smith_project_arguments(const char *verb, int count, char **args) {
 
 // `smith mcp`: the debugger server of issue #22. A feature of the full smith (-DSMITH_MCP, which `smith build` passes
 // with clang inside), as the prover and the debugger are: a smith built without it has the verb and says so. It stands
-// on the JSON, format and protocol code (knowledge/protocol-generation.md; format is the module smith::format, linked as
-// its own object), and on the io module.
+// on the JSON, format and protocol code (knowledge/protocol-generation.md; format is the module smith::format, linked
+// as its own object), and on the io module.
 #ifdef SMITH_MCP
 #include "dap.c"
 #include "lib/json.c"

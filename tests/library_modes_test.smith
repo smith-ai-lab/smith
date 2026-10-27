@@ -1,9 +1,10 @@
-// The libraries json, format and inflate in the builds the units runner does not make, from tests/json.sh, tests/format.sh
-// and tests/inflate.sh (issue #292). Their tests (lib/json_test.smith, lib/smith/format_numbers_test.smith,
-// lib/smith/inflate_test.smith) run on smith's own runner under AddressSanitizer and UBSan; here each is built as a
-// scratch project's tests with smith_tests (the fixture tests/build_fixtures/library_units, whose -DMODE is fast, -O2,
-// or ndebug, -O2 -DNDEBUG) and must pass in the runner's workers and with a process per test (--isolate). Also the
-// heavy runs on more keys under the sanitizers, JSONTestSuite (fetched into $SMITH_JSON_SUITE_CACHE, else
+// The libraries json, format and inflate in the builds the units runner does not make, from tests/json.sh,
+// tests/format.sh and tests/inflate.sh (issue #292). Their tests (lib/json_test.smith,
+// lib/smith/format_numbers_test.smith, lib/smith/inflate_test.smith) run on smith's own runner under AddressSanitizer
+// and UBSan; here each is built as a scratch project's tests with smith_tests (the fixture
+// tests/build_fixtures/library_units, whose -DMODE is fast, -O2, or ndebug, -O2 -DNDEBUG) and must pass in the runner's
+// workers and with a process per test (--isolate). Also the heavy runs on more keys under the sanitizers, JSONTestSuite
+// (fetched into $SMITH_JSON_SUITE_CACHE, else
 // ~/.cache/smith-tests, pinned by hash; skipped offline), the C and .smith callers of one format header, and each
 // library compiled alone under the warnings of a new project and naming no libc function.
 module library_modes_test;
@@ -22,8 +23,8 @@ typedef struct {
 } Library;
 
 static const Library json = {"lib/json_test.smith", "json_test.smith", "arena,random,format,json", false};
-static const Library numbers = {"lib/smith/format_numbers_test.smith", "smith/format_numbers_test.smith", "arena,random,format",
-                                false};
+static const Library numbers = {"lib/smith/format_numbers_test.smith", "smith/format_numbers_test.smith",
+                                "arena,random,format", false};
 static const Library inflate = {"lib/smith/inflate_test.smith", "smith/inflate_test.smith", "arena,random,inflate",
                                 true};
 
@@ -168,9 +169,9 @@ export void test_library_modes_inflate_damaged_input_never_misbehaves(io::Io *io
     }
 }
 
-// One header for C and for .smith: a project with smith_library(b, "format"), a C file that includes <smith/format.h> and
-// a .smith file that does `import smith::format;`. smith writes the header and the module's header step writes the same
-// bytes, so neither is "not a header smith wrote" and a second build has nothing to do.
+// One header for C and for .smith: a project with smith_library(b, "format"), a C file that includes <smith/format.h>
+// and a .smith file that does `import smith::format;`. smith writes the header and the module's header step writes the
+// same bytes, so neither is "not a header smith wrote" and a second build has nothing to do.
 export void test_library_modes_format_c_and_smith_share_one_header(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", "format_both");
     scratch::Run built = scratch::build(&p, "");

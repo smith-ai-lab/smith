@@ -149,7 +149,8 @@ bool smith_protocol_integer_parse([[maybe_unused]] SmithArena *arena, const Smit
                                   SmithProtocolError *error) {
     if (value->kind != SmithJsonKind_Number) return smith_protocol_fail(error, SmithProtocolReason_WrongType, value);
     smith_format_I64Result parsed = smith_format_parse_i64(value->text);
-    if (parsed.tag != smith_enum_result_i64__SmithFormatError_tag_ok) return smith_protocol_fail(error, SmithProtocolReason_WrongType, value);
+    if (parsed.tag != smith_enum_result_i64__SmithFormatError_tag_ok)
+        return smith_protocol_fail(error, SmithProtocolReason_WrongType, value);
     *out = parsed.ok;
     return true;
 }
@@ -174,7 +175,8 @@ bool smith_protocol_number_parse([[maybe_unused]] SmithArena *arena, const Smith
                                  SmithProtocolError *error) {
     if (value->kind != SmithJsonKind_Number) return smith_protocol_fail(error, SmithProtocolReason_WrongType, value);
     smith_format_F64Result parsed = smith_format_parse_f64(value->text);
-    if (parsed.tag != smith_enum_result_f64__SmithFormatError_tag_ok) return smith_protocol_fail(error, SmithProtocolReason_WrongType, value);
+    if (parsed.tag != smith_enum_result_f64__SmithFormatError_tag_ok)
+        return smith_protocol_fail(error, SmithProtocolReason_WrongType, value);
     *out = parsed.ok;
     return true;
 }
@@ -540,7 +542,8 @@ bool smith_protocol_const_text(const SmithJsonValue *value, const char *expected
 bool smith_protocol_const_integer(const SmithJsonValue *value, int64_t expected, SmithProtocolError *error) {
     if (value->kind != SmithJsonKind_Number) return smith_protocol_fail(error, SmithProtocolReason_WrongType, value);
     smith_format_I64Result parsed = smith_format_parse_i64(value->text);
-    if (parsed.tag != smith_enum_result_i64__SmithFormatError_tag_ok) return smith_protocol_fail(error, SmithProtocolReason_WrongType, value);
+    if (parsed.tag != smith_enum_result_i64__SmithFormatError_tag_ok)
+        return smith_protocol_fail(error, SmithProtocolReason_WrongType, value);
     int64_t integer = parsed.ok;
     if (integer != expected) return smith_protocol_fail(error, SmithProtocolReason_BadValue, value);
     return true;

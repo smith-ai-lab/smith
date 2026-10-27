@@ -1,9 +1,9 @@
 // Tests of `smith mcp` on the fake io (issue #22): a scripted client on the console and a scripted `smith dap` child,
 // so that the whole server runs in one process, with no debugger, no clock and no network. The server is runtime/mcp.c
 // included here as smith.c includes it, with the libraries and the protocol code it stands on (the text module is
-// linked, as in smith: tests/mcp_test.smith compiles lib/smith/format.smith with this file, and the other libraries too);
-// tests/mcp_test.smith builds this file under the sanitizers and runs it. The real thing, a real adapter and a real
-// program, is tests/mcp_test.smith's other half.
+// linked, as in smith: tests/mcp_test.smith compiles lib/smith/format.smith with this file, and the other libraries
+// too); tests/mcp_test.smith builds this file under the sanitizers and runs it. The real thing, a real adapter and a
+// real program, is tests/mcp_test.smith's other half.
 //
 // A case is the lines the client sends (`input`), the frames the adapter writes (`dap`, with the requests the server
 // sends numbered from 1, so a frame answers the request of that number), and files. The server's output is one JSON
@@ -238,16 +238,16 @@ static const char *test_reply(int id, bool *is_error) {
         int64_t found = -1;
         const SmithJsonValue *number = smith_json_member(tree, "id");
         if (number != nullptr && number->kind == SmithJsonKind_Number) {
-            smith_format_I64Result parsed = smith_format_parse_i64(number->text);
-            if (parsed.tag == smith_enum_result_i64__SmithFormatError_tag_ok) found = parsed.ok;
+            smith_format_I64Result read = smith_format_parse_i64(number->text);
+            if (read.tag == smith_enum_result_i64__SmithFormatError_tag_ok) found = read.ok;
         }
         if (found == id) {
             const SmithJsonValue *result = smith_json_member(tree, "result");
             const SmithJsonValue *failure = smith_json_member(tree, "error");
             if (failure != nullptr) {
                 int64_t code = 0;
-                smith_format_I64Result parsed = smith_format_parse_i64(smith_json_member(failure, "code")->text);
-                if (parsed.tag == smith_enum_result_i64__SmithFormatError_tag_ok) code = parsed.ok;
+                smith_format_I64Result read = smith_format_parse_i64(smith_json_member(failure, "code")->text);
+                if (read.tag == smith_enum_result_i64__SmithFormatError_tag_ok) code = read.ok;
                 snprintf(test_text, sizeof test_text, "error %lld: %.*s", (long long)code,
                          (int)smith_json_member(failure, "message")->text.count[0],
                          smith_json_member(failure, "message")->text.data);

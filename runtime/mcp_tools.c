@@ -99,9 +99,10 @@ static bool smith_mcp_breakpoints_send(SmithMcpServer *server, SmithMcpSession *
         }
         index[count++] = i;
     }
-    SmithDapSetBreakpointsRequest request = {.arguments = {.source = {.has_path = true, .path = smith_format_string(path)},
-                                                           .has_breakpoints = true,
-                                                           .breakpoints = {list, count}}};
+    SmithDapSetBreakpointsRequest request = {
+        .arguments = {.source = {.has_path = true, .path = smith_format_string(path)},
+                      .has_breakpoints = true,
+                      .breakpoints = {list, count}}};
     SmithMcpReply reply;
     SMITH_MCP_DAP_CALL(server, session, set_breakpoints_request, request, smith_mcp_request_timeout, reply);
     SmithDapSetBreakpointsResponseBody body;

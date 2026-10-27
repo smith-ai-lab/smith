@@ -1,7 +1,7 @@
 // <smith/json.h>: reading and writing JSON (RFC 8259) in memory, with every loop bounded and no malloc. Text is a
 // slice, `struct smith_array_const_char_n` (`.data`, `.count[0]`), so a file read into memory is read where it lies.
-// Numbers go through <smith/format.h>, which calls no C library function, so a double written here reads back as the same
-// bits on any machine.
+// Numbers go through <smith/format.h>, which calls no C library function, so a double written here reads back as the
+// same bits on any machine.
 //
 // Reading has two layers. The reader is a pull parser that walks values without building anything:
 //

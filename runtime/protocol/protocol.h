@@ -16,14 +16,14 @@
 // A project finds the headers with -I .smith/include; smith.c, built with one cc command and no -I, finds them beside.
 #if __has_include(<smith/arena.h>)
 #include <smith/arena.h>
+#include <smith/format.h>
 #include <smith/json.h>
 #include <smith/random.h>
-#include <smith/format.h>
 #else
 #include "../../include/smith/arena.h"
+#include "../../include/smith/format.h"
 #include "../../include/smith/json.h"
 #include "../../include/smith/random.h"
-#include "../../include/smith/format.h"
 #endif
 
 #include <stddef.h>

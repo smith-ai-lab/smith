@@ -84,13 +84,15 @@ static void smith_mcp_send_initialize(SmithMcpServer *server, const SmithMcpRequ
                                    .version = smith_format_string(smith_mcp_version)};
     SmithJsonWriter info_writer = smith_mcp_message_writer(server);
     smith_mcp_implementation_write(&info_writer, &info);
-    struct smith_array_const_char_n keys[] = {smith_format_string("protocolVersion"), smith_format_string("capabilities"),
-                                              smith_format_string("serverInfo"), smith_format_string("instructions")};
+    struct smith_array_const_char_n keys[] = {smith_format_string("protocolVersion"),
+                                              smith_format_string("capabilities"), smith_format_string("serverInfo"),
+                                              smith_format_string("instructions")};
     SmithProtocolAny values[] = {smith_mcp_json_string(&server->scratch, smith_format_string(version)),
                                  smith_mcp_tree(server, &capabilities_writer), smith_mcp_tree(server, &info_writer),
                                  smith_mcp_json_string(&server->scratch, smith_format_string(smith_mcp_instructions))};
     SmithMcpJSONRPCResultResponse response = {
-        .id = *id, .result = {.resultType = smith_format_string("complete"), .additionalProperties = {keys, values, 4}}};
+        .id = *id,
+        .result = {.resultType = smith_format_string("complete"), .additionalProperties = {keys, values, 4}}};
     SmithJsonWriter writer = smith_mcp_message_writer(server);
     smith_mcp_jsonrpc_result_response_write(&writer, &response);
     smith_mcp_emit(server, &writer);
@@ -136,8 +138,9 @@ static void smith_mcp_tool_make(SmithMcpServer *server, const SmithMcpToolEntry 
                                                                           schema->count, alignof(SmithProtocolAny));
     SMITH_ASSERT(keys != nullptr && values != nullptr);
     size_t count = 0;
-    for (size_t i = 0; i < schema->count; i++) {                    // bounded by the schema's members
-        if (smith_format_is(schema->items[i]->key, "type")) continue; // the generated inputSchema writes "type": "object"
+    for (size_t i = 0; i < schema->count; i++) { // bounded by the schema's members
+        if (smith_format_is(schema->items[i]->key, "type"))
+            continue; // the generated inputSchema writes "type": "object"
         keys[count] = schema->items[i]->key;
         values[count++] = schema->items[i];
     }
