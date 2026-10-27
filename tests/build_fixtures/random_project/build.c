@@ -8,11 +8,13 @@ void build(SmithBuild *b) {
     smith_object(b, &random);
     SmithObject arena = {.compiler = "smith-cc", .source = smith_library(b, "arena"), .output = "build/smith/arena.o", .flags = flags};
     smith_object(b, &arena);
+    SmithObject categorical = {.compiler = "smith-cc", .source = smith_library(b, "categorical"), .output = "build/smith/categorical.o", .flags = flags};
+    smith_object(b, &categorical);
     SmithProgram program = {
         .linker = "smith-cc",
         .output = "build/app",
         .flags = smith_list(b, "-fsanitize=address", nullptr),
-        .objects = (const SmithObject *[]){&main, &random, &arena, nullptr},
+        .objects = (const SmithObject *[]){&main, &random, &arena, &categorical, nullptr},
     };
     smith_program(b, &program);
     smith_default(b, program.step.outputs);

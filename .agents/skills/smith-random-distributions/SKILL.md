@@ -1,6 +1,6 @@
 ---
 name: smith-random-distributions
-description: "The distributions of smith::random (uniform_float_sample, uniform_int64_sample, normal_*_sample, bernoulli_sample, categorical_make, permutation_sample) and filling an array with a loop over keys. Load when drawing numbers of a given distribution."
+description: "The distributions of smith::random (uniform_float_sample, uniform_int64_sample, normal_*_sample, bernoulli_sample, permutation_sample, and smith::categorical) and filling an array with a loop over keys. Load when drawing numbers of a given distribution."
 ---
 
 # Distributions
@@ -21,9 +21,7 @@ void distributions(random::Key key, arena::Arena *a) {
     f64 gauss64 = random::normal_double_sample(k[4], (random::NormalDouble){.mean = 0, .deviation = 1});
     bool coin = random::bernoulli_sample(k[5], (random::Bernoulli){.probability = 0.3});
 
-    f64 weights[] = {1, 2, 3};
-    random::Categorical table = random::categorical_make(a, weights, _Countof(weights)); // built once, in the arena
-    usize pick = random::categorical_sample(k[6], table);                                 // an index below count
+    usize pick = 0;                                         // a weighted index: smith::categorical (smith-categorical)
 
     usize *order = arena::push_slice(a, usize, 52).data;
     random::permutation_sample(k[7], (random::Permutation){.count = 52}, order);         // 0..51, uniformly ordered
@@ -31,12 +29,12 @@ void distributions(random::Key key, arena::Arena *a) {
 }
 ```
 
-- Parameters are `assert`ed: `low < high` and finite, `deviation > 0`, a probability in [0, 1], categorical weights finite, not negative, with a positive sum. A real uniform never returns `high`.
+- Parameters are `assert`ed: `low < high` and finite, `deviation > 0`, a probability in [0, 1]. A real uniform never returns `high`.
 - The integer uniform is Lemire's multiply-and-reject: every value exactly as likely, up to 64 attempts. Needing all 64 has a probability below 2^-64, and then the last candidate is returned.
 - The normal is the inverse CDF (Wichura's AS241), computed in `float` for `float`. Its reach is about +-8.2 deviations for `double` and about +-5.3 for `float`: the grid never reaches 0 or 1, so a draw is finite, and the distribution is exactly symmetric. A `float` normal is a poor fit when the tails past 5.3 sigma matter; use `double`.
-- The zero word gives the simplest value, and values move away from it as the word grows (this is for the test runner, which shrinks a failing test by making its words smaller; it changes no distribution, only which word gives which value). The integer uniform gives 0 clamped into the range, then 0 - 1, 0 + 1, 0 - 2... (zigzag), and the real uniforms do the same on their grid; the normals give the mean to within one grid step; the Bernoulli gives `false`; the categorical gives column 0; the permutation gives the identity. A draw is a pure function of its key, so shrinking one word never shifts another: part i of a `split` is the same however many parts came with it.
+- The zero word gives the simplest value, and values move away from it as the word grows (this is for the test runner, which shrinks a failing test by making its words smaller; it changes no distribution, only which word gives which value). The integer uniform gives 0 clamped into the range, then 0 - 1, 0 + 1, 0 - 2... (zigzag), and the real uniforms do the same on their grid; the normals give the mean to within one grid step; the Bernoulli gives `false`; `categorical::sample` gives column 0; the permutation gives the identity. A draw is a pure function of its key, so shrinking one word never shifts another: part i of a `split` is the same however many parts came with it.
 - `random::Tap` is for smith's test runner and nothing else: a key the runner made carries a `tap` (a field of `random::Key`, `nullptr` for every key a program makes), and `random::key_bits` passes each word through the tap, so the runner can record a failing test's words and replace them with smaller ones; `split` copies the tap to the keys it makes. There is no global to set, and a program's own keys stay pure functions of their bits.
-- A zero weight is never drawn. The categorical table lives in the arena, which must outlive it; a sample is an index from the first part of a split of the key and a coin from the second.
+- A weighted index (a categorical distribution) is the module `smith::categorical`, because building its table allocates: [smith-categorical](../smith-categorical/SKILL.md).
 
 ## Fill an array: a loop
 

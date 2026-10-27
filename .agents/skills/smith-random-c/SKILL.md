@@ -21,8 +21,6 @@ float a = smith_uniform_float_sample(k[3], (SmithUniformFloat){.low = 0, .high =
 int64_t c = smith_uniform_int64_sample(k[4], (SmithUniformInt64){.low = 1, .high = 6});
 float d = smith_normal_float_sample(k[5], (SmithNormalFloat){.mean = 0, .deviation = 1});
 bool f = smith_bernoulli_sample(k[6], (SmithBernoulli){.probability = 0.3});
-SmithCategorical weights = smith_categorical_make(&arena, (const double[]){1, 2, 3}, 3);
-size_t g = smith_categorical_sample(k[7], weights);
 ```
 
 ```c
@@ -33,7 +31,7 @@ double exponential_sample(SmithKey key, double rate) {
 
 ## Get the library in build.c
 
-random uses the arena (`smith_categorical_make`), so a project compiles both. smith writes the headers and the sources into `.smith/` on every `smith build`. random is written in `.smith` (the module `smith::random`, source `.smith/lib/smith/random.smith`), so compiling it needs a smith with clang inside; C code that only includes `<smith/random.h>` works anywhere, and the C API (names, types, symbols) is the one it always had:
+random needs nothing else; a weighted index is `smith::categorical` ([smith-categorical](../smith-categorical/SKILL.md)). smith writes the headers and the sources into `.smith/` on every `smith build`. random is written in `.smith` (the module `smith::random`, source `.smith/lib/smith/random.smith`), so compiling it needs a smith with clang inside; C code that only includes `<smith/random.h>` works anywhere, and the C API (names, types, symbols) is the one it always had:
 
 ```c
 SmithObject random = {.compiler = "smith-cc", .source = smith_library(b, "random"), .output = "build/smith/random.o", .flags = flags};
@@ -44,4 +42,4 @@ smith_object(b, &arena);
 
 `flags` includes `-I .smith/include`, and the program's `.objects` list both. Add `-lm` to the link on platforms where `sqrt` is not inlined (macOS does not need it). See the smith-build and smith-arena skills.
 
-Also in this family: [smith-random](../smith-random/SKILL.md), [smith-random-distributions](../smith-random-distributions/SKILL.md), [smith-random-own](../smith-random-own/SKILL.md).
+Also in this family: [smith-random](../smith-random/SKILL.md), [smith-categorical](../smith-categorical/SKILL.md), [smith-random-distributions](../smith-random-distributions/SKILL.md), [smith-random-own](../smith-random-own/SKILL.md).

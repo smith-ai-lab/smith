@@ -4,7 +4,6 @@
 // refusals) stays in tests/random.c, run by tests/random_c_test.smith.
 module smith::random_test;
 
-import smith::arena;
 import smith::random;
 import smith::test;
 import <math.h>;
@@ -215,7 +214,7 @@ export void test_random_uniform_real_stays_below_high_when_rounding_reaches_it()
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Normal, Bernoulli, categorical, permutation
+// Normal, Bernoulli, permutation
 
 export void test_random_normal_moments(random::Key key) {
     random::Key *stream = &key;
@@ -261,48 +260,6 @@ export void test_random_bernoulli_frequency(random::Key key) {
     }
     f64 n = (f64)draws;
     test::check_less(__builtin_fabs((f64)hits - 0.3 * n), 5.5 * __builtin_sqrt(n * 0.3 * 0.7));
-}
-
-// Categorical: frequencies by chi-square, a zero weight never drawn, one category, and a deterministic table.
-export void test_random_categorical(random::Key key) {
-    random::Key *stream = &key;
-    arena::Arena a = test::memory(1 << 14);
-    const f64 weights[_] = {1.0, 2.0, 3.0, 0.0, 4.0, 0.5, 9.5};
-    constexpr usize count = 7;
-    random::Categorical categorical = random::categorical_make(&a, weights, count);
-    test::check_equal(categorical.count, count);
-    test::check_equal(a.scopes, 0);
-    usize observed[count] = {};
-    for (u64 i = 0; i < draws; i++) {
-        usize index = random::categorical_sample(take(stream), categorical);
-        test::check_less(index, count);
-        observed[index]++;
-    }
-    test::check_equal(observed[3], 0);
-    f64 expected[count - 1];
-    usize cells[count - 1];
-    usize used = 0;
-    for (usize i = 0; i < count; i++) {
-        if (weights[i] == 0.0) {
-            continue;
-        }
-        expected[used] = (f64)(draws)*weights[i] / 20.0;
-        cells[used++] = observed[i];
-    }
-    test::check_less(chi_square(cells, expected, used), chi_limit(used - 1));
-    random::Categorical one = random::categorical_make(&a, (const f64[_]){3.5}, 1);
-    for (u64 i = 0; i < 100; i++) {
-        test::check_equal(random::categorical_sample(take(stream), one), 0);
-    }
-    random::Categorical same = random::categorical_make(&a, weights, count); // construction is deterministic
-    for (usize i = 0; i < count; i++) {
-        test::check_equal(same.probability[i], categorical.probability[i]);
-        test::check_equal(same.alias[i], categorical.alias[i]);
-    }
-    random::Categorical tiny = random::categorical_make(&a, (const f64[_]){0.0, 1.0}, 2);
-    for (u64 i = 0; i < 1000; i++) {
-        test::check_equal(random::categorical_sample(take(stream), tiny), 1);
-    }
 }
 
 export void test_random_permutations_are_permutations(random::Key key) {
@@ -468,16 +425,6 @@ static constexpr u64 pinned_values[_] = {
     0x7e853102a74236ed, // split
     0xb9575d3a213c880d, // split
     0x71cfe040fa00339a, // split
-    0x3fe0000000000000, // categorical probability
-    0x0000000000000004, // categorical alias
-    0x3ff0000000000000, // categorical probability
-    0x0000000000000001, // categorical alias
-    0x3ff0000000000000, // categorical probability
-    0x0000000000000002, // categorical alias
-    0x0000000000000000, // categorical probability
-    0x0000000000000004, // categorical alias
-    0x3fe0000000000000, // categorical probability
-    0x0000000000000002, // categorical alias
     0x000000003ef30fa6, // unit_float
     0x3fde61f4fa7e2600, // unit_double
     0x00000000bf97e9c8, // uniform_float
@@ -486,7 +433,6 @@ static constexpr u64 pinned_values[_] = {
     0x00000000be8a7c9c, // normal_float
     0x400229f29201b1cb, // normal_double
     0x0000000000000000, // bernoulli
-    0x0000000000000002, // categorical
     0x00000000bea4d7a8, // log_float
     0xbfd49af4a1babd83, // log_double
     0x000000003f6f5147, // unit_float
@@ -497,7 +443,6 @@ static constexpr u64 pinned_values[_] = {
     0x00000000c02c0c06, // normal_float
     0x4012c0c0ac77efea, // normal_double
     0x0000000000000001, // bernoulli
-    0x0000000000000000, // categorical
     0x000000003e2dac53, // log_float
     0x3fc5b58a44f624ee, // log_double
     0x000000003f77aa93, // unit_float
@@ -508,7 +453,6 @@ static constexpr u64 pinned_values[_] = {
     0x00000000c0519b22, // normal_float
     0xc00a33655f8a9c90, // normal_double
     0x0000000000000001, // bernoulli
-    0x0000000000000000, // categorical
     0x000000003e497a52, // log_float
     0x3fc92f4a290f0e12, // log_double
     0x000000003f6c4500, // unit_float
@@ -519,7 +463,6 @@ static constexpr u64 pinned_values[_] = {
     0x00000000409125d2, // normal_float
     0xc00449741659234a, // normal_double
     0x0000000000000001, // bernoulli
-    0x0000000000000002, // categorical
     0x000000003e2354c6, // log_float
     0x3fc46a98ed1913b5, // log_double
     0x0000000000000004, // permutation
@@ -537,7 +480,7 @@ typedef struct {
 } Pins;
 
 static void pin(Pins *pins, u64 value) {
-    test::check_less(pins->count, 74);
+    test::check_less(pins->count, 60);
     test::note("pinned value number %zu", pins->count);
     test::check_equal(value, pinned_values[pins->count]);
     pins->count++;
@@ -562,13 +505,6 @@ export void test_random_pinned_values() {
             pin(&pins, parts[i].bits);
         }
     }
-    arena::Arena a = test::memory(1 << 12);
-    const f64 weights[_] = {1.0, 2.0, 3.0, 0.0, 4.0};
-    random::Categorical categorical = random::categorical_make(&a, weights, 5);
-    for (usize i = 0; i < 5; i++) {
-        pin(&pins, double_bits(categorical.probability[i]));
-        pin(&pins, categorical.alias[i]);
-    }
     random::Key cases[4];
     random::split(random::key_make(42), cases);
     for (usize i = 0; i < 4; i++) {
@@ -583,7 +519,6 @@ export void test_random_pinned_values() {
         pin(&pins, float_bits(random::normal_float_sample(random::key_make(word), (random::NormalFloat){1.0F, 2.0F})));
         pin(&pins, double_bits(random::normal_double_sample(random::key_make(word), (random::NormalDouble){1.0, 2.0})));
         pin(&pins, random::bernoulli_sample(random::key_make(word), (random::Bernoulli){0.3}) ? 1 : 0);
-        pin(&pins, random::categorical_sample(random::key_make(word), categorical));
         pin(&pins, float_bits(random::log_float(random::key_unit_float(random::key_make(word)) + 0.25F)));
         pin(&pins, double_bits(random::log_double(random::key_unit_double(random::key_make(word)) + 0.25)));
     }
@@ -592,7 +527,7 @@ export void test_random_pinned_values() {
     for (usize i = 0; i < 8; i++) {
         pin(&pins, order[i]);
     }
-    test::check_equal(pins.count, 74);
+    test::check_equal(pins.count, 60);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -625,8 +560,6 @@ static u64 word_for_index(u64 index, u64 span) {
 
 export void test_random_zero_word_gives_the_simplest_value() {
     ConstantTap zero = {.tap = {tap_constant}, .word = 0};
-    arena::Arena a = test::memory(1 << 12);
-    random::Categorical categorical = random::categorical_make(&a, (const f64[_]){1.0, 2.0, 3.0}, 3);
     test::check_equal(random::uniform_int64_sample(tapped(&zero), range(-3, 6)), 0);
     test::check_equal(random::uniform_int64_sample(tapped(&zero), range(5, 9)), 5);
     test::check_equal(random::uniform_int64_sample(tapped(&zero), range(-9, -5)), -5);
@@ -653,8 +586,6 @@ export void test_random_zero_word_gives_the_simplest_value() {
     test::check(!random::bernoulli_sample(tapped(&zero), (random::Bernoulli){0.3}));
     test::check(!random::bernoulli_sample(tapped(&zero), (random::Bernoulli){0.0}));
     test::check(random::bernoulli_sample(tapped(&zero), (random::Bernoulli){1.0}));
-    test::check_equal(random::categorical_sample(tapped(&zero), categorical),
-                      0); // column 0 and its own coin, as without a hook
     usize order[9];
     random::permutation_sample(tapped(&zero), (random::Permutation){9}, order);
     for (usize i = 0; i < 9; i++) {

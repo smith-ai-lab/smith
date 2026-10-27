@@ -1,4 +1,6 @@
 #include <smith/arena.h>
+#include <smith/categorical.h>
+#include <smith/mem.h>
 #include <smith/random.h>
 
 #include <stdio.h>
@@ -19,7 +21,10 @@ int main(void) {
     float x = smith_normal_float_sample(parts[1], (SmithNormalFloat){.mean = 0, .deviation = 1});
     alignas(smith_arena_align_max) static unsigned char memory[1024];
     SmithArena arena = smith_arena_fixed(memory, sizeof memory);
-    SmithCategorical categorical = smith_categorical_make(&arena, (const double[]){1, 1, 2}, 3);
-    printf("mean %.1f, normal %d, index %zu\n", mean, x > -6.0f && x < 6.0f, smith_categorical_sample(parts[2], categorical) < 3 ? (size_t)1 : (size_t)0);
+    SmithArenaAllocator allocator = smith_arena_allocator(&arena);
+    SmithAllocator *outside = smith_mem_set_allocator(&allocator.base); // the table is in the allocator in force
+    SmithCategoricalTable categorical = smith_categorical_table_make((const double[]){1, 1, 2}, 3);
+    smith_mem_set_allocator(outside);
+    printf("mean %.1f, normal %d, index %zu\n", mean, x > -6.0f && x < 6.0f, smith_categorical_table_sample(parts[2], categorical) < 3 ? (size_t)1 : (size_t)0);
     return 0;
 }

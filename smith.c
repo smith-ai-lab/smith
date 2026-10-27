@@ -1091,6 +1091,9 @@ static constexpr unsigned char smith_net_source[] = {
 static constexpr unsigned char smith_ascii_source[] = {
 #embed "lib/smith/ascii.smith"
 };
+static constexpr unsigned char smith_categorical_source[] = {
+#embed "lib/smith/categorical.smith"
+};
 static constexpr unsigned char smith_slice_source[] = {
 #embed "lib/smith/slice.smith"
 };
@@ -1154,6 +1157,7 @@ static const SmithLibrary smith_libraries[] = {
     SMITH_LIBRARY(arena, true),
     SMITH_LIBRARY(ascii, true),
     SMITH_LIBRARY(autodiff, true),
+    SMITH_LIBRARY(categorical, true),
     SMITH_LIBRARY(clock, true),
     SMITH_LIBRARY(console, true),
     SMITH_LIBRARY(contract, true),

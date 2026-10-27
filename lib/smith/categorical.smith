@@ -1,0 +1,92 @@
+// smith::categorical, <smith/categorical.h>: a random index with given weights (Vose's alias table), drawn from a
+// random::Key. Its C API is the generated header include/smith/categorical.h (a build output, not in git); the names
+// follow the rule of random.smith: `categorical::make` is `smith_categorical_table_make`, `categorical::Table` is
+// `SmithCategoricalTable`. It is a module of its own, not part of smith::random, because building a table allocates: it
+// imports smith::mem, and smith::random (which smith itself links) imports nothing that allocates.
+module smith::categorical;
+
+import smith::contract;
+import smith::mem;
+import smith::random;
+
+// Vose's alias table: a sample is two draws whatever the count. Built by make, with its two arrays in the memory of
+// the allocator in force, so that allocator must outlive the table.
+[[smith::c_name("SmithCategoricalTable")]] export typedef struct {
+    const f64 *probability; // the chance, per index, of keeping it rather than its alias
+    const usize *alias;
+    usize count;
+} Table;
+
+// Vose's alias method, "A Linear Algorithm For Generating Random Numbers With a Given Distribution", 1991. Each index
+// holds a chance of being kept and an alias to take otherwise. Indices with scaled weight under 1 (small) are paired
+// with ones over 1 (large).
+void alias_build(f64 *probability, usize *alias, usize *small, usize *large, usize count) {
+    usize small_count = 0;
+    usize large_count = 0;
+    for (usize i = 0; i < count; i++) {
+        if (probability[i] < 1.0) {
+            small[small_count++] = i;
+        } else {
+            large[large_count++] = i;
+        }
+    }
+    while (small_count > 0 && large_count > 0) { // each pass finishes one index, so at most count passes
+        usize less = small[--small_count];
+        usize more = large[--large_count];
+        alias[less] = more;
+        probability[more] = (probability[more] + probability[less]) - 1.0;
+        if (probability[more] < 1.0) {
+            small[small_count++] = more;
+        } else {
+            large[large_count++] = more;
+        }
+    }
+    while (large_count > 0) { // what is left has a chance of 1 (up to rounding)
+        usize index = large[--large_count];
+        probability[index] = 1.0;
+        alias[index] = index;
+    }
+    while (small_count > 0) {
+        usize index = small[--small_count];
+        probability[index] = 1.0;
+        alias[index] = index;
+    }
+}
+
+// The table for weights (count of them, at least one, finite, not negative, summing above zero; they need not sum to
+// 1). Construction is deterministic, so the same weights give the same table everywhere. The table and its two
+// worklists come from the allocator in force (mem::alloc_array_raw, never null) and belong to the caller's region: the
+// allocator must outlive the table, and nothing is freed one at a time.
+[[smith::c_name("smith_categorical_table_make")]] export [[nodiscard]] Table make(const f64 *weights, usize count) {
+    contract::trusted(); // its loops run over the weights, whose count has no bound a proof can use
+    contract::requires(count >= 1);
+    f64 sum = 0.0;
+    for (usize i = 0; i < count; i++) {
+        contract::assert(__builtin_isfinite(weights[i]) && weights[i] >= 0.0); // data, not a parameter
+        sum += weights[i];
+    }
+    contract::assert(__builtin_isfinite(sum) && sum > 0.0);
+    f64 *probability = (f64 *)mem::alloc_array_raw(sizeof(f64), count, alignof(f64));
+    usize *alias = (usize *)mem::alloc_array_raw(sizeof(usize), count, alignof(usize));
+    for (usize i = 0; i < count; i++) {
+        probability[i] = weights[i] * (f64)count / sum;
+        alias[i] = i;
+    }
+    usize *small = (usize *)mem::alloc_array_raw(sizeof(usize), count, alignof(usize));
+    usize *large = (usize *)mem::alloc_array_raw(sizeof(usize), count, alignof(usize));
+    alias_build(probability, alias, small, large, count);
+    return (Table){.probability = probability, .alias = alias, .count = count};
+}
+
+// An index below the table's count; a zero weight is never drawn. The zero word gives index 0 and a coin that keeps it.
+[[smith::c_name("smith_categorical_table_sample")]] export [[nodiscard]] usize sample(random::Key key, Table table) {
+    contract::trusted(); // its tables are pointers inside a struct passed by value, which a proof does not know to be
+                         // valid
+    contract::requires(table.count >= 1);
+    random::Key parts[2];
+    random::split(key, parts);
+    usize index =
+        (usize)random::uniform_int64_sample(parts[0], (random::UniformInt64){.low = 0, .high = (i64)table.count - 1});
+    bool keep = random::key_unit_double(parts[1]) < table.probability[index];
+    return keep ? index : table.alias[index];
+}

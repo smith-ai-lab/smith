@@ -4,7 +4,6 @@
 // header's doc comments, so they name the Smith names; the first one says how a C name follows from them.
 module smith::random;
 
-import smith::arena;
 import target;
 import smith::contract;
 import smith::math;
@@ -63,8 +62,8 @@ import smith::math;
 // test runner that makes the words of a failing test smaller (as unsigned integers) finds a simple failure. A
 // distribution of your own should do the same: let bits 0 give the simplest value. The simplest values are: 0, or the
 // bound nearest 0, for the uniforms (then 0 - 1, 0 + 1, 0 - 2... in that order); the mean, to within one grid step, for
-// the normals; false for the Bernoulli; column 0 for the categorical; the identity for the permutation. This changes no
-// distribution, since any bijection of uniform words is uniform; it only changes which word gives which value.
+// the normals; false for the Bernoulli; column 0 for smith::categorical; the identity for the permutation. This changes
+// no distribution, since any bijection of uniform words is uniform; it only changes which word gives which value.
 //
 // Real distributions come in f32 and f64 (float and double in C, named as <math.h> names sqrtf and sqrt), and integer
 // ones use i64. An f32 distribution computes in f32, so a GPU kernel can mirror it; Metal has no f64.
@@ -72,8 +71,7 @@ import smith::math;
 // The numbers are part of the API: smith never changes what a key gives. To keep that true on every machine, the
 // library keeps a multiply from fusing with an add whatever -ffp-contract says, and refuses -ffast-math, and its
 // logarithm is its own (log_float and log_double), the same bits everywhere; only sqrt and sqrtf come from libm, and
-// IEEE requires those to be exactly rounded. The library uses the arena (categorical_make), so a project compiles both:
-//   smith_library(b, "random") and smith_library(b, "arena") in its build.c.
+// IEEE requires those to be exactly rounded.
 // On platforms where sqrt is not inlined, link libm (-lm).
 //
 // A tap watches the words a key hands out. For smith's test runner, and nothing else: a key made by the runner carries
@@ -124,14 +122,6 @@ import smith::math;
 [[smith::c_name("SmithBernoulli")]] export typedef struct {
     f64 probability;
 } Bernoulli;
-
-// Vose's alias table: a sample is two draws whatever the count. Built by categorical_make, with its two arrays in
-// the arena, so the arena must outlive the distribution.
-[[smith::c_name("SmithCategorical")]] export typedef struct {
-    const f64 *probability; // the chance, per index, of keeping it rather than its alias
-    const usize *alias;
-    usize count;
-} Categorical;
 
 [[smith::c_name("SmithPermutation")]] export typedef struct {
     usize count;
@@ -611,8 +601,8 @@ u64 origin_double(f64 low, f64 high) {
     return origin < last ? origin : last;
 }
 
-// Each draws from the key's bits 0 (and derived keys, for the categorical and the permutation), and the zero word gives
-// the simplest value (see the top). The categorical's zero word gives column 0 and a coin that keeps it. Parameters are
+// Each draws from the key's bits 0 (and derived keys, for the permutation), and the zero word gives
+// the simplest value (see the top). Parameters are
 // required: low < high and both finite, deviation > 0, a probability in [0, 1].
 [[smith::c_name("smith_uniform_float_sample")]] export [[nodiscard]] f32 uniform_float_sample(Key key,
                                                                                               UniformFloat uniform) {
@@ -764,83 +754,6 @@ f32 normal_u_float(Key key) {
     contract::requires(bernoulli.probability >= 0.0 && bernoulli.probability <= 1.0);
     u64 grid = word(&key, 0) >> 11; // the unit's grid index; reversed, so word 0 gives false
     return (f64)(((u64)1 << 53) - 1 - grid) * 0x1p-53 < bernoulli.probability;
-}
-
-// Vose's alias method, "A Linear Algorithm For Generating Random Numbers With a Given Distribution", 1991. Each index
-// holds a chance of being kept and an alias to take otherwise. Indices with scaled weight under 1 (small) are paired
-// with ones over 1 (large); the stacks are in a scope that ends before the table is returned.
-void alias_build(f64 *probability, usize *alias, usize *small, usize *large, usize count) {
-    usize small_count = 0;
-    usize large_count = 0;
-    for (usize i = 0; i < count; i++) {
-        if (probability[i] < 1.0) {
-            small[small_count++] = i;
-        } else {
-            large[large_count++] = i;
-        }
-    }
-    while (small_count > 0 && large_count > 0) { // each pass finishes one index, so at most count passes
-        usize less = small[--small_count];
-        usize more = large[--large_count];
-        alias[less] = more;
-        probability[more] = (probability[more] + probability[less]) - 1.0;
-        if (probability[more] < 1.0) {
-            small[small_count++] = more;
-        } else {
-            large[large_count++] = more;
-        }
-    }
-    while (large_count > 0) { // what is left has a chance of 1 (up to rounding)
-        usize index = large[--large_count];
-        probability[index] = 1.0;
-        alias[index] = index;
-    }
-    while (small_count > 0) {
-        usize index = small[--small_count];
-        probability[index] = 1.0;
-        alias[index] = index;
-    }
-}
-
-// The table for weights (count of them, at least one, finite, not negative, summing above zero; they need not sum to
-// 1). Construction is deterministic, so the same weights give the same table everywhere. Its worklists live in a scope
-// that ends before this returns.
-[[smith::c_name("smith_categorical_make")]] export [[nodiscard]] Categorical
-categorical_make(arena::Arena *arena, const f64 *weights, usize count) {
-    contract::trusted(); // its loops run over the weights, whose count has no bound a proof can use
-    contract::requires(count >= 1);
-    f64 sum = 0.0;
-    for (usize i = 0; i < count; i++) {
-        contract::assert(__builtin_isfinite(weights[i]) && weights[i] >= 0.0); // data, not a parameter
-        sum += weights[i];
-    }
-    contract::assert(__builtin_isfinite(sum) && sum > 0.0);
-    f64 *probability = (f64 *)arena::push_array_raw(arena, sizeof(f64), count, alignof(f64));
-    usize *alias = (usize *)arena::push_array_raw(arena, sizeof(usize), count, alignof(usize));
-    for (usize i = 0; i < count; i++) {
-        probability[i] = weights[i] * (f64)count / sum;
-        alias[i] = i;
-    }
-    arena::Scope scope = arena::scope_begin(arena);
-    usize *small = (usize *)arena::push_array_raw(arena, sizeof(usize), count, alignof(usize));
-    usize *large = (usize *)arena::push_array_raw(arena, sizeof(usize), count, alignof(usize));
-    alias_build(probability, alias, small, large, count);
-    arena::scope_end(scope);
-    return (Categorical){.probability = probability, .alias = alias, .count = count};
-}
-
-// An index below count; a zero weight is never drawn.
-[[smith::c_name("smith_categorical_sample")]] export [[nodiscard]] usize categorical_sample(Key key,
-                                                                                            Categorical categorical) {
-    contract::trusted(); // its tables are pointers inside a struct passed by value, which a proof does not know to be
-                         // valid
-    contract::requires(categorical.count >= 1);
-    Key parts[2];
-    split_n(key, parts, 2);
-    Key index_key = parts[0];
-    usize index = (usize)draw_index(&index_key, categorical.count);
-    bool keep = key_unit_double(parts[1]) < categorical.probability[index];
-    return keep ? index : categorical.alias[index];
 }
 
 // Writes 0..count-1 to out in a uniformly random order (Fisher-Yates); a count of 0 writes nothing.

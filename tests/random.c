@@ -26,10 +26,6 @@ static SmithKey test_take(SmithKey *stream) {
     return next[1];
 }
 
-typedef struct {
-    alignas(smith_arena_align_max) unsigned char bytes[4096];
-} TestMemory;
-
 // ---------------------------------------------------------------------------------------------------------------
 // 1. Philox's known answers: Random123's tests/kat_vectors, https://github.com/DEShawResearch/random123, file
 //    tests/kat_vectors (fetched 2026-10-20). Each line is: name, rounds, counter (4 words), key (2 words), output. The
@@ -215,14 +211,6 @@ static void test_pin_keys(TestPins *pins) {
 }
 
 static void test_pin_distributions(TestPins *pins) {
-    static TestMemory memory;
-    SmithArena arena = smith_arena_fixed(memory.bytes, sizeof memory.bytes);
-    const double weights[] = {1.0, 2.0, 3.0, 0.0, 4.0};
-    SmithCategorical categorical = smith_categorical_make(&arena, weights, 5);
-    for (size_t i = 0; i < 5; i++) {
-        test_pin(pins, "categorical probability", smith_random_double_bits(categorical.probability[i]));
-        test_pin(pins, "categorical alias", categorical.alias[i]);
-    }
     SmithKey cases[4];
     smith_key_split_n(smith_key_make(42), cases, 4);
     for (size_t i = 0; i < 4; i++) {
@@ -244,7 +232,6 @@ static void test_pin_distributions(TestPins *pins) {
             pins, "normal_double",
             smith_random_double_bits(smith_normal_double_sample(smith_key_make(word), (SmithNormalDouble){1.0, 2.0})));
         test_pin(pins, "bernoulli", smith_bernoulli_sample(smith_key_make(word), (SmithBernoulli){0.3}));
-        test_pin(pins, "categorical", smith_categorical_sample(smith_key_make(word), categorical));
         test_pin(pins, "log_float",
                  smith_random_float_bits(smith_log_float(smith_key_unit_float(smith_key_make(word)) + 0.25f)));
         test_pin(pins, "log_double",
@@ -268,10 +255,6 @@ static uint64_t test_fold(uint64_t digest, uint64_t value) {
 }
 
 static uint64_t test_digest_draws(const SmithRandomTap *tap) {
-    static TestMemory memory;
-    SmithArena arena = smith_arena_fixed(memory.bytes, sizeof memory.bytes);
-    const double weights[] = {1.0, 2.0, 3.0, 0.0, 4.0, 0.5, 9.5};
-    SmithCategorical categorical = smith_categorical_make(&arena, weights, 7);
     uint64_t digest = 0xcbf29ce484222325ULL;
     SmithKey root = smith_key_make(test_seed);
     root.tap = tap;
@@ -295,7 +278,7 @@ static uint64_t test_digest_draws(const SmithRandomTap *tap) {
         digest = test_fold(
             digest, smith_random_double_bits(smith_normal_double_sample(k[9], (SmithNormalDouble){-3.0, 100.0})));
         digest = test_fold(digest, smith_bernoulli_sample(k[10], (SmithBernoulli){0.37}));
-        digest = test_fold(digest, smith_categorical_sample(k[11], categorical));
+        (void)k[11]; // was the categorical draw, which smith::categorical tests now
         digest = test_fold(digest, smith_random_float_bits(smith_log_float(
                                        smith_random_bits_float((uint32_t)smith_key_bits(k[12]) & 0x7fffffffU))));
         digest = test_fold(digest, smith_random_double_bits(smith_log_double(

@@ -1,9 +1,9 @@
 // <smith/random.h> from C, from tests/random.sh (issue #292): the program tests/random.c (Philox known answers, the
 // distributions and the digest of a large batch of draws) built in several configurations, the module compiled under a
-// new project's warnings, the refusals (-ffast-math, a normal with deviation 0) and a project that gets random and the
-// arena with smith_library (tests/build_fixtures/random_project). tests/random.c reaches the module's static functions
-// by including its raw lowering, what `smith cc --smith-lower` writes. The behavior of the library is
-// lib/smith/random_test.smith.
+// new project's warnings, the refusals (-ffast-math, a normal with deviation 0) and a project that gets random,
+// categorical and the arena with smith_library (tests/build_fixtures/random_project). tests/random.c reaches the
+// module's static functions by including its raw lowering, what `smith cc --smith-lower` writes. The behavior of the
+// library is lib/smith/random_test.smith.
 module random_c_test;
 
 import smith::format;
@@ -12,7 +12,7 @@ import smith::test;
 import scratch;
 
 // The same bits everywhere: the digest of a large batch of draws, which is part of the API, in every configuration.
-constexpr char expected_digest[_] = "0453abcbd4531af9";
+constexpr char expected_digest[_] = "df39a217d8c29f80";
 constexpr char warn[_] = "-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wmissing-prototypes "
                          "-Wstrict-prototypes -Wvla -Werror";
 constexpr char sources[_] = "-I lowered \"$SMITH_REPO/tests/random.c\" \"$SMITH_REPO/lib/smith/arena.smith\" "

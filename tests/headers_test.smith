@@ -161,6 +161,10 @@ export void test_the_ascii_header_compiles_alone(io::Io *io) {
     generated(io, "ascii");
 }
 
+export void test_the_categorical_header_compiles_alone(io::Io *io) {
+    generated(io, "categorical");
+}
+
 export void test_the_slice_header_compiles_alone(io::Io *io) {
     generated(io, "slice");
 }

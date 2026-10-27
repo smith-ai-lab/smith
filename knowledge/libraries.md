@@ -20,6 +20,8 @@ tags: [libraries, stdlib]
   stack.
 - Its names are typed as `<math.h>` names them, with no `_Generic`.
 
+- **A library that allocates is its own module** (#240): `smith::random` is linked into smith itself and imports nothing that allocates, so the categorical distribution, whose table is built with `mem::alloc`, is `smith::categorical` (imports `random` and `mem`), which only user programs link; the lag rule and smith's link would otherwise force `mem` and `handlers.c` into smith.
+
 - **Errors follow one line** (owner, 2026-10-25, #327): what the caller can handle locally is a value (`option`, `result`, a status: bad input, a limit, a full buffer, a missing file); misuse and exhaustion panic with a report (a wrong call, an arena or a buffer the library may not outgrow). `json` and `inflate` follow it; the others are being moved.
 
 **How a project uses one:** it compiles the library from source with its own flags (`smith_library`).
