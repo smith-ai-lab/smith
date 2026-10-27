@@ -228,8 +228,8 @@ static const char *const *build_protocol_steps(SmithBuild *b, const BuildConfig 
 // smith_object compiles (build_linked_libraries) has its header step from smith_object; the others are made here, and
 // are inputs of smith.c, which includes them. The installed smith writes the headers of its own embedded sources
 // first (`smith build` does, before this file runs), so a first build has them for build.c itself.
-static const char *const build_header_modules[] = {"ascii", "autodiff", "build", "categorical", "effects", "failing",
-                                                   "format", "math", "mem", "slice", "test", nullptr};
+static const char *const build_header_modules[] = {"ascii",  "autodiff", "build", "categorical", "effects", "failing",
+                                                   "format", "math",     "mem",   "slice",       "test",    nullptr};
 
 // The compiler's own file, which a header step lists as an input: it is the smith that writes the header.
 static const char *build_compiler_file(SmithBuild *b, const BuildConfig *config) {
