@@ -2954,7 +2954,7 @@ if constexpr (target::os == target::macos) {
     // addresses are used up, the last errno in op->internal.capacity.
     bool net_dial(Loop *loop, Op *op, Connection *connection) {
         for (usize tries = 0; op->internal.child != nullptr && tries < addresses_max; tries++) {
-            const struct c::addrinfo *address = op->internal.child;
+            const struct c::addrinfo *address = (const struct c::addrinfo *)op->internal.child;
             op->internal.child = address->ai_next;
             i32 descriptor = c::socket(address->ai_family, address->ai_socktype + sock_nonblock + sock_cloexec,
                                        address->ai_protocol);
@@ -3214,7 +3214,7 @@ if constexpr (target::os == target::macos) {
     // Runs one step of a real connection's op. True when the op is over (the caller completes it); false when it waits
     // for the socket, and then the op is not ready until the connection's next event.
     bool net_complete_real(Loop *loop, Op *op) {
-        Connection *connection = op->internal.connection;
+        Connection *connection = (Connection *)op->internal.connection;
         bool over = true;
         switch (op->internal.kind) {
         case NetConnect:

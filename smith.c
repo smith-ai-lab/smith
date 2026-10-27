@@ -35,7 +35,9 @@
 #include <sys/ioctl.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
-#include <sys/sysctl.h>
+#ifdef __APPLE__
+#include <sys/sysctl.h> // runtime/slots.c reads a process through sysctl on macOS
+#endif
 #include <sys/wait.h>
 #include <unistd.h>
 

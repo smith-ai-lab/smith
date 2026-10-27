@@ -44,7 +44,7 @@ static const char *const libraries[] = {"arena", "contract", "inflate", "io", "r
 static const char *const header_modules[] = {"arena", "contract", "inflate", "io", "random", "text", "build"};
 static const char *const shims[] = {"clang",        "lld",         "format", "tidy",          "clangd",
                                     "symbolize",    "hook",        "lsp",    "lldb",          "lldb_dap",
-                                    "lldb_explain", "lldb_slices", "affine", "effects_infer", "lldb_server"};
+                                    "lldb_explain", "lldb_slices", "affine", "effects_infer", "lldb_server", "coverage"};
 static const char *const cflags[] = {"-std=gnu23", "-O1", "-g", "-Wall", "-Wextra", "-Wpedantic"};
 
 static char cwd[path_max];      // the repository's root, where this runs
@@ -139,8 +139,9 @@ static bool read_text(const char *file, char *into, size_t capacity) {
 // smith needed) into .smith/seed/include/smith/, where stage A's compiles and stand-ins read them.
 static void write_headers(const char *cc) {
     run((const char *[]){"mkdir", "-p", ".smith/seed/include/smith", nullptr});
+    // -lm: glibc keeps floor and the rest of <math.h> in libm, which the lowering in header_tool calls
     run((const char *[]){cc, "-std=gnu2x", "-O1", "-x", "c", "scripts/header_tool.c", "-o", ".smith/seed/header_tool",
-                         nullptr});
+                         "-lm", nullptr});
     for (size_t i = 0; i < sizeof header_modules / sizeof header_modules[0]; i++) {
         run((const char *[]){".smith/seed/header_tool", path("lib/smith/%s.smith", header_modules[i], ""), "-o",
                              path(".smith/seed/include/smith/%s.h", header_modules[i], ""), nullptr});
