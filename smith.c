@@ -1250,6 +1250,45 @@ static void smith_make_folder(const char *path) {
     if (mkdir(path, 0777) != 0 && errno != EEXIST) smith_die(smith_exit_usage, "cannot create", path);
 }
 
+// `smith cc --smith-tree-sitter`: the path of the tree-sitter parser for .smith files, a shared library `smith build`
+// compiled from tree-sitter/grammar.js and linked into smith (runtime/tree_sitter_data.c), which the Neovim plugin
+// loads (knowledge/neovim.md). It is written once into the runtime folder, named for its bytes, so smiths of one LLVM
+// with different parsers never meet and a smith never replaces a library another has loaded. The Linux seed has none.
+#ifdef SMITH_TREE_SITTER
+extern const unsigned char smith_tree_sitter_library[]; // runtime/tree_sitter_data.c
+extern const size_t smith_tree_sitter_library_size;
+#endif
+
+static int smith_tree_sitter_main(const char *self) {
+#ifdef SMITH_TREE_SITTER
+    char folder[PATH_MAX];
+    char programs[PATH_MAX];
+    smith_resource_folder(folder);
+    smith_programs_folder(folder, programs);
+    smith_resource_ensure(folder, programs, self);
+    uint64_t key = 14695981039346656037ULL;                     // FNV-1a over the library's bytes
+    for (size_t i = 0; i < smith_tree_sitter_library_size; i++) // bounded by the library's size
+        key = (key ^ smith_tree_sitter_library[i]) * 1099511628211ULL;
+#ifdef __APPLE__
+    const char *extension = "dylib";
+#else
+    const char *extension = "so";
+#endif
+    char path[PATH_MAX];
+    int written = snprintf(path, sizeof path, "%s/tree-sitter/smith-%016" PRIx64 ".%s", folder, key, extension);
+    SMITH_ASSERT(written > 0 && (size_t)written < sizeof path);
+    smith_make_folders(path, false);
+    smith_write_if_changed(path, smith_tree_sitter_library, smith_tree_sitter_library_size);
+    printf("%s\n", path);
+    return 0;
+#else
+    (void)self;
+    smith_die(smith_exit_usage,
+              "this smith was built without the tree-sitter parser (a seed build); rebuild with `smith build`",
+              nullptr);
+#endif
+}
+
 static bool smith_is_plain_word(const char *word) {
     if (*word == '\0') return false;
     for (const char *c = word; *c != '\0'; c++) {
@@ -3078,7 +3117,7 @@ static int smith_tool_main(const SmithTool *tool, int argc, char **argv, const c
 
 // The compiler: `smith cc <args>` and `smith c++ <args>`, and the links smith-cc and smith-c++, which act as them by
 // their name. The program is argv[at]; --smith-which, when it comes first, names the compiler without running it,
-// and --smith-header and --smith-lower are the .smith helpers.
+// and --smith-header, --smith-lower and --smith-tree-sitter are the .smith helpers.
 static int smith_compile_main(int argc, char **argv, int at, bool plus, const char *self) {
     SMITH_ASSERT(at >= 0 && at < argc);
     int first = at + 1;
@@ -3088,6 +3127,7 @@ static int smith_compile_main(int argc, char **argv, int at, bool plus, const ch
         return smith_lang_main(argc - first - 1, argv + first + 1, true);
     if (first < argc && strcmp(argv[first], "--smith-lower") == 0)
         return smith_lang_main(argc - first - 1, argv + first + 1, false);
+    if (first < argc && strcmp(argv[first], "--smith-tree-sitter") == 0) return smith_tree_sitter_main(self);
 #ifdef SMITH_HOOK
     if (first < argc && strcmp(argv[first], "--smith-effects") == 0)
         return smith_effects_check(argc - first - 1, argv + first + 1, nullptr);

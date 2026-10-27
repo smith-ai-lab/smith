@@ -1,8 +1,8 @@
 -- Neovim support for .smith and smith's C (issue #24). plugin/smith.lua at the repository root loads this.
 --
 --   .smith files   the "smith" file type, and highlighting from the tree-sitter grammar in tree-sitter/ (queries in
---                  queries/smith). Neovim 0.12 loads parsers itself; the parser is the committed tree-sitter/src/parser.c,
---                  compiled on first use with `smith cc -shared` into stdpath("data")/smith/parser.
+--                  queries/smith). Neovim 0.12 loads parsers itself; the parser is the one the installed smith carries
+--                  (`smith cc --smith-tree-sitter` prints its path), so the grammar always matches the smith.
 --   smith lsp      a "smith" config for vim.lsp, which the user turns on with vim.lsp.enable("smith").
 --   .h files       the language of the project, in a smith project only (lua/smith/filetype.lua).
 --   smith dap      a "smith" adapter for nvim-dap when it is installed.
@@ -12,8 +12,8 @@ local M = {}
 M.root = nil -- the repository the plugin was loaded from
 M.parser_name = "smith"
 
-local pending = nil -- callbacks waiting for the parser to be compiled
-local loaded = false
+local pending = nil -- callbacks waiting for smith to name the parser
+local loaded = false -- the path of the parser once it is registered
 local warned = false
 
 local function notify_once(message)
@@ -30,21 +30,11 @@ local function read(path)
   return text
 end
 
--- Where the compiled parser lives: named for the contents of parser.c, so a new parser is compiled once and an old
--- one is never loaded again.
-function M.parser_source() return M.root .. "/tree-sitter/src/parser.c" end
-
-function M.parser_path()
-  local text = read(M.parser_source())
-  if not text then return nil end
-  return vim.fn.stdpath("data") .. "/smith/parser/smith-" .. vim.fn.sha256(text):sub(1, 16) .. ".so"
-end
-
 local function add_language(path)
   local ok, err = pcall(vim.treesitter.language.add, M.parser_name, { path = path, symbol_name = "smith" })
   if ok then
     vim.treesitter.language.register(M.parser_name, "smith")
-    loaded = true
+    loaded = path
   end
   return ok, err
 end
@@ -55,35 +45,22 @@ local function finish(ok, value)
   for _, callback in ipairs(waiting) do callback(ok, value) end
 end
 
--- Compiles parser.c with `smith cc -shared` when there is no parser for it yet, then registers the language; calls
--- callback(true, path) or callback(false, message) when done (at once if the parser is already loaded).
+-- Asks the installed smith for the path of its parser (`smith cc --smith-tree-sitter`: the library it carries, unpacked
+-- on first use) and registers the language; calls callback(true, path) or callback(false, message) when done (at once
+-- if the parser is already loaded).
 function M.ensure_parser(callback)
-  if loaded then return callback(true, M.parser_path()) end
+  if loaded then return callback(true, loaded) end
   if pending then return table.insert(pending, callback) end
-  local path = M.parser_path()
-  if not path then return callback(false, "tree-sitter/src/parser.c is missing from " .. tostring(M.root)) end
-  if vim.uv.fs_stat(path) then
-    local ok, err = add_language(path)
-    return callback(ok, ok and path or tostring(err))
-  end
   local smith = vim.fn.exepath("smith")
   if smith == "" then
-    return callback(false, "smith is not on the PATH, so the .smith parser cannot be compiled (smith cc -shared)")
+    return callback(false, "smith is not on the PATH, so the .smith parser cannot be found (smith cc --smith-tree-sitter)")
   end
   pending = { callback }
-  vim.fn.mkdir(vim.fs.dirname(path), "p")
-  local partial = path .. ".part"
-  local command = {
-    smith, "cc", "-shared", "-fPIC", "-O2", "-I", M.root .. "/tree-sitter/src", M.parser_source(), "-o", partial,
-  }
-  vim.system(command, { text = true }, function(result)
+  vim.system({ smith, "cc", "--smith-tree-sitter" }, { text = true }, function(result)
     vim.schedule(function()
-      if result.code ~= 0 then
-        return finish(false, "compiling the .smith parser failed: " .. (result.stderr or ""))
-      end
-      vim.uv.fs_rename(partial, path)
-      for _, old in ipairs(vim.fn.glob(vim.fs.dirname(path) .. "/smith-*.so", false, true)) do
-        if old ~= path then vim.uv.fs_unlink(old) end
+      local path = vim.trim(result.stdout or "")
+      if result.code ~= 0 or path == "" then
+        return finish(false, "smith cannot give the .smith parser (smith cc --smith-tree-sitter): " .. vim.trim(result.stderr or ""))
       end
       local ok, err = add_language(path)
       finish(ok, ok and path or tostring(err))

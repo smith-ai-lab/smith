@@ -29,7 +29,7 @@ local function wait(what, condition, timeout)
   check(ok, "timed out waiting for " .. what)
 end
 
--- The parser, compiled by the plugin on first use (the tests share one data folder, so only the first compiles).
+-- The parser, found by the plugin through the smith under test on first use.
 local function parser_ready()
   local done, ok, message
   require("smith").ensure_parser(function(success, text)
@@ -74,13 +74,15 @@ end
 
 function tests.parser()
   local path = parser_ready()
-  check(path:match("%.so$") and vim.uv.fs_stat(path), "the compiled parser is at " .. tostring(path))
+  check(path:match("%.so$") or path:match("%.dylib$"), "the parser is a shared library: " .. tostring(path))
+  check(vim.uv.fs_stat(path), "the parser is at " .. tostring(path))
+  equal(vim.trim(vim.fn.system({ vim.fn.exepath("smith"), "cc", "--smith-tree-sitter" })), path, "the path is smith's answer")
   local info = vim.treesitter.language.inspect("smith")
   check(info.abi_version >= 14, "the parser's ABI is " .. tostring(info.abi_version))
   local before = vim.uv.fs_stat(path).mtime.nsec
   local again = parser_ready()
   equal(path, again, "the second use finds the same parser")
-  equal(before, vim.uv.fs_stat(path).mtime.nsec, "the parser is not compiled twice")
+  equal(before, vim.uv.fs_stat(path).mtime.nsec, "the parser is not written twice")
   local _, root = captures("module a::b;\nimport lib::text as tx;\nexport u32 f(void) { return c::strlen(\"x\"); }\n")
   check(not root:has_error(), "a module parses without an error node: " .. root:sexpr())
 end
@@ -767,7 +769,7 @@ function tests.no_smith()
   local done, ok, message
   require("smith").ensure_parser(function(success, text) done, ok, message = true, success, text end)
   wait("the answer", function() return done end, 5000)
-  check(not ok and message:find("not on the PATH", 1, true), "the parser cannot be built without smith: " .. tostring(message))
+  check(not ok and message:find("not on the PATH", 1, true), "the parser cannot be found without smith: " .. tostring(message))
 end
 
 check(tests[test], "no test called " .. tostring(test))

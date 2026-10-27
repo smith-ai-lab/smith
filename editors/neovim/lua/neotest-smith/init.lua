@@ -51,7 +51,7 @@ local function build_position(file_path, source, captured_nodes)
   }
 end
 
--- Parses in this editor, not in neotest's subprocess: the .smith parser is compiled and registered here (smith's
+-- Parses in this editor, not in neotest's subprocess: the .smith parser (smith's own) is registered here (smith's
 -- plugin does it on the first .smith buffer, and waiting for it here covers a file no buffer has opened yet).
 function M.discover_positions(file_path)
   local nio = require("nio")

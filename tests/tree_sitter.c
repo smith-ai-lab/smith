@@ -1,18 +1,18 @@
-// Parses the files named on the command line with the .smith grammar (tree-sitter/src/parser.c) and the pinned
-// tree-sitter runtime, and fails on any ERROR or MISSING node. Usage: tree_sitter [--expect-error | --corpus] <file>...
-// With --expect-error each file must have such a node (the cases whose text is not valid .smith on purpose).
-// With --corpus each file is a tree-sitter corpus file (tree-sitter/test/corpus): every test's input must parse to the
-// tree written under its dashes, compared without whitespace and without field names (the format the tree-sitter CLI
-// writes), so the tests run without the CLI or Node.
-// Prints "ok <file>" or "FAIL <file>:<row>:<column> <what>" per file; the exit status is the number of failures
-// (at most 125). Nothing is allocated by this program; the runtime allocates its own trees.
+// Parses the files named on the command line with the .smith grammar (the shared library whose path is in
+// $SMITH_TREE_SITTER, else the one `smith cc --smith-tree-sitter` prints) and the pinned tree-sitter runtime, and fails
+// on any ERROR or MISSING node. Usage: tree_sitter [--expect-error | --corpus] <file>... With --expect-error each file
+// must have such a node (the cases whose text is not valid .smith on purpose). With --corpus each file is a tree-sitter
+// corpus file (tree-sitter/test/corpus): every test's input must parse to the tree written under its dashes, compared
+// without whitespace and without field names (the format the tree-sitter CLI writes), so the tests run without the CLI
+// or Node. Prints "ok <file>" or "FAIL <file>:<row>:<column> <what>" per file; the exit status is the number of
+// failures (at most 125). Nothing is allocated by this program; the runtime allocates its own trees.
 #include <ctype.h>
+#include <dlfcn.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <tree_sitter/api.h>
-
-extern const TSLanguage *tree_sitter_smith(void);
 
 constexpr size_t max_file = 8UL * 1024 * 1024;
 constexpr size_t max_steps = 64UL * 1024 * 1024;
@@ -185,8 +185,23 @@ int main(int argc, char **argv) {
     bool expect_error = argc >= 2 && strcmp(argv[1], "--expect-error") == 0;
     bool corpus = argc >= 2 && strcmp(argv[1], "--corpus") == 0;
     int first = expect_error || corpus ? 2 : 1;
+    char printed[4096] = "";
+    const char *library = getenv("SMITH_TREE_SITTER");
+    if (library == nullptr) { // else asks the smith on the PATH, as the Neovim plugin does
+        FILE *query = popen("smith cc --smith-tree-sitter", "r");
+        if (query != nullptr && fgets(printed, sizeof printed, query) != nullptr) library = printed;
+        if (query != nullptr) pclose(query);
+        printed[strcspn(printed, "\n")] = '\0';
+    }
+    void *handle = library != nullptr ? dlopen(library, RTLD_NOW) : nullptr;
+    const TSLanguage *(*language)(void) =
+        handle != nullptr ? (const TSLanguage *(*)(void))dlsym(handle, "tree_sitter_smith") : nullptr;
+    if (language == nullptr) {
+        fprintf(stderr, "tree_sitter: cannot load tree_sitter_smith from $SMITH_TREE_SITTER (%s)\n", library);
+        return 127;
+    }
     TSParser *parser = ts_parser_new();
-    if (!ts_parser_set_language(parser, tree_sitter_smith())) {
+    if (!ts_parser_set_language(parser, language())) {
         fprintf(stderr, "tree_sitter: the parser's ABI is not the runtime's\n");
         return 126;
     }

@@ -10,7 +10,7 @@
 /// <reference types="tree-sitter-cli/dsl" />
 // @ts-check
 
-// `smith build tree-sitter` puts the pinned tree-sitter-c here before it generates.
+// `smith build` puts the pinned tree-sitter-c here before it generates the parser.
 const C = require('./.vendor/tree-sitter-c/grammar');
 
 const sized = ['u8', 'u16', 'u32', 'u64', 'i8', 'i16', 'i32', 'i64', 'usize', 'isize', 'f16', 'f32', 'f64'];

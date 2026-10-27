@@ -449,10 +449,12 @@ static SmithObject build_commit_object(SmithBuild *b, const BuildConfig *config,
     return object;
 }
 
+static void build_tree_sitter_data(SmithBuild *b, const BuildConfig *config, const char *folder, SmithObject *data);
+
 // Everything smith links beside smith.c when clang is inside: the packed data, the shims of the compiler, the linker
 // and the tools, and the prover when its libraries are there. `list` gets pointers to them, ended by nullptr.
 typedef struct {
-    SmithObject objects[20];
+    SmithObject objects[22];
     BuildProver prove;
 } BuildShims;
 
@@ -474,8 +476,10 @@ static void build_shims(SmithBuild *b, const BuildConfig *config, const char *fo
                    &shims->objects[count + 1]);
         count += 1;
     }
+    build_tree_sitter_data(b, config, folder, &shims->objects[count + 1]);
+    count += 1;
     size_t listed = 0;
-    for (size_t i = 0; i < count + 1; i++) // the packed data, then the shims
+    for (size_t i = 0; i < count + 1; i++) // the packed data, then the shims, then the parser
         list[listed++] = &shims->objects[i];
     count = listed;
     if (config->prove[0] == '\0') return;
@@ -612,7 +616,8 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
         b, config->cflags,
         (const char *[]){"-I", "include", "-I", ".smith/include", "-I", ".smith/protocol", "-I", "runtime/protocol",
                          "-DSMITH_COMMIT_LINKED", "-DSMITH_IN_PROCESS", nullptr},
-        (const char *[]){smith_fmt(b, "-DSMITH_CLANG_ID=\"%s\"", config->llvm_id), "-DSMITH_MCP", nullptr},
+        (const char *[]){smith_fmt(b, "-DSMITH_CLANG_ID=\"%s\"", config->llvm_id), "-DSMITH_MCP", "-DSMITH_TREE_SITTER",
+                         nullptr},
         smith_when(b, config->prove[0] != '\0', (const char *[]){"-DSMITH_PROVE", nullptr}),
         smith_when(b, config->lldb, (const char *[]){"-DSMITH_LLDB", nullptr}),
         smith_when(b, config->hook, (const char *[]){"-DSMITH_HOOK", nullptr}),
@@ -1800,29 +1805,56 @@ static int build_friction(SmithRun *run) {
                                  nullptr));
 }
 
-// `smith build tree-sitter [-Dcorpus]`: regenerates tree-sitter/src/parser.c (a developer step: users never need the
-// tree-sitter CLI or Node, the plugin compiles the committed parser.c). Everything is pinned and fetched by
-// smith_package: the tree-sitter CLI by version and the sha256 of its release (a .gz of one file), tree-sitter-c by
-// version and the sha256 of its source archive. -Dcorpus runs the grammar's corpus tests too. The CLI is kept in
-// $XDG_CACHE_HOME/smith/tools (else ~/.cache/smith/tools). ABI 15 is what Neovim 0.12 loads.
+// The tree-sitter parser for .smith files (#466): a build output, never committed. A step generates parser.c,
+// grammar.json, node-types.json and the runtime's headers into tree-sitter/src/ (gitignored) from
+// tree-sitter/grammar.js and tree-sitter-c's, with the tree-sitter CLI; parser.c is compiled and linked into a shared
+// library, which smith embeds (runtime/tree_sitter_data.c) and `smith cc --smith-tree-sitter` unpacks for the Neovim
+// plugin. Everything is pinned and fetched by smith_package: the CLI by version and the sha256 of its release (a .gz of
+// one file, per platform), tree-sitter-c by version and the sha256 of its source archive. The CLI is kept in
+// $XDG_CACHE_HOME/smith/tools (else ~/.cache/smith/tools), and is needed only on the machine that builds smith. ABI 15
+// is what Neovim 0.12 loads. `smith build tree-sitter -Dcorpus` also runs the grammar's corpus tests.
+typedef struct {
+    const char *asset; // the release's file, without .gz
+    const char *hash;
+} BuildTreeSitterPin;
+
+static BuildTreeSitterPin build_tree_sitter_pin(SmithBuild *b) {
+    bool arm = build_is_arm(b);
+    if (build_is_linux(b))
+        return arm ? (BuildTreeSitterPin){"tree-sitter-linux-arm64",
+                                          "sha256:404be5d54a4955571c4067c21d4699660eab3a534cefb0659341b207f7139ec5"}
+                   : (BuildTreeSitterPin){"tree-sitter-linux-x64",
+                                          "sha256:d01042f94ba3d6827ddc9788e235f75d8366431be42bdf90ade534d960c98b7d"};
+    return arm ? (BuildTreeSitterPin){"tree-sitter-macos-arm64",
+                                      "sha256:46cb97d9a2c52c94e22d9a76c2f1116156b8b61f98360e2a9cce05fcb197cd4d"}
+               : (BuildTreeSitterPin){"tree-sitter-macos-x64",
+                                      "sha256:b740262cb0f35be64e39b50ad68b020433924a7bcee5ae5c8e40e68d71215647"};
+}
+
 static const char *build_tree_sitter_cli(SmithBuild *b) {
     const char *cache = smith_env(b, "XDG_CACHE_HOME", smith_fmt(b, "%s/.cache", smith_env(b, "HOME", "")));
     const char *tools = smith_fmt(b, "%s/smith/tools", cache);
-    const char *cli = smith_fmt(b, "%s/tree-sitter-0.27.1", tools);
+    BuildTreeSitterPin pin = build_tree_sitter_pin(b);
+    const char *cli = smith_fmt(b, "%s/%s-0.27.1", tools, pin.asset);
     if (access(cli, X_OK) == 0) return cli;
     const char *source = build_package_path(
-        b, &(SmithPackage){.url = "https://github.com/tree-sitter/tree-sitter/releases/download/v0.27.1/"
-                                  "tree-sitter-macos-arm64.gz",
-                           .hash = "sha256:46cb97d9a2c52c94e22d9a76c2f1116156b8b61f98360e2a9cce05fcb197cd4d"});
+        b,
+        &(SmithPackage){.url = smith_fmt(
+                            b, "https://github.com/tree-sitter/tree-sitter/releases/download/v0.27.1/%s.gz", pin.asset),
+                        .hash = pin.hash});
     if (build_make_folder(b, tools) != 0) return nullptr;
-    if (build_publish(b, smith_fmt(b, "%s/tree-sitter-macos-arm64", source), cli) != 0) return nullptr;
+    if (build_publish(b, smith_fmt(b, "%s/%s", source, pin.asset), cli) != 0) return nullptr;
     return build_exec(smith_list(b, "/bin/chmod", "+x", cli, nullptr)) == 0 ? cli : nullptr;
 }
 
-static int build_tree_sitter(SmithRun *run) {
+// args[0] is `generate` (the step that writes tree-sitter/src) or `corpus` (the task: also runs the corpus tests).
+static int build_tree_sitter_run(SmithRun *run) {
     SmithBuild *b = run->b;
+    if (strcmp(run->args[0], "none") == 0) return 0;
     const char *cli = build_tree_sitter_cli(b);
     if (cli == nullptr) return 1;
+    if (strcmp(run->args[0], "corpus") == 0)
+        return build_spawn(&(BuildSpawn){.argv = smith_list(b, cli, "test", nullptr), .folder = "tree-sitter"});
     const char *c_source = build_package_path(
         b, &(SmithPackage){.url = "https://github.com/tree-sitter/tree-sitter-c/archive/refs/tags/v0.24.2.tar.gz",
                            .hash = "sha256:2eeb4db31f8fa0865e45488503d13403923bcb485a1bdb637abff8c42dd97364"});
@@ -1832,12 +1864,62 @@ static int build_tree_sitter(SmithRun *run) {
     status = status != 0 ? status
                          : build_exec(smith_list(b, "/bin/cp", smith_fmt(b, "%s/grammar.js", c_source),
                                                  smith_fmt(b, "%s/", vendor), nullptr));
-    status = status != 0 ? status
-                         : build_spawn(&(BuildSpawn){.argv = smith_list(b, cli, "generate", "--abi", "15", nullptr),
-                                                     .folder = "tree-sitter"});
-    if (status == 0 && strcmp(run->args[0], "corpus") == 0)
-        status = build_spawn(&(BuildSpawn){.argv = smith_list(b, cli, "test", nullptr), .folder = "tree-sitter"});
-    return status;
+    return status != 0 ? status
+                       : build_spawn(&(BuildSpawn){.argv = smith_list(b, cli, "generate", "--abi", "15", nullptr),
+                                                   .folder = "tree-sitter"});
+}
+
+// The steps of the parser and the object that embeds it in smith (into *data, which smith links).
+static void build_tree_sitter_data(SmithBuild *b, const BuildConfig *config, const char *folder, SmithObject *data) {
+    SmithStep generate = {
+        .run = build_tree_sitter_run,
+        .args = smith_list(b, "generate", nullptr),
+        .inputs = smith_list(b, "tree-sitter/grammar.js", "tree-sitter/tree-sitter.json", nullptr),
+        .outputs = smith_list(b, "tree-sitter/src/parser.c", "tree-sitter/src/grammar.json",
+                              "tree-sitter/src/node-types.json", "tree-sitter/src/tree_sitter/alloc.h",
+                              "tree-sitter/src/tree_sitter/array.h", "tree-sitter/src/tree_sitter/parser.h", nullptr),
+        .description = "generating the tree-sitter parser",
+        .restat = true, // the files are written again with the same bytes: nothing after them reruns
+    };
+    smith_step(b, &generate);
+    SmithObject parser = {
+        .compiler = config->cc,
+        .source = "tree-sitter/src/parser.c",
+        .output = smith_fmt(b, "%s/tree-sitter-parser.o", folder),
+        .flags = smith_list(b, "-std=gnu11", "-O1", "-w", "-fPIC", "-I", "tree-sitter/src", nullptr),
+        .implicit_inputs = generate.outputs,
+    };
+    smith_object(b, &parser);
+    // Not smith_program: that links the handlers runtime into every program, which a library Neovim loads must not
+    // need.
+    const char *library = smith_fmt(b, "%s/smith-tree-sitter.%s", folder, build_is_linux(b) ? "so" : "dylib");
+    SmithStep link = {
+        .command = smith_list(b, config->cc, "-shared", parser.output, "-o", library, nullptr),
+        .inputs = parser.step.outputs,
+        .implicit_inputs = smith_list(b, build_compiler_file(b, config), nullptr),
+        .outputs = smith_list(b, library, nullptr),
+        .description = smith_fmt(b, "link %s", library),
+    };
+    smith_step(b, &link);
+    *data = (SmithObject){
+        .compiler = config->cc,
+        .source = "runtime/tree_sitter_data.c",
+        .output = smith_fmt(b, "%s/tree_sitter_data.o", folder),
+        .flags =
+            smith_cat(b, config->cflags,
+                      (const char *[]){smith_fmt(b, "-DSMITH_TREE_SITTER_LIBRARY=\"%s\"", library), nullptr}, nullptr),
+        .implicit_inputs = link.outputs,
+    };
+    smith_object(b, data);
+    SmithStep task = {
+        .run = build_tree_sitter_run,
+        .args = smith_list(
+            b, smith_option(b, "corpus", "tree-sitter: run the grammar's corpus tests too") ? "corpus" : "none",
+            nullptr),
+        .inputs = generate.outputs,
+        .description = "generating the tree-sitter parser (-Dcorpus: and testing the grammar)",
+    };
+    smith_task(b, "tree-sitter", &task);
 }
 
 // ---- The docs gate (#313): AGENTS.md says a change that adds something updates its skill and its concept in the same
@@ -2052,13 +2134,6 @@ static void build_developer_tasks(SmithBuild *b) {
         .description = "reporting where CI's time goes",
     };
     smith_task(b, "ci-times", &ci_times);
-    SmithStep tree_sitter = {
-        .run = build_tree_sitter,
-        .args = smith_list(
-            b, smith_option(b, "corpus", "tree-sitter: run the grammar's corpus tests too") ? "corpus" : "no", nullptr),
-        .description = "regenerating tree-sitter/src/parser.c",
-    };
-    smith_task(b, "tree-sitter", &tree_sitter);
     SmithStep gate = {
         .run = build_docs_gate,
         .args = smith_list(b, "origin/main", nullptr),

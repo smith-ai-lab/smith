@@ -2,8 +2,8 @@
 // they do nothing when nvim is absent. Each test of tests/neovim.lua (a fixture program in Lua, named by
 // SMITH_NVIM_TEST) runs in a Neovim of its own, started as a user's would be: the repository on the runtimepath and
 // `runtime plugin/smith.lua`, in a scratch home (XDG_*, the fixture tests/build_fixtures/neovim copied into the test's
-// scratch folder) so that the user's configuration and data are never read or written. The plugin compiles the parser
-// with the smith under test.
+// scratch folder) so that the user's configuration and data are never read or written. The plugin gets the parser from
+// the smith under test (`smith cc --smith-tree-sitter`).
 module neovim_test;
 
 import smith::format;

@@ -94,7 +94,7 @@ How each verb uses it:
 - **fmt** needs no build: `git ls-files -z --cached --others --exclude-standard`, through smith's io, the wanted
   extensions, the files that are there (a file removed and not yet staged is still listed). Outside a git repository it
   says to name the files (`smith fmt -i <files>`). clang-format reads `.clang-format-ignore` itself when it is given files
-  (a generated `parser.c`, the broken inputs of a test).
+  (the generated tree-sitter parser, the broken inputs of a test).
 - **lint** runs one clang-tidy per source, side by side (one per core), each with its output kept together, so the
   findings of different files do not interleave. `.smith` sources are linted as written (shim/tidy.cpp); a smith whose clang has no token hook (the stage0) leaves them out and says so once. It
   lints the first compile of a source, so a program built in three variants is checked once, with the first's flags. The checks are the project's `.clang-tidy`, or smith's defaults, which include `smith-effects` (a raw call such as `printf` or `fopen` outside a capability's implementation; skill smith-io).

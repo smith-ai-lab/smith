@@ -1,6 +1,6 @@
 ---
 name: smith-neovim
-description: "Neovim support from the smith repository: plugin/smith.lua, vim.pack.add, the .smith file type, the tree-sitter parser (compiled with smith cc -shared), vim.lsp.enable('smith'), the .h file type in a smith project, the nvim-dap 'smith: launch' configuration that debugs the test under the cursor, the neotest-smith adapter, and the plugin/smith version warning. Load when setting up Neovim for a smith project, on '.smith files have no highlighting', 'cannot build the parser', 'a .h file is cpp', nvim-dap or neotest with smith, or when asked how to debug or run a test from Neovim."
+description: "Neovim support from the smith repository: plugin/smith.lua, vim.pack.add, the .smith file type, the tree-sitter parser (from smith cc --smith-tree-sitter), vim.lsp.enable('smith'), the .h file type in a smith project, the nvim-dap 'smith: launch' configuration that debugs the test under the cursor, the neotest-smith adapter, and the plugin/smith version warning. Load when setting up Neovim for a smith project, on '.smith files have no highlighting', 'cannot build the parser', 'a .h file is cpp', nvim-dap or neotest with smith, or when asked how to debug or run a test from Neovim."
 ---
 
 # Neovim
@@ -18,7 +18,7 @@ vim.lsp.enable("smith")                                                      -- 
 
 ## What you get
 
-- **The `.smith` file type** and tree-sitter highlighting: `module`, `import`, `as`, `export`, `a::b` paths, `c::printf` calls, `constexpr type T`, plus everything C highlights; folds and indents inherit C's. The parser is compiled on first use in the background by `smith cc -shared` into `stdpath("data")/smith/parser/smith-<hash>.so` (a few seconds), and again only when `parser.c` changes. Without `smith` on the PATH the plugin says once it cannot build it. nvim-treesitter is not required.
+- **The `.smith` file type** and tree-sitter highlighting: `module`, `import`, `as`, `export`, `a::b` paths, `c::printf` calls, `constexpr type T`, plus everything C highlights; folds and indents inherit C's. The parser is the one the installed smith carries: the plugin runs `smith cc --smith-tree-sitter` in the background, which prints the path of the library (written once to smith's runtime folder), and loads it, so the grammar matches the smith. Without `smith` on the PATH, or with a seed-built smith, the plugin says once it cannot find it. nvim-treesitter is not required.
 - **`.h` files get a language from the project**, not Neovim's `cpp` guess: only in a smith project (a folder above with `build.c`, `build.smith`, `main.smith`, `main.c` or `.smith/`). Your `g:c_syntax_for_h` wins; else a source beside the header with the same stem decides (`.c` or `.smith`: `c`, `.cpp`: `cpp`, `.m`: `objc`, `.mm`: `objcpp`), then the `compile` lines of `.smith/build.info`, then Neovim's own. A `vim.filetype.add` mapping of yours after the plugin loads replaces this.
 - **The language server:** `vim.lsp.enable("smith")` runs `smith lsp` for `c cpp objc objcpp smith` with root markers `build.c`, `build.smith`, `main.smith`, `main.c`, `compile_commands.json`, `.git`. It replaces a `clangd` config: enable one of them. No `--query-driver`. Override with `vim.lsp.config("smith", {...})`. More in `smith-lsp`.
 - **Debugging with nvim-dap** (when nvim-dap is installed): the plugin registers the `smith` adapter (`smith dap`) and one configuration, "smith: launch", for `c cpp objc objcpp smith`, only where you have set none, so nothing asks which to use. Start a session (`:lua require('dap').continue()`) and it decides, in a smith project, with `cwd` the project root:
@@ -31,7 +31,7 @@ vim.lsp.enable("smith")                                                      -- 
 
 ## Troubleshooting
 
-- No highlighting on `.smith`: is `smith` on the PATH Neovim sees (start Neovim from the shell that has it), did the parser build (look in `:lua print(vim.fn.stdpath("data") .. "/smith/parser")`), is the plugin loaded (`:scriptnames` lists `plugin/smith.lua`; see `load = true` above)?
+- No highlighting on `.smith`: is `smith` on the PATH Neovim sees (start Neovim from the shell that has it), does `smith cc --smith-tree-sitter` print a path (a seed-built Linux smith says to rebuild with `smith build`), is the plugin loaded (`:scriptnames` lists `plugin/smith.lua`; see `load = true` above)?
 - A `.smith` buffer has no diagnostics: `smith-lsp`.
 - Formatting a `.smith` file: `smith fmt` (`smith-check`); the editor's own formatting uses the project's `.clang-format` only.
 - Debugging outside Neovim (VS Code, Helix, Emacs, an agent): `smith-debug`, `smith-mcp`.

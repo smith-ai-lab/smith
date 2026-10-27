@@ -35,3 +35,5 @@ compile_commands.json
 /runtime/protocol/mcp.h
 /tests/protocol/test_protocol_dap.c
 /tests/protocol/test_protocol_mcp.c
+# The tree-sitter parser (`smith build` generates it from tree-sitter/grammar.js).
+/tree-sitter/src/
