@@ -93,6 +93,32 @@ export void test_handlers_the_io_test_at_o2(io::Io *io) {
     io_handlers(io, "-O2");
 }
 
+// The env and clock handlers: getenv is answered by the env handler, and clock_gettime, nanosleep, usleep and sleep by
+// the clock handler (a fake sleeps by advancing its time); with none set they are libc's.
+static void env_clock_handlers(io::Io *io, const char *optimize) {
+    bool ok = false;
+    scratch::Project p = runtime(io, "p", &ok);
+    if (!ok) {
+        return;
+    }
+    must(&p, "handlers: the env and clock test builds",
+         format::push(&io->arena, "smith cc $f ", optimize, " $h/envclock.c libsmith_handlers.dylib -o t_envclock")
+             .data);
+    scratch::Run run = scratch::sh(&p, "./t_envclock 2>&1");
+    scratch::expect_status("handlers: the env and clock test passes", 0, &run);
+    scratch::expect_lacks("handlers: the env and clock test has no failing check", run.out, "FAIL");
+    scratch::expect_text("handlers: the env and clock test ran its 13 checks", "13",
+                         scratch::capture(&p, "./t_envclock 2>&1 | grep -c '^ok  '"));
+}
+
+export void test_handlers_the_env_and_clock_test_at_o0(io::Io *io) {
+    env_clock_handlers(io, "-O0");
+}
+
+export void test_handlers_the_env_and_clock_test_at_o2(io::Io *io) {
+    env_clock_handlers(io, "-O2");
+}
+
 // A project built by the conventions links the runtime by itself, in each profile: a handler set in main is reached.
 static void project_links_runtime(io::Io *io, const char *profile, const char *target) {
     scratch::Project p = scratch::project(io, "project", nullptr);
