@@ -62,3 +62,8 @@ export u32 sized(usize n) {
     void *raw = c::alloca(n);
     return fixed[0] + named[0] + run_time[0] + (raw == nullptr ? 0 : 1);
 }
+
+// va_list is the platform's own type, an array on x86_64 that C passes as a pointer: no finding.
+export i32 next_argument(__builtin_va_list arguments) {
+    return __builtin_va_arg(arguments, i32);
+}

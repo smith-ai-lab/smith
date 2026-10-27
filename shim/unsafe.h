@@ -170,6 +170,10 @@ class UnsafeCheck final : public ClangTidyCheck {
     void on_parameter(const ParmVarDecl *parameter, const SourceManager &sm) {
         QualType type = parameter->getOriginalType();
         if (!type->isArrayType()) return;
+        // va_list is an array on x86_64 (`__va_list_tag[1]`), which C passes as a pointer: the platform's own type,
+        // not an array parameter the program wrote (on arm64 it is a pointer and never comes here).
+        const ASTContext &context = parameter->getASTContext();
+        if (context.hasSameType(type, context.getBuiltinVaListType())) return;
         const ArrayType *outer = type->getAsArrayTypeUnsafe();
         bool constant = true;
         for (const ArrayType *level = outer; level != nullptr;
