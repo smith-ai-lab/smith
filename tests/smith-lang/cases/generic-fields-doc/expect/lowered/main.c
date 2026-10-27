@@ -1,6 +1,6 @@
 #include "docs.h"
 
-__INT32_TYPE__ main() {
+__INT32_TYPE__ main(void) {
 docs_run();__extension__({extern void docs_show__docsxxOptions(void)__asm__("_docs::show(docs_Options)");docs_show__docsxxOptions();});__extension__({extern void docs_show__docsxxShape(void)__asm__("_docs::show(docs_Shape)");docs_show__docsxxShape();});
 return 0;
 }
