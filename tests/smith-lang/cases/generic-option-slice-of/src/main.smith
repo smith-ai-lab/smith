@@ -1,0 +1,19 @@
+module main;
+
+import <stdio.h>;
+import rows;
+
+// `option(slice_of(T, 1))` is a generic's result: an option over a computed slice type. A caller names it through a
+// typedef of the slice; the early `return .none;` and the `return {...};` after it need no braces.
+
+typedef i32 Row[:];
+typedef option(Row) MaybeRow;
+
+i32 main(void) {
+    i32 xs[3] = {4, 5, 6};
+    MaybeRow a = rows::view(i32, xs, 3);
+    MaybeRow b = rows::view(i32, xs, 0);
+    if (a == .some) c::printf("%zu %d\n", countof(a.some), a.some[1]);
+    if (b == .none) c::printf("none\n");
+    return 0;
+}

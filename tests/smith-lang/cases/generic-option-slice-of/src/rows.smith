@@ -1,0 +1,14 @@
+module rows;
+
+export type slice_of(type element, usize count) {
+    type t = element;
+    for (usize i = 0; i < count; i++)
+        t = t[:];
+    return t;
+}
+
+// The result is an option over a slice type that a function computes: the argument of `option` is a call.
+export option(slice_of(T, 1)) view(constexpr type T, T *xs, usize n) {
+    if (n == 0) return .none;
+    return {.some = (struct smith_array_T_n){.data = xs, .count = {n}}};
+}

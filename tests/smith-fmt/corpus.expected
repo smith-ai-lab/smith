@@ -6095,6 +6095,41 @@ export i32 sum_all(auto p) {
 export i32 over_pack(auto p, auto... rest) {
     return scaled(2, (i32)(*p)) + scaled(countof(rest), 0);
 }
+==> generic-option-slice-of/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import rows;
+
+// `option(slice_of(T, 1))` is a generic's result: an option over a computed slice type. A caller names it through a
+// typedef of the slice; the early `return .none;` and the `return {...};` after it need no braces.
+
+typedef i32 Row[:];
+typedef option(Row) MaybeRow;
+
+i32 main(void) {
+    i32 xs[3] = {4, 5, 6};
+    MaybeRow a = rows::view(i32, xs, 3);
+    MaybeRow b = rows::view(i32, xs, 0);
+    if (a == .some) c::printf("%zu %d\n", countof(a.some), a.some[1]);
+    if (b == .none) c::printf("none\n");
+    return 0;
+}
+==> generic-option-slice-of/src/rows.smith <==
+module rows;
+
+export type slice_of(type element, usize count) {
+    type t = element;
+    for (usize i = 0; i < count; i++)
+        t = t[:];
+    return t;
+}
+
+// The result is an option over a slice type that a function computes: the argument of `option` is a call.
+export option(slice_of(T, 1)) view(constexpr type T, T *xs, usize n) {
+    if (n == 0) return .none;
+    return {.some = (struct smith_array_T_n){.data = xs, .count = {n}}};
+}
 ==> generic-own-names/src/main.smith <==
 module main;
 
