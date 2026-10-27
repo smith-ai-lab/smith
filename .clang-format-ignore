@@ -18,6 +18,7 @@ tests/autodiff/scan/**
 tests/build_fixtures/**
 # Negative fixtures and sub-projects, found by `smith lint` (the gate reads this list too): the inputs of the checks' own
 # tests (each .expected says what the check must report), and the autodiff programs, each a project with its own flags.
+tests/affine/**
 tests/effects/**
 tests/smith-fmt/**
 tests/autodiff/**
