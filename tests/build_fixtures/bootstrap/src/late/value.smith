@@ -1,0 +1,5 @@
+module late::value;
+
+export int late_value(void) {
+    return 1 @@ 2;
+}

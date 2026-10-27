@@ -35,6 +35,15 @@ adding itself: the release that builds it does not have it. Tests and libraries 
 needs the feature in smith's own code lands in two steps: the feature, then, after its release, the use.
 The same holds for the build API: `build.c` is compiled by the release smith with the `<smith/build.h>` that release embeds.
 
+**Stage 1 may leave a source out** (issue #619, the first step of narrowing the lag rule). `SmithObject.bootstrap` makes a
+compile that fails leave an empty object (and the depfile and effect summary the step promises) after saying
+`smith: stage 1 leaves <source> out`, and `SmithProgram.lenient` links with the symbols no object defines unresolved
+(`-undefined dynamic_lookup`, `--unresolved-symbols=ignore-all`), so a smith built by a compiler that lacks a feature
+still links and can compile what needs it. Both are off by default and change nothing for a project. The staged
+`build.c` that uses them (stage 1 by the release, stage 2 by stage 1) follows once a release has this; the lag rule
+above holds until then. Rejected: a second header folder for stage 1 (hackish) and recompiling in stage 2 only (it
+does not narrow the rule).
+
 **What still uses the raw lowering** (`smith cc --smith-lower`, the token-level lowering with no parser): the command
 itself and its corpus (`tests/smith-lang`), and the white-box tests that include a module's lowering to reach its static
 functions (`tests/random.c`, `tests/prove/sound/smith_random.c` and `smith_arena.c`, written by their scripts at run time).

@@ -253,7 +253,9 @@ export typedef result(const char *const *, LinesError) Lines; // NOLINT(readabil
     const char *const *flags;           // exactly these, in this order
     const char *const *implicit_inputs; // files the compile reads that are not in its depfile on a clean build, such as
                                         // a generated #include or #embed file
-    Step step;                          // set by build::object: the step it emitted
+    bool bootstrap; // stage 1 of a staged build (knowledge/smith-bootstrap.md): a compile that fails leaves an empty
+                    // object and a message, so a program linked with .lenient still links; default off
+    Step step;      // set by build::object: the step it emitted
 } Object;
 
 // Objects linked into a program:
@@ -264,7 +266,9 @@ export typedef result(const char *const *, LinesError) Lines; // NOLINT(readabil
     const char *const *flags;     // before the objects, such as -mmacosx-version-min=26.0
     const Object *const *objects; // the objects to link, each already passed to build::object
     const char *const *libraries; // after the objects: -framework Metal, -lm, a .a path
-    Step step;                    // set by build::program: the step it emitted
+    bool lenient; // stage 1 of a staged build: a symbol no object defines is left to fail when it is called, not at the
+                  // link (-undefined dynamic_lookup with lazy binding, --unresolved-symbols=ignore-all); default off
+    Step step;    // set by build::program: the step it emitted
 } Program;
 
 // A source that ends in .smith is a module or a plain .smith file (knowledge/smith-language.md): a module also gets a

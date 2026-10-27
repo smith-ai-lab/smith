@@ -2060,6 +2060,26 @@ static const char *const *smith_proved_flags(SmithBuild *b, const SmithObject *o
     return smith_list(b, flag, nullptr);
 }
 
+// The compile of a stage 1 object (SmithObject.bootstrap): the compile as written, and when it fails (the source uses
+// what the compiler that builds stage 1 does not have yet) a message and an empty object, with the depfile and the
+// effect summary the step promises, so that the program links with .lenient and stage 2 compiles the source again.
+// One line of sh: a newline in a word would make the edge run the whole command line as a script.
+static const char *const *smith_bootstrap_command(SmithBuild *b, const SmithObject *object, const char *depfile,
+                                                  const char *const *compile) {
+    char fx[PATH_MAX] = "";
+    if (smith_effects_summary(object->compiler, object->source, object->output) != nullptr)
+        (void)smith_effects_path(object->output, fx, sizeof fx);
+    const char *script =
+        "out=$1; dep=$2; src=$3; fx=$4; shift 4; \"$@\" && exit 0; "
+        "echo \"smith: stage 1 leaves $src out (this compiler cannot build it); stage 2 builds it\" >&2; "
+        "printf '' | \"$1\" -x c - -c -o \"$out\" || exit 1; printf '%s: %s\\n' \"$out\" \"$src\" > \"$dep\"; "
+        "if [ -n \"$fx\" ]; then : > \"$fx\"; fi";
+    return smith_cat(
+        b,
+        smith_list(b, "sh", "-c", script, "sh", object->output, depfile, object->source, smith_text("%s", fx), nullptr),
+        compile, nullptr);
+}
+
 void smith_object(SmithBuild *b, SmithObject *object) {
     SMITH_ASSERT(b != nullptr && object != nullptr);
     smith_require_program("smith_object", "compiler", object->compiler);
@@ -2089,10 +2109,12 @@ void smith_object(SmithBuild *b, SmithObject *object) {
     }
     const char *const *proved_inputs = nullptr;
     const char *const *proved_flags = smith_proved_flags(b, &copy, &proved_inputs);
+    const char *const *compile = smith_cat(
+        b, smith_one(copy.compiler), smith_modules_for(b, copy.source), smith_lang_flags(b, copy.source), copy.flags,
+        proved_flags, smith_library_flags(b, copy.source), smith_module_flags(b, copy.source), tail, nullptr);
+    if (copy.bootstrap) compile = smith_bootstrap_command(b, &copy, depfile, compile);
     copy.step = (SmithStep){
-        .command = smith_cat(b, smith_one(copy.compiler), smith_modules_for(b, copy.source),
-                             smith_lang_flags(b, copy.source), copy.flags, proved_flags,
-                             smith_library_flags(b, copy.source), smith_module_flags(b, copy.source), tail, nullptr),
+        .command = compile,
         .inputs = smith_one(copy.source),
         .implicit_inputs =
             smith_cat(b, copy.implicit_inputs, smith_one(smith_compiler_file(copy.compiler)), proved_inputs, nullptr),
@@ -2365,6 +2387,15 @@ static const char *const *smith_program_handlers(SmithBuild *b, const SmithProgr
     return handlers;
 }
 
+// The flags of a lenient link (SmithProgram.lenient): the symbols no object defines are left to fail when called. On
+// macOS the fixup chains bind every symbol at launch, so they are off and the calls bind lazily.
+static const char *const *smith_lenient_flags(SmithBuild *b, bool lenient) {
+    if (!lenient) return smith_list(b, nullptr);
+    return strcmp(b->os, "Linux") == 0
+               ? smith_list(b, "-Wl,--unresolved-symbols=ignore-all", nullptr)
+               : smith_list(b, "-Wl,-undefined,dynamic_lookup", "-Wl,-no_fixup_chains", nullptr);
+}
+
 void smith_program(SmithBuild *b, SmithProgram *program) {
     SMITH_ASSERT(b != nullptr && program != nullptr);
     smith_require_program("smith_program", "linker", program->linker);
@@ -2409,8 +2440,8 @@ void smith_program(SmithBuild *b, SmithProgram *program) {
     const char *const *handlers_files = nullptr;
     const char *const *handlers = smith_program_handlers(b, &copy, &handlers_files);
     copy.step = (SmithStep){
-        .command = smith_cat(b, smith_one(copy.linker), identity, copy.flags, (const char *const *)outputs,
-                             copy.libraries, handlers, tail, nullptr),
+        .command = smith_cat(b, smith_one(copy.linker), identity, copy.flags, smith_lenient_flags(b, program->lenient),
+                             (const char *const *)outputs, copy.libraries, handlers, tail, nullptr),
         .inputs = (const char *const *)outputs,
         .implicit_inputs = smith_cat(b, smith_library_files(copy.libraries),
                                      smith_one(smith_compiler_file(copy.linker)), summaries, handlers_files, nullptr),
