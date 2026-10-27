@@ -119,3 +119,42 @@ SmithClockHandler *smith_handlers_set_clock(SmithClockHandler *clock);
 
 // The clock of the calling thread, null when none is set.
 SmithClockHandler *smith_handlers_clock(void);
+// The child processes of the calling thread: smith::process (lib/smith/process.smith) calls these members itself, with
+// no libc function behind them, so a thread with a handler never starts a real process. A child is an id the handler
+// chooses (greater than 0). Calls return 0 (or a count) for success and -1 with errno set, as the libc calls do. No
+// process handler set is the real posix_spawn, pipes and waitpid. Issue #240; knowledge/process.md.
+typedef struct SmithProcessHandler SmithProcessHandler;
+
+// How a child's standard streams are connected.
+enum {
+    SMITH_PROCESS_INHERIT = 0, // no stdin; stdout and stderr are the program's own
+    SMITH_PROCESS_PIPED = 1,   // a pipe to its stdin and from its stdout; stderr is the program's own
+    SMITH_PROCESS_CAPTURED = 2 // no stdin; pipes from its stdout and from its stderr (stream 1 and 2 of read)
+};
+
+struct SmithProcessHandler {
+    // Starts argv[0] (a null-terminated array, found on PATH) connected as `mode` says; the id of the child, or -1.
+    int (*start)(SmithProcessHandler *self, const char *const *argv, int mode);
+    // Reads up to size bytes of the child's stream (1: stdout, 2: stderr) into buffer, blocking until there is
+    // something: the count, 0 at the end of the stream, -1 on an error.
+    ssize_t (*read)(SmithProcessHandler *self, int child, int stream, void *buffer, size_t size);
+    // Writes all of size bytes to the child's stdin: the count, or -1 (EPIPE when the child has exited or closed it).
+    ssize_t (*write)(SmithProcessHandler *self, int child, const void *buffer, size_t size);
+    // Closes the child's stdin, so it sees the end of its input.
+    int (*close_input)(SmithProcessHandler *self, int child);
+    // Blocks until the child has exited: *status is its exit status (0 if killed) and *signal the signal that killed it
+    // (0 if not).
+    int (*wait)(SmithProcessHandler *self, int child, int *status, int *signal);
+    // Sends the signal to the child and the processes of its group; ESRCH when it has exited.
+    int (*kill)(SmithProcessHandler *self, int child, int signal);
+    // Releases the child's streams. Called once; the handler may refuse a second time.
+    int (*close)(SmithProcessHandler *self, int child);
+    // How many processes can run at once; null means the machine's logical cores.
+    size_t (*cores)(SmithProcessHandler *self);
+};
+
+// Sets the processes of the calling thread (null: the real ones), returning the ones it had.
+SmithProcessHandler *smith_handlers_set_process(SmithProcessHandler *process);
+
+// The processes of the calling thread, null when the real ones are in force.
+SmithProcessHandler *smith_handlers_process(void);

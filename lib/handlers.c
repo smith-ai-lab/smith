@@ -180,6 +180,30 @@ static int smith_handlers_clock_read(SmithClockHandler *clock, clockid_t which, 
 static int smith_handlers_clock_sleep(SmithClockHandler *clock, uint64_t nanoseconds) {
     clock->sleep(clock, nanoseconds);
     return 0;
+// The child processes, found the same way (no libc function is interposed: smith::process calls the handler).
+static atomic_uint smith_handlers_process_active;
+static thread_local SmithProcessHandler *smith_handlers_process_table;
+
+__attribute__((noinline)) static SmithProcessHandler *smith_handlers_process_get(void) {
+    return smith_handlers_process_table;
+}
+
+__attribute__((noinline)) static SmithProcessHandler *smith_handlers_process_current(void) {
+    if (atomic_load_explicit(&smith_handlers_process_active, memory_order_relaxed) == 0) return nullptr;
+    if (!atomic_load_explicit(&smith_handlers_ready, memory_order_relaxed)) return nullptr;
+    return smith_handlers_process_get();
+}
+
+SmithProcessHandler *smith_handlers_set_process(SmithProcessHandler *process) {
+    SmithProcessHandler *previous = smith_handlers_process_table;
+    smith_handlers_process_table = process;
+    if (previous == nullptr && process != nullptr) atomic_fetch_add(&smith_handlers_process_active, 1);
+    if (previous != nullptr && process == nullptr) atomic_fetch_sub(&smith_handlers_process_active, 1);
+    return previous;
+}
+
+SmithProcessHandler *smith_handlers_process(void) {
+    return smith_handlers_process_current();
 }
 
 static bool smith_handlers_has(int flags, int bit) {
