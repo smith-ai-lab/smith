@@ -2183,10 +2183,12 @@ static int build_preflight(SmithRun *run) {
     const char *description = ok ? smith_fmt(b, "fmt, docs, lint and the changed tests ok (%s)",
                                              tests[0] != '\0' ? tests : "no tests selected")
                                  : smith_fmt(b, "failed:%s (smith build preflight)", failed);
-    int posted =
-        build_exec(smith_list(b, "gh", "api", smith_fmt(b, "repos/{owner}/{repo}/statuses/%s", sha), "-f",
-                              smith_fmt(b, "state=%s", ok ? "success" : "failure"), "-f", "context=smith/preflight",
-                              "-f", smith_fmt(b, "description=%.140s", description), nullptr));
+    int posted = build_spawn(&(BuildSpawn){
+        .argv = smith_list(b, "gh", "api", smith_fmt(b, "repos/{owner}/{repo}/statuses/%s", sha), "-f",
+                           smith_fmt(b, "state=%s", ok ? "success" : "failure"), "-f", "context=smith/preflight", "-f",
+                           smith_fmt(b, "description=%.140s", description), nullptr),
+        .log = ".smith/preflight-status.log",
+        .tail = 5});
     fprintf(stderr, "preflight: %s on %.12s: %s%s\n", ok ? "success" : "failure", sha, description,
             posted == 0 ? "" : " (the status could not be posted: gh api failed)");
     return ok && posted == 0 ? 0 : 1;
