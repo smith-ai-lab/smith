@@ -77,8 +77,56 @@ jobs:
             ;;
           esac
 
+      - name: Mechanical checks first
+        if: steps.tree.outputs.skip != 'true'
+        # Stage 0 (#360): fmt, docs and lint of this batch with the installed smith, before the build, so a mechanical red
+        # costs about a minute, not the 18 minutes of a run that built and tested first (run 40550483432: a function size
+        # lint found in seconds). fmt reads only the changed files; docs and lint are the project's own verbs (lint builds
+        # the headers it reads, and checks every source: a finding names its file). The installed smith is the previous
+        # release, so a batch that changes a check or the formatter is judged by the old one here and by its own in the
+        # Full check below, which stays the authority. Every failure ends in a line `FAIL <fmt|lint|docs> <file>`.
+        timeout-minutes: 8
+        shell: bash
+        env:
+          SMITH_OUTPUT: full
+          SMITH_PRIORITY: ci
+        run: |
+          export PATH="/opt/homebrew/bin:$HOME/.local/bin:$PATH"
+          git fetch -q origin main
+          log="$RUNNER_TEMP/stage0"
+          mkdir -p "$log"
+          changed=$(git diff --name-only --diff-filter=d origin/main...HEAD)
+          failed=0
+          start=$(date +%s)
+          for f in $(printf '%s\n' "$changed" | grep -E '[.](c|h|m|mm|cpp|cc|cxx|hpp|hh|smith|metal)$' || true); do
+            if ! smith fmt --dry-run --Werror "$f" >"$log/fmt.out" 2>&1; then
+              head -n 12 "$log/fmt.out"
+              echo "FAIL fmt $f"
+              failed=1
+            fi
+          done
+          if ! smith docs >"$log/docs.out" 2>&1; then
+            tail -n 40 "$log/docs.out"
+            echo "FAIL docs ($(grep -m1 -oE '[^ ]+[.]md' "$log/docs.out" || echo see above))"
+            failed=1
+          fi
+          if printf '%s\n' "$changed" | grep -qE '[.](c|h|m|mm|cpp|cc|cxx|hpp|hh|smith)$|^[.]clang-tidy$|(^|/)build[.]c$'; then
+            if ! smith lint >"$log/lint.out" 2>&1; then
+              grep -E ': (error|warning): ' "$log/lint.out" | head -n 40 || true
+              files=$(grep -oE '^[^ :]+:[0-9]+:[0-9]+: (error|warning)' "$log/lint.out" | sed -e "s|^$PWD/||" -e 's|^[.]/||' -e 's|:.*||' | sort -u)
+              for f in $files; do echo "FAIL lint $f"; done
+              [ -n "$files" ] || { tail -n 40 "$log/lint.out"; echo "FAIL lint (no file named: see above)"; }
+              failed=1
+            fi
+          fi
+          echo "mechanical checks took $(( $(date +%s) - start )) s" | tee -a "$GITHUB_STEP_SUMMARY"
+          exit $failed
+
       - name: Build smith
         if: steps.tree.outputs.skip != 'true'
+        # normally 20-75 s (the last 25 runs); a hang (run 40546445282 sat in a compile) is cut off here and the train
+        # reads GitHub's "The action 'Build smith' has timed out" as `timeout Build smith`
+        timeout-minutes: 10
         env:
           # the checked smith counts the lines it runs, per test (knowledge/coverage-selection.md, #456)
           COVERAGE: "1"

@@ -3,6 +3,11 @@
 // runtime/lang_generic.c
 static void smith_lang_generics_load(SmithLang *lang, const SmithHost *host, const char *module);
 
+// runtime/lang_objc.c, which comes after this file
+static bool smith_lang_objc_import(SmithLang *lang, const SmithHost *host, const char *header, size_t length,
+                                   uint32_t location);
+static void smith_lang_objc_define(SmithLang *lang, const SmithHost *host);
+
 // Reads tokens up to the `;` that ends a line, for a line that is malformed.
 static void smith_lang_skip_line(SmithLang *lang, const SmithHost *host) {
     for (size_t i = 0; i < smith_lang_batch_max; i++) { // bounded by the batch
@@ -400,6 +405,7 @@ static void smith_lang_import_c(SmithLang *lang, const SmithHost *host, const Sm
                          "`import` of a header needs its name, as in `import <math.h>;`");
         return;
     }
+    if (angled && smith_lang_objc_import(lang, host, header, used, keyword->location)) return;
     if (!lang->has_c) {
         lang->has_c = true;
         smith_lang_add_binding(lang, host, "c", 1, keyword->location, nullptr, true);
@@ -423,6 +429,7 @@ static bool smith_lang_is_import(SmithLang *lang, const SmithHost *host, const S
 static void smith_lang_imports_last(SmithLang *lang, const SmithHost *host, uint32_t location) {
     if (lang->type_import && lang->imports_seen == host->import_lines) smith_lang_types_define(lang, host, location);
     if (lang->imports_seen == host->import_lines) smith_lang_body_use(lang, host, location);
+    if (lang->imports_seen == host->import_lines) smith_lang_objc_define(lang, host);
 }
 
 static void smith_lang_import(SmithLang *lang, const SmithHost *host, const SmithToken *keyword) {

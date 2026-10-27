@@ -968,6 +968,9 @@ void make_snapshot(Function &function) {
         bool first_traps = isa<UnreachableInst>(branch->getSuccessor(0)->getTerminator());
         BasicBlock *kept = branch->getSuccessor(first_traps ? 1 : 0);
         if (isa<UnreachableInst>(kept->getTerminator())) continue; // both trap: leave it
+        // The trap block loses this predecessor: a phi in it (the file name a failure call reports, chosen by the
+        // paths that reach it) must lose the entry too, or the module does not verify (issue #508).
+        branch->getSuccessor(first_traps ? 0 : 1)->removePredecessor(branch->getParent());
         UncondBrInst::Create(kept, branch->getIterator());
         branch->eraseFromParent();
     }

@@ -318,6 +318,13 @@ typedef struct {
     // Whether the file being lowered has declared anything yet (an import must come first).
     bool (*declared)(void *context);
     const char *main_file; // the path of the file being lowered
+    // Objective-C (issue #318, runtime/lang_objc.c). The facts of the compile that a header's index depends on, as
+    // lines `sysroot=<dir>`, `triple=<t>`, `framework=<dir>` (a -F folder) and `editor=1`; valid until the next call.
+    // Null in a host without a compiler (the header pass), which then reads every import as a C header.
+    const char *(*objc_facts)(void *context);
+    // The text of the file being lowered, for the names it writes after `objc::` (null: none).
+    const char *main_text;
+    uint32_t main_text_length;
     // The lowering is read for the module's declarations only (the header pass, which has no compiler): what a function
     // body would need a compiler for, such as the type of a generic call's arguments, is skipped without an error.
     bool declarations_only;

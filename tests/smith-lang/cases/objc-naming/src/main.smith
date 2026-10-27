@@ -1,0 +1,15 @@
+import <Foundation/Foundation.h>;
+import <stdio.h>;
+
+// A selector with several parts joins them with `_`. A class method has the `class_` prefix only where an instance
+// method has its name: `description` is both, `alloc` and `stringWithUTF8String` are not.
+i32 main(void) {
+    objc::NSString *text = objc::NSString::stringWithUTF8String("a-b-c");
+    objc::NSString *plus =
+        objc::NSString::stringByReplacingOccurrencesOfString_withString(text, objc::NSString::stringWithUTF8String("-"),
+                                                                        objc::NSString::stringWithUTF8String("+"));
+    c::printf("%s\n", objc::NSString::UTF8String(plus));
+    c::printf("%s\n", objc::NSString::UTF8String(objc::NSObject::class_description()));
+    c::printf("%s\n", objc::NSString::UTF8String(objc::NSObject::description((objc::NSObject *)text)));
+    return 0;
+}

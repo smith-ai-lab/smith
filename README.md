@@ -403,6 +403,8 @@ export typeof(*p) first(const auto *p) { // `auto *p` and `auto xs[4]` work the 
 }
 ```
 
+A concept stands where `auto` does there too (`const arithmetic xs[:]`, `integer *p`): the element must be of it, and a call that gets it wrong is an error at the argument ([smith-lang-concepts](.agents/skills/smith-lang-concepts/SKILL.md)).
+
 [smith-lang-generics](.agents/skills/smith-lang-generics/SKILL.md).
 
 Types are values too, so a function over types runs in the compiler like any other:
@@ -573,6 +575,33 @@ d/dm = 12, d/db = 4
 ```
 
 [smith-autodiff](.agents/skills/smith-autodiff/SKILL.md).
+
+### Apple's frameworks, no Objective-C file
+
+`import <Foundation/Foundation.h>;` reads the header as Objective-C, apart from your C, and its classes and methods are `objc::` names: a message is a call whose arguments are checked, and the import links the framework.
+
+```smith project=objc run
+module main;
+
+import <Foundation/Foundation.h>;
+import smith::format;
+import smith::io;
+
+i32 main(io::Io *io) {
+    objc::NSString *text = objc::NSString::stringWithUTF8String("hello from smith");
+    objc::NSMutableArray *list = objc::NSMutableArray::array();
+    objc::NSMutableArray::addObject(list, text);
+    format::print(&io->console, "length ", (u64)objc::NSString::length(text), ", count ",
+                  (u64)objc::NSArray::count((objc::NSArray *)list), "\n");
+    return 0;
+}
+```
+
+```output project=objc
+length 16, count 1
+```
+
+[smith-lang-objc](.agents/skills/smith-lang-objc/SKILL.md).
 
 ## A module has no warnings
 

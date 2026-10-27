@@ -1,0 +1,26 @@
+import <AppKit/AppKit.h>;
+import <Metal/Metal.h>;
+import <stdio.h>;
+
+// A titled window, the main screen's name and a Metal device, with no Objective-C file. The program does not run the
+// loop: the window is closed at once, so a test never waits on it. A machine with no screen or GPU prints the same lines.
+i32 main(void) {
+    objc::NSApplication::sharedApplication();
+    objc::NSScreen *screen = objc::NSScreen::mainScreen();
+    // The names are the machine's own: the program prints that it read one, or that there was none to read.
+    bool screen_named = screen == nullptr || objc::NSString::length(objc::NSScreen::localizedName(screen)) > 0;
+    c::printf("screen: %s\n", screen_named ? "ok" : "no name");
+    objc::NSRect frame = {{100, 100}, {400, 300}};
+    objc::NSWindow *window = objc::NSWindow::alloc();
+    window = objc::NSWindow::initWithContentRect_styleMask_backing_defer(
+        window, frame, objc::NSWindowStyleMaskTitled | objc::NSWindowStyleMaskClosable, objc::NSBackingStoreBuffered,
+        false);
+    objc::NSWindow::setTitle(window, objc::NSString::stringWithUTF8String("smith"));
+    c::printf("title: %s\n", objc::NSString::UTF8String(objc::NSWindow::title(window)));
+    objc::NSWindow::close(window);
+    objc::NSWindow::release(window);
+    objc::MTLDevice *device = objc::MTLCreateSystemDefaultDevice();
+    bool device_named = device == nullptr || objc::NSString::length(objc::MTLDevice::name(device)) > 0;
+    c::printf("device: %s\n", device_named ? "ok" : "no name");
+    return 0;
+}

@@ -1,0 +1,22 @@
+import <AppKit/AppKit.h>;
+import <stdio.h>;
+
+// Objective-C is read apart from this file: the names Objective-C gives (id, SEL, BOOL, YES, nil, Class) are the
+// program's own, and mean what they mean in C.
+typedef int BOOL;
+enum { NO, YES };
+typedef struct {
+    int id;
+    int SEL;
+} Class;
+
+static BOOL flip(BOOL value) {
+    return value == YES ? NO : YES;
+}
+
+i32 main(void) {
+    Class nil = {.id = 3, .SEL = 4};
+    BOOL yes = flip(NO);
+    c::printf("%d %d %d %d\n", nil.id, nil.SEL, yes, (int)sizeof(Class));
+    return 0;
+}

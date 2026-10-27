@@ -491,6 +491,10 @@ static size_t smith_lang_chosen_name(SmithLang *lang, const SmithHost *host, con
     return total;
 }
 
+// runtime/lang_objc.c
+static void smith_lang_objc_name(SmithLang *lang, const SmithHost *host, const SmithToken *name,
+                                 const SmithToken *taken, SmithToken *result);
+
 // `name::member` where name is an import binding. The member is read unexpanded: for `c::X` it is a macro to expand
 // then, and for a module it is part of a name, so it must not be expanded at all. Anything else with that name (a
 // variable called io, say) is just a name, and so is `gnu` in [[gnu::unused]].
@@ -525,6 +529,10 @@ static bool smith_lang_namespace_read(SmithLang *lang, const SmithHost *host, co
     if (binding->is_target) { // a fact of the target (runtime/lang_target.c): one token where the access stood
         static char digits[24];
         smith_lang_target_use(lang, host, name, &taken, result, digits, sizeof digits);
+        return true;
+    }
+    if (binding->is_objc) { // runtime/lang_objc.c: objc_X, or objc_Class_method
+        smith_lang_objc_name(lang, host, name, &taken, result);
         return true;
     }
     if (binding->missing && host->suppress != nullptr) host->suppress(host->context, taken.location);

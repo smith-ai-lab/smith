@@ -1492,7 +1492,7 @@ static void smith_lang_ty_qualified(SmithLang *lang, const SmithHost *host, cons
     SmithLangTy *ty = &smith_lang_ty;
     if (!lang->type_import) return;
     const SmithLangBinding *binding = smith_lang_binding_find(lang, token->text, token->length);
-    if (binding == nullptr || binding->is_c) return;
+    if (binding == nullptr || binding->is_c || binding->is_objc) return;
     bool defines = false; // only an import that has functions over `type` is read ahead
     for (size_t i = 0; i < lang->generics_count; i++) {
         const SmithLangGeneric *generic = &smith_lang_generics[i];
@@ -1620,7 +1620,7 @@ static void smith_lang_types_define(SmithLang *lang, const SmithHost *host, uint
         bool bound = false;
         for (size_t b = 0; b < lang->bindings_count; b++) {
             const SmithLangBinding *binding = &lang->bindings[b];
-            bound = bound || (!binding->is_c && !binding->missing &&
+            bound = bound || (!binding->is_c && !binding->is_objc && !binding->missing &&
                               smith_lang_equals(smith_lang_str(binding->module), binding->module.length,
                                                 smith_lang_str(generic->module)));
         }

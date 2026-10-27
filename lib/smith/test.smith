@@ -2881,6 +2881,10 @@ bool listed_after(const Plan *plan, usize i, usize j) {
 void print_cpu(const Plan *plan) {
     for (usize i = 0; i < plan->count; i++)
         say(plan->options, "cpu\t%.3f\t%s\n", plan->runs[i].cpu, plan->tests[i]->name);
+    // and `wall<TAB>start<TAB>seconds<TAB>name`: when the test started (seconds from the runner's clock) and how long
+    // it took, so the busy workers over time and the tail of the run can be worked out (#360).
+    for (usize i = 0; i < plan->count; i++)
+        say(plan->options, "wall\t%.3f\t%.3f\t%s\n", plan->runs[i].start, plan->runs[i].seconds, plan->tests[i]->name);
 }
 
 void print_slowest(const Plan *plan) {

@@ -1,0 +1,24 @@
+module main;
+
+import <stdio.h>;
+
+struct Pair {
+    i32 x;
+    i32 y;
+};
+
+typedef float V3 __attribute__((ext_vector_type(3)));
+
+enum Shape {
+    Dot,
+    Line,
+};
+
+// A member access or swizzle after the `}` of a compound literal is C's postfix, not an enum shorthand.
+i32 main() {
+    i32 a = (Pair){3, 4}.y;
+    V3 v = {1.0f, 2.0f, 3.0f};
+    v.xz += (V3){10.0f, 0.0f, 20.0f}.xz;
+    c::printf("%d %g %g %g\n", a, v.x, v.y, v.z);
+    return 0;
+}
