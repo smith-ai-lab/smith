@@ -143,7 +143,8 @@ static const char *build_variable(SmithBuild *b, const char *name, const char *f
 // The flags of a .smith source: the build's C flags, the include folder of the generated headers, and C2y (as `smith
 // cc` compiles a module, so `_Countof` works).
 static const char *const *build_smith_flags(SmithBuild *b, const BuildConfig *config) {
-    return smith_cat(b, config->cflags, (const char *[]){"-I", "include", "-I", ".smith/include", "-std=gnu2y", nullptr}, nullptr);
+    return smith_cat(b, config->cflags,
+                     (const char *[]){"-I", "include", "-I", ".smith/include", "-std=gnu2y", nullptr}, nullptr);
 }
 
 // The protocol code smith's debugger server stands on, generated from the official schemas (scripts/protocol.c,
@@ -216,7 +217,8 @@ static void build_protocol(SmithBuild *b, const BuildConfig *config, const char 
             .compiler = config->cc,
             .source = sources[i],
             .output = smith_fmt(b, "%s/protocol-%zu.o", folder, i),
-            .flags = smith_cat(b, config->cflags, (const char *[]){"-I", "include", "-I", ".smith/include", nullptr}, nullptr),
+            .flags = smith_cat(b, config->cflags, (const char *[]){"-I", "include", "-I", ".smith/include", nullptr},
+                               nullptr),
         };
         if (strstr(sources[i], ".smith") != nullptr) objects[i].flags = build_smith_flags(b, config);
         smith_object(b, &objects[i]);
@@ -248,8 +250,8 @@ static void build_protocol(SmithBuild *b, const BuildConfig *config, const char 
 // smith_object compiles (build_linked_libraries) has its header step from smith_object; the others are made here, and
 // are inputs of smith.c, which includes them. The installed smith writes the headers of its own embedded sources
 // first (`smith build` does, before this file runs), so a first build has them for build.c itself.
-static const char *const build_header_modules[] = {"autodiff", "build", "effects", "format", "math", "mem", "test",
-                                                   nullptr};
+static const char *const build_header_modules[] = {"autodiff", "build", "effects", "format",
+                                                   "math",     "mem",   "test",    nullptr};
 
 // The compiler's own file, which a header step lists as an input: it is the smith that writes the header.
 static const char *build_compiler_file(SmithBuild *b, const BuildConfig *config) {
@@ -632,7 +634,9 @@ static const char *const *build_llvm_required(SmithBuild *b, const BuildConfig *
 static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const char *folder) {
     const char *pack = build_resource_pack(b, config, folder);
     const char *const *flags = smith_cat(
-        b, config->cflags, (const char *[]){"-I", "include", "-I", ".smith/include", "-DSMITH_COMMIT_LINKED", "-DSMITH_IN_PROCESS", nullptr},
+        b, config->cflags,
+        (const char *[]){"-I", "include", "-I", ".smith/include", "-DSMITH_COMMIT_LINKED", "-DSMITH_IN_PROCESS",
+                         nullptr},
         (const char *[]){smith_fmt(b, "-DSMITH_CLANG_ID=\"%s\"", config->llvm_id), "-DSMITH_MCP", nullptr},
         smith_when(b, config->prove[0] != '\0', (const char *[]){"-DSMITH_PROVE", nullptr}),
         smith_when(b, config->lldb, (const char *[]){"-DSMITH_LLDB", nullptr}),
@@ -647,8 +651,8 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
         .source = "smith.c",
         .output = smith_fmt(b, "%s/smith.o", folder),
         .flags = flags,
-        .implicit_inputs = smith_cat(b, (const char *[]){"scripts/pack.h", nullptr}, build_smith_inputs, config->headers,
-                                     build_llvm_required(b, config), nullptr),
+        .implicit_inputs = smith_cat(b, (const char *[]){"scripts/pack.h", nullptr}, build_smith_inputs,
+                                     config->headers, build_llvm_required(b, config), nullptr),
     };
     smith_object(b, &object);
     SmithObject commit = build_commit_object(b, config, folder);
@@ -772,7 +776,8 @@ static void build_other_objects(SmithBuild *b, const BuildConfig *config, const 
         .compiler = config->cc,
         .source = "runtime/build_runtime.c",
         .output = smith_fmt(b, "%s/build_runtime.o", folder),
-        .flags = smith_cat(b, config->cflags, (const char *[]){"-I", "include", "-I", ".smith/include", nullptr}, nullptr),
+        .flags =
+            smith_cat(b, config->cflags, (const char *[]){"-I", "include", "-I", ".smith/include", nullptr}, nullptr),
     };
     smith_object(b, &runtime);
     SmithObject stub = {
@@ -957,14 +962,15 @@ static const char *const *build_test(SmithBuild *b, const BuildConfig *config, c
     // Every float through the parser, against strtof: minutes on all cores, so it is not part of `test`.
     SmithStep exhaustive = {
         .command =
-            (const char *[]){"sh", "-c",
-                             "work=${TMPDIR:-/tmp}/smith-text-$$.noindex; mkdir \"$work\"; trap 'rm -rf \"$work\"' "
-                             "EXIT; export XDG_CACHE_HOME=$work/xdg-cache; "
-                             "\"$0\" cc -std=gnu23 -O2 -Wall -Wextra -Werror -I include -I .smith/include tests/text_exhaustive.c "
-                             "lib/smith/text.smith -pthread -o \"$work/exhaustive\" || exit 1; start=$(date +%s); "
-                             "\"$work/exhaustive\"; status=$?; "
-                             "echo \"exhaustive: exit $status in $(($(date +%s) - start)) s\"; exit $status",
-                             binary, nullptr},
+            (const char *[]){
+                "sh", "-c",
+                "work=${TMPDIR:-/tmp}/smith-text-$$.noindex; mkdir \"$work\"; trap 'rm -rf \"$work\"' "
+                "EXIT; export XDG_CACHE_HOME=$work/xdg-cache; "
+                "\"$0\" cc -std=gnu23 -O2 -Wall -Wextra -Werror -I include -I .smith/include tests/text_exhaustive.c "
+                "lib/smith/text.smith -pthread -o \"$work/exhaustive\" || exit 1; start=$(date +%s); "
+                "\"$work/exhaustive\"; status=$?; "
+                "echo \"exhaustive: exit $status in $(($(date +%s) - start)) s\"; exit $status",
+                binary, nullptr},
         .inputs = (const char *[]){binary, nullptr},
     };
     smith_task(b, "text-exhaustive", &exhaustive);
@@ -2165,10 +2171,10 @@ void build(SmithBuild *b) {
 
     config.headers = build_header_steps(b, &config);
     SmithStep smith = build_programs(b, &config, folder);
-    build_other_objects(b, &config, folder,
-                        build_template_modules(b, &config, folder,
-                                               smith_cat(b, build_test_modules(b, &config, folder), config.headers,
-                                                         nullptr)));
+    build_other_objects(
+        b, &config, folder,
+        build_template_modules(b, &config, folder,
+                               smith_cat(b, build_test_modules(b, &config, folder), config.headers, nullptr)));
     build_unbuilt_sources(b, &config);
     build_protocol(b, &config, folder);
     config.binary = smith.outputs[0];
