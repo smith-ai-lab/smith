@@ -17,6 +17,8 @@
     "debugger"
   ],
   "skills": [
+    "./.agents/skills/smith-ascii/",
+    "./.agents/skills/smith-slice/",
     "./.agents/skills/smith/",
     "./.agents/skills/smith-adopt/",
     "./.agents/skills/smith-adopt-build/",

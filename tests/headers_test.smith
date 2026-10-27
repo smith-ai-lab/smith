@@ -149,6 +149,14 @@ export void test_the_io_header_compiles_alone(io::Io *io) {
     generated(io, "io");
 }
 
+export void test_the_ascii_header_compiles_alone(io::Io *io) {
+    generated(io, "ascii");
+}
+
+export void test_the_slice_header_compiles_alone(io::Io *io) {
+    generated(io, "slice");
+}
+
 export void test_the_math_header_compiles_alone(io::Io *io) {
     generated(io, "math");
 }

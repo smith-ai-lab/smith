@@ -215,6 +215,10 @@ export void test_skill_smith_arena_c(io::Io *io) {
     skill_case(io, "smith-arena-c");
 }
 
+export void test_skill_smith_ascii(io::Io *io) {
+    skill_case(io, "smith-ascii");
+}
+
 export void test_skill_smith_autodiff(io::Io *io) {
     skill_case(io, "smith-autodiff");
 }
@@ -545,6 +549,10 @@ export void test_skill_smith_random_split(io::Io *io) {
 
 export void test_skill_smith_result(io::Io *io) {
     skill_case(io, "smith-result");
+}
+
+export void test_skill_smith_slice(io::Io *io) {
+    skill_case(io, "smith-slice");
 }
 
 export void test_skill_smith_test(io::Io *io) {

@@ -165,6 +165,22 @@ export void skip(const char (*text)[:], usize n) {
 
 [smith-lang-slice-pointers](.agents/skills/smith-lang-slice-pointers/SKILL.md).
 
+One library does what `strcmp`, `memchr` and `memset` did for every element type: `smith::slice` compares, searches, fills and reverses any slice, with no allocation, and `smith::ascii` tests one character with no locale. `slice::find` returns an `option(usize)` where C returned a sentinel, and an index or its absence travels as one value:
+
+```smith
+module header;
+
+import smith::ascii;
+import smith::slice;
+
+export bool is_setting(const char line[:]) {
+    const char prefix[:] = "#";
+    return countof(line) > 0 && ascii::alpha(line[0]) && !slice::starts_with(line, prefix);
+}
+```
+
+[smith-slice](.agents/skills/smith-slice/SKILL.md), [smith-ascii](.agents/skills/smith-ascii/SKILL.md).
+
 ### Typed memory, not `memcpy`
 
 ```c
@@ -662,6 +678,7 @@ i32 main(io::Io *io) {
 
 The libraries are [arena](.agents/skills/smith-arena/SKILL.md), [io](.agents/skills/smith-io/SKILL.md),
 [format](.agents/skills/smith-format/SKILL.md), [text](.agents/skills/smith-text/SKILL.md),
+[slice](.agents/skills/smith-slice/SKILL.md), [ascii](.agents/skills/smith-ascii/SKILL.md),
 [json](.agents/skills/smith-json/SKILL.md), [random](.agents/skills/smith-random/SKILL.md),
 [math](.agents/skills/smith-math/SKILL.md), [test](.agents/skills/smith-test/SKILL.md),
 [contract](.agents/skills/smith-contract/SKILL.md) and [autodiff](.agents/skills/smith-autodiff/SKILL.md): no malloc, no

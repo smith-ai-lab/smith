@@ -1,0 +1,160 @@
+// Tests of smith::slice and smith::ascii.
+module smith::slice_test;
+
+import smith::ascii;
+import smith::slice;
+import smith::test;
+
+typedef option(usize) Index;
+
+export void test_equal() {
+    {
+        const char a[:] = "abc";
+        const char b[:] = "abc";
+        bool got = slice::equal(a, b);
+        test::check_equal(got, true);
+    }
+    {
+        const char a[:] = "abc";
+        const char b[:] = "abd";
+        bool got = slice::equal(a, b);
+        test::check_equal(got, false);
+    }
+    {
+        const char a[:] = "abc";
+        const char b[:] = "ab";
+        bool got = slice::equal(a, b);
+        test::check_equal(got, false);
+    }
+    {
+        const char x[:] = "x";
+        const char a[:] = x[0:0];
+        const char b[:] = x[0:0];
+        bool got = slice::equal(a, b);
+        test::check_equal(got, true);
+    }
+}
+
+export void test_compare() {
+    {
+        const char a[:] = "abc";
+        const char b[:] = "abc";
+        i32 got = slice::compare(a, b);
+        test::check_equal(got, 0);
+    }
+    {
+        const char a[:] = "abc";
+        const char b[:] = "abd";
+        i32 got = slice::compare(a, b);
+        test::check_equal(got, -1);
+    }
+    {
+        const char a[:] = "b";
+        const char b[:] = "abc";
+        i32 got = slice::compare(a, b);
+        test::check_equal(got, 1);
+    }
+    {
+        const char a[:] = "abc";
+        const char b[:] = "ab";
+        i32 got = slice::compare(a, b);
+        test::check_equal(got, 1);
+    }
+    {
+        const char a[:] = "abc";
+        const char b[:] = "abcd";
+        i32 got = slice::compare(a, b);
+        test::check_equal(got, -1);
+    }
+}
+
+export void test_starts_with() {
+    {
+        const char a[:] = "hello";
+        const char b[:] = "he";
+        bool got = slice::starts_with(a, b);
+        test::check_equal(got, true);
+    }
+    {
+        const char a[:] = "hello";
+        const char b[:] = "lo";
+        bool got = slice::starts_with(a, b);
+        test::check_equal(got, false);
+    }
+    {
+        const char a[:] = "lo";
+        const char b[:] = "hello";
+        bool got = slice::starts_with(a, b);
+        test::check_equal(got, false);
+    }
+    {
+        const char a[:] = "hello";
+        const char x[:] = "x";
+        const char b[:] = x[0:0];
+        bool got = slice::starts_with(a, b);
+        test::check_equal(got, true);
+    }
+}
+
+export void test_ends_with() {
+    {
+        const char a[:] = "hello";
+        const char b[:] = "lo";
+        bool got = slice::ends_with(a, b);
+        test::check_equal(got, true);
+    }
+    {
+        const char a[:] = "hello";
+        const char b[:] = "he";
+        bool got = slice::ends_with(a, b);
+        test::check_equal(got, false);
+    }
+    {
+        const char a[:] = "lo";
+        const char b[:] = "hello";
+        bool got = slice::ends_with(a, b);
+        test::check_equal(got, false);
+    }
+}
+
+export void test_find() {
+    const char text[:] = "a=b=c";
+    const char plain[:] = "abc";
+    Index first = slice::find(text, '=');
+    Index last = slice::find_last(text, '=');
+    Index none = slice::find(plain, '=');
+    bool found = first == .some;
+    bool missing = none == .none;
+    usize two = slice::count(text, '=');
+    test::check_equal(found, true);
+    if (first == .some) test::check_equal(first.some, 1);
+    if (last == .some) test::check_equal(last.some, 3);
+    bool has_last = last == .some;
+    test::check_equal(has_last, true);
+    test::check_equal(missing, true);
+    test::check_equal(two, 2);
+    i32 numbers[4] = {5, 6, 7, 6};
+    i32 view[:] = numbers;
+    Index at = slice::find(view, 7);
+    if (at == .some) test::check_equal(at.some, 2);
+}
+
+export void test_fill_reverse() {
+    i32 a[4] = {1, 2, 3, 4};
+    i32 view[:] = a;
+    slice::reverse(view);
+    test::check_equal(a[0], 4);
+    test::check_equal(a[3], 1);
+    slice::fill(view, 9);
+    test::check_equal(a[2], 9);
+}
+
+export void test_ascii() {
+    test::check_equal(ascii::space(' '), true);
+    test::check_equal(ascii::space('\n'), true);
+    test::check_equal(ascii::space('a'), false);
+    test::check_equal(ascii::digit('7'), true);
+    test::check_equal(ascii::digit('x'), false);
+    test::check_equal(ascii::alpha('Q'), true);
+    test::check_equal(ascii::alpha('1'), false);
+}

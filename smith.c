@@ -1079,6 +1079,13 @@ static constexpr unsigned char smith_mem_source[] = {
 #embed "lib/smith/mem.smith"
 };
 
+static constexpr unsigned char smith_ascii_source[] = {
+#embed "lib/smith/ascii.smith"
+};
+static constexpr unsigned char smith_slice_source[] = {
+#embed "lib/smith/slice.smith"
+};
+
 static constexpr unsigned char smith_handlers_header[] = {
 #embed "include/smith/handlers.h"
 };
@@ -1136,6 +1143,7 @@ typedef struct {
 // clang-format off
 static const SmithLibrary smith_libraries[] = {
     SMITH_LIBRARY(arena, true),
+    SMITH_LIBRARY(ascii, true),
     SMITH_LIBRARY(autodiff, true),
     SMITH_LIBRARY(clock, true),
     SMITH_LIBRARY(console, true),
@@ -1152,6 +1160,7 @@ static const SmithLibrary smith_libraries[] = {
     SMITH_LIBRARY(mem, true),
     SMITH_LIBRARY(process, true),
     SMITH_LIBRARY_FLAGS(random, true, "-ffp-contract=off\n"),
+    SMITH_LIBRARY(slice, true),
     SMITH_LIBRARY(test, true),
     SMITH_LIBRARY(text, true),
     SMITH_LIBRARY(trace, false),
