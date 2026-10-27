@@ -31,8 +31,21 @@ void build(SmithBuild *b) {
         .flags = flags,
     };
     smith_object(b, &http);
+    // runtime/lsp_text.smith and runtime/lsp_json.smith are modules of smith itself and not libraries (the language
+    // server's layer stands on them), so tests/lsp_layer_test.smith reaches them here, from the same repository.
+    const char *const lsp_modules[] = {"lsp_text", "lsp_json"};
+    SmithObject lsp[2] = {};
+    for (size_t i = 0; i < sizeof lsp_modules / sizeof lsp_modules[0]; i++) {
+        lsp[i] = (SmithObject){
+            .compiler = "smith-cc",
+            .source = smith_fmt(b, "%s/runtime/%s.smith", repo != nullptr ? repo : "..", lsp_modules[i]),
+            .output = smith_fmt(b, "build/tests_objects/%s.o", lsp_modules[i]),
+            .flags = flags,
+        };
+        smith_object(b, &lsp[i]);
+    }
     SmithTests tests = {
-        .objects = (const SmithObject *[]){&http, nullptr},
+        .objects = (const SmithObject *[]){&http, &lsp[0], &lsp[1], nullptr},
         .sources =
             smith_glob(b, smith_list(b, "lib/smith/*_test.smith", "lib/*_test.smith", "tests/*_test.smith",
                                      "tests/scratch.smith", "tests/runner.smith", "tests/prove_cases.smith", nullptr)),

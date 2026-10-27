@@ -1,0 +1,111 @@
+// Tests of what the language server's layer (runtime/lsp*.smith) stands on and can be tested without a server: the
+// text toolbox and the JSON tree it edits. The layer as a whole, with clangd, is tests/lsp_test.smith.
+module lsp_layer_test;
+
+import smith::arena;
+import smith::test;
+import runtime::lsp_json;
+import runtime::lsp_text;
+
+typedef lsp_json::Node Node;
+
+// Whether the text is the characters.
+static bool is(lsp_text::Text text, lsp_text::Text expected) {
+    return lsp_text::equal(text, expected);
+}
+
+export void test_lsp_text_finds_what_it_is_asked_for() {
+    lsp_text::Text text = "a::b::c";
+    lsp_text::Index first = lsp_text::find(text, "::");
+    lsp_text::Index last = lsp_text::find_last(text, "::");
+    lsp_text::Index missing = lsp_text::find(text, "x");
+    lsp_text::Index after = lsp_text::find_from(text, "::", 2);
+    lsp_text::Index letter = lsp_text::find_char(text, 'c', 0);
+    lsp_text::Index colon = lsp_text::find_last_char(text, ':');
+    test::check_condition(first == .some && first.some == 1);
+    test::check_condition(last == .some && last.some == 4);
+    test::check_condition(missing != .some);
+    test::check_condition(after == .some && after.some == 4);
+    test::check_condition(letter == .some && letter.some == 6);
+    test::check_condition(colon == .some && colon.some == 5);
+    test::check_condition(lsp_text::starts_with(text, "a::"));
+    test::check_condition(lsp_text::ends_with(text, "::c"));
+    test::check_condition(!lsp_text::ends_with("c", "::c"));
+    test::check_condition(lsp_text::contains(text, "b::c"));
+    lsp_text::Text nothing = {};
+    test::check_condition(lsp_text::contains(text, nothing));
+}
+
+export void test_lsp_text_trims_and_orders() {
+    test::check_condition(is(lsp_text::trim("  \t x y \n"), "x y"));
+    test::check_condition(is(lsp_text::front("abcdef", 3), "abc"));
+    test::check_condition(is(lsp_text::drop("abcdef", 4), "ef"));
+    test::check_condition(is(lsp_text::front("ab", 9), "ab"));
+    test::check_condition(lsp_text::compare("a", "b") < 0);
+    test::check_condition(lsp_text::compare("b", "a") > 0);
+    test::check_condition(lsp_text::compare("ab", "a") > 0);
+    test::check_condition(lsp_text::compare("ab", "ab") == 0);
+    test::check_equal(lsp_text::leading_integer(" 42x"), 42);
+    test::check_equal(lsp_text::leading_integer("-7"), -7);
+    test::check_equal(lsp_text::leading_integer("x"), 0);
+}
+
+export void test_lsp_text_builder_grows() {
+    arena::Arena memory = test::memory(1 << 16);
+    lsp_text::Builder out = lsp_text::builder(&memory, 4);
+    for (usize i = 0; i < 100; i++) {
+        lsp_text::append(&out, "ab");
+        lsp_text::append_char(&out, '-');
+    }
+    lsp_text::append_i64(&out, -1234);
+    test::check_equal(out.length, 305);
+    test::check_condition(lsp_text::ends_with(lsp_text::view(&out), "ab--1234"));
+    lsp_text::shrink(&out, 5);
+    test::check_condition(lsp_text::ends_with(lsp_text::view(&out), "ab-"));
+}
+
+export void test_lsp_json_round_trips_a_message() {
+    arena::Arena memory = test::memory(1 << 16);
+    lsp_text::Text message = "{\"id\":1,\"jsonrpc\":\"2.0\",\"result\":[true,null,\"x\\n\",2.5,{\"a\":[]}]}";
+    Node *tree = lsp_json::parse(&memory, message);
+    test::check_condition(tree != nullptr);
+    test::check_condition(is(lsp_json::write(&memory, tree), message));
+    test::check_equal(lsp_json::member_integer(tree, "id", -1), 1);
+    test::check_condition(is(lsp_json::member_text(tree, "jsonrpc"), "2.0"));
+    Node *result = lsp_json::get_array(tree, "result");
+    test::check_condition(result != nullptr);
+    test::check_equal(result->count, 5);
+    test::check_condition(is(lsp_json::text_or(result->items[2], "no"), "x\n"));
+    test::check_condition(is(lsp_json::text_or(result->items[0], "no"), "no"));
+    test::check_condition(lsp_json::get(tree, "missing") == nullptr);
+    test::check_condition(lsp_json::get_object(tree, "id") == nullptr);
+}
+
+export void test_lsp_json_refuses_what_is_not_json() {
+    arena::Arena memory = test::memory(1 << 16);
+    test::check_condition(lsp_json::parse(&memory, "{") == nullptr);
+    test::check_condition(lsp_json::parse(&memory, "[1,]") == nullptr);
+    test::check_condition(lsp_json::parse(&memory, "{\"a\":1} x") == nullptr);
+    lsp_text::Text nothing = {};
+    test::check_condition(lsp_json::parse(&memory, nothing) == nullptr);
+}
+
+export void test_lsp_json_edits_a_tree() {
+    arena::Arena memory = test::memory(1 << 16);
+    Node *tree = lsp_json::parse(&memory, "{\"name\":\"geometry_box_area\",\"list\":[1,2,3,4],\"drop\":true}");
+    test::check_condition(tree != nullptr);
+    Node *name = lsp_json::get(tree, "name");
+    lsp_json::set_text(name, "box::area");
+    lsp_json::remove(tree, "drop");
+    Node *list = lsp_json::get_array(tree, "list");
+    bool kept[4] = {true, false, true, false};
+    bool kept_slice[:] = kept;
+    lsp_json::keep(list, kept_slice);
+    lsp_json::set_integer(&memory, list->items[1], 30);
+    lsp_json::add(&memory, tree, "extra", lsp_json::string(&memory, "a\"b"));
+    lsp_json::Node *answer = lsp_json::object(&memory);
+    lsp_json::add(&memory, answer, "ok", lsp_json::boolean(&memory, false));
+    lsp_json::set(&memory, tree, "extra", answer);
+    test::check_condition(
+        is(lsp_json::write(&memory, tree), "{\"extra\":{\"ok\":false},\"list\":[1,30],\"name\":\"box::area\"}"));
+}
