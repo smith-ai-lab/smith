@@ -11,6 +11,7 @@ compile_commands.json
 /include/smith/contract.h
 /include/smith/files.h
 /include/smith/entropy.h
+/include/smith/task.h
 /include/smith/env.h
 /include/smith/console.h
 /include/smith/clock.h

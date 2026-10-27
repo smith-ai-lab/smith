@@ -129,6 +129,10 @@ export void test_the_entropy_header_compiles_alone(io::Io *io) {
     generated(io, "entropy");
 }
 
+export void test_the_task_header_compiles_alone(io::Io *io) {
+    generated(io, "task");
+}
+
 export void test_the_env_header_compiles_alone(io::Io *io) {
     generated(io, "env");
 }

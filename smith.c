@@ -759,7 +759,9 @@ bool smith_effects_summary_path(const char *object, char *out, size_t capacity) 
     return written > 0 && (size_t)written < capacity;
 }
 
-constexpr size_t smith_effects_files_max = 128;
+// The objects of one link whose summaries the program's check reads; one past it is not read, and a function that only
+// that object defines looks like code with no source (the test runner links more than 128).
+constexpr size_t smith_effects_files_max = 512;
 
 // Whether a path is in the folder of temporary files (the objects clang makes for `smith cc a.c b.c -o p` are there,
 // with their summaries beside them, and are removed after the link).
@@ -1097,6 +1099,9 @@ static constexpr unsigned char smith_categorical_source[] = {
 static constexpr unsigned char smith_slice_source[] = {
 #embed "lib/smith/slice.smith"
 };
+static constexpr unsigned char smith_task_source[] = {
+#embed "lib/smith/task.smith"
+};
 
 static constexpr unsigned char smith_handlers_header[] = {
 #embed "include/smith/handlers.h"
@@ -1176,6 +1181,7 @@ static const SmithLibrary smith_libraries[] = {
     SMITH_LIBRARY(net, true),
     SMITH_LIBRARY_FLAGS(random, true, "-ffp-contract=off\n"),
     SMITH_LIBRARY(slice, true),
+    SMITH_LIBRARY(task, true),
     SMITH_LIBRARY(test, true),
     SMITH_LIBRARY(text, true),
     SMITH_LIBRARY(trace, false),

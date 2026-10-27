@@ -547,6 +547,7 @@ static const char *const build_smith_inputs[] = {
     "lib/smith/option.smith",
     "lib/smith/result.smith",
     "lib/smith/slice.smith",
+    "lib/smith/task.smith",
     "lib/smith/categorical.smith",
     "lib/smith/ascii.smith",
     "lib/smith/text.smith",
@@ -804,6 +805,7 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
     smith_compile_command(b, config->cc, "lib/smith/clock.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/console.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/entropy.smith", smith_flags);
+    smith_compile_command(b, config->cc, "lib/smith/task.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/env.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/math.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/mem.smith", smith_flags);
