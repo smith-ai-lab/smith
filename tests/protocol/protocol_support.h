@@ -1,4 +1,4 @@
-// What the generated protocol tests (tests/protocol/test_protocol_dap.c and _mcp.c) share: a writer with room for any
+// What the generated protocol tests (.smith/protocol/test_protocol_dap.c and _mcp.c) share: a writer with room for any
 // random value, the checks on a parse that failed or should have, and a tree with one member cut out.
 #pragma once
 
