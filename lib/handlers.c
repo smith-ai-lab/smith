@@ -189,6 +189,7 @@ SmithEntropyHandler *smith_handlers_entropy(void) {
     return smith_handlers_entropy_current();
 }
 
+#ifndef SMITH_HANDLERS_TABLES_ONLY
 // A timespec as nanoseconds, and nanoseconds as a timespec; a duration too long for 64 bits is the longest one.
 static uint64_t smith_handlers_nanoseconds(const struct timespec *duration) {
     constexpr uint64_t second = 1'000'000'000;
@@ -208,6 +209,7 @@ static int smith_handlers_clock_sleep(SmithClockHandler *clock, uint64_t nanosec
     clock->sleep(clock, nanoseconds);
     return 0;
 }
+#endif // SMITH_HANDLERS_TABLES_ONLY
 
 // The network, found the same way (no libc function is interposed: smith::net calls the handler).
 static atomic_uint smith_handlers_net_active;
@@ -261,6 +263,10 @@ SmithProcessHandler *smith_handlers_process(void) {
     return smith_handlers_process_current();
 }
 
+// What follows is the interposition: the functions that send malloc, write... to the tables above. A program that only
+// needs the tables (smith itself, whose malloc is LLVM's too, and the protocol generator) compiles this file with
+// -DSMITH_HANDLERS_TABLES_ONLY and reaches the allocator through smith::mem, which asks the table itself.
+#ifndef SMITH_HANDLERS_TABLES_ONLY
 static bool smith_handlers_has(int flags, int bit) {
     return ((unsigned)flags & (unsigned)bit) != 0;
 }
@@ -1347,3 +1353,4 @@ unsigned sleep(unsigned seconds) {
     return smith_handlers_clock_sleep(clock, (uint64_t)seconds * 1'000'000'000U) == 0 ? 0 : seconds;
 }
 #endif
+#endif // SMITH_HANDLERS_TABLES_ONLY

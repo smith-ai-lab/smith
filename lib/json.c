@@ -1,6 +1,7 @@
 #include <smith/json.h>
 
 #include <smith/contract.h>
+#include <smith/mem.h>
 #include <smith/trace.h>
 #include <stdint.h>
 
@@ -536,11 +537,11 @@ static struct smith_array_const_char_n smith_json_decode_into(const SmithJsonRea
     return (struct smith_array_const_char_n){.data = destination, .count = {used}};
 }
 
-struct smith_array_const_char_n smith_json_decode(const SmithJsonReader *reader, SmithArena *arena) {
+struct smith_array_const_char_n smith_json_decode(const SmithJsonReader *reader) {
     smith_trusted(); // its loops run over the input, which has no bound a proof can use
     smith_requires(reader->token == SmithJsonToken_String || reader->token == SmithJsonToken_Key);
     if (!reader->escaped) return reader->text;
-    char *destination = smith_arena_push(arena, reader->length + 1, 1);
+    char *destination = smith_mem_alloc(reader->length + 1, 1);
     return smith_json_decode_into(reader, destination);
 }
 
@@ -682,9 +683,9 @@ static void smith_json_build_token(SmithJsonBuild *build, const SmithJsonReader 
     }
 }
 
-// Pushes the one block the tree needs (the nodes, the arrays of children, the decoded strings). An arena that cannot
-// hold it stops the program with the arena's own report, as any push does.
-static void smith_json_build_make(SmithJsonBuild *build, SmithArena *arena, SmithJsonSize size) {
+// Takes the one block the tree needs (the nodes, the arrays of children, the decoded strings) from the current
+// allocator, which never returns null: one that refuses stops the program with its report, as any allocation does.
+static void smith_json_build_make(SmithJsonBuild *build, SmithJsonSize size) {
     size_t pool_count = size.values > 0 ? size.values - 1 : 0;
     size_t node_bytes = size.values * sizeof(SmithJsonValue);
     size_t pool_bytes = pool_count * sizeof(SmithJsonValue *);
@@ -695,18 +696,18 @@ static void smith_json_build_make(SmithJsonBuild *build, SmithArena *arena, Smit
     static_assert(sizeof(SmithJsonValue) % alignof(SmithJsonValue) == 0 &&
                   sizeof(SmithJsonValue *) % alignof(SmithJsonValue) == 0);
     size_t total = node_bytes + pool_bytes + size.bytes;
-    unsigned char *block = smith_arena_push(arena, total, alignof(SmithJsonValue));
+    unsigned char *block = smith_mem_alloc(total, alignof(SmithJsonValue));
     build->nodes = (SmithJsonValue *)(void *)block;
     build->pool = (const SmithJsonValue **)(void *)(block + node_bytes);
     build->bytes = (char *)(block + node_bytes + pool_bytes);
 }
 
-bool smith_json_parse(SmithArena *arena, struct smith_array_const_char_n input, SmithJsonLimits limits,
-                      const SmithJsonValue **root, SmithJsonError *error) {
+bool smith_json_parse(struct smith_array_const_char_n input, SmithJsonLimits limits, const SmithJsonValue **root,
+                      SmithJsonError *error) {
     SmithJsonSize size = {};
     if (!smith_json_measure(input, limits, &size, error)) return false;
     SmithJsonBuild build = {};
-    smith_json_build_make(&build, arena, size);
+    smith_json_build_make(&build, size);
     SmithJsonReader reader = smith_json_reader_make(input, limits);
     for (SmithJsonToken token = smith_json_read(&reader); token != SmithJsonToken_End;
          token = smith_json_read(&reader)) {

@@ -8,11 +8,12 @@
 //   SmithJsonReader reader = smith_json_reader_make(input, limits);
 //   while (smith_json_read(&reader) != SmithJsonToken_End) { ... }
 //
-// and smith_json_parse builds a tree in an arena on top of it, for callers that want random access:
+// and smith_json_parse builds a tree through the current allocator (<smith/mem.h>) on top of it, for callers that want
+// random access:
 //
 //   const SmithJsonValue *root;
 //   SmithJsonError error;
-//   if (!smith_json_parse(&arena, input, limits, &root, &error)) { ...error.offset, smith_json_reason_text(...) }
+//   if (!smith_json_parse(input, limits, &root, &error)) { ...error.offset, smith_json_reason_text(...) }
 //
 // Both refuse what RFC 8259 refuses, and a few things it permits that no UTF-8 text can hold: a lone surrogate escape,
 // and a byte order mark. A bad document is a value: a byte offset and a reason, never an exit. Strings are decoded
@@ -23,7 +24,6 @@
 // stickily) on data it cannot write, and stops on a call that cannot be right.
 #pragma once
 
-#include <smith/arena.h>
 #include <smith/text.h>
 
 #include <stddef.h>
@@ -110,11 +110,11 @@ SmithJsonToken smith_json_read(SmithJsonReader *reader);
 // array (a Key's value is not part of it: read the value, then skip it). Returns false at an error.
 [[nodiscard]] bool smith_json_skip(SmithJsonReader *reader);
 
-// The decoded text of the last Key or String. When it holds no escape it is the input itself; otherwise it is pushed
-// into the arena (length bytes, and a terminating zero that length does not count).
-[[nodiscard]] struct smith_array_const_char_n smith_json_decode(const SmithJsonReader *reader, SmithArena *arena);
+// The decoded text of the last Key or String. When it holds no escape it is the input itself; otherwise it is taken
+// from the current allocator (length bytes, and a terminating zero that length does not count).
+[[nodiscard]] struct smith_array_const_char_n smith_json_decode(const SmithJsonReader *reader);
 
-// Whether the last Key or String, decoded, is exactly the terminated string. Needs no arena.
+// Whether the last Key or String, decoded, is exactly the terminated string. Needs no allocation.
 [[nodiscard]] bool smith_json_is(const SmithJsonReader *reader, const char *string);
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -141,11 +141,12 @@ struct SmithJsonValue {
     size_t span;                          // values in it, itself and everything inside included
 };
 
-// Parses a whole document into the arena. The input must outlive the tree (strings without escapes and numbers point
-// into it); the tree lives as long as the arena. Returns false, and writes only *error, for a document that is invalid
-// or over a limit. A tree the arena cannot hold stops the program with the arena's report (its push), as any push does.
-// Duplicate keys are kept.
-[[nodiscard]] bool smith_json_parse(SmithArena *arena, struct smith_array_const_char_n input, SmithJsonLimits limits,
+// Parses a whole document into one block from the current allocator (smith_mem_alloc). The input must outlive the tree
+// (strings without escapes and numbers point into it); the tree lives as long as the block: there is no free, so the
+// caller's region (an arena installed with smith_mem_set_allocator) is reset. Returns false, and writes only *error,
+// for a document that is invalid or over a limit. A tree the allocator refuses stops the program with its report, as
+// any allocation does. Duplicate keys are kept.
+[[nodiscard]] bool smith_json_parse(struct smith_array_const_char_n input, SmithJsonLimits limits,
                                     const SmithJsonValue **root, SmithJsonError *error);
 
 // The value of the named member of an object (the last, if the key repeats), or nullptr.

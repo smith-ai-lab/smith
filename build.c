@@ -25,6 +25,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "scripts/linked_libraries.h"
+
 // Everything the targets share.
 typedef struct BuildPlatform BuildPlatform;
 
@@ -170,15 +172,19 @@ static const BuildProtocol build_protocols[] = {
 constexpr size_t build_protocol_count = sizeof build_protocols / sizeof build_protocols[0];
 
 // The generator is a program of smith's own C (scripts/protocol.c, on lib/json.c), built here and not shipped: like
-// scripts/pack.c, a tool of the build. arena, contract and text are the modules of smith, compiled from their sources.
+// scripts/pack.c, a tool of the build. arena, contract, math, mem, random and text are the modules of smith, compiled
+// from their sources; smith_program links the handlers into it as into any program, which json reaches the allocator
+// through.
 // Returns the program's step.
 static SmithStep build_protocol_program(SmithBuild *b, const BuildConfig *config, const char *folder) {
     const char *const sources[] = {
-        "scripts/protocol.c", "lib/smith/arena.smith", "lib/smith/contract.smith", "lib/smith/text.smith", "lib/json.c",
+        "scripts/protocol.c",  "lib/smith/arena.smith",  "lib/smith/contract.smith", "lib/smith/math.smith",
+        "lib/smith/mem.smith", "lib/smith/random.smith", "lib/smith/text.smith",     "lib/json.c",
         "lib/trace.c"};
-    SmithObject objects[6] = {};
-    const SmithObject *linked[7] = {};
-    for (size_t i = 0; i < 6; i++) {
+    constexpr size_t count = sizeof sources / sizeof sources[0];
+    SmithObject objects[count] = {};
+    const SmithObject *linked[count + 1] = {};
+    for (size_t i = 0; i < count; i++) {
         objects[i] = (SmithObject){
             .compiler = config->cc,
             .source = sources[i],
@@ -195,9 +201,6 @@ static SmithStep build_protocol_program(SmithBuild *b, const BuildConfig *config
     return program.step;
 }
 
-// The steps that write .smith/protocol/<name>.[ch], LICENSE-<name>.txt and test_protocol_<name>.c from the vendored
-// schema; returns their outputs, which smith.c and the tests that include the code wait for. The generator writes a
-// file only when its bytes change, so a build that regenerates nothing rebuilds nothing.
 static const char *const *build_protocol_steps(SmithBuild *b, const BuildConfig *config, const char *folder) {
     SmithStep program = build_protocol_program(b, config, folder);
     const char *const *outputs = smith_list(b, nullptr);
@@ -225,11 +228,12 @@ static const char *const *build_protocol_steps(SmithBuild *b, const BuildConfig 
 // The headers of the libraries written in .smith (lib/smith/<name>.smith, the module smith::<name>) and of smith::build
 // are build outputs, never committed (knowledge/smith-module-headers.md): `.smith/include/smith/<name>.h`, written by
 // the smith that compiles smith (CC, the previous release: the lag rule) from the module's source. A module that a
-// smith_object compiles (build_linked_libraries) has its header step from smith_object; the others are made here, and
+// smith_object compiles (smith_linked_libraries) has its header step from smith_object; the others are made here, and
 // are inputs of smith.c, which includes them. The installed smith writes the headers of its own embedded sources
 // first (`smith build` does, before this file runs), so a first build has them for build.c itself.
-static const char *const build_header_modules[] = {"ascii",  "autodiff", "build", "categorical", "effects", "failing",
-                                                   "format", "math",     "mem",   "slice",       "test",    nullptr};
+static const char *const build_header_modules[] = {"ascii",   "autodiff", "build", "categorical",
+                                                   "effects", "failing",  "slice", "test",
+                                                   nullptr};
 
 // The compiler's own file, which a header step lists as an input: it is the smith that writes the header.
 static const char *build_compiler_file(SmithBuild *b, const BuildConfig *config) {
@@ -598,9 +602,7 @@ static const char *const build_smith_inputs[] = {
 // (the C++ inline functions and templates of LLVM, 57,000 of them) that the executable exports is bound by dyld at
 // every start against every image loaded, which cost 4 ms in the smith without lldb, and 9 ms more with the frameworks
 // lldb loads.
-// The libraries smith links, .smith modules compiled by the smith that runs this build (smith.c and the runtime see
-// only their headers); text is its own object beside them.
-static const char *const build_linked_libraries[] = {"arena", "contract", "inflate", "io", "random", "text"};
+// The libraries smith links are scripts/linked_libraries.h's list, shared with the Linux seed.
 
 // The step that stops the build when the LLVM install is not there, and says what to run: an input of what links it.
 // Only the default target runs it, so `smith build llvm` works on a smith with no LLVM install.
@@ -643,19 +645,28 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
     smith_object(b, &object);
     SmithObject commit = build_commit_object(b, config, folder);
     BuildShims shims = {};
-    SmithObject libraries[sizeof build_linked_libraries / sizeof build_linked_libraries[0]] = {};
+    SmithObject libraries[sizeof smith_linked_libraries / sizeof smith_linked_libraries[0]] = {};
     const SmithObject *objects[40] = {&object, &commit};
     size_t count = 2;
     for (size_t i = 0; i < sizeof libraries / sizeof libraries[0]; i++) {
         libraries[i] = (SmithObject){
             .compiler = config->cc,
-            .source = smith_fmt(b, "lib/smith/%s.smith", build_linked_libraries[i]),
-            .output = smith_fmt(b, "%s/%s.o", folder, build_linked_libraries[i]),
+            .source = smith_fmt(b, "lib/smith/%s.smith", smith_linked_libraries[i]),
+            .output = smith_fmt(b, "%s/%s.o", folder, smith_linked_libraries[i]),
             .flags = flags,
         };
         smith_object(b, &libraries[i]);
         objects[count++] = &libraries[i];
     }
+    // The tables of the handlers, which smith::mem reads (not the interposition: smith's malloc stays the system's).
+    SmithObject handlers = {
+        .compiler = config->cc,
+        .source = smith_linked_handlers_source,
+        .output = smith_fmt(b, "%s/handlers_tables.o", folder),
+        .flags = smith_cat(b, flags, smith_list(b, smith_linked_handlers_flag, nullptr), nullptr),
+    };
+    smith_object(b, &handlers);
+    objects[count++] = &handlers;
     build_shims(b, config, folder, pack, &shims, objects + count);
     SmithProgram program = {
         .linker = config->cc,

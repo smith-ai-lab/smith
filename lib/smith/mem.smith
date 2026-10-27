@@ -46,6 +46,10 @@ import <unistd.h>; // write: the reports of mem::checked
     contract::requires(align > 0 && (align & (align - 1)) == 0);
     usize bytes = size;
     if (bytes == 0) bytes = 1; // malloc(0) may be null, which would read as a refusal
+    // The allocator in force is asked here, not through `malloc`: a program that links only the tables of the handlers
+    // (smith itself) has no interposed malloc, and one that links them all reaches the same allocator either way.
+    Allocator *current = c::smith_handlers_allocator();
+    if (current != nullptr) return current->alloc(current, bytes, align);
     // NOLINTBEGIN(smith-effects): the allocator is the edge: these are the calls the handlers of the thread answer
     if (align <= 16) return c::malloc(bytes);
     void *memory = nullptr;
@@ -83,6 +87,11 @@ const char *allocator_name(const Allocator *allocator);
 // Gives memory back to the allocator it came from (a block of any other goes to the system's; null is nothing).
 [[smith::c_name("smith_mem_free")]] export void free(void *block) {
     contract::trusted();
+    Allocator *current = c::smith_handlers_allocator();
+    if (current != nullptr && block != nullptr && current->owns(current, block)) {
+        current->free(current, block);
+        return;
+    }
     c::free(block); // NOLINT(smith-effects): the edge, as try_alloc_raw
 }
 

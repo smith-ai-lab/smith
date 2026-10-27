@@ -36,6 +36,23 @@ static typeof(const char[:]) test_json_text(const char *string) {
     return text::make(string);
 }
 
+// json takes its tree from the allocator in force (mem::alloc): the test puts its arena in force around the call, so
+// the arena's reset is the free and the runner's leak check sees nothing.
+static bool test_json_parse(arena::Arena *arena, typeof(const char[:]) input, c::SmithJsonLimits limits,
+                            const c::SmithJsonValue **root, c::SmithJsonError *error) {
+    arena::ArenaAllocator allocator = arena::allocator(arena);
+    mem::Allocator *before = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(before);
+    return c::smith_json_parse(input, limits, root, error);
+}
+
+static typeof(const char[:]) test_json_decode(const c::SmithJsonReader *reader, arena::Arena *arena) {
+    arena::ArenaAllocator allocator = arena::allocator(arena);
+    mem::Allocator *before = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(before);
+    return c::smith_json_decode(reader);
+}
+
 // The next key of a stream: `stream` moves on (the reassignment pattern) and the key returned is for one use.
 static random::Key take(random::Key *stream) {
     random::Key next[2];
@@ -144,7 +161,7 @@ static void test_json_check_errors(const TestJsonError *cases, usize count) {
         const c::SmithJsonValue *root = nullptr;
         c::SmithJsonError error = {};
         const char input[:] = cases[i].input[0:c::strlen(cases[i].input)];
-        test::check(!c::smith_json_parse(&arena, input, test_json_wide, &root, &error));
+        test::check(!test_json_parse(&arena, input, test_json_wide, &root, &error));
         test::check(error.reason == cases[i].reason);
         test::check_equal(error.offset, cases[i].offset);
         test::check_equal(arena.used, 0);
@@ -294,7 +311,7 @@ export void test_json_accepts_the_grammar() {
         test::note("input \"%s\"", good[i]);
         const c::SmithJsonValue *root = nullptr;
         c::SmithJsonError error = {};
-        test::check(c::smith_json_parse(&arena, test_json_text(good[i]), test_json_wide, &root, &error));
+        test::check(test_json_parse(&arena, test_json_text(good[i]), test_json_wide, &root, &error));
         test::check(root != nullptr);
     }
 }
@@ -305,7 +322,7 @@ export void test_json_accepts_the_grammar() {
 static typeof(const char[:]) test_json_only_string(arena::Arena *arena, const char *document) {
     const c::SmithJsonValue *root = nullptr;
     c::SmithJsonError error = {};
-    test::check(c::smith_json_parse(arena, test_json_text(document), test_json_wide, &root, &error));
+    test::check(test_json_parse(arena, test_json_text(document), test_json_wide, &root, &error));
     test::check(root->kind == c::SmithJsonKind_String);
     return root->text;
 }
@@ -347,14 +364,14 @@ export void test_json_reader_decodes_into_the_arena() {
     test::check(c::smith_json_read(&reader) == c::SmithJsonToken_ArrayBegin);
     test::check(c::smith_json_read(&reader) == c::SmithJsonToken_String);
     usize before = arena.used;
-    const char first[:] = c::smith_json_decode(&reader, &arena);
+    const char first[:] = test_json_decode(&reader, &arena);
     test::check_greater(arena.used, before);
     test::check_equal(countof(first), 3);
     const char tabbed[:] = "x\ty";
     test::check_condition(mem::equal(first, tabbed));
     test::check(c::smith_json_read(&reader) == c::SmithJsonToken_String);
     before = arena.used;
-    const char second[:] = c::smith_json_decode(&reader, &arena);
+    const char second[:] = test_json_decode(&reader, &arena);
     test::check_equal(arena.used, before); // nothing to decode: nothing pushed
     test::check(text::is(second, "plain"));
 }
@@ -366,7 +383,7 @@ static const c::SmithJsonValue *test_json_parse_ok(arena::Arena *arena, const ch
     const c::SmithJsonValue *root = nullptr;
     c::SmithJsonError error = {};
     test::note("document %s", document);
-    test::check(c::smith_json_parse(arena, test_json_text(document), test_json_wide, &root, &error));
+    test::check(test_json_parse(arena, test_json_text(document), test_json_wide, &root, &error));
     return root;
 }
 
@@ -404,7 +421,7 @@ export void test_json_numbers_are_exact() {
 static bool test_json_parses(const char *document, c::SmithJsonLimits limits, c::SmithJsonError *error) {
     arena::Arena arena = test::memory(1 << 16);
     const c::SmithJsonValue *root = nullptr;
-    return c::smith_json_parse(&arena, test_json_text(document), limits, &root, error);
+    return test_json_parse(&arena, test_json_text(document), limits, &root, error);
 }
 
 export void test_json_depth_limit() {
@@ -503,9 +520,25 @@ export void test_json_tree_does_not_touch_the_arena_on_failure() {
     usize used = arena.used;
     const c::SmithJsonValue *root = nullptr;
     c::SmithJsonError error = {};
-    test::check(!c::smith_json_parse(&arena, test_json_text("[1, 2, \"a\\n\", ]"), test_json_wide, &root, &error));
+    test::check(!test_json_parse(&arena, test_json_text("[1, 2, \"a\\n\", ]"), test_json_wide, &root, &error));
     test::check_equal(arena.used, used);
     test::check(root == nullptr);
+}
+
+export void test_json_parse_allocates_only_through_the_current_allocator() {
+    arena::Arena arena = test::memory(1 << 16);
+    arena::ArenaAllocator parent = arena::allocator(&arena);
+    mem::Checked checked = mem::checked(&parent.base);
+    mem::Allocator *before = mem::set_allocator(&checked.base);
+    defer mem::set_allocator(before);
+    const c::SmithJsonValue *root = nullptr;
+    c::SmithJsonError error = {};
+    test::check(c::smith_json_parse(test_json_text("[1, \"a\\n\", {\"k\": []}]"), test_json_wide, &root, &error));
+    test::check_equal(mem::checked_live(&checked), 1); // the whole tree is one block
+    test::check(arena.used > 0);                       // and the arena in force gave it
+    test::check_equal(root->count, 3);
+    mem::set_allocator(before);
+    mem::checked_release(&checked);
 }
 
 export void test_json_tree_that_does_not_fit_stops_with_the_arena_report() {
@@ -522,7 +555,7 @@ export void test_json_tree_that_does_not_fit_stops_with_the_arena_report() {
     big[used - 1] = ']';
     const c::SmithJsonValue *root = nullptr;
     c::SmithJsonError error = {};
-    (void)c::smith_json_parse(&arena, big[0:used], test_json_wide, &root, &error);
+    (void)test_json_parse(&arena, big[0:used], test_json_wide, &root, &error);
 }
 
 export void test_json_a_large_array_keeps_its_order() {
@@ -538,7 +571,7 @@ export void test_json_a_large_array_keeps_its_order() {
     const c::SmithJsonValue *root = nullptr;
     c::SmithJsonError error = {};
     c::SmithJsonLimits limits = {.depth = 2, .string_length = 1, .count = 1001};
-    test::check(c::smith_json_parse(&arena, digits[0:used], limits, &root, &error));
+    test::check(test_json_parse(&arena, digits[0:used], limits, &root, &error));
     test::check_equal(root->count, 1000);
     for (usize i = 0; i < 1000; i++) {
         u64 value = 0;
@@ -1014,7 +1047,7 @@ static void test_json_check_reader(const char input[:], const TestJsonDocument *
                    (i32)countof(input) > 600 ? 600 : (i32)countof(input), input.data);
         test::check(c::smith_json_read(&reader) == event->token);
         if (event->token == c::SmithJsonToken_Key || event->token == c::SmithJsonToken_String) {
-            const char decoded[:] = c::smith_json_decode(&reader, arena);
+            const char decoded[:] = test_json_decode(&reader, arena);
             test::check_equal(countof(decoded), event->length);
             test::check_condition(mem::equal(decoded.data[0:event->length], event->string[0:event->length]));
             if (reader.escaped) {
@@ -1106,7 +1139,7 @@ export void test_json_any_value_written_then_read_is_the_same(random::Key key) {
     test_json_check_reader(output, document, &arena);
     const c::SmithJsonValue *root = nullptr;
     c::SmithJsonError error = {};
-    test::check(c::smith_json_parse(&arena, output, test_json_wide, &root, &error));
+    test::check(test_json_parse(&arena, output, test_json_wide, &root, &error));
     test_json_check_tree(root, document);
     c::SmithJsonReader counter = c::smith_json_reader_make(output, test_json_wide);
     while (c::smith_json_read(&counter) != c::SmithJsonToken_End) {
@@ -1128,7 +1161,7 @@ export void test_json_write_value_puts_a_tree_back_as_it_was_written(random::Key
     test::check(c::smith_json_writer_finish(&writer, &output));
     const c::SmithJsonValue *root = nullptr;
     c::SmithJsonError error = {};
-    test::check(c::smith_json_parse(&arena, output, test_json_wide, &root, &error));
+    test::check(test_json_parse(&arena, output, test_json_wide, &root, &error));
     c::SmithJsonWriter again = c::smith_json_writer_make(second, size, indent);
     c::smith_json_write_value(&again, root);
     const char copy[:] = {};
@@ -1142,7 +1175,7 @@ export void test_json_write_value_keeps_numbers_and_duplicate_keys() {
     const c::SmithJsonValue *root = nullptr;
     c::SmithJsonError error = {};
     const char input[:] = test_json_text("{\"a\":1.50,\"a\":[],\"b\\u00e9\":[1e2,{},\"x\\ny\"],\"c\":null}");
-    test::check(c::smith_json_parse(&arena, input, test_json_wide, &root, &error));
+    test::check(test_json_parse(&arena, input, test_json_wide, &root, &error));
     char buffer[256];
     c::SmithJsonWriter writer = c::smith_json_writer_make(buffer, sizeof buffer, 0);
     c::smith_json_write_value(&writer, root);
@@ -1175,7 +1208,7 @@ export void test_json_any_double_round_trips_bit_for_bit(random::Key key) {
     arena::Arena arena = test::memory(1 << 12);
     const c::SmithJsonValue *root = nullptr;
     c::SmithJsonError error = {};
-    test::check(c::smith_json_parse(&arena, output, test_json_wide, &root, &error));
+    test::check(test_json_parse(&arena, output, test_json_wide, &root, &error));
     f64 back = 0;
     test::check(text::parse_f64(root->text, &back));
     test::check_same_bits(back, d);
@@ -1195,7 +1228,7 @@ export void test_json_any_integer_round_trips_exactly(random::Key key) {
     arena::Arena arena = test::memory(1 << 12);
     const c::SmithJsonValue *root = nullptr;
     c::SmithJsonError error = {};
-    test::check(c::smith_json_parse(&arena, output, test_json_wide, &root, &error));
+    test::check(test_json_parse(&arena, output, test_json_wide, &root, &error));
     u64 u = 0;
     i64 i = 0;
     test::check(text::parse_u64(root->items[0]->text, &u));
@@ -1261,7 +1294,7 @@ static void test_json_judge(arena::Arena *arena, const char *bytes, usize length
         test::check_less_equal(steps, length + 2); // each token takes a byte: no hang
         if (token == c::SmithJsonToken_Key || token == c::SmithJsonToken_String) {
             arena::Scope decoding = arena::scope_begin(arena);
-            const char decoded[:] = c::smith_json_decode(&reader, arena);
+            const char decoded[:] = test_json_decode(&reader, arena);
             test::check_equal(countof(decoded), reader.length);
             test::check_less_equal(countof(decoded), limits.string_length);
             arena::scope_end(decoding);
@@ -1270,7 +1303,7 @@ static void test_json_judge(arena::Arena *arena, const char *bytes, usize length
     const c::SmithJsonValue *root = nullptr;
     c::SmithJsonError error = {};
     arena::Scope scope = arena::scope_begin(arena);
-    bool parsed = c::smith_json_parse(arena, input, limits, &root, &error);
+    bool parsed = test_json_parse(arena, input, limits, &root, &error);
     test::check(parsed == (token == c::SmithJsonToken_End));
     if (parsed) {
         test::check_equal(root->span, reader.values);
@@ -1385,7 +1418,7 @@ static bool test_json_suite_accepts(arena::Arena *arena, const char bytes[:]) {
     arena::Scope scope = arena::scope_begin(arena);
     const c::SmithJsonValue *root = nullptr;
     c::SmithJsonError error = {};
-    bool accepted = c::smith_json_parse(arena, bytes, limits, &root, &error);
+    bool accepted = test_json_parse(arena, bytes, limits, &root, &error);
     c::SmithJsonReader reader = c::smith_json_reader_make(bytes, limits);
     c::SmithJsonToken token = c::SmithJsonToken_Null;
     while (token != c::SmithJsonToken_Error && token != c::SmithJsonToken_End) {

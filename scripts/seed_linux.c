@@ -12,9 +12,9 @@
 //   2. the libraries' headers, which are build outputs and not in git: scripts/header_tool.c, the writer of
 //      `smith cc --smith-header` as a program of its own, built with this compiler and run on lib/smith/*.smith;
 //   3. stage A: smith.c without `smith mcp` (no -DSMITH_MCP: the protocol code does not exist yet), its shims and that
-//      LLVM, linked with weak stand-ins for the six libraries, which are .smith and need a smith to compile. Stage A
+//      LLVM, linked with weak stand-ins for the libraries, which are .smith and need a smith to compile. Stage A
 //      has clang and the token hook, so it compiles .smith; any call into a stand-in stops it with a message;
-//   4. the six libraries, compiled by stage A, and the protocol code (DAP's and MCP's, which are build outputs and not
+//   4. the libraries, compiled by stage A, and the protocol code (DAP's and MCP's, which are build outputs and not
 //      in git): scripts/protocol.c, built with stage A's smith-cc and the libraries, run on schemas/;
 //   5. stage B: smith.c again, now with `smith mcp` and the protocol code, linked with the libraries, a whole smith,
 //      which then runs `smith build` with the arguments given, as stage0's release would.
@@ -28,6 +28,8 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "linked_libraries.h" // the libraries smith links: build.c includes the same file
+
 #include "sha256.h"
 
 extern char **environ;
@@ -39,9 +41,9 @@ constexpr size_t text_max = 1 << 20;   // a header's first lines, or the identit
 static const char llvm_url[] =
     "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.3/llvm-project-23.1.3.src.tar.xz";
 static const char llvm_sha256[] = "c44186a7762ed28954be72e5ff6df9808e0779d4f1bf014ecc4e7e211d31ee34";
-static const char *const libraries[] = {"arena", "contract", "inflate", "io", "random", "text"}; // build.c's list
+static const char *const *const libraries = smith_linked_libraries; // build.c's list, in the shared header
+constexpr size_t libraries_count = sizeof smith_linked_libraries / sizeof smith_linked_libraries[0];
 // The modules whose headers smith.c includes: the libraries it links, and smith::build's, which build_runtime.c reads.
-static const char *const header_modules[] = {"arena", "contract", "inflate", "io", "random", "text", "build"};
 static const char *const shims[] = {"clang",  "lld",           "format",      "tidy",     "clangd",       "symbolize",
                                     "hook",   "lsp",           "lldb",        "lldb_dap", "lldb_explain", "lldb_slices",
                                     "affine", "effects_infer", "lldb_server", "coverage"};
@@ -142,9 +144,10 @@ static void write_headers(const char *cc) {
     // -lm: glibc keeps floor and the rest of <math.h> in libm, which the lowering in header_tool calls
     run((const char *[]){cc, "-std=gnu2x", "-O1", "-x", "c", "scripts/header_tool.c", "-o", ".smith/seed/header_tool",
                          "-lm", nullptr});
-    for (size_t i = 0; i < sizeof header_modules / sizeof header_modules[0]; i++) {
-        run((const char *[]){".smith/seed/header_tool", path("lib/smith/%s.smith", header_modules[i], ""), "-o",
-                             path(".smith/seed/include/smith/%s.h", header_modules[i], ""), nullptr});
+    for (size_t i = 0; i <= libraries_count; i++) { // the libraries, then smith::build
+        const char *module = i < libraries_count ? libraries[i] : "build";
+        run((const char *[]){".smith/seed/header_tool", path("lib/smith/%s.smith", module, ""), "-o",
+                             path(".smith/seed/include/smith/%s.h", module, ""), nullptr});
     }
 }
 
@@ -262,6 +265,15 @@ static void compile_smith(Args *objects) {
     }
 }
 
+// The tables of the handlers (lib/handlers.c without the interposition): what smith::mem reads the allocator of the
+// thread from, in the protocol generator and in smith.
+static const char *compile_handlers(const char *clang, const char *stage, const Args *flags) {
+    Args tables = {};
+    add_all(&tables, flags->items, flags->count);
+    add(&tables, smith_linked_handlers_flag);
+    return compile(clang, smith_linked_handlers_source, stage, "handlers_tables", &tables);
+}
+
 // The generated protocol code: scripts/protocol.c with stage A's smith-cc for the modules it stands on (arena,
 // contract, text), and the plain C of lib/json.c and lib/trace.c, run on the vendored schemas into
 // .smith/seed/protocol/.
@@ -275,10 +287,11 @@ static void write_protocol(void) {
         {"scripts/protocol.c", "protocol"}, {"lib/json.c", "json"}, {"lib/trace.c", "trace"}};
     for (size_t i = 0; i < sizeof c_sources / sizeof c_sources[0]; i++)
         add(&objects, compile(clang, c_sources[i][0], "p", c_sources[i][1], &flags));
-    static const char *const modules[] = {"arena", "contract", "text"};
+    static const char *const modules[] = {"arena", "contract", "math", "mem", "random", "text"};
     for (size_t i = 0; i < sizeof modules / sizeof modules[0]; i++)
         add(&objects,
             compile(".smith/seed/a/bin/smith-cc", path("lib/smith/%s.smith", modules[i], ""), "p", modules[i], &flags));
+    add(&objects, compile_handlers(clang, "p", &flags));
     Args link = {};
     add(&link, clang);
     add(&link, "-o");
@@ -335,7 +348,7 @@ static const char *compile_stand_ins(void) {
           "    fprintf(stderr, \"smith (seed stage A): %s is in a library this smith does not have yet\\n\", name);\n"
           "    abort();\n}\n",
           out);
-    for (size_t i = 0; i < sizeof libraries / sizeof libraries[0]; i++)
+    for (size_t i = 0; i < libraries_count; i++)
         write_stand_ins(out, libraries[i]);
     if (fclose(out) != 0) die("cannot write", ".smith/seed/a/stand_ins.c");
     Args base = {};
@@ -409,10 +422,11 @@ int main(int argc, char **argv) {
     smith_flags(&flags_b, true);
     Args stage_b = objects;
     add(&stage_b, compile(path("%s/bin/clang", llvm, ""), "smith.c", "b", "smith", &flags_b));
-    for (size_t i = 0; i < sizeof libraries / sizeof libraries[0]; i++) {
+    for (size_t i = 0; i < libraries_count; i++) {
         add(&stage_b, compile(".smith/seed/a/bin/smith-cc", path("lib/smith/%s.smith", libraries[i], ""), "b",
                               libraries[i], &flags_b));
     }
+    add(&stage_b, compile_handlers(path("%s/bin/clang", llvm, ""), "b", &flags_b));
     link_smith(&stage_b, ".smith/seed/b/smith");
     make_bin(".smith/seed/b/bin", ".smith/seed/b/smith");
     printf("seed: stage B is .smith/seed/b/bin/smith; running its smith build\n");

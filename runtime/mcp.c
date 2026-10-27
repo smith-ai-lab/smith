@@ -26,6 +26,7 @@
 #include "mcp.h"
 #include <smith/io.h>
 #include <smith/json.h>
+#include <smith/mem.h>
 #include "dap.h"
 
 #include <errno.h>
