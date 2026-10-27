@@ -1,7 +1,7 @@
 ---
 type: design
 title: The caches and smith cache
-description: Modules and packages are cached under one rule, an entry unused for 31 days is removed, and smith cache shows and cleans them.
+description: Modules and packages are cached under one rule, an entry unused for 31 days is removed, each root has a byte cap with least-recently-used eviction, and smith cache shows and cleans them.
 tags: [cache]
 ---
 # The caches and smith cache
@@ -33,6 +33,31 @@ from either is simply fetched or built again:
   differ (different paths) never share or overwrite one another's module files, and a sanitized compile never reuses a
   plain one's. A module file is checked against its headers when it is used and rebuilt if one changed, so a warm cache
   can only be stale in a way clang detects.
+
+**A byte cap on every cache root (issue #618), beside the 31 days.** The 31 days are far too slow for a cache that
+tests fill (the tests' module cache reached 337 GB in 47,329 context-hash folders), so each root, `modules` and
+`packages`, also has a cap in bytes: 10 GB, or `SMITH_CACHE_MAX` (bytes, with a `k`, `M`, `G` or `T` suffix counting thousands,
+as `smith cache` shows sizes; `smith cache` prints the cap). It is checked when a write can have crossed it, and the oldest-used go first:
+
+- **Modules:** when a build opens the cache, at most every ten minutes (every build when `SMITH_CACHE_MAX` is set, which a
+  test does; the stamp is `modules/.cap-checked`). When the root is over the cap: first the folders of other smiths, least
+  recently used (their `.used`) first, never one a running smith holds (the pruning's exclusive lock without waiting) and
+  never this smith's; if that is not enough, this smith's own module files (`.pcm`), least recently used first, as
+  clang's pruning removes them (clang touches a module file whenever it uses it), never one used in the last hour. A
+  module a later compile needs is built again.
+- **Packages:** after a fetch, the least recently used (their `<hex>.used`) until the packages fit, never the one just
+  fetched, each by the weekly pruning's safe removal (renamed away, the stamp read again, renamed back if a build touched
+  it meanwhile).
+- **How:** an entry's bytes are counted in steps of age (half an hour), so the oldest are found without a table of entries:
+  the cutoff is the age from which everything goes so that the rest fits (`smith_cache_cutoff` in `runtime/package.c`).
+
+**What keeps new context-hash folders from starting** (measured with `clang -module-file-info` on the folders of one smith):
+clang hashes the language options, the target, the sysroot and resource directory, the optimization level and sanitizers and
+every `-D` into a module's context, and not the warnings, the diagnostics' colours or `-I` paths; a scratch folder's path
+is no part of it. The macros smith itself defines per source or run and no header reads (`SMITH_PROVED`, `SMITH_PROFILING`,
+`SMITH_RECORD`) are given as `-fmodules-ignore-macro=`, so they start no folder. A module file's name carries the hash
+of its module map's path, so a project's own and smith's modules (`.smith/modules/*.modulemap`) have one file for each
+project path in the folder; the cap bounds that growth.
 
 **One rule for what is inside: an entry unused for 31 days is removed, checked at most once a week** (the module folders of smiths are the exception above: they go sooner). For modules smith states it
 in every compile, as `-fmodules-prune-interval=604800 -fmodules-prune-after=2678400`, and clang applies it (named

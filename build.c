@@ -1736,6 +1736,28 @@ static int build_llvm_run_linux(SmithRun *run, const char *source, const char *n
     return smith_run_program(run, done, nullptr);
 }
 
+// After a build of LLVM (issue #618): every other LLVM folder of the cache goes, and its Enzyme, but the previous
+// release's, the one the smith that runs this build links (its identity is what `smith-cc --smith-which` prints), so a
+// build of the previous commit still works. scripts/llvm_prune.c does it; when the identity cannot be read nothing is
+// removed.
+static int build_llvm_prune(SmithRun *run) {
+    SmithBuild *b = run->b;
+    const char *cc = smith_env(b, "CC", "smith-cc");
+    const char *which = smith_capture_or(b, (const char *[]){cc, "--smith-which", nullptr}, "");
+    const char *line = strstr(which, "identity ");
+    if (line == nullptr) return 0;
+    const char *identity = line + strlen("identity ");
+    identity = smith_fmt(b, "%.*s", (int)strcspn(identity, "\n"), identity);
+    const char *current = build_llvm_folder(b);
+    const char *name = strrchr(current, '/') + 1;
+    const char *tool = smith_fmt(b, "%s/../llvm_prune", current);
+    const char *const compile[] = {cc, "-std=c23", "-O1", "scripts/llvm_prune.c", "-o", tool, nullptr};
+    int status = build_exec(compile);
+    if (status != 0) return status;
+    const char *const prune[] = {tool, smith_fmt(b, "%s/..", current), name, identity, nullptr};
+    return build_exec(prune);
+}
+
 // The pinned LLVM (`smith build llvm`): the sources, CMake and Python by hash, built once into the package cache by
 // scripts/llvm.sh, and then the prover's libraries beside it (Ninja, Z3, Alive2, Bitwuzla and its dependencies). A .run
 // step, so the packages are fetched only when this target runs, not on every smith build.
@@ -1755,7 +1777,10 @@ static int build_llvm_run(SmithRun *run) {
     const char *stamp = smith_fmt(b, "%s.llvm", run->outputs[0]);
     int status = build_ninja_make(run, ninja_source, build_python_package(b), ninja);
     if (status != 0) return status;
-    if (build_is_linux(b)) return build_llvm_run_linux(run, source, ninja, stamp);
+    if (build_is_linux(b)) {
+        status = build_llvm_run_linux(run, source, ninja, stamp);
+        return status != 0 ? status : build_llvm_prune(run);
+    }
     const char *const make_llvm[] = {
         "sh", "scripts/llvm.sh", source, build_cmake_package(b), build_python_package(b), stamp, ninja, nullptr};
     status = smith_run_program(run, make_llvm, nullptr);
@@ -1765,6 +1790,8 @@ static int build_llvm_run(SmithRun *run) {
     status = build_bitwuzla_run(run, ninja);
     if (status != 0) return status;
     status = build_enzyme_run(run, ninja);
+    if (status != 0) return status;
+    status = build_llvm_prune(run);
     if (status != 0) return status;
     const char *const done[] = {"sh", "-c", "cp \"$1\" \"$2\"", "sh", stamp, run->outputs[0], nullptr};
     return smith_run_program(run, done, nullptr);

@@ -17,3 +17,15 @@ hex() { shasum -a 256 "arc/pkg$1.tar.gz" | cut -d' ' -f1; }
 fetch3() { mkpkgs && for n in 1 2 3; do smith fetch "$(url $n)" >/dev/null 2>&1; done; }
 use() { smith build "-DURL=$(url "$1")" "-DHASH=sha256:$(hex "$1")" -DOFFLINE; }
 year_of() { date -r "$1" +%Y 2>/dev/null || stat -f %Sm -t %Y "$1"; }
+# Sets a file's time to N hours ago.
+ago() { touch -t "$(date -v-$1H +%Y%m%d%H%M 2>/dev/null || date -d "$1 hours ago" +%Y%m%d%H%M)" "$2"; }
+# Three packages of 200 kB each (a zero file packs to nothing) as tar.gz files in arc/, for the cap.
+mkbig() {
+    mkdir -p arc/src
+    for n in 1 2 3; do
+        mkdir -p "arc/src/pkg$n-1.0"
+        head -c 200000 /dev/zero >"arc/src/pkg$n-1.0/zeros.bin"
+        echo "package $n" >"arc/src/pkg$n-1.0/file.txt"
+        (cd arc/src && tar -czf "../pkg$n.tar.gz" "pkg$n-1.0")
+    done
+}

@@ -1519,6 +1519,115 @@ static void smith_modules_prune(const char *base, const char *name) {
     }
 }
 
+// The byte cap (issue #618; SMITH_CACHE_MAX, 10 GB: runtime/package.c) of the modules root, beside the rules above and
+// the 31 days. It is checked when a build opens the cache, at most every ten minutes (every build when SMITH_CACHE_MAX
+// is set, which a test does), and when the root is over it: (1) the folders of other smiths go, least recently used
+// first, unless a running smith holds one (the same exclusive lock without waiting as the pruning), then (2) if that
+// is not enough, the module files (.pcm) of this smith's own folder, least recently used first, as clang's own pruning
+// removes them (clang touches a module file whenever it uses it); a file used in the last hour stays, and clang builds
+// a missing one again.
+constexpr time_t smith_modules_check_seconds = 600;
+constexpr time_t smith_modules_young_seconds = 3600;
+
+static time_t smith_modules_walk_now;
+static long smith_modules_walk_cutoff;
+
+// The last use of a smith's folder: its stamp, else the folder itself (an old layout's).
+static time_t smith_modules_folder_used(const char *path) {
+    char used[PATH_MAX + 8];
+    struct stat info;
+    snprintf(used, sizeof used, "%s/.used", path);
+    return stat(used, &info) == 0 || stat(path, &info) == 0 ? info.st_mtime : 0;
+}
+
+static bool smith_modules_is_entry(const char *base, const char *name, char *path) {
+    return name[0] != '.' && smith_cache_join(path, base, name, "") && smith_package_is_folder(path);
+}
+
+// Counts the bytes of each folder of the root by the age of its last use.
+static void smith_modules_count_folders(const char *base, time_t now) {
+    smith_cache_ages_reset();
+    DIR *dir = opendir(base);
+    if (dir == nullptr) return;
+    for (size_t guard = 0; guard < 1000000; guard++) { // bounded by the entries
+        const struct dirent *entry = readdir(dir);
+        if (entry == nullptr) break;
+        char path[PATH_MAX];
+        if (!smith_modules_is_entry(base, entry->d_name, path)) continue;
+        uint64_t bytes = 0;
+        time_t newest = 0;
+        smith_cache_measure(path, &bytes, &newest);
+        smith_cache_ages_add(bytes, smith_modules_folder_used(path), now);
+    }
+    closedir(dir);
+}
+
+// Removes the folders that go at the cutoff, except `own` and any that a running smith holds.
+static void smith_modules_evict_folders(const char *base, const char *own, long cutoff, time_t now) {
+    DIR *dir = opendir(base);
+    if (dir == nullptr) return;
+    for (size_t guard = 0; guard < 1000000; guard++) { // bounded by the entries
+        const struct dirent *entry = readdir(dir);
+        if (entry == nullptr) break;
+        char path[PATH_MAX];
+        if (!smith_modules_is_entry(base, entry->d_name, path) || strcmp(entry->d_name, own) == 0) continue;
+        if (smith_cache_goes(smith_modules_folder_used(path), now, cutoff)) smith_modules_remove_if_free(path);
+    }
+    closedir(dir);
+}
+
+static bool smith_modules_old_module_file(const char *path, const struct stat *info, int type) {
+    size_t length = strlen(path);
+    return type == FTW_F && length > 4 && strcmp(path + length - 4, ".pcm") == 0 &&
+           smith_modules_walk_now - info->st_mtime >= smith_modules_young_seconds;
+}
+
+static int smith_modules_count_file(const char *path, const struct stat *info, int type, struct FTW *where) {
+    (void)where;
+    if (smith_modules_old_module_file(path, info, type))
+        smith_cache_ages_add((uint64_t)info->st_blocks * 512U, info->st_mtime, smith_modules_walk_now);
+    return 0;
+}
+
+static int smith_modules_remove_file(const char *path, const struct stat *info, int type, struct FTW *where) {
+    (void)where;
+    if (smith_modules_old_module_file(path, info, type) &&
+        smith_cache_goes(info->st_mtime, smith_modules_walk_now, smith_modules_walk_cutoff))
+        remove(path);
+    return 0;
+}
+
+// Step 2: the module files of this smith's folder, oldest first, until the root fits (or the folder has no more that
+// are old enough). The folders of other smiths are left whole to step 1: one may be held by a running smith.
+static void smith_modules_evict_files(const char *base, const char *own, uint64_t cap, time_t now) {
+    uint64_t bytes = 0;
+    time_t newest = 0;
+    char folder[PATH_MAX];
+    smith_cache_measure(base, &bytes, &newest);
+    if (bytes <= cap || !smith_cache_join(folder, base, own, "")) return;
+    smith_modules_walk_now = now;
+    smith_cache_ages_reset();
+    nftw(folder, smith_modules_count_file, smith_cache_walk_files, FTW_PHYS);
+    smith_modules_walk_cutoff = smith_cache_cutoff(bytes - cap);
+    if (smith_modules_walk_cutoff >= 0) nftw(folder, smith_modules_remove_file, smith_cache_walk_files, FTW_PHYS);
+}
+
+static void smith_modules_cap(const char *base, const char *own) {
+    time_t now = time(nullptr);
+    uint64_t cap = smith_cache_limit();
+    char stamp[PATH_MAX + 16];
+    struct stat info;
+    snprintf(stamp, sizeof stamp, "%s/.cap-checked", base);
+    bool every_build = getenv("SMITH_CACHE_MAX") != nullptr;
+    if (!every_build && stat(stamp, &info) == 0 && now - info.st_mtime < smith_modules_check_seconds) return;
+    (void)smith_cache_touch(stamp); // first, so a build that starts meanwhile skips the check
+    smith_modules_count_folders(base, now);
+    uint64_t total = smith_cache_ages.total;
+    if (total <= cap) return;
+    smith_modules_evict_folders(base, own, smith_cache_cutoff(total - cap), now);
+    smith_modules_evict_files(base, own, cap, now);
+}
+
 static bool smith_modules_cache_folder(char *out, SmithPackageFault *error) {
     char base[PATH_MAX];
     if (!smith_cache_folder(SmithCache_Modules, base, error)) return false;
@@ -1536,8 +1645,14 @@ static bool smith_modules_cache_folder(char *out, SmithPackageFault *error) {
     int held = open(stamp, O_RDWR | O_CREAT, 0666); // not close-on-exec: the compiles of the build hold it too
     if (held >= 0 && flock(held, LOCK_SH) != 0) close(held);
     smith_modules_prune(base, name);
+    smith_modules_cap(base, name);
     return true;
 }
+
+// The macros smith itself defines on a compile that no header reads (a proof's hash, the record mode): clang hashes
+// every -D into the module's context, so each value would be a folder of its own (issue #618).
+static const char *const smith_modules_ignored[] = {"SMITH_PROVED", "SMITH_PROFILING", "SMITH_RECORD"};
+constexpr size_t smith_modules_ignored_count = sizeof smith_modules_ignored / sizeof smith_modules_ignored[0];
 
 void smith_modules(SmithBuild *b, const SmithModules *modules) {
     SMITH_ASSERT(b != nullptr && modules != nullptr);
@@ -1552,16 +1667,19 @@ void smith_modules(SmithBuild *b, const SmithModules *modules) {
     char cache[PATH_MAX];
     SmithPackageFault error;
     if (!smith_modules_cache_folder(cache, &error)) smith_fail("smith_modules: %s", error.text);
-    const char **flags = smith_new_list(count + 5);
+    const char **flags = smith_new_list(count + 5 + smith_modules_ignored_count);
     flags[0] = "-fmodules";
     flags[1] = smith_text("-fmodules-cache-path=%s", cache); // one cache for every project and worktree
     // The pruning rule is the same as the package cache's, and written in every command: clang removes a module unused
     // for 31 days, and checks at most once a week.
     flags[2] = smith_text("-fmodules-prune-interval=%d", smith_cache_prune_interval);
     flags[3] = smith_text("-fmodules-prune-after=%d", smith_cache_prune_after);
+    for (size_t i = 0; i < smith_modules_ignored_count; i++)
+        flags[4 + i] = smith_text("-fmodules-ignore-macro=%s", smith_modules_ignored[i]);
+    size_t maps = 4 + smith_modules_ignored_count; // the module maps come after the fixed flags
     for (size_t i = 0; i < count; i++)
-        flags[4 + i] = smith_modules_write(b, smith_modules_folder(folders[i]), textual);
-    flags[4 + count] = smith_modules_write(b, smith_modules_library_folder, textual);
+        flags[maps + i] = smith_modules_write(b, smith_modules_folder(folders[i]), textual);
+    flags[maps + count] = smith_modules_write(b, smith_modules_library_folder, textual);
     for (size_t i = 0; textual[i] != nullptr; i++) {
         if (!smith_modules_textual_used[i])
             smith_fail("smith_modules: the textual header '%s' is not under any of the folders (spell it as a glob "
