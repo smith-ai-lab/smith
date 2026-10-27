@@ -251,7 +251,8 @@ static bool smith_rec_write(const char *dir, const char *name, const char *clean
     snprintf(path, sizeof path, "%s/%s.rec", folder, clean);
     FILE *out = smith_cov_open(path, temporary, sizeof temporary);
     if (out == nullptr) return false;
-    fprintf(out, "smith-record 1\ntest\t%s\nresult\t%s\n", name, pass ? "pass" : "fail");
+    fprintf(out, "smith-record 1\ntest\t%s\nresult\t%s\ncpu\t%.3f\n", name, pass ? "pass" : "fail",
+            smith_cov_cpu_seconds);
     smith_rec_seen_count = 0;
     smith_rec_source_path[0] = '\0';
     for (size_t f = 0; f < smith_cov_function_count;) { // a run of functions of one file
@@ -277,6 +278,7 @@ typedef struct {
     const char *why;
     size_t named_first; // its files in smith_rec_named: what its program was built from
     size_t named_count;
+    double cpu; // seconds the test took when it was recorded, 0 when unknown
 } SmithRecResult;
 
 static const char *smith_rec_named[smith_rec_named_max];
@@ -352,6 +354,10 @@ static void smith_rec_record_line(char *line, SmithRecResult *result) {
     }
     if (count >= 2 && strcmp(field[0], "test") == 0) {
         result->name = smith_cov_copy(field[1]);
+        return;
+    }
+    if (count >= 2 && strcmp(field[0], "cpu") == 0) {
+        result->cpu = strtod(field[1], nullptr);
         return;
     }
     if (count >= 2 && field[0][0] != 'r') smith_rec_name(result, field[1]);

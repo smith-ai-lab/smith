@@ -29,6 +29,7 @@ export void test_the_first_run_makes_a_record_for_each_test(io::Io *io) {
     scratch::expect_contains("both ran", run.out, "2 passed");
     scratch::expect_contains("a record each", run.out, "add_runs.rec\nmul_runs.rec");
     scratch::expect_contains("the result", run.out, "result\tpass");
+    scratch::expect_contains("the cpu seconds of the test", run.out, "\ncpu\t");
     scratch::expect_contains("the function the test ran", run.out, "fn\tops.c\tops_add");
     scratch::expect_contains("through the program it started", run.out, "fn\tmain.c\tmain");
     scratch::expect_contains("its own function", run.out, "fn\ttests/cli_test.c\ttest_add_runs");

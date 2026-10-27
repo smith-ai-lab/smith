@@ -850,12 +850,15 @@ static int smith_test_take_changed(SmithVerbArgs *split, const char *self) {
     bool changed = false;
     bool dry_run = false;
     bool list = false;
+    bool cheapest = false;
     const char *head = nullptr;
     size_t kept = 0;
     for (size_t i = 0; i < split->own_count; i++) { // bounded by smith_build_args_max
         char *arg = split->own[i];
         if (strcmp(arg, "--changed") == 0) {
             changed = true;
+        } else if (strcmp(arg, "--cheapest-first") == 0) {
+            cheapest = true;
         } else if (strcmp(arg, "--dry-run") == 0) {
             dry_run = true;
         } else if (strcmp(arg, "--list") == 0 && smith_test_wants_list(split)) {
@@ -874,6 +877,7 @@ static int smith_test_take_changed(SmithVerbArgs *split, const char *self) {
     }
     split->own_count = kept;
     if (!changed) {
+        if (cheapest) smith_die(smith_exit_usage, "--cheapest-first goes with --changed", "test");
         if (dry_run || base != nullptr) smith_die(smith_exit_usage, "--dry-run and --base go with --changed", "test");
         return -1;
     }
@@ -881,6 +885,11 @@ static int smith_test_take_changed(SmithVerbArgs *split, const char *self) {
     SmithChangedResult result = smith_changed_select(base, head, filter, sizeof filter);
     if (result == SmithChanged_Failed) return smith_exit_usage;
     if (list) return smith_test_print_selection(result, filter);
+    static char costs[PATH_MAX + 16];
+    if (cheapest && smith_changed_write_costs(costs, sizeof costs) && split->own_count + 2 <= smith_build_args_max) {
+        split->own[split->own_count++] = (char *)"--costs";
+        split->own[split->own_count++] = costs;
+    }
     if (result == SmithChanged_None) {
         fputs("smith test --changed: no test is affected\n", stderr);
         return 0;

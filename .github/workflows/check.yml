@@ -89,8 +89,8 @@ jobs:
         # The tests this batch's changes select, by the records of main's latest green run (smith-records, fetched by
         # the build file's coverage-fetch task with gh), stopping at the first failure: a broken batch is red in minutes,
         # not after the full check (#506). The Full check below still names every failure. It only reads the records
-        # (no COVERAGE: nothing is recorded), skips itself when the selection is wide (a change to the runner or to
-        # build.c selects nearly everything, and the Full check runs that anyway) and gives up after 5 minutes without
+        # (no COVERAGE: nothing is recorded), runs a wide selection (a change to the runner or to build.c selects
+        # nearly everything) cheapest first, by the cpu seconds of the records, and gives up after 4 minutes without
         # failing: only a failed selected test makes it red.
         timeout-minutes: 8
         shell: bash
@@ -109,16 +109,15 @@ jobs:
           echo "selected $n of $files test files"
           if [ "$n" -eq 0 ]; then echo "nothing selected"; exit 0; fi
           if [ "$picked" = '*' ] || [ $((n * 4)) -gt "$files" ]; then
-            echo "selection too wide, skipping" | tee -a "$GITHUB_STEP_SUMMARY"
-            exit 0
+            echo "wide selection: the cheapest tests first, for 4 minutes" | tee -a "$GITHUB_STEP_SUMMARY"
           fi
           start=$(date +%s)
           # job control: the background job is a process group of its own, so the watchdog ends every process the
           # tests started (an orphan once held a slot for 10 hours)
           set -m
-          $smith test --changed --base origin/main --fail-fast >"$RUNNER_TEMP/changed.log" 2>&1 &
+          $smith test --changed --base origin/main --cheapest-first --fail-fast >"$RUNNER_TEMP/changed.log" 2>&1 &
           pid=$!
-          ( sleep 300; kill -TERM -- "-$pid" 2>/dev/null; sleep 5; kill -KILL -- "-$pid" 2>/dev/null ) &
+          ( sleep 240; kill -TERM -- "-$pid" 2>/dev/null; sleep 5; kill -KILL -- "-$pid" 2>/dev/null ) &
           dog=$!
           rc=0
           wait "$pid" || rc=$?

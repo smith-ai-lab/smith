@@ -437,6 +437,8 @@ static size_t smith_cov_binaries(char *text, const char **out) {
 
 // `smith test --coverage merge <test name>`: SMITH_COVERAGE_DIR (where the profiles are) and SMITH_COVERAGE_BINARY (the
 // instrumented programs, separated by `:`) say where.
+static double smith_cov_cpu_seconds; // the CPU time the test took, for its record (issue #506)
+
 static int smith_cov_merge(const char *name, bool pass) {
     const char *dir = smith_cov_env("SMITH_COVERAGE_DIR");
     const char *binary = smith_cov_env("SMITH_COVERAGE_BINARY");
@@ -622,11 +624,14 @@ static int smith_cov_report(const char *table, const char *base, const char *out
 
 // The entry of `smith test --coverage <merge|join|report> ...`.
 static int smith_coverage_main(int argc, char **argv) {
-    if ((argc == 2 || argc == 3) && strcmp(argv[0], "merge") == 0)
+    if (argc >= 2 && argc <= 4 && strcmp(argv[0], "merge") == 0) {
+        smith_cov_cpu_seconds = argc == 4 ? strtod(argv[3], nullptr) : 0;
         return smith_cov_merge(argv[1], argc == 2 || strcmp(argv[2], "fail") != 0);
+    }
     if (argc == 4 && strcmp(argv[0], "join") == 0) return smith_cov_join(argv[1], argv[2], argv[3]);
     if (argc == 4 && strcmp(argv[0], "report") == 0) return smith_cov_report(argv[1], argv[2], argv[3]);
-    fputs("usage: smith test --coverage merge <test> [pass|fail] | join <dir> <commit> <table> | report <table> <base> "
+    fputs("usage: smith test --coverage merge <test> [pass|fail [cpu seconds]] | join <dir> <commit> <table> | report "
+          "<table> <base> "
           "<out>\n",
           stderr);
     return 2;

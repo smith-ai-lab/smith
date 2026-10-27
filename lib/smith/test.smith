@@ -1438,6 +1438,8 @@ typedef struct {
     bool full;
     bool update; // --update: test::golden writes its file
     bool list;
+    const char
+        *costs; // --costs <file>: lines `cpu<TAB>seconds<TAB>name`; the cheapest tests start first, unknown ones before
     bool fail_fast; // --fail-fast: no test starts after one has failed; the ones running finish
     bool verbose;
     bool color;
@@ -1903,7 +1905,7 @@ void coverage_begin(const Test *test) {
 
 // When the test is over: `smith test --coverage merge <test>` makes its record and deletes its profiles, so a full
 // run never holds 11 GB of them.
-void coverage_end(const Test *test, bool passed) {
+void coverage_end(const Test *test, bool passed, f64 cpu) {
     const char *dir = c::getenv("SMITH_COVERAGE_DIR");
     const char *self = c::getenv("SMITH_SELF");
     if (dir == nullptr || dir[0] == '\0' || self == nullptr) return;
@@ -1918,10 +1920,12 @@ void coverage_end(const Test *test, bool passed) {
         char option[11] = "--coverage";
         char action[6] = "merge";
         char result[5] = {};
+        char seconds_text[32];
         __builtin_snprintf(result, sizeof result, "%s", passed ? "pass" : "fail");
+        __builtin_snprintf(seconds_text, sizeof seconds_text, "%.3f", cpu);
         __builtin_snprintf(program, sizeof program, "%s", self);
         __builtin_snprintf(name, sizeof name, "%s", test->name);
-        char *arguments[7] = {program, verb, option, action, name, result, nullptr};
+        char *arguments[8] = {program, verb, option, action, name, result, seconds_text, nullptr};
         c::execv(program, arguments);
         c::_exit(127);
     }
@@ -1973,7 +1977,7 @@ void setup(Shared *block, i32 output) {
     setup(block, output);
     coverage_begin(test);
     execute(test, options, command);
-    coverage_end(test, true);
+    coverage_end(test, true, 0);
     c::fflush(nullptr);
     c::_exit(0);
 }
@@ -1998,7 +2002,7 @@ End serve(const Options *options, const Command *command) {
     i32 jumped = c::sigsetjmp(loop_jump, 1); // NOLINT(smith-preprocessor): a macro of __sigsetjmp in glibc
     coverage_begin(test);
     if (jumped == 0) execute(test, options, command);
-    coverage_end(test, jumped == 0);
+    coverage_end(test, jumped == 0, process_cpu() - cpu_before);
     failing_end(); // a failed test unwound with its allocators still set
     checked_end();
     disarm();
@@ -2935,6 +2939,10 @@ bool parse_value(Options *options, const char *flag, const char *value) {
         parse_filter(options, value);
         return true;
     }
+    if (c::strcmp(flag, "--costs") == 0) {
+        options->costs = value;
+        return value[0] != '\0';
+    }
     if (c::strcmp(flag, "--explain") == 0) {
         options->explain = value;
         return value[0] != '\0';
@@ -3055,6 +3063,35 @@ void shuffle(usize *order_of, usize count, u64 seed) {
     }
 }
 
+// --costs: the chosen tests ordered by the CPU seconds the file gives them, cheapest first, the ones it does not know
+// before all (they may be new). A stable insertion sort: tests of equal cost keep the table's order.
+void order_by_cost(Plan *plan, const char *path) {
+    c::FILE *file = c::fopen(path, "r");
+    if (file == nullptr) return;
+    f64 *cost = (f64 *)map_bytes((plan->count + 1) * sizeof(f64), map_private);
+    for (usize i = 0; i < plan->count; i++)
+        cost[i] = -1;
+    char line[512];
+    for (usize guard = 0; guard < ((usize)1 << 24) && c::fgets(line, sizeof line, file) != nullptr; guard++) {
+        char *seconds_text = c::strchr(line, '\t');
+        char *name = seconds_text != nullptr ? c::strchr(seconds_text + 1, '\t') : nullptr;
+        if (name == nullptr) continue;
+        name += 1;
+        name[c::strcspn(name, "\n")] = '\0';
+        for (usize i = 0; i < plan->count; i++) {
+            if (c::strcmp(plan->tests[i]->name, name) == 0) cost[i] = c::strtod(seconds_text + 1, nullptr);
+        }
+    }
+    c::fclose(file);
+    for (usize i = 1; i < plan->count; i++) {
+        usize moved = plan->order[i];
+        usize at = i;
+        for (; at > 0 && cost[plan->order[at - 1]] > cost[moved]; at--)
+            plan->order[at] = plan->order[at - 1];
+        plan->order[at] = moved;
+    }
+}
+
 // The tests the options choose, in order, with a run for each.
 Plan *make_plan(const Options *options) {
     Plan *plan = (Plan *)map_bytes((1) * sizeof(Plan), map_private);
@@ -3075,6 +3112,7 @@ Plan *make_plan(const Options *options) {
     for (usize i = 0; i < plan->count; i++)
         plan->order[i] = i;
     if (options->shuffle_given) shuffle(plan->order, plan->count, options->shuffle_seed);
+    if (options->costs != nullptr) order_by_cost(plan, options->costs);
     shared_slots = (Shared *)map_bytes((jobs_max + 1) * sizeof(Shared), map_shared);
     const char *kill_workers = c::getenv("SMITH_TEST_KILL_WORKERS");
     if (kill_workers != nullptr) {
@@ -3151,7 +3189,8 @@ static void say_usage(const Options *options, const Runner *runner) {
              "usage: %s [--test <substring>] [--seed <n>] [--seeds <1 to %ju>] [--jobs <1 to %zu>] "
              "[--timeout <cpu seconds>] [--wall-timeout <seconds>] [--shrink 0|1] [--shrink-seconds <seconds>] "
              "[--shuffle <seed>] [--isolate] "
-             "[--in-process] [--full] [--update] [--list] [--fail-fast] [--verbose] [--stats] [--trace] [--color] "
+             "[--in-process] [--full] [--update] [--list] [--fail-fast] [--costs <file>] [--verbose] [--stats] "
+             "[--trace] [--color] "
              "[--explain <smith>] [--explain-max <n>] [--no-explain] [--unchecked]\n",
              runner->argv[0], (c::uintmax_t)seeds_max, jobs_max);
 }
@@ -3207,7 +3246,7 @@ static usize report_run(const Plan *plan, const Options *options, f64 start) {
     Plan *plan = make_plan(&options);
     if (options.list) {
         for (usize i = 0; i < plan->count; i++)
-            say(&options, "%s\n", plan->tests[i]->name);
+            say(&options, "%s\n", plan->tests[plan->order[i]]->name);
         return 0;
     }
     if (plan->count == 0 && options.filter != nullptr) {

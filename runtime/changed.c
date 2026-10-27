@@ -537,6 +537,30 @@ static void smith_changed_filter_file(const char *path, char *filter, size_t siz
 
 // ---- The selection
 
+// --cheapest-first: the CPU seconds of each test the records know, as the runner's --costs file (`cpu<TAB>seconds<TAB>
+// name`) in .smith/costs.tsv. False when there is nothing to write (no records: the runner keeps its order).
+static bool smith_changed_write_costs(char *path, size_t size) {
+    char root[PATH_MAX];
+    char folder[PATH_MAX];
+    if (getcwd(root, sizeof root) == nullptr) return false;
+    if (smith_rec_result_count == 0) { // a selection that never read the records (the whole suite)
+        snprintf(smith_cov_root, sizeof smith_cov_root, "%s", root);
+        if (!smith_changed_records_folder(folder, sizeof folder)) {
+            smith_changed_fetch();
+            if (!smith_changed_records_folder(folder, sizeof folder)) return false;
+        }
+        if (smith_rec_check_folder(folder) == 0) return false;
+    }
+    snprintf(path, size, "%s/.smith/costs.tsv", root);
+    FILE *out = fopen(path, "w");
+    if (out == nullptr) return false;
+    for (size_t r = 0; r < smith_rec_result_count; r++) {
+        if (smith_rec_results[r].cpu > 0)
+            fprintf(out, "cpu\t%.3f\t%s\n", smith_rec_results[r].cpu, smith_rec_results[r].name);
+    }
+    return fclose(out) == 0;
+}
+
 typedef enum { SmithChanged_Failed, SmithChanged_Full, SmithChanged_None, SmithChanged_Some } SmithChangedResult;
 
 static bool smith_changed_name_ok(const char *base) {

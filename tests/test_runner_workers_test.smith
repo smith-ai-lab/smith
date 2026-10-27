@@ -434,6 +434,16 @@ export void test_runner_workers_stats_lists_the_cpu_time_of_each_test(io::Io *io
     }
 }
 
+export void test_runner_workers_costs_start_the_unknown_then_the_cheapest_first(io::Io *io) {
+    scratch::Project p = workers_project(io);
+    scratch::Run made =
+        scratch::sh(&p, "printf 'cpu\\t0.500\\tcrash_1_before\\ncpu\\t0.100\\tcrash_3_after\\n' > costs.tsv");
+    scratch::expect_status("costs: the file", 0, &made);
+    scratch::Run run = runner::tests(&p, "", "--test crash_ --list --costs costs.tsv");
+    runner::expect_has(io, "", "costs: unknown first, then by cost", &run,
+                       "crash_2_dies\ncrash_4_after\ncrash_3_after\ncrash_1_before\n");
+}
+
 export void test_runner_workers_fail_fast_starts_no_test_after_the_first_failure(io::Io *io) {
     scratch::Project p = workers_project(io);
     scratch::Run run = runner::tests(&p, "", "--test crash_ --jobs 1 --fail-fast");
