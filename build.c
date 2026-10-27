@@ -1071,6 +1071,8 @@ typedef struct {
     int32_t tail;                   // how many
     bool stdout_only;               // only stdout goes to the log
     bool append;                    // the log is not truncated first
+    bool new_session; // the child is a session leader (setsid): a hangup or a signal to this process's terminal or
+                      // group does not reach it
 } BuildSpawn;
 
 constexpr size_t build_environment_max = 2048;
@@ -1141,6 +1143,9 @@ static int build_spawn(const BuildSpawn *spawn) {
         posix_spawn_file_actions_addopen(&actions, 1, spawn->log, flags, 0644);
         if (!spawn->stdout_only) posix_spawn_file_actions_adddup2(&actions, 1, 2);
     }
+    posix_spawnattr_t attributes;
+    posix_spawnattr_init(&attributes);
+    if (spawn->new_session) posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETSID);
     pid_t pid = 0;
     // The child starts in the folder this process is in for the moment of the spawn (this process runs one step and has
     // no other thread), so no deprecated or newer spawn extension is needed.
@@ -1148,9 +1153,10 @@ static int build_spawn(const BuildSpawn *spawn) {
     bool moved = spawn->folder != nullptr && getcwd(home, sizeof home) != nullptr && chdir(spawn->folder) == 0;
     int error = spawn->folder != nullptr && !moved
                     ? ENOENT
-                    : posix_spawnp(&pid, spawn->argv[0], &actions, nullptr, (char *const *)spawn->argv,
+                    : posix_spawnp(&pid, spawn->argv[0], &actions, &attributes, (char *const *)spawn->argv,
                                    (char *const *)build_merged_environment(spawn->environment));
     if (moved && chdir(home) != 0) error = error != 0 ? error : EIO;
+    posix_spawnattr_destroy(&attributes);
     posix_spawn_file_actions_destroy(&actions);
     int status = error != 0 ? 127 : build_wait(pid);
     if (error != 0) fprintf(stderr, "smith: cannot run %s: %s\n", spawn->argv[0], strerror(error));
@@ -2135,11 +2141,8 @@ static int build_coverage_fetch(SmithRun *run) {
 static int build_preflight_step(SmithBuild *b, const char *name, const char *const *argv) {
     // Each step runs in a session of its own, so a signal to the terminal's or the tool's process group (a hangup after
     // a timeout: status 129) does not reach the checks.
-    const char *const *wrapped =
-        smith_cat(b, smith_list(b, "perl", "-MPOSIX", "-e", "POSIX::setsid(); exec @ARGV or die \"exec: $!\"", nullptr),
-                  argv, nullptr);
-    int status =
-        build_spawn(&(BuildSpawn){.argv = wrapped, .log = smith_fmt(b, ".smith/preflight-%s.log", name), .tail = 12});
+    int status = build_spawn(&(BuildSpawn){
+        .argv = argv, .log = smith_fmt(b, ".smith/preflight-%s.log", name), .tail = 12, .new_session = true});
     fprintf(stderr, "preflight: %s %s\n", name, status == 0 ? "ok" : "FAILED");
     return status;
 }
