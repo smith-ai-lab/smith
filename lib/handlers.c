@@ -180,6 +180,8 @@ static int smith_handlers_clock_read(SmithClockHandler *clock, clockid_t which, 
 static int smith_handlers_clock_sleep(SmithClockHandler *clock, uint64_t nanoseconds) {
     clock->sleep(clock, nanoseconds);
     return 0;
+}
+
 // The child processes, found the same way (no libc function is interposed: smith::process calls the handler).
 static atomic_uint smith_handlers_process_active;
 static thread_local SmithProcessHandler *smith_handlers_process_table;

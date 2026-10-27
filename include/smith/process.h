@@ -9,9 +9,18 @@
 // smith-bodies: set_handler current_handler spawn start write read close_input wait kill close cores run fake fake_add fake_set_cores fake_input
 // clang-format on
 #pragma once
+#include <errno.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <signal.h>
 #include <smith/handlers.h>
+#include <smith/trace.h>
+#include <spawn.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
+#include <sys/wait.h>
+#include <unistd.h>
 #ifndef SMITH_TARGET_OS
 #if defined(__APPLE__) && defined(__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__)
 #define SMITH_TARGET_OS 1
