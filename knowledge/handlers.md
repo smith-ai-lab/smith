@@ -45,7 +45,7 @@ prebuilt library's and one loaded with `dlopen`. Owner (2026-10-24): "always int
   the file calls a function it defines. Streams are `fopencookie`'s; `getchar`, `putchar`, `vprintf` and `getline`,
   which glibc's `<stdio.h>` makes extern inline when optimized, are defined under those names by asm labels, and
   `getdelim`/`__getdelim` (an optimized `getline`) are the stream's too. `malloc_usable_size` stands for `malloc_size`;
-  there are no zones. A sanitized program also links a weak `__asan_default_options` of `abort_on_error=1`, so a report
+  there are no zones. A sanitized program also links an `__asan_default_options` (strong: the runtime's weak one is first in the link) of `abort_on_error=1`, so a report
   stops with SIGABRT as on macOS. Known gap: a program built with `_FORTIFY_SOURCE` calls `__printf_chk` and its kind,
   which the runtime does not define.
 - **An optimizer knows malloc**: it may drop or fold a malloc/free pair, so a handler is seen only through calls it cannot

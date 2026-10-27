@@ -27,6 +27,8 @@
 #include "llvm/BinaryFormat/MachO.h"
 #include "llvm/DebugInfo/Symbolize/Symbolize.h"
 #include "llvm/Object/Binary.h"
+#include "llvm/Object/BuildID.h"
+#include "llvm/Object/ELFObjectFile.h"
 #include "llvm/Object/MachO.h"
 #include "llvm/Support/Error.h"
 
@@ -202,8 +204,13 @@ int fill(const llvm::DIInliningInfo &info, SmithSymbol *out, int capacity) {
     for (uint32_t i = 0; i < info.getNumberOfFrames() && count < capacity; i++) {
         const llvm::DILineInfo &frame = info.getFrame(i);
         SmithSymbol &symbol = out[count++];
-        std::snprintf(symbol.function, sizeof symbol.function, "%s",
-                      frame.FunctionName == kBad ? "" : frame.FunctionName.c_str());
+        std::string name = frame.FunctionName == kBad ? "" : frame.FunctionName;
+#ifndef __APPLE__
+        // A module's symbol is `_` and its path (runtime/lang_head.c); Mach-O's reader drops that underscore, ELF's
+        // keeps it.
+        if (name.size() > 1 && name[0] == '_' && name.find("::") != std::string::npos) name.erase(0, 1);
+#endif
+        std::snprintf(symbol.function, sizeof symbol.function, "%s", name.c_str());
         std::snprintf(symbol.file, sizeof symbol.file, "%s", frame.FileName == kBad ? "" : frame.FileName.c_str());
         symbol.line = frame.Line;
         symbol.column = frame.Column;
@@ -258,6 +265,7 @@ int symbolize_debug_map(const char *binary, uint64_t address, SmithSymbol *out, 
 
 extern "C" {
 
+#ifdef __APPLE__
 // The Mach-O UUID of a file as XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX; false when it has none.
 bool smith_symbolize_uuid(const char *path, char out[37]) {
     Opened opened;
@@ -289,6 +297,39 @@ uint64_t smith_symbolize_text_base(const char *path) {
     }
     return 0;
 }
+
+#else
+// Linux: the DWARF is in the executable itself (no debug map, no dSYM), and an image is named by its ELF build-id
+// (`--build-id=md5`: 16 bytes), written like a UUID, as lib/trace.c writes it.
+
+// The build-id of an ELF file as XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX; false when it has none of 16 bytes.
+bool smith_symbolize_uuid(const char *path, char out[37]) {
+    auto binary = llvm::object::createBinary(path);
+    if (!binary) {
+        llvm::consumeError(binary.takeError());
+        return false;
+    }
+    const auto *object = llvm::dyn_cast<llvm::object::ObjectFile>(binary->getBinary());
+    if (object == nullptr) return false;
+    llvm::object::BuildIDRef id = llvm::object::getBuildID(object);
+    if (id.size() != 16) return false;
+    static const char digits[] = "0123456789ABCDEF";
+    size_t at = 0;
+    for (size_t i = 0; i < 16; i++) {
+        if (i == 4 || i == 6 || i == 8 || i == 10) out[at++] = '-';
+        out[at++] = digits[id[i] >> 4];
+        out[at++] = digits[id[i] & 0xF];
+    }
+    out[at] = '\0';
+    return true;
+}
+
+// Addresses of an ELF image are relative to its load base, which the trace's slide already removed.
+uint64_t smith_symbolize_text_base(const char *path) {
+    (void)path;
+    return 0;
+}
+#endif
 
 // Why the last lookup found nothing in a place that should have had the answer; "" when nothing is known.
 const char *smith_symbolize_problem(void) {

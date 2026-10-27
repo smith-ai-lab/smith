@@ -125,7 +125,7 @@ export void test_runner_aborts_a_crash_a_hang_and_an_exit_of_zero_fail_and_the_r
 static scratch::Project profile_project(io::Io *io, const char *flags) {
     scratch::Project p = runner::project(io, "runner_c", "runner_profile");
     const char *edit =
-        format::push(&io->arena, "sed -i '' 's/\"-Wconversion\",/\"-Wconversion\", ", flags, ",/' build.c").data;
+        format::push(&io->arena, "sed -i.bak 's/\"-Wconversion\",/\"-Wconversion\", ", flags, ",/' build.c").data;
     scratch::Run edited = scratch::sh(&p, edit);
     scratch::expect_status("profiles: the flags are set", 0, &edited);
     scratch::Run run = runner::build(&p, "-DSAN=0");

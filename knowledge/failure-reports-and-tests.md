@@ -41,6 +41,11 @@ a crash is never read. An enumerator of a `.smith` enum is lowered to `<module>_
 type is named (`board::DARK_P1` of `board::Cell`); a one-byte integer prints as a number (and its character when it
 prints), not lldb's `'\x02'`.
 
+On Linux the same lines are written: `lib/trace.c` finds the images with `dl_iterate_phdr` and names each by its ELF
+build-id (`smith_program` links every program with `--build-id=md5` and `--export-dynamic`, so a raw frame has its
+name), a signal's frames start at the context's `rip` (x86-64) and the call site above libc's abort path is found on
+the stack, and the symbolizer reads the DWARF of the executable itself (no debug map).
+
 `smith symbolize [--binary <program>] [<log>]` turns the `smith-trace` lines of a failure (a log, a pipe, standard
 input) into the failing line and the call chain; it needs the full smith.
 

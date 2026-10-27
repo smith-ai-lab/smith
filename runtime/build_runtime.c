@@ -2278,8 +2278,8 @@ static const char *const *smith_handlers_link(SmithBuild *b, const SmithProgram 
 // of malloc, write... win over a shared library's; lib/handlers.c), compiled once for each folder of programs with the
 // program's compiler. AddressSanitizer exits with status 1 after a report where macOS's aborts (abort_on_error is
 // Darwin's default), so the test runner, a failure's report and the debugger, which read a report as a stop by
-// SIGABRT, would see an exit: a weak __asan_default_options in an object of each sanitized program gives Linux the
-// same (the program's own, strong, wins).
+// SIGABRT, would see an exit: an __asan_default_options in an object of each sanitized program gives Linux the same.
+// It is strong: the runtime ahead of the program on the link line has a weak one, and the first weak definition wins.
 constexpr size_t smith_handlers_folders_max = 64;
 static const char *smith_handlers_made[smith_handlers_folders_max];
 static bool smith_handlers_made_asan[smith_handlers_folders_max];
@@ -2301,10 +2301,9 @@ static void smith_handlers_object(SmithBuild *b, const SmithProgram *program, co
 }
 
 static void smith_asan_abort_options(SmithBuild *b, const SmithProgram *program, const char *object) {
-    const char *script =
-        "printf '%s\\n' 'const char *__asan_default_options(void);' "
-        "'__attribute__((weak)) const char *__asan_default_options(void) { return \"abort_on_error=1\"; }' "
-        "| \"$0\" -x c - -c -o \"$1\"";
+    const char *script = "printf '%s\\n' 'const char *__asan_default_options(void);' "
+                         "'const char *__asan_default_options(void) { return \"abort_on_error=1\"; }' "
+                         "| \"$0\" -x c - -c -o \"$1\"";
     SmithStep step = {
         .command = smith_list(b, "sh", "-c", script, smith_copy_string(program->linker), object, nullptr),
         .implicit_inputs = smith_one(smith_compiler_file(program->linker)),
@@ -2394,6 +2393,10 @@ void smith_program(SmithBuild *b, SmithProgram *program) {
     copy.libraries = smith_copy_list(program->libraries);
     copy.objects = (const SmithObject *const *)rows;
     const char *const tail[] = {"-o", copy.output, nullptr};
+    // ld64 gives every program an LC_UUID and dladdr sees its symbols; on Linux the ELF build-id (16 bytes) names the
+    // image in a failure's trace, and the exported symbols are the names of its raw frames (lib/trace.c).
+    const char *const *identity = smith_when(b, strcmp(b->os, "Linux") == 0,
+                                             smith_list(b, "-Wl,--build-id=md5", "-Wl,--export-dynamic", nullptr));
     // The effect summaries of the objects (an output of each compile that writes one): the link checks them (skill
     // smith-lang-effects), so a summary that changed reruns it even when its object did not (an attribute moved).
     const char **summaries = smith_new_list(count);
@@ -2406,8 +2409,8 @@ void smith_program(SmithBuild *b, SmithProgram *program) {
     const char *const *handlers_files = nullptr;
     const char *const *handlers = smith_program_handlers(b, &copy, &handlers_files);
     copy.step = (SmithStep){
-        .command = smith_cat(b, smith_one(copy.linker), copy.flags, (const char *const *)outputs, copy.libraries,
-                             handlers, tail, nullptr),
+        .command = smith_cat(b, smith_one(copy.linker), identity, copy.flags, (const char *const *)outputs,
+                             copy.libraries, handlers, tail, nullptr),
         .inputs = (const char *const *)outputs,
         .implicit_inputs = smith_cat(b, smith_library_files(copy.libraries),
                                      smith_one(smith_compiler_file(copy.linker)), summaries, handlers_files, nullptr),

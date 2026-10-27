@@ -24,6 +24,7 @@ after that calls the functions by name. In `.smith` code the platform is `target
 | `smith_platform_mtime`: a file's time (the executor, the symbolizer) | `st_mtimespec` | `st_mtim` |
 | `smith_platform_monotonic_ns`: the monotonic clock (`runtime/explain.c`'s wait for a resumed test) | `clock_gettime_nsec_np` | `clock_gettime` |
 | `smith_platform_process_stopped`: whether a test that `smith --smith-explain` read is still stopped | `proc_pidinfo` | the state letter in `/proc/<pid>/stat` |
+| the images of a failure's trace (`lib/trace.c`, `shim/symbolize.cpp`; not in `platform_*.c`: the file splits by `#ifdef __APPLE__`) | dyld's images, named by `LC_UUID`; the debug map of the binary | `dl_iterate_phdr`, named by the build-id (`smith_program` links every program with `--build-id=md5`); the DWARF is in the executable, read by LLVM's symbolizer |
 | `smith_platform_decompress`: a file of clang's resource pack | LZFSE (libcompression; `scripts/pack.c` compresses) | nothing: the pack is stored uncompressed (`scripts/pack.c` keeps every file as it is) |
 
 The C++ shims have the same split in `shim/platform_macos.h` and `shim/platform_linux.h`, which `shim/platform.h`
@@ -44,4 +45,4 @@ On Linux `smith.c` also defines `_GNU_SOURCE` before its first include, because 
 lldb's debug server differs too: macOS's lldb runs the system's debugserver, which Apple signs; on Linux smith is
 lldb-server itself, a clone in the programs folder ([debugger](debugger.md)). The LLVM build's post-install steps are
 `scripts/llvm_linux.c` and smith's own link is `build.c`'s `BuildPlatform` table. What still has no Linux side is
-listed in issue #305: the symbolizer, the prover's process accounting and `smith::io`.
+listed in issue #305: the prover's process accounting and `smith::io`.

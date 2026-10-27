@@ -1,6 +1,10 @@
 // smith's stack traces: the walk by frame pointers and the text that smith reads. The design is in
 // include/smith/trace.h. Everything here that a signal handler may call uses write(2) and no allocator, formatting
 // numbers by hand.
+#ifndef __APPLE__
+// NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming): glibc's name; it hides dl_iterate_phdr
+#define _GNU_SOURCE
+#endif
 #include <smith/trace.h>
 
 #include <signal.h>
@@ -10,8 +14,32 @@
 #include <string.h>
 #include <unistd.h>
 
-#ifdef __APPLE__
 #include <dlfcn.h>
+
+#ifndef __APPLE__
+#include <elf.h>
+#include <link.h>
+#include <ucontext.h>
+
+#ifndef __USE_GNU
+// With clang modules, glibc's <features.h> is read by a builtin header's module before this file's _GNU_SOURCE, and
+// <link.h> then hides these (glibc's own, the prefix of its struct that is read here).
+struct dl_phdr_info {
+    ElfW(Addr) dlpi_addr;
+    const char *dlpi_name;
+    const ElfW(Phdr) * dlpi_phdr;
+    ElfW(Half) dlpi_phnum;
+};
+int dl_iterate_phdr(int (*callback)(struct dl_phdr_info *info, size_t size, void *data), void *data);
+typedef struct {
+    const char *dli_fname;
+    void *dli_fbase;
+    const char *dli_sname;
+    void *dli_saddr;
+} Dl_info;
+int dladdr(const void *address, Dl_info *info);
+#endif
+#else
 #include <mach-o/dyld.h>
 #include <mach-o/loader.h>
 #include <pthread.h>
@@ -24,6 +52,11 @@ uintptr_t smith_trace_stop;
 constexpr uintptr_t smith_trace_address_mask = 0x0000'7fff'ffff'ffffU; // user space; drops pointer authentication bits
 constexpr size_t smith_trace_line_capacity = 1280;
 constexpr size_t smith_trace_images_max = 32;
+#if defined(__linux__) && defined(__x86_64__)
+constexpr int smith_trace_reg_rbp = 10; // glibc's REG_RBP, REG_RSP and REG_RIP, which it hides from plain C23
+constexpr int smith_trace_reg_rsp = 15;
+constexpr int smith_trace_reg_rip = 16;
+#endif
 constexpr uintptr_t smith_trace_frame_step_max = 64U << 20; // a frame farther than this from the last is not a frame
 
 // The stack of the running thread, or [0, UINTPTR_MAX] where the system does not say.
@@ -71,6 +104,47 @@ static size_t smith_trace_walk(uintptr_t *frames, size_t used, size_t capacity, 
     return smith_trace_walk(frames, 0, capacity, fp);
 }
 
+#if defined(__linux__) && defined(__x86_64__)
+typedef struct {
+    uintptr_t start;
+    uintptr_t end;
+} SmithTraceSpan;
+
+static int smith_trace_span_each(struct dl_phdr_info *info, size_t size, void *data) {
+    (void)size;
+    SmithTraceSpan *span = data;
+    uintptr_t here = (uintptr_t)&smith_trace_capture_signal;
+    uintptr_t low = UINTPTR_MAX;
+    uintptr_t high = 0;
+    for (size_t i = 0; i < info->dlpi_phnum; i++) {
+        const ElfW(Phdr) *header = &info->dlpi_phdr[i];
+        uintptr_t address = (uintptr_t)info->dlpi_addr + (uintptr_t)header->p_vaddr;
+        if (header->p_type != PT_LOAD) continue;
+        low = address < low ? address : low;
+        high = address + header->p_memsz > high ? address + header->p_memsz : high;
+    }
+    if (here < low || here >= high) return 0;
+    *span = (SmithTraceSpan){.start = low, .end = high};
+    return 1;
+}
+
+// A return address into this program found between the stack pointer and the frame pointer when the pc is outside the
+// program (in libc), 0 when the pc is inside it or none follows a call. Bounded: libc's abort path is a few frames.
+static uintptr_t smith_trace_call_site(uintptr_t sp, uintptr_t fp, uintptr_t pc) {
+    SmithTraceSpan span = {};
+    dl_iterate_phdr(smith_trace_span_each, &span);
+    if (span.end == 0 || (pc >= span.start && pc < span.end)) return 0;
+    if (sp % sizeof(uintptr_t) != 0 || fp <= sp || fp - sp > 32768) return 0;
+    for (uintptr_t at = sp; at < fp; at += sizeof(uintptr_t)) { // bounded by the 32 KB above
+        uintptr_t value = *(const uintptr_t *)at & smith_trace_address_mask;
+        if (value < span.start + 5 || value >= span.end) continue;
+        const uint8_t *code = (const uint8_t *)value;
+        if (code[-5] == 0xE8 || code[-2] == 0xFF || code[-3] == 0xFF || code[-6] == 0xFF) return value;
+    }
+    return 0;
+}
+
+#endif
 size_t smith_trace_capture_signal(uintptr_t *frames, size_t capacity, const void *ucontext) {
     if (frames == nullptr || capacity == 0 || ucontext == nullptr) return 0;
 #if defined(__APPLE__) && defined(__aarch64__)
@@ -90,6 +164,25 @@ size_t smith_trace_capture_signal(uintptr_t *frames, size_t capacity, const void
     const ucontext_t *context = ucontext;
     frames[0] = (uintptr_t)context->uc_mcontext->__ss.__rip & smith_trace_address_mask;
     return smith_trace_walk(frames, 1, capacity, (uintptr_t)context->uc_mcontext->__ss.__rbp);
+#elif defined(__linux__) && defined(__aarch64__)
+    const ucontext_t *context = ucontext;
+    uintptr_t fp = (uintptr_t)context->uc_mcontext.regs[29];
+    uintptr_t lr = (uintptr_t)context->uc_mcontext.regs[30] & smith_trace_address_mask;
+    frames[0] = (uintptr_t)context->uc_mcontext.pc & smith_trace_address_mask;
+    size_t used = 1;
+    uintptr_t next = fp != 0 && fp % sizeof(uintptr_t) == 0 ? ((const uintptr_t *)fp)[1] & smith_trace_address_mask : 0;
+    if (capacity > 1 && lr != 0 && lr != next && lr != frames[0]) frames[used++] = lr;
+    return smith_trace_walk(frames, used, capacity, fp);
+#elif defined(__linux__) && defined(__x86_64__)
+    const ucontext_t *context = ucontext;
+    frames[0] = (uintptr_t)context->uc_mcontext.gregs[smith_trace_reg_rip] & smith_trace_address_mask;
+    uintptr_t fp = (uintptr_t)context->uc_mcontext.gregs[smith_trace_reg_rbp];
+    size_t used = 1;
+    // Stopped in libc (abort, raise: no frame pointers, so fp is still the frame of the function that called them):
+    // the call site in that function is the return address nearest the stack pointer that follows a call.
+    uintptr_t site = smith_trace_call_site((uintptr_t)context->uc_mcontext.gregs[smith_trace_reg_rsp], fp, frames[0]);
+    if (capacity > 1 && site != 0) frames[used++] = site;
+    return smith_trace_walk(frames, used, capacity, fp);
 #else
     (void)ucontext;
     return smith_trace_capture(frames, capacity);
@@ -196,13 +289,88 @@ static size_t smith_trace_images(const uintptr_t *frames, size_t count, SmithTra
     return found;
 }
 #else
-// Elsewhere the frames are written alone: the symbolizer is given the program's path with --binary.
-static size_t smith_trace_images(const uintptr_t *frames, size_t count, SmithTraceImage *images, size_t capacity) {
-    (void)frames;
-    (void)count;
-    (void)images;
-    (void)capacity;
+// ELF: the loaded images come from dl_iterate_phdr, each named by its build-id (`--build-id=md5`), written like a UUID.
+typedef struct {
+    const uintptr_t *frames;
+    size_t count;
+    SmithTraceImage *images;
+    size_t capacity;
+    size_t found;
+    char self[4096]; // the running executable's path, for the image with no name
+} SmithTraceWalk;
+
+static void smith_trace_build_id_text(const uint8_t *bytes, char out[37]) {
+    static const char digits[] = "0123456789ABCDEF";
+    size_t at = 0;
+    for (size_t i = 0; i < 16; i++) {
+        if (i == 4 || i == 6 || i == 8 || i == 10) out[at++] = '-';
+        out[at++] = digits[bytes[i] >> 4];
+        out[at++] = digits[bytes[i] & 0xFU];
+    }
+    out[at] = '\0';
+}
+
+// The build-id of 16 bytes in the notes at [at, end) of a loaded image, as a UUID's text; false when there is none.
+static bool smith_trace_notes(uintptr_t at, uintptr_t end, char out[37]) {
+    for (size_t step = 0; step < 64 && at + sizeof(ElfW(Nhdr)) <= end; step++) { // bounded by the notes of one image
+        const ElfW(Nhdr) *note = (const ElfW(Nhdr) *)at;
+        uintptr_t name = at + sizeof *note;
+        uintptr_t desc = name + (((uintptr_t)note->n_namesz + 3U) & ~(uintptr_t)3U);
+        uintptr_t next = desc + (((uintptr_t)note->n_descsz + 3U) & ~(uintptr_t)3U);
+        if (next > end || next <= at) return false;
+        if (note->n_type == NT_GNU_BUILD_ID && note->n_descsz == 16 && note->n_namesz == 4 &&
+            memcmp((const void *)name, "GNU", 4) == 0) {
+            smith_trace_build_id_text((const uint8_t *)desc, out);
+            return true;
+        }
+        at = next;
+    }
+    return false;
+}
+
+// Reads one image's program headers: the span of its PT_LOAD segments and its build-id. False when it loads nothing.
+static bool smith_trace_image_read(const struct dl_phdr_info *info, SmithTraceImage *image) {
+    uintptr_t low = UINTPTR_MAX;
+    uintptr_t high = 0;
+    *image = (SmithTraceImage){.slide = (uintptr_t)info->dlpi_addr};
+    memcpy(image->uuid, "-", 2);
+    for (size_t i = 0; i < info->dlpi_phnum; i++) {
+        const ElfW(Phdr) *header = &info->dlpi_phdr[i];
+        uintptr_t address = (uintptr_t)info->dlpi_addr + (uintptr_t)header->p_vaddr;
+        if (header->p_type == PT_LOAD) {
+            if (address < low) low = address;
+            if (address + header->p_memsz > high) high = address + header->p_memsz;
+        }
+        if (header->p_type == PT_NOTE) smith_trace_notes(address, address + header->p_memsz, image->uuid);
+    }
+    image->start = low;
+    image->size = high > low ? high - low : 0;
+    return image->size != 0;
+}
+
+static int smith_trace_each(struct dl_phdr_info *info, size_t size, void *data) {
+    (void)size;
+    SmithTraceWalk *walk = data;
+    SmithTraceImage image;
+    if (walk->found >= walk->capacity || !smith_trace_image_read(info, &image)) return 0;
+    image.path = info->dlpi_name != nullptr && info->dlpi_name[0] != '\0' ? info->dlpi_name : walk->self;
+    for (size_t i = 0; i < walk->count; i++) {
+        if (walk->frames[i] >= image.start && walk->frames[i] - image.start < image.size) {
+            walk->images[walk->found++] = image;
+            break;
+        }
+    }
     return 0;
+}
+
+// The images any frame falls in, each once. The main program has no name here: it is /proc/self/exe's.
+static size_t smith_trace_images(const uintptr_t *frames, size_t count, SmithTraceImage *images, size_t capacity) {
+    static SmithTraceWalk walk;
+    walk = (SmithTraceWalk){.frames = frames, .count = count, .images = images, .capacity = capacity};
+    ssize_t length = readlink("/proc/self/exe", walk.self, sizeof walk.self - 1);
+    walk.self[length > 0 ? (size_t)length : 0] = '\0';
+    dl_iterate_phdr(smith_trace_each, &walk);
+    return walk.found;
 }
 #endif
 
@@ -222,9 +390,9 @@ static void smith_trace_write_image(int fd, const char *indent, const SmithTrace
     smith_trace_flush(fd, &line);
 }
 
-// " name+0xoff" for the nearest symbol, or nothing.
+// " name+0xoff" for the nearest symbol, or nothing. On Linux dladdr sees the dynamic symbols only, which the link
+// exports for a program (--export-dynamic, runtime/build_runtime.c).
 static void smith_trace_put_name(SmithTraceLine *line, uintptr_t address, bool exact) {
-#ifdef __APPLE__
     Dl_info info = {};
     uintptr_t lookup = exact ? address : address - 1; // a return address may be past the end of its function
     if (dladdr((const void *)lookup, &info) == 0 || info.dli_sname == nullptr || info.dli_saddr == nullptr) return;
@@ -232,11 +400,6 @@ static void smith_trace_put_name(SmithTraceLine *line, uintptr_t address, bool e
     smith_trace_put(line, info.dli_sname);
     smith_trace_put(line, "+");
     smith_trace_put_hex(line, address - (uintptr_t)info.dli_saddr, 1);
-#else
-    (void)line;
-    (void)address;
-    (void)exact;
-#endif
 }
 
 void smith_trace_write(int fd, const char *indent, const char *heading, const char *site, const char *details,
