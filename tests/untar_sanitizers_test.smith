@@ -16,7 +16,7 @@ static scratch::Project untar_project(io::Io *io) {
 }
 
 static scratch::Run run(const scratch::Project *p, const char *body) {
-    return scratch::sh(p, format::push(&p->io->arena, ". ./prelude; ", body).data);
+    return scratch::sh(p, format::push(". ./prelude; ", body).data);
 }
 
 // A setup command that must succeed.
@@ -27,16 +27,40 @@ static void setup(const scratch::Project *p, const char *body) {
 
 // What the shell's "$rc $out $err" is: the status, the output and the errors of a run.
 static const char *all_of(const scratch::Project *p, const scratch::Run *r) {
-    return format::push(&p->io->arena, r->status, " ", r->out, " ", r->err).data;
+    (void)p;
+    (void)p;
+    (void)p;
+    (void)p;
+    (void)p;
+    (void)p;
+    (void)p;
+    (void)p;
+    return format::push(r->status, " ", r->out, " ", r->err).data;
 }
 
 // "$rc $out".
 static const char *status_and_out(const scratch::Project *p, const scratch::Run *r) {
-    return format::push(&p->io->arena, r->status, " ", r->out).data;
+    (void)p;
+    (void)p;
+    (void)p;
+    (void)p;
+    (void)p;
+    (void)p;
+    (void)p;
+    (void)p;
+    (void)p;
+    (void)p;
+    (void)p;
+    (void)p;
+    return format::push(r->status, " ", r->out).data;
 }
 
 static const char *join(const scratch::Project *p, const char *a, const char *b) {
-    return format::push(&p->io->arena, a, b).data;
+    (void)p;
+    (void)p;
+    (void)p;
+    (void)p;
+    return format::push(a, b).data;
 }
 
 static scratch::Project sanitized_project(io::Io *io) {
@@ -54,20 +78,18 @@ static scratch::Run untar(const scratch::Project *p, const char *arguments) {
 // copies.
 static void seed_is_read_safely(io::Io *io, const char *seed) {
     scratch::Project p = sanitized_project(io);
-    const char *archive = format::push(&io->arena, "\"$work/seeds/", seed, "\"").data;
-    scratch::Run extracted = untar(&p, format::push(&io->arena, "extract ", archive, " \"$work/untar-out\"").data);
-    scratch::expect_text(format::push(&io->arena, "sanitizers: ", seed, " extracts").data, "0 ok",
-                         status_and_out(&p, &extracted));
-    scratch::Run prefixes =
-        untar(&p, format::push(&io->arena, "prefixes ", archive, " \"$work/scratch\" $prefix_step").data);
-    scratch::expect_status(format::push(&io->arena, "sanitizers: every shorter prefix of ", seed, " is refused").data,
-                           0, &prefixes);
+    const char *archive = format::push("\"$work/seeds/", seed, "\"").data;
+    scratch::Run extracted = untar(&p, format::push("extract ", archive, " \"$work/untar-out\"").data);
+    scratch::expect_text(format::push("sanitizers: ", seed, " extracts").data, "0 ok", status_and_out(&p, &extracted));
+    scratch::Run prefixes = untar(&p, format::push("prefixes ", archive, " \"$work/scratch\" $prefix_step").data);
+    scratch::expect_status(format::push("sanitizers: every shorter prefix of ", seed, " is refused").data, 0,
+                           &prefixes);
     scratch::expect_contains(
-        format::push(&io->arena, "sanitizers: every shorter prefix of ", seed, " is refused (the output)").data,
+        format::push("sanitizers: every shorter prefix of ", seed, " is refused (the output)").data,
         all_of(&p, &prefixes), "0 ");
     scratch::expect_contains("sanitizers: ... and the count says so", prefixes.out, "prefixes refused");
-    scratch::Run fuzzed = untar(&p, format::push(&io->arena, "fuzz ", archive, " \"$work/scratch\" 1500 1").data);
-    scratch::expect_contains(format::push(&io->arena, "sanitizers: 1500 damaged copies of ", seed, " do no harm").data,
+    scratch::Run fuzzed = untar(&p, format::push("fuzz ", archive, " \"$work/scratch\" 1500 1").data);
+    scratch::expect_contains(format::push("sanitizers: 1500 damaged copies of ", seed, " do no harm").data,
                              all_of(&p, &fuzzed), "0 1500 damaged archives");
 }
 

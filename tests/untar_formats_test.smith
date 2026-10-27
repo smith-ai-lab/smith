@@ -18,11 +18,11 @@ static scratch::Project untar_project(io::Io *io) {
 }
 
 static scratch::Run run(const scratch::Project *p, const char *body) {
-    return scratch::sh(p, format::push(&p->io->arena, ". ./prelude; ", body).data);
+    return scratch::sh(p, format::push(". ./prelude; ", body).data);
 }
 
 static const char *text(const scratch::Project *p, const char *body) {
-    return scratch::capture(p, format::push(&p->io->arena, ". ./prelude; ", body).data);
+    return scratch::capture(p, format::push(". ./prelude; ", body).data);
 }
 
 // A setup command that must succeed.
@@ -32,22 +32,29 @@ static void setup(const scratch::Project *p, const char *body) {
 }
 
 static const char *join(const scratch::Project *p, const char *a, const char *b) {
-    return format::push(&p->io->arena, a, b).data;
+    (void)p;
+    (void)p;
+    (void)p;
+    (void)p;
+    (void)p;
+    (void)p;
+    (void)p;
+    (void)p;
+    return format::push(a, b).data;
 }
 
 // Fetches an archive (a path in the project) into a cache of its own; the package folder is in *package, or
 // "/nonexistent" when it failed.
 static scratch::Run fetch(const scratch::Project *p, const char *cache, const char *archive, const char **package) {
-    scratch::Run fetched = run(p, format::push(&p->io->arena, "XDG_CACHE_HOME=\"$PWD/cache-", cache,
-                                               "\" smith fetch \"file://$PWD/", archive, "\"")
-                                      .data);
+    scratch::Run fetched = run(
+        p, format::push("XDG_CACHE_HOME=\"$PWD/cache-", cache, "\" smith fetch \"file://$PWD/", archive, "\"").data);
     *package = "/nonexistent";
     const char *start = fetched.status == 0 ? c::strstr(fetched.out, "\"sha256:") : nullptr;
     if (start != nullptr) {
         char *hash = arena::push_slice(&p->io->arena, char, 65).data;
         mem::copy(hash[0:64], start[8:8 + 64]);
         hash[64] = '\0';
-        *package = format::push(&p->io->arena, p->dir, "/cache-", cache, "/smith/packages/", hash).data;
+        *package = format::push(p->dir, "/cache-", cache, "/smith/packages/", hash).data;
     }
     return fetched;
 }
@@ -59,8 +66,8 @@ static void same(const scratch::Project *p, const char *name, const char *cache,
     scratch::Run fetched = fetch(p, cache, archive, &package);
     scratch::expect_status(join(p, name, ": extracts"), 0, &fetched);
     scratch::expect_text(join(p, name, ": the same tree, modes and bytes"),
-                         text(p, format::push(&p->io->arena, "listing \"", folder, "\"").data),
-                         text(p, format::push(&p->io->arena, "listing \"", package, "\" 2>/dev/null").data));
+                         text(p, format::push("listing \"", folder, "\"").data),
+                         text(p, format::push("listing \"", package, "\" 2>/dev/null").data));
 }
 
 export void test_untar_tar_gz(io::Io *io) {

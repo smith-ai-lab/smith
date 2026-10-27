@@ -13,7 +13,7 @@ import scratch;
 
 static scratch::Project folder(const scratch::Project *root, const char *name) {
     scratch::Project f = *root;
-    f.dir = format::push(&root->io->arena, root->dir, "/", name).data;
+    f.dir = format::push(root->dir, "/", name).data;
     return f;
 }
 
@@ -43,7 +43,8 @@ static bool has_hook(const scratch::Project *p) {
 }
 
 static scratch::Run dbg(const scratch::Project *p, io::Io *io, const char *arguments) {
-    return scratch::sh(p, format::push(&io->arena, "smith dbg -b ", arguments, " 2>&1").data);
+    (void)io;
+    return scratch::sh(p, format::push("smith dbg -b ", arguments, " 2>&1").data);
 }
 
 // smith dbg, in batch mode: a breakpoint by line, run, a variable, a struct field, a backtrace.
@@ -293,13 +294,13 @@ static void check_io_main(io::Io *io, const char *file) {
         return;
     }
     scratch::Project p = folder(&root, "iomain");
-    scratch::Run built = scratch::sh(
-        &p, format::push(&io->arena, "smith cc -g -O0 -I \"$SMITH_REPO/.smith/include\" -c ", file, " -o o.o").data);
+    scratch::Run built =
+        scratch::sh(&p, format::push("smith cc -g -O0 -I \"$SMITH_REPO/.smith/include\" -c ", file, " -o o.o").data);
     scratch::expect_status("the io-form main builds", 0, &built);
     const char *names = scratch::capture(
         &p, "dwarfdump --debug-info o.o 2>/dev/null | grep -A1 'DW_AT_linkage_name.*smith_user_main' | tail -n 1");
-    scratch::expect_contains(format::push(&io->arena, "the io-form main of ", file, " is main to the debugger").data,
-                             names, "DW_AT_name\t(\"main\")");
+    scratch::expect_contains(format::push("the io-form main of ", file, " is main to the debugger").data, names,
+                             "DW_AT_name\t(\"main\")");
 }
 
 export void test_dap_the_io_main_without_a_module_line_is_main(io::Io *io) {

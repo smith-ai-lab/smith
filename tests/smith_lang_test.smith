@@ -75,7 +75,7 @@ static typeof(const char[:]) slice_of(const char *text) {
 }
 
 static const char *join(const Case *kase, const char *a, const char *b, const char *c, const char *d) {
-    return format::push(&kase->io->arena, a, b, c, d).data;
+    return format::push(a, b, c, d).data;
 }
 
 // The next line of text, copied (a zero ends it), or nullptr at the end. `*at` moves past it.
@@ -128,17 +128,17 @@ static const char *listed(const Case *kase, const char *command) {
 static void write_header(const Case *kase, const char *file, const char *stem) {
     io::Io *io = kase->io;
     const scratch::Project *p = kase->project;
-    const char *source = format::push(&io->arena, "src/", file).data;
+    const char *source = format::push("src/", file).data;
     bool made =
         c::smith_core_header(p->dir, source, nullptr, header_text, header_capacity, report_text, report_capacity);
     if (report_text[0] != '\0') {
         const u8 *bytes = (const u8 *)report_text;
-        io::Error added = io::files_write(&io->files, format::push(&io->arena, p->dir, "/out/stderr").data,
+        io::Error added = io::files_write(&io->files, format::push(p->dir, "/out/stderr").data,
                                           bytes[0:c::strlen(report_text)], io::Append);
         test::check_equal(added.code, 0);
     }
     if (!made) return;
-    const char *path = format::push(&io->arena, p->dir, "/out/include/", stem, ".h").data;
+    const char *path = format::push(p->dir, "/out/include/", stem, ".h").data;
     const char *slash = c::strrchr(path, '/');
     char *folder = arena::push_slice(&io->arena, char, (usize)(slash - path) + 1).data;
     mem::copy(folder[0:(usize)(slash - path)], path[0:(usize)(slash - path)]);
@@ -153,7 +153,7 @@ static void write_header(const Case *kase, const char *file, const char *stem) {
 static Built build_sources(const Case *kase) {
     io::Io *io = kase->io;
     const scratch::Project *p = kase->project;
-    const char *flags = format::push(&io->arena, scratch::exists(p, "nostd") ? "" : "-std=gnu23",
+    const char *flags = format::push(scratch::exists(p, "nostd") ? "" : "-std=gnu23",
                                      " -g0 -fno-color-diagnostics -Wno-unused-function -I out/include ",
                                      scratch::exists(p, "flags") ? scratch::capture(p, "cat flags") : "")
                             .data;
@@ -163,7 +163,7 @@ static Built build_sources(const Case *kase) {
         // the headers first, as the build will: no compile waits on another
         const char *stem = stem_of(io, file);
         if (header_by_command(kase->name)) {
-            const char *command = format::push(&io->arena, "mkdir -p \"out/include/$(dirname ", file,
+            const char *command = format::push("mkdir -p \"out/include/$(dirname ", file,
                                                ")\" && smith cc --smith-header src/", file, " -o out/include/", stem,
                                                ".h 2>>out/stderr; [ -f out/include/", stem, ".h ] && cp out/include/",
                                                stem, ".h out/header/", module_of(io, file), ".h")
@@ -177,11 +177,11 @@ static Built build_sources(const Case *kase) {
     for (const char *at = sources, *file = next_line(io, &at); file != nullptr; file = next_line(io, &at)) {
         const char *module = module_of(io, file);
         const char *compile =
-            format::push(&io->arena, "SMITH_LANG_GENERICS=out/generics/", module, ".c SMITH_LANG_ASK='", ask,
+            format::push("SMITH_LANG_GENERICS=out/generics/", module, ".c SMITH_LANG_ASK='", ask,
                          "' smith cc ", flags, " -c src/", file, " -o out/obj/", module, ".o 2>>out/stderr")
                 .data;
         if (scratch::sh(p, compile).status != 0) built.status = 1;
-        built.objects = format::push(&io->arena, built.objects, " out/obj/", module, ".o").data;
+        built.objects = format::push(built.objects, " out/obj/", module, ".o").data;
     }
     return built;
 }
@@ -190,7 +190,7 @@ static Built build_sources(const Case *kase) {
 static void build_others(const Case *kase, Built *built) {
     io::Io *io = kase->io;
     const scratch::Project *p = kase->project;
-    const char *flags = format::push(&io->arena, scratch::exists(p, "nostd") ? "" : "-std=gnu23",
+    const char *flags = format::push(scratch::exists(p, "nostd") ? "" : "-std=gnu23",
                                      " -g0 -fno-color-diagnostics -Wno-unused-function -I out/include ",
                                      scratch::exists(p, "flags") ? scratch::capture(p, "cat flags") : "")
                             .data;
@@ -198,16 +198,16 @@ static void build_others(const Case *kase, Built *built) {
         listed(kase, "cd src && find . -name '*.c' -o -name '*.cpp' | sed 's|^\\./||' | LC_ALL=C sort");
     const char *linker = "cc"; // the verb that links: C++ needs smith c++
     for (const char *at = others, *file = next_line(io, &at); file != nullptr; file = next_line(io, &at)) {
-        const char *object = format::push(&io->arena, "out/obj/", object_of(io, file), ".o").data;
+        const char *object = format::push("out/obj/", object_of(io, file), ".o").data;
         bool cpp = c::strcmp(file + c::strlen(file) - 4, ".cpp") == 0;
         const char *compile =
-            cpp ? format::push(&io->arena, "smith c++ -std=c++20 -g0 -fno-color-diagnostics -I out/include -c src/",
+            cpp ? format::push("smith c++ -std=c++20 -g0 -fno-color-diagnostics -I out/include -c src/",
                                file, " -o ", object, " 2>>out/stderr")
                       .data
-                : format::push(&io->arena, "smith cc ", flags, " -c src/", file, " -o ", object, " 2>>out/stderr").data;
+                : format::push("smith cc ", flags, " -c src/", file, " -o ", object, " 2>>out/stderr").data;
         if (scratch::sh(p, compile).status != 0) built->status = 1;
         if (cpp) linker = "c++";
-        built->objects = format::push(&io->arena, built->objects, " ", object).data;
+        built->objects = format::push(built->objects, " ", object).data;
     }
     (void)scratch::sh(p, ": >out/stdout");
     bool has_main =
@@ -215,7 +215,7 @@ static void build_others(const Case *kase, Built *built) {
     if (built->status != 0 || !has_main) return;
     // -lm: glibc keeps libm apart; macOS's is in libSystem, which links anyway
     scratch::Run linked = scratch::sh(
-        p, format::push(&io->arena, "smith ", linker, built->objects, " -lm -o out/program 2>>out/stderr").data);
+        p, format::push("smith ", linker, built->objects, " -lm -o out/program 2>>out/stderr").data);
     if (linked.status != 0) {
         built->status = 1;
         return;
@@ -312,7 +312,7 @@ static void check_asked_and_symbols(const Case *kase, const Built *built) {
     }
     if (scratch::exists(p, "expect/symbols")) {
         const char *command =
-            format::push(&kase->io->arena, "for object in", built->objects,
+            format::push("for object in", built->objects,
                          "; do nm -g \"$object\" 2>/dev/null; done | grep -v ' U ' | awk '{print $2, $3}' | "
                          "LC_ALL=C sort")
                 .data;
@@ -321,7 +321,7 @@ static void check_asked_and_symbols(const Case *kase, const Built *built) {
 }
 
 static const char *join_name(io::Io *io, const char *name) {
-    return format::push(&io->arena, "cases/", name).data;
+    return format::push("cases/", name).data;
 }
 
 static void corpus_case(io::Io *io, const char *name) {

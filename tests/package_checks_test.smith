@@ -30,19 +30,17 @@ static scratch::Project package_project(io::Io *io) {
 
 // Compiles tests/package.c with the flags, and runs it on the archive in a scratch folder of its own.
 static scratch::Run compile_and_run(const scratch::Project *p, const char *flags, const char *program) {
-    scratch::Run compiled = scratch::sh(p, format::push(&p->io->arena, compile_prefix, flags,
-                                                        " \"$SMITH_REPO/tests/package.c\"", libraries, " -o ", program)
-                                               .data);
+    scratch::Run compiled = scratch::sh(
+        p, format::push(compile_prefix, flags, " \"$SMITH_REPO/tests/package.c\"", libraries, " -o ", program).data);
     scratch::expect_status("tests/package.c compiles", 0, &compiled);
-    return scratch::sh(
-        p, format::push(&p->io->arena, "cd scratch && ../", program, " \"$PWD/../pkg.tar.gz\" \"$PWD\"").data);
+    return scratch::sh(p, format::push("cd scratch && ../", program, " \"$PWD/../pkg.tar.gz\" \"$PWD\"").data);
 }
 
 export void test_package_checks_pass_at_o0_under_asan_and_ubsan(io::Io *io) {
     scratch::Project p = package_project(io);
     scratch::Run run = compile_and_run(&p, "-O0 -g -fsanitize=address,undefined", "bin/asan");
     scratch::expect_text("checks: pass at -O0 under ASan and UBSan", "0 package: all checks passed",
-                         format::push(&io->arena, run.status == 0 ? "0 " : "1 ", run.out).data);
+                         format::push(run.status == 0 ? "0 " : "1 ", run.out).data);
     scratch::expect_text("checks: ... and nothing was printed to stderr", "", run.err);
 }
 
@@ -50,5 +48,5 @@ export void test_package_checks_pass_at_o2(io::Io *io) {
     scratch::Project p = package_project(io);
     scratch::Run run = compile_and_run(&p, "-O2", "bin/fast");
     scratch::expect_text("checks: pass at -O2", "0 package: all checks passed",
-                         format::push(&io->arena, run.status == 0 ? "0 " : "1 ", run.out).data);
+                         format::push(run.status == 0 ? "0 " : "1 ", run.out).data);
 }

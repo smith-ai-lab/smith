@@ -19,7 +19,7 @@ static const char *flat(io::Io *io, const char *text) {
 }
 
 static scratch::Run exec(const scratch::Project *p, const char *arguments) {
-    return scratch::sh(p, format::push(&p->io->arena, "smith --smith-exec build.ninja ", arguments).data);
+    return scratch::sh(p, format::push("smith --smith-exec build.ninja ", arguments).data);
 }
 
 static const char *yes_no(const scratch::Project *p, const char *name) {

@@ -28,7 +28,7 @@ static typeof(const char[:]) slice_of(const char *text) {
 
 // The findings of `smith lint --quiet files -- flags`, one line each, with the path of the project left off.
 static const char *findings(const scratch::Project *p, const char *files, const char *extra) {
-    const char *command = format::push(&p->io->arena, "smith lint --quiet ", files, " -- ", extra,
+    const char *command = format::push("smith lint --quiet ", files, " -- ", extra,
                                        " 2>&1 | grep -E '^/.*:[0-9]+:[0-9]+: (error|warning):' | sed -e "
                                        "'s|^.*/proj/||' -e 's/ \\[smith-effects,-warnings-as-errors\\]$//'")
                               .data;
@@ -41,9 +41,8 @@ constexpr char flags[_] = "-I\"$SMITH_REPO/.smith/include\" -I. -std=gnu2y";
 static void golden(io::Io *io, const char *name, const char *files, const char *extra) {
     scratch::Project p = project(io, only_effects);
     const char *found = findings(&p, files, extra);
-    test::golden(io,
-                 slice_of(format::push(&io->arena, "tests/build_fixtures/effects_check/expected/", name, ".txt").data),
-                 slice_of(format::push(&io->arena, found, "\n").data));
+    test::golden(io, slice_of(format::push("tests/build_fixtures/effects_check/expected/", name, ".txt").data),
+                 slice_of(format::push(found, "\n").data));
 }
 
 // --- rule 1: a raw effect outside a capability's module; rule 2: failure is not one ---
@@ -56,7 +55,7 @@ export void test_effects_pure_calls_and_the_failure_calls_are_allowed(io::Io *io
     // string.h, math.h, snprintf, strto*, qsort, sscanf, builtins; assert, abort, __builtin_trap, __builtin_unreachable
     scratch::Project p = project(io, only_effects);
     scratch::expect_text("effects: no finding in the pure and failure functions", "0",
-                         scratch::capture(&p, format::push(&io->arena, "smith lint --quiet raw.c -- ", flags,
+                         scratch::capture(&p, format::push("smith lint --quiet raw.c -- ", flags,
                                                            " 2>&1 | grep -c -e 'raw.c:\\(1[7-9]\\|[2-4][0-9]\\):'")
                                                   .data));
 }
@@ -110,11 +109,10 @@ export void test_effects_smith_files_report_names_as_written(io::Io *io) {
 
 export void test_effects_smith_the_lowerings_names_never_appear_and_an_instance_is_its_generics(io::Io *io) {
     scratch::Project p = project(io, only_effects);
-    scratch::Run run = scratch::sh(
-        &p, format::push(&io->arena, "smith lint --quiet hw/dev.smith hw_main.smith -- ", flags, " 2>&1").data);
+    scratch::Run run =
+        scratch::sh(&p, format::push("smith lint --quiet hw/dev.smith hw_main.smith -- ", flags, " 2>&1").data);
     scratch::expect_text(".smith: the lowering's names never appear", "0",
-                         scratch::capture(&p, format::push(&io->arena,
-                                                           "smith lint --quiet hw/dev.smith hw_main.smith "
+                         scratch::capture(&p, format::push("smith lint --quiet hw/dev.smith hw_main.smith "
                                                            "-- ",
                                                            flags, " 2>&1 | grep -c 'hw_dev_'")
                                                   .data));
@@ -130,14 +128,14 @@ export void test_effects_cfiles_false_a_c_file_is_not_checked_and_a_smith_file_i
                                      "smith-effects.CFiles: false\n");
     const char *found = findings(&p, "raw.c made.c hw_main.smith", flags);
     test::golden(io, slice_of("tests/build_fixtures/effects_check/expected/off.txt"),
-                 slice_of(format::push(&io->arena, found, "\n").data));
+                 slice_of(format::push(found, "\n").data));
 }
 
 export void test_effects_cfiles_true_the_c_file_is_checked(io::Io *io) {
     scratch::Project p = project(io, "Checks: \"-*,smith-effects\"\nWarningsAsErrors: \"*\"\nCheckOptions:\n  "
                                      "smith-effects.CFiles: true\n");
     scratch::expect_text("effects: CFiles true: the .c file is checked", "6",
-                         scratch::capture(&p, format::push(&io->arena, "smith lint --quiet raw.c -- ", flags,
+                         scratch::capture(&p, format::push("smith lint --quiet raw.c -- ", flags,
                                                            " 2>&1 | grep -E '^/.*:[0-9]+:[0-9]+: (error|warning):' | "
                                                            "grep -c 'raw.c'")
                                                   .data));
@@ -153,8 +151,9 @@ export void test_effects_smith_lint_dump_config_shows_smith_effects_among_the_ch
 
 export void test_effects_with_no_clang_tidy_the_default_checks_report_a_raw_call(io::Io *io) {
     scratch::Project p = scratch::project(io, "proj", "effects_check");
-    scratch::expect_text("effects: with no .clang-tidy the default checks report a raw call", "1",
-                         scratch::capture(&p, format::push(&io->arena, "smith lint --quiet raw.c -- ", flags,
-                                                           " 2>&1 | grep -c 'fopen. touches the world'")
-                                                  .data));
+    scratch::expect_text(
+        "effects: with no .clang-tidy the default checks report a raw call", "1",
+        scratch::capture(
+            &p,
+            format::push("smith lint --quiet raw.c -- ", flags, " 2>&1 | grep -c 'fopen. touches the world'").data));
 }

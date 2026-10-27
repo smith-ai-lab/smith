@@ -25,7 +25,8 @@ static typeof(const char[:]) slice_of(const char *text) {
 }
 
 static const char *text(const scratch::Project *p, const char *a, const char *b, const char *c, const char *d) {
-    return format::push(&p->io->arena, a, b, c, d).data;
+    (void)p;
+    return format::push(a, b, c, d).data;
 }
 
 // The sources are compiled in a copy of the tree, where a renamed file sits beside the original.
@@ -43,8 +44,7 @@ static scratch::Project tree_project(io::Io *io) {
 static void compare(io::Io *io, const char *stem, const char *extra, bool from_smith) {
     scratch::Project p = tree_project(io);
     if (from_smith) {
-        scratch::Run copied =
-            scratch::sh(&p, format::push(&io->arena, "cp tree/", stem, ".smith tree/", stem, ".c").data);
+        scratch::Run copied = scratch::sh(&p, format::push("cp tree/", stem, ".smith tree/", stem, ".c").data);
         scratch::expect_status("the .smith is copied to .c", 0, &copied);
     }
     const char *base = stem;
@@ -52,16 +52,15 @@ static void compare(io::Io *io, const char *stem, const char *extra, bool from_s
         base = slash + 1;
     // The file's own name in a string is read as ".c" on the lowered side; any other ".smith" in a string is code.
     scratch::write(&p, "own.sed",
-                   format::push(&io->arena, "s|\\([^A-Za-z0-9_/.-]\\)", base, "\\.smith\"|\\1", base, ".c\"|g\n").data);
+                   format::push("s|\\([^A-Za-z0-9_/.-]\\)", base, "\\.smith\"|\\1", base, ".c\"|g\n").data);
     scratch::write(&p, "messages.sed", "s/\\.c\\([: ]\\)/.smith\\1/g\n");
-    const char *plain_command = format::push(&io->arena, "cd tree && smith cc ", flags, " ", extra, " -S ", stem,
-                                             ".c -o ../plain.s 2> ../plain.err")
-                                    .data;
+    const char *plain_command =
+        format::push("cd tree && smith cc ", flags, " ", extra, " -S ", stem, ".c -o ../plain.s 2> ../plain.err").data;
     scratch::Run plain = scratch::sh(&p, plain_command);
     scratch::expect_status("the .c compiles", 0, &plain);
     const char *lowered_command =
-        format::push(&io->arena, "cd tree && cp ", stem, ".c ", stem, ".smith && { smith cc ", flags, " ", extra,
-                     " -S ", stem, ".smith -o ../lowered.s 2> ../lowered.err; s=$?; rm -f ", stem, ".smith; exit $s; }")
+        format::push("cd tree && cp ", stem, ".c ", stem, ".smith && { smith cc ", flags, " ", extra, " -S ", stem,
+                     ".smith -o ../lowered.s 2> ../lowered.err; s=$?; rm -f ", stem, ".smith; exit $s; }")
             .data;
     scratch::Run lowered = scratch::sh(&p, lowered_command);
     if (plain.status != lowered.status) {
@@ -140,22 +139,20 @@ export void test_folding_in_c17_compiles_the_same_as_smith(io::Io *io) {
 // A program that prints: the same output as .c and as .smith, and the one in its .out file.
 static void behave(io::Io *io, const char *name) {
     scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run copied = scratch::sh(&p, format::push(&io->arena, "cp \"$SMITH_REPO/tests/smith-lang-c/", name,
-                                                       ".c\" ", name, ".c && cp ", name, ".c ", name, ".smith")
+    scratch::Run copied = scratch::sh(&p, format::push("cp \"$SMITH_REPO/tests/smith-lang-c/", name, ".c\" ", name,
+                                                       ".c && cp ", name, ".c ", name, ".smith")
                                               .data);
     scratch::expect_status("the program is copied", 0, &copied);
     const char *kinds[2] = {"c", "smith"};
     for (usize i = 0; i < 2; i++) {
-        const char *build = format::push(&io->arena,
-                                         "smith cc -std=gnu23 -O1 -g0 -Wno-builtin-macro-redefined "
+        const char *build = format::push("smith cc -std=gnu23 -O1 -g0 -Wno-builtin-macro-redefined "
                                          "-D'__FILE__=\"unit\"' -I \"$SMITH_REPO/.smith/include\" -w ",
                                          name, ".", kinds[i], " -o ", name, ".", kinds[i], ".bin")
                                 .data;
         scratch::Run built = scratch::sh(&p, build);
         scratch::expect_status(text(&p, "the .", kinds[i], " builds", ""), 0, &built);
-        scratch::Run ran = scratch::sh(&p, format::push(&io->arena, "./", name, ".", kinds[i], ".bin 2>&1").data);
-        test::golden(io, slice_of(format::push(&io->arena, "tests/smith-lang-c/", name, ".out").data),
-                     slice_of(ran.out));
+        scratch::Run ran = scratch::sh(&p, format::push("./", name, ".", kinds[i], ".bin 2>&1").data);
+        test::golden(io, slice_of(format::push("tests/smith-lang-c/", name, ".out").data), slice_of(ran.out));
     }
 }
 
@@ -195,8 +192,7 @@ export void test_slices_print_the_same_as_c(io::Io *io) {
 // is the target's own (a `long` of a Windows target is 4 bytes).
 static void constexpr_c(io::Io *io, const char *width, const char *flags_for_target) {
     scratch::Project p = scratch::project(io, "p", nullptr);
-    const char *source = format::push(&io->arena,
-                                      "static unsigned long width(void) { return sizeof(long); }\n"
+    const char *source = format::push("static unsigned long width(void) { return sizeof(long); }\n"
                                       "static int fib(int n) { return n < 2 ? n : fib(n - 1) + fib(n - 2); }\n"
                                       "constexpr int x = fib(10);\nstatic_assert(x == 55);\nstatic_assert(width() == ",
                                       width, ");\n")

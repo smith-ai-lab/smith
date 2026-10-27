@@ -20,7 +20,7 @@ static scratch::Project fresh(io::Io *io) {
 
 // `smith prove args -- -I include`, the output of both streams together; $c is tests/prove.
 static scratch::Run prove(const scratch::Project *p, const char *args) {
-    return scratch::sh(p, format::push(&p->io->arena, "c=\"$SMITH_REPO/tests/prove\"; smith prove ", args,
+    return scratch::sh(p, format::push("c=\"$SMITH_REPO/tests/prove\"; smith prove ", args,
                                        " -- -I \"$SMITH_REPO/.smith/include\" 2>&1")
                               .data);
 }

@@ -16,7 +16,7 @@ import scratch;
 
 static scratch::Project folder(const scratch::Project *root, const char *name) {
     scratch::Project f = *root;
-    f.dir = format::push(&root->io->arena, root->dir, "/", name).data;
+    f.dir = format::push(root->dir, "/", name).data;
     return f;
 }
 
@@ -30,8 +30,7 @@ constexpr char fake_sources[_] =
 static void check_fake(io::Io *io, const char *mode, const char *flags) {
     scratch::Project p = scratch::project(io, "fake", nullptr);
     scratch::Run built = scratch::sh(
-        &p, format::push(&io->arena, "smith cc -std=gnu23 -g -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror ",
-                         flags,
+        &p, format::push("smith cc -std=gnu23 -g -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror ", flags,
                          " -I \"$SMITH_REPO/.smith/include\" -I \"$SMITH_REPO/.smith/protocol\" -I "
                          "\"$SMITH_REPO/runtime/protocol\" ",
                          fake_sources, " -o mcp_fake 2>build.log")
@@ -39,11 +38,10 @@ static void check_fake(io::Io *io, const char *mode, const char *flags) {
     if (built.status != 0) {
         test::note("%s", scratch::read(&p, "build.log"));
     }
-    scratch::expect_status(format::push(&io->arena, "fake io, ", mode, ": tests/mcp_fake.c builds").data, 0, &built);
+    scratch::expect_status(format::push("fake io, ", mode, ": tests/mcp_fake.c builds").data, 0, &built);
     scratch::Run ran = scratch::sh(&p, "./mcp_fake 2>&1");
-    scratch::expect_status(format::push(&io->arena, "fake io, ", mode, ": the fake io's checks pass").data, 0, &ran);
-    scratch::expect_contains(format::push(&io->arena, "fake io, ", mode, ": the last line").data, ran.out,
-                             " checks, 0 failed");
+    scratch::expect_status(format::push("fake io, ", mode, ": the fake io's checks pass").data, 0, &ran);
+    scratch::expect_contains(format::push("fake io, ", mode, ": the last line").data, ran.out, " checks, 0 failed");
 }
 
 export void test_mcp_fake_io_under_the_sanitizers(io::Io *io) {
@@ -98,8 +96,8 @@ export void test_mcp_the_connection_discover_initialize_and_tools(io::Io *io) {
     const char *names[11] = {"launch", "breakpoint", "continue",  "step_over", "step_in", "step_out",
                              "pause",  "stack",      "variables", "evaluate",  "stop"};
     for (usize i = 0; i < 11; i++) {
-        scratch::expect_contains(format::push(&io->arena, "tools/list has ", names[i]).data, tools,
-                                 format::push(&io->arena, "\"name\":\"", names[i], "\"").data);
+        scratch::expect_contains(format::push("tools/list has ", names[i]).data, tools,
+                                 format::push("\"name\":\"", names[i], "\"").data);
     }
 }
 
@@ -124,18 +122,19 @@ static bool make(io::Io *io, scratch::Project *root) {
 
 // One line of calls: a request of the tool `tool` with the JSON `arguments`, as id `id`.
 static const char *call(io::Io *io, const char *jsonl, const char *id, const char *tool, const char *arguments) {
-    return format::push(&io->arena, jsonl, "{\"jsonrpc\":\"2.0\",\"id\":", id,
-                        ",\"method\":\"tools/call\",\"params\":{\"name\":\"", tool, "\",\"arguments\":", arguments,
-                        "}}\n")
+    (void)io;
+    return format::push(jsonl, "{\"jsonrpc\":\"2.0\",\"id\":", id, ",\"method\":\"tools/call\",\"params\":{\"name\":\"",
+                        tool, "\",\"arguments\":", arguments, "}}\n")
         .data;
 }
 
 // Writes the calls, runs `smith mcp` on them and leaves the text of each answer in r<id>.txt (for the ids 1 to
 // `count`).
 static scratch::Run serve(io::Io *io, const scratch::Project *p, const char *calls, const char *count) {
+    (void)io;
     scratch::write(p, "in.jsonl", calls);
     scratch::Run run = scratch::sh(p, "smith mcp <in.jsonl >out.jsonl 2>err.txt");
-    scratch::Run replies = scratch::sh(p, format::push(&io->arena, ". ../reply; i=1; while [ $i -le ", count,
+    scratch::Run replies = scratch::sh(p, format::push(". ../reply; i=1; while [ $i -le ", count,
                                                        " ]; do reply out.jsonl $i >r$i.txt; i=$((i + 1)); done")
                                               .data);
     scratch::expect_status("the answers are read", 0, &replies);
@@ -143,7 +142,7 @@ static scratch::Run serve(io::Io *io, const scratch::Project *p, const char *cal
 }
 
 static const char *answer(const scratch::Project *p, const char *id) {
-    return scratch::read(p, format::push(&p->io->arena, "r", id, ".txt").data);
+    return scratch::read(p, format::push("r", id, ".txt").data);
 }
 
 // --- a C program

@@ -39,7 +39,7 @@ static void has(const char *name, const scratch::Run *run, const char *needle) {
 
 // A command in a project folder of the fixture (`cd folder && smith prove ...`), both streams together.
 static scratch::Run in_folder(const scratch::Project *p, const char *folder, const char *arguments) {
-    return scratch::sh(p, format::push(&p->io->arena, "cd ", folder, " && smith prove ", arguments, " 2>&1").data);
+    return scratch::sh(p, format::push("cd ", folder, " && smith prove ", arguments, " 2>&1").data);
 }
 
 // 8. checkers' move generator, with the contracts of the issue: the fixed one is proved within the budget, and the one

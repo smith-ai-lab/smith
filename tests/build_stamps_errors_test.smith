@@ -10,7 +10,7 @@ import scratch;
 
 // Copies the variant (`<name>.txt` of the fixture) over build.c and builds.
 static scratch::Run build_variant(const scratch::Project *p, const char *name, const char *arguments) {
-    scratch::Run copied = scratch::sh(p, format::push(&p->io->arena, "cp ", name, ".txt build.c").data);
+    scratch::Run copied = scratch::sh(p, format::push("cp ", name, ".txt build.c").data);
     test::check_equal(copied.status, 0);
     return scratch::build(p, arguments);
 }

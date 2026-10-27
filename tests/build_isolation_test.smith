@@ -42,7 +42,7 @@ export void test_build_isolation_sanitized_and_plain_builds_keep_their_own_modul
     scratch::expect_status("modules: the program runs", 0, &app);
     scratch::expect_text(
         "modules: the two builds have caches of their own", "ok",
-        scratch::capture(&p, format::push(&io->arena, "n=$(find ", p.cache,
+        scratch::capture(&p, format::push("n=$(find ", p.cache,
                                           "/smith/modules -mindepth 2 -maxdepth 2 -type d | wc -l | tr -d ' '); "
                                           "[ \"$n\" -ge 2 ] && echo ok || echo \"$n\"")
                                  .data));

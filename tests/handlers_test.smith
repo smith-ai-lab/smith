@@ -20,7 +20,7 @@ static bool darwin(const scratch::Project *p) {
 
 // A command run after `flags`, which must succeed.
 static void must(const scratch::Project *p, const char *name, const char *command) {
-    scratch::Run run = scratch::sh(p, format::push(&p->io->arena, flags, command).data);
+    scratch::Run run = scratch::sh(p, format::push(flags, command).data);
     scratch::expect_status(name, 0, &run);
 }
 
@@ -37,7 +37,7 @@ static scratch::Project runtime(io::Io *io, const char *name, bool *ok) {
 
 // Runs a program that prints `ok` and `FAIL` lines: it passes with no FAIL line and a zero status.
 static void passes(const scratch::Project *p, const char *name, const char *program) {
-    scratch::Run run = scratch::sh(p, format::push(&p->io->arena, program, " 2>&1").data);
+    scratch::Run run = scratch::sh(p, format::push(program, " 2>&1").data);
     scratch::expect_lacks(name, run.out, "FAIL");
     scratch::expect_status(name, 0, &run);
 }
@@ -77,7 +77,7 @@ static void io_handlers(io::Io *io, const char *optimize) {
         return;
     }
     must(&p, "handlers: the io test builds",
-         format::push(&io->arena, "smith cc $f ", optimize, " $h/io.c libsmith_handlers.dylib -o t_io").data);
+         format::push("smith cc $f ", optimize, " $h/io.c libsmith_handlers.dylib -o t_io").data);
     scratch::Run run = scratch::sh(&p, "./t_io 2>&1");
     scratch::expect_status("handlers: the io test passes (the fakes are reached, libc's without them)", 0, &run);
     scratch::expect_lacks("handlers: the io test has no failing check", run.out, "FAIL");
@@ -102,8 +102,7 @@ static void env_clock_handlers(io::Io *io, const char *optimize) {
         return;
     }
     must(&p, "handlers: the env and clock test builds",
-         format::push(&io->arena, "smith cc $f ", optimize, " $h/envclock.c libsmith_handlers.dylib -o t_envclock")
-             .data);
+         format::push("smith cc $f ", optimize, " $h/envclock.c libsmith_handlers.dylib -o t_envclock").data);
     scratch::Run run = scratch::sh(&p, "./t_envclock 2>&1");
     scratch::expect_status("handlers: the env and clock test passes", 0, &run);
     scratch::expect_lacks("handlers: the env and clock test has no failing check", run.out, "FAIL");
@@ -127,19 +126,18 @@ static void project_links_runtime(io::Io *io, const char *profile, const char *t
     }
     scratch::Run copied = scratch::sh(&p, "cp \"$SMITH_REPO/tests/handlers/project.c\" main.c");
     scratch::expect_status("handlers: the project is written", 0, &copied);
-    scratch::Run built = scratch::sh(&p, format::push(&io->arena, "smith ", target, " >build.log 2>&1").data);
+    scratch::Run built = scratch::sh(&p, format::push("smith ", target, " >build.log 2>&1").data);
     scratch::expect_status("handlers: the project builds and links the runtime", 0, &built);
-    const char *program = format::push(&io->arena, "./build/", profile, "/project").data;
+    const char *program = format::push("./build/", profile, "/project").data;
     scratch::expect_text("handlers: the handler is reached by malloc", "handler 1, before 0, after 0, allocs 1",
-                         scratch::capture(&p, format::push(&io->arena, program, " 2>&1").data));
-    scratch::expect_text("handlers: the runtime is a dylib beside the program", "1",
-                         scratch::capture(&p, format::push(&io->arena, "otool -L build/", profile,
-                                                           "/project | grep -c '@rpath/libsmith_handlers.dylib'")
-                                                  .data));
+                         scratch::capture(&p, format::push(program, " 2>&1").data));
+    scratch::expect_text(
+        "handlers: the runtime is a dylib beside the program", "1",
+        scratch::capture(
+            &p, format::push("otool -L build/", profile, "/project | grep -c '@rpath/libsmith_handlers.dylib'").data));
     scratch::expect_text(
         "handlers: the program does not contain the runtime", "0",
-        scratch::capture(&p,
-                         format::push(&io->arena, "nm -U build/", profile, "/project | grep -c smith_handlers").data));
+        scratch::capture(&p, format::push("nm -U build/", profile, "/project | grep -c smith_handlers").data));
     if (c::strcmp(profile, "debug") == 0) {
         scratch::expect_text("handlers: debug: ASan is linked before the runtime (after the line that names the "
                              "program)",
@@ -166,10 +164,10 @@ static void console_handler(io::Io *io, const char *profile, const char *target)
     }
     scratch::Run copied = scratch::sh(&p, "cp \"$SMITH_REPO/tests/handlers/console.c\" main.c");
     scratch::expect_status("handlers: the console project is written", 0, &copied);
-    scratch::Run built = scratch::sh(&p, format::push(&io->arena, "smith ", target, " >build.log 2>&1").data);
+    scratch::Run built = scratch::sh(&p, format::push("smith ", target, " >build.log 2>&1").data);
     scratch::expect_status("handlers: the console project builds", 0, &built);
     scratch::expect_text("handlers: printf, puts and fputs reach the console handler", "ok captured=[x\ny\nz\n]",
-                         scratch::capture(&p, format::push(&io->arena, "./build/", profile, "/console 2>&1").data));
+                         scratch::capture(&p, format::push("./build/", profile, "/console 2>&1").data));
     if (c::strcmp(profile, "release") == 0) {
         scratch::expect_text("handlers: release: the optimizer turned the printf of a literal into puts (no printf is "
                              "imported)",

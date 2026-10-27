@@ -51,7 +51,7 @@ static const char *directive(io::Io *io, const char *text, const char *prefix) {
             }
             char *copy = arena::push_slice(&io->arena, char, value_length + 1).data;
             mem::copy(copy[0:value_length], value[0:value_length]);
-            joined = format::push(&io->arena, joined, " ", copy).data;
+            joined = format::push(joined, " ", copy).data;
         }
         line += length;
         if (*line == '\n') line++;
@@ -92,13 +92,13 @@ static const char *link_sources(const scratch::Project *p, const char *name, con
         usize length = c::strlen(source);
         if (length > 6 && c::strcmp(source + length - 6, ".smith") == 0) {
             scratch::Run copied =
-                scratch::sh(p, format::push(&io->arena, "mkdir -p \"$(dirname ", name, "/", kept,
-                                            ")\" && cp \"$SMITH_REPO/", source, "\" ", name, "/", kept)
+                scratch::sh(p, format::push("mkdir -p \"$(dirname ", name, "/", kept, ")\" && cp \"$SMITH_REPO/",
+                                            source, "\" ", name, "/", kept)
                                    .data);
             scratch::expect_status("prove_sound: a linked module is copied", 0, &copied);
-            sources = format::push(&io->arena, sources, " ", name, "/", kept).data;
+            sources = format::push(sources, " ", name, "/", kept).data;
         } else {
-            sources = format::push(&io->arena, sources, " \"$SMITH_REPO/", source, "\"").data;
+            sources = format::push(sources, " \"$SMITH_REPO/", source, "\"").data;
         }
     }
     return sources;
@@ -109,37 +109,35 @@ static const char *link_sources(const scratch::Project *p, const char *name, con
 static void sound(io::Io *io, const char *name) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     lower_modules(&p);
-    const char *source = format::push(&io->arena, "tests/prove/sound/", name, ".c").data;
-    const char *text = scratch::capture(&p, format::push(&io->arena, "cat \"$SMITH_REPO/", source, "\"").data);
+    const char *source = format::push("tests/prove/sound/", name, ".c").data;
+    const char *text = scratch::capture(&p, format::push("cat \"$SMITH_REPO/", source, "\"").data);
     const char *proves = directive(io, text, "// proves:");
     const char *files = directive(io, text, "// prove-files:");
     const char *links = directive(io, text, "// link:");
     const char *prove_files = c::strlen(files) > 0 ? files : source;
     const char *arguments = "";
     for (usize i = 0; word(io, prove_files, i) != nullptr; i++) {
-        arguments = format::push(&io->arena, arguments, " \"$SMITH_REPO/", word(io, prove_files, i), "\"").data;
+        arguments = format::push(arguments, " \"$SMITH_REPO/", word(io, prove_files, i), "\"").data;
     }
-    scratch::Run proved = scratch::sh(&p, format::push(&io->arena, "smith prove -v", arguments,
-                                                       " -- -I \"$SMITH_REPO/.smith/include\" -I lowered 2>&1")
-                                              .data);
+    scratch::Run proved = scratch::sh(
+        &p, format::push("smith prove -v", arguments, " -- -I \"$SMITH_REPO/.smith/include\" -I lowered 2>&1").data);
     for (usize i = 0; word(io, proves, i) != nullptr; i++) {
         const char *fn = word(io, proves, i);
-        if (!scratch::contains(proved.out, format::push(&io->arena, "ok    ", fn, "  (").data)) {
+        if (!scratch::contains(proved.out, format::push("ok    ", fn, "  (").data)) {
             test::note("the prover does not prove %s any more (a harness tests what was proved):\n%s", fn, proved.out);
         }
-        test::check_condition(scratch::contains(proved.out, format::push(&io->arena, "ok    ", fn, "  (").data));
+        test::check_condition(scratch::contains(proved.out, format::push("ok    ", fn, "  (").data));
     }
     const char *sources = link_sources(&p, name, links);
-    scratch::Run built =
-        scratch::sh(&p, format::push(&io->arena, "mkdir -p ", name, " && smith cc ", cc_flags, " \"$SMITH_REPO/",
-                                     source, "\"", sources, " ", cc_common, " -o ", name, "/run 2>&1")
-                            .data);
+    scratch::Run built = scratch::sh(&p, format::push("mkdir -p ", name, " && smith cc ", cc_flags, " \"$SMITH_REPO/",
+                                                      source, "\"", sources, " ", cc_common, " -o ", name, "/run 2>&1")
+                                             .data);
     scratch::expect_status("prove_sound: the harness builds", 0, &built);
     const char *seeds = test::full() ? "1 2 3 4 5 6 7 8" : "1";
     const char *count = test::full() ? "50000" : "2000";
     for (usize i = 0; word(io, seeds, i) != nullptr; i++) {
-        scratch::Run run = scratch::sh(
-            &p, format::push(&io->arena, "./", name, "/run ", word(io, seeds, i), " ", count, " 2>&1").data);
+        scratch::Run run =
+            scratch::sh(&p, format::push("./", name, "/run ", word(io, seeds, i), " ", count, " 2>&1").data);
         if (run.status != 0) {
             test::note("seed %s:\n%s", word(io, seeds, i), run.out);
         }
@@ -151,14 +149,12 @@ static void sound(io::Io *io, const char *name) {
 // that function's name must die with the text on its line.
 static void unsound(io::Io *io, const char *name) {
     scratch::Project p = scratch::project(io, "p", nullptr);
-    const char *source = format::push(&io->arena, "tests/prove/unsound/", name, ".c").data;
-    const char *text = scratch::capture(&p, format::push(&io->arena, "cat \"$SMITH_REPO/", source, "\"").data);
-    scratch::Run proved = scratch::sh(&p, format::push(&io->arena, "smith prove -v \"$SMITH_REPO/", source,
-                                                       "\" -- -I \"$SMITH_REPO/.smith/include\" 2>&1")
-                                              .data);
-    scratch::Run built = scratch::sh(&p, format::push(&io->arena, "smith cc ", cc_flags, " \"$SMITH_REPO/", source,
-                                                      "\" ", cc_common, " -o claims 2>&1")
-                                             .data);
+    const char *source = format::push("tests/prove/unsound/", name, ".c").data;
+    const char *text = scratch::capture(&p, format::push("cat \"$SMITH_REPO/", source, "\"").data);
+    scratch::Run proved = scratch::sh(
+        &p, format::push("smith prove -v \"$SMITH_REPO/", source, "\" -- -I \"$SMITH_REPO/.smith/include\" 2>&1").data);
+    scratch::Run built = scratch::sh(
+        &p, format::push("smith cc ", cc_flags, " \"$SMITH_REPO/", source, "\" ", cc_common, " -o claims 2>&1").data);
     scratch::expect_status("prove_sound: the corpus builds", 0, &built);
     for (const char *line = text; *line != '\0';) {
         usize length = 0;
@@ -178,13 +174,13 @@ static void unsound(io::Io *io, const char *name) {
                 expected++;
             }
             if (kind_length == 7 && c::strncmp(line + 3, "unsound", 7) == 0) {
-                const char *failed = format::push(&io->arena, "FAIL  ", function, "  (").data;
+                const char *failed = format::push("FAIL  ", function, "  (").data;
                 if (!scratch::contains(proved.out, failed)) {
                     test::note("%s: smith prove should fail it, and says: %s", function, proved.out);
                 }
                 test::check_condition(scratch::contains(proved.out, failed));
             }
-            scratch::Run run = scratch::sh(&p, format::push(&io->arena, "./claims ", function, " 2>&1").data);
+            scratch::Run run = scratch::sh(&p, format::push("./claims ", function, " 2>&1").data);
             if (run.status == 0) {
                 test::note("%s: the run that should refute it exits 0", function);
             }

@@ -21,7 +21,7 @@ constexpr char prelude[_] =
 
 static const char *slots_case(io::Io *io, const char *script) {
     scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run run = scratch::sh(&p, format::push(&io->arena, prelude, script).data);
+    scratch::Run run = scratch::sh(&p, format::push(prelude, script).data);
     scratch::expect_status("the case ends", 0, &run);
     return run.out;
 }
@@ -91,7 +91,7 @@ export void test_the_executor_takes_its_slot_at_the_first_step_and_an_up_to_date
                          "rm free held; smith --smith-slots sh -c \"$hold\" & a=$!; w held; "
                          "smith --smith-exec m.ninja 2>c.err >/dev/null; echo \"status $?\"; "
                          "grep -c 'waiting for a core' c.err; touch free; wait $a";
-    scratch::Run run = scratch::sh(&p, format::push(&io->arena, prelude, script).data);
+    scratch::Run run = scratch::sh(&p, format::push(prelude, script).data);
     scratch::expect_text("the first run waits, the second does not", "built\nstatus 0\n0\n", run.out);
 }
 
@@ -132,7 +132,7 @@ constexpr char three_steps[_] = "printf 'rule step\n  command = $cmd\n"
 // in a pool of four where three tokens are held, so the base token runs one; each token released starts a step.
 export void test_a_running_run_grows_as_tokens_free_up(io::Io *io) {
     const char *out = slots_case(
-        io, format::push(&io->arena, "export SMITH_CORES=4; ", three_steps,
+        io, format::push("export SMITH_CORES=4; ", three_steps,
                          "for n in 1 2 3; do smith --smith-slots sh -c \"touch held$n; "
                          "while [ ! -e free$n ]; do sleep 0.05; done\" & done; w held1; w held2; w held3; "
                          "smith --smith-exec m.ninja >/dev/null 2>b.err & e=$!; w r1; sleep 1; "
@@ -146,7 +146,7 @@ export void test_a_running_run_grows_as_tokens_free_up(io::Io *io) {
 // a pool of four the local run runs two, and the third starts once the CI run is gone.
 export void test_a_ci_holder_leaves_a_local_run_fewer_cores(io::Io *io) {
     const char *out =
-        slots_case(io, format::push(&io->arena, "export SMITH_CORES=4; ", three_steps,
+        slots_case(io, format::push("export SMITH_CORES=4; ", three_steps,
                                     "SMITH_PRIORITY=ci smith --smith-slots sh -c \"touch held; "
                                     "while [ ! -e free ]; do sleep 0.05; done\" & c=$!; w held; "
                                     "smith --smith-exec m.ninja >/dev/null 2>b.err & e=$!; w r1; w r2; sleep 1; "

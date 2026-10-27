@@ -30,13 +30,13 @@ static scratch::Project make_project(io::Io *io) {
 }
 
 static const char *join(const scratch::Project *p, const char *a, const char *b) {
-    return format::push(&p->io->arena, a, b).data;
+    return format::push(a, b).data;
 }
 
 // The header of a module (`t/body` is t/body.smith) written to include/t/body.h; flags are extra compiler flags.
 static void make_header(const scratch::Project *p, const char *module, const char *flags) {
     const char *command =
-        format::push(&p->io->arena, "smith cc --smith-header ", module, ".smith -o include/", module, ".h ", flags)
+        format::push("smith cc --smith-header ", module, ".smith -o include/", module, ".h ", flags)
             .data;
     scratch::Run run = scratch::sh(p, command);
     scratch::expect_status(join(p, module, ": the header is written"), 0, &run);
@@ -57,7 +57,7 @@ static void has(const scratch::Project *p, const char *name, const char *header,
         if (*at == '\n') at++;
     }
     const char *label =
-        format::push(&p->io->arena, name, ": ", line, wanted ? " is in the header" : " is not in the header").data;
+        format::push(name, ": ", line, wanted ? " is in the header" : " is not in the header").data;
     if (found != wanted) {
         test::note("%s", label);
     }
@@ -70,9 +70,9 @@ static void standalone(const scratch::Project *p, const char *name, const char *
     const char *modes[2] = {"-x c -std=gnu23", "-x c++ -std=c++23"};
     for (usize i = 0; i < 2; i++) {
         const char *command =
-            format::push(&p->io->arena, "smith cc -fsyntax-only ", modes[i], " ", includes, " ", header).data;
+            format::push("smith cc -fsyntax-only ", modes[i], " ", includes, " ", header).data;
         scratch::Run run = scratch::sh(p, command);
-        scratch::expect_status(format::push(&p->io->arena, name, " compiles alone (", labels[i], ")").data, 0, &run);
+        scratch::expect_status(format::push(name, " compiles alone (", labels[i], ")").data, 0, &run);
     }
 }
 
@@ -86,7 +86,7 @@ static void generated(io::Io *io, const char *name) {
             "*) \"$SMITH_SELF\" cc --smith-header \"$f\" -o \"generated/$(basename \"$f\" .smith).h\" || exit 1;; "
             "esac; done");
     scratch::expect_status("the headers are written", 0, &made);
-    const char *header = format::push(&io->arena, "generated/", name, ".h").data;
+    const char *header = format::push("generated/", name, ".h").data;
     standalone(&p, join(&p, name, ".h"), header, "-I generated -I \"$SMITH_REPO/.smith/include\"");
 }
 
@@ -298,7 +298,7 @@ export void test_modules_in_a_folder_above_and_beside_are_included_relative(io::
         scratch::Run run =
             scratch::sh(&p, join(&p, "smith cc -fsyntax-only ", join(&p, modes[i], " include/u/deep/farther.h")));
         scratch::expect_status(
-            format::push(&p.io->arena, "u/deep/farther.h compiles with no include path (", labels[i], ")").data, 0,
+            format::push("u/deep/farther.h compiles with no include path (", labels[i], ")").data, 0,
             &run);
     }
 }
@@ -316,19 +316,19 @@ static void write_chain(const scratch::Project *p) {
     for (usize i = 0; i < chain_length; i++) {
         const char *text =
             i + 1 < chain_length
-                ? format::push(&p->io->arena, "module chain::m", i, ";\nimport chain::m", i + 1, ";\nexport u32 m", i,
+                ? format::push("module chain::m", i, ";\nimport chain::m", i + 1, ";\nexport u32 m", i,
                                "(void) { return m", i + 1, "::m", i + 1, "() + 1; }\n")
                       .data
-                : format::push(&p->io->arena, "module chain::m", i, ";\nexport u32 m", i, "(void) { return 1; }\n")
+                : format::push("module chain::m", i, ";\nexport u32 m", i, "(void) { return 1; }\n")
                       .data;
-        scratch::write(p, format::push(&p->io->arena, "chain/m", i, ".smith").data, text);
+        scratch::write(p, format::push("chain/m", i, ".smith").data, text);
     }
 }
 
 // The headers of the chain from the last to the second, as a build makes them.
 static void make_chain_headers(const scratch::Project *p) {
     for (usize i = chain_length; i-- > 1;) {
-        scratch::Run run = scratch::sh(p, format::push(&p->io->arena, "smith cc --smith-header chain/m", i,
+        scratch::Run run = scratch::sh(p, format::push("smith cc --smith-header chain/m", i,
                                                        ".smith -o include/chain/m", i, ".h -I include")
                                               .data);
         scratch::expect_status("chain: a header of the chain", 0, &run);
@@ -363,11 +363,11 @@ export void test_more_modules_than_the_limit_is_an_error_that_names_it(io::Io *i
     scratch::Project p = make_project(io);
     for (usize i = 0; i < deep_length; i++) {
         const char *text = i + 1 < deep_length
-                               ? format::push(&io->arena, "module deep::m", i, ";\nimport deep::m", i + 1,
+                               ? format::push("module deep::m", i, ";\nimport deep::m", i + 1,
                                               ";\nexport u32 m", i, "(void);\n")
                                      .data
-                               : format::push(&io->arena, "module deep::m", i, ";\nexport u32 m", i, "(void);\n").data;
-        scratch::write(&p, format::push(&io->arena, "deep/m", i, ".smith").data, text);
+                               : format::push("module deep::m", i, ";\nexport u32 m", i, "(void);\n").data;
+        scratch::write(&p, format::push("deep/m", i, ".smith").data, text);
     }
     scratch::Run run = scratch::sh(&p, "smith cc --smith-header deep/m0.smith -o deep.h");
     scratch::expect_failure("deep: more modules than the limit fails", &run);
@@ -387,7 +387,7 @@ export void test_lines_added_above_a_generic_change_only_its_stored_first_line(i
     scratch::write(&p, "g/gen.smith", generic_source);
     scratch::Run first = scratch::sh(&p, "smith cc --smith-header g/gen.smith -o first.h");
     scratch::expect_status("the first header is written", 0, &first);
-    scratch::write(&p, "g/gen.smith", format::push(&io->arena, "// one\n// two\n// three\n\n", generic_source).data);
+    scratch::write(&p, "g/gen.smith", format::push("// one\n// two\n// three\n\n", generic_source).data);
     scratch::Run second = scratch::sh(&p, "smith cc --smith-header g/gen.smith -o second.h");
     scratch::expect_status("the second header is written", 0, &second);
     scratch::expect_text("one line differs", "1", scratch::capture(&p, "diff first.h second.h | grep -c '^<'"));
@@ -401,7 +401,7 @@ export void test_an_error_in_a_generic_body_points_at_its_line(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     scratch::Run made = scratch::sh(&p, "mkdir g");
     scratch::expect_status("the folder is made", 0, &made);
-    scratch::write(&p, "g/gen.smith", format::push(&io->arena, "// one\n// two\n// three\n\n", generic_source).data);
+    scratch::write(&p, "g/gen.smith", format::push("// one\n// two\n// three\n\n", generic_source).data);
     scratch::write(&p, "u.smith", "import g::gen;\ni32 main(void) { return gen::twice(i32, 1); }\n");
     scratch::Run header =
         scratch::sh(&p, "mkdir -p include/g && smith cc --smith-header g/gen.smith -o include/g/gen.h");

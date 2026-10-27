@@ -18,7 +18,7 @@ import smith::mem;
 // The project is smith's lsp fixture; its folders hold what each test opens.
 static scratch::Project folder(const scratch::Project *root, const char *name) {
     scratch::Project f = *root;
-    f.dir = format::push(&root->io->arena, root->dir, "/", name).data;
+    f.dir = format::push(root->dir, "/", name).data;
     return f;
 }
 
@@ -57,16 +57,17 @@ static bool make_built(io::Io *io, scratch::Project *root, scratch::Project *p, 
 
 // The lines the client printed for the commands: `smith lsp` from the folder, with its root, and stderr too.
 static const char *session(io::Io *io, const scratch::Project *p, const char *commands) {
-    const char *command = format::push(&io->arena, "\"", test::scratch(io),
-                                       "/lsp_client\" \"$(command -v smith)\" \"$(pwd -P)\" ", commands, " 2>&1")
-                              .data;
+    const char *command =
+        format::push("\"", test::scratch(io), "/lsp_client\" \"$(command -v smith)\" \"$(pwd -P)\" ", commands, " 2>&1")
+            .data;
     return scratch::sh(p, command).out;
 }
 
 // The log has the whole line.
 static bool has_line(io::Io *io, const char *log, const char *line) {
-    const char *haystack = format::push(&io->arena, "\n", log, "\n").data;
-    const char *needle = format::push(&io->arena, "\n", line, "\n").data;
+    (void)io;
+    const char *haystack = format::push("\n", log, "\n").data;
+    const char *needle = format::push("\n", line, "\n").data;
     return scratch::contains(haystack, needle);
 }
 
@@ -79,8 +80,9 @@ static void expect_line(io::Io *io, const char *name, const char *log, const cha
 
 // How many lines of the log start with the prefix.
 static usize count_prefix(io::Io *io, const char *log, const char *prefix) {
-    const char *haystack = format::push(&io->arena, "\n", log).data;
-    const char *needle = format::push(&io->arena, "\n", prefix).data;
+    (void)io;
+    const char *haystack = format::push("\n", log).data;
+    const char *needle = format::push("\n", prefix).data;
     usize count = 0;
     for (const char *at = c::strstr(haystack, needle); at != nullptr; at = c::strstr(at + 1, needle)) {
         count++;
@@ -111,8 +113,9 @@ static const char *joined(io::Io *io, const char *log, const char *prefix) {
 
 // How many lines of the log are the line.
 static usize count_line(io::Io *io, const char *log, const char *line) {
-    const char *haystack = format::push(&io->arena, "\n", log, "\n").data;
-    const char *needle = format::push(&io->arena, "\n", line, "\n").data;
+    (void)io;
+    const char *haystack = format::push("\n", log, "\n").data;
+    const char *needle = format::push("\n", line, "\n").data;
     usize count = 0;
     for (const char *at = c::strstr(haystack, needle); at != nullptr; at = c::strstr(at + 1, needle)) {
         count++;
@@ -521,7 +524,8 @@ export void test_lsp_plain_c_in_the_same_project(io::Io *io) {
 
 // What `smith lsp ARGUMENTS` prints on its standard output, in the folder.
 static const char *query(const scratch::Project *p, const char *arguments, io::Io *io) {
-    return scratch::sh(p, format::push(&io->arena, "smith lsp ", arguments, " 2>/dev/null").data).out;
+    (void)io;
+    return scratch::sh(p, format::push("smith lsp ", arguments, " 2>/dev/null").data).out;
 }
 
 constexpr char dot_definition[_] = "geom/vec.smith:8:12: function: geom::vec::dot: export f32 dot(Vec a, Vec b) {";
@@ -733,8 +737,7 @@ export void test_lsp_modules_a_name_close_to_a_real_one(io::Io *io) {
     const char *log = session(io, &p, "open main.smith foo.smith -- replace main.smith 'foo::f' 'foo::g'");
     const char *dir = scratch::capture(&p, "pwd -P");
     expect_line(io, "modules: a name close to a real one, the note in the module's source", log,
-                format::push(&io->arena,
-                             "diag main.smith:6:18: Use of undeclared identifier 'foo::g'; did you mean 'foo::f'? (fix "
+                format::push("diag main.smith:6:18: Use of undeclared identifier 'foo::g'; did you mean 'foo::f'? (fix "
                              "available) |  | ",
                              dir, "/foo.smith:3:12: | note: 'foo::f' declared here")
                     .data);
@@ -848,9 +851,9 @@ export void test_lsp_cinterop_exactly_one_definition(io::Io *io) {
     const char *log = session(io, &p, cinterop_hovers);
     const char *places[7] = {"7:19", "9:8", "9:21", "10:8", "10:58", "10:104", "10:112"};
     for (usize i = 0; i < 7; i++) {
-        const char *want = format::push(&io->arena, "definitions main.smith:", places[i], ": 1").data;
-        scratch::expect_text(format::push(&io->arena, "cinterop: exactly one definition at ", places[i]).data, want,
-                             joined(io, log, format::push(&io->arena, "definitions main.smith:", places[i], ":").data));
+        const char *want = format::push("definitions main.smith:", places[i], ": 1").data;
+        scratch::expect_text(format::push("cinterop: exactly one definition at ", places[i]).data, want,
+                             joined(io, log, format::push("definitions main.smith:", places[i], ":").data));
     }
     expect_line(io, "cinterop: c::local_value is defined in its header, at its name", log, "  place local.h:1:19");
 }
@@ -864,7 +867,7 @@ static void check_database_without_a_language(io::Io *io, const char *name, cons
     }
     scratch::Project p = folder(&root, name);
     scratch::Run made =
-        scratch::sh(&root, format::push(&io->arena, "mkdir -p ", name, " && cd ", name,
+        scratch::sh(&root, format::push("mkdir -p ", name, " && cd ", name,
                                         " && cp ../modules/main.smith ../modules/foo.smith . && ", database)
                                .data);
     scratch::expect_status("lsp: the folder is made", 0, &made);
@@ -922,7 +925,7 @@ export void test_lsp_a_root_database_wins_over_the_smith_folder(io::Io *io) {
     }
     scratch::Project p = folder(&root, "rootwins");
     scratch::Run made = scratch::sh(
-        &p, format::push(&io->arena, needs_database,
+        &p, format::push(needs_database,
                          " && printf '[{\"directory\": \"%s\", \"command\": \"smith-cc -c needs.c -o needs.o\", "
                          "\"file\": \"needs.c\"}]\\n' \"$(pwd -P)\" >compile_commands.json")
                 .data);

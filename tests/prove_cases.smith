@@ -13,7 +13,7 @@ import smith::mem;
 
 // `smith prove args -- -I include`, both streams together. $c in args is tests/prove.
 export scratch::Run prove(const scratch::Project *p, const char *args) {
-    return scratch::sh(p, format::push(&p->io->arena, "c=\"$SMITH_REPO/tests/prove\"; smith prove ", args,
+    return scratch::sh(p, format::push("c=\"$SMITH_REPO/tests/prove\"; smith prove ", args,
                                        " -- -I \"$SMITH_REPO/.smith/include\" 2>&1")
                               .data);
 }
@@ -41,7 +41,7 @@ static const char *word(io::Io *io, const char *text, usize index) {
 }
 
 static scratch::Run function(const scratch::Project *p, const char *file, const char *prefix, const char *name) {
-    return prove(p, format::push(&p->io->arena, "--function=", prefix, name, " ", file).data);
+    return prove(p, format::push("--function=", prefix, name, " ", file).data);
 }
 
 // Every function of `names` (separated by spaces), with `prefix` before each, is proved in `file` (a shell word such as

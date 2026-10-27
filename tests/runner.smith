@@ -23,7 +23,7 @@ export const char *plain_pipe() {
 // A project: the build.c of `base` (runner_base, or runner_c for C only) with the files of the fixture `files` over it.
 export scratch::Project project(io::Io *io, const char *base, const char *files) {
     scratch::Project p = scratch::project(io, "p", base);
-    const char *copy = format::push(&io->arena, "cp -R \"$SMITH_REPO/tests/build_fixtures/", files, "/.\" .").data;
+    const char *copy = format::push("cp -R \"$SMITH_REPO/tests/build_fixtures/", files, "/.\" .").data;
     scratch::Run copied = scratch::sh(&p, copy);
     scratch::expect_status("runner: the files of the fixture are copied", 0, &copied);
     return p;
@@ -31,7 +31,7 @@ export scratch::Project project(io::Io *io, const char *base, const char *files)
 
 // More files over a project: the files of another fixture.
 export void add(const scratch::Project *p, const char *files) {
-    const char *copy = format::push(&p->io->arena, "cp -R \"$SMITH_REPO/tests/build_fixtures/", files, "/.\" .").data;
+    const char *copy = format::push("cp -R \"$SMITH_REPO/tests/build_fixtures/", files, "/.\" .").data;
     scratch::Run copied = scratch::sh(p, copy);
     scratch::expect_status("runner: the files of the fixture are added", 0, &copied);
 }
@@ -52,45 +52,44 @@ export const char *flag(usize mode) {
 
 // A check's name, saying the mode when it is the isolated one.
 export const char *label(io::Io *io, const char *iso, const char *name) {
+    (void)io;
     if (iso[0] == '\0') return name;
-    return format::push(&io->arena, name, " (", iso, ")").data;
+    return format::push(name, " (", iso, ")").data;
 }
 
 // `smith build` with the output of the build's own errors, stderr after stdout.
 export scratch::Run build(const scratch::Project *p, const char *arguments) {
-    return scratch::sh(p, format::push(&p->io->arena, "env SMITH_OUTPUT=full smith build ", arguments, " 2>&1").data);
+    return scratch::sh(p, format::push("env SMITH_OUTPUT=full smith build ", arguments, " 2>&1").data);
 }
 
 // `smith test` of the project, as a task.
 export scratch::Run smith_test(const scratch::Project *p, const char *iso, const char *arguments) {
-    return scratch::sh(
-        p, format::push(&p->io->arena, "env SMITH_OUTPUT=full smith test ", iso, " ", arguments, " 2>&1").data);
+    return scratch::sh(p, format::push("env SMITH_OUTPUT=full smith test ", iso, " ", arguments, " 2>&1").data);
 }
 
 // The runner of the project, its two streams in one.
 export scratch::Run tests(const scratch::Project *p, const char *iso, const char *arguments) {
-    return scratch::sh(p, format::push(&p->io->arena, "build/tests ", iso, " ", arguments, " 2>&1").data);
+    return scratch::sh(p, format::push("build/tests ", iso, " ", arguments, " 2>&1").data);
 }
 
 // The runner's output through plain_filter.
 export scratch::Run plain(const scratch::Project *p, const char *iso, const char *arguments) {
-    return scratch::sh(p,
-                       format::push(&p->io->arena, "build/tests ", iso, " ", arguments, " 2>&1 | ", plain_filter).data);
+    return scratch::sh(p, format::push("build/tests ", iso, " ", arguments, " 2>&1 | ", plain_filter).data);
 }
 
 // The runner's trace turned into the report by smith symbolize, with the timings left out; the text is the same under
 // the project's lines, spaces squeezed (the columns of the call chain follow the longest path).
 export const char *report(const scratch::Project *p, const char *iso, const char *arguments) {
     const char *command =
-        format::push(&p->io->arena, "build/tests ", iso, " --trace ", arguments, " 2>&1 | smith symbolize 2>&1 | ",
-                     plain_filter, " | sed -e '/smith_test_execute/d' -e '/smith_test_run_key/d' | tr -s ' '")
+        format::push("build/tests ", iso, " --trace ", arguments, " 2>&1 | smith symbolize 2>&1 | ", plain_filter,
+                     " | sed -e '/smith_test_execute/d' -e '/smith_test_run_key/d' | tr -s ' '")
             .data;
     return scratch::capture(p, command);
 }
 
 // The report of a trace saved in a file of the project, in the form `report` gives.
 export const char *report_of(const scratch::Project *p, const char *file) {
-    const char *command = format::push(&p->io->arena, "smith symbolize 2>&1 <", file, " | ", plain_filter,
+    const char *command = format::push("smith symbolize 2>&1 <", file, " | ", plain_filter,
                                        " | sed -e '/smith_test_execute/d' -e '/smith_test_run_key/d' | tr -s ' '")
                               .data;
     return scratch::capture(p, command);
@@ -99,7 +98,7 @@ export const char *report_of(const scratch::Project *p, const char *file) {
 // The runner's trace through smith symbolize, whole.
 export const char *symbolized(const scratch::Project *p, const char *iso, const char *arguments) {
     const char *command =
-        format::push(&p->io->arena, "build/tests ", iso, " ", arguments, " --trace 2>&1 | smith symbolize 2>&1").data;
+        format::push("build/tests ", iso, " ", arguments, " --trace 2>&1 | smith symbolize 2>&1").data;
     return scratch::capture(p, command);
 }
 
@@ -164,12 +163,11 @@ export void expect_failure_block(const scratch::Project *p, const char *iso, con
                                  const char *file, const char *source, const char *values, const char *extra) {
     io::Io *io = p->io;
     usize line = line_of(p, file, source);
-    const char *wanted =
-        format::push(&io->arena, "FAIL ", test_name, "\n  check failed at ", file, ":", line, "\n     ", line,
-                     " |     ", source, "\n           ", values, "\n  called from\n    ", file, ":", line, " test_",
-                     test_name, "\n", extra, "\n0 passed, 1 failed")
-            .data;
-    const char *arguments = format::push(&io->arena, "--test ", test_name).data;
+    const char *wanted = format::push("FAIL ", test_name, "\n  check failed at ", file, ":", line, "\n     ", line,
+                                      " |     ", source, "\n           ", values, "\n  called from\n    ", file, ":",
+                                      line, " test_", test_name, "\n", extra, "\n0 passed, 1 failed")
+                             .data;
+    const char *arguments = format::push("--test ", test_name).data;
     scratch::expect_text(label(io, iso, name), squeezed(io, wanted), report(p, iso, arguments));
 }
 

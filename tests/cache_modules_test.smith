@@ -16,15 +16,14 @@ static scratch::Project modules_project(io::Io *io) {
 }
 
 static const char *text(const scratch::Project *p, const char *body) {
-    return scratch::capture(p, format::push(&p->io->arena, ". ./prelude; ", body).data);
+    return scratch::capture(p, format::push(". ./prelude; ", body).data);
 }
 
 // Builds a folder beside the project and says what its program prints.
 static void builds_and_runs(const scratch::Project *p, const char *folder, const char *name, const char *output) {
-    scratch::Run built = scratch::sh(p, format::push(&p->io->arena, "cd ../", folder, " && smith build").data);
+    scratch::Run built = scratch::sh(p, format::push("cd ../", folder, " && smith build").data);
     scratch::expect_status(name, 0, &built);
-    scratch::expect_text(name, output,
-                         scratch::capture(p, format::push(&p->io->arena, "cd ../", folder, " && ./build/app").data));
+    scratch::expect_text(name, output, scratch::capture(p, format::push("cd ../", folder, " && ./build/app").data));
 }
 
 export void test_cache_modules_the_second_clone_does_not_rebuild_the_sdk_modules(io::Io *io) {
@@ -39,7 +38,7 @@ export void test_cache_modules_the_second_clone_does_not_rebuild_the_sdk_modules
                          text(&p, "[ \"$(count_modules)\" -gt 0 ] && echo yes || echo no"));
     scratch::Run listed = scratch::sh(&p, "smith cache");
     scratch::expect_contains("modules: smith cache counts its entries", listed.out,
-                             format::push(&io->arena, "modules: ", p.cache, "/smith/modules").data);
+                             format::push("modules: ", p.cache, "/smith/modules").data);
     const char *before = text(&p, "sdk_signature");
     builds_and_runs(&p, "two", "modules: the second clone builds", "7");
     scratch::expect_text("modules: clang keeps its pruning timestamp in the shared cache", "yes",

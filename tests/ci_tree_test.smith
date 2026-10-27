@@ -25,13 +25,13 @@ static scratch::Project repository(io::Io *io) {
 
 // The output of commands run after the prelude.
 static const char *script(io::Io *io, const scratch::Project *p, const char *commands) {
-    return scratch::capture(p, format::push(&io->arena, prelude, commands).data);
+    (void)io;
+    return scratch::capture(p, format::push(prelude, commands).data);
 }
 
 // The output of one call of the script with the stub answering `answer` for the first tree.
 static const char *ask(io::Io *io, const scratch::Project *p, const char *answer, const char *call) {
-    return script(io, p,
-                  format::push(&io->arena, "export STUB_NAME=tree-$tree1 STUB_ANSWER='", answer, "'; ", call).data);
+    return script(io, p, format::push("export STUB_NAME=tree-$tree1 STUB_ANSWER='", answer, "'; ", call).data);
 }
 
 export void test_ci_tree_tree_is_the_tree(io::Io *io) {

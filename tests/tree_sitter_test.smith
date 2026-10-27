@@ -24,25 +24,21 @@ constexpr char runtime_hash[_] = "sha256:982cd3d4d9eb7be18c243240a622423fd2e4ecb
 // `smith cc --smith-tree-sitter`). False when the runtime is not available.
 static bool make_driver(io::Io *io, scratch::Project *p) {
     *p = scratch::project(io, "ts", nullptr);
-    scratch::Run fetched = scratch::sh(p, format::push(&io->arena, "smith fetch ", runtime_url, " 2>&1").data);
+    scratch::Run fetched = scratch::sh(p, format::push("smith fetch ", runtime_url, " 2>&1").data);
     if (!scratch::contains(fetched.out, runtime_hash)) {
         return false;
     }
     const char *runtime =
-        format::push(
-            &io->arena,
-            scratch::capture(
-                p,
-                format::push(&io->arena, "smith fetch ", runtime_url, " 2>&1 | sed -n 's/^smith: .* is in //p'").data),
-            "/lib")
+        format::push(scratch::capture(
+                         p, format::push("smith fetch ", runtime_url, " 2>&1 | sed -n 's/^smith: .* is in //p'").data),
+                     "/lib")
             .data;
-    const char *driver = format::push(&io->arena, "smith cc -std=gnu23 -O1 -g -Wall -Wextra -Wpedantic -Werror -I ",
-                                      runtime, "/include -c \"$SMITH_REPO/tests/tree_sitter.c\" -o driver.o")
+    const char *driver = format::push("smith cc -std=gnu23 -O1 -g -Wall -Wextra -Wpedantic -Werror -I ", runtime,
+                                      "/include -c \"$SMITH_REPO/tests/tree_sitter.c\" -o driver.o")
                              .data;
-    const char *library =
-        format::push(&io->arena, "smith cc -std=gnu11 -O2 -w -D_POSIX_C_SOURCE=200112L -D_DEFAULT_SOURCE -I ", runtime,
-                     "/include -I ", runtime, "/src -c ", runtime, "/src/lib.c -o runtime.o")
-            .data;
+    const char *library = format::push("smith cc -std=gnu11 -O2 -w -D_POSIX_C_SOURCE=200112L -D_DEFAULT_SOURCE -I ",
+                                       runtime, "/include -I ", runtime, "/src -c ", runtime, "/src/lib.c -o runtime.o")
+                              .data;
     scratch::Run run = scratch::sh(p, driver);
     scratch::expect_status("the driver compiles under -Werror", 0, &run);
     run = scratch::sh(p, library);

@@ -13,7 +13,7 @@ constexpr char prelude[_] = "flags=\"-std=gnu2y -I. -I.smith/include -I$SMITH_RE
                             "run() { smith lint --quiet --checks='-*,smith-mem' \"$@\" -- $flags 2>&1; }; ";
 
 static scratch::Run lint(const scratch::Project *p, const char *body) {
-    return scratch::sh(p, format::push(&p->io->arena, prelude, body).data);
+    return scratch::sh(p, format::push(prelude, body).data);
 }
 
 export void test_mem_check_names_the_replacement_of_each_raw_call_in_a_module(io::Io *io) {

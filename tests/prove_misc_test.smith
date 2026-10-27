@@ -345,7 +345,7 @@ export void test_prove_memcpy_chk_a_length_past_the_destination_is_refuted(io::I
 // 16e. smith_modifies (issue #54): the ranges a function writes; its callers keep everything else it knew.
 static void modifies_proves(io::Io *io, const char *name, const char *function) {
     scratch::Project p = fresh(io);
-    proved(&p, name, format::push(&io->arena, "\"$c/modifies.c\" --function=", function).data);
+    proved(&p, name, format::push("\"$c/modifies.c\" --function=", function).data);
 }
 
 export void test_prove_modifies_a_function_that_writes_only_what_it_names_proves(io::Io *io) {

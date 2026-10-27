@@ -20,11 +20,11 @@ static scratch::Project untar_project(io::Io *io) {
 }
 
 static scratch::Run run(const scratch::Project *p, const char *body) {
-    return scratch::sh(p, format::push(&p->io->arena, ". ./prelude; ", body).data);
+    return scratch::sh(p, format::push(". ./prelude; ", body).data);
 }
 
 static const char *text(const scratch::Project *p, const char *body) {
-    return scratch::capture(p, format::push(&p->io->arena, ". ./prelude; ", body).data);
+    return scratch::capture(p, format::push(". ./prelude; ", body).data);
 }
 
 // A setup command that must succeed.
@@ -34,13 +34,13 @@ static void setup(const scratch::Project *p, const char *body) {
 }
 
 static const char *join(const scratch::Project *p, const char *a, const char *b) {
-    return format::push(&p->io->arena, a, b).data;
+    return format::push(a, b).data;
 }
 
 // Fetches an archive (a path in the project) into a cache of its own; the package folder is in *package, or
 // "/nonexistent" when it failed.
 static scratch::Run fetch(const scratch::Project *p, const char *cache, const char *archive, const char **package) {
-    scratch::Run fetched = run(p, format::push(&p->io->arena, "XDG_CACHE_HOME=\"$PWD/cache-", cache,
+    scratch::Run fetched = run(p, format::push("XDG_CACHE_HOME=\"$PWD/cache-", cache,
                                                "\" smith fetch \"file://$PWD/", archive, "\"")
                                       .data);
     *package = "/nonexistent";
@@ -49,7 +49,7 @@ static scratch::Run fetch(const scratch::Project *p, const char *cache, const ch
         char *hash = arena::push_slice(&p->io->arena, char, 65).data;
         mem::copy(hash[0:64], start[8:8 + 64]);
         hash[64] = '\0';
-        *package = format::push(&p->io->arena, p->dir, "/cache-", cache, "/smith/packages/", hash).data;
+        *package = format::push(p->dir, "/cache-", cache, "/smith/packages/", hash).data;
     }
     return fetched;
 }
@@ -61,7 +61,7 @@ static void refuse(const scratch::Project *p, const char *name, const char *arch
     scratch::expect_failure(join(p, name, ": fails"), &fetched);
     scratch::expect_contains(join(p, name, ": says why"), fetched.err, needle);
     scratch::expect_contains(join(p, name, ": names the archive"), fetched.err,
-                             format::push(&p->io->arena, "cannot extract file://", text(p, "pwd"), "/", archive).data);
+                             format::push("cannot extract file://", text(p, "pwd"), "/", archive).data);
     scratch::expect_text(join(p, name, ": leaves no package"), "0",
                          text(p, "ls \"$PWD/cache-r/smith/packages\" 2>/dev/null | grep -c '^[0-9a-f]\\{64\\}$'"));
     scratch::expect_text(join(p, name, ": and no temporary"), "0",
@@ -73,7 +73,7 @@ static void refuse_hostile(io::Io *io, const char *name, const char *archive, co
                            const char *needle) {
     scratch::Project p = untar_project(io);
     setup(&p,
-          format::push(&io->arena, "hostile_tree; (cd \"$h\" && tar -cf \"$arc/", archive, "\" ", tar_arguments, ")")
+          format::push("hostile_tree; (cd \"$h\" && tar -cf \"$arc/", archive, "\" ", tar_arguments, ")")
               .data);
     refuse(&p, name, join(&p, "arc/", archive), needle);
 }
@@ -104,9 +104,9 @@ static void single_gz_extracts(io::Io *io, const char *f) {
                          text(&p, join(&p, "ls 2>/dev/null ", package)));
     scratch::expect_text(
         join(&p, name, ": the same bytes"), text(&p, join(&p, "shasum -a 256 <single/", f)),
-        text(&p, format::push(&p.io->arena, "shasum -a 256 <\"", package, "/", f, "\" 2>/dev/null").data));
+        text(&p, format::push("shasum -a 256 <\"", package, "/", f, "\" 2>/dev/null").data));
     scratch::expect_text(join(&p, name, ": mode 0644"), "-rw-r--r--",
-                         text(&p, format::push(&p.io->arena, "f=\"", package, "/", f,
+                         text(&p, format::push("f=\"", package, "/", f,
                                                "\"; stat -c %A \"$f\" 2>/dev/null || stat -f %Sp \"$f\" 2>/dev/null")
                                       .data));
 }

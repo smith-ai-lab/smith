@@ -37,14 +37,14 @@ static const char *math_library() {
 
 // Builds tests/random.c with the flags into `name`.
 static scratch::Run compile(const scratch::Project *p, const char *warnings, const char *flags, const char *name) {
-    return scratch::sh(p, format::push(&p->io->arena, "smith cc ", warnings, " -I \"$SMITH_REPO/.smith/include\" ",
+    return scratch::sh(p, format::push("smith cc ", warnings, " -I \"$SMITH_REPO/.smith/include\" ",
                                        flags, " ", sources, math_library(), " -o ", name)
                               .data);
 }
 
 static void checks_pass(io::Io *io, const char *name, const char *flags) {
     scratch::Project p = lowered_project(io);
-    scratch::Run built = compile(&p, format::push(&io->arena, "-std=gnu23 ", warn).data, flags, "checks");
+    scratch::Run built = compile(&p, format::push("-std=gnu23 ", warn).data, flags, "checks");
     scratch::expect_status("the checks build", 0, &built);
     scratch::Run checked = scratch::sh(&p, "./checks");
     scratch::expect_status(name, 0, &checked);
@@ -61,12 +61,12 @@ export void test_random_c_checks_pass_at_o2(io::Io *io) {
 
 static void compiles_as(io::Io *io, const char *standard) {
     scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run built = scratch::sh(&p, format::push(&io->arena, "smith cc -std=", standard, " ", warn,
+    scratch::Run built = scratch::sh(&p, format::push("smith cc -std=", standard, " ", warn,
                                                       " -I \"$SMITH_REPO/.smith/include\" -c "
                                                       "\"$SMITH_REPO/lib/smith/random.smith\" -o r.o")
                                              .data);
     scratch::expect_status(
-        format::push(&io->arena, "library: compiles as -std=", standard, " with the new project's warnings").data, 0,
+        format::push("library: compiles as -std=", standard, " with the new project's warnings").data, 0,
         &built);
 }
 
@@ -82,9 +82,9 @@ export void test_random_c_library_compiles_as_c2y(io::Io *io) {
 static void digest(io::Io *io, const char *name, const char *flags) {
     scratch::Project p = lowered_project(io);
     scratch::Run built = compile(&p, "-w", flags, "digest");
-    scratch::expect_status(format::push(&io->arena, "digest: ", name, " builds").data, 0, &built);
+    scratch::expect_status(format::push("digest: ", name, " builds").data, 0, &built);
     scratch::Run run = scratch::sh(&p, "./digest digest");
-    scratch::expect_text(format::push(&io->arena, "digest: ", name).data, expected_digest, run.out);
+    scratch::expect_text(format::push("digest: ", name).data, expected_digest, run.out);
 }
 
 export void test_random_c_digest_o0_sanitized(io::Io *io) {
@@ -132,7 +132,7 @@ export void test_random_c_refusal_ofast_fails_to_compile(io::Io *io) {
 
 export void test_random_c_refusal_a_normal_with_deviation_0_aborts(io::Io *io) {
     scratch::Project p = lowered_project(io);
-    scratch::Run built = compile(&p, format::push(&io->arena, "-std=gnu23 ", warn).data, "-O2", "checks");
+    scratch::Run built = compile(&p, format::push("-std=gnu23 ", warn).data, "-O2", "checks");
     scratch::expect_status("the checks build", 0, &built);
     scratch::Run run = scratch::sh(&p, "./checks assert");
     scratch::expect_status("refusal: a normal with deviation 0 aborts", 134, &run);

@@ -10,7 +10,7 @@ import scratch;
 
 // The last line of a command's output: the program's output follows the build's.
 static const char *last_line(const scratch::Project *p, const char *command) {
-    return scratch::capture(p, format::push(&p->io->arena, "{ ", command, "; } | tail -n 1").data);
+    return scratch::capture(p, format::push("{ ", command, "; } | tail -n 1").data);
 }
 
 // The files a compile of the build lists in .smith/build.info, as a line.
@@ -25,7 +25,8 @@ static const char *yes_no(bool value) {
 
 // The output and the errors of a run as one text.
 static const char *both(io::Io *io, const scratch::Run *run) {
-    return format::push(&io->arena, run->out, run->err).data;
+    (void)io;
+    return format::push(run->out, run->err).data;
 }
 
 // --- 1. a .smith project: main imports geometry::box, which imports geometry::scale; one more module nothing imports -

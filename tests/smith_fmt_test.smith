@@ -22,8 +22,7 @@ static typeof(const char[:]) slice_of(const char *text) {
 // The text of `smith fmt` for this input read as a file of this name, in the style of this repository's folder.
 static const char *formatted(const scratch::Project *p, const char *name, const char *input) {
     scratch::write(p, "input.txt", input);
-    const char *command =
-        format::push(&p->io->arena, "smith fmt --assume-filename=\"$SMITH_REPO/", name, "\" < input.txt 2>&1").data;
+    const char *command = format::push("smith fmt --assume-filename=\"$SMITH_REPO/", name, "\" < input.txt 2>&1").data;
     return scratch::sh(p, command).out;
 }
 
@@ -70,12 +69,12 @@ static const char *next_line(io::Io *io, const char **at) {
 // of files compared, the first that differs noted.
 static usize same_as_c(io::Io *io, const char *root) {
     scratch::Project p = scratch::project(io, "p", nullptr);
-    if (scratch::sh(&p, format::push(&io->arena, "[ -d \"", root, "\" ]").data).status != 0) return 0; // not there
+    if (scratch::sh(&p, format::push("[ -d \"", root, "\" ]").data).status != 0) return 0; // not there
     const char *listing =
         scratch::sh(
             &p,
             format::push(
-                &io->arena, "set -f; find \"", root,
+                "set -f; find \"", root,
                 "\" -name '*.c' -not -path '*/.smith/*' -not -path '*/build/*' "
                 "-not -path \"",
                 root,
@@ -88,11 +87,9 @@ static usize same_as_c(io::Io *io, const char *root) {
     usize same = 0;
     usize different = 0;
     for (const char *file = next_line(io, &listing); file != nullptr; file = next_line(io, &listing)) {
-        const char *command_c =
-            format::push(&io->arena, "smith fmt --assume-filename=\"", file, "\" < \"", file, "\" 2>&1").data;
+        const char *command_c = format::push("smith fmt --assume-filename=\"", file, "\" < \"", file, "\" 2>&1").data;
         const char *command_smith =
-            format::push(&io->arena, "f='", file, "'; smith fmt --assume-filename=\"${f%.c}.smith\" < \"$f\" 2>&1")
-                .data;
+            format::push("f='", file, "'; smith fmt --assume-filename=\"${f%.c}.smith\" < \"$f\" 2>&1").data;
         const char *text_c = scratch::sh(&p, command_c).out;
         const char *text_smith = scratch::sh(&p, command_smith).out;
         if (c::strcmp(text_c, text_smith) == 0) {
@@ -113,16 +110,15 @@ export void test_the_c_files_of_smith_format_the_same_as_c_and_as_smith(io::Io *
 }
 
 export void test_the_c_files_of_game_format_the_same_as_c_and_as_smith(io::Io *io) {
-    (void)same_as_c(io, format::push(&io->arena, io::args_env(&io->args, "HOME"), "/Documents/game").data);
+    (void)same_as_c(io, format::push(io::args_env(&io->args, "HOME"), "/Documents/game").data);
 }
 
 export void test_the_c_files_of_learner_format_the_same_as_c_and_as_smith(io::Io *io) {
-    (void)same_as_c(io,
-                    format::push(&io->arena, io::args_env(&io->args, "HOME"), "/Documents/virtual-cell/learner").data);
+    (void)same_as_c(io, format::push(io::args_env(&io->args, "HOME"), "/Documents/virtual-cell/learner").data);
 }
 
 export void test_the_c_files_of_checkers_format_the_same_as_c_and_as_smith(io::Io *io) {
-    (void)same_as_c(io, format::push(&io->arena, io::args_env(&io->args, "HOME"), "/Documents/checkers").data);
+    (void)same_as_c(io, format::push(io::args_env(&io->args, "HOME"), "/Documents/checkers").data);
 }
 
 // --- the cases of the issue ----------------------------------------------------------------------------------------

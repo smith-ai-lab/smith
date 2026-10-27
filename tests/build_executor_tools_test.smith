@@ -9,7 +9,7 @@ import smith::test;
 import scratch;
 
 static scratch::Run exec(const scratch::Project *p, const char *arguments) {
-    return scratch::sh(p, format::push(&p->io->arena, "smith --smith-exec build.ninja ", arguments).data);
+    return scratch::sh(p, format::push("smith --smith-exec build.ninja ", arguments).data);
 }
 
 static const char *yes_no(const scratch::Project *p, const char *name) {
@@ -18,7 +18,7 @@ static const char *yes_no(const scratch::Project *p, const char *name) {
 
 // The two outputs of exec_tools: "app dir/one.o", each yes or no.
 static const char *outputs(const scratch::Project *p) {
-    return format::push(&p->io->arena, yes_no(p, "app"), " ", yes_no(p, "dir/one.o")).data;
+    return format::push(yes_no(p, "app"), " ", yes_no(p, "dir/one.o")).data;
 }
 
 // 14f. The tools, and the manifests the executor refuses.
@@ -176,7 +176,7 @@ static scratch::Run build_with_ninja(const scratch::Project *p) {
 }
 
 static const char *status_and_output(const scratch::Project *p, const scratch::Run *run) {
-    return format::push(&p->io->arena, run->status, " ", scratch::read(p, "output")).data;
+    return format::push(run->status, " ", scratch::read(p, "output")).data;
 }
 
 export void test_build_executor_smith_ninja_runs_the_manifest_with_ninja(io::Io *io) {

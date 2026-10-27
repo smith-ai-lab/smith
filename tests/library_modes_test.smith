@@ -28,24 +28,22 @@ static const Library inflate = {"lib/smith/inflate_test.smith", "smith/inflate_t
 
 static scratch::Project units_project(io::Io *io, const Library *library) {
     scratch::Project p = scratch::project(io, "p", "library_units");
-    scratch::Run copied = scratch::sh(
-        &p, format::push(&io->arena, "mkdir -p smith tests && cp \"$SMITH_REPO/", library->source, "\" ", library->path,
-                         library->fixtures ? " && cp -R \"$SMITH_REPO/tests/fixtures\" tests/fixtures" : "")
-                .data);
+    scratch::Run copied =
+        scratch::sh(&p, format::push("mkdir -p smith tests && cp \"$SMITH_REPO/", library->source, "\" ", library->path,
+                                     library->fixtures ? " && cp -R \"$SMITH_REPO/tests/fixtures\" tests/fixtures" : "")
+                            .data);
     scratch::expect_status("the test file is copied into the project", 0, &copied);
     return p;
 }
 
 static scratch::Run build_mode(const scratch::Project *p, const Library *library, const char *mode) {
-    return scratch::build(
-        p, format::push(&p->io->arena, "-DMODE=", mode, " -DLIBS=", library->libs, " -DTEST=", library->path).data);
+    return scratch::build(p, format::push("-DMODE=", mode, " -DLIBS=", library->libs, " -DTEST=", library->path).data);
 }
 
 // The runner's summary line, without its time: "N passed, 0 failed".
 static const char *summary(const scratch::Project *p, const char *command) {
-    return scratch::capture(p, format::push(&p->io->arena, command,
-                                            " 2>&1 | grep ' passed, ' | "
-                                            "sed 's/ in [0-9.]* s$//'")
+    return scratch::capture(p, format::push(command, " 2>&1 | grep ' passed, ' | "
+                                                     "sed 's/ in [0-9.]* s$//'")
                                    .data);
 }
 
@@ -53,13 +51,13 @@ static const char *summary(const scratch::Project *p, const char *command) {
 static void passes_in_mode(io::Io *io, const Library *library, const char *mode) {
     scratch::Project p = units_project(io, library);
     scratch::Run built = build_mode(&p, library, mode);
-    scratch::expect_status(format::push(&io->arena, mode, ": the tests build").data, 0, &built);
-    const char *count = scratch::capture(
-        &p, format::push(&io->arena, "grep -c '^export void test_' \"$SMITH_REPO/", library->source, "\"").data);
-    const char *all = format::push(&io->arena, count, " passed, 0 failed").data;
-    scratch::expect_text(format::push(&io->arena, mode, ": all ", count, " tests pass").data, all,
+    scratch::expect_status(format::push(mode, ": the tests build").data, 0, &built);
+    const char *count =
+        scratch::capture(&p, format::push("grep -c '^export void test_' \"$SMITH_REPO/", library->source, "\"").data);
+    const char *all = format::push(count, " passed, 0 failed").data;
+    scratch::expect_text(format::push(mode, ": all ", count, " tests pass").data, all,
                          summary(&p, "env SMITH_JSON_SUITE= ./build/tests"));
-    scratch::expect_text(format::push(&io->arena, mode, ": all pass with a process per test").data, all,
+    scratch::expect_text(format::push(mode, ": all pass with a process per test").data, all,
                          summary(&p, "env SMITH_JSON_SUITE= ./build/tests --isolate"));
 }
 
@@ -107,9 +105,7 @@ static const char *json_suite(const scratch::Project *p) {
                            "sha256:32ab2fb37cc26679dbd9164dbb7053bcef10134643d53cb0cef45de7680dcdcc"))
         return "";
     const char *folder = scratch::capture(p, "sed -n 's/^smith: .* is in //p' fetch.txt");
-    return fetched.status == 0 && scratch::exists(p, "fetch.txt")
-               ? format::push(&p->io->arena, folder, "/test_parsing").data
-               : "";
+    return fetched.status == 0 && scratch::exists(p, "fetch.txt") ? format::push(folder, "/test_parsing").data : "";
 }
 
 // What was done with the suite: the counts, and each implementation-defined case. Skipped with no network.
@@ -120,7 +116,7 @@ export void test_library_modes_json_conformance_with_jsontestsuite(io::Io *io) {
     scratch::Run built = build_mode(&p, &json, "fast");
     scratch::expect_status("the tests build", 0, &built);
     scratch::Run run =
-        scratch::sh(&p, format::push(&io->arena, "env SMITH_JSON_SUITE=", suite,
+        scratch::sh(&p, format::push("env SMITH_JSON_SUITE=", suite,
                                      " SMITH_JSON_LISTING=\"$PWD/listing\" ./build/tests --test json_conformance")
                             .data);
     scratch::expect_status("the conformance test runs", 0, &run);
@@ -135,9 +131,8 @@ static void fuzz(io::Io *io, const char *name) {
     scratch::Project p = units_project(io, &json);
     scratch::Run built = build_mode(&p, &json, "asan");
     scratch::expect_status("the tests build", 0, &built);
-    scratch::expect_text(format::push(&io->arena, "fuzz: ", name, " on 5000 keys under ASan and UBSan").data,
-                         "1 passed, 0 failed",
-                         summary(&p, format::push(&io->arena, "./build/tests --test ", name, " --seeds 5000").data));
+    scratch::expect_text(format::push("fuzz: ", name, " on 5000 keys under ASan and UBSan").data, "1 passed, 0 failed",
+                         summary(&p, format::push("./build/tests --test ", name, " --seeds 5000").data));
 }
 
 export void test_library_modes_json_fuzz_damaged_documents(io::Io *io) {
@@ -159,11 +154,11 @@ export void test_library_modes_inflate_damaged_input_never_misbehaves(io::Io *io
     scratch::expect_status("the tests build", 0, &built);
     const char *seeds[5] = {"1", "2", "3", "4", "5"};
     for (usize i = 0; i < 5; i++) {
-        scratch::expect_text(format::push(&io->arena, "damaged input never misbehaves (--seed ", seeds[i], ")").data,
-                             "1 passed, 0 failed",
-                             summary(&p, format::push(&io->arena, "./build/tests --seed ", seeds[i],
-                                                      " --test test_inflate_survives_corrupt_input")
-                                             .data));
+        scratch::expect_text(
+            format::push("damaged input never misbehaves (--seed ", seeds[i], ")").data, "1 passed, 0 failed",
+            summary(
+                &p,
+                format::push("./build/tests --seed ", seeds[i], " --test test_inflate_survives_corrupt_input").data));
     }
 }
 
@@ -187,27 +182,26 @@ export void test_library_modes_text_c_and_smith_share_one_header(io::Io *io) {
 static void compiles_as(io::Io *io, const char *source, const char *standard) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     scratch::Run built = scratch::sh(
-        &p, format::push(&io->arena, "smith cc -std=", standard,
+        &p, format::push("smith cc -std=", standard,
                          " -Wall -Wextra -Wpedantic -Wconversion -Werror -O2 -I \"$SMITH_REPO/.smith/include\" -c "
                          "\"$SMITH_REPO/",
                          source, "\" -o library.o")
                 .data);
-    scratch::expect_status(format::push(&io->arena, "library: compiles as ", standard).data, 0, &built);
+    scratch::expect_status(format::push("library: compiles as ", standard).data, 0, &built);
 }
 
 static void names_no_libc_function(io::Io *io, const char *source, const char *allowed) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     scratch::Run built =
-        scratch::sh(&p, format::push(&io->arena,
-                                     "smith cc -std=gnu23 -O2 -DNDEBUG -ffreestanding -fno-stack-protector -I "
+        scratch::sh(&p, format::push("smith cc -std=gnu23 -O2 -DNDEBUG -ffreestanding -fno-stack-protector -I "
                                      "\"$SMITH_REPO/.smith/include\" -c \"$SMITH_REPO/",
                                      source, "\" -o library.o")
                             .data);
     scratch::expect_status("the library compiles freestanding", 0, &built);
-    scratch::expect_text("library: names no libc function", "",
-                         scratch::capture(&p, format::push(&io->arena, "nm -u library.o | tr -d ' ' | grep -v -x ",
-                                                           allowed, " | sort | tr '\\n' ' '")
-                                                  .data));
+    scratch::expect_text(
+        "library: names no libc function", "",
+        scratch::capture(
+            &p, format::push("nm -u library.o | tr -d ' ' | grep -v -x ", allowed, " | sort | tr '\\n' ' '").data));
 }
 
 export void test_library_modes_json_compiles_as_c23(io::Io *io) {
@@ -239,7 +233,7 @@ export void test_library_modes_text_names_no_libc_function(io::Io *io) {
 static void http_compiles(io::Io *io, const char *standard, const char *extra, const char *name) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     scratch::Run built = scratch::sh(
-        &p, format::push(&io->arena, "smith cc -std=", standard,
+        &p, format::push("smith cc -std=", standard,
                          " -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wmissing-prototypes "
                          "-Wstrict-prototypes -Wvla -Werror ",
                          extra, " -I \"$SMITH_REPO/.smith/include\" -c \"$SMITH_REPO/lib/http.c\" -o http.o")

@@ -21,22 +21,22 @@ static typeof(const char[:]) slice_of(const char *text) {
 }
 
 static const char *join(const scratch::Project *p, const char *a, const char *b, const char *c, const char *d) {
-    return format::push(&p->io->arena, a, b, c, d).data;
+    (void)p;
+    return format::push(a, b, c, d).data;
 }
 
 // What a compile of the file prints, as tests/effects/<file>.expected holds it.
 static void effects_case(io::Io *io, const char *file) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     const char *command =
-        format::push(&io->arena,
-                     "cd \"$SMITH_REPO/tests/effects\" && { smith cc -std=gnu2y -I \"$SMITH_REPO/.smith/include\" -c ",
+        format::push("cd \"$SMITH_REPO/tests/effects\" && { smith cc -std=gnu2y -I \"$SMITH_REPO/.smith/include\" -c ",
                      file,
                      " -o /dev/null >\"$TMPDIR/out\" 2>&1; echo \"status $?\"; grep -E '^[^ ]+:[0-9]+:[0-9]+: "
                      "(error|note|warning):' "
                      "\"$TMPDIR/out\"; }")
             .data;
     scratch::Run run = scratch::sh(&p, command);
-    test::golden(io, slice_of(format::push(&io->arena, "tests/effects/", file, ".expected").data), slice_of(run.out));
+    test::golden(io, slice_of(format::push("tests/effects/", file, ".expected").data), slice_of(run.out));
 }
 
 // The report-only pointer rule: the lines SMITH_EFFECTS_POINTERS gets, a call with the effects its type states.
@@ -60,10 +60,8 @@ export void test_every_file_has_a_test(io::Io *io) {
 // The editor: clangd shows the same error, for C and for a module.
 static void effects_editor(io::Io *io, const char *file) {
     scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run run =
-        scratch::sh(&p, format::push(&io->arena, "timeout -s KILL 120 smith lsp --check=\"$SMITH_REPO/tests/effects/",
-                                     file, "\" 2>&1")
-                            .data);
+    scratch::Run run = scratch::sh(
+        &p, format::push("timeout -s KILL 120 smith lsp --check=\"$SMITH_REPO/tests/effects/", file, "\" 2>&1").data);
     scratch::expect_contains(file, run.out, "smith-effect: `bad` is [[smith::pure]]");
 }
 
@@ -237,7 +235,7 @@ static scratch::Project stack_project(io::Io *io, const char *source) {
 
 // The frame of a function in a reference's .su file, or -1.
 static i64 frame(const scratch::Project *p, const char *reference, const char *name) {
-    const char *command = format::push(&p->io->arena, "awk -F'\\t' -v n=", name,
+    const char *command = format::push("awk -F'\\t' -v n=", name,
                                        " '{ split($1, p, \":\"); if (p[length(p)] == n) print $2 }' ", reference, ".su")
                               .data;
     const char *text = scratch::sh(p, command).out;
@@ -247,8 +245,7 @@ static i64 frame(const scratch::Project *p, const char *reference, const char *n
 // A column of a function's row in <program>.stack: 2 is its worst case, 3 the deepest call.
 static const char *row(const scratch::Project *p, const char *program, const char *name, const char *column) {
     const char *command =
-        format::push(&p->io->arena, "awk -F'\\t' -v n=", name, " '$1 == n { print $", column, " }' ", program, ".stack")
-            .data;
+        format::push("awk -F'\\t' -v n=", name, " '$1 == n { print $", column, " }' ", program, ".stack").data;
     return scratch::sh(p, command).out;
 }
 

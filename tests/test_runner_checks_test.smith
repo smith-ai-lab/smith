@@ -109,7 +109,7 @@ export void test_runner_checks_check_near_shows_the_values_the_tolerance_and_the
         const char *iso = runner::flag(mode);
         const char *traced = runner::symbolized(&p, iso, "--test near");
         scratch::expect_contains(runner::label(io, iso, "near: the failure names the line"), traced,
-                                 format::push(&io->arena, "  check failed at tests/test_checks.smith:", line).data);
+                                 format::push("  check failed at tests/test_checks.smith:", line).data);
         scratch::expect_contains(runner::label(io, iso, "near: ... shows the first value"), traced,
                                  "= 1 [0x1p+0]   (f64)");
         scratch::expect_contains(runner::label(io, iso, "near: ... the second"), traced, "= 1.5 [0x1.8p+0]   (f64)");
@@ -131,7 +131,7 @@ export void test_runner_checks_the_c_checks_print_the_same_block_named_by_their_
                                      "x = 7, 6   (i64)", "");
         const char *traced = runner::symbolized(&p, iso, "--test c_near");
         scratch::expect_contains(runner::label(io, iso, "c: smith_check_near_f64 names its line"), traced,
-                                 format::push(&io->arena, "  check failed at tests/test_checks_c.c:", near_line).data);
+                                 format::push("  check failed at tests/test_checks_c.c:", near_line).data);
         scratch::expect_contains(runner::label(io, iso, "c: ... and the distance"), traced, "= 0.5 [0x1p-1]   (f64)");
     }
 }

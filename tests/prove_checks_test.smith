@@ -51,9 +51,9 @@ static scratch::Project fresh(io::Io *io) {
 
 // What compiling edges.smith says about its checks; `flags` says debug (-O0) or optimized (-O2).
 static const char *report(const scratch::Project *p, const char *flags) {
-    const char *command = format::push(&p->io->arena, "SMITH_PROVED_REPORT=1 smith cc -c edges.smith ", flags,
-                                       " -I .smith/include -o edges.o 2>&1")
-                              .data;
+    const char *command =
+        format::push("SMITH_PROVED_REPORT=1 smith cc -c edges.smith ", flags, " -I .smith/include -o edges.o 2>&1")
+            .data;
     return scratch::sh(p, command).out;
 }
 
@@ -174,8 +174,7 @@ static scratch::Project across_files(io::Io *io) {
 
 static const char *report_of(const scratch::Project *p, const char *source) {
     const char *command =
-        format::push(&p->io->arena, "SMITH_PROVED_REPORT=1 smith cc -c ", source, " -O2 -I .smith/include -o x.o 2>&1")
-            .data;
+        format::push("SMITH_PROVED_REPORT=1 smith cc -c ", source, " -O2 -I .smith/include -o x.o 2>&1").data;
     return scratch::sh(p, command).out;
 }
 

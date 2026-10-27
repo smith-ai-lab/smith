@@ -58,7 +58,7 @@ static const char *copy_of(io::Io *io, const char *at, usize length) {
 // The words of an info string: the kind, then project=NAME, file=PATH, and the rest as flags.
 static void parse_info(io::Io *io, const char *info, Block *block) {
     block->kind = "";
-    block->project = format::push(&io->arena, "block-", block->number).data;
+    block->project = format::push("block-", block->number).data;
     block->path = nullptr;
     char *flags = arena::push_slice(&io->arena, char, c::strlen(info) + 3).data;
     usize used = 0;
@@ -158,16 +158,14 @@ typedef struct {
 // The file a block is written to: file=PATH, else Makefile, c-N.c, or the path its module line implies (example-N.smith
 // without one).
 static const char *path_of(io::Io *io, const scratch::Project *p, const Block *block) {
+    (void)io;
     if (block->path != nullptr) return block->path;
     if (c::strcmp(block->kind, "make") == 0) return "Makefile";
-    if (c::strcmp(block->kind, "c") == 0) return format::push(&io->arena, "c-", block->number, ".c").data;
+    if (c::strcmp(block->kind, "c") == 0) return format::push("c-", block->number, ".c").data;
     scratch::write(p, "raw", block->body);
     const char *module = scratch::capture(p, "sed -n 's/^module \\([A-Za-z0-9_:]*\\);.*/\\1/p' raw | head -n 1");
-    if (module[0] == '\0') return format::push(&io->arena, "example-", block->number, ".smith").data;
-    return format::push(
-               &io->arena,
-               scratch::capture(p, format::push(&io->arena, "printf '%s' '", module, "' | sed 's|::|/|g'").data),
-               ".smith")
+    if (module[0] == '\0') return format::push("example-", block->number, ".smith").data;
+    return format::push(scratch::capture(p, format::push("printf '%s' '", module, "' | sed 's|::|/|g'").data), ".smith")
         .data;
 }
 
@@ -185,7 +183,7 @@ static void place_blocks(io::Io *io, const scratch::Project *p, const Blocks *bl
         const Block *block = &blocks->items[i];
         if (c::strcmp(block->project, name) != 0) continue;
         if (c::strcmp(block->kind, "output") == 0 && !files_only) {
-            scratch::write(p, ".expected", format::push(&io->arena, scratch::read(p, ".expected"), block->body).data);
+            scratch::write(p, ".expected", format::push(scratch::read(p, ".expected"), block->body).data);
         }
         if (!is_file_block(block)) continue;
         const char *path = path_of(io, p, block);
@@ -196,8 +194,8 @@ static void place_blocks(io::Io *io, const scratch::Project *p, const Blocks *bl
             }
         }
         scratch::write(p, "raw", block->body);
-        scratch::Run copied = scratch::sh(
-            p, format::push(&io->arena, "mkdir -p \"$(dirname '", path, "')\" && cp raw '", path, "'").data);
+        scratch::Run copied =
+            scratch::sh(p, format::push("mkdir -p \"$(dirname '", path, "')\" && cp raw '", path, "'").data);
         scratch::expect_status(path, 0, &copied);
         if (placed->count < placed_max) placed->paths[placed->count++] = path;
     }
@@ -205,10 +203,11 @@ static void place_blocks(io::Io *io, const scratch::Project *p, const Blocks *bl
 
 // The flags of all the blocks of a project, as ",run,test,".
 static const char *flags_of(io::Io *io, const Blocks *blocks, const char *name) {
+    (void)io;
     const char *flags = ",";
     for (usize i = 0; i < blocks->count; i++) {
         if (c::strcmp(blocks->items[i].project, name) == 0) {
-            flags = format::push(&io->arena, flags, blocks->items[i].flags).data;
+            flags = format::push(flags, blocks->items[i].flags).data;
         }
     }
     return flags;
@@ -236,38 +235,39 @@ constexpr char missing_script[_] =
     "grep -qF -- \"$wanted\" out || echo \"not in the output: $wanted\"; done <.expected";
 
 static void check_port(io::Io *io, const scratch::Project *p, const char *label) {
+    (void)io;
     scratch::Run run =
         scratch::sh(p, "CC=smith-cc make >out 2>&1 && ./app >printed 2>&1 && smith build --dump-config >build.c "
                        "2>out && rm -f app ./*.o && smith build >out 2>&1 && ./app >stdout 2>&1 && "
                        "diff printed stdout >out; status=$?; cat out; exit $status");
-    scratch::expect_status(format::push(&io->arena, label, ": port (make with smith-cc, --dump-config, build)").data, 0,
-                           &run);
+    scratch::expect_status(format::push(label, ": port (make with smith-cc, --dump-config, build)").data, 0, &run);
 }
 
 // The command must fail and print every line of the output block.
 static void check_fails_with_output(io::Io *io, const scratch::Project *p, const char *label, const char *what,
                                     const char *command) {
+    (void)io;
     scratch::Run run = scratch::sh(p, command);
-    scratch::expect_failure(format::push(&io->arena, label, ": ", what).data, &run);
-    scratch::expect_text(format::push(&io->arena, label, ": ", what, " says what the README says").data, "",
+    scratch::expect_failure(format::push(label, ": ", what).data, &run);
+    scratch::expect_text(format::push(label, ": ", what, " says what the README says").data, "",
                          scratch::capture(p, missing_script));
 }
 
 static void check_run(io::Io *io, const scratch::Project *p, const char *label) {
+    (void)io;
     // smith run prints the build's progress lines ("[3/12] compile ...") before the program's own output.
     scratch::Run linted = scratch::sh(p, "smith lint --quiet 2>&1");
-    scratch::expect_status(format::push(&io->arena, label, ": lint").data, 0, &linted);
+    scratch::expect_status(format::push(label, ": lint").data, 0, &linted);
     scratch::Run run = scratch::sh(p, "smith run >progress 2>run.err; status=$?; cat run.err; exit $status");
-    scratch::expect_status(format::push(&io->arena, label, ": run").data, 0, &run);
+    scratch::expect_status(format::push(label, ": run").data, 0, &run);
     if (scratch::exists(p, ".expected")) {
-        scratch::expect_text(format::push(&io->arena, label, ": run printed its output block").data,
-                             scratch::read(p, ".expected"),
+        scratch::expect_text(format::push(label, ": run printed its output block").data, scratch::read(p, ".expected"),
                              scratch::capture(p, "sed '/^\\[[0-9]*\\/[0-9]*\\] /d' progress"));
     }
 }
 
 static void check_project(io::Io *io, const scratch::Project *p, const char *name, const char *flags, usize line) {
-    const char *label = format::push(&io->arena, "README.md:", line, " (", name, ")").data;
+    const char *label = format::push("README.md:", line, " (", name, ")").data;
     bool checked = false;
     if (has(flags, ",port,")) {
         check_port(io, p, label);
@@ -283,12 +283,12 @@ static void check_project(io::Io *io, const scratch::Project *p, const char *nam
     }
     if (has(flags, ",test,")) {
         scratch::Run run = scratch::sh(p, "smith test 2>&1");
-        scratch::expect_status(format::push(&io->arena, label, ": test").data, 0, &run);
+        scratch::expect_status(format::push(label, ": test").data, 0, &run);
         checked = true;
     }
     if (has(flags, ",prove,")) {
         scratch::Run run = scratch::sh(p, "smith prove 2>&1");
-        scratch::expect_status(format::push(&io->arena, label, ": prove").data, 0, &run);
+        scratch::expect_status(format::push(label, ": prove").data, 0, &run);
         checked = true;
     }
     if (has(flags, ",refuse,")) {
@@ -329,17 +329,15 @@ export void test_every_project_has_a_test(io::Io *io) {
 // The headers of a module and the syntax of its file, with warnings as errors, and smith lint's checks.
 static void check_compiled_smith(io::Io *io, const scratch::Project *p, const Block *block, const char *folder) {
     const char *path = path_of(io, p, block);
-    const char *where = format::push(&io->arena, folder, "/", path).data;
-    const char *label = format::push(&io->arena, "README.md:", block->line, " (", path, ")").data;
+    const char *where = format::push(folder, "/", path).data;
+    const char *label = format::push("README.md:", block->line, " (", path, ")").data;
     scratch::write(p, "raw", block->body);
-    scratch::Run placed =
-        scratch::sh(p, format::push(&io->arena, "mkdir -p '", folder, "/.smith/include' \"$(dirname '", where,
-                                    "')\" && cp raw '", where, "'")
-                           .data);
+    scratch::Run placed = scratch::sh(
+        p, format::push("mkdir -p '", folder, "/.smith/include' \"$(dirname '", where, "')\" && cp raw '", where, "'")
+               .data);
     scratch::expect_status(label, 0, &placed);
     const char *command =
-        format::push(&io->arena, "cd '", folder,
-                     "' && flags=\"-I $SMITH_REPO/.smith/include -I $PWD/.smith/include -I $PWD\"; ",
+        format::push("cd '", folder, "' && flags=\"-I $SMITH_REPO/.smith/include -I $PWD/.smith/include -I $PWD\"; ",
                      "module=$(sed -n 's/^module \\([A-Za-z0-9_:]*\\);.*/\\1/p' '", path, "' | head -n 1); ",
                      "if [ -n \"$module\" ]; then header=$PWD/.smith/include/$(printf '%s' \"$module\" | "
                      "sed 's|::|/|g').h; mkdir -p \"$(dirname \"$header\")\"; for pass in 1 2; do "
@@ -355,12 +353,12 @@ static void check_compiled_smith(io::Io *io, const scratch::Project *p, const Bl
 
 static void check_compiled_c(io::Io *io, const scratch::Project *p, const Block *block, const char *folder) {
     const char *path = path_of(io, p, block);
-    const char *label = format::push(&io->arena, "README.md:", block->line, " (c)").data;
+    const char *label = format::push("README.md:", block->line, " (c)").data;
     scratch::write(p, "raw", block->body);
-    scratch::Run run = scratch::sh(
-        p, format::push(&io->arena, "mkdir -p '", folder, "' && cp raw '", folder, "/", path, "' && cd '", folder,
-                        "' && smith cc -fsyntax-only -std=gnu23 -Wall -Wextra -Werror '", path, "' 2>&1")
-               .data);
+    scratch::Run run =
+        scratch::sh(p, format::push("mkdir -p '", folder, "' && cp raw '", folder, "/", path, "' && cd '", folder,
+                                    "' && smith cc -fsyntax-only -std=gnu23 -Wall -Wextra -Werror '", path, "' 2>&1")
+                           .data);
     scratch::expect_status(label, 0, &run);
 }
 
@@ -371,7 +369,7 @@ export void test_readme_blocks_that_are_a_folder_of_their_own_compile(io::Io *io
     usize checked = 0;
     for (usize i = 0; i < blocks.count; i++) {
         const Block *block = &blocks.items[i];
-        bool own_folder = c::strcmp(block->project, format::push(&io->arena, "block-", block->number).data) == 0;
+        bool own_folder = c::strcmp(block->project, format::push("block-", block->number).data) == 0;
         if (!own_folder || !is_file_block(block)) continue;
         if (c::strcmp(block->kind, "c") == 0) check_compiled_c(io, &p, block, block->project);
         if (c::strcmp(block->kind, "smith") == 0) check_compiled_smith(io, &p, block, block->project);
@@ -390,8 +388,8 @@ export void test_readme_smith_blocks_are_what_smith_fmt_writes(io::Io *io) {
         if (c::strcmp(blocks.items[i].kind, "smith") != 0) continue;
         scratch::write(&p, "block.smith", blocks.items[i].body);
         scratch::Run run = scratch::sh(&p, "smith fmt --dry-run --Werror block.smith 2>&1");
-        scratch::expect_status(
-            format::push(&io->arena, "README.md:", blocks.items[i].line, ": not what smith fmt writes").data, 0, &run);
+        scratch::expect_status(format::push("README.md:", blocks.items[i].line, ": not what smith fmt writes").data, 0,
+                               &run);
     }
 }
 
@@ -405,10 +403,9 @@ export void test_readme_smith_blocks_are_not_c_renamed(io::Io *io) {
         scratch::Run run = scratch::sh(
             &p, "grep -nE '^[[:space:]]*#[[:space:]]*(include|define)|\\<(u?int(8|16|32|64)_t|size_t|ptrdiff_t)\\>' "
                 "block.smith");
-        scratch::expect_status(format::push(&io->arena, "README.md:", blocks.items[i].line,
-                                            ": a smith block is C renamed (see smith-idiom)")
-                                   .data,
-                               1, &run);
+        scratch::expect_status(
+            format::push("README.md:", blocks.items[i].line, ": a smith block is C renamed (see smith-idiom)").data, 1,
+            &run);
     }
 }
 

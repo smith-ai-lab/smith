@@ -40,15 +40,15 @@ static scratch::Project prepared(io::Io *io, bool full) {
 }
 
 static scratch::Run lint(const scratch::Project *p, const char *body) {
-    return scratch::sh(p, format::push(&p->io->arena, prelude, body).data);
+    return scratch::sh(p, format::push(prelude, body).data);
 }
 
 static const char *lint_text(const scratch::Project *p, const char *body) {
-    return scratch::capture(p, format::push(&p->io->arena, prelude, body).data);
+    return scratch::capture(p, format::push(prelude, body).data);
 }
 
 static void golden_of(io::Io *io, const char *name, const char *actual) {
-    test::golden(io, slice_of(format::push(&io->arena, "tests/lint-smith/", name, ".expected").data), slice_of(actual));
+    test::golden(io, slice_of(format::push("tests/lint-smith/", name, ".expected").data), slice_of(actual));
 }
 
 // The text of the findings of a run in a fixture file, as the golden file `name` holds it.
@@ -81,18 +81,16 @@ constexpr char make_header[_] = "mkdir -p .smith/include/geometry; "
 
 export void test_lint_the_same_findings_with_the_generated_header_on_disk(io::Io *io) {
     scratch::Project p = prepared(io, false);
-    findings_are(
-        io, &p, "box",
-        format::push(&io->arena, make_header, "run geometry/box.smith main.smith >headers; findings <headers").data);
+    findings_are(io, &p, "box",
+                 format::push(make_header, "run geometry/box.smith main.smith >headers; findings <headers").data);
     scratch::expect_text("the lowering's names never appear with the header on disk", "0",
                          lint_text(&p, "grep -c 'geometry_box_' headers"));
 }
 
 export void test_lint_an_importer_alone_reports_its_own_and_nothing_in_the_modules_header(io::Io *io) {
     scratch::Project p = prepared(io, false);
-    scratch::expect_text(
-        "an importer alone reports its own and nothing in the module's header", bad_local,
-        lint_text(&p, format::push(&io->arena, make_header, "run main.smith >importer; findings <importer").data));
+    scratch::expect_text("an importer alone reports its own and nothing in the module's header", bad_local,
+                         lint_text(&p, format::push(make_header, "run main.smith >importer; findings <importer").data));
 }
 
 // --- the carets and the fixes are the source's ---------------------------------------------------------------------
@@ -107,9 +105,8 @@ export void test_lint_a_finding_shows_the_source_line_its_fix_at_the_written_nam
 
 export void test_lint_fix_rewrites_the_written_names_in_the_source(io::Io *io) {
     scratch::Project p = prepared(io, false);
-    (void)lint(&p, format::push(&io->arena, make_header,
-                                "cp geometry/box.smith box.orig; cp main.smith main.orig; "
-                                "run --fix geometry/box.smith main.smith >/dev/null")
+    (void)lint(&p, format::push(make_header, "cp geometry/box.smith box.orig; cp main.smith main.orig; "
+                                             "run --fix geometry/box.smith main.smith >/dev/null")
                        .data);
     scratch::expect_text("--fix rewrites the written names in the source",
                          scratch::capture(&p, "sed -e 's/} bad_Type;/} BadType;/' -e 's/Perimeter/perimeter/' "
@@ -177,7 +174,7 @@ export void test_lint_a_c_files_names_are_its_own_underscores_or_not(io::Io *io)
 export void test_lint_plain_c_beside_a_smith_file_in_one_run_is_reported_the_same(io::Io *io) {
     scratch::Project p = prepared(io, false);
     scratch::expect_text("plain C beside a .smith file in one run is reported the same",
-                         format::push(&io->arena, bad_local, "\n", plain_findings).data,
+                         format::push(bad_local, "\n", plain_findings).data,
                          lint_text(&p, "run main.smith plain.c >mixed; findings <mixed"));
 }
 
@@ -259,9 +256,8 @@ constexpr char preprocessor_only[_] =
 
 export void test_lint_smith_preprocessor_every_directive_and_c_macro_at_its_place(io::Io *io) {
     scratch::Project p = prepared(io, false);
-    findings_are(
-        io, &p, "preprocessor",
-        format::push(&io->arena, preprocessor_only, "run pre/bad.smith >pre.out; preprocessor_only <pre.out").data);
+    findings_are(io, &p, "preprocessor",
+                 format::push(preprocessor_only, "run pre/bad.smith >pre.out; preprocessor_only <pre.out").data);
 }
 
 export void test_lint_smith_preprocessor_each_directive_says_what_to_write(io::Io *io) {

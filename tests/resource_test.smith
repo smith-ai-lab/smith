@@ -111,24 +111,28 @@ static bool begin(io::Io *io, scratch::Project *p, bool own_cache) {
         scratch::own_cache(p);
     }
     const char *which = scratch::capture(
-        p, format::push(&io->arena, prelude, "smith cc --smith-which -c a.c | head -n 1 | cut -d ' ' -f 1,2").data);
+        p, format::push(prelude, "smith cc --smith-which -c a.c | head -n 1 | cut -d ' ' -f 1,2").data);
     return scratch::same(which, "clang in-process");
 }
 
 static scratch::Run run(io::Io *io, const scratch::Project *p, const char *commands) {
-    return scratch::sh(p, format::push(&io->arena, prelude, commands).data);
+    (void)io;
+    return scratch::sh(p, format::push(prelude, commands).data);
 }
 
 static scratch::Run run_after(io::Io *io, const scratch::Project *p, const char *commands) {
-    return scratch::sh(p, format::push(&io->arena, prelude, where, commands).data);
+    (void)io;
+    return scratch::sh(p, format::push(prelude, where, commands).data);
 }
 
 static const char *text(io::Io *io, const scratch::Project *p, const char *commands) {
-    return scratch::capture(p, format::push(&io->arena, prelude, commands).data);
+    (void)io;
+    return scratch::capture(p, format::push(prelude, commands).data);
 }
 
 static const char *text_after(io::Io *io, const scratch::Project *p, const char *commands) {
-    return scratch::capture(p, format::push(&io->arena, prelude, where, commands).data);
+    (void)io;
+    return scratch::capture(p, format::push(prelude, where, commands).data);
 }
 
 // The first compile, which writes the folders.
@@ -139,7 +143,7 @@ static void first_compile(io::Io *io, const scratch::Project *p) {
 
 // A compile of `source` and the run of its program: "<status> <output>", and what the compiler printed.
 static const char *built(io::Io *io, const scratch::Project *p, const char *compile, const char *program) {
-    return text_after(io, p, format::push(&io->arena, compile, " 2>../err; echo \"$? $(", program, ")\"").data);
+    return text_after(io, p, format::push(compile, " 2>../err; echo \"$? $(", program, ")\"").data);
 }
 
 static const char *printed(io::Io *io, const scratch::Project *p) {
@@ -260,7 +264,7 @@ export void test_resource_a_second_compile_rewrites_no_file(io::Io *io) {
     // libLTO.dylib is the system ld's on macOS; Linux has none
     constexpr char files[_] = "ls -l \"$folder/lib/clang/$major/include/stddef.h\" $([ \"$os\" = Darwin ] && echo "
                               "\"$folder/lib/libLTO.dylib\")";
-    scratch::Run stamped = run_after(io, &p, format::push(&io->arena, files, " >../stamp").data);
+    scratch::Run stamped = run_after(io, &p, format::push(files, " >../stamp").data);
     scratch::expect_status("resource: the stamps", 0, &stamped);
     scratch::sleep(&p, 1000);
     scratch::Run second = run(io, &p, "\"$smith\" cc -fsyntax-only hello.c");

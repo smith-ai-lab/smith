@@ -106,8 +106,8 @@ export void test_runner_workers_a_failed_test_ends_its_worker(io::Io *io) {
 // The first seed of 1 to 20 for which the run of the test fails; 0 when none does.
 static usize failing_seed(const scratch::Project *p, const char *iso, const char *test_name) {
     for (usize number = 1; number <= 20; number++) {
-        scratch::Run run = runner::tests(
-            p, iso, format::push(&p->io->arena, "--test ", test_name, " --seed ", number, " --shrink 0").data);
+        scratch::Run run =
+            runner::tests(p, iso, format::push("--test ", test_name, " --seed ", number, " --shrink 0").data);
         if (scratch::contains(run.out, "FAIL shrink_leaky")) return number;
     }
     return 0;
@@ -120,7 +120,7 @@ export void test_runner_workers_a_shrunk_case_that_fails_only_on_leaked_state_is
         usize seed = failing_seed(&p, iso, "shrink_leaky");
         scratch::expect_count(runner::label(io, iso, "leaky: some seed fails the first run"), 1, (usize)(seed != 0));
         if (seed == 0) seed = 1;
-        scratch::Run run = runner::tests(&p, iso, format::push(&io->arena, "--test shrink_leaky --seed ", seed).data);
+        scratch::Run run = runner::tests(&p, iso, format::push("--test shrink_leaky --seed ", seed).data);
         if (mode == 1) {
             runner::expect_has(io, iso, "leaky: with a process per attempt nothing leaks, and it shrinks to 500", &run,
                                "shrunk in");
@@ -132,7 +132,7 @@ export void test_runner_workers_a_shrunk_case_that_fails_only_on_leaked_state_is
                                "shrinking attempts");
             runner::expect_lacks(io, iso, "leaky: ... the failure is shown as it was", &run, "shrunk in");
             runner::expect_has(io, iso, "leaky: ... and still names the seed", &run,
-                               format::push(&io->arena, "rerun: smith test --test shrink_leaky --seed ", seed).data);
+                               format::push("rerun: smith test --test shrink_leaky --seed ", seed).data);
         }
     }
 }
@@ -155,7 +155,7 @@ export void test_runner_workers_a_test_after_an_expected_abort_or_a_failure_sees
 // The text from the line that starts `from` up to the line that starts `to` (to the end when `to` is empty).
 static const char *between(const scratch::Project *p, const char *text, const char *from, const char *to) {
     scratch::write(p, "between.txt", text);
-    const char *command = format::push(&p->io->arena, "sed -n '/^", from, "/,", to[0] != '\0' ? "/^" : "$", to,
+    const char *command = format::push("sed -n '/^", from, "/,", to[0] != '\0' ? "/^" : "$", to,
                                        to[0] != '\0' ? "/" : "", "p' between.txt")
                               .data;
     return scratch::capture(p, command);
@@ -213,14 +213,14 @@ export void test_runner_workers_shuffle_runs_the_tests_in_another_order_from_a_s
                              "2 passed, 0 failed");
     usize found = 0;
     for (usize number = 1; number <= 20 && found == 0; number++) {
-        scratch::Run run = runner::tests(
-            &p, "", format::push(&io->arena, "--test order_ --jobs 1 --shuffle ", number, " --verbose").data);
+        scratch::Run run =
+            runner::tests(&p, "", format::push("--test order_ --jobs 1 --shuffle ", number, " --verbose").data);
         if (scratch::contains(run.out, "FAIL order_b")) found = number;
     }
     scratch::expect_count("shuffle: some seed runs order_b before order_a, and the test fails", 1, (usize)(found != 0));
     if (found == 0) found = 1;
     // the trace's addresses differ per run
-    const char *same = format::push(&io->arena, "build/tests --test order_ --jobs 1 --shuffle ", found,
+    const char *same = format::push("build/tests --test order_ --jobs 1 --shuffle ", found,
                                     " --verbose 2>&1 | sed -e '/^slowest:/,/^$/d' -e 's/ in [0-9.]* s$//' | grep -v "
                                     "'smith-trace \\(image\\|frame\\)'")
                            .data;
@@ -229,8 +229,7 @@ export void test_runner_workers_shuffle_runs_the_tests_in_another_order_from_a_s
     scratch::expect_text("shuffle: the same seed gives the same results (the trace's addresses differ per run)", first,
                          second);
     scratch::expect_contains("shuffle: ... reported in table order", first, "PASS order_a\nFAIL order_b");
-    scratch::Run task =
-        runner::smith_test(&p, "", format::push(&io->arena, "--test order_ --jobs 1 --shuffle ", found).data);
+    scratch::Run task = runner::smith_test(&p, "", format::push("--test order_ --jobs 1 --shuffle ", found).data);
     scratch::expect_contains("shuffle: --shuffle reaches the runner", task.out, "FAIL order_b");
 }
 
@@ -242,8 +241,8 @@ export void test_runner_workers_ninety_jobs_under_a_limit_of_a_hundred_descripto
     scratch::expect_status("many: the runner builds", 0, &built);
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
-        scratch::Run run = scratch::sh(
-            &p, format::push(&io->arena, "sh -c \"ulimit -S -n 100; build/tests ", iso, " --jobs 90\" 2>&1").data);
+        scratch::Run run =
+            scratch::sh(&p, format::push("sh -c \"ulimit -S -n 100; build/tests ", iso, " --jobs 90\" 2>&1").data);
         runner::expect_has(io, iso, "many: 90 jobs under a limit of 100 descriptors all run", &run,
                            "90 passed, 0 failed");
     }
@@ -291,7 +290,6 @@ export void test_runner_workers_in_process_smith_dbg_stops_at_a_breakpoint_insid
     usize line = runner::line_of(&p, "tests/test_inproc.smith", "test::check_equal(answer, 42);");
     const char *command =
         format::push(
-            &io->arena,
             "smith dbg -b -o 'settings set plugin.process.gdb-remote.packet-timeout 600' -o \"b test_inproc.smith:",
             line,
             "\" -o 'process launch -X false' -o 'frame variable answer' -o kill -- build/tests --test "
@@ -320,10 +318,9 @@ static scratch::Project explain_project(io::Io *io) {
 
 // The report smith test prints, with the values read from the stopped test.
 static const char *explained(const scratch::Project *p, const char *iso, const char *arguments) {
-    const char *command =
-        format::push(&p->io->arena, "build/tests ", iso, " --trace --explain \"$SMITH_SELF\" ", arguments,
-                     " 2>&1 | smith symbolize 2>&1 | ", runner::plain_pipe(), " | tr -s ' '")
-            .data;
+    const char *command = format::push("build/tests ", iso, " --trace --explain \"$SMITH_SELF\" ", arguments,
+                                       " 2>&1 | smith symbolize 2>&1 | ", runner::plain_pipe(), " | tr -s ' '")
+                              .data;
     return scratch::capture(p, command);
 }
 
@@ -379,13 +376,11 @@ export void test_runner_workers_explain_reads_a_contract_c_code_and_keeps_check_
         scratch::expect_contains(runner::label(io, iso, "explain: check_equal keeps its own two values"), equal,
                                  "count = 3, 4 (u64)");
         scratch::expect_lacks(runner::label(io, iso, "explain: ... and reads nothing"), equal, "@");
-        const char *filter =
-            format::push(&io->arena, " 2>&1 | ", runner::plain_pipe(), " | grep -v 'smith-trace'").data;
+        const char *filter = format::push(" 2>&1 | ", runner::plain_pipe(), " | grep -v 'smith-trace'").data;
         const char *plain_crash =
-            scratch::capture(&p, format::push(&io->arena, "build/tests ", iso, " --test ex_crash", filter).data);
+            scratch::capture(&p, format::push("build/tests ", iso, " --test ex_crash", filter).data);
         const char *read_crash = scratch::capture(
-            &p,
-            format::push(&io->arena, "build/tests ", iso, " --explain \"$SMITH_SELF\" --test ex_crash", filter).data);
+            &p, format::push("build/tests ", iso, " --explain \"$SMITH_SELF\" --test ex_crash", filter).data);
         scratch::expect_text(runner::label(io, iso, "explain: a crash reports as it did"), plain_crash, read_crash);
     }
 }
@@ -401,7 +396,7 @@ export void test_runner_workers_explain_reads_at_most_explain_max_and_no_explain
                                  "more failures were not read in the debugger (--explain-max 1)");
         const char *off = scratch::capture(
             &p,
-            format::push(&io->arena, "build/tests ", iso,
+            format::push("build/tests ", iso,
                          " --trace --test ex_member --explain \"$SMITH_SELF\" --no-explain 2>&1 | smith symbolize 2>&1")
                 .data);
         scratch::expect_contains(runner::label(io, iso, "explain: --no-explain gives the report as before"), off,

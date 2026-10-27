@@ -35,11 +35,13 @@ static scratch::Project repository(io::Io *io) {
 }
 
 static const char *capture(io::Io *io, const scratch::Project *p, const char *commands) {
-    return scratch::capture(p, format::push(&io->arena, prelude, commands).data);
+    (void)io;
+    return scratch::capture(p, format::push(prelude, commands).data);
 }
 
 static scratch::Run run(io::Io *io, const scratch::Project *p, const char *commands) {
-    return scratch::sh(p, format::push(&io->arena, prelude, commands).data);
+    (void)io;
+    return scratch::sh(p, format::push(prelude, commands).data);
 }
 
 // 1. package: the name, the checksum and what is inside

@@ -26,15 +26,14 @@ constexpr char guard_script[_] =
 // the test's scratch folder, and run with the root as its argument.
 static const char *offenders(const scratch::Project *p, const char *root) {
     scratch::write(p, "../guard.sh", guard_script);
-    const char *command = format::push(&p->io->arena, "sh ../guard.sh ", root).data;
+    const char *command = format::push("sh ../guard.sh ", root).data;
     return scratch::capture(p, command);
 }
 
 // A repository with a .gitignore and files, all added to the index (by force, as a careless `git add -f` would).
 static scratch::Project make_repository(io::Io *io, const char *ignored, const char *files) {
     scratch::Project p = scratch::project(io, "repository", nullptr);
-    scratch::Run made = scratch::sh(&p, format::push(&io->arena,
-                                                     "git init -q . && mkdir -p src include tests/smith-fmt "
+    scratch::Run made = scratch::sh(&p, format::push("git init -q . && mkdir -p src include tests/smith-fmt "
                                                      "tests/smith-lang/cases/a/expect/header && ",
                                                      "printf '", ignored, "\\n' > .gitignore && ", files)
                                             .data);

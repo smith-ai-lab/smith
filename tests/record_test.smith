@@ -19,11 +19,10 @@ constexpr char repository[_] = "export SMITH_OUTPUT=full; git init -q -b main . 
 // (the program's too) and not the other test's.
 export void test_the_first_run_makes_a_record_for_each_test(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", "record_project");
-    scratch::Run run =
-        scratch::sh(&p, format::push(&io->arena, repository,
-                                     "smith test --changed --base HEAD 2>&1; "
+    scratch::Run run = scratch::sh(
+        &p, format::push(repository, "smith test --changed --base HEAD 2>&1; "
                                      "echo ---; ls .smith/records; echo ---; cat .smith/records/add_runs.rec")
-                            .data);
+                .data);
     scratch::expect_status("the run", 0, &run);
     scratch::expect_contains("the reason", run.out, "no records yet, so every test runs once to make them");
     scratch::expect_contains("both ran", run.out, "2 passed");
@@ -42,7 +41,7 @@ export void test_a_change_reruns_the_test_that_ran_it(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", "record_project");
     const char *edit = "sed 's/a \\* b/a * b + 0/' ops.c > next.c && mv next.c ops.c; ";
     scratch::Run run =
-        scratch::sh(&p, format::push(&io->arena, repository, "smith test --changed --base HEAD >/dev/null 2>&1; ", edit,
+        scratch::sh(&p, format::push(repository, "smith test --changed --base HEAD >/dev/null 2>&1; ", edit,
                                      "smith test --changed --base HEAD --dry-run 2>&1; "
                                      "smith test --changed --base HEAD 2>&1; "
                                      "echo ---; cat .smith/records/mul_runs.rec")
@@ -63,7 +62,7 @@ export void test_a_failed_test_reruns_and_the_rest_do_not(io::Io *io) {
         "sed 's/return a \\* b;/return a * b + 1;/' ops.c > next.c && mv next.c ops.c; "
         "sed 's/mul 3 4 >/mul 3 4 \\&\\& false >/' tests/cli_test.c > next.c && mv next.c tests/cli_test.c; ";
     scratch::Run run =
-        scratch::sh(&p, format::push(&io->arena, repository, "smith test --changed --base HEAD >/dev/null 2>&1; ", edit,
+        scratch::sh(&p, format::push(repository, "smith test --changed --base HEAD >/dev/null 2>&1; ", edit,
                                      "smith test --changed --base HEAD >/dev/null 2>&1; "
                                      "git checkout -q tests/cli_test.c; "
                                      "smith test --changed --base HEAD --dry-run 2>&1")
@@ -76,8 +75,7 @@ export void test_a_failed_test_reruns_and_the_rest_do_not(io::Io *io) {
 // A plain `smith test` builds and records nothing.
 export void test_a_plain_test_leaves_no_record(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", "record_project");
-    scratch::Run run =
-        scratch::sh(&p, format::push(&io->arena, repository, "smith test 2>&1; ls .smith/records 2>&1").data);
+    scratch::Run run = scratch::sh(&p, format::push(repository, "smith test 2>&1; ls .smith/records 2>&1").data);
     scratch::expect_contains("both ran", run.out, "2 passed");
     scratch::expect_lacks("no record", run.out, ".rec");
 }

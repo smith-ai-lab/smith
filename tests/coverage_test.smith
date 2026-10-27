@@ -23,7 +23,8 @@ constexpr char program[_] =
 // Compiles the program with coverage and merges one record for each run named in `runs` ("one" runs first, "two"
 // runs second), then joins them into cov/table.tsv.
 static const char *make_table(io::Io *io, const char *runs) {
-    return format::push(&io->arena, "set -e; r=$(pwd -P); printf '", program, "' > prog.c; ", find_tools,
+    (void)io;
+    return format::push("set -e; r=$(pwd -P); printf '", program, "' > prog.c; ", find_tools,
                         "smith cc -fprofile-instr-generate -fcoverage-mapping \"$r/prog.c\" -o prog; "
                         "export SMITH_COVERAGE_DIR=$r/cov SMITH_COVERAGE_BINARY=$r/prog "
                         "SMITH_REPO=$r; mkdir -p cov/raw/t__one cov/raw/t__two; ",
@@ -42,7 +43,7 @@ constexpr char run_two[_] =
 // profiles are gone.
 export void test_a_record_is_the_functions_a_test_ran(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run run = scratch::sh(&p, make_table(io, format::push(&io->arena, run_one, run_two).data));
+    scratch::Run run = scratch::sh(&p, make_table(io, format::push(run_one, run_two).data));
     if (run.status == 77) {
         test::note("coverage: skipped, this smith has no LLVM inside");
         return;
@@ -65,7 +66,7 @@ export void test_the_report_names_the_changed_lines_no_test_ran(io::Io *io) {
         "&& sed 's/x \\* 2/x * 3/' prog.c > next.c && mv next.c prog.c && "
         "git -c user.name=t -c user.email=t@t commit -q -am b && "
         "smith test --coverage report cov/table.tsv HEAD~1 cov/report.txt; cat cov/report.txt";
-    scratch::Run run = scratch::sh(&p, format::push(&io->arena, make_table(io, run_one), edit).data);
+    scratch::Run run = scratch::sh(&p, format::push(make_table(io, run_one), edit).data);
     if (run.status == 77) return;
     scratch::expect_status("the run", 0, &run);
     scratch::expect_contains("the totals", run.out, "coverage\tabc123\tlines\t");
@@ -95,8 +96,9 @@ constexpr char repository[_] =
 
 // Runs the program under coverage as the tests a and b, and merges a record for each; `result` is what a's run was.
 static const char *recorded(io::Io *io, const char *result) {
+    (void)io;
     return format::
-        push(&io->arena, find_tools,
+        push(find_tools,
              "r=$(pwd -P); smith cc -fprofile-instr-generate -fcoverage-mapping \"$r/runtime/prog.c\" -o .smith/prog; "
              "export SMITH_COVERAGE_DIR=$r/.smith/cov SMITH_COVERAGE_BINARY=$r/.smith/prog "
              "SMITH_REPO=$r; mkdir -p .smith/cov/raw/runs_test__a .smith/cov/raw/runs_test__b; "
@@ -110,9 +112,9 @@ static const char *recorded(io::Io *io, const char *result) {
 
 static const char *changed_with(io::Io *io, const char *result, const char *edit) {
     scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run run = scratch::sh(&p, format::push(&io->arena, repository, recorded(io, result), edit,
-                                                    "; smith test --changed --base HEAD --dry-run 2>&1")
-                                           .data);
+    scratch::Run run = scratch::sh(
+        &p,
+        format::push(repository, recorded(io, result), edit, "; smith test --changed --base HEAD --dry-run 2>&1").data);
     if (run.status == 77) return "";
     scratch::expect_status("the dry run ends", 0, &run);
     return run.out;
@@ -178,10 +180,10 @@ export void test_a_file_the_graph_places_selects_the_tests_built_from_it(io::Io 
 // Without records the graph decides, and the message says so.
 export void test_no_records_means_the_graph_decides(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run run = scratch::sh(&p, format::push(&io->arena, repository,
-                                                    "echo '// x' >> runtime/prog.c; smith test --changed --base HEAD "
-                                                    "--dry-run 2>&1")
-                                           .data);
+    scratch::Run run =
+        scratch::sh(&p, format::push(repository, "echo '// x' >> runtime/prog.c; smith test --changed --base HEAD "
+                                                 "--dry-run 2>&1")
+                            .data);
     scratch::expect_contains("the reason", run.out, "no records of tests");
     scratch::expect_contains("the graph's choice", run.out, "tests/runs_test.smith: it runs smith");
 }

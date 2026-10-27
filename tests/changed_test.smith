@@ -32,8 +32,8 @@ constexpr char repository[_] =
 
 static const char *changed(io::Io *io, const char *edit) {
     scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run run = scratch::sh(
-        &p, format::push(&io->arena, repository, edit, "; smith test --changed --base HEAD --dry-run 2>&1").data);
+    scratch::Run run =
+        scratch::sh(&p, format::push(repository, edit, "; smith test --changed --base HEAD --dry-run 2>&1").data);
     scratch::expect_status("the dry run ends", 0, &run);
     return run.out;
 }

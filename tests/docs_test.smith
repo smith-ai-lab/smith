@@ -28,17 +28,15 @@ static scratch::Project fixtures(io::Io *io) {
 static void fixture_case(io::Io *io, const char *name) {
     scratch::Project p = fixtures(io);
     scratch::Run run =
-        scratch::sh(&p, format::push(&io->arena, "args=; [ -f ", name, "/args ] && args=$(cat ", name,
-                                     "/args); smith docs $args ", name, " >actual 2>&1; echo $? >status; cat actual")
+        scratch::sh(&p, format::push("args=; [ -f ", name, "/args ] && args=$(cat ", name, "/args); smith docs $args ",
+                                     name, " >actual 2>&1; echo $? >status; cat actual")
                             .data);
-    test::golden(io, slice_of(format::push(&io->arena, "tests/docs/fixtures/", name, "/expect.txt").data),
-                 slice_of(run.out));
+    test::golden(io, slice_of(format::push("tests/docs/fixtures/", name, "/expect.txt").data), slice_of(run.out));
     // The check exits 1 exactly when there are problems.
-    const char *want =
-        scratch::capture(&p, format::push(&io->arena, "case $(tail -n 1 ", name,
-                                          "/expect.txt) in *\" 0 problems\") echo 0 ;; *) echo 1 ;; esac")
-                                 .data);
-    scratch::expect_text(format::push(&io->arena, "fixture ", name, ": exit status").data, want,
+    const char *want = scratch::capture(
+        &p,
+        format::push("case $(tail -n 1 ", name, "/expect.txt) in *\" 0 problems\") echo 0 ;; *) echo 1 ;; esac").data);
+    scratch::expect_text(format::push("fixture ", name, ": exit status").data, want,
                          scratch::capture(&p, "cat status"));
 }
 

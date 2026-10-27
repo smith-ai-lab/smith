@@ -81,11 +81,12 @@ static Run run_in(const Project *p, const char *command) {
 }
 
 static const char *path_in(const Project *p, const char *name) {
-    return format::push(&p->io->arena, p->dir, "/", name).data;
+    return format::push(p->dir, "/", name).data;
 }
 
 static const char *join(io::Io *io, const char *folder, const char *name) {
-    return format::push(&io->arena, folder, "/", name).data;
+    (void)io;
+    return format::push(folder, "/", name).data;
 }
 
 // A project: a folder `name` in the test's scratch folder, with the files of tests/build_fixtures/<fixture> in it
@@ -116,7 +117,7 @@ export Run sh(const Project *p, const char *command) {
 
 // `smith build` with the arguments in a string.
 export Run build(const Project *p, const char *arguments) {
-    return run_in(p, format::push(&p->io->arena, "smith build ", arguments).data);
+    return run_in(p, format::push("smith build ", arguments).data);
 }
 
 export void write(const Project *p, const char *name, const char *text) {

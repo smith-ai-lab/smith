@@ -20,9 +20,8 @@ static void compile(const scratch::Project *p, const char *name) {
     const char *extra = c::strcmp(name, "asan") == 0   ? "-g -fsanitize=address,undefined"
                         : c::strcmp(name, "fast") == 0 ? "-w -DNDEBUG -O2"
                                                        : "";
-    scratch::Run built =
-        scratch::sh(p, format::push(&p->io->arena, "smith cc ", flags, " ", extra, " ", sources, " -o ", name).data);
-    scratch::expect_status(format::push(&p->io->arena, "the ", name, " program builds").data, 0, &built);
+    scratch::Run built = scratch::sh(p, format::push("smith cc ", flags, " ", extra, " ", sources, " -o ", name).data);
+    scratch::expect_status(format::push("the ", name, " program builds").data, 0, &built);
 }
 
 static scratch::Project arena_project(io::Io *io, const char *program) {
@@ -32,7 +31,7 @@ static scratch::Project arena_project(io::Io *io, const char *program) {
 }
 
 static scratch::Run mode(const scratch::Project *p, const char *program, const char *which) {
-    return scratch::sh(p, format::push(&p->io->arena, "./", program, " ", which).data);
+    return scratch::sh(p, format::push("./", program, " ", which).data);
 }
 
 export void test_arena_c_stop_is_on_in_every_build_ndebug_included(io::Io *io) {
@@ -99,13 +98,12 @@ export void test_arena_c_carved_arena_catches_what_any_arena_catches(io::Io *io)
 static void compiles_as(io::Io *io, const char *standard) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     scratch::Run built = scratch::sh(
-        &p, format::push(&io->arena, "smith cc -std=", standard,
+        &p, format::push("smith cc -std=", standard,
                          " -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror -I \"$SMITH_REPO/.smith/include\" "
                          "-iquote \"$SMITH_REPO/.smith/include/smith\" -c \"$SMITH_REPO/lib/smith/arena.smith\" -o a.o")
                 .data);
     scratch::expect_status(
-        format::push(&io->arena, "library: compiles as -std=", standard, " with the new project's warnings").data, 0,
-        &built);
+        format::push("library: compiles as -std=", standard, " with the new project's warnings").data, 0, &built);
 }
 
 export void test_arena_c_library_compiles_as_c23(io::Io *io) {

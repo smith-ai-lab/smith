@@ -41,15 +41,16 @@ static Block block_of(const char *info) {
 }
 
 static const char *where(io::Io *io, const char *name, usize line) {
-    return format::push(&io->arena, name, "/SKILL.md:", line).data;
+    (void)io;
+    return format::push(name, "/SKILL.md:", line).data;
 }
 
 // A `c` block holds no .smith.
 static void check_c_block(io::Io *io, const scratch::Project *p, const char *name, usize line, const char *body) {
     scratch::write(p, "raw", body);
     scratch::Run run = scratch::sh(p, "grep -nE '^(module|import) |c::' raw");
-    scratch::expect_status(
-        format::push(&io->arena, where(io, name, line), ": a c block holds .smith (tag it smith)").data, 1, &run);
+    scratch::expect_status(format::push(where(io, name, line), ": a c block holds .smith (tag it smith)").data, 1,
+                           &run);
 }
 
 // A complete `smith` block is placed in the file its module line implies (example-N.smith without one), and is not
@@ -59,24 +60,21 @@ static void place_smith_block(io::Io *io, const scratch::Project *p, const char 
     const char *label = where(io, name, line);
     scratch::write(p, "raw", body);
     scratch::Run renamed = scratch::sh(p, c_renamed);
-    scratch::expect_status(format::push(&io->arena, label, ": a smith block is C renamed (see smith-idiom)").data, 1,
-                           &renamed);
+    scratch::expect_status(format::push(label, ": a smith block is C renamed (see smith-idiom)").data, 1, &renamed);
     if (renamed.status == 0) return;
     const char *module = scratch::capture(p, "sed -n 's/^module \\([A-Za-z0-9_:]*\\);.*/\\1/p' raw | head -n 1");
     const char *path =
         module[0] != '\0'
-            ? format::push(
-                  &io->arena,
-                  scratch::capture(p, format::push(&io->arena, "printf '%s' '", module, "' | sed 's|::|/|g'").data),
-                  ".smith")
+            ? format::push(scratch::capture(p, format::push("printf '%s' '", module, "' | sed 's|::|/|g'").data),
+                           ".smith")
                   .data
-            : format::push(&io->arena, "example-", line, ".smith").data;
+            : format::push("example-", line, ".smith").data;
     bool twice = scratch::exists(p, path);
     if (twice) test::note("%s: module %s is defined by two blocks", label, module);
     test::check_condition(!twice);
     if (twice || placed->count == modules_max) return;
     scratch::Run copied =
-        scratch::sh(p, format::push(&io->arena, "mkdir -p \"$(dirname '", path, "')\" && cp raw '", path, "'").data);
+        scratch::sh(p, format::push("mkdir -p \"$(dirname '", path, "')\" && cp raw '", path, "'").data);
     scratch::expect_status(label, 0, &copied);
     placed->paths[placed->count] = path;
     placed->lines[placed->count] = line;
@@ -155,7 +153,7 @@ constexpr char headers_script[_] =
 static void check_module(io::Io *io, const scratch::Project *p, const char *name, const char *path, usize line) {
     const char *strict = c::strncmp(path, "example-", 8) == 0 ? "-Wno-missing-prototypes" : "-Wmissing-prototypes";
     const char *command =
-        format::push(&io->arena, "flags=\"-I $SMITH_REPO/.smith/include -I $PWD/.smith/include -I $PWD\"; ",
+        format::push("flags=\"-I $SMITH_REPO/.smith/include -I $PWD/.smith/include -I $PWD\"; ",
                      "smith cc -fsyntax-only -std=gnu2y ", strict,
                      " -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough "
                      "-Wstrict-prototypes -Wvla -Werror $flags '",
@@ -165,20 +163,20 @@ static void check_module(io::Io *io, const scratch::Project *p, const char *name
                      path, "' -- -std=gnu2y $flags 2>&1")
             .data;
     scratch::Run run = scratch::sh(p, command);
-    scratch::expect_status(format::push(&io->arena, where(io, name, line), " (", path, ")").data, 0, &run);
+    scratch::expect_status(format::push(where(io, name, line), " (", path, ")").data, 0, &run);
 }
 
 static void skill_case(io::Io *io, const char *name) {
     scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run copied = scratch::sh(
-        &p, format::push(&io->arena, "cp \"$SMITH_REPO/.agents/skills/", name, "/SKILL.md\" SKILL.md").data);
+    scratch::Run copied =
+        scratch::sh(&p, format::push("cp \"$SMITH_REPO/.agents/skills/", name, "/SKILL.md\" SKILL.md").data);
     scratch::expect_status("the skill is copied", 0, &copied);
     Placed placed = {};
     walk_blocks(io, &p, name, &placed);
     if (placed.count == 0) return;
     for (usize i = 0; i < placed.count; i++) {
         const char *path = placed.paths[i];
-        scratch::write(&p, "modules", format::push(&io->arena, scratch::read(&p, "modules"), path, "\n").data);
+        scratch::write(&p, "modules", format::push(scratch::read(&p, "modules"), path, "\n").data);
     }
     scratch::Run headers = scratch::sh(&p, headers_script);
     scratch::expect_status("the headers", 0, &headers);

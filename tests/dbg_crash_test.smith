@@ -31,23 +31,24 @@ static bool make(io::Io *io, scratch::Project *p) {
 static void note_output(const scratch::Project *p, const char *folder);
 
 static scratch::Run crash(const scratch::Project *p, io::Io *io, const char *arguments) {
-    scratch::Run run = scratch::sh(p, format::push(&io->arena, "smith dbg ", arguments, " >out.txt 2>err.txt").data);
+    (void)io;
+    scratch::Run run = scratch::sh(p, format::push("smith dbg ", arguments, " >out.txt 2>err.txt").data);
     note_output(p, "");
     return run;
 }
 
 // A failure shows the debugger's whole output, standard output and error, so that the cause is named.
 static void note_output(const scratch::Project *p, const char *folder) {
-    const char *out = scratch::read(p, format::push(&p->io->arena, folder, "out.txt").data);
-    const char *err = scratch::read(p, format::push(&p->io->arena, folder, "err.txt").data);
+    const char *out = scratch::read(p, format::push(folder, "out.txt").data);
+    const char *err = scratch::read(p, format::push(folder, "err.txt").data);
     test::note("smith dbg standard output:\n%s\nsmith dbg standard error:\n%s", out, err);
 }
 
 // smith dbg --crash on the .smith app, with the arguments of the program.
 static scratch::Run crash_app(const scratch::Project *p, io::Io *io, const char *arguments) {
+    (void)io;
     scratch::Run run = scratch::sh(
-        p, format::push(&io->arena, "cd w/app && smith dbg --crash build/debug/app ", arguments, " >out.txt 2>err.txt")
-               .data);
+        p, format::push("cd w/app && smith dbg --crash build/debug/app ", arguments, " >out.txt 2>err.txt").data);
     note_output(p, "w/app/");
     return run;
 }
