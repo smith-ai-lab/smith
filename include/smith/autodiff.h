@@ -3,6 +3,9 @@
 // smith-module: smith::autodiff
 // smith-imports: smith::arena smith::contract smith::effects
 // smith-names: reverse=__enzyme_autodiff forward=__enzyme_fwddiff constant=enzyme_const dup=enzyme_dup out=enzyme_out dup_no_need=enzyme_dupnoneed interleave=enzyme_interleave zeros gradient map
+// smith-tuples
+// smith-slices
+// smith-enums
 // smith-types: leaf_of down_of
 // smith-generic: smith::autodiff leaf_of smith_autodiff_leaf_of lib/smith/autodiff.smith g 2 3 6 7 | i@41:1=static iw@41:8=type iw@41:13=smith_autodiff_leaf_of p@41:20=( i@41:21=type iw@41:26=t p@41:27=) pw@41:29={ iw@42:5=if pw@42:8=( i@42:9=is_pointer p@42:19=( i@42:20=t p@42:21=) p@42:22=) iw@42:24=return iw@42:31=typeof p@42:37=( p@42:38=* p@42:39=( i@42:40=t p@42:41=) iw@42:43=nullptr p@42:50=) p@42:51=; iw@43:5=return iw@43:12=t p@43:13=; p@44:1=}
 // smith-generic: smith::autodiff down_of smith_autodiff_down_of lib/smith/autodiff.smith g 2 3 9 10 | i@48:1=static iw@48:8=type iw@48:13=smith_autodiff_down_of p@48:20=( i@48:21=type iw@48:26=t p@48:27=, iw@48:29=type iw@48:34=down p@48:38=) pw@48:40={ iw@49:5=if pw@49:8=( i@49:9=is_pointer p@49:19=( i@49:20=t p@49:21=) p@49:22=) iw@49:24=return iw@49:31=down p@49:35=; iw@50:5=return iw@50:12=t p@50:13=; p@51:1=}

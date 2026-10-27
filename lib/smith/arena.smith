@@ -21,7 +21,8 @@ import <sys/mman.h>; // mmap and munmap: the operating system as the default bac
 // another chunk from its backing allocator (the operating system by default) when the current one is full, so a push
 // never fails; the chunks are kept across scopes and resets (a second pass over the same work reuses them), `grown` is
 // the bytes beyond the first chunk, and the operating system refusing is a checked failure naming the size.
-// arena::try_push_raw is the nullable form of a push, for code that refuses.
+// arena::try_push_raw (null) and arena::try_push (an `option`) are the forms of a push for code that
+// refuses.
 //
 // The project compiles lib/smith/arena.smith itself (build.c: smith_library(b, "arena")), so the library is built with
 // the project's own flags, sanitizers included.
@@ -398,6 +399,17 @@ try_push_array_raw(Arena *arena, usize size, usize count, usize align) {
 // A zeroed T, the size and the alignment of the type. For .smith; C passes sizeof and alignof to smith_arena_push.
 [[smith::c_name("smith_arena_push_type")]] export [[nodiscard]] T *push(Arena *arena, constexpr type T) {
     return (T *)push_raw(arena, sizeof(T), alignof(T));
+}
+
+// A zeroed T, or `.none` when the arena cannot hold it (a fixed arena out of space, the backing of a growing one
+// refusing): the form for code that refuses, where push is a checked failure. A refusal pushes nothing.
+[[smith::c_name("smith_arena_try_push_type")]] export [[nodiscard]] option(T *) try_push(Arena *a, constexpr type T) {
+    void *memory = try_push_raw(a, sizeof(T), alignof(T));
+    if (memory != nullptr) {
+        return {.some = (T *)memory};
+    } else {
+        return .none;
+    }
 }
 
 // `T[:]` written `count` times in front of T (the element), the type of a slice of that many run-time dimensions:

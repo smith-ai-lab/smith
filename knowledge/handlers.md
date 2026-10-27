@@ -101,5 +101,5 @@ allocator; `checked` (D2a), `failing` and the profiles (D2b).
   of a scope (a scope remembers the chunk it began in, ending it walks back and keeps the later ones as spares), so the
   second pass over the same work takes none; `arena::release` gives them back. `arena::fixed(memory, capacity)` never grows: a full one is the checked failure that names the capacity. `arena::try_push_raw` is the form that
   returns null. As an allocator (`arena::allocator`) a growing arena answers `owns` for every chunk and null only when
-  its backing refuses. The `option` forms of the pushes wait for a release whose smith compiles `option` in its own
-  libraries (the lag rule: arena is compiled into smith itself).
+  its backing refuses. `arena::try_push` is the `option` form of `push` (`.none` instead of the stop or the checked failure, nothing
+  pushed), built on `try_push_raw` as `mem::try_alloc` is on `try_alloc_raw`; a slice has no `option` form yet.

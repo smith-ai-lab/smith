@@ -337,6 +337,55 @@ export void test_arena_try_push_is_null_where_a_push_would_fail() {
     test::check_condition(arena::try_push_raw(&growing, 100, 8) != nullptr);             // and the arena still works
 }
 
+typedef option(Record *) MaybeRecord;
+
+// The option tests sit in functions with a single generic call each (smith issue #353).
+MaybeRecord try_record(arena::Arena *a) {
+    return arena::try_push(a, Record);
+}
+
+bool record_is_zeroed(MaybeRecord record) {
+    return record == .some && record.some->count == 0 && record.some->value == 0;
+}
+
+bool is_some_record(MaybeRecord record) {
+    return record == .some;
+}
+
+// Pushes 8 bytes at a time until a Record no longer fits the current block.
+void fill_block(arena::Arena *a) {
+    while (arena::fits(a, sizeof(Record), alignof(Record))) {
+        (void)arena::push_raw(a, 8, 8);
+    }
+}
+
+export void test_arena_try_push_is_none_where_a_push_would_fail() {
+    static Memory memory;
+    arena::Arena fixed = arena::fixed(memory.bytes, sizeof memory.bytes);
+    test::check_condition(record_is_zeroed(try_record(&fixed)));
+    fill_block(&fixed);
+    usize used = fixed.used;
+    test::check_condition(!is_some_record(try_record(&fixed))); // a fixed arena never grows
+    test::check_equal(fixed.used, used);                        // a refusal pushes nothing
+}
+
+export void test_arena_try_push_takes_chunks_of_a_growing_arena() {
+    arena::Arena a = arena::growing(chunk_first, nullptr);
+    fill_block(&a);
+    test::check_equal(a.grown, 0);
+    test::check_condition(is_some_record(try_record(&a))); // the record comes from another chunk
+    test::check_condition(a.grown > 0);
+    arena::release(&a);
+
+    static Parent parent_memory;
+    arena::Arena parent = arena::fixed(parent_memory.bytes, 40 << 10);
+    arena::ArenaAllocator backing = arena::allocator(&parent);
+    arena::Arena refused = arena::growing(chunk_first, &backing.base);
+    fill_block(&refused);
+    test::check_condition(!is_some_record(try_record(&refused))); // the backing refuses the next chunk: none
+    test::check_equal(refused.grown, 0);                          // and nothing was taken
+}
+
 export void test_arena_allocator_serves_a_growing_arena() {
     arena::Arena a = arena::growing(chunk_first, nullptr);
     defer arena::release(&a);
