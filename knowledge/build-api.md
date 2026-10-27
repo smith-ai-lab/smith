@@ -1,13 +1,13 @@
 ---
 type: contract
 title: The build API
-description: Every call of include/smith/build.h with its fields, defaults and the generated manifest.
+description: Every call of <smith/build.h> with its fields, defaults and the generated manifest.
 tags: [build, api]
 ---
 # The build API
 
 Version 1 is enough for checkers and learner. Version 1.5 (`smith_defer`, `smith_lines`) adds what game needs for its
-generated mesh list. Everything else is later. The text below is the API in C names, as in [include/smith/build.h](../include/smith/build.h)
+generated mesh list. Everything else is later. The text below is the API in C names, as in `<smith/build.h>`, generated from [lib/smith/build.smith](../lib/smith/build.smith)
 (generated from [lib/smith/build.smith](../lib/smith/build.smith), where the types come in the order they depend on
 each other) without its `#pragma once`, includes and `extern "C"` guards; a struct is anonymous and has only the typedef
 name, as the module writes it. Setting `.content_hash` is the error `smith: build.c: .content_hash is not implemented yet`.

@@ -50,7 +50,7 @@ is compiled for.
   and `#endif` the raw lowering writes, and the `SMITH_TARGET_*` definitions it needs go once at the top of the header
   (and, in the interface read in memory, on the blank lines before the first declaration), so a C includer's compiler
   answers it, as a `.smith` importer's does. `smith::contract` is built on this: `smith_requires` and the others are
-  `static inline` in `include/smith/contract.h`, choosing between `__builtin_assume` (`target::static_analyzer`), a call of
+  `static inline` in `<smith/contract.h>`, choosing between `__builtin_assume` (`target::static_analyzer`), a call of
   the library, in every build (`NDEBUG` does not change it).
 - **`if constexpr (condition) { ... } else if constexpr (...) { ... } else { ... }` in a function body.** The branches
   are blocks. The condition is a constant expression of integers and `true` and `false`, the operators of C,

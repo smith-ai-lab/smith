@@ -1,5 +1,5 @@
 // smith::io, <smith/io.h>: everything a program does to the world outside it, as values you hold and pass on. Its C API
-// is the generated header include/smith/io.h (committed; `smith build headers` regenerates it). Every export has a
+// is the generated header include/smith/io.h (a build output, not in git). Every export has a
 // short name here and a C name (the attribute before it): `io::make` is `smith_io_make`, `io::Io` is `SmithIo`,
 // `io::console_printf` is `smith_console_printf`. The comments above an export are the header's doc comments, so they
 // name the Smith names; the first one says how a C name follows from them.

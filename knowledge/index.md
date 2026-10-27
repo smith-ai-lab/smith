@@ -41,7 +41,7 @@ What smith is and the contracts its code keeps. Read only the concepts your task
 
 ## Contracts
 
-- [The build API](build-api.md): Every call of include/smith/build.h with its fields, defaults and the generated manifest.
+- [The build API](build-api.md): Every call of <smith/build.h> with its fields, defaults and the generated manifest.
 - [smith-effects, a program touches the world only through capabilities](effects-check.md): A clang-tidy check decided function by function from the source: raw effects live only in a capability's module, and io::make is called only in main.
 - [A module has no warnings](module-diagnostics.md): The compile of a .smith file with a module line fails on a fixed baseline of diagnostics, each with a written way to say I meant it; heuristic ones are opt-in and advisory.
 - [The idiom checks](idiom-checks.md): clang-tidy checks smith-sized-types, smith-module-library, smith-module, smith-bounded-loop, smith-c23 and smith-constexpr tell an agent what idiomatic Smith and C23 look like.

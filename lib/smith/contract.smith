@@ -1,5 +1,5 @@
 // smith::contract, <smith/contract.h>: contracts written as calls. Its C API is the generated header
-// include/smith/contract.h (committed; `smith build headers` regenerates it). Every export has a short name here and a
+// include/smith/contract.h (a build output, not in git). Every export has a short name here and a
 // C name (the attribute before it): `contract::requires` is `smith_requires`. The comments above an export are the
 // header's doc comments, so they name the Smith names; the first one says how a C name follows from them.
 module smith::contract;

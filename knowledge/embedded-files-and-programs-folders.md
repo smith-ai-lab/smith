@@ -38,3 +38,10 @@ to read file` (`Killed: 9`, exit 137), and a file that vanishes while it is vali
 test's scratch data folder held a hard-linked name of the smith under test and was removed when the test ended, so
 the other processes of that smith, started from `build/`, were killed. With a clone nothing but the program's own
 name can vanish under it. A test that makes a copy of smith for a project uses `cp -c`, and `ln -s` where a name will do.
+
+**The libraries travel as sources, not headers.** smith embeds `lib/smith/*.smith` and `lib/*.c` (and the hand-written
+headers of the C libraries), never the generated headers of the `.smith` modules, which are build outputs and not in git
+([smith-module-headers](smith-module-headers.md)). Each `smith build` (and `smith lsp`, for an editor) writes the sources
+to the project's `.smith/lib/` and, from them, the headers to `.smith/include/smith/` with the same binary (about 80 ms
+once, in parallel, then nothing while its stamp matches), so a header is always in the format of the smith that reads it.
+

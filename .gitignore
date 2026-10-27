@@ -2,3 +2,22 @@ build/
 compile_commands.json
 .cache/
 /.claude/worktrees/
+# Generated files are build outputs, never committed (AGENTS.md; tests/generated_files_test.smith): smith's own folder,
+# and the headers of the .smith libraries, which `smith build` writes to .smith/include/smith/.
+/.smith/
+/include/smith/arena.h
+/include/smith/autodiff.h
+/include/smith/build.h
+/include/smith/contract.h
+/include/smith/effects.h
+/include/smith/format.h
+/include/smith/inflate.h
+/include/smith/io.h
+/include/smith/math.h
+/include/smith/mem.h
+/include/smith/option.h
+/include/smith/random.h
+/include/smith/result.h
+/include/smith/test.h
+/include/smith/text.h
+/include/smith/random.body

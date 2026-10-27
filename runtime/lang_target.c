@@ -7,8 +7,8 @@
 //
 // `target::x` is a constant of the target the file is compiled for. A host with a preprocessor (the clang hook) answers
 // each fact from it (`SmithHost.target_fact`) and the lowering writes the value as a literal, so it works in a
-// `static_assert`, an array size or a `constexpr` initializer. The raw lowering (`smith cc --smith-lower`, which
-// `smith build headers` uses for the headers) has no preprocessor and writes the preprocessor's own question into its
+// `static_assert`, an array size or a `constexpr` initializer. The raw lowering (`smith cc --smith-lower`, and
+// `--smith-header`, which writes the headers) has no preprocessor and writes the preprocessor's own question into its
 // output: a macro for the fact, defined at the top of the output by an `#if` chain (smith_lang_target_prelude), and for
 // an `if constexpr` the branches between `#if`, `#else` and `#endif`. The preprocessor lives only in generated output.
 //

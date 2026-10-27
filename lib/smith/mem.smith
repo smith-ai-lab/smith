@@ -1,5 +1,5 @@
 // smith::mem, <smith/mem.h>: memory through the allocator of the current thread. Its C API is the generated header
-// include/smith/mem.h (committed; `smith build headers` regenerates it); the names follow the rule of arena.smith:
+// include/smith/mem.h (a build output, not in git); the names follow the rule of arena.smith:
 // `mem::alloc_raw` is `smith_mem_alloc`, `mem::set_allocator` is `smith_mem_set_allocator`.
 //
 // Code asks for memory with mem::alloc and mem::alloc_slice and never gets null: the allocator in force is what

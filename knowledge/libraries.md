@@ -24,11 +24,12 @@ tags: [libraries, stdlib]
 
 **How a project uses one:** it compiles the library from source with its own flags (`smith_library`).
 
-**C or `.smith`, one registry:** a library is its header (`include/smith/<name>.h`) and its source, `lib/<name>.c`
+**C or `.smith`, one registry:** a library is its header and its source, `lib/<name>.c`
 or a `.smith` module `lib/smith/<name>.smith` (`module smith::<name>;`), one row of `smith_libraries` in
-`smith.c`. A `.smith` library's header is generated and committed (the stage0 has no hook and embeds it as
-bytes), `smith build headers` regenerates it and `check-headers` (in `check`) fails on a difference; its C API
-(names, symbols via `[[smith::c_name]]`, doc comments) stays what it was. `option` and `result` (issue #198) are `.smith` modules, `smith::option` and `smith::result`, that export only a type function each; they are no library to link and are never imported: the lowering reads their embedded headers (the `// smith-eshape:` line) so that `option(T)` and `result(T, E)` are in scope in every module. `text`, `random`, `arena`, `test` and `io` are `.smith` (issue #39; #45). C passes `sizeof` and
+`smith.c`. A C library's header is hand-written (`include/smith/<name>.h`). A `.smith` library's header is a build
+output, never committed ([smith-module-headers](smith-module-headers.md)): smith embeds the source and the installed
+smith writes the header into `.smith/include/smith/` at first use; its C API (names, symbols via `[[smith::c_name]]`,
+doc comments) stays what it was. `option` and `result` (issue #198) are `.smith` modules, `smith::option` and `smith::result`, that export only a type function each; they are no library to link and are never imported: the lowering carries their `// smith-eshape:` lines itself (`runtime/lang_enum.c`) so that `option(T)` and `result(T, E)` are in scope in every module. `text`, `random`, `arena`, `test` and `io` are `.smith` (issue #39; #45). C passes `sizeof` and
 `alignof` to `smith_arena_push`; `.smith` writes the type as an argument, `arena::push(&a, T)` and
 `arena::push_slice(&a, T, sizes...)` (a slice with a size for each `[:]`).
 

@@ -46,6 +46,6 @@ export void build(build::Build *b) {
 }
 ```
 
-`smith::build` is the API of this skill with module names: `SmithX` is `build::X` (`Build`, `Step`, `Run`, `Object`, `Program`, `Modules`, `Tests`, `Package`, `App`, `AppTests`) and `smith_x` is `build::x` (`build::app`, `build::object`, `build::program`, `build::tests`, `build::task`, `build::list`, `build::glob`, `build::fmt`, `build::run_lines`...), except `smith_default`, which is `build::default_targets`. They are the same functions a build.c calls (the module's header is `include/smith/build.h`), so everything below applies; read `smith_x` as `build::x`.
+`smith::build` is the API of this skill with module names: `SmithX` is `build::X` (`Build`, `Step`, `Run`, `Object`, `Program`, `Modules`, `Tests`, `Package`, `App`, `AppTests`) and `smith_x` is `build::x` (`build::app`, `build::object`, `build::program`, `build::tests`, `build::task`, `build::list`, `build::glob`, `build::fmt`, `build::run_lines`...), except `smith_default`, which is `build::default_targets`. They are the same functions a build.c calls (the module's header is `.smith/include/smith/build.h`, written by `smith build`), so everything below applies; read `smith_x` as `build::x`.
 
 Also in this family: [smith-build](../smith-build/SKILL.md), [smith-build-c](../smith-build-c/SKILL.md), [smith-build-functions](../smith-build-functions/SKILL.md), [smith-build-objects](../smith-build-objects/SKILL.md), [smith-build-makefile](../smith-build-makefile/SKILL.md).

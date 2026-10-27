@@ -22,7 +22,7 @@ already; `smith build` says so when it is not (the default target stops, `llvm` 
 
 **How the build uses it.** `CC` defaults to `smith-cc`. `build.c` compiles `lib/smith/{arena,contract,inflate,io,random,text}.smith`
 to objects with it and links them beside `smith.c`, which (and `runtime/package.c` in it) sees only their generated headers
-in `include/smith/`. The build program of a user project (`.smith/runtime.c` and `package.c`) links the same five
+in `.smith/include/smith/` (written by the previous release during the build, never committed). The build program of a user project (`.smith/runtime.c` and `package.c`) links the same five
 libraries, compiled by `smith build` from the copies it writes to `.smith/lib/smith/` with the smith itself, even when
 `SMITH_CLANG` makes an external clang compile `build.c` (`.smith/build-program/build.ninja` is that manifest). smith has
 no build with one `cc` command and no stage0 without clang inside any more.
@@ -38,7 +38,7 @@ The same holds for the build API: `build.c` is compiled by the release smith wit
 **What still uses the raw lowering** (`smith cc --smith-lower`, the token-level lowering with no parser): the command
 itself and its corpus (`tests/smith-lang`), and the white-box tests that include a module's lowering to reach its static
 functions (`tests/random.c`, `tests/prove/sound/smith_random.c` and `smith_arena.c`, written by their scripts at run time).
-The header pass (`smith cc --smith-header`, `smith build headers`) is also parser-less until a later ticket moves headers to
+The header pass (`smith cc --smith-header`) is also parser-less until a later ticket moves headers to
 the full compiler. Nothing is committed from the lowering any more.
 
 **Why chicken and egg does not bite.** Deleting `bootstrap/` removed nothing a release needs to build the next one: a
