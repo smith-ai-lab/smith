@@ -157,6 +157,10 @@ export void test_the_io_header_compiles_alone(io::Io *io) {
     generated(io, "io");
 }
 
+export void test_the_gpu_header_compiles_alone(io::Io *io) {
+    generated(io, "gpu");
+}
+
 export void test_the_ascii_header_compiles_alone(io::Io *io) {
     generated(io, "ascii");
 }

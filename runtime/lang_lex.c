@@ -1025,6 +1025,9 @@ static bool smith_raw_read_header(void *context, const char *relative, const cha
     return true;
 }
 
+// Takes the lowered text in place of stdout (`smith cc --smith-metal`, runtime/gpu_metal.c).
+static void (*smith_lang_dump_sink)(const char *text, size_t length);
+
 // Feeds a file to the lowering with no compiler. Returns the exit status.
 static int smith_lang_run_raw(const char *path, const char *header_path, bool print_lowered) {
     SmithLangRaw raw = {.file = path, .line_start = true, .keep = print_lowered};
@@ -1071,7 +1074,9 @@ static int smith_lang_run_raw(const char *path, const char *header_path, bool pr
     if (print_lowered) smith_lang_dump_directives(lang, UINT32_MAX); // those after the last token
     smith_lang_finish(lang);
     smith_lang_import_asker = nullptr;
-    if (print_lowered) {
+    if (print_lowered && smith_lang_dump_sink != nullptr) {
+        smith_lang_dump_sink(smith_lang_dump, lang->dump_used);
+    } else if (print_lowered) {
         smith_lang_target_prelude(lang, stdout);
         fwrite(smith_lang_dump, 1, lang->dump_used, stdout);
         fputc('\n', stdout);
