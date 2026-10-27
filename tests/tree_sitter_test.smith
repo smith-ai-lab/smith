@@ -150,7 +150,7 @@ export void test_tree_sitter_smiths_own_c_parses_without_error_nodes(io::Io *io)
 
 // The query the Neovim plugin asks (`smith cc --smith-tree-sitter`): the path of a library that exists, is the same on
 // every run, and loads with the grammar's entry point. It needs no network.
-constexpr char loader_source[] = "#include <dlfcn.h>\n#include <stdio.h>\n"
+constexpr char loader_source[_] = "#include <dlfcn.h>\n#include <stdio.h>\n"
                                  "int main(int argc, char **argv) {\n"
                                  "    void *handle = argc > 1 ? dlopen(argv[1], RTLD_NOW) : 0;\n"
                                  "    void *entry = handle ? dlsym(handle, \"tree_sitter_smith\") : 0;\n"
