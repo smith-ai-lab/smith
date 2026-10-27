@@ -88,21 +88,42 @@ jobs:
         if: steps.tree.outputs.skip != 'true'
         # The tests this batch's changes select, by the records of main's latest green run (smith-records, fetched by
         # the build file's coverage-fetch task with gh), stopping at the first failure: a broken batch is red in minutes,
-        # not after the full check (#506). Nothing selected is a pass. The Full check below still names every failure.
-        timeout-minutes: 20
+        # not after the full check (#506). The Full check below still names every failure. It only reads the records
+        # (no COVERAGE: nothing is recorded), skips itself when the selection is wide (a change to the runner or to
+        # build.c selects nearly everything, and the Full check runs that anyway) and gives up after 5 minutes without
+        # failing: only a failed selected test makes it red.
+        timeout-minutes: 8
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SMITH_OUTPUT: full
           SMITH_PRIORITY: ci
-          COVERAGE: "1"
+          LLVM_PROFILE_FILE: /dev/null
         run: |
           export PATH="/opt/homebrew/bin:$HOME/.local/bin:$PATH"
           git fetch -q origin main
+          smith=build/Darwin-arm64/smith
+          picked=$($smith test --changed --list origin/main 2>"$RUNNER_TEMP/list.err") || { cat "$RUNNER_TEMP/list.err"; echo "the selection failed, skipping"; exit 0; }
+          files=$(git ls-files '*_test.smith' '*_test.c' | wc -l | tr -d ' ')
+          n=$(printf '%s\n' "$picked" | grep -c . || true)
+          echo "selected $n of $files test files"
+          if [ "$n" -eq 0 ]; then echo "nothing selected"; exit 0; fi
+          if [ "$picked" = '*' ] || [ $((n * 4)) -gt "$files" ]; then
+            echo "selection too wide, skipping" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           start=$(date +%s)
+          $smith test --changed --base origin/main --fail-fast >"$RUNNER_TEMP/changed.log" 2>&1 &
+          pid=$!
+          ( sleep 300; kill "$pid" 2>/dev/null ) &
+          dog=$!
           rc=0
-          build/Darwin-arm64/smith test --changed --base origin/main --fail-fast 2>&1 | tee "$RUNNER_TEMP/changed.log" || rc=${PIPESTATUS[0]}
-          echo "changed tests ended with status $rc after $(( $(date +%s) - start )) s" | tee -a "$GITHUB_STEP_SUMMARY"
+          wait "$pid" || rc=$?
+          kill "$dog" 2>/dev/null || true
+          tail -n 60 "$RUNNER_TEMP/changed.log"
+          took=$(( $(date +%s) - start ))
+          if [ "$rc" -eq 143 ]; then echo "changed tests: gave up after $took s, the Full check decides" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
+          echo "changed tests ended with status $rc after $took s" | tee -a "$GITHUB_STEP_SUMMARY"
           exit $rc
 
       - name: Full check
