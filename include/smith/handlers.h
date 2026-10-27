@@ -158,3 +158,18 @@ SmithProcessHandler *smith_handlers_set_process(SmithProcessHandler *process);
 
 // The processes of the calling thread, null when the real ones are in force.
 SmithProcessHandler *smith_handlers_process(void);
+
+// The entropy of the calling thread: the random bytes getentropy fills (smith::random::seed asks it). `fill` writes
+// `size` bytes of buffer and never fails (a fake writes the bytes of a number it holds, so a test scripts the seed). No
+// entropy handler set is the system's. arc4random and getrandom are not reached.
+typedef struct SmithEntropyHandler SmithEntropyHandler;
+
+struct SmithEntropyHandler {
+    void (*fill)(SmithEntropyHandler *self, unsigned char *buffer, size_t size);
+};
+
+// Sets the entropy of the calling thread (null: the system's), returning the one it had.
+SmithEntropyHandler *smith_handlers_set_entropy(SmithEntropyHandler *entropy);
+
+// The entropy of the calling thread, null when none is set.
+SmithEntropyHandler *smith_handlers_entropy(void);

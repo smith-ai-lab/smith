@@ -416,6 +416,10 @@ export void test_effects_chain_smith(io::Io *io) {
     effects_case(io, "effects_chain.smith");
 }
 
+export void test_effects_entropy_smith(io::Io *io) {
+    effects_case(io, "effects_entropy.smith");
+}
+
 export void test_effects_globals_c(io::Io *io) {
     effects_case(io, "effects_globals.c");
 }

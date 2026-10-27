@@ -109,3 +109,7 @@ allocator; `checked` (D2a), `failing` and the profiles (D2b).
   handler, and none set is libc's. `gettimeofday`, `time` and the Mach clocks are not reached. A fake clock's `sleep`
   advances its time and returns, so sleeping on it never blocks. See [direct-call-modules](direct-call-modules.md).
 - **Processes (issue #240):** `SmithProcessHandler {start, read, write, close_input, wait, kill, close, cores}` is called by `smith::process` itself (no libc function is interposed); per thread, with a setter returning the previous handler, and none set is the real posix_spawn, pipes and waitpid. See [process](process.md).
+- **Entropy (issue #240):** `SmithEntropyHandler {fill}` answers `getentropy` (per thread, setter returns the previous
+  one, none set is the system's; `fill` writes the bytes and never fails). `arc4random` and `getrandom` are not reached.
+  `random::seed()` is the one caller in smith's libraries; it has the `entropy` effect (`getentropy` is `entropy` in
+  `shim/effects_table.h`). A test scripts it with a fake whose `fill` writes the bytes of a number.

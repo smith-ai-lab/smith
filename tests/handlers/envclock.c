@@ -1,10 +1,11 @@
-// An env handler answers getenv and a clock handler answers clock_gettime, nanosleep, usleep and sleep, per thread;
-// with none set they are libc's. A sleep on the fake clock advances it and returns at once. Exits 0 when every check is
-// ok.
+// An env handler answers getenv, a clock handler answers clock_gettime, nanosleep, usleep and sleep, and an entropy
+// handler answers getentropy, per thread; with none set they are libc's. A sleep on the fake clock advances it and
+// returns at once. Exits 0 when every check is ok.
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/random.h>
 #include <time.h>
 #include <unistd.h>
 #include "smith/handlers.h"
@@ -43,6 +44,19 @@ static void fake_sleep(SmithClockHandler *self, uint64_t nanoseconds) {
     fake->slept += nanoseconds;
 }
 
+typedef struct {
+    SmithEntropyHandler entropy;
+    unsigned char next;
+    int asked;
+} FakeEntropy;
+
+static void fake_fill(SmithEntropyHandler *self, unsigned char *buffer, size_t size) {
+    FakeEntropy *fake = (FakeEntropy *)self;
+    fake->asked += 1;
+    for (size_t i = 0; i < size; i++)
+        buffer[i] = fake->next++;
+}
+
 int main(void) {
     check("no env handler: getenv is libc's", getenv("PATH") != nullptr && smith_handlers_env() == nullptr);
     FakeEnv env = {.env = {fake_get}};
@@ -71,5 +85,18 @@ int main(void) {
     check("the fake's time moved with its sleeps", fake.now == 5'000'000'123 + (int64_t)fake.slept);
     smith_handlers_set_clock(before_clock);
     check("the clock handler is gone", smith_handlers_clock() == nullptr && clock_gettime(CLOCK_MONOTONIC, &real) == 0);
+
+    unsigned char bytes[8] = {};
+    check("no entropy handler: getentropy is the system's",
+          getentropy(bytes, sizeof bytes) == 0 && smith_handlers_entropy() == nullptr);
+    FakeEntropy entropy = {.entropy = {fake_fill}, .next = 10};
+    SmithEntropyHandler *before_entropy = smith_handlers_set_entropy(&entropy.entropy);
+    check("the entropy setter returns the previous handler",
+          before_entropy == nullptr && smith_handlers_entropy() == &entropy.entropy);
+    check("getentropy reaches the handler",
+          getentropy(bytes, sizeof bytes) == 0 && bytes[0] == 10 && bytes[7] == 17 && entropy.asked == 1);
+    smith_handlers_set_entropy(before_entropy);
+    check("the entropy handler is gone",
+          smith_handlers_entropy() == nullptr && getentropy(bytes, sizeof bytes) == 0 && entropy.asked == 1);
     return failures == 0 ? 0 : 1;
 }

@@ -26,6 +26,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/random.h>
 #include <sys/syscall.h>
 #include <time.h>
 #include <unistd.h>
@@ -160,6 +161,32 @@ SmithClockHandler *smith_handlers_set_clock(SmithClockHandler *clock) {
 
 SmithClockHandler *smith_handlers_clock(void) {
     return smith_handlers_clock_current();
+}
+
+// The entropy, found the same way.
+static atomic_uint smith_handlers_entropy_active;
+static thread_local SmithEntropyHandler *smith_handlers_entropy_table;
+
+__attribute__((noinline)) static SmithEntropyHandler *smith_handlers_entropy_get(void) {
+    return smith_handlers_entropy_table;
+}
+
+__attribute__((noinline)) static SmithEntropyHandler *smith_handlers_entropy_current(void) {
+    if (atomic_load_explicit(&smith_handlers_entropy_active, memory_order_relaxed) == 0) return nullptr;
+    if (!atomic_load_explicit(&smith_handlers_ready, memory_order_relaxed)) return nullptr;
+    return smith_handlers_entropy_get();
+}
+
+SmithEntropyHandler *smith_handlers_set_entropy(SmithEntropyHandler *entropy) {
+    SmithEntropyHandler *previous = smith_handlers_entropy_table;
+    smith_handlers_entropy_table = entropy;
+    if (previous == nullptr && entropy != nullptr) atomic_fetch_add(&smith_handlers_entropy_active, 1);
+    if (previous != nullptr && entropy == nullptr) atomic_fetch_sub(&smith_handlers_entropy_active, 1);
+    return previous;
+}
+
+SmithEntropyHandler *smith_handlers_entropy(void) {
+    return smith_handlers_entropy_current();
 }
 
 // A timespec as nanoseconds, and nanoseconds as a timespec; a duration too long for 64 bits is the longest one.
@@ -603,6 +630,13 @@ static char *smith_handlers_getenv(const char *name) {
     return env != nullptr ? env->get(env, name) : getenv(name);
 }
 
+static int smith_handlers_getentropy(void *buffer, size_t size) {
+    SmithEntropyHandler *entropy = smith_handlers_entropy_current();
+    if (entropy == nullptr) return getentropy(buffer, size);
+    entropy->fill(entropy, buffer, size);
+    return 0;
+}
+
 static int smith_handlers_clock_gettime(clockid_t which, struct timespec *time) {
     SmithClockHandler *clock = smith_handlers_clock_current();
     return clock != nullptr ? smith_handlers_clock_read(clock, which, time) : clock_gettime(which, time);
@@ -684,6 +718,7 @@ __attribute__((used, section("__DATA,__interpose"))) static const SmithInterpose
     {(uintptr_t)&smith_handlers_fdopen, (uintptr_t)&fdopen},
     {(uintptr_t)&smith_handlers_freopen, (uintptr_t)&freopen},
     {(uintptr_t)&smith_handlers_getenv, (uintptr_t)&getenv},
+    {(uintptr_t)&smith_handlers_getentropy, (uintptr_t)&getentropy},
     {(uintptr_t)&smith_handlers_clock_gettime, (uintptr_t)&clock_gettime},
     {(uintptr_t)&smith_handlers_nanosleep, (uintptr_t)&nanosleep},
     {(uintptr_t)&smith_handlers_usleep, (uintptr_t)&usleep},
@@ -818,6 +853,7 @@ static SmithHandlersNext smith_handlers_next_open = {"open", ___interceptor_open
 static SmithHandlersNext smith_handlers_next_read = {"read", ___interceptor_read, nullptr};
 static SmithHandlersNext smith_handlers_next_write = {"write", ___interceptor_write, nullptr};
 static SmithHandlersNext smith_handlers_next_getenv = {"getenv", ___interceptor_getenv, nullptr};
+static SmithHandlersNext smith_handlers_next_getentropy = {"getentropy", nullptr, nullptr};
 static SmithHandlersNext smith_handlers_next_clock_gettime = {"clock_gettime", ___interceptor_clock_gettime, nullptr};
 static SmithHandlersNext smith_handlers_next_nanosleep = {"nanosleep", ___interceptor_nanosleep, nullptr};
 static SmithHandlersNext smith_handlers_next_usleep = {"usleep", ___interceptor_usleep, nullptr};
@@ -1247,6 +1283,14 @@ char *getenv(const char *name) {
     SmithEnvHandler *env = smith_handlers_env_current();
     if (env != nullptr) return env->get(env, name);
     return ((char *(*)(const char *))smith_handlers_find(&smith_handlers_next_getenv))(name);
+}
+
+int getentropy(void *buffer, size_t size) {
+    SmithEntropyHandler *entropy = smith_handlers_entropy_current();
+    if (entropy == nullptr)
+        return ((int (*)(void *, size_t))smith_handlers_find(&smith_handlers_next_getentropy))(buffer, size);
+    entropy->fill(entropy, buffer, size);
+    return 0;
 }
 
 int clock_gettime(clockid_t which, struct timespec *time) {
