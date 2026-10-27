@@ -943,6 +943,7 @@ static void smith_lang_body_write(SmithLang *lang); // runtime/lang_body.c
 void smith_lang_finish(SmithLang *lang) {
     if (lang->finished) return;
     lang->finished = true;
+    if (lang->is_module) smith_lang_objc_header(lang, smith_lang_header_body, smith_lang_header_max);
     if (lang->is_module) smith_lang_assemble_header(lang, lang->main_file);
     smith_lang_body_write(lang);
     const char *dump = getenv("SMITH_LANG_DUMP");

@@ -741,3 +741,77 @@ static void smith_lang_objc_define(SmithLang *lang, const SmithHost *host) {
     if (out.full) lang->broken = true;
     host->include_text(host->context, out.text, (uint32_t)out.used);
 }
+
+// ---- `objc::` in a module's generated header (issue #601)
+// ----------------------------------------------------------------------------------------
+// The header pass (`smith cc --smith-header`) reads a module with no compiler, so it has no index to ask. A module's
+// export may name a class or protocol of an imported framework (`objc::MTLDevice *metal;`), and the header must be C:
+// `objc::X` is written `objc_X` (the name the index gives it), and each X used through a pointer is declared opaque in
+// the header, `typedef struct objc_X objc_X;`, the same typedef the importer's `types.h` has (C repeats a typedef).
+// A record or an enum used by value needs the index: the importer must import the framework itself.
+
+constexpr size_t smith_lang_objc_header_names_max = 64;
+
+static bool smith_lang_objc_header_word(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+}
+
+// Whether `name` is already in the list.
+static bool smith_lang_objc_header_has(char names[][96], size_t count, const char *name, size_t length) {
+    for (size_t i = 0; i < count; i++)
+        if (strlen(names[i]) == length && memcmp(names[i], name, length) == 0) return true;
+    return false;
+}
+
+// Rewrites each `objc::X` of the header body to `objc_X` and collects the X that a pointer uses. Returns the count.
+static size_t smith_lang_objc_header_rename(char *text, size_t *used, char names[][96], size_t capacity) {
+    size_t count = 0;
+    size_t out = 0;
+    size_t length = *used;
+    for (size_t i = 0; i < length; i++) {                                        // bounded by the body
+        bool boundary = out == 0 || !smith_lang_objc_header_word(text[out - 1]); // the output holds what came before
+        if (!boundary || i + 6 >= length || memcmp(text + i, "objc::", 6) != 0 ||
+            !smith_lang_objc_header_word(text[i + 6])) {
+            text[out++] = text[i];
+            continue;
+        }
+        size_t end = i + 6;
+        while (end < length && smith_lang_objc_header_word(text[end])) // the class name
+            end += 1;
+        size_t after = end;
+        while (after < length && text[after] == ' ')
+            after += 1;
+        size_t name_length = end - (i + 6);
+        bool pointer = after < length && text[after] == '*';
+        if (pointer && name_length < sizeof names[0] && count < capacity &&
+            !smith_lang_objc_header_has(names, count, text + i + 6, name_length)) {
+            memcpy(names[count], text + i + 6, name_length);
+            names[count++][name_length] = 0;
+        }
+        memcpy(text + out, "objc_", 5);
+        out += 5;
+        i += 5; // the name follows on the next steps
+    }
+    *used = out;
+    return count;
+}
+
+// The hook of the header writer: the body of a module's header, made C. Declarations go on the first declaration's
+// line, so no line moves.
+static void smith_lang_objc_header(SmithLang *lang, char *body, size_t capacity) {
+    if (memmem(body, lang->header_used, "objc::", 6) == nullptr) return;
+    static char names[smith_lang_objc_header_names_max][96];
+    size_t count = smith_lang_objc_header_rename(body, &lang->header_used, names, smith_lang_objc_header_names_max);
+    static char declarations[smith_lang_objc_header_names_max * 128];
+    size_t used = 0;
+    for (size_t i = 0; i < count; i++)
+        used += (size_t)snprintf(declarations + used, sizeof declarations - used, "typedef struct objc_%s objc_%s; ",
+                                 names[i], names[i]);
+    size_t blank = 0;
+    while (blank < lang->header_used && body[blank] == '\n')
+        blank += 1;
+    if (used == 0 || lang->header_used + used >= capacity) return;
+    memmove(body + blank + used, body + blank, lang->header_used - blank);
+    memcpy(body + blank, declarations, used);
+    lang->header_used += used;
+}

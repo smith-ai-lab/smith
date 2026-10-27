@@ -1,0 +1,18 @@
+module gpu;
+
+import <Metal/Metal.h>;
+
+// An export names classes of the framework: the generated header must stay C for the importers.
+export struct Device {
+    objc::MTLDevice *metal;
+    u32 queues;
+};
+
+export Device open() {
+    Device device = {objc::MTLCreateSystemDefaultDevice(), 1};
+    return device;
+}
+
+export objc::NSString *name(const Device *device) {
+    return objc::MTLDevice::name(device->metal);
+}

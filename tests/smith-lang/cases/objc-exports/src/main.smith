@@ -1,0 +1,11 @@
+import gpu;
+import <Foundation/Foundation.h>;
+import <stdio.h>;
+
+i32 main(void) {
+    gpu::Device device = gpu::open();
+    objc::NSString *name = gpu::name(&device);
+    c::printf("queues %u\n", device.queues);
+    c::printf("named %d\n", (int)(objc::NSString::length(name) > 0));
+    return 0;
+}

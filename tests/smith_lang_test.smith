@@ -417,6 +417,10 @@ export void test_objc_call(io::Io *io) {
     corpus_case(io, "objc-call");
 }
 
+export void test_objc_exports(io::Io *io) {
+    corpus_case(io, "objc-exports");
+}
+
 export void test_objc_naming(io::Io *io) {
     corpus_case(io, "objc-naming");
 }
