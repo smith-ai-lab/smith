@@ -333,7 +333,9 @@ static size_t smith_lang_main_make(const char *const *words, size_t count, const
         made[used] = smith_lang_tuple_made(word ? SmithTokenKind_Identifier : SmithTokenKind_Punctuator, text,
                                            strlen(text), like, !tight && strchr("),;]:[", text[0]) == nullptr);
         if (isdigit((unsigned char)text[0])) made[used].kind = SmithTokenKind_Number;
-        made[used++].synthetic = false; // the slice rewrites read these as the program's
+        // Only `main` stands for a token of the source; counting the other ninety as the source's gave clangd's token
+        // buffer a spelled token for each (issue #523: its walk of the expanded tokens never ended).
+        made[used++].synthetic = strcmp(text, "main") != 0;
         tight = text[0] == '(' || text[0] == '[';
     }
     return used;
