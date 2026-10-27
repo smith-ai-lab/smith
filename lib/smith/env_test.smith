@@ -1,0 +1,87 @@
+// Tests of smith::env, with a fake environment set on the thread, and of the process's own without one. A checked
+// failure (an empty name) stops the process and is not a test here.
+module smith::env_test;
+
+import smith::env;
+import smith::test;
+import <string.h>;
+
+typedef struct {
+    env::Handler base; // first: &fake.base is what set_handler takes
+    usize asked;
+} Fake;
+
+// The fake's variables: HOME is /home/ada, EMPTY is set to nothing, anything else is not set.
+char *fake_get(env::Handler *self, const char *name) {
+    Fake *fake = (Fake *)self;
+    fake->asked += 1;
+    if (c::strcmp(name, "HOME") == 0) return (char *)"/home/ada";
+    if (c::strcmp(name, "EMPTY") == 0) return (char *)"";
+    return nullptr;
+}
+
+Fake make_fake() {
+    Fake fake = {};
+    fake.base.get = fake_get;
+    return fake;
+}
+
+// A function of its own: an option read after a call to a generic in the same function (smith issue #353).
+env::Value value_of(const char name[:]) {
+    return env::get(name);
+}
+
+bool has(env::Value value, const char *expected) {
+    return value == .some && countof(value.some) == c::strlen(expected) &&
+           c::strncmp(value.some.data, expected, countof(value.some)) == 0;
+}
+
+bool is_none(env::Value value) {
+    return value == .none;
+}
+
+bool is_some(env::Value value) {
+    return value == .some;
+}
+
+export void test_env_get_answers_the_value_of_a_variable() {
+    Fake fake = make_fake();
+    env::Handler *before = env::set_handler(&fake.base);
+    defer env::set_handler(before);
+    test::check_condition(has(value_of("HOME"), "/home/ada"));
+    test::check_equal(fake.asked, 1);
+}
+
+export void test_env_get_of_a_variable_that_is_not_set_is_none() {
+    Fake fake = make_fake();
+    env::Handler *before = env::set_handler(&fake.base);
+    defer env::set_handler(before);
+    test::check_condition(is_none(value_of("NOT_SET")));
+}
+
+export void test_env_an_empty_value_is_some_of_an_empty_slice() {
+    Fake fake = make_fake();
+    env::Handler *before = env::set_handler(&fake.base);
+    defer env::set_handler(before);
+    test::check_condition(has(value_of("EMPTY"), ""));
+}
+
+export void test_env_get_takes_a_slice_that_is_not_terminated() {
+    Fake fake = make_fake();
+    env::Handler *before = env::set_handler(&fake.base);
+    defer env::set_handler(before);
+    const char text[:] = "HOMEWARD";
+    test::check_condition(has(value_of(text[0:4]), "/home/ada"));
+    test::check_condition(is_none(value_of(text[0:5])));
+}
+
+export void test_env_set_handler_returns_the_previous_one_and_none_set_is_the_processs() {
+    Fake fake = make_fake();
+    env::Handler *none = env::set_handler(&fake.base);
+    test::check_condition(none == nullptr);
+    test::check_condition(env::set_handler(none) == &fake.base);
+    test::check_equal(fake.asked, 0);
+    test::check_condition(is_some(value_of("PATH"))); // the process's own, as any process has one
+    test::check_condition(is_none(value_of("SMITH_ENV_TEST_NOT_SET_ANYWHERE")));
+    test::check_equal(fake.asked, 0);
+}

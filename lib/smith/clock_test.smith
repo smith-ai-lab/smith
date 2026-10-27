@@ -1,0 +1,84 @@
+// Tests of smith::clock, with a fake clock set on the thread (sleeping on it moves its time and never blocks), and of
+// the system's own without one.
+module smith::clock_test;
+
+import smith::clock;
+import smith::test;
+import <time.h>;
+
+typedef struct {
+    clock::Handler base; // first: &fake.base is what set_handler takes
+    i64 wall;
+    u64 monotonic;
+    usize sleeps;
+} Fake;
+
+// NOLINTBEGIN(smith-preprocessor, bugprone-signed-bitwise)
+constexpr i32 realtime = c::CLOCK_REALTIME;
+// NOLINTEND(smith-preprocessor, bugprone-signed-bitwise)
+
+// A clock handler answers in nanoseconds: `now` the time of the clock named by `which`, `sleep` waits that long.
+i64 fake_now(clock::Handler *self, i32 which) {
+    Fake *fake = (Fake *)self;
+    return which == realtime ? fake->wall : (i64)fake->monotonic;
+}
+
+// Sleeping on the fake clock advances it: both of its clocks move, and nothing waits.
+void fake_sleep(clock::Handler *self, u64 nanoseconds) {
+    Fake *fake = (Fake *)self;
+    fake->wall += (i64)nanoseconds;
+    fake->monotonic += nanoseconds;
+    fake->sleeps += 1;
+}
+
+Fake make_fake(i64 wall, u64 monotonic) {
+    Fake fake = {};
+    fake.base.now = fake_now;
+    fake.base.sleep = fake_sleep;
+    fake.wall = wall;
+    fake.monotonic = monotonic;
+    return fake;
+}
+
+export void test_clock_now_and_monotonic_read_the_fake_clock() {
+    Fake fake = make_fake(1'700'000'000 * (i64)clock::second + 5, 42 * clock::second + 7);
+    clock::Handler *before = clock::set_handler(&fake.base);
+    defer clock::set_handler(before);
+    test::check_equal(clock::now(), 1'700'000'000 * (i64)clock::second + 5);
+    test::check_equal(clock::monotonic(), 42 * clock::second + 7);
+}
+
+export void test_clock_sleep_on_the_fake_clock_advances_it_and_does_not_block() {
+    Fake fake = make_fake(1000, 2000);
+    clock::Handler *before = clock::set_handler(&fake.base);
+    defer clock::set_handler(before);
+    u64 start = clock::monotonic();
+    clock::sleep(3600 * clock::second); // an hour, which returns at once
+    clock::sleep(250 * clock::millisecond);
+    test::check_equal(clock::monotonic() - start, 3600 * clock::second + 250 * clock::millisecond);
+    test::check_equal(clock::now(), 1000 + (i64)(3600 * clock::second + 250 * clock::millisecond));
+    test::check_equal(fake.sleeps, 2);
+}
+
+export void test_clock_sleep_of_nothing_is_a_sleep_that_returns() {
+    Fake fake = make_fake(0, 0);
+    clock::Handler *before = clock::set_handler(&fake.base);
+    defer clock::set_handler(before);
+    clock::sleep(0);
+    test::check_equal(clock::monotonic(), 0);
+}
+
+export void test_clock_set_handler_returns_the_previous_one() {
+    Fake fake = make_fake(0, 0);
+    clock::Handler *none = clock::set_handler(&fake.base);
+    test::check_condition(none == nullptr);
+    test::check_condition(clock::set_handler(none) == &fake.base);
+}
+
+export void test_clock_the_system_clock_never_goes_back_and_sleep_takes_time() {
+    u64 first = clock::monotonic();
+    clock::sleep(2 * clock::millisecond);
+    u64 second = clock::monotonic();
+    test::check_condition(second >= first + 2 * clock::millisecond);
+    test::check_condition(clock::now() > 1'600'000'000 * (i64)clock::second); // after September 2020
+}

@@ -98,6 +98,18 @@ export void test_the_effects_header_compiles_alone(io::Io *io) {
     committed(io, "effects");
 }
 
+export void test_the_clock_header_compiles_alone(io::Io *io) {
+    committed(io, "clock");
+}
+
+export void test_the_console_header_compiles_alone(io::Io *io) {
+    committed(io, "console");
+}
+
+export void test_the_env_header_compiles_alone(io::Io *io) {
+    committed(io, "env");
+}
+
 export void test_the_files_header_compiles_alone(io::Io *io) {
     committed(io, "files");
 }
