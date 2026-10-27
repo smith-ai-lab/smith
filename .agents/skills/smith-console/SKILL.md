@@ -19,10 +19,13 @@ bool failed(console::Written shown) { // a function of its own reads a result (s
     return shown == .error;
 }
 
+void drop(console::LineResult next) {
+    if (next == .ok) mem::free(next.ok.text.data); // the caller's memory, from the allocator in force
+}
+
 export i32 main() {
     if (failed(console::print("hello, ", 42, "\n"))) return 1; // typed pieces, as format::to; a closed pipe is a value
-    console::LineResult next = console::read_line();            // the next line of stdin
-    if (next == .ok) mem::free(next.ok.text.data);              // the caller's memory, from the allocator in force
+    drop(console::read_line());                                 // the next line of stdin
     return 0;
 }
 ```
