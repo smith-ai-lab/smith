@@ -477,3 +477,13 @@ export void test_lint_objective_c_ivars_properties_and_methods_do_not_crash_lint
                          scratch::capture(&p, "smith lint objc.m >objc.out 2>&1; s=$?; "
                                               "echo \"$s $(grep -c 'readability-identifier-naming' objc.out)\""));
 }
+
+// --- defer: a command that says `-x c`, as every build command does, still turns the defer TS on -----------------
+// undeclared `_Defer` --------------
+
+export void test_lint_a_module_that_uses_defer_lints_clean(io::Io *io) {
+    scratch::Project p = prepared(io, false);
+    (void)lint(&p, "smith lint --quiet defer/cleanup.smith -- -x c $flags >defer.out 2>&1; echo $? >defer.status");
+    scratch::expect_text("a module that uses defer lints clean", "0", scratch::capture(&p, "cat defer.status"));
+    scratch::expect_text("... with no finding about _Defer", "0", scratch::capture(&p, "grep -c '_Defer' defer.out"));
+}

@@ -1,0 +1,10 @@
+module defer::cleanup;
+
+export i32 leave(i32 n) {
+    i32 total = 0;
+    {
+        defer total += 1;
+        if (n > 0) return total;
+    }
+    return total;
+}
