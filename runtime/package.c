@@ -186,7 +186,17 @@ static bool smith_package_is_folder(const char *path) {
     return stat(path, &info) == 0 && S_ISDIR(info.st_mode);
 }
 
-// mkdir -p. False when a part cannot be made.
+// Puts an empty .metadata_never_index in the folder, so Spotlight (mds_stores) does not index what smith generates
+// (issue #622). Best effort.
+static void smith_never_index(const char *folder) {
+    char marker[PATH_MAX];
+    int written = snprintf(marker, sizeof marker, "%s/.metadata_never_index", folder);
+    if (written <= 0 || (size_t)written >= sizeof marker) return;
+    int descriptor = open(marker, O_WRONLY | O_CREAT, 0644);
+    if (descriptor >= 0) close(descriptor);
+}
+
+// mkdir -p. False when a part cannot be made. The cache root, <cache home>/smith, gets the never-index marker.
 static bool smith_package_make_folders(const char *path) {
     char partial[PATH_MAX];
     int written = snprintf(partial, sizeof partial, "%s", path);
@@ -195,6 +205,7 @@ static bool smith_package_make_folders(const char *path) {
         if (partial[i] != '/' && partial[i] != '\0') continue;
         partial[i] = '\0';
         if (mkdir(partial, 0777) != 0 && errno != EEXIST) return false;
+        if (i >= 6 && strcmp(partial + i - 6, "/smith") == 0) smith_never_index(partial);
         if (i < (size_t)written) partial[i] = '/';
     }
     return smith_package_is_folder(path);

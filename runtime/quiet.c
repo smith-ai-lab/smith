@@ -113,6 +113,7 @@ static size_t smith_quiet_excerpt(char *out, const char *text, size_t size, size
 // written as `_`.
 static const char *smith_quiet_log_path(char *path, size_t capacity, const char *name) {
     (void)mkdir(".smith", 0755);
+    smith_never_index(".smith");
     (void)mkdir(".smith/log", 0755);
     int length = snprintf(path, capacity, ".smith/log/%s", name);
     for (size_t i = sizeof ".smith/log/" - 1; i < capacity && path[i] != '\0'; i++) {

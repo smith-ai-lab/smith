@@ -975,6 +975,7 @@ static void smith_make_parents(const char *path) {
         struct stat info;
         if (mkdir(folder, 0777) != 0 && (stat(folder, &info) != 0 || !S_ISDIR(info.st_mode)))
             smith_fail("cannot make the folder %s", folder);
+        if (strcmp(folder, ".smith") == 0 || strcmp(folder, "build") == 0) smith_never_index(folder); // issue #622
         *c = '/';
     }
 }

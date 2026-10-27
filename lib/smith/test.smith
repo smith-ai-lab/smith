@@ -15,6 +15,7 @@ import <errno.h>;
 import <fcntl.h>;
 if constexpr (target::os == target::macos) {
     import <libproc.h>;
+    import <mach/mach.h>;
     import <mach/mach_time.h>;
 }
 import <poll.h>;
@@ -1961,9 +1962,23 @@ void coverage_end(const Test *test, bool passed, f64 cpu) {
     c::smith_trace_stop = 0;
 }
 
+// macOS writes a crash report (ReportCrash, about half a core under load) for every process that dies of a fault, and a
+// test crashes on purpose. With no handler for the crash exceptions the kernel delivers the plain signal instead, which
+// the runner reads as ever; children (fork, posix_spawn) inherit the ports, so the smith a test starts is quiet too
+// (issue #622).
+void silence_crash_reports() {
+    if constexpr (target::os == target::macos) {
+        // NOLINTBEGIN(smith-preprocessor): the masks are macros
+        constexpr c::exception_mask_t crashes = c::EXC_MASK_CRASH | c::EXC_MASK_CORPSE_NOTIFY;
+        // NOLINTEND(smith-preprocessor)
+        c::task_set_exception_ports(c::mach_task_self_, crashes, 0, c::EXCEPTION_DEFAULT, c::THREAD_STATE_NONE);
+    }
+}
+
 // In a forked process, before its first test: all output goes down the pipe.
 void setup(Shared *block, i32 output) {
     shared = block;
+    silence_crash_reports();
     catch_signals();
     c::smith_failure_hook = on_failure;
     hooking_tap.word = tap_word;

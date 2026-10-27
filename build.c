@@ -19,8 +19,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 // Everything the targets share.
@@ -2132,7 +2134,16 @@ static int build_coverage_fetch(SmithRun *run) {
 // smith it built, and posts the commit status `smith/preflight` on the head's SHA: success with the counts, or failure
 // naming the steps. A push makes a new head with no status, so the train takes only what was checked as it is. smith
 // never runs gh itself: this task does, like coverage-fetch. Logs are .smith/preflight-<step>.log.
+static double build_children_cpu(void) {
+    struct rusage used = {};
+    getrusage(RUSAGE_CHILDREN, &used);
+    return (double)(used.ru_utime.tv_sec + used.ru_stime.tv_sec) +
+           (double)(used.ru_utime.tv_usec + used.ru_stime.tv_usec) / 1e6;
+}
+
 static int build_preflight_step(SmithBuild *b, const char *name, const char *const *argv) {
+    double cpu_before = build_children_cpu(); // the CPU of each phase is reported (issue #622)
+    time_t wall_before = time(nullptr);
     // Each step runs in a session of its own, so a signal to the terminal's or the tool's process group (a hangup after
     // a timeout: status 129) does not reach the checks.
     const char *const *wrapped =
@@ -2140,7 +2151,8 @@ static int build_preflight_step(SmithBuild *b, const char *name, const char *con
                   argv, nullptr);
     int status =
         build_spawn(&(BuildSpawn){.argv = wrapped, .log = smith_fmt(b, ".smith/preflight-%s.log", name), .tail = 12});
-    fprintf(stderr, "preflight: %s %s\n", name, status == 0 ? "ok" : "FAILED");
+    fprintf(stderr, "preflight: %s %s (%ld s wall, %.1f s cpu)\n", name, status == 0 ? "ok" : "FAILED",
+            (long)(time(nullptr) - wall_before), build_children_cpu() - cpu_before);
     return status;
 }
 
