@@ -619,7 +619,7 @@ i32 main(io::Io *io) {
 | Verb | What it does | Skill |
 |---|---|---|
 | `smith new` | writes a project: a program, a test and what agents need | [smith-new](.agents/skills/smith-new/SKILL.md) |
-| `smith run`, `smith test` | run the program, or its tests | [smith-run-test](.agents/skills/smith-run-test/SKILL.md) |
+| `smith run`, `smith test` | run the program, or its tests (`smith test --changed`: only those a diff reaches) | [smith-run-test](.agents/skills/smith-run-test/SKILL.md) |
 | `smith build` | builds by convention, or runs `build.c` / `build.smith` | [smith-build](.agents/skills/smith-build/SKILL.md) |
 | `smith check` | formatting, lint, docs, tests and proofs before a commit | [smith-check](.agents/skills/smith-check/SKILL.md) |
 | `smith fmt`, `smith lint` | clang-format and clang-tidy, with smith's defaults | [smith-check](.agents/skills/smith-check/SKILL.md) |

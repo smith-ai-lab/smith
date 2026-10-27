@@ -813,6 +813,52 @@ static void smith_verb_take_keep_going(SmithVerbArgs *split) {
     split->own_count = kept;
 }
 
+// `--changed [--base <ref>] [--dry-run]` (runtime/changed.c): takes them out of the arguments and, unless the whole
+// suite runs, adds `--test <names>` for the tests the change can affect. Returns an exit status when there is nothing
+// to run (nothing selected, a dry run, or a failure), else -1.
+static int smith_test_take_changed(SmithVerbArgs *split) {
+    static char filter[8192];
+    const char *base = nullptr;
+    bool changed = false;
+    bool dry_run = false;
+    size_t kept = 0;
+    for (size_t i = 0; i < split->own_count; i++) { // bounded by smith_build_args_max
+        char *arg = split->own[i];
+        if (strcmp(arg, "--changed") == 0) {
+            changed = true;
+        } else if (strcmp(arg, "--dry-run") == 0) {
+            dry_run = true;
+        } else if (strcmp(arg, "--base") == 0 && i + 1 < split->own_count) {
+            base = split->own[++i];
+        } else {
+            split->own[kept++] = arg;
+        }
+    }
+    split->own_count = kept;
+    if (!changed) {
+        if (dry_run || base != nullptr) smith_die(smith_exit_usage, "--dry-run and --base go with --changed", "test");
+        return -1;
+    }
+    SmithChangedResult result = smith_changed_select(base, filter, sizeof filter);
+    if (result == SmithChanged_Failed) return smith_exit_usage;
+    if (result == SmithChanged_None) {
+        fputs("smith test --changed: no test is affected\n", stderr);
+        return 0;
+    }
+    if (result == SmithChanged_Some && split->own_count + 2 <= smith_build_args_max) {
+        split->own[split->own_count++] = (char *)"--test";
+        split->own[split->own_count++] = filter;
+    }
+    if (dry_run) {
+        fprintf(stderr, "smith test --changed: %s\n",
+                result == SmithChanged_Some ? "--dry-run: the tests run with --test (above)"
+                                            : "--dry-run: every test runs");
+        if (result == SmithChanged_Some) fprintf(stderr, "smith test --changed: --test %s\n", filter);
+        return 0;
+    }
+    return -1;
+}
+
 // `smith test`: builds and runs the tests smith_tests declares; the arguments go to the runner.
 static int smith_test_project(int count, char **args, const char *self) {
     int quiet = smith_quiet_verb("test", count, args, self, true);
@@ -822,6 +868,8 @@ static int smith_test_project(int count, char **args, const char *self) {
         if (strcmp(split->own[i], "-v") == 0) split->own[i] = (char *)"--verbose";
     }
     smith_verb_take_keep_going(split);
+    int changed = smith_test_take_changed(split);
+    if (changed >= 0) return changed;
     const char *const targets[] = {"smith_tests", nullptr};
     // Each task's wall and CPU time and smith starts (runtime/account.c), unless SMITH_ACCOUNT=no; =all lists every
     // task.

@@ -3111,6 +3111,8 @@ static bool smith_project_arguments(const char *verb, int count, char **args) {
 #endif
 
 // The verbs that act on a project by what it declares (fmt, lint, prove, test, run, check).
+// The tests a change can affect: `smith test --changed` (issue #441).
+#include "runtime/changed.c"
 #include "runtime/verbs.c"
 
 // smith's top level is only verbs. This table is where they are: a new verb is a row and, when it is none of these

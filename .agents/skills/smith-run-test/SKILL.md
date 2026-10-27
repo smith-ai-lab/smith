@@ -24,7 +24,9 @@ To debug one test: `smith dbg -- build/tests --test <name> --in-process` (the ru
 
 In Neovim, the `neotest-smith` adapter ([neovim](../../../knowledge/neovim.md)) runs the nearest test as `smith test --test <name> --verbose`, a `.smith` module's file as `--test <module>::`, a `.c` file and the suite as `smith test`, and shows a failure at its check's line; the dap strategy debugs the nearest test as above.
 
-Examples: `smith test`, `smith test --test v3`, `smith test --test prop_v3 --seed 8022860619270860748`, `smith test --full`.
+- `--changed [--base <ref>] [--dry-run]` runs only the tests a diff reaches: the test files that changed or import (or include) something changed, and those that run smith when smith's own sources changed; `build.c` and a few other files run everything, and a file that no source imports selects nothing. It prints the tests it selected and why. `--dry-run` lists them and runs none. `--base` is the ref to compare with (default: where the branch left `origin/main`). `--test a::,b::` takes several comma-separated names.
+
+Examples: `smith test --changed --dry-run`, `smith test`, `smith test --test v3`, `smith test --test prop_v3 --seed 8022860619270860748`, `smith test --full`.
 
 ## When it goes wrong
 

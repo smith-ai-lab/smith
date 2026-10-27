@@ -872,9 +872,18 @@ static const char *build_units(SmithBuild *b, const char *binary, const char *fo
         .inputs = inputs,
     };
     smith_task(b, "units-build", &build_step);
+    // The arguments of `smith test` (--test a,b from --changed, #441) go to the runner of the units project.
+    const char *const *given = smith_args(b);
+    const char *quoted[256];
+    size_t quoted_count = 0;
+    for (size_t i = 0; given[i] != nullptr && quoted_count < 255; i++)
+        quoted[quoted_count++] = smith_fmt(b, "'%s'", given[i]);
+    quoted[quoted_count] = nullptr;
     SmithStep run = {
-        .command = (const char *[]){"sh", "-c", smith_fmt(b, "%s env %s \"%s\" test", setup, environment, self), "sh",
-                                    folder, nullptr},
+        .command = (const char *[]){"sh", "-c",
+                                    smith_fmt(b, "%s env %s \"%s\" test %s", setup, environment, self,
+                                              smith_join(b, quoted, " ")),
+                                    "sh", folder, nullptr},
         .inputs = (const char *[]){"units-build", nullptr},
         .test = true,
     };

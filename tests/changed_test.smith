@@ -1,0 +1,99 @@
+// Tests of `smith test --changed` (issue #441, runtime/changed.c, knowledge/changed-tests.md): which tests a change
+// selects, on a scratch git repository with a few modules and tests (never this checkout). Each case commits the files,
+// changes some, and reads `smith test --changed --dry-run`, which names the tests and why.
+module changed_test;
+
+import smith::format;
+import smith::io;
+import smith::test;
+import scratch;
+
+// A repository: a module a, tests of it, a test of b that imports a, a test of c that imports nothing, a test that runs
+// smith and a test that lists the tree. Committed on main.
+constexpr char repository[] =
+    "export SMITH_OUTPUT=full; git init -q -b main . && "
+    "mkdir -p lib tests docs runtime src && "
+    "printf 'module a;\\nexport i32 one() { return 1; }\\n' > lib/a.smith && "
+    "printf 'module a_test;\\nimport a;\\nexport void test_one() {}\\n' > lib/a_test.smith && "
+    "printf 'module b;\\nimport a;\\nexport i32 two() { return 2; }\\n' > lib/b.smith && "
+    "printf 'module b_test;\\nimport b;\\nexport void test_two() {}\\n' > lib/b_test.smith && "
+    "printf 'module c_test;\\nexport void test_three() {}\\n' > lib/c_test.smith && "
+    "printf 'module lone;\\nexport i32 four() { return 4; }\\n' > src/lone.smith && "
+    "printf 'module runs_test;\\nimport scratch;\\nexport void test_runs() { scratch::sh(); }\\n' > "
+    "tests/runs_test.smith && "
+    "printf 'module scratch;\\n' > tests/scratch.smith && "
+    "printf 'module tree_test;\\nexport void test_tree() { sh(\"find $SMITH_REPO -name x.c\"); }\\n' > "
+    "tests/tree_test.smith && "
+    "printf 'module docs_test;\\nexport void test_docs() { read(\"README.md\"); read(\"docs/guide.txt\"); }\\n' > "
+    "tests/docs_test.smith && "
+    "printf 'int main(void) { return 0; }\\n' > tests/old.c && printf 'text\\n' > README.md && "
+    "printf 'text\\n' > docs/guide.txt && printf 'int x;\\n' > runtime/docs.c && "
+    "git add -A && git -c user.name=t -c user.email=t@t commit -q -m base; ";
+
+static const char *changed(io::Io *io, const char *edit) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Run run = scratch::sh(
+        &p, format::push(&io->arena, repository, edit, "; smith test --changed --base HEAD --dry-run 2>&1").data);
+    scratch::expect_status("the dry run ends", 0, &run);
+    return run.out;
+}
+
+// A change to a module selects its tests, and the tests of the modules that import it, and no others.
+export void test_a_module_selects_its_tests_and_those_of_its_importers(io::Io *io) {
+    const char *out = changed(io, "echo '// x' >> lib/a.smith");
+    scratch::expect_contains("the test of a", out, "lib/a_test.smith: it depends on lib/a.smith");
+    scratch::expect_contains("the test of b, which imports a", out, "lib/b_test.smith: it depends on lib/b.smith");
+    scratch::expect_lacks("the test of c", out, "c_test");
+    scratch::expect_contains("the filter", out, "--test a_test::,b_test::");
+}
+
+// A test file that changed is selected.
+export void test_a_changed_test_file_is_selected(io::Io *io) {
+    const char *out = changed(io, "echo '// x' >> lib/c_test.smith");
+    scratch::expect_contains("the test", out, "lib/c_test.smith: it changed");
+    scratch::expect_contains("the filter", out, "--test c_test::");
+    scratch::expect_lacks("a_test", out, "a_test");
+}
+
+// A source nothing imports affects no test.
+export void test_a_source_no_test_reads_selects_nothing(io::Io *io) {
+    const char *out = changed(io, "echo '// x' >> src/lone.smith");
+    scratch::expect_contains("nothing", out, "no test is affected");
+}
+
+// A file the graph does not know (a new .c nothing includes, a text file) selects nothing; the train is the net.
+export void test_a_file_the_graph_does_not_know_selects_nothing(io::Io *io) {
+    const char *out = changed(io, "echo 'int y;' > tests/new.c; echo more >> README.md; echo x > stray.dat");
+    scratch::expect_contains("nothing", out, "no test is affected");
+}
+
+// An include selects the test that includes the changed header, through a header that includes it.
+export void test_a_header_selects_the_tests_that_include_it_transitively(io::Io *io) {
+    const char *out = changed(io, "printf '#include <mid.h>\\n' > tests/h_test.c; "
+                                  "printf '#include <base.h>\\n' > tests/mid.h; echo 'int z;' > tests/base.h; "
+                                  "git add -A; git -c user.name=t -c user.email=t@t commit -q -m h; "
+                                  "echo 'int w;' >> tests/base.h");
+    scratch::expect_contains("the test", out, "tests/h_test.c: it depends on tests/mid.h");
+}
+
+// #417: a change to what smith is made of selects the tests that run smith, and not the pure ones.
+export void test_a_change_to_smith_selects_the_tests_that_run_smith(io::Io *io) {
+    const char *out = changed(io, "echo '// x' >> runtime/docs.c");
+    scratch::expect_contains("the test that runs smith", out,
+                             "tests/runs_test.smith: it runs smith, and runtime/docs.c");
+    scratch::expect_lacks("a pure test", out, "c_test");
+}
+
+// The files on the full-check list select the whole suite.
+export void test_the_full_check_list_selects_the_whole_suite(io::Io *io) {
+    const char *out = changed(io, "echo '// x' >> runtime/lang_x.c; echo x > build.c");
+    scratch::expect_contains("the list", out, "selects the whole suite");
+}
+
+// --dry-run and --base go with --changed.
+export void test_dry_run_without_changed_is_refused(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Run run = scratch::sh(&p, "SMITH_OUTPUT=full smith test --dry-run 2>&1");
+    scratch::expect_contains("the message", run.out, "--dry-run and --base go with --changed");
+    scratch::expect_failure("exit status", &run);
+}

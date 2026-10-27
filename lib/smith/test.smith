@@ -2861,9 +2861,25 @@ bool parse_options(i32 argc, char **argv, Options *options) {
     return true;
 }
 
+// Whether `name` contains one of the comma-separated substrings of `list`.
+bool selects_any(const char *name, const char *list) {
+    char item[256];
+    while (*list != '\0') {
+        usize length = c::strcspn(list, ",");
+        if (length > 0 && length < sizeof item) {
+            __builtin_memcpy(item, list, length);
+            item[length] = '\0';
+            if (c::strstr(name, item) != nullptr) return true;
+        }
+        list += length + (list[length] == ',' ? 1 : 0);
+    }
+    return false;
+}
+
 bool selects(const Options *options, const char *name) {
     if (options->filter == nullptr) return true;
     if (options->exact) return c::strcmp(name, options->filter) == 0;
+    if (c::strchr(options->filter, ',') != nullptr) return selects_any(name, options->filter);
     return c::strstr(name, options->filter) != nullptr;
 }
 
