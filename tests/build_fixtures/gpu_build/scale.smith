@@ -1,0 +1,12 @@
+// A module with a kernel: building a program that links it also builds scale.metallib beside the program.
+module scale;
+
+import smith::gpu;
+
+export void twice(gpu::Thread *t, u32 count, const f32 *a, f32 *out) {
+    if (t->index < count) out[t->index] = 2.0f * a[t->index];
+}
+
+export f32 half(f32 x) {
+    return 0.5f * x;
+}

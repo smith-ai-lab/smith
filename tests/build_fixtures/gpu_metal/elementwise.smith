@@ -1,0 +1,186 @@
+// The learner's elementwise and reduce kernels (learner/src/kernels/elementwise.metal and reduce.metal), written as
+// .smith functions: the nonlinearities, the pointwise arithmetic, the Adam step, the column sum in two passes and the
+// sums of squares and of values. They use a helper, a struct of uniforms, the math functions, threadgroup memory,
+// barriers and simd_sum. Each is the handwritten kernel's arithmetic, in the same order, so the sums are the same.
+module elementwise;
+
+import smith::gpu;
+import <math.h>;
+
+// The uniforms of the pointwise kernels: count elements, columns of a row, and the scalars a kernel reads.
+export struct Uniforms {
+    u32 count;
+    u32 columns;
+    f32 alpha;
+    f32 beta;
+    f32 gamma;
+    f32 epsilon;
+};
+
+// The column sum's two passes: rows by columns of the input, how many row partitions, alpha.
+export struct ColsumUniforms {
+    u32 rows;
+    u32 columns;
+    u32 parts;
+    f32 alpha;
+};
+
+export struct ReduceUniforms {
+    u32 count;
+};
+
+// Neither a kernel nor reached by one: it is not written to the Metal file.
+export struct Unused {
+    u32 never;
+};
+
+export f32 unreached(f32 x) {
+    return x;
+}
+
+constexpr u32 threads = 256; // a threadgroup's threads, which the host dispatches
+constexpr u32 simds_max = 32;
+constexpr u32 colsum_tile = 32; // columns of a first-pass threadgroup, a simdgroup wide
+constexpr u32 colsum_lanes = 8; // row lanes of a first-pass threadgroup
+constexpr f32 tanh_limit = 20.0f; // tanh is 1 to float precision beyond this, and exp would overflow
+constexpr f32 gelu_c = 0.7978845608028654f; // sqrt(2 / pi)
+constexpr f32 gelu_k = 0.044715f;
+
+static f32 tanh_clamped(f32 x) {
+    return c::tanhf(c::fminf(c::fmaxf(x, -tanh_limit), tanh_limit));
+}
+
+// out = tanh(a)
+export void tanh_kernel(gpu::Thread *t, const Uniforms *u, const f32 *a, f32 *out) {
+    if (t->index < u->count) out[t->index] = tanh_clamped(a[t->index]);
+}
+
+// out = 1 - tanh(a)^2, the slope of tanh at a
+export void dtanh_kernel(gpu::Thread *t, const Uniforms *u, const f32 *a, f32 *out) {
+    if (t->index >= u->count) return;
+    f32 y = tanh_clamped(a[t->index]);
+    out[t->index] = 1.0f - y * y;
+}
+
+// out = a + b[column]: a bias vector of length columns added to every row of a
+export void bias_kernel(gpu::Thread *t, const Uniforms *u, const f32 *a, const f32 *b, f32 *out) {
+    if (t->index < u->count) out[t->index] = a[t->index] + b[t->index % u->columns];
+}
+
+// out = gelu(a), the tanh form: a (1 + tanh(sqrt(2 / pi) (a + 0.044715 a^3))) / 2
+export void gelu_kernel(gpu::Thread *t, const Uniforms *u, const f32 *a, f32 *out) {
+    if (t->index >= u->count) return;
+    f32 x = a[t->index];
+    out[t->index] = 0.5f * x * (1.0f + tanh_clamped(gelu_c * (x + gelu_k * x * x * x)));
+}
+
+// out = b gelu'(a): the gradient b of gelu's output carried back to its input a
+export void gelu_back_kernel(gpu::Thread *t, const Uniforms *u, const f32 *a, const f32 *b, f32 *out) {
+    if (t->index >= u->count) return;
+    f32 x = a[t->index];
+    f32 y = tanh_clamped(gelu_c * (x + gelu_k * x * x * x));
+    f32 slope = 0.5f * (1.0f + y) + 0.5f * x * (1.0f - y * y) * gelu_c * (1.0f + 3.0f * gelu_k * x * x);
+    out[t->index] = b[t->index] * slope;
+}
+
+// out = alpha a + beta b: a copy, a difference, a blend, a scaled add
+export void axpby_kernel(gpu::Thread *t, const Uniforms *u, const f32 *a, const f32 *b, f32 *out) {
+    if (t->index < u->count) out[t->index] = u->alpha * a[t->index] + u->beta * b[t->index];
+}
+
+// out = a b
+export void mul_kernel(gpu::Thread *t, const Uniforms *u, const f32 *a, const f32 *b, f32 *out) {
+    if (t->index < u->count) out[t->index] = a[t->index] * b[t->index];
+}
+
+// One step of settling a hidden layer by gradient descent on the energy: out = a + gamma (-b + c d), where a is the
+// value nodes x, b their error, c the slope of the activation at x and d the error of the layer above carried back
+// through the weights.
+export void settle_kernel(gpu::Thread *t, const Uniforms *u, const f32 *a, const f32 *b, const f32 *c, const f32 *d,
+                          f32 *out) {
+    if (t->index < u->count) out[t->index] = a[t->index] + u->gamma * (c[t->index] * d[t->index] - b[t->index]);
+}
+
+// The column sum, in two passes, with no atomics so the order of every sum is fixed. a is count / columns rows by
+// columns. First pass: a threadgroup is a tile of colsum_tile columns by colsum_lanes row lanes, and group y of the
+// grid takes the rows y * lanes + lane, stepping by parts * lanes; a simdgroup reads one row of the tile, colsum_tile
+// floats in a row, which is coalesced. The lanes are added in order through threadgroup memory and the group writes
+// its partial sum of each column, times alpha, to partials[part * columns + column].
+export void colsum_kernel(gpu::Thread *t, const ColsumUniforms *u, const f32 *a, f32 *partials) {
+    f32 *lanes = gpu::shared(t, f32, colsum_lanes * colsum_tile);
+    u32 column = t->group * colsum_tile + t->local;
+    f32 sum = 0.0f;
+    if (column < u->columns) {
+        for (u32 row = t->group_y * colsum_lanes + t->local_y; row < u->rows; row += t->groups_y * colsum_lanes)
+            sum += a[(u64)row * u->columns + column];
+    }
+    lanes[t->local_y * colsum_tile + t->local] = sum;
+    gpu::barrier(t);
+    if (t->local_y != 0 || column >= u->columns) return;
+    f32 total = lanes[t->local];
+    for (u32 lane = 1; lane < colsum_lanes; lane++)
+        total += lanes[lane * colsum_tile + t->local];
+    partials[(u64)t->group_y * u->columns + column] = u->alpha * total;
+}
+
+// Second pass: out[column] = alpha times the partial sums of the column added in a fixed order. The same tile of
+// colsum_tile columns by colsum_lanes lanes: lane l adds the partials l, l + lanes, ... and the lanes are added in
+// order.
+export void colsum_finish_kernel(gpu::Thread *t, const ColsumUniforms *u, const f32 *partials, f32 *out) {
+    f32 *lanes = gpu::shared(t, f32, colsum_lanes * colsum_tile);
+    u32 column = t->group * colsum_tile + t->local;
+    f32 sum = 0.0f;
+    if (column < u->columns) {
+        for (u32 part = t->local_y; part < u->parts; part += colsum_lanes)
+            sum += partials[(u64)part * u->columns + column];
+    }
+    lanes[t->local_y * colsum_tile + t->local] = sum;
+    gpu::barrier(t);
+    if (t->local_y != 0 || column >= u->columns) return;
+    f32 total = lanes[t->local];
+    for (u32 lane = 1; lane < colsum_lanes; lane++)
+        total += lanes[lane * colsum_tile + t->local];
+    out[column] = u->alpha * total;
+}
+
+// The sum of squares, as sum_kernel sums: each threadgroup writes the sum of its share of a squared to out[group], and
+// the host adds the partials.
+export void sq_kernel(gpu::Thread *t, const Uniforms *u, const f32 *a, f32 *out) {
+    f32 *sums = gpu::shared(t, f32, simds_max);
+    f32 sum = 0.0f;
+    for (u32 i = t->group * threads + t->local; i < u->count; i += t->groups * threads)
+        sum += a[i] * a[i];
+    sum = gpu::simd_sum(t, sum);
+    if (t->lane == 0) sums[t->simd] = sum;
+    gpu::barrier(t);
+    if (t->simd != 0) return;
+    f32 total = gpu::simd_sum(t, t->lane < t->simds ? sums[t->lane] : 0.0f);
+    if (t->lane == 0) out[t->group] = total;
+}
+
+// Sums the input: each thread adds the elements a whole grid apart, a simd group adds its threads' sums with simd_sum,
+// and the first simd group adds the groups' sums. Thread 0 writes the threadgroup's sum.
+export void sum_kernel(gpu::Thread *t, const ReduceUniforms *u, const f32 *input, f32 *partials) {
+    f32 *sums = gpu::shared(t, f32, simds_max);
+    f32 sum = 0.0f;
+    for (u32 i = t->group * threads + t->local; i < u->count; i += t->groups * threads)
+        sum += input[i];
+    sum = gpu::simd_sum(t, sum);
+    if (t->lane == 0) sums[t->simd] = sum;
+    gpu::barrier(t);
+    if (t->simd != 0) return;
+    f32 total = gpu::simd_sum(t, t->lane < t->simds ? sums[t->lane] : 0.0f);
+    if (t->lane == 0) partials[t->group] = total;
+}
+
+// One Adam step on weights a with gradient b and moment estimates c (of the gradient) and d (of its square): alpha is
+// the learning rate already corrected for the step's bias, beta and gamma the moments' decay rates, epsilon the floor.
+export void adam_kernel(gpu::Thread *t, const Uniforms *u, f32 *a, const f32 *b, f32 *c, f32 *d) {
+    if (t->index >= u->count) return;
+    f32 gradient = b[t->index];
+    f32 first = c::fmaf(u->beta, c[t->index], (1.0f - u->beta) * gradient);
+    f32 second = c::fmaf(u->gamma, d[t->index], (1.0f - u->gamma) * (gradient * gradient));
+    c[t->index] = first;
+    d[t->index] = second;
+    a[t->index] -= u->alpha * first / (c::sqrtf(second) + u->epsilon);
+}

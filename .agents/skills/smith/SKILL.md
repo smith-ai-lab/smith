@@ -18,7 +18,7 @@ smith is a C toolchain written in C: clang, clang-format, clang-tidy, clangd, ll
 
 | Verb | Load |
 | --- | --- |
-| `smith cc`, `smith c++`, `smith-cc`, `smith-c++` | [smith-cc](../smith-cc/SKILL.md); shaders [smith-metal](../smith-metal/SKILL.md) |
+| `smith cc`, `smith c++`, `smith-cc`, `smith-c++` | [smith-cc](../smith-cc/SKILL.md); shaders [smith-metal](../smith-metal/SKILL.md), kernels written in .smith [smith-gpu](../smith-gpu/SKILL.md) |
 | `smith build`, `build.c`, `build.smith` | [smith-build](../smith-build/SKILL.md): [-smith](../smith-build-smith/SKILL.md), [-c](../smith-build-c/SKILL.md), [-objects](../smith-build-objects/SKILL.md), [-functions](../smith-build-functions/SKILL.md), [-makefile](../smith-build-makefile/SKILL.md), [-tests](../smith-build-tests/SKILL.md), [-levels](../smith-build-levels/SKILL.md) ([-high](../smith-build-levels-high/SKILL.md), [-low](../smith-build-levels-low/SKILL.md)), [-warnings](../smith-build-warnings/SKILL.md) |
 | `smith fetch`, `smith cache`, `smith_package`, `smith_modules` | [smith-packages](../smith-packages/SKILL.md), [smith-modules-cache](../smith-modules-cache/SKILL.md) |
 | `smith run`, `smith test` | [smith-run-test](../smith-run-test/SKILL.md); writing tests [smith-test](../smith-test/SKILL.md) |

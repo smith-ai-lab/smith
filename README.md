@@ -603,6 +603,58 @@ length 16, count 1
 
 [smith-lang-objc](.agents/skills/smith-lang-objc/SKILL.md).
 
+### A GPU kernel is a function
+
+A function whose first parameter is a `gpu::Thread *` is a kernel: `smith build` writes it as Metal source and builds a `.metallib` beside the program (Apple's `metal` when it is installed, else the source, compiled when the program starts). Helpers, a struct of uniforms, the float functions, threadgroup memory, barriers and `simd_sum` are ordinary code; the kernel runs as fast as the Metal you would write, with the same bits.
+
+```smith project=gpu_kernel run
+module scale;
+
+import smith::gpu;
+
+export struct Uniforms {
+    u32 count;
+    f32 alpha;
+};
+
+static f32 twice(f32 x) {
+    return 2.0f * x;
+}
+
+export void scale(gpu::Thread *t, const Uniforms *u, const f32 *a, f32 *out) {
+    if (t->index < u->count) out[t->index] = twice(a[t->index]) * u->alpha;
+}
+```
+
+Called once for each thread, it runs on the CPU too:
+
+```smith project=gpu_kernel
+module main;
+
+import scale;
+import smith::gpu;
+import smith::format;
+import smith::io;
+
+i32 main(io::Io *io) {
+    const f32 a[2] = {1.0f, 2.0f};
+    f32 out[2] = {};
+    scale::Uniforms uniforms = {.count = 2, .alpha = 1.5f};
+    for (u32 i = 0; i < 2; i++) {
+        gpu::Thread thread = {.index = i};
+        scale::scale(&thread, &uniforms, a, out);
+    }
+    format::print(&io->console, out[0], " ", out[1], "\n");
+    return 0;
+}
+```
+
+```output project=gpu_kernel
+3 6
+```
+
+[smith-gpu](.agents/skills/smith-gpu/SKILL.md).
+
 ## A module has no warnings
 
 In a module (a `.smith` file with a `module` line) every warning of a fixed baseline is an error, and each has a written way to say you meant it, so there is no disable comment: a lossy implicit conversion, `if (x = y)`, a case that falls through without `[[fallthrough]];`, a cast that drops `const`, a missing return. A `.c` file keeps its flags. Other checks (`padded`, `shadow`) are yours to opt into with `.warnings` or `.errors` in `build::defaults`.

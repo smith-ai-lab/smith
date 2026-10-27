@@ -1,27 +1,65 @@
-// The Metal path of a GPU kernel (issue #18, knowledge/gpu-metal.md): `smith cc --smith-metal` turns the learner's gelu
-// kernel, written as a .smith function, into Metal source, and the source runs on the GPU. The fixture
-// tests/build_fixtures/gpu_metal holds the kernel, a copy of the learner's handwritten one and a small Objective-C
-// host that runs both and checks them against gelu in double precision.
+// The Metal path of a GPU kernel (issue #18, knowledge/gpu-metal.md): `smith cc --smith-metal` turns the learner's
+// elementwise and reduce kernels, written as .smith functions, into Metal source or a .metallib, and the library runs
+// on the GPU. The fixture tests/build_fixtures/gpu_metal holds the kernels (elementwise.smith), a copy of the learner's
+// handwritten ones (handwritten.metal) and a small Objective-C host that runs both over the same inputs and checks that
+// every output is the same, bit for bit.
 module gpu_metal_test;
 
 import smith::io;
 import smith::test;
+import <string.h>;
 import scratch;
 
-constexpr char write_command[_] = "smith cc --smith-metal gelu_kernel.smith -o gelu.metal";
+// How many times needle is in text.
+static usize count_of(const char *text, const char *needle) {
+    usize found = 0;
+    for (const char *at = c::strstr(text, needle); at != nullptr; at = c::strstr(at + 1, needle))
+        found++;
+    return found;
+}
+
+constexpr char write_command[_] = "smith cc --smith-metal elementwise.smith -o elementwise.metal";
 
 export void test_gpu_metal_a_kernel_is_written_as_a_metal_entry_point(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", "gpu_metal");
     scratch::Run run = scratch::sh(&p, write_command);
-    scratch::expect_status("metal: a file with a kernel is written", 0, &run);
-    const char *source = scratch::read(&p, "gelu.metal");
-    scratch::expect_contains("metal: the entry takes the thread's position", source,
-                             "kernel void gelu_kernel_gelu(uint smith_position [[thread_position_in_grid]]");
-    scratch::expect_contains("metal: a scalar is a constant buffer", source, "constant uint &count [[buffer(0)]]");
+    scratch::expect_status("metal: a file with kernels is written", 0, &run);
+    const char *source = scratch::read(&p, "elementwise.metal");
+    scratch::expect_contains("metal: the entry takes the thread's places", source,
+                             "kernel void elementwise_gelu_kernel(uint2 smith_position [[thread_position_in_grid]]");
+    scratch::expect_contains("metal: a const struct pointer is the uniforms, a constant buffer", source,
+                             "constant const elementwise_Uniforms *u [[buffer(0)]]");
     scratch::expect_contains("metal: a pointer is a device buffer", source, "device const float *a [[buffer(1)]]");
     scratch::expect_contains("metal: the output is the next buffer", source, "device float *out [[buffer(2)]]");
+    scratch::expect_contains("metal: the uniforms' struct is written", source, "struct elementwise_Uniforms {");
     scratch::expect_contains("metal: the float functions have Metal's names", source, "tanh(fmin(fmax(");
+    scratch::expect_contains("metal: fma is Metal's", source, "fma(u->beta");
     scratch::expect_lacks("metal: and no C spelling is left", source, "__UINT32_TYPE__");
+}
+
+export void test_gpu_metal_a_helper_is_written_once_and_an_unused_function_not_at_all(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "gpu_metal");
+    scratch::Run run = scratch::sh(&p, write_command);
+    scratch::expect_status("metal: written", 0, &run);
+    const char *source = scratch::read(&p, "elementwise.metal");
+    scratch::expect_count("metal: the helper the kernels share is written once", 1,
+                          count_of(source, "static float elementwise_tanh_clamped(float x)"));
+    scratch::expect_lacks("metal: a function no kernel reaches is not written", source, "elementwise_unreached");
+    scratch::expect_lacks("metal: and neither is a struct no kernel names", source, "elementwise_Unused");
+}
+
+export void test_gpu_metal_shared_memory_barriers_and_simd_sum_are_metal_calls(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "gpu_metal");
+    scratch::Run run = scratch::sh(&p, write_command);
+    scratch::expect_status("metal: written", 0, &run);
+    const char *source = scratch::read(&p, "elementwise.metal");
+    scratch::expect_contains("metal: gpu::shared is a threadgroup array at the top of the kernel", source,
+                             "threadgroup float smith_shared_0[elementwise_simds_max];");
+    scratch::expect_contains("metal: and the pointer to it is declared with auto", source, "auto sums =");
+    scratch::expect_contains("metal: and is that array", source, "smith_shared_0;");
+    scratch::expect_contains("metal: gpu::barrier", source, "threadgroup_barrier(mem_flags::mem_threadgroup);");
+    scratch::expect_contains("metal: gpu::simd_sum", source, "return simd_sum(x);");
+    scratch::expect_lacks("metal: and no generic call is left", source, "__extension__");
 }
 
 export void test_gpu_metal_a_file_with_no_kernel_is_refused(io::Io *io) {
@@ -34,17 +72,74 @@ export void test_gpu_metal_a_file_with_no_kernel_is_refused(io::Io *io) {
                          scratch::sh(&p, "[ -f plain.metal ] && echo yes || echo no").out);
 }
 
-// The source runs on the GPU and matches both gelu in double precision and the learner's handwritten kernel. Does
-// nothing off macOS or with no Metal device (the host exits 77).
-export void test_gpu_metal_the_gelu_kernel_runs_and_matches_the_handwritten_one(io::Io *io) {
+export void test_gpu_metal_a_function_that_takes_a_thread_is_a_kernel_and_returns_void(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "gpu_metal");
+    scratch::write(&p, "helper.smith",
+                   "module helper;\n\nimport smith::gpu;\n\nstatic f32 *make(gpu::Thread *t) {\n"
+                   "    return gpu::shared(t, f32, 8);\n}\n\n"
+                   "export void k(gpu::Thread *t, f32 *out) {\n    out[t->index] = make(t)[0];\n}\n");
+    scratch::Run run = scratch::sh(&p, "smith cc --smith-metal helper.smith -o helper.metal");
+    scratch::expect_failure("metal: a function with a thread that returns a value fails", &run);
+    scratch::expect_contains("metal: and says why", run.err, "helper_make: a kernel returns void");
+}
+
+// The library is Apple's .metallib when `metal` resolves, and the Metal source itself when it does not.
+export void test_gpu_metal_a_metallib_is_built_by_metal_or_is_the_source(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "gpu_metal");
+    if (scratch::sh(&p, "[ \"$(uname)\" = Darwin ]").status != 0) return;
+    scratch::Run run = scratch::sh(&p, "smith cc --smith-metal elementwise.smith -o elementwise.metallib");
+    scratch::expect_status("metal: the library is built", 0, &run);
+    bool toolchain = scratch::sh(&p, "xcrun -f metal").status == 0;
+    const char *magic = scratch::sh(&p, "head -c 4 elementwise.metallib").out;
+    scratch::expect_text("metal: its first bytes say what it is", toolchain ? "MTLB" : "#inc", magic);
+    scratch::Run bare = scratch::sh(&p, "PATH=\"$(dirname \"$(command -v smith)\")\" smith cc --smith-metal "
+                                        "elementwise.smith -o bare.metallib && head -c 4 bare.metallib");
+    scratch::expect_status("metal: without xcrun it is still built", 0, &bare);
+    scratch::expect_text("metal: and is the source", "#inc", bare.out);
+}
+
+// The source runs on the GPU and every output matches the learner's handwritten kernels bit for bit. Does nothing off
+// macOS or with no Metal device (the host exits 77).
+export void test_gpu_metal_the_kernels_match_the_handwritten_ones_from_source(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", "gpu_metal");
     if (scratch::sh(&p, "[ \"$(uname)\" = Darwin ]").status != 0) return;
     scratch::Run written = scratch::sh(&p, write_command);
-    scratch::expect_status("metal: the kernel is written", 0, &written);
+    scratch::expect_status("metal: the kernels are written", 0, &written);
     scratch::Run host = scratch::sh(&p, "smith cc host.m -fobjc-arc -framework Metal -framework Foundation -o host");
     scratch::expect_status("metal: the host builds", 0, &host);
-    scratch::Run run = scratch::sh(&p, "./host gelu.metal handwritten.metal gelu_kernel_gelu 2>&1");
+    scratch::Run run = scratch::sh(&p, "./host elementwise.metal handwritten.metal 2>&1");
     if (run.status == 77) return;
-    scratch::expect_status("metal: the host finds the output right", 0, &run);
-    scratch::expect_contains("metal: and says so", run.out, "ok 1048576 elements");
+    scratch::expect_status("metal: the host finds every output the same", 0, &run);
+    scratch::expect_contains("metal: and says so", run.out, "give the same bits");
+}
+
+// The same through Apple's `metal` (the build step's way): both libraries built with -fno-fast-math. Does nothing
+// without the Metal toolchain.
+export void test_gpu_metal_the_kernels_match_the_handwritten_ones_built_by_metal(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "gpu_metal");
+    if (scratch::sh(&p, "[ \"$(uname)\" = Darwin ] && xcrun -f metal").status != 0) return;
+    scratch::Run built = scratch::sh(&p, "smith cc --smith-metal elementwise.smith -o elementwise.metallib && "
+                                         "xcrun -sdk macosx metal -fno-fast-math -c handwritten.metal -o hand.air && "
+                                         "xcrun -sdk macosx metallib hand.air -o hand.metallib");
+    scratch::expect_status("metal: both libraries are built", 0, &built);
+    scratch::Run host = scratch::sh(&p, "smith cc host.m -fobjc-arc -framework Metal -framework Foundation -o host");
+    scratch::expect_status("metal: the host builds", 0, &host);
+    scratch::Run run = scratch::sh(&p, "./host elementwise.metallib hand.metallib 2>&1");
+    if (run.status == 77) return;
+    scratch::expect_status("metal: every output is the same", 0, &run);
+    scratch::expect_contains("metal: and says so", run.out, "give the same bits");
+}
+
+// smith build gives a program that links a module importing smith::gpu its Metal library, with no call in a build file.
+export void test_gpu_metal_a_program_with_kernels_gets_its_metallib_beside_it(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "gpu_build");
+    scratch::Run built = scratch::build(&p, "");
+    scratch::expect_status("build: the program with kernels builds", 0, &built);
+    scratch::expect_text("build: and the library is beside it", "yes",
+                         scratch::sh(&p, "[ -s build/debug/scale.metallib ] && echo yes || echo no").out);
+    bool toolchain = scratch::sh(&p, "xcrun -f metal").status == 0;
+    scratch::expect_text("build: Apple's metal built it, or it is the source", toolchain ? "MTLB" : "#inc",
+                         scratch::sh(&p, "head -c 4 build/debug/scale.metallib").out);
+    scratch::Run again = scratch::build(&p, "-v");
+    scratch::expect_lacks("build: a second build makes nothing", again.out, "metal build/debug/scale.metallib");
 }

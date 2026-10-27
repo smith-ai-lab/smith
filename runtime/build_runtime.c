@@ -2283,6 +2283,68 @@ static const char *const *smith_program_handlers(SmithBuild *b, const SmithProgr
     return handlers;
 }
 
+// A module that imports smith::gpu and has a function that takes a `gpu::Thread *` has kernels
+// (knowledge/gpu-metal.md): a program that links it gets a Metal library beside it, <folder of the program>/<name of
+// the source>.metallib, made by `smith cc --smith-metal` (Apple's `metal` builds it when it resolves; otherwise the
+// file is the Metal source, which the program compiles when it starts).
+constexpr size_t smith_gpu_libraries_max = 64;
+static const char *smith_gpu_made[smith_gpu_libraries_max];
+static size_t smith_gpu_made_count;
+
+static bool smith_imports_gpu(const char *source) {
+    if (!smith_ends_with(source, ".smith")) return false;
+    FILE *file = fopen(source, "rb");
+    if (file == nullptr) return false;
+    static char text[16384];
+    size_t length = fread(text, 1, sizeof text - 1, file);
+    fclose(file);
+    text[length] = '\0';
+    bool imported = false;
+    for (const char *found = strstr(text, "import smith::gpu"); found != nullptr && !imported;
+         found = strstr(found + 1, "import smith::gpu")) // each pass moves past one match
+        imported = found == text || found[-1] == '\n';
+    return imported && strstr(text, "(gpu::Thread *") != nullptr;
+}
+
+// The step that writes the library of one source, once for each output.
+static const char *smith_gpu_library(SmithBuild *b, const SmithObject *row, const char *folder) {
+    const char *base = strrchr(row->source, '/');
+    base = base != nullptr ? base + 1 : row->source;
+    const char *dot = strrchr(base, '.');
+    const char *output = smith_text("%s/%.*s.metallib", folder, (int)(dot - base), base);
+    for (size_t i = 0; i < smith_gpu_made_count; i++) {
+        if (strcmp(smith_gpu_made[i], output) == 0) return smith_gpu_made[i];
+    }
+    if (smith_gpu_made_count >= smith_gpu_libraries_max) smith_too_many("kernel libraries", smith_gpu_libraries_max);
+    smith_gpu_made[smith_gpu_made_count++] = output;
+    SmithStep step = {
+        .command = smith_list(b, smith_copy_string(row->compiler), "--smith-metal", row->source, "-I", ".smith/include",
+                              "-o", output, nullptr),
+        .inputs = smith_one(row->source),
+        .implicit_inputs = smith_one(smith_compiler_file(row->compiler)),
+        .order_only_inputs = smith_one(smith_lang_stamp),
+        .outputs = smith_one(output),
+        .description = smith_text("metal %s", output),
+    };
+    smith_step(b, &step);
+    return output;
+}
+
+// The libraries of the kernels the program links; the link waits for them.
+static const char *const *smith_program_gpu(SmithBuild *b, const SmithProgram *program, const SmithObject *const *rows,
+                                            size_t count) {
+    const char *slash = strrchr(program->output, '/');
+    const char *folder = slash != nullptr ? smith_text("%.*s", (int)(slash - program->output), program->output) : ".";
+    const char **outputs = smith_new_list(count);
+    size_t used = 0;
+    for (size_t i = 0; i < count; i++) {
+        if (!smith_imports_gpu(rows[i]->source)) continue;
+        outputs[used++] = smith_gpu_library(b, rows[i], folder);
+    }
+    outputs[used] = nullptr;
+    return outputs;
+}
+
 void smith_program(SmithBuild *b, SmithProgram *program) {
     SMITH_ASSERT(b != nullptr && program != nullptr);
     smith_require_program("smith_program", "linker", program->linker);
@@ -2304,6 +2366,7 @@ void smith_program(SmithBuild *b, SmithProgram *program) {
         outputs[i] = rows[i]->output;
         sources[i] = rows[i]->source;
     }
+    const char *const *gpu_libraries = smith_program_gpu(b, program, rows, count);
     SmithProgram copy = *program;
     copy.linker = smith_copy_string(program->linker);
     copy.output = smith_copy_string(program->output);
@@ -2326,8 +2389,9 @@ void smith_program(SmithBuild *b, SmithProgram *program) {
         .command = smith_cat(b, smith_one(copy.linker), copy.flags, (const char *const *)outputs, copy.libraries,
                              handlers, tail, nullptr),
         .inputs = (const char *const *)outputs,
-        .implicit_inputs = smith_cat(b, smith_library_files(copy.libraries),
-                                     smith_one(smith_compiler_file(copy.linker)), summaries, handlers_files, nullptr),
+        .implicit_inputs =
+            smith_cat(b, smith_library_files(copy.libraries), smith_one(smith_compiler_file(copy.linker)), summaries,
+                      handlers_files, gpu_libraries, nullptr),
         .outputs = smith_one(copy.output),
         .description = smith_text("link %s", copy.output),
     };

@@ -1,14 +1,50 @@
 // smith::gpu, <smith/gpu.h>: the kernel's side of the GPU (issue #18). A kernel is a plain function whose first
-// parameter is a `gpu::Thread *`; `smith cc --smith-metal` writes it as Metal source, and the same function runs on the
-// CPU by calling it once for each thread. Today a kernel is one thread for each element, with the C subset that is the
-// same in Metal (sized types, arithmetic, `if`, `for`, `c::tanhf` and the other float functions).
+// parameter is a `gpu::Thread *`; `smith cc --smith-metal` writes it as Metal source (knowledge/gpu-metal.md). The
+// subset a kernel is written in is C's: sized types, arithmetic, `if`, `for`, the float functions of <math.h>
+// (`c::tanhf`, `c::fmaf`, `c::sqrtf`, ...), file-scope `constexpr`, other functions of the same file (helpers, written
+// once for each kernel that calls them), and the calls below. A pointer parameter is a buffer (`device`, or `constant`
+// for a `const` pointer to a struct: the uniforms), any other parameter is a value.
 //
 //   export void scale(gpu::Thread *t, u32 count, const f32 *a, f32 *out) {
 //       if (t->index < count) out[t->index] = 2.0f * a[t->index];
 //   }
+//
+// On a CPU the same function can be called, once for a thread, with a Thread the caller fills: that thread is a
+// threadgroup and a SIMD group of one, so `barrier` does nothing and `simd_sum` is its argument.
 module smith::gpu;
 
-// The thread a kernel runs as: its position in the grid.
+// The thread a kernel runs as: its place in the grid, in its threadgroup and in its SIMD group. The grid has two
+// dimensions (a 1-D dispatch has `y` 0 and one group in `y`). `index` is the thread's position in the grid, `local`
+// in its threadgroup, `group` the threadgroup's position in the grid and `groups` the grid's size in threadgroups;
+// the `_y` fields are the second dimension. `lane` is the thread's place in its SIMD group, `simd` the group's place
+// in the threadgroup and `simds` how many SIMD groups the threadgroup has.
 export struct Thread {
     u32 index;
+    u32 index_y;
+    u32 local;
+    u32 local_y;
+    u32 group;
+    u32 group_y;
+    u32 groups;
+    u32 groups_y;
+    u32 lane;
+    u32 simd;
+    u32 simds;
 };
+
+// An array of `count` values of T shared by the threadgroup (Metal's `threadgroup` memory), not initialized. Write
+// `f32 *sums = gpu::shared(t, f32, 32);` in a kernel's own body, with a count the compiler knows; null for more than
+// 32 KB (an Apple GPU's threadgroup memory). On a CPU it is one array for all the callers of the same type.
+export T *shared(Thread *_, constexpr type T, usize count) {
+    constexpr usize bytes = 32 << 10;
+    alignas(16) static u8 storage[bytes];
+    return count * sizeof(T) <= bytes ? (T *)(void *)storage : nullptr;
+}
+
+// Waits until every thread of the threadgroup has reached it, and its writes to shared memory are seen.
+export void barrier(Thread *_) {}
+
+// The sum of x over the threads of the SIMD group, the same in each, added in a fixed order.
+export f32 simd_sum(Thread *_, f32 x) {
+    return x;
+}

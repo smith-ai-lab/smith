@@ -3168,7 +3168,7 @@ static int smith_compile_main(int argc, char **argv, int at, bool plus, const ch
     if (first < argc && strcmp(argv[first], "--smith-lower") == 0)
         return smith_lang_main(argc - first - 1, argv + first + 1, false);
     if (first < argc && strcmp(argv[first], "--smith-metal") == 0)
-        return smith_metal_main(argc - first - 1, argv + first + 1);
+        return smith_metal_main(argc - first - 1, argv + first + 1, self);
     if (first < argc && strcmp(argv[first], "--smith-tree-sitter") == 0) return smith_tree_sitter_main(self);
 #ifdef SMITH_HOOK
     if (first < argc && strcmp(argv[first], "--smith-effects") == 0)

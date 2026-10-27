@@ -439,6 +439,10 @@ export void test_readme_project_gradient(io::Io *io) {
     project_case(io, "gradient");
 }
 
+export void test_readme_project_gpu_kernel(io::Io *io) {
+    project_case(io, "gpu_kernel");
+}
+
 export void test_readme_project_objc(io::Io *io) {
     project_case(io, "objc");
 }
