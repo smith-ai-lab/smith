@@ -42,9 +42,9 @@ static const char llvm_sha256[] = "c44186a7762ed28954be72e5ff6df9808e0779d4f1bf0
 static const char *const libraries[] = {"arena", "contract", "inflate", "io", "random", "text"}; // build.c's list
 // The modules whose headers smith.c includes: the libraries it links, and smith::build's, which build_runtime.c reads.
 static const char *const header_modules[] = {"arena", "contract", "inflate", "io", "random", "text", "build"};
-static const char *const shims[] = {"clang",        "lld",         "format", "tidy",          "clangd",
-                                    "symbolize",    "hook",        "lsp",    "lldb",          "lldb_dap",
-                                    "lldb_explain", "lldb_slices", "affine", "effects_infer", "lldb_server", "coverage"};
+static const char *const shims[] = {"clang",  "lld",           "format",      "tidy",     "clangd",       "symbolize",
+                                    "hook",   "lsp",           "lldb",        "lldb_dap", "lldb_explain", "lldb_slices",
+                                    "affine", "effects_infer", "lldb_server", "coverage"};
 static const char *const cflags[] = {"-std=gnu23", "-O1", "-g", "-Wall", "-Wextra", "-Wpedantic"};
 
 static char cwd[path_max];      // the repository's root, where this runs

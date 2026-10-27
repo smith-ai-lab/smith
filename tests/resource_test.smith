@@ -61,15 +61,15 @@ constexpr char where[_] = "out=$(\"$smith\" cc -print-resource-dir)\n"
 
 // Eight workers of two smiths, five rounds each, on the one runtime folder: the number of failures.
 constexpr char workers[_] = "for n in 1 2 3 4 5 6 7 8; do\n"
-                           "    (for round in 1 2 3 4 5; do\n"
-                           "        \"$smith\" cc $seven -o \"objc_a$n\" 2>>\"../mix$n\" && [ "
-                           "\"$(./objc_a$n)\" = 7 ] || echo bad >>\"../mix$n.bad\"\n"
-                           "        \"../smith_b\" cc $seven -o \"objc_c$n\" 2>>\"../mix$n\" && "
-                           "[ \"$(./objc_c$n)\" = 7 ] || echo bad >>\"../mix$n.bad\"\n"
-                           "    done) &\n"
-                           "done\n"
-                           "wait\n"
-                           "cat ../mix*.bad 2>/dev/null | wc -l | tr -d ' '\n";
+                            "    (for round in 1 2 3 4 5; do\n"
+                            "        \"$smith\" cc $seven -o \"objc_a$n\" 2>>\"../mix$n\" && [ "
+                            "\"$(./objc_a$n)\" = 7 ] || echo bad >>\"../mix$n.bad\"\n"
+                            "        \"../smith_b\" cc $seven -o \"objc_c$n\" 2>>\"../mix$n\" && "
+                            "[ \"$(./objc_c$n)\" = 7 ] || echo bad >>\"../mix$n.bad\"\n"
+                            "    done) &\n"
+                            "done\n"
+                            "wait\n"
+                            "cat ../mix*.bad 2>/dev/null | wc -l | tr -d ' '\n";
 
 // A programs folder whose smith is running, or whose binary exists, stays: what each folder does after a prune.
 constexpr char lock_script[_] =
@@ -259,7 +259,7 @@ export void test_resource_a_second_compile_rewrites_no_file(io::Io *io) {
     first_compile(io, &p);
     // libLTO.dylib is the system ld's on macOS; Linux has none
     constexpr char files[_] = "ls -l \"$folder/lib/clang/$major/include/stddef.h\" $([ \"$os\" = Darwin ] && echo "
-                             "\"$folder/lib/libLTO.dylib\")";
+                              "\"$folder/lib/libLTO.dylib\")";
     scratch::Run stamped = run_after(io, &p, format::push(&io->arena, files, " >../stamp").data);
     scratch::expect_status("resource: the stamps", 0, &stamped);
     scratch::sleep(&p, 1000);
