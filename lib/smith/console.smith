@@ -8,7 +8,7 @@
 //
 // An error the world makes (a closed pipe, a full disk, an input that fails) is a `result`; a bug (a buffer with no
 // room, a read of no bytes) is a checked failure. Its C API is the generated header include/smith/console.h
-// (committed; `smith build headers` regenerates it); the names follow the rule of arena.smith: `console::write` is
+// (a build output: `smith build` writes it); the names follow the rule of arena.smith: `console::write` is
 // `smith_console_write`, `console::Error` is `SmithConsoleError`.
 module smith::console;
 

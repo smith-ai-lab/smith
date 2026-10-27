@@ -6,7 +6,7 @@
 //   clock::sleep(250 * clock::millisecond);
 //   u64 elapsed = clock::monotonic() - start;
 //
-// Its C API is the generated header include/smith/clock.h (committed; `smith build headers` regenerates it); the names
+// Its C API is the generated header include/smith/clock.h (a build output: `smith build` writes it); the names
 // follow the rule of arena.smith: `clock::monotonic` is `smith_clock_monotonic`; `clock::now` is
 // `smith_clock_now_epoch` and `clock::sleep` is `smith_clock_sleep_ns` while io.h still declares `smith_clock_now` and
 // `smith_clock_sleep`.

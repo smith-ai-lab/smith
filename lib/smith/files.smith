@@ -1,6 +1,6 @@
 // smith::files, <smith/files.h>: files and folders by direct calls, with no `io::Io` value: open, read, write and close
 // a file, read or write a whole one, ask about a path, list a folder, make, remove and rename, map a file. Its C API is
-// the generated header include/smith/files.h (committed; `smith build headers` regenerates it); the names follow the
+// the generated header include/smith/files.h (a build output: `smith build` writes it); the names follow the
 // rule of arena.smith with one difference: the functions are `smith_fs_*` (`files::read_file` is `smith_fs_read_file`)
 // because io's `smith_files_read` and the others of `io::Io` own `smith_files_` until io goes (#240); the types are
 // `SmithFiles*`.
