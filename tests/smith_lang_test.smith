@@ -1001,6 +1001,10 @@ export void test_generic_braceless(io::Io *io) {
     corpus_case(io, "generic-braceless");
 }
 
+export void test_generic_braceless_head(io::Io *io) {
+    corpus_case(io, "generic-braceless-head");
+}
+
 export void test_generic_built_list_error(io::Io *io) {
     corpus_case(io, "generic-built-list-error");
 }

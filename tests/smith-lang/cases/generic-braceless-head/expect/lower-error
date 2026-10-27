@@ -1,0 +1,5 @@
+src/heads.smith:24:25: cannot tell the type of `i`, the argument of `equal`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/heads.smith:26:30: cannot tell the type of `xs[i]`, the argument of `equal`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/heads.smith:27:56: cannot tell the type of `i`, the argument of `equal`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/heads.smith:30:29: cannot tell the type of `i`, the argument of `equal`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/heads.smith:36:24: cannot tell the type of `n`, the argument of `equal`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable

@@ -1013,6 +1013,8 @@ static SmithLangEnumDefined smith_lang_edefined[smith_lang_eshape_defined_max];
 static size_t smith_lang_edefined_count;
 static uint32_t smith_lang_eshape_depth; // `{` minus `}` of the source's tokens
 static bool smith_lang_eshape_start;     // the next token begins a statement or a declaration
+static int
+    smith_lang_eshape_head; // inside the head of an `if`, `for`, `while` or `switch`: 1 before its `(`, then 1 + depth
 
 // The tables are static like the lowering's, and a module's interface read in the middle of a file
 // (smith_lang_keep_aside) would end with its own in them: they are set aside and put back with the lowering's.
@@ -1067,6 +1069,7 @@ static void smith_lang_enum_shapes_reset(void) {
     smith_lang_edefined_count = 0;
     smith_lang_eshape_depth = 0;
     smith_lang_eshape_start = true;
+    smith_lang_eshape_head = 0;
 }
 
 static const char *smith_lang_eshape_keep(const char *text, size_t length) {
@@ -1889,11 +1892,20 @@ static bool smith_lang_eshape_define_ahead(SmithLang *lang, const SmithHost *hos
     int depth = 0;
     const SmithToken *before =
         lang->prev_member ? &(SmithToken){.kind = SmithTokenKind_Punctuator, .text = ".", .length = 1} : nullptr;
+    // Everything read ahead is lowered in one batch before the parser reads any of it, so a name the parser declares
+    // on the way (`for (u32 i = 0; i < n; i++) f(i);`, a variable named like a C function) is not yet declared. The
+    // read ends where the head does (a `for`'s clauses are statements of their own), and the body begins another.
+    bool control = smith_lang_ident(token, "if") || smith_lang_ident(token, "for") ||
+                   smith_lang_ident(token, "while") || smith_lang_ident(token, "switch");
+    bool bodied = control || smith_lang_ident(token, "else") || smith_lang_ident(token, "do");
     for (size_t at = 0; at < smith_lang_eshape_scan_max; at++) {
         const SmithToken *each = smith_lang_eshape_at(lang, host, token, at);
         if (each->kind == SmithTokenKind_Eof || each->foreign) break;
+        if (bodied && at == 1 && !control) break; // `else` and `do` are followed by a statement of its own
         depth += smith_lang_punct(each, "(") || smith_lang_punct(each, "[");
         depth -= smith_lang_punct(each, ")") || smith_lang_punct(each, "]");
+        if (depth < 0 || (control && depth == 0 && smith_lang_punct(each, ")"))) break; // the end of the head
+        if (control && depth == 1 && smith_lang_punct(each, ";")) break; // a clause of `for (...)`: the next begins one
         if (depth <= 0 && (smith_lang_punct(each, ";") || smith_lang_punct(each, "{") || smith_lang_punct(each, "}"))) {
             break; // the end of the head or the statement, or of the block it is in
         }
@@ -1964,6 +1976,27 @@ static bool smith_lang_eshape_rewrite(SmithLang *lang, const SmithHost *host, co
     return smith_lang_tuple_replace(lang, call.close, made, 2);
 }
 
+// The head of an `if`, `for`, `while` or `switch` and the `else` and `do` before a body: the token after each begins a
+// statement of its own, which `smith_lang_eshape_define_ahead` reads (it does not read across them).
+static void smith_lang_eshape_track_head(const SmithToken *token) {
+    if (token->foreign || token->synthetic) return;
+    if (token->kind == SmithTokenKind_Identifier) {
+        if (smith_lang_ident(token, "else") || smith_lang_ident(token, "do")) smith_lang_eshape_start = true;
+        if (smith_lang_ident(token, "if") || smith_lang_ident(token, "for") || smith_lang_ident(token, "while") ||
+            smith_lang_ident(token, "switch")) {
+            smith_lang_eshape_head = 1;
+        }
+    } else if (smith_lang_eshape_head > 0 && smith_lang_punct(token, "(")) {
+        smith_lang_eshape_head += 1;
+    } else if (smith_lang_eshape_head > 1 && smith_lang_punct(token, ")")) {
+        smith_lang_eshape_head -= 1;
+        if (smith_lang_eshape_head == 1) {
+            smith_lang_eshape_head = 0;
+            smith_lang_eshape_start = true;
+        }
+    }
+}
+
 // A token of a file that has type functions returning enums, before any other reading of it: the declaration of one,
 // the definitions a declaration needs and a use (`option(usize)` is `struct smith_enum_option_usize`). True when the
 // token was consumed.
@@ -1988,6 +2021,7 @@ static bool smith_lang_enum_function(SmithLang *lang, const SmithHost *host, con
             smith_lang_edefined_count = kept;
         }
     }
+    smith_lang_eshape_track_head(token);
     if (token->foreign || lang->in_attribute || !lang->is_module || token->synthetic) return false;
     bool recording =
         lang->recording; // a generic's body: its uses are written as they are in any body, nothing is defined
