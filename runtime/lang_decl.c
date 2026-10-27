@@ -467,6 +467,17 @@ static void smith_lang_note_io_use(SmithLang *lang, const SmithToken *member, si
     }
 }
 
+// Whether the call of `smith_ensures`, `smith_invariant` or `smith_assert` at `location` is a check the prover proved
+// (issue #325: the same `.pts` line as an index's, which the host answers only in an optimized build). `smith_requires`
+// is never left out: it is proved at each call, and a caller in another source or language may not be proved.
+static bool smith_lang_proved_check(const SmithLang *lang, const SmithHost *host, const char *name, size_t length,
+                                    uint32_t location) {
+    if (host->proved == nullptr || !lang->in_function || lang->recording) return false;
+    bool contract = smith_lang_equals(name, length, "smith_ensures") ||
+                    smith_lang_equals(name, length, "smith_invariant") || smith_lang_equals(name, length, "smith_assert");
+    return contract && host->proved(host->context, location);
+}
+
 // `name::member` where name is an import binding. The member is read unexpanded: for `c::X` it is a macro to expand
 // then, and for a module it is part of a name, so it must not be expanded at all. Anything else with that name (a
 // variable called io, say) is just a name, and so is `gnu` in [[gnu::unused]].
@@ -531,6 +542,10 @@ static bool smith_lang_namespace_read(SmithLang *lang, const SmithHost *host, co
         if (chosen != nullptr) { // the module chose this export's C name
             total = chosen->c_name.length;
             memcpy(lang->tmp, smith_lang_str(chosen->c_name), total + 1);
+        }
+        if (chosen != nullptr && smith_lang_proved_check(lang, host, lang->tmp, total, taken.location)) {
+            total = sizeof "smith_proved" - 1; // `smith prove` proved this check: an optimized build leaves it out
+            memcpy(lang->tmp, "smith_proved", total + 1);
         }
         *result = smith_lang_made(name, lang->tmp, total, false);
         if (smith_lang_is_io_binding(binding)) smith_lang_note_io_use(lang, &taken, total);

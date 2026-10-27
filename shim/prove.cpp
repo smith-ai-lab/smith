@@ -368,7 +368,7 @@ void cache_store(const std::string &path, const prove::Outcome &outcome) {
 
 // ---- the proof file: what a release build leaves out (issue #221, shim/proved.hpp) ----
 
-// The checks of an index or a cut that a proved function owns, one `file<TAB>line` each, written by the process that
+// The checks of an index or a cut, and the `ensures`, `invariant` and `assert` calls (issue #325), that a proved function owns, one `file<TAB>line` each, written by the process that
 // proved it to a file the parent made (a proof runs in a process of its own), and with them one
 // `D<TAB>file<TAB>directory<TAB>name` for each file the proof read besides the source (Unit::dependencies), which the
 // proof file's key covers. A check a callee inlined into the unit brings is the callee's, whose own line this proof
@@ -379,8 +379,8 @@ void record_checks(const prove::Unit &unit) {
     if (checks_file == nullptr || unit.name.find('<') != std::string::npos) return;
     std::set<std::string> sources;
     for (const prove::Point &point : unit.points) {
-        if (point.kind != prove::Kind::Assert || point.text != proved::check_text() || !point.inlined.empty() ||
-            point.line == 0 || point.file.size() < 6 || point.file.compare(point.file.size() - 6, 6, ".smith") != 0)
+        bool index_check = point.kind == prove::Kind::Assert && point.text == proved::check_text();
+        if ((!index_check && !point.contract_check) || !point.inlined.empty() || point.line == 0 || point.file.size() < 6 || point.file.compare(point.file.size() - 6, 6, ".smith") != 0)
             continue;
         std::fprintf(checks_file, "%s\t%u\n", point.file.c_str(), point.line);
         sources.insert(point.file);

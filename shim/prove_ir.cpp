@@ -2765,6 +2765,7 @@ class Normalizer {
         info.id = static_cast<unsigned>(context_points.size());
         info.kind = kind;
         auto *base = cast<CallBase>(call);
+        info.contract_check = kind == Kind::Ensures || kind == Kind::Invariant || (kind == Kind::Assert && condition != nullptr);
         if (kind == Kind::Requires || kind == Kind::Ensures || kind == Kind::Invariant || kind == Kind::Premise) {
             if (MDNode *site = call->getMetadata("smith.callsite")) info.call_site = static_cast<int>(id_of(site));
         } else if (kind == Kind::Assert && condition != nullptr) {

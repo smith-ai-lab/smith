@@ -1,5 +1,5 @@
 // The proof file of a `.smith` source (issue #221): `smith prove` writes, for each source, the lines whose index and
-// cut checks it proved can never fail, and the lowering of a release build (-O1 or more; debug is -O0) leaves those
+// cut checks and whose `contract::ensures`, `invariant` and `assert` checks (issue #325) it proved can never fail, and the lowering of a release build (-O1 or more; debug is -O0) leaves those
 // checks out. Both sides are in this header, so they cannot disagree about the file, its name or its key.
 //
 //   .smith/proved/<source's path from the project folder>.pts
@@ -36,7 +36,7 @@
 // Bump when a change to the prover can change what a function proves or how it fails.
 #define SMITH_PROVER_VERSION "10"
 // Bump when the lowering changes the line a check is reported at, or which checks a line has, or the file's format.
-#define SMITH_PROVED_LOWERING_VERSION "2"
+#define SMITH_PROVED_LOWERING_VERSION "3"
 
 namespace proved {
 

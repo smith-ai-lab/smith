@@ -83,6 +83,13 @@ check_assert(bool condition) {
     if (!condition) c::smith_failure(c::SmithFailure_Assert);
 }
 
+// What an optimized build writes in place of `ensures`, `invariant` and `assert` when `smith prove` proved the check
+// holds (issue #325, `.smith/proved/<source>.pts`): the lowering names it where the call stood, never you. It checks
+// nothing and has no effect, so a function whose only failure point was that check does not `fail`.
+[[smith::c_name("smith_proved")]] export [[gnu::always_inline, maybe_unused]] inline void proved(bool condition) {
+    (void)condition;
+}
+
 // A marker for `smith prove`, which reads the call in the IR: a trusted function is assumed, not proved. It checks
 // nothing, at run time or anywhere else.
 [[smith::c_name("smith_contract_trusted")]] export void check_trusted() {}
