@@ -15,6 +15,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <spawn.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,6 +23,9 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 
 constexpr size_t smith_lang_objc_text_max = 8U << 20;
 constexpr size_t smith_lang_objc_names_max = 256;
@@ -118,12 +122,32 @@ typedef struct {
     size_t flag_count;
 } SmithLangObjcCompile;
 
+// The path of the running binary (this code is linked into smith), for a process the driver did not start.
+static bool smith_lang_objc_own_path(char *out) {
+    char raw[PATH_MAX];
+#ifdef __APPLE__
+    uint32_t size = sizeof raw;
+    if (_NSGetExecutablePath(raw, &size) != 0) return false;
+#else
+    ssize_t length = readlink("/proc/self/exe", raw, sizeof raw - 1);
+    if (length <= 0) return false;
+    raw[length] = 0;
+#endif
+    char real[PATH_MAX];
+    if (realpath(raw, real) == nullptr || strlen(real) >= smith_lang_objc_path_max) return false;
+    snprintf(out, smith_lang_objc_path_max, "%s", real);
+    return true;
+}
+
 // The flags the driver passed (SMITH_LANG_FLAGS, a line each; the standard is left out) and this binary.
 static bool smith_lang_objc_compile_flags(SmithLangObjcCompile *compile) {
     const char *self = getenv("SMITH_LANG_SELF");
     const char *flags = getenv("SMITH_LANG_FLAGS");
-    if (self == nullptr || strlen(self) >= sizeof compile->self) return false;
-    snprintf(compile->self, sizeof compile->self, "%s", self);
+    if (self != nullptr && strlen(self) < sizeof compile->self) {
+        snprintf(compile->self, sizeof compile->self, "%s", self);
+    } else if (!smith_lang_objc_own_path(compile->self)) { // clang-tidy and clangd: no driver set the variable
+        return false;
+    }
     snprintf(compile->flags, sizeof compile->flags, "%s", flags != nullptr ? flags : "");
     compile->flag_count = 0;
     for (char *line = compile->flags; *line != 0;) { // by line
