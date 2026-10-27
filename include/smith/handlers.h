@@ -34,11 +34,36 @@ SmithAllocator *smith_handlers_allocator(void);
 // handler set (the default) is libc's. A stream a handler opened is not seekable (the handler has no seek).
 typedef struct SmithFileHandler SmithFileHandler;
 
+typedef struct {
+    bool folder;
+    bool writable; // the program may write here: to a file, or make files in a folder
+    size_t size;   // bytes of a file; 0 for a folder
+} SmithFileStatus;
+
+typedef struct {
+    char name[256]; // the name alone, not the path
+    bool folder;
+    size_t size; // bytes of a file; 0 for a folder
+} SmithFileItem;
+
 struct SmithFileHandler {
     int (*open)(SmithFileHandler *self, const char *path, int flags, int mode);
     ssize_t (*read)(SmithFileHandler *self, int fd, void *buffer, size_t size);
     ssize_t (*write)(SmithFileHandler *self, int fd, const void *buffer, size_t size);
     int (*close)(SmithFileHandler *self, int fd);
+    // The members below are called by smith::files (lib/smith/files.smith), not by an interposed libc function; each
+    // may be null, which is libc's own call (stat, mkdir, unlink, rename, opendir, mmap, munmap). They return 0 for
+    // success and -1 with errno set, as the libc calls do.
+    int (*stat)(SmithFileHandler *self, const char *path, SmithFileStatus *status);
+    int (*mkdir)(SmithFileHandler *self, const char *path);  // one folder; EEXIST if it is there
+    int (*remove)(SmithFileHandler *self, const char *path); // a file
+    int (*rename)(SmithFileHandler *self, const char *from, const char *to);
+    // The index-th entry of a folder, without "." and "..", in any order: 1 when item is filled, 0 past the last, -1 on
+    // an error.
+    int (*list)(SmithFileHandler *self, const char *folder, size_t index, SmithFileItem *item);
+    // Maps a file (private, writable): the memory and its size, or null with errno set.
+    void *(*map)(SmithFileHandler *self, const char *path, size_t *size);
+    void (*unmap)(SmithFileHandler *self, void *data, size_t size);
 };
 
 // Sets the files of the calling thread (null: libc's), returning the ones it had.

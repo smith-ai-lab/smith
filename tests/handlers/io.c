@@ -154,7 +154,9 @@ static void test_console_input(void) {
 }
 
 static void test_files(void) {
-    FakeFiles fake = {.files = {fake_files_open, fake_files_read, fake_files_write, fake_files_close}};
+    FakeFiles fake = {
+        .files = {
+            .open = fake_files_open, .read = fake_files_read, .write = fake_files_write, .close = fake_files_close}};
     SmithFileHandler *previous = smith_handlers_set_files(&fake.files);
     int fd = open("/fake/a", O_WRONLY | O_CREAT | O_TRUNC, 0644);
     write(fd, "hello", 5);
