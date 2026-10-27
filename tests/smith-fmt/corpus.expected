@@ -2327,6 +2327,43 @@ export typeof(*p) read(const auto *p) {
 export typeof(xs[0]) third(auto xs[4]) {
     return xs[2];
 }
+==> error-generic-concept-element/src/main.smith <==
+module main;
+
+import stats;
+
+i32 main() {
+    i32 n = 5;
+    char *names[2] = {"a", "b"};
+    char *ns[:] = names;
+    i32 ints[2][2] = {{1, 2}, {3, 4}};
+    i32 is[:][:] = ints;
+    f32 f = 1.5f;
+    stats::count(ns);
+    stats::count(n);
+    stats::rows(is);
+    stats::read(&f);
+    stats::third(names);
+    return 0;
+}
+==> error-generic-concept-element/src/stats.smith <==
+module stats;
+
+export usize count(const arithmetic xs[:]) {
+    return countof(xs);
+}
+
+export usize rows(floating grid[:][:]) {
+    return countof(grid);
+}
+
+export typeof(*p) read(const integer *p) {
+    return *p;
+}
+
+export typeof(xs[0]) third(arithmetic xs[4]) {
+    return xs[2];
+}
 ==> error-generic-concept-local/src/main.smith <==
 typedef struct {
     int a;
@@ -4797,6 +4834,62 @@ int main() {
     q->x = p->x + 10;
     printf("%d %d %llu %d used %zu\n", p->x, p->y, (unsigned long long)*n, q->x, a.used);
     return 0;
+}
+==> generic-concept-element/src/main.smith <==
+module main;
+
+import stats;
+import <stdio.h>;
+
+i32 main() {
+    i32 raw[4] = {1, 2, 3, 4};
+    i32 xs[:] = raw;
+    const f64 fs[:] = (f64[3]){1.5, 2.5, 3.5};
+    c::printf("%zu %zu %zu\n", stats::count(xs), stats::count(fs), stats::find(xs, 3));
+    c::printf("%zu %zu\n", stats::find(fs, 2.5), stats::find(fs, 9.0));
+    f32 grid[2][2] = {{1, 2}, {3, 4}};
+    f32 g[:][:] = grid;
+    c::printf("%zu\n", stats::rows(g));
+    i32 n = 5;
+    stats::bump(&n, 2);
+    u8 small = 7;
+    stats::bump(&small, 1);
+    c::printf("%d %d %d\n", n, small, stats::read(&n));
+    c::printf("%d\n", stats::third(raw));
+    c::printf("%zu\n", stats::pair(fs, xs));
+    return 0;
+}
+==> generic-concept-element/src/stats.smith <==
+module stats;
+
+export usize count(const arithmetic xs[:]) {
+    return countof(xs);
+}
+
+export usize find(const arithmetic xs[:], typeof(xs[0]) v) {
+    for (usize i = 0; i < countof(xs); i++)
+        if (xs[i] == v) return i;
+    return countof(xs);
+}
+
+export usize rows(floating grid[:][:]) {
+    return countof(grid);
+}
+
+export typeof(*p) read(const integer *p) {
+    return *p;
+}
+
+export void bump(arithmetic *p, typeof(*p) by) {
+    *p += by;
+}
+
+export typeof(xs[0]) third(arithmetic xs[4]) {
+    return xs[2];
+}
+
+export usize pair(const arithmetic a[:], const integer b[:]) {
+    return countof(a) + countof(b);
 }
 ==> generic-concept-local/src/main.smith <==
 #include <stdio.h>

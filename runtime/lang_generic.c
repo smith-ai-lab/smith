@@ -358,7 +358,10 @@ static bool smith_lang_shape_head(const SmithLangParam *param, SmithLangShape *s
         *at += 7;
         return true;
     }
-    if (*at >= param->end || !smith_lang_gt_is(keyword, SmithTokenKind_Identifier, "auto")) return false;
+    if (*at >= param->end ||
+        !(smith_lang_gt_is(keyword, SmithTokenKind_Identifier, "auto") || smith_lang_concept_of(keyword) != 0)) {
+        return false; // `auto`, or a concept in its place
+    }
     shape->auto_at = (*at)++;
     return true;
 }
@@ -693,6 +696,12 @@ static bool smith_lang_generic_ahead(SmithLang *lang, const SmithHost *host, con
             host->lookup(host->context, token->text, token->length, SmithLookup_Value).kind == SmithLookup_None) {
             return true; // `arithmetic x`: a concept for `auto`
         }
+        if (in_params && depth == 1 && smith_lang_concept_word(token) &&
+            smith_lang_element_auto_at(lang, host, index) &&
+            host->lookup(host->context, token->text, token->length, SmithLookup_Type).kind == SmithLookup_None &&
+            host->lookup(host->context, token->text, token->length, SmithLookup_Value).kind == SmithLookup_None) {
+            return true; // `const arithmetic xs[:]`, `integer *p`: a concept for the element's `auto`
+        }
         if (in_params && depth == 1 && smith_lang_ident(token, "auto") &&
             (((starts_parameter || after_constexpr) &&
               (smith_lang_type_parameter_at(lang, host, index) ||
@@ -781,7 +790,8 @@ static const char *smith_lang_generic_scan(SmithLangGeneric *generic) {
                 (uint8_t)((element ? shape.name_at - 1 : params[i].start) - generic->first);
             generic->type_position[generic->type_count] = (uint8_t)i;
             generic->type_kind[generic->type_count] = SmithLangSlot_Auto;
-            generic->type_concept[generic->type_count] = (uint8_t)smith_lang_concept_of(first);
+            generic->type_concept[generic->type_count] =
+                (uint8_t)smith_lang_concept_of(element ? &smith_lang_gt.tokens[shape.auto_at] : first);
             generic->type_count += 1;
             continue;
         }
@@ -3671,6 +3681,47 @@ typedef struct {
     bool literal[smith_lang_call_params_max];
 } SmithLangCallTypes;
 
+// The type a concept judges for a parameter written with it as the element (`const arithmetic xs[:]`, `integer *p`):
+// the element of the slice, the pointee, the array's element. `spelling` is the argument's type and is replaced; it
+// stays when the parameter is no such shape or the type does not have it (the shape check reports that).
+static void smith_lang_element_spelling(const SmithHost *host, const SmithLangGeneric *generic, size_t slot,
+                                        char *spelling, size_t capacity) {
+    SmithLangParam params[smith_lang_call_params_max];
+    size_t total = smith_lang_generic_params(generic, params, smith_lang_call_params_max);
+    size_t position = generic->type_position[slot];
+    SmithLangShape shape;
+    if (total == SIZE_MAX || position >= total || !smith_lang_param_shape(&params[position], &shape)) return;
+    char current[512];
+    snprintf(current, sizeof current, "%s", spelling);
+    unsigned strip = shape.kind == SmithLangShape_Array ? 1U : shape.kind == SmithLangShape_Pointer ? shape.stars : 0U;
+    if (shape.kind == SmithLangShape_Slice) { // the tag says the element, however many dimensions
+        SmithTypeQuery query = {};
+        unsigned long dims = 0;
+        char data[512];
+        if (host->type_query == nullptr ||
+            !host->type_query(host->context, current, (uint32_t)strlen(current), &query) ||
+            strncmp(query.canonical, "struct smith_array_", 19) != 0) {
+            return;
+        }
+        char tag[smith_lang_name_max];
+        snprintf(tag, sizeof tag, "%.*s", (int)strcspn(query.canonical + 7, " "), query.canonical + 7);
+        if (!smith_lang_slice_tag_definition(tag, data, sizeof data, &dims)) return;
+        snprintf(current, sizeof current, "%s", data);
+        char *star = strrchr(current, '*');
+        if (star != nullptr) *star = 0; // `float * `: the element is what is left of the star
+    }
+    for (size_t end = strlen(current); strip > 0 && end > 0; end--) { // the stars of a pointer or an array decay
+        if (current[end - 1] == ' ') continue;
+        if (current[end - 1] != '*') return;
+        current[end - 1] = 0;
+        strip -= 1;
+    }
+    for (size_t end = strlen(current); end > 0 && current[end - 1] == ' '; end--)
+        current[end - 1] = 0;
+    const char *bare = strncmp(current, "const ", 6) == 0 ? current + 6 : current;
+    snprintf(spelling, capacity, "%s", bare);
+}
+
 // An `auto` parameter written with a concept (`arithmetic x`): the argument's type must be of it, else the error is at
 // the argument, the call that asked.
 static bool smith_lang_concept_check(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
@@ -3680,13 +3731,16 @@ static bool smith_lang_concept_check(SmithLang *lang, const SmithHost *host, Smi
     if (concept_id == 0) return true;
     char spelling[512];
     smith_lang_it_spelling(*first, *count, spelling, sizeof spelling);
-    if (smith_lang_concept_holds(host, concept_id, spelling)) return true;
+    char judged[512];
+    snprintf(judged, sizeof judged, "%s", spelling);
+    smith_lang_element_spelling(host, generic, slot, judged, sizeof judged); // the element of `const arithmetic xs[:]`
+    if (smith_lang_concept_holds(host, concept_id, judged)) return true;
     const SmithLangGenToken *parameter = &smith_lang_gt.tokens[generic->first + generic->type_token[slot] + 1];
     char shown[256];
     smith_lang_infer_written(span, shown, sizeof shown);
     smith_lang_error(
         lang, host, smith_lang_infer_place(host, replay, span, location),
-        "`%s` is not `%s`: `%s`, the argument of `%s`, has the type `%s`; the parameter `%.*s` is `%s %.*s`", spelling,
+        "`%s` is not `%s`: `%s`, the argument of `%s`, has the type `%s`; the parameter `%.*s` is `%s %.*s`", judged,
         smith_lang_concepts[concept_id - 1], shown, smith_lang_str(generic->member), spelling, (int)parameter->length,
         smith_lang_gt_str(parameter), smith_lang_concepts[concept_id - 1], (int)parameter->length,
         smith_lang_gt_str(parameter));
@@ -3734,17 +3788,19 @@ static bool smith_lang_shape_check(SmithLang *lang, const SmithHost *host, Smith
     const SmithLangGenToken *parameter = &smith_lang_gt.tokens[shape.name_at];
     char shown[256];
     smith_lang_infer_written(span, shown, sizeof shown);
-    char want[96];
+    char want[128];
+    const char *word = generic->type_concept[slot] != 0 ? smith_lang_concepts[generic->type_concept[slot] - 1] : "auto";
     if (shape.kind == SmithLangShape_Slice) {
         char brackets[40] = "";
         for (unsigned i = 0; i < shape.dims && i < 8; i++) // the dimensions as written
             snprintf(brackets + strlen(brackets), sizeof brackets - strlen(brackets), "[:]");
-        snprintf(want, sizeof want, "a slice (`auto %.*s%s`)", (int)parameter->length, smith_lang_gt_str(parameter),
+        snprintf(want, sizeof want, "a slice (`%s %.*s%s`)", word, (int)parameter->length, smith_lang_gt_str(parameter),
                  brackets);
     } else if (shape.kind == SmithLangShape_Pointer) {
-        snprintf(want, sizeof want, "a pointer (`auto *%.*s`)", (int)parameter->length, smith_lang_gt_str(parameter));
+        snprintf(want, sizeof want, "a pointer (`%s *%.*s`)", word, (int)parameter->length,
+                 smith_lang_gt_str(parameter));
     } else {
-        snprintf(want, sizeof want, "a fixed array (`auto %.*s[N]`)", (int)parameter->length,
+        snprintf(want, sizeof want, "a fixed array (`%s %.*s[N]`)", word, (int)parameter->length,
                  smith_lang_gt_str(parameter));
     }
     smith_lang_error(lang, host, smith_lang_infer_place(host, replay, span, location),
@@ -3903,10 +3959,10 @@ static bool smith_lang_call_types(SmithLang *lang, const SmithHost *host, SmithL
         } else if (kind == SmithLangSlot_Auto) {
             good = smith_lang_infer_auto(lang, host, replay, generic, span, location, &types->first[k],
                                          &types->count[k]) &&
-                   smith_lang_concept_check(lang, host, replay, generic, k, span, location, &types->first[k],
-                                            &types->count[k]) &&
                    smith_lang_shape_check(lang, host, replay, generic, k, span, location, &types->first[k],
-                                          &types->count[k]);
+                                          &types->count[k]) &&
+                   smith_lang_concept_check(lang, host, replay, generic, k, span, location, &types->first[k],
+                                            &types->count[k]);
             if (good) smith_lang_shape_constify(host, generic, k, types, location);
         } else if (kind == SmithLangSlot_Function) {
             good = smith_lang_infer_function(lang, host, replay, generic, k, span, location, &types->first[k],

@@ -512,11 +512,11 @@ static bool smith_lang_slice_declaration(SmithLang *lang, const SmithHost *host,
                                          size_t *close, SmithLangSliceQuals *quals) {
     if (first->kind != SmithTokenKind_Identifier || smith_lang_slice_statement_word(first)) return false;
     // A generic's parameter `const auto xs[:]` is recorded as written: its instance writes the slice (issue #193).
-    if (lang->decl.generic && smith_lang_ident(first, "auto")) return false;
+    if (lang->decl.generic && (smith_lang_ident(first, "auto") || smith_lang_concept_word(first))) return false;
     for (size_t at = 1; at < smith_lang_slice_scan_max; at++) { // a declaration's type is a few tokens
         const SmithToken *token = smith_lang_slice_at(lang, host, first, at);
         if (token->kind == SmithTokenKind_Eof || token->foreign) return false;
-        if (lang->decl.generic && smith_lang_ident(token, "auto")) return false;
+        if (lang->decl.generic && (smith_lang_ident(token, "auto") || smith_lang_concept_word(token))) return false;
         if (at == 1 && smith_lang_punct(token, "::")) {
             const SmithLangBinding *named =
                 lang->bindings_count > 0 ? smith_lang_binding_find(lang, first->text, first->length) : nullptr;
@@ -667,12 +667,13 @@ static bool smith_lang_slice_begin_array(SmithLang *lang, const SmithHost *host,
 static bool smith_lang_slice_pointer_declaration(SmithLang *lang, const SmithHost *host, const SmithToken *first,
                                                  size_t *open, size_t *name, size_t *close) {
     if (first->kind != SmithTokenKind_Identifier || smith_lang_slice_statement_word(first)) return false;
-    if (lang->decl.generic && smith_lang_ident(first, "auto")) return false; // recorded as written, as `auto xs[:]`
+    if (lang->decl.generic && (smith_lang_ident(first, "auto") || smith_lang_concept_word(first)))
+        return false; // recorded as written, as `auto xs[:]`
     size_t at = 1;
     for (; at < smith_lang_slice_scan_max; at++) { // the element: types, stars and `::`
         const SmithToken *token = smith_lang_slice_at(lang, host, first, at);
         if (token->kind == SmithTokenKind_Eof || token->foreign) return false;
-        if (lang->decl.generic && smith_lang_ident(token, "auto")) return false;
+        if (lang->decl.generic && (smith_lang_ident(token, "auto") || smith_lang_concept_word(token))) return false;
         if (smith_lang_punct(token, "(")) break;
         if (at == 1 && smith_lang_punct(token, "::")) {
             const SmithLangBinding *named =

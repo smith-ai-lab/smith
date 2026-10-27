@@ -686,3 +686,43 @@ char s[_] = "abc";
         (identifier))
       (string_literal
         (string_content)))))
+
+================================================================================
+a concept as the element of a parameter
+================================================================================
+
+usize count(const arithmetic xs[:]);
+void bump(integer *p, floating m[:][:], arithmetic a[4]);
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (declaration
+    (primitive_type)
+    (function_declarator
+      (identifier)
+      (parameter_list
+        (parameter_declaration
+          (type_qualifier)
+          (type_identifier)
+          (array_declarator
+            (identifier))))))
+  (declaration
+    (primitive_type)
+    (function_declarator
+      (identifier)
+      (parameter_list
+        (parameter_declaration
+          (type_identifier)
+          (pointer_declarator
+            (identifier)))
+        (parameter_declaration
+          (type_identifier)
+          (array_declarator
+            (array_declarator
+              (identifier))))
+        (parameter_declaration
+          (type_identifier)
+          (array_declarator
+            (identifier)
+            (number_literal)))))))

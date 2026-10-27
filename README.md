@@ -403,6 +403,8 @@ export typeof(*p) first(const auto *p) { // `auto *p` and `auto xs[4]` work the 
 }
 ```
 
+A concept stands where `auto` does there too (`const arithmetic xs[:]`, `integer *p`): the element must be of it, and a call that gets it wrong is an error at the argument ([smith-lang-concepts](.agents/skills/smith-lang-concepts/SKILL.md)).
+
 [smith-lang-generics](.agents/skills/smith-lang-generics/SKILL.md).
 
 Types are values too, so a function over types runs in the compiler like any other:
