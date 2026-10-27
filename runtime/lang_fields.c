@@ -1283,6 +1283,13 @@ static void smith_lang_fields_alias(SmithLang *lang, const SmithHost *host, cons
         .location = smith_lang_gen_place(host, replay->generic, smith_lang_cx_token(at), replay->location)};
     char text[1024];
     if (!smith_lang_cx_text(&evaluation, at + 4, end, text, sizeof text)) return;
+    if (smith_lang_cx_word(kind, "Field")) { // a dropped branch leaves it unread: no fault of the module's
+        static const char *const unused[] = {"[", "[", "maybe_unused", "]", "]"};
+        uint32_t place = smith_lang_gen_place(host, replay->generic, smith_lang_cx_token(at), replay->location);
+        for (size_t i = 0; i < sizeof unused / sizeof unused[0]; i++) // five tokens
+            smith_lang_gen_put(lang, host, i == 2 ? SmithTokenKind_Identifier : SmithTokenKind_Punctuator, unused[i],
+                               place, replay->instance_id);
+    }
     size_t index = smith_lang_field_aliases.count++;
     snprintf(smith_lang_field_aliases.name[index], sizeof smith_lang_field_aliases.name[index], "%s",
              smith_lang_gt_str(smith_lang_cx_token(at + 2)));

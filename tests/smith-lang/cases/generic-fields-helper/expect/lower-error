@@ -1,0 +1,1 @@
+src/main.smith:14:28: in `for constexpr`: the condition must be a compile-time constant: `fields(T)` needs the compiler to read the struct: a raw lowering (`smith cc --smith-lower`) cannot write it

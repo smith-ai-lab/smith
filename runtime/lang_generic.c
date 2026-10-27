@@ -690,6 +690,9 @@ static bool smith_lang_generic_ahead(SmithLang *lang, const SmithHost *host, con
             over_type = over_type || smith_lang_ident(token, "type");
         }
         if (token->kind == SmithTokenKind_Eof) return false;
+        // An exported function with a `Field` in its head: no C header defines the type before the import (issue #181),
+        // so it is a function of the compiler, like one over `type`.
+        over_type = over_type || (lang->pending_export && smith_lang_ident(token, "Field") && depth <= 1);
         if (token->kind == SmithTokenKind_Punctuator && token->length == 1) {
             char c = token->text[0];
             if (c == '(') {

@@ -5319,6 +5319,42 @@ export i32 not_constant(constexpr type T, T *x, i32 n) {
 export void odd_name(constexpr type T) {
     const char *name = fields(T)[0].label;
 }
+==> generic-fields-helper/src/lib.smith <==
+module lib;
+
+import <stdio.h>;
+
+// An exported helper over a `Field`, called from a condition in an exported generic: a module that imports it needs
+// no `Field` before its import line, and the helper and the field it holds need no attribute under the warnings.
+export bool is_floating(Field f) {
+    return is_float(f.type);
+}
+
+export f64 sum_floats(constexpr type T, T *x) {
+    f64 total = 0;
+    for constexpr (usize i = 0; i < countof(fields(T)); i++) {
+        constexpr Field f = fields(T)[i];
+        if constexpr (is_floating(f)) total += (f64)x->[f];
+    }
+    return total;
+}
+==> generic-fields-helper/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import lib;
+
+typedef struct {
+    i32 id;
+    f32 weight;
+    f64 scale;
+} Sample;
+
+i32 main() {
+    Sample s = {1, 2.5f, 4};
+    c::printf("%g\n", lib::sum_floats(Sample, &s));
+    return 0;
+}
 ==> generic-fields-import/src/lib.smith <==
 module lib;
 
