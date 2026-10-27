@@ -318,11 +318,10 @@ typedef struct {
     // Whether the file being lowered has declared anything yet (an import must come first).
     bool (*declared)(void *context);
     const char *main_file; // the path of the file being lowered
-    // Objective-C (issue #318, runtime/lang_objc.c). Whether the angled header is an Objective-C framework header, as
-    // `import <AppKit/AppKit.h>;` writes it: if so, the path of the C file that declares its types and the index of
-    // its methods; both stay valid for the whole compile. False for a C header and for a host that cannot say. Null in
-    // a host without a compiler (the header pass), which then reads the import as a C header.
-    bool (*objc_index)(void *context, const char *header, const char **types, const char **index, uint32_t *length);
+    // Objective-C (issue #318, runtime/lang_objc.c). The facts of the compile that a header's index depends on, as
+    // lines `sysroot=<dir>`, `triple=<t>`, `framework=<dir>` (a -F folder) and `editor=1`; valid until the next call.
+    // Null in a host without a compiler (the header pass), which then reads every import as a C header.
+    const char *(*objc_facts)(void *context);
     // The text of the file being lowered, for the names it writes after `objc::` (null: none).
     const char *main_text;
     uint32_t main_text_length;
