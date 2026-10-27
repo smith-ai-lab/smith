@@ -453,6 +453,10 @@ export void test_errdefer_run(io::Io *io) {
     corpus_case(io, "errdefer-run");
 }
 
+export void test_braceless_for_generic_with_enums(io::Io *io) {
+    corpus_case(io, "braceless-for-generic-with-enums");
+}
+
 export void test_enum_builtin_option_result(io::Io *io) {
     corpus_case(io, "enum-builtin-option-result");
 }
