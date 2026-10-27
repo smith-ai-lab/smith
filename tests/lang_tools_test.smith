@@ -16,6 +16,17 @@ constexpr char prelude[_] =
     "wait $p; r=$?; kill $w 2>/dev/null; return $r; }; "
     "flags=\"-std=gnu23 -O1 -I $SMITH_REPO/.smith/include -I $SMITH_REPO/include\"; ";
 
+// `sweep dir` compiles every `.smith` file under `dir` (the working directory is the file's own folder, as a corpus
+// case's `src` is) with the debug line tables and the coverage mapping, in an `-O0` build (an `-O1` one of a tuple in
+// a prototype's scope crashes clang's own TBAA for a reason of its own, issue #561) and prints `BAD file status` for
+// each that was killed or crashed. A compile that fails with an error is the file's own business: a corpus holds
+// the files that must fail.
+constexpr char sweep[_] =
+    "sweep() { for f in $(cd $1 && find . -name '*.smith' | sort); do d=$1/$(dirname $f); "
+    "( cd $d && limited 40 smith cc -std=gnu23 -I $SMITH_REPO/.smith/include -I $SMITH_REPO/include -g "
+    "-fprofile-instr-generate -fcoverage-mapping -S $(basename $f) -o /dev/null >/dev/null 2>&1; r=$?; "
+    "[ $r -ge 128 ] && echo \"BAD $1/$f status $r\" ); done; }; ";
+
 // A module that imports arena (whose type function `slice_of` the lowering defines in the importer after its last
 // import) and has more than one constant: the function is a static one nothing calls, so the coverage mapping writes
 // an empty mapping for it, and walked up from its head, which the hook had put in a buffer with no includer, for ever.
@@ -65,4 +76,46 @@ export void test_a_bad_location_stops_the_hook_with_the_token(io::Io *io) {
     scratch::Run run = scratch::sh(&p, command);
     scratch::expect_contains("the check fired", run.out, "a location the token hook made does not reach a file");
     scratch::expect_contains("and names the token", run.out, "token '");
+}
+
+// Every source of the corpus (tests/smith-lang/cases: one folder per case, the file with a `module` line or without
+// one, the generics, tuples, slices and type values), each in a copy so nothing lands in the repository.
+export void test_every_corpus_source_ends_with_coverage_and_lines(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    const char *command = format::push(&io->arena, prelude, sweep,
+                                       "rm -rf cases; mkdir cases; for c in \"$SMITH_REPO\"/tests/smith-lang/cases/*/; "
+                                       "do [ -d $c/src ] && cp -R $c/src cases/$(basename $c); done; "
+                                       "for c in cases/*/; do sweep $PWD/$c; done; echo finished")
+                              .data;
+    scratch::Run run = scratch::sh(&p, command);
+    scratch::expect_lacks("nothing is killed or crashes", run.out, "BAD ");
+    scratch::expect_contains("every case was visited", run.out, "finished");
+}
+
+// The tests of smith and their fixtures (a build fixture, a prove program, an affine case) and the templates.
+export void test_every_test_and_template_source_ends_with_coverage_and_lines(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    const char *command = format::push(&io->arena, prelude, sweep,
+                                       "rm -rf tests templates; cp -R \"$SMITH_REPO\"/tests tests; "
+                                       "rm -rf tests/smith-lang; cp -R \"$SMITH_REPO\"/templates templates; "
+                                       "sweep $PWD/tests; sweep $PWD/templates; echo finished")
+                              .data;
+    scratch::Run run = scratch::sh(&p, command);
+    scratch::expect_lacks("nothing is killed or crashes", run.out, "BAD ");
+    scratch::expect_contains("everything was visited", run.out, "finished");
+}
+
+// The editor's tokens (clangd, `smith lsp diag`) and clang-tidy (`smith lint`) walk the same locations: each reads
+// every library in one process, under a limit of 150 s, and neither ends in a kill.
+export void test_the_editor_and_the_linter_read_every_library(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    const char *command = format::push(&io->arena, prelude,
+                                       "mkdir -p smith; cp \"$SMITH_REPO\"/lib/smith/[a-z]*.smith smith/; "
+                                       "rm -f smith/*_test.smith; "
+                                       "limited 150 smith lsp diag smith/*.smith >diag.out 2>&1; echo \"diag=$?\"; "
+                                       "limited 150 smith lint smith/*.smith >lint.out 2>&1; echo \"lint=$?\"")
+                              .data;
+    scratch::Run run = scratch::sh(&p, command);
+    scratch::expect_lacks("clangd ends", run.out, "diag=137");
+    scratch::expect_lacks("clang-tidy ends", run.out, "lint=137");
 }
