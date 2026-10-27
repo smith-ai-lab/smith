@@ -1,0 +1,24 @@
+// smith lint reads the project's header lookup flags into the Objective-C index of an imported header (#583): a
+// framework in a custom -F folder is found by the index compile, which no driver gave the flags to.
+module objc_lint_test;
+
+import smith::io;
+import smith::test;
+import scratch;
+
+constexpr char header[_] = "#import <Foundation/Foundation.h>\n@interface FakeThing : NSObject\n- (int)answer;\n@end\n";
+constexpr char program[_] = "module main;\n\nimport <Foundation/Foundation.h>;\nimport <Fake/Fake.h>;\n\n"
+                            "i32 main() {\n    objc::FakeThing *thing = nullptr;\n    (void)thing;\n    return 0;\n}\n";
+
+export void test_objc_lint_indexes_a_framework_of_a_custom_framework_folder(io::Io *io) {
+    scratch::Project p = scratch::project(io, "fake", nullptr);
+    (void)scratch::sh(
+        &p, "mkdir -p fw/Fake.framework/Headers && cp \"$SMITH_REPO/.clang-format\" \"$SMITH_REPO/.clang-tidy\" .");
+    scratch::write(&p, "fw/Fake.framework/Headers/Fake.h", header);
+    scratch::write(&p, "main.smith", program);
+    scratch::Run run = scratch::sh(&p, "smith lint main.smith -- -F fw 2>&1");
+    if (run.status != 0) {
+        test::note("lint said: %s", run.out);
+    }
+    scratch::expect_status("objc: lint: a framework in a -F folder is indexed", 0, &run);
+}

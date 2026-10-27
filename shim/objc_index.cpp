@@ -445,8 +445,16 @@ const char *smith::objcFacts(Preprocessor &pp, bool inEditor) {
     static std::string facts;
     const HeaderSearchOptions &options = pp.getHeaderSearchInfo().getHeaderSearchOpts();
     facts = "sysroot=" + options.Sysroot + "\ntriple=" + pp.getTargetInfo().getTriple().str() + "\n";
-    for (const HeaderSearchOptions::Entry &entry : options.UserEntries)
-        if (entry.IsFramework) facts += "framework=" + entry.Path + "\n";
+    for (const HeaderSearchOptions::Entry &entry : options.UserEntries) {
+        if (entry.IsFramework) {
+            facts += "framework=" + entry.Path + "\n";
+        } else { // the other header lookup flags, for the index compile of a lint or an editor (no driver gave them)
+            const char *name = entry.Group == frontend::Quoted   ? "iquote="
+                               : entry.Group == frontend::Angled ? "I="
+                                                                 : "isystem=";
+            facts += name + entry.Path + "\n";
+        }
+    }
     if (inEditor) facts += "editor=1\n";
     return facts.c_str();
 }

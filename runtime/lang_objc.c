@@ -141,7 +141,36 @@ static bool smith_lang_objc_own_path(char *out) {
 }
 
 // The flags the driver passed (SMITH_LANG_FLAGS, a line each; the standard is left out) and this binary.
-static bool smith_lang_objc_compile_flags(SmithLangObjcCompile *compile) {
+// Without SMITH_LANG_FLAGS (smith lint and smith lsp: clang-tidy and clangd run the compile) the header lookup flags of
+// the file's own command come from the facts: -isysroot, -F, -I, -isystem and -iquote, a line each.
+static void smith_lang_objc_flags_of_facts(const char *facts, char *out, size_t capacity) {
+    static const struct {
+        const char *fact;
+        const char *flag;
+        bool separate;
+    } kinds[] = {{"sysroot=", "-isysroot", true},
+                 {"framework=", "-F", false},
+                 {"I=", "-I", false},
+                 {"isystem=", "-isystem", false},
+                 {"iquote=", "-iquote", false}};
+    size_t used = 0;
+    out[0] = 0;
+    for (const char *line = facts; line != nullptr && *line != 0;) {
+        const char *end = strchr(line, '\n');
+        size_t size = end != nullptr ? (size_t)(end - line) : strlen(line);
+        for (size_t k = 0; k < sizeof kinds / sizeof kinds[0]; k++) {
+            size_t name = strlen(kinds[k].fact);
+            if (size <= name || strncmp(line, kinds[k].fact, name) != 0) continue;
+            int wrote = snprintf(out + used, capacity - used, kinds[k].separate ? "%s\n%.*s\n" : "%s%.*s\n",
+                                 kinds[k].flag, (int)(size - name), line + name);
+            if (wrote > 0 && (size_t)wrote < capacity - used) used += (size_t)wrote;
+            break;
+        }
+        line = end != nullptr ? end + 1 : nullptr;
+    }
+}
+
+static bool smith_lang_objc_compile_flags(SmithLangObjcCompile *compile, const char *facts) {
     const char *self = getenv("SMITH_LANG_SELF");
     const char *flags = getenv("SMITH_LANG_FLAGS");
     if (self != nullptr && strlen(self) < sizeof compile->self) {
@@ -149,7 +178,11 @@ static bool smith_lang_objc_compile_flags(SmithLangObjcCompile *compile) {
     } else if (!smith_lang_objc_own_path(compile->self)) { // clang-tidy and clangd: no driver set the variable
         return false;
     }
-    snprintf(compile->flags, sizeof compile->flags, "%s", flags != nullptr ? flags : "");
+    if (flags != nullptr) {
+        snprintf(compile->flags, sizeof compile->flags, "%s", flags);
+    } else {
+        smith_lang_objc_flags_of_facts(facts, compile->flags, sizeof compile->flags);
+    }
     compile->flag_count = 0;
     for (char *line = compile->flags; *line != 0;) { // by line
         char *end = strchr(line, '\n');
@@ -277,7 +310,7 @@ static bool smith_lang_objc_index(const char *facts, const char *header, size_t 
     char editor[4];
     bool in_editor = smith_lang_objc_fact(facts, "editor=", editor, sizeof editor) != nullptr;
     char folder[smith_lang_objc_path_max];
-    if (!smith_lang_objc_compile_flags(compile) ||
+    if (!smith_lang_objc_compile_flags(compile, facts) ||
         !smith_lang_objc_folder(compile, facts, header, folder, sizeof folder))
         return false;
     char file[smith_lang_objc_path_max];
