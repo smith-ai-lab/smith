@@ -161,7 +161,7 @@ export void test_text_write_stays_in_capacity() {
     char out[text::number_capacity + 8];
     __builtin_memset(out, 'x', sizeof out);
     test::check_equal(text::write_i64(out, i64_min), text::number_capacity); // the longest text
-    for (usize i = text::number_capacity; i < sizeof out; i++) {
+    for (usize i = text::number_capacity; i < sizeof out; i++) {             // braces until #462
         test::check_equal(out[i], 'x');
     }
 }
