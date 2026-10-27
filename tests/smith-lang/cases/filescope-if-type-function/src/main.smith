@@ -1,0 +1,26 @@
+// A branch for another target that holds the last import lines (issue #305): the definitions of the imports'
+// functions over `type` come after the last import line, and the dropped branch must not take them with its tokens.
+module main;
+
+import kinds;
+import target;
+import <stdio.h>;
+
+if constexpr (target::os == target::macos) {
+    import <mach/mach_time.h>;
+    import <dispatch/dispatch.h>;
+}
+
+export kinds::slice_of(T, 2) make(constexpr type T, usize rows, usize columns) {
+    struct smith_array_T_n result = {};
+    result.count[0] = rows;
+    result.count[1] = columns;
+    return result;
+}
+
+int main() {
+    f32 grid[:][:];
+    grid = make(f32, 4, 5);
+    c::printf("%zu %zu\n", countof(grid), countof(grid[0]));
+    return 0;
+}

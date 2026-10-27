@@ -1,0 +1,9 @@
+module kinds;
+
+// A function over `type`, which an importer runs where a type is computed (issue #107).
+export type slice_of(type element, usize count) {
+    type t = element;
+    for (usize i = 0; i < count; i++)
+        t = t[:];
+    return t;
+}

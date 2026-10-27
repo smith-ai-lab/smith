@@ -925,6 +925,10 @@ export void test_filescope_if_dropped_macro(io::Io *io) {
     corpus_case(io, "filescope-if-dropped-macro");
 }
 
+export void test_filescope_if_header(io::Io *io) {
+    corpus_case(io, "filescope-if-header");
+}
+
 export void test_filescope_if_imports(io::Io *io) {
     corpus_case(io, "filescope-if-imports");
 }
@@ -935,6 +939,10 @@ export void test_filescope_if_reflect(io::Io *io) {
 
 export void test_filescope_if_run(io::Io *io) {
     corpus_case(io, "filescope-if-run");
+}
+
+export void test_filescope_if_type_function(io::Io *io) {
+    corpus_case(io, "filescope-if-type-function");
 }
 
 export void test_foreign_extern(io::Io *io) {

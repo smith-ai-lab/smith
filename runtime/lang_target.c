@@ -97,6 +97,16 @@ static size_t smith_lang_target_header_prelude(const SmithLang *lang, char *out,
     return used;
 }
 
+// The definitions the conditionals around the imports need: the include lines come before everything else in a
+// header, so they define the facts they ask themselves (each definition is guarded, a second one is harmless).
+static size_t smith_lang_target_include_prelude(const SmithLang *lang, char *out, size_t capacity, size_t used) {
+    for (size_t i = 0; i < sizeof smith_lang_target_prelude_text / sizeof smith_lang_target_prelude_text[0]; i++) {
+        if ((lang->include_target_used & (1U << i)) != 0)
+            used = smith_lang_append(out, capacity, used, "%s", smith_lang_target_prelude_text[i]);
+    }
+    return used;
+}
+
 // The definitions the raw lowering's output needs, for the facts it used.
 static void smith_lang_target_prelude(const SmithLang *lang, FILE *out) {
     for (size_t i = 0; i < sizeof smith_lang_target_prelude_text / sizeof smith_lang_target_prelude_text[0]; i++) {
@@ -423,16 +433,23 @@ static bool smith_lang_ifc_skip(SmithLang *lang, const SmithHost *host, const ch
 
 // A branch that is dropped: the block that begins at the next token. A dropped branch at file scope holds import lines
 // the hook counted (issue #335), which are counted here as if they were seen.
+// What the last import line queues (the imports' functions over `type`) goes in front of the queue, so it is queued
+// after the branch's `}` is taken: queued earlier, the branch would drop it with its tokens.
 static bool smith_lang_ifc_drop_tokens(SmithLang *lang, const SmithHost *host, bool file_scope) {
     int depth = 0;
+    // the location of the last import line of the branch, or 0
+    uint32_t counted = 0;
     for (size_t i = 0; i < smith_lang_gt_max; i++) { // bounded by the pool
         if (smith_lang_peek(lang, host, 0, false)->kind == SmithTokenKind_Eof) return false;
         SmithToken token = smith_lang_take(lang, host);
         if (smith_lang_punct(&token, "{")) depth += 1;
-        if (smith_lang_punct(&token, "}") && --depth == 0) return true;
+        if (smith_lang_punct(&token, "}") && --depth == 0) {
+            if (counted != 0) smith_lang_imports_last(lang, host, counted);
+            return true;
+        }
         if (file_scope && depth == 1 && token.line_start && smith_lang_ident(&token, "import")) {
             lang->imports_seen += 1;
-            smith_lang_imports_last(lang, host, token.location);
+            counted = token.location;
         }
     }
     return false;
@@ -509,8 +526,24 @@ static void smith_lang_ifc_discard_else(SmithLang *lang, const SmithHost *host, 
     }
 }
 
+// A directive of a file-scope `if constexpr` also stands in the header's include lines, around the imports the
+// branches hold: the header keeps an import inside the conditional it was written in (smith_lang_kept_includes), so a
+// branch for another target is never included.
+static void smith_lang_include_dump(SmithLang *lang, const char *text, size_t length) {
+    bool opens = strncmp(text, "#if", 3) == 0; // the others belong to the chain on top
+    bool wanted = opens ? lang->ifc_opening : lang->ifc_count > 0 && lang->ifc[lang->ifc_count - 1].file_scope;
+    if (!lang->is_module || !wanted) return;
+    smith_lang_include_append(lang, text, length);
+    for (size_t i = 0; i < sizeof smith_lang_target_table / sizeof smith_lang_target_table[0]; i++) {
+        const SmithLangTargetEntry *entry = &smith_lang_target_table[i];
+        if (entry->fact >= 0 && entry->macro != nullptr && strstr(text, entry->macro) != nullptr)
+            lang->include_target_used |= 1U << (unsigned)entry->fact;
+    }
+}
+
 static void smith_lang_dump_line(SmithLang *lang, const char *text) {
     size_t length = strlen(text);
+    smith_lang_include_dump(lang, text, length);
     if (smith_lang_ifc_header(lang)) { // an exported inline function's body, or exports around which this is
         smith_lang_header_line(lang, text, length, 0);
         if (lang->aligned && smith_lang_header_append(lang, "\n", 1)) { // the interface read in memory: the next token

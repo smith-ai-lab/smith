@@ -370,8 +370,10 @@ static void smith_lang_body_write(SmithLang *lang) {
         fprintf(file, "#if __has_include(\"%s\")\n#endif\n", source);
     }
     if (lang->include_used > 0) { // the C headers the module's code needs: defined with the first thing a copy needs
-        fprintf(file, "//@ H SMITH_BODY_INCLUDES\n#if defined(SMITH_BODY_SMITH_BODY_INCLUDES)\n%.*s#endif\n",
-                (int)lang->include_used, lang->include_body);
+        char prelude[2048];
+        size_t prelude_used = smith_lang_target_include_prelude(lang, prelude, sizeof prelude, 0);
+        fprintf(file, "//@ H SMITH_BODY_INCLUDES\n#if defined(SMITH_BODY_SMITH_BODY_INCLUDES)\n%.*s%.*s#endif\n",
+                (int)prelude_used, prelude, (int)lang->include_used, lang->include_body);
     }
     for (size_t i = 0; i < lang->body_count; i++) { // the declarations, in the order of the file
         const SmithLangBodySpan *span = &smith_lang_body_spans[i];

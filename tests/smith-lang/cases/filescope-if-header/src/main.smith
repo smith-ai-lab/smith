@@ -1,0 +1,6 @@
+import report;
+
+int main(void) {
+    report::say();
+    return 0;
+}

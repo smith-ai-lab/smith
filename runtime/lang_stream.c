@@ -792,6 +792,13 @@ static size_t smith_lang_kept_includes(SmithLang *lang, char *out, size_t capaci
                 chain_kept[open[j]] = true;
         }
     }
+    bool any_chain = false;
+    for (size_t i = 0; i < line_count; i++)
+        any_chain = any_chain || (lines[i].kind == SmithLangLine_Open && chain_kept[i]);
+    if (any_chain) {
+        used = smith_lang_target_include_prelude(lang, out, capacity, used);
+        lang->include_prelude = lang->include_target_used;
+    }
     for (size_t i = 0; i < line_count; i++) {
         bool keep = lines[i].kind == SmithLangLine_Import
                         ? lines[i].import < lang->cimports_count && lang->cimport_keep[lines[i].import]
@@ -899,6 +906,7 @@ static void smith_lang_assemble_header(SmithLang *lang, const char *main_file) {
     used = smith_lang_append(out, capacity, used, "// clang-format on\n");
     used = smith_lang_append(out, capacity, used, "#pragma once\n");
     used += smith_lang_assemble_includes(lang, out + used, capacity - used, true);
+    lang->header_target_used &= ~lang->include_prelude; // the include lines defined these above
     used = smith_lang_target_header_prelude(lang, out, capacity, used);
     used = smith_lang_append(out, capacity, used, "#ifdef __cplusplus\nextern \"C\" {\n#endif\n");
     smith_lang_tuple_hoist(smith_lang_header_body, &lang->header_used, smith_lang_header_max);

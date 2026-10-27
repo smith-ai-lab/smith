@@ -1498,6 +1498,9 @@ static int smith_spawn_with(const char *program, char *const *args, const posix_
 static bool smith_lang_write_probe(const SmithLang *lang, const char *path) {
     FILE *file = fopen(path, "w");
     if (file == nullptr) return false;
+    char prelude[2048]; // the facts the conditionals ask
+    size_t prelude_used = smith_lang_target_include_prelude(lang, prelude, sizeof prelude, 0);
+    fprintf(file, "%.*s", (int)prelude_used, prelude);
     for (size_t at = 0; at < lang->include_used;) { // each line
         size_t end = at;
         while (end < lang->include_used && lang->include_body[end] != '\n')

@@ -91,7 +91,9 @@ What the header keeps of the source (written by the plain lexer, `runtime/lang_t
     `tests/headers_test.smith` (the generated header of every library compiles on its own, as C and as C++) finds it.
   A conditional around imports (`#if defined(__linux__) import <linux/x.h>; #else import <sys/x.h>; #endif`) is
   copied with the imports it holds: when one import of a conditional is kept, so are the others of it (they are other
-  spellings of it), and a conditional with none kept is left out. The `#if 0` text is left out.
+  spellings of it), and a conditional with none kept is left out. The `#if 0` text is left out. A file-scope `if constexpr` around imports
+  ([smith-target-facts](smith-target-facts.md)) is the same conditional, written as `#if SMITH_TARGET_OS == 1` after the definition of the fact: a
+  header includes the imports of the branch for another target only under that `#if`, and none when no export uses them.
 - **Inline functions.** `export inline T f(…) { … }` is written to the header as `static inline T game_replay_f(…) { … }`,
   body included, and the module defines it the same way: it has no symbol and no `__asm__` label, so C, C++ and `.smith`
   importers compile it themselves. Its body may use only what the header has: the module's other exports, the module's

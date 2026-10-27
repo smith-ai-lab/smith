@@ -3561,6 +3561,34 @@ int main(void) {
     c::printf("%d\n", errors::current() >= 0 ? 1 : 0);
     return 0;
 }
+==> filescope-if-header/src/main.smith <==
+import report;
+
+int main(void) {
+    report::say();
+    return 0;
+}
+==> filescope-if-header/src/report.smith <==
+// The header keeps an import inside the conditional the source has it in (issue #305): the import of the branch for
+// macOS is no part of a header that an export of stdio's alone needs, and a header that did include it would fail
+// on Linux. Only the imports an export uses a name of are kept.
+module report;
+
+import target;
+import <stdio.h>;
+
+if constexpr (target::os == target::macos) {
+    import <sys/types.h>;
+    import <sys/stat.h>;
+}
+
+export c::FILE *output(void) {
+    return nullptr;
+}
+
+export void say(void) {
+    c::printf("report %d\n", output() == nullptr ? 1 : 0);
+}
 ==> filescope-if-imports/src/clock.smith <==
 // Imports chosen by the target (issue #335): a branch that holds only imports may sit among the import lines, and the
 // header of the branch not taken is never read.
@@ -3693,6 +3721,43 @@ export i32 both(void) {
         sum = width() + extra;
     }
     return sum + platform();
+}
+==> filescope-if-type-function/src/kinds.smith <==
+module kinds;
+
+// A function over `type`, which an importer runs where a type is computed (issue #107).
+export type slice_of(type element, usize count) {
+    type t = element;
+    for (usize i = 0; i < count; i++)
+        t = t[:];
+    return t;
+}
+==> filescope-if-type-function/src/main.smith <==
+// A branch for another target that holds the last import lines (issue #305): the definitions of the imports'
+// functions over `type` come after the last import line, and the dropped branch must not take them with its tokens.
+module main;
+
+import kinds;
+import target;
+import <stdio.h>;
+
+if constexpr (target::os == target::macos) {
+    import <mach/mach_time.h>;
+    import <dispatch/dispatch.h>;
+}
+
+export kinds::slice_of(T, 2) make(constexpr type T, usize rows, usize columns) {
+    struct smith_array_T_n result = {};
+    result.count[0] = rows;
+    result.count[1] = columns;
+    return result;
+}
+
+int main() {
+    f32 grid[:][:];
+    grid = make(f32, 4, 5);
+    c::printf("%zu %zu\n", countof(grid), countof(grid[0]));
+    return 0;
 }
 ==> foreign-extern/src/sys/world.smith <==
 module sys::world;

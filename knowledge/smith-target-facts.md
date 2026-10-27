@@ -68,10 +68,11 @@ is compiled for.
   its imports' headers are never loaded. A compile is offered the `if` and every token of the branch only in a file
   whose text has `if constexpr` (`smith_lang_fast`). Imports keep their order: a branch of only imports may sit among
   the import lines, and the hook counts an indented `import` line as one (`countImportLines`), the lowering counting a
-  dropped branch's as seen, so the last import is still where the imports' type functions and bodies are used. The raw
+  dropped branch's as seen (after its `}` is taken, so what the last import queues is not dropped with it), so the last import is still where the imports' type functions and bodies are used. The raw
   lowering writes `#if`/`#elif`/`#else`/`#endif` with the braces dropped, and the module's header gets the same
   directives around its exports (with the `SMITH_TARGET_*` definitions), so a C includer's preprocessor chooses as
-  the module's compile did. An `if` at file scope is invalid C, so no file without a `module` line changes meaning.
+  the module's compile did; the `#if` chains also stand around the imports they hold in the header's include lines
+  (with the definition of the facts they ask), so a header never includes the header of another target (#305). A function before a file-scope `if` is measured by `readability-function-size` with the branch after it (`// NOLINTNEXTLINE(readability-function-size)`, lib/smith/net.smith). An `if` at file scope is invalid C, so no file without a `module` line changes meaning.
   clang-format reads `import <a/b.h>;` inside a branch as code (`<a / b.h>`) until its patch learns the form (#305).
 - **Files that contain `if constexpr`** are offered every token of a function body by the compiler (a keyword is not an
   identifier, which is all a sparse host is offered), so such a file lowers a little slower; others are not changed.

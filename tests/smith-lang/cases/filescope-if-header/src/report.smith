@@ -1,0 +1,20 @@
+// The header keeps an import inside the conditional the source has it in (issue #305): the import of the branch for
+// macOS is no part of a header that an export of stdio's alone needs, and a header that did include it would fail
+// on Linux. Only the imports an export uses a name of are kept.
+module report;
+
+import target;
+import <stdio.h>;
+
+if constexpr (target::os == target::macos) {
+    import <sys/types.h>;
+    import <sys/stat.h>;
+}
+
+export c::FILE *output(void) {
+    return nullptr;
+}
+
+export void say(void) {
+    c::printf("report %d\n", output() == nullptr ? 1 : 0);
+}
