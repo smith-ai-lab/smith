@@ -1,0 +1,18 @@
+module main;
+
+import <Foundation/Foundation.h>;
+import <stdio.h>;
+
+// A pool is a scope: begin it, and defer its end. What is autoreleased inside it is released at the end.
+i32 main(void) {
+    {
+        objc::Pool pool = objc::pool_begin();
+        defer objc::pool_end(pool);
+        objc::NSString *text = objc::NSString::stringWithUTF8String("inside the pool");
+        c::printf("%s\n", objc::NSString::UTF8String(text));
+    }
+    objc::Pool again = objc::pool_begin();
+    defer objc::pool_end(again);
+    c::printf("%lu\n", (unsigned long)objc::NSString::length(objc::NSString::stringWithUTF8String("abc")));
+    return 0;
+}

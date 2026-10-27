@@ -601,6 +601,30 @@ i32 main(io::Io *io) {
 length 16, count 1
 ```
 
+An object you own (`alloc`, `new`, `copy`, `mutableCopy`) is an `objc::Owned(...)`: read `.object`, release it once with `defer objc::release(x);` (a second release is a compile error), and wrap a scope in a pool. `objc::string(s)` copies a `str` to an owned `NSString`; `objc::str(ns)` copies its UTF-8 bytes back.
+
+```smith project=objc_owned run
+module main;
+
+import <Foundation/Foundation.h>;
+import smith::format;
+import smith::io;
+
+i32 main(io::Io *io) {
+    objc::Pool pool = objc::pool_begin();
+    defer objc::pool_end(pool);
+    objc::Owned(objc::NSString) title = objc::string("smith");
+    defer objc::release(title);
+    str back = objc::str(title.object);
+    format::print(&io->console, "length ", (u64)objc::NSString::length(title.object), ", bytes ", (u64)countof(back), "\n");
+    return 0;
+}
+```
+
+```output project=objc_owned
+length 5, bytes 5
+```
+
 [smith-lang-objc](.agents/skills/smith-lang-objc/SKILL.md).
 
 ## A module has no warnings

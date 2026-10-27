@@ -1,0 +1,1 @@
+src/main.smith:9:11: smith-affine: 'list.token' is used again; it was already used at line 14

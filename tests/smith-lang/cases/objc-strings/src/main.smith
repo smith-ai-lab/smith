@@ -1,0 +1,20 @@
+module main;
+
+import <Foundation/Foundation.h>;
+import <stdio.h>;
+
+// objc::string copies a str into a new NSString (owned); objc::str copies an NSString's UTF-8 bytes through the
+// allocator in force. A literal and a str variable both work.
+i32 main(void) {
+    objc::Owned(objc::NSString) from_literal = objc::string("caf\xc3\xa9");
+    defer objc::release(from_literal);
+    str word = "smith";
+    objc::Owned(objc::NSString) from_str = objc::string(word);
+    defer objc::release(from_str);
+
+    str back = objc::str(from_literal.object);
+    c::printf("%lu %lu\n", (unsigned long)objc::NSString::length(from_literal.object), (unsigned long)countof(back));
+    str again = objc::str(from_str.object);
+    c::printf("%.*s %lu\n", (int)countof(again), again.data, (unsigned long)countof(again));
+    return 0;
+}

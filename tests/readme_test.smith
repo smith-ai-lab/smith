@@ -443,6 +443,10 @@ export void test_readme_project_objc(io::Io *io) {
     project_case(io, "objc");
 }
 
+export void test_readme_project_objc_owned(io::Io *io) {
+    project_case(io, "objc_owned");
+}
+
 export void test_readme_project_pack(io::Io *io) {
     project_case(io, "pack");
 }

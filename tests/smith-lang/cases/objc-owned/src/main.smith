@@ -1,0 +1,26 @@
+module main;
+
+import <Foundation/Foundation.h>;
+import <stdio.h>;
+
+// alloc, new, copy and mutableCopy return an owned object: its pointer is `.object`, read as often as you like, and the
+// one `objc::release` is deferred. retain turns a borrowed object into an owned one.
+i32 main(void) {
+    objc::Owned(objc::NSMutableArray) list = objc::NSMutableArray::new();
+    defer objc::release(list);
+    objc::NSMutableArray::addObject(list.object, objc::NSString::stringWithUTF8String("one"));
+    objc::NSMutableArray::addObject(list.object, objc::NSString::stringWithUTF8String("two"));
+
+    objc::Owned(objc::NSMutableArray) copy = objc::NSMutableArray::mutableCopy(list.object);
+    defer objc::release(copy);
+    objc::NSMutableArray::addObject(copy.object, objc::NSString::stringWithUTF8String("three"));
+
+    objc::NSString *borrowed = objc::NSString::stringWithUTF8String("kept");
+    objc::Owned(objc::NSString) kept = objc::retain(borrowed);
+    defer objc::release(kept);
+
+    c::printf("%lu %lu %s\n", (unsigned long)objc::NSArray::count((objc::NSArray *)list.object),
+              (unsigned long)objc::NSArray::count((objc::NSArray *)copy.object),
+              objc::NSString::UTF8String(kept.object));
+    return 0;
+}

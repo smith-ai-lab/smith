@@ -35,6 +35,7 @@ constexpr size_t smith_lang_objc_set_size = 16384; // a power of two
 static char smith_lang_objc_text[smith_lang_objc_text_max];
 static uint64_t smith_lang_objc_instance_set[smith_lang_objc_set_size];
 static uint64_t smith_lang_objc_emitted_set[smith_lang_objc_set_size];
+static uint64_t smith_lang_objc_owned_set[smith_lang_objc_set_size]; // the classes whose objc_Owned_ struct is written
 
 typedef struct {
     char *text;
@@ -341,6 +342,37 @@ static bool smith_lang_objc_import(SmithLang *lang, const SmithHost *host, const
 
 // ---- Names: objc::X and objc::Class::method
 
+// `objc::Owned(objc::X)` is the struct `objc_Owned_X`: a pointer to the object and the token that the affine check
+// follows (the pointer is read freely, the token once, by `objc::release`). False when it is not that form.
+static bool smith_lang_objc_owned_type(SmithLang *lang, const SmithHost *host, const SmithToken *name,
+                                       const SmithToken *taken, SmithToken *result) {
+    const SmithToken *open = smith_lang_peek(lang, host, 0, false);
+    const SmithToken *inner = smith_lang_peek(lang, host, 1, false);
+    const SmithToken *colons = smith_lang_peek(lang, host, 2, false);
+    const SmithToken *type = smith_lang_peek(lang, host, 3, false);
+    const SmithToken *close = smith_lang_peek(lang, host, 4, false);
+    if (!smith_lang_punct(open, "(") || inner->kind != SmithTokenKind_Identifier ||
+        !smith_lang_equals(inner->text, inner->length, "objc") || !smith_lang_punct(colons, "::") ||
+        type->kind != SmithTokenKind_Identifier || !smith_lang_punct(close, ")"))
+        return false;
+    static const char prefix[] = "objc_Owned_";
+    if (sizeof prefix - 1 + type->length + 1 > sizeof lang->tmp) {
+        lang->broken = true;
+        return false;
+    }
+    SmithToken class_name = *type;
+    for (int i = 0; i < 4; i++)
+        smith_lang_take(lang, host);
+    smith_lang_take(lang, host);
+    memcpy(lang->tmp, prefix, sizeof prefix - 1);
+    memcpy(lang->tmp + sizeof prefix - 1, class_name.text, class_name.length);
+    size_t total = sizeof prefix - 1 + class_name.length;
+    lang->tmp[total] = 0;
+    *result = smith_lang_made(name, lang->tmp, total, false);
+    result->location = taken->location;
+    return true;
+}
+
 // `objc::X` is `objc_X`; `objc::Class::method` is `objc_Class_method`. `taken` is the name after the first `::`.
 static void smith_lang_objc_name(SmithLang *lang, const SmithHost *host, const SmithToken *name,
                                  const SmithToken *taken, SmithToken *result) {
@@ -353,6 +385,18 @@ static void smith_lang_objc_name(SmithLang *lang, const SmithHost *host, const S
     memcpy(lang->tmp, prefix, sizeof prefix - 1);
     memcpy(lang->tmp + sizeof prefix - 1, taken->text, taken->length);
     total = sizeof prefix - 1 + taken->length;
+    bool macro = smith_lang_equals(taken->text, taken->length, "release");
+    if (smith_lang_equals(taken->text, taken->length, "string") &&
+        smith_lang_punct(smith_lang_peek(lang, host, 0, false), "(") &&
+        smith_lang_peek(lang, host, 1, false)->kind == SmithTokenKind_String) { // objc::string("text"): its length
+        static const char literal[] = "objc_string_literal";
+        memcpy(lang->tmp, literal, sizeof literal);
+        total = sizeof literal - 1;
+        macro = true;
+    }
+    if (smith_lang_equals(taken->text, taken->length, "Owned") &&
+        smith_lang_objc_owned_type(lang, host, name, taken, result))
+        return;
     const SmithToken *colons = smith_lang_peek(lang, host, 0, false);
     const SmithToken *method = smith_lang_peek(lang, host, 1, false);
     if (smith_lang_punct(colons, "::") && method->kind == SmithTokenKind_Identifier && !method->foreign &&
@@ -364,7 +408,9 @@ static void smith_lang_objc_name(SmithLang *lang, const SmithHost *host, const S
         total += member.length;
     }
     lang->tmp[total] = 0;
-    *result = smith_lang_made(name, lang->tmp, total, false);
+    // `release` is a macro of the output (it uses the token of its argument): a name from C, whose macro expands.
+    if (macro) smith_lang_allow(lang, taken->location);
+    *result = smith_lang_made(name, lang->tmp, total, macro);
     result->location = taken->location;
 }
 
@@ -530,6 +576,10 @@ static bool smith_lang_objc_set_has(const uint64_t *set, const char *text, size_
 
 // ---- The wrappers
 
+static bool smith_lang_objc_word(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+}
+
 typedef struct {
     const char *kind; // "+" or "-"
     const char *name;
@@ -572,6 +622,53 @@ static void smith_lang_objc_type(SmithLangObjcOut *out, const char *type, size_t
     smith_lang_objc_put(out, type, length);
 }
 
+// The class `objc::Owned(...)` of a method's result: the receiver's class for `instancetype` and `id` (what `alloc`,
+// `new`, `copy` and `mutableCopy` return), else the class of the result pointer. False for a result that is no object.
+static bool smith_lang_objc_owned_class(const SmithLangObjcMethod *method, const char *self, size_t self_length,
+                                        const char **name, size_t *length) {
+    if (memchr(method->flags, 'o', method->flags_length) == nullptr) return false;
+    const char *type = method->types[0];
+    size_t size = method->type_lengths[0];
+    if ((size == 5 && memcmp(type, "@self", 5) == 0) || (size == 13 && memcmp(type, "smith_objc_id", 13) == 0)) {
+        *name = self;
+        *length = self_length;
+        return true;
+    }
+    if (size < 8 || memcmp(type, "objc_", 5) != 0 || memcmp(type + size - 2, " *", 2) != 0) return false;
+    *name = type + 5;
+    *length = size - 7;
+    for (size_t i = 0; i < *length; i++)
+        if (!smith_lang_objc_word((*name)[i])) return false;
+    return *length > 0;
+}
+
+// The owned form of a class, once: the struct that holds the object and the token the affine check follows, and
+// `objc::retain`, which adds a reference to a borrowed object. The pointer is read freely (a borrow); the token is used
+// once, by `objc::release`, so a second release is a compile error. (A forgotten release is not found: issue #438.)
+static void smith_lang_objc_owned(SmithLangObjcOut *out, const char *name, size_t length) {
+    if (smith_lang_objc_set_add(smith_lang_objc_owned_set, name, length)) return;
+    smith_lang_objc_puts(out, "typedef struct { objc_");
+    smith_lang_objc_put(out, name, length);
+    smith_lang_objc_puts(out, " *object; objc_OwnedToken token; } objc_Owned_");
+    smith_lang_objc_put(out, name, length);
+    smith_lang_objc_puts(out, ";\nstatic inline __attribute__((overloadable)) objc_Owned_");
+    smith_lang_objc_put(out, name, length);
+    smith_lang_objc_puts(out, " objc_retain(objc_");
+    smith_lang_objc_put(out, name, length);
+    smith_lang_objc_puts(out, " *object) { smith_objc_retain(object); return (objc_Owned_");
+    smith_lang_objc_put(out, name, length);
+    smith_lang_objc_puts(out, "){object, {0}}; }\n");
+}
+
+// The start of the return of an owned result: the struct around the pointer the send answers with.
+static void smith_lang_objc_owned_return(SmithLangObjcOut *out, const char *owned, size_t owned_length) {
+    smith_lang_objc_puts(out, " return (objc_Owned_");
+    smith_lang_objc_put(out, owned, owned_length);
+    smith_lang_objc_puts(out, "){(objc_");
+    smith_lang_objc_put(out, owned, owned_length);
+    smith_lang_objc_puts(out, " *)((");
+}
+
 // One wrapper. `class_method`: the receiver is the class, found by name once.
 static void smith_lang_objc_wrapper(SmithLangObjcOut *out, const char *self, size_t self_length,
                                     const SmithLangObjcMethod *method, bool class_method, bool renamed) {
@@ -579,8 +676,16 @@ static void smith_lang_objc_wrapper(SmithLangObjcOut *out, const char *self, siz
     if (memchr(method->flags, 's', method->flags_length) != nullptr) send = "smith_objc_send_stret";
     if (memchr(method->flags, 'f', method->flags_length) != nullptr) send = "smith_objc_send_fpret";
     bool is_void = method->type_lengths[0] == 4 && memcmp(method->types[0], "void", 4) == 0;
+    const char *owned = nullptr;
+    size_t owned_length = 0;
+    bool is_owned = smith_lang_objc_owned_class(method, self, self_length, &owned, &owned_length);
+    if (is_owned) smith_lang_objc_owned(out, owned, owned_length);
     smith_lang_objc_puts(out, "static inline ");
-    smith_lang_objc_type(out, method->types[0], method->type_lengths[0], self, self_length);
+    if (is_owned) {
+        smith_lang_objc_puts(out, "objc_Owned_");
+        smith_lang_objc_put(out, owned, owned_length);
+    } else
+        smith_lang_objc_type(out, method->types[0], method->type_lengths[0], self, self_length);
     smith_lang_objc_puts(out, " objc_");
     smith_lang_objc_put(out, self, self_length);
     smith_lang_objc_puts(out, renamed ? "_class_" : "_");
@@ -612,7 +717,10 @@ static void smith_lang_objc_wrapper(SmithLangObjcOut *out, const char *self, siz
         smith_lang_objc_put(out, self, self_length);
         smith_lang_objc_puts(out, ";");
     }
-    smith_lang_objc_puts(out, is_void ? " ((" : " return ((");
+    if (is_owned)
+        smith_lang_objc_owned_return(out, owned, owned_length);
+    else
+        smith_lang_objc_puts(out, is_void ? " ((" : " return ((");
     smith_lang_objc_type(out, method->types[0], method->type_lengths[0], self, self_length);
     smith_lang_objc_puts(out, class_method ? " (*)(smith_objc_id, smith_objc_sel" : " (*)(");
     if (!class_method) {
@@ -631,7 +739,7 @@ static void smith_lang_objc_wrapper(SmithLangObjcOut *out, const char *self, siz
         snprintf(number, sizeof number, ", a%zu", i);
         smith_lang_objc_puts(out, number);
     }
-    smith_lang_objc_puts(out, "); }\n");
+    smith_lang_objc_puts(out, is_owned ? "), {0}}; }\n" : "); }\n");
 }
 
 // Calls `emit` shape: pass 1 collects the instance names of the chain, pass 2 writes the wrappers.
@@ -648,6 +756,7 @@ static void smith_lang_objc_class(const SmithLang *lang, SmithLangObjcOut *out, 
         smith_lang_objc_put(out, name, length);
         smith_lang_objc_puts(out, "\");\n");
     }
+    smith_lang_objc_owned(out, name, length);
     for (int pass = 0; pass < 2; pass++) {
         for (size_t o = 0; o < chain.count; o++) {
             SmithLangObjcSpan spans[8];
@@ -685,10 +794,6 @@ static void smith_lang_objc_class(const SmithLang *lang, SmithLangObjcOut *out, 
     }
 }
 
-static bool smith_lang_objc_word(char c) {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
-}
-
 // The names after `objc::` in the file's text: the classes and protocols whose methods are written out.
 static size_t smith_lang_objc_mentions(const SmithHost *host, char names[][96], size_t capacity) {
     size_t count = 0;
@@ -714,6 +819,54 @@ static size_t smith_lang_objc_mentions(const SmithHost *host, char names[][96], 
     return count;
 }
 
+// What every file that imports an Objective-C header gets, in C: the token of an owned object, `objc::release` (a
+// macro that uses the token of its argument, so a second one is the affine check's error), a pool as a scope and the
+// two runtime calls they stand on. A macro and `__attribute__((overloadable))` are the output's own C, never the
+// file's.
+constexpr char smith_lang_objc_prelude[] =
+    "extern void smith_objc_release(void *) __asm__(\"_objc_release\");\n"
+    "extern void *smith_objc_retain_raw(void *) __asm__(\"_objc_retain\");\n"
+    "extern void *smith_objc_pool_push(void) __asm__(\"_objc_autoreleasePoolPush\");\n"
+    "extern void smith_objc_pool_pop(void *) __asm__(\"_objc_autoreleasePoolPop\");\n"
+    "#define smith_objc_retain(object) ((void)smith_objc_retain_raw((void *)(object)))\n"
+    "[[clang::annotate(\"smith::affine\")]] typedef struct { char unused; } objc_OwnedToken;\n"
+    "[[clang::annotate(\"smith::affine\")]] typedef struct { void *pool; } objc_Pool;\n"
+    "static inline void smith_objc_release_owned(void *object, objc_OwnedToken token) {\n"
+    "    (void)token;\n"
+    "    smith_objc_release(object);\n"
+    "}\n"
+    "#define objc_release(owned) smith_objc_release_owned((owned).object, (owned).token)\n"
+    "static inline objc_Pool objc_pool_begin(void) { return (objc_Pool){smith_objc_pool_push()}; }\n"
+    "static inline void objc_pool_end(objc_Pool pool) { smith_objc_pool_pop(pool.pool); }\n";
+
+// `objc::string(s)` copies a `str` into a new NSString (owned); `objc::str(ns)` copies an NSString's UTF-8 bytes into
+// memory from the allocator in force (malloc is what the thread's allocator answers; a refusal stops the program).
+constexpr char smith_lang_objc_strings[] =
+    "struct smith_array_const_char_n { const char *data; __SIZE_TYPE__ count[1]; };\n" // what `str` is
+    "extern char smith_objc_class_symbol_NSString __asm__(\"_OBJC_CLASS_$_NSString\");\n"
+    "extern void *smith_objc_allocate(unsigned long) __asm__(\"_malloc\");\n"
+    "static inline objc_Owned_NSString objc_string(struct smith_array_const_char_n text) {\n"
+    "    smith_objc_id raw = ((smith_objc_id (*)(smith_objc_id, smith_objc_sel))smith_objc_send)(\n"
+    "        (smith_objc_id)&smith_objc_class_symbol_NSString, smith_objc_selector(\"alloc\"));\n"
+    "    raw = ((smith_objc_id (*)(smith_objc_id, smith_objc_sel, const void *, unsigned long, unsigned long))\n"
+    "               smith_objc_send)(raw, smith_objc_selector(\"initWithBytes:length:encoding:\"), text.data,\n"
+    "                                text.count[0], 4);\n"
+    "    return (objc_Owned_NSString){(objc_NSString *)raw, {0}};\n"
+    "}\n"
+    "#define objc_string_literal(text) objc_string((struct smith_array_const_char_n){(text), {sizeof(text) - 1}})\n"
+    "static inline struct smith_array_const_char_n objc_str(objc_NSString *text) {\n"
+    "    unsigned long length = ((unsigned long (*)(objc_NSString *, smith_objc_sel, unsigned long))smith_objc_send)(\n"
+    "        text, smith_objc_selector(\"lengthOfBytesUsingEncoding:\"), 4);\n"
+    "    const char *bytes = ((const char *(*)(objc_NSString *, smith_objc_sel))smith_objc_send)(\n"
+    "        text, smith_objc_selector(\"UTF8String\"));\n"
+    "    char *copy = (char *)smith_objc_allocate(length + 1);\n"
+    "    if (copy == nullptr) __builtin_trap();\n"
+    "    for (unsigned long i = 0; i < length; i++) copy[i] = bytes[i];\n"
+    "    copy[length] = 0;\n"
+    "    struct smith_array_const_char_n result = {copy, {length}};\n"
+    "    return result;\n"
+    "}\n";
+
 // At the last import: the types of each index, then the wrappers and the linker options.
 static void smith_lang_objc_define(SmithLang *lang, const SmithHost *host) {
     if (lang->objc.count == 0 || lang->objc.defined || host->include_text == nullptr) return;
@@ -728,8 +881,19 @@ static void smith_lang_objc_define(SmithLang *lang, const SmithHost *host) {
         smith_lang_objc_puts(&out, "\\\"\");\n");
     }
     smith_lang_objc_puts(&out, "__asm__(\".linker_option \\\"-lobjc\\\"\");\n");
+    memset(smith_lang_objc_owned_set, 0, sizeof smith_lang_objc_owned_set);
+    smith_lang_objc_puts(&out, smith_lang_objc_prelude);
     static char names[smith_lang_objc_names_max][96];
     size_t count = smith_lang_objc_mentions(host, names, smith_lang_objc_names_max);
+    SmithLangObjcSpan string_span[1];
+    bool has_string = smith_lang_objc_blocks(lang, 'c', "NSString", 8, string_span, 1) > 0;
+    bool names_string = false;
+    for (size_t i = 0; i < count; i++)
+        names_string = names_string || strcmp(names[i], "NSString") == 0;
+    if (has_string && !names_string && count < smith_lang_objc_names_max) {
+        memcpy(names[count], "NSString", 9); // objc::string and objc::str are NSString's
+        count += 1;
+    }
     for (size_t i = 0; i < count; i++) {
         SmithLangObjcSpan spans[1];
         size_t length = strlen(names[i]);
@@ -737,6 +901,12 @@ static void smith_lang_objc_define(SmithLang *lang, const SmithHost *host) {
             smith_lang_objc_class(lang, &out, 'c', names[i], length);
         else if (smith_lang_objc_blocks(lang, 'p', names[i], length, spans, 1) > 0)
             smith_lang_objc_class(lang, &out, 'p', names[i], length);
+    }
+    if (has_string) {
+        smith_lang_objc_puts(&out, smith_lang_objc_strings);
+        // `str` is this struct from here on: the lowering names it and does not define it again.
+        if (lang->slice.tag_count < 32)
+            snprintf(lang->slice.tags[lang->slice.tag_count++], sizeof lang->slice.tags[0], "smith_array_const_char_n");
     }
     if (out.full) lang->broken = true;
     host->include_text(host->context, out.text, (uint32_t)out.used);

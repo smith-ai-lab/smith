@@ -397,6 +397,10 @@ export void test_error_objc_argument(io::Io *io) {
     corpus_case(io, "error-objc-argument");
 }
 
+export void test_error_objc_double_release(io::Io *io) {
+    corpus_case(io, "error-objc-double-release");
+}
+
 export void test_error_range_for(io::Io *io) {
     corpus_case(io, "error-range-for");
 }
@@ -419,6 +423,18 @@ export void test_objc_call(io::Io *io) {
 
 export void test_objc_naming(io::Io *io) {
     corpus_case(io, "objc-naming");
+}
+
+export void test_objc_owned(io::Io *io) {
+    corpus_case(io, "objc-owned");
+}
+
+export void test_objc_pool(io::Io *io) {
+    corpus_case(io, "objc-pool");
+}
+
+export void test_objc_strings(io::Io *io) {
+    corpus_case(io, "objc-strings");
 }
 
 export void test_objc_window(io::Io *io) {

@@ -1,0 +1,11 @@
+module main;
+
+import <Foundation/Foundation.h>;
+
+// A second release of one owned object is the affine check's error. (A forgotten release is not found yet: #438.)
+i32 main(void) {
+    objc::Owned(objc::NSMutableArray) list = objc::NSMutableArray::new();
+    objc::release(list);
+    objc::release(list);
+    return 0;
+}
