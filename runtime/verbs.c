@@ -856,38 +856,54 @@ static int smith_test_print_selection(SmithChangedResult result, const char *fil
 // `--changed [--base <ref>] [--dry-run | --list [<base> [<head>]]]` (runtime/changed.c): takes them out of the
 // arguments and, unless the whole suite runs, adds `--test <names>` for the tests the change can affect. Returns an
 // exit status when there is nothing to run (nothing selected, a dry run, or a failure), else -1.
-static int smith_test_take_changed(SmithVerbArgs *split, const char *self) {
-    SmithChangedBuffer selection = {};
-    const char *base = nullptr;
-    bool changed = false;
-    bool dry_run = false;
-    bool list = false;
-    bool cheapest = false;
-    const char *head = nullptr;
+typedef struct {
+    const char *base;
+    const char *head;
+    bool changed;
+    bool dry_run;
+    bool list;
+    bool cheapest;
+} SmithTestChangedArgs;
+
+// Takes the `--changed` family out of the arguments of `smith test`; the rest stays for the runner.
+static SmithTestChangedArgs smith_test_changed_args(SmithVerbArgs *split) {
+    SmithTestChangedArgs found = {};
     size_t kept = 0;
     for (size_t i = 0; i < split->own_count; i++) { // bounded by smith_build_args_max
         char *arg = split->own[i];
         if (strcmp(arg, "--changed") == 0) {
-            changed = true;
+            found.changed = true;
         } else if (strcmp(arg, "--cheapest-first") == 0) {
-            cheapest = true;
+            found.cheapest = true;
         } else if (strcmp(arg, "--dry-run") == 0) {
-            dry_run = true;
+            found.dry_run = true;
         } else if (strcmp(arg, "--list") == 0 && smith_test_wants_list(split)) {
-            list = true;
+            found.list = true;
             for (size_t refs = 0; refs < 2 && i + 1 < split->own_count && split->own[i + 1][0] != '-'; refs++) {
-                if (base == nullptr)
-                    base = split->own[++i];
+                if (found.base == nullptr)
+                    found.base = split->own[++i];
                 else
-                    head = split->own[++i];
+                    found.head = split->own[++i];
             }
         } else if (strcmp(arg, "--base") == 0 && i + 1 < split->own_count) {
-            base = split->own[++i];
+            found.base = split->own[++i];
         } else {
             split->own[kept++] = arg;
         }
     }
     split->own_count = kept;
+    return found;
+}
+
+static int smith_test_take_changed(SmithVerbArgs *split, const char *self) {
+    SmithChangedBuffer selection = {};
+    SmithTestChangedArgs given = smith_test_changed_args(split);
+    const char *base = given.base;
+    const char *head = given.head;
+    bool changed = given.changed;
+    bool dry_run = given.dry_run;
+    bool list = given.list;
+    bool cheapest = given.cheapest;
     if (!changed) {
         if (cheapest) smith_die(smith_exit_usage, "--cheapest-first goes with --changed", "test");
         if (dry_run || base != nullptr) smith_die(smith_exit_usage, "--dry-run and --base go with --changed", "test");
