@@ -94,7 +94,7 @@ class SmithNaming final : public RenamerClangTidyCheck {
         // to ask for, and Objective-C naming is not smith's to enforce: ivars, properties and methods are skipped.
         if (!Decl->getDeclName().isIdentifier() || isObjC(Decl)) return std::nullopt;
         if (isTuplePart(Decl) || isEnumPart(Decl)) return std::nullopt;
-        if (isTypeName(Decl)) return std::nullopt;
+        if (isTypeName(Decl, SM)) return std::nullopt;
         const smith::WrittenName *written = writtenName(Decl, SM);
         if (written == nullptr || written->member.empty()) return (inner.*reach(DeclFn{}))(Decl, SM);
         // The first declaration of an exported function is the lowering's copy of its prototype, which is in no file
@@ -177,21 +177,25 @@ class SmithNaming final : public RenamerClangTidyCheck {
     // Types are capitalized (issue #366): a concept `Bool Ordered(constexpr Type T)`, a type function over `Type`, and
     // a `Type T` parameter of either are names of types, so the case rule of functions and variables does not apply to
     // them; every other name keeps the project's rule. The test is the declaration's own shape, never a pattern.
-    static bool isTypeFunction(const FunctionDecl *function) {
-        const StringRef name = function->getName();
-        if (name.empty() || !clang::isUppercase(name[0])) return false;
+    bool isTypeFunction(const FunctionDecl *function, const SourceManager &SM) const {
+        // A module's function is `stats_Ordered` to the compiler and `Ordered` to the source.
+        StringRef name = function->getName();
+        const smith::WrittenName *written = writtenName(function, SM);
+        if (written != nullptr && !written->member.empty()) name = judgedName(written->member);
+        // The standard concepts are defined in every module that uses one under their C names (`smith_concepts_Int`).
+        if (name.empty() || !(clang::isUppercase(name[0]) || name.starts_with("smith_concepts_"))) return false;
         if (isHandle(function->getReturnType())) return true;
         for (const ParmVarDecl *each : function->parameters())
             if (isHandle(each->getType())) return true;
         return false;
     }
 
-    static bool isTypeName(const NamedDecl *Decl) {
-        if (const auto *function = dyn_cast<FunctionDecl>(Decl)) return isTypeFunction(function);
+    bool isTypeName(const NamedDecl *Decl, const SourceManager &SM) const {
+        if (const auto *function = dyn_cast<FunctionDecl>(Decl)) return isTypeFunction(function, SM);
         const auto *parameter = dyn_cast<ParmVarDecl>(Decl);
         if (parameter == nullptr || !isHandle(parameter->getType())) return false;
         const auto *owner = dyn_cast_or_null<FunctionDecl>(parameter->getDeclContext());
-        return owner != nullptr && isTypeFunction(owner) && !parameter->getName().empty() &&
+        return owner != nullptr && isTypeFunction(owner, SM) && !parameter->getName().empty() &&
                clang::isUppercase(parameter->getName()[0]);
     }
 

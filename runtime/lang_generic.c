@@ -4345,7 +4345,10 @@ static bool smith_lang_call_types(SmithLang *lang, const SmithHost *host, SmithL
                    smith_lang_shape_check(lang, host, replay, generic, k, span, location, &types->first[k],
                                           &types->count[k]) &&
                    smith_lang_concept_check(lang, host, replay, generic, k, span, location, &types->first[k],
-                                            &types->count[k]);
+                                            &types->count[k]) &&
+                   (k < slots || // an argument of the rest pack: `Num... rest` judges each
+                    smith_lang_pack_concept_check(lang, host, replay, generic, span, location, &types->first[k],
+                                                  &types->count[k]));
             if (good) smith_lang_shape_constify(host, generic, k, types, location);
         } else if (kind == SmithLangSlot_Function) {
             good = smith_lang_infer_function(lang, host, replay, generic, k, span, location, &types->first[k],
@@ -4358,9 +4361,6 @@ static bool smith_lang_call_types(SmithLang *lang, const SmithHost *host, SmithL
             smith_lang_error(lang, host, location, "the type argument of `%s` is missing or too long",
                              smith_lang_str(generic->member));
             good = false;
-        } else if (k >= slots) { // an argument of the rest pack: `Num... rest` judges each
-            good = smith_lang_pack_concept_check(lang, host, replay, generic, span, location, &types->first[k],
-                                                 &types->count[k]);
         }
     }
     SmithLangParam params[smith_lang_call_params_max];
