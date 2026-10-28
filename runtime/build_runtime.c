@@ -3980,9 +3980,9 @@ static const char *const *smith_module_flags(SmithBuild *b, const char *source) 
     if (!smith_is_module_source(source)) return smith_list(b, nullptr);
     // Everything in a module starts at zero (issue #415): a local never written is zero in every profile, the debug
     // profile's pattern included, because this flag comes after the profile's.
-    return smith_module_prefixed(
-        b, smith_module_baseline, "-Werror=",
-        smith_module_prefixed(b, smith_app_state.defaults.errors, "-Werror=", smith_list(b, "-ftrivial-auto-var-init=zero", nullptr)));
+    return smith_module_prefixed(b, smith_module_baseline, "-Werror=",
+                                 smith_module_prefixed(b, smith_app_state.defaults.errors, "-Werror=",
+                                                       smith_list(b, "-ftrivial-auto-var-init=zero", nullptr)));
 }
 
 static const char *const *smith_module_advisories(SmithBuild *b, const char *source) {
