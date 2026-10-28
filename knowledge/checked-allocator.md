@@ -35,9 +35,12 @@ any allocator, `mem::set_allocator(&checked.base)`, so `malloc`, `mem::alloc` an
   because a module import of `smith::mem` makes the C names of its headers (`index`) errors in a file that uses them as
   variables.
 - **A test with no io runs on a region** (issue #240): the runner sets a growing arena over the checked allocator as the
-  current allocator, so what the test allocates is the region's and given back as a whole; blocks are not individually
-  checked, so a leak, a double free or a foreign free in such a test is not reported unless the run has `--no-region`
-  (the fixture of `tests/mem_checked_test.smith` is run with it). The chunks themselves are checked.
+  region (`mem::set_region`), the allocator of smith's code only: `mem::alloc`, `mem::free`, `format::push` and a
+  library's result are the region's and given back as a whole; blocks are not individually checked, so a leak, a double
+  free or a foreign free in them is not reported unless the run has `--no-region` (the fixture of
+  `tests/mem_checked_test.smith` is run with it). The chunks themselves are checked. `malloc` is not interposed to the
+  region (the C library's own allocations, such as the caches behind float printing, outlive it): a `malloc` in a test
+  goes to the checked allocator, where a leak is reported.
 - **The C library's own blocks are not leaks.** `libc` keeps some of what it allocates for the life of the process (the
   cache of its number printing, `__Balloc_D2A`). At the end of a test each live block is looked at with `dladdr`: walking
   out from the allocator past its own machinery (this module, the handlers, the system's allocator), if the first

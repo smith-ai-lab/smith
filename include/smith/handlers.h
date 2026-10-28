@@ -29,6 +29,14 @@ SmithAllocator *smith_handlers_set_allocator(SmithAllocator *allocator);
 // The allocator of the calling thread, null when none is set.
 SmithAllocator *smith_handlers_allocator(void);
 
+// The region of the calling thread: an allocator that only smith's own code asks (smith::mem: mem::alloc, mem::free), never
+// malloc, so the C library's own allocations (the caches behind number printing, in system libraries) stay on the
+// thread's allocator, which outlives the region. Null: mem goes to the thread's allocator. Returns the one it had.
+SmithAllocator *smith_handlers_set_region(SmithAllocator *region);
+
+// The region of the calling thread, null when none is set.
+SmithAllocator *smith_handlers_region(void);
+
 // The files of the calling thread: open, read, write and close of a file descriptor, which open, read, write, close,
 // syscall (SYS_read, SYS_write) and, through funopen, fopen, fdopen and freopen reach while one is set. Every
 // descriptor from 3 up goes to it (a fake decides what its descriptors are); 0, 1 and 2 are the console's. No files

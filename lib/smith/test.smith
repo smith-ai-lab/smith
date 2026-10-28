@@ -1741,6 +1741,7 @@ bool checked_active;
 // The io test's region (below): a failed test jumps out of run_io with the region's allocator still set, and its frame
 // is gone, so the runner puts the allocator that was there back before it reports.
 c::SmithAllocator *region_outside;
+c::SmithAllocator *region_before; // the region that was set before a test's own (none, in the runner)
 bool region_active;
 
 arena::Arena region_arena; // the region of a test with no io: chunks from the checked allocator, given back after
@@ -1750,51 +1751,30 @@ bool region_owned;                 // the region is region_arena, not an io's ar
 void region_end() {
     if (!region_active) return;
     region_active = false;
-    c::smith_mem_set_allocator(region_outside); // NOLINT(smith-module-library): mem by its C names (issue #405)
-    if (!region_owned) return;
+    if (!region_owned) {
+        c::smith_mem_set_allocator(region_outside); // NOLINT(smith-module-library): mem by its C names (issue #405)
+        return;
+    }
     region_owned = false;
+    c::smith_mem_set_region(region_before); // NOLINT(smith-module-library): mem by its C names (issue #405)
     arena::release(&region_arena);
 }
 
 constexpr usize region_first = 1U << 16; // the first chunk of a test's region
 
-// The region of a test with no io (issue #240): what the test gets from the current allocator (mem::alloc,
-// format::push, a library's result, malloc) belongs to a growing arena, which the runner releases when the test ends,
-// so nothing is freed one block at a time. Its chunks come from the checked allocator, when there is one. --no-region
-// leaves the checked allocator itself as the test's current allocator (the tests of mem::checked need it).
-// The C library keeps the blocks its number printing took from malloc (the free lists of its floating point
-// conversion) for the next conversion, and malloc is the current allocator: a block taken inside a region would dangle
-// when the region ends (a heap-use-after-free in the next test that prints a float). Printing the extremes once, before
-// the first region, makes the library take the blocks from the allocator that outlives every test.
-bool libc_primed;
-
-void prime_libc() {
-    if (libc_primed) return;
-    libc_primed = true;
-    constexpr usize room = 2048;
-    constexpr usize places_count = 9;
-    const i32 places[places_count] = {0, 1, 3, 6, 17, 40, 100, 400, 1100};
-    char text[room];
-    f64 value = 1.0e-320;
-    for (usize step = 0; step < 700; step++) { // the magnitudes of f64, each with a mantissa of its own
-        value = value * 1.9 + 0.1234567 * (f64)(step & 7U);
-        if (value > 1.0e305) value = 3.0e-310;
-        for (usize at = 0; at < places_count; at++) {
-            __builtin_snprintf(text, room, "%.*f", places[at], value);
-            __builtin_snprintf(text, room, "%.*e", places[at], value);
-            __builtin_snprintf(text, room, "%.*g", places[at], value);
-        }
-    }
-}
-
+// The region of a test with no io (issue #240): what smith's code gets from mem (mem::alloc, format::push, a library's
+// result) belongs to a growing arena, which the runner releases when the test ends, so nothing is freed one block at a
+// time. It is smith code's allocator only: `malloc` never reaches it (the C library's own allocations, the caches
+// behind float printing, must outlive the test), so a malloc in a test goes to the checked allocator, where a leak is
+// reported. The region's chunks come from the checked allocator, when there is one. --no-region leaves the checked
+// allocator itself as the allocator of mem too (the tests of mem::checked need it).
 void region_begin(const Options *options) {
     if (options->no_region) return;
-    prime_libc();
     region_arena = arena::growing(region_first, checked_active ? &checked_state.base : nullptr);
     region_base = arena::allocator(&region_arena);
     region_owned = true;
     // NOLINTBEGIN(smith-module-library): mem by its C names, as checked_begin (issue #405)
-    region_outside = c::smith_mem_set_allocator(&region_base.base);
+    region_before = c::smith_mem_set_region(&region_base.base);
     // NOLINTEND(smith-module-library)
     region_active = true;
 }

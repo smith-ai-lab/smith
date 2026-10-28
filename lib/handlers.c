@@ -59,6 +59,19 @@ SmithAllocator *smith_handlers_set_allocator(SmithAllocator *allocator) {
     return previous;
 }
 
+// The region: read only by smith::mem, never by an interposed function, so it needs no counter or readiness check.
+static thread_local SmithAllocator *smith_handlers_region_table;
+
+SmithAllocator *smith_handlers_set_region(SmithAllocator *region) {
+    SmithAllocator *previous = smith_handlers_region_table;
+    smith_handlers_region_table = region;
+    return previous;
+}
+
+SmithAllocator *smith_handlers_region(void) {
+    return smith_handlers_region_table;
+}
+
 SmithAllocator *smith_handlers_allocator(void) {
     return smith_handlers_current();
 }

@@ -95,6 +95,10 @@ allocator; `checked` (D2a), `failing` and the profiles (D2b).
   `option` for code that refuses, and the `malloc` itself keeps C's nullable contract. A refusal is a checked failure that
   names the size, for the cases "if you can handle it locally it is a result or an option, otherwise you let it crash":
   allocation is the second kind.
+- **A region is the allocator of smith's code only** (issue #240): `mem::set_region` sets a second, thread-local allocator
+  that `mem::alloc`, `mem::try_alloc` and `mem::free` use before the thread's allocator, and `malloc` never reads. The
+  test runner's region is one, so the C library's own allocations (interposed `malloc` called from system libraries)
+  stay on the thread's allocator, which outlives the region.
 - **Arenas grow or are fixed.** `arena::growing(first, backing)` takes a chunk twice the current block (or what the push
   needs) from its backing (the OS through `mmap` by default, or a `SmithAllocator`) when full, so `push` and `push_slice`
   never return null; `Arena.grown` is the bytes beyond the first chunk; chunks are a list kept across `reset` and the end
