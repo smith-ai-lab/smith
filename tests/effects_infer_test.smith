@@ -650,3 +650,8 @@ export void test_ownership_is_recorded_in_the_summary(io::Io *io) {
                          "T\tName\tinternal\nlinked\n",
                          run.out);
 }
+
+// The same rules for the idiom written on a function pointer type with `annotate_type`.
+export void test_ownership_type_bad_c(io::Io *io) {
+    effects_case(io, "ownership_type_bad.c");
+}

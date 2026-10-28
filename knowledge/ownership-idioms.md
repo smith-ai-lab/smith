@@ -20,8 +20,7 @@ code, so nothing is written). smith infers an idiom where it can read the code a
   the parameter list, which clang keeps through typedefs as it keeps effects; a field or a variable of a function pointer type takes the attribute too.
 - **Accepted**: `returns_owned(f)` names a declared function with one pointer parameter; `returns_borrowed(n)` has
   `n` a parameter that is a pointer or a slice; each applies only to a function returning a pointer or a slice; at
-  most one per declaration. Anything else is `error: smith-ownership: ...` naming the rule. The `annotate_type`
-  form is recorded and not validated.
+  most one per declaration. Anything else is `error: smith-ownership: ...` naming the rule, on the type form too.
 - **Recorded** in the object's `.fx` summary, beside the effects: `O <symbol> <idiom> <place>` for a function and
   `T <name> <idiom> <place>` for a typedef, idiom `owned:<f>`, `borrowed:<n>` or `internal`. A reader that does not know
   the tags skips the lines and a summary without them reads as before, so the format needed no version.

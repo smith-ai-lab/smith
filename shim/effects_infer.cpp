@@ -407,8 +407,50 @@ struct ReturnsInternalAttr final : OwnershipAttr {
     }
 };
 
+// The same rules for the idiom written on a function pointer type (`[[clang::annotate_type("smith::owns:...")]]`),
+// which no attribute handler sees: the text of the error, or empty when the idiom is fine.
+std::string typeIdiomError(ASTContext &context, const FunctionType *type, llvm::StringRef idiom) {
+    auto [kind, argument] = idiom.split(':');
+    if (kind != "owned" && kind != "borrowed" && kind != "internal")
+        return "an ownership idiom is returns_owned, returns_borrowed or returns_internal, not `" + idiom.str() + "`";
+    std::string scoped = "smith::returns_" + kind.str();
+    if (!isPointerOrSlice(type->getReturnType()))
+        return "`" + scoped + "` is for a function that returns a pointer or a slice, and this one returns `" +
+               type->getReturnType().getAsString() + "`";
+    if (kind == "internal") return "";
+    if (kind == "owned") {
+        const FunctionDecl *release = nullptr;
+        for (const NamedDecl *found : context.getTranslationUnitDecl()->lookup(&context.Idents.get(argument)))
+            if (const auto *function = dyn_cast<FunctionDecl>(found)) release = function;
+        if (release == nullptr)
+            return "`returns_owned(" + argument.str() + ")`: `" + argument.str() + "` is not a declared function";
+        if (release->getNumParams() != 1 || !release->getParamDecl(0)->getType()->isPointerType())
+            return "`returns_owned(" + argument.str() + ")`: `" + argument.str() + "` must take one pointer";
+        return "";
+    }
+    unsigned index = 0;
+    if (argument.getAsInteger(10, index))
+        return "`returns_borrowed` takes the number of a parameter: `returns_borrowed(1)`";
+    const auto *proto = type->getAs<FunctionProtoType>();
+    unsigned count = proto == nullptr ? 0 : proto->getNumParams();
+    if (index < 1 || index > count)
+        return "`returns_borrowed(" + std::to_string(index) + ")`: there is no parameter " + std::to_string(index) +
+               " (the function has " + std::to_string(count) + ")";
+    QualType parameter = proto->getParamType(index - 1);
+    if (!isPointerOrSlice(parameter))
+        return "`returns_borrowed(" + std::to_string(index) + ")`: parameter " + std::to_string(index) + " is `" +
+               parameter.getAsString() + "`, not a pointer or a slice";
+    return "";
+}
+
 // The ownership a declaration states, "owned:free", "borrowed:1" or "internal" (empty when none): from its own
 // attribute, or from the annotation clang keeps on a function pointer type.
+bool hasOwnershipAttr(const Decl *decl) {
+    for (const auto *attr : decl->specific_attrs<AnnotateAttr>())
+        if (attr->getAnnotation().starts_with(ownsPrefix)) return true;
+    return false;
+}
+
 std::string ownershipOf(const Decl *decl) {
     for (const Decl *redecl : decl->redecls())
         for (const auto *attr : redecl->specific_attrs<AnnotateAttr>())
@@ -895,6 +937,16 @@ class Analysis {
         if (sm.isInSystemHeader(decl->getLocation())) return;
         std::string idiom = ownershipOf(decl);
         if (idiom.empty()) return;
+        if (named != nullptr && !sm.isInSystemHeader(decl->getLocation()) && !hasOwnershipAttr(decl)) {
+            const FunctionType *type = ownerFunctionType(decl);
+            std::string message = type == nullptr ? "an ownership annotation is for a function pointer"
+                                                  : typeIdiomError(context, type, idiom);
+            if (!message.empty()) {
+                unsigned id = engine.getCustomDiagID(DiagnosticsEngine::Error, "smith-ownership: %0");
+                engine.Report(decl->getLocation(), id) << message;
+                return;
+            }
+        }
         std::string symbol = function != nullptr ? symbolOf(function) : cast<NamedDecl>(decl)->getNameAsString();
         if (!owned.insert(symbol).second) return;
         ownerships.push_back({function != nullptr ? 'O' : 'T', symbol, idiom, decl->getLocation()});

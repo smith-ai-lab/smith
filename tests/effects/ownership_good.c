@@ -11,3 +11,5 @@ typedef char *(*Name)(int) [[clang::annotate_type("smith::owns:internal")]];
 [[smith::returns_owned(free)]] char *own_dup(const char *s) {
     return strdup(s);
 }
+typedef char *(*Duplicate)(const char *) [[clang::annotate_type("smith::owns:owned:free")]];
+typedef char *(*Find)(const char *, int) [[clang::annotate_type("smith::owns:borrowed:1")]];
