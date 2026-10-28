@@ -1,6 +1,6 @@
-module affine_loop_counter_changed;
+module linear_loop_counter_changed;
 
-export [[smith::affine]] typedef struct {
+export [[std::linear]] typedef struct {
     u64 bits;
 } Key;
 export typedef struct {
@@ -10,23 +10,17 @@ export typedef struct {
 export u64 draw(Key key) {
     return key.bits;
 }
-export void split(Key key, Key keys[3]) {
-    (void)key;
-    (void)keys;
-}
-export void split_all(Key key, Key keys[:]) {
-    (void)key;
-    (void)keys;
-}
-export u64 take(Key *key) {
-    return key->bits;
-}
+export struct { Key, Key } split(Key key);
+export typeof(Key[:]) split_many(Key key, usize count);
+export u64 pair_sum(struct { Key, Key } pair);
+export u64 total(Key keys[:]);
+export u64 peek(const Key keys[:]);
+export u64 take(Key *key);
 
 u64 skipping(Key key) {
-    Key keys[3];
-    split(key, keys);
+    Key keys[:] = split_many(key, 3);
     u64 total = 0;
-    for (usize i = 0; i < 3; i++) {
+    for (usize i = 0; i < countof(keys); i++) {
         total += draw(keys[i]);
         i++;
     }

@@ -1,0 +1,54 @@
+module linear_move_slice;
+
+export [[std::linear]] typedef struct {
+    u64 bits;
+} Key;
+export typedef struct {
+    Key key;
+    u64 n;
+} Holder;
+export u64 draw(Key key) {
+    return key.bits;
+}
+export struct { Key, Key } split(Key key);
+export typeof(Key[:]) split_many(Key key, usize count);
+export u64 pair_sum(struct { Key, Key } pair);
+export u64 total(Key keys[:]);
+export u64 peek(const Key keys[:]);
+export u64 take(Key *key);
+
+u64 moved(Key key) {
+    Key keys[:] = split_many(key, 3);
+    return total(keys);
+}
+u64 moved_twice(Key key) {
+    Key keys[:] = split_many(key, 3);
+    u64 a = total(keys);
+    return a + total(keys);
+}
+u64 moved_after_element(Key key) {
+    Key keys[:] = split_many(key, 3);
+    u64 a = draw(keys[0]);
+    return a + total(keys);
+}
+u64 returned(Key key, usize n) {
+    Key keys[:] = split_many(key, n);
+    return total(keys);
+}
+typeof(Key[:]) pass_on(Key key) {
+    Key keys[:] = split_many(key, 3);
+    return keys;
+}
+u64 never(Key key) {
+    Key keys[:] = split_many(key, 3);
+    return 0;
+}
+u64 consume_param(Key keys[:]) {
+    u64 sum = 0;
+    for (usize i = 0; i < countof(keys); i++)
+        sum += draw(keys[i]);
+    return sum;
+}
+u64 forget_param(Key keys[:]) {
+    return 0;
+}

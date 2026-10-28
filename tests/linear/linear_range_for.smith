@@ -1,6 +1,6 @@
-module affine_range_for;
+module linear_range_for;
 
-export [[smith::affine]] typedef struct {
+export [[std::linear]] typedef struct {
     u64 bits;
 } Key;
 export u64 draw(Key key) {

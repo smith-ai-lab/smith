@@ -1,3 +1,3 @@
 status 1
-affine_loop_outer.smith:28:23: error: smith-affine: 'key' is used in a loop, so it would be used once per iteration
-affine_loop_outer.smith:28:23: note: write the plain loop `for (usize i = 0; i < countof(keys); i++)` and use `keys[i]` once in its body, or reassign the value in the loop (`key = next[0];`)
+linear_loop_outer.smith:28:23: error: smith-linear: 'key' is used in a loop, so it would be used once per iteration
+linear_loop_outer.smith:28:23: note: write the plain loop `for (usize i = 0; i < countof(keys); i++)` and use `keys[i]` once in its body, or reassign the value in the loop (`key = next[0];`)

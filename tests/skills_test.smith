@@ -359,8 +359,8 @@ export void test_skill_smith_lang(io::Io *io) {
     skill_case(io, "smith-lang");
 }
 
-export void test_skill_smith_lang_affine(io::Io *io) {
-    skill_case(io, "smith-lang-affine");
+export void test_skill_smith_lang_linear(io::Io *io) {
+    skill_case(io, "smith-lang-linear");
 }
 
 export void test_skill_smith_lang_array_dims(io::Io *io) {

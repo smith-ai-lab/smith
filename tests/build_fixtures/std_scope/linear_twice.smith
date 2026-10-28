@@ -1,6 +1,6 @@
-module affine_twice;
+module linear_twice;
 
-[[std::affine]] typedef struct {
+[[std::linear]] typedef struct {
     i32 id;
 } Handle;
 

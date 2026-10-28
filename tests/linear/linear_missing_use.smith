@@ -1,0 +1,51 @@
+module linear_missing_use;
+
+export [[std::linear]] typedef struct {
+    u64 bits;
+} Key;
+export typedef struct {
+    Key key;
+    u64 n;
+} Holder;
+export u64 draw(Key key) {
+    return key.bits;
+}
+export struct { Key, Key } split(Key key);
+export typeof(Key[:]) split_many(Key key, usize count);
+export u64 pair_sum(struct { Key, Key } pair);
+export u64 total(Key keys[:]);
+export u64 peek(const Key keys[:]);
+export u64 take(Key *key);
+
+u64 used(Key key) {
+    return draw(key);
+}
+u64 ends(Key key) {
+    Key other = key;
+    return 1;
+}
+u64 early(Key key, int c) {
+    if (c) return 0;
+    return draw(key);
+}
+u64 one_branch(Key key, int c) {
+    u64 n = 0;
+    if (c) n = draw(key);
+    return n;
+}
+u64 both_branches(Key key, int c) {
+    if (c) return draw(key);
+    return draw(key) + 1;
+}
+void leave(usize n) {
+    for (usize i = 0; i < n; i++) {
+        Key inner = {i};
+        if (i == 2) break;
+        if (i == 3) continue;
+        (void)draw(inner);
+    }
+}
+void declared_later(int c) {
+    Key made;
+    if (c) made = (Key){1};
+}

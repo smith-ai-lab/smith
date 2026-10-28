@@ -21,7 +21,7 @@ export [[std::alloc]] i32 reserve(void);
     return twice(x);
 }
 
-[[std::affine]] typedef struct {
+[[std::linear]] typedef struct {
     i32 id;
 } Handle;
 

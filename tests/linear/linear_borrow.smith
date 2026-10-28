@@ -1,0 +1,34 @@
+module linear_borrow;
+
+export [[std::linear]] typedef struct {
+    u64 bits;
+} Key;
+export typedef struct {
+    Key key;
+    u64 n;
+} Holder;
+export u64 draw(Key key) {
+    return key.bits;
+}
+export struct { Key, Key } split(Key key);
+export typeof(Key[:]) split_many(Key key, usize count);
+export u64 pair_sum(struct { Key, Key } pair);
+export u64 total(Key keys[:]);
+export u64 peek(const Key keys[:]);
+export u64 take(Key *key);
+
+u64 borrows(Key key) {
+    Key keys[:] = split_many(key, 3);
+    u64 a = peek(keys);
+    return a + total(keys);
+}
+u64 borrowed_only(Key key) {
+    Key keys[:] = split_many(key, 3);
+    return peek(keys);
+}
+u64 reads_field(const Key keys[:]) {
+    return keys[0].bits + keys[1].bits;
+}
+u64 uses_up(const Key keys[:]) {
+    return draw(keys[0]);
+}

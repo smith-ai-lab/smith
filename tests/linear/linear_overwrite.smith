@@ -1,0 +1,28 @@
+module linear_overwrite;
+
+export [[std::linear]] typedef struct {
+    u64 bits;
+} Key;
+export typedef struct {
+    Key key;
+    u64 n;
+} Holder;
+export u64 draw(Key key) {
+    return key.bits;
+}
+export struct { Key, Key } split(Key key);
+export typeof(Key[:]) split_many(Key key, usize count);
+export u64 pair_sum(struct { Key, Key } pair);
+export u64 total(Key keys[:]);
+export u64 peek(const Key keys[:]);
+export u64 take(Key *key);
+
+u64 overwrite(Key key, Key other) {
+    key = other;
+    return draw(key);
+}
+u64 after_use(Key key, Key other) {
+    u64 a = draw(key);
+    key = other;
+    return a + draw(key);
+}

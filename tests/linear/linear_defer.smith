@@ -1,16 +1,27 @@
-module affine_defer;
+module linear_defer;
 
-export [[smith::affine]] typedef struct {
+export [[std::linear]] typedef struct {
     u64 bits;
 } Key;
+export typedef struct {
+    Key key;
+    u64 n;
+} Holder;
 export u64 draw(Key key) {
     return key.bits;
 }
+export struct { Key, Key } split(Key key);
+export typeof(Key[:]) split_many(Key key, usize count);
+export u64 pair_sum(struct { Key, Key } pair);
+export u64 total(Key keys[:]);
+export u64 peek(const Key keys[:]);
+export u64 take(Key *key);
+
 export void sink(u64 value) {
     (void)value;
 }
 
-// A use inside a deferred statement is a use, and a block with defers does not stop the analysis (issue #210).
+// A use inside a deferred statement is a use, and it covers every way out of the block after the `defer` (issue #210).
 u64 once(Key key) {
     u64 n = 1;
     defer sink(n);
@@ -21,4 +32,25 @@ u64 twice(Key key) {
     u64 a = 0;
     defer a = draw(key);
     return draw(key) + a;
+}
+
+u64 closes(Key key, int c) {
+    defer sink(draw(key));
+    if (c) return 1;
+    return 2;
+}
+
+u64 late(Key key, int c) {
+    if (c) return 1;
+    defer sink(draw(key));
+    return 2;
+}
+
+void in_loop(usize n) {
+    for (usize i = 0; i < n; i++) {
+        Key key = {i};
+        defer sink(draw(key));
+        if (i == 2) break;
+        if (i == 3) continue;
+    }
 }

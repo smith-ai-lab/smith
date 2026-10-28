@@ -9,7 +9,7 @@ import scratch;
 export void test_std_scope_imports_and_attributes_of_std_build_and_run(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", "std_scope");
     scratch::Run built = scratch::build(&p, "");
-    scratch::expect_status("std: import std::arena and [[std::pure]], effects, alloc and affine build", 0, &built);
+    scratch::expect_status("std: import std::arena and [[std::pure]], effects, alloc and linear build", 0, &built);
     scratch::expect_text("std: the program runs", "3 4", scratch::sh(&p, "./build/app").out);
     scratch::expect_contains("std: [[std::c_name]] names the C export", scratch::read(&p, ".smith/include/main.h"),
                              "std_scope_doubled");
@@ -22,9 +22,9 @@ export void test_std_scope_attributes_of_std_are_checked(io::Io *io) {
     scratch::Run pure = scratch::build(&p, "");
     scratch::expect_failure("std: [[std::pure]] calling alloc is an error", &pure);
     scratch::expect_contains("std: ... that names the promise", pure.out, "is [[smith::pure]], but it has the effects");
-    scratch::Run affine = scratch::sh(&p, "smith cc -std=gnu23 -I .smith/include -c affine_twice.smith -o /dev/null");
-    scratch::expect_failure("std: a second use of a [[std::affine]] value is an error", &affine);
-    scratch::expect_contains("std: ... naming the first use", affine.err, "already used");
+    scratch::Run linear = scratch::sh(&p, "smith cc -std=gnu23 -I .smith/include -c linear_twice.smith -o /dev/null");
+    scratch::expect_failure("std: a second use of a [[std::linear]] value is an error", &linear);
+    scratch::expect_contains("std: ... naming the first use", linear.err, "already used");
 }
 
 export void test_std_scope_attributes_of_std_work_in_c(io::Io *io) {

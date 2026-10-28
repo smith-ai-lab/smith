@@ -1,6 +1,6 @@
-module affine_bad_index;
+module linear_bad_index;
 
-export [[smith::affine]] typedef struct {
+export [[std::linear]] typedef struct {
     u64 bits;
 } Key;
 export typedef struct {
@@ -10,28 +10,22 @@ export typedef struct {
 export u64 draw(Key key) {
     return key.bits;
 }
-export void split(Key key, Key keys[3]) {
-    (void)key;
-    (void)keys;
-}
-export void split_all(Key key, Key keys[:]) {
-    (void)key;
-    (void)keys;
-}
-export u64 take(Key *key) {
-    return key->bits;
-}
+export struct { Key, Key } split(Key key);
+export typeof(Key[:]) split_many(Key key, usize count);
+export u64 pair_sum(struct { Key, Key } pair);
+export u64 total(Key keys[:]);
+export u64 peek(const Key keys[:]);
+export u64 take(Key *key);
 
-u64 bad(Key key, usize j) {
-    Key keys[3];
-    split(key, keys);
-    return draw(keys[j]);
+u64 bad(Key a, Key b, usize j) {
+    Key keys[2] = {a, b};
+    u64 first = draw(keys[0]);
+    return first + draw(keys[1]) + draw(keys[j]);
 }
-u64 shifted(Key key) {
-    Key keys[3];
-    split(key, keys);
+u64 shifted(Key a, Key b, Key c) {
+    Key keys[3] = {a, b, c};
     u64 total = 0;
     for (usize i = 0; i < 2; i++)
         total += draw(keys[i + 1]);
-    return total;
+    return total + draw(keys[0]);
 }
