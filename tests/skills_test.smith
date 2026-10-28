@@ -487,6 +487,10 @@ export void test_skill_smith_math(io::Io *io) {
     skill_case(io, "smith-math");
 }
 
+export void test_skill_smith_failing(io::Io *io) {
+    skill_case(io, "smith-failing");
+}
+
 export void test_skill_smith_mem(io::Io *io) {
     skill_case(io, "smith-mem");
 }

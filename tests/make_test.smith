@@ -1,8 +1,11 @@
-// The translation of a Makefile into a build.c (issue #44, runtime/make*.c), ported from tests/make.sh: `smith build
-// --dump-config` in a folder with a Makefile and no build file. Each case is a small project with one Makefile for a
-// construct (tests/build_fixtures/make_NN): the translation is checked for what it says, the build.c passes `smith
-// lint` and `smith fmt --dry-run`, is built with `smith build`, and what it makes is compared with what make makes from
-// the same Makefile. Needs make. Each case is a test of its own, so they run side by side.
+// The translation of a Makefile into a build.c, end to end (issue #44, runtime/make*.c): `smith build --dump-config` in
+// a folder with a Makefile and no build file, as a user runs it. Each case is a small project with one Makefile for a
+// construct (tests/build_fixtures/make_NN): the build.c passes `smith lint` and `smith fmt --dry-run`, is built with
+// `smith build`, and what it makes is compared with what make makes from the same Makefile. Needs make. What the
+// translation says (its text, what it reports, the values of its flags as make computes them) is tests of a function
+// in process, tests/make_translate_test.smith (issue #646); a case is here because it needs a real make, a compiler,
+// the lint and format of the result, or the verb (which Makefile `smith build` and `--dump-config` look at). Each case
+// is a test of its own, so they run side by side.
 module make_test;
 
 import smith::arena;
@@ -61,14 +64,6 @@ static i32 translate(const scratch::Project *p, const char *name) {
         scratch::expect_text(label, "none 0", findings);
     }
     return dumped.status;
-}
-
-static void has(const scratch::Project *p, const char *name, const char *text) {
-    scratch::expect_contains(name, scratch::read(p, "build.c"), text);
-}
-
-static void lacks(const scratch::Project *p, const char *name, const char *text) {
-    scratch::expect_lacks(name, scratch::read(p, "build.c"), text);
 }
 
 static void expect_zero(const char *name, i32 status) {
@@ -356,19 +351,7 @@ export void test_make_variables(io::Io *io) {
     printer(&p, 12);
     (void)translate(&p, "1");
     same_output(&p, "variables", "prog", "", "1");
-    has(&p, "variables: the flags of the compile are written out", "\"-DR1=\\\"2\\\"\"");
-    has(&p, "variables: a command-line variable is an option", "smith_option_value(b, \"UNDEFINED_VARIABLE\"");
-    has(&p, "variables: the option has the Makefile's line", "Makefile:");
     same_output(&p, "variables: C and D set on the command line", "prog", "C=cmd D=cmd2", "1");
-}
-
-// 2. The functions of the subset.
-export void test_make_functions(io::Io *io) {
-    scratch::Project p = project(io, "make_02");
-    printer(&p, 20);
-    (void)translate(&p, "2");
-    same_output(&p, "functions", "prog", "", "2");
-    scratch::expect_text("functions: no construct is reported", "", scratch::read(&p, "dump.err"));
 }
 
 // 3. Rules: explicit and pattern rules, order-only prerequisites, the automatic variables, a recipe that is not a
@@ -385,10 +368,6 @@ export void test_make_rules(io::Io *io) {
                   ">smith.files 2>&1");
     scratch::expect_text("rules: automatic variables and the stem in recipes", scratch::read(&p, "make.files"),
                          scratch::read(&p, "smith.files"));
-    has(&p, "rules: a pattern rule's compile is a smith_object", "smith_object(b, &object_1);");
-    has(&p, "rules: a link is a smith_program", "smith_program(b, &program_1);");
-    has(&p, "rules: another recipe is a smith_step", "smith_step(b, &step_");
-    has(&p, "rules: each block says where it came from", "// Makefile:");
 }
 
 // 4. Recipes: @ and -, line continuations, several lines.
@@ -398,7 +377,6 @@ export void test_make_recipes(io::Io *io) {
     (void)run(&p, "make >/dev/null 2>&1; cp out.txt make.out; rm out.txt; smith build >/dev/null 2>&1");
     scratch::expect_text("recipes: the lines run in order, - ignores a failure, a continuation joins",
                          scratch::read(&p, "make.out"), scratch::read(&p, "out.txt"));
-    has(&p, "recipes: several lines are one script", "set -e");
 }
 
 // 5. Phony targets, the default goal, and the names of smith's verbs.
@@ -406,42 +384,12 @@ export void test_make_phony_targets_and_the_default_goal(io::Io *io) {
     scratch::Project p = project(io, "make_05");
     printer(&p, 1);
     (void)translate(&p, "5");
-    has(&p, "phony: the first target is the default", "smith_default(b, (const char *[]){\"prog\", nullptr});");
-    has(&p, "phony: clean is dropped, with the reason", "`clean` is dropped");
-    has(&p, "phony: a verb's name becomes make-test, which smith test runs", "smith_task(b, \"make-test\", &");
-    has(&p, "phony: and it is one of the tests", ".test = true,");
-    has(&p, "phony: run is smith run", "`run` is `smith run`");
-    has(&p, "phony: check is an alias of another name", "smith_alias(b, \"make-check\", ");
-    has(&p, "phony: another phony target is a task", "smith_task(b, \"extra\", &");
-    lacks(&p, "phony: no task named after a verb", "smith_task(b, \"test\"");
     (void)run(&p, "smith build >/dev/null 2>&1");
     scratch::expect_text("phony: the default builds the program", "ok", run(&p, "[ -x prog ] && echo ok").out);
     (void)run(&p, "smith build extra >/dev/null 2>&1");
     scratch::expect_text("phony: smith build extra runs the task", "extra", scratch::read(&p, "extra.txt"));
     (void)run(&p, "cp Makefile.default Makefile");
     (void)translate(&p, "5b");
-    has(&p, ".DEFAULT_GOAL names the default", "smith_default(b, (const char *[]){\"second\", nullptr});");
-}
-
-// 6. include and -include.
-export void test_make_include(io::Io *io) {
-    scratch::Project p = project(io, "make_06");
-    printer(&p, 3);
-    (void)translate(&p, "6");
-    (void)run(&p, "rm -f main.o");
-    same_output(&p, "include", "prog", "", "6");
-    scratch::expect_text("include: nothing is reported", "", scratch::read(&p, "dump.err"));
-    has(&p, "include: dependency files are dropped, with a note", "smith tracks the headers");
-    lacks(&p, "include: -MMD is not kept", "\"-MMD\"");
-}
-
-// 7. Conditionals: ifeq, ifneq, ifdef, ifndef, else, else ifeq.
-export void test_make_conditionals(io::Io *io) {
-    scratch::Project p = project(io, "make_07");
-    printer(&p, 8);
-    (void)translate(&p, "7");
-    same_output(&p, "conditionals", "prog", "", "7");
-    has(&p, "conditionals: a test of an option the Makefile never sets is an option", "build_never");
 }
 
 // 8. A test of the platform keeps both branches, as an if on b->os and b->arch.
@@ -450,12 +398,6 @@ export void test_make_platform(io::Io *io) {
     printer(&p, 5);
     (void)translate(&p, "8");
     same_output(&p, "platform", "prog", "", "8");
-    has(&p, "platform: Darwin is a test of b->os", "strcmp(b->os, \"Darwin\") == 0");
-    has(&p, "platform: and Linux", "strcmp(b->os, \"Linux\") == 0");
-    has(&p, "platform: OS == Windows_NT is a test of b->os too", "strcmp(b->os, \"Windows_NT\") == 0");
-    has(&p, "platform: the architecture is b->arch", "b->arch");
-    scratch::expect_text("platform: a test of the platform is not reported as unsupported", "",
-                         scratch::read(&p, "dump.err"));
 }
 
 // 9. Command-line knobs are -D options of the build file.
@@ -463,25 +405,9 @@ export void test_make_knobs(io::Io *io) {
     scratch::Project p = project(io, "make_09");
     printer(&p, 3);
     (void)translate(&p, "9");
-    has(&p, "knobs: the first line names the options", "// Options the Makefile reads from the command line");
-    has(&p, "knobs: DEBUG", "-DDEBUG=...");
-    has(&p, "knobs: VERBOSE", "-DVERBOSE=...");
     same_output(&p, "knobs: the defaults", "prog", "", "9");
     same_output(&p, "knobs: DEBUG=1", "prog", "DEBUG=1", "9");
     same_output(&p, "knobs: DEBUG=1 VERBOSE=yes EXTRA=more", "prog", "DEBUG=1 VERBOSE=yes EXTRA=more", "9");
-}
-
-// 10. make's built-in rules for C: a compile and a link nobody wrote.
-export void test_make_built_in_rules(io::Io *io) {
-    scratch::Project p = project(io, "make_10");
-    printer(&p, 2);
-    (void)run(&p, "mv main.c prog.c; printf 'int helper(void) { return 1; }\\n' >helper.c; "
-                  "sed -i.bak 's/int main(void) {/int helper(void);\\nint main(void) {/' prog.c");
-    (void)translate(&p, "10");
-    same_output(&p, "built-in rules", "prog", "", "10");
-    has(&p, "built-in rules: the compile is a smith_object", "smith_object(b, &object_1);");
-    has(&p, "built-in rules: with the CFLAGS", "\"-O1\"");
-    has(&p, "built-in rules: the link is a smith_program", "smith_program(b, &program_1);");
 }
 
 // 11. An archive is a step, and the program that links it names it a library.
@@ -491,8 +417,6 @@ export void test_make_archive(io::Io *io) {
     scratch::write(&p, "lib.c", "const char *name(void) { return \"lib\"; }\n");
     (void)translate(&p, "11");
     same_output(&p, "archive", "prog", "", "11");
-    has(&p, "archive: ar is a step", "\"ar\", \"rcs\"");
-    has(&p, "archive: the library of the link", ".libraries = (const char *[]){\"libx.a\", nullptr}");
 }
 
 // 12. Recursive make: a goal of the same Makefile, and -C another folder.
@@ -504,32 +428,15 @@ export void test_make_recursive_make(io::Io *io) {
     (void)run(&p, "rm -f sub/lib.a sub/lib.o");
     same_output(&p, "recursive make", "prog", "", "12");
     (void)run(&p, "rm -f sub/lib.a sub/lib.o");
-    has(&p, "recursive make: the other folder's targets are named under it", "\"sub/lib.a\"");
-    has(&p, "recursive make: and run in it", "cd 'sub'");
-    has(&p, "recursive make: the other Makefile is the source of the comment", "sub/Makefile:");
-    scratch::expect_text("recursive make: nothing is reported", "", scratch::read(&p, "dump.err"));
 }
 
-// 13. What is outside the subset is reported by name, file and line, and the rest still translates.
+// 13. What is outside the subset is reported, and the rest still translates (what is said is in
+// tests/make_translate_test.smith): the build.c still builds.
 export void test_make_what_is_outside_the_subset_is_reported(io::Io *io) {
     scratch::Project p = project(io, "make_13");
     printer(&p, 1);
     (void)run(&p, "echo other >other");
     expect_zero("reported: the translation still exits 0", translate(&p, "13"));
-    const char *err = scratch::read(&p, "dump.err");
-    scratch::expect_contains("reported: VPATH by line", err, "Makefile:1: not translated: VPATH is not supported");
-    scratch::expect_contains("reported: .SECONDEXPANSION", err,
-                             "Makefile:2: not translated: .SECONDEXPANSION is not supported");
-    scratch::expect_contains("reported: a double-colon rule", err,
-                             "Makefile:5: not translated: a double-colon rule is not supported");
-    scratch::expect_contains("reported: a target-specific variable", err,
-                             "Makefile:7: not translated: a target-specific variable is not supported");
-    scratch::expect_contains("reported: $(shell) is frozen", err,
-                             "Makefile:11: not translated: $(shell echo frozen) was run now and is frozen");
-    scratch::expect_contains("reported: eval in a recipe", err,
-                             "Makefile:10: not translated: $(eval) in a recipe is not supported");
-    has(&p, "reported: the build.c says so too", "// NOT TRANSLATED");
-    has(&p, "reported: with the line", "//   Makefile:1: VPATH is not supported");
     scratch::expect_text("reported: and the build.c builds", "0", run(&p, "smith build >/dev/null 2>&1; echo $?").out);
 }
 
@@ -541,19 +448,12 @@ export void test_make_the_same_commands_as_make(io::Io *io) {
     (void)translate(&p, "14");
     (void)run(&p, "smith build >/dev/null 2>&1");
     same_commands(&p, "commands", "prog");
-    has(&p, "readable: a flags variable is an array with the Makefile's name", "const char *const *build_warn =");
-    has(&p, "readable: and the other uses it", "smith_cat(b, build_warn, ");
-    has(&p, "readable: the compiler is smith-cc", ".compiler = \"smith-cc\"");
-    has(&p, "readable: the header names the Makefile", "// build.c, translated from Makefile");
 }
 
 // 15. A rule under a test of the platform is a step that build.c declares only there; two that differ are reported.
 export void test_make_a_rule_under_a_test_of_the_platform(io::Io *io) {
     scratch::Project p = project(io, "make_15");
     (void)translate(&p, "15");
-    has(&p, "guarded rule: the step is declared under the test", "if ((strcmp(b->os, \"NotAnOs\") != 0)) {");
-    scratch::expect_contains("guarded rule: two recipes under different tests are reported",
-                             scratch::read(&p, "dump.err"), "other.txt has recipes under different tests");
     (void)run(&p, "smith build >/dev/null 2>&1");
     scratch::expect_text("guarded rule: and the build.c builds it", "here", scratch::read(&p, "here.txt"));
 }
@@ -563,22 +463,13 @@ export void test_make_a_wildcard_of_an_option_is_read_at_its_default(io::Io *io)
     scratch::Project p = project(io, "make_16");
     (void)run(&p, "echo font >font.bdf");
     (void)translate(&p, "16");
-    scratch::expect_contains("wildcard of an option: reported", scratch::read(&p, "dump.err"),
-                             "$(wildcard $(FONT)) was read now, with the option at its default (font.bdf)");
-    has(&p, "wildcard of an option: its default is the file", "\"font.bdf\"");
     (void)run(&p, "smith build >/dev/null 2>&1");
     scratch::expect_text("wildcard of an option: the build uses the file", "font", scratch::read(&p, "out.txt"));
 }
 
-// 16. Which Makefile, and when.
+// 16. A folder with a build file is not translated (which Makefile comes first is in tests/make_translate_test.smith).
 export void test_make_which_makefile_and_when(io::Io *io) {
     scratch::Project p = project(io, "make_17");
-    (void)translate(&p, "17");
-    has(&p, "files: GNUmakefile comes first", "\"b\"");
-    lacks(&p, "files: and Makefile is left", "\"a\"");
-    (void)run(&p, "rm GNUmakefile");
-    (void)translate(&p, "17b");
-    has(&p, "files: otherwise Makefile", "\"a\"");
     scratch::write(&p, "build.c", "#include <smith/build.h>\nvoid build(SmithBuild *b) { (void)b; }\n");
     (void)run(&p, "smith build --dump-config >dumped.txt 2>&1");
     scratch::expect_lacks("files: a folder with a build.c is not translated", scratch::read(&p, "dumped.txt"),
@@ -649,10 +540,6 @@ export void test_make_a_makefile_too_big_for_one_function(io::Io *io) {
                   "\"$i\"; i=$((i + 1)); done; "
                   "echo '.PHONY: all'; echo 'all: step1 step30'; } >Makefile");
     expect_zero("split: the Makefile is translated", translate(&p, "19"));
-    has(&p, "split: the variables are statics", "static const char *const *build_data;");
-    has(&p, "split: a long list is written in pieces", "build_data = smith_cat(b, build_data,");
-    has(&p, "split: a function for each run of targets", "static void part_2(SmithBuild *b) {");
-    has(&p, "split: build() calls them", "    part_1(b);");
     scratch::Run built = run(&p, "smith build -DPREFIX=pre");
     scratch::expect_status("split: smith build builds it", 0, &built);
     scratch::expect_text("split: the option reaches a recipe", "pre1.txt", run(&p, "ls pre1.txt 2>/dev/null").out);

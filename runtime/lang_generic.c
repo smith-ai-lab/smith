@@ -3564,6 +3564,31 @@ static int smith_lang_converts_to(const SmithLangGeneric *generic, const SmithLa
     return type;
 }
 
+// The parameter at `position` is `typeof(xs[0]) name` or `typeof(*p) name` for an `auto` parameter written with a
+// shape (`const auto xs[:]`, `auto *p`): the index of that parameter's type, else -1. Its argument converts to the
+// element, as `typeof(a) b` converts to a's type.
+static int smith_lang_converts_to_element(const SmithLangGeneric *generic, const SmithLangParam *param,
+                                          size_t position) {
+    const SmithLangGenToken *t = &smith_lang_gt.tokens[param->start];
+    size_t length = param->end - param->start;
+    bool indexed = length == 8 && smith_lang_gt_punct(&t[3], "[") &&
+                   smith_lang_gt_is(&t[4], SmithTokenKind_Number, "0") && smith_lang_gt_punct(&t[5], "]") &&
+                   smith_lang_gt_punct(&t[6], ")");
+    bool pointee = length == 6 && smith_lang_gt_punct(&t[2], "*") && smith_lang_gt_punct(&t[4], ")");
+    if ((!indexed && !pointee) || !smith_lang_gt_is(&t[0], SmithTokenKind_Identifier, "typeof") ||
+        !smith_lang_gt_punct(&t[1], "(") || t[length - 1].kind != SmithTokenKind_Identifier) {
+        return -1;
+    }
+    const SmithLangGenToken *of = indexed ? &t[2] : &t[3];
+    if (of->param == 0) return -1;
+    int type = (int)of->param - 1;
+    if ((size_t)type >= generic->type_count || generic->type_kind[type] != SmithLangSlot_Auto ||
+        generic->type_position[type] == position) {
+        return -1;
+    }
+    return type;
+}
+
 // An expression as the operand of a cast: in parentheses unless it is one name, field chain or literal.
 static void smith_lang_parenthesize(char *text, size_t capacity) {
     bool simple = text[0] == '-' || text[0] == '+' ? text[1] != 0 : true;
@@ -3581,12 +3606,41 @@ static void smith_lang_parenthesize(char *text, size_t capacity) {
 
 // Whether the argument at `span` converts to the staged type unchanged, as the module for `auto` says; the error
 // otherwise. `first` is the argument that gave the type.
+static bool smith_lang_convert_to(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                  const SmithLangGeneric *generic, SmithLangSpan span, SmithLangSpan first_span,
+                                  const char *to_spelling, const char *to_written, bool element, uint32_t location);
+static void smith_lang_element_spelling(const SmithHost *host, const SmithLangGeneric *generic, size_t slot,
+                                        char *spelling, size_t capacity);
+static void smith_lang_spell_written(const SmithLang *lang, const char *spelling, char *out, size_t capacity);
+
 static bool smith_lang_convert_ok(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
                                   const SmithLangGeneric *generic, SmithLangSpan span, SmithLangSpan first_span,
                                   const uint32_t type_first, const uint32_t type_count, uint32_t location) {
     char to_spelling[256];
     char to_written[256];
     smith_lang_it_spelling(type_first, type_count, to_spelling, sizeof to_spelling);
+    smith_lang_it_written(lang, type_first, type_count, to_written, sizeof to_written);
+    return smith_lang_convert_to(lang, host, replay, generic, span, first_span, to_spelling, to_written, false,
+                                 location);
+}
+
+// The same for a later argument of the element of a shaped parameter: `slice::find(bytes, 300)` where bytes is `u8[:]`.
+static bool smith_lang_convert_element_ok(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                          const SmithLangGeneric *generic, size_t type, SmithLangSpan span,
+                                          SmithLangSpan first_span, const uint32_t type_first,
+                                          const uint32_t type_count, uint32_t location) {
+    char to_spelling[256];
+    char to_written[256];
+    smith_lang_it_spelling(type_first, type_count, to_spelling, sizeof to_spelling);
+    smith_lang_element_spelling(host, generic, type, to_spelling, sizeof to_spelling);
+    smith_lang_spell_written(lang, to_spelling, to_written, sizeof to_written);
+    return smith_lang_convert_to(lang, host, replay, generic, span, first_span, to_spelling, to_written, true,
+                                 location);
+}
+
+static bool smith_lang_convert_to(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                  const SmithLangGeneric *generic, SmithLangSpan span, SmithLangSpan first_span,
+                                  const char *to_spelling, const char *to_written, bool element, uint32_t location) {
     SmithLangNumber to = smith_lang_number_of(host, to_spelling);
     if (!to.known) return true;
     SmithLangArgType from = {};
@@ -3599,7 +3653,6 @@ static bool smith_lang_convert_ok(SmithLang *lang, const SmithHost *host, SmithL
     char argument[256];
     char first[256];
     char from_spelling[256];
-    smith_lang_it_written(lang, type_first, type_count, to_written, sizeof to_written);
     smith_lang_infer_written(span, argument, sizeof argument);
     smith_lang_infer_written(first_span, first, sizeof first);
     smith_lang_smith_spelling(from.written, from_spelling, sizeof from_spelling);
@@ -3611,6 +3664,20 @@ static bool smith_lang_convert_ok(SmithLang *lang, const SmithHost *host, SmithL
     snprintf(first_cast, sizeof first_cast, "%s", first);
     smith_lang_parenthesize(argument_cast, sizeof argument_cast);
     smith_lang_parenthesize(first_cast, sizeof first_cast);
+    if (element && is_literal) { // the first argument is a slice or a pointer: only the argument can be cast
+        smith_lang_error(lang, host, place,
+                         "the argument `%s` of `%s` converts to %s, the element type of its first argument `%s`, and "
+                         "changes its value; cast it, `(%s)%s`",
+                         argument, name, to_written, first, to_written, argument_cast);
+        return false;
+    }
+    if (element) {
+        smith_lang_error(lang, host, place,
+                         "the argument `%s` of `%s` is %s and converts to %s, the element type of its first argument "
+                         "`%s`, which may change its value; cast it, `(%s)%s`",
+                         argument, name, from_spelling, to_written, first, to_written, argument_cast);
+        return false;
+    }
     if (is_literal) {
         smith_lang_error(
             lang, host, place,
@@ -3779,8 +3846,95 @@ static void smith_lang_element_spelling(const SmithHost *host, const SmithLangGe
     snprintf(spelling, capacity, "%s", bare);
 }
 
+static const char *smith_lang_written_spelling(const SmithLang *lang, const char *text, size_t *length);
+
+// A type's spelling as the source writes it: the lowering's `__INT32_TYPE__` is `i32`, `main_Colour` is `Colour`.
+static void smith_lang_spell_written(const SmithLang *lang, const char *spelling, char *out, size_t capacity) {
+    size_t used = 0;
+    out[0] = 0;
+    for (size_t at = 0; spelling[at] != 0 && used + 2 < capacity;) {
+        size_t word = 0;
+        while (smith_lang_word_char(spelling[at + word]))
+            word++;
+        if (word == 0) {
+            out[used++] = spelling[at++];
+            out[used] = 0;
+            continue;
+        }
+        size_t length = word;
+        const char *text = smith_lang_written_spelling(lang, spelling + at, &length);
+        if (used + length + 1 >= capacity) break;
+        memcpy(out + used, text, length);
+        used += length;
+        out[used] = 0;
+        at += word;
+    }
+}
+
+// The parameter as its module wrote it: `const arithmetic xs[:]`.
+static void smith_lang_param_text(const SmithLangParam *param, char *out, size_t capacity) {
+    size_t used = 0;
+    out[0] = 0;
+    for (uint32_t at = param->start; at < param->end; at++) {
+        const SmithLangGenToken *token = &smith_lang_gt.tokens[at];
+        size_t length = token->length;
+        size_t space = at > param->start && (token->flags & smith_lang_gen_flag_space) != 0 ? 1 : 0;
+        if (used + space + length + 1 >= capacity) break;
+        if (space == 1) out[used++] = ' ';
+        memcpy(out + used, smith_lang_gt_str(token), length);
+        used += length;
+    }
+    out[used] = 0;
+}
+
+// The note at the generic's parameter that asked for the type: `lib::sum` takes `const arithmetic xs[:]`.
+static void smith_lang_takes_note(const SmithHost *host, const SmithLangGeneric *generic, const SmithLangParam *param,
+                                  uint32_t word_at, uint32_t error_location) {
+    char taken[256];
+    smith_lang_param_text(param, taken, sizeof taken);
+    SmithLangGenToken *word = &smith_lang_gt.tokens[word_at]; // the `auto` or the concept
+    uint32_t declared = smith_lang_gen_place(host, generic, word, UINT32_MAX);
+    smith_lang_note(host, error_location, declared, "`%s::%s` takes `%s`", smith_lang_str(generic->module),
+                    smith_lang_str(generic->member), taken);
+}
+
+// What a type is among the standard's kinds, for the line that says why a concept is false.
+static const char *smith_lang_type_kind(const SmithTypeQuery *query) {
+    if (strncmp(query->canonical, "struct smith_array_", 19) == 0) return "a slice";
+    if (query->is_bool) return "the boolean type";
+    if (query->is_enum) return "an enumerated type";
+    if (query->is_integer) return query->is_signed ? "a signed integer type" : "an unsigned integer type";
+    if (query->is_float) return "a floating type";
+    if (query->is_pointer) return "a pointer type";
+    if (query->is_array) return "an array type";
+    if (query->is_record) return "a structure or union type";
+    return "no arithmetic, pointer, array or structure type";
+}
+
+// The note that says why the type is not of the concept, and the facts it rests on: `arithmetic(char)` is
+// `integer(char) || floating(char)`; every other concept is a leaf, a question of the type the compiler answers.
+static void smith_lang_concept_why(const SmithLang *lang, const SmithHost *host, uint32_t error_location,
+                                   unsigned concept_id, const char *judged) {
+    SmithTypeQuery query = {};
+    char written[256];
+    smith_lang_spell_written(lang, judged, written, sizeof written);
+    if (host->type_query == nullptr || !host->type_query(host->context, judged, (uint32_t)strlen(judged), &query)) {
+        return;
+    }
+    const char *name = smith_lang_concepts[concept_id - 1];
+    if (concept_id == 5) { // arithmetic
+        smith_lang_note(host, error_location, 0,
+                        "`arithmetic(%s)` is false: `integer(%s)` and `floating(%s)` are both false; `%s` is %s",
+                        written, written, written, written, smith_lang_type_kind(&query));
+        return;
+    }
+    smith_lang_note(host, error_location, 0, "`%s(%s)` is false: `%s` is %s", name, written, written,
+                    smith_lang_type_kind(&query));
+}
+
 // An `auto` parameter written with a concept (`arithmetic x`): the argument's type must be of it, else the error is at
-// the argument, the call that asked.
+// the argument, the call that asked. The error says the main thing first (`char *` is not `arithmetic`), then come the
+// notes: the parameter that asked, and why.
 static bool smith_lang_concept_check(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
                                      const SmithLangGeneric *generic, size_t slot, SmithLangSpan span,
                                      uint32_t location, const uint32_t *first, const uint32_t *count) {
@@ -3792,15 +3946,29 @@ static bool smith_lang_concept_check(SmithLang *lang, const SmithHost *host, Smi
     snprintf(judged, sizeof judged, "%s", spelling);
     smith_lang_element_spelling(host, generic, slot, judged, sizeof judged); // the element of `const arithmetic xs[:]`
     if (smith_lang_concept_holds(host, concept_id, judged)) return true;
-    const SmithLangGenToken *parameter = &smith_lang_gt.tokens[generic->first + generic->type_token[slot] + 1];
     char shown[256];
     smith_lang_infer_written(span, shown, sizeof shown);
-    smith_lang_error(
-        lang, host, smith_lang_infer_place(host, replay, span, location),
-        "`%s` is not `%s`: `%s`, the argument of `%s`, has the type `%s`; the parameter `%.*s` is `%s %.*s`", judged,
-        smith_lang_concepts[concept_id - 1], shown, smith_lang_str(generic->member), spelling, (int)parameter->length,
-        smith_lang_gt_str(parameter), smith_lang_concepts[concept_id - 1], (int)parameter->length,
-        smith_lang_gt_str(parameter));
+    char written[256];
+    smith_lang_spell_written(lang, judged, written, sizeof written);
+    uint32_t place = smith_lang_infer_place(host, replay, span, location);
+    SmithLangParam params[smith_lang_call_params_max];
+    size_t total = smith_lang_generic_params(generic, params, smith_lang_call_params_max);
+    size_t position = generic->type_position[slot];
+    SmithLangShape shape = {};
+    bool element = total != SIZE_MAX && position < total && smith_lang_param_shape(&params[position], &shape);
+    if (total != SIZE_MAX && position < total) {
+        smith_lang_takes_note(host, generic, &params[position], element ? shape.auto_at : params[position].start,
+                              place);
+    }
+    smith_lang_concept_why(lang, host, place, concept_id, judged);
+    if (element) {
+        bool pointer = shape.kind == SmithLangShape_Pointer;
+        smith_lang_error(lang, host, place, "`%s` is not `%s`: the %s of `%s` %s that type", written,
+                         smith_lang_concepts[concept_id - 1], pointer ? "pointee" : "elements", shown,
+                         pointer ? "has" : "have");
+    } else {
+        smith_lang_error(lang, host, place, "`%s` is not `%s`", written, smith_lang_concepts[concept_id - 1]);
+    }
     return false;
 }
 
@@ -3860,6 +4028,8 @@ static bool smith_lang_shape_check(SmithLang *lang, const SmithHost *host, Smith
         snprintf(want, sizeof want, "a fixed array (`%s %.*s[N]`)", word, (int)parameter->length,
                  smith_lang_gt_str(parameter));
     }
+    smith_lang_takes_note(host, generic, &params[position], shape.auto_at,
+                          smith_lang_infer_place(host, replay, span, location));
     smith_lang_error(lang, host, smith_lang_infer_place(host, replay, span, location),
                      "`%s`, the argument of `%s`, has the type `%s`, but the parameter `%.*s` is %s%s", shown,
                      smith_lang_str(generic->member), spelling, (int)parameter->length, smith_lang_gt_str(parameter),
@@ -4038,7 +4208,15 @@ static bool smith_lang_call_types(SmithLang *lang, const SmithHost *host, SmithL
     smith_lang_generic_params(generic, params, smith_lang_call_params_max);
     for (size_t i = 0; good && i < count && i < generic->param_count; i++) { // a later argument converts to `auto`'s
         int type = smith_lang_converts_to(generic, &params[i], i);
-        if (type < 0) continue;
+        if (type < 0) {
+            type = smith_lang_converts_to_element(generic, &params[i], i);
+            if (type >= 0) {
+                good = smith_lang_convert_element_ok(lang, host, replay, generic, (size_t)type, spans[i],
+                                                     spans[generic->type_position[type]], types->first[type],
+                                                     types->count[type], location);
+            }
+            continue;
+        }
         good = smith_lang_convert_ok(lang, host, replay, generic, spans[i], spans[generic->type_position[type]],
                                      types->first[type], types->count[type], location);
     }

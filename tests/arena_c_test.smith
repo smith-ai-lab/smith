@@ -187,9 +187,9 @@ export void test_arena_c_unknown_library_lists_the_known_names(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", "arena_unknown");
     scratch::Run run = scratch::build(&p, "");
     scratch::expect_status("unknown: the build fails with status 2", 2, &run);
-    scratch::expect_contains(
-        "unknown: the message names the library", run.err,
-        "smith: build.c: smith_library: unknown library \"nope\"; known: handlers, json, trace, "
-        "arena, ascii, autodiff, categorical, clock, console, contract, effects, entropy, env, files, format, inflate, "
-        "io, math, mem, net, process, random, slice, test, text");
+    scratch::expect_contains("unknown: the message names the library", run.err,
+                             "smith: build.c: smith_library: unknown library \"nope\"; known: handlers, json, trace, "
+                             "arena, ascii, autodiff, categorical, clock, console, contract, effects, entropy, env, "
+                             "failing, files, format, inflate, "
+                             "io, math, mem, net, process, random, slice, test, text");
 }

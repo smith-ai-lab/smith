@@ -1,0 +1,21 @@
+module main;
+
+import stats;
+
+enum Colour { Red, Green };
+
+i32 main() {
+    char *names[2] = {"a", "b"};
+    char *ns[:] = names;
+    const char *name = "x";
+    f32 real = 1.5f;
+    enum Colour colour = Green;
+    arithmetic local = name;
+    stats::sum(ns);
+    stats::twice(name);
+    stats::twice(colour);
+    stats::read(&real);
+    stats::count(real);
+    stats::same_kind(real, real);
+    return 0;
+}

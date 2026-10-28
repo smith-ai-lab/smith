@@ -1,0 +1,23 @@
+module stats;
+
+// A later argument converts to the element of the first one, as `typeof(a) b` converts to a's type.
+export usize find(const auto xs[:], typeof(xs[0]) v) {
+    for (usize i = 0; i < countof(xs); i++) {
+        if (xs[i] == v) return i;
+    }
+    return countof(xs);
+}
+
+export void fill(auto xs[:], typeof(xs[0]) v) {
+    for (usize i = 0; i < countof(xs); i++) {
+        xs[i] = v;
+    }
+}
+
+export void bump(auto *p, typeof(*p) by) {
+    *p += by;
+}
+
+export usize position(const arithmetic xs[:], typeof(xs[0]) v) {
+    return find(xs, v);
+}

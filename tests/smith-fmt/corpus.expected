@@ -1884,6 +1884,50 @@ int later() {
 
 // an export that declares nothing a C name could name
 [[smith::c_name("smith_names_k")]] export enum { Alpha, Beta };
+==> error-concept-notes/src/main.smith <==
+module main;
+
+import stats;
+
+enum Colour { Red, Green };
+
+i32 main() {
+    char *names[2] = {"a", "b"};
+    char *ns[:] = names;
+    const char *name = "x";
+    f32 real = 1.5f;
+    enum Colour colour = Green;
+    arithmetic local = name;
+    stats::sum(ns);
+    stats::twice(name);
+    stats::twice(colour);
+    stats::read(&real);
+    stats::count(real);
+    stats::same_kind(real, real);
+    return 0;
+}
+==> error-concept-notes/src/stats.smith <==
+module stats;
+
+export typeof(xs[0]) sum(const arithmetic xs[:]) {
+    return xs[0];
+}
+
+export typeof(x) twice(arithmetic x) {
+    return x + x;
+}
+
+export typeof(*p) read(const integer *p) {
+    return *p;
+}
+
+export usize count(const auto xs[:]) {
+    return countof(xs);
+}
+
+export bool same_kind(pointer p, typeof(p) q) {
+    return p == q;
+}
 ==> error-constexpr-c-asm/src/main.smith <==
 #include <stdio.h>
 
@@ -2431,6 +2475,45 @@ export usize width(pointer p) {
 
 export i32 sign_of(signed_integer n) {
     return n < 0 ? -1 : 1;
+}
+==> error-generic-element-convert/src/main.smith <==
+module main;
+import stats;
+i32 main() {
+    u8 raw[3] = {1, 2, 3};
+    u8 bs[:] = raw;
+    f32 fl[2] = {1, 2};
+    f32 fs[:] = fl;
+    i32 wide = 5;
+    u8 small = 4;
+    stats::find(bs, 3);
+    stats::find(bs, small);
+    stats::find(bs, 300);
+    stats::find(bs, wide);
+    stats::fill(bs, -1);
+    stats::fill(fs, 0.1);
+    stats::fill(fs, 0.5);
+    stats::bump(&small, 300);
+    stats::cmax(bs, 256);
+    stats::cmax(fs, 2);
+    return 0;
+}
+==> error-generic-element-convert/src/stats.smith <==
+module stats;
+export usize find(const auto xs[:], typeof(xs[0]) v) {
+    for (usize i = 0; i < countof(xs); i++)
+        if (xs[i] == v) return i;
+    return countof(xs);
+}
+export void fill(auto xs[:], typeof(xs[0]) v) {
+    for (usize i = 0; i < countof(xs); i++)
+        xs[i] = v;
+}
+export void bump(auto *p, typeof(*p) by) {
+    *p += by;
+}
+export usize cmax(const arithmetic xs[:], typeof(xs[0]) v) {
+    return countof(xs) + (usize)v;
 }
 ==> error-generic-number-parameter/src/main.smith <==
 module main;
@@ -5099,6 +5182,48 @@ export usize name_lengths(auto x) {
         n += countof(f.name);
     }
     return n;
+}
+==> generic-element-convert/src/main.smith <==
+module main;
+
+import stats;
+import <stdio.h>;
+
+i32 main() {
+    u8 raw[3] = {1, 2, 3};
+    u8 bytes[:] = raw;
+    f32 reals[2] = {1.5f, 2.5f};
+    f32 rs[:] = reals;
+    u8 small = 3;
+    stats::fill(rs, 0.5);
+    stats::bump(&small, 1);
+    c::printf("%zu %zu %zu\n", stats::find(bytes, 3), stats::find(bytes, small), stats::position(bytes, 2));
+    c::printf("%g %d\n", (double)reals[1], small);
+    return 0;
+}
+==> generic-element-convert/src/stats.smith <==
+module stats;
+
+// A later argument converts to the element of the first one, as `typeof(a) b` converts to a's type.
+export usize find(const auto xs[:], typeof(xs[0]) v) {
+    for (usize i = 0; i < countof(xs); i++) {
+        if (xs[i] == v) return i;
+    }
+    return countof(xs);
+}
+
+export void fill(auto xs[:], typeof(xs[0]) v) {
+    for (usize i = 0; i < countof(xs); i++) {
+        xs[i] = v;
+    }
+}
+
+export void bump(auto *p, typeof(*p) by) {
+    *p += by;
+}
+
+export usize position(const arithmetic xs[:], typeof(xs[0]) v) {
+    return find(xs, v);
 }
 ==> generic-error-instance/src/main.smith <==
 module main;
