@@ -5,7 +5,7 @@
     "output": "build/util.o",
     "arguments": [
       "cc",
-      "-MMD",
+      "-MD",
       "-MF",
       "build/util.d",
       "-c",

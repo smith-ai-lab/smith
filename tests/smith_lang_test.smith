@@ -763,6 +763,10 @@ export void test_error_generic_concept_param(io::Io *io) {
     corpus_case(io, "error-generic-concept-param");
 }
 
+export void test_error_generic_concept_user(io::Io *io) {
+    corpus_case(io, "error-generic-concept-user");
+}
+
 export void test_error_generic_number_parameter(io::Io *io) {
     corpus_case(io, "error-generic-number-parameter");
 }
@@ -1135,6 +1139,18 @@ export void test_generic_concept_param(io::Io *io) {
     corpus_case(io, "generic-concept-param");
 }
 
+export void test_generic_kind(io::Io *io) {
+    corpus_case(io, "generic-kind");
+}
+
+export void test_generic_concept_any(io::Io *io) {
+    corpus_case(io, "generic-concept-any");
+}
+
+export void test_generic_concept_user(io::Io *io) {
+    corpus_case(io, "generic-concept-user");
+}
+
 export void test_generic_countof_member(io::Io *io) {
     corpus_case(io, "generic-countof-member");
 }
@@ -1189,6 +1205,10 @@ export void test_generic_function(io::Io *io) {
 
 export void test_generic_function_error(io::Io *io) {
     corpus_case(io, "generic-function-error");
+}
+
+export void test_generic_function_forward(io::Io *io) {
+    corpus_case(io, "generic-function-forward");
 }
 
 export void test_generic_function_generic(io::Io *io) {

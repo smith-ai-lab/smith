@@ -431,6 +431,22 @@ static bool smith_lang_cx_push_op(SmithLangCx *cx, SmithLangCxOp op) {
     return true;
 }
 
+// The number of a type's kind, what `kind(T)` is (issue #193): `Kind::integer` and the others are these numbers.
+static const char *const smith_lang_kind_names[] = {"integer",   "floating", "boolean", "pointer", "enumeration",
+                                                    "structure", "array",    "slice",   "other"};
+
+static int64_t smith_lang_kind_code(const SmithTypeQuery *query, const char *canonical) {
+    static const char tag[] = "struct smith_array_";
+    if (strncmp(canonical, tag, sizeof tag - 1) == 0 && strpbrk(canonical + 7, "*[( ") == nullptr) return 7;
+    if (query->is_bool) return 2;
+    if (query->is_enum) return 4;
+    if (query->is_pointer) return 3;
+    if (query->is_array) return 6;
+    if (query->is_record) return 5;
+    if (query->is_float) return 1;
+    return query->is_integer ? 0 : 8;
+}
+
 // The value of `sizeof(T)`, `alignof(T)` or `is_integer(T)` and the like, the call at `at` (the name): fills `value`
 // and moves `at` past the `)`.
 static bool smith_lang_cx_builtin(SmithLangCx *cx, uint32_t *at, uint32_t last, SmithLangCxValue *value) {
@@ -459,6 +475,8 @@ static bool smith_lang_cx_builtin(SmithLangCx *cx, uint32_t *at, uint32_t last, 
     if (strcmp(text, "enumeration") == 0) value->number = query.is_enum;
     if (strcmp(text, "structure") == 0) value->number = query.is_record;
     if (strcmp(text, "array") == 0) value->number = query.is_array;
+    if (strcmp(text, "any") == 0) value->number = 1;
+    if (strcmp(text, "kind") == 0) value->number = smith_lang_kind_code(&query, cx->canonical[canonical]);
     if (strcmp(text, "is_integer") == 0) value->number = query.is_integer;
     if (strcmp(text, "is_float") == 0) value->number = query.is_float;
     if (strcmp(text, "is_signed") == 0) value->number = query.is_signed;
@@ -482,14 +500,35 @@ static bool smith_lang_cx_is_builtin(const SmithLangGenToken *token) {
                                         "is_signed",        "is_pointer", "is_bool",  "is_enum",    "is_record",
                                         "is_array",         "is_slice",   "integer",  "floating",   "signed_integer",
                                         "unsigned_integer", "arithmetic", "boolean",  "pointer",    "enumeration",
-                                        "structure",        "array",      "slice"};
+                                        "structure",        "array",      "slice",    "any",        "kind"};
     if (token->kind != SmithTokenKind_Identifier || token->special != SmithLangGen_Plain || token->param != 0) {
         return false;
     }
-    for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) { // 23 names
-        if (smith_lang_equals(smith_lang_gt_str(token), token->length, names[i])) return true;
+    for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) { // 25 names
+        if (smith_lang_equals(smith_lang_gt_str(token), token->length, names[i])) {
+            // `kind` and `any` are common names: the builtins are the ones called with a type in parentheses
+            return i < 23 || smith_lang_gt_punct(token + 1, "(");
+        }
     }
     return false;
+}
+
+// `Kind::integer` and the others at `*at` (issue #193): 1 and the number, -1 after an error, 0 when it is none of them.
+static int smith_lang_cx_kind_constant(SmithLangCx *cx, uint32_t *at, uint32_t last, SmithLangCxValue *value) {
+    const SmithLangGenToken *token = smith_lang_cx_token(*at);
+    if (!smith_lang_cx_word(token, "Kind") || *at + 2 >= last || !smith_lang_gt_punct(token + 1, "::") ||
+        token[2].kind != SmithTokenKind_Identifier) {
+        return 0;
+    }
+    for (size_t i = 0; i < sizeof smith_lang_kind_names / sizeof smith_lang_kind_names[0]; i++) { // 9 kinds
+        if (smith_lang_equals(smith_lang_gt_str(token + 2), token[2].length, smith_lang_kind_names[i])) {
+            value->number = (int64_t)i;
+            *at += 3;
+            return 1;
+        }
+    }
+    smith_lang_cx_fail(cx, "`Kind` has no `%s`", smith_lang_gt_str(token + 2));
+    return -1;
 }
 
 // runtime/lang_target.c: the value of the fact whose macro the raw lowering wrote (`SMITH_TARGET_STATIC_ANALYZER`), as
@@ -583,6 +622,8 @@ static bool smith_lang_cx_operand(SmithLangCx *cx, uint32_t *at, uint32_t last, 
                                   "raw lowering (`smith cc --smith-lower`) cannot choose the branch");
     }
     if (smith_lang_cx_is_builtin(token)) return smith_lang_cx_builtin(cx, at, last, value);
+    int kind = smith_lang_cx_kind_constant(cx, at, last, value);
+    if (kind != 0) return kind > 0;
     if (smith_lang_cx_type_start(cx, *at)) {
         uint32_t end = smith_lang_cx_type_end(cx, *at, last);
         SmithTypeQuery query;

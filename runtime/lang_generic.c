@@ -243,28 +243,81 @@ static bool smith_lang_param_is_bare_type(const SmithLangParam *param) {
 // concept `auto` is, narrowed. The order is the one of smith_lang_concept_holds.
 static const char *const smith_lang_concepts[] = {"integer",    "floating", "signed_integer", "unsigned_integer",
                                                   "arithmetic", "boolean",  "pointer",        "enumeration",
-                                                  "structure",  "array",    "slice"};
+                                                  "structure",  "array",    "slice",          "any"};
 
-// The concept a token names: 1 + its index, or 0.
-static unsigned smith_lang_concept_of(const SmithLangGenToken *token) {
-    if (token->kind != SmithTokenKind_Identifier || token->special != SmithLangGen_Plain) return 0;
-    for (size_t i = 0; i < sizeof smith_lang_concepts / sizeof smith_lang_concepts[0]; i++) { // 11 concepts
-        if (smith_lang_equals(smith_lang_gt_str(token), token->length, smith_lang_concepts[i])) return (unsigned)i + 1;
+// The concepts a program declares (`Bool Ordered(constexpr Type T)`, issue #193): ordinary functions over a type that
+// a parameter may name. A name is a concept from its declaration on, in the module that declares it (`module` empty)
+// or in one the file imports. They count after the eleven above: the id of the first is 12.
+constexpr size_t smith_lang_user_concepts_max = 64;
+constexpr unsigned smith_lang_builtin_concepts = 12;
+
+typedef struct {
+    char name[smith_lang_name_max];
+    char module[smith_lang_name_max]; // empty: this file's own
+} SmithLangUserConcept;
+
+static SmithLangUserConcept smith_lang_user_concepts[smith_lang_user_concepts_max];
+static size_t smith_lang_user_concept_count;
+
+// The id of the program's concept `name` (the builtin count + its index + 1), or 0.
+static unsigned smith_lang_user_concept_find(const char *name, size_t length) {
+    for (size_t i = 0; i < smith_lang_user_concept_count; i++) { // the concepts declared so far
+        if (smith_lang_equals(name, length, smith_lang_user_concepts[i].name)) {
+            return smith_lang_builtin_concepts + (unsigned)i + 1;
+        }
     }
     return 0;
 }
 
+static void smith_lang_user_concept_add(const char *name, size_t length, const char *module, size_t module_length) {
+    if (length >= smith_lang_name_max || module_length >= smith_lang_name_max) return;
+    unsigned known = smith_lang_user_concept_find(name, length);
+    if (known != 0) { // read from an import's header after the raw lowering that made it declared it as the file's own
+        SmithLangUserConcept *old = &smith_lang_user_concepts[known - smith_lang_builtin_concepts - 1];
+        if (old->module[0] == 0 && module_length > 0)
+            snprintf(old->module, sizeof old->module, "%.*s", (int)module_length, module);
+        return;
+    }
+    if (smith_lang_user_concept_count >= smith_lang_user_concepts_max) return;
+    SmithLangUserConcept *entry = &smith_lang_user_concepts[smith_lang_user_concept_count++];
+    snprintf(entry->name, sizeof entry->name, "%.*s", (int)length, name);
+    snprintf(entry->module, sizeof entry->module, "%.*s", (int)module_length, module);
+}
+
+// The id of the concept a name stands for: a builtin one, or one the program declares. 0 when it is none.
+static unsigned smith_lang_concept_id_text(const char *text, size_t length) {
+    for (size_t i = 0; i < sizeof smith_lang_concepts / sizeof smith_lang_concepts[0]; i++) { // 11 concepts
+        if (smith_lang_equals(text, length, smith_lang_concepts[i])) return (unsigned)i + 1;
+    }
+    return length > 0 && text[0] >= 'A' && text[0] <= 'Z' ? smith_lang_user_concept_find(text, length) : 0;
+}
+
+static const char *smith_lang_concept_name(unsigned concept_id) {
+    return concept_id <= smith_lang_builtin_concepts
+               ? smith_lang_concepts[concept_id - 1]
+               : smith_lang_user_concepts[concept_id - smith_lang_builtin_concepts - 1].name;
+}
+
+// The concept a token names: its id, or 0.
+static unsigned smith_lang_concept_of(const SmithLangGenToken *token) {
+    if (token->kind != SmithTokenKind_Identifier || token->special != SmithLangGen_Plain) return 0;
+    return smith_lang_concept_id_text(smith_lang_gt_str(token), token->length);
+}
+
 // Whether the token written in the source names a concept.
 static bool smith_lang_concept_word(const SmithToken *token) {
-    if (token->kind != SmithTokenKind_Identifier) return false;
-    for (size_t i = 0; i < sizeof smith_lang_concepts / sizeof smith_lang_concepts[0]; i++) { // 11 concepts
-        if (smith_lang_equals(token->text, token->length, smith_lang_concepts[i])) return true;
-    }
-    return false;
+    return token->kind == SmithTokenKind_Identifier && smith_lang_concept_id_text(token->text, token->length) != 0;
 }
 
 // Whether the type, spelled as the compiler writes it, is of the concept (1 + its index in smith_lang_concepts).
-static bool smith_lang_concept_holds(const SmithHost *host, unsigned concept_id, const char *spelling) {
+static bool smith_lang_user_concept_holds(SmithLang *lang, const SmithHost *host, unsigned concept_id,
+                                          const char *spelling, uint32_t location);
+
+static bool smith_lang_concept_holds(SmithLang *lang, const SmithHost *host, unsigned concept_id, const char *spelling,
+                                     uint32_t location) {
+    if (concept_id > smith_lang_builtin_concepts) {
+        return smith_lang_user_concept_holds(lang, host, concept_id, spelling, location);
+    }
     SmithTypeQuery query = {};
     if (host->type_query == nullptr || !host->type_query(host->context, spelling, (uint32_t)strlen(spelling), &query)) {
         return true; // a host that cannot read the type judges nothing: the instance's own compile does
@@ -290,6 +343,8 @@ static bool smith_lang_concept_holds(const SmithHost *host, unsigned concept_id,
         return query.is_record;
     case 9:
         return query.is_array;
+    case 11:
+        return true; // `Any`: every type
     default: {
         static const char tag[] = "struct smith_array_";
         return strncmp(query.canonical, tag, sizeof tag - 1) == 0 && strpbrk(query.canonical + 7, "*[( ") == nullptr;
@@ -465,9 +520,11 @@ static bool smith_lang_param_is_number(const SmithLangParam *param) {
 // type.
 static bool smith_lang_param_is_pack(const SmithLangParam *param) {
     const SmithLangGenToken *first = &smith_lang_gt.tokens[param->start];
-    return param->end - param->start == 3 && smith_lang_gt_is(first, SmithTokenKind_Identifier, "auto") &&
-           smith_lang_gt_punct(first + 1, "...") && first[2].kind == SmithTokenKind_Identifier &&
-           first[2].special == SmithLangGen_Plain;
+    return param->end - param->start == 3 &&
+           (smith_lang_gt_is(first, SmithTokenKind_Identifier, "auto") ||
+            smith_lang_gt_is(first, SmithTokenKind_Identifier, "any")) && // `Any... rest`: every type is accepted
+           smith_lang_gt_punct(first + 1, "...") &&
+           first[2].kind == SmithTokenKind_Identifier && first[2].special == SmithLangGen_Plain;
 }
 
 // The parameters of a generic: the tokens between the parentheses, split at the commas that stand outside any
@@ -659,10 +716,12 @@ static bool smith_lang_parameter_generic_at(SmithLang *lang, const SmithHost *ho
         host->lookup(host->context, token->text, token->length, SmithLookup_Value).kind == SmithLookup_None) {
         return true; // `const arithmetic xs[:]`, `integer *p`: a concept for the element's `auto`
     }
-    if (smith_lang_ident(token, "auto") && (((starts_parameter || after_constexpr) &&
-                                             (smith_lang_type_parameter_at(lang, host, index) ||
-                                              (starts_parameter && smith_lang_pack_parameter_at(lang, host, index)))) ||
-                                            smith_lang_element_auto_at(lang, host, index))) {
+    if ((smith_lang_ident(token, "auto") ||
+         (starts_parameter && smith_lang_ident(token, "any") && smith_lang_pack_parameter_at(lang, host, index))) &&
+        (((starts_parameter || after_constexpr) &&
+          (smith_lang_type_parameter_at(lang, host, index) ||
+           (starts_parameter && smith_lang_pack_parameter_at(lang, host, index)))) ||
+         smith_lang_element_auto_at(lang, host, index))) {
         return true; // `auto x`, `constexpr auto f`, `auto... rest`, `const auto xs[:]`, `auto *p`
     }
     const SmithToken *after = smith_lang_peek(lang, host, index + 1, false);
@@ -671,6 +730,27 @@ static bool smith_lang_parameter_generic_at(SmithLang *lang, const SmithHost *ho
         return true; // `constexpr usize i`: a number known at compile time (C has no `constexpr` parameter)
     }
     return false;
+}
+
+// Whether the `type` read ahead at `index` is the only parameter of `Bool Name(constexpr type T)` with a capitalized
+// name: a concept (issue #193), an ordinary function over a type that runs in the compiler and is never instantiated.
+// It is recorded as a concept, so a later parameter may name it.
+static bool smith_lang_concept_function_at(SmithLang *lang, const SmithHost *host, const SmithToken *const *result,
+                                           size_t result_count, size_t index) {
+    if (result_count < 2) return false;
+    const SmithToken *name = result[result_count - 1];
+    if (!smith_lang_ident(result[result_count - 2], "bool") || name->text[0] < 'A' || name->text[0] > 'Z') return false;
+    if (!smith_lang_ident(smith_lang_peek(lang, host, index - 1, false), "constexpr") ||
+        !smith_lang_punct(smith_lang_peek(lang, host, index - 2, false), "(")) {
+        return false;
+    }
+    if (smith_lang_peek(lang, host, index + 1, false)->kind != SmithTokenKind_Identifier ||
+        !smith_lang_punct(smith_lang_peek(lang, host, index + 2, false), ")")) {
+        return false;
+    }
+    smith_lang_user_concept_add(name->text, name->length, "", 0);
+    lang->concept_head = true;
+    return true;
 }
 
 // Reads ahead, to the end of the parameter list of the function the declaration begins with: is there a `type T` in it.
@@ -720,6 +800,11 @@ static bool smith_lang_generic_ahead(SmithLang *lang, const SmithHost *host, con
                     smith_lang_bare_type_used(lang, host, result, result_count, index);
         if (in_params && depth == 1 && smith_lang_ident(token, "type") &&
             (smith_lang_ident(before, "constexpr") || bare) && smith_lang_type_parameter_at(lang, host, index)) {
+            if (smith_lang_concept_function_at(lang, host, result, result_count, index)) {
+                over_type = true; // `Bool Ordered(constexpr Type T)`: a concept, a function that runs in the compiler
+                before = token;
+                continue;
+            }
             return host->lookup(host->context, "type", 4, SmithLookup_Type).kind == SmithLookup_None;
         }
         if (in_params && depth == 1 && smith_lang_parameter_generic_at(lang, host, before, index)) return true;
@@ -986,14 +1071,22 @@ static void smith_lang_generic_enter_body(SmithLang *lang, const SmithHost *host
 static void smith_lang_generic_head_uses(SmithLang *lang, const SmithLangGeneric *generic) {
     bool was = lang->recording;
     lang->recording = true;
-    for (uint32_t i = 0; i + 1 < generic->name_index; i++) { // the result type, to the name
+    for (uint32_t i = 0; i + 1 < generic->close_index; i++) { // the result type, to the name; a concept in a parameter
         const SmithLangGenToken *token = &smith_lang_gt.tokens[generic->first + i];
         const SmithLangGenToken *next = &smith_lang_gt.tokens[generic->first + i + 1];
-        if (token->kind != SmithTokenKind_Identifier || !smith_lang_gt_punct(next, "(")) continue;
+        bool concept_word =
+            token->kind == SmithTokenKind_Identifier && i > 0 &&
+            smith_lang_concept_id_text(smith_lang_gt_str(token), token->length) > smith_lang_builtin_concepts;
+        if (token->kind != SmithTokenKind_Identifier || (i + 1 >= generic->name_index && !concept_word) ||
+            !(smith_lang_gt_punct(next, "(") || concept_word)) {
+            continue;
+        }
         for (size_t g = 0; g + 1 < lang->generics_count; g++) { // the head is written with the C name
             const SmithLangGeneric *called = &smith_lang_generics[g];
             if (!called->own || !called->plain || called->exported ||
-                !smith_lang_equals(smith_lang_gt_str(token), token->length, smith_lang_str(called->lowered))) {
+                !(smith_lang_equals(smith_lang_gt_str(token), token->length, smith_lang_str(called->lowered)) ||
+                  (concept_word &&
+                   smith_lang_equals(smith_lang_gt_str(token), token->length, smith_lang_str(called->member))))) {
                 continue;
             }
             const SmithLangName *known =
@@ -1408,6 +1501,19 @@ static int smith_lang_generic_find(const SmithLang *lang, const char *module, si
     return smith_lang_generic_find_in(lang, module, module_length, member, member_length, false);
 }
 
+// Whether a function over `type` read from a header is a concept: `bool Name(constexpr type T)`, a capital first.
+static bool smith_lang_generic_is_concept(const SmithLangGeneric *generic) {
+    const char *member = smith_lang_str(generic->member);
+    const SmithLangGenToken *name = &smith_lang_gt.tokens[generic->first + generic->name_index];
+    if (generic->name_index == 0 || generic->member.length == 0 || member[0] < 'A' || member[0] > 'Z' ||
+        !smith_lang_gt_is(name - 1, SmithTokenKind_Identifier, "bool")) {
+        return false;
+    }
+    SmithLangParam params[2];
+    size_t count = smith_lang_generic_params(generic, params, 2);
+    return count == 1 && smith_lang_param_is_type(&params[0]);
+}
+
 // Reads the generics a header lists (`// smith-generic:` lines), once for each module.
 static void smith_lang_generics_read(SmithLang *lang, const char *text, size_t length) {
     size_t marker = sizeof smith_lang_generic_marker - 1;
@@ -1443,6 +1549,9 @@ static void smith_lang_generics_read(SmithLang *lang, const char *text, size_t l
                 generic->body_index = (uint32_t)strtoul(parsed.words[8], nullptr, 10);
                 generic->exported = !generic->hidden;
                 good = smith_lang_generic_scan(generic) == nullptr;
+                if (good && generic->plain && smith_lang_generic_is_concept(generic)) {
+                    smith_lang_user_concept_add(words[1], strlen(words[1]), words[0], strlen(words[0]));
+                }
             }
             if (good &&
                 smith_lang_generic_find_in(lang, words[0], strlen(words[0]), words[1], strlen(words[1]), true) < 0) {
@@ -2757,6 +2866,37 @@ static void smith_lang_callee_name(const SmithLang *lang, const char *module, si
 
 #include "lang_constexpr.c"
 
+// Whether the type is of a concept the program declares: its function runs in the compiler's constant evaluator on the
+// type's handle, as `static_assert(Ordered(T))` would (issue #193). A function the evaluator cannot run is reported.
+static bool smith_lang_user_concept_holds(SmithLang *lang, const SmithHost *host, unsigned concept_id,
+                                          const char *spelling, uint32_t location) {
+    if (host->value_query == nullptr) return true; // the raw lowering has no compiler to run it
+    const SmithLangUserConcept *entry = &smith_lang_user_concepts[concept_id - smith_lang_builtin_concepts - 1];
+    uint64_t handle = 0;
+    char literal[512];
+    if (!smith_lang_ty_handle(lang, host, spelling, location, &handle) ||
+        !smith_lang_ty_literal(handle, literal, sizeof literal)) {
+        return true; // a type the lowering cannot make a handle of: the instance's own compile says what it is
+    }
+    char callee[smith_lang_name_max];
+    if (entry->module[0] == 0) {
+        snprintf(callee, sizeof callee, "%s", smith_lang_prefixed(lang, entry->name, strlen(entry->name)));
+    } else {
+        smith_lang_callee_name(lang, entry->module, strlen(entry->module), entry->name, strlen(entry->name), callee,
+                               sizeof callee);
+    }
+    char tokens[1024];
+    snprintf(tokens, sizeof tokens, "%s\x1f(\x1f%s\x1f)", callee, literal);
+    SmithValue nodes[4];
+    SmithValueQuery query = {.nodes = nodes, .capacity = 4};
+    if (!host->value_query(host->context, tokens, (uint32_t)strlen(tokens), &query)) {
+        smith_lang_error(lang, host, location, "the concept `%s` cannot run in the compiler: %s", entry->name,
+                         query.why != nullptr ? query.why : "it is not a constant");
+        return true;
+    }
+    return query.root.kind == SmithValue_Int && query.root.magnitude != 0;
+}
+
 static void smith_lang_generic_poison(SmithLang *lang, const SmithHost *host, uint32_t location);
 
 // ---- Argument lists: `auto... rest`
@@ -3434,6 +3574,24 @@ static int smith_lang_generic_named(SmithLang *lang, const SmithHost *host, Smit
     return smith_lang_generic_of(lang, host, smith_lang_gt_str(token), token->length);
 }
 
+// The generic function that `span`, a `constexpr auto` parameter of the generic being replayed, was given (`less` in
+// `sift_down(xs, i, n, less)` inside `sort_by`, whose instance was given `module::ascending`), or -1.
+static int smith_lang_forwarded_generic(SmithLang *lang, const SmithHost *host, const SmithLangReplay *replay,
+                                        SmithLangSpan span) {
+    if (replay->instance == nullptr || replay->generic == nullptr || span.end != span.start + 1) return -1;
+    const SmithLangGenToken *token = &smith_lang_gt.tokens[span.start];
+    if (token->kind != SmithTokenKind_Identifier || token->special != SmithLangGen_Plain || token->param == 0)
+        return -1;
+    const SmithLangGeneric *own = &smith_lang_generics[replay->instance->generic];
+    unsigned slot = (unsigned)token->param - 1;
+    if (slot >= own->type_count || own->type_kind[slot] != SmithLangSlot_Function ||
+        replay->instance->arg_count[slot] != 1) {
+        return -1;
+    }
+    const SmithLangGenToken *arg = &smith_lang_it.tokens[replay->instance->arg_first[slot]];
+    return smith_lang_generic_of(lang, host, smith_lang_pool_text(&smith_lang_it, arg), arg->length);
+}
+
 // The function passed to `constexpr auto f` at `span`, staged in smith_lang_it as its name. It must be a function
 // designator (a name the compiler says is a function, not a pointer to one): False after the error.
 static bool smith_lang_infer_function(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
@@ -3445,7 +3603,10 @@ static bool smith_lang_infer_function(SmithLang *lang, const SmithHost *host, Sm
     uint32_t place = smith_lang_infer_place(host, replay, span, location);
     SmithLangArgType type = {};
     const char *why = nullptr;
-    if (smith_lang_generic_named(lang, host, span) >= 0) { // a generic function: its calls make the instances
+    // a generic function, or a `constexpr auto` parameter of the instance that holds one (forwarded): its calls make
+    // the instances
+    if (smith_lang_generic_named(lang, host, span) >= 0 ||
+        smith_lang_forwarded_generic(lang, host, replay, span) >= 0) {
         return smith_lang_stage_type(span, replay->instance, location, first, count) && *count == 1;
     }
     if (!smith_lang_arg_type(lang, host, replay, span, location, &type, &why, true)) {
@@ -3915,13 +4076,14 @@ static const char *smith_lang_type_kind(const SmithTypeQuery *query) {
 // `integer(char) || floating(char)`; every other concept is a leaf, a question of the type the compiler answers.
 static void smith_lang_concept_why(const SmithLang *lang, const SmithHost *host, uint32_t error_location,
                                    unsigned concept_id, const char *judged) {
+    if (concept_id > smith_lang_builtin_concepts) return; // a program's concept: the error says it is false, no more
     SmithTypeQuery query = {};
     char written[256];
     smith_lang_spell_written(lang, judged, written, sizeof written);
     if (host->type_query == nullptr || !host->type_query(host->context, judged, (uint32_t)strlen(judged), &query)) {
         return;
     }
-    const char *name = smith_lang_concepts[concept_id - 1];
+    const char *name = smith_lang_concept_name(concept_id);
     if (concept_id == 5) { // arithmetic
         smith_lang_note(host, error_location, 0,
                         "`arithmetic(%s)` is false: `integer(%s)` and `floating(%s)` are both false; `%s` is %s",
@@ -3945,7 +4107,7 @@ static bool smith_lang_concept_check(SmithLang *lang, const SmithHost *host, Smi
     char judged[512];
     snprintf(judged, sizeof judged, "%s", spelling);
     smith_lang_element_spelling(host, generic, slot, judged, sizeof judged); // the element of `const arithmetic xs[:]`
-    if (smith_lang_concept_holds(host, concept_id, judged)) return true;
+    if (smith_lang_concept_holds(lang, host, concept_id, judged, location)) return true;
     char shown[256];
     smith_lang_infer_written(span, shown, sizeof shown);
     char written[256];
@@ -3956,18 +4118,22 @@ static bool smith_lang_concept_check(SmithLang *lang, const SmithHost *host, Smi
     size_t position = generic->type_position[slot];
     SmithLangShape shape = {};
     bool element = total != SIZE_MAX && position < total && smith_lang_param_shape(&params[position], &shape);
-    if (total != SIZE_MAX && position < total) {
+    if (total != SIZE_MAX && position < total && concept_id <= smith_lang_builtin_concepts) {
         smith_lang_takes_note(host, generic, &params[position], element ? shape.auto_at : params[position].start,
                               place);
     }
     smith_lang_concept_why(lang, host, place, concept_id, judged);
+    if (concept_id > smith_lang_builtin_concepts) { // a concept the program wrote: one line, no trace
+        smith_lang_error(lang, host, place, "`%s(%s)` is false", smith_lang_concept_name(concept_id), written);
+        return false;
+    }
     if (element) {
         bool pointer = shape.kind == SmithLangShape_Pointer;
         smith_lang_error(lang, host, place, "`%s` is not `%s`: the %s of `%s` %s that type", written,
-                         smith_lang_concepts[concept_id - 1], pointer ? "pointee" : "elements", shown,
+                         smith_lang_concept_name(concept_id), pointer ? "pointee" : "elements", shown,
                          pointer ? "has" : "have");
     } else {
-        smith_lang_error(lang, host, place, "`%s` is not `%s`", written, smith_lang_concepts[concept_id - 1]);
+        smith_lang_error(lang, host, place, "`%s` is not `%s`", written, smith_lang_concept_name(concept_id));
     }
     return false;
 }
@@ -4014,7 +4180,7 @@ static bool smith_lang_shape_check(SmithLang *lang, const SmithHost *host, Smith
     char shown[256];
     smith_lang_infer_written(span, shown, sizeof shown);
     char want[128];
-    const char *word = generic->type_concept[slot] != 0 ? smith_lang_concepts[generic->type_concept[slot] - 1] : "auto";
+    const char *word = generic->type_concept[slot] != 0 ? smith_lang_concept_name(generic->type_concept[slot]) : "auto";
     if (shape.kind == SmithLangShape_Slice) {
         char brackets[40] = "";
         for (unsigned i = 0; i < shape.dims && i < 8; i++) // the dimensions as written
@@ -5296,6 +5462,15 @@ static void smith_lang_replay_plain(SmithLang *lang, const SmithHost *host, Smit
         smith_lang_generic_poison(lang, host, place);
         return;
     }
+    uint32_t here = (uint32_t)(token - smith_lang_gt.tokens);
+    if (replay->typing && smith_lang_forwarded_generic(lang, host, replay, (SmithLangSpan){here, here + 1}) >= 0) {
+        // `less` in the arguments of a call that is typed first, given a generic: the generic's name, which the
+        // call's own `constexpr auto` parameter takes (smith_lang_infer_function), not an address.
+        const SmithLangGenToken *arg = &smith_lang_it.tokens[replay->instance->arg_first[token->param - 1]];
+        smith_lang_gen_put(lang, host, SmithTokenKind_Identifier, smith_lang_pool_text(&smith_lang_it, arg), place,
+                           replay->instance_id);
+        return;
+    }
     smith_lang_gen_put_subst(lang, host, replay->generic, replay->instance, token, replay->location,
                              replay->instance_id, replay->instance_id == 0);
 }
@@ -5741,6 +5916,7 @@ static void smith_lang_generics_aside(bool save, const SmithLang *lang) {
 }
 
 static void smith_lang_generics_reset(void) {
+    smith_lang_user_concept_count = 0;
     smith_lang_gt.count = 0;
     smith_lang_gt.text_used = 0;
     smith_lang_it.count = 0;
