@@ -32,8 +32,10 @@ includes its header waits for that step: an edit to a module regenerates its hea
 run by hand (no task regenerates headers and no check compares them). smith's own libraries (`lib/std/*.smith`) and
 `std::build` write theirs to `.smith/include/smith/`, never `include/smith/`, which holds only hand-written headers
 (`handlers.h`, `http.h`, `json.h`, `trace.h`); a user's project gets them there too. Who writes them:
-- **A project's build:** `smith build` writes the sources smith embeds (`.smith/lib/std/<name>.smith`) and, in parallel,
-  the header of each from them with the same binary (`smith_write_lang_headers` in smith.c: about 80 ms for the 13, and
+- **A project's build:** `smith build` writes the sources smith embeds (`.smith/lib/std/<name>.smith`) and the
+  header of each from them with the same binary, in parallel within a wave: a module's header waits for the headers of
+  the modules it imports (their `import std::<name>;` lines), or it would name their types by the fallback and the
+  stamp would keep that header (`tests/header_order_test.smith`) (`smith_write_lang_headers` in smith.c: about 80 ms for the 13, and
   nothing while the stamp `.smith/include/smith/.written-by`, the binary's size and mtime, and every header are there).
   smith embeds the *sources*, not headers, so the program that reads a header is the one that wrote it and no
   compatibility reader exists. `smith lsp` does the same for the nearest project, so an editor finds `<smith/arena.h>`
