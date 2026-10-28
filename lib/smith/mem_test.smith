@@ -223,3 +223,19 @@ export void test_mem_view_of_misaligned_bytes_is_a_failed_check() {
     f32 floats[:] = mem::view(storage[1:9], f32);
     test::check_equal(countof(floats), 2);
 }
+
+export void test_mem_resize_keeps_the_bytes_and_zeroes_the_new_ones() {
+    u8 *block = (u8 *)mem::alloc_raw(8, 16);
+    mem::fill(block[0:8], 0x5A);
+    u8 *bigger = (u8 *)mem::resize_raw(block, 8, 4096);
+    test::check_equal(bigger[7], 0x5A);
+    test::check_equal(bigger[8], 0);
+    test::check_equal(bigger[4095], 0);
+    mem::free(bigger);
+}
+
+export void test_mem_resize_of_null_is_an_allocation() {
+    u8 *block = (u8 *)mem::resize_raw(nullptr, 0, 32);
+    test::check_equal(block[31], 0);
+    mem::free(block);
+}

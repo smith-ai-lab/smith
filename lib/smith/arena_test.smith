@@ -404,3 +404,24 @@ export void test_arena_allocator_serves_a_growing_arena() {
     for (usize i = 0; i < 16; i++)
         base->free(base, blocks[i]); // only the last of the current chunk goes back; none touches another chunk's
 }
+
+export void test_arena_allocator_extends_its_last_block_in_place() {
+    static Memory memory;
+    arena::Arena a = arena::fixed(memory.bytes, sizeof memory.bytes);
+    arena::ArenaAllocator allocator = arena::allocator(&a);
+    typeof(allocator.base) *base = &allocator.base;
+    u8 *block = (u8 *)base->alloc(base, 100, 16);
+    mem::fill(block[0:100], 0xAA);
+    usize top = a.used;
+    u8 *same = (u8 *)base->realloc(base, block, 300, 16); // the last block: the cursor moves, nothing copies
+    test::check_condition(same == block);
+    test::check_condition(a.used > top);
+    test::check_equal(base->size(base, block), 300);
+    test::check_equal(block[99], 0xAA); // what was there stays
+    test::check_equal(block[100], 0);   // what is new is zero
+    u8 *later = (u8 *)base->alloc(base, 16, 16);
+    test::check_condition(later != nullptr);
+    u8 *moved = (u8 *)base->realloc(base, block, 400, 16); // something was pushed after it: a copy elsewhere
+    test::check_condition(moved != block);
+    test::check_equal(moved[99], 0xAA);
+}
