@@ -1,0 +1,13 @@
+module main;
+
+import <stdio.h>;
+import stats;
+
+i32 main(void) {
+    i32 a = 21;
+    f64 b = 1.25;
+    i16 c = 7;
+    c::printf("%d %g %d\n", stats::twice(a), stats::twice(b), stats::smaller(c, (i16)3));
+    c::printf("%zu\n", stats::bytes(b));
+    return 0;
+}
