@@ -21,10 +21,8 @@ constexpr char sources[_] = "-I lowered \"$SMITH_REPO/tests/random.c\" \"$SMITH_
 
 static scratch::Project lowered_project(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run lowered =
-        scratch::sh(&p, "mkdir lowered && smith cc --smith-lower \"$SMITH_REPO/lib/smith/random.smith\" "
-                        ">lowered/random_lowered.c");
-    scratch::expect_status("the raw lowering of random.smith", 0, &lowered);
+    // the lowering is made in process: the text is all this needs (the compiles below stay end to end)
+    scratch::write_lowered(&p, "lib/smith/random.smith", "lowered/random_lowered.c");
     return p;
 }
 

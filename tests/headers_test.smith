@@ -16,6 +16,7 @@ import smith::format;
 import smith::io;
 import smith::test;
 import scratch;
+import <string.h>;
 
 constexpr usize chain_length = 20;
 constexpr usize deep_length = 140;
@@ -41,13 +42,26 @@ static void make_header(const scratch::Project *p, const char *module, const cha
     scratch::expect_status(join(p, module, ": the header is written"), 0, &run);
 }
 
-// Whether a line (fixed text) is in the header, as `grep -x` finds it.
+// Whether a line (fixed text) is in the header, as `grep -x` finds it; the file is read in process.
 static void has(const scratch::Project *p, const char *name, const char *header, const char *line, bool wanted) {
-    const char *command = format::push(&p->io->arena, "grep -qxF '", line, "' ", header).data;
-    scratch::Run run = scratch::sh(p, command);
+    const char *text = scratch::read(p, header);
+    usize size = c::strlen(line);
+    bool found = false;
+    for (const char *at = text; *at != '\0';) {
+        usize length = 0;
+        while (at[length] != '\n' && at[length] != '\0') {
+            length++;
+        }
+        found = found || (length == size && c::strncmp(at, line, size) == 0);
+        at += length;
+        if (*at == '\n') at++;
+    }
     const char *label =
         format::push(&p->io->arena, name, ": ", line, wanted ? " is in the header" : " is not in the header").data;
-    scratch::expect_status(label, wanted ? 0 : 1, &run);
+    if (found != wanted) {
+        test::note("%s", label);
+    }
+    test::check_equal(found, wanted);
 }
 
 // The header compiles on its own, as C and as C++, with the include path (when given).
@@ -63,7 +77,8 @@ static void standalone(const scratch::Project *p, const char *name, const char *
 }
 
 // The header of every library module, written by the smith under test into generated/ (they include one another, so
-// all are written), and the one named compiled on its own.
+// all are written), and the one named compiled on its own. This stays end to end: written in process, the twenty
+// headers cost about 10 s of CPU a test in the sanitized runner, far more than the command's processes (issue #646).
 static void generated(io::Io *io, const char *name) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     scratch::Run made = scratch::sh(
@@ -89,10 +104,8 @@ export void test_every_library_module_has_a_header_test(io::Io *io) {
 // because their headers are not in git: the generated headers must say the same.
 export void test_the_shapes_the_lowering_carries_are_the_ones_the_headers_write(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run made =
-        scratch::sh(&p, "\"$SMITH_SELF\" cc --smith-header \"$SMITH_REPO/lib/smith/option.smith\" -o option.h && "
-                        "\"$SMITH_SELF\" cc --smith-header \"$SMITH_REPO/lib/smith/result.smith\" -o result.h");
-    scratch::expect_status("the headers are written", 0, &made);
+    scratch::write_header_of(&p, "lib/smith/option.smith", "option.h");
+    scratch::write_header_of(&p, "lib/smith/result.smith", "result.h");
     has(&p, "option", "option.h", "// smith-eshape: option(T) { T some ; none ; }", true);
     has(&p, "result", "result.h", "// smith-eshape: result(T,E) { T ok ; E error ; }", true);
 }
@@ -205,7 +218,7 @@ export void test_the_text_header_compiles_alone(io::Io *io) {
 
 export void test_an_import_only_a_body_uses_stays_out(io::Io *io) {
     scratch::Project p = make_project(io);
-    make_header(&p, "t/body", "");
+    scratch::write_header(&p, "t/body");
     has(&p, "body: an import only a body uses", "include/t/body.h", "#include <stdio.h>", false);
     has(&p, "every header: the sized types' headers", "include/t/body.h", "#include <stdint.h>", true);
     standalone(&p, "t/body.h", "include/t/body.h", "-I include");
@@ -246,8 +259,8 @@ export void test_of_two_imports_the_one_that_declares_the_tag_goes_in(io::Io *io
 // include path of their own (a stage0 compiling smith.c has none).
 export void test_an_imported_module_an_export_uses_is_included(io::Io *io) {
     scratch::Project p = make_project(io);
-    make_header(&p, "t/point", "");
-    make_header(&p, "t/uses", "");
+    scratch::write_header(&p, "t/point");
+    scratch::write_header(&p, "t/uses");
     has(&p, "uses: an imported module an export's type uses", "include/t/uses.h", "#include \"point.h\"", true);
     standalone(&p, "t/point.h", "include/t/point.h", "-I include");
     standalone(&p, "t/uses.h", "include/t/uses.h", "-I include");
@@ -255,8 +268,8 @@ export void test_an_imported_module_an_export_uses_is_included(io::Io *io) {
 
 export void test_an_imported_module_only_a_body_uses_is_not_included(io::Io *io) {
     scratch::Project p = make_project(io);
-    make_header(&p, "t/point", "");
-    make_header(&p, "t/body_module", "");
+    scratch::write_header(&p, "t/point");
+    scratch::write_header(&p, "t/body_module");
     has(&p, "body_module: an imported module only a body uses", "include/t/body_module.h", "#include \"point.h\"",
         false);
     standalone(&p, "t/body_module.h", "include/t/body_module.h", "-I include");
@@ -264,17 +277,17 @@ export void test_an_imported_module_only_a_body_uses_is_not_included(io::Io *io)
 
 export void test_a_module_in_another_folder_is_included_relative(io::Io *io) {
     scratch::Project p = make_project(io);
-    make_header(&p, "t/point", "");
-    make_header(&p, "u/far", "");
+    scratch::write_header(&p, "t/point");
+    scratch::write_header(&p, "u/far");
     has(&p, "far: a module in another folder", "include/u/far.h", "#include \"../t/point.h\"", true);
     standalone(&p, "u/far.h", "include/u/far.h", "-I include");
 }
 
 export void test_modules_in_a_folder_above_and_beside_are_included_relative(io::Io *io) {
     scratch::Project p = make_project(io);
-    make_header(&p, "t/point", "");
-    make_header(&p, "u/far", "");
-    make_header(&p, "u/deep/farther", "");
+    scratch::write_header(&p, "t/point");
+    scratch::write_header(&p, "u/far");
+    scratch::write_header(&p, "u/deep/farther");
     has(&p, "farther: a module in a folder above", "include/u/deep/farther.h", "#include \"../../t/point.h\"", true);
     has(&p, "farther: a module beside the folder", "include/u/deep/farther.h", "#include \"../far.h\"", true);
     standalone(&p, "u/deep/farther.h", "include/u/deep/farther.h", "-I include");
@@ -341,7 +354,6 @@ export void test_a_chain_of_twenty_modules_is_read_by_header(io::Io *io) {
 export void test_an_import_after_twenty_others_is_still_found(io::Io *io) {
     scratch::Project p = make_project(io);
     write_chain(&p);
-    make_header(&p, "t/point", "");
     make_chain_headers(&p);
     scratch::Run run = scratch::sh(&p, "smith cc --smith-header chain/last.smith -o chain-last.h -I include");
     scratch::expect_status("chain: an import after twenty others is still found", 0, &run);
