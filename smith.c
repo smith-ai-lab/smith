@@ -873,13 +873,18 @@ static int smith_route_in_process(int argc, char **argv, int first, bool which, 
 
 #include "runtime/lang.h"
 
-constexpr size_t smith_smith_args_max = 8192; // arguments of a command with .smith inputs
+constexpr size_t smith_smith_args_max = 8192;            // arguments of a command with .smith inputs
+constexpr size_t smith_smith_environment_max = 4U << 20; // SMITH_LANG_INPUTS and SMITH_LANG_FLAGS, each
+
+[[noreturn]] static void smith_smith_environment_full(const char *name) {
+    smith_die(smith_exit_usage, "the arguments of this command are too long for", name);
+}
 
 // The .smith files of the command, for the compile of each: an `import foo` that finds no foo.h looks for foo.smith
 // among them first (the hook reads SMITH_LANG_INPUTS, one path to a line). The environment is smith's own and inherited
 // by the compiles the driver runs.
 static void smith_set_smith_inputs(int argc, char **argv, int first) {
-    static char inputs[smith_smith_args_max];
+    static char inputs[smith_smith_environment_max];
     size_t used = 0;
     inputs[0] = 0;
     for (int i = first; i < argc; i++) { // bounded by argc
@@ -887,7 +892,7 @@ static void smith_set_smith_inputs(int argc, char **argv, int first) {
             i += 1;
         } else if (argv[i][0] != '-' && smith_ends_with(argv[i], ".smith")) {
             size_t length = strlen(argv[i]);
-            if (used + length + 2 > sizeof inputs) break; // a command with that many keeps the rest to the path search
+            if (used + length + 2 > sizeof inputs) smith_smith_environment_full("SMITH_LANG_INPUTS (4 MiB)");
             memcpy(inputs + used, argv[i], length);
             inputs[used + length] = '\n';
             used += length + 1;
@@ -901,7 +906,7 @@ static void smith_set_smith_inputs(int argc, char **argv, int first) {
 // -std,
 // ...), one to a line, for the compile that makes another module's body file (issue #107): it is given the same ones.
 static void smith_set_smith_flags(int argc, char **argv, int first) {
-    static char flags[smith_smith_args_max];
+    static char flags[smith_smith_environment_max];
     static const char *const separate[] = {"-I", "-isystem", "-iquote", "-include", "-isysroot", "-D", "-U"};
     static const char *const joined[] = {"-I", "-isystem", "-iquote", "-D", "-U", "-std=", "-isysroot", "-F"};
     size_t used = 0;
@@ -914,7 +919,8 @@ static void smith_set_smith_flags(int argc, char **argv, int first) {
         for (size_t k = 0; k < sizeof joined / sizeof joined[0]; k++)
             keep = keep || strncmp(argv[i], joined[k], strlen(joined[k])) == 0;
         size_t need = strlen(argv[i]) + 1 + (pair && i + 1 < argc ? strlen(argv[i + 1]) + 1 : 0);
-        if ((!pair && !keep) || used + need + 1 > sizeof flags) {
+        if ((pair || keep) && used + need + 1 > sizeof flags) smith_smith_environment_full("SMITH_LANG_FLAGS (4 MiB)");
+        if (!pair && !keep) {
             i += argv[i][0] == '-' && smith_takes_value(argv[i]) && i + 1 < argc ? 1 : 0;
             continue;
         }
@@ -2758,7 +2764,7 @@ static int smith_tool_in_process(const SmithTool *tool, int argc, char **argv, c
 // by their content) and passed as `--style=file:<path>` and `--config-file=<path>`. A project's file replaces smith's
 // whole, and an explicit option of the tool wins. `--dump-config` is the tool's own, so it prints the effective one.
 // `smith lsp` points clangd at `.smith/compile_commands.json` when the project has no root one.
-constexpr int smith_defaults_args_max = 4096;
+constexpr int smith_defaults_args_max = 262144; // arguments of smith fmt, lint and lsp; more is an error
 constexpr int smith_defaults_depth_max = 256;
 
 // Whether the folder or one above it holds a file of one of the names (null-terminated list). A path that cannot be
@@ -2970,7 +2976,6 @@ static int smith_defaults_apply(const SmithTool *tool, int *argc, char ***argv, 
     bool fmt = strcmp(tool->command, "fmt") == 0;
     int count = *argc;
     char **args = *argv;
-    if (count > smith_defaults_args_max - 8) return -1;
     smith_defaults_read(fmt, count, args);
     SmithDefaultsScan *scan = &smith_defaults_scan;
     if (fmt) smith_fmt_refuse_non_c(scan, args);
@@ -2986,7 +2991,7 @@ static int smith_defaults_apply(const SmithTool *tool, int *argc, char ***argv, 
     bool all = scan->count == 0 || scan->missing_count == scan->count;
     int status = -1;
     if (!all) { // the files without run in a process of their own, with the default
-        char *child[smith_defaults_args_max];
+        static char *child[smith_defaults_args_max];
         int used = 0;
         child[used++] = (char *)self;
         child[used++] = args[1];
@@ -3148,7 +3153,7 @@ static bool smith_fmt_names_a_file_only(int argc, char **argv) {
 }
 
 static void smith_fmt_rewrite(int *argc, char ***argv) {
-    if (*argc >= smith_defaults_args_max - 2 || !smith_fmt_names_a_file_only(*argc, *argv)) return;
+    if (!smith_fmt_names_a_file_only(*argc, *argv)) return;
     int out = 0;
     smith_fmt_rewrite_argv[out++] = (*argv)[0];
     smith_fmt_rewrite_argv[out++] = (*argv)[1];
@@ -3165,11 +3170,17 @@ static void smith_fmt_rewrite(int *argc, char ***argv) {
 static int smith_tool_main(const SmithTool *tool, int argc, char **argv, const char *self) {
     SMITH_ASSERT(tool != nullptr && argc >= 2 && argv[0] != nullptr);
     int before = -1;
+    if (argc > smith_defaults_args_max - 8 &&
+        (strcmp(tool->command, "fmt") == 0 || strcmp(tool->command, "lint") == 0 ||
+         strcmp(tool->command, "lsp") == 0)) {
+        char found[32];
+        snprintf(found, sizeof found, "%d", argc);
+        smith_die(smith_exit_usage, "too many arguments for smith's defaults (limit 262136, found):", found);
+    }
     if (strcmp(tool->command, "fmt") == 0) smith_fmt_rewrite(&argc, &argv);
     if (strcmp(tool->command, "fmt") == 0 || strcmp(tool->command, "lint") == 0) {
         before = smith_defaults_apply(tool, &argc, &argv, self);
-    } else if (strcmp(tool->command, "lsp") == 0 && argc < smith_defaults_args_max - 2 &&
-               smith_lsp_commands_option(argc, argv)) {
+    } else if (strcmp(tool->command, "lsp") == 0 && smith_lsp_commands_option(argc, argv)) {
         for (int i = 0; i < argc; i++)
             smith_defaults_argv[i] = argv[i];
         smith_defaults_argv[argc++] = smith_lsp_option;
