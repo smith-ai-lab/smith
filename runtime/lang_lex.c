@@ -749,6 +749,64 @@ static const char *smith_header_flags[smith_header_flags_max];
 static size_t smith_header_flag_count;
 static const char *smith_header_source;
 
+// The files the header pass read, for the depfile of `-MF<file>` (the step cache keys a header step by them, as it keys
+// a compile by its depfile): the module's source, the sources of the modules it imports (or their headers on the
+// include path), and the files its probe compiled (smith.c). nullptr when no depfile was asked for.
+constexpr size_t smith_header_reads_max = 512;
+constexpr size_t smith_header_reads_bytes = (size_t)1 << 17;
+static const char *smith_header_depfile;
+static char smith_header_reads[smith_header_reads_bytes];
+static size_t smith_header_reads_used;
+static size_t smith_header_reads_count;
+static bool smith_header_reads_full;
+
+static void smith_header_note_read(const char *path) {
+    if (smith_header_depfile == nullptr) return;
+    size_t length = strlen(path);
+    for (size_t at = 0, i = 0; i < smith_header_reads_count; i++) { // bounded by the count: once for each file
+        if (strcmp(smith_header_reads + at, path) == 0) return;
+        at += strlen(smith_header_reads + at) + 1;
+    }
+    if (smith_header_reads_count >= smith_header_reads_max ||
+        smith_header_reads_used + length + 1 > sizeof smith_header_reads) {
+        smith_header_reads_full = true;
+        return;
+    }
+    memcpy(smith_header_reads + smith_header_reads_used, path, length + 1);
+    smith_header_reads_used += length + 1;
+    smith_header_reads_count += 1;
+}
+
+// `<header>: <the files read>`, as a Makefile writes it and ninja reads it (a space is `\ `, a `#` is `\#`, a `$` is
+// `$$`). Nothing is written when the list did not fit or a name has a character no depfile can carry: a header step
+// with no depfile is no dependencies, and the step cache stores nothing for it.
+static bool smith_header_write_depfile(const char *header) {
+    if (smith_header_depfile == nullptr) return true;
+    if (smith_header_reads_full) {
+        (void)unlink(smith_header_depfile);
+        return true;
+    }
+    FILE *file = fopen(smith_header_depfile, "wb");
+    if (file == nullptr) return false;
+    bool good = true;
+    fprintf(file, "%s:", header);
+    for (size_t at = 0, i = 0; i < smith_header_reads_count; i++) { // bounded by the count
+        const char *path = smith_header_reads + at;
+        at += strlen(path) + 1;
+        fputs(" ", file);
+        for (const char *c = path; *c != 0; c++) {
+            if (*c == '\n' || *c == '\\') good = false;
+            if (*c == ' ' || *c == '#') fputc('\\', file);
+            if (*c == '$') fputc('$', file);
+            fputc(*c, file);
+        }
+    }
+    fputc('\n', file);
+    good = fclose(file) == 0 && good;
+    if (!good) (void)unlink(smith_header_depfile);
+    return true;
+}
+
 // smith.c: asks a compile of the module's imports alone which import declared each C name the exports use.
 static bool smith_lang_ask_compiler(const SmithLang *lang, const char **spellings);
 
@@ -856,6 +914,7 @@ static void smith_raw_text_root(const char *file, const char *text, size_t lengt
 static size_t smith_raw_read_file(const char *path, char *into, size_t capacity) {
     FILE *file = fopen(path, "rb");
     if (file == nullptr) return SIZE_MAX;
+    smith_header_note_read(path);
     size_t got = fread(into, 1, capacity - 1, file);
     fclose(file);
     into[got] = 0;
@@ -994,7 +1053,17 @@ static bool smith_raw_read_header(void *context, const char *relative, const cha
         smith_raw_modules[slot].length = 0;
         into[0] = 0;
         size_t got = SIZE_MAX;
-        for (size_t i = 0; i < smith_header_flag_count && got == SIZE_MAX; i++) { // the header on an include path
+        // The module's source first, at its root: the same bytes in every folder, and no dependence on whether another
+        // step has written the module's header yet (the step cache keys a header step by what it read).
+        char root[PATH_MAX];
+        smith_raw_root(raw, root, sizeof root);
+        char source_path[PATH_MAX];
+        size_t stem = strlen(relative) - 2; // without the .h
+        if ((size_t)snprintf(source_path, sizeof source_path, "%s/%.*s.smith", root, (int)stem, relative) <
+            sizeof source_path) {
+            got = smith_raw_interface_meta(raw, source_path, into, smith_raw_meta_max);
+        }
+        for (size_t i = 0; i < smith_header_flag_count && got == SIZE_MAX; i++) { // else the header on an include path
             const char *flag = smith_header_flags[i];
             const char *directory = nullptr;
             if (strcmp(flag, "-I") == 0 && i + 1 < smith_header_flag_count) {
@@ -1006,15 +1075,6 @@ static bool smith_raw_read_header(void *context, const char *relative, const cha
             if (directory != nullptr &&
                 (size_t)snprintf(path, sizeof path, "%s/%s", directory, relative) < sizeof path) {
                 got = smith_raw_read_file(path, into, smith_raw_meta_max);
-            }
-        }
-        if (got == SIZE_MAX) { // else the module's source
-            char root[PATH_MAX];
-            smith_raw_root(raw, root, sizeof root);
-            char path[PATH_MAX];
-            size_t stem = strlen(relative) - 2; // without the .h
-            if ((size_t)snprintf(path, sizeof path, "%s/%.*s.smith", root, (int)stem, relative) < sizeof path) {
-                got = smith_raw_interface_meta(raw, path, into, smith_raw_meta_max);
             }
         }
         smith_raw_modules[slot].length = got == SIZE_MAX ? 0 : got;
@@ -1033,6 +1093,7 @@ static int smith_lang_run_raw(const char *path, const char *header_path, bool pr
     smith_raw_directives_next = 0;
     smith_raw_directive_pool_used = 0;
     if (!smith_raw_read_source(path, &raw.length)) smith_die(smith_exit_missing, "cannot read", path);
+    smith_header_note_read(path);
     smith_lang_index_lines(raw.length);
     SmithLang *lang = smith_lang_new();
     raw.lang = lang;
@@ -1078,7 +1139,12 @@ static int smith_lang_run_raw(const char *path, const char *header_path, bool pr
     }
     if (lang->errors > 0 || names.errors > 0) return 1;
     if (header_path != nullptr && lang->is_module) {
-        return smith_lang_write_header(header_path, smith_lang_header_full, lang->header_full_used);
+        int status = smith_lang_write_header(header_path, smith_lang_header_full, lang->header_full_used);
+        if (status == 0 && !smith_header_write_depfile(header_path)) {
+            fprintf(stderr, "smith: cannot write %s\n", smith_header_depfile);
+            return 1;
+        }
+        return status;
     } else if (header_path != nullptr) {
         fprintf(stderr, "%s: not a module (it has no `module` line), so it has no header\n", path);
         return 1;
@@ -1095,6 +1161,8 @@ static int smith_lang_main(int count, char **args, bool header) {
     for (int i = 0; i < count; i++) { // bounded by the arguments
         if (strcmp(args[i], "-o") == 0 && i + 1 < count) {
             output = args[++i];
+        } else if (header && strncmp(args[i], "-MF", 3) == 0) { // the depfile: -MF<file> (the form a smith before it
+            smith_header_depfile = args[i][3] != 0 ? args[i] + 3 : (i + 1 < count ? args[++i] : nullptr); // ignores)
         } else if (header && args[i][0] == '-') { // a compile flag: -I dir, -Dname, -std=...
             static const char *const separate[] = {"-I", "-isystem", "-iquote", "-include", "-isysroot", "-D", "-U"};
             bool pair = false;

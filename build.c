@@ -185,7 +185,11 @@ static SmithStep build_protocol_program(SmithBuild *b, const BuildConfig *config
             .flags = smith_cat(b, config->cflags, (const char *[]){"-I", "include", "-I", ".smith/include", nullptr},
                                nullptr),
         };
-        if (strstr(sources[i], ".smith") != nullptr) objects[i].flags = build_smith_flags(b, config);
+        if (strstr(sources[i], ".smith") != nullptr) {
+            objects[i].flags = build_smith_flags(b, config);
+            objects[i].implicit_inputs =
+                config->headers; // a header written while a module compiles is read in either state
+        }
         smith_object(b, &objects[i]);
         linked[i] = &objects[i];
     }
@@ -240,17 +244,24 @@ static const char *build_compiler_file(SmithBuild *b, const BuildConfig *config)
 static const char *const *build_header_steps(SmithBuild *b, const BuildConfig *config) {
     const char *compiler = build_compiler_file(b, config);
     const char *const *outputs = smith_list(b, nullptr);
+    // the flags of the modules' compiles: the header pass asks the compiler which C import declared a name, and finds
+    // the headers only with them
+    const char *const *flags = build_smith_flags(b, config);
     for (size_t i = 0; build_header_modules[i] != nullptr; i++) {
         const char *name = build_header_modules[i];
         const char *header = smith_fmt(b, ".smith/include/smith/%s.h", name);
         const char *source = smith_fmt(b, "lib/smith/%s.smith", name);
         SmithStep step = {
-            .command = smith_list(b, config->cc, "--smith-header", source, "-o", header, nullptr),
+            .command = smith_cat(b,
+                                 smith_list(b, config->cc, "--smith-header", source, "-o", header,
+                                            smith_fmt(b, "-MF%s.d", header), nullptr),
+                                 flags, nullptr),
             .inputs = smith_list(b, source, nullptr),
             .implicit_inputs = smith_list(b, compiler, nullptr),
             .outputs = smith_list(b, header, nullptr),
             .description = smith_fmt(b, "header %s", source),
-            .restat = true, // the header is written only when its bytes change
+            .depfile = smith_fmt(b, "%s.d", header), // what the header pass read: the sources of the modules it imports
+            .restat = true,                          // the header is written only when its bytes change
         };
         smith_step(b, &step);
         outputs = smith_cat(b, outputs, step.outputs, nullptr);
@@ -650,6 +661,7 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
             .source = smith_fmt(b, "lib/smith/%s.smith", build_linked_libraries[i]),
             .output = smith_fmt(b, "%s/%s.o", folder, build_linked_libraries[i]),
             .flags = flags,
+            .implicit_inputs = config->headers, // the headers no smith_object makes, written before a module reads them
         };
         smith_object(b, &libraries[i]);
         objects[count++] = &libraries[i];
@@ -686,6 +698,12 @@ static const char *const *build_test_modules(SmithBuild *b, const BuildConfig *c
     const char *const *tests =
         smith_glob(b, smith_list(b, "tests/*.smith", "lib/*_test.smith", "lib/smith/*_test.smith", nullptr));
     const char *const *needs = smith_list(b, smith_cc, nullptr);
+    // Most tests import the scratch module (tests/scratch.smith), whose header they read from .smith/include: its step
+    // goes first, so that they read it as it will be (the step cache serves a header step by what it read)
+    const char *scratch = ".smith/include/scratch.h";
+    bool has_scratch = false;
+    for (size_t i = 0; tests[i] != nullptr; i++)
+        has_scratch = has_scratch || strcmp(tests[i], "tests/scratch.smith") == 0;
     for (size_t i = 0; tests[i] != nullptr; i++) {
         const char *root_less =
             tests[i] + strlen(strncmp(tests[i], "tests/", strlen("tests/")) == 0 ? "tests/" : "lib/");
@@ -693,12 +711,17 @@ static const char *const *build_test_modules(SmithBuild *b, const BuildConfig *c
         const char *header = smith_fmt(b, ".smith/include/%s.h", name);
         const char *object = smith_fmt(b, "%s/lint/%zu.o", folder, i);
         SmithStep write = {
-            .command = smith_cat(b, smith_list(b, smith_cc, "--smith-header", tests[i], "-o", header, nullptr), flags,
-                                 nullptr),
+            .command = smith_cat(b,
+                                 smith_list(b, smith_cc, "--smith-header", tests[i], "-o", header,
+                                            smith_fmt(b, "-MF%s.d", header), nullptr),
+                                 flags, nullptr),
             .inputs = smith_list(b, tests[i], nullptr),
             .implicit_inputs = smith_list(b, smith_cc, nullptr),
             .outputs = smith_list(b, header, nullptr),
             .description = smith_fmt(b, "header %s", tests[i]),
+            .depfile = smith_fmt(b, "%s.d", header),
+            .order_only_inputs =
+                smith_when(b, has_scratch && strcmp(header, scratch) != 0, (const char *[]){scratch, nullptr}),
             .restat = true, // written only when its bytes change
         };
         smith_step(b, &write);
@@ -732,12 +755,15 @@ static const char *const *build_template_modules(SmithBuild *b, const BuildConfi
         const char *name = smith_replace_extension(b, modules[i] + strlen("templates/new/"), "");
         const char *header = smith_fmt(b, ".smith/template-new/%s.h", name);
         SmithStep write = {
-            .command = smith_cat(b, smith_list(b, smith_cc, "--smith-header", modules[i], "-o", header, nullptr), flags,
-                                 smith_list(b, "-I", ".smith/template-new", nullptr), nullptr),
+            .command = smith_cat(b,
+                                 smith_list(b, smith_cc, "--smith-header", modules[i], "-o", header,
+                                            smith_fmt(b, "-MF%s.d", header), nullptr),
+                                 flags, smith_list(b, "-I", ".smith/template-new", nullptr), nullptr),
             .inputs = smith_list(b, modules[i], nullptr),
             .implicit_inputs = smith_list(b, smith_cc, nullptr),
             .outputs = smith_list(b, header, nullptr),
             .description = smith_fmt(b, "header %s", modules[i]),
+            .depfile = smith_fmt(b, "%s.d", header),
             .restat = true,
         };
         smith_step(b, &write);

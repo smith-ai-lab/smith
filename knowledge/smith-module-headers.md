@@ -27,7 +27,9 @@ Exports are separated by a blank line. The generator's output is the header: not
 smith` and `// smith-` lines stay whole (an importer reads them by line).
 
 **A header is a build output, never committed** (issue #466; owner, 2026-10-26: "They should never be committed to git").
-Its step's inputs are the module's source and the smith that writes it, and every compile that imports the module or
+Its step's inputs are the module's source and the smith that writes it, its depfile (`-MF<header>.d`) names what the header pass
+read besides (the sources of the modules it imports, which it reads before any header on `-I`; the files its probe compiled), so an
+edit to an imported module runs the step again and the step cache serves it by those files ([the executor](executor.md)); and every compile that imports the module or
 includes its header waits for that step: an edit to a module regenerates its header when its bytes change, and nothing is
 run by hand (no task regenerates headers and no check compares them). smith's own libraries (`lib/smith/*.smith`) and
 `smith::build` write theirs to `.smith/include/smith/`, never `include/smith/`, which holds only hand-written headers

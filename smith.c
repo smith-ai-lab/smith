@@ -1537,6 +1537,45 @@ static bool smith_lang_write_probe(const SmithLang *lang, const char *path) {
     return fclose(file) == 0;
 }
 
+// The files a probe compiled, from the depfile its compile wrote (`-MD`), as reads of the header pass: its own file (a
+// temporary one) is not one. A Makefile rule: the target, a colon, the files, a backslash before a space and a newline.
+static void smith_lang_note_probe_reads(const char *depfile, const char *probe) {
+    static char text[(size_t)1 << 17];
+    FILE *file = fopen(depfile, "rb");
+    if (file == nullptr) {
+        smith_header_reads_full = true; // reads that cannot be known: no depfile for this header
+        return;
+    }
+    size_t got = fread(text, 1, sizeof text - 1, file);
+    bool whole = feof(file) != 0 && ferror(file) == 0;
+    fclose(file);
+    (void)unlink(depfile);
+    text[got] = 0;
+    smith_header_reads_full = smith_header_reads_full || !whole;
+    bool after_colon = false;
+    char word[PATH_MAX];
+    size_t used = 0;
+    for (size_t at = 0; at <= got; at++) { // one more than the text: the end ends the last word
+        char c = text[at];
+        if (c == '\\' && (text[at + 1] == '\n' || text[at + 1] == '\r')) {
+            at += text[at + 1] == '\r' && text[at + 2] == '\n' ? 2 : 1;
+        } else if (c == '\\' && text[at + 1] != 0 && used + 1 < sizeof word) {
+            word[used++] = text[++at];
+        } else if (c != 0 && c != ' ' && c != '\t' && c != '\n' && c != '\r' && used + 1 < sizeof word) {
+            word[used++] = c;
+        } else if (used > 0) {
+            word[used] = 0;
+            if (!after_colon && word[used - 1] == ':') {
+                after_colon = true;
+            } else if (after_colon && strcmp(word, probe) != 0) {
+                smith_header_note_read(word);
+            }
+            used = 0;
+        }
+    }
+    smith_header_reads_full = smith_header_reads_full || !after_colon;
+}
+
 // Runs `smith cc -fsyntax-only` on the probe, which writes its answers to `answers`; true if it succeeded.
 static bool smith_lang_run_probe(const SmithLang *lang, const char *probe, const char *answers) {
     static char names[smith_lang_cuses_max * (smith_lang_name_max + 8)];
@@ -1557,12 +1596,19 @@ static bool smith_lang_run_probe(const SmithLang *lang, const char *probe, const
     } else {
         snprintf(source, sizeof source, ".");
     }
-    char *args[smith_header_flags_max + 8];
+    char reads[PATH_MAX + 16]; // what the probe compiled, for the header step's depfile
+    snprintf(reads, sizeof reads, "%s.d", answers);
+    char *args[smith_header_flags_max + 12];
     size_t count = 0;
     args[count++] = self;
     args[count++] = (char *)"cc";
     args[count++] = (char *)"-fsyntax-only";
     args[count++] = (char *)"-w";
+    if (smith_header_depfile != nullptr) {
+        args[count++] = (char *)"-MD";
+        args[count++] = (char *)"-MF";
+        args[count++] = reads;
+    }
     args[count++] = (char *)"-iquote";
     args[count++] = source;
     for (size_t i = 0; i < smith_header_flag_count; i++) // bounded by the flags
@@ -1585,7 +1631,11 @@ static bool smith_lang_run_probe(const SmithLang *lang, const char *probe, const
     posix_spawn_file_actions_destroy(&actions);
     unsetenv("SMITH_LANG_ASK_IMPORTS");
     unsetenv("SMITH_LANG_IMPORTS_OUT");
-    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    bool good = WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    if (smith_header_depfile != nullptr && good) smith_lang_note_probe_reads(reads, probe);
+    if (smith_header_depfile != nullptr && !good) smith_header_reads_full = true; // what it failed on is not known
+    (void)unlink(reads);
+    return good;
 }
 
 // The answers: a line `name<TAB>spelling` for each name asked, in order (the spelling empty when no import declared

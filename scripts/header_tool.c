@@ -12,6 +12,7 @@
 #include <limits.h>
 #include <stdarg.h>
 #include <stdint.h>
+#include <unistd.h>
 
 #include "../runtime/base.h"
 #include "../runtime/lang.h"

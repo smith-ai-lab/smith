@@ -1,0 +1,7 @@
+import util;
+import <stdio.h>;
+
+int main(void) {
+    c::printf("%d\n", util::answer());
+    return 0;
+}

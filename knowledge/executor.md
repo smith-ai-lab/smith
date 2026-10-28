@@ -48,7 +48,8 @@ tree is never left wrong, at worst built twice.
 ## The step cache
 
 A compile (an edge with `deps = gcc`, one object and at most its `.fx` effects summary, `-MD` and `-MF` in a command with
-no shell feature) is served from `<cache>/smith/steps` when a build has made it before (#621, `runtime/executor_cache.c`).
+no shell feature) or a module's header step (below) is served from `<cache>/smith/steps` when a build has made it before
+(#621, `runtime/executor_cache.c`).
 Written in C, not `.smith`: it works on the executor's own types (`SmithExec`, `SmithEdge`, `SmithJob`), which move to
 `.smith` with the executor (#45); its one pure part, SHA-256, is `runtime/package.c`'s.
 - **Two levels, as ccache's direct mode.** The inputs of a compile are known only after it ran, so a *manifest*
@@ -72,14 +73,38 @@ Written in C, not `.smith`: it works on the executor's own types (`SmithExec`, `
   folder a token and restored with this one. A compile that printed anything (a warning), read a file written after it
   began, or names `__TIME__`, `__DATE__` or `__TIMESTAMP__` is not stored; nor are compiles with a flag that reads or
   writes more than the depfile names (`@file`, `-fprofile-*`, `--coverage`, `-save-temps`, plugins, ...).
+- **A module's header step** (`smith-cc --smith-header f.smith -o f.h -MF<f.h.d> flags`) is keyed as a compile is, and
+  its depfile is what the header pass read: the module's source, the sources of the modules it imports (read from their
+  sources first, at the importer's root, and only else from a header on `-I`, so the bytes read do not depend on whether
+  another step has written that header yet), and, when it asked the compiler which of several C imports declared a name,
+  the files that probe compiled. `-MF<file>` is one word so that a smith that predates it (the lag rule: smith's own tree
+  is built by the previous release) takes it for a compile flag of its probe and writes no depfile, which is no
+  dependencies and nothing stored. It is not stored when the probe failed (what it failed on is not known), when a file
+  it read is another step's output that has not finished (nothing orders the two: the header is a function of the file
+  as it will be, so a variant naming such a file is not served either; build.c orders the test headers after
+  `scratch.h`, which most import), and a step whose depfile names a file another step writes does not keep that file in the graph (a
+  rebuild of the one would rerun the other for nothing). **Restat holds:** a header served has the bytes the step would
+  write; when the output already holds them it is left alone (its time is its old one), so what includes it is not built
+  again, as when the step runs.
+- **A declared input is not read as text.** The key hashes the content of the step's explicit and implicit inputs; the
+  macros `__TIME__`, `__DATE__` and `__TIMESTAMP__` refuse a file only when the step reads it (the variant files, the
+  depfile), not when it is merely named: `tests/stub.c` lists smith-cc, whose clang names them. An input with a build-id
+  of 1 MiB or more (a program a step is handed) is keyed by it, as a compiler is, and the compiler itself is not an
+  input when the step lists it. A step that lists a tool linked a moment ago for each of a hundred steps would
+  otherwise hash 300 MB a hundred times.
 - **Restoring** clones the files (FICLONE on Linux, `clonefile` on macOS, else a copy), writes the depfile as a compile
   would, and the job ends as one does: the depfile log and command log are written, `-v` shows `(cached)` after the
-  step, `-d explain` says it was restored. A hit takes no core of the host's pool. Stores and restores are a temporary
+  step, `-d explain` says it was restored, and says why a step was not: `is not cached: <shape>` (no depfile, a refused flag,
+  a shell feature), `is not in the step cache: <file> is not what the cached variant read` or `no manifest for this
+  command and these inputs`, `is not stored in the step cache: <why>` (it printed something, a file was written after it
+  began, a time macro). A hit takes no core of the host's pool. Stores and restores are a temporary
   file and a rename, so builds in other worktrees can share the folder.
 - `SMITH_STEP_CACHE=0` turns it off. An entry unused for 31 days is removed, and the results are kept within `SMITH_CACHE_MAX` (#618), checked at most once an hour (`smith cache`
   shows the folder; `smith cache clean steps` empties it). Like the depfile model it cannot see a header that appears
-  earlier on the include path, or (with `-fmodules`) a system header that only a module reads. Module header steps and
-  lint are not covered yet.
+  earlier on the include path, or (with `-fmodules`) a system header that only a module reads. Lint is not covered yet.
+- **What a build of smith's own tree still runs** with every compile and header served: the links, the steps with no
+  depfile (the tree-sitter parser, the protocol code, the packs) and `imports.stamp`. A header step whose source names a
+  time macro (`tests/prove_misc_test.smith`) is run each time.
 
 ## Keep writing `build.ninja`
 

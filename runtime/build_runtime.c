@@ -2131,14 +2131,20 @@ static const char *const *smith_effects_outputs(SmithBuild *b, const char *compi
 
 // The header step of a module, and the flags and ordering its compile gets.
 static void smith_lang_header_step(SmithBuild *b, const SmithObject *object, const char *header) {
+    // The depfile names the files the header pass read: the module's source and the sources of the modules it imports.
+    // `-MF<file>` is one word, so that a smith that predates it (the lag rule) takes it for a compile flag and writes
+    // no depfile, which is no dependencies.
+    const char *depfile = smith_text("%s.d", header);
     SmithStep step = {
-        .command =
-            smith_cat(b, smith_list(b, object->compiler, "--smith-header", object->source, "-o", header, nullptr),
-                      smith_header_pass_flags(b, object), nullptr),
+        .command = smith_cat(b,
+                             smith_list(b, object->compiler, "--smith-header", object->source, "-o", header,
+                                        smith_text("-MF%s", depfile), nullptr),
+                             smith_header_pass_flags(b, object), nullptr),
         .inputs = smith_one(object->source),
         .implicit_inputs = smith_one(smith_compiler_file(object->compiler)),
         .outputs = smith_one(header),
         .description = smith_text("header %s", object->source),
+        .depfile = depfile,
         .restat = true, // the header is written only when its bytes change
     };
     smith_step(b, &step);
@@ -2438,7 +2444,10 @@ static size_t smith_handlers_made_count;
 
 static void smith_handlers_object(SmithBuild *b, const SmithProgram *program, const char *object) {
     const char *source = smith_library(b, "handlers");
-    const char *const flags[] = {"-std=gnu23", "-O2", "-fPIC", "-I", ".smith/include", "-c", nullptr};
+    // with a depfile, as every compile: the step cache serves a compile by the files it read (#621)
+    const char *depfile = smith_replace_extension(b, object, ".d");
+    const char *const flags[] = {"-std=gnu23", "-O2", "-fPIC", "-I", ".smith/include",
+                                 "-MD",        "-MF", depfile, "-c", nullptr};
     const char *const tail[] = {source, "-o", object, nullptr};
     SmithStep step = {
         .command = smith_cat(b, smith_one(smith_copy_string(program->linker)), smith_copy_list(flags), tail, nullptr),
@@ -2447,6 +2456,7 @@ static void smith_handlers_object(SmithBuild *b, const SmithProgram *program, co
                                      smith_one(".smith/include/smith/handlers.h"), nullptr),
         .outputs = smith_one(object),
         .description = smith_text("compile %s", object),
+        .depfile = depfile,
     };
     smith_step(b, &step);
 }
