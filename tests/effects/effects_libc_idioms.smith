@@ -1,10 +1,12 @@
 module effects_libc_idioms;
 
+import <ctype.h>;
 import <stdlib.h>;
 import <string.h>;
 
 // A module may call a libc function that returns a pointer when the table gives it an idiom: strdup is owned (freed
-// by free), strerror is internal and strchr points into its first argument.
+// by free), strerror is internal and strchr points into its first argument. glibc's isalpha is a macro over
+// __ctype_b_loc, internal too.
 export char *copy(const char *text) {
     return c::strdup(text);
 }
@@ -15,4 +17,8 @@ export const char *describe(i32 code) {
 
 export const char *after_space(const char *text) {
     return c::strchr(text, ' ');
+}
+
+export bool letter(char c) {
+    return c::isalpha(c) != 0;
 }

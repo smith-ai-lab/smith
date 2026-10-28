@@ -438,6 +438,10 @@ inline constexpr Entry effect_functions[] = {
     {"fscanf", Console | Files | Globals},
     {"gethostbyname", Net | Globals},
     {"__errno_location", Globals},
+    // glibc's <ctype.h> macros (isalpha, tolower, ...) read the current locale's tables through these
+    {"__ctype_b_loc", Globals},
+    {"__ctype_tolower_loc", Globals},
+    {"__ctype_toupper_loc", Globals},
 };
 
 // What a pointer a function of the C library returns means (issue #724, #720): who frees it, or how long it lives. The
@@ -518,6 +522,9 @@ inline constexpr Ownership ownership_functions[] = {
     {"ttyname", "internal"},
     {"__error", "internal"},
     {"__errno_location", "internal"},
+    {"__ctype_b_loc", "internal"},
+    {"__ctype_tolower_loc", "internal"},
+    {"__ctype_toupper_loc", "internal"},
 };
 
 // The idiom of the pointer a function of the C library returns, by name; false when the table gives it none.
