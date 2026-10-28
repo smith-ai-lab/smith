@@ -414,6 +414,8 @@ class Collector {
             leaf(statement->getBeginLoc(), C, "an Objective-C message");
         } else if (const auto *assembly = dyn_cast<AsmStmt>(statement)) {
             onAsm(assembly);
+        } else if (const auto *cast = dyn_cast<ExplicitCastExpr>(statement)) {
+            noteAssignment(cast->getTypeAsWritten(), cast->getSubExpr(), cast->getBeginLoc()); // a cast is no way round
         } else if (const auto *list = dyn_cast<InitListExpr>(statement)) {
             noteList(list);
         } else if (const auto *returned = dyn_cast<ReturnStmt>(statement)) {

@@ -9,4 +9,7 @@ effects_pointer_rule.c:59:18: error: smith-effect: `helper` is put where a funct
 effects_pointer_rule.c:63:5: error: smith-effect: `noisy` is put where a function pointer limited to pure is expected, but it has the effects console: noisy -> printf (effects_pointer_rule.c:18)
 effects_pointer_rule.c:69:11: error: smith-effect: `a function pointer` is put where a function pointer limited to pure is expected, but it has the effects console: a function pointer
 effects_pointer_rule.c:101:12: error: smith-effect: `a function pointer` is put where a function pointer limited to console is expected, but it has the effects c: a function pointer
+effects_pointer_rule.c:111:14: error: smith-effect: `a function pointer` is put where a function pointer limited to pure is expected, but it has the effects c: a function pointer
+effects_pointer_rule.c:110:14: error: smith-effect: `a function pointer` is put where a function pointer limited to pure is expected, but it has the effects console: a function pointer
+effects_pointer_rule.c:109:14: error: smith-effect: `noisy` is put where a function pointer limited to pure is expected, but it has the effects console: noisy -> printf (effects_pointer_rule.c:18)
 effects_pointer_rule.c:92:6: error: smith-effect: `noisy` is put where a function pointer limited to pure is expected, but it has the effects console: noisy -> printf (effects_pointer_rule.c:18)

@@ -103,3 +103,15 @@ static void unknown(void (*any)(const char *)) {
     (void)log;
     (void)none;
 }
+
+// A cast to a bounded type is checked like an assignment.
+static void casts(Logger log, void (*any)(const char *)) {
+    Step a = (Step)noisy;
+    Step b = (Step)log;
+    Step c = (Step)any;
+    Logger d = (Logger)say;
+    (void)a;
+    (void)b;
+    (void)c;
+    (void)d;
+}
