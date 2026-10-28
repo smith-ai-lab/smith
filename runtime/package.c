@@ -239,10 +239,14 @@ typedef enum {
     SmithCache_Modules,
     SmithCache_Packages,
     SmithCache_Lint,
+    SmithCache_Steps,
 } SmithCacheKind;
 
 static const char *smith_cache_name(SmithCacheKind kind) {
-    return kind == SmithCache_Modules ? "modules" : kind == SmithCache_Packages ? "packages" : "lint";
+    return kind == SmithCache_Modules    ? "modules"
+           : kind == SmithCache_Packages ? "packages"
+           : kind == SmithCache_Steps    ? "steps"
+                                         : "lint";
 }
 
 // $XDG_CACHE_HOME/smith, or ~/.cache/smith: the folder of every smith cache.

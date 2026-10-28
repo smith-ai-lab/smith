@@ -18,6 +18,9 @@ smith keeps two caches under `$XDG_CACHE_HOME/smith/` (or `~/.cache/smith/`), ea
 from either is simply fetched or built again:
 
 - `packages/<hex>/`: what `smith_package` extracted (above).
+- `steps/`: the executor's compile steps (`m/` manifests, `r/` results; [the executor](executor.md) says what is keyed).
+  The 31-day rule and #618's cap (`SMITH_CACHE_MAX`, least recently used first, the same `smith_cache_cutoff` code) apply;
+  a hit touches its entry when a day old, and the check runs at most once an hour (`steps/prune.timestamp`), at a build's start.
 - `modules/<LC_UUID of the smith>/`: clang's module cache for `smith_modules` (below), one folder for each smith binary
   (issue #575): clang keys a module by its flags and paths, not by the compiler and resource folder that built it, so two
   smiths on one cache (CI's, a lane's, the installed one) would read each other's modules. The folders are pruned sooner than the
