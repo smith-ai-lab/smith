@@ -2633,7 +2633,7 @@ static void smith_lang_infer_written(SmithLangSpan span, char *out, size_t capac
         const char *text = smith_lang_gt_str(token);
         size_t length = token->length;
         for (size_t i = 0; i < sizeof smith_lang_sized / sizeof smith_lang_sized[0]; i++) { // 14 entries
-            if (smith_lang_sized[i].name[0] != 'f' && smith_lang_equals(text, length, smith_lang_sized[i].standard)) {
+            if (smith_lang_sized[i].name[0] != 'F' && smith_lang_equals(text, length, smith_lang_sized[i].standard)) {
                 text = smith_lang_sized[i].name; // the lowering wrote `__INT32_TYPE__` for `i32`
                 length = strlen(text);
                 break;
@@ -2667,7 +2667,7 @@ static void smith_lang_smith_spelling(const char *written, char *out, size_t cap
         const char *text = written + at;
         size_t length = end - at;
         for (size_t i = 0; word && i < sizeof smith_lang_sized / sizeof smith_lang_sized[0]; i++) { // 14 entries
-            if (smith_lang_sized[i].name[0] != 'f' && smith_lang_equals(text, length, smith_lang_sized[i].header)) {
+            if (smith_lang_sized[i].name[0] != 'F' && smith_lang_equals(text, length, smith_lang_sized[i].header)) {
                 text = smith_lang_sized[i].name;
                 length = strlen(text);
                 break;

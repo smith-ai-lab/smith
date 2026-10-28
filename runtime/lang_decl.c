@@ -729,7 +729,7 @@ static void smith_lang_check_c_name(SmithLang *lang, const SmithHost *host, cons
     *is_type = found.kind == SmithLookup_Type;
     if (found.kind == SmithLookup_None || !found.from_import || found.in_main_file) return;
     for (size_t i = 0; i < sizeof smith_lang_sized / sizeof smith_lang_sized[0]; i++) { // 14 entries
-        if (smith_lang_sized[i].name[0] != 'f' && smith_lang_equals(name, length, smith_lang_sized[i].header)) {
+        if (smith_lang_sized[i].name[0] != 'F' && smith_lang_equals(name, length, smith_lang_sized[i].header)) {
             smith_lang_error(lang, host, location, "`%.*s` is a C type name; write `%s`", (int)length, name,
                              smith_lang_sized[i].name);
             return;
