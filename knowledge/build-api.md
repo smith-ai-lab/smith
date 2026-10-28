@@ -49,7 +49,7 @@ typedef struct {
     const char *const *implicit_inputs;   // a change reruns the step; not on the command line
     const char *const *order_only_inputs; // built first; a change does not rerun the step
     const char *const *outputs;           // $out
-    const char *depfile;                  // a file the command writes in -MMD form
+    const char *depfile;                  // a file the command writes in -MMD or -MD form
     const char *stamp;         // the step's only output, which smith touches on success; .depfile may name it
     const char *description;   // printed instead of the command
     const char *pool;          // a name from smith_pool, or "console" for the terminal
@@ -227,7 +227,7 @@ int smith_run_program(SmithRun *run, const char *const *argv, const char *const 
 // High level: compiles and links that smith knows are compiles and links, so it can write compile_commands.json.
 // Each emits ordinary steps, the same as calling smith_step yourself; the command is written out in its comment.
 // One source compiled to one object:
-//   <compiler> <flags...> -MMD -MF <output with .d for its extension> -c <source> -o <output>
+//   <compiler> <flags...> -MD -MF <output with .d for its extension> -c <source> -o <output>
 // with that .d file as the step's depfile.
 typedef struct {
     const char *compiler;               // the program, such as "smith-cc" or "smith-c++"; required
@@ -312,7 +312,7 @@ typedef struct {
 //     pattern ^void (test_[a-z0-9_]+)\((void|SmithKey [a-z_]+)\) \{$. A name defined twice is an error that names
 //     both files.
 //   each test file, through smith_object:
-//     <compiler> <flags...> -include <tests_list.h> -Werror=missing-prototypes -MMD -MF <d> -c <file> -o <object>
+//     <compiler> <flags...> -include <tests_list.h> -Werror=missing-prototypes -MD -MF <d> -c <file> -o <object>
 //     so a test_ function the scan missed, because it is formatted another way, is a compile error.
 //   tests_list.c and smith_library(b, "test"), compiled with <compiler> <flags...>.
 //   the runner: <compiler> <link_flags...> <test objects, tests_list.o, the test library, .objects...> -o <output>

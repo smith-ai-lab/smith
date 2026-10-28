@@ -15,6 +15,7 @@ concurrency:
 permissions:
   contents: read
   actions: read
+  pull-requests: write
 
 jobs:
   check:
@@ -228,6 +229,60 @@ jobs:
             echo '```'
           } >>"$GITHUB_STEP_SUMMARY"
           exit $rc
+
+      - name: Record the speed budgets
+        # the train's run only (#639): `smith build bench` measures the budget lines of the speed table on this Mac after
+        # the check has filled every cache; the table is the artifact `bench`, and a line more than 10% (and 0.3 s) slower
+        # than the last recorded table is commented on each pull request of the batch. It never fails the run: a
+        # regression is a comment and a warning with the table in the job summary, and a measurement that cannot run is
+        # skipped. Wall seconds on a shared Mac are noisy; the CPU column is in the table beside it.
+        if: success() && steps.tree.outputs.skip != 'true' && github.ref == 'refs/heads/train'
+        continue-on-error: true
+        timeout-minutes: 12
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SMITH_PRIORITY: ci
+        run: |
+          out="$RUNNER_TEMP/bench"
+          mkdir -p "$out/previous"
+          build/Darwin-arm64/smith build bench -Dsmith=build/Darwin-arm64/smith | tee "$out/table.txt"
+          cp .smith/bench.tsv "$out/bench.tsv"
+          # the last recorded table: the newest successful run of this workflow that uploaded one
+          for id in $(gh run list --workflow check.yml --status success --limit 10 --json databaseId --jq '.[].databaseId'); do
+            gh run download "$id" -n bench -D "$out/previous" 2>/dev/null && break
+          done
+          [ -s "$out/previous/bench.tsv" ] || { echo "no earlier table to compare with"; exit 0; }
+          awk -F'\t' 'NR==FNR { old[$1] = $2; next }
+            ($1 in old) && $2 > old[$1] * 1.10 && $2 - old[$1] > 0.3 {
+              printf "%s: %.2f s -> %.2f s wall (+%.0f%%)\n", $1, old[$1], $2, ($2 / old[$1] - 1) * 100 }' \
+            "$out/previous/bench.tsv" "$out/bench.tsv" >"$out/slower.txt"
+          [ -s "$out/slower.txt" ] || exit 0
+          {
+            echo '### slower than the last recorded table'
+            echo '```'; cat "$out/slower.txt"; echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "::warning::a speed budget line is more than 10% slower; see the job summary"
+          prs=$(for sha in $(git log --format=%H origin/main..HEAD); do
+                  gh api "repos/${{ github.repository }}/commits/$sha/pulls" --jq '.[].number' 2>/dev/null
+                done | sort -u)
+          body="The train run ${{ github.run_id }} (${{ github.sha }}) made a line of \`smith build bench\` more than 10% slower than the last recorded table (#639):
+
+          \`\`\`
+          $(cat "$out/slower.txt")
+          \`\`\`
+          This batch may include other pull requests; the full table is the \`bench\` artifact of the run."
+          for pr in $prs; do gh pr comment "$pr" --body "$body" || true; done
+          [ -n "$prs" ] || echo "::warning::no pull request found for the commits of this batch; the table is in the summary"
+
+      - name: Upload the speed table
+        if: always() && github.ref == 'refs/heads/train' && steps.tree.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench
+          path: ${{ runner.temp }}/bench
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Record the checked tree
         if: success() && steps.tree.outputs.skip != 'true'
