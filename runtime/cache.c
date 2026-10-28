@@ -91,6 +91,17 @@ static void smith_cache_show_one(SmithCacheKind kind, bool verbose) {
     char folder[PATH_MAX];
     SmithPackageFault error;
     if (!smith_cache_folder(kind, folder, &error)) smith_die(smith_exit_usage, "cache:", error.text);
+    if (kind == SmithCache_Steps) { // m/ and r/ hold the entries by hash: the size is what there is to show
+        uint64_t used = 0;
+        time_t last = 0;
+        char text[32];
+        if (smith_package_is_folder(folder)) smith_cache_measure(folder, &used, &last);
+        smith_cache_format_size(used, text);
+        char cap[32];
+        smith_cache_format_size(smith_cache_limit(), cap);
+        printf("steps: %s\n  %s (cap %s)\n", folder, text, cap);
+        return;
+    }
     size_t kept = 0;
     size_t total = smith_cache_scan(kind, folder, &kept);
     uint64_t bytes = 0;
@@ -136,6 +147,7 @@ static void smith_cache_show(bool verbose) {
     smith_cache_show_one(SmithCache_Modules, verbose);
     smith_cache_show_one(SmithCache_Packages, verbose);
     smith_cache_show_lint();
+    smith_cache_show_one(SmithCache_Steps, verbose);
     printf("an entry unused for %d days is removed, checked at most once a week\n",
            smith_cache_prune_after / (24 * 60 * 60));
 }
@@ -186,7 +198,7 @@ static void smith_cache_clean_lint(void) {
 
 // `smith cache [-v]` and `smith cache clean [modules|packages|lint]`.
 static int smith_cache_main(int count, char **args) {
-    constexpr char usage[] = "usage: smith cache [-v] | smith cache clean [modules|packages|lint]";
+    constexpr char usage[] = "usage: smith cache [-v] | smith cache clean [modules|packages|lint|steps]";
     if (count == 0 || (count == 1 && strcmp(args[0], "-v") == 0)) {
         smith_cache_show(count == 1);
         return 0;
@@ -195,10 +207,12 @@ static int smith_cache_main(int count, char **args) {
     bool modules = count == 1 || strcmp(args[1], "modules") == 0;
     bool packages = count == 1 || strcmp(args[1], "packages") == 0;
     bool lint = count == 1 || strcmp(args[1], "lint") == 0;
-    if (!modules && !packages && !lint) smith_die(smith_exit_usage, usage, nullptr);
+    bool steps = count == 1 || strcmp(args[1], "steps") == 0;
+    if (!modules && !packages && !lint && !steps) smith_die(smith_exit_usage, usage, nullptr);
     smith_cache_exclude_builds();
     if (modules) smith_cache_clean_one(SmithCache_Modules);
     if (packages) smith_cache_clean_one(SmithCache_Packages);
     if (lint) smith_cache_clean_lint();
+    if (steps) smith_cache_clean_one(SmithCache_Steps);
     return 0;
 }
