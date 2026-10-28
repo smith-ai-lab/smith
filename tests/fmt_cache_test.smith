@@ -72,12 +72,14 @@ export void test_the_check_fails_on_a_file_cached_under_another_clang_format(io:
     scratch::expect_failure("the same with the files named", &named);
 }
 
+// Both runs say why (SMITH_FMT_CACHE=why), and the second's output carries the first's, so a failure shows both.
 export void test_named_files_use_the_cache_and_are_written(io::Io *io) {
     scratch::Project p = project_of(io, eight);
-    scratch::Run first = scratch::sh(&p, "smith fmt a.c b.c 2>&1");
+    scratch::Run first = scratch::sh(
+        &p, "SMITH_FMT_CACHE=why smith fmt a.c b.c >first.log 2>&1; status=$?; cat first.log; exit $status");
     scratch::expect_status("named files", 0, &first);
     scratch::expect_text("a.c is written", "int main(void) { return 0; }\n", scratch::read(&p, "a.c"));
-    scratch::Run second = scratch::sh(&p, "smith fmt 2>&1");
+    scratch::Run second = scratch::sh(&p, "cat first.log; SMITH_FMT_CACHE=why smith fmt 2>&1");
     scratch::expect_contains("the project run knows them", second.out, "2 files (2 already formatted, 0 checked)");
     scratch::Run check = scratch::sh(&p, "smith fmt --dry-run --Werror a.c 2>&1");
     scratch::expect_status("the named check passes", 0, &check);

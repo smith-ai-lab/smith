@@ -46,6 +46,12 @@ static bool smith_fmt_cache_wanted(void) {
     return (off == nullptr || strcmp(off, "0") != 0) && (tool == nullptr || *tool == '\0');
 }
 
+// SMITH_FMT_CACHE=why: say, on stderr, which list is read and why each file is or is not skipped.
+static bool smith_fmt_why(void) {
+    const char *setting = getenv("SMITH_FMT_CACHE");
+    return setting != nullptr && strcmp(setting, "why") == 0;
+}
+
 // Loads this smith's list of keys, sorted. False when there is nowhere to keep it: the files are then all formatted.
 static bool smith_fmt_cache_open(void) {
     if (!smith_fmt_cache_wanted()) return false;
@@ -328,6 +334,19 @@ static bool smith_fmt_cached(const char *file, SmithFmtTodo *todo, bool cache) {
     return smith_fmt_cache_has(&todo->key);
 }
 
+// One file's line under SMITH_FMT_CACHE=why: its key (the first 8 bytes) and whether the list has it.
+static void smith_fmt_why_file(const char *file, const SmithFmtTodo *todo, bool skipped) {
+    if (!todo->keyed) {
+        fprintf(stderr, "smith fmt: why: %s: no key (it or its .clang-format cannot be read)\n", file);
+        return;
+    }
+    char hex[17];
+    for (size_t i = 0; i < 8; i++)
+        snprintf(hex + 2 * i, 3, "%02x", todo->key.bytes[i]);
+    fprintf(stderr, "smith fmt: why: %s: key %s, %s\n", file, hex,
+            skipped ? "in the list, skipped" : "not in the list");
+}
+
 // Formats `count` files in place, or checks them with `check` (--dry-run --Werror), skipping those the cache knows to
 // be formatted, the rest in processes of smith side by side. Prints a summary line when `summary`. Returns 0, or 1 when
 // a file is not formatted (check) or clang-format failed.
@@ -336,9 +355,15 @@ static int smith_fmt_run(const char *self, bool check, const char *const *files,
     static SmithFmtKey remembered[smith_verbs_files_max];
     setenv("SMITH_FMT_BATCH", "1", 1); // the processes below format; they do not go through this again
     bool cache = smith_fmt_cache_open();
+    bool why = smith_fmt_why();
+    if (why)
+        fprintf(stderr, "smith fmt: why: list %s, %zu keys%s\n", cache ? smith_fmt_list_path : "(none)",
+                smith_fmt_known_count, cache ? "" : ", the cache is off");
     size_t todo_count = 0;
     for (size_t i = 0; i < count; i++) { // bounded by the files
-        if (!smith_fmt_cached(files[i], &smith_fmt_todo[todo_count], cache)) todo_count++;
+        bool skipped = smith_fmt_cached(files[i], &smith_fmt_todo[todo_count], cache);
+        if (why) smith_fmt_why_file(files[i], &smith_fmt_todo[todo_count], skipped);
+        if (!skipped) todo_count++;
     }
     size_t failed = 0;
     if (todo_count > 0) {
@@ -355,7 +380,9 @@ static int smith_fmt_run(const char *self, bool check, const char *const *files,
             failed = smith_fmt_pass(self, check, 1, again);
         }
     }
-    if (cache) smith_fmt_cache_add(remembered, smith_fmt_remember(todo_count, check, remembered));
+    size_t keep = cache ? smith_fmt_remember(todo_count, check, remembered) : 0;
+    if (cache) smith_fmt_cache_add(remembered, keep);
+    if (why) fprintf(stderr, "smith fmt: why: %zu of %zu keys remembered\n", keep, todo_count);
     if (summary)
         fprintf(stderr, "smith fmt: %zu files (%zu already formatted, %zu checked)\n", count, count - todo_count,
                 todo_count);
