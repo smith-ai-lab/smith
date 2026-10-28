@@ -250,10 +250,10 @@ static void smith_find_clang(const char *tool, const char *override_name, const 
 }
 
 #ifdef __APPLE__
+#include "runtime/sdk_cache.c"
+
 // Runs `xcrun --show-sdk-path` and writes its one line to out. False when xcrun is missing or fails.
-static bool smith_xcrun_sdk(const char *self, char *out) {
-    char xcrun[PATH_MAX];
-    if (!smith_find_in_path("xcrun", self, xcrun)) return false;
+static bool smith_xcrun_run(const char *xcrun, char *out) {
     int pipes[2];
     if (pipe(pipes) != 0) return false;
     posix_spawn_file_actions_t actions;
@@ -261,7 +261,7 @@ static bool smith_xcrun_sdk(const char *self, char *out) {
     SMITH_ASSERT(posix_spawn_file_actions_adddup2(&actions, pipes[1], 1) == 0);
     SMITH_ASSERT(posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0) == 0);
     SMITH_ASSERT(posix_spawn_file_actions_addclose(&actions, pipes[0]) == 0);
-    char *args[] = {xcrun, (char *)"--show-sdk-path", nullptr};
+    char *args[] = {(char *)xcrun, (char *)"--show-sdk-path", nullptr};
     pid_t pid = 0;
     int spawned = posix_spawn(&pid, xcrun, &actions, nullptr, args, environ);
     posix_spawn_file_actions_destroy(&actions);
@@ -281,6 +281,16 @@ static bool smith_xcrun_sdk(const char *self, char *out) {
         length -= 1;
     out[length] = '\0';
     return length > 0 && strchr(out, '\n') == nullptr;
+}
+
+// The SDK path: remembered for the real xcrun (runtime/sdk_cache.c), else what xcrun says.
+static bool smith_xcrun_sdk(const char *self, char *out) {
+    char xcrun[PATH_MAX];
+    if (!smith_find_in_path("xcrun", self, xcrun)) return false;
+    if (smith_sdk_cache_get(xcrun, out)) return true;
+    if (!smith_xcrun_run(xcrun, out)) return false;
+    smith_sdk_cache_put(xcrun, out);
+    return true;
 }
 
 // Homebrew's clang reads a default config that forces -isysroot to the Command Line Tools SDK, which can differ from
