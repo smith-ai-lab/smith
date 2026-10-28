@@ -447,6 +447,15 @@ static void smith_raw_include(void *context, const char *header, bool angled) {
     smith_lang_dump[lang->dump_used++] = '\n';
 }
 
+// Where the raw lowering writes what `smith cc --smith-lower` prints and its errors: stdout and stderr, unless the
+// units runner asked for them in memory (smith_core_lower, below). smith_lang_reset puts them back.
+static FILE *smith_raw_out_file;
+static FILE *smith_raw_err_file;
+
+static FILE *smith_raw_errors(void) {
+    return smith_raw_err_file != nullptr ? smith_raw_err_file : stderr;
+}
+
 static void smith_raw_error(void *context, uint32_t location, const char *message) {
     SmithLangRaw *raw = context;
     unsigned line = 1;
@@ -463,7 +472,7 @@ static void smith_raw_error(void *context, uint32_t location, const char *messag
         if (raw->capture[0] == 0) snprintf(raw->capture, raw->capture_capacity, "%u:%zu: %s", line, column, message);
         return;
     }
-    fprintf(stderr, "%s:%u:%zu: error: %s\n", raw->file, line, column, message);
+    fprintf(smith_raw_errors(), "%s:%u:%zu: error: %s\n", raw->file, line, column, message);
 }
 
 static SmithLookup smith_raw_lookup(void *context, const char *name, uint32_t length, SmithLookupKind space) {
@@ -1025,18 +1034,72 @@ static bool smith_raw_read_header(void *context, const char *relative, const cha
     return true;
 }
 
+// What one run of the raw lowering is asked: `smith cc --smith-header` or `--smith-lower`, or the same in process
+// (smith_core_lower, smith_core_header).
+typedef struct {
+    const char *path;        // the file, as errors name it and as its imports are found
+    const char *text;        // its source, or nullptr to read `path`
+    size_t text_length;      //
+    bool header;             // the module's header (left in smith_lang_header_full) rather than the lowering
+    const char *header_path; // where the header is written, or nullptr to leave it in memory
+    bool print_lowered;      // the lowering is written to the output
+    bool ask; // `smith cc --smith-header` asks the compiler which import declared a C name; in process it cannot
+} SmithRawRun;
+
+// Everything the lowering keeps between runs, put back as a new process has it. A run that is not the first in its
+// process (the units runner calls the lowering for every test) starts from here. What is not reset is written in full
+// before it is read (the buffers, and the function-local `static` scratch of runtime/lang_*.c, are assigned by the
+// function that reads them), and smith_lang_new resets the lowering's own tables.
+static void smith_lang_reset(void) {
+    smith_lang_counter = (typeof(smith_lang_counter)){.slice_cut = smith_lang_counter_cut_start,
+                                                      .slice_convert = smith_lang_counter_convert_start};
+    smith_lang_field_arrays = (SmithLangFieldArrays){};
+    smith_lang_replay_after_open = false;
+    smith_lang_written_used = 0;
+    smith_lang_enum_return_dot = 0;
+    smith_lang_ty_lang = nullptr;
+    smith_lang_import_asker = nullptr;
+    smith_lang_aside_held = false;
+    smith_lang_line_count = 0;
+    smith_raw_modules_count = 0;
+    smith_raw_run_active = false;
+    smith_raw_cache_only = false;
+    smith_raw_directives_count = 0;
+    smith_raw_directives_next = 0;
+    smith_raw_directive_pool_used = 0;
+    smith_header_flag_count = 0;
+    smith_header_source = nullptr;
+    smith_raw_out_file = nullptr;
+    smith_raw_err_file = nullptr;
+}
+
+// Reads the source of a run into smith_lang_source. False when the file cannot be read or the text is too long.
+static bool smith_raw_load(const SmithRawRun *run, size_t *length) {
+    if (run->text == nullptr) return smith_raw_read_source(run->path, length);
+    if (run->text_length > smith_lang_source_max) return false;
+    memcpy(smith_lang_source, run->text, run->text_length);
+    smith_lang_source[run->text_length] = 0;
+    *length = run->text_length;
+    return true;
+}
+
 // Feeds a file to the lowering with no compiler. Returns the exit status.
-static int smith_lang_run_raw(const char *path, const char *header_path, bool print_lowered) {
-    SmithLangRaw raw = {.file = path, .line_start = true, .keep = print_lowered};
+static int smith_lang_run_raw(const SmithRawRun *run) {
+    const char *path = run->path;
+    SmithLangRaw raw = {.file = path, .line_start = true, .keep = run->print_lowered};
     smith_raw_run_active = true;
     smith_raw_directives_count = 0;
     smith_raw_directives_next = 0;
     smith_raw_directive_pool_used = 0;
-    if (!smith_raw_read_source(path, &raw.length)) smith_die(smith_exit_missing, "cannot read", path);
+    if (!smith_raw_load(run, &raw.length)) {
+        if (smith_raw_err_file == nullptr) smith_die(smith_exit_missing, "cannot read", path);
+        fprintf(smith_raw_errors(), "smith: cannot read %s\n", path);
+        return 2;
+    }
     smith_lang_index_lines(raw.length);
     SmithLang *lang = smith_lang_new();
     raw.lang = lang;
-    lang->dump_enabled = print_lowered;
+    lang->dump_enabled = run->print_lowered;
     SmithHost host = {
         .context = &raw,
         .next = smith_raw_next_named,
@@ -1048,7 +1111,7 @@ static int smith_lang_run_raw(const char *path, const char *header_path, bool pr
         .field = nullptr,
         .read_header = smith_raw_read_header,
         .main_file = path,
-        .declarations_only = header_path != nullptr,
+        .declarations_only = run->header,
         .maybe_generic = true,
         .maybe_if_constexpr = true,
         .maybe_slice = smith_lang_text_has_slice(smith_lang_source, raw.length) ||
@@ -1057,30 +1120,32 @@ static int smith_lang_run_raw(const char *path, const char *header_path, bool pr
     SmithRawNames names = {};
     raw.names = &names;
     smith_header_source = path;
-    smith_lang_import_asker = header_path != nullptr ? smith_lang_ask_compiler : nullptr;
+    smith_lang_import_asker = run->header && run->ask ? smith_lang_ask_compiler : nullptr;
     for (size_t guard = 0; guard < raw.length + 2; guard++) { // one pass per token at most
         SmithToken token;
         smith_raw_next_named(&raw, &token, false);
-        if (guard == 0 && header_path != nullptr && !smith_lang_ident(&token, "module")) {
-            fprintf(stderr, "%s: not a module (it has no `module` line), so it has no header\n", path);
+        if (guard == 0 && run->header && !smith_lang_ident(&token, "module")) {
+            fprintf(smith_raw_errors(), "%s: not a module (it has no `module` line), so it has no header\n", path);
             return 1;
         }
         smith_lang_feed(lang, &host, &token);
         if (token.kind == SmithTokenKind_Eof) break;
     }
-    if (print_lowered) smith_lang_dump_directives(lang, UINT32_MAX); // those after the last token
+    if (run->print_lowered) smith_lang_dump_directives(lang, UINT32_MAX); // those after the last token
     smith_lang_finish(lang);
     smith_lang_import_asker = nullptr;
-    if (print_lowered) {
-        smith_lang_target_prelude(lang, stdout);
-        fwrite(smith_lang_dump, 1, lang->dump_used, stdout);
-        fputc('\n', stdout);
+    if (run->print_lowered) {
+        FILE *out = smith_raw_out_file != nullptr ? smith_raw_out_file : stdout;
+        smith_lang_target_prelude(lang, out);
+        fwrite(smith_lang_dump, 1, lang->dump_used, out);
+        fputc('\n', out);
     }
     if (lang->errors > 0 || names.errors > 0) return 1;
-    if (header_path != nullptr && lang->is_module) {
-        return smith_lang_write_header(header_path, smith_lang_header_full, lang->header_full_used);
-    } else if (header_path != nullptr) {
-        fprintf(stderr, "%s: not a module (it has no `module` line), so it has no header\n", path);
+    if (run->header && lang->is_module) {
+        if (run->header_path == nullptr) return 0;
+        return smith_lang_write_header(run->header_path, smith_lang_header_full, lang->header_full_used);
+    } else if (run->header) {
+        fprintf(smith_raw_errors(), "%s: not a module (it has no `module` line), so it has no header\n", path);
         return 1;
     }
     return 0;
@@ -1092,6 +1157,7 @@ static int smith_lang_main(int count, char **args, bool header) {
                                : "usage: smith cc --smith-lower file.smith";
     const char *file = nullptr;
     const char *output = nullptr;
+    smith_lang_reset();
     for (int i = 0; i < count; i++) { // bounded by the arguments
         if (strcmp(args[i], "-o") == 0 && i + 1 < count) {
             output = args[++i];
@@ -1114,7 +1180,60 @@ static int smith_lang_main(int count, char **args, bool header) {
     if (header && output == nullptr) {
         char fallback[PATH_MAX];
         snprintf(fallback, sizeof fallback, "%s.h", file);
-        return smith_lang_run_raw(file, fallback, false);
+        return smith_lang_run_raw(&(SmithRawRun){.path = file, .header = true, .header_path = fallback, .ask = true});
     }
-    return smith_lang_run_raw(file, header ? output : nullptr, !header);
+    return smith_lang_run_raw(&(SmithRawRun){.path = file,
+                                             .header = header,
+                                             .header_path = header ? output : nullptr,
+                                             .print_lowered = !header,
+                                             .ask = header});
 }
+
+#ifdef SMITH_CORE
+// include/smith_core.h: the raw lowering in process, for the units runner.
+static bool smith_core_raw(const char *folder, const char *file, const char *text, bool header, char *out,
+                           size_t out_size, char *errors, size_t errors_size) {
+    if (out_size == 0 || errors_size == 0) return false;
+    out[0] = 0;
+    errors[0] = 0;
+    int home = open(".", O_RDONLY);
+    FILE *lowered = header ? nullptr : fmemopen(out, out_size, "w");
+    FILE *report = fmemopen(errors, errors_size, "w");
+    bool ok =
+        home >= 0 && report != nullptr && (header || lowered != nullptr) && (folder == nullptr || chdir(folder) == 0);
+    if (ok) {
+        smith_lang_reset();
+        smith_raw_out_file = lowered;
+        smith_raw_err_file = report;
+        SmithRawRun run = {.path = file,
+                           .text = text,
+                           .text_length = text != nullptr ? strlen(text) : 0,
+                           .header = header,
+                           .print_lowered = !header};
+        ok = smith_lang_run_raw(&run) == 0;
+        if (ok && header) {
+            ok = smith_lang_instance.header_full_used < out_size;
+            if (ok) {
+                memcpy(out, smith_lang_header_full, smith_lang_instance.header_full_used);
+                out[smith_lang_instance.header_full_used] = 0;
+            }
+        }
+        smith_lang_reset(); // as a new process has it, for the next call
+        if (folder != nullptr) ok = fchdir(home) == 0 && ok;
+    }
+    if (lowered != nullptr) fclose(lowered);
+    if (report != nullptr) fclose(report);
+    if (home >= 0) close(home);
+    return ok && (header || strlen(out) + 1 < out_size); // a lowering that filled the buffer was cut short
+}
+
+bool smith_core_lower(const char *folder, const char *file, const char *text, char *out, size_t out_size, char *errors,
+                      size_t errors_size) {
+    return smith_core_raw(folder, file, text, false, out, out_size, errors, errors_size);
+}
+
+bool smith_core_header(const char *folder, const char *file, const char *text, char *out, size_t out_size, char *errors,
+                       size_t errors_size) {
+    return smith_core_raw(folder, file, text, true, out, out_size, errors, errors_size);
+}
+#endif

@@ -1,0 +1,354 @@
+// The raw lowering of the .smith language as a function, in process (issue #646, runtime/lang*.c): the text of a file
+// in, the C it lowers to, the header of a module and the errors out, through `smith_core_lower` and `smith_core_header`
+// (include/smith_core.h, smith.c compiled as a library by tests/units/build.c). No process starts. This is what
+// `smith cc --smith-lower` and `--smith-header` do, so the corpus of tests/smith-lang/cases checks here what only the
+// text of the lowering shows: `expect/lowered/` (the C each file is lowered to), `expect/header/` (the header of each
+// module) and `expect/lower-error` (the errors the lowering reports). tests/smith_lang_test.smith keeps what needs the
+// compiler for a case (the build, the errors it reports, the program's output, the symbols, the generic instances).
+//
+// The lowering keeps state in the process (counters, caches of the modules it read, tables); a call resets it
+// (smith_lang_reset), and `test_lowering_twice_is_the_same` and `test_a_lowering_does_not_remember_the_last` lower the
+// whole corpus a second time, in the other order, and compare with the first. The corpus is checked in four shards so
+// that the tests run side by side. A case added to the folder needs no test here: every case is read.
+module smith_lang_lowering_test;
+
+import smith::arena;
+import smith::format;
+import smith::io;
+import smith::mem;
+import smith::test;
+import <smith_core.h>;
+import <string.h>;
+
+constexpr usize lowered_capacity = 1U << 23;
+constexpr usize header_capacity = 1U << 21;
+constexpr usize report_capacity = 1U << 16;
+constexpr usize shards = 4;
+constexpr usize slots_per_case = 16;
+
+static char lowered_text[lowered_capacity];
+static char header_text[header_capacity];
+static char report_text[report_capacity];
+
+static const char *join3(io::Io *io, const char *a, const char *b, const char *c) {
+    return format::push(&io->arena, a, b, c).data;
+}
+
+static const char *copy_text(io::Io *io, const char *text) {
+    usize length = c::strlen(text);
+    char *copy = arena::push_slice(&io->arena, char, length + 1).data;
+    mem::copy(copy[0:length], text[0:length]);
+    return copy;
+}
+
+static typeof(const char[:]) slice_of(const char *text) {
+    return text[0:c::strlen(text)];
+}
+
+static bool ends_with(const char *text, const char *tail) {
+    usize length = c::strlen(text);
+    usize size = c::strlen(tail);
+    return length >= size && c::strcmp(text + length - size, tail) == 0;
+}
+
+// A text lowered as the module `m` (a module's file ends with its name); no file is read.
+static bool lower_text(const char *text, char *errors) {
+    return c::smith_core_lower(nullptr, "m.smith", text, lowered_text, lowered_capacity, errors, report_capacity);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The functions.
+
+export void test_a_file_is_lowered_to_c(io::Io *io) {
+    (void)io;
+    bool done = lower_text("module m;\nexport i32 twice(i32 x) { return x * 2; }\n", report_text);
+    test::check_equal(done, true);
+    test::check_equal(report_text[0], '\0');
+    test::check(c::strstr(lowered_text, "twice") != nullptr);
+    test::check(c::strstr(lowered_text, "module") == nullptr);
+}
+
+export void test_an_error_is_reported_with_its_line_and_column(io::Io *io) {
+    (void)io;
+    bool done = lower_text("module m;\n\nimport m;\n", report_text);
+    test::check_equal(done, false);
+    test::check(c::strstr(report_text, "m.smith:3:8: error: module `m` imports itself") != nullptr);
+}
+
+export void test_a_module_has_a_header(io::Io *io) {
+    (void)io;
+    bool done = c::smith_core_header(nullptr, "m.smith", "module m;\nexport i32 twice(i32 x) { return x * 2; }\n",
+                                     header_text, header_capacity, report_text, report_capacity);
+    test::check_equal(done, true);
+    test::check(c::strstr(header_text, "// smith-module: m") != nullptr);
+    test::check(c::strstr(header_text, "twice") != nullptr);
+}
+
+export void test_a_file_with_no_module_line_has_no_header(io::Io *io) {
+    (void)io;
+    bool done = c::smith_core_header(nullptr, "m.smith", "i32 twice(i32 x) { return x * 2; }\n", header_text,
+                                     header_capacity, report_text, report_capacity);
+    test::check_equal(done, false);
+    test::check(c::strstr(report_text, "not a module (it has no `module` line), so it has no header") != nullptr);
+}
+
+export void test_a_file_that_is_missing_is_reported(io::Io *io) {
+    (void)io;
+    bool done = c::smith_core_lower(nullptr, "no/such/file.smith", nullptr, lowered_text, lowered_capacity, report_text,
+                                    report_capacity);
+    test::check_equal(done, false);
+    test::check(c::strstr(report_text, "cannot read no/such/file.smith") != nullptr);
+}
+
+export void test_a_buffer_that_is_too_small_is_a_failure(io::Io *io) {
+    (void)io;
+    char small[16];
+    bool done = c::smith_core_lower(nullptr, "m.smith", "module m;\nexport i32 twice(i32 x) { return x * 2; }\n", small,
+                                    sizeof small, report_text, report_capacity);
+    test::check_equal(done, false);
+}
+
+// The names of the temporaries count over one lowering: the second starts again, so it writes the same names.
+export void test_a_lowering_does_not_remember_the_last(io::Io *io) {
+    (void)io;
+    const char *source = "module m;\nexport i32 f(i32 xs[:], usize i) { return xs[i]; }\n"
+                         "export void g(i32 xs[:]) { for (i32 x : xs) { (void)x; } }\n";
+    test::check_equal(lower_text(source, report_text), true);
+    const char *first = copy_text(io, lowered_text);
+    test::check(c::strstr(first, "smith_rfor_i1") != nullptr);
+    test::check_equal(lower_text(source, report_text), true);
+    test::check_equal(c::strcmp(first, lowered_text), 0);
+    // another file between them leaves no names behind
+    test::check_equal(c::smith_core_lower(nullptr, "n.smith",
+                                          "module n;\nexport i32 h(i32 xs[:]) { return xs[0] + xs[1]; }\n",
+                                          lowered_text, lowered_capacity, report_text, report_capacity),
+                      true);
+    test::check_equal(lower_text(source, report_text), true);
+    test::check_equal(c::strcmp(first, lowered_text), 0);
+}
+
+// An error does not stay either: the lowering after a failed one is clean.
+export void test_a_failed_lowering_leaves_nothing_behind(io::Io *io) {
+    (void)io;
+    test::check_equal(lower_text("module m;\nimport m;\n", report_text), false);
+    test::check_equal(lower_text("module m;\nexport i32 f(i32 x) { return x; }\n", report_text), true);
+    test::check_equal(report_text[0], '\0');
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The corpus.
+
+// The names in a folder, sorted (the order of the shell's `sort`, bytes).
+static usize names_of(io::Io *io, const char *folder, bool folders, const char **names, usize capacity) {
+    io::FileList list = io::files_list(&io->files, &io->arena, folder);
+    usize count = 0;
+    for (usize i = 0; i < list.count && count < capacity; i++) {
+        if (list.entries[i].folder == folders) names[count++] = copy_text(io, list.entries[i].name);
+    }
+    for (usize i = 1; i < count; i++) { // an insertion sort: the folders are small
+        const char *held = names[i];
+        usize at = i;
+        while (at > 0 && c::strcmp(names[at - 1], held) > 0) {
+            names[at] = names[at - 1];
+            at -= 1;
+        }
+        names[at] = held;
+    }
+    return count;
+}
+
+constexpr usize files_max = 64;
+constexpr usize cases_max = 512;
+constexpr usize lines_max = 512;
+
+// The `.smith` files of a case's src/, as `a/b.smith`, sorted.
+static usize sources_of(io::Io *io, const char *kase, const char **files, usize capacity) {
+    const char *src = join3(io, "tests/smith-lang/cases/", kase, "/src");
+    const char *top[files_max];
+    usize count = 0;
+    usize tops = names_of(io, src, false, top, files_max);
+    for (usize i = 0; i < tops && count < capacity; i++) {
+        if (ends_with(top[i], ".smith")) files[count++] = top[i];
+    }
+    const char *folders[files_max];
+    usize nested = names_of(io, src, true, folders, files_max);
+    for (usize f = 0; f < nested; f++) {
+        const char *inside[files_max];
+        const char *folder = join3(io, src, "/", folders[f]);
+        usize found = names_of(io, folder, false, inside, files_max);
+        for (usize i = 0; i < found && count < capacity; i++) {
+            if (ends_with(inside[i], ".smith")) files[count++] = join3(io, folders[f], "/", inside[i]);
+        }
+    }
+    for (usize i = 1; i < count; i++) { // sorted as a whole, as `find | sort` gives them
+        const char *held = files[i];
+        usize at = i;
+        while (at > 0 && c::strcmp(files[at - 1], held) > 0) {
+            files[at] = files[at - 1];
+            at -= 1;
+        }
+        files[at] = held;
+    }
+    return count;
+}
+
+// `a/b.smith` as `a.b`.
+static const char *module_of(io::Io *io, const char *file) {
+    usize length = c::strlen(file) - 6;
+    char *copy = arena::push_slice(&io->arena, char, length + 1).data;
+    for (usize i = 0; i < length; i++) {
+        copy[i] = file[i] == '/' ? '.' : file[i];
+    }
+    return copy;
+}
+
+static bool exists(io::Io *io, const char *path) {
+    return io::files_info(&io->files, path).error.code == 0;
+}
+
+// What a case holds to be checked: it has no `cmd`, which runs smith cc as a user does and lowers nothing by itself.
+static bool lowers(io::Io *io, const char *kase) {
+    return !exists(io, join3(io, "tests/smith-lang/cases/", kase, "/cmd"));
+}
+
+// The lines of `errors` that name an error, as `file:line:column: message`, appended to `lines`.
+static usize add_errors(io::Io *io, const char *errors, const char **lines, usize used, usize capacity) {
+    for (const char *at = errors; *at != '\0';) {
+        const char *end = c::strchr(at, '\n');
+        usize length = end != nullptr ? (usize)(end - at) : c::strlen(at);
+        const char *next = at + length + (end != nullptr ? 1 : 0);
+        const char *marker = c::strstr(at, ": error: ");
+        if (marker != nullptr && (usize)(marker - at) < length && used < capacity) {
+            bool plain = true; // the position has no space or second colon before the line and column
+            for (const char *p = at; p < marker; p++)
+                plain = plain && *p != ' ';
+            if (plain) {
+                char *line = arena::push_slice(&io->arena, char, length + 1).data;
+                usize head = (usize)(marker - at);
+                mem::copy(line[0:head], at[0:head]);
+                line[head] = ':';
+                usize rest = length - head - 8;
+                mem::copy(line[head + 1:head + 1 + rest], marker[8:8 + rest]);
+                line[head + 1 + rest] = '\0';
+                lines[used++] = line;
+            }
+        }
+        at = next;
+    }
+    return used;
+}
+
+// The lines sorted and each once, as `sort -u` gives them, as one text.
+static const char *sorted_unique(io::Io *io, const char **lines, usize count) {
+    for (usize i = 1; i < count; i++) {
+        const char *held = lines[i];
+        usize at = i;
+        while (at > 0 && c::strcmp(lines[at - 1], held) > 0) {
+            lines[at] = lines[at - 1];
+            at -= 1;
+        }
+        lines[at] = held;
+    }
+    const char *text = "";
+    for (usize i = 0; i < count; i++) {
+        if (i > 0 && c::strcmp(lines[i], lines[i - 1]) == 0) continue;
+        text = format::push(&io->arena, text, lines[i], "\n").data;
+    }
+    return text;
+}
+
+// The cases whose header has several C imports to choose from: `smith cc --smith-header` asks the compiler which
+// declared a name, and the function does not, so tests/smith_lang_test.smith checks their header (and the case's
+// folder is the only place that lists them).
+static bool header_by_command(const char *name) {
+    static const char *const cases[_] = {"filescope-if-header", "filescope-if-reflect"};
+    for (usize i = 0; i < countof(cases); i++) {
+        if (c::strcmp(name, cases[i]) == 0) return true;
+    }
+    return false;
+}
+
+typedef enum { Pass_Files, Pass_Record, Pass_Compare } Pass;
+
+// A case lowered: the C of each file, the header of each module and the errors. `Pass_Files` compares them with the
+// case's folder; `Pass_Record` keeps the C of each file in `slots`, and `Pass_Compare` lowers again and checks it is
+// the same.
+static void check_case(io::Io *io, const char *kase, Pass pass, const char **slots) {
+    const char *folder = join3(io, "tests/smith-lang/cases/", kase, "");
+    const char *files[files_max];
+    usize count = sources_of(io, kase, files, files_max);
+    const char *errors[lines_max];
+    usize error_count = 0;
+    // new: nothing of the lowering is held yet (the build's own goldens, expect/stdout and the rest, may be: an update
+    // of both tests at once writes them side by side)
+    bool fresh =
+        !exists(io, join3(io, folder, "/expect/lowered", "")) && !exists(io, join3(io, folder, "/expect/header", ""));
+    for (usize i = 0; i < count; i++) {
+        const char *file = join3(io, "src/", files[i], "");
+        const char *module = module_of(io, files[i]);
+        (void)c::smith_core_lower(folder, file, nullptr, lowered_text, lowered_capacity, report_text, report_capacity);
+        error_count = add_errors(io, report_text, errors, error_count, lines_max);
+        if (pass == Pass_Record && i < slots_per_case) slots[i] = copy_text(io, lowered_text);
+        if (pass == Pass_Compare && i < slots_per_case) test::check_equal(c::strcmp(slots[i], lowered_text), 0);
+        if (pass != Pass_Files) continue;
+        const char *golden = join3(io, folder, "/expect/lowered/", format::push(&io->arena, module, ".c").data);
+        if (exists(io, golden) || (test::updating() && fresh))
+            test::golden(io, slice_of(golden), slice_of(lowered_text));
+        // the header of the module, as `smith cc --smith-header` writes it
+        if (header_by_command(kase)) continue;
+        bool made =
+            c::smith_core_header(folder, file, nullptr, header_text, header_capacity, report_text, report_capacity);
+        const char *header_golden = join3(io, folder, "/expect/header/", format::push(&io->arena, module, ".h").data);
+        if (made && (exists(io, header_golden) || (test::updating() && fresh)))
+            test::golden(io, slice_of(header_golden), slice_of(header_text));
+    }
+    const char *error_golden = join3(io, folder, "/expect/lower-error", "");
+    const char *joined = sorted_unique(io, errors, error_count);
+    if (pass == Pass_Files && (exists(io, error_golden) || (test::updating() && fresh && joined[0] != '\0')))
+        test::golden(io, slice_of(error_golden), slice_of(joined));
+}
+
+static void check_shard(io::Io *io, usize shard) {
+    const char *cases[cases_max];
+    usize count = names_of(io, "tests/smith-lang/cases", true, cases, cases_max);
+    test::check(count > 100);
+    for (usize i = shard; i < count; i += shards) {
+        if (lowers(io, cases[i])) check_case(io, cases[i], Pass_Files, nullptr);
+    }
+}
+
+export void test_corpus_lowering_shard_0(io::Io *io) {
+    check_shard(io, 0);
+}
+
+export void test_corpus_lowering_shard_1(io::Io *io) {
+    check_shard(io, 1);
+}
+
+export void test_corpus_lowering_shard_2(io::Io *io) {
+    check_shard(io, 2);
+}
+
+export void test_corpus_lowering_shard_3(io::Io *io) {
+    check_shard(io, 3);
+}
+
+static const char *seen_lowered[cases_max * slots_per_case];
+
+// The corpus lowered, then lowered again from the last case to the first: each file's C is the same both times, so a
+// lowering depends on its file and nothing else in the process.
+export void test_lowering_twice_is_the_same(io::Io *io) {
+    const char *cases[cases_max];
+    usize count = names_of(io, "tests/smith-lang/cases", true, cases, cases_max);
+    usize lowered = 0;
+    for (usize i = 0; i < count; i++) {
+        if (!lowers(io, cases[i])) continue;
+        check_case(io, cases[i], Pass_Record, seen_lowered + i * slots_per_case);
+        lowered += 1;
+    }
+    for (usize i = count; i > 0; i--) {
+        if (lowers(io, cases[i - 1]))
+            check_case(io, cases[i - 1], Pass_Compare, seen_lowered + (i - 1) * slots_per_case);
+    }
+    test::check(lowered > 200);
+}

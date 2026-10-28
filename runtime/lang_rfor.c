@@ -224,8 +224,8 @@ static void smith_lang_rfor_concept(SmithLang *lang, const SmithHost *host, Smit
 // The pattern of the loop's start, up to and with the `{` of the body and the element's declaration.
 static void smith_lang_rfor_pattern(char *out, size_t capacity, SmithLangRforForm form,
                                     const SmithLangRforParts *parts) {
-    static unsigned counter; // the names are the loop's own: the lowering of a subscript renames `smith_i<n>`
-    counter += 1;
+    // the names are the loop's own: the lowering of a subscript renames `smith_i<n>`
+    unsigned counter = ++smith_lang_counter.rfor_pattern;
     char own[48];
     char copy[48];
     snprintf(own, sizeof own, "smith_rfor_i%u", counter);
