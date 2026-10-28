@@ -34,10 +34,13 @@ static size_t smith_changed_path_count;
 static bool smith_changed_overflow;
 static char smith_changed_text[smith_changed_text_max + 1];
 
-// The files that select the whole suite: the build file (every record has it as an input), the driver, the lowering,
-// the patches, the shims and the runner's own build. CI's files (.github/) select the tests that name them.
-static const char *const smith_changed_full[] = {"smith.c", "runtime/lang", "patches/",
-                                                 "shim/",   "tests/units/", nullptr};
+// The files that select the whole suite: the patches, the shims that no record sees and the runner's own build. The
+// driver (smith.c) and the lowering (runtime/lang*) are not here: they run counted in the records of the train, so a
+// change to them is judged by function like any other (#638). CI's files (.github/) select the tests that name them.
+static const char *const smith_changed_full[] = {"patches/", "shim/", "tests/units/", nullptr};
+// Under the whole-suite folders, the files that are counted too (build.c compiles them with the counters in a run that
+// records): their functions are in the records, so they are judged by function.
+static const char *const smith_changed_counted[] = {"shim/hook.cpp", nullptr};
 // What is compiled into smith: a test that runs smith depends on all of it.
 static const char *const smith_changed_smith[] = {"smith.c",      "runtime/", "shim/",      "patches/",
                                                   "include/",     "lib/",     "templates/", "scripts/",
@@ -392,7 +395,8 @@ static void smith_changed_find_functions(SmithChangedFunctions *all) {
     for (size_t line = 1; line <= smith_rec_line_count && all->count < smith_changed_functions_max; line++) {
         if (!smith_rec_line_opens[line]) continue;
         size_t last = line;
-        while (last < smith_rec_line_count && smith_rec_line_depth[last + 1] != 0) // bounded by the lines
+        while (last < smith_rec_line_count && smith_rec_line_inside[last + 1] &&
+               !smith_rec_line_opens[last + 1]) // bounded by the lines
             last++;
         const char *text = smith_rec_source + smith_changed_line_offset[line];
         const char *paren = memchr(text, '(', smith_changed_line_offset[line + 1] - smith_changed_line_offset[line]);
@@ -996,7 +1000,9 @@ static bool smith_changed_base(const char *given, char *base, size_t size) {
 
 static size_t smith_changed_full_path(void) {
     for (size_t p = 0; p < smith_changed_path_count; p++) {
-        if (smith_changed_in(smith_changed_paths[p], smith_changed_full)) return p + 1;
+        if (smith_changed_in(smith_changed_paths[p], smith_changed_full) &&
+            !smith_changed_in(smith_changed_paths[p], smith_changed_counted))
+            return p + 1;
     }
     return 0;
 }

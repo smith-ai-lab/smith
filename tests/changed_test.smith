@@ -186,8 +186,18 @@ export void test_a_change_to_smith_selects_the_tests_that_run_smith(io::Io *io) 
 
 // The files on the full-check list select the whole suite.
 export void test_the_full_check_list_selects_the_whole_suite(io::Io *io) {
-    const char *out = changed(io, "echo '// x' >> runtime/lang_x.c; echo x > build.c");
+    const char *out = changed(io, "mkdir -p patches; echo x > patches/x.patch");
     scratch::expect_contains("the list", out, "selects the whole suite");
+}
+
+// The driver and the lowering are no whole-suite files (#638): they are part of smith like the rest of runtime/, so the
+// tests that run smith are selected (and with records, the tests that ran the changed function).
+export void test_the_lowering_is_judged_like_the_rest_of_smith(io::Io *io) {
+    const char *out = changed(io, "echo 'int y;' > runtime/lang_x.c; echo '// x' >> smith.c");
+    scratch::expect_lacks("not the whole suite", out, "selects the whole suite");
+    scratch::expect_contains("the test that runs smith", out,
+                             "tests/runs_test.smith: it runs smith, and runtime/lang_x.c is part of smith");
+    scratch::expect_lacks("a pure test", out, "c_test");
 }
 
 // `--list` prints the selected tests one per line on stdout and runs nothing; with two refs it reads the diff of

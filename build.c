@@ -313,7 +313,12 @@ static void build_shim(SmithBuild *b, const BuildConfig *config, const char *fol
                              smith_fmt(b, "%s/include", config->llvm), "-isystem", "shim/lldb", nullptr},
             smith_when(b, config->werror[0] != '\0', (const char *[]){config->werror, nullptr}),
             smith_when(b, config->hook, (const char *[]){"-DSMITH_HOOK", nullptr}),
-            smith_when(b, config->enzyme[0] != '\0', (const char *[]){"-DSMITH_ENZYME", nullptr}), nullptr),
+            smith_when(b, config->enzyme[0] != '\0', (const char *[]){"-DSMITH_ENZYME", nullptr}),
+            // The token hook counts the lines it runs too (COVERAGE=1): the records then select the tests that ran a
+            // function of it, and a change to shim/hook.cpp no longer selects every test (#638).
+            smith_when(b, config->coverage && strcmp(name, "hook_shim") == 0,
+                       (const char *[]){"-fprofile-instr-generate", "-fcoverage-mapping", nullptr}),
+            nullptr),
     };
     smith_object(b, shim);
 }
