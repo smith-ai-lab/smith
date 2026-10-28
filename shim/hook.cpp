@@ -619,6 +619,24 @@ class ArrayParameters {
     }
 };
 
+// A query of the compiler that is expected to fail, often (is this name a variable?), must not search the whole
+// identifier table for a correction: it throws its message away, and a corrected name is an error to it all the same.
+// The words of the message it keeps (the second parse that explains a failure) are read with the correction on.
+class TypoGuard {
+    Sema &sema;
+    bool before;
+
+  public:
+    TypoGuard(Sema &s, bool correct) : sema(s), before(s.DisableTypoCorrection) {
+        if (!correct) sema.DisableTypoCorrection = true;
+    }
+    ~TypoGuard() {
+        sema.DisableTypoCorrection = before;
+    }
+    TypoGuard(const TypoGuard &) = delete;
+    TypoGuard &operator=(const TypoGuard &) = delete;
+};
+
 class SmithHook;
 
 class ArrayEnd final : public ExternalSemaSource {
@@ -1922,6 +1940,7 @@ class SmithHook final : public TokenHook, public NameSource {
         bool wasSuppressed = diags.getSuppressAllDiagnostics();
         diags.setSuppressAllDiagnostics(true);
         DiagnosticErrorTrap trap(diags);
+        TypoGuard guard(*sema, false);
         TypeResult parsed = sema->ParseTypeFromStringCallback(text, "<smith>", SourceLocation());
         bool failed = trap.hasErrorOccurred();
         diags.setSuppressAllDiagnostics(wasSuppressed);
@@ -1977,8 +1996,9 @@ class SmithHook final : public TokenHook, public NameSource {
     // reads the string's tokens in a child scope of the one the parser is in, so the locals declared so far are seen,
     // and puts the token back). The operand of typeof is never evaluated, so nothing is marked used. Diagnostics are
     // off while it runs, and asked again with them on when the parse fails, so the compiler says why itself.
-    bool parseTypeof(const std::string &text, QualType *type, const Expr **expression) {
+    bool parseTypeof(const std::string &text, QualType *type, const Expr **expression, bool correct = true) {
         if (!sema->ParseTypeFromStringCallback || sema->getCurScope() == nullptr) return false;
+        TypoGuard guard(*sema, correct);
         std::string source = "__typeof__(" + text + ")";
         DiagnosticErrorTrap trap(sema->getDiagnostics());
         TypeResult parsed = sema->ParseTypeFromStringCallback(source, "<smith>", SourceLocation());
@@ -2067,7 +2087,7 @@ class SmithHook final : public TokenHook, public NameSource {
         diags.setSuppressAllDiagnostics(true);
         QualType type;
         const Expr *expression = nullptr;
-        bool good = self->parseTypeof(text, &type, &expression);
+        bool good = self->parseTypeof(text, &type, &expression, false);
         diags.setSuppressAllDiagnostics(wasSuppressed);
         if (!good) {
             self->queryText = "the compiler does not accept it here";
@@ -2260,7 +2280,7 @@ class SmithHook final : public TokenHook, public NameSource {
         diags.setSuppressAllDiagnostics(true);
         QualType type;
         const Expr *expression = nullptr;
-        bool good = self->parseTypeof(text, &type, &expression);
+        bool good = self->parseTypeof(text, &type, &expression, false);
         diags.setSuppressAllDiagnostics(wasSuppressed);
         if (!good) {
             self->queryText = "the compiler does not accept it here";
