@@ -474,3 +474,7 @@ export void test_readme_project_refuse(io::Io *io) {
 export void test_readme_project_memcopy(io::Io *io) {
     project_case(io, "memcopy");
 }
+
+export void test_readme_project_unused(io::Io *io) {
+    project_case(io, "unused");
+}

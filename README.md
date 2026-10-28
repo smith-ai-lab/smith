@@ -635,6 +635,34 @@ d/dm = 12, d/db = 4
 
 [smith-autodiff](.agents/skills/smith-autodiff/SKILL.md).
 
+### Unused on purpose: `_`
+
+```smith project=unused run
+module main;
+
+import std::console;
+
+[[nodiscard]] I32 compute(I32 x) {
+    return x * 2;
+}
+
+I32 pick(I32 _, I32 _, I32 third) {
+    return third;
+}
+
+I32 main() {
+    _ = compute(3); // drops a [[nodiscard]] result on purpose
+    console::print(pick(1, 2, 7), "\n");
+    return 0;
+}
+```
+
+```output project=unused
+7
+```
+
+In a module a name that is `_` or starts with `_` is never read (reading it is an error), so a parameter you do not use is `_` (several may repeat) or `_name` when the name documents it, and `_ = f();` drops a value; `(void)f();` is not needed. [smith-lang-unused](.agents/skills/smith-lang-unused/SKILL.md).
+
 ## A module has no warnings
 
 In a module (a `.smith` file with a `module` line) every warning of a fixed baseline is an error, and each has a written way to say you meant it, so there is no disable comment: a lossy implicit conversion, `if (x = y)`, a case that falls through without `[[fallthrough]];`, a cast that drops `const`, a missing return. A `.c` file keeps its flags. Other checks (`padded`, `shadow`) are yours to opt into with `.warnings` or `.errors` in `build::defaults`.
