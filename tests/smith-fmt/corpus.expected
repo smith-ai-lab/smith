@@ -6070,22 +6070,22 @@ import <stdio.h>;
 import <stdlib.h>;
 
 // What a failed check of an index calls.
-[[smith::c_name("smith_failure")]] export void failure(u8 code) {
+[[std::c_name("smith_failure")]] export void failure(U8 code) {
     c::exit(code);
 }
 
 // From a function that is not generic: the generic is named at the call.
-static usize ints_from_main(i32 xs[:]) {
+static Usize ints_from_main(I32 xs[:]) {
     return order::smallest(order::ascending, xs);
 }
 
 int main() {
-    i32 ints[3] = {5, 2, 9};
-    f64 reals[3] = {2.5, 9.5, 1.5};
-    usize a = ints_from_main(ints[0:3]);
-    usize b = order::smallest(order::ascending, reals[0:3]);
-    usize c = order::smallest_of(ints[0:3]);
-    usize d = order::smallest_of(reals[0:3]);
+    I32 ints[3] = {5, 2, 9};
+    F64 reals[3] = {2.5, 9.5, 1.5};
+    Usize a = ints_from_main(ints[0:3]);
+    Usize b = order::smallest(order::ascending, reals[0:3]);
+    Usize c = order::smallest_of(ints[0:3]);
+    Usize d = order::smallest_of(reals[0:3]);
     c::printf("%zu %zu %zu %zu\n", a, b, c, d);
     return 0;
 }
@@ -6093,19 +6093,19 @@ int main() {
 module order;
 
 // A generic function, written once: an instance for each type of its arguments.
-export bool ascending(arithmetic a, typeof(a) b) {
+export Bool ascending(Num a, typeof(a) b) {
     return a < b;
 }
 
 // A helper that takes the function again: `less` is forwarded to it by `smallest`.
-export bool before(constexpr auto less, const auto xs[:], usize a, usize b) {
+export Bool before(constexpr auto less, const auto xs[:], Usize a, Usize b) {
     return less(xs[a], xs[b]);
 }
 
 // A second helper that takes it, called in the same body.
-export usize rank(constexpr auto less, const auto xs[:], usize at) {
-    usize below = 0;
-    for (usize i = 0; i < countof(xs); i++) {
+export Usize rank(constexpr auto less, const auto xs[:], Usize at) {
+    Usize below = 0;
+    for (Usize i = 0; i < countof(xs); i++) {
         if (before(less, xs, i, at)) below += 1;
     }
     return below;
@@ -6113,16 +6113,16 @@ export usize rank(constexpr auto less, const auto xs[:], usize at) {
 
 // `less` is the whole argument of two calls whose parameters are `constexpr auto`: the generic is passed on, and each
 // callee makes the instances its own calls ask for.
-export usize smallest(constexpr auto less, const auto xs[:]) {
-    usize best = 0;
-    for (usize i = 1; i < countof(xs); i++) {
+export Usize smallest(constexpr auto less, const auto xs[:]) {
+    Usize best = 0;
+    for (Usize i = 1; i < countof(xs); i++) {
         if (before(less, xs, i, best)) best = i;
     }
     return best + 10 * rank(less, xs, 0);
 }
 
 // The same, from a generic that knows its element type at each instance.
-export usize smallest_of(arithmetic xs[:]) {
+export Usize smallest_of(Num xs[:]) {
     return smallest(ascending, xs);
 }
 ==> generic-function-generic-error/src/main.smith <==

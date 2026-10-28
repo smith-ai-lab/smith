@@ -139,6 +139,18 @@ static void smith_lang_ty_reset(void) {
 
 // ---- Handles
 
+// The standard type of the sized name a slice's tag spells in lowercase (`f32` in smith_array_f32_n, for `F32`).
+static const char *smith_lang_ty_stem_standard(const char *name, size_t length) {
+    for (size_t i = 0; i < sizeof smith_lang_sized / sizeof smith_lang_sized[0]; i++) { // 14 entries
+        const char *sized = smith_lang_sized[i].name;
+        bool same = strlen(sized) == length;
+        for (size_t at = 0; same && at < length; at++)
+            same = tolower((unsigned char)sized[at]) == name[at];
+        if (same) return smith_lang_sized[i].standard;
+    }
+    return nullptr;
+}
+
 static const char *const smith_lang_ty_basic[] = {"void",     "char",     "short",    "int",    "long",  "float",
                                                   "double",   "signed",   "unsigned", "_Bool",  "bool",  "const",
                                                   "volatile", "restrict", "_Complex", "struct", "union", "enum"};
@@ -315,7 +327,7 @@ static bool smith_lang_ty_stem_spelling(const char *stem, size_t length, char *o
         pointer = strstr(pointer + 1, "_ptr");
     if (pointer != nullptr) *pointer = 0;
     if (strncmp(at, "tuple_", 6) == 0 || strstr(at, "_h") != nullptr || at[0] == 0) return false;
-    const char *standard = smith_lang_ty_standard(at, strlen(at));
+    const char *standard = smith_lang_ty_stem_standard(at, strlen(at));
     if (strcmp(at, "ldouble") == 0) {
         smith_lang_ty_spell_add(out, capacity, "long double", 11);
     } else if (strncmp(at, "struct_", 7) == 0 || strncmp(at, "union_", 6) == 0 || strncmp(at, "enum_", 5) == 0) {

@@ -187,11 +187,11 @@ static void bench_module(void) {
     mkdir(".smith", 0755);
     mkdir(folder, 0755);
     size_t length = (size_t)snprintf(text, sizeof text,
-                                     "module bench::big;\n\nexport struct Point {\n    i32 x;\n    i32 y;\n};\n\n");
+                                     "module bench::big;\n\nexport struct Point {\n    I32 x;\n    I32 y;\n};\n\n");
     for (int i = 0; i < module_functions; i++)
         length +=
             (size_t)snprintf(text + length, sizeof text - length,
-                             "export i32 f%d(Point p, i32 n) {\n    i32 total = 0;\n    for (i32 i = 0; i < n; i++) {\n"
+                             "export I32 f%d(Point p, I32 n) {\n    I32 total = 0;\n    for (I32 i = 0; i < n; i++) {\n"
                              "        if (i %% 2 == 0) total += p.x * i + %d;\n        else total -= p.y + i;\n    }\n"
                              "    return total;\n}\n\n",
                              i, i);
