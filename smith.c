@@ -1684,6 +1684,10 @@ typedef struct {
     char source[PATH_MAX];
     char header[PATH_MAX];
     char scratch[PATH_MAX + 32];
+    char name[64];             // the module's name: `io` for smith::io, the header's basename
+    const unsigned char *text; // the module's source, where its imports are found
+    size_t text_size;
+    bool skip; // the header is written already (or copied): no process
     pid_t pid;
 } SmithHeaderJob;
 
@@ -1719,9 +1723,13 @@ static bool smith_header_job_finish(SmithHeaderJob *job) {
     return true;
 }
 
-static void smith_header_job_add(SmithHeaderJob *jobs, size_t *count, const char *name, const char *source_folder) {
-    SMITH_ASSERT(*count < smith_headers_max);
+static void smith_header_job_add(SmithHeaderJob *jobs, size_t *count, const char *name, const char *source_folder,
+                                 const unsigned char *text, size_t text_size) {
+    SMITH_ASSERT(*count < smith_headers_max && strlen(name) < sizeof jobs[0].name);
     SmithHeaderJob *job = &jobs[(*count)++];
+    snprintf(job->name, sizeof job->name, "%s", name);
+    job->text = text;
+    job->text_size = text_size;
     snprintf(job->source, sizeof job->source, "%s/smith/%s.smith", source_folder, name);
     snprintf(job->header, sizeof job->header, ".smith/include/smith/%s.h", name);
 }
@@ -1754,28 +1762,111 @@ static bool smith_headers_copy(const SmithHeaderJob *jobs, size_t count, const c
     return true;
 }
 
+// A module's header pass reads the headers of the modules it imports (their type names), so it runs after theirs are
+// written: a header written first would carry the fallback names (`smith_arena_Arena` for `SmithArena`) and, kept by
+// the stamp, break every compile that includes it. The imports are the `import smith::<name>;` lines of the source. The
+// bit of each job (by index) that `job` imports, among the jobs; an import that is no job sets none.
+static uint32_t smith_header_imports(const SmithHeaderJob *jobs, size_t count, const SmithHeaderJob *job) {
+    static const char prefix[] = "import smith::";
+    const size_t prefix_size = sizeof prefix - 1;
+    const char *text = (const char *)job->text;
+    uint32_t mask = 0;
+    size_t at = 0;
+    while (at < job->text_size) { // bounded by the source: each pass moves past one line
+        size_t end = at;
+        while (end < job->text_size && text[end] != '\n')
+            end++;
+        size_t start = at;
+        while (start < end && (text[start] == ' ' || text[start] == '\t'))
+            start++;
+        if (end - start > prefix_size && strncmp(text + start, prefix, prefix_size) == 0) {
+            const char *name = text + start + prefix_size;
+            size_t length = 0;
+            while (name + length < text + end && name[length] != ';')
+                length++;
+            for (size_t i = 0; i < count; i++) { // bounded by the jobs
+                if (&jobs[i] != job && strlen(jobs[i].name) == length && strncmp(jobs[i].name, name, length) == 0)
+                    mask |= (uint32_t)1 << i;
+            }
+        }
+        at = end + 1;
+    }
+    return mask;
+}
+
+// The wave of each job: 0 for the jobs that import no other job, then the jobs whose imports are all in earlier waves.
+// A round that can start nothing (an import cycle) starts all that are left, so this never hangs. Returns the number of
+// waves, at most one for each job.
+static size_t smith_header_waves(const SmithHeaderJob *jobs, size_t count, size_t *waves) {
+    SMITH_ASSERT(count <= smith_headers_max);
+    uint32_t imports[smith_headers_max];
+    uint32_t all = 0;
+    for (size_t i = 0; i < count; i++) { // bounded by the jobs
+        imports[i] = smith_header_imports(jobs, count, &jobs[i]);
+        all |= (uint32_t)1 << i;
+    }
+    uint32_t placed = 0;
+    size_t wave = 0;
+    while (placed != all && wave < count) { // bounded: each round places at least one job
+        uint32_t ready = 0;
+        for (size_t i = 0; i < count; i++) {
+            if ((placed & ((uint32_t)1 << i)) == 0 && (imports[i] & ~placed) == 0) ready |= (uint32_t)1 << i;
+        }
+        if (ready == 0) ready = all & ~placed;
+        for (size_t i = 0; i < count; i++) {
+            if ((ready & ((uint32_t)1 << i)) != 0) waves[i] = wave;
+        }
+        placed |= ready;
+        wave++;
+    }
+    return wave;
+}
+
+// The waves of modules given by name and source (include/smith_core.h), for a test: the number of waves, 0 for more
+// modules than smith writes headers for.
+size_t smith_core_header_waves(const char *const *names, const char *const *texts, size_t count, size_t *waves) {
+    static SmithHeaderJob jobs[smith_headers_max];
+    if (count > smith_headers_max) return 0;
+    for (size_t i = 0; i < count; i++) {
+        SMITH_ASSERT(strlen(names[i]) < sizeof jobs[i].name);
+        snprintf(jobs[i].name, sizeof jobs[i].name, "%s", names[i]);
+        jobs[i].text = (const unsigned char *)texts[i];
+        jobs[i].text_size = strlen(texts[i]);
+    }
+    return smith_header_waves(jobs, count, waves);
+}
+
 // Writes the headers that are missing, or all of them when the stamp is not this binary's. The sources are written
 // already (the libraries' by smith_build_write_libraries, smith::build's by the caller).
 static void smith_write_lang_headers(const char *self) {
     static SmithHeaderJob jobs[smith_headers_max];
     size_t count = 0;
     for (size_t i = 0; i < sizeof smith_libraries / sizeof smith_libraries[0]; i++) {
-        if (smith_libraries[i].lang) smith_header_job_add(jobs, &count, smith_libraries[i].name, ".smith/lib");
+        if (smith_libraries[i].lang) {
+            smith_header_job_add(jobs, &count, smith_libraries[i].name, ".smith/lib", smith_libraries[i].source,
+                                 smith_libraries[i].source_size);
+        }
     }
-    smith_header_job_add(jobs, &count, "build", ".smith/internal");
+    smith_header_job_add(jobs, &count, "build", ".smith/internal", smith_build_source, sizeof smith_build_source);
     char identity[64];
     bool named = smith_binary_identity(self, identity, sizeof identity);
     bool current =
         named && smith_file_has_bytes(smith_headers_stamp, (const unsigned char *)identity, strlen(identity));
     bool copied = named && !current && smith_headers_copy(jobs, count, identity);
-    bool good = true;
     for (size_t i = 0; i < count; i++) {
         jobs[i].pid = 0;
-        if (copied || (current && access(jobs[i].header, R_OK) == 0)) continue;
-        good = smith_header_job_start(&jobs[i], self) && good;
+        jobs[i].skip = copied || (current && access(jobs[i].header, R_OK) == 0);
     }
-    for (size_t i = 0; i < count; i++) {
-        if (jobs[i].pid != 0) good = smith_header_job_finish(&jobs[i]) && good;
+    size_t waves[smith_headers_max];
+    size_t wave_count = smith_header_waves(jobs, count, waves);
+    bool good = true;
+    for (size_t wave = 0; wave < wave_count; wave++) { // bounded by the waves, at most one for each job
+        for (size_t i = 0; i < count; i++) {
+            if (waves[i] == wave && !jobs[i].skip) good = smith_header_job_start(&jobs[i], self) && good;
+        }
+        for (size_t i = 0; i < count; i++) {
+            if (waves[i] == wave && jobs[i].pid != 0) good = smith_header_job_finish(&jobs[i]) && good;
+        }
     }
     if (!good)
         smith_die(smith_exit_usage, "cannot write the headers of smith's libraries (smith cc --smith-header)", nullptr);

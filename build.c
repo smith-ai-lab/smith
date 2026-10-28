@@ -240,6 +240,28 @@ static const char *build_compiler_file(SmithBuild *b, const BuildConfig *config)
     return smith_capture_or(b, (const char *[]){"which", config->cc, nullptr}, config->cc);
 }
 
+// The headers a header step waits for: a module's header pass reads the headers of the modules it imports, so each
+// `import smith::<name>;` of its source that names another of build_header_modules makes that header an input of the
+// step (the others are written first by smith itself, smith_write_lang_headers, which orders them the same way).
+static const char *const *build_header_imports(SmithBuild *b, const char *source, const char *self) {
+    const char *const *inputs = smith_list(b, nullptr);
+    const char *lines =
+        smith_capture_or(b, (const char *[]){"grep", "-h", "^[ \t]*import smith::", source, nullptr}, "");
+    for (const char *at = strstr(lines, "import smith::"); at != nullptr; at = strstr(at + 1, "import smith::")) {
+        const char *name = at + strlen("import smith::");
+        size_t length = strcspn(name, ";\n");
+        for (size_t i = 0; build_header_modules[i] != nullptr; i++) { // bounded by the table
+            if (strlen(build_header_modules[i]) != length || strncmp(build_header_modules[i], name, length) != 0)
+                continue;
+            if (strcmp(build_header_modules[i], self) == 0) continue;
+            inputs = smith_cat(
+                b, inputs, smith_list(b, smith_fmt(b, ".smith/include/smith/%s.h", build_header_modules[i]), nullptr),
+                nullptr);
+        }
+    }
+    return inputs;
+}
+
 // Makes the steps of the headers no smith_object makes; returns their outputs.
 static const char *const *build_header_steps(SmithBuild *b, const BuildConfig *config) {
     const char *compiler = build_compiler_file(b, config);
@@ -251,7 +273,8 @@ static const char *const *build_header_steps(SmithBuild *b, const BuildConfig *c
         SmithStep step = {
             .command = smith_list(b, config->cc, "--smith-header", source, "-o", header, nullptr),
             .inputs = smith_list(b, source, nullptr),
-            .implicit_inputs = smith_list(b, compiler, nullptr),
+            .implicit_inputs =
+                smith_cat(b, smith_list(b, compiler, nullptr), build_header_imports(b, source, name), nullptr),
             .outputs = smith_list(b, header, nullptr),
             .description = smith_fmt(b, "header %s", source),
             .restat = true, // the header is written only when its bytes change
@@ -331,6 +354,9 @@ static bool build_shim_uses_pch(const char *name) {
 // depfile), and the shims that use it depend on it.
 // `-fpch-instantiate-templates` puts the templates' instantiations in the header too: the part of the saving that
 // matters, since the headers' parse alone is a third of the compile.
+// `-fvalidate-ast-input-files-content` (clang's own flag: the driver drops it; here and where it is used) stores each
+// input's hash, so a shim/pch.h whose time changed and whose text did not (a checkout that rewrote it) still matches
+// the header.
 static const char *build_shim_pch(SmithBuild *b, const BuildConfig *config, const char *folder) {
     static SmithObject pch; // the build keeps the pointer
     pch = (SmithObject){
@@ -338,7 +364,8 @@ static const char *build_shim_pch(SmithBuild *b, const BuildConfig *config, cons
         .source = "shim/pch.h",
         .output = smith_fmt(b, "%s/shim.pch", folder),
         .flags = smith_cat(b, build_shim_flags(b, config),
-                           (const char *[]){"-fpch-instantiate-templates", "-x", "c++-header", nullptr},
+                           (const char *[]){"-fpch-instantiate-templates", "-Xclang",
+                                            "-fvalidate-ast-input-files-content", "-x", "c++-header", nullptr},
                            // hook's coverage flags (build_shim) are in the header's too, so the two agree.
                            smith_when(b, config->coverage,
                                       (const char *[]){"-fprofile-instr-generate", "-fcoverage-mapping", nullptr}),
@@ -356,14 +383,16 @@ static void build_shim(SmithBuild *b, const BuildConfig *config, const char *fol
         .compiler = config->cxx,
         .source = source,
         .output = smith_fmt(b, "%s/%s_shim.o", folder, name),
-        .flags = smith_cat(b, build_shim_flags(b, config),
-                           smith_when(b, uses_pch, (const char *[]){"-include-pch", pch, nullptr}),
-                           // The token hook counts the lines it runs too (COVERAGE=1): the records then select the
-                           // tests that ran a function of it, and a change to shim/hook.cpp no longer selects every
-                           // test (#638).
-                           smith_when(b, config->coverage && strcmp(name, "hook") == 0,
-                                      (const char *[]){"-fprofile-instr-generate", "-fcoverage-mapping", nullptr}),
-                           nullptr),
+        .flags = smith_cat(
+            b, build_shim_flags(b, config),
+            smith_when(b, uses_pch,
+                       (const char *[]){"-include-pch", pch, "-Xclang", "-fvalidate-ast-input-files-content", nullptr}),
+            // The token hook counts the lines it runs too (COVERAGE=1): the records then select the
+            // tests that ran a function of it, and a change to shim/hook.cpp no longer selects every
+            // test (#638).
+            smith_when(b, config->coverage && strcmp(name, "hook") == 0,
+                       (const char *[]){"-fprofile-instr-generate", "-fcoverage-mapping", nullptr}),
+            nullptr),
         .implicit_inputs = smith_when(b, uses_pch, (const char *[]){pch, nullptr}),
     };
     smith_object(b, shim);

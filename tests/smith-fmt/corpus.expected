@@ -10813,7 +10813,7 @@ import <stdio.h>;
 typedef result(usize, i32) Wide;
 typedef result(f64, i32) Real;
 typedef option(u8) Small;
-typedef option(f64) Real;
+typedef option(f64) Scalar;
 
 static result(i32, i32) step(i32 n) {
     if (n < 0) return {.error = n};
@@ -10871,7 +10871,7 @@ static void show_small(Small o) {
     }
 }
 
-static void show_float(Real o) {
+static void show_float(Scalar o) {
     switch (o) {
     case .some:
         c::printf("some %g\n", o.some);
