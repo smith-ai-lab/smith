@@ -5,19 +5,28 @@ description: "[[std::linear]] on a type: a value of it is used exactly once on e
 
 # Linear types
 
-Draw twice from one random key and you get the same numbers twice; forget a key and a stream is thrown away. Mark the type and the compiler checks both: every value is used **exactly once**, on every path.
+A handle closed twice, a random key drawn from twice, a file never closed: mark the type `[[std::linear]]` and the compiler checks that every value is used **exactly once**, on every path.
 
 ```smith
-module keys;
+module handles;
 
-import std::random;
+export [[std::linear]] typedef struct {
+    i32 id;
+} Handle;
 
-export u64 pair(random::Key key) {
-    struct { random::Key, random::Key } parts = random::split(key);   // uses key; parts[0] and parts[1] are two new keys
-    random::UniformDouble unit = {.low = 0, .high = 1};
-    f64 a = random::uniform_double_sample(parts[0], unit);
-    _ = parts[1];                                                      // the second is dropped, and the code says so
-    return (u64)a;
+export Handle open(i32 id) {
+    return (Handle){.id = id};
+}
+
+export void close(Handle handle) {
+    _ = handle;                          // the value is used up here: this is the end of its life
+}
+
+export i32 work(i32 id, bool fail) {
+    Handle handle = open(id);
+    defer close(handle);                 // uses it at the `defer`, which covers each way out below
+    if (fail) return -1;
+    return 0;
 }
 ```
 

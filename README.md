@@ -563,7 +563,7 @@ export [[std::linear]] typedef struct {
 } Handle;
 
 export Handle open(i32 id) {
-    return {.id = id};
+    return (Handle){.id = id};
 }
 
 export void close(Handle handle) {
