@@ -122,13 +122,10 @@ export void test_runner_shrink_a_list_shrinks_to_its_failing_item_and_one_seed_g
 static void case_a_normal_failure_shrinks_to_the_value_nearest_three_from_above(io::Io *io, usize mode) {
     scratch::Project p = shrink_project(io, "runner_shrink", "");
     const char *iso = runner::flag(mode);
-    // One run: the text it saved is what is searched for the failure and what the nearest z is read from. --no-region:
-    // on a region each shrinking run of this failing f64 test costs 20 ms (150 page reclaims) against 0.4 ms, and the
-    // shrink reaches its 1000-run cap before z is within 1e-7 of 3 (see the pull request).
-    (void)scratch::sh(
-        &p, format::push("build/tests ", iso,
-                         " --no-region --test shrink_normal --shrink-seconds 3600 --seeds 5000 >normal.txt 2>&1")
-                .data);
+    // One run: the text it saved is what is searched for the failure and what the nearest z is read from.
+    (void)scratch::sh(&p, format::push("build/tests ", iso,
+                                       " --test shrink_normal --shrink-seconds 3600 --seeds 5000 >normal.txt 2>&1")
+                              .data);
     scratch::expect_contains(runner::label(io, iso, "shrink: a normal with z < 3 shrinks"),
                              scratch::read(&p, "normal.txt"), "FAIL shrink_normal with seed");
     const char *verdict = scratch::capture(

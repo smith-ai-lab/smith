@@ -1762,8 +1762,34 @@ constexpr usize region_first = 1U << 16; // the first chunk of a test's region
 // format::push, a library's result, malloc) belongs to a growing arena, which the runner releases when the test ends,
 // so nothing is freed one block at a time. Its chunks come from the checked allocator, when there is one. --no-region
 // leaves the checked allocator itself as the test's current allocator (the tests of mem::checked need it).
+// The C library keeps the blocks its number printing took from malloc (the free lists of its floating point
+// conversion) for the next conversion, and malloc is the current allocator: a block taken inside a region would dangle
+// when the region ends (a heap-use-after-free in the next test that prints a float). Printing the extremes once, before
+// the first region, makes the library take the blocks from the allocator that outlives every test.
+bool libc_primed;
+
+void prime_libc() {
+    if (libc_primed) return;
+    libc_primed = true;
+    constexpr usize room = 2048;
+    constexpr usize places_count = 9;
+    const i32 places[places_count] = {0, 1, 3, 6, 17, 40, 100, 400, 1100};
+    char text[room];
+    f64 value = 1.0e-320;
+    for (usize step = 0; step < 700; step++) { // the magnitudes of f64, each with a mantissa of its own
+        value = value * 1.9 + 0.1234567 * (f64)(step & 7U);
+        if (value > 1.0e305) value = 3.0e-310;
+        for (usize at = 0; at < places_count; at++) {
+            __builtin_snprintf(text, room, "%.*f", places[at], value);
+            __builtin_snprintf(text, room, "%.*e", places[at], value);
+            __builtin_snprintf(text, room, "%.*g", places[at], value);
+        }
+    }
+}
+
 void region_begin(const Options *options) {
     if (options->no_region) return;
+    prime_libc();
     region_arena = arena::growing(region_first, checked_active ? &checked_state.base : nullptr);
     region_base = arena::allocator(&region_arena);
     region_owned = true;
