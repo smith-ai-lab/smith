@@ -113,3 +113,163 @@ export typeof(xs) trim(const auto xs[:], constexpr auto pred) {
     }
     return xs[start:end];
 }
+
+// The first index whose element is not less than v in a slice sorted ascending: where v is, or would be inserted. It
+// is countof(sorted) when every element is less. Halves the range each step, so it takes log2(count) comparisons.
+export usize search(const arithmetic sorted[:], typeof(sorted[0]) v) {
+    usize low = 0;
+    usize high = countof(sorted);
+    while (low < high) {
+        contract::invariant(low <= high && high <= countof(sorted));
+        usize middle = low + (high - low) / 2;
+        if (sorted[middle] < v) {
+            low = middle + 1;
+        } else {
+            high = middle;
+        }
+    }
+    contract::ensures(low <= countof(sorted));
+    return low;
+}
+
+// Moves the element at root down the heap xs[0:end] until both its children sort after it.
+void sift_down(auto xs[:], usize root, usize end, constexpr auto less) {
+    contract::requires(end <= countof(xs) && root < end);
+    usize parent = root;
+    while (2 * parent + 1 < end) {
+        contract::invariant(parent < end);
+        usize child = 2 * parent + 1;
+        if (child + 1 < end && less(xs[child], xs[child + 1])) child += 1;
+        if (!less(xs[parent], xs[child])) return;
+        typeof_unqual(xs[0]) held = xs[parent];
+        xs[parent] = xs[child];
+        xs[child] = held;
+        parent = child;
+    }
+}
+
+// Whether no element of xs sorts before the one in front of it, by less.
+bool ordered_by(const auto xs[:], constexpr auto less) {
+    for (usize i = 1; i < countof(xs); i++) {
+        if (less(xs[i], xs[i - 1])) return false;
+    }
+    return true;
+}
+
+// Puts the elements in the order less gives, in place: less(a, b) is true when a sorts strictly before b. A heapsort,
+// so the worst case is count * log2(count) comparisons, nothing allocates and nothing recurses. Not stable.
+export void sort_by(auto xs[:], constexpr auto less) {
+    usize length = countof(xs);
+    for (usize i = length / 2; i > 0; i--) {
+        sift_down(xs, i - 1, length, less);
+    }
+    for (usize end = length; end > 1; end--) {
+        typeof_unqual(xs[0]) held = xs[0];
+        xs[0] = xs[end - 1];
+        xs[end - 1] = held;
+        sift_down(xs, 0, end - 1, less);
+    }
+    contract::ensures(ordered_by(xs, less));
+}
+
+// Moves the element at root down the heap xs[0:end] until both its children are not less than it (sift_down with `<`:
+// a generic function cannot be passed as `less`, so sort cannot call sort_by).
+void sift_down_ascending(arithmetic xs[:], usize root, usize end) {
+    contract::requires(end <= countof(xs) && root < end);
+    usize parent = root;
+    while (2 * parent + 1 < end) {
+        contract::invariant(parent < end);
+        usize child = 2 * parent + 1;
+        if (child + 1 < end && xs[child] < xs[child + 1]) child += 1;
+        if (!(xs[parent] < xs[child])) return;
+        typeof_unqual(xs[0]) held = xs[parent];
+        xs[parent] = xs[child];
+        xs[child] = held;
+        parent = child;
+    }
+}
+
+// Whether no element of xs is less than the one in front of it.
+bool ordered(const arithmetic xs[:]) {
+    for (usize i = 1; i < countof(xs); i++) {
+        if (xs[i] < xs[i - 1]) return false;
+    }
+    return true;
+}
+
+// Puts the elements in ascending order, in place: sort_by with `<`, a heapsort. NaN of a floating slice has no place
+// in the order, so a slice holding one ends in no particular order.
+export void sort(arithmetic xs[:]) {
+    usize length = countof(xs);
+    for (usize i = length / 2; i > 0; i--) {
+        sift_down_ascending(xs, i - 1, length);
+    }
+    for (usize end = length; end > 1; end--) {
+        typeof_unqual(xs[0]) held = xs[0];
+        xs[0] = xs[end - 1];
+        xs[end - 1] = held;
+        sift_down_ascending(xs, 0, end - 1);
+    }
+    contract::ensures(ordered(xs));
+}
+
+// The sum of the elements, 0 for an empty slice. An integer sum that overflows is a failed check.
+export typeof(xs[0]) sum(const arithmetic xs[:]) {
+    typeof_unqual(xs[0]) total = 0;
+    for (usize i = 0; i < countof(xs); i++) {
+        total += xs[i];
+    }
+    return total;
+}
+
+// The index of the smallest element, the first of equal ones. NaN of a floating slice is never smaller than any.
+export usize argmin(const arithmetic xs[:]) {
+    contract::requires(countof(xs) > 0);
+    usize best = 0;
+    for (usize i = 1; i < countof(xs); i++) {
+        contract::invariant(best < i);
+        if (xs[i] < xs[best]) best = i;
+    }
+    contract::ensures(best < countof(xs));
+    return best;
+}
+
+// The index of the largest element, the first of equal ones.
+export usize argmax(const arithmetic xs[:]) {
+    contract::requires(countof(xs) > 0);
+    usize best = 0;
+    for (usize i = 1; i < countof(xs); i++) {
+        contract::invariant(best < i);
+        if (xs[i] > xs[best]) best = i;
+    }
+    contract::ensures(best < countof(xs));
+    return best;
+}
+
+// The smallest element.
+export typeof(xs[0]) min(const arithmetic xs[:]) {
+    contract::requires(countof(xs) > 0);
+    return xs[argmin(xs)];
+}
+
+// The largest element.
+export typeof(xs[0]) max(const arithmetic xs[:]) {
+    contract::requires(countof(xs) > 0);
+    return xs[argmax(xs)];
+}
+
+// Whether pred is true for every element, true for an empty slice.
+export bool all(const auto xs[:], constexpr auto pred) {
+    for (usize i = 0; i < countof(xs); i++) {
+        if (!pred(xs[i])) return false;
+    }
+    return true;
+}
+
+// Whether pred is true for some element, false for an empty slice.
+export bool any(const auto xs[:], constexpr auto pred) {
+    for (usize i = 0; i < countof(xs); i++) {
+        if (pred(xs[i])) return true;
+    }
+    return false;
+}

@@ -1236,8 +1236,10 @@ static bool smith_lang_concept_local(SmithLang *lang, const SmithHost *host, con
         if (smith_lang_equals(token->text, token->length, smith_lang_concepts[i])) id = (unsigned)i + 1;
     }
     if (!smith_lang_concept_holds(host, id, found.canonical)) {
-        smith_lang_error(lang, host, token->location, "`%s` is not `%s`: the initializer of `%.*s` has that type",
-                         found.written, smith_lang_concepts[id - 1], (int)name->length, name->text);
+        uint32_t place = init[0].location != 0 ? init[0].location : token->location; // at the initializer
+        smith_lang_concept_why(lang, host, place, id, found.canonical);
+        smith_lang_error(lang, host, place, "`%s` is not `%s`: the initializer of `%.*s` has that type", found.written,
+                         smith_lang_concepts[id - 1], (int)name->length, name->text);
     } // and the declaration goes on as `auto`, so that nothing else is said about the name
     SmithToken automatic = smith_lang_tuple_made(SmithTokenKind_Identifier, "auto", 4, token, token->space_before);
     automatic.line_start = token->line_start;

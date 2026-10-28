@@ -35,6 +35,7 @@ A later argument converts to `typeof(a)` by C's rules, except that a conversion 
 
 - **By value**: a literal and an expression of literals (`1 << 4`, `flag_a | flag_b`), `constexpr` integers (the file's, or a C header's through `c::`, of any signedness: `c::bpe_failed`, a `uint32_t` of all ones, is 4294967295 and fits a `u32`) and enumerators (`c::Style_Count - 1`). `0.1` is not an `f32`; `0.5` and `0.1f` are; `-1` is not a `u32`.
 - **By type**, for any other argument: its range must fit the target's (`u8` to `u32` and `i32` to `f64` yes; `u32` to `u8`, `i32` to `u32`, `i32` to `f32`, `f64` to `f32` no).
+- **The element of a shaped parameter** is the same: with `usize find(const auto xs[:], typeof(xs[0]) v)`, `find(bytes, 300)` for a `u8` slice is the error (``the argument `300` of `find` converts to u8, the element type of its first argument `bytes`, and changes its value; cast it, `(u8)300` ``); `typeof(*p)` of `auto *p` the same.
 - Bools, enums and pointers convert by C's rules; an argument whose type cannot be said is not judged. Fix an error with the cast the message names.
 
 Generics: `smith-lang-generics`.

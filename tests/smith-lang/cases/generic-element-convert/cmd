@@ -1,0 +1,1 @@
+-I @REPO@/.smith/include main.smith @REPO@/tests/smith-lang/cases/generic-element-convert/src/stats.smith @REPO@/lib/smith/contract.smith @REPO@/lib/trace.c -o @OUT@/program

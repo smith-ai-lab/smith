@@ -1,5 +1,5 @@
-src/main.smith:14:18: `const char *` is not `arithmetic`: `name`, the argument of `twice`, has the type `const char *`; the parameter `x` is `arithmetic x`
-src/main.smith:15:18: `Pair` is not `arithmetic`: `pair`, the argument of `twice`, has the type `Pair`; the parameter `x` is `arithmetic x`
-src/main.smith:16:19: `f64` is not `integer`: `real`, the argument of `larger`, has the type `f64`; the parameter `a` is `integer a`
-src/main.smith:17:20: `u32` is not `signed_integer`: `unsigned_value`, the argument of `sign_of`, has the type `u32`; the parameter `n` is `signed_integer n`
-src/main.smith:18:18: `f64` is not `pointer`: `real`, the argument of `width`, has the type `f64`; the parameter `p` is `pointer p`
+src/main.smith:14:18: `const char *` is not `arithmetic`
+src/main.smith:15:18: `Pair` is not `arithmetic`
+src/main.smith:16:19: `f64` is not `integer`
+src/main.smith:17:20: `u32` is not `signed_integer`
+src/main.smith:18:18: `f64` is not `pointer`

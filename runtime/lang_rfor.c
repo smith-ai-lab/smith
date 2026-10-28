@@ -211,9 +211,9 @@ static void smith_lang_rfor_concept(SmithLang *lang, const SmithHost *host, Smit
     if (form != SmithLangRfor_Error && host->expr_type != nullptr && text[0] != 0 &&
         host->expr_type(host->context, probe, (uint32_t)strlen(probe), &found) &&
         !smith_lang_concept_holds(host, parts->concept_id, found.canonical)) {
-        smith_lang_error(lang, host, parts->type.tokens[0].location,
-                         "`%s` is not `%s`: the elements have the type `%s`", found.written,
-                         smith_lang_concepts[parts->concept_id - 1], found.written);
+        smith_lang_concept_why(lang, host, parts->type.tokens[0].location, parts->concept_id, found.canonical);
+        smith_lang_error(lang, host, parts->type.tokens[0].location, "`%s` is not `%s`: the elements have that type",
+                         found.written, smith_lang_concepts[parts->concept_id - 1]);
     }
     *automatic = smith_lang_tuple_made(SmithTokenKind_Identifier, "auto", 4, &parts->type.tokens[0],
                                        parts->type.tokens[0].space_before);

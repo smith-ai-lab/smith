@@ -149,6 +149,8 @@ struct PresenterLink {
     unsigned noteId = 0; // a custom note that shows its text
     std::set<unsigned> suppressed;
     std::map<unsigned, std::string> hints; // by place: a note for the error the compiler reports there
+    // by place: the notes of an error the lowering reports there, each at a place of its own (issue #193)
+    std::map<unsigned, std::vector<std::pair<unsigned, std::string>>> notes;
 };
 
 // The engine a tool reports its own findings from, which the next hook of this thread puts its Presenter in front of
@@ -224,6 +226,16 @@ class Presenter final : public DiagnosticConsumer {
             if (hint != link->hints.end()) { // the lowering knows why the name is not found
                 pendingNotes.insert(pendingNotes.begin(), {at, hint->second});
                 engine = info.getDiags();
+            }
+            auto noted = level == DiagnosticsEngine::Error && at.isValid() ? link->notes.find(at.getRawEncoding())
+                                                                           : link->notes.end();
+            if (noted != link->notes.end()) { // the lowering's notes of its own error, before the instances'
+                std::vector<std::pair<SourceLocation, std::string>> own;
+                for (auto &[place, text] : noted->second)
+                    own.emplace_back(SourceLocation::getFromRawEncoding(place), text);
+                pendingNotes.insert(pendingNotes.begin(), own.begin(), own.end());
+                engine = info.getDiags();
+                link->notes.erase(noted);
             }
             if (origin.isValid()) at = origin;
             // A place in a module's generated header is where the module's source declares it.
@@ -654,6 +666,7 @@ class SmithHook final : public TokenHook, public NameSource {
         host.read_problem = &SmithHook::readProblem;
         host.suppress = &SmithHook::suppressUse;
         host.hint = &SmithHook::hintAt;
+        host.note = &SmithHook::noteAt;
         host.proved = &SmithHook::provedAt;
         if (OptionalFileEntryRef entry = SM.getFileEntryRefForID(MainFile)) {
             mainName = entry->getName().str();
@@ -3589,6 +3602,11 @@ class SmithHook final : public TokenHook, public NameSource {
     // (Not in the editor: clangd shows a note in the file it is in as a diagnostic of its own, beside the error.)
     static void hintAt(void *context, uint32_t location, const char *message) {
         if (!inEditor) static_cast<SmithHook *>(context)->link->hints[location] = message;
+    }
+
+    // A note for the error the lowering is about to report at `error`: it follows the error, at `location`.
+    static void noteAt(void *context, uint32_t error, uint32_t location, const char *message) {
+        static_cast<SmithHook *>(context)->link->notes[error].emplace_back(location, message);
     }
 
     // ---- The names as written

@@ -12,6 +12,19 @@
     host->error(host->context, location, message);
 }
 
+// A note for the error that is reported next at `error_location`, at `location` (0: no place, the note stands alone).
+// A host without notes says nothing of them: the error's own text stands.
+[[gnu::format(printf, 4, 5)]] static void smith_lang_note(const SmithHost *host, uint32_t error_location,
+                                                          uint32_t location, const char *format, ...) {
+    if (host->note == nullptr || location == UINT32_MAX) return;
+    char message[smith_lang_message_max];
+    va_list arguments;
+    va_start(arguments, format);
+    vsnprintf(message, sizeof message, format, arguments);
+    va_end(arguments);
+    host->note(host->context, error_location, location, message);
+}
+
 static bool smith_lang_word_char(char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '$';
 }
