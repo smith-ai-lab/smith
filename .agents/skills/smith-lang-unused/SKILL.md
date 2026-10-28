@@ -40,4 +40,4 @@ i32 main() {
 - **Not these:** C's own names (`__x`, `_X`), a member (`p._x`, `p->_x`) and a name after `::` (`c::_exit`) are no module's.
 - **Without a `module` line nothing changes:** `int _ = 1; return _;` is C.
 
-Overview: `smith-lang`. Reference: [knowledge/smith-language.md](../../../knowledge/smith-language.md) ("`_` and `_name`").
+A runnable example is in the README ("Unused on purpose: `_`"), which `tests/readme_test.smith` compiles. Overview: `smith-lang`. Reference: [knowledge/smith-language.md](../../../knowledge/smith-language.md) ("`_` and `_name`").
