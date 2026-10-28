@@ -11833,6 +11833,34 @@ int main() {
     printf("%lld %u %zu %g %zu\n", (long long)big, small_one, (size_t)length, ratio, sizeof(local));
     return 0;
 }
+==> typetag-attribute/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+// Attributes between the keyword and the tag's name do not stop the name being the type's: the struct is `Op`, and an
+// export may choose its C name beside them.
+
+struct [[maybe_unused]] Plain {
+    i32 value;
+};
+
+[[smith::c_name("MainCounter")]] export struct [[clang::annotate("main::capability")]] Counter {
+    i32 count;
+};
+
+union [[maybe_unused]] Number {
+    i32 whole;
+    f32 real;
+};
+
+i32 main() {
+    Plain plain = {.value = 4};
+    Counter counter = {.count = 5};
+    Number number = {.whole = 6};
+    c::printf("%d %d %d\n", plain.value, counter.count, number.whole);
+    return 0;
+}
 ==> typetag-module/src/geo/shapes.smith <==
 module geo::shapes;
 
