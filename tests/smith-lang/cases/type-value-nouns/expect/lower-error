@@ -1,5 +1,5 @@
-src/main.smith:43:39: in `if constexpr`: this condition has too many types, or the compiler cannot answer for them
-src/main.smith:43:63: in `if constexpr`: this condition has too many types, or the compiler cannot answer for them
-src/main.smith:43:86: in `if constexpr`: this condition has too many types, or the compiler cannot answer for them
-src/main.smith:44:19: in `if constexpr`: this condition has too many types, or the compiler cannot answer for them
-src/main.smith:44:52: in `if constexpr`: this condition has too many types, or the compiler cannot answer for them
+src/main.smith:43:42: in `if constexpr`: `smith_concepts_Signed` is not a constant or a type; a call or a field of a `constexpr` value needs smith's compiler to evaluate it, and the raw lowering has none
+src/main.smith:43:66: in `if constexpr`: `smith_concepts_Signed` is not a constant or a type; a call or a field of a `constexpr` value needs smith's compiler to evaluate it, and the raw lowering has none
+src/main.smith:43:89: in `if constexpr`: `smith_concepts_Signed` is not a constant or a type; a call or a field of a `constexpr` value needs smith's compiler to evaluate it, and the raw lowering has none
+src/main.smith:44:22: in `if constexpr`: `smith_concepts_Signed` is not a constant or a type; a call or a field of a `constexpr` value needs smith's compiler to evaluate it, and the raw lowering has none
+src/main.smith:44:55: in `if constexpr`: `smith_concepts_Signed` is not a constant or a type; a call or a field of a `constexpr` value needs smith's compiler to evaluate it, and the raw lowering has none
