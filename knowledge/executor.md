@@ -66,9 +66,8 @@ Written in C, not `.smith`: it works on the executor's own types (`SmithExec`, `
   in it: only a build in that folder is served it. A `-g` object does not hold it: `smith_object` adds
   `-fdebug-prefix-map=<folder>=.` to a compile with debug information (the folder as clang spells it, and as `getcwd`
   does when that differs), so the compilation directory is `.` and a file read by an absolute path is `./path`, and the
-  object is the same bytes in every folder (#621). So every profile's object is shared by every worktree. Lldb reads the
-  sources from the folder it runs in (`smith dbg` from the project's root; `smith dap` gets absolute paths); elsewhere
-  `settings set target.source-map . <root>` finds them. The `.d` and `.fx` are stored with the
+  object is the same bytes in every folder (#621). So every profile's object is shared by every worktree. The debugger maps `.` to the
+  project root itself ([debugger](debugger.md)). The `.d` and `.fx` are stored with the
   folder a token and restored with this one. A compile that printed anything (a warning), read a file written after it
   began, or names `__TIME__`, `__DATE__` or `__TIMESTAMP__` is not stored; nor are compiles with a flag that reads or
   writes more than the depfile names (`@file`, `-fprofile-*`, `--coverage`, `-save-temps`, plugins, ...).

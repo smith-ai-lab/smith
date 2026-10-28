@@ -139,6 +139,26 @@ union (garbage, and once a summary parse error) and the raw tag are hidden: `(ma
 affine plugin reads the struct's constants as `<name>_tag_<variant>` with `smith_enum_` taken off the tag
 (`variantOf`, shim/affine.cpp). Tests: `tests/dap_test.smith`.
 
+## Sources of a debug object
+
+A debug object's compilation directory is `.` (`-fdebug-prefix-map=<root>=.`, [executor](executor.md), #621), so the
+debugger maps `.` to the project root itself and shows the sources from any folder. The root
+(`runtime/debug_root.c`, `smith_project_root`) is the nearest folder above the program that holds `build.c`,
+`build.smith` or `.smith/build.info` (what a `smith build` leaves); a program no smith built has none, and nothing is
+mapped. Each tool maps it before the target loads symbols, with no change to the program:
+
+- **`smith dbg`** finds the program among its arguments (the first file before `--` that is not the value of an option
+  that takes one; else the current folder) and runs `-O 'settings append target.source-map . "<root>"'` before the
+  user's own commands (`shim/lldb.cpp`). `append` keeps a map of the user's; their own `settings set` replaces ours.
+- **`smith dap`** forks a child before lldb-dap starts (`runtime/dap_filter.c`): it copies the client's messages into the
+  pipe that becomes lldb-dap's standard input and adds `"sourcePath":"<root>"` to the arguments of a `launch` or
+  `attach` request that names a `program` with a root and has neither `sourcePath` nor `sourceMap`; every other byte
+  passes unchanged (a message over 1 MiB, or a terminal on standard input, is not filtered). lldb-dap also gets
+  `--pre-init-command` with the same command for the root of the current folder, for a client that attaches by pid.
+- **`smith mcp`** puts `sourcePath` in its own launch request (`runtime/mcp_tools.c`); its adapter is `smith dap`.
+- **`smith symbolize`, `smith dbg --crash` and `--at`** read a source line from the root above the program (the first
+  usable image of the trace, or the program) when the path is relative (`smith_sym_open_path`).
+
 ## Reading a failed check
 
 `smith --smith-explain --pid <pid>` (`runtime/explain.c`, `shim/lldb_explain.cpp`) uses lldb's SB API in smith's process

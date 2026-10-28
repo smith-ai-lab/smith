@@ -515,6 +515,8 @@ static const char *const build_smith_inputs[] = {
     "runtime/xz.c",
     "runtime/untar.c",
     "runtime/cache.c",
+    "runtime/debug_root.c",
+    "runtime/dap_filter.c",
     "runtime/symbolize.c",
     "runtime/explain.c",
     "runtime/platform_macos.c",

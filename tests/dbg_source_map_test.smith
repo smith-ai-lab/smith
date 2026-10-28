@@ -1,0 +1,74 @@
+// A debug object's compilation directory is `.` (issue #621), so the debugger maps it to the project's root itself:
+// `smith dbg`, `smith dbg --at` and `smith dap` show the source lines of a program built by `smith build` from any
+// folder (runtime/debug_root.c, runtime/dap_filter.c). They launch real processes under a debugger, so a smith without
+// lldb inside, or an account that may not debug, has nothing to test and the tests do nothing.
+module dbg_source_map_test;
+
+import smith::io;
+import scratch;
+
+constexpr char program[_] = "#include <stdio.h>\n"
+                            "int main(void) {\n"
+                            "    int x = 41;\n"
+                            "    x += 1;\n"
+                            "    printf(\"%d\\n\", x);\n"
+                            "    return 0;\n"
+                            "}\n";
+
+// The project built by `smith build`, and what runs from another folder. False when this smith cannot debug here.
+static bool made(io::Io *io, scratch::Project *p) {
+    *p = scratch::project(io, "dbg_map", nullptr);
+    if (scratch::sh(p, "smith dbg --version >/dev/null 2>&1").status != 0) {
+        return false;
+    }
+    scratch::write(p, "main.c", program);
+    scratch::Run built = scratch::build(p, "");
+    scratch::expect_status("the project builds", 0, &built);
+    scratch::Run probe =
+        scratch::sh(p, "smith dbg -b -o 'b main.c:4' -o run -o kill \"build/debug/$(basename \"$PWD\")\" 2>&1");
+    return scratch::contains(probe.out, "stop reason = breakpoint");
+}
+
+export void test_dbg_source_map_dbg_from_another_folder(io::Io *io) {
+    scratch::Project p;
+    if (!made(io, &p)) {
+        return;
+    }
+    scratch::Run run = scratch::sh(&p, "P=\"$PWD/build/debug/$(basename \"$PWD\")\"; cd / && "
+                                       "smith dbg -b -o 'b main.c:4' -o run -o kill \"$P\" 2>&1");
+    scratch::expect_contains("the line of the stop is shown, from /", run.out, "x += 1;");
+    scratch::Run below = scratch::sh(&p, "mkdir -p sub/deeper && cd sub/deeper && "
+                                         "smith dbg -b -o 'b main.c:4' -o run -o kill "
+                                         "\"../../build/debug/$(basename \"$(cd ../.. && pwd)\")\" 2>&1");
+    scratch::expect_contains("the line of the stop is shown, from a folder below the root", below.out, "x += 1;");
+}
+
+export void test_dbg_source_map_at_from_another_folder(io::Io *io) {
+    scratch::Project p;
+    if (!made(io, &p)) {
+        return;
+    }
+    // --at needs the debugger to attach to a process it starts; a machine that cannot has nothing to show anywhere.
+    scratch::Run here = scratch::sh(&p, "smith dbg --at main.c:4 \"build/debug/$(basename \"$PWD\")\" 2>&1");
+    if (!scratch::contains(here.out, "x += 1;")) {
+        return;
+    }
+    scratch::Run run = scratch::sh(&p, "P=\"$PWD/build/debug/$(basename \"$PWD\")\"; cd / && "
+                                       "smith dbg --at main.c:4 \"$P\" 2>&1");
+    scratch::expect_contains("--at shows the source line, from /", run.out, "x += 1;");
+}
+
+export void test_dbg_source_map_dap_from_another_folder(io::Io *io) {
+    scratch::Project p;
+    if (!made(io, &p)) {
+        return;
+    }
+    scratch::Run client = scratch::sh(&p, "smith cc -std=gnu23 \"$SMITH_REPO/tests/dap_client.c\" -o dap_client");
+    scratch::expect_status("tests/dap_client.c builds", 0, &client);
+    // The frame's source is named by its absolute path when lldb resolved it, and by `main.c` alone when it did not.
+    scratch::Run run =
+        scratch::sh(&p, "D=\"$PWD\"; P=\"$D/build/debug/$(basename \"$D\")\"; cd / && "
+                        "\"$D/dap_client\" \"$(command -v smith)\" \"$P\" \"$D/main.c\" 4 x 41 2>&1 | "
+                        "grep -q \"\\\"name\\\":\\\"main.c\\\",\\\"path\\\":\\\"$D/main.c\\\"\" && echo resolved");
+    scratch::expect_contains("the frame's source is resolved to the project's file, from /", run.out, "resolved");
+}

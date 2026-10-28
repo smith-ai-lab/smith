@@ -531,6 +531,7 @@ static int smith_crash_run(const SmithCrashOptions *options, const char *self) {
 static int smith_crash_main(int argc, char **argv, const char *self) {
     SmithCrashOptions options = smith_crash_parse(argc, argv);
     if (getcwd(smith_sym_directory, sizeof smith_sym_directory) == nullptr) smith_sym_directory[0] = '\0';
+    if (options.program != nullptr && options.program[0] != nullptr) smith_sym_root_from(options.program[0]);
     int status = smith_crash_run(&options, self);
     fflush(stdout);
     return status;
