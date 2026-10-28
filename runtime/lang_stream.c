@@ -907,20 +907,20 @@ static void smith_lang_assemble_header(SmithLang *lang, const char *main_file) {
     smith_lang_priv_resolve(lang); // before the includes: what the section names through imports
     used += smith_lang_assemble_meta(lang, out + used, capacity - used);
     used = smith_lang_append(out, capacity, used, "// clang-format on\n");
-    used = smith_lang_append(out, capacity, used, "#pragma once\n");
+    used = smith_lang_priv_open(lang, out, capacity, used);
     used += smith_lang_assemble_includes(lang, out + used, capacity - used, true);
     lang->header_target_used &= ~lang->include_prelude; // the include lines defined these above
     used = smith_lang_target_header_prelude(lang, out, capacity, used);
     used = smith_lang_append(out, capacity, used, "#ifdef __cplusplus\nextern \"C\" {\n#endif\n");
     smith_lang_tuple_hoist(smith_lang_header_body, &lang->header_used, smith_lang_header_max);
     used = smith_lang_append(out, capacity, used, "%.*s\n", (int)lang->header_used, smith_lang_header_body);
-    used = smith_lang_priv_section(lang, out, capacity, used);
     used = smith_lang_append(out, capacity, used, "#ifdef __cplusplus\n}\n#endif\n");
-    lang->header_full_used = used;
+    used = smith_lang_priv_close(lang, out, capacity, used);
+    lang->header_full_used = smith_lang_priv_section(lang, out, capacity, used, true);
 }
 
 // The interface an importer reads when it finds the module by its source (runtime/lang_lex.c): the declarations on
-// the lines the module has them (the first line is `#pragma once`), with no other line. The includes it needs and the
+// the lines the module has them (the first line is `#pragma once`, or `#ifndef` of the guard), with no other line. The includes it needs and the
 // comment lines are the host's to use, apart from it.
 static void smith_lang_assemble_aligned(SmithLang *lang) {
     // An exported inline function whose `if constexpr` asks the target needs the facts defined above its #if lines.
@@ -935,11 +935,13 @@ static void smith_lang_assemble_aligned(SmithLang *lang) {
     while (blank < lang->header_used && smith_lang_header_body[blank] == '\n')
         blank += 1;
     size_t skip = blank >= lines ? lines : 0;
-    lang->header_full_used =
-        smith_lang_append(smith_lang_header_full, sizeof smith_lang_header_full, 0, "#pragma once\n%.*s%.*s\n",
-                          (int)prelude_used, prelude, (int)(lang->header_used - skip), smith_lang_header_body + skip);
-    lang->header_full_used =
-        smith_lang_priv_section(lang, smith_lang_header_full, sizeof smith_lang_header_full, lang->header_full_used);
+    char *full = smith_lang_header_full;
+    size_t capacity = sizeof smith_lang_header_full;
+    size_t used = smith_lang_priv_open(lang, full, capacity, 0); // one line, as the declarations' lines count
+    used = smith_lang_append(full, capacity, used, "%.*s%.*s\n", (int)prelude_used, prelude,
+                             (int)(lang->header_used - skip), smith_lang_header_body + skip);
+    used = smith_lang_priv_close(lang, full, capacity, used);
+    lang->header_full_used = smith_lang_priv_section(lang, full, capacity, used, false);
 }
 
 static void smith_lang_write_file(const char *path, const char *bytes, size_t length) {

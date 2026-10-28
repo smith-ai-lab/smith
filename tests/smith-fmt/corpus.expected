@@ -7286,6 +7286,42 @@ export typeof(x) framed(auto x) {
 export i32 plain(i32 x) {
     return unused(x);
 }
+==> generic-private-included-first/src/main.smith <==
+module main;
+
+import mid;
+import scale;
+import <stdio.h>;
+
+int main() {
+    scale::Key key = mid::make();
+    c::printf("%d %d\n", (int)key.bits, scale::twice(2));
+    return 0;
+}
+==> generic-private-included-first/src/mid.smith <==
+module mid;
+
+import scale;
+
+// Its header includes scale's plainly: an importer of both reads scale's section after that.
+export scale::Key make() {
+    return (scale::Key){7};
+}
+==> generic-private-included-first/src/scale.smith <==
+module scale;
+
+export struct Key {
+    u64 bits;
+};
+
+static u64 derive(u64 x) {
+    return x * 2;
+}
+
+// An exported generic that uses a private name: its instance needs the header's instance section.
+export typeof(x) twice(auto x) {
+    return (typeof(x))derive(1) + x;
+}
 ==> generic-private-names/src/main.smith <==
 module main;
 

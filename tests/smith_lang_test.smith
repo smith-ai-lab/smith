@@ -1441,6 +1441,10 @@ export void test_generic_private_generic() {
     corpus_case("generic-private-generic");
 }
 
+export void test_generic_private_included_first() {
+    corpus_case("generic-private-included-first");
+}
+
 export void test_generic_private_names() {
     corpus_case("generic-private-names");
 }

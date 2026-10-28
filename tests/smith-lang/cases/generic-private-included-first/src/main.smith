@@ -1,0 +1,11 @@
+module main;
+
+import mid;
+import scale;
+import <stdio.h>;
+
+int main() {
+    scale::Key key = mid::make();
+    c::printf("%d %d\n", (int)key.bits, scale::twice(2));
+    return 0;
+}
