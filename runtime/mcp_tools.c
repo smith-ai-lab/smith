@@ -318,6 +318,21 @@ static bool smith_mcp_launch_initialize(SmithMcpServer *server, SmithMcpSession 
     return false;
 }
 
+// The root in the session's spelling of its folder when it is inside it (the shell's /var/folders/... for the real
+// /private/var/folders/... on macOS): lldb names a frame's file under the sourcePath it was given, and a frame is shown
+// relative to the session's folder only in that folder's spelling.
+static void smith_mcp_root_as_session(const SmithMcpSession *session, char *root, size_t capacity) {
+    char real[PATH_MAX];
+    if (realpath(session->cwd, real) == nullptr) return;
+    size_t length = strlen(real);
+    if (strncmp(root, real, length) != 0 || (root[length] != '\0' && root[length] != '/')) return;
+    char spelled[PATH_MAX];
+    int written = snprintf(spelled, sizeof spelled, "%s%s", session->cwd, root + length);
+    if (written > 0 && (size_t)written < sizeof spelled && (size_t)written < capacity) {
+        snprintf(root, capacity, "%s", spelled);
+    }
+}
+
 // Sends the launch request: the program, its arguments, the folder, and stopOnEntry unless breakpoints were given.
 static bool smith_mcp_launch_send(SmithMcpServer *server, SmithMcpSession *session, const char *program,
                                   const char *const *list, size_t count, bool stop_on_entry, int64_t *seq,
@@ -325,6 +340,7 @@ static bool smith_mcp_launch_send(SmithMcpServer *server, SmithMcpSession *sessi
     // A debug object's compilation directory is `.` (issue #621): sourcePath maps it to the program's project root.
     char root[PATH_MAX];
     bool has_root = smith_project_root(program, root, sizeof root);
+    if (has_root) smith_mcp_root_as_session(session, root, sizeof root);
     struct smith_array_const_char_n keys[] = {smith_text_make("program"), smith_text_make("args"),
                                               smith_text_make("cwd"), smith_text_make("stopOnEntry"),
                                               smith_text_make("sourcePath")};
