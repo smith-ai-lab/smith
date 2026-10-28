@@ -210,8 +210,8 @@ static bool smith_lang_text_has_array_result(const char *text, size_t length) {
         if (next + 1 < length && text[next] == '=' && text[next + 1] != '=' && smith_lang_text_declares(text, at)) {
             size_t value = smith_lang_text_blanks(text, length, next + 1);
             size_t letters = value;
-            while (letters < length && letters < value + 2 && (text[letters] == 'L' || text[letters] == 'u' ||
-                                                              text[letters] == 'U' || text[letters] == '8')) {
+            while (letters < length && letters < value + 2 &&
+                   (text[letters] == 'L' || text[letters] == 'u' || text[letters] == 'U' || text[letters] == '8')) {
                 letters += 1;
             }
             bool text_literal = letters < length && (text[letters] == '"' || text[letters] == '\'');
@@ -842,14 +842,15 @@ static bool smith_lang_slice_pointer_begin(SmithLang *lang, const SmithHost *hos
 }
 
 static bool smith_lang_aret_result_begin(SmithLang *lang, const SmithHost *host, const SmithToken *first);
-static bool smith_lang_aret_init_begin(SmithLang *lang, const SmithHost *host, const SmithToken *first);
+static bool smith_lang_aret_init_equals(SmithLang *lang, const SmithHost *host, const SmithToken *equals);
+static void smith_lang_aret_init_arm(SmithLang *lang, const SmithHost *host, const SmithToken *first);
 static bool smith_lang_aret_return(SmithLang *lang, const SmithHost *host);
 
 // At the first token of a declaration: `T xs[:]`, `T (*xs)[:]`, or the head of a function whose result is written
 // `T[:]` or `T[3]` (runtime/lang_array.c).
 static bool smith_lang_slice_begin(SmithLang *lang, const SmithHost *host, const SmithToken *first) {
-    return smith_lang_aret_result_begin(lang, host, first) || smith_lang_aret_init_begin(lang, host, first) ||
-           smith_lang_slice_begin_array(lang, host, first) ||
+    smith_lang_aret_init_arm(lang, host, first);
+    return smith_lang_aret_result_begin(lang, host, first) || smith_lang_slice_begin_array(lang, host, first) ||
            smith_lang_slice_pointer_begin(lang, host, first);
 }
 

@@ -37,7 +37,7 @@ export i32 first_low(Key key) {
 ## Rules
 
 - `return array;` copies the elements of an array of the same size; `return {a, b};` is the list. Another size is a compile error.
-- `T xs[N] = call();` declares `xs` from the call's elements (`const` and the order of evaluation stay as written); `N` must be the call's size, else ``the array has another size than the call's result``. It is the only place a call's array is taken: a local in a function body, `N` a number.
+- `T xs[N] = call();` declares `xs`, then writes its elements from the call's (the call runs once); `N` is a number and must be the call's size, else ``the array has another size than the call's result``. A local in a function body, not `const` (``an array initialized from a call is not `const` ``).
 - A generic's `T[n]` takes `T` too (`export T[n] fill(constexpr type T, T v, constexpr usize n)`); `n` is a `constexpr usize` parameter given a number.
 - Each element of a returned array is its own value (a linear `Key` is used once per element).
 - Underneath: `struct smith_array_<element>_<n> { <element> data[n]; }`, named like a slice's struct (`smith_array_<element>_n`) with the size in place of `n`, and returned by value. An export's header defines it (guarded `SMITH_ARRAY_...`), so C reads `r.data[i]`; a generic is not callable from C.

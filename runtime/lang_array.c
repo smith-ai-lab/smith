@@ -21,7 +21,7 @@ typedef struct {
 // Whether the declaration that begins with `first` is a head whose result is written `T[...]`: the element's tokens, a
 // bracket, and then the function's name and its `(`. (C has no name between a `]` and a `(`, so nothing else is.)
 static bool smith_lang_aret_result_shape(SmithLang *lang, const SmithHost *host, const SmithToken *first,
-                                          SmithLangArrayResult *shape) {
+                                         SmithLangArrayResult *shape) {
     if (first->kind != SmithTokenKind_Identifier || smith_lang_slice_statement_word(first)) return false;
     size_t at = 1;
     for (; at < smith_lang_slice_scan_max; at++) { // the element: names, stars and `::`
@@ -32,8 +32,7 @@ static bool smith_lang_aret_result_shape(SmithLang *lang, const SmithHost *host,
         }
         break;
     }
-    if (at >= smith_lang_slice_scan_max - 4 ||
-        !smith_lang_punct(smith_lang_slice_at(lang, host, first, at), "[") ||
+    if (at >= smith_lang_slice_scan_max - 4 || !smith_lang_punct(smith_lang_slice_at(lang, host, first, at), "[") ||
         smith_lang_slice_at(lang, host, first, at - 1)->kind != SmithTokenKind_Identifier) {
         return false;
     }
@@ -55,8 +54,7 @@ static bool smith_lang_aret_result_shape(SmithLang *lang, const SmithHost *host,
     shape->open = at;
     shape->close = close;
     shape->name = close + 1;
-    shape->slice =
-        close == at + 2 && smith_lang_punct(smith_lang_slice_at(lang, host, first, at + 1), ":");
+    shape->slice = close == at + 2 && smith_lang_punct(smith_lang_slice_at(lang, host, first, at + 1), ":");
     return true;
 }
 
@@ -103,8 +101,8 @@ static void smith_lang_aret_register(SmithLang *lang, const SmithHost *host, con
 // `struct tag { T v[size]; }`, or only `struct tag` when an earlier declaration defined it at file scope. `count`
 // tokens of the element, `size_count` of the size.
 static size_t smith_lang_aret_wrap(SmithLang *lang, const SmithHost *host, SmithToken *out, size_t used,
-                                      size_t capacity, const char *tag, const SmithToken *elem, size_t count,
-                                      const SmithToken *size, size_t size_count, const SmithToken *like) {
+                                   size_t capacity, const char *tag, const SmithToken *elem, size_t count,
+                                   const SmithToken *size, size_t size_count, const SmithToken *like) {
     bool bare = smith_lang_slice_defined(lang, tag);
     char pattern[smith_lang_tuple_name_max + 80];
     if (bare) {
@@ -146,7 +144,8 @@ static bool smith_lang_aret_result_begin(SmithLang *lang, const SmithHost *host,
     SmithLangArrayResult shape = {};
     if (!smith_lang_aret_result_shape(lang, host, first, &shape)) return false;
     // A generic's `T[n]` is recorded as written (the declaration has not begun, so ask what it will be).
-    if (!shape.slice && smith_lang_generic_candidate(lang, host, first) && smith_lang_generic_ahead(lang, host, first)) {
+    if (!shape.slice && smith_lang_generic_candidate(lang, host, first) &&
+        smith_lang_generic_ahead(lang, host, first)) {
         lang->generic_result_call = false;
         lang->array_result_open = smith_lang_slice_at(lang, host, first, shape.open)->location;
         return false;
@@ -159,8 +158,8 @@ static bool smith_lang_aret_result_begin(SmithLang *lang, const SmithHost *host,
     size_t elem_count = shape.open - leading;
     static SmithToken made[smith_lang_slice_scan_max + 40];
     size_t used = 0;
-    // A private function of a module is `static`, which the lowering decides from the declaration's first token, and the
-    // struct this head now begins with looks like a definition of its own.
+    // A private function of a module is `static`, which the lowering decides from the declaration's first token, and
+    // the struct this head now begins with looks like a definition of its own.
     if (leading == 0 && lang->is_module && host->previous != nullptr && !lang->pending_export && !lang->decl.generic) {
         made[used++] = smith_lang_tuple_made(SmithTokenKind_Identifier, "static", 6, first, first->space_before);
     }
@@ -170,8 +169,8 @@ static bool smith_lang_aret_result_begin(SmithLang *lang, const SmithHost *host,
     const char *problem = nullptr;
     uint32_t where = span[shape.open].location;
     char spelled[smith_lang_tuple_name_max];
-    bool good = elem_count > 0 &&
-                smith_lang_tuple_spell(lang, elem, 0, elem_count, spelled, sizeof spelled, &problem, &where);
+    bool good =
+        elem_count > 0 && smith_lang_tuple_spell(lang, elem, 0, elem_count, spelled, sizeof spelled, &problem, &where);
     if (elem_count == 0) problem = "an array needs its element type: `T[3] f()`";
     if (good && shape.slice) {
         SmithLangSliceDims dims = smith_lang_slice_dims_one();
@@ -189,7 +188,7 @@ static bool smith_lang_aret_result_begin(SmithLang *lang, const SmithHost *host,
         } else {
             smith_lang_aret_tag(spelled, value, tag, sizeof tag);
             used = smith_lang_aret_wrap(lang, host, made, used, sizeof made / sizeof made[0], tag, elem, elem_count,
-                                           size, size_count, &span[leading]);
+                                        size, size_count, &span[leading]);
         }
     }
     if (!good) {
@@ -211,10 +210,11 @@ constexpr size_t smith_lang_aret_pattern_max = 700;
 // copied out of the array (a name, or any expression of an array's type) into the struct. `tag` is the struct's name,
 // `@0` the returned expression and `@1` the message of the size check.
 static const char *smith_lang_aret_value_pattern(bool braced) {
-    return braced ? "( struct %s ) { . data = @0 }"
-                  : "__extension__ ( { struct %s smith_r ; auto smith_p = ( @0 ) ; static_assert ( sizeof smith_r . data "
-                    "== sizeof ( @0 ) , @1 ) ; for ( __SIZE_TYPE__ smith_i = 0 ; smith_i < sizeof smith_r . data / sizeof "
-                    "smith_r . data [ 0 ] ; smith_i ++ ) smith_r . data [ smith_i ] = smith_p [ smith_i ] ; smith_r ; } )";
+    return braced
+               ? "( struct %s ) { . data = @0 }"
+               : "__extension__ ( { struct %s smith_r ; auto smith_p = ( @0 ) ; static_assert ( sizeof smith_r . data "
+                 "== sizeof ( @0 ) , @1 ) ; for ( __SIZE_TYPE__ smith_i = 0 ; smith_i < sizeof smith_r . data / sizeof "
+                 "smith_r . data [ 0 ] ; smith_i ++ ) smith_r . data [ smith_i ] = smith_p [ smith_i ] ; smith_r ; } )";
 }
 
 // The tokens of the value, written from the expression `right`.
@@ -257,81 +257,101 @@ static bool smith_lang_aret_return(SmithLang *lang, const SmithHost *host) {
 
 // ---- `T xs[3] = call();`
 
-// At the first token of a declaration `T xs[N] = value;` in a function, where the value is no list and no string (C
-// has no other initializer for an array): the value is a call that returns the array's struct, and the array is
-// declared from its elements,
-//     auto smith_w_xs = value; static_assert(...); T xs[N] = { smith_w_xs.v[0], ... };
-// so `const` and the initialization stay what they are. True when the declaration was replaced.
-static bool smith_lang_aret_init_begin(SmithLang *lang, const SmithHost *host, const SmithToken *first) {
+// At the `=` of `T xs[N] = value;` in a function, where the value is no list and no string (C has no other initializer
+// for an array): the value is a call that returns the array's struct, and the array gets its elements,
+//     T xs[N]; auto smith_w_xs = value; static_assert(...); xs[0] = smith_w_xs.data[0]; ...
+// (the declaration is written already, so the `=` is dropped and the rest follows it). Read here and not at the
+// declaration's first token because only the tokens up to the `=` are the declaration's: a look at the value from the
+// first token reads ahead of the parser. True when the `=` was replaced.
+// At the first token of a declaration `T xs[N] =` (the tokens up to the `=` only: reading farther ahead pulls the next
+// statement's questions to the compiler into a batch it has not parsed): remembers the name, so that the `=` knows it
+// follows a declaration (the type of `i32 xs[2]` is a sized name the host's record of the last tokens does not hold)
+// and not an assignment to an element. Replaces nothing.
+static void smith_lang_aret_init_arm(SmithLang *lang, const SmithHost *host, const SmithToken *first) {
+    lang->aret_equals = 0;
     if (!lang->in_function || first->kind != SmithTokenKind_Identifier || smith_lang_slice_statement_word(first) ||
-        smith_lang_word(first->text, first->length) == SmithLangWord_Storage || lang->decl.generic) {
-        return false;
+        smith_lang_word(first->text, first->length) == SmithLangWord_Storage) {
+        return;
     }
+    bool constant = smith_lang_ident(first, "const");
     size_t at = 1;
     for (; at < smith_lang_slice_scan_max; at++) { // the element's type: names and `::`
         const SmithToken *token = smith_lang_slice_at(lang, host, first, at);
-        if (token->kind == SmithTokenKind_Eof || token->foreign) return false;
+        if (token->kind == SmithTokenKind_Eof || token->foreign) return;
         if (token->kind != SmithTokenKind_Identifier && !smith_lang_punct(token, "::")) break;
+        constant = constant || smith_lang_ident(token, "const");
     }
-    // Each token is read only when the ones before it fit: reading ahead pulls the next statement's questions to the
-    // compiler into a batch it has not parsed yet.
-    const SmithToken *open = smith_lang_slice_at(lang, host, first, at);
+    const SmithToken *bracket = smith_lang_slice_at(lang, host, first, at);
     const SmithToken *name = smith_lang_slice_at(lang, host, first, at - 1);
-    if (at < 2 || at >= smith_lang_slice_scan_max - 8 || !smith_lang_punct(open, "[") ||
+    if (at < 2 || at >= smith_lang_slice_scan_max - 8 || !smith_lang_punct(bracket, "[") ||
         name->kind != SmithTokenKind_Identifier || smith_lang_word(name->text, name->length) != SmithLangWord_Other) {
-        return false;
+        return;
     }
-    const SmithToken *size = smith_lang_slice_at(lang, host, first, at + 1);
-    if (size->kind != SmithTokenKind_Number || !smith_lang_punct(smith_lang_slice_at(lang, host, first, at + 2), "]") ||
+    const SmithToken *number = smith_lang_slice_at(lang, host, first, at + 1);
+    char digits[32];
+    snprintf(digits, sizeof digits, "%.*s", (int)(number->length < 31 ? number->length : 31), number->text);
+    if (number->kind != SmithTokenKind_Number ||
+        !smith_lang_punct(smith_lang_slice_at(lang, host, first, at + 2), "]") ||
         !smith_lang_punct(smith_lang_slice_at(lang, host, first, at + 3), "=")) {
+        return;
+    }
+    lang->aret_equals = smith_lang_slice_at(lang, host, first, at + 3)->location;
+    lang->aret_name = *name;
+    lang->aret_elements = strtoull(digits, nullptr, 0);
+    lang->aret_const = constant;
+}
+
+static size_t smith_lang_aret_init_write(SmithToken *made, size_t made_max, const SmithToken *right, size_t count,
+                                         unsigned long long elements, const SmithToken *name, const SmithToken *like) {
+    char temporary[smith_lang_name_max];
+    snprintf(temporary, sizeof temporary, "smith_w_%.*s", (int)(name->length < 40 ? name->length : 40), name->text);
+    char pattern[smith_lang_aret_pattern_max];
+    snprintf(pattern, sizeof pattern, "; auto %s =", temporary);
+    size_t used = smith_lang_slice_pattern(made, 0, made_max, pattern, nullptr, like);
+    for (size_t index = 0; index < count && used + 1 < made_max; index++) // the value, as written
+        made[used++] = right[index];
+    static const char message[] = "\"the array has another size than the call's result\"";
+    SmithToken text = smith_lang_tuple_made(SmithTokenKind_String, message, sizeof message - 1, like, true);
+    SmithLangSliceSpan spans[2] = {{&text, 1}, {name, 1}};
+    snprintf(pattern, sizeof pattern, "; static_assert ( sizeof %s . data / sizeof %s . data [ 0 ] == %llu , @0 ) ;",
+             temporary, temporary, elements);
+    used = smith_lang_slice_pattern(made, used, made_max, pattern, spans, like);
+    for (unsigned long long element = 0; element < elements; element++) { // the elements, one by one
+        snprintf(pattern, sizeof pattern, "@1 [ %llu ] = %s . data [ %llu ] %s", element, temporary, element,
+                 element + 1 < elements ? ";" : "");
+        used = smith_lang_slice_pattern(made, used, made_max, pattern, spans, like);
+    }
+    return used;
+}
+
+static bool smith_lang_aret_init_equals(SmithLang *lang, const SmithHost *host, const SmithToken *equals) {
+    if (lang->aret_equals == 0 || equals->location != lang->aret_equals || equals->synthetic || lang->recording ||
+        host->expr_type == nullptr || host->previous == nullptr) {
         return false;
     }
-    const SmithToken *value = smith_lang_slice_at(lang, host, first, at + 4);
+    lang->aret_equals = 0;
+    const SmithToken *value = smith_lang_peek(lang, host, 0, false);
     if (value->kind == SmithTokenKind_Eof || value->foreign || value->kind == SmithTokenKind_String ||
         smith_lang_punct(value, "{")) {
         return false;
     }
-    unsigned long long elements = 0;
-    if (!smith_lang_aret_size(size, 1, &elements)) return false;
     static SmithToken right[smith_lang_slice_chain_max];
-    size_t count = smith_lang_slice_right(lang, host, at + 3, right, smith_lang_slice_chain_max);
-    if (count == 0 || !smith_lang_punct(smith_lang_peek(lang, host, at + 3 + count, false), ";")) return false;
-    if (elements == 0 || elements > smith_lang_aret_elements_max) {
-        smith_lang_error(lang, host, size->location,
-                         "an array initialized from a call has 1 to %llu elements; this one has %llu",
-                         smith_lang_aret_elements_max, elements);
+    size_t count = smith_lang_slice_right(lang, host, 0, right, smith_lang_slice_chain_max);
+    if (count == 0 || !smith_lang_punct(smith_lang_peek(lang, host, count, false), ";")) return false;
+    unsigned long long elements = lang->aret_elements;
+    if (elements == 0 || elements > smith_lang_aret_elements_max || lang->aret_const) {
+        smith_lang_error(lang, host, lang->aret_name.location,
+                         lang->aret_const ? "an array initialized from a call is not `const`: its elements are written "
+                                            "after the declaration"
+                                          : "an array initialized from a call has 1 to %llu elements",
+                         smith_lang_aret_elements_max);
         return false;
     }
-    static SmithToken declaration[smith_lang_slice_scan_max + 4];
-    for (size_t index = 0; index <= at + 2; index++) // the type, the name and the brackets, as written
-        declaration[index] = *smith_lang_slice_at(lang, host, first, index);
-    char temporary[smith_lang_name_max];
-    snprintf(temporary, sizeof temporary, "smith_w_%.*s", (int)(name->length < 40 ? name->length : 40), name->text);
-    static SmithToken made[smith_lang_slice_cur_max + 6 * smith_lang_aret_elements_max + 120];
-    constexpr size_t made_max = sizeof made / sizeof made[0];
-    char pattern[smith_lang_aret_pattern_max];
-    snprintf(pattern, sizeof pattern, "auto %s =", temporary);
-    size_t used = smith_lang_slice_pattern(made, 0, made_max, pattern, nullptr, first);
-    for (size_t index = 0; index < count && used + 1 < made_max; index++) // the value, as written
-        made[used++] = right[index];
-    static const char message[] = "\"the array has another size than the call's result\"";
-    SmithToken text = smith_lang_tuple_made(SmithTokenKind_String, message, sizeof message - 1, first, true);
-    SmithLangSliceSpan spans[1] = {{&text, 1}};
-    snprintf(pattern, sizeof pattern, "; static_assert ( sizeof %s . data / sizeof %s . data [ 0 ] == %llu , @0 ) ;", temporary,
-             temporary, elements);
-    used = smith_lang_slice_pattern(made, used, made_max, pattern, spans, first);
-    for (size_t index = 0; index <= at + 2 && used + 1 < made_max; index++) // the declaration, now with a list
-        made[used++] = declaration[index];
-    made[used - 1].space_before = false;
-    used = smith_lang_slice_pattern(made, used, made_max, "= {", nullptr, first);
-    for (unsigned long long element = 0; element < elements; element++) {
-        snprintf(pattern, sizeof pattern, "%s %s . data [ %llu ]", element > 0 ? "," : "", temporary, element);
-        used = smith_lang_slice_pattern(made, used, made_max, pattern, nullptr, first);
-    }
-    used = smith_lang_slice_pattern(made, used, made_max, "}", nullptr, first);
-    if (!smith_lang_tuple_replace(lang, at + 3 + count, made, used)) return false;
+    static SmithToken made[smith_lang_slice_cur_max + 8 * smith_lang_aret_elements_max + 120];
+    size_t used = smith_lang_aret_init_write(made, sizeof made / sizeof made[0], right, count, elements,
+                                             &lang->aret_name, equals);
+    if (!smith_lang_tuple_replace(lang, count, made, used)) return false;
     smith_lang_slice_flag(lang);
-    lang->slice.skip = name->location;
     return true;
 }
 
@@ -409,7 +429,8 @@ static bool smith_lang_aret_generic_tag(SmithLang *lang, const SmithHost *host, 
         if (token->param != 0 && instance != nullptr && (size_t)token->param <= instance->entries) {
             unsigned slot = (unsigned)token->param - 1;
             for (uint32_t i = 0; i < instance->arg_count[slot] && count + 1 < sizeof span / sizeof span[0]; i++)
-                span[count++] = smith_lang_gt_token(&smith_lang_it, &smith_lang_it.tokens[instance->arg_first[slot] + i]);
+                span[count++] =
+                    smith_lang_gt_token(&smith_lang_it, &smith_lang_it.tokens[instance->arg_first[slot] + i]);
         } else {
             span[count++] = smith_lang_gt_token(&smith_lang_gt, token);
         }
