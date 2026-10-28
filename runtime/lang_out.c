@@ -224,7 +224,9 @@ static void smith_lang_priv_form(SmithLang *lang, uint8_t form, bool linked);
 static void smith_lang_priv_name(SmithLang *lang, const char *name, size_t length, const char *cname,
                                  size_t cname_length);
 static void smith_lang_priv_resolve(SmithLang *lang);
-static size_t smith_lang_priv_section(SmithLang *lang, char *out, size_t capacity, size_t used);
+static size_t smith_lang_priv_open(SmithLang *lang, char *out, size_t capacity, size_t used);
+static size_t smith_lang_priv_close(SmithLang *lang, char *out, size_t capacity, size_t used);
+static size_t smith_lang_priv_section(SmithLang *lang, char *out, size_t capacity, size_t used, bool c_linkage);
 static size_t smith_lang_priv_linked_line(const SmithLang *lang, char *out, size_t capacity, size_t used);
 static size_t smith_lang_priv_hidden_line(const SmithLang *lang, char *out, size_t capacity, size_t used);
 static void smith_lang_hidden_read(SmithLang *lang, const char *text, size_t length, const char *prefix,

@@ -1279,6 +1279,10 @@ export void test_generic_private_generic(io::Io *io) {
     corpus_case(io, "generic-private-generic");
 }
 
+export void test_generic_private_included_first(io::Io *io) {
+    corpus_case(io, "generic-private-included-first");
+}
+
 export void test_generic_private_names(io::Io *io) {
     corpus_case(io, "generic-private-names");
 }

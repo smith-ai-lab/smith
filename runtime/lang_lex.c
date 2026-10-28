@@ -686,7 +686,7 @@ static SmithLang *smith_lang_run_interface(const char *file, const char *text, s
     raw.lang = lang;
     lang->dump_enabled = false;
     lang->aligned = aligned;
-    lang->aligned_line = 2; // the first line is `#pragma once`
+    lang->aligned_line = 2; // the first line is `#pragma once` or the guard's `#ifndef`
     lang->aligned_column = 1;
     SmithHost host = {
         .context = &raw,
