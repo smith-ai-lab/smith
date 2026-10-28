@@ -1,0 +1,29 @@
+module split;
+
+// The size of the array is a `constexpr` parameter of the generic: each size is an instance with its own struct.
+
+export struct Key {
+    u64 high;
+    u64 low;
+};
+
+export Key[n] split(Key key, constexpr usize n) {
+    Key out[n];
+    for constexpr (usize i = 0; i < n; i++) {
+        out[i].high = key.high + i;
+        out[i].low = key.low * 2 + i;
+    }
+    return out;
+}
+
+export T[n] fill(constexpr type T, T value, constexpr usize n) {
+    T out[n];
+    for constexpr (usize i = 0; i < n; i++) {
+        out[i] = value;
+    }
+    return out;
+}
+
+export T[2] both(constexpr type T, T a, T b) {
+    return {a, b};
+}

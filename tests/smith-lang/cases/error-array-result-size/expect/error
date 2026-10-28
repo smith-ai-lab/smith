@@ -1,0 +1,1 @@
+src/main.smith:7:5: the size of an array a function returns is a number, or a `constexpr` parameter of a generic
