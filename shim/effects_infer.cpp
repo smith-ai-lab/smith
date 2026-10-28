@@ -597,9 +597,54 @@ class Analysis {
         misuse = engine.getCustomDiagID(DiagnosticsEngine::Error,
                                         "smith-effect: effects::within takes the name of a function and a constant set "
                                         "of effects, as `effects::within(f, effects::alloc)`");
+        constant = engine.getCustomDiagID(DiagnosticsEngine::Error,
+                                          "'%0' is a function with no parameters and no effects: it is a constant; "
+                                          "write `constexpr %1 %0 = ...;` instead");
         recursion = engine.getCustomDiagID(
             DiagnosticsEngine::Error, "smith-effect: recursion in a module: %0 (write a loop; a call that ends the "
                                       "function can be `[[clang::musttail]] return f(...);`)");
+    }
+
+    // In a module a function that takes nothing and has no effects is a constant (issue #415,
+    // knowledge/zero-value.md): `constexpr T name = ...;`, not a constructor. Only what the file itself shows is
+    // judged, so it is never wrong: an exported function with no parameters that returns a value, whose body makes no
+    // call (a builtin apart), reads no variable and names no function, and says nothing about its effects. A function
+    // that reads the clock, draws entropy or returns the allocator calls something, so it stays. `main` is the
+    // program's entry, not a constant.
+    void checkConstants() {
+        for (const FunctionDecl *function : order) {
+            if (!function->doesThisDeclarationHaveABody() || function->getNumParams() != 0 || function->isStatic() ||
+                function->isMain() || function->getReturnType()->isVoidType() || function->isNoReturn() ||
+                function->isVariadic() || function->hasAttr<AnnotateAttr>() || !function->isExternallyVisible() ||
+                !inMain(function) || !isConstant(function->getBody())) {
+                continue;
+            }
+            engine.Report(function->getLocation(), constant)
+                << function->getNameAsString() << function->getReturnType().getAsString(context.getPrintingPolicy());
+        }
+    }
+
+    // Nothing in the body is a call or a read of a variable that is not the function's own.
+    static bool isConstant(const Stmt *body) {
+        std::vector<const Stmt *> pending{body}; // a worklist, not a recursion
+        while (!pending.empty()) {
+            const Stmt *statement = pending.back();
+            pending.pop_back();
+            if (statement == nullptr) continue;
+            if (isa<GCCAsmStmt>(statement) || isa<AtomicExpr>(statement)) return false;
+            if (auto *call = dyn_cast<CallExpr>(statement)) {
+                const FunctionDecl *callee = call->getDirectCallee();
+                if (callee == nullptr || callee->getBuiltinID() == 0) return false;
+            }
+            if (auto *reference = dyn_cast<DeclRefExpr>(statement)) {
+                if (isa<FunctionDecl>(reference->getDecl())) return false; // an address of a function: handlers
+                auto *variable = dyn_cast<VarDecl>(reference->getDecl());
+                if (variable != nullptr && !variable->hasLocalStorage() && !variable->isConstexpr()) return false;
+            }
+            for (const Stmt *child : statement->children())
+                pending.push_back(child);
+        }
+        return true;
     }
 
     void run() {
@@ -611,6 +656,7 @@ class Analysis {
             if (node.annotated && inMain(node.function)) check(node);
         }
         if (isModule()) checkRecursion();
+        if (isModule()) checkConstants();
         checkAssertions();
         attachHover();
         writeSummary();
@@ -620,7 +666,7 @@ class Analysis {
   private:
     ASTContext &context;
     DiagnosticsEngine &engine;
-    unsigned bad, note, recursion, assertion, misuse;
+    unsigned bad, note, recursion, assertion, misuse, constant;
     ASTNameGenerator generator;
     bool syntaxOnly;       // a parse that only reads the file (the editor's, not the preamble's)
     std::string output;    // the object file being written: the summary goes beside it, `<object>.fx`

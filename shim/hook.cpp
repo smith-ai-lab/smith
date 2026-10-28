@@ -684,71 +684,6 @@ class ZeroLocals {
     std::function<bool(SourceLocation)> generated;
 };
 
-// In a module a function that takes nothing and has no effects is a constant (issue #415, knowledge/zero-value.md):
-// `constexpr T name = ...;`, not a constructor. Only what the file itself shows is judged, so it is never wrong: an
-// exported function with no parameters that returns a value, whose body makes no call (a builtin apart) and reads no
-// variable of the file or of another, and that says nothing about its effects. A function that reads the clock,
-// draws entropy or returns the allocator calls something, so it stays. `main` is the program's entry, not a constant.
-class PureConstants {
-  public:
-    PureConstants(ASTContext &context, SourceManager &manager, std::function<bool(SourceLocation)> generated)
-        : context(context), manager(manager), generated(std::move(generated)) {
-        diagnostic = context.getDiagnostics().getCustomDiagID(
-            DiagnosticsEngine::Error, "'%0' is a function with no parameters and no effects: it is a constant; write "
-                                      "`constexpr %1 %0 = ...;` instead");
-    }
-
-    void run() {
-        for (Decl *decl : context.getTranslationUnitDecl()->decls()) {
-            auto *function = dyn_cast<FunctionDecl>(decl);
-            if (function == nullptr || !function->doesThisDeclarationHaveABody() || function->getNumParams() != 0 ||
-                function->isStatic() || function->isMain() || function->getReturnType()->isVoidType() ||
-                function->isNoReturn() || function->isVariadic() || function->hasAttr<AnnotateAttr>() ||
-                !function->isExternallyVisible()) {
-                continue;
-            }
-            if (!manager.isWrittenInMainFile(manager.getSpellingLoc(function->getLocation())) ||
-                generated(function->getLocation())) {
-                continue;
-            }
-            if (isConstant(function->getBody())) {
-                std::string type = function->getReturnType().getAsString(context.getPrintingPolicy());
-                context.getDiagnostics().Report(function->getLocation(), diagnostic)
-                    << function->getNameAsString() << type;
-            }
-        }
-    }
-
-  private:
-    // Nothing in the body is a call or a read of a variable that is not the function's own.
-    bool isConstant(const Stmt *body) {
-        std::vector<const Stmt *> pending{body}; // a worklist, not a recursion
-        while (!pending.empty()) {
-            const Stmt *statement = pending.back();
-            pending.pop_back();
-            if (statement == nullptr) continue;
-            if (isa<GCCAsmStmt>(statement) || isa<AtomicExpr>(statement) || isa<CXXThrowExpr>(statement)) return false;
-            if (auto *call = dyn_cast<CallExpr>(statement)) {
-                const FunctionDecl *callee = call->getDirectCallee();
-                if (callee == nullptr || callee->getBuiltinID() == 0) return false;
-            }
-            if (auto *reference = dyn_cast<DeclRefExpr>(statement)) {
-                auto *variable = dyn_cast<VarDecl>(reference->getDecl());
-                if (variable != nullptr && !variable->hasLocalStorage() && !variable->isConstexpr()) return false;
-                if (isa<FunctionDecl>(reference->getDecl())) return false; // an address of a function: handlers
-            }
-            for (const Stmt *child : statement->children())
-                pending.push_back(child);
-        }
-        return true;
-    }
-
-    ASTContext &context;
-    SourceManager &manager;
-    std::function<bool(SourceLocation)> generated;
-    unsigned diagnostic = 0;
-};
-
 class SmithHook;
 
 class ArrayEnd final : public ExternalSemaSource {
@@ -3885,7 +3820,6 @@ class SmithHook final : public TokenHook, public NameSource {
         checked = true;
         ArrayParameters(sema->Context, SM, [this](SourceLocation at) { return generatedAt(at); }).run();
         ZeroLocals(sema->Context, SM, [this](SourceLocation at) { return generatedAt(at); }).run();
-        PureConstants(sema->Context, SM, [this](SourceLocation at) { return generatedAt(at); }).run();
     }
 
   private:
