@@ -2363,25 +2363,15 @@ static const char *build_preflight_duration(SmithBuild *b, double seconds) {
     return smith_fmt(b, "%.0fs", seconds);
 }
 
-// How many of the selected tests ran, and of how many (#638). A finished run says it in its summary ("N passed, M
-// failed", "K not run"). A run the cap cut short has no summary: the runner's --progress file has a byte for each
-// test it reported, and the runner's --list names the selected tests. Anything unknown stays -1.
+// How many of the selected tests ran, and of how many (#638): the runner's --progress file has a byte for each test it
+// reported (a quiet `smith test` prints no summary, and a run the cap killed has none), and the runner's --list names
+// the selected tests. Anything unknown stays -1.
 static long build_preflight_number(SmithBuild *b, const char *name, const char *script) {
     const char *text = build_preflight_capture(b, name, smith_list(b, "sh", "-c", script, nullptr));
     return text[0] == '\0' ? -1 : strtol(text, nullptr, 10);
 }
 
 static void build_preflight_count(SmithBuild *b, const char *built, PreflightResult *result) {
-    const char *log = ".smith/preflight-test.log";
-    if (!result->test_capped) {
-        result->ran = build_preflight_number(
-            b, "ran",
-            smith_fmt(b, "grep -Eo '[0-9]+ (passed|failed)' %s 2>/dev/null | awk '{n+=$1} END{if (NR) print n}'", log));
-        long left = build_preflight_number(
-            b, "left", smith_fmt(b, "grep -Eo '[0-9]+ not run' %s 2>/dev/null | awk '{n+=$1} END{print n+0}'", log));
-        result->total = result->ran >= 0 && left >= 0 ? result->ran + left : -1;
-        return;
-    }
     result->ran = build_preflight_number(
         b, "ran", "wc -c < .smith/preflight-test.progress 2>/dev/null | tr -d ' '"); // a byte for each reported test
     const char *system = build_preflight_capture(b, "uname", smith_list(b, "uname", "-s", nullptr));

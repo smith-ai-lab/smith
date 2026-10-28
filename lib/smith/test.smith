@@ -2525,7 +2525,7 @@ void print_failure(const Test *test, const Options *options, const Run *run) {
 // --progress: one byte appended for each reported test (preflight counts a run its cap killed by the file's size).
 void note_progress(const Options *options) {
     if (options->progress == nullptr) return;
-    i32 file = c::open(options->progress, append_only, 0o644);
+    i32 file = c::open(options->progress, append_only, 420); // 420 is 0644
     if (file < 0) return;
     (void)c::write(file, ".", 1);
     c::close(file);
