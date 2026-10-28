@@ -2675,9 +2675,17 @@ class SmithHook final : public TokenHook, public NameSource {
     // `constexpr type T`, which is inside parentheses: a type value is declared (runtime/lang_type.c).
     // Whether the text has a concept's name and a space (`arithmetic x`, issue #193): it may declare a generic.
     static bool namesConcept(StringRef text) {
-        static const char *const concepts[] = {"integer ",    "floating ", "signed_integer ", "unsigned_integer ",
-                                               "arithmetic ", "pointer ",  "enumeration ",    "structure ",
-                                               "array ",      "slice ",    "any "};
+        static const char *const concepts[] = {"integer ",
+                                               "floating ",
+                                               "signed_integer ",
+                                               "unsigned_integer ",
+                                               "arithmetic ",
+                                               "pointer ",
+                                               "enumeration ",
+                                               "structure ",
+                                               "array ",
+                                               "slice ",
+                                               "any "};
         for (const char *name : concepts) {
             if (text.contains(name)) return true;
         }

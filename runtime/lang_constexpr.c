@@ -484,9 +484,9 @@ static bool smith_lang_cx_builtin(SmithLangCx *cx, uint32_t *at, uint32_t last, 
 }
 
 static bool smith_lang_cx_is_builtin(const SmithLangGenToken *token) {
-    static const char *const names[] = {"sizeof",     "alignof",    "_Alignof", "is_integer", "is_float",
-                                        "is_signed",  "is_pointer", "is_bool",  "is_enum",    "is_record",
-                                        "is_array",   "is_slice",   "kind"};
+    static const char *const names[] = {"sizeof",    "alignof",    "_Alignof", "is_integer", "is_float",
+                                        "is_signed", "is_pointer", "is_bool",  "is_enum",    "is_record",
+                                        "is_array",  "is_slice",   "kind"};
     if (token->kind != SmithTokenKind_Identifier || token->special != SmithLangGen_Plain || token->param != 0) {
         return false;
     }

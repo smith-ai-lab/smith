@@ -285,14 +285,22 @@ static const struct {
     const char *old;
     const char *name;
 } smith_lang_concept_nouns[] = {
-    {"integer", "Int"},    {"floating", "Float"},   {"signed_integer", "Signed"}, {"unsigned_integer", "Unsigned"},
-    {"arithmetic", "Num"}, {"pointer", "Pointer"},  {"enumeration", "Enum"},      {"structure", "Struct"},
-    {"array", "Array"},    {"slice", "Slice"},      {"any", "Any"},
+    {"integer", "Int"},
+    {"floating", "Float"},
+    {"signed_integer", "Signed"},
+    {"unsigned_integer", "Unsigned"},
+    {"arithmetic", "Num"},
+    {"pointer", "Pointer"},
+    {"enumeration", "Enum"},
+    {"structure", "Struct"},
+    {"array", "Array"},
+    {"slice", "Slice"},
+    {"any", "Any"},
 };
 
 // The standard concepts, in the order of lib/smith/concepts.smith.
-static const char *const smith_lang_standard_concepts[] = {"Any",     "Int",     "Float",  "Num",   "Signed",   "Unsigned",
-                                                           "Pointer", "Enum",    "Struct", "Array", "Slice"};
+static const char *const smith_lang_standard_concepts[] = {"Any",     "Int",  "Float",  "Num",   "Signed", "Unsigned",
+                                                           "Pointer", "Enum", "Struct", "Array", "Slice"};
 
 // The prefix of the standard concepts' functions, `smith_concepts_Num`: what `Num` is read as in a module.
 static constexpr char smith_lang_concepts_prefix[] = "smith_concepts_";
@@ -704,11 +712,10 @@ static bool smith_lang_parameter_generic_at(SmithLang *lang, const SmithHost *ho
     if (smith_lang_concept_word(token) && !smith_lang_ident(before, "constexpr")) {
         // A standard concept is a function the compiler has under its name; a word that is a type or a variable of
         // the program's is not the concept.
-        bool usable = smith_lang_concept_standard(token) ||
-                    (host->lookup(host->context, token->text, token->length, SmithLookup_Type).kind ==
-                         SmithLookup_None &&
-                     host->lookup(host->context, token->text, token->length, SmithLookup_Value).kind ==
-                         SmithLookup_None);
+        bool usable =
+            smith_lang_concept_standard(token) ||
+            (host->lookup(host->context, token->text, token->length, SmithLookup_Type).kind == SmithLookup_None &&
+             host->lookup(host->context, token->text, token->length, SmithLookup_Value).kind == SmithLookup_None);
         if (usable && starts_parameter &&
             (smith_lang_type_parameter_at(lang, host, index) || smith_lang_pack_parameter_at(lang, host, index))) {
             return true; // `Num x`, `Num... rest`: a concept for `auto`
@@ -717,11 +724,10 @@ static bool smith_lang_parameter_generic_at(SmithLang *lang, const SmithHost *ho
             return true; // `const Num xs[:]`, `Int *p`: a concept for the element's `auto`
         }
     }
-    if (smith_lang_ident(token, "auto") &&
-        (((starts_parameter || after_constexpr) &&
-          (smith_lang_type_parameter_at(lang, host, index) ||
-           (starts_parameter && smith_lang_pack_parameter_at(lang, host, index)))) ||
-         smith_lang_element_auto_at(lang, host, index))) {
+    if (smith_lang_ident(token, "auto") && (((starts_parameter || after_constexpr) &&
+                                             (smith_lang_type_parameter_at(lang, host, index) ||
+                                              (starts_parameter && smith_lang_pack_parameter_at(lang, host, index)))) ||
+                                            smith_lang_element_auto_at(lang, host, index))) {
         return true; // `auto x`, `constexpr auto f`, `auto... rest`, `const auto xs[:]`, `auto *p`
     }
     const SmithToken *after = smith_lang_peek(lang, host, index + 1, false);

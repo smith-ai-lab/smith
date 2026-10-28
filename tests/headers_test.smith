@@ -110,6 +110,26 @@ export void test_the_shapes_the_lowering_carries_are_the_ones_the_headers_write(
     has(&p, "result", "result.h", "// smith-eshape: result(T,E) { T ok ; E error ; }", true);
 }
 
+// The standard concepts are in scope with no import: the lowering carries the definitions of smith::concepts
+// (runtime/lang_type.c, `smith_concepts_header`), because the headers are not in git, so the generated header's lines
+// must be the ones it carries (none is missing, none is left over).
+export void test_the_concepts_the_lowering_carries_are_the_ones_the_header_writes(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::write_header_of(&p, "lib/smith/concepts.smith", "concepts.h");
+    scratch::Run missing = scratch::sh(&p, "grep '^// smith-generic: ' concepts.h | while IFS= read -r line; do "
+                                           "grep -qF -- \"$line\" \"$SMITH_REPO/runtime/lang_type.c\" || "
+                                           "echo \"missing: $line\"; done");
+    scratch::expect_text("a concept's line the lowering does not carry", "", missing.out);
+    scratch::Run counted = scratch::sh(
+        &p, "echo $(grep -c '^// smith-generic: ' concepts.h) $(grep -c '^    \"// smith-generic: smith::concepts ' "
+            "\"$SMITH_REPO/runtime/lang_type.c\")");
+    scratch::expect_text("the lines in the header and the lines carried", "11 11\n", counted.out);
+}
+
+export void test_the_concepts_header_compiles_alone(io::Io *io) {
+    generated(io, "concepts");
+}
+
 export void test_the_arena_header_compiles_alone(io::Io *io) {
     generated(io, "arena");
 }

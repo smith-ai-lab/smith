@@ -266,9 +266,17 @@ static void smith_lang_eshape_builtins(SmithLang *lang);
 static bool smith_lang_header_uses_concepts(const char *text, uint32_t length) {
     if (memmem(text, length, "smith_concepts_", 15) != nullptr) return true;
     if (memmem(text, length, "// smith-generic:", 17) == nullptr) return false;
-    static const char *const nouns[] = {"=integer ",    "=floating ", "=signed_integer ", "=unsigned_integer ",
-                                        "=arithmetic ", "=pointer ",  "=enumeration ",    "=structure ",
-                                        "=array ",      "=slice ",    "=any "};
+    static const char *const nouns[] = {"=integer ",
+                                        "=floating ",
+                                        "=signed_integer ",
+                                        "=unsigned_integer ",
+                                        "=arithmetic ",
+                                        "=pointer ",
+                                        "=enumeration ",
+                                        "=structure ",
+                                        "=array ",
+                                        "=slice ",
+                                        "=any "};
     for (size_t i = 0; i < sizeof nouns / sizeof nouns[0]; i++) { // 11 old nouns
         if (memmem(text, length, nouns[i], strlen(nouns[i])) != nullptr) return true;
     }

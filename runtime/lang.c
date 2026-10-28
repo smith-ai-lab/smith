@@ -927,7 +927,8 @@ bool smith_lang_concepts_file(const char *path) {
     size_t length = path != nullptr ? strlen(path) : 0;
     for (size_t i = 0; i < sizeof ends / sizeof ends[0]; i++) { // 2 spellings
         size_t end = strlen(ends[i]);
-        if (length >= end && strcmp(path + length - end, ends[i]) == 0 && (length == end || path[length - end - 1] == '/'))
+        if (length >= end && strcmp(path + length - end, ends[i]) == 0 &&
+            (length == end || path[length - end - 1] == '/'))
             return true;
     }
     return false;

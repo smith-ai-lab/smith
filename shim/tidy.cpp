@@ -17,9 +17,9 @@
 #include "unsafe.h"
 #endif
 
+#include "clang/Basic/CharInfo.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringRef.h"
-#include "clang/Basic/CharInfo.h"
 
 #include <cstddef>
 #include <vector>
