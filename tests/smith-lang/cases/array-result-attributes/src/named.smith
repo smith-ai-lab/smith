@@ -1,0 +1,17 @@
+module named;
+
+// An attribute before or after `export` does not hide a `T[:]` or `T[3]` result: the header and the module write the
+// struct that holds it, as for a result with no attribute.
+
+[[smith::c_name("SmithNamedKey")]] export typedef struct {
+    u64 high;
+    u64 low;
+} Key;
+
+[[smith::c_name("smith_named_view")]] export [[nodiscard]] Key[:] view(Key keys[:]) {
+    return keys[1:];
+}
+
+[[smith::c_name("smith_named_both")]] export Key[2] both(Key key) {
+    return {key, key};
+}

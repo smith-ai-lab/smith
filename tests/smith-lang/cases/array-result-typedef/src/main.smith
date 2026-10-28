@@ -1,0 +1,13 @@
+module main;
+
+import <stdio.h>;
+import runs;
+
+i32 main() {
+    runs::Key key = {1, 2};
+    runs::Key many[3] = runs::split(key, 3);
+    runs::Key two[2] = runs::pair(key);
+    runs::Keys all = many;
+    c::printf("%llu %llu %zu %llu\n", many[2].high, two[1].low, countof(all), all[1].high);
+    return 0;
+}

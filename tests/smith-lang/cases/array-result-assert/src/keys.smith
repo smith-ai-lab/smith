@@ -1,0 +1,28 @@
+module keys;
+
+// A `static_assert` with a macro in a module whose private function is used by an exported generic: the module holds
+// every head to know which private names are linked, and the macro's tokens must not run ahead of the held ones.
+
+export typedef struct {
+    u64 high;
+    u64 low;
+} Key;
+
+static_assert(!__FINITE_MATH_ONLY__, "keys: compile without -ffast-math");
+
+Key derive(const Key *key, u64 i) {
+    return (Key){.high = key->high + i, .low = key->low * 2 + i};
+}
+
+export Key[n] split(Key key, constexpr usize n) {
+    const Key *parent = &key;
+    Key out[n];
+    for constexpr (usize i = 0; i < n; i++) {
+        out[i] = derive(parent, i);
+    }
+    return out;
+}
+
+export Key[:] rest(Key keys[:]) {
+    return keys[1:];
+}

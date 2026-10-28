@@ -400,8 +400,11 @@ static void smith_lang_begin_declaration(SmithLang *lang, const SmithHost *host,
         token = &shown;
     }
     // A module with private names that have a symbol holds every head (as an export's), to know which is one of them.
+    // A `static_assert` is no head: a macro in it (`!__FINITE_MATH_ONLY__`) reaches the compiler at once, ahead of the
+    // tokens a held head would write, so it streams like any other private declaration.
+    bool assertion = smith_lang_ident(token, "static_assert") || smith_lang_ident(token, "_Static_assert");
     if (lang->is_module && host->previous != nullptr && !lang->pending_export && !lang->generic_next &&
-        lang->linked_count == 0) {
+        (lang->linked_count == 0 || assertion)) {
         smith_lang_declare_process(lang, host, token); // a private one streams
         return;
     }
@@ -521,6 +524,7 @@ static bool smith_lang_c_name_attribute(SmithLang *lang, const SmithHost *host, 
         lang->pending_c_name = (SmithLangText){0, 0};
     }
     smith_lang_ty_attribute_taken();
+    lang->slice.after_boundary = true; // the export after the attribute begins the declaration (a `Key[:]` result)
     return true;
 }
 

@@ -1,0 +1,24 @@
+module runs;
+
+// A typedef of a slice before a generic whose result is `Key[n]`, after a type that is a typedef of an anonymous
+// struct: the `[` of the result is a type's bracket, not a subscript of a value to ask the compiler about.
+
+export typedef struct {
+    u64 high;
+    u64 low;
+} Key;
+
+export typedef typeof(Key[:]) Keys;
+
+export Key[n] split(Key key, constexpr usize n) {
+    Key out[n];
+    for constexpr (usize i = 0; i < n; i++) {
+        out[i].high = key.high + i;
+        out[i].low = key.low;
+    }
+    return out;
+}
+
+export Key[2] pair(Key key) {
+    return {key, key};
+}

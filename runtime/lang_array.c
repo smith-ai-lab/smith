@@ -40,6 +40,18 @@ static bool smith_lang_aret_result_shape(SmithLang *lang, const SmithHost *host,
         if (token->kind == SmithTokenKind_Identifier || smith_lang_punct(token, "*") || smith_lang_punct(token, "::")) {
             continue;
         }
+        if (smith_lang_punct(token, "[") && smith_lang_punct(smith_lang_slice_at(lang, host, first, at + 1), "[")) {
+            // an attribute list, `export [[nodiscard]] Key[:] f(`: skipped to its closing `]]`
+            int depth = 0;
+            for (; at < smith_lang_slice_scan_max - 4; at++) {
+                const SmithToken *inner = smith_lang_slice_at(lang, host, first, at);
+                if (inner->kind == SmithTokenKind_Eof || inner->foreign) return false;
+                depth += smith_lang_punct(inner, "[") ? 1 : 0;
+                depth -= smith_lang_punct(inner, "]") ? 1 : 0;
+                if (depth == 0) break;
+            }
+            continue;
+        }
         break;
     }
     if (at >= smith_lang_slice_scan_max - 4 || !smith_lang_punct(smith_lang_slice_at(lang, host, first, at), "[") ||

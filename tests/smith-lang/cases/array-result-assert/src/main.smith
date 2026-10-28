@@ -1,0 +1,12 @@
+module main;
+
+import <stdio.h>;
+import keys;
+
+i32 main() {
+    keys::Key key = {10, 20};
+    keys::Key parts[3] = keys::split(key, 3);
+    keys::Key tail[:] = keys::rest(parts);
+    c::printf("%llu %llu %zu %llu\n", parts[1].high, parts[2].low, countof(tail), tail[0].high);
+    return 0;
+}

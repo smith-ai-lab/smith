@@ -1,0 +1,12 @@
+module main;
+
+import <stdio.h>;
+import named;
+
+i32 main() {
+    named::Key keys[3] = {{1, 2}, {3, 4}, {5, 6}};
+    named::Key rest[:] = named::view(keys);
+    named::Key pair[2] = named::both(keys[2]);
+    c::printf("%zu %llu %llu\n", countof(rest), rest[0].high, pair[1].low);
+    return 0;
+}

@@ -604,6 +604,9 @@ static bool smith_lang_tuple_subscript(SmithLang *lang, const SmithHost *host, c
     // the end of the declaration before it wrong (a function's `}` ended at the slice parameter after it, and hover
     // found nothing in that function).
     if (token->synthetic || host->previous == nullptr || host->expr_type == nullptr || lang->recording) return false;
+    // The `[` of a generic's array result, `Key[n] split(...)`: the name before it is a type, and asking the compiler
+    // for its value made it read a typedef's name as an expression.
+    if (lang->array_result_open != 0 && token->location == lang->array_result_open) return false;
     const SmithToken *index = smith_lang_peek(lang, host, 0, false);
     if (index->foreign || lang->in_attribute || smith_lang_punct(index, "[")) return false;
     char base[512];

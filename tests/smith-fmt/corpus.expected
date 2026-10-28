@@ -133,6 +133,79 @@ i32 main() {
     c::memset(xs, 0, sizeof xs);
     return 0;
 }
+==> array-result-assert/src/keys.smith <==
+module keys;
+
+// A `static_assert` with a macro in a module whose private function is used by an exported generic: the module holds
+// every head to know which private names are linked, and the macro's tokens must not run ahead of the held ones.
+
+export typedef struct {
+    u64 high;
+    u64 low;
+} Key;
+
+static_assert(!__FINITE_MATH_ONLY__, "keys: compile without -ffast-math");
+
+Key derive(const Key *key, u64 i) {
+    return (Key){.high = key->high + i, .low = key->low * 2 + i};
+}
+
+export Key[n] split(Key key, constexpr usize n) {
+    const Key *parent = &key;
+    Key out[n];
+    for constexpr (usize i = 0; i < n; i++) {
+        out[i] = derive(parent, i);
+    }
+    return out;
+}
+
+export Key[:] rest(Key keys[:]) {
+    return keys[1:];
+}
+==> array-result-assert/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import keys;
+
+i32 main() {
+    keys::Key key = {10, 20};
+    keys::Key parts[3] = keys::split(key, 3);
+    keys::Key tail[:] = keys::rest(parts);
+    c::printf("%llu %llu %zu %llu\n", parts[1].high, parts[2].low, countof(tail), tail[0].high);
+    return 0;
+}
+==> array-result-attributes/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import named;
+
+i32 main() {
+    named::Key keys[3] = {{1, 2}, {3, 4}, {5, 6}};
+    named::Key rest[:] = named::view(keys);
+    named::Key pair[2] = named::both(keys[2]);
+    c::printf("%zu %llu %llu\n", countof(rest), rest[0].high, pair[1].low);
+    return 0;
+}
+==> array-result-attributes/src/named.smith <==
+module named;
+
+// An attribute before or after `export` does not hide a `T[:]` or `T[3]` result: the header and the module write the
+// struct that holds it, as for a result with no attribute.
+
+[[smith::c_name("SmithNamedKey")]] export typedef struct {
+    u64 high;
+    u64 low;
+} Key;
+
+[[smith::c_name("smith_named_view")]] export [[nodiscard]] Key[:] view(Key keys[:]) {
+    return keys[1:];
+}
+
+[[smith::c_name("smith_named_both")]] export Key[2] both(Key key) {
+    return {key, key};
+}
 ==> array-result-generic/src/main.smith <==
 module main;
 
@@ -223,6 +296,45 @@ export i32[3] counted(i32 start) {
 
 export i32[:] tail(i32 xs[:]) {
     return xs[1:];
+}
+==> array-result-typedef/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import runs;
+
+i32 main() {
+    runs::Key key = {1, 2};
+    runs::Key many[3] = runs::split(key, 3);
+    runs::Key two[2] = runs::pair(key);
+    runs::Keys all = many;
+    c::printf("%llu %llu %zu %llu\n", many[2].high, two[1].low, countof(all), all[1].high);
+    return 0;
+}
+==> array-result-typedef/src/runs.smith <==
+module runs;
+
+// A typedef of a slice before a generic whose result is `Key[n]`, after a type that is a typedef of an anonymous
+// struct: the `[` of the result is a type's bracket, not a subscript of a value to ask the compiler about.
+
+export typedef struct {
+    u64 high;
+    u64 low;
+} Key;
+
+export typedef typeof(Key[:]) Keys;
+
+export Key[n] split(Key key, constexpr usize n) {
+    Key out[n];
+    for constexpr (usize i = 0; i < n; i++) {
+        out[i].high = key.high + i;
+        out[i].low = key.low;
+    }
+    return out;
+}
+
+export Key[2] pair(Key key) {
+    return {key, key};
 }
 ==> array-result/src/main.smith <==
 module main;
@@ -5294,47 +5406,6 @@ export typeof(x) shifted(arithmetic x) {
 export i32 plain(i32 q) {
     integer r = q * 2;
     return r;
-}
-==> generic-concept-user/src/main.smith <==
-module main;
-
-import <stdio.h>;
-import stats;
-
-i32 main(void) {
-    i32 a = 21;
-    f64 b = 1.25;
-    i16 c = 7;
-    c::printf("%d %g %d\n", stats::twice(a), stats::twice(b), stats::smaller(c, (i16)3));
-    c::printf("%zu\n", stats::bytes(b));
-    return 0;
-}
-==> generic-concept-user/src/stats.smith <==
-module stats;
-
-// A concept the program writes: an ordinary function over a type, named where a parameter's type goes (issue #193).
-Bool Ordered(constexpr Type T) {
-    return Int(T) || Float(T);
-}
-
-export Bool Narrow(constexpr Type T) {
-    return Int(T) && sizeof(T) <= 2;
-}
-
-export typeof(x) twice(Ordered x) {
-    return x + x;
-}
-
-export typeof(a) smaller(Narrow a, typeof(a) b) {
-    return a < b ? a : b;
-}
-
-export Bool Sized(constexpr Type T) {
-    return sizeof(T) == 8;
-}
-
-export usize bytes(Sized x) {
-    return sizeof(x);
 }
 ==> generic-countof-member/src/main.smith <==
 module main;

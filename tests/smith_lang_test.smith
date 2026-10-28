@@ -911,6 +911,18 @@ export void test_array_result_generic(io::Io *io) {
     corpus_case(io, "array-result-generic");
 }
 
+export void test_array_result_assert(io::Io *io) {
+    corpus_case(io, "array-result-assert");
+}
+
+export void test_array_result_typedef(io::Io *io) {
+    corpus_case(io, "array-result-typedef");
+}
+
+export void test_array_result_attributes(io::Io *io) {
+    corpus_case(io, "array-result-attributes");
+}
+
 export void test_error_array_result_count(io::Io *io) {
     corpus_case(io, "error-array-result-count");
 }
