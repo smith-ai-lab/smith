@@ -4,9 +4,9 @@
 // only to a build in that folder.
 module build_step_cache_test;
 
-import smith::format;
-import smith::io;
-import smith::test;
+import std::format;
+import std::io;
+import std::test;
 import scratch;
 
 static scratch::Project made(io::Io *io, const char *name) {

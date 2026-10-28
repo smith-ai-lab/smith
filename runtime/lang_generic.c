@@ -4384,16 +4384,10 @@ static int smith_lang_generic_resolve(SmithLang *lang, const SmithHost *host, co
 // The name a module's member has in C: the module's prefix and the member.
 static void smith_lang_member_name(const char *module, size_t module_length, const char *member, size_t member_length,
                                    char *out, size_t capacity) {
-    size_t used = 0;
-    for (size_t i = 0; i < module_length && used + 2 < capacity; i++) { // a::b is a_b
-        if (module[i] == ':') {
-            if (i + 1 < module_length && module[i + 1] == ':') i += 1;
-            out[used++] = '_';
-        } else {
-            out[used++] = module[i];
-        }
-    }
-    out[used++] = '_';
+    char module_text[smith_lang_name_max];
+    snprintf(module_text, sizeof module_text, "%.*s", (int)module_length, module);
+    smith_lang_c_prefix(module_text, out, capacity); // a::b is a_b_, std::a is smith_a_
+    size_t used = strlen(out);
     size_t take = member_length < capacity - used - 1 ? member_length : capacity - used - 1;
     memcpy(out + used, member, take);
     out[used + take] = 0;

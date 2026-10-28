@@ -2995,8 +2995,13 @@ typedef struct {
 // a::b and test_x give a_b_test_x, as the lowering names an export.
 static const char *smith_tests_symbol(const char *module, const char *test) {
     if (module == nullptr) return test;
-    char *flat = smith_alloc(strlen(module) + 1);
+    char *flat = smith_alloc(strlen(module) + 2);
     size_t used = 0;
+    if (strncmp(module, "std::", 5) == 0) { // the standard library's C names start smith_ (#366)
+        memcpy(flat, "smith_", 6);
+        used = 6;
+        module += 5;
+    }
     for (size_t i = 0; module[i] != '\0'; i++) { // bounded by the module's name
         if (module[i] == ':' && module[i + 1] == ':') {
             flat[used++] = '_';
