@@ -288,11 +288,11 @@ inline constexpr Entry effect_functions[] = {
     {"access", Files},
     {"chmod", Files},
     {"chdir", Files},
-    {"getcwd", Files},
+    {"getcwd", Files | Alloc}, // allocates when its buffer is null
     {"opendir", Files},
     {"readdir", Files},
     {"closedir", Files},
-    {"realpath", Files},
+    {"realpath", Files | Alloc}, // allocates when its buffer is null
     {"dup", Files | Net},
     {"dup2", Files | Net},
     {"pipe", Files},
