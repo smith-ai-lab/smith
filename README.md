@@ -432,6 +432,24 @@ export typeof(*p) first(const auto *p) { // `auto *p` and `auto xs[4]` work the 
 
 A concept stands where `auto` does there too (`const arithmetic xs[:]`, `integer *p`): the element must be of it, and a call that gets it wrong is an error at the argument ([smith-lang-concepts](.agents/skills/smith-lang-concepts/SKILL.md)).
 
+A concept you write is a function over a type, and `Any` accepts every type:
+
+```smith
+module stats;
+
+Bool Ordered(constexpr Type T) {
+    return Int(T) || Float(T); // runs in the compiler on the argument's type
+}
+
+export typeof(x) twice(Ordered x) { // `stats::twice("text")`: error: `Ordered(const char *)` is false
+    return x + x;
+}
+
+export usize width(Any x) {
+    return sizeof(x);
+}
+```
+
 [smith-lang-generics](.agents/skills/smith-lang-generics/SKILL.md).
 
 Types are values too, so a function over types runs in the compiler like any other:

@@ -141,10 +141,8 @@ static bool smith_lang_rfor_parts(SmithLang *lang, const SmithHost *host, const 
                          "a generic), or write `auto x` for a copy");
         return false;
     }
-    for (size_t i = 0; i < sizeof smith_lang_concepts / sizeof smith_lang_concepts[0]; i++) { // 11 concepts
-        if (parts->type.count == 1 && smith_lang_ident(&parts->type.tokens[0], smith_lang_concepts[i])) {
-            parts->concept_id = (unsigned)i + 1;
-        }
+    if (parts->type.count == 1 && parts->type.tokens[0].kind == SmithTokenKind_Identifier) {
+        parts->concept_id = smith_lang_concept_id_text(parts->type.tokens[0].text, parts->type.tokens[0].length);
     }
     return true;
 }
@@ -210,10 +208,10 @@ static void smith_lang_rfor_concept(SmithLang *lang, const SmithHost *host, Smit
     SmithExprType found = {};
     if (form != SmithLangRfor_Error && host->expr_type != nullptr && text[0] != 0 &&
         host->expr_type(host->context, probe, (uint32_t)strlen(probe), &found) &&
-        !smith_lang_concept_holds(host, parts->concept_id, found.canonical)) {
+        !smith_lang_concept_holds(lang, host, parts->concept_id, found.canonical, parts->type.tokens[0].location)) {
         smith_lang_concept_why(lang, host, parts->type.tokens[0].location, parts->concept_id, found.canonical);
         smith_lang_error(lang, host, parts->type.tokens[0].location, "`%s` is not `%s`: the elements have that type",
-                         found.written, smith_lang_concepts[parts->concept_id - 1]);
+                         found.written, smith_lang_concept_name(parts->concept_id));
     }
     *automatic = smith_lang_tuple_made(SmithTokenKind_Identifier, "auto", 4, &parts->type.tokens[0],
                                        parts->type.tokens[0].space_before);

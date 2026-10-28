@@ -1,0 +1,18 @@
+module stats;
+
+// A concept the program writes is false for a type: the call says so in one line, with no trace (issue #193).
+export Bool Ordered(constexpr Type T) {
+    return Int(T) || Float(T);
+}
+
+export typeof(x) twice(Ordered x) {
+    return x + x;
+}
+
+export typeof(xs[0]) first(const Ordered xs[:]) {
+    return xs[0];
+}
+
+export usize width(Ordered *p) {
+    return sizeof(*p);
+}

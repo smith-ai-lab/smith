@@ -1236,6 +1236,74 @@ static bool smith_lang_ty_question(SmithLang *lang, const SmithHost *host, const
     return true;
 }
 
+// `kind(t)` and `any(t)`, where `t` holds a type (issue #193): `kind` is the number of the type's kind (`Kind::integer`
+// and the others are these numbers), read from the handle's bits like the questions above; `any` is true of every type.
+static bool smith_lang_ty_kind(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+    if (smith_lang_ident(token, "Kind") && smith_lang_punct(smith_lang_peek(lang, host, 0, false), "::")) {
+        const SmithToken *name = smith_lang_peek(lang, host, 1, false);
+        for (size_t i = 0; i < sizeof smith_lang_kind_names / sizeof smith_lang_kind_names[0]; i++) { // 9 kinds
+            if (name->kind != SmithTokenKind_Identifier ||
+                !smith_lang_equals(name->text, name->length, smith_lang_kind_names[i])) {
+                continue;
+            }
+            char number[16];
+            snprintf(number, sizeof number, "%zu", i);
+            SmithToken made = smith_lang_ty_made(SmithTokenKind_Number, number, token, token->space_before);
+            return smith_lang_ty_put(lang, 2, &made, 1);
+        }
+        return false;
+    }
+    bool kind = smith_lang_ident(token, "kind");
+    if (!(kind || smith_lang_ident(token, "any")) || !smith_lang_punct(smith_lang_peek(lang, host, 0, false), "(")) {
+        return false;
+    }
+    SmithLangTyChain chain;
+    if (!smith_lang_ty_chain(lang, host, token, 2, &chain)) return false;
+    if (!smith_lang_punct(smith_lang_peek(lang, host, chain.count + 1, false), ")")) return false;
+    static SmithToken made[256];
+    size_t used = 0;
+    if (!kind) { // `(1)`
+        made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, "(", token, token->space_before);
+        made[used++] = smith_lang_ty_made(SmithTokenKind_Number, "1", token, false);
+        made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, ")", token, false);
+        if (smith_lang_ty_put(lang, 2 + chain.count, made, used)) smith_lang_ty.passthrough = 0;
+        return true;
+    }
+    // `((t >> 12 & 15) ? 7 : (t >> 20 & 1) ? 2 : ... : 8)`: the first kind that holds, in an order that makes the
+    // slice, the boolean and the enumeration win over the integer they also are.
+    static const struct {
+        unsigned shift;
+        unsigned mask;
+        const char *number;
+    } order[] = {{12, 15, "7"}, {20, 1, "2"}, {21, 1, "4"}, {19, 1, "3"},
+                 {23, 1, "6"},  {22, 1, "5"}, {17, 1, "1"}, {16, 1, "0"}};
+    made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, "(", token, token->space_before);
+    for (size_t i = 0; i < sizeof order / sizeof order[0]; i++) { // 8 kinds
+        made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, "(", token, i > 0);
+        made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, "(", token, false);
+        for (size_t c = 0; c < chain.count; c++) { // the chain, as written: the first copy is the one passed through
+            made[used] = chain.tokens[c];
+            made[used++].synthetic = i > 0;
+        }
+        made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, ")", token, false);
+        made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, ">>", token, true);
+        char number[16];
+        snprintf(number, sizeof number, "%u", order[i].shift);
+        made[used++] = smith_lang_ty_made(SmithTokenKind_Number, number, token, true);
+        made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, "&", token, true);
+        snprintf(number, sizeof number, "%u", order[i].mask);
+        made[used++] = smith_lang_ty_made(SmithTokenKind_Number, number, token, true);
+        made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, ")", token, false);
+        made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, "?", token, true);
+        made[used++] = smith_lang_ty_made(SmithTokenKind_Number, order[i].number, token, true);
+        made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, ":", token, true);
+    }
+    made[used++] = smith_lang_ty_made(SmithTokenKind_Number, "8", token, true);
+    made[used++] = smith_lang_ty_made(SmithTokenKind_Punctuator, ")", token, false);
+    if (smith_lang_ty_put(lang, 2 + chain.count, made, used)) smith_lang_ty.passthrough = chain.count;
+    return true;
+}
+
 // ---- Following the shape of the file
 
 static void smith_lang_ty_copy(char *out, const char *text, size_t length) {
@@ -1499,7 +1567,9 @@ static bool smith_lang_ty_member_constexpr(SmithLang *lang, const SmithHost *hos
 static bool smith_lang_ty_specifier(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     SmithLangTy *ty = &smith_lang_ty;
     if (!smith_lang_ident(token, "type") || ty->decl_name || !smith_lang_ty_at_start()) return false;
-    if (ty->paren > 0 && smith_lang_ty_last_is(0, "constexpr")) return false; // a generic's `constexpr type T`
+    if (ty->paren > 0 && smith_lang_ty_last_is(0, "constexpr") && !lang->concept_head) {
+        return false; // a generic's `constexpr type T`
+    }
     const SmithToken *next = smith_lang_peek(lang, host, 0, false);
     // `type * x` where `type` is a variable declared here: the product, as in C. (`type x` is no C at all: the
     // keyword.)
@@ -1567,10 +1637,16 @@ static bool smith_lang_ty_token(SmithLang *lang, const SmithHost *host, const Sm
     if (ty->passthrough > 0) {
         ty->passthrough -= 1;
     } else if (token->kind == SmithTokenKind_Identifier) {
+        if (lang->concept_head && ty->paren == 1 && smith_lang_ident(token, "constexpr") &&
+            smith_lang_ident(smith_lang_peek(lang, host, 0, false), "type") && smith_lang_ty_last_is(0, "(")) {
+            smith_lang_ty_put(lang, 0, nullptr, 0); // `Bool Ordered(constexpr Type T)`: the function takes `type T`
+            return true;
+        }
         replaced = smith_lang_ty_member_constexpr(lang, host, token) || smith_lang_ty_specifier(lang, host, token);
         smith_lang_ty_qualified(lang, host, token);
         if (!replaced) replaced = as_value = smith_lang_ty_slice_op(lang, host, token);
         if (!replaced) replaced = as_value = smith_lang_ty_question(lang, host, token);
+        if (!replaced) replaced = as_value = smith_lang_ty_kind(lang, host, token);
         if (!replaced) replaced = as_value = smith_lang_ty_pointee(lang, host, token);
         if (!replaced) replaced = as_value = smith_lang_ty_use(lang, host, token);
         if (!replaced) replaced = as_value = smith_lang_ty_leaf(lang, host, token);
@@ -1620,6 +1696,11 @@ static size_t smith_lang_plain_tokens(SmithLang *lang, const SmithHost *host, co
             return 0;
         }
         if (token->special == SmithLangGen_CallEnd) continue;
+        if (smith_lang_gt_is(token, SmithTokenKind_Identifier, "constexpr") && at + 1 < generic->count &&
+            smith_lang_gt_is(token + 1, SmithTokenKind_Identifier, "type") && at > 0 &&
+            smith_lang_gt_punct(token - 1, "(")) {
+            continue; // `Bool Ordered(constexpr Type T)` is the function `Ordered(type T)` (a concept, issue #193)
+        }
         uint32_t place = smith_lang_gen_place(host, generic, token, fallback);
         if (token->special == SmithLangGen_CallBegin) { // `m::f` is written as the callee `m_f`
             const char *text = smith_lang_gt_str(token);
