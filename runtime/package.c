@@ -235,10 +235,11 @@ static bool smith_package_download(SmithIo *io, const char *url, const char *des
 typedef enum {
     SmithCache_Modules,
     SmithCache_Packages,
+    SmithCache_Steps,
 } SmithCacheKind;
 
 static const char *smith_cache_name(SmithCacheKind kind) {
-    return kind == SmithCache_Modules ? "modules" : "packages";
+    return kind == SmithCache_Modules ? "modules" : kind == SmithCache_Steps ? "steps" : "packages";
 }
 
 // $XDG_CACHE_HOME/smith, or ~/.cache/smith: the folder of every smith cache.

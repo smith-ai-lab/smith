@@ -61,6 +61,12 @@ static bool smith_platform_clone(const char *from, const char *to) {
     return clonefile(from, to, 0) == 0 || link(from, to) == 0 || symlink(from, to) == 0;
 }
 
+// Makes `to`, which must not exist, a copy of the file `from` that shares its blocks (clonefile, on APFS). False, with
+// nothing left behind, when this volume cannot: the caller copies the bytes.
+static bool smith_platform_clone_file(const char *from, const char *to) {
+    return clonefile(from, to, 0) == 0;
+}
+
 // The monotonic clock in nanoseconds.
 [[maybe_unused]] static unsigned long long smith_platform_monotonic_ns(void) {
     return clock_gettime_nsec_np(CLOCK_MONOTONIC);

@@ -97,7 +97,7 @@ export void test_build_verbs_build_info_and_the_compile_database_say_what_the_ve
     scratch::expect_status("verbs: build.c runs with a task test made by smith_tests", 0, &run);
     const char *info = ".smith/build.info";
     scratch::expect_text("verbs: build.info has the first compile of main.c, once, with its flags", "1",
-                         matches(&p, info, "'^compile\tmain.c\t-DFIRST\t-MMD'"));
+                         matches(&p, info, "'^compile\tmain.c\t-DFIRST\t-MD'"));
     scratch::expect_text("verbs: ... not its second compile", "0", matches(&p, info, "-e -DSECOND"));
     scratch::expect_text("verbs: ... helper.c, which reads a generated file", "1",
                          matches(&p, info, "'^compile\thelper.c\t'"));

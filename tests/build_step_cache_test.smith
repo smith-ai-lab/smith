@@ -1,0 +1,106 @@
+// The shared cache of compile steps (#621): a compile whose command and inputs another build has seen is not run, its
+// outputs are cloned from <cache>/smith/steps. Each test has a cache of its own, shared by its projects. The projects
+// are built `release`: a debug object holds the folder it was compiled in (its debug info), so a debug build is served
+// only to a build in that folder.
+module build_step_cache_test;
+
+import smith::format;
+import smith::io;
+import smith::test;
+import scratch;
+
+static scratch::Project made(io::Io *io, const char *name) {
+    scratch::Project p = scratch::project(io, name, "step_cache");
+    scratch::own_cache(&p);
+    return p;
+}
+
+// `smith build release` with its progress lines kept: the compiles it ran, and how many of them the cache served.
+static const char *built(const scratch::Project *p, const char *before) {
+    return format::push(&p->io->arena, "env SMITH_STEP_CACHE=1 ", before, "smith build release 2>&1").data;
+}
+
+static const char *count(const scratch::Project *p, const char *build, const char *pattern) {
+    return scratch::capture(p, format::push(&p->io->arena, build, " | grep -c '", pattern, "'; true").data);
+}
+
+// 1. The second folder runs no compile, and its objects are the first's, byte for byte.
+export void test_build_step_cache_a_second_folder_runs_no_compile(io::Io *io) {
+    scratch::Project a = made(io, "a");
+    scratch::Project b = made(io, "b");
+    scratch::expect_text("cache: the first folder compiles all three", "3",
+                         count(&a, built(&a, ""), "^\\[[0-9/]*\\] compile [a-z]*[.]c$"));
+    const char *second = built(&b, "");
+    scratch::expect_text("cache: the second folder is served all three", "3", count(&b, second, "[.]c (cached)$"));
+    scratch::Run same =
+        scratch::sh(&b, "for f in main other util; do cmp build/release/$f.o ../a/build/release/$f.o || exit 1; done");
+    scratch::expect_status("cache: its objects are the first's", 0, &same);
+    scratch::expect_status("cache: and the program built from them runs", 0,
+                           &(scratch::Run){.status = scratch::sh(&b, "build/release/b").status});
+}
+
+// 2. A header changed: the files that include it compile again, the others are up to date.
+export void test_build_step_cache_a_changed_header_recompiles_its_includers(io::Io *io) {
+    scratch::Project a = made(io, "a");
+    (void)scratch::sh(&a, built(&a, ""));
+    scratch::write(&a, "util.h", "int util(void);\nint more(void);\n");
+    const char *again = built(&a, "");
+    scratch::Run run = scratch::sh(&a, again);
+    scratch::expect_contains("header: main.c, which includes it, compiles again", run.out, "compile main.c");
+    scratch::expect_contains("header: and so does util.c", run.out, "compile util.c");
+    scratch::expect_lacks("header: other.c does not", run.out, "other.c");
+    scratch::expect_lacks("header: and neither is served, for the header is new", run.out, "(cached)");
+    scratch::write(&a, "util.h", "int util(void);\n");
+    scratch::Run back = scratch::sh(&a, built(&a, ""));
+    scratch::expect_contains("header: the old header's compiles are served again", back.out, "compile util.c (cached)");
+}
+
+// 3. A hit is what a rebuild makes.
+export void test_build_step_cache_a_hit_equals_a_rebuild(io::Io *io) {
+    scratch::Project a = made(io, "a");
+    scratch::Project b = made(io, "b");
+    (void)scratch::sh(&a, built(&a, ""));
+    (void)scratch::sh(&b, built(&b, ""));
+    (void)scratch::sh(&b,
+                      "mkdir -p hit && cp build/release/*.o hit/ && rm -rf build .smith/.smith_log .smith/.smith_deps");
+    scratch::Run forced = scratch::sh(&b, "SMITH_STEP_CACHE=0 smith build release 2>&1");
+    scratch::expect_lacks("rebuild: the forced build uses no cache", forced.out, "(cached)");
+    scratch::Run same = scratch::sh(&b, "for f in main other util; do cmp build/release/$f.o hit/$f.o || exit 1; done");
+    scratch::expect_status("rebuild: a hit equals a rebuild", 0, &same);
+}
+
+// 4. The folder is a token in what is kept: the second folder's depfile log names its own files.
+export void test_build_step_cache_the_second_folders_log_names_its_own_paths(io::Io *io) {
+    scratch::Project a = made(io, "a");
+    scratch::Project b = made(io, "b");
+    (void)scratch::sh(&a, built(&a, ""));
+    scratch::Run second = scratch::sh(&b, built(&b, ""));
+    scratch::expect_contains("paths: the second folder is served", second.out, "(cached)");
+    scratch::expect_text(
+        "paths: its depfile log holds nothing of the first folder", "0",
+        scratch::capture(&b, format::push(&io->arena, "grep -c '", a.dir, "' .smith/.smith_deps; true").data));
+    scratch::expect_text("paths: and it names the headers", "yes",
+                         scratch::capture(&b, "grep -q '^util[.]h$' .smith/.smith_deps && echo yes"));
+}
+
+// 5. SMITH_STEP_CACHE=0 turns the cache off.
+export void test_build_step_cache_can_be_turned_off(io::Io *io) {
+    scratch::Project a = made(io, "a");
+    scratch::Project b = made(io, "b");
+    (void)scratch::sh(&a, built(&a, ""));
+    scratch::Run second = scratch::sh(&b, built(&b, "SMITH_STEP_CACHE=0 "));
+    scratch::expect_lacks("off: nothing is served", second.out, "(cached)");
+    scratch::expect_contains("off: the compiles run", second.out, "compile main.c");
+}
+
+// 6. The cap of the caches (SMITH_CACHE_MAX, #618) applies: over it, the least recently used results go at the next
+// build's start, once an hour.
+export void test_build_step_cache_results_over_the_cap_are_removed(io::Io *io) {
+    scratch::Project a = made(io, "a");
+    scratch::Project b = made(io, "b");
+    (void)scratch::sh(&a, built(&a, ""));
+    (void)scratch::sh(&a, "touch -d '2 hours ago' \"$XDG_CACHE_HOME/smith/steps/prune.timestamp\"");
+    scratch::Run capped = scratch::sh(&b, built(&b, "SMITH_CACHE_MAX=1 "));
+    scratch::expect_lacks("cap: nothing is left to serve", capped.out, "(cached)");
+    scratch::expect_contains("cap: the compiles run", capped.out, "compile main.c");
+}
