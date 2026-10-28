@@ -1,0 +1,3 @@
+src/main.smith:7:58: cannot tell the type of `2.5`, the argument of `convert`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:7:91: cannot tell the type of `(U8)1`, the argument of `convert`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:8:40: cannot tell the type of `2.5`, the argument of `convert`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable

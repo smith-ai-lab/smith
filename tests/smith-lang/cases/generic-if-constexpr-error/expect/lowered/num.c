@@ -1,0 +1,1 @@
+[ [ clang :: unavailable ( "num::sign is a generic function: call it from a .smith module" ) ] ] void num_sign ( void ) ; [ [ clang :: unavailable ( "num::many is a generic function: call it from a .smith module" ) ] ] void num_many ( void ) ;

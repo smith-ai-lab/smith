@@ -6,7 +6,7 @@ SmithArena smith_arena_create(__UINT64_TYPE__ capacity);
 SmithArena smith_arena_create(__UINT64_TYPE__ capacity) {
 return (SmithArena){.used = 0, .capacity = capacity};
 }
-__UINT64_TYPE__ smith_arena_take(SmithArena *arena, __UINT64_TYPE__ size) __asm__("_smith::arena::take");
+__UINT64_TYPE__ smith_arena_take(SmithArena *arena, __UINT64_TYPE__ size) __asm__("_std::arena::take");
 __UINT64_TYPE__ smith_arena_take(SmithArena *arena, __UINT64_TYPE__ size) {
 if (arena->used + size > arena->capacity) return 0;
 arena->used += size;

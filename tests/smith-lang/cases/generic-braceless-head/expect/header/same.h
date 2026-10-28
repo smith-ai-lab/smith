@@ -3,7 +3,7 @@
 // smith-module: same
 // smith-imports:
 // smith-names: equal
-// smith-generic: same equal same_equal src/same.smith -@4 1 2 8 9 | iw@0:8=bool iw@0:13=same_equal p@0:18=( iP1@0:19=auto iw@0:24=a p@0:25=, iP1w@0:27=typeof(a) iw@0:37=b p@0:38=) pw@0:40={ iw@1:5=return iw@1:12=a pw@1:14=== iw@1:17=b p@1:18=; p@2:1=}
+// smith-generic: same equal same_equal src/same.smith -@4 1 2 8 9 | ixw@0:8=bool iw@0:13=same_equal p@0:18=( iP1@0:19=auto iw@0:24=a p@0:25=, iP1w@0:27=typeof(a) iw@0:37=b p@0:38=) pw@0:40={ iw@1:5=return iw@1:12=a pw@1:14=== iw@1:17=b p@1:18=; p@2:1=}
 // clang-format on
 #pragma once
 #include <stddef.h>

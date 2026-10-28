@@ -29,7 +29,7 @@ size_t words_total(struct smith_array_const_char_n xs) __asm__("_words::total");
 
 struct smith_array_const_char_n words_first_word(struct smith_array_const_char_n xs) __asm__("_words::first_word");
 
-Bool words_pop(struct smith_array_const_char_n *p) __asm__("_words::pop");
+bool words_pop(struct smith_array_const_char_n *p) __asm__("_words::pop");
 #ifdef __cplusplus
 }
 #endif

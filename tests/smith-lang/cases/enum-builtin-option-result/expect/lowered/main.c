@@ -12,7 +12,7 @@ __INT32_TYPE__ main(void) {
 __SIZE_TYPE__ xs[2] = {7, 8};
 main_Index a = finder_find("key=value", '=');
 main_Index b = parser_position("a,b", ',');
-main_Index c =__extension__({extern struct smith_enum_option_usize main_first__usize(__SIZE_TYPE__*xs,__SIZE_TYPE__ n)__asm__("_main::first(__SIZE_TYPE__)");main_first__usize(xs,2);});
+main_Index c =__extension__({extern struct smith_enum_option_usize main_first__Usize(__SIZE_TYPE__*xs,__SIZE_TYPE__ n)__asm__("_main::first(__SIZE_TYPE__)");main_first__Usize(xs,2);});
 main_Quotient good = parser_divide(6, 3);
 main_Quotient bad = parser_divide(1, 0);
 printf("%zu %zu %zu\n", main_or_else(a, 99), main_or_else(b, 99), main_or_else(c, 99));
@@ -26,5 +26,5 @@ case .error: printf("error %d\n", bad.error); break;
 }
 return 0;
 }
-extern struct smith_enum_option_usize main_first__usize(__SIZE_TYPE__*xs,__SIZE_TYPE__ n)__asm__("_main::first(__SIZE_TYPE__)");
-[[gnu::weak]][[gnu::visibility("hidden")]]struct smith_enum_option_usize main_first__usize(__SIZE_TYPE__*xs,__SIZE_TYPE__ n){if(n==0)return.none;return{.some=xs[0]};}
+extern struct smith_enum_option_usize main_first__Usize(__SIZE_TYPE__*xs,__SIZE_TYPE__ n)__asm__("_main::first(__SIZE_TYPE__)");
+[[gnu::weak]][[gnu::visibility("hidden")]]struct smith_enum_option_usize main_first__Usize(__SIZE_TYPE__*xs,__SIZE_TYPE__ n){if(n==0)return.none;return{.some=xs[0]};}

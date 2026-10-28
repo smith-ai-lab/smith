@@ -3,7 +3,7 @@ typedef struct {
 int type;
 int size;
 } Item;
-constexpr Type wide = __INT64_TYPE__;
+constexpr Type Wide = __INT64_TYPE__;
 static int scaled(int type, int n) {
 return (type * n + 1) * 2;
 }
@@ -15,7 +15,7 @@ return sum;
 }
 int main() {
 Item item = {3, 4};
-wide big = 5;
+Wide big = 5;
 printf("%d %d %lld\n", scaled(2, 5), total(&item, 2), (long long)big);
 return 0;
 }

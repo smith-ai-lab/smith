@@ -1,0 +1,1 @@
+typedef struct smith_tuple_i32__f32 { __INT32_TYPE__ _0; float _1; } pairs_Pair; [ [ clang :: unavailable ( "pairs::first is a generic function: call it from a .smith module" ) ] ] void pairs_first ( void ) ; [ [ clang :: unavailable ( "pairs::second is a generic function: call it from a .smith module" ) ] ] void pairs_second ( void ) ;

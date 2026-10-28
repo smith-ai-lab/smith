@@ -1,3 +1,3 @@
-src/main.smith:12:19: a type function that returns an enum must be exactly `return enum {...};` with only `type` parameters for now (known gap)
-src/main.smith:18:6: a type function that returns an enum must be exactly `return enum {...};` with only `type` parameters for now (known gap)
-src/main.smith:25:8: `opt` takes 1 type argument: the arguments of a type function that returns an enum are written types for now (known gap)
+src/main.smith:12:19: a type function that returns an enum must be exactly `return enum {...};` with only `Type` parameters for now (known gap)
+src/main.smith:18:6: a type function that returns an enum must be exactly `return enum {...};` with only `Type` parameters for now (known gap)
+src/main.smith:25:8: `Opt` takes 1 type argument: the arguments of a type function that returns an enum are written types for now (known gap)

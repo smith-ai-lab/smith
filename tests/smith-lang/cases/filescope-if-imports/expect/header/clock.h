@@ -25,7 +25,7 @@ extern "C" {
 #else
 #endif
 
-Bool clock_ticks(void) __asm__("_clock::ticks");
+bool clock_ticks(void) __asm__("_clock::ticks");
 
 void clock_say(void) __asm__("_clock::say");
 #ifdef __cplusplus

@@ -77,12 +77,12 @@ extern __INT32_TYPE__ c_f64_mantissa_bits();
 extern __INT32_TYPE__ c_float_eval_method();
 extern __INT32_TYPE__ c_static_analyzer();
 static_assert(SMITH_TARGET_FLOAT_RADIX == 2);
-static_assert(SMITH_TARGET_F32_MANTISSA_BITS == 24 && SMITH_TARGET_F64_MANTISSA_BITS == 53, "f32 and f64 are IEEE");
+static_assert(SMITH_TARGET_F32_MANTISSA_BITS == 24 && SMITH_TARGET_F64_MANTISSA_BITS == 53, "F32 and F64 are IEEE");
 static_assert(1 != 2 && 1 != 2);
 static_assert(SMITH_TARGET_ARCH == 1 || SMITH_TARGET_ARCH == 2 || SMITH_TARGET_ARCH == 0);
 __UINT8_TYPE__ mantissa[SMITH_TARGET_F32_MANTISSA_BITS];
 constexpr __INT32_TYPE__ arch_copy = SMITH_TARGET_ARCH;
-constexpr Bool sanitized = SMITH_TARGET_ADDRESS_SANITIZER;
+constexpr bool sanitized = SMITH_TARGET_ADDRESS_SANITIZER;
 static_assert(_Countof(mantissa) == 24);
 static __INT32_TYPE__ check(const char *name, __INT32_TYPE__ smith, __INT32_TYPE__ compiler) {
 if (smith != compiler) {

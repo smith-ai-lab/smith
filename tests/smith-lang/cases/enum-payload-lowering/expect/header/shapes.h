@@ -36,7 +36,7 @@ float shapes_area(shapes_Shape s) __asm__("_shapes::area");
 
 shapes_Shape shapes_unit() __asm__("_shapes::unit");
 
-Bool shapes_is_empty(shapes_Shape s) __asm__("_shapes::is_empty");
+bool shapes_is_empty(shapes_Shape s) __asm__("_shapes::is_empty");
 #ifdef __cplusplus
 }
 #endif

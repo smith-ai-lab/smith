@@ -16,7 +16,7 @@
 #define SMITH_TARGET_OS 0
 #endif
 #endif
-static constexpr Bool shape_wide = true;
+static constexpr bool shape_wide = true;
 #if (1)
 
 static constexpr __INT32_TYPE__ shape_columns = 80;

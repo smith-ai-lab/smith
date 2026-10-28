@@ -1,0 +1,1 @@
+[ [ clang :: unavailable ( "bad::built is a generic function: call it from a .smith module" ) ] ] void bad_built ( void ) ; [ [ clang :: unavailable ( "bad::grown is a generic function: call it from a .smith module" ) ] ] void bad_grown ( void ) ;

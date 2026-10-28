@@ -1,0 +1,10 @@
+typedef struct {
+int a;
+} Pair;
+int main(void) {
+const char *name = "x";
+Int n = 2.5;
+Num text = name;
+Float pair = (Pair){1};
+return n;
+}

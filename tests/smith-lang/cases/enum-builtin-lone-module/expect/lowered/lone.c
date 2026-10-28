@@ -16,7 +16,7 @@ return otherwise;
 }
 static __SIZE_TYPE__ lone_use_first(void) {
 __SIZE_TYPE__ xs[1] = {5};
-return lone_or_else(__extension__({extern struct smith_enum_option_usize lone_first__usize(__SIZE_TYPE__*xs,__SIZE_TYPE__ n)__asm__("_lone::first(__SIZE_TYPE__)");lone_first__usize(xs,1);}), 0);
+return lone_or_else(__extension__({extern struct smith_enum_option_usize lone_first__Usize(__SIZE_TYPE__*xs,__SIZE_TYPE__ n)__asm__("_lone::first(__SIZE_TYPE__)");lone_first__Usize(xs,1);}), 0);
 }
-extern struct smith_enum_option_usize lone_first__usize(__SIZE_TYPE__*xs,__SIZE_TYPE__ n)__asm__("_lone::first(__SIZE_TYPE__)");
-[[gnu::weak]][[gnu::visibility("hidden")]]struct smith_enum_option_usize lone_first__usize(__SIZE_TYPE__*xs,__SIZE_TYPE__ n){if(n==0)return.none;return{.some=xs[0]};}
+extern struct smith_enum_option_usize lone_first__Usize(__SIZE_TYPE__*xs,__SIZE_TYPE__ n)__asm__("_lone::first(__SIZE_TYPE__)");
+[[gnu::weak]][[gnu::visibility("hidden")]]struct smith_enum_option_usize lone_first__Usize(__SIZE_TYPE__*xs,__SIZE_TYPE__ n){if(n==0)return.none;return{.some=xs[0]};}

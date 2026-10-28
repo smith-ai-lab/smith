@@ -13,7 +13,7 @@ float _1;
 static __SIZE_TYPE__ walk_name_length(Field f) {
 return countof(f.name);
 }
-static Bool walk_is_floating(Field f) {
+static bool walk_is_floating(Field f) {
 return Float(f.type);
 }
 static Field walk_first_float(Field a, Field b) {

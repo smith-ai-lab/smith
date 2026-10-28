@@ -11,8 +11,8 @@ return (__UINT64_TYPE__)p.x * p.x + (__UINT64_TYPE__)p.y * p.y + (__UINT64_TYPE_
 }
 extern __UINT32_TYPE__ geo_shape_origin_count __asm__("_geo::shape::origin_count");
 __UINT32_TYPE__ geo_shape_origin_count __asm__("_geo::shape::origin_count") = 1;
-Bool geo_is_origin(geo_shape_Point p);
-Bool geo_is_origin(geo_shape_Point p) {
+bool geo_is_origin(geo_shape_Point p);
+bool geo_is_origin(geo_shape_Point p) {
 return geo_shape_norm2(p) == 0;
 }
 static __UINT32_TYPE__ geo_shape_helper() {

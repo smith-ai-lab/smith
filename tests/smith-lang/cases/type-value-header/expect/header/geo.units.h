@@ -11,7 +11,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-// A struct is exported by name; the aliases below are `constexpr Type` and reach C as typedefs.
+// A struct is exported by name; the aliases below are `constexpr type` and reach C as typedefs.
 struct geo_units_Request {
 int32_t id;
 };

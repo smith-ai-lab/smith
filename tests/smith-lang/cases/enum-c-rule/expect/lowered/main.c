@@ -1,0 +1,23 @@
+#include <stdio.h>
+enum Color { Red, Green = 5, Blue };
+typedef enum { Low = 1, High } Level;
+struct Pair {
+int first;
+int second;
+};
+static int pick(enum Color color) {
+switch (color) {
+case Red: return 1;
+case Green: return 2;
+default: return 3;
+}
+}
+static struct Pair make() {
+return (struct Pair){.first = 4, .second = High};
+}
+int main() {
+struct Pair p = make();
+Level level = Low;
+printf("%d %d %d %d %d\n", pick(Red), pick(Blue), p.first, p.second, level == Low);
+return 0;
+}

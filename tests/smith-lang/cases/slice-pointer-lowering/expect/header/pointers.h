@@ -21,7 +21,7 @@ struct smith_array_const_char_n {const char * data; size_t count [1]; };
 #endif
 typedef struct smith_array_const_char_n pointers_Text;
 
-Bool pointers_take_line(struct smith_array_const_char_n *text,struct smith_array_const_char_n *line) __asm__("_pointers::take_line");
+bool pointers_take_line(struct smith_array_const_char_n *text,struct smith_array_const_char_n *line) __asm__("_pointers::take_line");
 
 size_t pointers_length(pointers_Text *text) __asm__("_pointers::length");
 

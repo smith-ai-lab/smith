@@ -1,0 +1,1 @@
+src/main.smith:5:8: `Count` is a tag here and a variable, function or enum constant above; in a module a tag is also a type name, so the two cannot share a name

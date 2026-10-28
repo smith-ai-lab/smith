@@ -17,16 +17,16 @@ return {.some = x * 2};
 }
 __INT32_TYPE__ main(void) {
 __SIZE_TYPE__ xs[2] = {7, 8};
-main_Maybe a =__extension__({extern struct smith_enum_maybe_usize opt_first__usize(__SIZE_TYPE__*xs,__SIZE_TYPE__ n)__asm__("_opt::first(__SIZE_TYPE__)");opt_first__usize(xs,2);});
-main_Maybe n =__extension__({extern struct smith_enum_maybe_usize opt_first__usize(__SIZE_TYPE__*xs,__SIZE_TYPE__ n)__asm__("_opt::first(__SIZE_TYPE__)");opt_first__usize(xs,0);});
+main_Maybe a =__extension__({extern struct smith_enum_maybe_usize opt_first__Usize(__SIZE_TYPE__*xs,__SIZE_TYPE__ n)__asm__("_opt::first(__SIZE_TYPE__)");opt_first__Usize(xs,2);});
+main_Maybe n =__extension__({extern struct smith_enum_maybe_usize opt_first__Usize(__SIZE_TYPE__*xs,__SIZE_TYPE__ n)__asm__("_opt::first(__SIZE_TYPE__)");opt_first__Usize(xs,0);});
 main_Maybe f = opt_find("key=value", '=');
-main_MaybeF w =__extension__({extern struct smith_enum_maybe_f64 opt_first__f64(double*xs,__SIZE_TYPE__ n)__asm__("_opt::first(double)");opt_first__f64((double[]){2.5},1);});
+main_MaybeF w =__extension__({extern struct smith_enum_maybe_f64 opt_first__F64(double*xs,__SIZE_TYPE__ n)__asm__("_opt::first(double)");opt_first__F64((double[]){2.5},1);});
 main_Maybe p = other_pick(5);
 printf("%zu\n", main_or_else(p, 0));
 printf("%zu %zu %zu %g\n", main_or_else(a, 0), main_or_else(n, 99), main_or_else(f, 99), main_or_zero(w));
 return 0;
 }
-extern struct smith_enum_maybe_usize opt_first__usize(__SIZE_TYPE__*xs,__SIZE_TYPE__ n)__asm__("_opt::first(__SIZE_TYPE__)");
-[[gnu::weak]][[gnu::visibility("hidden")]]struct smith_enum_maybe_usize opt_first__usize(__SIZE_TYPE__*xs,__SIZE_TYPE__ n){if(n==0)return.none;return{.some=xs[0]};}
-extern struct smith_enum_maybe_f64 opt_first__f64(double*xs,__SIZE_TYPE__ n)__asm__("_opt::first(double)");
-[[gnu::weak]][[gnu::visibility("hidden")]]struct smith_enum_maybe_f64 opt_first__f64(double*xs,__SIZE_TYPE__ n){if(n==0)return.none;return{.some=xs[0]};}
+extern struct smith_enum_maybe_usize opt_first__Usize(__SIZE_TYPE__*xs,__SIZE_TYPE__ n)__asm__("_opt::first(__SIZE_TYPE__)");
+[[gnu::weak]][[gnu::visibility("hidden")]]struct smith_enum_maybe_usize opt_first__Usize(__SIZE_TYPE__*xs,__SIZE_TYPE__ n){if(n==0)return.none;return{.some=xs[0]};}
+extern struct smith_enum_maybe_f64 opt_first__F64(double*xs,__SIZE_TYPE__ n)__asm__("_opt::first(double)");
+[[gnu::weak]][[gnu::visibility("hidden")]]struct smith_enum_maybe_f64 opt_first__F64(double*xs,__SIZE_TYPE__ n){if(n==0)return.none;return{.some=xs[0]};}

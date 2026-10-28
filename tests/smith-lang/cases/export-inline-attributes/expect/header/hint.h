@@ -13,7 +13,7 @@ extern "C" {
 #endif
 // Attributes after `export` stay before `static inline` in the module and in the header, beside [[std::c_name]]: an
 // inline function nothing calls is not an unused function, and always_inline needs no __attribute__ spelling.
-[[gnu::always_inline, maybe_unused]] static inline void hint_first(Bool condition) {
+[[gnu::always_inline, maybe_unused]] static inline void hint_first(bool condition) {
 (void)condition;
 }
 

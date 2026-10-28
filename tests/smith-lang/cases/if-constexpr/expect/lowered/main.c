@@ -26,7 +26,7 @@
 #include "kind.h"
 #include <stdio.h>
 
-constexpr Bool fast = SMITH_TARGET_ASSERTIONS == false;
+constexpr bool fast = SMITH_TARGET_ASSERTIONS == false;
 int main() {
 __INT32_TYPE__ answer = 0;
 #if SMITH_TARGET_OS == 1
@@ -53,12 +53,12 @@ printf("neither\n");
 #endif
 
 printf("%d %d %d\n", kind_arch_name(), kind_opaque(5), kind_nested(20));
-printf("%d %d %d\n",__extension__({extern __INT32_TYPE__ kind_describe__f32(float value)__asm__("_kind::describe(float)");kind_describe__f32(1.5f);}),__extension__({extern __INT32_TYPE__ kind_describe__u64(__UINT64_TYPE__ value)__asm__("_kind::describe(__UINT64_TYPE__)");kind_describe__u64(9);}),__extension__({extern __INT32_TYPE__ kind_describe__u8(__UINT8_TYPE__ value)__asm__("_kind::describe(__UINT8_TYPE__)");kind_describe__u8(1);}));
+printf("%d %d %d\n",__extension__({extern __INT32_TYPE__ kind_describe__F32(float value)__asm__("_kind::describe(float)");kind_describe__F32(1.5f);}),__extension__({extern __INT32_TYPE__ kind_describe__U64(__UINT64_TYPE__ value)__asm__("_kind::describe(__UINT64_TYPE__)");kind_describe__U64(9);}),__extension__({extern __INT32_TYPE__ kind_describe__U8(__UINT8_TYPE__ value)__asm__("_kind::describe(__UINT8_TYPE__)");kind_describe__U8(1);}));
 return answer == 7 ? 0 : 1;
 }
-extern __INT32_TYPE__ kind_describe__f32(float value)__asm__("_kind::describe(float)");
-[[gnu::weak]][[gnu::visibility("hidden")]]__INT32_TYPE__ kind_describe__f32(float value){(void)value;}
-extern __INT32_TYPE__ kind_describe__u64(__UINT64_TYPE__ value)__asm__("_kind::describe(__UINT64_TYPE__)");
-[[gnu::weak]][[gnu::visibility("hidden")]]__INT32_TYPE__ kind_describe__u64(__UINT64_TYPE__ value){(void)value;}
-extern __INT32_TYPE__ kind_describe__u8(__UINT8_TYPE__ value)__asm__("_kind::describe(__UINT8_TYPE__)");
-[[gnu::weak]][[gnu::visibility("hidden")]]__INT32_TYPE__ kind_describe__u8(__UINT8_TYPE__ value){(void)value;}
+extern __INT32_TYPE__ kind_describe__F32(float value)__asm__("_kind::describe(float)");
+[[gnu::weak]][[gnu::visibility("hidden")]]__INT32_TYPE__ kind_describe__F32(float value){(void)value;}
+extern __INT32_TYPE__ kind_describe__U64(__UINT64_TYPE__ value)__asm__("_kind::describe(__UINT64_TYPE__)");
+[[gnu::weak]][[gnu::visibility("hidden")]]__INT32_TYPE__ kind_describe__U64(__UINT64_TYPE__ value){(void)value;}
+extern __INT32_TYPE__ kind_describe__U8(__UINT8_TYPE__ value)__asm__("_kind::describe(__UINT8_TYPE__)");
+[[gnu::weak]][[gnu::visibility("hidden")]]__INT32_TYPE__ kind_describe__U8(__UINT8_TYPE__ value){(void)value;}
