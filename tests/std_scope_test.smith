@@ -44,3 +44,19 @@ export void test_std_scope_module_line_follows_the_path_rule(io::Io *io) {
     scratch::expect_failure("std: ... and not in elsewhere/mine.smith", &outside);
     scratch::expect_contains("std: ... which names the path", outside.err, "must be in a file whose path ends in");
 }
+
+// Types are capitalized (issue #366): the capitalized names are the old lowercase ones until the tree is rewritten.
+export void test_std_scope_capitalized_types_and_concepts_are_the_lowercase_ones(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "std_scope");
+    scratch::Run built = scratch::sh(&p, "smith cc -std=gnu23 capitals.smith -o capitals");
+    scratch::expect_status("capitals: I32, U8, Usize, F64, Bool and the concepts compile in a plain file", 0, &built);
+    scratch::expect_text("capitals: ... and mean what the lowercase ones do", "3 0.5 5 -4 12 3 7 5 250 2 1.5 1",
+                         scratch::sh(&p, "./capitals").out);
+}
+
+export void test_std_scope_capitalized_names_work_in_a_module(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "std_scope");
+    scratch::Run built = scratch::sh(&p, "smith cc -std=gnu23 -c capitals_module.smith -o /dev/null");
+    scratch::expect_status("capitals: Option, Result, Str, Type, slices of I32 and a Type alias in a module", 0,
+                           &built);
+}

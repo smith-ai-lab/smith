@@ -867,6 +867,96 @@ static bool smith_lang_is_word(const SmithToken *token) {
            smith_lang_word(token->text, token->length) != SmithLangWord_Other;
 }
 
+// ---- Capitalized type names (issue #366) --------------------------------------------------------------------------
+//
+// Types are written with a capital (`I32`, `Str`, `Type`, `Option(T)`, the concepts `Int` and `Num`) beside the old
+// lowercase names, which are the ones the lowering knows: a capitalized name is read as its lowercase one, the same
+// type, silently, until the tree is rewritten.
+
+typedef struct {
+    const char *written;
+    const char *name;
+} SmithLangCapital;
+
+static const SmithLangCapital smith_lang_capitals[] = {
+    {"I8", "i8"},
+    {"I16", "i16"},
+    {"I32", "i32"},
+    {"I64", "i64"},
+    {"U8", "u8"},
+    {"U16", "u16"},
+    {"U32", "u32"},
+    {"U64", "u64"},
+    {"F16", "f16"},
+    {"F32", "f32"},
+    {"F64", "f64"},
+    {"Usize", "usize"},
+    {"Isize", "isize"},
+    {"Bool", "bool"},
+    {"Str", "str"},
+    {"Type", "type"},
+    {"Option", "option"},
+    {"Result", "result"},
+    {"Int", "integer"},
+    {"Float", "floating"},
+    {"Num", "arithmetic"},
+    {"Pointer", "pointer"},
+    {"Enum", "enumeration"},
+    {"Struct", "structure"},
+    {"Array", "array"},
+    {"Slice", "slice"},
+    {"Signed", "signed_integer"},
+    {"Unsigned", "unsigned_integer"},
+};
+
+// The capitalized name number `index` and the lowercase name it stands for; false past the last.
+bool smith_lang_capital_at(size_t index, const char **written, const char **name) {
+    if (index >= sizeof smith_lang_capitals / sizeof smith_lang_capitals[0]) return false;
+    *written = smith_lang_capitals[index].written;
+    *name = smith_lang_capitals[index].name;
+    return true;
+}
+
+// The lowercase name a capitalized one stands for, or null.
+const char *smith_lang_capital_name(const char *text, size_t length) {
+    if (length < 3 || length > 8 || text[0] < 'A' || text[0] > 'Z') return nullptr;
+    for (size_t i = 0; i < sizeof smith_lang_capitals / sizeof smith_lang_capitals[0]; i++) { // 28 names
+        if (smith_lang_equals(text, length, smith_lang_capitals[i].written)) return smith_lang_capitals[i].name;
+    }
+    return nullptr;
+}
+
+static bool smith_lang_word_char(char c);
+static size_t smith_lang_text_skip(const char *text, size_t length, size_t at);
+
+// Writes a source text into `out` (room for `length * 3 + 1`) with the lowercase names in place of the capitalized
+// ones: the same length for every type, a longer name for a concept when `concepts` is set. Comments and strings are
+// copied as they are, and so is a name after `.`, `->` or `::` (a member or a C name). Returns the length written.
+size_t smith_lang_capitals_lower(const char *text, size_t length, char *out, bool concepts) {
+    size_t used = 0;
+    for (size_t at = 0; at < length;) {                      // each piece of the text once
+        size_t end = smith_lang_text_skip(text, length, at); // a comment or a literal
+        if (end == at) {
+            end = at + 1;
+            while (smith_lang_word_char(text[at]) && end < length && smith_lang_word_char(text[end]))
+                end += 1;
+        }
+        const char *name = smith_lang_capital_name(text + at, end - at);
+        bool member = at > 0 && (text[at - 1] == '.' || (at > 1 && text[at - 1] == '>' && text[at - 2] == '-') ||
+                                 (at > 1 && text[at - 1] == ':' && text[at - 2] == ':'));
+        if (name != nullptr && !member && (concepts || strlen(name) == end - at)) {
+            memcpy(out + used, name, strlen(name));
+            used += strlen(name);
+        } else {
+            memmove(out + used, text + at, end - at);
+            used += end - at;
+        }
+        at = end;
+    }
+    out[used] = 0;
+    return used;
+}
+
 static const SmithLangSized *smith_lang_find_sized(const char *text, size_t length) {
     for (size_t i = 0; i < sizeof smith_lang_sized / sizeof smith_lang_sized[0]; i++) { // 13 entries
         if (smith_lang_equals(text, length, smith_lang_sized[i].name)) return &smith_lang_sized[i];

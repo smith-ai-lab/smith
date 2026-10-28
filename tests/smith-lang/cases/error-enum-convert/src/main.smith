@@ -3,8 +3,8 @@ module main;
 typedef result(i32, i32) Same;
 typedef option(i32) Inner;
 typedef option(Inner) Nested;
-typedef i32 *Pointer;
-typedef option(Pointer) Maybe;
+typedef i32 *Address;
+typedef option(Address) Maybe;
 typedef option(i32) Number;
 
 // Each conversion that would have to choose is an error that names the explicit form (issue #358).
