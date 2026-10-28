@@ -1,0 +1,5 @@
+src/main.smith:29:10: cannot tell the type of `&a`, the argument of `push`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:30:10: cannot tell the type of `&a`, the argument of `push`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:31:10: cannot tell the type of `&b`, the argument of `push`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:32:48: cannot tell the type of `a`, the argument of `last`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:32:66: cannot tell the type of `b`, the argument of `last`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable

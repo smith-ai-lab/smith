@@ -1,0 +1,17 @@
+module main;
+
+Type Box(Type T) {
+    return struct {
+        T value;
+    };
+}
+
+T twice(Box(constexpr Num T) box) {
+    return box.value + box.value;
+}
+
+i32 main(void) {
+    Box(const char *) text = {.value = "a"};
+    twice(text);
+    return 0;
+}

@@ -8,6 +8,7 @@
 // smith-enums
 // smith-bodies: both
 // smith-eshape: Pair(T) struct { T first ; T second ; usize count ; }
+// smith-einstance: smith_struct_Pair_usize Pair 1 usize
 // clang-format on
 #pragma once
 #include <stddef.h>

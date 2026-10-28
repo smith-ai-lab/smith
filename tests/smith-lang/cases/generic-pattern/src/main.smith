@@ -1,0 +1,34 @@
+module main;
+
+import <stdio.h>;
+
+// A parameter written as a pattern: `List(constexpr Type T) *xs` takes any instance of `List`, and `T` is bound from
+// the argument's type, so `item` is an `I32` for a `List(I32)` and an `F64` for a `List(F64)`.
+
+Type List(Type T) {
+    return struct {
+        T *items;
+        usize count;
+    };
+}
+
+void push(List(constexpr Type T) *xs, T item) {
+    xs->items[xs->count] = item;
+    xs->count += 1;
+}
+
+T last(List(constexpr Type T) xs) {
+    return xs.items[xs.count - 1];
+}
+
+i32 main(void) {
+    i32 ints[4] = {};
+    f64 reals[4] = {};
+    List(i32) a = {.items = ints};
+    List(f64) b = {.items = reals};
+    push(&a, 3);
+    push(&a, 4);
+    push(&b, 2.5);
+    c::printf("%zu %d %zu %g\n", a.count, last(a), b.count, last(b));
+    return 0;
+}

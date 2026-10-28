@@ -374,16 +374,43 @@ typedef enum {
 
 typedef struct {
     SmithLangShapeKind kind;
-    uint32_t auto_at;   // the `auto`, an index of smith_lang_gt
-    uint32_t name_at;   // the parameter's name
-    unsigned stars;     // `auto **p`: 2
-    unsigned dims;      // `auto m[:][:]`: 2
-    bool is_const;      // `const auto xs[:]`: the elements are read-only
-    bool fixed;         // `auto xs[const :]`: the slice itself is fixed
-    bool restricted;    // `auto xs[restrict :]`: no other pointer overlaps its data
-    bool derived;       // `const typeof(a[0]) b[:]`: a slice of the element of `a`; `auto_at` is the `typeof`
-    uint32_t source_at; // the `a` of a derived slice
+    uint32_t auto_at;     // the `auto`, an index of smith_lang_gt
+    uint32_t name_at;     // the parameter's name
+    unsigned stars;       // `auto **p`: 2
+    unsigned dims;        // `auto m[:][:]`: 2
+    bool is_const;        // `const auto xs[:]`: the elements are read-only
+    bool fixed;           // `auto xs[const :]`: the slice itself is fixed
+    bool restricted;      // `auto xs[restrict :]`: no other pointer overlaps its data
+    bool derived;         // `const typeof(a[0]) b[:]`: a slice of the element of `a`; `auto_at` is the `typeof`
+    uint32_t source_at;   // the `a` of a derived slice
+    uint32_t pattern_end; // `List(constexpr Type T) *xs`: the token after the pattern's `)`, from `auto_at` (0: none)
 } SmithLangShape;
+
+// Whether the tokens from `at` are a pattern, `List(constexpr Type T)`: a name, then parentheses that hold a
+// `constexpr` (a hole) at any depth. The index after the closing parenthesis in `close`. A parameter's type that is a
+// type function's instance, with holes for the arguments (issue #449): the argument's type is looked up in the type
+// function's instances and the holes bind.
+static bool smith_lang_pattern_at(uint32_t at, uint32_t end, uint32_t *close) {
+    const SmithLangGenToken *first = &smith_lang_gt.tokens[at];
+    if (at + 3 >= end || first->kind != SmithTokenKind_Identifier || first->special != SmithLangGen_Plain ||
+        !smith_lang_gt_punct(first + 1, "(") || smith_lang_gt_is(first, SmithTokenKind_Identifier, "typeof") ||
+        smith_lang_gt_is(first, SmithTokenKind_Identifier, "__typeof__")) {
+        return false;
+    }
+    int depth = 0;
+    bool hole = false;
+    for (uint32_t i = at + 1; i < end; i++) { // the parameter's tokens
+        const SmithLangGenToken *token = &smith_lang_gt.tokens[i];
+        depth += smith_lang_gt_punct(token, "(") ? 1 : 0;
+        depth -= smith_lang_gt_punct(token, ")") ? 1 : 0;
+        hole = hole || smith_lang_gt_is(token, SmithTokenKind_Identifier, "constexpr");
+        if (depth == 0) {
+            *close = i + 1;
+            return hole;
+        }
+    }
+    return false;
+}
 
 static bool smith_lang_qualifier_token(const SmithLangGenToken *token) {
     return token->kind == SmithTokenKind_Identifier && token->special == SmithLangGen_Plain &&
@@ -402,6 +429,13 @@ static bool smith_lang_shape_head(const SmithLangParam *param, SmithLangShape *s
         *at += 1;
     }
     const SmithLangGenToken *keyword = &smith_lang_gt.tokens[*at];
+    uint32_t close = 0;
+    if (*at < param->end && smith_lang_pattern_at(*at, param->end, &close)) {
+        shape->auto_at = *at;
+        shape->pattern_end = close;
+        *at = close;
+        return true; // `List(constexpr Type T) *xs`
+    }
     if (*at + 8 < param->end && smith_lang_gt_is(keyword, SmithTokenKind_Identifier, "typeof") &&
         smith_lang_gt_punct(keyword + 1, "(") && keyword[2].kind == SmithTokenKind_Identifier &&
         keyword[2].special == SmithLangGen_Plain && smith_lang_gt_punct(keyword + 3, "[") &&
@@ -490,7 +524,7 @@ static bool smith_lang_param_shape(const SmithLangParam *param, SmithLangShape *
     shape->name_at = at++;
     if (at == param->end) {
         shape->kind = shape->stars > 0 ? SmithLangShape_Pointer : SmithLangShape_None;
-        return shape->stars > 0;
+        return shape->stars > 0 || shape->pattern_end != 0;
     }
     if (shape->stars > 0 || !smith_lang_gt_punct(&smith_lang_gt.tokens[at], "[")) return false;
     return smith_lang_shape_brackets(param, shape, at);
@@ -807,6 +841,11 @@ static bool smith_lang_generic_ahead(SmithLang *lang, const SmithHost *host, con
             }
             return host->lookup(host->context, "type", 4, SmithLookup_Type).kind == SmithLookup_None;
         }
+        if (in_params && depth >= 2 && smith_lang_ident(before, "constexpr") &&
+            (smith_lang_ident(token, "type") || smith_lang_concept_word(token)) &&
+            smith_lang_type_parameter_at(lang, host, index)) {
+            return true; // `List(constexpr Type T) *xs`: a hole of a pattern
+        }
         if (in_params && depth == 1 && smith_lang_parameter_generic_at(lang, host, before, index)) return true;
         before = token;
     }
@@ -858,6 +897,33 @@ static void smith_lang_generic_mark_values(const SmithLangGeneric *generic) {
     }
 }
 
+// The holes of a pattern parameter, [from, to) in smith_lang_gt: each `constexpr Type T` (or `constexpr Num T`, a
+// concept narrows what the hole takes) is a slot of its own, of kind Derived, right after the pattern's `auto` slot:
+// the call gives it no argument, the pattern binds it. A message, or null.
+static const char *smith_lang_pattern_holes(SmithLangGeneric *generic, uint32_t from, uint32_t to, size_t position) {
+    for (uint32_t at = from + 2; at + 2 < to; at++) { // the parameters of the type function, nested ones too
+        const SmithLangGenToken *token = &smith_lang_gt.tokens[at];
+        if (!smith_lang_gt_is(token, SmithTokenKind_Identifier, "constexpr")) continue;
+        const SmithLangGenToken *kind = token + 1;
+        const SmithLangGenToken *name = token + 2;
+        if (kind->kind != SmithTokenKind_Identifier || name->kind != SmithTokenKind_Identifier ||
+            !(smith_lang_gt_is(kind, SmithTokenKind_Identifier, "type") || smith_lang_concept_of(kind) != 0)) {
+            return "a hole of a pattern is `constexpr Type T`, or a concept in place of `Type`: `constexpr Num T`";
+        }
+        if (generic->type_count >= smith_lang_type_params_max)
+            return "a generic function has at most 32 `constexpr type`, `constexpr auto` and `auto` parameters";
+        if (smith_lang_param_named(generic, smith_lang_gt_str(name), name->length) >= 0)
+            return "two compile-time parameters have the same name";
+        generic->type_token[generic->type_count] = (uint8_t)(at + 2 - generic->first);
+        generic->type_position[generic->type_count] = (uint8_t)position;
+        generic->type_kind[generic->type_count] = SmithLangSlot_Derived;
+        generic->type_concept[generic->type_count] = (uint8_t)smith_lang_concept_of(kind);
+        generic->type_count += 1;
+        at += 2;
+    }
+    return nullptr;
+}
+
 // The type parameters of the head just recorded: `constexpr type T`, their names and which parameter each is. A
 // message, or null.
 static const char *smith_lang_generic_scan(SmithLangGeneric *generic) {
@@ -886,6 +952,10 @@ static const char *smith_lang_generic_scan(SmithLangGeneric *generic) {
             generic->type_concept[generic->type_count] =
                 (uint8_t)smith_lang_concept_of(element ? &smith_lang_gt.tokens[shape.auto_at] : first);
             generic->type_count += 1;
+            if (element && shape.pattern_end != 0) {
+                const char *problem = smith_lang_pattern_holes(generic, shape.auto_at, shape.pattern_end, i);
+                if (problem != nullptr) return problem;
+            }
             continue;
         }
         if (params[i].kind == SmithLangSlot_Number) {
@@ -2278,8 +2348,9 @@ static void smith_lang_gen_put_shaped(SmithLang *lang, const SmithHost *host, co
         const SmithLangGenToken *token = &smith_lang_it.tokens[instance->arg_first[slot] + i];
         smith_lang_gen_put_token(lang, host, &smith_lang_it, token, token->location, instance_id, false);
     }
-    smith_lang_gen_put_run(lang, host, generic, instance, shape->auto_at + 1, shape->name_at + 1, location,
-                           instance_id);
+    smith_lang_gen_put_run(lang, host, generic, instance,
+                           shape->pattern_end != 0 ? shape->pattern_end : shape->auto_at + 1, shape->name_at + 1,
+                           location, instance_id);
     if (shape->kind != SmithLangShape_Array) return;
     smith_lang_gen_put_run(lang, host, generic, instance, shape->name_at + 1, shape->name_at + 2, location,
                            instance_id); // `[`
@@ -4185,7 +4256,8 @@ static bool smith_lang_shape_check(SmithLang *lang, const SmithHost *host, Smith
             if (last->kind != SmithTokenKind_Punctuator || smith_lang_pool_text(&smith_lang_it, last)[0] != '*') break;
             stars += 1;
         }
-        fits = stars >= (shape.kind == SmithLangShape_Array ? 1U : shape.stars) && query.is_pointer;
+        fits = stars >= (shape.kind == SmithLangShape_Array ? 1U : shape.stars) &&
+               (query.is_pointer || shape.kind == SmithLangShape_None);
     }
     if (fits) return true;
     const SmithLangGenToken *parameter = &smith_lang_gt.tokens[shape.name_at];
@@ -4336,6 +4408,13 @@ static bool smith_lang_derive_slice(SmithLang *lang, const SmithHost *host, Smit
     return true;
 }
 
+// runtime/lang_enum.c, which comes after this file: the holes of the pattern parameter at slot `slot` bound from the
+// argument's type (the slots after it)
+static bool smith_lang_pattern_bind(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                    const SmithLangGeneric *generic, size_t slot, const SmithLangParam *param,
+                                    const SmithLangShape *shape, SmithLangSpan span, uint32_t location,
+                                    SmithLangCallTypes *types);
+
 // The types of a call: each slot's, then the arguments of `auto... rest`, staged in smith_lang_it, and the check that a
 // later argument converts to the type of an `auto` parameter. False after the error.
 static bool smith_lang_call_types(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
@@ -4369,6 +4448,12 @@ static bool smith_lang_call_types(SmithLang *lang, const SmithHost *host, SmithL
                    smith_lang_concept_check(lang, host, replay, generic, k, span, location, &types->first[k],
                                             &types->count[k]);
             if (good) smith_lang_shape_constify(host, generic, k, types, location);
+            if (good && derived.pattern_end != 0) {
+                good = smith_lang_pattern_bind(lang, host, replay, generic, k, &derived_params[derived_at], &derived,
+                                               span, location, types);
+            }
+        } else if (kind == SmithLangSlot_Derived) {
+            continue; // bound by the pattern of the `auto` slot before it
         } else if (kind == SmithLangSlot_Function) {
             good = smith_lang_infer_function(lang, host, replay, generic, k, span, location, &types->first[k],
                                              &types->count[k]);
@@ -5425,8 +5510,8 @@ static bool smith_lang_replay_rewritten(SmithLang *lang, const SmithHost *host, 
                                         SmithLangFrame *frame) {
     return smith_lang_fields_replay(lang, host, replay, frame) || smith_lang_slice_replay(lang, host, replay, frame) ||
            smith_lang_try_replay(lang, host, replay, frame) || smith_lang_enum_replay(lang, host, replay, frame) ||
-           smith_lang_aret_replay(lang, host, replay, frame) ||
-           smith_lang_replay_shape(lang, host, replay, frame) || smith_lang_list_gone(lang, host, replay, frame);
+           smith_lang_aret_replay(lang, host, replay, frame) || smith_lang_replay_shape(lang, host, replay, frame) ||
+           smith_lang_list_gone(lang, host, replay, frame);
 }
 
 // The argument list at the frame's position (`rest...`, `rest[i]`, `countof(rest)`). True when it took tokens.

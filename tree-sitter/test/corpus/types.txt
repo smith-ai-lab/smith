@@ -758,3 +758,69 @@ constexpr type Block = u8[16];
       (subscript_expression
         (identifier)
         (number_literal)))))
+
+================================================================================
+a parameter written as a pattern
+================================================================================
+
+void push(List(constexpr Type T) *xs, T item);
+A head(Pair(constexpr Type A, constexpr Num B) pair);
+T sum(Option(Box(constexpr Type T)) maybe, Pair(constexpr Type U, F64) both);
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (declaration
+    (primitive_type)
+    (function_declarator
+      (identifier)
+      (parameter_list
+        (parameter_declaration
+          (pattern_parameter
+            (identifier)
+            (pattern_hole
+              (identifier)
+              (identifier))
+            (pointer_declarator
+              (identifier))))
+        (parameter_declaration
+          (type_identifier)
+          (identifier)))))
+  (declaration
+    (type_identifier)
+    (function_declarator
+      (identifier)
+      (parameter_list
+        (parameter_declaration
+          (pattern_parameter
+            (identifier)
+            (pattern_hole
+              (identifier)
+              (identifier))
+            (pattern_hole
+              (identifier)
+              (identifier))
+            (identifier))))))
+  (declaration
+    (type_identifier)
+    (function_declarator
+      (identifier)
+      (parameter_list
+        (parameter_declaration
+          (pattern_parameter
+            (identifier)
+            (pattern
+              (identifier)
+              (pattern_hole
+                (identifier)
+                (identifier)))
+            (identifier)))
+        (parameter_declaration
+          (pattern_parameter
+            (identifier)
+            (pattern_hole
+              (identifier)
+              (identifier))
+            (type_descriptor
+              (type_identifier))
+            (identifier)))))))

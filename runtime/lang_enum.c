@@ -635,6 +635,7 @@ static size_t smith_lang_enum_switch_count;
 static uint32_t smith_lang_enum_braces; // `{` minus `}` of the tokens seen in slice mode
 
 static void smith_lang_enum_shapes_reset(void);
+static size_t smith_lang_einst_count; // the instances of the type functions (below)
 
 static void smith_lang_enum_reset(void) {
     smith_lang_enum_switch_count = 0;
@@ -1084,6 +1085,7 @@ static void smith_lang_enum_shapes_reset(void) {
     smith_lang_eshape_count = 0;
     smith_lang_eshape_pool_used = 0;
     smith_lang_edefined_count = 0;
+    smith_lang_einst_count = 0;
     smith_lang_eshape_depth = 0;
     smith_lang_eshape_start = true;
     smith_lang_eshape_head = 0;
@@ -1378,6 +1380,73 @@ static bool smith_lang_eshape_defined(const SmithHost *host, const char *tag) {
     return true;
 }
 
+// The instances of the type functions the file has named (issue #449): each struct's tag, its type function and the
+// arguments as C words, so that a parameter written as a pattern (`List(constexpr Type T) *xs`) finds the arguments of
+// the argument's type and binds its holes. The header carries a line for each (`// smith-einstance:`).
+constexpr size_t smith_lang_einst_max = 96;
+
+typedef struct {
+    char tag[smith_lang_tuple_name_max];
+    char function[64];
+    size_t count;
+    char args[smith_lang_eshape_params_max][128];
+} SmithLangEnumInstance;
+
+static SmithLangEnumInstance smith_lang_einsts[smith_lang_einst_max];
+
+static const SmithLangEnumInstance *smith_lang_einst_find(const char *tag) {
+    for (size_t i = 0; i < smith_lang_einst_count; i++) { // at most 96
+        if (strcmp(smith_lang_einsts[i].tag, tag) == 0) return &smith_lang_einsts[i];
+    }
+    return nullptr;
+}
+
+static size_t smith_lang_eshape_words(SmithLang *lang, const SmithToken *tokens, size_t count, char *out,
+                                      size_t capacity);
+static bool smith_lang_eshape_words_header = true; // the words for a header (else for the compiler)
+
+// The words of a type with the sized types by their names (`i32`, not `__INT32_TYPE__`), as the instances write the
+// types they are given: the lowering turns a sized name into the C type where it writes it.
+static void smith_lang_einst_source_names(const char *words, char *out, size_t capacity) {
+    size_t used = 0;
+    out[0] = 0;
+    for (const char *at = words; *at != 0 && used + 2 < capacity;) {
+        size_t length = strcspn(at, " ");
+        const char *text = at;
+        size_t take = length;
+        for (size_t k = 0; k < sizeof smith_lang_sized / sizeof smith_lang_sized[0]; k++) { // 13 sized types
+            if (smith_lang_equals(at, length, smith_lang_sized[k].standard)) {
+                text = smith_lang_sized[k].name;
+                take = strlen(text);
+            }
+        }
+        used += (size_t)snprintf(out + used, capacity - used, "%s%.*s", used > 0 ? " " : "", (int)take, text);
+        at += length;
+        while (*at == ' ')
+            at += 1;
+    }
+}
+
+// Remembers the struct `tag` as the instance of `shape` made by `call`.
+static void smith_lang_einst_note(SmithLang *lang, const SmithLangEnumShape *shape, const SmithLangEnumCall *call,
+                                  const char *tag) {
+    if (smith_lang_einst_find(tag) != nullptr || smith_lang_einst_count >= smith_lang_einst_max) return;
+    SmithLangEnumInstance *entry = &smith_lang_einsts[smith_lang_einst_count++];
+    *entry = (SmithLangEnumInstance){};
+    snprintf(entry->tag, sizeof entry->tag, "%s", tag);
+    snprintf(entry->function, sizeof entry->function, "%s", shape->name);
+    entry->count = shape->param_count;
+    bool header = smith_lang_eshape_words_header;
+    smith_lang_eshape_words_header = false; // the words for the compiler
+    for (size_t p = 0; p < shape->param_count; p++) {
+        char words[1024]; // smith_lang_eshape_words wants room for a long name
+        smith_lang_eshape_words(lang, call->tokens + call->begin[p], call->end[p] - call->begin[p], words,
+                                sizeof words);
+        smith_lang_einst_source_names(words + (words[0] == ' ' ? 1 : 0), entry->args[p], sizeof entry->args[p]);
+    }
+    smith_lang_eshape_words_header = header;
+}
+
 // The struct's name for a call: `smith_enum_<function>_<arguments' spelling>`, cut and hashed when long.
 static bool smith_lang_eshape_tag(SmithLang *lang, const SmithHost *host, const SmithLangEnumShape *shape,
                                   const SmithLangEnumCall *call, char *tag, size_t capacity, bool report) {
@@ -1398,6 +1467,7 @@ static bool smith_lang_eshape_tag(SmithLang *lang, const SmithHost *host, const 
     smith_lang_tuple_tag(joined, hashed, sizeof hashed);
     snprintf(tag, capacity, shape->is_struct ? "smith_struct_%s" : "smith_enum_%s",
              hashed + sizeof smith_lang_tuple_prefix - 1);
+    smith_lang_einst_note(lang, shape, call, tag);
     return true;
 }
 
@@ -1540,7 +1610,6 @@ static SmithLangEnumDefined *smith_lang_eshape_note_defined(const char *tag) {
 
 // The types of a variant as a C header spells them: the sized names as the standard ones, a module's name with its
 // prefix, the rest as written.
-static bool smith_lang_eshape_words_header = true; // the words for a header (else for the compiler, no header needed)
 
 static size_t smith_lang_eshape_words(SmithLang *lang, const SmithToken *tokens, size_t count, char *out,
                                       size_t capacity) {
@@ -1847,6 +1916,13 @@ static uint32_t smith_lang_eshape_instance_call(SmithLang *lang, const SmithHost
     SmithToken as_token = smith_lang_gt_token(&smith_lang_gt, name);
     const SmithLangEnumShape *shape = smith_lang_eshape_find(&as_token);
     if (shape == nullptr) return 0;
+    int nesting = 0;
+    for (uint32_t scan = at + 1; scan < end; scan++) { // a pattern (`List(constexpr Type T)`) is no call to write
+        const SmithLangGenToken *token = &smith_lang_gt.tokens[scan];
+        nesting += smith_lang_gt_punct(token, "(") ? 1 : smith_lang_gt_punct(token, ")") ? -1 : 0;
+        if (smith_lang_gt_is(token, SmithTokenKind_Identifier, "constexpr")) return 0;
+        if (nesting == 0) break;
+    }
     call->count = 0;
     smith_lang_eshape_slice_count = 0;
     size_t argument = 0;
@@ -1992,8 +2068,62 @@ static void smith_lang_eshape_put_slices(SmithLang *lang, const SmithHost *host,
 
 // Before an instance's definition is written at file scope: the struct of each shape call in the generic's tokens that
 // no scope defines.
+// The structs of type functions that the types of the instance name (a pattern parameter's `List(I32)` is the
+// argument's struct, which the caller may have defined in a block): defined here when no scope has them, from the
+// arguments the file recorded.
+static void smith_lang_einst_define(SmithLang *lang, const SmithHost *host, const SmithLangInstance *instance,
+                                    uint32_t place, uint32_t instance_id) {
+    for (size_t k = 0; k < instance->entries; k++) { // the types of the instance
+        char spelling[512];
+        smith_lang_it_spelling(instance->arg_first[k], instance->arg_count[k], spelling, sizeof spelling);
+        for (const char *at = spelling; *at != 0;) {
+            size_t length = strspn(at, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_");
+            if (length == 0) {
+                at += 1;
+                continue;
+            }
+            char tag[smith_lang_tuple_name_max];
+            snprintf(tag, sizeof tag, "%.*s", (int)length, at);
+            at += length;
+            const SmithLangEnumInstance *recorded =
+                strncmp(tag, "smith_struct_", 13) == 0 || strncmp(tag, "smith_enum_", 11) == 0
+                    ? smith_lang_einst_find(tag)
+                    : nullptr;
+            const SmithLangEnumShape *shape = nullptr;
+            for (size_t i = 0; recorded != nullptr && i < smith_lang_eshape_count; i++) { // at most 16
+                if (strcmp(smith_lang_eshapes[i].name, recorded->function) == 0) shape = &smith_lang_eshapes[i];
+            }
+            if (shape == nullptr || smith_lang_eshape_defined(host, tag)) continue;
+            static SmithLangEnumCall call;
+            call.count = 0;
+            for (size_t p = 0; p < recorded->count && p < smith_lang_eshape_params_max; p++) { // the arguments' words
+                call.begin[p] = call.count;
+                for (const char *word = recorded->args[p]; *word != 0 && call.count < smith_lang_eshape_tokens_max;) {
+                    size_t each = strcspn(word, " ");
+                    SmithToken token = {};
+                    bool name = isalpha((unsigned char)*word) || *word == '_';
+                    token.kind = name ? SmithTokenKind_Identifier : SmithTokenKind_Punctuator;
+                    token.text = word;
+                    token.length = (uint32_t)each;
+                    token.handle = smith_token_no_handle;
+                    token.space_before = word != recorded->args[p];
+                    call.tokens[call.count++] = token;
+                    word += each;
+                    while (*word == ' ')
+                        word += 1;
+                }
+                call.end[p] = call.count;
+            }
+            smith_lang_eshape_put_slices(lang, host, place, instance_id);
+            smith_lang_eshape_put_definition(lang, host, shape, &call, tag, place, instance_id);
+            smith_lang_eshape_note_defined(tag);
+        }
+    }
+}
+
 static void smith_lang_instance_define_enums(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
                                              const SmithLangInstance *instance, uint32_t place, uint32_t instance_id) {
+    smith_lang_einst_define(lang, host, instance, place, instance_id);
     uint32_t end = generic->first + generic->count;
     for (uint32_t at = generic->first; at < end; at++) {
         const SmithLangEnumShape *shape = nullptr;
@@ -2059,12 +2189,56 @@ static size_t smith_lang_eshape_lines(const SmithLang *lang, char *out, size_t c
             used = smith_lang_append(out, capacity, used, " %.*s", (int)shape->tokens[t].length, shape->tokens[t].text);
         used = smith_lang_append(out, capacity, used, " }\n");
     }
+    for (size_t i = 0; i < smith_lang_edefined_count; i++) { // the instances the header defines: a pattern finds them
+        const SmithLangEnumInstance *instance = smith_lang_einst_find(smith_lang_edefined[i].tag);
+        if (!smith_lang_edefined[i].header || instance == nullptr) continue;
+        used = smith_lang_append(out, capacity, used, "// smith-einstance: %s %s %zu", instance->tag,
+                                 instance->function, instance->count);
+        for (size_t p = 0; p < instance->count; p++)
+            used = smith_lang_append(out, capacity, used, "%s%s", p > 0 ? "|" : " ", instance->args[p]);
+        used = smith_lang_append(out, capacity, used, "\n");
+    }
     return used;
+}
+
+// The instances a header's `// smith-einstance:` lines hold.
+static void smith_lang_einst_import(const char *text, uint32_t length) {
+    static const char marker[] = "// smith-einstance: ";
+    for (const char *at = memmem(text, length, marker, sizeof marker - 1); at != nullptr;
+         at = memmem(at + 1, (size_t)(text + length - at - 1), marker, sizeof marker - 1)) { // one pass per line
+        const char *line = at + sizeof marker - 1;
+        const char *end = memchr(line, '\n', (size_t)(text + length - line));
+        if (end == nullptr) end = text + length;
+        char copy[640];
+        snprintf(copy, sizeof copy, "%.*s",
+                 (int)(end - line < (long)sizeof copy - 1 ? end - line : (long)sizeof copy - 1), line);
+        char *cursor = copy;
+        char *tag = strsep(&cursor, " ");
+        char *function = strsep(&cursor, " ");
+        char *count = strsep(&cursor, " ");
+        if (tag == nullptr || function == nullptr || count == nullptr || cursor == nullptr ||
+            smith_lang_einst_find(tag) != nullptr || smith_lang_einst_count >= smith_lang_einst_max) {
+            continue;
+        }
+        SmithLangEnumInstance *entry = &smith_lang_einsts[smith_lang_einst_count];
+        *entry = (SmithLangEnumInstance){};
+        snprintf(entry->tag, sizeof entry->tag, "%s", tag);
+        snprintf(entry->function, sizeof entry->function, "%s", function);
+        entry->count = (size_t)strtoul(count, nullptr, 10);
+        if (entry->count > smith_lang_eshape_params_max) continue;
+        for (size_t p = 0; p < entry->count; p++) {
+            char *each = strsep(&cursor, "|");
+            if (each == nullptr) break;
+            snprintf(entry->args[p], sizeof entry->args[p], "%s", each);
+        }
+        smith_lang_einst_count += 1;
+    }
 }
 
 // The shapes a header's `// smith-eshape:` lines hold, kept for the import named `bind`.
 static void smith_lang_eshape_import(const char *text, uint32_t length, const char *bind, size_t bind_length) {
     static const char marker[] = "// smith-eshape: ";
+    smith_lang_einst_import(text, length);
     for (const char *at = memmem(text, length, marker, sizeof marker - 1); at != nullptr;
          at = memmem(at + 1, (size_t)(text + length - at - 1), marker, sizeof marker - 1)) { // one pass per line
         const char *line = at + sizeof marker - 1;
@@ -2495,4 +2669,209 @@ static bool smith_lang_enum_argument(SmithLang *lang, const SmithHost *host, con
     SmithLangEnumType type;
     return smith_lang_enum_param(host, callee, index, &type) &&
            smith_lang_enum_value(lang, host, &type, tokens, count, true, cur);
+}
+
+// ---- A parameter written as a pattern (issue #449)
+//
+// `void push(List(constexpr Type T) *xs, T item)`: the parameter's type is an instance of the type function `List`, and
+// `T` is a hole. At a call the argument's type is the struct of an instance, whose type function and arguments the file
+// recorded (smith_lang_einst_*), so the holes are bound to the arguments: `T` is `I32` for a `List(I32)`. A pattern
+// nests (`Option(List(constexpr Type T))`), takes several holes (`Result(constexpr Type T, constexpr Type E)`) and
+// compares an argument that is no hole (`Pair(constexpr Type T, F64)`) with the instance's. An argument that is no
+// instance of the type function is an error at the call. The parameter is an `auto` slot (its type is the argument's)
+// followed by a slot for each hole (kind Derived), staged here.
+
+constexpr size_t smith_lang_pattern_nodes_max = 8;
+
+typedef struct {
+    uint32_t name_at; // the type function's name, in smith_lang_gt
+    size_t count;     // its arguments
+    struct {
+        int child;        // the node of a nested pattern, else -1
+        uint32_t hole_at; // the name of a hole, else 0
+        uint32_t begin;   // the tokens of the argument, [begin, end)
+        uint32_t end;
+    } arg[smith_lang_eshape_params_max];
+} SmithLangPatternNode;
+
+// The pattern at [from, to) of smith_lang_gt as nodes (the root is the first). A message, or null.
+static const char *smith_lang_pattern_parse(uint32_t from, uint32_t to, SmithLangPatternNode *nodes, size_t *used) {
+    int stack[smith_lang_pattern_nodes_max];
+    int top = -1;
+    *used = 0;
+    for (uint32_t at = from; at < to; at++) { // the tokens of the pattern
+        const SmithLangGenToken *token = &smith_lang_gt.tokens[at];
+        if (token->kind == SmithTokenKind_Identifier && smith_lang_gt_punct(token + 1, "(") &&
+            !smith_lang_gt_is(token, SmithTokenKind_Identifier, "constexpr")) {
+            if (*used >= smith_lang_pattern_nodes_max) return "a pattern is nested at most 8 deep";
+            SmithLangPatternNode *node = &nodes[*used];
+            *node = (SmithLangPatternNode){.name_at = at, .count = 1};
+            for (size_t i = 0; i < smith_lang_eshape_params_max; i++)
+                node->arg[i].child = -1;
+            node->arg[0].begin = at + 2;
+            if (top >= 0) nodes[stack[top]].arg[nodes[stack[top]].count - 1].child = (int)*used;
+            stack[++top] = (int)*used;
+            *used += 1;
+            at += 1;
+            continue;
+        }
+        if (top < 0) return "a pattern is a name and its arguments in parentheses";
+        SmithLangPatternNode *node = &nodes[stack[top]];
+        if (smith_lang_gt_is(token, SmithTokenKind_Identifier, "constexpr")) {
+            node->arg[node->count - 1].hole_at = at + 2;
+            at += 2;
+        } else if (smith_lang_gt_punct(token, ",")) {
+            node->arg[node->count - 1].end = at;
+            if (node->count >= smith_lang_eshape_params_max) return "a type function takes at most 4 arguments";
+            node->arg[node->count++].begin = at + 1;
+        } else if (smith_lang_gt_punct(token, ")")) {
+            node->arg[node->count - 1].end = at;
+            top -= 1;
+        }
+    }
+    return top < 0 && *used > 0 ? nullptr : "a pattern's parentheses never close";
+}
+
+// Whether the generic's token names the type function `function`: as it is, or after the `::` of a module's name.
+static bool smith_lang_pattern_names(const SmithLangGenToken *token, const char *function) {
+    const char *text = smith_lang_gt_str(token);
+    size_t length = token->length;
+    size_t name = strlen(function);
+    return (length == name && memcmp(text, function, name) == 0) ||
+           (length > name + 2 && memcmp(text + length - name, function, name) == 0 && text[length - name - 1] == ':' &&
+            text[length - name - 2] == ':');
+}
+
+// The struct tag of the type spelled as the compiler writes it, when it is a struct, else an empty string.
+static void smith_lang_pattern_tag(const SmithHost *host, const char *spelling, char *tag, size_t capacity) {
+    SmithTypeQuery query = {};
+    tag[0] = 0;
+    if (host->type_query == nullptr || !host->type_query(host->context, spelling, (uint32_t)strlen(spelling), &query) ||
+        strncmp(query.canonical, "struct ", 7) != 0) {
+        return;
+    }
+    snprintf(tag, capacity, "%.*s", (int)strcspn(query.canonical + 7, " "), query.canonical + 7);
+}
+
+// The canonical spelling of a type written as C words.
+static void smith_lang_pattern_canonical(const SmithHost *host, const char *spelling, char *out, size_t capacity) {
+    SmithTypeQuery query = {};
+    snprintf(out, capacity, "%s", spelling);
+    if (host->type_query != nullptr && host->type_query(host->context, spelling, (uint32_t)strlen(spelling), &query) &&
+        query.canonical_length < capacity) {
+        memcpy(out, query.canonical, query.canonical_length);
+        out[query.canonical_length] = 0;
+    }
+}
+
+// The pattern as the module wrote it, for the messages: `List(constexpr Type T)`.
+static void smith_lang_pattern_text(const SmithLangShape *shape, char *out, size_t capacity) {
+    size_t used = 0;
+    out[0] = 0;
+    for (uint32_t at = shape->auto_at; at < shape->pattern_end && used + 2 < capacity; at++) {
+        const SmithLangGenToken *token = &smith_lang_gt.tokens[at];
+        bool space = at > shape->auto_at && (token->flags & smith_lang_gen_flag_space) != 0;
+        used += (size_t)snprintf(out + used, capacity - used, "%s%.*s", space ? " " : "", (int)token->length,
+                                 smith_lang_gt_str(token));
+    }
+}
+
+static bool smith_lang_pattern_bind(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                    const SmithLangGeneric *generic, size_t slot, const SmithLangParam *param,
+                                    const SmithLangShape *shape, SmithLangSpan span, uint32_t location,
+                                    SmithLangCallTypes *types) {
+    SmithLangPatternNode nodes[smith_lang_pattern_nodes_max];
+    size_t node_count = 0;
+    const char *problem = smith_lang_pattern_parse(shape->auto_at, shape->pattern_end, nodes, &node_count);
+    uint32_t place = smith_lang_infer_place(host, replay, span, location);
+    if (problem != nullptr) {
+        smith_lang_error(lang, host, place, "%s", problem);
+        return false;
+    }
+    char spelling[512];
+    smith_lang_it_spelling(types->first[slot], types->count[slot], spelling, sizeof spelling);
+    smith_lang_element_spelling(host, generic, slot, spelling, sizeof spelling);
+    struct {
+        int node;
+        char tag[smith_lang_tuple_name_max];
+    } work[smith_lang_pattern_nodes_max];
+    size_t pending = 0;
+    work[pending].node = 0;
+    smith_lang_pattern_tag(host, spelling, work[pending++].tag, sizeof work[0].tag);
+    char reason[256] = "";
+    while (pending > 0 && reason[0] == 0) { // the instance of each node, then of the nodes inside it
+        pending -= 1;
+        const SmithLangPatternNode *node = &nodes[work[pending].node];
+        const SmithLangEnumInstance *instance = smith_lang_einst_find(work[pending].tag);
+        const char *function = smith_lang_gt_str(&smith_lang_gt.tokens[node->name_at]);
+        size_t function_length = smith_lang_gt.tokens[node->name_at].length;
+        if (instance == nullptr ||
+            !smith_lang_pattern_names(&smith_lang_gt.tokens[node->name_at], instance->function)) {
+            snprintf(reason, sizeof reason, "it is not an instance of `%.*s`", (int)function_length, function);
+            break;
+        }
+        for (size_t a = 0; a < node->count && reason[0] == 0; a++) { // the arguments of the instance
+            if (node->arg[a].hole_at != 0) {
+                size_t hole = 0;
+                while (hole < generic->type_count &&
+                       !(generic->type_kind[hole] == SmithLangSlot_Derived &&
+                         generic->type_token[hole] == node->arg[a].hole_at - generic->first)) {
+                    hole += 1;
+                }
+                if (hole == generic->type_count) {
+                    snprintf(reason, sizeof reason, "its hole has no slot");
+                } else if (generic->type_concept[hole] != 0 &&
+                           !smith_lang_concept_holds(lang, host, generic->type_concept[hole], instance->args[a],
+                                                     place)) {
+                    char written[256];
+                    smith_lang_spell_written(lang, instance->args[a], written, sizeof written);
+                    snprintf(reason, sizeof reason, "`%s`, the argument of `%.*s`, is not `%s`", written,
+                             (int)function_length, function, smith_lang_concept_name(generic->type_concept[hole]));
+                } else if (!smith_lang_infer_stage(instance->args[a], location, &types->first[hole],
+                                                   &types->count[hole])) {
+                    snprintf(reason, sizeof reason, "its argument is too long");
+                }
+            } else if (node->arg[a].child >= 0) {
+                if (pending >= smith_lang_pattern_nodes_max) {
+                    snprintf(reason, sizeof reason, "its pattern is nested too deep");
+                    break;
+                }
+                work[pending].node = node->arg[a].child;
+                smith_lang_pattern_tag(host, instance->args[a], work[pending].tag, sizeof work[0].tag);
+                pending += 1;
+            } else {
+                SmithToken literal[16];
+                size_t length = 0;
+                for (uint32_t at = node->arg[a].begin; at < node->arg[a].end && length < 16; at++)
+                    literal[length++] = smith_lang_gt_token(&smith_lang_gt, &smith_lang_gt.tokens[at]);
+                char words[1024];
+                bool header = smith_lang_eshape_words_header;
+                smith_lang_eshape_words_header = false;
+                smith_lang_eshape_words(lang, literal, length, words, sizeof words);
+                smith_lang_eshape_words_header = header;
+                char want[256];
+                char got[256];
+                smith_lang_pattern_canonical(host, words + (words[0] == ' ' ? 1 : 0), want, sizeof want);
+                smith_lang_pattern_canonical(host, instance->args[a], got, sizeof got);
+                if (strcmp(want, got) != 0) {
+                    char written[256];
+                    smith_lang_spell_written(lang, instance->args[a], written, sizeof written);
+                    snprintf(reason, sizeof reason, "its argument `%s` is not the `%s` the pattern has there", written,
+                             words + (words[0] == ' ' ? 1 : 0));
+                }
+            }
+        }
+    }
+    if (reason[0] == 0) return true;
+    char shown[256];
+    smith_lang_infer_written(span, shown, sizeof shown);
+    char written[256];
+    smith_lang_spell_written(lang, spelling, written, sizeof written);
+    char pattern[256];
+    smith_lang_pattern_text(shape, pattern, sizeof pattern);
+    smith_lang_takes_note(host, generic, param, shape->auto_at, place);
+    smith_lang_error(lang, host, place, "`%s`, the argument of `%s`, does not match `%s`: %s", written,
+                     smith_lang_str(generic->member), pattern, reason);
+    (void)shown;
+    return false;
 }

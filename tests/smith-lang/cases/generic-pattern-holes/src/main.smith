@@ -1,0 +1,53 @@
+module main;
+
+import <stdio.h>;
+
+// Patterns with several holes, a hole that takes a concept, a nested pattern and an argument that is no hole.
+
+Type Pair(Type A, Type B) {
+    return struct {
+        A first;
+        B second;
+    };
+}
+
+Type Box(Type T) {
+    return struct {
+        T value;
+    };
+}
+
+A head(Pair(constexpr Type A, constexpr Type B) pair) {
+    return pair.first;
+}
+
+B tail(Pair(constexpr Type A, constexpr Type B) *pair) {
+    return pair->second;
+}
+
+T sum(Box(constexpr Num T) box, T extra) {
+    return box.value + extra;
+}
+
+T zero(Option(Box(constexpr Type T)) maybe) {
+    (void)maybe;
+    T none = {};
+    return none;
+}
+
+f64 scale(Pair(constexpr Type A, F64) pair) {
+    return pair.second * 2;
+}
+
+typedef Box(i32) IntBox;
+typedef Pair(i32, f64) Mixed;
+
+i32 main(void) {
+    Mixed m = {.first = 7, .second = 1.5};
+    Box(f32) real = {.value = 0.5f};
+    IntBox whole = {.value = 40};
+    Option(IntBox) maybe = {.some = whole};
+    c::printf("%d %g %g %g %d %g\n", head(m), tail(&m), (f64)sum(real, 1.0f), (f64)sum(whole, 2), zero(maybe),
+              scale(m));
+    return 0;
+}

@@ -7,6 +7,7 @@
 // smith-slices
 // smith-enums
 // smith-bodies: find
+// smith-einstance: smith_enum_option_usize option 1 usize
 // clang-format on
 #pragma once
 #include <stddef.h>

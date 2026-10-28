@@ -26,6 +26,9 @@ module.exports = grammar(C, {
 
   conflicts: ($, original) => original.concat([
     [$.scoped_identifier, $.scoped_type_identifier],
+    [$.type_qualifier, $.pattern_parameter],
+    [$.type_qualifier, $.pattern_hole],
+    [$.macro_type_specifier, $._pattern_argument],
     [$.macro_type_specifier, $._argument],
     [$.expression, $.macro_type_specifier],
     [$.type_specifier, $.expression, $.macro_type_specifier, $.macro_invocation],
@@ -219,9 +222,16 @@ module.exports = grammar(C, {
       prec.dynamic(1, $.type_parameter),
       prec.dynamic(1, $.pack_parameter),
       prec.dynamic(2, $.element_parameter),
+      prec.dynamic(2, $.pattern_parameter),
     ),
     element_parameter: $ => seq(optional('const'), 'auto', field('declarator', choice($.pointer_declarator, $.array_declarator))),
     type_parameter: $ => seq('constexpr', 'type', field('name', $.identifier)),
+    // A parameter written as a pattern (issue #449): List(constexpr Type T) *xs, Pair(constexpr Type A, F64) pair,
+    // Option(List(constexpr Num T)) maybe. A hole is a constexpr kind and a name; a pattern nests.
+    pattern_parameter: $ => seq(optional('const'), $._pattern, optional(field('declarator', choice($.pointer_declarator, $.identifier)))),
+    _pattern: $ => prec(3, seq(field('name', choice($.identifier, $.scoped_identifier)), '(', commaSep1($._pattern_argument), ')')),
+    _pattern_argument: $ => choice($.pattern_hole, alias($._pattern, $.pattern), $.type_descriptor),
+    pattern_hole: $ => seq('constexpr', field('kind', choice('type', $.identifier)), field('name', $.identifier)),
     pack_parameter: $ => seq('auto', '...', field('name', $.identifier)),
 
     // if constexpr (T == f32) { ... }

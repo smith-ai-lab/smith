@@ -223,7 +223,8 @@ typedef enum {
     SmithLangSlot_Auto,
     SmithLangSlot_Function,
     SmithLangSlot_Pack,
-    SmithLangSlot_Number, // `constexpr usize i`: an integer constant, one instance for each value
+    SmithLangSlot_Number,  // `constexpr usize i`: an integer constant, one instance for each value
+    SmithLangSlot_Derived, // a hole of a pattern, `List(constexpr Type T)`: bound by the argument of the pattern's slot
 } SmithLangSlot;
 
 typedef struct {
@@ -487,15 +488,16 @@ struct SmithLang {
     bool call_failed;                                        // a call nested too deep: the outermost is dropped
     bool recording;                                          // a generic's body is being read into smith_lang_gt
     uint32_t recording_generic;                              // its index
-    bool recording_skip;      // its head had an error: the body is read to its end and dropped
-    uint32_t skip_mark;       // where in smith_lang_gt the dropped body begins
-    bool generic_next;        // the declaration about to begin is generic
-    uint32_t array_result_open; // the `[` of a generic's result `T[n]` (runtime/lang_array.c): what is before it is a type
-    bool concept_head;        // the head being read is a concept's, `Bool Ordered(constexpr Type T)` (issue #193)
-    bool generic_plain;       // ... a plain one: a function over `type` that is exported (issue #107)
-    bool type_import;         // an import has functions over `type`: their records are defined after the last import
-    bool generic_result_call; // ... and its result type is a call
-    bool generics_loaded;     // the generics of the imports are read
+    bool recording_skip; // its head had an error: the body is read to its end and dropped
+    uint32_t skip_mark;  // where in smith_lang_gt the dropped body begins
+    bool generic_next;   // the declaration about to begin is generic
+    uint32_t
+        array_result_open; // the `[` of a generic's result `T[n]` (runtime/lang_array.c): what is before it is a type
+    bool concept_head;     // the head being read is a concept's, `Bool Ordered(constexpr Type T)` (issue #193)
+    bool generic_plain;    // ... a plain one: a function over `type` that is exported (issue #107)
+    bool type_import;      // an import has functions over `type`: their records are defined after the last import
+    bool generic_result_call;                                      // ... and its result type is a call
+    bool generics_loaded;                                          // the generics of the imports are read
     SmithLangText generic_modules[smith_lang_generic_modules_max]; // the modules read for their generics
     size_t generic_modules_count;
     bool gen_dump_on; // SMITH_LANG_GENERICS names a file for what the generics write (a test's view of it)

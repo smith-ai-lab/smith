@@ -133,6 +133,141 @@ i32 main() {
     c::memset(xs, 0, sizeof xs);
     return 0;
 }
+==> array-result-generic/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import split;
+
+i32 main() {
+    split::Key key = {10, 20};
+    split::Key keys[3] = split::split(key, 3);
+    split::Key pair[2] = split::split(key, 2);
+    i32 sevens[4] = split::fill(i32, 7, 4);
+    f32 halves[2] = split::both(f32, 0.5f, 1.5f);
+    c::printf("%llu %llu %llu %llu\n", keys[0].high, keys[1].low, keys[2].low, pair[1].high);
+    c::printf("%d %d %d %.1f %.1f\n", sevens[0], sevens[3], (i32)countof(sevens), halves[0], halves[1]);
+    return 0;
+}
+==> array-result-generic/src/split.smith <==
+module split;
+
+// The size of the array is a `constexpr` parameter of the generic: each size is an instance with its own struct.
+
+export struct Key {
+    u64 high;
+    u64 low;
+};
+
+export Key[n] split(Key key, constexpr usize n) {
+    Key out[n];
+    for constexpr (usize i = 0; i < n; i++) {
+        out[i].high = key.high + i;
+        out[i].low = key.low * 2 + i;
+    }
+    return out;
+}
+
+export T[n] fill(constexpr type T, T value, constexpr usize n) {
+    T out[n];
+    for constexpr (usize i = 0; i < n; i++) {
+        out[i] = value;
+    }
+    return out;
+}
+
+export T[2] both(constexpr type T, T a, T b) {
+    return {a, b};
+}
+==> array-result-lowering/src/local.smith <==
+module local;
+
+// Not exported: the struct is defined where the function is, and a second function with the same result names it.
+
+i32[2] two(i32 x) {
+    return {x, x + 1};
+}
+
+i32[2] again(i32 x) {
+    i32 keep[2] = two(x);
+    return keep;
+}
+
+i32 first(i32 x) {
+    i32 pair[2] = again(x);
+    return pair[0];
+}
+==> array-result-lowering/src/pairs.smith <==
+module pairs;
+
+// A function returns a fixed-size array: `T[3]`, written bare. It lowers to a function that returns a struct wrapping
+// the array (`struct smith_array_i32_3 { i32 data[3]; }`), and an array is initialized from the call.
+
+export struct Pair {
+    i32 left;
+    i32 right;
+};
+
+export Pair[2] twin(Pair p) {
+    return {p, {p.right, p.left}};
+}
+
+export i32[3] count_from(i32 start) {
+    i32 out[3] = {start, start + 1, start + 2};
+    return out;
+}
+
+export i32[3] counted(i32 start) {
+    return count_from(start);
+}
+
+export i32[:] tail(i32 xs[:]) {
+    return xs[1:];
+}
+==> array-result/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import pairs;
+
+i32 main() {
+    pairs::Pair p = {1, 2};
+    pairs::Pair both[2] = pairs::twin(p);
+    i32 three[3] = pairs::count_from(10);
+    const i32 more[3] = pairs::counted(20);
+    i32 raw[4] = {5, 6, 7, 8};
+    i32 rest[:] = pairs::tail(raw);
+    c::printf("%d %d %d %d\n", both[0].left, both[1].left, both[1].right, three[2]);
+    c::printf("%d %d %zu %d\n", more[0], more[2], countof(rest), rest[0]);
+    return 0;
+}
+==> array-result/src/pairs.smith <==
+module pairs;
+
+// A function returns a fixed-size array: `T[3]`, written bare. It lowers to a function that returns a struct wrapping
+// the array (`struct smith_array_i32_3 { i32 data[3]; }`), and an array is initialized from the call.
+
+export struct Pair {
+    i32 left;
+    i32 right;
+};
+
+export Pair[2] twin(Pair p) {
+    return {p, {p.right, p.left}};
+}
+
+export i32[3] count_from(i32 start) {
+    i32 out[3] = {start, start + 1, start + 2};
+    return out;
+}
+
+export i32[3] counted(i32 start) {
+    return count_from(start);
+}
+
+export i32[:] tail(i32 xs[:]) {
+    return xs[1:];
+}
 ==> attribute-c-names/src/log/fmt.smith <==
 module log::fmt;
 import <stdio.h>;
@@ -1787,6 +1922,43 @@ i32 mine(i32 argc, char *argv[]) {
     i32 xs[1] = {};
     return first(xs) + argc;
 }
+==> error-array-result-count/src/main.smith <==
+module main;
+
+i32[2] two(i32 x) {
+    return {x, x};
+}
+
+i32 main() {
+    i32 three[3] = two(1);
+    return three[0];
+}
+==> error-array-result-return/src/main.smith <==
+module main;
+
+i32[3] three(i32 x) {
+    i32 two[2] = {x, x};
+    return two;
+}
+
+i32 main() {
+    i32 xs[3] = three(1);
+    return xs[0];
+}
+==> error-array-result-size/src/main.smith <==
+module main;
+
+i32 limit() {
+    return 3;
+}
+
+i32[limit] bad(i32 x) {
+    return 0;
+}
+
+i32 main() {
+    return 0;
+}
 ==> error-c-name-function/src/uses/math.smith <==
 module uses::math;
 import <math.h>;
@@ -2607,6 +2779,51 @@ export i32 sum_all(auto p) {
 // A number among the arguments of a call that holds a pattern: the other parameters are no number.
 export i32 over_pack(auto p, auto... rest) {
     return scaled(2, (i32)(*p)) + scaled(countof(rest), 0);
+}
+==> error-generic-pattern-concept/src/main.smith <==
+module main;
+
+Type Box(Type T) {
+    return struct {
+        T value;
+    };
+}
+
+T twice(Box(constexpr Num T) box) {
+    return box.value + box.value;
+}
+
+i32 main(void) {
+    Box(const char *) text = {.value = "a"};
+    twice(text);
+    return 0;
+}
+==> error-generic-pattern/src/main.smith <==
+module main;
+
+Type List(Type T) {
+    return struct {
+        T *items;
+        usize count;
+    };
+}
+
+Type Box(Type T) {
+    return struct {
+        T value;
+    };
+}
+
+T last(List(constexpr Type T) xs) {
+    return xs.items[xs.count - 1];
+}
+
+i32 main(void) {
+    Box(i32) box = {.value = 1};
+    i32 plain = 2;
+    last(box);
+    last(plain);
+    return 0;
 }
 ==> error-generic-private-generic/src/main.smith <==
 module main;
@@ -7255,6 +7472,146 @@ int main() {
               s0, s1, s2, z0, z1, z2, f1, f2, c1, c2, b);
     return 0;
 }
+==> generic-pattern-holes/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+// Patterns with several holes, a hole that takes a concept, a nested pattern and an argument that is no hole.
+
+Type Pair(Type A, Type B) {
+    return struct {
+        A first;
+        B second;
+    };
+}
+
+Type Box(Type T) {
+    return struct {
+        T value;
+    };
+}
+
+A head(Pair(constexpr Type A, constexpr Type B) pair) {
+    return pair.first;
+}
+
+B tail(Pair(constexpr Type A, constexpr Type B) * pair) {
+    return pair->second;
+}
+
+T sum(Box(constexpr Num T) box, T extra) {
+    return box.value + extra;
+}
+
+T zero(Option(Box(constexpr Type T)) maybe) {
+    (void)maybe;
+    T none = {};
+    return none;
+}
+
+f64 scale(Pair(constexpr Type A, F64) pair) {
+    return pair.second * 2;
+}
+
+typedef Box(i32) IntBox;
+typedef Pair(i32, f64) Mixed;
+
+i32 main(void) {
+    Mixed m = {.first = 7, .second = 1.5};
+    Box(f32) real = {.value = 0.5f};
+    IntBox whole = {.value = 40};
+    Option(IntBox) maybe = {.some = whole};
+    c::printf("%d %g %g %g %d %g\n", head(m), tail(&m), (f64)sum(real, 1.0f), (f64)sum(whole, 2), zero(maybe),
+              scale(m));
+    return 0;
+}
+==> generic-pattern-import/src/lists.smith <==
+module lists;
+
+// A module whose type function and generic functions take it as a pattern: an importer's `lists::List(i32)` and the
+// `List(usize)` this module's exported function returns are both instances `push` binds `T` from.
+
+export Type List(Type T) {
+    return struct {
+        T *items;
+        usize count;
+    };
+}
+
+export void push(List(constexpr Type T) * xs, T item) {
+    xs->items[xs->count] = item;
+    xs->count += 1;
+}
+
+export usize total(List(constexpr Num T) xs) {
+    usize sum = 0;
+    for (usize i = 0; i < xs.count; i++)
+        sum += (usize)xs.items[i];
+    return sum;
+}
+
+static usize storage[4];
+
+export List(usize) filled(usize first) {
+    List(usize) list = {.items = storage};
+    push(&list, first);
+    push(&list, first + 1);
+    return list;
+}
+==> generic-pattern-import/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import lists;
+
+typedef lists::List(i32) Ints;
+
+i32 main(void) {
+    i32 storage[4] = {};
+    Ints a = {.items = storage};
+    lists::push(&a, 5);
+    lists::push(&a, 6);
+    auto b = lists::filled(10);
+    lists::push(&b, 12);
+    c::printf("%zu %zu %zu %zu\n", a.count, lists::total(a), b.count, lists::total(b));
+    return 0;
+}
+==> generic-pattern/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+// A parameter written as a pattern: `List(constexpr Type T) *xs` takes any instance of `List`, and `T` is bound from
+// the argument's type, so `item` is an `I32` for a `List(I32)` and an `F64` for a `List(F64)`.
+
+Type List(Type T) {
+    return struct {
+        T *items;
+        usize count;
+    };
+}
+
+void push(List(constexpr Type T) * xs, T item) {
+    xs->items[xs->count] = item;
+    xs->count += 1;
+}
+
+T last(List(constexpr Type T) xs) {
+    return xs.items[xs.count - 1];
+}
+
+i32 main(void) {
+    i32 ints[4] = {};
+    f64 reals[4] = {};
+    List(i32) a = {.items = ints};
+    List(f64) b = {.items = reals};
+    push(&a, 3);
+    push(&a, 4);
+    push(&b, 2.5);
+    c::printf("%zu %d %zu %g\n", a.count, last(a), b.count, last(b));
+    return 0;
+}
 ==> generic-print-error/src/fmt.smith <==
 module fmt;
 
@@ -10910,6 +11267,77 @@ i32 main() {
     c::printf("%zu %zu\n", countof(n.name), countof(same));
     return 0;
 }
+==> struct-type-function-export/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import pairs;
+
+typedef pairs::Pair(usize) Indexes;
+typedef pairs::Pair(f64) Points;
+
+static usize total(Indexes pair) {
+    return pair.first + pair.second + pair.count;
+}
+
+i32 main(void) {
+    Indexes a = pairs::both(5, 6);
+    Points b = {.first = 1.5, .second = 2.5, .count = 1};
+    Indexes zero = {};
+    c::printf("%zu %g %zu\n", total(a), b.first + b.second, total(zero));
+    return 0;
+}
+==> struct-type-function-export/src/pairs.smith <==
+module pairs;
+
+// An exported type function that returns a struct: the header carries its shape, and an importer's `pairs::Pair(usize)`
+// is the same struct as this module's.
+export Type Pair(Type T) {
+    return struct {
+        T first;
+        T second;
+        usize count;
+    };
+}
+
+export Pair(usize) both(usize a, usize b) {
+    Pair(usize) both = {.first = a, .second = b, .count = 2};
+    return both;
+}
+==> struct-type-function/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+// A type function that returns a struct: `Pair(usize)` is one struct for every use, defined at the first declaration
+// that names it, and its fields may be of the argument's type.
+
+Type Pair(Type T) {
+    return struct {
+        T first;
+        T second;
+        usize count;
+    };
+}
+
+typedef Pair(usize) Indexes;
+typedef Pair(f64) Points;
+
+static usize total(Indexes pair) {
+    return pair.first + pair.second + pair.count;
+}
+
+static f64 mid(Points pair) {
+    return (pair.first + pair.second) / 2;
+}
+
+i32 main(void) {
+    Indexes a = {.first = 3, .second = 4, .count = 2};
+    Points b = {.first = 1.5, .second = 2.5};
+    Indexes zero = {};
+    c::printf("%zu %g %zu\n", total(a), mid(b), total(zero));
+    return 0;
+}
 ==> target-facts/src/main.smith <==
 import target;
 import <stdio.h>;
@@ -10972,7 +11400,7 @@ import <stdio.h>;
 typedef result(usize, i32) Wide;
 typedef result(f64, i32) Real;
 typedef option(u8) Small;
-typedef option(f64) Real;
+typedef option(f64) Scalar;
 
 static result(i32, i32) step(i32 n) {
     if (n < 0) return {.error = n};
@@ -11030,7 +11458,7 @@ static void show_small(Small o) {
     }
 }
 
-static void show_float(Real o) {
+static void show_float(Scalar o) {
     switch (o) {
     case .some:
         c::printf("some %g\n", o.some);

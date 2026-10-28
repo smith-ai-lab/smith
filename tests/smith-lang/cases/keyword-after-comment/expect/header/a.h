@@ -7,6 +7,7 @@
 // smith-slices
 // smith-enums
 // smith-bodies: pass
+// smith-einstance: smith_enum_option_i32 option 1 i32
 // clang-format on
 #pragma once
 #include <stddef.h>

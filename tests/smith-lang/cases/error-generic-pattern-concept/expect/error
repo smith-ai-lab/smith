@@ -1,0 +1,1 @@
+src/main.smith:15:11: `struct smith_struct_Box_const_char_ptr`, the argument of `twice`, does not match `Box(constexpr arithmetic T)`: `const char *`, the argument of `Box`, is not `arithmetic`

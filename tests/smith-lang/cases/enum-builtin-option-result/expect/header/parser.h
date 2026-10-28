@@ -7,6 +7,8 @@
 // smith-slices
 // smith-enums
 // smith-bodies: position divide
+// smith-einstance: smith_enum_option_usize option 1 usize
+// smith-einstance: smith_enum_result_f64__i32 result 2 f64|i32
 // clang-format on
 #pragma once
 #include <stddef.h>

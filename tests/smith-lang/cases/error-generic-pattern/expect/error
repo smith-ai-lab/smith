@@ -1,0 +1,2 @@
+src/main.smith:23:10: `struct smith_struct_Box_i32`, the argument of `last`, does not match `List(constexpr type T)`: it is not an instance of `List`
+src/main.smith:24:10: `i32`, the argument of `last`, does not match `List(constexpr type T)`: it is not an instance of `List`

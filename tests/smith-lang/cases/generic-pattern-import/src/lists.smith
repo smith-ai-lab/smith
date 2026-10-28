@@ -1,0 +1,32 @@
+module lists;
+
+// A module whose type function and generic functions take it as a pattern: an importer's `lists::List(i32)` and the
+// `List(usize)` this module's exported function returns are both instances `push` binds `T` from.
+
+export Type List(Type T) {
+    return struct {
+        T *items;
+        usize count;
+    };
+}
+
+export void push(List(constexpr Type T) *xs, T item) {
+    xs->items[xs->count] = item;
+    xs->count += 1;
+}
+
+export usize total(List(constexpr Num T) xs) {
+    usize sum = 0;
+    for (usize i = 0; i < xs.count; i++)
+        sum += (usize)xs.items[i];
+    return sum;
+}
+
+static usize storage[4];
+
+export List(usize) filled(usize first) {
+    List(usize) list = {.items = storage};
+    push(&list, first);
+    push(&list, first + 1);
+    return list;
+}

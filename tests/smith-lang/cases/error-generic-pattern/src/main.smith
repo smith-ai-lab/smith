@@ -1,0 +1,26 @@
+module main;
+
+Type List(Type T) {
+    return struct {
+        T *items;
+        usize count;
+    };
+}
+
+Type Box(Type T) {
+    return struct {
+        T value;
+    };
+}
+
+T last(List(constexpr Type T) xs) {
+    return xs.items[xs.count - 1];
+}
+
+i32 main(void) {
+    Box(i32) box = {.value = 1};
+    i32 plain = 2;
+    last(box);
+    last(plain);
+    return 0;
+}

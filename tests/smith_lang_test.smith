@@ -1886,3 +1886,23 @@ export void test_struct_type_function(io::Io *io) {
 export void test_struct_type_function_export(io::Io *io) {
     corpus_case(io, "struct-type-function-export");
 }
+
+export void test_generic_pattern(io::Io *io) {
+    corpus_case(io, "generic-pattern");
+}
+
+export void test_generic_pattern_holes(io::Io *io) {
+    corpus_case(io, "generic-pattern-holes");
+}
+
+export void test_generic_pattern_import(io::Io *io) {
+    corpus_case(io, "generic-pattern-import");
+}
+
+export void test_error_generic_pattern(io::Io *io) {
+    corpus_case(io, "error-generic-pattern");
+}
+
+export void test_error_generic_pattern_concept(io::Io *io) {
+    corpus_case(io, "error-generic-pattern-concept");
+}

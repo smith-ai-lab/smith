@@ -1,0 +1,6 @@
+src/main.smith:50:104: cannot tell the type of `maybe`, the argument of `zero`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:50:43: cannot tell the type of `m`, the argument of `head`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:50:52: cannot tell the type of `&m`, the argument of `tail`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:50:66: cannot tell the type of `real`, the argument of `sum`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:50:88: cannot tell the type of `whole`, the argument of `sum`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:51:21: cannot tell the type of `m`, the argument of `scale`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable

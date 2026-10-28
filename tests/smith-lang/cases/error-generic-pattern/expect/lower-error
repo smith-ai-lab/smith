@@ -1,0 +1,2 @@
+src/main.smith:23:10: cannot tell the type of `box`, the argument of `last`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:24:10: cannot tell the type of `plain`, the argument of `last`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable

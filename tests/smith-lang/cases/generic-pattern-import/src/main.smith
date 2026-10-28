@@ -1,0 +1,17 @@
+module main;
+
+import <stdio.h>;
+import lists;
+
+typedef lists::List(i32) Ints;
+
+i32 main(void) {
+    i32 storage[4] = {};
+    Ints a = {.items = storage};
+    lists::push(&a, 5);
+    lists::push(&a, 6);
+    auto b = lists::filled(10);
+    lists::push(&b, 12);
+    c::printf("%zu %zu %zu %zu\n", a.count, lists::total(a), b.count, lists::total(b));
+    return 0;
+}
