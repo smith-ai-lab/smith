@@ -12,10 +12,7 @@ import runner;
 import scratch;
 
 static scratch::Project workers_project(io::Io *io) {
-    scratch::Project p = runner::project(io, "runner_base", "runner_workers");
-    scratch::Run run = runner::build(&p, "");
-    scratch::expect_status("workers: the runner builds", 0, &run);
-    return p;
+    return runner::built_project(io, "runner_base", "runner_workers", "");
 }
 
 // The forks a run is expected to make: the value of the workers, and of --isolate.
@@ -254,10 +251,7 @@ export void test_runner_workers_ninety_jobs_under_a_limit_of_a_hundred_descripto
 // a shell it waits 10 s of wall time for ("shell expansion failed (timed out)" on a loaded machine, #344), so the
 // debugger test launches with `process launch -X false`.
 static scratch::Project inprocess_project(io::Io *io) {
-    scratch::Project p = runner::project(io, "runner_base", "runner_inproc");
-    scratch::Run run = runner::build(&p, "");
-    scratch::expect_status("in-process: the runner builds", 0, &run);
-    return p;
+    return runner::built_project(io, "runner_base", "runner_inproc", "");
 }
 
 export void test_runner_workers_in_process_reports_a_failure_and_prints_as_written(io::Io *io) {
@@ -312,10 +306,7 @@ static bool explain_available(const scratch::Project *p) {
 }
 
 static scratch::Project explain_project(io::Io *io) {
-    scratch::Project p = runner::project(io, "runner_base", "runner_explain");
-    scratch::Run run = runner::build(&p, "");
-    scratch::expect_status("explain: the runner builds", 0, &run);
-    return p;
+    return runner::built_project(io, "runner_base", "runner_explain", "");
 }
 
 // The report smith test prints, with the values read from the stopped test.
