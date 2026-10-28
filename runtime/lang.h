@@ -290,6 +290,8 @@ typedef struct {
     // Whether the file's text may declare a generic (it contains `type `); false lets a declaration be decided at its
     // first token.
     bool maybe_generic;
+    // Whether the file's text may use a standard concept (`Num`, issue #193): the lowering then has them in scope.
+    bool maybe_concepts;
     // Whether the file's text may contain an `if constexpr` (the words in that order): the host then offers every token
     // of a function body, because `if` and `else` are keywords and a sparse host is offered only identifiers.
     bool maybe_local_tag; // a tag is defined inside braces (a block's struct): the bodies of functions are read whole
@@ -443,6 +445,7 @@ const char *smith_lang_module_name(const SmithLang *lang);
 // written with the lowercase names (`concepts`: the concepts too, which makes it longer; `out` has room for 3 * length
 // + 1).
 bool smith_lang_capital_at(size_t index, const char **written, const char **name);
+bool smith_lang_concepts_file(const char *path);
 const char *smith_lang_capital_name(const char *text, size_t length);
 size_t smith_lang_capitals_lower(const char *text, size_t length, char *out, bool concepts);
 bool smith_lang_misused_keyword(const char *text, size_t length);

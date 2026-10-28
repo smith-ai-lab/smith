@@ -490,6 +490,7 @@ struct SmithLang {
     bool recording_skip;      // its head had an error: the body is read to its end and dropped
     uint32_t skip_mark;       // where in smith_lang_gt the dropped body begins
     bool generic_next;        // the declaration about to begin is generic
+    bool concepts_in;         // the standard concepts are in scope in this file (runtime/lang_type.c)
     bool concept_head;        // the head being read is a concept's, `Bool Ordered(constexpr Type T)` (issue #193)
     bool generic_plain;       // ... a plain one: a function over `type` that is exported (issue #107)
     bool type_import;         // an import has functions over `type`: their records are defined after the last import
@@ -898,17 +899,17 @@ static const SmithLangCapital smith_lang_capitals[] = {
     {"Type", "type"},
     {"Option", "option"},
     {"Result", "result"},
-    {"Int", "integer"},
-    {"Float", "floating"},
-    {"Num", "arithmetic"},
-    {"Pointer", "pointer"},
-    {"Enum", "enumeration"},
-    {"Struct", "structure"},
-    {"Array", "array"},
-    {"Slice", "slice"},
-    {"Any", "any"},
-    {"Signed", "signed_integer"},
-    {"Unsigned", "unsigned_integer"},
+    {"Int", "smith_concepts_Int"},
+    {"Float", "smith_concepts_Float"},
+    {"Num", "smith_concepts_Num"},
+    {"Pointer", "smith_concepts_Pointer"},
+    {"Enum", "smith_concepts_Enum"},
+    {"Struct", "smith_concepts_Struct"},
+    {"Array", "smith_concepts_Array"},
+    {"Slice", "smith_concepts_Slice"},
+    {"Any", "smith_concepts_Any"},
+    {"Signed", "smith_concepts_Signed"},
+    {"Unsigned", "smith_concepts_Unsigned"},
 };
 
 // The capitalized name number `index` and the lowercase name it stands for; false past the last.
@@ -919,9 +920,22 @@ bool smith_lang_capital_at(size_t index, const char **written, const char **name
     return true;
 }
 
+// Whether the file is lib/smith/concepts.smith, where the standard concepts are written with the names they have there
+// (`Int` is its own function, not `smith_concepts_Int`).
+bool smith_lang_concepts_file(const char *path) {
+    static const char *const ends[] = {"smith/concepts.smith", "std/concepts.smith"};
+    size_t length = path != nullptr ? strlen(path) : 0;
+    for (size_t i = 0; i < sizeof ends / sizeof ends[0]; i++) { // 2 spellings
+        size_t end = strlen(ends[i]);
+        if (length >= end && strcmp(path + length - end, ends[i]) == 0 && (length == end || path[length - end - 1] == '/'))
+            return true;
+    }
+    return false;
+}
+
 // The lowercase name a capitalized one stands for, or null.
 const char *smith_lang_capital_name(const char *text, size_t length) {
-    if (length < 3 || length > 8 || text[0] < 'A' || text[0] > 'Z') return nullptr;
+    if (length < 2 || length > 8 || text[0] < 'A' || text[0] > 'Z') return nullptr;
     for (size_t i = 0; i < sizeof smith_lang_capitals / sizeof smith_lang_capitals[0]; i++) { // 28 names
         if (smith_lang_equals(text, length, smith_lang_capitals[i].written)) return smith_lang_capitals[i].name;
     }

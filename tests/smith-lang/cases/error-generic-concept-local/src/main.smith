@@ -1,11 +1,13 @@
-typedef struct {
-    int a;
-} Pair;
+module main;
 
-int main(void) {
+struct Pair {
+    i32 a;
+};
+
+i32 main(void) {
     const char *name = "x";
-    integer n = 2.5;
-    arithmetic text = name;
-    floating pair = (Pair){1};
+    Int n = 2.5;
+    Num text = name;
+    Float pair = (Pair){1};
     return n;
 }

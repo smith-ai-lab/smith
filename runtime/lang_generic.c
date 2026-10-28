@@ -239,17 +239,14 @@ static bool smith_lang_param_is_bare_type(const SmithLangParam *param) {
            first[1].kind == SmithTokenKind_Identifier;
 }
 
-// The concepts, the questions of a type that can stand for a type (`arithmetic x`, issue #193): a name here is the
-// concept `auto` is, narrowed. The order is the one of smith_lang_concept_holds.
-static const char *const smith_lang_concepts[] = {"integer",    "floating", "signed_integer", "unsigned_integer",
-                                                  "arithmetic", "boolean",  "pointer",        "enumeration",
-                                                  "structure",  "array",    "slice",          "any"};
-
-// The concepts a program declares (`Bool Ordered(constexpr Type T)`, issue #193): ordinary functions over a type that
-// a parameter may name. A name is a concept from its declaration on, in the module that declares it (`module` empty)
-// or in one the file imports. They count after the eleven above: the id of the first is 12.
-constexpr size_t smith_lang_user_concepts_max = 64;
-constexpr unsigned smith_lang_builtin_concepts = 12;
+// ---- Concepts (issue #193)
+//
+// A concept is an ordinary function `Bool Name(constexpr Type T)` that a parameter names where a type goes (`Num x`,
+// `const Int xs[:]`, `Any... rest`) and that the compiler runs on the argument's type, never instantiated. The standard
+// ones (`Any`, `Int`, `Float`, `Num`, `Signed`, `Unsigned`, `Pointer`, `Enum`, `Struct`, `Array`, `Slice`) are the
+// functions of the module smith::concepts (lib/smith/concepts.smith), in scope in every module with no import
+// (runtime/lang_type.c); a program's own are declared where it writes them, or in a module it imports.
+constexpr size_t smith_lang_user_concepts_max = 96;
 
 typedef struct {
     char name[smith_lang_name_max];
@@ -259,12 +256,10 @@ typedef struct {
 static SmithLangUserConcept smith_lang_user_concepts[smith_lang_user_concepts_max];
 static size_t smith_lang_user_concept_count;
 
-// The id of the program's concept `name` (the builtin count + its index + 1), or 0.
+// The id of the concept `name` (its index + 1), or 0.
 static unsigned smith_lang_user_concept_find(const char *name, size_t length) {
     for (size_t i = 0; i < smith_lang_user_concept_count; i++) { // the concepts declared so far
-        if (smith_lang_equals(name, length, smith_lang_user_concepts[i].name)) {
-            return smith_lang_builtin_concepts + (unsigned)i + 1;
-        }
+        if (smith_lang_equals(name, length, smith_lang_user_concepts[i].name)) return (unsigned)i + 1;
     }
     return 0;
 }
@@ -273,7 +268,7 @@ static void smith_lang_user_concept_add(const char *name, size_t length, const c
     if (length >= smith_lang_name_max || module_length >= smith_lang_name_max) return;
     unsigned known = smith_lang_user_concept_find(name, length);
     if (known != 0) { // read from an import's header after the raw lowering that made it declared it as the file's own
-        SmithLangUserConcept *old = &smith_lang_user_concepts[known - smith_lang_builtin_concepts - 1];
+        SmithLangUserConcept *old = &smith_lang_user_concepts[known - 1];
         if (old->module[0] == 0 && module_length > 0)
             snprintf(old->module, sizeof old->module, "%.*s", (int)module_length, module);
         return;
@@ -284,18 +279,46 @@ static void smith_lang_user_concept_add(const char *name, size_t length, const c
     snprintf(entry->module, sizeof entry->module, "%.*s", (int)module_length, module);
 }
 
-// The id of the concept a name stands for: a builtin one, or one the program declares. 0 when it is none.
+// The names the standard concepts had before #366 capitalized them, read as the concepts until its second landing
+// deletes them (smith's own libraries, built by a smith that cannot read a capital, still write them).
+static const struct {
+    const char *old;
+    const char *name;
+} smith_lang_concept_nouns[] = {
+    {"integer", "Int"},    {"floating", "Float"},   {"signed_integer", "Signed"}, {"unsigned_integer", "Unsigned"},
+    {"arithmetic", "Num"}, {"pointer", "Pointer"},  {"enumeration", "Enum"},      {"structure", "Struct"},
+    {"array", "Array"},    {"slice", "Slice"},      {"any", "Any"},
+};
+
+// The standard concepts, in the order of lib/smith/concepts.smith.
+static const char *const smith_lang_standard_concepts[] = {"Any",     "Int",     "Float",  "Num",   "Signed",   "Unsigned",
+                                                           "Pointer", "Enum",    "Struct", "Array", "Slice"};
+
+// The prefix of the standard concepts' functions, `smith_concepts_Num`: what `Num` is read as in a module.
+static constexpr char smith_lang_concepts_prefix[] = "smith_concepts_";
+constexpr size_t smith_lang_concepts_prefix_length = sizeof smith_lang_concepts_prefix - 1;
+
+// The id of the concept a name stands for: a standard one (`smith_concepts_Num`, or its old lowercase noun), or one the
+// program declares. 0 when it is none.
 static unsigned smith_lang_concept_id_text(const char *text, size_t length) {
-    for (size_t i = 0; i < sizeof smith_lang_concepts / sizeof smith_lang_concepts[0]; i++) { // 11 concepts
-        if (smith_lang_equals(text, length, smith_lang_concepts[i])) return (unsigned)i + 1;
+    if (length == 0) return 0;
+    if (text[0] >= 'A' && text[0] <= 'Z') return smith_lang_user_concept_find(text, length);
+    if (length > smith_lang_concepts_prefix_length &&
+        memcmp(text, smith_lang_concepts_prefix, smith_lang_concepts_prefix_length) == 0) {
+        return smith_lang_user_concept_find(text + smith_lang_concepts_prefix_length,
+                                            length - smith_lang_concepts_prefix_length);
     }
-    return length > 0 && text[0] >= 'A' && text[0] <= 'Z' ? smith_lang_user_concept_find(text, length) : 0;
+    for (size_t i = 0; i < sizeof smith_lang_concept_nouns / sizeof smith_lang_concept_nouns[0]; i++) { // 11 nouns
+        if (smith_lang_equals(text, length, smith_lang_concept_nouns[i].old)) {
+            return smith_lang_user_concept_find(smith_lang_concept_nouns[i].name,
+                                                strlen(smith_lang_concept_nouns[i].name));
+        }
+    }
+    return 0;
 }
 
 static const char *smith_lang_concept_name(unsigned concept_id) {
-    return concept_id <= smith_lang_builtin_concepts
-               ? smith_lang_concepts[concept_id - 1]
-               : smith_lang_user_concepts[concept_id - smith_lang_builtin_concepts - 1].name;
+    return smith_lang_user_concepts[concept_id - 1].name;
 }
 
 // The concept a token names: its id, or 0.
@@ -309,47 +332,20 @@ static bool smith_lang_concept_word(const SmithToken *token) {
     return token->kind == SmithTokenKind_Identifier && smith_lang_concept_id_text(token->text, token->length) != 0;
 }
 
-// Whether the type, spelled as the compiler writes it, is of the concept (1 + its index in smith_lang_concepts).
+// Whether the word is a standard concept's function (`smith_concepts_Num`): the compiler has it as a function, and in a
+// type's place it is the concept all the same.
+static bool smith_lang_concept_standard(const SmithToken *token) {
+    return token->length > smith_lang_concepts_prefix_length &&
+           memcmp(token->text, smith_lang_concepts_prefix, smith_lang_concepts_prefix_length) == 0;
+}
+
+// Whether the type, spelled as the compiler writes it, is of the concept: its function, run on the type.
 static bool smith_lang_user_concept_holds(SmithLang *lang, const SmithHost *host, unsigned concept_id,
                                           const char *spelling, uint32_t location);
 
 static bool smith_lang_concept_holds(SmithLang *lang, const SmithHost *host, unsigned concept_id, const char *spelling,
                                      uint32_t location) {
-    if (concept_id > smith_lang_builtin_concepts) {
-        return smith_lang_user_concept_holds(lang, host, concept_id, spelling, location);
-    }
-    SmithTypeQuery query = {};
-    if (host->type_query == nullptr || !host->type_query(host->context, spelling, (uint32_t)strlen(spelling), &query)) {
-        return true; // a host that cannot read the type judges nothing: the instance's own compile does
-    }
-    switch (concept_id - 1) {
-    case 0:
-        return query.is_integer;
-    case 1:
-        return query.is_float;
-    case 2:
-        return query.is_integer && query.is_signed;
-    case 3:
-        return query.is_integer && !query.is_signed;
-    case 4:
-        return query.is_integer || query.is_float;
-    case 5:
-        return query.is_bool;
-    case 6:
-        return query.is_pointer;
-    case 7:
-        return query.is_enum;
-    case 8:
-        return query.is_record;
-    case 9:
-        return query.is_array;
-    case 11:
-        return true; // `Any`: every type
-    default: {
-        static const char tag[] = "struct smith_array_";
-        return strncmp(query.canonical, tag, sizeof tag - 1) == 0 && strpbrk(query.canonical + 7, "*[( ") == nullptr;
-    }
-    }
+    return smith_lang_user_concept_holds(lang, host, concept_id, spelling, location);
 }
 
 // Whether the parameter is `auto x`, or `arithmetic x` (a concept in place of `auto`): two tokens. Its type is the
@@ -521,10 +517,9 @@ static bool smith_lang_param_is_number(const SmithLangParam *param) {
 static bool smith_lang_param_is_pack(const SmithLangParam *param) {
     const SmithLangGenToken *first = &smith_lang_gt.tokens[param->start];
     return param->end - param->start == 3 &&
-           (smith_lang_gt_is(first, SmithTokenKind_Identifier, "auto") ||
-            smith_lang_gt_is(first, SmithTokenKind_Identifier, "any")) && // `Any... rest`: every type is accepted
-           smith_lang_gt_punct(first + 1, "...") &&
-           first[2].kind == SmithTokenKind_Identifier && first[2].special == SmithLangGen_Plain;
+           (smith_lang_gt_is(first, SmithTokenKind_Identifier, "auto") || smith_lang_concept_of(first) != 0) &&
+           smith_lang_gt_punct(first + 1, "...") && first[2].kind == SmithTokenKind_Identifier &&
+           first[2].special == SmithLangGen_Plain; // `Num... rest`: every argument is judged by the concept
 }
 
 // The parameters of a generic: the tokens between the parentheses, split at the commas that stand outside any
@@ -706,18 +701,23 @@ static bool smith_lang_parameter_generic_at(SmithLang *lang, const SmithHost *ho
     const SmithToken *token = smith_lang_peek(lang, host, index, false);
     bool starts_parameter = smith_lang_punct(before, "(") || smith_lang_punct(before, ",");
     bool after_constexpr = smith_lang_ident(before, "constexpr");
-    if (starts_parameter && smith_lang_concept_word(token) && smith_lang_type_parameter_at(lang, host, index) &&
-        host->lookup(host->context, token->text, token->length, SmithLookup_Type).kind == SmithLookup_None &&
-        host->lookup(host->context, token->text, token->length, SmithLookup_Value).kind == SmithLookup_None) {
-        return true; // `arithmetic x`: a concept for `auto`
+    if (smith_lang_concept_word(token) && !smith_lang_ident(before, "constexpr")) {
+        // A standard concept is a function the compiler has under its name; a word that is a type or a variable of
+        // the program's is not the concept.
+        bool usable = smith_lang_concept_standard(token) ||
+                    (host->lookup(host->context, token->text, token->length, SmithLookup_Type).kind ==
+                         SmithLookup_None &&
+                     host->lookup(host->context, token->text, token->length, SmithLookup_Value).kind ==
+                         SmithLookup_None);
+        if (usable && starts_parameter &&
+            (smith_lang_type_parameter_at(lang, host, index) || smith_lang_pack_parameter_at(lang, host, index))) {
+            return true; // `Num x`, `Num... rest`: a concept for `auto`
+        }
+        if (usable && smith_lang_element_auto_at(lang, host, index)) {
+            return true; // `const Num xs[:]`, `Int *p`: a concept for the element's `auto`
+        }
     }
-    if (smith_lang_concept_word(token) && smith_lang_element_auto_at(lang, host, index) &&
-        host->lookup(host->context, token->text, token->length, SmithLookup_Type).kind == SmithLookup_None &&
-        host->lookup(host->context, token->text, token->length, SmithLookup_Value).kind == SmithLookup_None) {
-        return true; // `const arithmetic xs[:]`, `integer *p`: a concept for the element's `auto`
-    }
-    if ((smith_lang_ident(token, "auto") ||
-         (starts_parameter && smith_lang_ident(token, "any") && smith_lang_pack_parameter_at(lang, host, index))) &&
+    if (smith_lang_ident(token, "auto") &&
         (((starts_parameter || after_constexpr) &&
           (smith_lang_type_parameter_at(lang, host, index) ||
            (starts_parameter && smith_lang_pack_parameter_at(lang, host, index)))) ||
@@ -1074,9 +1074,8 @@ static void smith_lang_generic_head_uses(SmithLang *lang, const SmithLangGeneric
     for (uint32_t i = 0; i + 1 < generic->close_index; i++) { // the result type, to the name; a concept in a parameter
         const SmithLangGenToken *token = &smith_lang_gt.tokens[generic->first + i];
         const SmithLangGenToken *next = &smith_lang_gt.tokens[generic->first + i + 1];
-        bool concept_word =
-            token->kind == SmithTokenKind_Identifier && i > 0 &&
-            smith_lang_concept_id_text(smith_lang_gt_str(token), token->length) > smith_lang_builtin_concepts;
+        bool concept_word = token->kind == SmithTokenKind_Identifier && i > 0 &&
+                            smith_lang_concept_id_text(smith_lang_gt_str(token), token->length) != 0;
         if (token->kind != SmithTokenKind_Identifier || (i + 1 >= generic->name_index && !concept_word) ||
             !(smith_lang_gt_punct(next, "(") || concept_word)) {
             continue;
@@ -2871,7 +2870,7 @@ static void smith_lang_callee_name(const SmithLang *lang, const char *module, si
 static bool smith_lang_user_concept_holds(SmithLang *lang, const SmithHost *host, unsigned concept_id,
                                           const char *spelling, uint32_t location) {
     if (host->value_query == nullptr) return true; // the raw lowering has no compiler to run it
-    const SmithLangUserConcept *entry = &smith_lang_user_concepts[concept_id - smith_lang_builtin_concepts - 1];
+    const SmithLangUserConcept *entry = &smith_lang_user_concepts[concept_id - 1];
     uint64_t handle = 0;
     char literal[512];
     if (!smith_lang_ty_handle(lang, host, spelling, location, &handle) ||
@@ -4059,44 +4058,8 @@ static void smith_lang_takes_note(const SmithHost *host, const SmithLangGeneric 
                     smith_lang_str(generic->member), taken);
 }
 
-// What a type is among the standard's kinds, for the line that says why a concept is false.
-static const char *smith_lang_type_kind(const SmithTypeQuery *query) {
-    if (strncmp(query->canonical, "struct smith_array_", 19) == 0) return "a slice";
-    if (query->is_bool) return "the boolean type";
-    if (query->is_enum) return "an enumerated type";
-    if (query->is_integer) return query->is_signed ? "a signed integer type" : "an unsigned integer type";
-    if (query->is_float) return "a floating type";
-    if (query->is_pointer) return "a pointer type";
-    if (query->is_array) return "an array type";
-    if (query->is_record) return "a structure or union type";
-    return "no arithmetic, pointer, array or structure type";
-}
-
-// The note that says why the type is not of the concept, and the facts it rests on: `arithmetic(char)` is
-// `integer(char) || floating(char)`; every other concept is a leaf, a question of the type the compiler answers.
-static void smith_lang_concept_why(const SmithLang *lang, const SmithHost *host, uint32_t error_location,
-                                   unsigned concept_id, const char *judged) {
-    if (concept_id > smith_lang_builtin_concepts) return; // a program's concept: the error says it is false, no more
-    SmithTypeQuery query = {};
-    char written[256];
-    smith_lang_spell_written(lang, judged, written, sizeof written);
-    if (host->type_query == nullptr || !host->type_query(host->context, judged, (uint32_t)strlen(judged), &query)) {
-        return;
-    }
-    const char *name = smith_lang_concept_name(concept_id);
-    if (concept_id == 5) { // arithmetic
-        smith_lang_note(host, error_location, 0,
-                        "`arithmetic(%s)` is false: `integer(%s)` and `floating(%s)` are both false; `%s` is %s",
-                        written, written, written, written, smith_lang_type_kind(&query));
-        return;
-    }
-    smith_lang_note(host, error_location, 0, "`%s(%s)` is false: `%s` is %s", name, written, written,
-                    smith_lang_type_kind(&query));
-}
-
-// An `auto` parameter written with a concept (`arithmetic x`): the argument's type must be of it, else the error is at
-// the argument, the call that asked. The error says the main thing first (`char *` is not `arithmetic`), then come the
-// notes: the parameter that asked, and why.
+// A parameter written with a concept (`Num x`): the argument's type must be of it, else the error is at the argument,
+// the call that asked, one line: `Num(char *)` is false.
 static bool smith_lang_concept_check(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
                                      const SmithLangGeneric *generic, size_t slot, SmithLangSpan span,
                                      uint32_t location, const uint32_t *first, const uint32_t *count) {
@@ -4106,35 +4069,12 @@ static bool smith_lang_concept_check(SmithLang *lang, const SmithHost *host, Smi
     smith_lang_it_spelling(*first, *count, spelling, sizeof spelling);
     char judged[512];
     snprintf(judged, sizeof judged, "%s", spelling);
-    smith_lang_element_spelling(host, generic, slot, judged, sizeof judged); // the element of `const arithmetic xs[:]`
+    smith_lang_element_spelling(host, generic, slot, judged, sizeof judged); // the element of `const Num xs[:]`
     if (smith_lang_concept_holds(lang, host, concept_id, judged, location)) return true;
-    char shown[256];
-    smith_lang_infer_written(span, shown, sizeof shown);
     char written[256];
     smith_lang_spell_written(lang, judged, written, sizeof written);
     uint32_t place = smith_lang_infer_place(host, replay, span, location);
-    SmithLangParam params[smith_lang_call_params_max];
-    size_t total = smith_lang_generic_params(generic, params, smith_lang_call_params_max);
-    size_t position = generic->type_position[slot];
-    SmithLangShape shape = {};
-    bool element = total != SIZE_MAX && position < total && smith_lang_param_shape(&params[position], &shape);
-    if (total != SIZE_MAX && position < total && concept_id <= smith_lang_builtin_concepts) {
-        smith_lang_takes_note(host, generic, &params[position], element ? shape.auto_at : params[position].start,
-                              place);
-    }
-    smith_lang_concept_why(lang, host, place, concept_id, judged);
-    if (concept_id > smith_lang_builtin_concepts) { // a concept the program wrote: one line, no trace
-        smith_lang_error(lang, host, place, "`%s(%s)` is false", smith_lang_concept_name(concept_id), written);
-        return false;
-    }
-    if (element) {
-        bool pointer = shape.kind == SmithLangShape_Pointer;
-        smith_lang_error(lang, host, place, "`%s` is not `%s`: the %s of `%s` %s that type", written,
-                         smith_lang_concept_name(concept_id), pointer ? "pointee" : "elements", shown,
-                         pointer ? "has" : "have");
-    } else {
-        smith_lang_error(lang, host, place, "`%s` is not `%s`", written, smith_lang_concept_name(concept_id));
-    }
+    smith_lang_error(lang, host, place, "`%s(%s)` is false", smith_lang_concept_name(concept_id), written);
     return false;
 }
 

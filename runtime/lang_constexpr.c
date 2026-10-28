@@ -465,17 +465,6 @@ static bool smith_lang_cx_builtin(SmithLangCx *cx, uint32_t *at, uint32_t last, 
     if (size_question && !query.complete) return smith_lang_cx_fail(cx, "`%s` has no size", cx->canonical[canonical]);
     if (strcmp(text, "sizeof") == 0) value->number = (int64_t)query.size;
     if (strcmp(text, "alignof") == 0 || strcmp(text, "_Alignof") == 0) value->number = (int64_t)query.alignment;
-    if (strcmp(text, "integer") == 0) value->number = query.is_integer;
-    if (strcmp(text, "floating") == 0) value->number = query.is_float;
-    if (strcmp(text, "signed_integer") == 0) value->number = query.is_integer && query.is_signed;
-    if (strcmp(text, "unsigned_integer") == 0) value->number = query.is_integer && !query.is_signed;
-    if (strcmp(text, "arithmetic") == 0) value->number = query.is_integer || query.is_float;
-    if (strcmp(text, "boolean") == 0) value->number = query.is_bool;
-    if (strcmp(text, "pointer") == 0) value->number = query.is_pointer;
-    if (strcmp(text, "enumeration") == 0) value->number = query.is_enum;
-    if (strcmp(text, "structure") == 0) value->number = query.is_record;
-    if (strcmp(text, "array") == 0) value->number = query.is_array;
-    if (strcmp(text, "any") == 0) value->number = 1;
     if (strcmp(text, "kind") == 0) value->number = smith_lang_kind_code(&query, cx->canonical[canonical]);
     if (strcmp(text, "is_integer") == 0) value->number = query.is_integer;
     if (strcmp(text, "is_float") == 0) value->number = query.is_float;
@@ -485,8 +474,7 @@ static bool smith_lang_cx_builtin(SmithLangCx *cx, uint32_t *at, uint32_t last, 
     if (strcmp(text, "is_enum") == 0) value->number = query.is_enum;
     if (strcmp(text, "is_record") == 0) value->number = query.is_record;
     if (strcmp(text, "is_array") == 0) value->number = query.is_array;
-    if (strcmp(text, "is_slice") == 0 ||
-        strcmp(text, "slice") == 0) { // `T[:]` and its dimensions: the struct of runtime/lang_slice.c, no other
+    if (strcmp(text, "is_slice") == 0) { // `T[:]` and its dimensions: the struct of runtime/lang_slice.c, no other
         static const char tag[] = "struct smith_array_";
         value->number = strncmp(cx->canonical[canonical], tag, sizeof tag - 1) == 0 &&
                         strpbrk(cx->canonical[canonical] + 7, "*[( ") == nullptr;
@@ -496,18 +484,16 @@ static bool smith_lang_cx_builtin(SmithLangCx *cx, uint32_t *at, uint32_t last, 
 }
 
 static bool smith_lang_cx_is_builtin(const SmithLangGenToken *token) {
-    static const char *const names[] = {"sizeof",           "alignof",    "_Alignof", "is_integer", "is_float",
-                                        "is_signed",        "is_pointer", "is_bool",  "is_enum",    "is_record",
-                                        "is_array",         "is_slice",   "integer",  "floating",   "signed_integer",
-                                        "unsigned_integer", "arithmetic", "boolean",  "pointer",    "enumeration",
-                                        "structure",        "array",      "slice",    "any",        "kind"};
+    static const char *const names[] = {"sizeof",     "alignof",    "_Alignof", "is_integer", "is_float",
+                                        "is_signed",  "is_pointer", "is_bool",  "is_enum",    "is_record",
+                                        "is_array",   "is_slice",   "kind"};
     if (token->kind != SmithTokenKind_Identifier || token->special != SmithLangGen_Plain || token->param != 0) {
         return false;
     }
-    for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) { // 25 names
+    for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) { // 13 names
         if (smith_lang_equals(smith_lang_gt_str(token), token->length, names[i])) {
-            // `kind` and `any` are common names: the builtins are the ones called with a type in parentheses
-            return i < 23 || smith_lang_gt_punct(token + 1, "(");
+            // `kind` is a common name: the builtin is the one called with a type in parentheses
+            return i < 12 || smith_lang_gt_punct(token + 1, "(");
         }
     }
     return false;
