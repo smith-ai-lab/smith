@@ -165,7 +165,7 @@ export void skip(const char (*text)[:], usize n) {
 
 [smith-lang-slice-pointers](.agents/skills/smith-lang-slice-pointers/SKILL.md).
 
-One library does what `strcmp`, `memchr` and `memset` did for every element type: `smith::slice` compares, searches, fills and reverses any slice, with no allocation, and `smith::ascii` tests one character with no locale. `slice::find` returns an `option(usize)` where C returned a sentinel, and an index or its absence travels as one value:
+One library does what `strcmp`, `memchr` and `memset` did for every element type: `smith::slice` compares, searches, sorts, fills and reverses any slice, with no allocation, and `smith::ascii` tests one character with no locale. `slice::find` returns an `option(usize)` where C returned a sentinel, and an index or its absence travels as one value:
 
 ```smith
 module header;
@@ -182,6 +182,11 @@ export usize body_length(const char line[:]) {
     // A cut of line: nothing is copied.
     const char body[:] = slice::trim(line, ascii::space);
     return countof(body);
+}
+
+export i32 median(i32 xs[:]) {
+    slice::sort(xs); // in place, no allocation
+    return xs[countof(xs) / 2];
 }
 ```
 
@@ -221,6 +226,33 @@ same true, copy[1] 0, copy[3] 4.5
 ```
 
 `mem::copy`, `mem::move`, `mem::zero`, `mem::fill`, `mem::equal`, `mem::bytes(&x)` and `mem::view(bytes, f32)` take slices, so a length that does not match is a checked failure, and they lower to the C functions. In a file with a `module` line the raw `memcpy`, `memmove`, `memset` and `memcmp` are a `smith-mem` finding that names the replacement (`smith lint --fix` applies the mechanical ones); a function that implements a wrapper says `contract::trusted()`. A `.c` file is untouched. [smith-mem](.agents/skills/smith-mem/SKILL.md).
+
+A test can make memory refuse on purpose with `smith::failing`: `failing::make(parent, key)` is an allocator that refuses one allocation in eight by a draw from a `random::Key`, so a failure replays from its seed ([smith-failing](.agents/skills/smith-failing/SKILL.md)).
+
+```smith project=refuse run
+module main;
+
+import smith::failing;
+import smith::console;
+import smith::mem;
+import smith::random;
+
+typedef option(i32 *) MaybeInt;
+
+i32 main() {
+    failing::Failing f = failing::make(nullptr, random::key_make(1));
+    f.one_in = 1; // refuse every allocation
+    mem::Allocator *before = mem::set_allocator(&f.base);
+    MaybeInt maybe = mem::try_alloc(i32);
+    mem::set_allocator(before);
+    console::print("refused ", maybe == .none, " of ", f.calls, "\n");
+    return 0;
+}
+```
+
+```output project=refuse
+refused 1 of 1
+```
 
 ### No preprocessor
 

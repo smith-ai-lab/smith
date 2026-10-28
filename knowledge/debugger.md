@@ -36,14 +36,17 @@ smith-debug is the short guide for users; this is how it is built.
 **No launch goes through a shell** (#388). lldb's `run` and `r` are aliases of `process launch --shell-expand-args true`,
 whose shell globs what the user quoted and gives up after about 10 s of wall time. `smith dbg` re-aliases both to
 `process launch -X false --` (`-O` commands in `shim/lldb.cpp`, before the user's own); `process launch -X true` still
-expands. `smith dap` and `smith mcp` launch without expansion already (`shellExpandArguments` is false by default).
+expands on macOS (on Linux lldb-server launches without a shell and lldb's `Host::ShellExpandArguments` is "unimplemented", so it
+does not). `smith dap` and `smith mcp` launch without expansion already (`shellExpandArguments` is false by default).
 `tests/dbg_launch_test.smith` checks an argument with a space and a glob character.
 
 **On Linux** (issue #305) lldb debugs a process through `lldb-server gdbserver`, which LLVM builds. smith is that
 program too: `scripts/llvm_linux.c` puts lldb-server's objects in `libsmithlldb.a` with its `main` renamed
 `smith_lldb_server_tool_main`, `shim/lldb_server.cpp` runs it, and the programs folder has a fifth clone,
 `bin/lldb-server`, which `main` runs as it by its name. So `smith dbg`, `smith dap` and a failed check's report need no
-program beside smith, and nothing is signed.
+program beside smith, and nothing is signed. A program for `smith dbg --crash` and `--at` is started by
+`smith_platform_spawn_suspended` and attached to; on Linux it stops itself first, so the exec that follows is a stop
+of its own that `shim/lldb_explain.cpp` (`resume_first`) continues past.
 
 ## The lldb options, and what each costs when off
 

@@ -9,6 +9,32 @@ src=$PWD/src
 arc=$PWD/arc
 mkdir -p "$arc"
 
+# The tests spell tar's options as bsdtar does (macOS, and what the archives were first made with); GNU tar (Linux)
+# spells -n, -s and the format name differently, so there tar is a function that translates those.
+case $(command tar --version 2>&1) in
+*"GNU tar"*)
+    tar() {
+        n=$#
+        while [ "$n" -gt 0 ]; do
+            a=$1
+            shift
+            n=$((n - 1))
+            case $a in
+            -n) a=--no-recursion ;;
+            gnutar) a=gnu ;;
+            -s)
+                a=--transform=s$1
+                shift
+                n=$((n - 1))
+                ;;
+            esac
+            set -- "$@" "$a"
+        done
+        command tar "$@"
+    }
+    ;;
+esac
+
 # The files of a tree: type, permission bits and size, then the bytes by checksum. Equal listings are equal trees.
 listing() {
     (cd "$1" && find . -type f -exec sh -c 'for f; do printf "%s %s %s " "$(stat -c "%A %s" "$f" 2>/dev/null || stat -f "%Sp %z" "$f")" "$f" "$(shasum -a 256 <"$f" | cut -c1-16)"; echo; done' sh {} + | sort

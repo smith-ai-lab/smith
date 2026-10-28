@@ -21,7 +21,7 @@ Where a command cannot take an argument, use the links that act as the verbs by 
 
 ## See what it does
 
-- `smith cc --smith-header x.smith -o x.h` and `smith cc --smith-lower x.smith` are the `.smith` helpers (a module's generated header, and a file's lowering; load `smith-lang`); `smith build` runs the first itself. The top-level `smith --smith-header` is gone.
+- `smith cc --smith-header x.smith -o x.h` and `smith cc --smith-lower x.smith` are the `.smith` helpers (a module's generated header, and a file's lowering; load `smith-lang`); `smith build` runs the first itself. `smith cc --smith-headers [flags] -- a.smith a.h b.smith b.h` is the same for many modules in one process (a smith process costs about 10 ms to start). The top-level `smith --smith-header` is gone.
 - A `.smith` input is compiled as `-x c -std=gnu2y` (smith's own language, C2y; a `-std=` of yours wins; nothing is added beside a C++ input; your own `-x c` is kept and the standard is still added, another `-x` leaves the command alone), and `smith cc main.smith foo.smith -o prog` builds a program of modules in one command (load `smith-lang`).
 - `smith cc --smith-tree-sitter` prints the path of the tree-sitter parser for `.smith` files (a shared library inside smith, written once to its runtime folder), which the Neovim plugin loads (load `smith-neovim`); a smith built without it (the Linux seed) says so and exits 2.
 - `SMITH_VERBOSE=1` prints the command on stderr. `smith cc --smith-which <args>` (or `smith-cc --smith-which`) prints the compiler it would choose: `clang in-process <path>` or `clang <path>`. `smith version` prints the version and, after `commit`, the commit it was built from (a smith built with one `cc` command has none).

@@ -1,0 +1,51 @@
+// Fixed-size caps that used to drop input silently (issue #604): a count beyond the old cap is read whole.
+module caps_test;
+
+import smith::io;
+import smith::test;
+import scratch;
+
+// build.info kept 8192 lines of each kind, so `smith run` saw no program for a default that came after them.
+export void test_caps_run_reads_every_program_of_build_info(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "verbs_many");
+    scratch::Run run = scratch::sh(&p, "smith run");
+    scratch::expect_status("caps: smith run with 8200 programs", 0, &run);
+    scratch::expect_contains("caps: ... runs the last program, past the old cap", run.out, "many");
+    scratch::expect_text("caps: ... build.info holds all of them", "8200",
+                         scratch::capture(&p, "grep -c '^program' .smith/build.info"));
+}
+
+// smith fmt gave up smith's defaults (and -i) for 4089 or more arguments, and printed each file instead.
+export void test_caps_fmt_formats_more_than_4089_files(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    (void)scratch::sh(&p, "for i in $(seq 1 4100); do echo \"int   f$i( void ){return   $i;}\" > f$i.c; done");
+    scratch::Run run = scratch::sh(&p, "smith fmt f*.c");
+    scratch::expect_status("caps: smith fmt with 4100 files", 0, &run);
+    scratch::expect_text("caps: ... the first file is formatted in place, with smith's four spaces",
+                         "int f1(void) {\n    return 1;\n}", scratch::capture(&p, "cat f1.c"));
+    scratch::expect_text("caps: ... so is the last", "int f4100(void) {\n    return 4100;\n}",
+                         scratch::capture(&p, "cat f4100.c"));
+    scratch::expect_text("caps: ... and nothing was printed", "", run.out);
+}
+
+// SMITH_LANG_INPUTS and SMITH_LANG_FLAGS were cut at 8192 bytes; a stub compiler reports what it was given.
+export void test_caps_smith_inputs_and_flags_reach_the_compiler_whole(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::write(&p, "stub.sh",
+                   "#!/bin/sh\n"
+                   "echo \"inputs=$(printf %s \"$SMITH_LANG_INPUTS\" | wc -l | tr -d ' ')\"\n"
+                   "[ $(printf %s \"$SMITH_LANG_FLAGS\" | wc -c) -gt 12000 ] && echo flags=whole\n");
+    (void)scratch::sh(&p, "chmod +x stub.sh; D=$(printf 'd%.0s' $(seq 1 150)); mkdir $D; "
+                          "for i in $(seq 0 59); do printf \"module m$i;\\nexport i32 f$i(void) { return $i; }\\n\" > "
+                          "$D/m$i.smith; done; "
+                          "printf 'module main;\\ni32 main(void) { return 0; }\\n' > $D/main.smith; "
+                          "echo $D > dir.txt");
+    scratch::Run run =
+        scratch::sh(&p, "D=$(cat dir.txt); SMITH_CLANG=$PWD/stub.sh smith cc $D/main.smith "
+                        "$(for i in $(seq 0 59); do echo $D/m$i.smith; done) "
+                        "$(for i in $(seq 1 400); do echo -I/some/long/include/path/number$i; done) -o app");
+    scratch::expect_contains("caps: all 61 .smith inputs, 9300 bytes of names, are in SMITH_LANG_INPUTS", run.out,
+                             "inputs=61");
+    scratch::expect_contains("caps: ... and the 400 -I flags, about 14000 bytes, are in SMITH_LANG_FLAGS", run.out,
+                             "flags=whole");
+}
