@@ -53,7 +53,7 @@ the module names drop the `smith_` and the `Smith`:
 | `smith_option`, `smith_option_value`, `smith_args`, `smith_env` | `build::option`, `build::option_value`, `build::args`, `build::env` |
 | `smith_glob`, `smith_capture`, `smith_capture_or`, `smith_write`, `smith_library`, `smith_package` | `build::glob`, `build::capture`, `build::capture_or`, `build::write`, `build::library`, `build::package` |
 | `smith_fmt`, `smith_cat`, `smith_map`, `smith_when`, `smith_join`, `smith_list`, `smith_replace_extension` | `build::fmt`, `build::cat`, `build::map`, `build::when`, `build::join`, `build::list`, `build::replace_extension` |
-| `smith_defer`, `smith_lines`, `smith_compile_command`, `smith_compile_commands` | `build::defer`, `build::lines`, `build::compile_command`, `build::compile_commands` |
+| `smith_defer`, `smith_lines`, `smith_compile_command`, `smith_compile_needs`, `smith_compile_commands` | `build::defer`, `build::lines`, `build::compile_command`, `build::compile_needs`, `build::compile_commands` |
 | `smith_run_lines`, `smith_run_status`, `smith_run_combined`, `smith_run_depend`, `smith_run_program` | `build::run_lines`, `build::run_status`, `build::run_combined`, `build::run_depend`, `build::run_program` |
 | `build` (what the file defines) | `build::build` (declared; a build.smith defines `build`) |
 

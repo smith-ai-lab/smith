@@ -31,6 +31,28 @@ of an unchanged tree runs clang-tidy on no file (about 1 s for smith's 180 files
 only itself and the files that include it. `SMITH_LINT_CACHE=0` turns it off, `SMITH_LINT_CACHE=why` says why a file
 ran. Tests: `tests/lint_cache_test.smith`.
 
+**`smith lint --changed[=<ref>]` lints what a change reaches** (issue #638, `smith_lint_changed`, runtime/verbs.c, and
+`runtime/changed.c`, which `smith test --changed` shares): the files that differ from the merge-base of `HEAD` and `<ref>`
+(default `origin/main`, else `main`; the working tree counts, so do untracked files) and every file that includes or
+imports one of them, transitively, by the same graph as the tests'. A file the graph does not know is linted. These
+paths select every file: a `.clang-tidy` anywhere, `build.c`, `build.smith`, a `Makefile` (they move what clang-tidy
+says or the flags of a compile), and `shim/` and `patches/` (smith's own checks). The line `smith lint --changed: N
+changed files since <sha>: M of K files to lint` says what was chosen, and no file affected is a success that says so
+and `linted 0 files`. Plain `smith lint` still lints everything, as the merge train does. A path outside the project
+folder is not seen (`git diff --relative`), and a file a source `#embed`s is not an edge of the graph. `smith build
+preflight` runs `lint --changed`. Tests: `tests/lint_changed_test.smith`.
+
+**`smith lint` builds what the files it lints wait for, not the program.** Plain `smith lint` builds `smith_needs`: the
+generated files every compile reads (and, in smith's own build.c, the smith-cc link and the header of each of ~120 test
+modules, which the smith under test must make). With `--changed` the build first runs only to write `.smith/build.info`
+(the empty target `smith_info`), then builds the `need<TAB>source<TAB>file...` lines of the chosen sources, so editing a
+`runtime/*.c` rebuilds nothing but the headers it includes (about 7 s for clang-tidy on a large file, from 50 s for the
+relink and the 116 headers); a chosen source with no such line (a `.smith` module or a C file the build only declares with
+`smith_compile_command`, unless build.c says what it reads with `smith_compile_needs`) builds `smith_needs`. Smith's own
+build.c declares none yet, so its test modules and unbuilt sources do. A no-op `smith lint` after a build by the same smith builds nothing
+(0.8 s); a build by another smith (a new compiler) rebuilds every object, which is that smith's doing, not the
+executor's.
+
 **The editor finds `.smith/compile_commands.json`:** `smith lsp` adds clangd's `--compile-commands-dir` for it when
 the project has no root or `build/` one. **The editor has smith's defaults too** (`patches/smith-editor-defaults.patch`):
 `smith lsp` sets clangd's default fallback style to `file:<smith's .clang-format>` (a fallback style may now be

@@ -1,0 +1,119 @@
+// `smith lint --changed` (issue #638, runtime/changed.c, knowledge/format-lint-and-editor-tools.md): lints the files
+// changed since the merge-base with a ref and the files that include a changed header, and says what it chose. A
+// scratch git repository of the three C files and the build file of tests/build_fixtures/lint_cache (a.c and b.c
+// include common.h, c.c includes nothing; the build file is the fourth file linted), committed on main, in a cache of
+// its own, with the working tree edited after the commit.
+module lint_changed_test;
+
+import smith::io;
+import smith::test;
+import scratch;
+
+static scratch::Project committed(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "lint_cache");
+    scratch::own_cache(&p);
+    scratch::Run made = scratch::sh(&p, "printf 'build/\\n' > .gitignore && git init -q -b main . && git add -A && "
+                                        "git -c user.name=t -c user.email=t@t commit -q -m base");
+    scratch::expect_status("the repository is committed", 0, &made);
+    return p;
+}
+
+// A lint of what changed since HEAD, all of it printed: its output and status are in the run.
+static scratch::Run changed(const scratch::Project *p) {
+    return scratch::sh(p, "SMITH_OUTPUT=full smith lint --changed=HEAD 2>&1");
+}
+
+export void test_lint_changed_with_one_c_file_changed_lints_only_it(io::Io *io) {
+    scratch::Project p = committed(io);
+    scratch::Run edited = scratch::sh(&p, "printf '// edited\\n' >> b.c");
+    scratch::expect_status("b.c is edited", 0, &edited);
+    scratch::Run run = changed(&p);
+    scratch::expect_status("the lint passes", 0, &run);
+    scratch::expect_contains("one changed file", run.out, "smith lint --changed: 1 changed file since");
+    scratch::expect_contains("... of four to lint", run.out, "1 of 4 files to lint");
+    scratch::expect_contains("... and only it runs", run.out, "linted 1 files (1 run, 0 cached");
+    scratch::expect_lacks("... not a.c", run.out, "a.c");
+}
+
+export void test_lint_changed_without_a_ref_compares_with_where_the_branch_left_main(io::Io *io) {
+    scratch::Project p = committed(io);
+    scratch::Run edited = scratch::sh(&p, "git checkout -q -b work && printf '// edited\\n' >> c.c");
+    scratch::expect_status("c.c is edited on a branch", 0, &edited);
+    scratch::Run run = scratch::sh(&p, "SMITH_OUTPUT=full smith lint --changed 2>&1");
+    scratch::expect_status("the lint passes", 0, &run);
+    scratch::expect_contains("only c.c is chosen", run.out, "1 of 4 files to lint");
+}
+
+export void test_lint_changed_with_a_header_changed_lints_the_files_that_include_it(io::Io *io) {
+    scratch::Project p = committed(io);
+    scratch::Run edited = scratch::sh(&p, "printf '// edited\\n' >> common.h");
+    scratch::expect_status("common.h is edited", 0, &edited);
+    scratch::Run run = changed(&p);
+    scratch::expect_status("the lint passes", 0, &run);
+    scratch::expect_contains("a.c and b.c are chosen, c.c is not", run.out, "2 of 4 files to lint");
+    scratch::expect_contains("... and run", run.out, "linted 2 files (2 run, 0 cached");
+}
+
+export void test_lint_changed_counts_a_new_untracked_header(io::Io *io) {
+    scratch::Project p = committed(io);
+    scratch::Run edited =
+        scratch::sh(&p, "printf '#include \"extra.h\"\\n' >> c.c && printf 'int extra;\\n' > extra.h");
+    scratch::expect_status("c.c includes a new header", 0, &edited);
+    scratch::Run run = changed(&p);
+    scratch::expect_contains("two changed files, c.c lints", run.out, "2 changed files since");
+    scratch::expect_contains("... and only c.c", run.out, "1 of 4 files to lint");
+}
+
+export void test_lint_changed_with_a_config_changed_lints_every_file(io::Io *io) {
+    scratch::Project p = committed(io);
+    scratch::Run edited = scratch::sh(&p, "printf '# edited\\n' >> .clang-tidy");
+    scratch::expect_status(".clang-tidy is written", 0, &edited);
+    scratch::Run run = changed(&p);
+    scratch::expect_status("the lint passes", 0, &run);
+    scratch::expect_contains("it says why", run.out, ".clang-tidy changed, so every file is linted");
+    scratch::expect_contains("... and every file is linted", run.out, "linted 4 files");
+}
+
+export void test_lint_changed_with_no_change_lints_nothing_and_says_so(io::Io *io) {
+    scratch::Project p = committed(io);
+    scratch::Run run = changed(&p);
+    scratch::expect_status("the lint passes", 0, &run);
+    scratch::expect_contains("it says nothing is affected", run.out, "no file is affected, so nothing is linted");
+    scratch::expect_contains("... and the count", run.out, "linted 0 files");
+}
+
+export void test_lint_changed_replays_a_failing_file_it_chose(io::Io *io) {
+    scratch::Project p = committed(io);
+    scratch::Run written =
+        scratch::sh(&p, "printf 'int third(int value, int unused) {\\n    return value;\\n}\\n' > c.c");
+    scratch::expect_status("c.c has an unused parameter", 0, &written);
+    scratch::Run run = changed(&p);
+    scratch::expect_status("the lint fails on the finding", 1, &run);
+    scratch::expect_contains("... and reports it", run.out, "c.c:1:26: error: parameter 'unused' is unused");
+}
+
+// A project of a.c, which includes a header a step makes, and c.c, which includes nothing (tests/build_fixtures/
+// lint_changed), committed.
+static scratch::Project generated(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "lint_changed");
+    scratch::own_cache(&p);
+    scratch::Run made = scratch::sh(&p, "printf 'build/\\n' > .gitignore && git init -q -b main . && git add -A && "
+                                        "git -c user.name=t -c user.email=t@t commit -q -m base");
+    scratch::expect_status("the repository is committed", 0, &made);
+    return p;
+}
+
+export void test_lint_changed_builds_only_what_the_chosen_files_wait_for(io::Io *io) {
+    scratch::Project p = generated(io);
+    scratch::Run edited = scratch::sh(&p, "printf '// edited\\n' >> c.c");
+    scratch::expect_status("c.c is edited", 0, &edited);
+    scratch::Run only = changed(&p);
+    scratch::expect_status("c.c lints", 0, &only);
+    scratch::expect_contains("one file is chosen", only.out, "1 of 3 files to lint");
+    scratch::expect_lacks("... and the header a.c waits for is not made", only.out, "make gen.h");
+    scratch::Run header = scratch::sh(&p, "printf '// edited\\n' >> a.c");
+    scratch::expect_status("a.c is edited", 0, &header);
+    scratch::Run both = changed(&p);
+    scratch::expect_status("a.c lints", 0, &both);
+    scratch::expect_contains("... and then the header is made", both.out, "make gen.h");
+}

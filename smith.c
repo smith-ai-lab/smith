@@ -2113,7 +2113,7 @@ static void smith_build_effects_argument(const char *self, char *out, size_t cap
 }
 
 // verb is nullptr for `smith build`, and the project verb that runs this build otherwise (runtime/verbs.c passes
-// nullptr: its targets are smith's own, smith_needs and smith_tests).
+// nullptr: its targets are smith's own, smith_needs, smith_tests and smith_info, and the files a lint needs).
 static int smith_build_main(int count, char **args, const char *self, const char *verb) {
     SMITH_ASSERT(count >= 0);
     if (verb == nullptr && count == 1 && strcmp(args[0], "--dump-config") == 0) return smith_build_dump_config();
@@ -3289,7 +3289,7 @@ static bool smith_only_options(int count, char **args) {
 static bool smith_project_arguments(const char *verb, int count, char **args) {
     const char *const *own = nullptr;
     static const char *const fmt_options[] = {"--dry-run", "-n", "--Werror", "-i", nullptr};
-    static const char *const lint_options[] = {"--quiet", nullptr};
+    static const char *const lint_options[] = {"--quiet", "--changed", nullptr};
     static const char *const prove_options[] = {"-v", "--no-cache", "--induction", "--unroll", nullptr};
     if (strcmp(verb, "fmt") == 0) own = fmt_options;
     if (strcmp(verb, "lint") == 0) own = lint_options;
@@ -3302,6 +3302,7 @@ static bool smith_project_arguments(const char *verb, int count, char **args) {
             (strncmp(args[i], "--budget=", 9) == 0 || strncmp(args[i], "--emit-ir=", 10) == 0 ||
              strncmp(args[i], "--induction-from=", 17) == 0 || strncmp(args[i], "--function=", 11) == 0))
             continue;
+        if (strcmp(verb, "lint") == 0 && strncmp(args[i], "--changed=", 10) == 0 && args[i][10] != '\0') continue;
         bool known = false;
         for (size_t j = 0; own != nullptr && own[j] != nullptr; j++)
             known = known || strcmp(args[i], own[j]) == 0;

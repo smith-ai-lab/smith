@@ -1031,27 +1031,39 @@ static bool smith_changed_build_c_gate(const char *base, const char *head) {
     return true;
 }
 
-// Reads the changes since `base_name` (or where the branch left main) in the current folder's git repository and
-// decides which tests to run. With `head`, the changes are those of base..head (no untracked files); the files
-// themselves (imports, records) are still read from the working tree. `filter` gets the value of `--test` for
-// SmithChanged_Some.
-static SmithChangedResult smith_changed_select(const char *base_name, const char *head, SmithChangedBuffer *filter) {
-    char base[256];
-    if (!smith_changed_base(base_name, base, sizeof base) || (head != nullptr && !smith_changed_name_ok(head))) {
-        fprintf(stderr, "smith test --changed: no base: pass --base <ref> (no origin/main or main to compare with)\n");
-        return SmithChanged_Failed;
+// Reads the changes since `base_name` (or where the branch left main) in the current folder's git repository into the
+// file list and the changed paths: the files git sees (tracked and untracked), and the paths that differ from `base`
+// (the working tree, or `head` when given: then no untracked file counts). `who` names the verb in what it prints;
+// `relative` makes the paths those below the current folder (a project that is a folder of a repository). `base`
+// gets the ref that was compared. False when there is nothing to compare with.
+static bool smith_changed_collect(const char *base_name, const char *head, bool relative, const char *who, char *base,
+                                  size_t size) {
+    if (!smith_changed_base(base_name, base, size) || (head != nullptr && !smith_changed_name_ok(head))) {
+        fprintf(stderr, "%s: no base: pass --base <ref> (no origin/main or main to compare with)\n", who);
+        return false;
     }
     static const char *const list[] = {"ls-files", "--cached", "--others", "--exclude-standard", nullptr};
     static const char *const others[] = {"ls-files", "--others", "--exclude-standard", nullptr};
-    const char *const diff[] = {"diff", "--name-status", "--no-renames", base, "--", nullptr};
+    const char *flag = relative ? "--relative" : "--no-color"; // a flag git takes twice, or one that changes nothing
+    const char *const diff[] = {"diff", "--name-status", "--no-renames", flag, base, "--", nullptr};
+    const char *const range[] = {"diff", "--name-status", "--no-renames", flag, base, head, "--", nullptr};
     bool listed = smith_changed_git(list, smith_changed_on_file);
-    const char *const range[] = {"diff", "--name-status", "--no-renames", base, head, "--", nullptr};
     bool diffed = smith_changed_git(head != nullptr ? range : diff, smith_changed_on_diff);
     if (head == nullptr) (void)smith_changed_git(others, smith_changed_on_untracked);
     if (!listed || !diffed) {
-        fprintf(stderr, "smith test --changed: git could not compare with %s\n", base);
-        return SmithChanged_Failed;
+        fprintf(stderr, "%s: git could not compare with %s\n", who, base);
+        return false;
     }
+    return true;
+}
+
+// Decides which tests to run from the changes `smith_changed_collect` reads. With `head`, the changes are those of
+// base..head (no untracked files); the files themselves (imports, records) are still read from the working tree.
+// `filter` gets the value of `--test` for SmithChanged_Some.
+static SmithChangedResult smith_changed_select(const char *base_name, const char *head, SmithChangedBuffer *filter) {
+    char base[256];
+    if (!smith_changed_collect(base_name, head, false, "smith test --changed", base, sizeof base))
+        return SmithChanged_Failed;
     if (smith_changed_overflow) return SmithChanged_Full;
     size_t full = smith_changed_full_path();
     if (full > 0) {
@@ -1098,4 +1110,61 @@ static SmithChangedResult smith_changed_select(const char *base_name, const char
     }
     bool all = selected == tests && !narrowed;
     return smith_changed_overflow ? SmithChanged_Full : all ? SmithChanged_Full : SmithChanged_Some;
+}
+
+// ---- `smith lint --changed`
+//
+// The files to lint after a change: those that changed since the merge-base with a ref (default origin/main, as for the
+// tests; the working tree counts, untracked files too) and the files that include or import one that did, transitively,
+// by the same graph as the tests'. A file the graph does not know is linted. Some paths change what clang-tidy says of
+// every file, so they select all: a `.clang-tidy` anywhere, the build file (it moves the flags of a compile), and the
+// shims and patches that are smith's own checks.
+
+static bool smith_changed_lints_all(const char *path) {
+    static const char *const names[] = {".clang-tidy", "build.c", "build.smith", "Makefile", nullptr};
+    static const char *const folders[] = {"shim/", "patches/", nullptr};
+    const char *base = strrchr(path, '/');
+    base = base != nullptr ? base + 1 : path;
+    for (size_t i = 0; names[i] != nullptr; i++) { // a short fixed list
+        if (strcmp(base, names[i]) == 0) return true;
+    }
+    return smith_changed_in(path, folders);
+}
+
+static void smith_changed_on_merge_base(char *text) {
+    snprintf(smith_changed_text, 256, "%s", text);
+}
+
+// Reads the changes and, unless one of them selects every file (false), the graph. `base` gets the ref compared with;
+// `given` is the one asked for, whose merge-base with HEAD is used when git has one. Returns SmithChanged_Failed,
+// SmithChanged_Full (every file; `why` names the path) or SmithChanged_Some (ask `smith_changed_lint_wants`).
+static SmithChangedResult smith_changed_lint_select(const char *given, char *base, size_t size, const char **why) {
+    char merged[256];
+    if (given != nullptr && smith_changed_name_ok(given)) {
+        const char *const command[] = {"merge-base", "HEAD", given, nullptr};
+        smith_changed_text[0] = '\0';
+        if (smith_changed_git(command, smith_changed_on_merge_base) && smith_changed_text[0] != '\0') {
+            snprintf(merged, sizeof merged, "%.255s", smith_changed_text);
+            given = merged;
+        }
+    }
+    if (!smith_changed_collect(given, nullptr, true, "smith lint --changed", base, size)) return SmithChanged_Failed;
+    if (smith_changed_overflow) return SmithChanged_Full;
+    for (size_t p = 0; p < smith_changed_path_count; p++) {
+        if (!smith_changed_lints_all(smith_changed_paths[p])) continue;
+        *why = smith_changed_paths[p];
+        return SmithChanged_Full;
+    }
+    smith_changed_build_graph();
+    return SmithChanged_Some;
+}
+
+static size_t smith_changed_lint_paths(void) {
+    return smith_changed_path_count;
+}
+
+// Whether `path` changed or includes or imports a file that did; a path the graph does not know is wanted.
+static bool smith_changed_lint_wants(const char *path) {
+    int at = smith_changed_find(path);
+    return at < 0 || smith_changed_hit[at];
 }

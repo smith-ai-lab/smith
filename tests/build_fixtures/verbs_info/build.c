@@ -19,6 +19,7 @@ void build(SmithBuild *b) {
                             .objects = (const SmithObject *[]){&main_object, &helper, &made, nullptr}};
     smith_program(b, &program);
     smith_compile_command(b, "cc", "other.c", (const char *[]){"-DOTHER", nullptr});
+    smith_compile_needs(b, "other.c", generate.outputs);
     SmithTests tests = {.sources = smith_glob(b, smith_list(b, "tests/test_*.c", nullptr)), .flags = (const char *[]){"-I", ".smith/include", nullptr}};
     smith_tests(b, &tests);
     smith_alias(b, "everything", program.step.outputs);

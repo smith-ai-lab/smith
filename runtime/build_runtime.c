@@ -1323,6 +1323,7 @@ static bool smith_making_tests;
 typedef struct {
     const char *source;
     const char *const *arguments; // compiler, flags, -c, source
+    const char *const *needs;     // smith_compile_needs: the generated files it reads (nullptr: not said)
 } SmithCommandRow;
 
 static SmithCommandRow smith_command_rows[smith_objects_max];
@@ -2608,7 +2609,22 @@ void smith_compile_command(SmithBuild *b, const char *compiler, const char *sour
     const char *const *arguments =
         smith_cat(b, smith_one(smith_copy_string(compiler)), smith_modules_for(b, copy), smith_lang_flags(b, copy),
                   smith_copy_list(flags), smith_library_flags(b, copy), smith_module_flags(b, copy), tail, nullptr);
-    smith_command_rows[smith_command_row_count++] = (SmithCommandRow){copy, arguments};
+    smith_command_rows[smith_command_row_count++] = (SmithCommandRow){copy, arguments, nullptr};
+}
+
+void smith_compile_needs(SmithBuild *b, const char *source, const char *const *files) {
+    SMITH_ASSERT(b != nullptr);
+    smith_require_text("smith_compile_needs", "source", source);
+    if (files == nullptr) smith_fail("smith_compile_needs: the files are required (a list ending in nullptr)");
+    for (size_t i = 0; i < smith_command_row_count; i++) { // bounded by the rows
+        if (strcmp(smith_command_rows[i].source, source) != 0) continue;
+        smith_command_rows[i].needs = smith_copy_list(files);
+        return;
+    }
+    for (size_t i = 0; i < smith_object_row_count; i++) { // a compile of its own already knows what it waits for
+        if (strcmp(smith_object_rows[i].object.source, source) == 0) return;
+    }
+    smith_fail("smith_compile_needs: %s has no smith_compile_command before it", source);
 }
 
 // Whether an earlier compile is of the same source: `smith lint` reads the first of each.
@@ -2670,6 +2686,10 @@ void smith_compile_commands(SmithBuild *b, const char *path) {
 //   compile<TAB>source<TAB>word...   a source of the project's own that the build compiles, with the words of its first
 //                      compile after the compiler; not a generated file, not under .smith/, not an absolute path (a
 //                      package)
+//   need<TAB>source<TAB>file...  the generated files one compile of the source waits for: of an object, its
+//                      inputs that a step makes; of a source the build only declares (smith_compile_command), those
+//                      smith_compile_needs names, and none when it was not called: unknown, so `smith lint --changed`
+//                      builds smith_needs for it
 //   test<TAB>task      a task that `smith test` runs
 //   program<TAB>path   the output of a smith_program
 //   unit<TAB>source... the own sources of a program's objects (not of the tests' runner): what `smith prove` proves
@@ -2707,6 +2727,18 @@ static bool smith_is_own_source(const char *source) {
     return smith_find_output(smith_one(source), &shared) == nullptr; // a generated file is not the project's own
 }
 
+// The generated files one compile reads: its implicit and order-only inputs that a step makes.
+static const char *const *smith_object_needs(SmithBuild *b, const SmithObject *object) {
+    const char *const *needs = smith_list(b, nullptr);
+    const char *const *inputs = smith_cat(b, object->step.implicit_inputs, object->step.order_only_inputs, nullptr);
+    for (size_t j = 0; inputs[j] != nullptr; j++) {
+        const char *shared = nullptr;
+        if (smith_find_output(smith_one(inputs[j]), &shared) != nullptr)
+            needs = smith_cat(b, needs, smith_one(inputs[j]), nullptr);
+    }
+    return needs;
+}
+
 // The generated files the project's sources read: the implicit and order-only inputs of their compiles that a step
 // makes.
 static const char *const *smith_needed_files(SmithBuild *b) {
@@ -2714,12 +2746,7 @@ static const char *const *smith_needed_files(SmithBuild *b) {
     for (size_t i = 0; i < smith_object_row_count; i++) {
         const SmithObject *object = &smith_object_rows[i].object;
         if (!smith_is_own_source(object->source)) continue;
-        const char *const *inputs = smith_cat(b, object->step.implicit_inputs, object->step.order_only_inputs, nullptr);
-        for (size_t j = 0; inputs[j] != nullptr; j++) {
-            const char *shared = nullptr;
-            if (smith_find_output(smith_one(inputs[j]), &shared) != nullptr)
-                needs = smith_cat(b, needs, smith_one(inputs[j]), nullptr);
-        }
+        needs = smith_cat(b, needs, smith_object_needs(b, object), nullptr);
     }
     return needs;
 }
@@ -2769,12 +2796,26 @@ static void smith_put_build_info(FILE *out, SmithBuild *b) {
             fprintf(out, "\t%s", command[j]);
         fputc('\n', out);
     }
+    for (size_t i = 0; i < smith_object_row_count; i++) { // what each compile of a source waits for, to build only that
+        const SmithObject *object = &smith_object_rows[i].object;
+        if (!smith_is_own_source(object->source)) continue;
+        fprintf(out, "need\t%s", object->source);
+        const char *const *needs = smith_object_needs(b, object);
+        for (size_t j = 0; needs[j] != nullptr; j++)
+            fprintf(out, "\t%s", needs[j]);
+        fputc('\n', out);
+    }
     for (size_t i = 0; i < smith_command_row_count; i++) { // sources the build never compiles (smith_compile_command)
         const SmithCommandRow *row = &smith_command_rows[i];
         if (!smith_is_own_source(row->source)) continue;
         fprintf(out, "compile\t%s", row->source);
         for (size_t j = 1; row->arguments[j] != nullptr; j++)
             fprintf(out, "\t%s", row->arguments[j]);
+        fputc('\n', out);
+        if (row->needs == nullptr) continue;
+        fprintf(out, "need\t%s", row->source);
+        for (size_t j = 0; row->needs[j] != nullptr; j++)
+            fprintf(out, "\t%s", row->needs[j]);
         fputc('\n', out);
     }
     const char *build_file = smith_build_file_name();
@@ -4722,6 +4763,7 @@ static void smith_put_manifest(FILE *out, SmithBuild *b) {
     if (smith_defer_count > 0) smith_put_regenerate_edge(out);
     smith_put_phony(out, "smith_needs", smith_needed_files(b));
     smith_put_phony(out, "smith_tests", smith_test_tasks(b));
+    smith_put_phony(out, "smith_info", smith_list(b, nullptr)); // builds nothing: build.c's run wrote .smith/build.info
     // ninja builds every target when there is no default line, so an empty default names a target that does nothing.
     if (smith_default_count == 0) fputs("build smith_nothing: phony\ndefault smith_nothing", out);
     if (smith_default_count > 0) fputs("default", out);
