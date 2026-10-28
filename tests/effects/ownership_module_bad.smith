@@ -2,10 +2,10 @@ module ownership_module_bad;
 
 import <stdlib.h>;
 
-[[smith::returns_borrowed(2)]] u8 *bad_index(u8 xs[:], i32 n);
-[[smith::returns_internal]] i32 returns_no_pointer(void);
-[[smith::returns_internal]] [[smith::returns_borrowed(1)]] u8 *two(u8 *p);
-[[smith::returns_owned(nonexistent)]] u8 *unknown_release(u8 *p);
+[[std::returns_borrowed(2)]] u8 *bad_index(u8 xs[:], i32 n);
+[[std::returns_internal]] i32 returns_no_pointer(void);
+[[std::returns_internal]] [[std::returns_borrowed(1)]] u8 *two(u8 *p);
+[[std::returns_owned(nonexistent)]] u8 *unknown_release(u8 *p);
 
 i32 main() {
     return 0;

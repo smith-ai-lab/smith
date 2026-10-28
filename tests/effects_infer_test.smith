@@ -637,11 +637,11 @@ export void test_ownership_bad_module(io::Io *io) {
 export void test_ownership_is_recorded_in_the_summary(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     scratch::write(&p, "a.c",
-                   "#include <stdlib.h>\n[[smith::returns_owned(free)]] char *dup1(const char *s);\n"
-                   "[[smith::returns_borrowed(1)]] char *find1(const char *s, int c);\n"
-                   "[[smith::returns_internal]] char *note1(int n);\n"
-                   "[[smith::returns_internal]] typedef char *(*Describe)(int);\n"
-                   "typedef char *(*Name)(int) [[clang::annotate_type(\"smith::owns:internal\")]];\n"
+                   "#include <stdlib.h>\n[[std::returns_owned(free)]] char *dup1(const char *s);\n"
+                   "[[std::returns_borrowed(1)]] char *find1(const char *s, int c);\n"
+                   "[[std::returns_internal]] char *note1(int n);\n"
+                   "[[std::returns_internal]] typedef char *(*Describe)(int);\n"
+                   "typedef char *(*Name)(int) [[clang::annotate_type(\"std::owns:internal\")]];\n"
                    "int main(void) { return 0; }\n");
     scratch::Run run = scratch::sh(&p, "smith cc -c a.c -o a.o && grep -E '^[OT]' a.o.fx | cut -f1-3 && "
                                        "smith cc a.o -o program && echo linked");
