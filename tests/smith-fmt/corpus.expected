@@ -735,6 +735,40 @@ i32 main() {
     jump();
     return 0;
 }
+==> effects-function-type/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+// The effects of a function pointer go after the parameter list of the function type (iss
+// field, a parameter and a local, `[[smith::pure]]` for none.
+typedef void (*Logger)(const char *text) [[smith::effects(console)]];
+
+struct Sink {
+    Logger log;
+    i32 (*step)(i32 x) [[smith::pure]];
+};
+
+[[smith::effects(console)]] static void say(const char *text) {
+    c::printf("%s\n", text);
+}
+
+static i32 twice(i32 x) {
+    return x * 2;
+}
+
+export i32 apply(i32 (*f)(i32 x) [[smith::pure]], i32 x) {
+    return f(x);
+}
+
+i32 main() {
+    Sink sink = {.log = say, .step = twice};
+    void (*other)(const char *text) [[std::effects(console, files)]] = say;
+    sink.log("hello");
+    other("world");
+    c::printf("%d\n", apply(sink.step, 21));
+    return 0;
+}
 ==> enum-body-from-file-scope/src/finder.smith <==
 module finder;
 
