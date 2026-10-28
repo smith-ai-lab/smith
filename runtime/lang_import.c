@@ -22,6 +22,7 @@ typedef struct {
     char underscored[smith_lang_name_max];
     char last[smith_lang_name_max];
     uint32_t location;
+    bool std; // written `std::...`: the standard library, whose modules are `smith::...` inside (#366)
 } SmithLangModuleName;
 
 static bool smith_lang_read_module_name(SmithLang *lang, const SmithHost *host, SmithLangModuleName *name) {
@@ -46,11 +47,16 @@ static bool smith_lang_read_module_name(SmithLang *lang, const SmithHost *host, 
             short_used += 1;
         }
         last = used;
-        memcpy(name->colons + used, taken.text, taken.length);
-        memcpy(name->path + short_used, taken.text, taken.length);
-        memcpy(name->underscored + short_used, taken.text, taken.length);
-        used += taken.length;
-        short_used += taken.length;
+        bool library = i == 0 && smith_lang_equals(taken.text, taken.length, "std") &&
+                       smith_lang_punct(smith_lang_peek(lang, host, 0, false), "::");
+        const char *text = library ? "smith" : taken.text; // `std::arena` is the module `smith::arena`
+        size_t text_length = library ? 5 : taken.length;
+        if (i == 0) name->std = library;
+        memcpy(name->colons + used, text, text_length);
+        memcpy(name->path + short_used, text, text_length);
+        memcpy(name->underscored + short_used, text, text_length);
+        used += text_length;
+        short_used += text_length;
         if (!smith_lang_punct(smith_lang_peek(lang, host, 0, false), "::")) break;
         smith_lang_take(lang, host);
     }
@@ -96,7 +102,10 @@ static void smith_lang_module_line(SmithLang *lang, const SmithHost *host, const
         return;
     }
     lang->seen_module_line = true;
-    if (host->main_file != nullptr && !smith_lang_path_matches(host->main_file, name.path)) {
+    char std_path[smith_lang_name_max] = "std"; // a std module is also in a file whose path ends in std/x.smith
+    if (name.std) snprintf(std_path + 3, sizeof std_path - 3, "%s", name.path + 5);
+    if (host->main_file != nullptr && !smith_lang_path_matches(host->main_file, name.path) &&
+        !(name.std && smith_lang_path_matches(host->main_file, std_path))) {
         smith_lang_error(lang, host, name.location,
                          "module `%s` must be in a file whose path ends in `%s.smith`; this one is `%s`", name.colons,
                          name.path, host->main_file);

@@ -126,6 +126,7 @@ u32 helper(void) { … }                              // private
     An exported variable is declared before its definition in the module's own compile (`extern T name __asm__(…);`,
     what its header says), as a C file that includes its own header has it, so a `-Werror` project with
     `-Wmissing-variable-declarations` compiles a module with no pragma.
+  - **The standard library is `std::`** (#366, runtime/lang_import.c `smith_lang_read_module_name`): a first name `std` before `::` in a module line or an import reads as `smith`, so `std::arena` is the module `smith::arena` inside (C names `smith_arena_`, header `smith/arena.h`), and a `module std::x;` line is in a file ending in `smith/x.smith` or `std/x.smith`. The plugin's attributes (`pure`, `effects`, the effect names, `affine`) and `c_name` have both scopes, and the checks that read `clang::annotate("smith::capability")`, `main_only` and `edge` read `std::` too. `smith::` is still the spelling of the tree until `lib/smith` becomes `lib/std`; there is no warning for it. Test: `tests/std_scope_test.smith`.
   - **`[[smith::c_name("Name")]]` before `export` chooses the C name** of the export, for a library that keeps its C
     API when it becomes a module (`[[smith::c_name("SmithArena")]] export typedef struct {…} Arena;`,
     `[[smith::c_name("smith_text_parse_f64")]] export bool parse_f64(…)`).

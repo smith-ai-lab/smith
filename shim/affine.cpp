@@ -50,7 +50,7 @@ namespace {
 
 bool annotated(const Decl *decl) {
     for (const auto *attr : decl->specific_attrs<AnnotateAttr>())
-        if (attr->getAnnotation() == "smith::affine") return true;
+        if (attr->getAnnotation() == "smith::affine" || attr->getAnnotation() == "std::affine") return true;
     return false;
 }
 
@@ -1033,6 +1033,8 @@ struct AffineAttr final : ParsedAttrInfo {
     AffineAttr() {
         static constexpr Spelling spellings[] = {{ParsedAttr::AS_C23, "smith::affine"},
                                                  {ParsedAttr::AS_CXX11, "smith::affine"},
+                                                 {ParsedAttr::AS_C23, "std::affine"},
+                                                 {ParsedAttr::AS_CXX11, "std::affine"},
                                                  {ParsedAttr::AS_GNU, "smith_affine"}};
         Spellings = spellings;
     }
