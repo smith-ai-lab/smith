@@ -346,6 +346,12 @@ module.exports = grammar(C, {
       field('declarator', optional($._abstract_declarator)), '[', repeat(choice($.type_qualifier, 'static')), field('size', ':'), ']'))),
     subscript_expression: ($, original) => choice(original, prec(C.PREC.SUBSCRIPT, seq(
       field('argument', $.expression), '[', field('index', $.slice_range), ']'))),
+    // A function that returns an array (issue #734): `Key[2] pair(Key k)`, `Key[n] split(Key k, constexpr usize n)`, and a
+    // slice written the same way, `i32[:] tail(i32 xs[:])`.
+    function_definition: ($, original) => choice(original, seq(
+      optional($.ms_call_modifier), $._declaration_specifiers, field('result_size', $.result_size),
+      field('declarator', $._declarator), field('body', $.compound_statement))),
+    result_size: $ => seq('[', choice(':', $.expression), ']'),
     slice_range: $ => choice(
       seq($.expression, ':', optional($.expression), optional(seq(':', $.expression))),
       seq(':', optional($.expression)),
