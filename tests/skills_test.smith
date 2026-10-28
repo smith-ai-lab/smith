@@ -427,6 +427,10 @@ export void test_skill_smith_lang_generics_more(io::Io *io) {
     skill_case(io, "smith-lang-generics-more");
 }
 
+export void test_skill_smith_lang_generics_pattern(io::Io *io) {
+    skill_case(io, "smith-lang-generics-pattern");
+}
+
 export void test_skill_smith_lang_if_constexpr(io::Io *io) {
     skill_case(io, "smith-lang-if-constexpr");
 }

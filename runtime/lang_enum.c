@@ -2023,6 +2023,7 @@ static void smith_lang_eshape_put_definition(SmithLang *lang, const SmithHost *h
     char *stop = strstr(text, "\n#endif");
     if (body == nullptr || start == nullptr || stop == nullptr) return;
     *stop = 0;
+    bool ended = stop > start && stop[-1] == ';'; // a struct's text ends with its own `;`
     smith_lang_gen_note_break(lang);
     for (char *at = start; *at != 0;) {
         if (isspace((unsigned char)*at)) {
@@ -2053,7 +2054,7 @@ static void smith_lang_eshape_put_definition(SmithLang *lang, const SmithHost *h
             at += 1;
         }
     }
-    smith_lang_gen_put(lang, host, SmithTokenKind_Punctuator, ";", place, instance_id);
+    if (!ended) smith_lang_gen_put(lang, host, SmithTokenKind_Punctuator, ";", place, instance_id);
 }
 
 // The definitions of the slice structs that the last shape call read computed, in front of the enum struct that holds

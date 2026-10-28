@@ -24,7 +24,7 @@ void push(List(constexpr Type T) *xs, T item) {
     xs->count += 1;
 }
 
-i32 main(void) {
+i32 main() {
     i32 storage[4] = {};
     List(i32) xs = {.items = storage};
     push(&xs, 3);
