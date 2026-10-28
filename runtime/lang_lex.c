@@ -919,14 +919,20 @@ static void smith_raw_want(const char *file, const char *text, size_t length, Sm
                 }
             }
             memcpy(relative + used, ".h", 3);
+            char source_relative[smith_lang_name_max]; // where the source is: std/arena.h, though C calls it smith/arena.h
+            memcpy(source_relative, relative, used + 3);
+            if (strncmp(relative, "std/", 4) == 0) { // the header of std::arena is smith/arena.h (#366)
+                memmove(relative + 6, relative + 4, used - 1);
+                memcpy(relative, "smith/", 6);
+            }
             bool known = cursor == name || strcmp(relative, "target.h") != 0 ? false : true;
             for (size_t i = 0; i < smith_raw_modules_count; i++) // read already
                 known = known || strcmp(smith_raw_modules[i].path, relative) == 0;
             for (size_t i = 0; i < *count; i++) // wanted already
                 known = known || strcmp(wanted[i].relative, relative) == 0;
             char path[PATH_MAX];
-            bool fits = (size_t)snprintf(path, sizeof path, "%s/%.*s.smith", root, (int)(strlen(relative) - 2),
-                                         relative) < sizeof path;
+            bool fits = (size_t)snprintf(path, sizeof path, "%s/%.*s.smith", root,
+                                         (int)(strlen(source_relative) - 2), source_relative) < sizeof path;
             if (!known && cursor > name && fits) {
                 if (*count >= smith_raw_modules_max - smith_raw_modules_count) smith_raw_modules_full();
                 snprintf(wanted[*count].relative, sizeof wanted[0].relative, "%s", relative);
@@ -1023,6 +1029,11 @@ static bool smith_raw_read_header(void *context, const char *relative, const cha
             char path[PATH_MAX];
             size_t stem = strlen(relative) - 2; // without the .h
             if ((size_t)snprintf(path, sizeof path, "%s/%.*s.smith", root, (int)stem, relative) < sizeof path) {
+                got = smith_raw_interface_meta(raw, path, into, smith_raw_meta_max);
+            }
+            if (got == SIZE_MAX && strncmp(relative, "smith/", 6) == 0 &&
+                (size_t)snprintf(path, sizeof path, "%s/std/%.*s.smith", root, (int)(stem - 6), relative + 6) <
+                    sizeof path) { // the header of std::arena is smith/arena.h, its source std/arena.smith (#366)
                 got = smith_raw_interface_meta(raw, path, into, smith_raw_meta_max);
             }
         }

@@ -3498,6 +3498,15 @@ class SmithHook final : public TokenHook, public NameSource {
             source = std::move(*buffer);
             break;
         }
+        if (!source && StringRef(module).starts_with("smith/")) {
+            // The header of std::arena is smith/arena.h (C has no namespaces, #366) and its source std/arena.smith.
+            Interface *library = interfaceOf("std/" + module.substr(6));
+            if (library != nullptr && library->ok) {
+                entry = *library;
+                return &entry;
+            }
+            problem.clear();
+        }
         if (!source) {
             entry.text = "cannot find module `" + name + "`: no `" + module + ".h` in the include paths, no `" +
                          module + ".smith` among the input files, and nothing at the path the name implies (" + tried +
