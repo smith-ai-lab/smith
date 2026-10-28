@@ -2151,6 +2151,25 @@ static int build_ci_times(SmithRun *run) {
     return build_exec(smith_cat(b, smith_list(b, tool, root, nullptr), ids, nullptr));
 }
 
+// `smith build bench [-Dfull=1] [-Dpreflight=1] [-Dsmith=<path>]` (issue #639): measures each budget line of the speed
+// table (no-op build, one-file build, fresh worktree, fmt, lint, a .smith module's compile, optionally the full test
+// suite's CPU and preflight) with the smith this build made, prints the table and writes it to .smith/bench.tsv.
+// scripts/bench.c, compiled here, does the measuring.
+static int build_bench(SmithRun *run) {
+    SmithBuild *b = run->b;
+    const char *folder = ".smith/bench";
+    const char *tool = smith_fmt(b, "%s/bench", folder);
+    if (build_make_folder(b, ".smith") != 0 || build_make_folder(b, folder) != 0) return 1;
+    const char *const compile[] = {
+        smith_env(b, "CC", "smith-cc"), "-std=c23", "-O1", "scripts/bench.c", "-o", tool, nullptr};
+    int status = build_exec(compile);
+    if (status != 0) return status;
+    const char *const *argv = smith_list(b, tool, run->args[0], ".smith/bench.tsv", nullptr);
+    if (run->args[1][0] != '\0') argv = smith_cat(b, argv, smith_list(b, "full", nullptr), nullptr);
+    if (run->args[2][0] != '\0') argv = smith_cat(b, argv, smith_list(b, "preflight", nullptr), nullptr);
+    return build_exec(argv);
+}
+
 // `smith build coverage-fetch` (issue #456), run by `smith test --changed` when it finds no records and this build file
 // defines the task: brings the records of the last green run of the train (the artifact `smith-records`) into
 // .smith/records, keeping any record already there. Records are keyed by content, so one from CI is valid wherever its
@@ -2337,7 +2356,7 @@ static int build_preflight(SmithRun *run) {
     return ok && posted == 0 ? 0 : 1;
 }
 
-static void build_developer_tasks(SmithBuild *b) {
+static void build_developer_tasks(SmithBuild *b, const char *binary) {
     SmithStep preflight = {.run = build_preflight};
     smith_task(b, "preflight", &preflight);
     SmithStep friction = {
@@ -2355,6 +2374,14 @@ static void build_developer_tasks(SmithBuild *b) {
         .description = "reporting where CI's time goes",
     };
     smith_task(b, "ci-times", &ci_times);
+    SmithStep bench = {
+        .run = build_bench,
+        .args = smith_list(b, smith_option_value(b, "smith", binary, "bench: the smith to measure"),
+                           smith_option_value(b, "full", "", "bench: 1 also runs the full test suite"),
+                           smith_option_value(b, "preflight", "", "bench: 1 also runs preflight"), nullptr),
+        .description = "measuring the speed budgets of #639",
+    };
+    smith_task(b, "bench", &bench);
     SmithStep gate = {
         .run = build_docs_gate,
         .args = smith_list(b, "origin/main", nullptr),
@@ -2456,7 +2483,7 @@ void build(SmithBuild *b) {
     build_install(b, &config, config.binary, tested);
     build_release(b, config.binary);
     build_llvm(b);
-    build_developer_tasks(b);
+    build_developer_tasks(b, config.binary);
     SmithStep clean = {.command = (const char *[]){"rm", "-rf", "build", nullptr}};
     smith_task(b, "clean", &clean);
     // clangd reads this: the exact command of each compile, and build.c's own.
