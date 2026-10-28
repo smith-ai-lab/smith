@@ -1,2 +1,2 @@
 status 1
-effects_libc_unknown_pointer.smith:7:15: error: smith-ownership: 'ctermid' returns a pointer and the C library table gives it no idiom; add it to shim/effects_table.h
+effects_libc_unknown_pointer.smith:7:15: error: smith-ownership: 'getusershell' returns a pointer and the C library table gives it no idiom; add it to shim/effects_table.h

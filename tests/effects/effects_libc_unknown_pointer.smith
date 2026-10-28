@@ -1,8 +1,8 @@
 module effects_libc_unknown_pointer;
 
-import <stdio.h>;
+import <unistd.h>;
 
-// ctermid returns a pointer and the table gives it no idiom: in a module that is an error naming it.
-export const char *terminal() {
-    return c::ctermid(nullptr);
+// getusershell returns a pointer and the table gives it no idiom: in a module that is an error naming it.
+export const char *shell() {
+    return c::getusershell();
 }

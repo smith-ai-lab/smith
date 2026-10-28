@@ -379,6 +379,10 @@ inline constexpr Entry effect_functions[] = {
     {"gethostname", Env},
     {"getuid", Env},
     {"getlogin", Env | Globals},
+    {"cuserid", Env | Globals},
+    {"ctermid", Globals},
+    {"tmpnam", Globals},
+    {"tempnam", Alloc | Globals},
     {"uname", Env},
     {"sysconf", Env},
     {"getpagesize", Env},
@@ -448,10 +452,15 @@ inline constexpr Entry effect_functions[] = {
 // idiom is written as #720's attributes are recorded in a summary: `owned:<f>` (the caller frees it with `f`),
 // `borrowed:<n>` (it points into argument `n`, 1-based) or `internal` (the function's own memory, never freed by the
 // caller). A function that returns a pointer and is not here is an error in a module. Where the idiom depends on the
-// arguments (`realloc`, `fgets`, `getcwd`) it is the documented common case.
+// arguments (`realloc`, `fgets`) it is the documented common case. `owned:<f>:<n>[,<n>...]` calls `f` with the pointer
+// and then the listed arguments of the allocating call (`mmap`: `owned:munmap:2`, the length). A function that
+// allocates (or returns static memory) when one argument is a null pointer constant (`getcwd(nullptr, 0)`) has a second
+// idiom for it: `null_arg` (1-based) and `null_idiom`; a call picks the form by its argument.
 struct Ownership {
     const char *name;
     const char *idiom;
+    int null_arg = 0;
+    const char *null_idiom = nullptr;
 };
 
 inline constexpr Ownership ownership_functions[] = {
@@ -471,7 +480,8 @@ inline constexpr Ownership ownership_functions[] = {
     {"opendir", "owned:closedir"},
     {"fdopendir", "owned:closedir"},
     {"dlopen", "owned:dlclose"},
-    {"mmap", "owned:munmap"},
+    {"mmap", "owned:munmap:2"},
+    {"tempnam", "owned:free"},
     // borrowed: it points into an argument
     {"strchr", "borrowed:1"},
     {"strrchr", "borrowed:1"},
@@ -489,10 +499,13 @@ inline constexpr Ownership ownership_functions[] = {
     {"strncat", "borrowed:1"},
     {"stpcpy", "borrowed:1"},
     {"fgets", "borrowed:1"},
-    {"getcwd", "borrowed:1"},
+    {"getcwd", "borrowed:1", 1, "owned:free"},
     {"readdir", "borrowed:1"},
     {"bsearch", "borrowed:2"},
-    {"realpath", "borrowed:2"},
+    {"realpath", "borrowed:2", 2, "owned:free"},
+    {"tmpnam", "borrowed:1", 1, "internal"},
+    {"ctermid", "borrowed:1", 1, "internal"},
+    {"cuserid", "borrowed:1", 1, "internal"},
     {"ctime_r", "borrowed:2"},
     {"asctime_r", "borrowed:2"},
     {"localtime_r", "borrowed:2"},
@@ -539,6 +552,18 @@ inline bool idiom(llvm::StringRef name, llvm::StringRef &out) {
     if (found == table.end()) return false;
     out = found->second;
     return true;
+}
+
+// The second idiom of a function whose result depends on a null argument: which argument (1-based) and the idiom when
+// it is a null pointer constant; false when the function has one form.
+inline bool null_idiom(llvm::StringRef name, int &arg, llvm::StringRef &out) {
+    for (const Ownership &entry : ownership_functions)
+        if (entry.null_idiom != nullptr && name == entry.name) {
+            arg = entry.null_arg;
+            out = entry.null_idiom;
+            return true;
+        }
+    return false;
 }
 
 // The effects of a function of the C library by name; false when the table does not know it.

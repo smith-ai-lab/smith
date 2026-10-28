@@ -59,6 +59,7 @@
 #include <mutex>
 #include <set>
 #include <string>
+#include <tuple>
 #include <unistd.h>
 #include <vector>
 
@@ -301,6 +302,7 @@ struct Node {
     bool trusted = false; // the body calls smith_trusted(): a promise the prover and this check do not examine
     std::string symbol;
     std::vector<std::pair<SourceLocation, std::string>> unowned; // calls of a pointer-returning libc function, no idiom
+    std::vector<std::tuple<SourceLocation, std::string, int>> unkeyed; // calls whose null-keyed argument is neither
 };
 
 // Whether a function returns an object pointer (a function pointer is not memory anyone owns).
@@ -489,10 +491,31 @@ class Collector {
         std::string name = callee->getNameAsString();
         llvm::StringRef kind;
         if (!sm.isInSystemHeader(callee->getLocation()) || !returnsObjectPointer(callee) ||
-            llvm::StringRef(name).starts_with("__builtin_") || smith_effects::idiom(name, kind))
+            llvm::StringRef(name).starts_with("__builtin_"))
             return;
-        if (sm.isWrittenInMainFile(sm.getExpansionLoc(call->getBeginLoc())))
+        bool known = smith_effects::idiom(name, kind);
+        if (!sm.isWrittenInMainFile(sm.getExpansionLoc(call->getBeginLoc()))) return;
+        if (!known) {
             node.unowned.emplace_back(call->getBeginLoc(), name);
+            return;
+        }
+        int arg = 0;
+        llvm::StringRef nullForm;
+        if (smith_effects::null_idiom(name, arg, nullForm) && static_cast<unsigned>(arg) <= call->getNumArgs() &&
+            !isNullOrBuffer(call->getArg(arg - 1)))
+            node.unkeyed.emplace_back(call->getBeginLoc(), name, arg);
+    }
+
+    // Whether an argument is a null pointer constant (the null form of the idiom) or evidently a buffer: an array that
+    // decays, the address of an object or a string literal (the buffer form). Anything else is neither.
+    bool isNullOrBuffer(const Expr *arg) {
+        if (arg->isNullPointerConstant(context, Expr::NPC_ValueDependentIsNull) != Expr::NPCK_NotNull) return true;
+        const Expr *bare = arg->IgnoreParenCasts();
+        if (bare->getType()->isArrayType() || isa<StringLiteral>(bare)) return true;
+        if (const auto *cast = dyn_cast<ImplicitCastExpr>(arg->IgnoreParens()))
+            if (cast->getCastKind() == CK_ArrayToPointerDecay) return true;
+        const auto *unary = dyn_cast<UnaryOperator>(bare);
+        return unary != nullptr && unary->getOpcode() == UO_AddrOf;
     }
 
     // An `asm` statement: the assembler reads it (shim/effects_asm.h), and each thing it does is a call: a system call
@@ -649,6 +672,9 @@ class Analysis {
         ownership = engine.getCustomDiagID(
             DiagnosticsEngine::Error, "smith-ownership: '%0' returns a pointer and the C library table gives it no "
                                       "idiom; add it to shim/effects_table.h");
+        nullkeyed = engine.getCustomDiagID(
+            DiagnosticsEngine::Error, "smith-ownership: '%0' allocates when its argument %1 is null and returns it "
+                                      "otherwise; pass an array as the buffer, or NULL to allocate");
     }
 
     void run() {
@@ -673,7 +699,7 @@ class Analysis {
   private:
     ASTContext &context;
     DiagnosticsEngine &engine;
-    unsigned bad, note, recursion, assertion, misuse, ownership;
+    unsigned bad, note, recursion, assertion, misuse, ownership, nullkeyed;
     ASTNameGenerator generator;
     bool syntaxOnly;       // a parse that only reads the file (the editor's, not the preamble's)
     std::string output;    // the object file being written: the summary goes beside it, `<object>.fx`
@@ -883,6 +909,9 @@ class Analysis {
         for (const FunctionDecl *function : order)
             for (const auto &[loc, name] : nodes[function].unowned)
                 engine.Report(loc, ownership) << name;
+        for (const FunctionDecl *function : order)
+            for (const auto &[loc, name, arg] : nodes[function].unkeyed)
+                engine.Report(loc, nullkeyed) << name << arg;
     }
 
     // `SMITH_EFFECTS_IDIOMS=missing|list`: for each function of the effects table that a system header declares and
@@ -900,6 +929,10 @@ class Analysis {
             bool known = smith_effects::idiom(name, kind);
             if (mode == "missing" && !known) lines.insert("smith-ownership-missing: " + name);
             if (mode == "list" && known) lines.insert("smith-ownership: " + name + " " + kind.str());
+            int arg = 0;
+            llvm::StringRef nullForm;
+            if (mode == "list" && smith_effects::null_idiom(name, arg, nullForm))
+                lines.insert("smith-ownership: " + name + " null:" + std::to_string(arg) + " " + nullForm.str());
         }
         for (const std::string &line : lines)
             llvm::errs() << line << "\n";

@@ -494,6 +494,16 @@ export void test_effects_libc_unknown_pointer_smith(io::Io *io) {
     effects_case(io, "effects_libc_unknown_pointer.smith");
 }
 
+// A function that allocates when an argument is null (issue #724): an array or a null constant names the form, any
+// other argument is an error.
+export void test_effects_libc_null_buffer_smith(io::Io *io) {
+    effects_case(io, "effects_libc_null_buffer.smith");
+}
+
+export void test_effects_libc_null_unknown_smith(io::Io *io) {
+    effects_case(io, "effects_libc_null_unknown.smith");
+}
+
 // A C file with the libc headers, compiled in the plugin's idiom mode (`SMITH_EFFECTS_IDIOMS=missing|list`).
 static scratch::Run idiom_report(io::Io *io, const char *mode) {
     scratch::Project p = scratch::project(io, "p", nullptr);
@@ -520,6 +530,13 @@ export void test_the_table_records_the_idiom_of_a_returned_pointer(io::Io *io) {
     scratch::expect_contains("strerror is internal", run.out, "smith-ownership: strerror internal\n");
     scratch::expect_contains("strchr points into argument 1", run.out, "smith-ownership: strchr borrowed:1\n");
     scratch::expect_contains("fopen is owned, freed by fclose", run.out, "smith-ownership: fopen owned:fclose\n");
+    scratch::expect_contains("mmap is unmapped with its length", run.out, "smith-ownership: mmap owned:munmap:2\n");
+    scratch::expect_contains("getcwd allocates when argument 1 is null", run.out,
+                             "smith-ownership: getcwd null:1 owned:free\n");
+    scratch::expect_contains("realpath allocates when argument 2 is null", run.out,
+                             "smith-ownership: realpath null:2 owned:free\n");
+    scratch::expect_contains("tmpnam is static when argument 1 is null", run.out,
+                             "smith-ownership: tmpnam null:1 internal\n");
 }
 
 // effects::within in a generic (skill smith-lang-effects): a function of another module is judged by the link, which
