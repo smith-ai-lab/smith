@@ -655,6 +655,10 @@ export void test_array_infer_run(io::Io *io) {
     corpus_case(io, "array-infer-run");
 }
 
+export void test_effects_function_type(io::Io *io) {
+    corpus_case(io, "effects-function-type");
+}
+
 export void test_error_array_empty(io::Io *io) {
     corpus_case(io, "error-array-empty");
 }

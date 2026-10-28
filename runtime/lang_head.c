@@ -691,7 +691,7 @@ static void smith_lang_enter_body(SmithLang *lang, const SmithHost *host, uint32
         if (lang->has_c && !lang->imports_watched) host->watch_imports(host->context);
         lang->imports_watched = true;
         lang->body_sparse = !lang->body_enabled && !host->maybe_local_tag; // the body file needs every token written
-        host->watch_mode(host->context, host->maybe_if_constexpr || lang->body_enabled || host->maybe_local_tag ||
+        host->watch_mode(host->context, host->maybe_if_constexpr || host->maybe_effects_type || lang->body_enabled || host->maybe_local_tag ||
                                                 smith_lang_type_on(lang, host) || smith_lang_tuples_on(lang, host)
                                             ? SmithWatch_All
                                             : SmithWatch_Braces);

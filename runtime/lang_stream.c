@@ -1272,6 +1272,7 @@ static bool smith_lang_slice_process(SmithLang *lang, const SmithHost *host, con
 // What `if constexpr` and the constants it names do with a token (runtime/lang_target.c), then the token's own path.
 static void smith_lang_process_token(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     bool closes = false;
+    if (!token->replay) smith_lang_effects_type(lang, host, token);
     if (token->replay) { // a function over `type` of an import, defined here: only its type values are lowered
         if (token->synthetic || !smith_lang_ty_token(lang, host, token)) smith_lang_emit_code(lang, host, *token);
         return;
@@ -1356,6 +1357,7 @@ SmithLang *smith_lang_new(void) {
     smith_lang_enum_reset();
     smith_lang_unused_serial = 0;
     smith_lang_unused_has_last = false;
+    smith_lang_effects_paren = false;
     smith_lang_brackets_extern_seen = false;
     smith_lang_ty_reset();
     smith_lang_word_buckets();

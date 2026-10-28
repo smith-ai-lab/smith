@@ -702,6 +702,7 @@ class SmithHook final : public TokenHook, public NameSource {
         host.maybe_local_tag = hasNestedTag(scan);
         host.maybe_slice = hasSlice(scan) || hasStr(scan);
         host.maybe_brackets = hasEmptyBrackets(scan);
+        host.maybe_effects_type = hasEffectsType(scan);
         host.maybe_shape = hasShapeCall(scan);
         host.maybe_tuple =
             host.maybe_slice || hasTuple(scan) || hasPayloadEnum(scan) || host.maybe_shape || hasTryWord(scan);
@@ -1015,7 +1016,7 @@ class SmithHook final : public TokenHook, public NameSource {
     // The declarations of a module, as they stream by: the lowering decides each token without looking ahead, or says
     // it must (Slow).
     Fast tryFast(Token &tok) {
-        if (host.maybe_slice || host.maybe_brackets || smith_lang_slices_on(lang))
+        if (host.maybe_slice || host.maybe_brackets || host.maybe_effects_type || smith_lang_slices_on(lang))
             return Fast::No; // the lowering reads every token
         // A name of the module may hold a type (`constexpr type big = u32;`, then `big x = 1;`): the lowering reads its
         // neighbours, so it is not renamed here (issue #165).
@@ -2928,6 +2929,22 @@ class SmithHook final : public TokenHook, public NameSource {
         while (next < text.size() && isWhitespace(text[next]))
             next += 1;
         return next < text.size() && text[next] == ']';
+    }
+
+    // Whether the code of the text has `) [[smith::effects` or `) [[smith::pure` (or `std::`): the effects of a function
+    // type, which the lowering writes as `annotate_type` (runtime/lang_effects.c).
+    static bool hasEffectsType(StringRef text) {
+        for (size_t at = text.find("[["); at != StringRef::npos; at = text.find("[[", at + 2)) {
+            size_t before = at;
+            while (before > 0 && isWhitespace(text[before - 1]))
+                before -= 1;
+            if (before == 0 || text[before - 1] != ')') continue;
+            StringRef rest = text.substr(at + 2).ltrim();
+            if (!rest.consume_front("smith") && !rest.consume_front("std")) continue;
+            if (!rest.consume_front("::")) continue;
+            if (rest.starts_with("effects") || rest.starts_with("pure")) return true;
+        }
+        return false;
     }
 
     static bool hasEmptyBrackets(StringRef text) {

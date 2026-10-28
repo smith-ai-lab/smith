@@ -1020,6 +1020,9 @@ static const char *smith_lang_str(SmithLangText text) {
 // `_` and `_name` mean unused; `_ = expr;` discards a value.
 #include "lang_unused.c"
 
+// The effects of a function type: `[[smith::effects(console)]]` after a parameter list.
+#include "lang_effects.c"
+
 // Run-time arrays: `T xs[:]`, `xs[i]`, `xs[a:b]`.
 #include "lang_slice.c"
 

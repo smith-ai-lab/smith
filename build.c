@@ -586,6 +586,7 @@ static const char *const build_smith_inputs[] = {
     "runtime/lang_declare.c",
     "runtime/lang_tuple.c",
     "runtime/lang_unused.c",
+    "runtime/lang_effects.c",
     "runtime/lang_type.c",
     "runtime/lang_stream.c",
     "runtime/lang_lex.c",
