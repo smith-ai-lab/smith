@@ -66,7 +66,8 @@ export void test_build_lang_a_project_of_three_modules_and_a_c_file(io::Io *io) 
                          scratch::sh(&p, "./build/app 2>&1").out);
 
     scratch::sleep(&p, 1000);
-    (void)scratch::sh(&p, "printf '\\nexport usize extra(usize n) {\\n    return n + 2;\\n}\\n' >>src/game/replay.smith");
+    (void)scratch::sh(&p,
+                      "printf '\\nexport usize extra(usize n) {\\n    return n + 2;\\n}\\n' >>src/game/replay.smith");
     scratch::expect_text("modules: an edit to a module's exports recompiles it and its importers, and the C file that "
                          "includes the header",
                          "src/checksum.c src/game/replay.smith src/main.smith ", scratch::sh(&p, compiled_command).out);
