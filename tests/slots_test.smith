@@ -155,3 +155,28 @@ export void test_a_ci_holder_leaves_a_local_run_fewer_cores(io::Io *io) {
                            .data);
     scratch::expect_text("the CI run keeps a core while it runs", "done\n", out);
 }
+
+// `smith build preflight` takes its base token at once and holds it for the whole run: a second preflight waits at its
+// start, and what the first runs (an inner executor here, standing for its build, fmt, lint and test) rides on the
+// token, with the one token there is, and does not wait. The project's task holds until `free` exists.
+export void test_preflight_takes_its_token_at_once_and_holds_it_for_the_whole_run(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::write(&p, "build.c",
+                   "#include <smith/build.h>\n"
+                   "void build(SmithBuild *b) {\n"
+                   "    SmithStep step = {.command = (const char *[]){\"sh\", \"-c\", \"touch held; while [ ! -e "
+                   "free ]; do sleep 0.05; done; smith --smith-exec m.ninja\", nullptr}};\n"
+                   "    smith_task(b, \"preflight\", &step);\n"
+                   "    smith_default(b, step.outputs);\n"
+                   "}\n");
+    const char *script = "printf 'rule step\\n  command = $cmd\\nbuild out: step\\n  cmd = touch out\\n' >m.ninja; "
+                         "mkdir two && cp build.c m.ninja two/; "
+                         "smith build preflight 2>a.err >/dev/null & a=$!; w held; "
+                         "(cd two && smith build preflight 2>../b.err >/dev/null) & b=$!; "
+                         "ww b.err 'waiting for a core'; [ -e two/out ] && echo early; "
+                         "touch free; wait $a; touch two/free; wait $b; echo done; grep -c 'waiting for a core' a.err; "
+                         "[ -e out ] && echo inner-built";
+    scratch::Run run = scratch::sh(&p, format::push(&io->arena, prelude, script).data);
+    scratch::expect_text("the second waits, the first's inner build rides on its token", "done\n0\ninner-built\n",
+                         run.out);
+}
