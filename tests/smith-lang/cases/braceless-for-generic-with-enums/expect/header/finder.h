@@ -16,7 +16,7 @@ extern "C" {
 #endif
 #ifndef SMITH_ENUM_smith_enum_option_i32
 #define SMITH_ENUM_smith_enum_option_i32 // NOLINT(readability-identifier-naming)
-struct smith_enum_option_i32 { enum smith_enum_option_i32_tag { smith_enum_option_i32_tag_some, smith_enum_option_i32_tag_none } tag; union { int32_t some; }; } __attribute__((annotate("smith::enum")));
+struct smith_enum_option_i32 { enum smith_enum_option_i32_tag { smith_enum_option_i32_tag_none, smith_enum_option_i32_tag_some } tag; union { int32_t some; }; } __attribute__((annotate("smith::enum")));
 #endif
 
 struct smith_enum_option_i32 finder_first_positive(int32_t a, int32_t b) __asm__("_finder::first_positive");

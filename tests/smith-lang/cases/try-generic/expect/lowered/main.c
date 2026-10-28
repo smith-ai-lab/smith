@@ -1,13 +1,13 @@
 #include <stdio.h>
-struct smith_enum_result_usize__i32 {enum smith_enum_result_usize__i32_tag {smith_enum_result_usize__i32_tag_ok, smith_enum_result_usize__i32_tag_error } tag; union { __SIZE_TYPE__ ok; __INT32_TYPE__ error; }; } __attribute__((annotate("smith::enum")));
-typedef struct smith_enum_result_usize__i32 main_Wide;struct smith_enum_result_f64__i32 {enum smith_enum_result_f64__i32_tag {smith_enum_result_f64__i32_tag_ok, smith_enum_result_f64__i32_tag_error } tag; union { double ok; __INT32_TYPE__ error; }; } __attribute__((annotate("smith::enum")));
-typedef struct smith_enum_result_f64__i32 main_Real;struct smith_enum_option_u8 {enum smith_enum_option_u8_tag {smith_enum_option_u8_tag_some, smith_enum_option_u8_tag_none } tag; union { __UINT8_TYPE__ some; }; } __attribute__((annotate("smith::enum")));
-typedef struct smith_enum_option_u8 main_Small;struct smith_enum_option_f64 {enum smith_enum_option_f64_tag {smith_enum_option_f64_tag_some, smith_enum_option_f64_tag_none } tag; union { double some; }; } __attribute__((annotate("smith::enum")));
-typedef struct smith_enum_option_f64 main_Float;struct smith_enum_result_i32__i32 {enum smith_enum_result_i32__i32_tag {smith_enum_result_i32__i32_tag_ok, smith_enum_result_i32__i32_tag_error } tag; union { __INT32_TYPE__ ok; __INT32_TYPE__ error; }; } __attribute__((annotate("smith::enum")));
+struct smith_enum_result_usize__i32 {enum smith_enum_result_usize__i32_tag {smith_enum_result_usize__i32_tag_error, smith_enum_result_usize__i32_tag_ok } tag; union { __INT32_TYPE__ error; __SIZE_TYPE__ ok; }; } __attribute__((annotate("smith::enum")));
+typedef struct smith_enum_result_usize__i32 main_Wide;struct smith_enum_result_f64__i32 {enum smith_enum_result_f64__i32_tag {smith_enum_result_f64__i32_tag_error, smith_enum_result_f64__i32_tag_ok } tag; union { __INT32_TYPE__ error; double ok; }; } __attribute__((annotate("smith::enum")));
+typedef struct smith_enum_result_f64__i32 main_Real;struct smith_enum_option_u8 {enum smith_enum_option_u8_tag {smith_enum_option_u8_tag_none, smith_enum_option_u8_tag_some } tag; union { __UINT8_TYPE__ some; }; } __attribute__((annotate("smith::enum")));
+typedef struct smith_enum_option_u8 main_Small;struct smith_enum_option_f64 {enum smith_enum_option_f64_tag {smith_enum_option_f64_tag_none, smith_enum_option_f64_tag_some } tag; union { double some; }; } __attribute__((annotate("smith::enum")));
+typedef struct smith_enum_option_f64 main_floating;struct smith_enum_result_i32__i32 {enum smith_enum_result_i32__i32_tag {smith_enum_result_i32__i32_tag_error, smith_enum_result_i32__i32_tag_ok } tag; union { __INT32_TYPE__ error; __INT32_TYPE__ ok; }; } __attribute__((annotate("smith::enum")));
 static struct smith_enum_result_i32__i32 main_step(__INT32_TYPE__ n) {
 if (n < 0) return {.error = n};
 return {.ok = n};
-}struct smith_enum_option_i32 {enum smith_enum_option_i32_tag {smith_enum_option_i32_tag_some, smith_enum_option_i32_tag_none } tag; union { __INT32_TYPE__ some; }; } __attribute__((annotate("smith::enum")));
+}struct smith_enum_option_i32 {enum smith_enum_option_i32_tag {smith_enum_option_i32_tag_none, smith_enum_option_i32_tag_some } tag; union { __INT32_TYPE__ some; }; } __attribute__((annotate("smith::enum")));
 static struct smith_enum_option_i32 main_pick(__INT32_TYPE__ n) {
 if (n < 0) return .none;
 return {.some = n};
@@ -27,12 +27,6 @@ case .error: printf("error %d\n", r.error); break;
 static void main_show_small(main_Small o) {
 switch (o) {
 case .some: printf("some %d\n", o.some); break;
-case .none: printf("none\n"); break;
-}
-}
-static void main_show_float(main_Float o) {
-switch (o) {
-case .some: printf("some %g\n", o.some); break;
 case .none: printf("none\n"); break;
 }
 }

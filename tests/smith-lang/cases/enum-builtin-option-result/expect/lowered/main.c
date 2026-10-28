@@ -1,8 +1,8 @@
 #include <stdio.h>
 #include "finder.h"
 #include "parser.h"
-struct smith_enum_option_usize {enum smith_enum_option_usize_tag {smith_enum_option_usize_tag_some, smith_enum_option_usize_tag_none } tag; union { __SIZE_TYPE__ some; }; } __attribute__((annotate("smith::enum")));
-typedef struct smith_enum_option_usize main_Index;struct smith_enum_result_f64__i32 {enum smith_enum_result_f64__i32_tag {smith_enum_result_f64__i32_tag_ok, smith_enum_result_f64__i32_tag_error } tag; union { double ok; __INT32_TYPE__ error; }; } __attribute__((annotate("smith::enum")));
+struct smith_enum_option_usize {enum smith_enum_option_usize_tag {smith_enum_option_usize_tag_none, smith_enum_option_usize_tag_some } tag; union { __SIZE_TYPE__ some; }; } __attribute__((annotate("smith::enum")));
+typedef struct smith_enum_option_usize main_Index;struct smith_enum_result_f64__i32 {enum smith_enum_result_f64__i32_tag {smith_enum_result_f64__i32_tag_error, smith_enum_result_f64__i32_tag_ok } tag; union { __INT32_TYPE__ error; double ok; }; } __attribute__((annotate("smith::enum")));
 typedef struct smith_enum_result_f64__i32 main_Quotient; [ [ clang :: unavailable ( "main::first is a generic function: call it from a .smith module" ) ] ] void main_first ( void ) ;
 static __SIZE_TYPE__ main_or_else(main_Index at, __SIZE_TYPE__ otherwise) {
 if (at == .some) return at.some;
