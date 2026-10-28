@@ -105,3 +105,29 @@ export void test_build_step_cache_results_over_the_cap_are_removed(io::Io *io) {
     scratch::expect_lacks("cap: nothing is left to serve", capped.out, "(cached)");
     scratch::expect_contains("cap: the compiles run", capped.out, "compile main.c");
 }
+
+// 7. A precompiled header is never served: it records the time of each file it read, so one served after a checkout
+// rewrote its header with the same text (a new time) is rejected by every compile that includes it (#728).
+constexpr char pch_build[_] =
+    "#include <smith/build.h>\n"
+    "void build(SmithBuild *b) {\n"
+    "    SmithObject header = {.compiler = \"smith-cc\", .source = \"other.h\", .output = \"build/other.pch\",\n"
+    "                          .flags = smith_list(b, \"-x\", \"c-header\", nullptr)};\n"
+    "    smith_object(b, &header);\n"
+    "    smith_default(b, header.step.outputs);\n"
+    "}\n";
+
+export void test_build_step_cache_a_precompiled_header_is_compiled_again(io::Io *io) {
+    scratch::Project a = made(io, "a");
+    scratch::write(&a, "build.c", pch_build);
+    const char *build = "env SMITH_STEP_CACHE=1 smith build 2>&1";
+    scratch::Run first = scratch::sh(&a, build);
+    scratch::expect_status("pch: the header compiles", 0, &first);
+    // the header's text is the same and its time is newer than the header's output, both in the past
+    (void)scratch::sh(&a, "touch -t 200101010000 other.h && touch -t 200001010000 build/other.pch");
+    scratch::Run again = scratch::sh(&a, build);
+    scratch::expect_contains("pch: it compiles again", again.out, "compile other.h");
+    scratch::expect_lacks("pch: and is not served", again.out, "(cached)");
+    scratch::Run used = scratch::sh(&a, "smith-cc -include-pch build/other.pch -fsyntax-only other.c 2>&1");
+    scratch::expect_status("pch: a compile that includes it accepts it", 0, &used);
+}

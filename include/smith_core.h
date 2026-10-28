@@ -43,3 +43,10 @@ bool smith_core_lower(const char *folder, const char *file, const char *text, ch
                       size_t errors_size);
 bool smith_core_header(const char *folder, const char *file, const char *text, char *out, size_t out_size, char *errors,
                        size_t errors_size);
+
+// The order in which smith writes the headers of its .smith modules (smith.c, smith_write_lang_headers): `names[i]` is
+// module i and `texts[i]` its source. waves[i] is the wave module i's header is written in: 0 when it imports no other
+// of the modules, else one more than the latest of those it imports; modules of one wave are written at the same time.
+// An import cycle ends in one last wave of the modules left. Returns the number of
+// waves (0 for more than 32 modules).
+size_t smith_core_header_waves(const char *const *names, const char *const *texts, size_t count, size_t *waves);
