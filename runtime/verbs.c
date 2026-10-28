@@ -14,7 +14,6 @@
 constexpr size_t smith_verb_args_max = 16384;
 constexpr size_t smith_verbs_files_max = 16384;
 constexpr size_t smith_verbs_names_max = 16U << 20;
-constexpr size_t smith_verbs_batch = 128;
 constexpr size_t smith_verbs_info_max = 64U << 20; // .smith/build.info; bss, so only the pages a project fills are used
 constexpr size_t smith_verbs_lines_max = 131072;   // lines of one kind (twice smith_objects_max)
 constexpr size_t smith_verbs_targets_max = 1024;
@@ -232,10 +231,11 @@ typedef struct {
     size_t job;
 } SmithVerbsSlot;
 
-// With `ended`, each job's wait status and log go to it before the log is printed.
-static size_t smith_verbs_parallel(size_t count, size_t jobs, char *const *(*argv_of)(size_t job, void *context),
-                                   void (*ended)(size_t job, int wait_status, FILE *log, void *context),
-                                   void *context) {
+// With `ended`, each job's wait status and log go to it before the log is printed; with `passed`, whether each job
+// passed; without `replay_failed`, a failed job's log is not printed (its caller reports it another way).
+static size_t smith_verbs_parallel_status(size_t count, size_t jobs, char *const *(*argv_of)(size_t job, void *context),
+                                          void (*ended)(size_t job, int wait_status, FILE *log, void *context),
+                                          void *context, bool *passed, bool replay_failed) {
     SMITH_ASSERT(jobs >= 1 && jobs <= smith_verbs_jobs_max);
     SmithVerbsSlot slots[smith_verbs_jobs_max] = {};
     size_t next = 0;
@@ -258,15 +258,24 @@ static size_t smith_verbs_parallel(size_t count, size_t jobs, char *const *(*arg
         if (done < 0) continue;
         for (size_t at = 0; at < jobs; at++) { // bounded by the slots
             if (slots[at].pid != done) continue;
-            if (smith_verbs_status(wait_status) != 0) failed++;
+            bool ok = smith_verbs_status(wait_status) == 0;
+            if (!ok) failed++;
+            if (passed != nullptr) passed[slots[at].job] = ok;
             if (ended != nullptr) ended(slots[at].job, wait_status, slots[at].log, context);
-            smith_verbs_replay(slots[at].log);
+            if (ok || replay_failed) smith_verbs_replay(slots[at].log);
             fclose(slots[at].log);
             slots[at] = (SmithVerbsSlot){};
             active--;
         }
     }
     return failed;
+}
+
+// The same, with every job's output printed.
+static size_t smith_verbs_parallel(size_t count, size_t jobs, char *const *(*argv_of)(size_t job, void *context),
+                                   void (*ended)(size_t job, int wait_status, FILE *log, void *context),
+                                   void *context) {
+    return smith_verbs_parallel_status(count, jobs, argv_of, ended, context, nullptr, true);
 }
 
 // ---- Quiet runs (issue #78)
@@ -371,6 +380,8 @@ static int smith_quiet_verb(const char *verb, int count, char **args, const char
 
 // ---- fmt
 
+#include "fmt_cache.c"
+
 static bool smith_fmt_wanted(const char *name) {
     static const char *const extensions[] = {".c",   ".h",   ".m",  ".mm",    ".cpp",  ".cc",
                                              ".cxx", ".hpp", ".hh", ".smith", ".metal"};
@@ -428,20 +439,7 @@ static int smith_fmt_project(const char *self, bool check) {
         fprintf(stderr, "smith fmt: git sees no C, C++, Objective-C or .smith files here\n");
         return 0;
     }
-    int status = 0;
-    for (size_t first = 0; first < count; first += smith_verbs_batch) { // bounded by the files
-        char *argv[smith_verbs_batch + 6];
-        size_t used = 0;
-        argv[used++] = (char *)self;
-        argv[used++] = (char *)"fmt";
-        argv[used++] = (char *)(check ? "--dry-run" : "-i");
-        if (check) argv[used++] = (char *)"--Werror";
-        for (size_t i = first; i < count && i < first + smith_verbs_batch; i++)
-            argv[used++] = (char *)files[i];
-        argv[used] = nullptr;
-        int one = smith_verbs_wait(smith_verbs_start(argv, nullptr));
-        if (one != 0) status = one;
-    }
+    int status = smith_fmt_run(self, check, files, count, true);
     if (status != 0 && check) fprintf(stderr, "smith fmt: some files are not formatted; `smith fmt` formats them\n");
     return status;
 }
