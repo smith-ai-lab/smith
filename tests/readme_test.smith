@@ -463,6 +463,10 @@ export void test_readme_project_reflect(io::Io *io) {
     project_case(io, "reflect");
 }
 
+export void test_readme_project_pairs(io::Io *io) {
+    project_case(io, "pairs");
+}
+
 export void test_readme_project_slices(io::Io *io) {
     project_case(io, "slices");
 }

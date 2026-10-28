@@ -165,6 +165,39 @@ export void skip(const char (*text)[:], usize n) {
 
 [smith-lang-slice-pointers](.agents/skills/smith-lang-slice-pointers/SKILL.md).
 
+C cannot return an array, so a function that makes a fixed number of values fills an out parameter. In a module it returns them, and the size is a number or a `constexpr` parameter:
+
+```smith project=pairs run
+module main;
+
+import smith::console;
+
+i32[n] counted(i32 start, constexpr usize n) {
+    i32 out[n];
+    for constexpr (usize i = 0; i < n; i++) {
+        out[i] = start + (i32)i;
+    }
+    return out;
+}
+
+i32[2] twin(i32 x) {
+    return {x, x + 1};
+}
+
+i32 main() {
+    i32 four[4] = counted(10, 4); // an array is initialized from the call
+    i32 pair[2] = twin(7);
+    console::print(four[0], " ", four[3], " ", pair[0], " ", pair[1], "\n");
+    return 0;
+}
+```
+
+```output project=pairs
+10 13 7 8
+```
+
+It lowers to a function that returns a struct wrapping the array (`struct smith_array_i32_2 { i32 data[2]; }`, plain C that C and C++ callers read as `r.data[i]`); a slice result is written the same way, `i32[:] tail(i32 xs[:])`. An array of another size than the call's is an error ([smith-lang-arrays](.agents/skills/smith-lang-arrays/SKILL.md)).
+
 One library does what `strcmp`, `memchr` and `memset` did for every element type: `smith::slice` compares, searches, sorts, fills and reverses any slice, with no allocation, and `smith::ascii` tests one character with no locale. `slice::find` returns an `option(usize)` where C returned a sentinel, and an index or its absence travels as one value:
 
 ```smith
