@@ -195,8 +195,7 @@ static size_t smith_lang_slice_build(SmithToken *out, size_t used, size_t capaci
 // The tokens of a pattern (as smith_lang_slice_build), the unsigned type of a size spelled as the compiler does.
 static size_t smith_lang_slice_pattern(SmithToken *out, size_t used, size_t capacity, const char *pattern,
                                        const SmithLangSliceSpan *spans, const SmithToken *like) {
-    static unsigned counter;
-    counter += 1;
+    unsigned counter = ++smith_lang_counter.slice_pattern;
     size_t from = used;
     used = smith_lang_slice_build(out, used, capacity, pattern, spans, like);
     for (size_t i = from; i < used; i++) { // each token made
@@ -2941,8 +2940,7 @@ static bool smith_lang_slice_replay_subscript(SmithLang *lang, const SmithHost *
         smith_lang_slice_parts(replay, place, parts, 1);
         return true;
     }
-    static unsigned counter;
-    counter += 1;
+    unsigned counter = ++smith_lang_counter.slice_subscript;
     char condition[160];
     char check[512];
     char head[640];
@@ -2981,8 +2979,7 @@ static void smith_lang_slice_replay_dim(const SmithLangSliceDims *dims, size_t a
 static void smith_lang_slice_replay_element(const SmithHost *host, SmithLangReplay *replay, uint32_t place,
                                             const SmithLangSliceDims *dims, const uint32_t span[2],
                                             const uint32_t (*at)[2]) {
-    static unsigned counter;
-    counter += 1;
+    unsigned counter = ++smith_lang_counter.slice_element;
     char condition[320] = "";
     char offset[320] = "";
     char names[smith_lang_slice_dims_max][32];
@@ -3088,8 +3085,7 @@ static bool smith_lang_slice_replay_member(SmithLang *lang, const SmithHost *hos
         return true;
     }
     if (cut) {
-        static unsigned counter = 1000000;
-        counter += 1;
+        unsigned counter = ++smith_lang_counter.slice_cut;
         return smith_lang_slice_replay_cut(host, replay, place, &type, (uint32_t[4]){first, group, colon, close},
                                            counter);
     }
@@ -3155,8 +3151,7 @@ static bool smith_lang_slice_replay_words(SmithLang *lang, const SmithHost *host
         snprintf(texts[0], 640, "__extension__ ( { %s ( struct %s ) { } ; } )", definition, tag); // nothing else
         return false;
     }
-    static unsigned counter = 3000000;
-    counter += 1;
+    unsigned counter = ++smith_lang_counter.slice_convert;
     SmithLangSliceDims dims = smith_lang_slice_dims_one();
     size_t stem = 0;
     if (!smith_lang_slice_dims_parse(tag, &dims, &stem)) dims = smith_lang_slice_dims_one();
