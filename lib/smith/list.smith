@@ -1,0 +1,95 @@
+// smith::list: a list that grows, `List(T)`, in place of a pointer, a count and a capacity kept by hand. It takes its
+// memory from the allocator in force on the thread (`smith::mem`), so under a fixed arena it stops at the budget, under
+// a growing arena it extends its last block in place, and under the heap it is realloc. Every export is a generic over
+// the list's pattern (`List(constexpr type T) *xs`: T is the list's element), so it has no C spelling.
+//
+//   import smith::list;
+//
+//   List(i32) xs = {};          // the zero value is the empty list
+//   list::push(&xs, 3);
+//   list::push(&xs, 4);
+//   i32 all[:] = list::items(&xs);
+//   option(i32) last = list::pop(&xs);
+//   list::free(&xs);
+//
+// The fields are the list's own: use `list::count`, `list::items` and the functions, not the fields. There is no
+// compile-time rule that an item taken by `items` is not used after the next `push` (the borrow rule waits for #439).
+module smith::list;
+
+import smith::contract;
+import smith::mem;
+
+// The list of T: the items, how many are used, and how many fit before the next growth. All zero is the empty list.
+export type List(type T) {
+    return struct {
+        T *data;
+        usize count;
+        usize capacity;
+    };
+}
+
+// The type of a slice of T: what `items` and `finish` return (a function the compiler runs where it computes a type).
+type slice_type(type element) {
+    return element[:];
+}
+
+// The first capacity a list takes: a few items, so that small lists grow rarely.
+[[maybe_unused]] constexpr usize first_capacity = 4; // read by the generics, which importers compile
+
+// Makes room for one more item: the capacity doubles, the items stay, the new bytes are zero. A refusal of the
+// allocator is its checked failure (smith::mem), not a null here.
+void reserve_one(List(constexpr type T) * xs) {
+    usize capacity = xs->capacity == 0 ? first_capacity : xs->capacity * 2;
+    contract::requires(capacity > xs->capacity);
+    xs->data = (T *)mem::resize_raw(xs->data, xs->capacity * sizeof(T), capacity * sizeof(T));
+    xs->capacity = capacity;
+}
+
+// How many items the list holds.
+export [[nodiscard]] usize count(List(constexpr type T) * xs) {
+    return xs->count;
+}
+
+// Adds an item at the end.
+export void push(List(constexpr type T) * xs, T item) {
+    if (xs->count == xs->capacity) reserve_one(xs);
+    xs->data[xs->count] = item;
+    xs->count += 1;
+}
+
+// Takes the last item off, or `.none` when the list is empty.
+export [[nodiscard]] option(T) pop(List(constexpr type T) * xs) {
+    if (xs->count == 0) return .none;
+    xs->count -= 1;
+    return {.some = xs->data[xs->count]};
+}
+
+// The items as a slice: valid until the next `push`, which may move them.
+export [[nodiscard]] slice_type(T) items(List(constexpr type T) * xs) {
+    struct smith_array_T_n result =
+        {}; // the slice's struct, as arena::push_slice names it (the body is written before T)
+    result.data = xs->data;
+    result.count[0] = xs->count;
+    return result;
+}
+
+// The items as a slice the caller now owns, and the list is empty again: its memory is not freed (an arena frees it
+// with its scope or reset; under the heap, pass the slice's data to `mem::free`).
+export [[nodiscard]] slice_type(T) finish(List(constexpr type T) * xs) {
+    struct smith_array_T_n result = {};
+    result.data = xs->data;
+    result.count[0] = xs->count;
+    xs->data = nullptr;
+    xs->count = 0;
+    xs->capacity = 0;
+    return result;
+}
+
+// Gives the memory back to the allocator and makes the list empty. Under an arena this frees nothing (an arena frees
+// at its reset or scope end); under the heap it is `free`.
+export void free(List(constexpr type T) * xs) {
+    if (xs->data != nullptr) mem::free(xs->data);
+    xs->data = nullptr;
+    xs->count = 0;
+    xs->capacity = 0;
+}

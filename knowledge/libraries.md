@@ -35,6 +35,8 @@ doc comments) stays what it was. `option` and `result` (issue #198) are `.smith`
 `alignof` to `smith_arena_push`; `.smith` writes the type as an argument, `arena::push(&a, T)` and
 `arena::push_slice(&a, T, sizes...)` (a slice with a size for each `[:]`).
 
+**Collections:** `smith::list` (`lib/smith/list.smith`, issue #449) is `List(T)`, a type function that returns a struct (`T *data; usize count; usize capacity;`) with its functions written over the pattern `List(constexpr Type T) *xs` ([smith-generics](smith-generics.md)): the zero value is the empty list (#415), growth doubles through `mem::resize_raw` (the allocator in force: a fixed arena's budget is a checked failure, a growing arena's last block extends in place, the heap reallocates), `items` is a slice valid until the next `push`, and no rule checks that yet (the borrow rule waits for #439). Every export is a generic, so it has no C spelling.
+
 **Talking to the OS:** `smith::io` (`import smith::io;`, `<smith/io.h>` from C) is the one way a program touches the
 world outside it (memory, randomness, console, files, clock, processes, the network), each platform behind it on its
 best API (kqueue and Network.framework on macOS, epoll and OpenSSL on Linux). Its module names are the C names without the prefix (`io::Io` is
