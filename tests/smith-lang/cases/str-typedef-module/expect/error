@@ -1,0 +1,9 @@
+main.smith:13:16: assigning to 'text::Str' (aka 'struct smith_array_const_char_n') from incompatible type 'char[2]'
+main.smith:14:62: '_Countof' requires an argument of array type; 'text::Str' (aka 'struct smith_array_const_char_n') invalid
+main.smith:14:81: '_Countof' requires an argument of array type; 'text::Str' (aka 'struct smith_array_const_char_n') invalid
+main.smith:15:43: cannot tell the type of `s`, the argument of `count_of`: the compiler does not accept it here; give it a type with a cast or a variable
+main.smith:15:62: cannot tell the type of `pair.key`, the argument of `count_of`: the compiler does not accept it here; give it a type with a cast or a variable
+main.smith:7:11: unknown type name 'text::str'; did you mean 'text::Str'?
+main.smith:7:15: initializing 'text::Str' (aka 'struct smith_array_const_char_n') with an expression of incompatible type 'char[12]'
+main.smith:8:11: unknown type name 'text::str'; did you mean 'text::Str'?
+main.smith:9:11: unknown type name 'text::str'; did you mean 'text::Str'?

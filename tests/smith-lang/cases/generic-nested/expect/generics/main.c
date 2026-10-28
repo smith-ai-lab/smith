@@ -1,15 +1,15 @@
 __extension__({ extern main_Point * list_make_two__Point(arena_Arena * a) __asm__("_list::make_two(main_Point)"); list_make_two__Point(& a); })
-__extension__({ extern __SIZE_TYPE__ list_measure__u64(arena_Arena * a) __asm__("_list::measure(unsigned long long)"); list_measure__u64(& a); })
+__extension__({ extern __SIZE_TYPE__ list_measure__U64(arena_Arena * a) __asm__("_list::measure(unsigned long long)"); list_measure__U64(& a); })
 extern main_Point * list_make_two__Point(arena_Arena * a) __asm__("_list::make_two(main_Point)");
 [[gnu::weak]][[gnu::visibility("hidden")]] main_Point * list_make_two__Point(arena_Arena * a) {
     __extension__({ extern main_Point * list_make__Point(arena_Arena * a) __asm__("_list::make(main_Point)"); list_make__Point(a); });
     return
     __extension__({ extern main_Point * list_make__Point(arena_Arena * a) __asm__("_list::make(main_Point)"); list_make__Point(a); });
 }
-extern __SIZE_TYPE__ list_measure__u64(arena_Arena * a) __asm__("_list::measure(unsigned long long)");
-[[gnu::weak]][[gnu::visibility("hidden")]] __SIZE_TYPE__ list_measure__u64(arena_Arena * a) {
+extern __SIZE_TYPE__ list_measure__U64(arena_Arena * a) __asm__("_list::measure(unsigned long long)");
+[[gnu::weak]][[gnu::visibility("hidden")]] __SIZE_TYPE__ list_measure__U64(arena_Arena * a) {
     __UINT64_TYPE__ * value =
-    __extension__({ extern __UINT64_TYPE__ * list_make__u64(arena_Arena * a) __asm__("_list::make(unsigned long long)"); list_make__u64(a); });
+    __extension__({ extern __UINT64_TYPE__ * list_make__U64(arena_Arena * a) __asm__("_list::make(unsigned long long)"); list_make__U64(a); });
     (void) value;
     return list_bytes(a);
 }
@@ -18,10 +18,10 @@ extern main_Point * list_make__Point(arena_Arena * a) __asm__("_list::make(main_
     return
     __extension__({ extern main_Point * arena_push__Point(arena_Arena * a) __asm__("_arena::push(main_Point)"); arena_push__Point(a); });
 }
-extern __UINT64_TYPE__ * list_make__u64(arena_Arena * a) __asm__("_list::make(unsigned long long)");
-[[gnu::weak]][[gnu::visibility("hidden")]] __UINT64_TYPE__ * list_make__u64(arena_Arena * a) {
+extern __UINT64_TYPE__ * list_make__U64(arena_Arena * a) __asm__("_list::make(unsigned long long)");
+[[gnu::weak]][[gnu::visibility("hidden")]] __UINT64_TYPE__ * list_make__U64(arena_Arena * a) {
     return
-    __extension__({ extern __UINT64_TYPE__ * arena_push__u64(arena_Arena * a) __asm__("_arena::push(unsigned long long)"); arena_push__u64(a); });
+    __extension__({ extern __UINT64_TYPE__ * arena_push__U64(arena_Arena * a) __asm__("_arena::push(unsigned long long)"); arena_push__U64(a); });
 }
 extern main_Point * arena_push__Point(arena_Arena * a) __asm__("_arena::push(main_Point)");
 [[gnu::weak]][[gnu::visibility("hidden")]] main_Point * arena_push__Point(arena_Arena * a) {
@@ -30,8 +30,8 @@ extern main_Point * arena_push__Point(arena_Arena * a) __asm__("_arena::push(mai
     a->used = aligned + sizeof(main_Point);
     return result;
 }
-extern __UINT64_TYPE__ * arena_push__u64(arena_Arena * a) __asm__("_arena::push(unsigned long long)");
-[[gnu::weak]][[gnu::visibility("hidden")]] __UINT64_TYPE__ * arena_push__u64(arena_Arena * a) {
+extern __UINT64_TYPE__ * arena_push__U64(arena_Arena * a) __asm__("_arena::push(unsigned long long)");
+[[gnu::weak]][[gnu::visibility("hidden")]] __UINT64_TYPE__ * arena_push__U64(arena_Arena * a) {
     __SIZE_TYPE__ aligned = (a->used + alignof(__UINT64_TYPE__) - 1) & ~(alignof(__UINT64_TYPE__) - 1);
     __UINT64_TYPE__ * result = (__UINT64_TYPE__ *)(a->base + aligned);
     a->used = aligned + sizeof(__UINT64_TYPE__);

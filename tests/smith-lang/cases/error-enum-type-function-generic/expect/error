@@ -2,4 +2,4 @@ src/main.smith:11:24: expected expression
 src/main.smith:12:12: expected expression
 src/main.smith:18:5: calling 'main::first(Usize)' with incomplete return type 'struct smith_enum_maybe_usize'
 src/main.smith:18:5: conflicting types for 'main::first(Usize)'
-src/main.smith:18:5: the struct of this instance's `maybe(...)` is not defined where the call is (known gap): name the type at file scope first, for example `typedef maybe(...) Name;`
+src/main.smith:18:5: the struct of this instance's `Maybe(...)` is not defined where the call is (known gap): name the type at file scope first, for example `typedef Maybe(...) Name;`

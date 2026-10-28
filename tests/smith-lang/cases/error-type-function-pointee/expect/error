@@ -1,1 +1,1 @@
-src/main.smith:15:5: `deep` is not the value of a type: a pointer's pointee is known one level deep (a type function cannot walk `T **` twice with `typeof(*(t)nullptr)`)
+src/main.smith:15:5: `Deep` is not the value of a type: a pointer's pointee is known one level deep (a type function cannot walk `T **` twice with `typeof(*(t)nullptr)`)

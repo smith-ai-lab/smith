@@ -1,9 +1,9 @@
 src/main.smith:10:12: expected expression
-src/main.smith:14:17: `str` is a type in a module, `const char[:]`, as `I32` is one: it cannot name a variable, a field or a function; use another name
+src/main.smith:14:17: `Str` is a type in a module, `const char[:]`, as `I32` is one: it cannot name a variable, a field or a function; use another name
 src/main.smith:14:17: expected identifier or '('
 src/main.smith:14:21: expected expression
 src/main.smith:15:20: expected expression
-src/main.smith:6:17: `str` is a type in a module, `const char[:]`, as `I32` is one: it cannot name a variable, a field or a function; use another name
-src/main.smith:9:32: `str` is a type in a module, `const char[:]`, as `I32` is one: it cannot name a variable, a field or a function; use another name
+src/main.smith:6:17: `Str` is a type in a module, `const char[:]`, as `I32` is one: it cannot name a variable, a field or a function; use another name
+src/main.smith:9:32: `Str` is a type in a module, `const char[:]`, as `I32` is one: it cannot name a variable, a field or a function; use another name
 src/main.smith:9:32: expected ')'
-src/main.smith:9:32: invalid parameter name: 'str) {' is a keyword
+src/main.smith:9:32: invalid parameter name: 'Str) {' is a keyword

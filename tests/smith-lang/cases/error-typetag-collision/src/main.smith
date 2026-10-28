@@ -1,13 +1,13 @@
 module main;
 
-struct stat {
+struct Stat {
     I32 size;
 };
 
-I32 stat(I32 fd) {
+I32 Stat(I32 fd) {
     return fd;
 }
 
 I32 main() {
-    return stat(0);
+    return Stat(0);
 }

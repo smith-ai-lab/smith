@@ -1,6 +1,6 @@
 __extension__({ extern int apply_twice__inc_int(int x) __asm__("_apply::twice(main_inc, int)@src/main.smith"); apply_twice__inc_int(5); })
 __extension__({ extern int apply_twice__applyxxtriple_int(int x) __asm__("_apply::twice(apply_triple, int)@src/main.smith"); apply_twice__applyxxtriple_int(2); })
-__extension__({ extern double apply_twice__half_f64(double x) __asm__("_apply::twice(main_half, double)@src/main.smith"); apply_twice__half_f64(10.0); })
+__extension__({ extern double apply_twice__half_F64(double x) __asm__("_apply::twice(main_half, double)@src/main.smith"); apply_twice__half_F64(10.0); })
 __extension__({ extern int apply_twice__abs_int(int x) __asm__("_apply::twice(abs, int)@src/main.smith"); apply_twice__abs_int(- 3); })
 __extension__({ extern int apply_again__inc_int(int x) __asm__("_apply::again(main_inc, int)@src/main.smith"); apply_again__inc_int(0); })
 __extension__({ extern __SIZE_TYPE__ apply_address_matches__inc_int(int x) __asm__("_apply::address_matches(main_inc, int)@src/main.smith"); apply_address_matches__inc_int(1); })
@@ -13,8 +13,8 @@ extern int apply_twice__applyxxtriple_int(int x) __asm__("_apply::twice(apply_tr
 [[gnu::weak]][[gnu::visibility("hidden")]] int apply_twice__applyxxtriple_int(int x) {
     return apply_triple(apply_triple(x));
 }
-extern double apply_twice__half_f64(double x) __asm__("_apply::twice(main_half, double)@src/main.smith");
-[[gnu::weak]][[gnu::visibility("hidden")]] double apply_twice__half_f64(double x) {
+extern double apply_twice__half_F64(double x) __asm__("_apply::twice(main_half, double)@src/main.smith");
+[[gnu::weak]][[gnu::visibility("hidden")]] double apply_twice__half_F64(double x) {
     return main_half(main_half(x));
 }
 extern int apply_twice__abs_int(int x) __asm__("_apply::twice(abs, int)@src/main.smith");

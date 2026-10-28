@@ -1,1 +1,1 @@
-src/main.smith:6:5: `errdefer` runs when the function fails, and only a function that returns a `result` or an `option` has a failure to mark; use `defer` here
+src/main.smith:6:5: `errdefer` runs when the function fails, and only a function that returns a `Result` or an `Option` has a failure to mark; use `defer` here

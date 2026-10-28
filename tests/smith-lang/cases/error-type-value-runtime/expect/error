@@ -1,4 +1,4 @@
-src/main.smith:10:10: `local` is a `type`, which exists only at compile time: declare it `constexpr`
+src/main.smith:10:10: `local` is a `Type`, which exists only at compile time: declare it `constexpr`
 src/main.smith:11:12: `column` holds a type (`column.of`), which exists only at compile time: declare it `constexpr`
-src/main.smith:6:6: `kinds` is a `type`, which exists only at compile time: declare it `constexpr`
+src/main.smith:6:6: `kinds` is a `Type`, which exists only at compile time: declare it `constexpr`
 src/main.smith:7:8: `table` holds a type (`table.of`), which exists only at compile time: declare it `constexpr`

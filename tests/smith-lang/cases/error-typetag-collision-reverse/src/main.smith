@@ -1,11 +1,11 @@
 module main;
 
-I32 count = 1;
+I32 Count = 1;
 
-struct count {
+struct Count {
     I32 total;
 };
 
 I32 main() {
-    return count;
+    return Count;
 }

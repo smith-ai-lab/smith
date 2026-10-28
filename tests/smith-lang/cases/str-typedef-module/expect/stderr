@@ -1,0 +1,43 @@
+main.smith:7:11: error: unknown type name 'text::str'; did you mean 'text::Str'?
+    7 |     text::str s = "hello world";
+      |           ^~~
+      |           Str
+/Users/adamkowalski/Documents/smith/.claude/worktrees/feat-366-l2/tests/smith-lang/cases/str-typedef-module/src/text.smith:8:41: note: 'text::Str' declared here
+    8 | typedef struct smith_array_const_char_n text_Str;
+      |                                         ^
+main.smith:7:11: note: the header of module `text` lists no export `str`; if the module has one, the header is stale: `smith build` writes it again
+    7 |     text::str s = "hello world";
+      |           ^
+main.smith:7:15: error: initializing 'text::Str' (aka 'struct smith_array_const_char_n') with an expression of incompatible type 'char[12]'
+    7 |     text::str s = "hello world";
+      |               ^   ~~~~~~~~~~~~~
+main.smith:8:11: error: unknown type name 'text::str'; did you mean 'text::Str'?
+    8 |     text::str w = text::first_word(s);
+      |           ^~~
+      |           Str
+/Users/adamkowalski/Documents/smith/.claude/worktrees/feat-366-l2/tests/smith-lang/cases/str-typedef-module/src/text.smith:8:41: note: 'text::Str' declared here
+    8 | typedef struct smith_array_const_char_n text_Str;
+      |                                         ^
+main.smith:9:11: error: unknown type name 'text::str'; did you mean 'text::Str'?
+    9 |     text::str *p = &s;
+      |           ^~~
+      |           Str
+/Users/adamkowalski/Documents/smith/.claude/worktrees/feat-366-l2/tests/smith-lang/cases/str-typedef-module/src/text.smith:8:41: note: 'text::Str' declared here
+    8 | typedef struct smith_array_const_char_n text_Str;
+      |                                         ^
+main.smith:13:16: error: assigning to 'text::Str' (aka 'struct smith_array_const_char_n') from incompatible type 'char[2]'
+   13 |     pair.value = "x";
+      |                ^ ~~~
+main.smith:14:62: error: '_Countof' requires an argument of array type; 'text::Str' (aka 'struct smith_array_const_char_n') invalid
+   14 |     c::printf("%zu %zu %zu %zu\n", text::total(w), n, countof(pair.key), countof(pair.value));
+      |                                                              ^
+main.smith:14:81: error: '_Countof' requires an argument of array type; 'text::Str' (aka 'struct smith_array_const_char_n') invalid
+   14 |     c::printf("%zu %zu %zu %zu\n", text::total(w), n, countof(pair.key), countof(pair.value));
+      |                                                                                 ^
+main.smith:15:43: error: cannot tell the type of `s`, the argument of `count_of`: the compiler does not accept it here; give it a type with a cast or a variable
+   15 |     c::printf("%zu %zu\n", text::count_of(s), text::count_of(pair.key));
+      |                                           ^
+main.smith:15:62: error: cannot tell the type of `pair.key`, the argument of `count_of`: the compiler does not accept it here; give it a type with a cast or a variable
+   15 |     c::printf("%zu %zu\n", text::count_of(s), text::count_of(pair.key));
+      |                                                              ^
+9 errors generated.

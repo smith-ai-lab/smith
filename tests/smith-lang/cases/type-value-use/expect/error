@@ -1,0 +1,4 @@
+src/main.smith:12:29: field designator 'of' does not refer to any field in type 'const Column'
+src/main.smith:19:32: no member named 'of' in 'Column'
+src/main.smith:21:5: the type `Of` has no value here: the compiler does not accept it here (a `constexpr Type` initialized from an array or a member is known to the compiler only once the next statement has begun: use it from the statement after)
+src/main.smith:25:80: the type `column` has no value here: no member named 'of' in 'Column' (a `constexpr Type` initialized from an array or a member is known to the compiler only once the next statement has begun: use it from the statement after)

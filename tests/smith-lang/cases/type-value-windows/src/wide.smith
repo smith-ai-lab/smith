@@ -1,4 +1,4 @@
-module Wide;
+module wide;
 
 // The size of a type value is the target's: `long` is four bytes for Windows and eight elsewhere. A function over a
 // type value runs in the compiler with the same answer.

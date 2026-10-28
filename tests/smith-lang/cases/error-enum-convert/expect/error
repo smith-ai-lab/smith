@@ -1,5 +1,5 @@
-src/main.smith:12:12: the `.ok` and the `.error` of this `result` have the same type, so a value could be either and does not convert: write `{.ok = v}` or `{.error = v}`
-src/main.smith:16:12: a value could be the payload of the inner `result` or `option` as well as of this one, so it does not convert: write the variants out, as `{.some = {.some = v}}` or `{.some = .none}`
-src/main.smith:20:12: `nullptr` does not convert to an `option` of a pointer: write `.none` for no value, or `{.some = nullptr}` for a null one
+src/main.smith:12:12: the `.ok` and the `.error` of this `Result` have the same type, so a value could be either and does not convert: write `{.ok = v}` or `{.error = v}`
+src/main.smith:16:12: a value could be the payload of the inner `Result` or `Option` as well as of this one, so it does not convert: write the variants out, as `{.some = {.some = v}}` or `{.some = .none}`
+src/main.smith:20:12: `nullptr` does not convert to an `Option` of a pointer: write `.none` for no value, or `{.some = nullptr}` for a null one
 src/main.smith:25:14: invalid operands to binary expression ('Number' (aka 'struct smith_enum_option_i32') and 'int')
 src/main.smith:29:9: initializing 'I32' (aka 'int') with an expression of incompatible type 'Number' (aka 'struct smith_enum_option_i32')
