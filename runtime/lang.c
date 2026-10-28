@@ -495,7 +495,7 @@ struct SmithLang {
     char aret_name[64];               // ... its name
     unsigned long long aret_elements; // ... and its size
     bool aret_const;                  // ... and its type has `const`
-    bool generic_plain;       // ... a plain one: a function over `type` that is exported (issue #107)
+    bool generic_plain;               // ... a plain one: a function over `type` that is exported (issue #107)
     bool type_import;         // an import has functions over `type`: their records are defined after the last import
     bool generic_result_call; // ... and its result type is a call
     bool generics_loaded;     // the generics of the imports are read
