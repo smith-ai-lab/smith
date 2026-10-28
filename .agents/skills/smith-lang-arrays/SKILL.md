@@ -56,4 +56,4 @@ In a module an array's brackets say what it is, and a bare `[]` is an error.
 - a slice where a pointer is wanted is clang's own ``initializing 'I32 *' with an expression of incompatible type 'struct smith_array_i32_n'``: pass it to a slice parameter or a `c::` function
 - a slice across rows: `smith-lang-array-dims`
 
-A slice may be the `some` of an `option`: a generic returns `Option(slice_of(T, 1))`, a caller writes `typedef I32 Row[:]; typedef Option(Row) MaybeRow;` (`smith-option`).
+A slice may be the `some` of an `option`: a generic returns `Option(SliceOf(T, 1))`, a caller writes `typedef I32 Row[:]; typedef Option(Row) MaybeRow;` (`smith-option`).

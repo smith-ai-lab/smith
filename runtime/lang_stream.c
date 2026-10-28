@@ -1288,6 +1288,8 @@ static void smith_lang_capitalized(const char *name, size_t length, char *out, s
 // In a module a struct, union or enum tag, a `constexpr Type` alias and a type function a program declares start with a
 // capital letter: types are capitalized so that a type reads as one at a glance. The error names the spelling.
 static void smith_lang_check_capital(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+    bool after_constexpr = lang->after_constexpr; // the token before this one was `constexpr`
+    lang->after_constexpr = token->kind == SmithTokenKind_Identifier && smith_lang_ident(token, "constexpr");
     if (!lang->is_module || token->kind != SmithTokenKind_Identifier || token->synthetic || token->foreign ||
         token->declared || lang->in_attribute) {
         return;
@@ -1304,9 +1306,7 @@ static void smith_lang_check_capital(SmithLang *lang, const SmithHost *host, con
                          smith_lang_punct(smith_lang_peek(lang, host, 3, false), "{"));
         if (declares) noun = token->text[0] == 's' ? "a struct tag" : token->text[0] == 'u' ? "a union tag" : "an enum tag";
     } else if (smith_lang_ident(token, "Type")) {
-        SmithToken before;
-        bool alias = smith_lang_punct(after, "=") && smith_lang_previous(lang, host, 1, &before) &&
-                     smith_lang_ident(&before, "constexpr");
+        bool alias = smith_lang_punct(after, "=") && after_constexpr;
         bool function = smith_lang_punct(after, "(") && lang->brace_depth == 0 && lang->paren_depth == 0;
         if (alias) noun = "a `constexpr Type` alias";
         if (function) noun = "a type function";

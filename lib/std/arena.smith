@@ -413,7 +413,7 @@ try_push_array_raw(Arena *arena, Usize size, Usize count, Usize align) {
 }
 
 // `T[:]` written `count` times in front of T (the element), the type of a slice of that many run-time dimensions:
-// `slice_of(F32, 2)` is `F32[:][:]` and `slice_of(F32[2], 1)` is `F32[:][2]`. An ordinary function over types, run by
+// `SliceOf(F32, 2)` is `F32[:][:]` and `SliceOf(F32[2], 1)` is `F32[:][2]`. An ordinary function over types, run by
 // the compiler wherever a type is computed; `t[:]` is the slice of the type value t.
 export Type SliceOf(Type element, Usize count) {
     Type t = element;
@@ -424,7 +424,7 @@ export Type SliceOf(Type element, Usize count) {
 
 // A zeroed array of T with a size for each `[:]`, as a slice: `push_slice(&a, F32, n)` is `F32[:]`, `push_slice(&a,
 // F32, n, m)` is `F32[:][:]` (one contiguous block, row-major) and `push_slice(&a, F32[2], n)` is `F32[:][2]`: the type
-// is `slice_of(T, countof(dims))`. A size whose product overflows, like a count that overflows size_t, is the same stop
+// is `SliceOf(T, countof(dims))`. A size whose product overflows, like a count that overflows size_t, is the same stop
 // as in push_array_raw (the product is then the largest size_t, which no count of any type fits). For .smith; C passes
 // sizeof, the count and alignof to smith_arena_push_array.
 [[std::c_name("smith_arena_push_slice_type")]] export [[nodiscard]] SliceOf(T, countof(dims))

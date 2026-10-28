@@ -570,7 +570,7 @@ static bool smith_lang_bare_type_used(SmithLang *lang, const SmithHost *host, co
     return false;
 }
 
-// The `)` read ahead at `index` closes the result type's call, `slice_of(T, k) name(`: a name and its `(` follow
+// The `)` read ahead at `index` closes the result type's call, `SliceOf(T, k) name(`: a name and its `(` follow
 // (a parameter list never has a name after it but an attribute, a group keyword).
 static bool smith_lang_computed_return_follows(SmithLang *lang, const SmithHost *host, size_t index) {
     const SmithToken *name = smith_lang_peek(lang, host, index + 1, false);
@@ -698,7 +698,7 @@ static bool smith_lang_generic_ahead(SmithLang *lang, const SmithHost *host, con
             } else if (c == ')') {
                 depth -= 1;
                 if (depth == 0 && in_params && smith_lang_computed_return_follows(lang, host, index)) {
-                    in_params = false; // `slice_of(T, k)` was the result type: the parameter list is next
+                    in_params = false; // `SliceOf(T, k)` was the result type: the parameter list is next
                     lang->generic_result_call = true;
                 } else if (depth == 0 && in_params) {
                     // The parameter list ended without one: a function over types, with a body, is plain.
@@ -1247,7 +1247,7 @@ static size_t smith_lang_generic_lines(const SmithLang *lang, char *out, size_t 
     return used;
 }
 
-// `// smith-types: slice_of small`: the functions over `type` the header records, which an importer defines (issue
+// `// smith-types: SliceOf small`: the functions over `type` the header records, which an importer defines (issue
 // #107).
 static size_t smith_lang_types_line(const SmithLang *lang, char *out, size_t capacity, size_t used) {
     bool any = false;
@@ -1995,7 +1995,7 @@ static void smith_lang_gen_put_subst(SmithLang *lang, const SmithHost *host, con
             return;
         }
         if ((token->flags & smith_lang_gen_flag_slice) != 0) {
-            // In a generic whose result type is computed (`slice_of(T, countof(dims)) push_slice(...)`), the struct
+            // In a generic whose result type is computed (`SliceOf(T, countof(dims)) push_slice(...)`), the struct
             // the body names is the result's, whatever its dimensions: the instance's `struct tag` (issue #107).
             const SmithLangInstance *kept = &smith_lang_instances[instance - smith_lang_instances];
             if (kept->result_state == 1 && strncmp(kept->result, "struct smith_array_", 19) == 0) {

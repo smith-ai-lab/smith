@@ -439,11 +439,11 @@ Types are values too, so a function over types runs in the compiler like any oth
 ```smith
 module widths;
 
-static Type wider(Type a, Type b) {
+static Type Wider(Type a, Type b) {
     return sizeof(a) >= sizeof(b) ? a : b; // runs in the compiler
 }
 
-constexpr Type big = wider(U8, I64);
+constexpr Type big = Wider(U8, I64);
 static_assert(sizeof(big) == 8);
 ```
 

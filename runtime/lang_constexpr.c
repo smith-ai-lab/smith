@@ -880,7 +880,7 @@ static bool smith_lang_generic_for_constexpr(SmithLang *lang, const SmithHost *h
 // ---- A result type computed from the parameters (issue #102)
 // ---------------------------------------------------------------------------------------------
 
-// Whether the head's result type is a call, `slice_of(T, countof(rest)) name(`: an ordinary function over types and
+// Whether the head's result type is a call, `SliceOf(T, countof(rest)) name(`: an ordinary function over types and
 // numbers that returns `type`, run in the compiler for each instance (one body, the type settled per instance).
 static bool smith_lang_result_call(const SmithLangGeneric *generic) {
     uint32_t first = smith_lang_generic_skip_attributes(generic);
@@ -925,7 +925,7 @@ static bool smith_lang_result_text(SmithLangCx *cx, uint32_t first, uint32_t las
     return true;
 }
 
-// Asks the compiler for the type that the call in the generic's tokens `first` to `last` computes (`slice_of(T, 1)`)
+// Asks the compiler for the type that the call in the generic's tokens `first` to `last` computes (`SliceOf(T, 1)`)
 // for the instance: its spelling and handle. Null when it is a type, else why it is not.
 static const char *smith_lang_type_call_ask(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
                                             SmithLangInstance *instance, uint32_t first, uint32_t last, char *spelling,

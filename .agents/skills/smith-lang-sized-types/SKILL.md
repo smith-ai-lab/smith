@@ -41,7 +41,7 @@ A file that declares its own `U32` (a typedef, a variable, a field named `U8`) k
 
 ## Errors
 
-- A diagnostic names the type as written, with what it is: ``initializing 'i32' (aka 'int') with an expression of type 'char[6]'``, with no "expanded from macro" notes.
+- A diagnostic names the type as written, with what it is: ``initializing 'I32' (aka 'int') with an expression of type 'char[6]'``, with no "expanded from macro" notes.
 - `I32 double(I32 x)` is ``double` is a C keyword; it cannot name a function`` (likewise a variable, parameter, field or type), at the name.
 - `main` takes them too: `I32 main(I32 argc, char **argv)`, `I32 main(void)`, or `I32 main(io::Io *io)` (`smith-io`). `I32` is `int`, so a renamed `.c` file builds; `smith lint` reports the `int`s (`smith-sized-types`).
 - **`Str` is the type `const char[:]`** in a module (a file with a `module` line), as `U8` is a type: no import, a rewrite of the name (`Str s = "abc";` count 3, no copy; `Str *p` is `const char (*p)[:]`, `smith-lang-slice-pointers`; a parameter, result, field, cut, `countof`, `.name = "x"` in an initializer list). A C caller sees `struct smith_array_const_char_n`. In a file with no `module` line `Str` is a plain name; a module that declares its own typedef `Str` keeps it. As the name of a variable, field or function in a module it is an error, as `I32` is. Not yet: `Str` in a generic's parameter list or body (write `const char xs[:]` there), and an array of `Str` with braces (an error: assign the elements).

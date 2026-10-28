@@ -45,4 +45,4 @@ Every error is at the generic's source, with a note at the call that asked: ``ma
 
 ## Not built
 
-Generic types, building a struct from a function that returns `type`, overloading, specialization, pointers to generics, a function-local type as `T`, and a `target::` fact in a condition under `smith cc --smith-lower` (a compile accepts it). The long reference: [knowledge/smith-language.md](../../../knowledge/smith-language.md) ("Generic functions").
+Generic types, building a struct from a function that returns `Type`, overloading, specialization, pointers to generics, a function-local type as `T`, and a `target::` fact in a condition under `smith cc --smith-lower` (a compile accepts it). The long reference: [knowledge/smith-language.md](../../../knowledge/smith-language.md) ("Generic functions").

@@ -376,7 +376,7 @@ typedef struct {
     bool c_name_used;  // a name this declaration introduces took it
     bool generic;      // the head has a `type T` parameter: the declaration is recorded, not compiled
     bool plain;        // ... a function over `type` that has no such parameter (issue #107)
-    bool result_call;  // a generic's result type is a call (`slice_of(T, k) name(...)`): its `)` ends the type
+    bool result_call;  // a generic's result type is a call (`SliceOf(T, k) name(...)`): its `)` ends the type
     bool linked;       // a private function or variable that has a symbol: an exported generic's instance calls it
     bool is_alias;     // `constexpr type Y = X;`: a type alias, a name of the module's types like a typedef's
     bool alias_header; // an exported alias: the header gets `typedef X Y;`, written when the declaration ends
@@ -510,6 +510,7 @@ struct SmithLang {
     bool is_module;
     bool has_c;
     bool seen_declaration;
+    bool after_constexpr; // the last token was `constexpr` (the capital check of a `constexpr Type` alias)
     bool seen_module_line;
     uint32_t imports_seen;
     char module[smith_lang_name_max];

@@ -229,7 +229,7 @@ static bool smith_lang_head_punct(SmithLang *lang, const SmithToken *token) {
         if (lang->paren_depth > 0) lang->paren_depth -= 1;
         if (lang->paren_depth == 0) lang->decl.in_params = false;
         if (lang->paren_depth == 0 && lang->decl.result_call && !lang->decl.name_found) {
-            lang->decl.result_call = false; // `slice_of(T, k)` is a type: the name is next
+            lang->decl.result_call = false; // `SliceOf(T, k)` is a type: the name is next
             lang->decl.saw_type = true;
         }
     } else if (smith_lang_punct(token, "[")) {

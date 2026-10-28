@@ -1728,12 +1728,12 @@ static uint32_t smith_lang_eshape_cut_type(SmithLangEnumCall *call, const SmithL
     return cut;
 }
 
-// The slice types that the type-function calls of the shape call being read computed (`option(slice_of(T, 1))`): the
+// The slice types that the type-function calls of the shape call being read computed (`option(SliceOf(T, 1))`): the
 // struct of each is defined before the enum struct that holds it.
 static uint64_t smith_lang_eshape_slices[4];
 static size_t smith_lang_eshape_slice_count;
 
-// `slice_of(T, 1)` (a call of a function that returns `type`) as a whole argument of a shape call: the compiler is
+// `SliceOf(T, 1)` (a call of a function that returns `type`) as a whole argument of a shape call: the compiler is
 // asked for the type it computes for the instance and its spelling is the argument's tokens. The index of the call's
 // closing `)`, or 0 when the tokens are no such call (or no type), which the other readings then try.
 static uint32_t smith_lang_eshape_type_call(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
@@ -1837,7 +1837,7 @@ static uint32_t smith_lang_eshape_instance_call(SmithLang *lang, const SmithHost
         uint32_t made = call->count == call->begin[argument]
                             ? smith_lang_eshape_type_call(lang, host, generic, instance, close, end, call)
                             : 0;
-        if (made != 0) { // `slice_of(T, 1)`: the type the compiler computes
+        if (made != 0) { // `SliceOf(T, 1)`: the type the compiler computes
             close = made;
             continue;
         }

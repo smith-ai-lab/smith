@@ -5,7 +5,7 @@ description: "`fields(T)[i]` as a `Field` value in .smith: `constexpr Field f = 
 
 # `fields(T)` is an array of `Field`
 
-`Field` is `struct { char name[:]; U64 type; char doc[:]; }` (a `type` is a handle: `Float(f.type)`, `f.type == F32`), defined once per file when its text has `fields(` or `Field`, or it imports a generic that reflects. `fields(T)[i]` is an ordinary value: store it, pass it to a function (which runs in the compiler), return it, compare its parts.
+`Field` is `struct { char name[:]; U64 type; char doc[:]; }` (a `Type` is a handle: `Float(f.type)`, `f.type == F32`), defined once per file when its text has `fields(` or `Field`, or it imports a generic that reflects. `fields(T)[i]` is an ordinary value: store it, pass it to a function (which runs in the compiler), return it, compare its parts.
 
 ```smith
 module fieldvals;
