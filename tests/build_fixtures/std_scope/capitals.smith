@@ -1,0 +1,23 @@
+#include <stdio.h>
+
+typedef struct {
+    int a;
+} Pair;
+
+int main(void) {
+    Int n = 3;
+    Float ratio = 0.5;
+    Num total = n + 2;
+    Signed delta = -4;
+    Unsigned bits = 12u;
+    Pointer where = &n;
+    Struct pair = (Pair){7};
+    I32 k = 5;
+    U8 small = 250;
+    Usize size = 2;
+    F64 wide = 1.5;
+    Bool yes = true;
+    printf("%d %g %d %d %u %d %d %d %d %zu %g %d\n", n, ratio, total, delta, bits, *(int *)where, pair.a, k, small,
+           size, wide, yes);
+    return 0;
+}

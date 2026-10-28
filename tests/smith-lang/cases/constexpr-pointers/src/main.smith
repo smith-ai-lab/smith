@@ -4,15 +4,15 @@ import <stdio.h>;
 typedef struct {
     const char *ptr;
     i32 len;
-} Str;
+} Text;
 
 constexpr char hello[] = "hello world";
 constexpr i32 nums[4] = {10, 20, 30, 40};
 constexpr const char *word = "abc";
 constexpr const char *inside = &hello[1];
 constexpr const i32 *third = nums + 2;
-constexpr Str small = {"xy", 2};
-constexpr Str prefix = {hello, 5};
+constexpr Text small = {"xy", 2};
+constexpr Text prefix = {hello, 5};
 
 static i32 length(const char *p) {
     i32 n = 0;

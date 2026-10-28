@@ -33,7 +33,7 @@ export void test_the_first_run_makes_a_record_for_each_test(io::Io *io) {
     scratch::expect_contains("the function the test ran", run.out, "fn\tops.c\tops_add");
     scratch::expect_contains("through the program it started", run.out, "fn\tmain.c\tmain");
     scratch::expect_contains("its own function", run.out, "fn\ttests/cli_test.c\ttest_add_runs");
-    scratch::expect_contains("the header", run.out, "input\tops.h");
+    scratch::expect_contains("the header", run.out, "outside\tops.h");
     scratch::expect_lacks("not the other test's function", run.out, "ops_mul");
 }
 
@@ -54,6 +54,33 @@ export void test_a_change_reruns_the_test_that_ran_it(io::Io *io) {
     scratch::expect_lacks("not every test", run.out, "every test runs");
     scratch::expect_contains("it ran", run.out, "1 passed");
     scratch::expect_contains("the record names the new run", run.out, "fn\tops.c\tops_mul");
+}
+
+// A .c file that another includes (smith.c includes runtime/lang.c and the rest) is judged by function, not as a whole
+// input (#638): a change inside the function one test ran selects that test, and a change to a line of a table selects
+// every test that ran the program.
+export void test_a_function_of_an_included_file_selects_the_tests_that_ran_it(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "record_project");
+    const char *unit =
+        "printf 'static const int table[] = {\\n    1,\\n    2,\\n};\\n\\nstatic int more_add(int a, int b) {\\n"
+        "    return a + b + table[0] - 1;\\n}\\n' > more.c; "
+        "{ printf '#include \"more.c\"\\n'; sed 's/return a + b;/return more_add(a, b);/' ops.c; } > next.c && "
+        "mv next.c ops.c; git add -A; git -c user.name=t -c user.email=t@t commit -q -m more; "
+        "smith test --changed --base HEAD >/dev/null 2>&1; cat .smith/records/add_runs.rec; echo ---; ";
+    const char *body = "sed 's/table\\[0\\] - 1/table[0] - 1 + 0/' more.c > next.c && mv next.c more.c; ";
+    const char *entry = "git checkout -q more.c; sed 's/    2,/    3,/' more.c > next.c && mv next.c more.c; ";
+    scratch::Run run = scratch::sh(&p, format::push(&io->arena, repository, unit, body,
+                                                    "smith test --changed --base HEAD --dry-run 2>&1; echo ---; ",
+                                                    entry, "smith test --changed --base HEAD --dry-run 2>&1")
+                                           .data);
+    scratch::expect_status("the run", 0, &run);
+    scratch::expect_contains("the included file is judged by function", run.out, "fn\tmore.c\tops.c:more_add");
+    scratch::expect_contains("and by what is outside its functions", run.out, "outside\tmore.c");
+    scratch::expect_lacks("not as a whole", run.out, "input\tmore.c");
+    scratch::expect_contains("the test that ran the function", run.out,
+                             "its record is stale: add_runs, ops.c:more_add");
+    scratch::expect_contains("a line of the table", run.out, "code outside functions changed");
+    scratch::expect_contains("both ran the program", run.out, "--test add_runs,mul_runs");
 }
 
 // A test whose function is untouched by a change to the other is not selected, and a failed test is.

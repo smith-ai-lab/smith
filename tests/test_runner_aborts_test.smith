@@ -99,24 +99,31 @@ export void test_runner_aborts_jobs_one_gives_the_same_results_as_the_default(io
 }
 
 // A crash without the sanitizers, in a project of its own.
-export void test_runner_aborts_a_crash_a_hang_and_an_exit_of_zero_fail_and_the_rest_still_run(io::Io *io) {
+static void case_a_crash_a_hang_and_an_exit_of_zero_fail_and_the_rest_still_run(io::Io *io, usize mode) {
     scratch::Project p = built(io, "runner_base", "runner_crash", "-DSAN=0");
-    for (usize mode = 0; mode < 2; mode++) {
-        const char *iso = runner::flag(mode);
-        scratch::Run segv = runner::tests(&p, iso, "--test abort_segv");
-        runner::expect_has(io, iso, "aborts: a SIGSEGV fails", &segv, "FAIL abort_segv");
-        runner::expect_has(io, iso, "aborts: ... saying it crashed", &segv, "it crashed with SIGSEGV");
-        runner::expect_has(io, iso, "aborts: ... and showing what it printed first", &segv, "before the crash");
-        // wall time on purpose: these test the backstop
-        scratch::Run hangs = runner::tests(&p, iso, "--test abort_hangs --wall-timeout 1");
-        runner::expect_has(io, iso, "aborts: a hang is reported as a hang", &hangs, "FAIL abort_hangs: hung after 1.");
-        scratch::Run zero = runner::tests(&p, iso, "--test abort_exits_zero");
-        runner::expect_has(io, iso, "aborts: exit(0) is a return, not an abort", &zero,
-                           "expected an abort; the test returned");
-        scratch::Run every = runner::tests(&p, iso, "--test abort_ --wall-timeout 1");
-        runner::expect_has(io, iso, "aborts: the tests after a crash, a hang and an exit still run", &every,
-                           "1 passed, 3 failed");
-    }
+
+    const char *iso = runner::flag(mode);
+    scratch::Run segv = runner::tests(&p, iso, "--test abort_segv");
+    runner::expect_has(io, iso, "aborts: a SIGSEGV fails", &segv, "FAIL abort_segv");
+    runner::expect_has(io, iso, "aborts: ... saying it crashed", &segv, "it crashed with SIGSEGV");
+    runner::expect_has(io, iso, "aborts: ... and showing what it printed first", &segv, "before the crash");
+    // wall time on purpose: these test the backstop
+    scratch::Run hangs = runner::tests(&p, iso, "--test abort_hangs --wall-timeout 1");
+    runner::expect_has(io, iso, "aborts: a hang is reported as a hang", &hangs, "FAIL abort_hangs: hung after 1.");
+    scratch::Run zero = runner::tests(&p, iso, "--test abort_exits_zero");
+    runner::expect_has(io, iso, "aborts: exit(0) is a return, not an abort", &zero,
+                       "expected an abort; the test returned");
+    scratch::Run every = runner::tests(&p, iso, "--test abort_ --wall-timeout 1");
+    runner::expect_has(io, iso, "aborts: the tests after a crash, a hang and an exit still run", &every,
+                       "1 passed, 3 failed");
+}
+
+export void test_runner_aborts_a_crash_a_hang_and_an_exit_of_zero_fail_and_the_rest_still_run_workers(io::Io *io) {
+    case_a_crash_a_hang_and_an_exit_of_zero_fail_and_the_rest_still_run(io, 0);
+}
+
+export void test_runner_aborts_a_crash_a_hang_and_an_exit_of_zero_fail_and_the_rest_still_run_isolated(io::Io *io) {
+    case_a_crash_a_hang_and_an_exit_of_zero_fail_and_the_rest_still_run(io, 1);
 }
 
 // The three profiles. debug is the runners above (sanitizers on). release is -O2 with assertions on, and fast is -O2
@@ -187,11 +194,13 @@ export void test_runner_aborts_a_sanitizer_report_an_exit_and_a_later_test_are_i
     }
 }
 
-export void test_runner_aborts_a_hang_a_busy_test_and_an_alarm_are_reported(io::Io *io) {
+// The cases of the hang test run side by side (each waits its second of wall time): `part` 0 is a hang and a busy test,
+// 1 a blocked test, 2 an alarm.
+static void case_a_hang_a_busy_test_and_an_alarm_is_reported(io::Io *io, usize mode, usize part) {
     scratch::Project p = built(io, "runner_base", "runner_isolation", "");
-    for (usize mode = 0; mode < 2; mode++) {
-        const char *iso = runner::flag(mode);
-        // wall time on purpose: a test of the backstop
+    const char *iso = runner::flag(mode);
+    // wall time on purpose: a test of the backstop
+    if (part == 0) {
         scratch::Run sleeps = runner::tests(&p, iso, "--test sleeps --wall-timeout 1");
         runner::expect_has(io, iso, "isolation: a hang is reported", &sleeps, "FAIL sleeps: hung after 1.");
         scratch::Run spins = runner::tests(&p, iso, "--test spins --timeout 1 --wall-timeout 600");
@@ -199,16 +208,44 @@ export void test_runner_aborts_a_hang_a_busy_test_and_an_alarm_are_reported(io::
                            "FAIL spins: over its CPU time limit of 1 s (");
         runner::expect_has(io, iso, "isolation: ... and says the wall time, since threads add CPU time", &spins,
                            "s of wall time passed; threads add CPU time)");
+    }
+    if (part == 1) {
         scratch::Run naps = runner::tests(&p, iso, "--test naps --timeout 1 --verbose");
         runner::expect_has(io, iso, "isolation: a blocked test spends no CPU time, so the CPU limit does not end it",
                            &naps, "PASS naps");
         scratch::Run napped = runner::tests(&p, iso, "--test naps --timeout 1 --wall-timeout 1");
         runner::expect_has(io, iso, "isolation: ... and the wall-clock backstop (a hang, wall time on purpose) does",
                            &napped, "FAIL naps: hung after 1.");
+    }
+    if (part == 2) {
         scratch::Run alarm = runner::tests(&p, iso, "--test alarm_hangs");
         runner::expect_has(io, iso, "isolation: a test's own alarm ends it as a hang, with the measured time", &alarm,
                            "FAIL alarm_hangs: hung after 1.");
     }
+}
+
+export void test_runner_aborts_a_hang_and_a_busy_test_are_reported_workers(io::Io *io) {
+    case_a_hang_a_busy_test_and_an_alarm_is_reported(io, 0, 0);
+}
+
+export void test_runner_aborts_a_hang_and_a_busy_test_are_reported_isolated(io::Io *io) {
+    case_a_hang_a_busy_test_and_an_alarm_is_reported(io, 1, 0);
+}
+
+export void test_runner_aborts_a_blocked_test_is_reported_workers(io::Io *io) {
+    case_a_hang_a_busy_test_and_an_alarm_is_reported(io, 0, 1);
+}
+
+export void test_runner_aborts_a_blocked_test_is_reported_isolated(io::Io *io) {
+    case_a_hang_a_busy_test_and_an_alarm_is_reported(io, 1, 1);
+}
+
+export void test_runner_aborts_an_alarm_is_reported_workers(io::Io *io) {
+    case_a_hang_a_busy_test_and_an_alarm_is_reported(io, 0, 2);
+}
+
+export void test_runner_aborts_an_alarm_is_reported_isolated(io::Io *io) {
+    case_a_hang_a_busy_test_and_an_alarm_is_reported(io, 1, 2);
 }
 
 export void test_runner_aborts_a_note_shows_in_full_up_to_four_kib(io::Io *io) {
@@ -241,21 +278,28 @@ export void test_runner_aborts_a_test_whose_worker_was_lost_gets_a_fresh_one(io:
     scratch::expect_lacks("lost workers: ... and does not blame the test", never.out, "over its CPU time limit");
 }
 
-export void test_runner_aborts_the_whole_run_reports_every_test_and_a_bad_option_exits_two(io::Io *io) {
+static void case_the_whole_run_reports_every_test_and_a_bad_option_exits_two(io::Io *io, usize mode) {
     scratch::Project p = built(io, "runner_base", "runner_isolation", "");
-    for (usize mode = 0; mode < 2; mode++) {
-        const char *iso = runner::flag(mode);
-        scratch::Run whole = runner::tests(&p, iso, "--wall-timeout 1");
-        runner::expect_has(io, iso, "isolation: the whole run reports every test", &whole, "failed in");
-        scratch::expect_count(runner::label(io, iso, "isolation: ... and exits 1"), 1, (usize)whole.status);
-        scratch::Run jobs = runner::tests(&p, iso, "--jobs 0");
-        scratch::expect_count(runner::label(io, iso, "options: a bad option exits 2"), 2, (usize)jobs.status);
-        runner::expect_has(io, iso, "options: ... and prints the usage", &jobs, "usage:");
-        scratch::Run none = runner::tests(&p, iso, "--test nothing_like_this");
-        scratch::expect_count(runner::label(io, iso, "options: no matching test exits 1"), 1, (usize)none.status);
-        runner::expect_has(io, iso, "options: ... and says no test matches", &none,
-                           "no test matches \"nothing_like_this\"");
-    }
+
+    const char *iso = runner::flag(mode);
+    scratch::Run whole = runner::tests(&p, iso, "--wall-timeout 1");
+    runner::expect_has(io, iso, "isolation: the whole run reports every test", &whole, "failed in");
+    scratch::expect_count(runner::label(io, iso, "isolation: ... and exits 1"), 1, (usize)whole.status);
+    scratch::Run jobs = runner::tests(&p, iso, "--jobs 0");
+    scratch::expect_count(runner::label(io, iso, "options: a bad option exits 2"), 2, (usize)jobs.status);
+    runner::expect_has(io, iso, "options: ... and prints the usage", &jobs, "usage:");
+    scratch::Run none = runner::tests(&p, iso, "--test nothing_like_this");
+    scratch::expect_count(runner::label(io, iso, "options: no matching test exits 1"), 1, (usize)none.status);
+    runner::expect_has(io, iso, "options: ... and says no test matches", &none,
+                       "no test matches \"nothing_like_this\"");
+}
+
+export void test_runner_aborts_the_whole_run_reports_every_test_and_a_bad_option_exits_two_workers(io::Io *io) {
+    case_the_whole_run_reports_every_test_and_a_bad_option_exits_two(io, 0);
+}
+
+export void test_runner_aborts_the_whole_run_reports_every_test_and_a_bad_option_exits_two_isolated(io::Io *io) {
+    case_the_whole_run_reports_every_test_and_a_bad_option_exits_two(io, 1);
 }
 
 // Section 4. Running: --test filters, --seeds counts, --jobs 1 gives the same results.

@@ -20,4 +20,6 @@ Many lanes and two CI runners share one Mac, and its load reached 100 to 170 (#3
 
 **A dead or orphaned holder loses its token.** A job that finds a token locked reads its file; when that process no longer exists (the lock outlived it in a child), its start time differs (a recycled pid), or its parent is now pid 1 or another than recorded (an orphan: a `smith build wait` left behind by a test held a slot for 10 hours), the job unlinks the file and takes a fresh one; the old holder keeps a lock on a file nobody opens, and is not killed. A holder started directly by launchd (parent 1) is read as an orphan too.
 
+**Tests.** The runner gives each test `SMITH_SLOTS_DIR=<its scratch folder>/slots`, so a smith a test starts counts private slots and never waits for the host's (#627); `tests/slots_test.smith` sets its own.
+
 **Not covered.** `smith lint`, `fmt` and `prove` take no token of their own (lint and prove run `smith build` first, which does); the test runner started by hand, outside `smith test`, has no pool and runs all its workers. `smith --smith-slots PROGRAM` takes a token and runs the program: it is for `tests/slots_test.smith`.

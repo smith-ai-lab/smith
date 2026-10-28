@@ -245,9 +245,15 @@ inline Verdict classify(const FunctionDecl *fn, const SourceManager &sm) {
 
 // ---- Capabilities --------------------------------------------------------------------------------------------------
 
+// `smith::capability` is also written `std::capability` (the standard library's scope, issue #366).
+inline bool is_annotation(llvm::StringRef written, llvm::StringRef text) {
+    if (written == text) return true;
+    return text.starts_with("smith::") && written.starts_with("std::") && written.drop_front(5) == text.drop_front(7);
+}
+
 inline bool has_annotation(const Decl *decl, llvm::StringRef text) {
     for (const auto *attribute : decl->specific_attrs<AnnotateAttr>())
-        if (attribute->getAnnotation() == text) return true;
+        if (is_annotation(attribute->getAnnotation(), text)) return true;
     return false;
 }
 

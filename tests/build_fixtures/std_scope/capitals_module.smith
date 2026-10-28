@@ -1,0 +1,30 @@
+module capitals_module;
+
+export Option(I32) pick(I32 x) {
+    if (x > 0) return x;
+    return .none;
+}
+
+export Result(U8, I32) narrow(I32 x) {
+    return (U8)x;
+}
+
+export Usize total(I32 xs[:]) {
+    Usize sum = 0;
+    for (Usize i = 0; i < countof(xs); i++) sum += (Usize)xs[i];
+    return sum;
+}
+
+export Str name(void) {
+    return "capitals";
+}
+
+export constexpr Type Small = I8;
+
+export Small tiny(void) {
+    return 7;
+}
+
+export Bool same(constexpr Type T, constexpr Type U) {
+    return T == U;
+}

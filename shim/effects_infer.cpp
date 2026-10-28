@@ -184,6 +184,8 @@ struct EffectsAttr final : ParsedAttrInfo {
         allowIdentifiers(*this, 0);
         static constexpr Spelling spellings[] = {{ParsedAttr::AS_C23, "smith::effects"},
                                                  {ParsedAttr::AS_CXX11, "smith::effects"},
+                                                 {ParsedAttr::AS_C23, "std::effects"},
+                                                 {ParsedAttr::AS_CXX11, "std::effects"},
                                                  {ParsedAttr::AS_GNU, "smith_effects"}};
         Spellings = spellings;
     }
@@ -225,9 +227,12 @@ struct EffectsAttr final : ParsedAttrInfo {
 template <size_t Index> struct EffectAttr final : ParsedAttrInfo {
     EffectAttr() {
         static const std::string scoped = std::string("smith::") + names[Index].text;
+        static const std::string library = std::string("std::") + names[Index].text;
         static const std::string plain = std::string("smith_") + names[Index].text;
         static const Spelling spellings[] = {{ParsedAttr::AS_C23, scoped.c_str()},
                                              {ParsedAttr::AS_CXX11, scoped.c_str()},
+                                             {ParsedAttr::AS_C23, library.c_str()},
+                                             {ParsedAttr::AS_CXX11, library.c_str()},
                                              {ParsedAttr::AS_GNU, plain.c_str()}};
         Spellings = spellings;
     }
@@ -248,6 +253,8 @@ struct PureAttr final : ParsedAttrInfo {
     PureAttr() {
         static constexpr Spelling spellings[] = {{ParsedAttr::AS_C23, "smith::pure"},
                                                  {ParsedAttr::AS_CXX11, "smith::pure"},
+                                                 {ParsedAttr::AS_C23, "std::pure"},
+                                                 {ParsedAttr::AS_CXX11, "std::pure"},
                                                  {ParsedAttr::AS_GNU, "smith_pure"}};
         Spellings = spellings;
     }

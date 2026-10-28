@@ -590,15 +590,15 @@ import <stdio.h>;
 typedef struct {
     const char *ptr;
     i32 len;
-} Str;
+} Text;
 
 constexpr char hello[] = "hello world";
 constexpr i32 nums[4] = {10, 20, 30, 40};
 constexpr const char *word = "abc";
 constexpr const char *inside = &hello[1];
 constexpr const i32 *third = nums + 2;
-constexpr Str small = {"xy", 2};
-constexpr Str prefix = {hello, 5};
+constexpr Text small = {"xy", 2};
+constexpr Text prefix = {hello, 5};
 
 static i32 length(const char *p) {
     i32 n = 0;
@@ -2085,8 +2085,8 @@ module main;
 typedef result(i32, i32) Same;
 typedef option(i32) Inner;
 typedef option(Inner) Nested;
-typedef i32 *Pointer;
-typedef option(Pointer) Maybe;
+typedef i32 *Address;
+typedef option(Address) Maybe;
 typedef option(i32) Number;
 
 // Each conversion that would have to choose is an error that names the explicit form (issue #358).
@@ -10750,7 +10750,7 @@ import <stdio.h>;
 typedef result(usize, i32) Wide;
 typedef result(f64, i32) Real;
 typedef option(u8) Small;
-typedef option(f64) Float;
+typedef option(f64) Real;
 
 static result(i32, i32) step(i32 n) {
     if (n < 0) return {.error = n};
@@ -10808,7 +10808,7 @@ static void show_small(Small o) {
     }
 }
 
-static void show_float(Float o) {
+static void show_float(Real o) {
     switch (o) {
     case .some:
         c::printf("some %g\n", o.some);

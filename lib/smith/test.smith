@@ -1846,6 +1846,13 @@ void make_scratch(const Test *test, const Options *options, io::Io *io) {
     }
     c::setenv("SMITH_TEST_SCRATCH", shared->scratch, 1);
     c::setenv("TMPDIR", shared->scratch, 1);
+    // A smith the test starts counts its slots in the test's own folder, never the host's (#627).
+    char slots[path_capacity];
+    __builtin_snprintf(slots, path_capacity, "%s/slots", shared->scratch);
+    c::setenv("SMITH_SLOTS_DIR", slots, 1);
+    // ... and has the cores of a build with a few jobs, not the share the smith holding the host's slot was left with:
+    // a share of 1 turns the `-j2` of a test into one job, and a job that waits for the other never ends.
+    c::setenv("SMITH_CORES", "4", 1);
 }
 
 // Runs a test that takes an io: a real one, made for this test alone, on the run's seed.

@@ -1,0 +1,13 @@
+module main;
+
+import std::arena;
+
+[[std::pure]] i32 broken(arena::Arena *a) {
+    return *arena::push(a, i32);
+}
+
+i32 main(void) {
+    alignas(arena::align_max) static u8 memory[64];
+    arena::Arena a = arena::fixed(memory, sizeof memory);
+    return broken(&a);
+}

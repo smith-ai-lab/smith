@@ -4,8 +4,11 @@
 //   vectors                                known answers: small gzip (fixed Huffman blocks) and xz streams, and
 //                                          every shorter prefix of each refused
 //   extract <archive> <folder>             extract; print "ok", or the error text; exit 0 or 1
-//   prefixes <archive> <scratch>           every prefix shorter than the archive must fail (for a plain tar, shorter
-//                                          than its entries and its two zero blocks), without crashing
+//   prefixes <archive> <scratch> [step [part parts]]
+//                                          every prefix shorter than the archive must fail (for a plain tar, shorter
+//                                          than its entries and its two zero blocks), without crashing; with `part`
+//                                          and `parts`, only the prefixes whose turn is `part` of `parts` (0 <= part
+//                                          < parts), so that the parts run side by side and together try them all
 //   fuzz <archive> <scratch> <n> <seed>    n random damages of the archive; none may crash, hang, or leave a file
 //                                          outside the folder or a symlink that resolves outside it
 // Damage is made by a fixed pseudo-random sequence, so a failure repeats. For a plain tar the damage also rewrites
@@ -152,15 +155,17 @@ static bool test_prefix_wanted(size_t length, size_t step) {
            length % step == 0;
 }
 
-static int test_mode_prefixes(const char *archive, const char *scratch, size_t step) {
+static int test_mode_prefixes(const char *archive, const char *scratch, size_t step, size_t part, size_t parts) {
     if (!test_read_archive(archive)) return 2;
     size_t limit = test_original_size;
     const char *refused = nullptr;
     if (smith_archive_format(test_original, test_original_size, &refused) == SmithArchive_Tar) {
         limit = test_tar_length(test_original, test_original_size);
     }
+    size_t turn = 0;
     for (size_t length = 0; length < limit; length++) {
         if (!test_prefix_wanted(length, step)) continue;
+        if (turn++ % parts != part) continue;
         SmithPackageFault error = {};
         if (test_extract_bytes(scratch, test_original, length, &error)) {
             fprintf(stderr, "a prefix of %zu of %zu bytes was accepted\n", length, test_original_size);
@@ -340,11 +345,15 @@ static int test_mode_vectors(void) {
 int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "vectors") == 0) return test_mode_vectors();
     if (argc == 4 && strcmp(argv[1], "extract") == 0) return test_mode_extract(argv[2], argv[3]);
-    if ((argc == 4 || argc == 5) && strcmp(argv[1], "prefixes") == 0)
-        return test_mode_prefixes(argv[2], argv[3], argc == 5 ? (size_t)strtoul(argv[4], nullptr, 10) : 1);
+    if ((argc == 4 || argc == 5 || argc == 7) && strcmp(argv[1], "prefixes") == 0) {
+        size_t parts = argc == 7 ? (size_t)strtoul(argv[6], nullptr, 10) : 1;
+        size_t part = argc == 7 ? (size_t)strtoul(argv[5], nullptr, 10) : 0;
+        if (parts == 0 || part >= parts) return 2;
+        return test_mode_prefixes(argv[2], argv[3], argc >= 5 ? (size_t)strtoul(argv[4], nullptr, 10) : 1, part, parts);
+    }
     if (argc == 6 && strcmp(argv[1], "fuzz") == 0) {
         return test_mode_fuzz(argv[2], argv[3], strtoull(argv[4], nullptr, 10), strtoull(argv[5], nullptr, 10));
     }
-    fprintf(stderr, "usage: untar extract A F | prefixes A S | fuzz A S N SEED\n");
+    fprintf(stderr, "usage: untar extract A F | prefixes A S [STEP [PART PARTS]] | fuzz A S N SEED\n");
     return 2;
 }

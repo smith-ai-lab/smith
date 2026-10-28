@@ -690,22 +690,25 @@ class SmithHook final : public TokenHook, public NameSource {
             mainName = entry->getName().str();
         }
         host.main_file = mainName.c_str();
-        host.maybe_main = SM.getBufferData(MainFile).contains("main");
-        host.maybe_generic = SM.getBufferData(MainFile).contains("type ") ||
-                             SM.getBufferData(MainFile).contains("auto ") ||
-                             SM.getBufferData(MainFile).contains("auto...") || namesConcept(SM.getBufferData(MainFile));
-        host.maybe_if_constexpr = hasIfConstexpr(SM.getBufferData(MainFile));
-        host.maybe_local_tag = hasNestedTag(SM.getBufferData(MainFile));
-        host.maybe_slice = hasSlice(SM.getBufferData(MainFile)) || hasStr(SM.getBufferData(MainFile));
-        host.maybe_brackets = hasEmptyBrackets(SM.getBufferData(MainFile));
-        host.maybe_shape = hasShapeCall(SM.getBufferData(MainFile));
-        host.maybe_tuple = host.maybe_slice || hasTuple(SM.getBufferData(MainFile)) ||
-                           hasPayloadEnum(SM.getBufferData(MainFile)) || host.maybe_shape ||
-                           hasTryWord(SM.getBufferData(MainFile));
-        host.maybe_field = hasFieldsUse(SM.getBufferData(MainFile));
-        host.import_lines = countImportLines(SM.getBufferData(MainFile));
+        // The text the scans below read has the lowercase names for the capitalized ones (issue #366).
+        StringRef buffer = SM.getBufferData(MainFile);
+        std::string lowered(buffer.size() * 3 + 1, '\0');
+        lowered.resize(smith_lang_capitals_lower(buffer.data(), buffer.size(), lowered.data(), true));
+        const StringRef scan = lowered;
+        host.maybe_main = scan.contains("main");
+        host.maybe_generic =
+            scan.contains("type ") || scan.contains("auto ") || scan.contains("auto...") || namesConcept(scan);
+        host.maybe_if_constexpr = hasIfConstexpr(scan);
+        host.maybe_local_tag = hasNestedTag(scan);
+        host.maybe_slice = hasSlice(scan) || hasStr(scan);
+        host.maybe_brackets = hasEmptyBrackets(scan);
+        host.maybe_shape = hasShapeCall(scan);
+        host.maybe_tuple =
+            host.maybe_slice || hasTuple(scan) || hasPayloadEnum(scan) || host.maybe_shape || hasTryWord(scan);
+        host.maybe_field = hasFieldsUse(scan);
+        host.import_lines = countImportLines(scan);
         host.type_values = &SmithHook::typeValues;
-        host.maybe_type_value = host.maybe_field || hasTypeValue(SM.getBufferData(MainFile));
+        host.maybe_type_value = host.maybe_field || hasTypeValue(scan);
         host.target_fact = &SmithHook::targetFact;
         host.constant = &SmithHook::constantValue;
         // A tool that reports from an engine of its own (clang-tidy) numbers its custom diagnostics apart from the
@@ -732,6 +735,27 @@ class SmithHook final : public TokenHook, public NameSource {
             sizedInfos[i] = PP.getIdentifierInfo(sizedTable[i].name);
             sizedNames[sizedInfos[i]] = i;
         }
+        const char *written = nullptr;
+        const char *name = nullptr;
+        for (size_t i = 0; smith_lang_capital_at(i, &written, &name); i++) { // `I32` is read as `i32`
+            IdentifierInfo *capital = PP.getIdentifierInfo(written);
+            capital->setHookWatched(true);
+            capitals[capital] = PP.getIdentifierInfo(name);
+        }
+    }
+
+    llvm::DenseMap<const IdentifierInfo *, IdentifierInfo *> capitals; // `I32` to `i32`, `Int` to `integer` (#366)
+    tok::TokenKind lastKind = tok::unknown;                            // the token before the one a lookahead reads
+
+    // A capitalized type name is the lowercase one, unless it names a member or a C name (after `.`, `->`, `::`).
+    void lowerCapital(Token &tok, tok::TokenKind before) {
+        if (tok.isNot(tok::identifier) || before == tok::period || before == tok::arrow || before == tok::coloncolon) {
+            return;
+        }
+        auto found = capitals.find(tok.getIdentifierInfo());
+        if (found == capitals.end() || !spelledInMain(tok.getLocation())) return;
+        tok.setIdentifierInfo(found->second);
+        tok.setKind(found->second->getTokenID()); // `Bool` is the keyword `bool`
     }
 
     void semaCreated(Sema &s) override {
@@ -799,6 +823,9 @@ class SmithHook final : public TokenHook, public NameSource {
     // (`i32 double(i32 x)`), and is reported as that, once, at the name. The hook is offered everything for as long as
     // the look lasts, and what it would not have been offered is passed over.
     bool offer(Token &tok) {
+        const IdentifierInfo *capitalBefore = nullptr;
+        lowerCapital(tok, PP.getHookPrevious(1, capitalBefore));
+        lastKind = tok.getKind();
         if (!spelledInMain(tok.getLocation()) || tok.is(tok::eof)) {
             if (afterSized > 0) endLook();
             return offerLowered(tok);
@@ -1743,6 +1770,8 @@ class SmithHook final : public TokenHook, public NameSource {
         } else {
             self->PP.Lex(next);
         }
+        self->lowerCapital(next, self->lastKind);
+        self->lastKind = next.getKind();
         self->pool.push_back(next);
         *token = self->convert(next, self->pool.size() - 1);
     }
