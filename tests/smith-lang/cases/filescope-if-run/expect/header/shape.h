@@ -31,27 +31,27 @@ extern "C" {
 #endif
 #if (1)
 
-int32_t shape_width(void) __asm__("_shape::width");
+int32_t shape_width([[maybe_unused]] int32_t n) __asm__("_shape::width");
 #else
 
-int32_t shape_width(void) __asm__("_shape::width");
+int32_t shape_width([[maybe_unused]] int32_t n) __asm__("_shape::width");
 #endif
 #if SMITH_TARGET_OS == 1 || SMITH_TARGET_OS == 2
 
-int32_t shape_platform(void) __asm__("_shape::platform");
+int32_t shape_platform([[maybe_unused]] int32_t n) __asm__("_shape::platform");
 #elif SMITH_TARGET_ARCH == 1
 
-int32_t shape_platform(void) __asm__("_shape::platform");
+int32_t shape_platform([[maybe_unused]] int32_t n) __asm__("_shape::platform");
 #else
 
-int32_t shape_platform(void) __asm__("_shape::platform");
+int32_t shape_platform([[maybe_unused]] int32_t n) __asm__("_shape::platform");
 #endif
 #if SMITH_TARGET_OS == 1
 
-int32_t shape_sides(void);
+int32_t shape_sides([[maybe_unused]] int32_t n);
 #else
 
-int32_t shape_sides(void);
+int32_t shape_sides([[maybe_unused]] int32_t n);
 #endif
 
 // A function's own `if constexpr` still keeps its braces.

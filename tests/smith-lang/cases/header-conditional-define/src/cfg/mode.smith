@@ -12,15 +12,15 @@ export typedef struct {
 #endif
 
 #if defined(WIDE) && WIDE > 1
-export u32 width() {
+export u32 width([[maybe_unused]] i32 n) {
     return 128;
 }
 #elif defined(WIDE)
-export u32 width() {
+export u32 width([[maybe_unused]] i32 n) {
     return 64;
 }
 #else
-export u32 width() {
+export u32 width([[maybe_unused]] i32 n) {
     return 32;
 }
 #endif
@@ -35,7 +35,7 @@ export u32 never() {
     return 0;
 }
 #else
-export u32 always() {
+export u32 always([[maybe_unused]] i32 n) {
     return 1;
 }
 #endif
@@ -48,6 +48,6 @@ export u32 nested() {
 #endif
 #endif
 
-export u32 plain() {
+export u32 plain([[maybe_unused]] i32 n) {
     return 5;
 }

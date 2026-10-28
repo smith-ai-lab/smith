@@ -1,4 +1,4 @@
 module cycle::a;
 import cycle::b;
 
-export int from_a() { return 1; }
+export int from_a([[maybe_unused]] i32 n) { return 1; }

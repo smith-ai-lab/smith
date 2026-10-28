@@ -8,8 +8,8 @@ typedef struct grid_Nested grid_Nested;
 static __UINT8_TYPE__ grid_table[SIDE];
 struct grid_Board { __UINT8_TYPE__ cells[SIDE * SIDE]; __UINT32_TYPE__ n; };
 typedef struct grid_Board grid_Board;
-__SIZE_TYPE__ grid_board_size() __asm__("_grid::board_size");
-__SIZE_TYPE__ grid_board_size() {
+__SIZE_TYPE__ grid_board_size([[maybe_unused]] __INT32_TYPE__ n) __asm__("_grid::board_size");
+__SIZE_TYPE__ grid_board_size([[maybe_unused]] __INT32_TYPE__ n) {
 return sizeof(struct grid_Board);
 }
 __SIZE_TYPE__ grid_other_sizes() __asm__("_grid::other_sizes");

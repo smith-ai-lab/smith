@@ -13,7 +13,7 @@
 extern "C" {
 #endif
 // A chain: the branches not taken are never given to the parser, so they may be anything.
-int32_t kind_arch_name() __asm__("_kind::arch_name");
+int32_t kind_arch_name([[maybe_unused]] int32_t n) __asm__("_kind::arch_name");
 
 // The constraint for another architecture would not compile here.
 int32_t kind_opaque(int32_t value) __asm__("_kind::opaque");

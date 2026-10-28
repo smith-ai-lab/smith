@@ -5,4 +5,4 @@ export int never_there();
 export int also_never() { return -1; }
 #endif
 
-export int always_there() { return 7; }
+export int always_there([[maybe_unused]] i32 n) { return 7; }

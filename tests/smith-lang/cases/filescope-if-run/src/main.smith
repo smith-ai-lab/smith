@@ -2,6 +2,6 @@ import shape;
 import <stdio.h>;
 
 int main(void) {
-    c::printf("%d %d %d %d\n", shape::width(), shape::platform(), shape::both(), shape::sides());
+    c::printf("%d %d %d %d\n", shape::width(0), shape::platform(0), shape::both(), shape::sides(0));
     return 0;
 }

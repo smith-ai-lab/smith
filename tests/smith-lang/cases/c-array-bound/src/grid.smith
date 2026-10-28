@@ -8,7 +8,7 @@ u8 table[c::SIDE];
 
 export struct Board { u8 cells[c::SIDE * c::SIDE]; u32 n; };
 
-export usize board_size() {
+export usize board_size([[maybe_unused]] i32 n) {
     return sizeof(struct Board);
 }
 

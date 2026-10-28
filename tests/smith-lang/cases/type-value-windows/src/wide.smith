@@ -13,6 +13,6 @@ static_assert(sizeof(wide) != 4, "sizeof of a type value is four bytes here");
 static_assert(alignof(wide) != 4, "alignof of a type value is four here");
 static_assert(sizeof(char *) == 8);
 
-export i32 eight() {
+export i32 eight([[maybe_unused]] i32 n) {
     return 8;
 }
