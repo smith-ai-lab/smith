@@ -57,4 +57,4 @@ export usize scratch_sum(arena::Arena *a, usize count) {
 }
 ```
 
-`arena::reset(&a)` is allowed only with no scope open; both are `assert`s. Also in this family: [smith-arena-c](../smith-arena-c/SKILL.md).
+`arena::reset(&a)` is allowed only with no scope open; both are `assert`s. Also in this family: [smith-arena-c](../smith-arena-c/SKILL.md). **`arena::push_uninit(&a, T)`** (`push_uninit_raw`, `smith_arena_push_uninit` from C) is the one opt-out of zeroed memory: the caller writes the block whole before reading it. Use it only for a hot spot whose zeroing was measured to cost more than 2%, and say the measurement in a comment at the call.

@@ -71,6 +71,18 @@ export void test_mem_alloc_without_an_allocator_set_is_the_systems_and_never_nul
     mem::free(record);
 }
 
+// The opt-out of zero-is-initialization: alloc_uninit hands out a usable, aligned block the caller writes whole.
+export void test_mem_alloc_uninit_is_a_block_the_caller_writes() {
+    Record *record = mem::alloc_uninit(Record);
+    test::check_condition(record != nullptr);
+    record->value = 2.5;
+    test::check_equal(record->value, 2.5);
+    void *aligned = mem::alloc_uninit_raw(100, 64);
+    test::check_equal((usize)aligned & 63, 0);
+    mem::free(aligned);
+    mem::free(record);
+}
+
 // The tests of an option sit in functions with no generic call: a `== .some` after a call to a generic in the same
 // function does not find the option's type (smith issue #353).
 MaybeRecord try_record() {
