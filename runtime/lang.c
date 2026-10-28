@@ -491,8 +491,8 @@ struct SmithLang {
     uint32_t skip_mark;               // where in smith_lang_gt the dropped body begins
     bool generic_next;                // the declaration about to begin is generic
     uint32_t array_result_open;       // the `[` of a generic's result `T[n]` (lang_array.c): a type is before it
-    uint32_t aret_equals;             // the `=` of `T xs[N] = value` being declared in a function (lang_array.c)
-    SmithToken aret_name;             // ... its name
+    bool aret_armed;                  // `T xs[N] =` is being declared in a function (lang_array.c)
+    char aret_name[64];               // ... its name
     unsigned long long aret_elements; // ... and its size
     bool aret_const;                  // ... and its type has `const`
     bool generic_plain;       // ... a plain one: a function over `type` that is exported (issue #107)

@@ -1,1 +1,1 @@
-src/main.smith:8:5: static assertion failed due to requirement 'sizeof smith_w_three.data / sizeof smith_w_three.data[0] == 3': the array has another size than the call's result
+src/main.smith:8:18: static assertion failed due to requirement 'sizeof smith_w_three.data / sizeof smith_w_three.data[0] == 3': the array has another size than the call's result
