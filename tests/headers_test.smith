@@ -106,8 +106,8 @@ export void test_the_shapes_the_lowering_carries_are_the_ones_the_headers_write(
     scratch::Project p = scratch::project(io, "p", nullptr);
     scratch::write_header_of(&p, "lib/smith/option.smith", "option.h");
     scratch::write_header_of(&p, "lib/smith/result.smith", "result.h");
-    has(&p, "option", "option.h", "// smith-eshape: option(T) { T some ; none ; }", true);
-    has(&p, "result", "result.h", "// smith-eshape: result(T,E) { T ok ; E error ; }", true);
+    has(&p, "option", "option.h", "// smith-eshape: option(T) { none ; T some ; }", true);
+    has(&p, "result", "result.h", "// smith-eshape: result(T,E) { E error ; T ok ; }", true);
 }
 
 export void test_the_arena_header_compiles_alone(io::Io *io) {

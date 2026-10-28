@@ -1,0 +1,66 @@
+// In a module, `T t;` and `T t = {};` both make a zero value: every byte zero, padding and a union's whole size
+// included (issue #415, knowledge/zero-value.md). A .c file is unchanged.
+module zero_init_test;
+
+import std::io;
+import std::test;
+import scratch;
+
+static const char *both_spellings = "module main;\n"
+                                    "\n"
+                                    "struct Padded {\n"
+                                    "    char c;\n"
+                                    "    I64 n;\n"
+                                    "    char d;\n"
+                                    "};\n"
+                                    "\n"
+                                    "union Wide {\n"
+                                    "    char c;\n"
+                                    "    I64 n;\n"
+                                    "    char text[24];\n"
+                                    "};\n"
+                                    "\n"
+                                    "static I32 dirty(I32 depth) {\n"
+                                    "    volatile char noise[256];\n"
+                                    "    for (I32 i = 0; i < 256; i++) {\n"
+                                    "        noise[i] = (char)0x5a;\n"
+                                    "    }\n"
+                                    "    return depth > 0 ? dirty(depth - 1) + noise[depth] : noise[0];\n"
+                                    "}\n"
+                                    "\n"
+                                    "static I32 nonzero_bytes(const U8 bytes[:]) {\n"
+                                    "    I32 count = 0;\n"
+                                    "    for (Usize i = 0; i < countof(bytes); i++) {\n"
+                                    "        count += bytes[i] != 0;\n"
+                                    "    }\n"
+                                    "    return count;\n"
+                                    "}\n"
+                                    "\n"
+                                    "static I32 declared(void) {\n"
+                                    "    struct Padded p;\n"
+                                    "    union Wide w;\n"
+                                    "    return nonzero_bytes(((const U8 *)&p)[0:sizeof p]) + nonzero_bytes(((const U8 *)&w)[0:sizeof w]);\n"
+                                    "}\n"
+                                    "\n"
+                                    "static I32 braced(void) {\n"
+                                    "    struct Padded p = {};\n"
+                                    "    union Wide w = {};\n"
+                                    "    return nonzero_bytes(((const U8 *)&p)[0:sizeof p]) + nonzero_bytes(((const U8 *)&w)[0:sizeof w]);\n"
+                                    "}\n"
+                                    "\n"
+                                    "I32 main() {\n"
+                                    "    dirty(8);\n"
+                                    "    I32 a = declared();\n"
+                                    "    dirty(8);\n"
+                                    "    I32 b = braced();\n"
+                                    "    return a + b;\n"
+                                    "}\n";
+
+export void test_zero_init_declared_and_braced_are_all_zero_bytes(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::write(&p, "main.smith", both_spellings);
+    scratch::Run built = scratch::build(&p, "--profile debug");
+    scratch::expect_status("the module builds", 0, &built);
+    scratch::Run ran = scratch::sh(&p, "build/debug/p");
+    scratch::expect_status("T t; and T t = {}; leave no nonzero byte, in padding or a union", 0, &ran);
+}

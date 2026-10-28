@@ -1399,7 +1399,7 @@ static bool smith_lang_eshape_tag(SmithLang *lang, const SmithHost *host, const 
 
 // The constant of a variant of the result of a call of a generic whose result is built from its arguments
 // (`option(typeof(xs[0]))`): the instance's struct has no name until the call is written, but a shape's variants are
-// numbered in the order the shape writes them, so the variant is its number (`option`: `some` 0, `none` 1).
+// numbered in the order the shape writes them, so the variant is its number (`option`: `none` 0, `some` 1).
 static bool smith_lang_enum_derived_constant(const SmithLangGeneric *generic, const SmithToken *variant, char *out,
                                              size_t capacity) {
     const SmithLangGenToken *head = &smith_lang_gt.tokens[generic->first + smith_lang_generic_skip_attributes(generic)];
@@ -2077,8 +2077,8 @@ static void smith_lang_eshape_import(const char *text, uint32_t length, const ch
 // `smith::option` and `smith::result` (lib/smith/option.smith, result.smith) export. Those headers are not in git, so
 // the two lines the lowering needs of them are written here; `tests/headers_test.smith` checks that each module's
 // generated header has exactly its line.
-static constexpr char smith_option_header[] = "// smith-eshape: option(T) { T some ; none ; }\n";
-static constexpr char smith_result_header[] = "// smith-eshape: result(T,E) { T ok ; E error ; }\n";
+static constexpr char smith_option_header[] = "// smith-eshape: option(T) { none ; T some ; }\n";
+static constexpr char smith_result_header[] = "// smith-eshape: result(T,E) { E error ; T ok ; }\n";
 
 static void smith_lang_eshape_builtins(SmithLang *lang) {
     if (smith_lang_eshape_builtins_done || !lang->is_module) return;
