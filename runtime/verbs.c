@@ -15,10 +15,10 @@ constexpr size_t smith_verb_args_max = 16384;
 constexpr size_t smith_verbs_files_max = 16384;
 constexpr size_t smith_verbs_names_max = 16U << 20;
 constexpr size_t smith_verbs_batch = 128;
-constexpr size_t smith_verbs_info_max = 8U << 20;
-constexpr size_t smith_verbs_lines_max = 8192;
+constexpr size_t smith_verbs_info_max = 64U << 20; // .smith/build.info; bss, so only the pages a project fills are used
+constexpr size_t smith_verbs_lines_max = 131072;   // lines of one kind (twice smith_objects_max)
 constexpr size_t smith_verbs_jobs_max = 64;
-constexpr size_t smith_verbs_words_max = 8192;
+constexpr size_t smith_verbs_words_max = 131072;
 
 // ---- Arguments
 
@@ -112,6 +112,19 @@ typedef struct {
 static SmithInfo smith_info;
 static char smith_info_text[smith_verbs_info_max + 1];
 
+[[noreturn]] static void smith_info_too_many(const char *things, size_t limit) {
+    fprintf(stderr,
+            "smith: .smith/build.info has more than %zu %s (the limit); split the build or raise the limit in "
+            "runtime/verbs.c\n",
+            limit, things);
+    exit(smith_exit_usage);
+}
+
+static void smith_info_add(const char **list, size_t *count, const char *what, const char *value) {
+    if (*count >= smith_verbs_lines_max) smith_info_too_many(what, smith_verbs_lines_max);
+    list[(*count)++] = value;
+}
+
 // Reads .smith/build.info, which build.c's run wrote: `compile<TAB>source<TAB>flag...`, `test<TAB>task`,
 // `program<TAB>path`, `runner<TAB>path`, `default<TAB>target` (runtime/build_runtime.c). Each line is cut at its end in
 // place.
@@ -119,12 +132,13 @@ static const SmithInfo *smith_info_read(const char *verb) {
     FILE *file = fopen(".smith/build.info", "rb");
     if (file == nullptr)
         smith_die(smith_exit_usage, verb, "the build left no .smith/build.info; is there a build.c or build.smith?");
-    size_t size = fread(smith_info_text, 1, smith_verbs_info_max, file);
+    size_t size = fread(smith_info_text, 1, smith_verbs_info_max + 1, file);
     fclose(file);
+    if (size > smith_verbs_info_max) smith_info_too_many("bytes", smith_verbs_info_max);
     smith_info_text[size] = '\0';
     smith_info = (SmithInfo){};
     char *line = smith_info_text;
-    for (size_t guard = 0; *line != '\0' && guard < 4 * smith_verbs_lines_max; guard++) { // bounded by the lines
+    for (size_t guard = 0; *line != '\0' && guard < smith_verbs_info_max; guard++) { // bounded by the bytes
         char *end = strchr(line, '\n');
         if (end == nullptr) end = line + strlen(line);
         bool last = *end == '\0';
@@ -136,23 +150,24 @@ static const SmithInfo *smith_info_read(const char *verb) {
             } else {
                 tab = end;
             }
-            if (strcmp(line, "compile") == 0 && smith_info.compile_count < smith_verbs_lines_max) {
+            if (strcmp(line, "compile") == 0) {
                 char *flags = strchr(tab, '\t');
                 if (flags != nullptr) *flags++ = '\0';
-                smith_info.compile_flags[smith_info.compile_count] = flags != nullptr ? flags : "";
-                smith_info.compiles[smith_info.compile_count++] = tab;
+                size_t at = smith_info.compile_count;
+                smith_info_add(smith_info.compiles, &smith_info.compile_count, "compile lines", tab);
+                smith_info.compile_flags[at] = flags != nullptr ? flags : "";
             } else if (strcmp(line, "test") == 0) {
                 smith_info.test_count++;
-            } else if (strcmp(line, "unit") == 0 && smith_info.unit_count < smith_verbs_lines_max) {
-                smith_info.units[smith_info.unit_count++] = tab;
-            } else if (strcmp(line, "library") == 0 && smith_info.library_count < smith_verbs_lines_max) {
-                smith_info.libraries[smith_info.library_count++] = tab;
-            } else if (strcmp(line, "program") == 0 && smith_info.program_count < smith_verbs_lines_max) {
-                smith_info.programs[smith_info.program_count++] = tab;
-            } else if (strcmp(line, "runner") == 0 && smith_info.runner_count < smith_verbs_lines_max) {
-                smith_info.runners[smith_info.runner_count++] = tab;
-            } else if (strcmp(line, "default") == 0 && smith_info.default_count < smith_verbs_lines_max) {
-                smith_info.defaults[smith_info.default_count++] = tab;
+            } else if (strcmp(line, "unit") == 0) {
+                smith_info_add(smith_info.units, &smith_info.unit_count, "unit lines", tab);
+            } else if (strcmp(line, "library") == 0) {
+                smith_info_add(smith_info.libraries, &smith_info.library_count, "library lines", tab);
+            } else if (strcmp(line, "program") == 0) {
+                smith_info_add(smith_info.programs, &smith_info.program_count, "program lines", tab);
+            } else if (strcmp(line, "runner") == 0) {
+                smith_info_add(smith_info.runners, &smith_info.runner_count, "runner lines", tab);
+            } else if (strcmp(line, "default") == 0) {
+                smith_info_add(smith_info.defaults, &smith_info.default_count, "default lines", tab);
             }
         }
         if (last) break;
@@ -511,6 +526,7 @@ static int smith_lint_project(int count, char **args, const char *self) {
             continue;
 #endif
         }
+        if (files_count >= smith_verbs_files_max) smith_die(smith_exit_usage, "too many files to lint", nullptr);
         files[files_count++] = info->compiles[i];
     }
 #ifdef SMITH_HOOK
@@ -590,7 +606,13 @@ static bool smith_proves(const char *source) {
     return smith_ends_with(source, ".c") || smith_ends_with(source, ".smith");
 }
 
-static char *smith_prove_argv[smith_verbs_lines_max + smith_verbs_words_max + 8];
+static char *smith_prove_argv[2 * smith_verbs_lines_max + smith_verbs_words_max + 8];
+
+// Room for one more argument of the prover, or an error naming the limit.
+static void smith_prove_room(size_t used) {
+    if (used + 2 >= sizeof smith_prove_argv / sizeof smith_prove_argv[0])
+        smith_die(smith_exit_usage, "smith prove: too many arguments for one group of sources (limit 393216)", nullptr);
+}
 
 // Keeps, in place, the words of a tab-separated compile that the prover may see (smith_prove_drops).
 static void smith_prove_filter(char *flags) {
@@ -633,8 +655,8 @@ static void smith_prove_pass_options(size_t *used) {
             snprintf(append, sizeof append, "--emit-ir-append=%s", option + sizeof emit - 1);
             option = append;
         }
-        if (*used + 2 < sizeof smith_prove_argv / sizeof smith_prove_argv[0])
-            smith_prove_argv[(*used)++] = (char *)option;
+        smith_prove_room(*used);
+        smith_prove_argv[(*used)++] = (char *)option;
     }
 }
 
@@ -642,16 +664,17 @@ static void smith_prove_pass_options(size_t *used) {
 // for its contracts and does not prove.
 static void smith_prove_libraries(const char *libraries, size_t *used) {
     static char copy[smith_verbs_info_max + 1];
-    static char words[smith_verbs_lines_max][PATH_MAX + 16];
+    static char words[smith_verbs_info_max + 16 * smith_verbs_lines_max];
     snprintf(copy, sizeof copy, "%s", libraries);
-    size_t count = 0;
+    size_t text = 0;
     char *source = copy;
-    while (*source != '\0' && count < smith_verbs_lines_max) { // bounded by the sources
+    for (size_t guard = 0; *source != '\0' && guard < smith_verbs_info_max; guard++) { // bounded by the bytes
         char *tab = strchr(source, '\t');
         if (tab != nullptr) *tab = '\0';
-        snprintf(words[count], sizeof words[count], "--library=%s", source);
-        if (*used + 2 < sizeof smith_prove_argv / sizeof smith_prove_argv[0])
-            smith_prove_argv[(*used)++] = words[count++];
+        smith_prove_room(*used);
+        SMITH_ASSERT(text + strlen(source) + 12 <= sizeof words);
+        smith_prove_argv[(*used)++] = words + text;
+        text += (size_t)snprintf(words + text, sizeof words - text, "--library=%s", source) + 1;
         if (tab == nullptr) break;
         source = tab + 1;
     }
@@ -701,7 +724,7 @@ static int smith_prove_group(const char *self, const SmithInfo *info, const size
     for (size_t guard = 0; *flags != '\0' && guard < smith_verbs_words_max; guard++) { // bounded by the words
         char *tab = strchr(flags, '\t');
         if (tab != nullptr) *tab = '\0';
-        if (used + 2 >= sizeof smith_prove_argv / sizeof smith_prove_argv[0]) break;
+        smith_prove_room(used);
         if (*flags != '\0') smith_prove_argv[used++] = flags;
         if (tab == nullptr) break;
         flags = tab + 1;
@@ -723,11 +746,15 @@ static size_t smith_prove_compile_of(const SmithInfo *info, const char *source) 
 static int smith_prove_unit(const char *self, const SmithInfo *info, char *sources, const char *libraries) {
     static size_t found[smith_verbs_lines_max];
     size_t found_count = 0;
-    for (char *source = sources; source != nullptr && *source != '\0' && found_count < smith_verbs_lines_max;) {
+    for (char *source = sources; source != nullptr && *source != '\0';) {
         char *tab = strchr(source, '\t');
         if (tab != nullptr) *tab = '\0';
         size_t at = smith_prove_compile_of(info, source);
-        if (at < smith_verbs_lines_max && smith_proves(source)) found[found_count++] = at;
+        if (at < smith_verbs_lines_max && smith_proves(source)) {
+            if (found_count >= smith_verbs_lines_max)
+                smith_info_too_many("sources in one program", smith_verbs_lines_max);
+            found[found_count++] = at;
+        }
         source = tab != nullptr ? tab + 1 : nullptr;
     }
     static size_t members[smith_verbs_lines_max];
@@ -993,7 +1020,7 @@ static int smith_run_project(int count, char **args, const char *self) {
     int status = smith_verb_build(self, split, targets, false);
     if (status != 0) return status;
     const SmithInfo *info = smith_info_read("smith run");
-    const char *named[smith_verbs_lines_max];
+    static const char *named[smith_verbs_lines_max];
     size_t named_count = 0;
     for (size_t i = 0; i < info->default_count; i++) {
         for (size_t j = 0; j < info->program_count; j++) {

@@ -6,6 +6,7 @@ module dbg_launch_test;
 import scratch;
 import smith::io;
 import smith::test;
+import target;
 
 constexpr char program[_] = "#include <stdio.h>\n"
                             "int main(int count, char **arguments) {\n"
@@ -38,6 +39,13 @@ export void test_dbg_launch_process_launch_with_x_true_expands(io::Io *io) {
     if (!made(&p)) return;
     scratch::Run run = scratch::sh(&p, "smith dbg -b -o 'settings set plugin.process.gdb-remote.packet-timeout 600' "
                                        "-o 'process launch -X true' args -- '*.txt' 2>&1");
-    scratch::expect_contains("-X true: the glob expands", run.out, "<one.txt>");
-    scratch::expect_contains("-X true: ... every match", run.out, "<two.txt>");
+    if constexpr (target::os == target::macos) {
+        scratch::expect_contains("-X true: the glob expands", run.out, "<one.txt>");
+        scratch::expect_contains("-X true: ... every match", run.out, "<two.txt>");
+    } else {
+        // lldb-server launches without a shell and lldb's own expansion is macOS's (Host::ShellExpandArguments is
+        // "unimplemented" on Linux), so the flag changes nothing there.
+        scratch::expect_contains("-X true on Linux: the glob stays", run.out, "<*.txt>");
+        scratch::expect_lacks("-X true on Linux: nothing is expanded", run.out, "<one.txt>");
+    }
 }

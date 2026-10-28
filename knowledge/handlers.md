@@ -78,7 +78,7 @@ prebuilt library's and one loaded with `dlopen`. Owner (2026-10-24): "always int
   a container with the `SmithAllocator` first, not a `ctx` field, because a field added to handlers.h waits for a smith
   release (the lag rule: arena is built into smith).
 
-- **Refusing (step D2b):** `mem::failing(parent, key)` refuses allocations by draws from a random key, and the test
+- **Refusing (step D2b):** `failing::make(parent, key)` (smith::failing) refuses allocations by draws from a random key, and the test
   runner gives a test one beside its key; `.checked_allocator` turns the runner's checked allocator off. See
   [checked-allocator](checked-allocator.md).
 

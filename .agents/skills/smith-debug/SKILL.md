@@ -20,7 +20,7 @@ One command, one answer: the program's state at a crash or a line, with no edit 
 ## smith dbg: a person at a terminal
 
 - Interactive: `smith dbg build/debug/app -- arg1 arg2`; then `b main.c:42`, `run`, `bt`, `frame variable`, `p expr`, `n`, `s`, `c`, `q`.
-- `run` passes the arguments as they are, with no shell (no globbing, no 10 s expansion timeout, like `smith dap` and `smith mcp`); `process launch -X true` expands them through a shell.
+- `run` passes the arguments as they are, with no shell (no globbing, no 10 s expansion timeout, like `smith dap` and `smith mcp`); `process launch -X true` expands them through a shell (macOS only: on Linux lldb-server launches without a shell, so the flag changes nothing).
 - Batch, which is how to script it and what an agent runs: `smith dbg -b -o 'b file.c:42' -o run -o 'frame variable' -o bt -o kill build/debug/app -- args`. `-b` exits after the last `-o`; add `-o kill` when the program would otherwise run on.
 - Set a breakpoint after the prologue (a line of the body, not the function's first line), or arguments read as garbage.
 - A program that forks (smith's test runner `--jobs`, servers): the breakpoint hits in the child, which the debugger does not follow on macOS and which dies with SIGTRAP. Run the program with its option for one process. For smith's test runner that is `--in-process`: `smith dbg -b -o 'b test_x.c:12' -o run -o 'frame variable' -o kill build/tests -- --test name --in-process`. It runs the tests in the runner's own process, with no fork and no timeout, so a crash or hang ends the run; `--jobs 1` and `--isolate` still fork, and the breakpoint then hits in a child the debugger does not follow.

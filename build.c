@@ -22,6 +22,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 // Everything the targets share.
@@ -231,8 +232,8 @@ static const char *const *build_protocol_steps(SmithBuild *b, const BuildConfig 
 // smith_object compiles (build_linked_libraries) has its header step from smith_object; the others are made here, and
 // are inputs of smith.c, which includes them. The installed smith writes the headers of its own embedded sources
 // first (`smith build` does, before this file runs), so a first build has them for build.c itself.
-static const char *const build_header_modules[] = {"ascii", "autodiff", "build", "categorical", "effects", "format",
-                                                   "math",  "mem",      "slice", "test",        nullptr};
+static const char *const build_header_modules[] = {"ascii",  "autodiff", "build", "categorical", "effects", "failing",
+                                                   "format", "math",     "mem",   "slice",       "test",    nullptr};
 
 // The compiler's own file, which a header step lists as an input: it is the smith that writes the header.
 static const char *build_compiler_file(SmithBuild *b, const BuildConfig *config) {
@@ -546,6 +547,7 @@ static const char *const build_smith_inputs[] = {
     "lib/smith/random.smith",
     "lib/smith/contract.smith",
     "lib/smith/effects.smith",
+    "lib/smith/failing.smith",
     "lib/smith/files.smith",
     "lib/smith/format.smith",
     "lib/smith/clock.smith",
@@ -685,6 +687,37 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
     return program.step;
 }
 
+static const char *build_test_header(SmithBuild *b, const char *source) {
+    const char *root_less = source + strlen(strncmp(source, "tests/", strlen("tests/")) == 0 ? "tests/" : "lib/");
+    return smith_fmt(b, ".smith/include/%s.h", smith_replace_extension(b, root_less, ""));
+}
+
+// The headers of all the tests are one step, `smith-cc --smith-headers`: each is a few ms of work but a process costs
+// about 10 ms to start, so a step per header made a build that changed the smith (all of them run again, to find
+// their bytes the same) cost 2 s of CPU (#639). It is restat: a header whose bytes did not change leaves its compile
+// alone.
+static const char *const *build_test_header_step(SmithBuild *b, const char *smith_cc, const char *const *flags,
+                                                 const char *const *tests) {
+    const char *const *pairs = smith_list(b, nullptr);
+    const char *const *outputs = smith_list(b, nullptr);
+    for (size_t i = 0; tests[i] != nullptr; i++) {
+        const char *header = build_test_header(b, tests[i]);
+        pairs = smith_cat(b, pairs, smith_list(b, tests[i], header, nullptr), nullptr);
+        outputs = smith_cat(b, outputs, smith_list(b, header, nullptr), nullptr);
+    }
+    SmithStep write = {
+        .command = smith_cat(b, smith_list(b, smith_cc, "--smith-headers", nullptr), flags,
+                             smith_list(b, "--", nullptr), pairs, nullptr),
+        .inputs = tests,
+        .implicit_inputs = smith_list(b, smith_cc, nullptr),
+        .outputs = outputs,
+        .description = "headers of the tests",
+        .restat = true, // written only when its bytes change
+    };
+    smith_step(b, &write);
+    return outputs;
+}
+
 // The modules of tests/*.smith and the *_test.smith beside the libraries in lib/, for lint: each one's header
 // (.smith/include/<name>.h, which the tests that import `scratch` read) and an object nobody asks for, both made by the
 // smith under test (the one this build links: a test uses a feature at once). They are plain steps that wait for the
@@ -697,34 +730,10 @@ static const char *const *build_test_modules(SmithBuild *b, const BuildConfig *c
     const char *const *flags = build_smith_flags(b, config);
     const char *const *tests =
         smith_glob(b, smith_list(b, "tests/*.smith", "lib/*_test.smith", "lib/smith/*_test.smith", nullptr));
-    const char *const *needs = smith_list(b, smith_cc, nullptr);
-    // Most tests import the scratch module (tests/scratch.smith), whose header they read from .smith/include: its step
-    // goes first, so that they read it as it will be (the step cache serves a header step by what it read)
-    const char *scratch = ".smith/include/scratch.h";
-    bool has_scratch = false;
-    for (size_t i = 0; tests[i] != nullptr; i++)
-        has_scratch = has_scratch || strcmp(tests[i], "tests/scratch.smith") == 0;
+    const char *const *headers = build_test_header_step(b, smith_cc, flags, tests);
     for (size_t i = 0; tests[i] != nullptr; i++) {
-        const char *root_less =
-            tests[i] + strlen(strncmp(tests[i], "tests/", strlen("tests/")) == 0 ? "tests/" : "lib/");
-        const char *name = smith_replace_extension(b, root_less, "");
-        const char *header = smith_fmt(b, ".smith/include/%s.h", name);
+        const char *header = headers[i];
         const char *object = smith_fmt(b, "%s/lint/%zu.o", folder, i);
-        SmithStep write = {
-            .command = smith_cat(b,
-                                 smith_list(b, smith_cc, "--smith-header", tests[i], "-o", header,
-                                            smith_fmt(b, "-MF%s.d", header), nullptr),
-                                 flags, nullptr),
-            .inputs = smith_list(b, tests[i], nullptr),
-            .implicit_inputs = smith_list(b, smith_cc, nullptr),
-            .outputs = smith_list(b, header, nullptr),
-            .description = smith_fmt(b, "header %s", tests[i]),
-            .depfile = smith_fmt(b, "%s.d", header),
-            .order_only_inputs =
-                smith_when(b, has_scratch && strcmp(header, scratch) != 0, (const char *[]){scratch, nullptr}),
-            .restat = true, // written only when its bytes change
-        };
-        smith_step(b, &write);
         SmithStep compile = {
             .command = smith_cat(b, smith_list(b, smith_cc, nullptr), flags,
                                  smith_list(b, "-I", ".smith/include", "-c", tests[i], "-o", object, nullptr), nullptr),
@@ -737,9 +746,8 @@ static const char *const *build_test_modules(SmithBuild *b, const BuildConfig *c
         smith_compile_command(
             b, smith_cc, tests[i],
             smith_cat(b, flags, smith_list(b, "-I", ".smith/include", "-fdefer-ts", nullptr), nullptr));
-        needs = smith_cat(b, needs, write.outputs, nullptr);
     }
-    return needs;
+    return smith_cat(b, smith_list(b, smith_cc, nullptr), headers, nullptr);
 }
 
 // The template of `smith new` (templates/new/*.smith) is a program of its own whose modules import one another, so each
@@ -824,6 +832,7 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
     smith_compile_command(b, config->cc, "lib/smith/autodiff.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/contract.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/effects.smith", smith_flags);
+    smith_compile_command(b, config->cc, "lib/smith/failing.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/files.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/format.smith", smith_flags);
     smith_compile_command(b, config->cc, "lib/smith/inflate.smith", smith_flags);
@@ -2256,6 +2265,18 @@ static const char *build_preflight_capture(SmithBuild *b, const char *name, cons
     return lines != nullptr && lines[0] != nullptr ? lines[0] : "";
 }
 
+// Seconds on a monotonic clock, and a duration as the status shows it: 41s, 3m.
+static double build_preflight_now(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (double)now.tv_sec + (double)now.tv_nsec / 1e9;
+}
+
+static const char *build_preflight_duration(SmithBuild *b, double seconds) {
+    if (seconds >= 120) return smith_fmt(b, "%.0fm", seconds / 60);
+    return smith_fmt(b, "%.0fs", seconds);
+}
+
 static int build_preflight(SmithRun *run) {
     SmithBuild *b = run->b;
     if (build_make_folder(b, ".smith") != 0) return 1;
@@ -2274,8 +2295,12 @@ static int build_preflight(SmithRun *run) {
     const char *machine = build_preflight_capture(b, "machine", smith_list(b, "uname", "-m", nullptr));
     const char *built = smith_fmt(b, "build/%s-%s/smith", system, machine);
     const char *failed = "";
+    const char *times = ""; // "build 41s, fmt 3s, ..." for the summary and the description
     bool test_capped = false;
-    if (build_preflight_step(b, "build", smith_list(b, self, "build", nullptr)) != 0) {
+    double started = build_preflight_now();
+    int built_status = build_preflight_step(b, "build", smith_list(b, self, "build", nullptr));
+    times = smith_fmt(b, "build %s", build_preflight_duration(b, build_preflight_now() - started));
+    if (built_status != 0) {
         failed = "build";
     } else {
         const char *const names[] = {"fmt", "docs", "lint", "test"};
@@ -2284,6 +2309,7 @@ static int build_preflight(SmithRun *run) {
             smith_list(b, built, "lint", nullptr),
             smith_list(b, built, "test", "--changed", "--cheapest-first", "--fail-fast", nullptr)};
         for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
+            double step_started = build_preflight_now();
             if (strcmp(names[i], "test") == 0) { // capped: a timeout is a pass
                 int status = build_preflight_capped(b, commands[i], ".smith/preflight-test.log", &test_capped);
                 if (status != 0) build_print_tail(".smith/preflight-test.log", 12);
@@ -2292,6 +2318,9 @@ static int build_preflight(SmithRun *run) {
             } else if (build_preflight_step(b, names[i], commands[i]) != 0) {
                 failed = smith_fmt(b, "%s %s", failed, names[i]);
             }
+            times = smith_fmt(b, "%s, %s %s%s", times, strcmp(names[i], "test") == 0 ? "tests" : names[i],
+                              build_preflight_duration(b, build_preflight_now() - step_started),
+                              strcmp(names[i], "test") == 0 && test_capped ? " capped" : "");
         }
     }
     const char *tests = build_preflight_capture(
@@ -2299,12 +2328,13 @@ static int build_preflight(SmithRun *run) {
         smith_list(b, "sh", "-c", "grep -Eo '[0-9]+ passed' .smith/preflight-test.log 2>/dev/null | tail -1; true",
                    nullptr));
     bool ok = failed[0] == '\0';
-    const char *description = ok ? smith_fmt(b, "fmt, docs, lint and the changed tests ok (%s%s)",
+    // Under GitHub's 140 characters: the times, then the count.
+    const char *description = ok ? smith_fmt(b, "ok: %s (%s)", times,
                                              tests[0] != '\0' ? tests
-                                             : test_capped    ? "no summary before the cap"
-                                                              : "no tests selected",
-                                             test_capped ? ", capped at 10 min" : "")
-                                 : smith_fmt(b, "failed:%s (smith build preflight)", failed);
+                                             : test_capped    ? "no count before the cap"
+                                                              : "no tests selected")
+                                 : smith_fmt(b, "failed:%s (%s)", failed, times);
+    fprintf(stderr, "preflight: %s, %s in all\n", times, build_preflight_duration(b, build_preflight_now() - started));
     int posted = build_spawn(&(BuildSpawn){
         .argv = smith_list(b, "gh", "api", smith_fmt(b, "repos/{owner}/{repo}/statuses/%s", sha), "-f",
                            smith_fmt(b, "state=%s", ok ? "success" : "failure"), "-f", "context=smith/preflight", "-f",

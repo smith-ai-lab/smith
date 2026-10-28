@@ -180,6 +180,12 @@ twice from clean in one folder, game (548 files), learner (243) and checkers dif
 (the linker's UUID and the object files' times, 48 bytes each, as between two ninja builds) and learner's metallibs (not
 reproducible); every object and generated file is the same.
 
+A no-op build of smith itself (nothing changed, the smith in the tree unchanged) is 0.13-0.27 s wall and 0.08 s CPU
+(#639): `build()` and the manifest, and no step. What costs more is the smith that built the tree changing: its link is
+newer than every header step's output, so each runs again to find its bytes the same, and a smith process costs about
+10 ms to start whatever it does. The headers of the tests are one step, `smith-cc --smith-headers` (see
+[smith-module-headers](smith-module-headers.md)): 0.3 s of CPU where 116 steps took 1.9 s.
+
 ## How it was checked
 
 - `tests/build_*_test.smith` has 89 checks of the executor (a failed job, `-k`, depfiles, restat, pools, parallel output, Ctrl-C,
