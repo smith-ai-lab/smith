@@ -165,7 +165,7 @@ export void skip(const char (*text)[:], usize n) {
 
 [smith-lang-slice-pointers](.agents/skills/smith-lang-slice-pointers/SKILL.md).
 
-One library does what `strcmp`, `memchr` and `memset` did for every element type: `smith::slice` compares, searches, fills and reverses any slice, with no allocation, and `smith::ascii` tests one character with no locale. `slice::find` returns an `option(usize)` where C returned a sentinel, and an index or its absence travels as one value:
+One library does what `strcmp`, `memchr` and `memset` did for every element type: `smith::slice` compares, searches, sorts, fills and reverses any slice, with no allocation, and `smith::ascii` tests one character with no locale. `slice::find` returns an `option(usize)` where C returned a sentinel, and an index or its absence travels as one value:
 
 ```smith
 module header;
@@ -182,6 +182,11 @@ export usize body_length(const char line[:]) {
     // A cut of line: nothing is copied.
     const char body[:] = slice::trim(line, ascii::space);
     return countof(body);
+}
+
+export i32 median(i32 xs[:]) {
+    slice::sort(xs); // in place, no allocation
+    return xs[countof(xs) / 2];
 }
 ```
 
