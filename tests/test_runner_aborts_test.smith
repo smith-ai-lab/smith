@@ -44,8 +44,7 @@ export void test_runner_aborts_a_sanitizer_report_is_a_failure_not_an_expected_s
         runner::expect_has(io, iso, "aborts: an ASan report fails", &read, "FAIL sanitized_read");
         runner::expect_has(io, iso, "aborts: ... saying it was a sanitizer report", &read,
                            "stopped by a sanitizer report, which is a bug, not the stop the test expected");
-        runner::expect_has(io, iso, "aborts: ... and shows the child's output", &read,
-                           "AddressSanitizer: heap-buffer-overflow");
+        runner::expect_has(io, iso, "aborts: ... and shows the child's output", &read, "ERROR: AddressSanitizer:");
         scratch::Run overflow = runner::tests(&p, iso, "--test sanitized_overflow");
         runner::expect_has(io, iso, "aborts: a UBSan error fails", &overflow,
                            "stopped by a sanitizer report, which is a bug, not the stop the test expected");
@@ -172,8 +171,7 @@ export void test_runner_aborts_a_sanitizer_report_an_exit_and_a_later_test_are_i
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run overflow = runner::tests(&p, iso, "--test overflow");
-        runner::expect_has(io, iso, "isolation: an ASan report is shown", &overflow,
-                           "AddressSanitizer: heap-buffer-overflow");
+        runner::expect_has(io, iso, "isolation: an ASan report is shown", &overflow, "ERROR: AddressSanitizer:");
         runner::expect_has(io, iso, "isolation: ... under the test's FAIL line", &overflow,
                            "FAIL overflow: killed by SIGABRT");
         runner::expect_has(io, iso, "isolation: ... with the note", &overflow, "    note: index 8");

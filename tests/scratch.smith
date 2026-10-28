@@ -60,14 +60,14 @@ static void write_free(const char *path, const char *text) {
     files::File file = opened_file(path, files::Replace);
     usize length = c::strlen(text);
     files::CountResult wrote = files::write(file, test_io_bytes(text, length));
-    test::check_equal(wrote.tag == files::CountResult_tag_ok, true);
+    test::check_equal(wrote == .ok, true);
     (void)files::close(file);
 }
 
 // A file read with no io: its whole text, or "" when it is absent.
 static const char *read_free(const char *path) {
     files::OpenResult opened = files::open(path[0:c::strlen(path)], files::Read);
-    if (opened.tag != files::OpenResult_tag_ok) return "";
+    if (opened != .ok) return "";
     files::File file = opened.ok;
     usize used = 0;
     usize capacity = 4096;
@@ -81,7 +81,7 @@ static const char *read_free(const char *path) {
         }
         u8 *at = (u8 *)text + used;
         files::CountResult got = files::read(file, at[0:capacity - 1 - used]);
-        if (got.tag != files::CountResult_tag_ok || got.ok == 0) break;
+        if (got != .ok || got.ok == 0) break;
         used += got.ok;
     }
     text[used] = '\0';
@@ -127,12 +127,7 @@ static const char *bytes_text(process::Bytes bytes) {
 // The run of a command with no io: the process module, in the memory of the current allocator.
 static Run run_free(const char *const argv[:]) {
     process::OutputResult done = process::run(argv);
-    switch (done) {
-    case .error:
-        test::note("the command could not start");
-        test::check_equal(0, 1);
-        return {};
-    case .ok:
+    if (done == .ok) {
         process::Output output = done.ok;
         return (Run){
             .status = output.exit.signal != 0 ? 128 + output.exit.signal : output.exit.status,
@@ -140,13 +135,16 @@ static Run run_free(const char *const argv[:]) {
             .err = bytes_text(output.errors),
         };
     }
+    test::note("the command could not start");
+    test::check_equal(0, 1);
+    return (Run){};
 }
 
 // Runs `sh -c command` in a folder and waits. The commands see the smith under test first on PATH, a cache of their own
 // (never the real one) and the repository as $SMITH_REPO (where the runner was started). Nothing is set in this
 // process: the environment is made by the shell that runs the command.
 static Run run_in(const Project *p, const char *command) {
-    const char *argv[_] = {"sh", "-c", run_script, p->dir, command, p->tested, p->cache, nullptr};
+    const char *const argv[_] = {"sh", "-c", run_script, p->dir, command, p->tested, p->cache, nullptr};
     if (p->io == nullptr) return run_free(argv[0:7]);
     io::ProcessResult result = io::processes_run(&p->io->processes, &p->io->arena, argv);
     test::check_equal(result.error.code, 0);
@@ -173,7 +171,7 @@ static const char *join(io::Io *io, const char *folder, const char *name) {
 export Project project(io::Io *io, const char *name, const char *fixture) {
     const char *scratch = test::scratch(io);
     Project p = {.io = io, .dir = join(io, scratch, name), .tested = join(io, scratch, "tested"), .cache = ""};
-    const char *argv[_] = {"sh", "-c", setup_script, scratch, p.dir, fixture != nullptr ? fixture : "", nullptr};
+    const char *const argv[_] = {"sh", "-c", setup_script, scratch, p.dir, fixture != nullptr ? fixture : "", nullptr};
     io::ProcessResult made = io::processes_run(&io->processes, &io->arena, argv);
     if (made.exit_status != 0) {
         test::note("the project could not be made: %s", text_of(made.errors));
@@ -186,15 +184,16 @@ export Project project(io::Io *io, const char *name, const char *fixture) {
 // files of the fixture in it, and the commands run through the process module in the current allocator's memory.
 // `scratch::clean(&p)` removes the folder; a test that fails keeps it, as the runner keeps an io test's.
 export Project make(const char *name, const char *fixture) {
-    env::Value tmp = env::get("TMPDIR");
-    const char *base = tmp.tag == env::Value_tag_some ? format::push(tmp.some, "/smith-scratch-XXXXXX").data
-                                                      : "/tmp/smith-scratch-XXXXXX";
-    char *folder = (char *)mem::alloc_slice(char, c::strlen(base) + 1).data;
-    mem::copy(folder[0:c::strlen(base) + 1], base[0:c::strlen(base) + 1]);
-    test::check_condition(c::mkdtemp(folder) != nullptr);
+    const char *const make_argv[_] = {"sh", "-c", "mktemp -d \"${TMPDIR:-/tmp}/smith-scratch-XXXXXX\"", nullptr};
+    Run folder_run = run_free(make_argv[0:3]);
+    test::check_equal(folder_run.status, 0);
+    usize length = c::strlen(folder_run.out);
+    while (length > 0 && folder_run.out[length - 1] == '\n')
+        length--;
+    const char *folder = format::push(folder_run.out[0:length]).data;
     Project p = {
         .io = nullptr, .dir = join(nullptr, folder, name), .tested = join(nullptr, folder, "tested"), .cache = ""};
-    const char *argv[_] = {"sh", "-c", setup_script, folder, p.dir, fixture != nullptr ? fixture : "", nullptr};
+    const char *const argv[_] = {"sh", "-c", setup_script, folder, p.dir, fixture != nullptr ? fixture : "", nullptr};
     Run made = run_free(argv[0:6]);
     if (made.status != 0) {
         test::note("the project could not be made: %s", made.err);
@@ -205,7 +204,7 @@ export Project make(const char *name, const char *fixture) {
 
 // Removes the folder of a project made by `make`.
 export void clean(const Project *p) {
-    const char *argv[_] = {"sh", "-c", "rm -rf \"$(dirname \"$0\")\"", p->tested, nullptr};
+    const char *const argv[_] = {"sh", "-c", "rm -rf \"$(dirname \"$0\")\"", p->tested, nullptr};
     (void)run_free(argv[0:4]);
 }
 
@@ -304,7 +303,8 @@ export const char *read(const Project *p, const char *name) {
 export bool exists(const Project *p, const char *name) {
     if (p->io == nullptr) {
         const char *path = path_in(p, name);
-        return files::info(path[0:c::strlen(path)]).tag == files::InfoResult_tag_ok;
+        files::InfoResult info = files::info(path[0:c::strlen(path)]);
+        return info == .ok;
     }
     return io::files_info(&p->io->files, path_in(p, name)).error.code == 0;
 }

@@ -2,8 +2,10 @@
 // of its own, and a test that takes an io::Io still runs, on the region of its io's arena.
 module smith::test_region_test;
 
+import smith::arena;
 import smith::io;
 import smith::mem;
+import smith::random;
 import smith::test;
 
 // Allocates a block and never frees it; the current allocator owns it, so the checked allocator has nothing to report.

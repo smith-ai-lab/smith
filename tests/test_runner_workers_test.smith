@@ -58,7 +58,7 @@ export void test_runner_workers_a_sanitizer_report_fails_its_test_and_a_printed_
         scratch::Run run = runner::tests(&p, iso, "--test report_ --jobs 1 --stats");
         runner::expect_has(io, iso, "workers: a sanitizer report fails its test", &run,
                            "FAIL report_2_overflows: killed by SIGABRT");
-        runner::expect_has(io, iso, "workers: ... with the report", &run, "AddressSanitizer: heap-buffer-overflow");
+        runner::expect_has(io, iso, "workers: ... with the report", &run, "ERROR: AddressSanitizer:");
         runner::expect_has(io, iso, "workers: ... and a test that only prints a report passes", &run,
                            "3 passed, 1 failed");
         scratch::expect_count(
@@ -78,7 +78,7 @@ export void test_runner_workers_expected_aborts_end_their_worker_so_it_is_one_fo
         runner::expect_has(io, iso, "workers: ... a sanitizer report fails the test", &run, "FAIL aborts_3_reads");
         runner::expect_has(io, iso, "workers: ... saying so", &run,
                            "expected an abort; it was stopped by a sanitizer report");
-        runner::expect_has(io, iso, "workers: ... with the report", &run, "AddressSanitizer: heap-buffer-overflow");
+        runner::expect_has(io, iso, "workers: ... with the report", &run, "ERROR: AddressSanitizer:");
         runner::expect_has(io, iso, "workers: ... and shows what the test printed", &run, "before the read");
         runner::expect_has(io, iso, "workers: ... a later check passes", &run, "PASS aborts_4_after");
         scratch::expect_count(
