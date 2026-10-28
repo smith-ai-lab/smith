@@ -6,18 +6,29 @@ constexpr size_t smith_run_stop_rounds = 100;     // rounds (of that wait) a job
 constexpr size_t smith_run_loops_max = (size_t)1 << 40;
 
 static volatile sig_atomic_t smith_run_signal;
+static volatile sig_atomic_t smith_run_sender; // the pid that sent it (0 when the kernel or a terminal did)
 
-static void smith_run_on_signal(int signal_number) {
+static void smith_run_on_signal(int signal_number, siginfo_t *info, void *context) {
+    (void)context;
+    smith_run_sender = info != nullptr ? info->si_pid : 0;
     smith_run_signal = signal_number;
 }
 
+static constexpr int smith_run_watched[] = {SIGINT, SIGTERM, SIGHUP};
+
 static void smith_run_watch_signals(void) {
     struct sigaction action = {};
-    action.sa_handler = smith_run_on_signal; // no SA_RESTART: a wait is interrupted and the flag is looked at
+    action.sa_sigaction = smith_run_on_signal;
+    action.sa_flags = SA_SIGINFO; // the sender's pid is kept; no SA_RESTART: a wait is interrupted and the flag is seen
     sigemptyset(&action.sa_mask);
-    sigaction(SIGINT, &action, nullptr);
-    sigaction(SIGTERM, &action, nullptr);
-    sigaction(SIGHUP, &action, nullptr);
+    // A signal that was ignored when smith started stays ignored: `nohup smith test &` ignores SIGHUP on purpose (and a
+    // background job of a shell ignores SIGINT), and a handler installed over that ignore stopped the build and its
+    // tasks with code 129 when the shell or the tool that ran them went away (#723).
+    for (size_t i = 0; i < sizeof smith_run_watched / sizeof smith_run_watched[0]; i++) {
+        struct sigaction before = {};
+        if (sigaction(smith_run_watched[i], nullptr, &before) == 0 && before.sa_handler == SIG_IGN) continue;
+        sigaction(smith_run_watched[i], &action, nullptr);
+    }
 }
 
 // ---------------------------------------------------------------- the printer
@@ -660,7 +671,8 @@ static int smith_run_plan(SmithExec *exec) {
     }
     smith_run_printer_close(exec);
     if (exec->stopped != 0) {
-        fprintf(stderr, "smith: build stopped: interrupted by user.\n");
+        fprintf(stderr, "smith: build stopped: interrupted by user (signal %d from pid %d, group %d).\n", exec->stopped,
+                (int)smith_run_sender, (int)getpgrp());
         return 128 + exec->stopped;
     }
     if (exec->failures == 0) return 0;
