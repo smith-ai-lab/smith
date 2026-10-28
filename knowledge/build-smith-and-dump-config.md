@@ -1,24 +1,24 @@
 ---
 type: design
-title: build.smith, the module smith::build, and --dump-config
-description: build.smith is a build file in .smith over the module smith::build, and --dump-config writes the build file the conventions imply.
+title: build.smith, the module std::build, and --dump-config
+description: build.smith is a build file in .smith over the module std::build, and --dump-config writes the build file the conventions imply.
 tags: [build, dump-config]
 ---
-# build.smith, the module smith::build, and --dump-config
+# build.smith, the module std::build, and --dump-config
 
 **`build.smith`.** A project's root may hold `build.smith` instead of `build.c` (issue #43). It is the same build file
 in `.smith`: `smith build` compiles it as a `.smith` file (C2y, `smith cc build.smith`, through the same build-program
 manifest as a build.c and the embedded `.smith/conventions.c`) and links it with the same runtime, so the verbs (`run`,
 `test`, `lint`, `prove`, `check`, `docs`) work on it exactly as on a build.c. It is `module build;`, and the
 function the runtime calls is `export void build(build::Build *b)`: in a module named `build` that one export keeps the
-C name `build` (no `[[smith::c_name]]` needed), and the import `build` wins over the module's own name when written
+C name `build` (no `[[std::c_name]]` needed), and the import `build` wins over the module's own name when written
 with `::` (`build::app` is the API's, the module's `build` is written unqualified). A file with no `module` line and a
-plain `void build(...)` still builds. `import smith::build;` gives the API:
+plain `void build(...)` still builds. `import std::build;` gives the API:
 
 ```c
 module build;
 
-import smith::build;
+import std::build;
 
 export void build(build::Build *b) {
     build::app(b, &(build::App){.entry = "main.smith"});
@@ -35,13 +35,13 @@ export void build(build::Build *b) {
   `.smith/compile_commands.json` (`file` "build.smith", `arguments` `smith-cc -g -O0 -Wall -Wextra -I .smith/include -c
   build.smith`).
 
-**`smith::build` is the same API with module names.** The header `<smith/build.h>` is generated from the module
-`lib/smith/build.smith` (a build output like `random.h` and `text.h`, not in git). Every call there
-has no body: the build runtime (`runtime/build_runtime.c`, C) defines it under its C name (`[[smith::c_name("smith_task")]]`),
+**`std::build` is the same API with module names.** The header `<smith/build.h>` is generated from the module
+`lib/std/build.smith` (a build output like `random.h` and `text.h`, not in git). Every call there
+has no body: the build runtime (`runtime/build_runtime.c`, C) defines it under its C name (`[[std::c_name("smith_task")]]`),
 so a build.smith and a build.c call the very same functions and nothing is implemented twice. The C names are unchanged;
 the module names drop the `smith_` and the `Smith`:
 
-| C | `import smith::build;` |
+| C | `import std::build;` |
 |---|---|
 | `SmithBuild`, `SmithStep`, `SmithRun` | `build::Build`, `build::Step`, `build::Run` |
 | `SmithObject`, `SmithProgram`, `SmithModules`, `SmithTests`, `SmithPackage` | `build::Object`, `build::Program`, `build::Modules`, `build::Tests`, `build::Package` |
@@ -70,7 +70,7 @@ $ smith build --dump-config > build.smith     # a main.smith project
 // `smith build --dump-config`. Change a field, or replace a call with the low-level calls it expands to.
 module build;
 
-import smith::build;
+import std::build;
 
 export void build(build::Build *b) {
     build::app(b, &(build::App){

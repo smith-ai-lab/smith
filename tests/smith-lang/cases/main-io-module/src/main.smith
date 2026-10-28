@@ -1,13 +1,13 @@
 module main;
-import smith::io as program_io;
+import std::io as program_io;
 import <stdio.h>;
 
-i32 helper(i32 x) {
+I32 helper(I32 x) {
     return x + 1;
 }
 
 // A main in a module is the same: the name the file gives the import does not matter.
-i32 main(program_io::Io *io) {
+I32 main(program_io::Io *io) {
     c::printf("main has %d argument\n", helper(io->count - 1));
     return 4;
 }

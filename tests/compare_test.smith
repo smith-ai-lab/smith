@@ -9,9 +9,9 @@
 // against it.
 module compare_test;
 
-import smith::format;
-import smith::io;
-import smith::test;
+import std::format;
+import std::io;
+import std::test;
 import scratch;
 
 // $real: $SMITH_REAL, else the install smith links; empty when there is none.

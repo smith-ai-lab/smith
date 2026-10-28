@@ -5,28 +5,28 @@ module main;
 import <stdio.h>;
 import std::arena;
 
-[[std::pure]] i32 twice(i32 x) {
+[[std::pure]] I32 twice(I32 x) {
     return x * 2;
 }
 
-[[std::effects(alloc, c, fails)]] i32 grow(arena::Arena *a) {
-    i32 *p = arena::push(a, i32);
+[[std::effects(alloc, c, fails)]] I32 grow(arena::Arena *a) {
+    I32 *p = arena::push(a, I32);
     *p = 3;
     return *p;
 }
 
-export [[std::alloc]] i32 reserve(void);
+export [[std::alloc]] I32 reserve(void);
 
-[[std::c_name("std_scope_doubled")]] export i32 doubled(i32 x) {
+[[std::c_name("std_scope_doubled")]] export I32 doubled(I32 x) {
     return twice(x);
 }
 
 [[std::affine]] typedef struct {
-    i32 id;
+    I32 id;
 } Handle;
 
-i32 main(void) {
-    alignas(arena::align_max) static u8 memory[4096];
+I32 main(void) {
+    alignas(arena::align_max) static U8 memory[4096];
     arena::Arena a = arena::fixed(memory, sizeof memory);
     Handle h = {.id = twice(2)};
     c::printf("%d %d\n", grow(&a), h.id);

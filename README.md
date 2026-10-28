@@ -8,12 +8,12 @@ One binary: compiler, build, tests, proofs, formatter, linter, debugger and edit
 // stats.smith
 module stats;
 
-import smith::contract;
+import std::contract;
 
-export i32 largest(i32 xs[:]) {
+export I32 largest(I32 xs[:]) {
     contract::requires(countof(xs) > 0);
-    i32 best = xs[0];
-    for (usize i = 1; i < countof(xs); i++) {
+    I32 best = xs[0];
+    for (Usize i = 1; i < countof(xs); i++) {
         contract::invariant(1 <= i && i <= countof(xs));
         best = xs[i] > best ? xs[i] : best;
     }
@@ -32,13 +32,13 @@ export typeof(x) clamp(auto x, typeof(x) low, typeof(x) high) {
 // main.smith
 module main;
 
-import smith::console;
+import std::console;
 import stats;
 
-i32 main() {
-    i32 raw[_] = {-3, 1, 9, 4};
-    i32 readings[:] = raw;
-    i32 top = stats::largest(readings[1:]); // a cut: three elements, shared with raw
+I32 main() {
+    I32 raw[_] = {-3, 1, 9, 4};
+    I32 readings[:] = raw;
+    I32 top = stats::largest(readings[1:]); // a cut: three elements, shared with raw
     console::print("largest ", top, ", clamped ", stats::clamp(top, 0, 5), "\n");
     return 0;
 }
@@ -69,12 +69,12 @@ unsigned spokes(unsigned turns);
 module wheel;
 
 // private: no other file can name it
-static u32 twice(u32 n) {
+static U32 twice(U32 n) {
     return n * 2;
 }
 
 // callers write wheel::spokes(3)
-export u32 spokes(u32 turns) {
+export U32 spokes(U32 turns) {
     return twice(turns) + 1;
 }
 ```
@@ -87,12 +87,12 @@ export u32 spokes(u32 turns) {
 ```smith
 module pixel;
 
-export u32 pack(u8 r, u8 g, u8 b) {
-    return (u32)r << 16 | (u32)g << 8 | b;
+export U32 pack(U8 r, U8 g, U8 b) {
+    return (U32)r << 16 | (U32)g << 8 | b;
 }
 ```
 
-`u8` to `u64`, `i8` to `i64`, `usize`, `isize`, `f16`, `f32` and `f64` need no include.
+`U8` to `U64`, `I8` to `I64`, `Usize`, `Isize`, `F16`, `F32` and `F64` need no include.
 [smith-lang-sized-types](.agents/skills/smith-lang-sized-types/SKILL.md).
 
 ### Slices: a pointer that knows its length
@@ -105,19 +105,19 @@ int sum(const int *xs, size_t n); // the length is a second argument, and nothin
 ```smith project=slices run
 module main;
 
-import smith::console;
+import std::console;
 
-i32 sum(const i32 xs[:]) {
-    i32 total = 0;
-    for (i32 x : xs) { // each element, with no bounds to get wrong
+I32 sum(const I32 xs[:]) {
+    I32 total = 0;
+    for (I32 x : xs) { // each element, with no bounds to get wrong
         total += x;
     }
     return total;
 }
 
-i32 main() {
-    i32 raw[_] = {1, 2, 3, 4, 5};
-    i32 all[:] = raw;
+I32 main() {
+    I32 raw[_] = {1, 2, 3, 4, 5};
+    I32 all[:] = raw;
     console::print("all ", sum(all), ", middle ", sum(all[1:4]), "\n");
     return 0;
 }
@@ -127,25 +127,25 @@ i32 main() {
 all 15, middle 9
 ```
 
-In a module an array's brackets say what it is: `i32 xs[3]` has the size written, `i32 xs[_] = {1, 2, 3}` takes it from the initializer (`char s[_] = "abc"`, `i32 m[_][3]` too), and `i32 xs[:]` is a slice; a bare `[]` is an error that names these ([smith-lang-arrays](.agents/skills/smith-lang-arrays/SKILL.md)).
+In a module an array's brackets say what it is: `I32 xs[3]` has the size written, `I32 xs[_] = {1, 2, 3}` takes it from the initializer (`char s[_] = "abc"`, `I32 m[_][3]` too), and `I32 xs[:]` is a slice; a bare `[]` is an error that names these ([smith-lang-arrays](.agents/skills/smith-lang-arrays/SKILL.md)).
 
-`for (i32 x : xs)` visits each element, `for (usize i, i32 x : xs)` adds its position, and `i32 *p` points at the element; C's `for` stays for a step or a reverse walk ([smith-lang-for](.agents/skills/smith-lang-for/SKILL.md)). A cut `xs[a:b]` is a view of the same elements. `const i32 xs[:]` makes the elements read-only, and `u8 dst[restrict :]`
-is C's `restrict`. A parameter written `i32 xs[4]` keeps its 4, where C throws it away:
+`for (I32 x : xs)` visits each element, `for (Usize i, I32 x : xs)` adds its position, and `I32 *p` points at the element; C's `for` stays for a step or a reverse walk ([smith-lang-for](.agents/skills/smith-lang-for/SKILL.md)). A cut `xs[a:b]` is a view of the same elements. `const I32 xs[:]` makes the elements read-only, and `U8 dst[restrict :]`
+is C's `restrict`. A parameter written `I32 xs[4]` keeps its 4, where C throws it away:
 
 ```smith
 module shape;
 
-export i32 corner(i32 xs[4]) {
+export I32 corner(I32 xs[4]) {
     return xs[3]; // a call with an array of another size is an error
 }
 ```
 
-`smith lint` reports the unsafe C that remains in a module: `setjmp` and `longjmp` (they skip every `defer`), `alloca` and a stack array sized at run time, and an array parameter it cannot check (`i32 a[n]`, `i32 a[const 4]`), each with what to write instead (`smith-unsafe`, [smith-check-lints](.agents/skills/smith-check-lints/SKILL.md)):
+`smith lint` reports the unsafe C that remains in a module: `setjmp` and `longjmp` (they skip every `defer`), `alloca` and a stack array sized at run time, and an array parameter it cannot check (`I32 a[n]`, `I32 a[const 4]`), each with what to write instead (`smith-unsafe`, [smith-check-lints](.agents/skills/smith-check-lints/SKILL.md)):
 
 ```smith
 module rows;
 
-export i32 first(i32 xs[:]) { // not `usize n, i32 xs[n]`: a slice carries its count
+export I32 first(I32 xs[:]) { // not `Usize n, I32 xs[n]`: a slice carries its count
     return xs[0];
 }
 ```
@@ -158,33 +158,33 @@ A pointer to a slice lets a function advance the caller's, as a cursor does:
 ```smith
 module cursor;
 
-export void skip(const char (*text)[:], usize n) {
+export void skip(const char (*text)[:], Usize n) {
     *text = (*text)[n:]; // advances the caller's slice
 }
 ```
 
 [smith-lang-slice-pointers](.agents/skills/smith-lang-slice-pointers/SKILL.md).
 
-One library does what `strcmp`, `memchr` and `memset` did for every element type: `smith::slice` compares, searches, sorts, fills and reverses any slice, with no allocation, and `smith::ascii` tests one character with no locale. `slice::find` returns an `option(usize)` where C returned a sentinel, and an index or its absence travels as one value:
+One library does what `strcmp`, `memchr` and `memset` did for every element type: `std::slice` compares, searches, sorts, fills and reverses any slice, with no allocation, and `std::ascii` tests one character with no locale. `slice::find` returns an `Option(Usize)` where C returned a sentinel, and an index or its absence travels as one value:
 
 ```smith
 module header;
 
-import smith::ascii;
-import smith::slice;
+import std::ascii;
+import std::slice;
 
-export bool is_setting(const char line[:]) {
+export Bool is_setting(const char line[:]) {
     const char prefix[:] = "#";
     return countof(line) > 0 && ascii::alpha(line[0]) && !slice::starts_with(line, prefix);
 }
 
-export usize body_length(const char line[:]) {
+export Usize body_length(const char line[:]) {
     // A cut of line: nothing is copied.
     const char body[:] = slice::trim(line, ascii::space);
     return countof(body);
 }
 
-export i32 median(i32 xs[:]) {
+export I32 median(I32 xs[:]) {
     slice::sort(xs); // in place, no allocation
     return xs[countof(xs) / 2];
 }
@@ -205,16 +205,16 @@ void copy(float *dst, const float *src, size_t n) {
 ```smith project=memcopy run
 module main;
 
-import smith::console;
-import smith::mem;
+import std::console;
+import std::mem;
 
-i32 main() {
-    f32 raw[4] = {1.5f, 2.5f, 3.5f, 4.5f};
-    f32 copy[4] = {};
-    f32 from[:] = raw;
-    f32 to[:] = copy;
+I32 main() {
+    F32 raw[4] = {1.5f, 2.5f, 3.5f, 4.5f};
+    F32 copy[4] = {};
+    F32 from[:] = raw;
+    F32 to[:] = copy;
     mem::copy(to, from); // two slices of one type and one length, checked
-    bool same = mem::equal(to, from);
+    Bool same = mem::equal(to, from);
     mem::zero(to[0:2]);
     console::print("same ", same, ", copy[1] ", copy[1], ", copy[3] ", copy[3], "\n");
     return 0;
@@ -225,25 +225,25 @@ i32 main() {
 same true, copy[1] 0, copy[3] 4.5
 ```
 
-`mem::copy`, `mem::move`, `mem::zero`, `mem::fill`, `mem::equal`, `mem::bytes(&x)` and `mem::view(bytes, f32)` take slices, so a length that does not match is a checked failure, and they lower to the C functions. In a file with a `module` line the raw `memcpy`, `memmove`, `memset` and `memcmp` are a `smith-mem` finding that names the replacement (`smith lint --fix` applies the mechanical ones); a function that implements a wrapper says `contract::trusted()`. A `.c` file is untouched. [smith-mem](.agents/skills/smith-mem/SKILL.md).
+`mem::copy`, `mem::move`, `mem::zero`, `mem::fill`, `mem::equal`, `mem::bytes(&x)` and `mem::view(bytes, F32)` take slices, so a length that does not match is a checked failure, and they lower to the C functions. In a file with a `module` line the raw `memcpy`, `memmove`, `memset` and `memcmp` are a `smith-mem` finding that names the replacement (`smith lint --fix` applies the mechanical ones); a function that implements a wrapper says `contract::trusted()`. A `.c` file is untouched. [smith-mem](.agents/skills/smith-mem/SKILL.md).
 
-A test can make memory refuse on purpose with `smith::failing`: `failing::make(parent, key)` is an allocator that refuses one allocation in eight by a draw from a `random::Key`, so a failure replays from its seed ([smith-failing](.agents/skills/smith-failing/SKILL.md)).
+A test can make memory refuse on purpose with `std::failing`: `failing::make(parent, key)` is an allocator that refuses one allocation in eight by a draw from a `random::Key`, so a failure replays from its seed ([smith-failing](.agents/skills/smith-failing/SKILL.md)).
 
 ```smith project=refuse run
 module main;
 
-import smith::failing;
-import smith::console;
-import smith::mem;
-import smith::random;
+import std::failing;
+import std::console;
+import std::mem;
+import std::random;
 
-typedef option(i32 *) MaybeInt;
+typedef Option(I32 *) MaybeInt;
 
-i32 main() {
+I32 main() {
     failing::Failing f = failing::make(nullptr, random::key_make(1));
     f.one_in = 1; // refuse every allocation
     mem::Allocator *before = mem::set_allocator(&f.base);
-    MaybeInt maybe = mem::try_alloc(i32);
+    MaybeInt maybe = mem::try_alloc(I32);
     mem::set_allocator(before);
     console::print("refused ", maybe == .none, " of ", f.calls, "\n");
     return 0;
@@ -270,10 +270,10 @@ module platform;
 
 import target;
 
-constexpr usize count = 4; // `#define count 4` in a .smith file is a lint error
-constexpr usize lanes = target::arch == target::aarch64 ? 4 : 2;
+constexpr Usize count = 4; // `#define count 4` in a .smith file is a lint error
+constexpr Usize lanes = target::arch == target::aarch64 ? 4 : 2;
 
-u32 lane_bytes() {
+U32 lane_bytes() {
     if constexpr (target::arch == target::aarch64) { // the branch not taken is dropped
         return 16;
     } else {
@@ -291,18 +291,18 @@ A function runs in the compiler, and its result is a constant or a table baked i
 ```smith
 module tables;
 
-static u32 triangle(u32 n) {
+static U32 triangle(U32 n) {
     return n * (n + 1) / 2;
 }
-constexpr u32 t100 = triangle(100);
+constexpr U32 t100 = triangle(100);
 static_assert(t100 == 5050);
 
 struct Table {
-    u32 v[8];
+    U32 v[8];
 };
 static struct Table squares() {
     struct Table t = {};
-    for (u32 i = 0; i < 8; i++)
+    for (U32 i = 0; i < 8; i++)
         t.v[i] = i * i;
     return t;
 }
@@ -316,20 +316,20 @@ One function prints any struct, read at compile time:
 ```smith project=reflect run
 module main;
 
-import smith::console;
+import std::console;
 
 struct Particle {
-    f64 mass;
-    i32 id;
-    f64 charge;
+    F64 mass;
+    I32 id;
+    F64 charge;
 };
 
-void show(constexpr type T, T *x) {
-    for constexpr (usize i = 0; i < countof(fields(T)); i++)
+void show(constexpr Type T, T *x) {
+    for constexpr (Usize i = 0; i < countof(fields(T)); i++)
         console::print(fields(T)[i].name, " = ", x->[fields(T)[i]], "\n");
 }
 
-i32 main() {
+I32 main() {
     struct Particle p = {1.5, 7, -0.25};
     show(struct Particle, &p);
     return 0;
@@ -354,22 +354,22 @@ export typeof(x) twice(auto x) {
     return x + x;
 }
 
-export f64 mean(auto... args) {
-    f64 total = 0;
-    for constexpr (usize i = 0; i < countof(args); i++) {
-        if constexpr (is_integer(typeof(args[i])) || is_float(typeof(args[i]))) {
-            total += (f64)args[i];
+export F64 mean(auto... args) {
+    F64 total = 0;
+    for constexpr (Usize i = 0; i < countof(args); i++) {
+        if constexpr (Int(typeof(args[i])) || Float(typeof(args[i]))) {
+            total += (F64)args[i];
         } else {
             static_assert(false, "mean: no rule for this type");
         }
     }
-    return total / (f64)countof(args);
+    return total / (F64)countof(args);
 }
 
-export f64 total_of_doubles(auto... args) {
-    f64 doubled[_] = {(f64)twice(args)...}; // one element per argument
-    f64 total = 0;
-    for (usize i = 0; i < countof(args); i++)
+export F64 total_of_doubles(auto... args) {
+    F64 doubled[_] = {(F64)twice(args)...}; // one element per argument
+    F64 total = 0;
+    for (Usize i = 0; i < countof(args); i++)
         total += doubled[i];
     return total;
 }
@@ -380,11 +380,11 @@ export f64 total_of_doubles(auto... args) {
 module main;
 
 import meta;
-import smith::console;
+import std::console;
 
-i32 main() {
-    console::print(meta::mean(1, 2.5f, (i64)3, 3.5), "\n");
-    console::print(meta::total_of_doubles(1, 2.5f, (i64)3), "\n");
+I32 main() {
+    console::print(meta::mean(1, 2.5f, (I64)3, 3.5), "\n");
+    console::print(meta::total_of_doubles(1, 2.5f, (I64)3), "\n");
     return 0;
 }
 ```
@@ -401,8 +401,8 @@ module main;
 
 import meta;
 
-i32 main() {
-    return (i32)meta::mean(1, "two");
+I32 main() {
+    return (I32)meta::mean(1, "two");
 }
 ```
 
@@ -419,8 +419,8 @@ writes its own copy, and `typeof(xs[0])` names the element in the rest of the si
 ```smith
 module search;
 
-export usize find(const auto xs[:], typeof(xs[0]) v) { // find(ints, 3) and find(floats, 2.5f)
-    for (usize i = 0; i < countof(xs); i++)
+export Usize find(const auto xs[:], typeof(xs[0]) v) { // find(ints, 3) and find(floats, 2.5f)
+    for (Usize i = 0; i < countof(xs); i++)
         if (xs[i] == v) return i;
     return countof(xs);
 }
@@ -430,7 +430,7 @@ export typeof(*p) first(const auto *p) { // `auto *p` and `auto xs[4]` work the 
 }
 ```
 
-A concept stands where `auto` does there too (`const arithmetic xs[:]`, `integer *p`): the element must be of it, and a call that gets it wrong is an error at the argument ([smith-lang-concepts](.agents/skills/smith-lang-concepts/SKILL.md)).
+A concept stands where `auto` does there too (`const Num xs[:]`, `integer *p`): the element must be of it, and a call that gets it wrong is an error at the argument ([smith-lang-concepts](.agents/skills/smith-lang-concepts/SKILL.md)).
 
 [smith-lang-generics](.agents/skills/smith-lang-generics/SKILL.md).
 
@@ -439,11 +439,11 @@ Types are values too, so a function over types runs in the compiler like any oth
 ```smith
 module widths;
 
-static type wider(type a, type b) {
+static Type wider(Type a, Type b) {
     return sizeof(a) >= sizeof(b) ? a : b; // runs in the compiler
 }
 
-constexpr type big = wider(u8, i64);
+constexpr Type big = wider(U8, I64);
 static_assert(sizeof(big) == 8);
 ```
 
@@ -453,9 +453,9 @@ A type value may be any C type, written as in a cast, and an exported one is a t
 ```smith
 module geo;
 
-export constexpr type meters = f64;
-export constexpr type handler = i32 (*)(i32);
-export constexpr type block = u8[16];
+export constexpr Type meters = F64;
+export constexpr Type handler = I32 (*)(I32);
+export constexpr Type block = U8[16];
 
 static_assert(sizeof(block) == 16);
 ```
@@ -471,17 +471,17 @@ two that overlap.
 ```smith project=bytes refuse
 module bytes;
 
-import smith::contract;
+import std::contract;
 
-export void copy(u8 dst[restrict :], const u8 src[const restrict :]) {
+export void copy(U8 dst[restrict :], const U8 src[const restrict :]) {
     contract::requires(countof(dst) >= countof(src));
-    for (usize i = 0; i < countof(src); i++) {
+    for (Usize i = 0; i < countof(src); i++) {
         contract::invariant(i <= countof(src));
         dst[i] = src[i];
     }
 }
 
-export void shift_in_place(u8 buf[:]) {
+export void shift_in_place(U8 buf[:]) {
     contract::requires(countof(buf) == 5);
     copy(buf[1:5], buf[0:4]); // refused at this call
 }
@@ -498,8 +498,8 @@ module main;
 
 import bytes;
 
-i32 main() {
-    u8 raw[5] = {1, 2, 3, 4, 5};
+I32 main() {
+    U8 raw[5] = {1, 2, 3, 4, 5};
     bytes::shift_in_place(raw);
     return 0;
 }
@@ -517,9 +517,9 @@ out. Debug keeps every check, and so does a source edited since the proof.
 ```smith
 module first;
 
-import smith::contract;
+import std::contract;
 
-export i32 head(const i32 xs[:]) {
+export I32 head(const I32 xs[:]) {
     contract::requires(countof(xs) >= 1); // every caller is proved to meet it
     contract::ensures(true);              // asks for the proof of `xs[0]`'s check
     return xs[0];                         // proved: gone from `smith build release`
@@ -534,8 +534,8 @@ export i32 head(const i32 xs[:]) {
 // tests/stats_test.smith
 module stats_test;
 
-import smith::random;
-import smith::test;
+import std::random;
+import std::test;
 import stats;
 
 export void test_clamp_cuts_a_big_value() { // (void): pure, it can touch nothing
@@ -543,8 +543,8 @@ export void test_clamp_cuts_a_big_value() { // (void): pure, it can touch nothin
 }
 
 export void test_clamp_always_lands_inside(random::Key key) { // a property test: 100 random keys
-    i32 x = (i32)random::uniform_int64_sample(key, (random::UniformInt64){.low = -1000, .high = 1000});
-    i32 result = stats::clamp(x, 0, 5);
+    I32 x = (I32)random::uniform_int64_sample(key, (random::UniformInt64){.low = -1000, .high = 1000});
+    I32 result = stats::clamp(x, 0, 5);
     test::check(0 <= result && result <= 5);
 }
 ```
@@ -553,15 +553,15 @@ An `(io::Io *io)` test gets a real io in a scratch folder of its own. [smith-tes
 
 ### Randomness is pure; the system's entropy is one effect
 
-A `random::Key` is a value: the same key gives the same numbers on every build, so `smith::random` touches nothing. A key from the system comes from `smith::entropy`, the one place that asks for randomness, and its signature shows it.
+A `random::Key` is a value: the same key gives the same numbers on every build, so `std::random` touches nothing. A key from the system comes from `std::entropy`, the one place that asks for randomness, and its signature shows it.
 
 ```smith
 module fresh;
 
-import smith::entropy;
-import smith::random;
+import std::entropy;
+import std::random;
 
-export random::Key replayable(u64 seed) { // pure: the same seed, the same key
+export random::Key replayable(U64 seed) { // pure: the same seed, the same key
     return random::key_make(seed);
 }
 
@@ -588,15 +588,15 @@ A function's effects are inferred from its body and its callees, so a function t
 ```smith
 module report;
 
-import smith::console;
+import std::console;
 
 // it prints: its effects include the console
-export void report(i32 top) {
+export void report(I32 top) {
     console::print("largest ", top, "\n");
 }
 
 // it cannot: it is pure
-export i32 twice(i32 x) {
+export I32 twice(I32 x) {
     return x * 2;
 }
 ```
@@ -608,20 +608,20 @@ export i32 twice(i32 x) {
 ```smith project=gradient run
 module main;
 
-import smith::autodiff;
-import smith::console;
+import std::autodiff;
+import std::console;
 
 struct Line {
-    f64 m;
-    f64 b;
+    F64 m;
+    F64 b;
 };
 
-f64 loss(struct Line *line, f64 x, f64 y) {
-    f64 error = line->m * x + line->b - y;
+F64 loss(struct Line *line, F64 x, F64 y) {
+    F64 error = line->m * x + line->b - y;
     return error * error;
 }
 
-i32 main() {
+I32 main() {
     struct Line line = {2, 1};
     struct Line g = autodiff::gradient(loss, &line, 3.0, 5.0);
     console::print("d/dm = ", g.m, ", d/db = ", g.b, "\n");
@@ -642,7 +642,7 @@ In a module (a `.smith` file with a `module` line) every warning of a fixed base
 ```smith project=constcast rejects
 module main;
 
-i32 main() {
+I32 main() {
     const char *name = "smith";
     char *copy = (char *)name;
     return copy[0];
@@ -707,7 +707,7 @@ int main(void) {
 ```smith project=ported run
 module greet;
 
-import smith::console;
+import std::console;
 
 export void greet(const char name[:]) {
     console::print("hello, ", name, "\n");
@@ -724,7 +724,7 @@ module main;
 
 import greet;
 
-i32 main() {
+I32 main() {
     greet::greet("smith");
     return 0;
 }

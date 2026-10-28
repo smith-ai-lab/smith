@@ -5,10 +5,10 @@
 // give the same result.
 module runner;
 
-import smith::arena;
-import smith::format;
-import smith::io;
-import smith::test;
+import std::arena;
+import std::format;
+import std::io;
+import std::test;
 import <string.h>;
 import scratch;
 
@@ -39,7 +39,7 @@ export scratch::Project project(io::Io *io, const char *base, const char *files)
 constexpr char shared_script[_] =
     "here=$SMITH_REPO; root=$SMITH_TEST_CACHE/runner; mkdir -p \"$root\"; "
     "if [ \"$(uname -s)\" = Darwin ]; then sf='-f %N_%m_%z'; else sf='-c %n_%Y_%s'; fi; "
-    "key=$( { echo \"$ARGS\"; stat $sf \"$SMITH_SELF\" \"$here\"/lib/smith/*.smith \"$here\"/lib/*.c \"$here\"/lib/*.h "
+    "key=$( { echo \"$ARGS\"; stat $sf \"$SMITH_SELF\" \"$here\"/lib/std/*.smith \"$here\"/lib/*.c \"$here\"/lib/*.h "
     "2>/dev/null; find . -name build -prune -o -name .smith -prune -o -type f -print | sort | while read -r f; do "
     "echo \"$f\"; cat \"$f\"; done; } | shasum -a 256 | cut -c1-20 ); c=$root/$key; "
     "if [ ! -e \"$c/done\" ]; then "
@@ -72,16 +72,16 @@ export void add(const scratch::Project *p, const char *files) {
 }
 
 // A character repeated.
-export const char *repeated(io::Io *io, char letter, usize count) {
+export const char *repeated(io::Io *io, char letter, Usize count) {
     char *text = arena::push_slice(&io->arena, char, count + 1).data;
-    for (usize i = 0; i < count; i++)
+    for (Usize i = 0; i < count; i++)
         text[i] = letter;
     text[count] = '\0';
     return text;
 }
 
 // The second argument of the runner for mode 0 (workers) and mode 1 (a process per test).
-export const char *flag(usize mode) {
+export const char *flag(Usize mode) {
     return mode == 0 ? "" : "--isolate";
 }
 
@@ -139,16 +139,16 @@ export const char *symbolized(const scratch::Project *p, const char *iso, const 
 }
 
 // Whether this smith can symbolize (it can when it was built with its debugger and symbolizer).
-export bool can_symbolize(const scratch::Project *p) {
+export Bool can_symbolize(const scratch::Project *p) {
     return scratch::sh(p, "smith symbolize --available").status == 0;
 }
 
 // The text with every run of spaces made one space, as `tr -s ' '` does.
 export const char *squeezed(io::Io *io, const char *text) {
-    usize length = c::strlen(text);
+    Usize length = c::strlen(text);
     char *copy = arena::push_slice(&io->arena, char, length + 1).data;
-    usize at = 0;
-    for (usize i = 0; i < length; i++) {
+    Usize at = 0;
+    for (Usize i = 0; i < length; i++) {
         if (text[i] == ' ' && at > 0 && copy[at - 1] == ' ') continue;
         copy[at++] = text[i];
     }
@@ -157,24 +157,24 @@ export const char *squeezed(io::Io *io, const char *text) {
 }
 
 // The number a text starts with (digits only), 0 when it has none.
-export usize number(const char *text) {
-    usize value = 0;
+export Usize number(const char *text) {
+    Usize value = 0;
     for (; *text >= '0' && *text <= '9'; text++)
-        value = value * 10 + (usize)(*text - '0');
+        value = value * 10 + (Usize)(*text - '0');
     return value;
 }
 
 // The number of the line (from 1) of the `occurrence`th line (from 1) of a project's file that holds the text.
-export usize line_of_nth(const scratch::Project *p, const char *file, const char *text, usize occurrence) {
+export Usize line_of_nth(const scratch::Project *p, const char *file, const char *text, Usize occurrence) {
     const char *whole = scratch::read(p, file);
-    usize size = c::strlen(whole);
-    usize wanted = c::strlen(text);
-    usize line = 1;
-    usize seen = 0;
-    usize start = 0;
-    for (usize at = 0; at <= size; at++) {
+    Usize size = c::strlen(whole);
+    Usize wanted = c::strlen(text);
+    Usize line = 1;
+    Usize seen = 0;
+    Usize start = 0;
+    for (Usize at = 0; at <= size; at++) {
         if (whole[at] != '\n' && whole[at] != '\0') continue;
-        for (usize i = start; i + wanted <= at; i++) {
+        for (Usize i = start; i + wanted <= at; i++) {
             if (c::strncmp(whole + i, text, wanted) == 0) {
                 seen++;
                 break;
@@ -189,7 +189,7 @@ export usize line_of_nth(const scratch::Project *p, const char *file, const char
     return 0;
 }
 
-export usize line_of(const scratch::Project *p, const char *file, const char *text) {
+export Usize line_of(const scratch::Project *p, const char *file, const char *text) {
     return line_of_nth(p, file, text, 1);
 }
 
@@ -198,7 +198,7 @@ export usize line_of(const scratch::Project *p, const char *file, const char *te
 export void expect_failure_block(const scratch::Project *p, const char *iso, const char *name, const char *test_name,
                                  const char *file, const char *source, const char *values, const char *extra) {
     io::Io *io = p->io;
-    usize line = line_of(p, file, source);
+    Usize line = line_of(p, file, source);
     const char *wanted =
         format::push(&io->arena, "FAIL ", test_name, "\n  check failed at ", file, ":", line, "\n     ", line,
                      " |     ", source, "\n           ", values, "\n  called from\n    ", file, ":", line, " test_",
@@ -218,11 +218,11 @@ export void expect_lacks(io::Io *io, const char *iso, const char *name, const sc
 }
 
 // The forks the run made: the runner's `forks: N` line of --stats.
-export usize forks_of(const scratch::Run *run) {
+export Usize forks_of(const scratch::Run *run) {
     const char *at = c::strstr(run->out, "forks: ");
     test::check_not_equal(at, nullptr);
-    usize count = 0;
+    Usize count = 0;
     for (at += 7; *at >= '0' && *at <= '9'; at++)
-        count = count * 10 + (usize)(*at - '0');
+        count = count * 10 + (Usize)(*at - '0');
     return count;
 }

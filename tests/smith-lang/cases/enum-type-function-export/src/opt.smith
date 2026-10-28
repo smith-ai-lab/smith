@@ -1,21 +1,21 @@
 module opt;
 
-export type maybe(type T) {
+export Type Maybe(Type T) {
     return enum {
         T some;
         none;
     };
 }
 
-typedef maybe(usize) Index;
+typedef Maybe(Usize) Index;
 
-export maybe(T) first(constexpr type T, T *xs, usize n) {
+export Maybe(T) first(constexpr Type T, T *xs, Usize n) {
     if (n == 0) return .none;
     return {.some = xs[0]};
 }
 
-export maybe(usize) find(const char *text, char wanted) {
-    for (usize i = 0; text[i] != 0; i++)
+export Maybe(Usize) find(const char *text, char wanted) {
+    for (Usize i = 0; text[i] != 0; i++)
         if (text[i] == wanted) return {.some = i};
     return .none;
 }

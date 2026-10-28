@@ -14,8 +14,8 @@ __SIZE_TYPE__ n = 0;
 while (n < countof(xs) && xs[n] != ' ') n++;
 return xs[0:n];
 }
-bool text_pop(text_str *p) __asm__("_text::pop");
-bool text_pop(text_str *p) {
+Bool text_pop(text_str *p) __asm__("_text::pop");
+Bool text_pop(text_str *p) {
 if (countof(*p) == 0) return false;
 *p = (*p)[1:];
 return true;

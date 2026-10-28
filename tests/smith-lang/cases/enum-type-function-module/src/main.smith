@@ -4,26 +4,26 @@ import <stdio.h>;
 import first;
 import second;
 
-type maybe(type T) {
+Type Maybe(Type T) {
     return enum {
         T some;
         none;
     };
 }
 
-// `maybe(usize)` from `first`, from `second` and the importer's own is one type: a value of one is a value of the
+// `maybe(Usize)` from `first`, from `second` and the importer's own is one type: a value of one is a value of the
 // others.
-static usize or_zero(maybe(usize) o) {
+static Usize or_zero(Maybe(Usize) o) {
     if (o == .some) return o.some;
     return 0;
 }
 
-i32 main(void) {
-    u8 raw[5] = {1, 2, 3, 4, 5};
-    u8 bytes[:] = raw;
-    maybe(usize) a = first::head(7);
-    maybe(usize) b = second::last(1);
-    maybe(usize) c = second::position(bytes, 4);
+I32 main(void) {
+    U8 raw[5] = {1, 2, 3, 4, 5};
+    U8 bytes[:] = raw;
+    Maybe(Usize) a = first::head(7);
+    Maybe(Usize) b = second::last(1);
+    Maybe(Usize) c = second::position(bytes, 4);
     c::printf("%zu %zu %zu %zu\n", or_zero(a), or_zero(b), or_zero(c), or_zero(first::head(0)));
     return 0;
 }

@@ -1,0 +1,406 @@
+// Tests of std::arena, in smith's own test library; build.c's `test-units` runner links them with the module. What
+// must stop or be caught by a sanitizer (a push past the capacity, a write just past a push, a stale read, the lazy
+// poison of a 64 GiB reservation) needs a process of its own in a build of its own, and stays in tests/arena.c.
+module std::arena_test;
+
+import std::arena;
+import std::math;
+import std::test;
+import std::mem;
+
+constexpr Usize capacity = 4096;
+
+typedef struct {
+    alignas(arena::align_max) U8 bytes[capacity];
+} Memory;
+
+typedef struct {
+    F64 value;
+    I32 count;
+} Record;
+
+export void test_arena_pushes_are_zeroed() {
+    static Memory memory;
+    mem::fill(memory.bytes[0:sizeof memory.bytes], 0xAA);
+    arena::Arena a = arena::fixed(memory.bytes, sizeof memory.bytes);
+    U8 *bytes = (U8 *)arena::push_raw(&a, 100, 1);
+    for (Usize i = 0; i < 100; i++) {
+        test::check_equal(bytes[i], 0);
+    }
+    mem::fill(bytes[0:100], 0xBB);
+    arena::reset(&a);
+    U8 *again = (U8 *)arena::push_raw(&a, 100, 1);
+    for (Usize i = 0; i < 100; i++) {
+        test::check_equal(again[i], 0); // a push after a reset is zeroed too
+    }
+}
+
+export void test_arena_pushes_are_aligned() {
+    static Memory memory;
+    arena::Arena a = arena::fixed(memory.bytes, sizeof memory.bytes);
+    for (Usize align = 1; align <= arena::align_max; align *= 2) {
+        U8 *odd = (U8 *)arena::push_raw(&a, 1, 1); // knock the cursor off every alignment
+        test::check_condition(odd != nullptr);
+        void *aligned = arena::push_raw(&a, 3, align);
+        test::check_equal((Usize)aligned & (align - 1), 0);
+    }
+}
+
+export void test_arena_typed_and_slice_pushes() {
+    static Memory memory;
+    arena::Arena a = arena::fixed(memory.bytes, sizeof memory.bytes);
+    Record *record = arena::push(&a, Record);
+    test::check_equal(record->count, 0);
+    test::check_equal(record->value, 0.0);
+    Record records[:] = arena::push_slice(&a, Record, 10);
+    test::check_equal(countof(records), 10);
+    for (Usize i = 0; i < 10; i++) {
+        test::check_equal(records[i].count, 0);
+        records[i].count = (I32)i; // all ten are writable
+    }
+    test::check_equal((Usize)&records[0] & (alignof(Record) - 1), 0);
+    U8 none[:] = arena::push_slice(&a, U8, 0); // an empty slice is a valid push
+    test::check_equal(countof(none), 0);
+}
+
+export void test_arena_typed_pushes_keep_every_alignment() {
+    static Memory memory;
+    mem::fill(memory.bytes[0:sizeof memory.bytes], 0xAA);
+    arena::Arena a = arena::fixed(memory.bytes, sizeof memory.bytes);
+    U8 *odd = arena::push(&a, U8);
+    test::check_condition(odd != nullptr);
+    Record *record = arena::push(&a, Record);
+    test::check_equal((Usize)record & (alignof(Record) - 1), 0);
+    test::check_equal(record->count, 0);
+    test::check_equal(record->value, 0.0);
+    Record records[:] = arena::push_slice(&a, Record, 5);
+    test::check_equal((Usize)&records[0] & (alignof(Record) - 1), 0);
+    for (Usize i = 0; i < 5; i++) {
+        test::check_equal(records[i].count, 0);
+        test::check_equal(records[i].value, 0.0);
+    }
+    F64 *wide = arena::push(&a, F64);
+    test::check_equal((Usize)wide & (alignof(F64) - 1), 0);
+    test::check_equal(*wide, 0.0);
+}
+
+export void test_arena_fits_asks_without_pushing() {
+    static Memory memory;
+    arena::Arena a = arena::fixed(memory.bytes, 128);
+    test::check_condition(arena::fits(&a, 128, 1));
+    test::check_condition(!arena::fits(&a, 129, 1));
+    test::check_condition(!arena::fits(&a, math::max(Usize), 1)); // no overflow in the sum
+    U8 *head = (U8 *)arena::push_raw(&a, 8, 8); // leaves the cursor on a granule, with or without ASan
+    test::check_condition(head != nullptr);
+    Usize left = a.capacity - a.used;
+    test::check_condition(arena::fits(&a, left, 1));
+    test::check_condition(!arena::fits(&a, left + 1, 1));
+    U8 *rest = (U8 *)arena::push_raw(&a, left, 1); // exactly the room that fits
+    test::check_condition(rest != nullptr);
+    test::check_equal(a.used, a.capacity);
+    test::check_condition(arena::fits(&a, 0, 1));
+    test::check_condition(!arena::fits(&a, 1, 1));
+}
+
+export void test_arena_reset_and_scopes_give_memory_back() {
+    static Memory memory;
+    arena::Arena a = arena::fixed(memory.bytes, sizeof memory.bytes);
+    U8 *base = (U8 *)arena::push_raw(&a, 10, 1);
+    test::check_condition(base != nullptr);
+    Usize base_used = a.used;
+    arena::Scope outer = arena::scope_begin(&a);
+    U8 *first = (U8 *)arena::push_raw(&a, 20, 1);
+    test::check_condition(first != nullptr);
+    Usize outer_used = a.used;
+    arena::Scope inner = arena::scope_begin(&a);
+    test::check_equal(a.scopes, 2);
+    U8 *second = (U8 *)arena::push_raw(&a, 30, 1);
+    test::check_condition(second != nullptr);
+    arena::scope_end(inner);
+    test::check_equal(a.used, outer_used);
+    test::check_equal(a.scopes, 1);
+    U8 *third = (U8 *)arena::push_raw(&a, 30, 1);
+    test::check_equal(third, second); // the inner scope's memory is handed out again
+    arena::scope_end(outer);
+    test::check_equal(a.used, base_used);
+    test::check_equal(a.scopes, 0);
+    arena::reset(&a);
+    test::check_equal(a.used, 0);
+}
+
+// The same pushes lay out the same way in two arenas, whatever their addresses.
+export void test_arena_layout_is_deterministic() {
+    static Memory first_memory;
+    static Memory second_memory;
+    arena::Arena first = arena::fixed(first_memory.bytes, sizeof first_memory.bytes);
+    arena::Arena second = arena::fixed(second_memory.bytes, sizeof second_memory.bytes);
+    const Usize sizes[_] = {1, 7, 64, 3, 100, 8};
+    const Usize aligns[_] = {1, 4, 64, 2, 16, 8};
+    for (Usize i = 0; i < _Countof(sizes); i++) {
+        U8 *a = (U8 *)arena::push_raw(&first, sizes[i], aligns[i]);
+        U8 *b = (U8 *)arena::push_raw(&second, sizes[i], aligns[i]);
+        test::check_equal(a - first.memory, b - second.memory);
+    }
+    test::check_equal(first.used, second.used);
+}
+
+// Carved arenas are separate, aligned, laid out after what the parent used, and the parent goes on after them.
+export void test_arena_carve_makes_separate_arenas() {
+    static Memory memory;
+    arena::Arena parent = arena::fixed(memory.bytes, sizeof memory.bytes);
+    U8 *before = (U8 *)arena::push_raw(&parent, 10, 1);
+    arena::Arena first = arena::carve(&parent, 1000);
+    arena::Arena second = arena::carve(&parent, 2000);
+    U8 *after = (U8 *)arena::push_raw(&parent, 10, 1);
+    test::check_equal(first.capacity, 1000);
+    test::check_equal(second.capacity, 2000);
+    test::check_equal(first.used, 0);
+    test::check_equal(second.used, 0);
+    test::check_equal((Usize)first.memory % arena::align_max, 0);
+    test::check_equal((Usize)second.memory % arena::align_max, 0);
+    test::check_condition(first.memory > before);
+    test::check_condition(second.memory >= first.memory + 1000);
+    test::check_condition(after >= second.memory + 2000);
+    test::check_condition(parent.used >= 3010);
+    U8 a[:] = arena::push_slice(&first, U8, 900);
+    U8 b[:] = arena::push_slice(&second, U8, 1900);
+    mem::fill(a, 1);
+    mem::fill(b, 2);
+    after[9] = 3;
+    arena::reset(&first); // a reset gives back its own memory only
+    test::check_equal(b[1899], 2);
+    test::check_equal(after[9], 3);
+    U8 again[:] = arena::push_slice(&first, U8, 900);
+    test::check_equal(&again[0], &a[0]);
+    test::check_equal(again[0], 0); // zeroed again
+}
+
+export void test_arena_push_slice_is_a_zeroed_slice_of_the_arena() {
+    static Memory memory;
+    mem::fill(memory.bytes[0:sizeof memory.bytes], 0xAA);
+    arena::Arena a = arena::fixed(memory.bytes, sizeof memory.bytes);
+    Record records[:] = arena::push_slice(&a, Record, 6);
+    test::check_equal(countof(records), 6);
+    test::check_equal((Usize)&records[0] & (alignof(Record) - 1), 0);
+    for (Usize i = 0; i < countof(records); i++) {
+        test::check_equal(records[i].count, 0);
+        test::check_equal(records[i].value, 0.0);
+        records[i].count = (I32)i;
+    }
+    test::check_equal(records[5].count, 5);
+    U8 none[:] = arena::push_slice(&a, U8, 0); // an empty slice is a valid push
+    test::check_equal(countof(none), 0);
+    I32 four[:] = arena::push_slice(&a, I32, 4);
+    I32 inner[:] = four[1:3];
+    test::check_equal(countof(inner), 2);
+    arena::Scope scope = arena::scope_begin(&a);
+    Usize before = a.used;
+    F64 wide[:] = arena::push_slice(&a, F64, 3);
+    test::check_equal(countof(wide), 3);
+    test::check_condition(a.used > before);
+    arena::scope_end(scope);
+    test::check_equal(a.used, before); // the slice's memory is given back with the scope
+}
+
+export void test_arena_push_slice_with_a_size_for_each_dimension() {
+    static Memory memory;
+    mem::fill(memory.bytes[0:sizeof memory.bytes], 0xAA);
+    arena::Arena a = arena::fixed(memory.bytes, sizeof memory.bytes);
+    F32 vector[:] = arena::push_slice(&a, F32, 5);
+    F32 matrix[:][:] = arena::push_slice(&a, F32, 3, 4);
+    F32 rows[:][2] = arena::push_slice(&a, F32[2], 3);
+    F32 cube[:][:][:] = arena::push_slice(&a, F32, 2, 3, 4);
+    test::check_equal(countof(vector), 5);
+    test::check_equal(countof(matrix), 3);
+    test::check_equal(countof(matrix[0]), 4);
+    test::check_equal(countof(rows), 3);
+    test::check_equal(countof(rows[0]), 2);
+    test::check_equal(countof(cube), 2);
+    test::check_equal(countof(cube[1]), 3);
+    test::check_equal(countof(cube[1][2]), 4);
+    for (Usize i = 0; i < countof(matrix); i++) {
+        for (Usize j = 0; j < countof(matrix[i]); j++) {
+            test::check_equal(matrix[i][j], 0.0f); // zeroed, though the arena's memory was not
+            matrix[i][j] = (F32)(i * 10 + j);
+        }
+    }
+    test::check_equal(matrix[2][3], 23.0f);
+    rows[2][1] = 7;
+    cube[1][2][3] = 9;
+    test::check_equal(rows[2][1], 7.0f);
+    test::check_equal(cube[1][2][3], 9.0f);
+    test::check_equal(cube[0][0][0], 0.0f); // one contiguous block, row-major: no write reached its neighbors
+    // The type of the result is slice_of(T, countof(dims)), computed by an ordinary function over types.
+    constexpr Bool types_match = arena::SliceOf(F32, 2) == typeof(matrix) &&arena::SliceOf(F32[2], 1) ==
+                                 typeof(rows) &&arena::SliceOf(F32, 3) == typeof(cube) &&arena::SliceOf(F32, 0) ==
+                                 F32;
+    test::check_condition(types_match);
+}
+
+// A growing arena: the chunks come from a backing, the pushes never fail and the chunks outlive the scopes and resets.
+constexpr Usize chunk_first = 16 << 10;
+
+// Pushes `count` blocks of 1000 bytes, each written with `fill`, and checks they arrived zeroed.
+void fill_blocks(arena::Arena *a, Usize count, U8 fill) {
+    for (Usize i = 0; i < count; i++) {
+        U8 *block = (U8 *)arena::push_array_raw(a, 1, 1000, 1);
+        test::check_condition(block != nullptr);
+        for (Usize j = 0; j < 1000; j += 97) {
+            test::check_equal(block[j], 0); // zeroed, though a chunk reused after a reset held `fill`
+        }
+        mem::fill(block[0:1000], fill);
+    }
+}
+
+export void test_arena_growing_takes_chunks_and_keeps_them_across_a_reset() {
+    arena::Arena a = arena::growing(chunk_first, nullptr);
+    defer arena::release(&a);
+    Usize first = a.capacity;
+    test::check_condition(first >= chunk_first);
+    test::check_equal(a.grown, 0);
+    fill_blocks(&a, 40, 0xAB); // 40 KB: more than the first chunk
+    test::check_condition(a.grown > 0);
+    Usize grown = a.grown;
+    arena::reset(&a);
+    test::check_equal(a.capacity, first); // back in the first chunk
+    test::check_equal(a.used, 0);
+    fill_blocks(&a, 40, 0xCD);         // the same work again
+    test::check_equal(a.grown, grown); // took no chunk: the grown ones were kept
+}
+
+export void test_arena_growing_scopes_end_across_chunks() {
+    arena::Arena a = arena::growing(chunk_first, nullptr);
+    defer arena::release(&a);
+    fill_blocks(&a, 3, 1);
+    Usize used = a.used;
+    U8 *memory = a.memory;
+    arena::Scope scope = arena::scope_begin(&a);
+    fill_blocks(&a, 60, 2); // two or more chunks inside the scope
+    test::check_condition(a.memory != memory);
+    Usize grown = a.grown;
+    arena::scope_end(scope);
+    test::check_equal(a.memory, memory); // the cursor is back where it began, in the chunk it began in
+    test::check_equal(a.used, used);
+    test::check_equal(a.grown, grown); // and the chunks are kept
+    arena::Scope again = arena::scope_begin(&a);
+    fill_blocks(&a, 60, 3);
+    arena::scope_end(again);
+    test::check_equal(a.grown, grown); // the second time through takes none
+}
+
+export void test_arena_growing_serves_a_push_bigger_than_a_chunk() {
+    arena::Arena a = arena::growing(chunk_first, nullptr);
+    defer arena::release(&a);
+    U8 big[:] = arena::push_slice(&a, U8, 5 * chunk_first);
+    test::check_equal(countof(big), 5 * chunk_first);
+    test::check_equal(big[5 * chunk_first - 1], 0);
+    big[5 * chunk_first - 1] = 1;          // all of it is writable
+    test::check_equal(a.memory[0] | 1, 1); // a push after it lands in a chunk of its own, not past the end
+    U8 *small = arena::push(&a, U8);
+    test::check_equal(*small, 0);
+}
+
+typedef struct {
+    alignas(arena::align_max) U8 bytes[128 << 10];
+} Parent;
+
+export void test_arena_growing_from_a_backing_allocator() {
+    static Parent memory;
+    arena::Arena parent = arena::fixed(memory.bytes, sizeof memory.bytes);
+    arena::ArenaAllocator backing = arena::allocator(&parent);
+    arena::Arena a = arena::growing(chunk_first, &backing.base);
+    test::check_condition(parent.used >= chunk_first); // the first chunk is the backing's
+    Usize before = parent.used;
+    fill_blocks(&a, 40, 7);
+    test::check_condition(parent.used > before);         // and so is the next
+    test::check_condition(!arena::fits(&a, 1 << 30, 8)); // fits asks about the current chunk only
+    arena::release(&a);
+    test::check_equal(a.grown, 0);
+}
+
+export void test_arena_try_push_is_null_where_a_push_would_fail() {
+    static Memory memory;
+    arena::Arena fixed = arena::fixed(memory.bytes, sizeof memory.bytes);
+    U8 *fits = (U8 *)arena::try_push_raw(&fixed, 100, 8);
+    test::check_condition(fits != nullptr);
+    Usize used = fixed.used;
+    test::check_condition(arena::try_push_raw(&fixed, 2 * capacity, 8) == nullptr); // a fixed arena never grows
+    test::check_condition(arena::try_push_array_raw(&fixed, 8, math::max(Usize), 8) == nullptr); // an overflow too
+    test::check_equal(fixed.used, used); // a refusal pushes nothing
+    test::check_condition(!arena::fits(&fixed, 2 * capacity, 8));
+
+    static Parent parent_memory;
+    arena::Arena parent = arena::fixed(parent_memory.bytes, 40 << 10);
+    arena::ArenaAllocator backing = arena::allocator(&parent);
+    arena::Arena growing = arena::growing(chunk_first, &backing.base);
+    test::check_condition(arena::try_push_raw(&growing, 8 * chunk_first, 8) == nullptr); // the backing is out of memory
+    test::check_condition(arena::try_push_raw(&growing, 100, 8) != nullptr);             // and the arena still works
+}
+
+typedef Option(Record *) MaybeRecord;
+
+// The option tests sit in functions with a single generic call each (smith issue #353).
+MaybeRecord try_record(arena::Arena *a) {
+    return arena::try_push(a, Record);
+}
+
+Bool record_is_zeroed(MaybeRecord record) {
+    return record == .some && record.some->count == 0 && record.some->value == 0;
+}
+
+Bool is_some_record(MaybeRecord record) {
+    return record == .some;
+}
+
+// Pushes 8 bytes at a time until a Record no longer fits the current block.
+void fill_block(arena::Arena *a) {
+    while (arena::fits(a, sizeof(Record), alignof(Record))) {
+        (void)arena::push_raw(a, 8, 8);
+    }
+}
+
+export void test_arena_try_push_is_none_where_a_push_would_fail() {
+    static Memory memory;
+    arena::Arena fixed = arena::fixed(memory.bytes, sizeof memory.bytes);
+    test::check_condition(record_is_zeroed(try_record(&fixed)));
+    fill_block(&fixed);
+    Usize used = fixed.used;
+    test::check_condition(!is_some_record(try_record(&fixed))); // a fixed arena never grows
+    test::check_equal(fixed.used, used);                        // a refusal pushes nothing
+}
+
+export void test_arena_try_push_takes_chunks_of_a_growing_arena() {
+    arena::Arena a = arena::growing(chunk_first, nullptr);
+    fill_block(&a);
+    test::check_equal(a.grown, 0);
+    test::check_condition(is_some_record(try_record(&a))); // the record comes from another chunk
+    test::check_condition(a.grown > 0);
+    arena::release(&a);
+
+    static Parent parent_memory;
+    arena::Arena parent = arena::fixed(parent_memory.bytes, 40 << 10);
+    arena::ArenaAllocator backing = arena::allocator(&parent);
+    arena::Arena refused = arena::growing(chunk_first, &backing.base);
+    fill_block(&refused);
+    test::check_condition(!is_some_record(try_record(&refused))); // the backing refuses the next chunk: none
+    test::check_equal(refused.grown, 0);                          // and nothing was taken
+}
+
+export void test_arena_allocator_serves_a_growing_arena() {
+    arena::Arena a = arena::growing(chunk_first, nullptr);
+    defer arena::release(&a);
+    arena::ArenaAllocator allocator = arena::allocator(&a);
+    typeof(allocator.base) *base = &allocator.base;
+    void *blocks[16] = {};
+    for (Usize i = 0; i < 16; i++) {
+        blocks[i] = base->alloc(base, 3000, 16); // 48 KB: three chunks
+        test::check_condition(blocks[i] != nullptr);
+    }
+    test::check_condition(a.grown > 0);
+    for (Usize i = 0; i < 16; i++)
+        test::check_condition(base->owns(base, blocks[i])); // a block of an earlier chunk is still the arena's
+    I32 outside = 0;
+    test::check_condition(!base->owns(base, &outside));
+    for (Usize i = 0; i < 16; i++)
+        base->free(base, blocks[i]); // only the last of the current chunk goes back; none touches another chunk's
+}

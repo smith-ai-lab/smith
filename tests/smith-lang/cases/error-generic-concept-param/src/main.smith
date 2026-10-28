@@ -3,14 +3,14 @@ module main;
 import stats;
 
 typedef struct {
-    i32 a;
+    I32 a;
 } Pair;
 
-i32 main(void) {
+I32 main(void) {
     const char *name = "x";
     Pair pair = {1};
-    u32 unsigned_value = 4;
-    f64 real = 2.0;
+    U32 unsigned_value = 4;
+    F64 real = 2.0;
     stats::twice(name);
     stats::twice(pair);
     stats::larger(real, 1.0);

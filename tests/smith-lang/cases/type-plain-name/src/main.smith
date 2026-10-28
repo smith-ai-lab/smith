@@ -7,7 +7,7 @@ typedef struct {
     int size;
 } Item;
 
-constexpr type wide = i64;
+constexpr Type Wide = I64;
 
 static int scaled(int type, int n) {
     return (type * n + 1) * 2;
@@ -22,7 +22,7 @@ static int total(const Item *item, int n) {
 
 int main() {
     Item item = {3, 4};
-    wide big = 5;                  // the keyword again, once `type` is out of scope
+    Wide big = 5;                  // the keyword again, once `type` is out of scope
     printf("%d %d %lld\n", scaled(2, 5), total(&item, 2), (long long)big);
     return 0;
 }

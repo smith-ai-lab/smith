@@ -1,6 +1,6 @@
 // What a module's generated C header includes: exactly what its exported declarations need
 // (knowledge/smith-module-headers.md).
-//   1. the generated header of every library module (lib/smith/*.smith; none is in git) compiles on its own, as
+//   1. the generated header of every library module (lib/std/*.smith; none is in git) compiles on its own, as
 //      C and as C++; a library added there needs a test here: `test_every_library_module_has_a_header_test` says which;
 //   2. the rule, on the small modules of tests/build_fixtures/headers: an import only a body uses stays out; an import
 //   an
@@ -12,14 +12,14 @@
 //      old limit of eight is read by source and by header, up to the limit that is an error naming it.
 module headers_test;
 
-import smith::format;
-import smith::io;
-import smith::test;
+import std::format;
+import std::io;
+import std::test;
 import scratch;
 import <string.h>;
 
-constexpr usize chain_length = 20;
-constexpr usize deep_length = 140;
+constexpr Usize chain_length = 20;
+constexpr Usize deep_length = 140;
 
 // A project of the fixture, with the folders the headers go to.
 static scratch::Project make_project(io::Io *io) {
@@ -43,12 +43,12 @@ static void make_header(const scratch::Project *p, const char *module, const cha
 }
 
 // Whether a line (fixed text) is in the header, as `grep -x` finds it; the file is read in process.
-static void has(const scratch::Project *p, const char *name, const char *header, const char *line, bool wanted) {
+static void has(const scratch::Project *p, const char *name, const char *header, const char *line, Bool wanted) {
     const char *text = scratch::read(p, header);
-    usize size = c::strlen(line);
-    bool found = false;
+    Usize size = c::strlen(line);
+    Bool found = false;
     for (const char *at = text; *at != '\0';) {
-        usize length = 0;
+        Usize length = 0;
         while (at[length] != '\n' && at[length] != '\0') {
             length++;
         }
@@ -68,7 +68,7 @@ static void has(const scratch::Project *p, const char *name, const char *header,
 static void standalone(const scratch::Project *p, const char *name, const char *header, const char *includes) {
     const char *labels[2] = {"c", "c++"};
     const char *modes[2] = {"-x c -std=gnu23", "-x c++ -std=c++23"};
-    for (usize i = 0; i < 2; i++) {
+    for (Usize i = 0; i < 2; i++) {
         const char *command =
             format::push(&p->io->arena, "smith cc -fsyntax-only ", modes[i], " ", includes, " ", header).data;
         scratch::Run run = scratch::sh(p, command);
@@ -82,7 +82,7 @@ static void standalone(const scratch::Project *p, const char *name, const char *
 static void generated(io::Io *io, const char *name) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     scratch::Run made = scratch::sh(
-        &p, "mkdir generated && for f in \"$SMITH_REPO\"/lib/smith/*.smith; do case \"$f\" in *_test.smith) ;; "
+        &p, "mkdir generated && for f in \"$SMITH_REPO\"/lib/std/*.smith; do case \"$f\" in *_test.smith) ;; "
             "*) \"$SMITH_SELF\" cc --smith-header \"$f\" -o \"generated/$(basename \"$f\" .smith).h\" || exit 1;; "
             "esac; done");
     scratch::expect_status("the headers are written", 0, &made);
@@ -104,10 +104,10 @@ export void test_every_library_module_has_a_header_test(io::Io *io) {
 // because their headers are not in git: the generated headers must say the same.
 export void test_the_shapes_the_lowering_carries_are_the_ones_the_headers_write(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::write_header_of(&p, "lib/smith/option.smith", "option.h");
-    scratch::write_header_of(&p, "lib/smith/result.smith", "result.h");
-    has(&p, "option", "option.h", "// smith-eshape: option(T) { T some ; none ; }", true);
-    has(&p, "result", "result.h", "// smith-eshape: result(T,E) { T ok ; E error ; }", true);
+    scratch::write_header_of(&p, "lib/std/option.smith", "option.h");
+    scratch::write_header_of(&p, "lib/std/result.smith", "result.h");
+    has(&p, "option", "option.h", "// smith-eshape: Option(T) { T some ; none ; }", true);
+    has(&p, "result", "result.h", "// smith-eshape: Result(T,E) { T ok ; E error ; }", true);
 }
 
 export void test_the_arena_header_compiles_alone(io::Io *io) {
@@ -294,7 +294,7 @@ export void test_modules_in_a_folder_above_and_beside_are_included_relative(io::
     // and with no include path at all: the header finds the headers it includes beside itself
     const char *labels[2] = {"c", "c++"};
     const char *modes[2] = {"-x c -std=gnu23", "-x c++ -std=c++23"};
-    for (usize i = 0; i < 2; i++) {
+    for (Usize i = 0; i < 2; i++) {
         scratch::Run run =
             scratch::sh(&p, join(&p, "smith cc -fsyntax-only ", join(&p, modes[i], " include/u/deep/farther.h")));
         scratch::expect_status(
@@ -313,13 +313,13 @@ export void test_a_generic_with_its_type_written_in_a_body_does_not_stop_the_hea
 
 // The files chain/m0 to chain/m19, each importing the next.
 static void write_chain(const scratch::Project *p) {
-    for (usize i = 0; i < chain_length; i++) {
+    for (Usize i = 0; i < chain_length; i++) {
         const char *text =
             i + 1 < chain_length
-                ? format::push(&p->io->arena, "module chain::m", i, ";\nimport chain::m", i + 1, ";\nexport u32 m", i,
+                ? format::push(&p->io->arena, "module chain::m", i, ";\nimport chain::m", i + 1, ";\nexport U32 m", i,
                                "(void) { return m", i + 1, "::m", i + 1, "() + 1; }\n")
                       .data
-                : format::push(&p->io->arena, "module chain::m", i, ";\nexport u32 m", i, "(void) { return 1; }\n")
+                : format::push(&p->io->arena, "module chain::m", i, ";\nexport U32 m", i, "(void) { return 1; }\n")
                       .data;
         scratch::write(p, format::push(&p->io->arena, "chain/m", i, ".smith").data, text);
     }
@@ -327,7 +327,7 @@ static void write_chain(const scratch::Project *p) {
 
 // The headers of the chain from the last to the second, as a build makes them.
 static void make_chain_headers(const scratch::Project *p) {
-    for (usize i = chain_length; i-- > 1;) {
+    for (Usize i = chain_length; i-- > 1;) {
         scratch::Run run = scratch::sh(p, format::push(&p->io->arena, "smith cc --smith-header chain/m", i,
                                                        ".smith -o include/chain/m", i, ".h -I include")
                                               .data);
@@ -361,12 +361,12 @@ export void test_an_import_after_twenty_others_is_still_found(io::Io *io) {
 
 export void test_more_modules_than_the_limit_is_an_error_that_names_it(io::Io *io) {
     scratch::Project p = make_project(io);
-    for (usize i = 0; i < deep_length; i++) {
+    for (Usize i = 0; i < deep_length; i++) {
         const char *text = i + 1 < deep_length
                                ? format::push(&io->arena, "module deep::m", i, ";\nimport deep::m", i + 1,
-                                              ";\nexport u32 m", i, "(void);\n")
+                                              ";\nexport U32 m", i, "(void);\n")
                                      .data
-                               : format::push(&io->arena, "module deep::m", i, ";\nexport u32 m", i, "(void);\n").data;
+                               : format::push(&io->arena, "module deep::m", i, ";\nexport U32 m", i, "(void);\n").data;
         scratch::write(&p, format::push(&io->arena, "deep/m", i, ".smith").data, text);
     }
     scratch::Run run = scratch::sh(&p, "smith cc --smith-header deep/m0.smith -o deep.h");
@@ -377,7 +377,7 @@ export void test_more_modules_than_the_limit_is_an_error_that_names_it(io::Io *i
 // 4. The lines of a generic's record are relative to its first line (knowledge/smith-module-headers.md).
 
 static const char *generic_source =
-    "module g::gen;\n\nexport T twice(constexpr type T, T x) {\n    T y = x + x;\n    return y + \"oops\";\n}\n";
+    "module g::gen;\n\nexport T twice(constexpr Type T, T x) {\n    T y = x + x;\n    return y + \"oops\";\n}\n";
 
 // Adding lines above a generic changes no byte of its header but the one stored first line.
 export void test_lines_added_above_a_generic_change_only_its_stored_first_line(io::Io *io) {
@@ -402,19 +402,19 @@ export void test_an_error_in_a_generic_body_points_at_its_line(io::Io *io) {
     scratch::Run made = scratch::sh(&p, "mkdir g");
     scratch::expect_status("the folder is made", 0, &made);
     scratch::write(&p, "g/gen.smith", format::push(&io->arena, "// one\n// two\n// three\n\n", generic_source).data);
-    scratch::write(&p, "u.smith", "import g::gen;\ni32 main(void) { return gen::twice(i32, 1); }\n");
+    scratch::write(&p, "u.smith", "import g::gen;\nI32 main(void) { return gen::twice(I32, 1); }\n");
     scratch::Run header =
         scratch::sh(&p, "mkdir -p include/g && smith cc --smith-header g/gen.smith -o include/g/gen.h");
     scratch::expect_status("the header is written", 0, &header);
     const char *text = scratch::capture(&p, "smith cc -fsyntax-only -I include u.smith 2>&1");
     scratch::expect_contains("the error is at line 9", text, "g/gen.smith:9:12: error:");
-    scratch::expect_contains("the request is at line 2", text, "u.smith:2:30: note: in instance g::gen::twice(i32)");
+    scratch::expect_contains("the request is at line 2", text, "u.smith:2:30: note: in instance g::gen::twice(I32)");
 }
 
 // 5. `--smith-headers` writes several headers in one process (issue #639).
 
-static const char *const batch_one = "module g::one;\n\nexport i32 one(void) { return 1; }\n";
-static const char *const batch_two = "module g::two;\n\nexport i32 two(void) { return 2; }\n";
+static const char *const batch_one = "module g::one;\n\nexport I32 one(void) { return 1; }\n";
+static const char *const batch_two = "module g::two;\n\nexport I32 two(void) { return 2; }\n";
 
 // The headers of a batch are the bytes `--smith-header` writes for each, and a second run writes none of them again.
 export void test_a_batch_of_headers_is_the_bytes_of_each_header(io::Io *io) {
@@ -445,7 +445,7 @@ export void test_a_batch_with_a_bad_module_fails_and_writes_the_rest(io::Io *io)
     scratch::Project p = scratch::project(io, "p", nullptr);
     scratch::Run made = scratch::sh(&p, "mkdir -p g out");
     scratch::expect_status("the folders are made", 0, &made);
-    scratch::write(&p, "g/bad.smith", "i32 not_a_module(void) { return 0; }\n");
+    scratch::write(&p, "g/bad.smith", "I32 not_a_module(void) { return 0; }\n");
     scratch::write(&p, "g/two.smith", batch_two);
     scratch::Run run = scratch::sh(&p, "smith cc --smith-headers -- g/bad.smith out/bad.h g/two.smith out/two.h");
     scratch::expect_failure("the batch fails", &run);

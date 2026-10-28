@@ -4,8 +4,8 @@
 // asserted nothing and is not ported. Each fixture is tests/build_fixtures/steps_<name>/build.c.
 module build_steps_run_test;
 
-import smith::io;
-import smith::test;
+import std::io;
+import std::test;
 import scratch;
 import <string.h>;
 
@@ -147,8 +147,8 @@ export void test_build_steps_a_run_step_gets_its_data_from_its_command(io::Io *i
                           scratch::lines(&p, "calls.log"));
 }
 
-static usize count_of(const char *text, const char *needle) {
-    usize count = 0;
+static Usize count_of(const char *text, const char *needle) {
+    Usize count = 0;
     for (const char *at = c::strstr(text, needle); at != nullptr; at = c::strstr(at + 1, needle))
         count++;
     return count;

@@ -8,20 +8,20 @@ description: "Asynchronous calls in smith::io: io::Op values the caller owns, io
 To wait on several things in one loop, submit operations in `io::Op`s you own and run the loop:
 
 ```smith
-import smith::io;
+import std::io;
 
-constexpr usize round_max = 1000;
+constexpr Usize round_max = 1000;
 
 void wait_for(io::Io *io, io::Process child) {
     io::Op timer = {}, exited = {};
     io::clock_timeout_async(&io->clock, &timer, 2'000'000'000);
     io::processes_wait_async(&io->processes, &exited, child);
-    for (usize round = 0; round < round_max && !(timer.done && exited.done); round++)
+    for (Usize round = 0; round < round_max && !(timer.done && exited.done); round++)
         (void)io::run(io, io::forever); // or a timeout in ns; 0 only polls
 }
 ```
 
-`io::files_read_async`, `io::files_write_async`, `io::console_read_async`, `io::clock_timeout_async`, `io::processes_wait_async`, `io::child_write_async` and `io::child_read_async` submit; `io::run` completes what is ready and sets `op.done`, with `op.error`, `op.data` (a `const u8[:]`: the bytes of a read)/`op.end` (reads), `op.taken` (the bytes a write took) or `op.exit_status`/`op.signal` (waits). **Completion is a done flag, not a callback**: the result sits in the op, a loop in your own control flow reads it where your state is, no closure is needed. An op must not move or be freed while pending, and may be reused after done; paths and data it points at stay yours until done.
+`io::files_read_async`, `io::files_write_async`, `io::console_read_async`, `io::clock_timeout_async`, `io::processes_wait_async`, `io::child_write_async` and `io::child_read_async` submit; `io::run` completes what is ready and sets `op.done`, with `op.error`, `op.data` (a `const U8[:]`: the bytes of a read)/`op.end` (reads), `op.taken` (the bytes a write took) or `op.exit_status`/`op.signal` (waits). **Completion is a done flag, not a callback**: the result sits in the op, a loop in your own control flow reads it where your state is, no closure is needed. An op must not move or be freed while pending, and may be reused after done; paths and data it points at stay yours until done.
 
 File operations run synchronously, in submission order, inside `io::run` (neither loop has asynchronous file IO). Pipes, timers and process exits wait on kqueue on macOS, on epoll with a timerfd and a pidfd on Linux. On macOS network connections are Network.framework's, whose callbacks push the finished op onto a lock-free list that wakes the same kqueue (`EVFILT_USER`); on Linux they are nonblocking sockets on the same epoll, with no thread. Either way they complete in `io::run` like the rest. Every blocking call is an op run to completion on this same loop.
 

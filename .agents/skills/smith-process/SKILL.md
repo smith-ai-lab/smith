@@ -1,18 +1,18 @@
 ---
 name: smith-process
-description: "Using smith::process (import smith::process; process::run, spawn, start, write, read, close_input, wait, kill, close, process::fake): child processes by direct calls that return a result, with a scripted fake for tests. Load when code imports smith::process or includes <smith/process.h>, or on running a program, capturing its output or talking to a child's stdin and stdout without io::Io."
+description: "Using std::process (import std::process; process::run, spawn, start, write, read, close_input, wait, kill, close, process::fake): child processes by direct calls that return a result, with a scripted fake for tests. Load when code imports std::process or includes <smith/process.h>, or on running a program, capturing its output or talking to a child's stdin and stdout without io::Io."
 ---
 
-# Child processes by direct calls: smith::process
+# Child processes by direct calls: std::process
 
-No `io::Io` value: call `process::` anywhere. A call returns `result(T, process::Error)`; the error is what the world said (`NotFound`, `Denied`, `TooMany`, `Broken` for a write to a child that has gone, `Gone` for a signal to one that has, `Other`). A program is a slice of C strings, `argv[0]` found on `PATH`. Memory a call returns comes from the current allocator (smith-mem) and is the caller's region.
+No `io::Io` value: call `process::` anywhere. A call returns `Result(T, process::Error)`; the error is what the world said (`NotFound`, `Denied`, `TooMany`, `Broken` for a write to a child that has gone, `Gone` for a signal to one that has, `Other`). A program is a slice of C strings, `argv[0]` found on `PATH`. Memory a call returns comes from the current allocator (smith-mem) and is the caller's region.
 
 ```smith
 module scratch;
-import smith::arena;
-import smith::mem;
-import smith::process;
-export i32 status_of_echo(arena::Arena *a) {
+import std::arena;
+import std::mem;
+import std::process;
+export I32 status_of_echo(arena::Arena *a) {
     arena::ArenaAllocator allocator = arena::allocator(a);
     mem::Allocator *before = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(before);
@@ -38,10 +38,10 @@ export i32 status_of_echo(arena::Arena *a) {
 **The fake, for tests** (a scripted program runs nothing):
 ```smith
 module scratch_fake;
-import smith::arena;
-import smith::mem;
-import smith::process;
-export usize lines_built(arena::Arena *a) {
+import std::arena;
+import std::mem;
+import std::process;
+export Usize lines_built(arena::Arena *a) {
     arena::ArenaAllocator allocator = arena::allocator(a);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);

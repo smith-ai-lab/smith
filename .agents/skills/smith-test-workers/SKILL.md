@@ -19,10 +19,10 @@ symbolizer and the test binary links as quickly as before:
 FAIL moves_every_step
   check failed at tests/moves_test.smith:42
        42 |     test::check_equal(moves.count, expected);
-            moves.count = 3, expected = 4   (u64)
+            moves.count = 3, expected = 4   (U64)
   called from
     tests/moves_test.smith:42  moves_every_step
-    .smith/lib/smith/test.smith:1065   smith_test_execute
+    .smith/lib/std/test.smith:1065   smith_test_execute
 ```
 
 **Values of the failing line.** For a `test::check(cond)`, a failed contract or an `assert`, `smith test` starts the runner with `--explain <smith>`: when the check fails, the test process waits while `smith --smith-explain` attaches lldb to it, reads the variables the source line names and lets it go, and the report prints them under the line, so `check(moves.count == expected)` shows both:
@@ -41,7 +41,7 @@ An `assert` is `aborted at file:line`, a segfault `crashed at file:line`, with i
 UBSan stacks have lines too: smith answers their symbolizer protocol. A runner run by hand prints the raw `smith-trace` lines for a
 failed check; `smith symbolize [--binary <program>] [<log>]` turns a saved log back into the report. A property test says `with seed 6387777158891554393` after FAIL, and its last line is `rerun: smith test --test <name> --seed 6387777158891554393`.
 
-A test with a heavy check picks its size from `test::full()`, false by default and true with `--full`: `usize count = test::full() ? 20000 : 200;`. It checks the same properties either way. Use `test::check_same_bits` for determinism, where near is not enough.
+A test with a heavy check picks its size from `test::full()`, false by default and true with `--full`: `Usize count = test::full() ? 20000 : 200;`. It checks the same properties either way. Use `test::check_same_bits` for determinism, where near is not enough.
 
 A failing property test is shrunk before it is shown: the runner reruns the key, tries each random word it drew as 0 and then as the smallest word that still fails the same check (the same stack) or the same signal, within 1,000 runs or 10 s, so a failure shows `x = 500` rather than a random 64-bit draw; the header says `shrunk in 41 runs`. The rerun line names the original seed and shrinks to the same case again; `--shrink 0` shows the unshrunk failure. This works because every distribution in smith-random maps word 0 to its simplest value, so draw everything from the key with smith's distributions. Your own distribution should do the same: spend the key with `random::key_bits`, `key_unit_float` or `key_unit_double`, and make word 0 the simplest value. (The runner's keys carry a `tap` that records and replaces the words; a program's own keys carry none.)
 

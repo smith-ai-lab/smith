@@ -78,7 +78,7 @@ prebuilt library's and one loaded with `dlopen`. Owner (2026-10-24): "always int
   a container with the `SmithAllocator` first, not a `ctx` field, because a field added to handlers.h waits for a smith
   release (the lag rule: arena is built into smith).
 
-- **Refusing (step D2b):** `failing::make(parent, key)` (smith::failing) refuses allocations by draws from a random key, and the test
+- **Refusing (step D2b):** `failing::make(parent, key)` (std::failing) refuses allocations by draws from a random key, and the test
   runner gives a test one beside its key; `.checked_allocator` turns the runner's checked allocator off. See
   [checked-allocator](checked-allocator.md).
 
@@ -86,10 +86,10 @@ prebuilt library's and one loaded with `dlopen`. Owner (2026-10-24): "always int
   test runner sets one around each test. See [checked-allocator](checked-allocator.md).
 
 The steps (issue #239): the allocator family and its tests (`tests/handlers_test.smith`); linking it into every program (this
-step, B1); `read`, `write`, `open`, `close`, `syscall` and stdio with their handlers (B2); `smith::mem` and arena's
+step, B1); `read`, `write`, `open`, `close`, `syscall` and stdio with their handlers (B2); `std::mem` and arena's
 allocator; `checked` (D2a), `failing` and the profiles (D2b).
 
-- **Allocation in .smith (step C2, owner 2026-10-25):** `smith::mem` (`lib/smith/mem.smith`) is the smith face of the
+- **Allocation in .smith (step C2, owner 2026-10-25):** `std::mem` (`lib/std/mem.smith`) is the smith face of the
   allocator handler: `mem::set_allocator` returns the previous one (`defer` puts it back), `mem::alloc(T)` and
   `mem::alloc_slice(T, n)` go through whatever `malloc` reaches and never return null, `mem::try_alloc` returns an
   `option` for code that refuses, and the `malloc` itself keeps C's nullable contract. A refusal is a checked failure that
@@ -108,10 +108,10 @@ allocator; `checked` (D2a), `failing` and the profiles (D2b).
   answers `clock_gettime`, `nanosleep`, `usleep` and `sleep`. Each is per thread with a setter that returns the previous
   handler, and none set is libc's. `gettimeofday`, `time` and the Mach clocks are not reached. A fake clock's `sleep`
   advances its time and returns, so sleeping on it never blocks. See [direct-call-modules](direct-call-modules.md).
-- **Processes (issue #240):** `SmithProcessHandler {start, read, write, close_input, wait, kill, close, cores}` is called by `smith::process` itself (no libc function is interposed); per thread, with a setter returning the previous handler, and none set is the real posix_spawn, pipes and waitpid. See [process](process.md).
-- **Network (issue #240):** `SmithNetHandler {connect, listen, port, accept, read, write, close}` is called by `smith::net` itself (no libc function is interposed); per thread, with a setter returning the previous handler, and none set is the real sockets and TLS. See [net](net.md).
+- **Processes (issue #240):** `SmithProcessHandler {start, read, write, close_input, wait, kill, close, cores}` is called by `std::process` itself (no libc function is interposed); per thread, with a setter returning the previous handler, and none set is the real posix_spawn, pipes and waitpid. See [process](process.md).
+- **Network (issue #240):** `SmithNetHandler {connect, listen, port, accept, read, write, close}` is called by `std::net` itself (no libc function is interposed); per thread, with a setter returning the previous handler, and none set is the real sockets and TLS. See [net](net.md).
 - **Entropy (issue #240):** `SmithEntropyHandler {fill}` answers `getentropy` (per thread, setter returns the previous
   one, none set is the system's; `fill` writes the bytes and never fails). `arc4random` and `getrandom` are not reached.
-  `entropy::seed()` (`smith::entropy`) is the one caller in smith's libraries; it has the `entropy` effect
-  (`getentropy` is `entropy` in `shim/effects_table.h`), and `smith::random` stays pure. A test scripts it with
+  `entropy::seed()` (`std::entropy`) is the one caller in smith's libraries; it has the `entropy` effect
+  (`getentropy` is `entropy` in `shim/effects_table.h`), and `std::random` stays pure. A test scripts it with
   `entropy::fake(number)`, whose `fill` writes the bytes of a number.

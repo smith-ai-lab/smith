@@ -3,11 +3,11 @@ module main;
 import <stdio.h>;
 import find;
 
-i32 main(void) {
-    u8 raw[5] = {1, 2, 3, 4, 5};
-    u8 bytes[:] = raw;
-    i32 numbers[3] = {10, 20, 30};
-    i32 ints[:] = numbers;
+I32 main(void) {
+    U8 raw[5] = {1, 2, 3, 4, 5};
+    U8 bytes[:] = raw;
+    I32 numbers[3] = {10, 20, 30};
+    I32 ints[:] = numbers;
     find::Position a = find::position(bytes, 3);
     find::Position b = find::position(bytes, 9);
     find::Position c = find::position(ints, 30);

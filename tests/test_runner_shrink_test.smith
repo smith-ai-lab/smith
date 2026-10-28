@@ -3,9 +3,9 @@
 // runs as workers and with --isolate. Fixtures: tests/build_fixtures/runner_shrink, _alongside and _budget.
 module test_runner_shrink_test;
 
-import smith::format;
-import smith::io;
-import smith::test;
+import std::format;
+import std::io;
+import std::test;
 import runner;
 import scratch;
 
@@ -23,9 +23,9 @@ static const char *number_in(const scratch::Project *p, const char *iso, const c
     return scratch::capture(p, command);
 }
 
-static void case_a_uniform_failure_shrinks_to_the_boundary(io::Io *io, usize mode) {
+static void case_a_uniform_failure_shrinks_to_the_boundary(io::Io *io, Usize mode) {
     scratch::Project p = shrink_project(io, "runner_shrink", "");
-    usize line = runner::line_of(&p, "tests/test_shrink.smith", "test::check_less(x, 500);");
+    Usize line = runner::line_of(&p, "tests/test_shrink.smith", "test::check_less(x, 500);");
     const char *iso = runner::flag(mode);
     // One run: its seed and its shrunk runs are read from the text it saved, which is also what is reported.
     (void)scratch::sh(&p, format::push(&io->arena, "build/tests ", iso,
@@ -37,7 +37,7 @@ static void case_a_uniform_failure_shrinks_to_the_boundary(io::Io *io, usize mod
     if (runner::can_symbolize(&p)) {
         const char *wanted = format::push(&io->arena, "FAIL shrink_int with seed ", seed, ", shrunk in ", runs,
                                           " runs\n check failed at ", "tests/test_shrink.smith:", line, "\n ", line,
-                                          " | test::check_less(x, 500);\n x = 500, 500 (i64)\n",
+                                          " | test::check_less(x, 500);\n x = 500, 500 (I64)\n",
                                           " called from\n tests/test_shrink.smith:", line,
                                           " test_shrink_int\n rerun: smith test --test shrink_int ", "--seed ", seed,
                                           "\n\n0 passed, 1 failed")
@@ -47,18 +47,18 @@ static void case_a_uniform_failure_shrinks_to_the_boundary(io::Io *io, usize mod
     }
     scratch::Run alone = runner::tests(&p, iso, "--test shrink_int --shrink-seconds 3600");
     runner::expect_has(io, iso, "shrink: the runner on its own shows 500 and 500", &alone,
-                       "    a = 500   (i64)\n    b = 500   (i64)");
+                       "    a = 500   (I64)\n    b = 500   (I64)");
     scratch::expect_count(runner::label(io, iso, "shrink: ... in at most 1000 runs"), 1,
-                          (usize)(runs[0] != '\0' && runner::number(runs) <= 1000));
+                          (Usize)(runs[0] != '\0' && runner::number(runs) <= 1000));
 
     scratch::Run unshrunk = runner::tests(&p, iso, "--test shrink_int --shrink 0");
     const char *first = number_in(&p, iso, "--test shrink_int --shrink 0", "s/^    a = \\([0-9]*\\) .*/\\1/p");
     scratch::expect_count(runner::label(io, iso, "shrink: --shrink 0 shows the unshrunk failure"), 1,
-                          (usize)(first[0] != '\0' && runner::number(first) > 500));
+                          (Usize)(first[0] != '\0' && runner::number(first) > 500));
     runner::expect_lacks(io, iso, "shrink: ... without 'shrunk'", &unshrunk, "shrunk");
 
     scratch::Run rerun = runner::smith_test(&p, iso, format::push(&io->arena, "--test shrink_int --seed ", seed).data);
-    runner::expect_has(io, iso, "shrink: the rerun line shrinks to the same case", &rerun, "    x = 500, 500   (i64)");
+    runner::expect_has(io, iso, "shrink: the rerun line shrinks to the same case", &rerun, "    x = 500, 500   (I64)");
 }
 
 export void test_runner_shrink_a_uniform_failure_shrinks_to_the_boundary_workers(io::Io *io) {
@@ -69,13 +69,13 @@ export void test_runner_shrink_a_uniform_failure_shrinks_to_the_boundary_isolate
     case_a_uniform_failure_shrinks_to_the_boundary(io, 1);
 }
 
-static void case_a_failure_that_moves_to_another_check_is_not_kept(io::Io *io, usize mode) {
+static void case_a_failure_that_moves_to_another_check_is_not_kept(io::Io *io, Usize mode) {
     scratch::Project p = shrink_project(io, "runner_shrink", "");
-    usize line = runner::line_of_nth(&p, "tests/test_shrink.smith", "test::check_less(x, 500);", 2);
+    Usize line = runner::line_of_nth(&p, "tests/test_shrink.smith", "test::check_less(x, 500);", 2);
     const char *iso = runner::flag(mode);
     scratch::Run moves = runner::tests(&p, iso, "--test shrink_moves --shrink-seconds 3600");
     runner::expect_has(io, iso, "shrink: a failure that moves to another check is not kept: x is not 0", &moves,
-                       "    a = 500   (i64)");
+                       "    a = 500   (I64)");
     if (runner::can_symbolize(&p)) {
         const char *traced = runner::symbolized(&p, iso, "--test shrink_moves --shrink-seconds 3600");
         scratch::expect_contains(runner::label(io, iso, "shrink: ... and it is the first check"), traced,
@@ -92,7 +92,7 @@ export void test_runner_shrink_a_failure_that_moves_to_another_check_is_not_kept
 }
 
 // The same command twice, side by side: it takes a minute under --isolate. The addresses of the trace differ per run.
-static void case_a_list_shrinks_to_its_failing_item_and_one_seed_gives_one_case(io::Io *io, usize mode) {
+static void case_a_list_shrinks_to_its_failing_item_and_one_seed_gives_one_case(io::Io *io, Usize mode) {
     scratch::Project p = shrink_project(io, "runner_shrink", "");
     const char *iso = runner::flag(mode);
     const char *run = format::push(&io->arena, "build/tests ", iso,
@@ -107,7 +107,7 @@ static void case_a_list_shrinks_to_its_failing_item_and_one_seed_gives_one_case(
                                              "\\2/p' first.txt | awk '{ print ($1 == $2 + 1) "
                                              "? \"yes\" : \"no\" }'");
     scratch::expect_text(runner::label(io, iso, "shrink: a list shrinks to its failing item"), "yes", shape);
-    scratch::expect_contains(runner::label(io, iso, "shrink: ... of 91"), first, "    a = 91   (i64)");
+    scratch::expect_contains(runner::label(io, iso, "shrink: ... of 91"), first, "    a = 91   (I64)");
     scratch::expect_text(runner::label(io, iso, "shrink: the same seed gives the same shrunk case"), first,
                          scratch::read(&p, "second.txt"));
 }
@@ -120,7 +120,7 @@ export void test_runner_shrink_a_list_shrinks_to_its_failing_item_and_one_seed_g
     case_a_list_shrinks_to_its_failing_item_and_one_seed_gives_one_case(io, 1);
 }
 
-static void case_a_normal_failure_shrinks_to_the_value_nearest_three_from_above(io::Io *io, usize mode) {
+static void case_a_normal_failure_shrinks_to_the_value_nearest_three_from_above(io::Io *io, Usize mode) {
     scratch::Project p = shrink_project(io, "runner_shrink", "");
     const char *iso = runner::flag(mode);
     // One run: the text it saved is what is searched for the failure and what the nearest z is read from.
@@ -145,7 +145,7 @@ export void test_runner_shrink_a_normal_failure_shrinks_to_the_value_nearest_thr
 
 // Shrinking does not make another test depend on it: while one test shrinks for seconds, a healthy test that writes
 // more than 64 KiB, waits a second and writes more, still passes with --timeout 2.
-static void case_a_healthy_test_is_not_disturbed_by_another_shrinking(io::Io *io, usize mode) {
+static void case_a_healthy_test_is_not_disturbed_by_another_shrinking(io::Io *io, Usize mode) {
     scratch::Project p = shrink_project(io, "runner_alongside", "-DSAN=0");
     const char *iso = runner::flag(mode);
     scratch::Run run = runner::tests(&p, iso, "--timeout 2 --jobs 2");
@@ -166,7 +166,7 @@ export void test_runner_shrink_a_healthy_test_is_not_disturbed_by_another_shrink
 // The budget: a test that needs far more than 1000 runs to shrink stops at 1000 runs or 10 seconds. --shrink-seconds is
 // a wall deadline of the runner (a quality budget: how long to keep looking for a smaller case, not a pass/fail limit
 // of any test), so this checks that it ends and not how fast: well past 10 s, a loaded machine's slack.
-static void case_the_budget_stops_shrinking_within_1000_runs_and_ends(io::Io *io, usize mode) {
+static void case_the_budget_stops_shrinking_within_1000_runs_and_ends(io::Io *io, Usize mode) {
     scratch::Project p = shrink_project(io, "runner_budget", "-DSAN=0");
     const char *iso = runner::flag(mode);
     const char *elapsed =
@@ -175,9 +175,9 @@ static void case_the_budget_stops_shrinking_within_1000_runs_and_ends(io::Io *io
                                  .data);
     const char *runs = scratch::capture(&p, "sed -n 's/.*shrunk in \\([0-9]*\\) runs.*/\\1/p' budget.out");
     scratch::expect_count(runner::label(io, iso, "budget: it shrinks, and stops within 1000 runs"), 1,
-                          (usize)(runs[0] != '\0' && runner::number(runs) <= 1000));
+                          (Usize)(runs[0] != '\0' && runner::number(runs) <= 1000));
     scratch::expect_count(runner::label(io, iso, "budget: ... and ends near its 10 second budget, not never"), 1,
-                          (usize)(runner::number(elapsed) <= 90));
+                          (Usize)(runner::number(elapsed) <= 90));
 }
 
 export void test_runner_shrink_the_budget_stops_shrinking_within_1000_runs_and_ends_workers(io::Io *io) {

@@ -4,9 +4,9 @@ import <stdlib.h>;
 import <string.h>;
 import <sys/stat.h>;
 import <unistd.h>;
-import smith::arena;
-import smith::io;
-import smith::test;
+import std::arena;
+import std::io;
+import std::test;
 
 // Writes text to $SMITH_TEST_PROBE/name, where the script that runs the tests reads it.
 static void probe(const char *name, const char *text) {
@@ -20,7 +20,7 @@ static void probe(const char *name, const char *text) {
     c::fclose(file);
 }
 
-static bool exists(const char *path) {
+static Bool exists(const char *path) {
     return c::access(path, c::F_OK) == 0;
 }
 
@@ -33,7 +33,7 @@ void test_io_real(c::SmithIo *io) {
     const char *tmp = c::getenv("TMPDIR");
     test::check_not_equal(tmp, nullptr);
     test::check_equal(c::strcmp(tmp, scratch), 0);
-    u64 *cell = arena::push(&io->arena, u64); // the io's arena is real memory
+    U64 *cell = arena::push(&io->arena, U64); // the io's arena is real memory
     test::check_not_equal(cell, nullptr);
     char marker[1024];
     c::snprintf(marker, sizeof marker, "%s/marker.txt", scratch);
@@ -80,7 +80,7 @@ static void wait_for(const char *name) {
     const char *folder = c::getenv("SMITH_TEST_PROBE");
     char path[1024];
     c::snprintf(path, sizeof path, "%s/%s", folder, name);
-    for (i32 i = 0; i < 60000 && !exists(path); i++) { // up to 600 s: a hang backstop, never a pass/fail time
+    for (I32 i = 0; i < 60000 && !exists(path); i++) { // up to 600 s: a hang backstop, never a pass/fail time
         c::usleep(10000);
     }
     test::check(exists(path));
@@ -96,7 +96,7 @@ void test_io_parallel_b(c::SmithIo *io) {
     wait_for("a");
 }
 
-// The same test written with the module's own name for the type, which import smith::io; gives.
+// The same test written with the module's own name for the type, which import std::io; gives.
 void test_io_module_name(io::Io *io) {
     probe("module_name", test::scratch(io));
     test::check_not_equal(test::scratch(io), nullptr);

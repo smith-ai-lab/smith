@@ -2,13 +2,13 @@
 // and of nothing else, and build::defaults' .errors adds a diagnostic to it.
 module module_diagnostics_test;
 
-import smith::io;
-import smith::test;
+import std::io;
+import std::test;
 import scratch;
 
 static const char *cast_away_const = "module main;\n"
                                      "\n"
-                                     "i32 main() {\n"
+                                     "I32 main() {\n"
                                      "    const char *s = \"hi\";\n"
                                      "    char *m = (char *)s;\n"
                                      "    return m[0];\n"
@@ -18,22 +18,22 @@ static const char *padded = "module main;\n"
                             "\n"
                             "struct Padded {\n"
                             "    char c;\n"
-                            "    i64 n;\n"
+                            "    I64 n;\n"
                             "};\n"
                             "\n"
-                            "i32 main() {\n"
+                            "I32 main() {\n"
                             "    struct Padded p = {'a', 1};\n"
-                            "    return (i32)p.n;\n"
+                            "    return (I32)p.n;\n"
                             "}\n";
 
 static const char *mismatched_function_cast = "module main;\n"
                                               "\n"
-                                              "i32 one(i32 x) {\n"
+                                              "I32 one(I32 x) {\n"
                                               "    return x;\n"
                                               "}\n"
                                               "\n"
-                                              "i32 main() {\n"
-                                              "    i32 (*f)(void) = (i32 (*)(void))one;\n"
+                                              "I32 main() {\n"
+                                              "    I32 (*f)(void) = (I32 (*)(void))one;\n"
                                               "    return f == nullptr;\n"
                                               "}\n";
 
@@ -47,7 +47,7 @@ static const char *both(const scratch::Run *run) {
 static const char *build_with(const char *field) {
     static char text[512];
     __builtin_snprintf(text, sizeof text,
-                       "module build;\n\nimport smith::build;\n\nexport void build(build::Build *b) {\n"
+                       "module build;\n\nimport std::build;\n\nexport void build(build::Build *b) {\n"
                        "    build::defaults(b, &(build::Defaults){%s});\n    build::app(b, &(build::App){});\n}\n",
                        field);
     return text;

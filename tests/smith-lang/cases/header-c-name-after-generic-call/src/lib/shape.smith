@@ -2,11 +2,11 @@ module lib::shape;
 
 import lib::gen;
 
-[[smith::c_name("ShapeBox")]] export typedef struct {
-    usize size;
+[[std::c_name("ShapeBox")]] export typedef struct {
+    Usize size;
 } Box;
 
 // A call of a generic on a variable in a body: an importer's header must still name Box by its C name.
-export usize doubled(Box *box, usize count) {
+export Usize doubled(Box *box, Usize count) {
     return gen::twice(count) + box->size;
 }

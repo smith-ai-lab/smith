@@ -1,4 +1,4 @@
-// main has asserts and calls the io library, whose exports are marked [[clang::annotate("smith::edge")]]: a function
+// main has asserts and calls the io library, whose exports are marked [[clang::annotate("std::edge")]]: a function
 // with no body that is the edge of the program, assumed to touch only what its pointers point to and to free nothing.
 // The first main is proved from the contract of sum; the second asserts what the contract does not give.
 #include <smith/contract.h>
@@ -9,7 +9,7 @@ typedef struct {
     int32_t lines;
 } Console;
 
-[[clang::annotate("smith::edge")]] int32_t console_print(Console *console, int32_t value);
+[[clang::annotate("std::edge")]] int32_t console_print(Console *console, int32_t value);
 
 int32_t sum(int32_t count) {
     smith_requires(0 <= count && count <= 5);

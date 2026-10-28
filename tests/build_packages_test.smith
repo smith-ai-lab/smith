@@ -2,13 +2,13 @@
 // tests/package.sh) into a cache of its own. Each test makes the archives in `pk/` of its project.
 module build_packages_test;
 
-import smith::arena;
-import smith::format;
-import smith::io;
-import smith::test;
+import std::arena;
+import std::format;
+import std::io;
+import std::test;
 import <string.h>;
 import scratch;
-import smith::mem;
+import std::mem;
 
 typedef struct {
     scratch::Project p;
@@ -157,7 +157,7 @@ export void test_build_package_xz_extracts_and_a_zip_is_refused(io::Io *io) {
     char hash[128] = "";
     if (start != nullptr) {
         const char *end = c::strchr(start + 1, '"');
-        usize length = end != nullptr ? (usize)(end - start - 1) : 0;
+        Usize length = end != nullptr ? (Usize)(end - start - 1) : 0;
         if (length < sizeof hash) {
             mem::copy(hash[0:length], start[1:1 + length]);
             hash[length] = '\0';

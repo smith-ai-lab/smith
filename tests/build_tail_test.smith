@@ -4,9 +4,9 @@
 // gone.
 module build_tail_test;
 
-import smith::format;
-import smith::io;
-import smith::test;
+import std::format;
+import std::io;
+import std::test;
 import scratch;
 
 // 15. A smith without the token hook (a stage0) still writes headers; the compile says what is missing. A smith with

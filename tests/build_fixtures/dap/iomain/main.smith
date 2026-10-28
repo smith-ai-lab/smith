@@ -1,7 +1,7 @@
 module main;
 
-import smith::io;
+import std::io;
 
-i32 main(io::Io *io) {
-    return (i32)io->seed - (i32)io->seed;
+I32 main(io::Io *io) {
+    return (I32)io->seed - (I32)io->seed;
 }

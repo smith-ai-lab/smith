@@ -1,7 +1,7 @@
 module sample_test;
 
-import smith::io;
-import smith::test;
+import std::io;
+import std::test;
 
 export void test_matches(io::Io *io) {
     test::golden(io, "expected/matches.txt", "alpha\nbeta\n");
@@ -15,9 +15,9 @@ export void test_differs(io::Io *io) {
 // Every line of sixty differs: the diff is longer than the limit.
 export void test_long(io::Io *io) {
     char text[1024] = "";
-    usize used = 0;
-    for (usize i = 1; i <= 60; i++)
-        used += (usize)__builtin_snprintf(text + used, sizeof text - used, "new %zu\n", i);
+    Usize used = 0;
+    for (Usize i = 1; i <= 60; i++)
+        used += (Usize)__builtin_snprintf(text + used, sizeof text - used, "new %zu\n", i);
     test::golden(io, "expected/long.txt", text[0:used]);
 }
 

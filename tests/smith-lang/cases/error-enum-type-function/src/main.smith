@@ -2,24 +2,24 @@ module main;
 
 // Each line below is an error with its fix; none is accepted and misread. The limits are the implementation's.
 
-type pair(type T) {
+Type Pair(Type T) {
     return enum {
         T first;
         T second;
     };
 }
 
-type many(type T, usize n) {
+Type Many(Type T, Usize n) {
     return enum {
         T some;
     };
 }
 
-type branchy(type T) {
+Type Branchy(Type T) {
     if (sizeof(T) > 4) return enum { T big; };
     return enum { T small; };
 }
 
-type opt(type T) { return enum { T some; none; }; }
+Type Opt(Type T) { return enum { T some; none; }; }
 
-static opt(usize, usize) two(void);
+static Opt(Usize, Usize) two(void);

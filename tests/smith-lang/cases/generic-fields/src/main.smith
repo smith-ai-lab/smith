@@ -4,19 +4,19 @@ import <stdio.h>;
 import reflect;
 
 typedef struct {
-    i32 m;
-    f32 b;
+    I32 m;
+    F32 b;
 } Pair;
 
 typedef struct {
     Pair pair;
-    u8 bits : 3;
-    u8 more : 5;
-    i32 values[3];
-    f64 scale;
+    U8 bits : 3;
+    U8 more : 5;
+    I32 values[3];
+    F64 scale;
 } Mixed;
 
-i32 main() {
+I32 main() {
     Pair pair = {1, 2.5f};
     Mixed mixed = {pair, 5, 17, {1, 2, 3}, 0.5};
     reflect::show(Pair, &pair);

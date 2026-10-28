@@ -1,15 +1,15 @@
 #include <stdio.h>
-enum { i64 = 7, u8, u16 };
-enum Tagged { first, i32 = 40, u64, last };
-static int u32(int x) {
+enum { I64 = 7, U8, U16 };
+enum Tagged { first, I32 = 40, U64, last };
+static int U32(int x) {
 return x + 1;
 }
-static int f64(int x);
-static int f64(int x) {
+static int F64(int x);
+static int F64(int x) {
 return x * 2;
 }
 static int local(int x) {
-enum { i8 = 3, u8_local };
+enum { I8 = 3, u8_local };
 return x + __INT8_TYPE__ + u8_local;
 }
 int main() {

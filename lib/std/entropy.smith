@@ -1,0 +1,63 @@
+// std::entropy, <smith/entropy.h>: random bytes from the system, through the entropy handler of the thread
+// (include/smith/handlers.h), so a test can stand in for them. It is the one place smith's libraries ask the system
+// for randomness: std::random stays pure (a `random::Key` is a value, made from a seed), and a key from the system
+// comes from here. Called directly, no `io::Io` value:
+//
+//   random::Key key = entropy::seed();
+//
+// Its C API is the generated header include/smith/entropy.h (a build output, not in git); the names follow the rule of
+// arena.smith: `entropy::seed` is `smith_entropy_seed`.
+module std::entropy;
+
+import std::contract;
+import std::random;
+import <smith/handlers.h>; // SmithEntropyHandler, smith_handlers_set_entropy
+import <sys/random.h>;     // getentropy: the function the handler of the thread answers
+
+// The entropy handler of the thread (include/smith/handlers.h): `fill` writes the bytes and never fails.
+[[std::c_name("SmithEntropyHandler")]] export typedef c::SmithEntropyHandler Handler;
+
+// Sets the entropy of the calling thread (null: the system's) and returns the one it had, as signal() does. Restore
+// it with `defer`:
+//   entropy::Handler *before = entropy::set_handler(&fake.base);
+//   defer entropy::set_handler(before);
+[[std::c_name("smith_entropy_set_handler")]] export Handler *set_handler(Handler *handler) {
+    return c::smith_handlers_set_entropy(handler);
+}
+
+// A fresh key from the system's entropy (getentropy): 64 random bits, a different key on every call, so a program that
+// wants a run it can repeat prints `key.bits` or builds its keys with `random::key_make(seed)` instead. It has the
+// `entropy` effect. A test scripts it with `entropy::fake`. A system that cannot give 64 bits of entropy is a checked
+// failure.
+[[std::c_name("smith_entropy_seed")]] export [[nodiscard]] random::Key seed() {
+    contract::trusted(); // a call into the system, the edge a proof cannot read
+    U64 bits = 0;
+    I32 status = c::getentropy(&bits, sizeof bits); // NOLINT(smith-effects): the edge, as the handler answers it
+    contract::assert(status == 0);
+    return random::key_make(bits);
+}
+
+// A fake entropy: it writes the bytes of the number it holds (least significant first, again from the start when
+// more than eight are asked), so a test scripts what `seed()` returns. `asked` counts the fills. The handler base is
+// the first member: `&fake.base` is what `entropy::set_handler` takes.
+[[std::c_name("SmithEntropyFake")]] export typedef struct {
+    Handler base;
+    U64 number;
+    Usize asked;
+} Fake;
+
+void fake_fill(Handler *self, U8 *buffer, Usize size) {
+    contract::trusted(); // the handler's C signature is a pointer and a size, which a proof cannot relate
+    Fake *fake = (Fake *)self;
+    fake->asked += 1;
+    for (Usize i = 0; i < size; i++)
+        buffer[i] = (U8)(fake->number >> (8 * (i % 8)));
+}
+
+// A fake whose bytes are those of `number`. Put it in force with `entropy::set_handler(&fake.base)`.
+[[std::c_name("smith_entropy_fake")]] export [[nodiscard]] Fake fake(U64 number) {
+    Fake result = {};
+    result.base = (c::SmithEntropyHandler){.fill = fake_fill};
+    result.number = number;
+    return result;
+}

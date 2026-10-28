@@ -4,9 +4,9 @@
 // repository.
 module release_test;
 
-import smith::format;
-import smith::io;
-import smith::test;
+import std::format;
+import std::io;
+import std::test;
 import scratch;
 
 // Every command: the stub gh first on PATH, its releases in ../gh and its log in ../gh.log, the script, and the file

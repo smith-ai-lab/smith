@@ -209,7 +209,7 @@ static int smith_handlers_clock_sleep(SmithClockHandler *clock, uint64_t nanosec
     return 0;
 }
 
-// The network, found the same way (no libc function is interposed: smith::net calls the handler).
+// The network, found the same way (no libc function is interposed: std::net calls the handler).
 static atomic_uint smith_handlers_net_active;
 static thread_local SmithNetHandler *smith_handlers_net_table;
 
@@ -235,7 +235,7 @@ SmithNetHandler *smith_handlers_net(void) {
     return smith_handlers_net_current();
 }
 
-// The child processes, found the same way (no libc function is interposed: smith::process calls the handler).
+// The child processes, found the same way (no libc function is interposed: std::process calls the handler).
 static atomic_uint smith_handlers_process_active;
 static thread_local SmithProcessHandler *smith_handlers_process_table;
 

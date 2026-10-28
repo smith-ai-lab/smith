@@ -7,40 +7,40 @@ export typeof(xs) tail(auto xs) {
     return xs[1:];
 }
 
-export typeof(xs) head(auto xs, usize n) {
+export typeof(xs) head(auto xs, Usize n) {
     return xs[:n];
 }
 
-export bool is_a_slice(auto x) {
-    if constexpr (is_slice(typeof(x))) {
+export Bool is_a_slice(auto x) {
+    if constexpr (Slice(typeof(x))) {
         return true;
     } else {
         return false;
     }
 }
 
-export usize count(auto xs) {
+export Usize count(auto xs) {
     return countof(xs);
 }
 
-export i32 last_i32(auto xs) {
+export I32 last_i32(auto xs) {
     return xs[countof(xs) - 1];
 }
 
-export i32 second_y(auto xs) {
+export I32 second_y(auto xs) {
     return xs[1].y;
 }
 
-export f32 total(auto xs) {
-    f32 sum = 0;
-    for (usize i = 0; i < countof(xs); i++)
+export F32 total(auto xs) {
+    F32 sum = 0;
+    for (Usize i = 0; i < countof(xs); i++)
         sum += xs[i];
     return sum;
 }
 
-export i64 total_i(auto xs) {
-    i64 sum = 0;
-    for (usize i = 0; i < countof(xs); i++)
+export I64 total_i(auto xs) {
+    I64 sum = 0;
+    for (Usize i = 0; i < countof(xs); i++)
         sum += xs[i];
     return sum;
 }
@@ -50,6 +50,6 @@ export const void *start(auto xs) {
     return countof(xs) ? &xs[0] : nullptr;
 }
 
-export usize element_size(auto xs) {
+export Usize element_size(auto xs) {
     return sizeof(xs[0]);
 }

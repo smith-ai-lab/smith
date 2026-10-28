@@ -1,31 +1,31 @@
 ---
 name: smith-format
-description: "Using smith::format (import smith::format; format::to, format::push, format::length, format::hex, format::fixed, format::general, format::scientific, format::pad, format::left, format::bytes): a type-checked formatter in place of snprintf, the pieces of the text as arguments. Load when a .smith file imports smith::format, when a build.c calls smith_library(b, \"format\"), on writing text into a buffer or an arena in .smith, on replacing snprintf or printf, or on 'no rule for the type of an argument'."
+description: "Using std::format (import std::format; format::to, format::push, format::length, format::hex, format::fixed, format::general, format::scientific, format::pad, format::left, format::bytes): a type-checked formatter in place of snprintf, the pieces of the text as arguments. Load when a .smith file imports std::format, when a build.c calls smith_library(b, \"format\"), on writing text into a buffer or an arena in .smith, on replacing snprintf or printf, or on 'no rule for the type of an argument'."
 ---
 
-# Formatted text with no format string: smith::format
+# Formatted text with no format string: std::format
 
 This skill ships in the smith plugin, from `.agents/skills/smith-format/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there. It uses the generics of `smith-lang-generics` and `smith-lang-rest`, and `smith-text-numbers` and `smith-arena`.
 
 There is no format string, so none can disagree with its arguments: the arguments are the pieces, in order, and each one's **type picks how it is written, when the call is compiled**. Write `format::to(buf, sizeof buf, "count: ", n, " of ", total)`, never `snprintf(buf, sizeof buf, "count: %d of %zu", ...)`.
 
 ```smith fragment
-import smith::format;
-import smith::arena;
+import std::format;
+import std::arena;
 
 char out[128];
 format::Written w = format::to(out, sizeof out, "move ", dx, " ", dy, " key ", format::hex(key, 16));
 if (!w.fits) { /* cut: out is terminated, w.length is what the whole text needs */ }
 char path[:] = format::push(&arena, folder, "/", name, ".mesh");   // path.data is terminated too (not counted)
-usize n = format::length("abc", 12345);                               // 8, writes nothing
+Usize n = format::length("abc", 12345);                               // 8, writes nothing
 ```
 
 | Argument | Written as |
 |---|---|
-| `bool` | `true` / `false` |
-| `char` | the character (`i8` and `u8` are numbers) |
-| `i8`..`i64`, `u8`..`u64`, `usize`, `isize` | decimal digits, `-` for a negative one |
-| `f32`, `f64` | the shortest digits that read back the same (`0.1`, `1e22`), as `text::write_f64`; `inf`, `-inf`, `nan`; a `f32` as its `f64` value |
+| `Bool` | `true` / `false` |
+| `char` | the character (`I8` and `U8` are numbers) |
+| `I8`..`I64`, `U8`..`U64`, `Usize`, `Isize` | decimal digits, `-` for a negative one |
+| `F32`, `F64` | the shortest digits that read back the same (`0.1`, `1e22`), as `text::write_f64`; `inf`, `-inf`, `nan`; a `F32` as its `F64` value |
 | `char *`, `const char *` | the terminated string; null is `(null)` |
 | `char[:]`, `const char[:]` | its count of characters (`%.*s`); `format::bytes(p, n)` makes one from a pointer and a length |
 | `format::hex(x, width)` | lowercase hex, zero-padded to `width` (0 for none, at most 16): `%016llx`, `%02x` |
@@ -34,7 +34,7 @@ usize n = format::length("abc", 12345);                               // 8, writ
 | `format::scientific(x, places)` | `%.Ne`: `1.23e+04`, `places` at most 40 |
 | `format::pad(piece, width)`, `format::left(piece, width)` | any piece above (not another pad) in a column of `width` characters, spaces before it or after it: `%5d`, `%12s`, `%-16s`, `%6.1f` as `pad(format::fixed(x, 1), 6)`; a wider piece is written whole; a string or `Text` must outlive the call that writes it; the text of any other piece is held (at most 63 characters) |
 
-- **A struct** is written `{m = 1, b = 2}`: each field by the rule of its type, a nested struct the same way, a fixed array as `[1, 2, 3]` and a `char` array as its text (the fields come from `fields(T)`, `smith-lang-reflection`); a union, a struct with an anonymous member and a pointer field are errors. **A type with no rule** (a pointer, an enum) is a compile-time error at the call that names the piece: `static assertion failed: format: no rule for the type of piece 3; the note lists the types in order`, with the notes `in instance smith::format::no_rule(char [ 2 + 1 ])` (the piece's number is the array size) and `in instance smith::format::to(char *, int, Point, int)` (the types in order). The expression is not named (one instance serves every call with those types). Convert it: `(u64)(usize)p`, `(i64)kind`, or the field.
+- **A struct** is written `{m = 1, b = 2}`: each field by the rule of its type, a nested struct the same way, a fixed array as `[1, 2, 3]` and a `char` array as its text (the fields come from `fields(T)`, `smith-lang-reflection`); a union, a struct with an anonymous member and a pointer field are errors. **A type with no rule** (a pointer, an enum) is a compile-time error at the call that names the piece: `static assertion failed: format: no rule for the type of piece 3; the note lists the types in order`, with the notes `in instance std::format::no_rule(char [ 2 + 1 ])` (the piece's number is the array size) and `in instance std::format::to(char *, int, Point, int)` (the types in order). The expression is not named (one instance serves every call with those types). Convert it: `(U64)(Usize)p`, `(I64)kind`, or the field.
 - **The console** is `console::print("n = ", n, "\n")` and `console::print_error` (skill smith-console): the same pieces, no length limit; `format` has no print.
 - **Writing never stops.** `to(buffer, capacity, ...)` cuts the text where the buffer ends and always terminates it when `capacity > 0`; `Written.length` is the whole text's length (as `snprintf` returns) and `fits` is `length < capacity`. `capacity` 0 with a null buffer only measures. `push` measures, then pushes exactly `length + 1` bytes, so a full arena stops as any push does.
 - **Up to 30 pieces** in one call (a generic takes 32 parameters).

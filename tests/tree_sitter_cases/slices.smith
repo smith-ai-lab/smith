@@ -2,34 +2,34 @@ module slices;
 
 // Run-time arrays `T xs[:]` and their slices (#82, #106): every form parses as an ordinary declaration or expression.
 export typedef struct {
-    f32 weights[:];
+    F32 weights[:];
     char name[:];
 } Layer;
 
-export typedef i32 Numbers[:];
+export typedef I32 Numbers[:];
 
-export usize total(i32 xs[:], usize skip) {
-    usize sum = 0;
-    for (usize i = skip; i < countof(xs); i++) {
-        sum += (usize)xs[i];
+export Usize total(I32 xs[:], Usize skip) {
+    Usize sum = 0;
+    for (Usize i = skip; i < countof(xs); i++) {
+        sum += (Usize)xs[i];
     }
     return sum;
 }
 
-export typeof(i32[:]) middle(i32 xs[:], i32 *p, usize n) {
-    i32 head[:] = xs[:2];
-    i32 tail[:] = xs[2:];
-    i32 mid[:] = xs[1:countof(xs) - 1];
-    i32 view[:] = p[0:n];
+export typeof(I32[:]) middle(I32 xs[:], I32 *p, Usize n) {
+    I32 head[:] = xs[:2];
+    I32 tail[:] = xs[2:];
+    I32 mid[:] = xs[1:countof(xs) - 1];
+    I32 view[:] = p[0:n];
     char word[:] = "abc";
-    bool inside = n > 0 ? true : false;
+    Bool inside = n > 0 ? true : false;
     return inside ? head : view;
 }
 
 // Many dimensions and read-only elements (#106, #126): the same declarators, with a fixed size after the `:`.
-export f32 corner(f32 rows[:][2], f32 grid[:][:], const char label[:], char const tail[:]) {
-    f32 first[:][2] = rows[1:];
-    f32 cell = grid[0][0] + rows[0][1];
+export F32 corner(F32 rows[:][2], F32 grid[:][:], const char label[:], char const tail[:]) {
+    F32 first[:][2] = rows[1:];
+    F32 cell = grid[0][0] + rows[0][1];
     const char word[:] = "abc";
-    return cell + first[0][0] + (f32)countof(label) + (f32)countof(word) + (f32)countof(tail);
+    return cell + first[0][0] + (F32)countof(label) + (F32)countof(word) + (F32)countof(tail);
 }

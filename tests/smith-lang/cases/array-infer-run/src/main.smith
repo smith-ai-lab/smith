@@ -4,20 +4,20 @@ import <stdio.h>;
 
 // `[_]` is a fixed array whose size the initializer gives (issue #423): one dimension, the outermost of two, a string
 // literal, a compound literal, and an exported one.
-export const i32 primes[_] = {2, 3, 5, 7};
+export const I32 primes[_] = {2, 3, 5, 7};
 
-static i32 sum(const i32 *xs, usize n) {
-    i32 total = 0;
-    for (usize i = 0; i < n; i++)
+static I32 sum(const I32 *xs, Usize n) {
+    I32 total = 0;
+    for (Usize i = 0; i < n; i++)
         total += xs[i];
     return total;
 }
 
-i32 main() {
-    i32 xs[_] = {1, 2, 3};
-    i32 m[_][3] = {{1, 2, 3}, {4, 5, 6}};
+I32 main() {
+    I32 xs[_] = {1, 2, 3};
+    I32 m[_][3] = {{1, 2, 3}, {4, 5, 6}};
     char s[_] = "abc";
     c::printf("%zu %zu %zu %zu\n", sizeof xs / sizeof xs[0], sizeof m / sizeof m[0], sizeof s, sizeof primes / sizeof primes[0]);
-    c::printf("%d %d\n", sum(xs, 3), sum((const i32[_]){10, 20}, 2));
+    c::printf("%d %d\n", sum(xs, 3), sum((const I32[_]){10, 20}, 2));
     return 0;
 }

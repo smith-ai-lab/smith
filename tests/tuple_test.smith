@@ -3,16 +3,16 @@
 // tests/smith-lang/cases/tuple-*.
 module tuple_test;
 
-import smith::test;
+import std::test;
 
-typedef struct { i32, f32 } Pair;
+typedef struct { I32, F32 } Pair;
 
-static struct { i32, f32 } make(i32 a, f32 b) {
+static struct { I32, F32 } make(I32 a, F32 b) {
     return {a, b};
 }
 
-static struct { i32, struct { f32, f32 } } nested() {
-    return (struct { i32, struct { f32, f32 } }){7, {1.5f, 2.5f}};
+static struct { I32, struct { F32, F32 } } nested() {
+    return (struct { I32, struct { F32, F32 } }){7, {1.5f, 2.5f}};
 }
 
 static void bump(Pair *p) {
@@ -20,8 +20,8 @@ static void bump(Pair *p) {
     p->_1 *= 2.0f;
 }
 
-static i32 sum(Pair p) {
-    return p[0] + (i32)p[1];
+static I32 sum(Pair p) {
+    return p[0] + (I32)p[1];
 }
 
 export void test_tuple_returned_from_a_function() {
@@ -59,14 +59,14 @@ export void test_tuple_nests() {
 export void test_tuple_has_a_count_and_the_size_of_a_struct() {
     Pair p = make(0, 0.0f);
     test::check_equal(countof(p), 2);
-    test::check_equal(sizeof p, sizeof(struct { i32, f32 }));
+    test::check_equal(sizeof p, sizeof(struct { I32, F32 }));
     test::check_equal(countof(nested()[1]), 2);
 }
 
 export void test_tuples_of_one_shape_are_one_type() {
-    struct { i32, f32 } a = make(4, 1.0f);
+    struct { I32, F32 } a = make(4, 1.0f);
     Pair b = a;
-    struct { i32, f32 } list[2] = {a, b};
+    struct { I32, F32 } list[2] = {a, b};
     list[1][0] = 5;
     test::check_equal(list[0][0] + list[1][0], 9);
 }

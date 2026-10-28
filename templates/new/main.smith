@@ -3,12 +3,12 @@ module main;
 
 import primes;
 
-import smith::contract;
-import smith::io;
+import std::contract;
+import std::io;
 
 // smith makes the program's io before main and closes it after; main passes down the parts each function needs.
-i32 main(io::Io *io) {
-    i32 sum = primes::sum(5);
+I32 main(io::Io *io) {
+    I32 sum = primes::sum(5);
     contract::assert(sum <= 28);
     primes::report(&io->console, sum);
     return 0;

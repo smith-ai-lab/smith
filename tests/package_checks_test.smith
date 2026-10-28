@@ -5,9 +5,9 @@
 // at -O2.
 module package_checks_test;
 
-import smith::format;
-import smith::io;
-import smith::test;
+import std::format;
+import std::io;
+import std::test;
 import scratch;
 
 // runtime/package.c sees the libraries through their headers; the modules are linked.
@@ -15,8 +15,8 @@ constexpr char compile_prefix[_] =
     "smith cc -std=gnu23 -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wmissing-prototypes "
     "-Wstrict-prototypes -Wvla -Werror -Wno-unused-function -I \"$SMITH_REPO/.smith/include\" ";
 constexpr char libraries[_] =
-    " \"$SMITH_REPO/lib/smith/arena.smith\" \"$SMITH_REPO/lib/smith/contract.smith\" "
-    "\"$SMITH_REPO/lib/smith/inflate.smith\" \"$SMITH_REPO/lib/smith/io.smith\" \"$SMITH_REPO/lib/smith/random.smith\"";
+    " \"$SMITH_REPO/lib/std/arena.smith\" \"$SMITH_REPO/lib/std/contract.smith\" "
+    "\"$SMITH_REPO/lib/std/inflate.smith\" \"$SMITH_REPO/lib/std/io.smith\" \"$SMITH_REPO/lib/std/random.smith\"";
 
 static scratch::Project package_project(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);

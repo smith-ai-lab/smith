@@ -1,32 +1,32 @@
 module qualifiers;
 
 // The slice's qualifiers and the element's, as the lowering writes them: the element's go in the struct's data
-// pointer's type (`const u8 *`), `[restrict :]` makes the data pointer `restrict` (a struct of its own), `[const :]`
+// pointer's type (`const U8 *`), `[restrict :]` makes the data pointer `restrict` (a struct of its own), `[const :]`
 // makes the variable const, and a string literal given to `const char[:]` is the literal itself, count 3, with no copy.
 
 export typedef struct {
     const char name[:];
-    u8 bytes[restrict :];
+    U8 bytes[restrict :];
 } Entry;
 
-export usize total(const u8 xs[:]) {
-    usize sum = 0;
-    for (usize i = 0; i < countof(xs); i++) {
+export Usize total(const U8 xs[:]) {
+    Usize sum = 0;
+    for (Usize i = 0; i < countof(xs); i++) {
         sum += xs[i];
     }
     return sum;
 }
 
-export void copy(u8 dst[restrict :], u8 const src[const restrict :]) {
-    for (usize i = 0; i < countof(dst) && i < countof(src); i++) {
+export void copy(U8 dst[restrict :], U8 const src[const restrict :]) {
+    for (Usize i = 0; i < countof(dst) && i < countof(src); i++) {
         dst[i] = src[i];
     }
 }
 
-export usize greet() {
+export Usize greet() {
     const char word[:] = "abc";
-    u8 bytes[3] = {1, 2, 3};
-    u8 writable[const :] = bytes;
-    const u8 view[:] = writable[1:];
+    U8 bytes[3] = {1, 2, 3};
+    U8 writable[const :] = bytes;
+    const U8 view[:] = writable[1:];
     return countof(word) + total(view) + total(writable);
 }

@@ -3,16 +3,16 @@ module reach;
 // A pointer to an array (`T (*)[N]`, what `&s->field` of an array field is) goes to a generic: its type has
 // parentheses and a number, written for the instance's signature as `__typeof__(...)`.
 
-export usize bytes(auto p) {
+export Usize bytes(auto p) {
     return sizeof(*p);
 }
 
-export usize elements(auto p) {
+export Usize elements(auto p) {
     return sizeof(*p) / sizeof((*p)[0]);
 }
 
-export bool is_a_pointer(auto p) {
-    if constexpr (is_pointer(typeof(p))) {
+export Bool is_a_pointer(auto p) {
+    if constexpr (Pointer(typeof(p))) {
         return true;
     } else {
         return false;

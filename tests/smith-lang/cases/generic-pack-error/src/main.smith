@@ -4,13 +4,13 @@ import args;
 import last;
 
 int main() {
-    i64 a = args::runtime_index(1, 2, 3);
-    i64 b = args::out_of_range(1, 2);
-    i64 c = args::bare(1, 2);
-    usize d = args::needs_one();
+    I64 a = args::runtime_index(1, 2, 3);
+    I64 b = args::out_of_range(1, 2);
+    I64 c = args::bare(1, 2);
+    Usize d = args::needs_one();
     // These are fine.
-    i64 ok1 = args::out_of_range(1, 2, 3);
-    i64 ok2 = args::guarded(1);
-    i64 ok3 = args::guarded(1, 2, 3);
-    return (int)(a + b + c + (i64)d + ok1 + ok2 + ok3);
+    I64 ok1 = args::out_of_range(1, 2, 3);
+    I64 ok2 = args::guarded(1);
+    I64 ok3 = args::guarded(1, 2, 3);
+    return (int)(a + b + c + (I64)d + ok1 + ok2 + ok3);
 }

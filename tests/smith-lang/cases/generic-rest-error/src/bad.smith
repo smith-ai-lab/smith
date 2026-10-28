@@ -1,32 +1,32 @@
 module bad;
 
 // The bound of a `for constexpr` is a compile-time constant: a parameter is not one.
-export i32 run_time_bound(auto x, auto... rest) {
-    i32 sum = 0;
-    for constexpr (i32 i = 0; i < x; i++) {
+export I32 run_time_bound(auto x, auto... rest) {
+    I32 sum = 0;
+    for constexpr (I32 i = 0; i < x; i++) {
         sum += 1;
     }
     return sum;
 }
 
 // `rest` is the tuple of the arguments: it is spread, indexed or counted, not passed whole.
-export i32 bare(auto... rest) {
-    return (i32)rest;
+export I32 bare(auto... rest) {
+    return (I32)rest;
 }
 
 // The index is in range and a constant.
-export i32 out_of_range(auto... rest) {
+export I32 out_of_range(auto... rest) {
     return rest[2];
 }
 
-export i32 runtime_index(auto x, auto... rest) {
+export I32 runtime_index(auto x, auto... rest) {
     return rest[x];
 }
 
 // A loop that never ends, and a step that is none.
-export i32 forever(auto... rest) {
-    i32 sum = 0;
-    for constexpr (usize i = 0; i < 10; i += 0) {
+export I32 forever(auto... rest) {
+    I32 sum = 0;
+    for constexpr (Usize i = 0; i < 10; i += 0) {
         sum += 1;
     }
     return sum;

@@ -9,36 +9,36 @@ description: "The rolls module as idiomatic Smith: the module, its main, and how
 // rolls.smith
 module rolls;
 
-import smith::arena;
-import smith::io;
-import smith::random;
+import std::arena;
+import std::io;
+import std::random;
 
-constexpr i64 sides = 6;
+constexpr I64 sides = 6;
 
 export typedef struct {
-    u32 *faces;
-    usize count;
+    U32 *faces;
+    Usize count;
 } Rolls;
 
 // count rolls of a die, each from its own key split from `key`.
-export Rolls make(arena::Arena *arena, random::Key key, usize count) {
-    Rolls rolls = {.faces = arena::push_slice(arena, u32, count).data, .count = count};
+export Rolls make(arena::Arena *arena, random::Key key, Usize count) {
+    Rolls rolls = {.faces = arena::push_slice(arena, U32, count).data, .count = count};
     random::Key keys[:] = arena::push_slice(arena, random::Key, count);
     random::split(key, keys);
-    for (usize i = 0; i < countof(keys); i++) {
-        rolls.faces[i] = (u32)random::uniform_int64_sample(keys[i], (random::UniformInt64){.low = 1, .high = sides});
+    for (Usize i = 0; i < countof(keys); i++) {
+        rolls.faces[i] = (U32)random::uniform_int64_sample(keys[i], (random::UniformInt64){.low = 1, .high = sides});
     }
     return rolls;
 }
 
-export f64 mean(const Rolls *rolls) {
-    u64 sum = 0;
-    for (usize i = 0; i < rolls->count; i++) sum += rolls->faces[i];
-    return rolls->count == 0 ? 0 : (f64)sum / (f64)rolls->count;
+export F64 mean(const Rolls *rolls) {
+    U64 sum = 0;
+    for (Usize i = 0; i < rolls->count; i++) sum += rolls->faces[i];
+    return rolls->count == 0 ? 0 : (F64)sum / (F64)rolls->count;
 }
 
 export void print(io::Console *console, const Rolls *rolls) {
-    for (usize i = 0; i < rolls->count; i++) (void)io::console_printf(console, "%u ", rolls->faces[i]);
+    for (Usize i = 0; i < rolls->count; i++) (void)io::console_printf(console, "%u ", rolls->faces[i]);
     (void)io::console_printf(console, "(mean %.2f)\n", mean(rolls));
 }
 ```
@@ -48,9 +48,9 @@ export void print(io::Console *console, const Rolls *rolls) {
 module main;
 
 import rolls;
-import smith::io;
+import std::io;
 
-i32 main(io::Io *io) {
+I32 main(io::Io *io) {
     rolls::Rolls dice = rolls::make(&io->arena, io->key, 10);
     rolls::print(&io->console, &dice);
     return 0;

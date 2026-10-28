@@ -1,5 +1,5 @@
 // The forms that are accepted and not taught: one attribute for each effect, and one GNU attribute with the names as
-// strings. They mean what [[smith::effects(...)]] means.
+// strings. They mean what [[std::effects(...)]] means.
 #include <stdio.h>
 #include <stdlib.h>
 

@@ -6,9 +6,9 @@
 // or an account that may not debug, has nothing to test, and the tests do nothing.
 module dap_test;
 
-import smith::format;
-import smith::io;
-import smith::test;
+import std::format;
+import std::io;
+import std::test;
 import scratch;
 
 static scratch::Project folder(const scratch::Project *root, const char *name) {
@@ -19,7 +19,7 @@ static scratch::Project folder(const scratch::Project *root, const char *name) {
 
 // The fixture in a folder of the scratch space, the client built, and prog built in src. False when this smith has no
 // lldb, or this account may not debug.
-static bool make(io::Io *io, scratch::Project *root) {
+static Bool make(io::Io *io, scratch::Project *root) {
     *root = scratch::project(io, "dap", "dap");
     scratch::Run usable = scratch::sh(
         root, "[ \"$(smith cc --smith-which -c a.c | head -n 1 | cut -d ' ' -f 1,2)\" = 'clang in-process' ] && "
@@ -38,7 +38,7 @@ static bool make(io::Io *io, scratch::Project *root) {
 }
 
 // Whether the smith has the token hook, so `.smith` names exist in the debugger.
-static bool has_hook(const scratch::Project *p) {
+static Bool has_hook(const scratch::Project *p) {
     return scratch::sh(p, "smith cc --smith-which -x c 2>/dev/null | grep -q 'token-hook yes'").status == 0;
 }
 
@@ -124,7 +124,7 @@ constexpr char build_lang[_] =
     "geometry/box.smith -o box.o && smith cc -g -O0 -I include -c main.smith -o main.o && smith cc -g box.o main.o -o "
     "lang";
 
-static bool make_lang(io::Io *io, scratch::Project *p) {
+static Bool make_lang(io::Io *io, scratch::Project *p) {
     scratch::Project root;
     if (!make(io, &root) || !has_hook(&root)) {
         return false;
@@ -151,10 +151,10 @@ export void test_dap_dbg_stops_in_a_modules_function_named_as_written(io::Io *io
     scratch::expect_contains("dbg's backtrace goes through main.smith", out, "main at main.smith:5");
     scratch::expect_contains("dbg prints a parameter's type as written", out,
                              "(geometry::box::Box) b = (w = 2, h = 3)");
-    scratch::expect_contains("dbg reads a field", out, "(f32) 2");
+    scratch::expect_contains("dbg reads a field", out, "(F32) 2");
     scratch::expect_contains("dbg casts to a type as written", out, "(geometry::box::Box)  (w = 2, h = 3)");
-    scratch::expect_contains("dbg looks the type up by its name as written", out, "f32 w;");
-    scratch::expect_contains("dbg's finish returns the value", out, "Return value: (f32) $0 = 6");
+    scratch::expect_contains("dbg looks the type up by its name as written", out, "F32 w;");
+    scratch::expect_contains("dbg's finish returns the value", out, "Return value: (F32) $0 = 6");
 }
 
 export void test_dap_dbg_the_other_compile_unit_agrees_on_the_type(io::Io *io) {
@@ -180,7 +180,7 @@ export void test_dap_a_smith_session_has_names_as_written(io::Io *io) {
     scratch::expect_contains("dap's variable has the type as written", session.out, "\"type\":\"geometry::box::Box\"");
 }
 
-// A generic's instance (issue #15): the frame is `pick::larger<i32>` with the types it was asked for, and it is in the
+// A generic's instance (issue #15): the frame is `pick::larger<I32>` with the types it was asked for, and it is in the
 // generic's own source, at the line written there, not in the compiler's copy of the tokens.
 export void test_dap_dbg_a_generics_instance(io::Io *io) {
     scratch::Project root;
@@ -193,11 +193,11 @@ export void test_dap_dbg_a_generics_instance(io::Io *io) {
     const char *out = dbg(&p, io, "-o 'br set -r larger' -o run -o bt -o 'frame variable' -o c -o bt generic").out;
     scratch::expect_contains("dbg stops in an instance", out, "stop reason = breakpoint 1.1");
     scratch::expect_contains("dbg's frame is the instance, named with its types", out,
-                             "generic`pick::larger<i32>(a=3, b=8) at pick.smith:4");
+                             "generic`pick::larger<I32>(a=3, b=8) at pick.smith:4");
     scratch::expect_contains("dbg's other instance has its own types", out,
-                             "generic`pick::larger<f64>(a=2.5, b=1.5) at pick.smith:4");
+                             "generic`pick::larger<F64>(a=2.5, b=1.5) at pick.smith:4");
     scratch::expect_contains("dbg lists the generic's own source", out, "typeof(a) result = a > b ? a : b;");
-    scratch::expect_contains("dbg shows the parameter's type as written", out, "(i32) a = 3");
+    scratch::expect_contains("dbg shows the parameter's type as written", out, "(I32) a = 3");
     scratch::expect_lacks("dbg shows no compiler-made file or warning for an instance (a checksum mismatch)", out,
                           "checksum mismatch");
     scratch::expect_lacks("dbg shows no compiler-made file or warning for an instance (the copy of the tokens)", out,
@@ -216,7 +216,7 @@ export void test_dap_dbg_an_argument_list_and_for_constexpr(io::Io *io) {
     scratch::expect_status("the argument list program builds", 0, &built);
     const char *out =
         dbg(&p, io, "-o 'br set -r sum_with_marker' -o run -o next -o next -o 'frame variable' -o c lists").out;
-    scratch::expect_contains("dbg steps a for constexpr at the generic's own lines", out, "total += (i32)rest[i];");
+    scratch::expect_contains("dbg steps a for constexpr at the generic's own lines", out, "total += (I32)rest[i];");
     scratch::expect_contains("dbg names the argument list's elements", out, "(int) rest_1 = 2");
     scratch::expect_contains("dbg names the first argument", out, "(int) rest_0 = 1");
 }
@@ -236,10 +236,10 @@ export void test_dap_dbg_a_slice(io::Io *io) {
     const char *out =
         dbg(&p, io, "-o 'b main.smith:6' -o run -o 'frame variable xs name' -o 'frame variable xs[2]' slice").out;
     scratch::expect_contains("dbg shows a slice with its type as written and its count", out,
-                             "(i32[:]) xs = count=3 {");
+                             "(I32[:]) xs = count=3 {");
     scratch::expect_contains("dbg shows a slice's elements", out, "[2] = 6");
     scratch::expect_contains("dbg shows a char slice as text", out, "(char[:]) name = \"abc\" count=3");
-    scratch::expect_contains("dbg indexes a slice", out, "(i32) xs[2] = 6");
+    scratch::expect_contains("dbg indexes a slice", out, "(I32) xs[2] = 6");
 }
 
 export void test_dap_a_slice_session(io::Io *io) {
@@ -272,17 +272,17 @@ export void test_dap_dbg_many_dimensions_and_qualifier_tags(io::Io *io) {
                           "-o 'b main.smith:11' -o run -o 'frame variable rows grid r c' -o 'frame variable "
                           "rows[1][0]' slices2")
                           .out;
-    scratch::expect_contains("dbg shows f32[:][2] with its counts", out, "(f32[:][2]) rows = count=3x2 {");
+    scratch::expect_contains("dbg shows F32[:][2] with its counts", out, "(F32[:][2]) rows = count=3x2 {");
     scratch::expect_contains("dbg shows the rows of a slice as children of children", out, "[2] = ([0] = 5, [1] = 6)");
-    scratch::expect_contains("dbg shows f32[:][:] with its counts", out, "(f32[:][:]) grid = count=3x2 {");
+    scratch::expect_contains("dbg shows F32[:][:] with its counts", out, "(F32[:][:]) grid = count=3x2 {");
     scratch::expect_contains("dbg indexes a row's element", out, "(float) rows[1][0] = 3");
-    scratch::expect_contains("dbg shows a restrict slice as u8[restrict :]", out, "(u8[restrict :]) r = ");
+    scratch::expect_contains("dbg shows a restrict slice as U8[restrict :]", out, "(U8[restrict :]) r = ");
     scratch::expect_contains("dbg shows a restrict slice's elements", out, "[3] = '\\n'");
     scratch::expect_contains("dbg shows a const slice as text with its written type", out,
                              "(const char[const :]) c = \"hey\" count=3");
 }
 
-// `i32 main(io::Io *io)` is the function `smith_user_main` to the compiler and `main` to the debugger, with a module
+// `I32 main(io::Io *io)` is the function `smith_user_main` to the compiler and `main` to the debugger, with a module
 // line or without (the DWARF name; no debugger process runs).
 static void check_io_main(io::Io *io, const char *file) {
     scratch::Project root;

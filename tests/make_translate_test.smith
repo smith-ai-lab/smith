@@ -7,17 +7,17 @@
 // tests/make_test.smith. The text here is the translation before `smith fmt` has laid it out.
 module make_translate_test;
 
-import smith::arena;
-import smith::format;
-import smith::io;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::format;
+import std::io;
+import std::mem;
+import std::test;
 import scratch;
 import <smith_core.h>;
 import <string.h>;
 
-constexpr usize build_capacity = 1U << 20;
-constexpr usize report_capacity = 1U << 16;
+constexpr Usize build_capacity = 1U << 20;
+constexpr Usize report_capacity = 1U << 16;
 
 typedef struct {
     const char *build;  // the build.c
@@ -41,7 +41,7 @@ static void copy_files(io::Io *io, const char *from, const char *to) {
     test::check_equal(made.code, 0);
     io::FileList list = io::files_list(&io->files, &io->arena, from);
     test::check_equal(list.error.code, 0);
-    for (usize i = 0; i < list.count; i++) {
+    for (Usize i = 0; i < list.count; i++) {
         if (!list.entries[i].folder)
             copy_file(io, join(io, from, list.entries[i].name), join(io, to, list.entries[i].name));
     }
@@ -58,7 +58,7 @@ static const char *project_named(io::Io *io, const char *name, const char *fixtu
         format::push(&io->arena, io::args_env(&io->args, "SMITH_REPO"), "/tests/build_fixtures/", fixture).data;
     copy_files(io, from, folder);
     io::FileList list = io::files_list(&io->files, &io->arena, from);
-    for (usize i = 0; i < list.count; i++) {
+    for (Usize i = 0; i < list.count; i++) {
         if (list.entries[i].folder)
             copy_files(io, join(io, from, list.entries[i].name), join(io, folder, list.entries[i].name));
     }
@@ -74,11 +74,11 @@ static void write(io::Io *io, const char *folder, const char *name, const char *
     const char *path = join(io, folder, name);
     const char *slash = c::strrchr(path, '/');
     char *parent = arena::push_slice(&io->arena, char, c::strlen(path) + 1).data;
-    mem::copy(parent[0:(usize)(slash - path)], path[0:(usize)(slash - path)]);
+    mem::copy(parent[0:(Usize)(slash - path)], path[0:(Usize)(slash - path)]);
     parent[slash - path] = '\0';
     io::Error made = io::files_make_folder(&io->files, parent);
     test::check_equal(made.code, 0);
-    const u8 *bytes = (const u8 *)text;
+    const U8 *bytes = (const U8 *)text;
     io::Error written = io::files_write(&io->files, path, bytes[0:c::strlen(text)], io::Replace);
     test::check_equal(written.code, 0);
 }
@@ -91,7 +91,7 @@ static void main_c(io::Io *io, const char *folder) {
 static Translation translate(io::Io *io, const char *folder) {
     char *build = arena::push_slice(&io->arena, char, build_capacity).data;
     char *report = arena::push_slice(&io->arena, char, report_capacity).data;
-    bool done = c::smith_core_make_translate(folder, nullptr, build, build_capacity, report, report_capacity);
+    Bool done = c::smith_core_make_translate(folder, nullptr, build, build_capacity, report, report_capacity);
     test::check_equal(done, true);
     return (Translation){.build = build, .report = report};
 }
@@ -111,8 +111,8 @@ typedef struct {
     const char *value;
 } Define;
 
-static void defines(io::Io *io, const char *label, const Translation *t, const Define *table, usize count) {
-    for (usize i = 0; i < count; i++) {
+static void defines(io::Io *io, const char *label, const Translation *t, const Define *table, Usize count) {
+    for (Usize i = 0; i < count; i++) {
         const char *flag = format::push(&io->arena, "\"-D", table[i].name, "=\\\"", table[i].value, "\\\"\"").data;
         scratch::expect_contains(format::push(&io->arena, label, ": ", table[i].name).data, t->build, flag);
     }
@@ -336,13 +336,13 @@ export void test_which_makefile(io::Io *io) {
 // statics.
 export void test_a_makefile_too_big_for_one_function(io::Io *io) {
     const char *folder = project(io, nullptr);
-    for (i32 i = 1; i <= 45; i++) {
+    for (I32 i = 1; i <= 45; i++) {
         write(io, folder, format::push(&io->arena, "src", i, ".dat").data, "");
     }
     char *makefile = arena::push_slice(&io->arena, char, 1U << 16).data;
-    usize used = (usize)__builtin_snprintf(makefile, 1U << 16, "DATA := $(sort $(wildcard src*.dat))\nPREFIX ?= out\n");
-    for (i32 i = 1; i <= 30; i++) {
-        used += (usize)__builtin_snprintf(makefile + used, (1U << 16) - used,
+    Usize used = (Usize)__builtin_snprintf(makefile, 1U << 16, "DATA := $(sort $(wildcard src*.dat))\nPREFIX ?= out\n");
+    for (I32 i = 1; i <= 30; i++) {
+        used += (Usize)__builtin_snprintf(makefile + used, (1U << 16) - used,
                                           "step%d: $(DATA)\n\t@touch $(PREFIX)%d.txt $(DATA)\n", i, i);
     }
     __builtin_snprintf(makefile + used, (1U << 16) - used, ".PHONY: all\nall: step1 step30\n");

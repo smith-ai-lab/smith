@@ -1,44 +1,44 @@
-import smith::arena;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::mem;
+import std::test;
 
 // The checked allocator around each test (mem::checked, issue #239). Sites are found by their text: keep the comments
 // `// leak site`, `// first free` and `// second free` on their lines.
 
 void test_checked_1_clean(void) {
-    i32 *one = mem::alloc(i32);
-    f32 grid[:][:] = mem::alloc_slice(f32, 3, 4);
+    I32 *one = mem::alloc(I32);
+    F32 grid[:][:] = mem::alloc_slice(F32, 3, 4);
     *one = 7;
     mem::free(grid.data);
     mem::free(one);
 }
 
 void test_checked_2_leaks(void) {
-    i32 *kept = mem::alloc(i32); // leak site
+    I32 *kept = mem::alloc(I32); // leak site
     *kept = 1;
 }
 
 void test_checked_3_double_free(void) {
-    i32 *one = mem::alloc(i32);
+    I32 *one = mem::alloc(I32);
     mem::free(one); // first free
     mem::free(one); // second free
 }
 
 void test_checked_4_foreign_free(void) {
-    i32 on_the_stack = 0;
+    I32 on_the_stack = 0;
     mem::Allocator *allocator = mem::allocator();
     test::check_not_equal(allocator, nullptr);
     allocator->free(allocator, &on_the_stack); // foreign free
 }
 
 void test_checked_5_use_after_free(void) {
-    volatile i32 *one = mem::alloc(i32);
+    volatile I32 *one = mem::alloc(I32);
     mem::free((void *)one);
     *one = 3; // use after free
 }
 
 void test_checked_6_overflow(void) {
-    volatile u8 *four = mem::alloc_raw(4, 1);
+    volatile U8 *four = mem::alloc_raw(4, 1);
     four[4] = 1; // overflow
     mem::free((void *)four);
 }

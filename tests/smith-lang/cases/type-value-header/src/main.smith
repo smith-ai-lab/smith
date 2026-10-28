@@ -3,15 +3,15 @@ module main;
 import <stdio.h>;
 import geo::units;
 
-extern i32 user(void); // C names the same aliases (user.c)
+extern I32 user(void); // C names the same aliases (user.c)
 
-i32 main() {
+I32 main() {
     units::Meters m = units::add(1.5, 2.5);
     units::Handler h = units::handler();
     units::Block b = {1, 2};
     units::Request r = {7};
     units::Pointers p = {&r};
     units::Feet f = 0.5f;
-    c::printf("%g %d %d %d %g\n", m, h(&r), b[1], p[0]->id, (f64)f);
+    c::printf("%g %d %d %d %g\n", m, h(&r), b[1], p[0]->id, (F64)f);
     return user();
 }

@@ -32,7 +32,7 @@ size_t text_total(text_str xs) __asm__("_text::total");
 
 text_str text_first_word(text_str xs) __asm__("_text::first_word");
 
-bool text_pop(text_str *p) __asm__("_text::pop");
+Bool text_pop(text_str *p) __asm__("_text::pop");
 #ifdef __cplusplus
 }
 #endif

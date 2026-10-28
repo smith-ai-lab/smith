@@ -6,38 +6,38 @@ import <stdio.h>;
 /// Read once at start.
 export typedef struct {
     /// Port to listen on.
-    u16 port;
-    u16 backlog; // a plain comment is no doc comment
+    U16 port;
+    U16 backlog; // a plain comment is no doc comment
     /* neither is this */
-    u8 flag;
+    U8 flag;
     /** a
      * b */
-    i32 level;
+    I32 level;
     /// Say "hi" \ then
     ///   indented
-    i32 quote;
+    I32 quote;
 } Options;
 
 /** The pair. */
 typedef struct {
-    i32 a;
+    I32 a;
 } Pair;
 
 typedef struct {
-    i32 undocumented;
+    I32 undocumented;
 } Plain;
 
-export void show(constexpr type T) {
+export void show(constexpr Type T) {
     c::printf("[%s]\n", doc(T));
-    for constexpr (usize i = 0; i < countof(fields(T)); i++) {
+    for constexpr (Usize i = 0; i < countof(fields(T)); i++) {
         c::printf("%s: [%s]\n", fields(T)[i].name, fields(T)[i].doc);
     }
 }
 
-void value(constexpr type T) {
-    for constexpr (usize i = 0; i < countof(fields(T)); i++) {
+void value(constexpr Type T) {
+    for constexpr (Usize i = 0; i < countof(fields(T)); i++) {
         constexpr Field f = fields(T)[i];
-        c::printf("%.*s=[%.*s] %zu\n", (i32)countof(f.name), f.name.data, (i32)countof(f.doc), f.doc.data, countof(f.doc));
+        c::printf("%.*s=[%.*s] %zu\n", (I32)countof(f.name), f.name.data, (I32)countof(f.doc), f.doc.data, countof(f.doc));
     }
 }
 
@@ -53,7 +53,7 @@ export typedef enum {
 // The variants of an enum with payloads are listed too, with the doc above each.
 export typedef enum {
     /// A circle.
-    f32 round;
+    F32 round;
     /// Nothing.
     none;
     plain; // no doc

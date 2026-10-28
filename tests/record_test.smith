@@ -5,9 +5,9 @@
 // and ops.c). Nothing here is specific to smith.
 module record_test;
 
-import smith::format;
-import smith::io;
-import smith::test;
+import std::format;
+import std::io;
+import std::test;
 import scratch;
 
 // A repository of the fixture, committed on main. SMITH_OUTPUT=full for the messages of the nested smith.

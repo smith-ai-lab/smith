@@ -1,32 +1,32 @@
 ---
 name: smith-ascii
-description: "Using smith::ascii (import smith::ascii; ascii::space, digit, alpha): tests of one character, ASCII only and no locale, in place of isspace, isdigit and isalpha. Load when code imports smith::ascii, on classifying a char in .smith, or on a trim, a split or a token loop."
+description: "Using std::ascii (import std::ascii; ascii::space, digit, alpha): tests of one character, ASCII only and no locale, in place of isspace, isdigit and isalpha. Load when code imports std::ascii, on classifying a char in .smith, or on a trim, a split or a token loop."
 ---
 
 # Tests of one character: smith's ascii
 
 This skill ships in the smith plugin, from `.agents/skills/smith-ascii/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there.
 
-`smith::ascii` (`lib/smith/ascii.smith`) holds three functions of a `char`, each answering the same on every machine because none reads the locale: `ascii::space(c)` (a space, tab, newline or carriage return), `ascii::digit(c)` (`0` to `9`) and `ascii::alpha(c)` (`a` to `z`, `A` to `Z`). They replace `isspace`, `isdigit` and `isalpha`, which are macros in some libcs, take an `int` and depend on the locale.
+`std::ascii` (`lib/std/ascii.smith`) holds three functions of a `char`, each answering the same on every machine because none reads the locale: `ascii::space(c)` (a space, tab, newline or carriage return), `ascii::digit(c)` (`0` to `9`) and `ascii::alpha(c)` (`a` to `z`, `A` to `Z`). They replace `isspace`, `isdigit` and `isalpha`, which are macros in some libcs, take an `int` and depend on the locale.
 
 ```smith
 module words;
 
-import smith::ascii;
+import std::ascii;
 
 // How many runs of letters a text holds.
-export usize word_count(const char text[:]) {
-    usize words = 0;
-    bool inside = false;
+export Usize word_count(const char text[:]) {
+    Usize words = 0;
+    Bool inside = false;
     for (char c : text) {
-        bool letter = ascii::alpha(c);
+        Bool letter = ascii::alpha(c);
         if (letter && !inside) words += 1;
         inside = letter;
     }
     return words;
 }
 
-export bool blank(const char text[:]) {
+export Bool blank(const char text[:]) {
     for (char c : text) {
         if (!ascii::space(c)) return false;
     }

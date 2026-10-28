@@ -1020,7 +1020,7 @@ static int smith_prove(int argc, char **argv, const char *self) {
 // The build program's header and runtime travel inside smith, so `smith build` needs nothing installed beside it and
 // `cc -std=gnu23 smith.c -o smith` still builds all of smith.
 static constexpr unsigned char smith_build_source[] = {
-#embed "lib/smith/build.smith"
+#embed "lib/std/build.smith"
 };
 static constexpr unsigned char smith_build_runtime[] = {
 #embed "runtime/build_runtime.c"
@@ -1043,25 +1043,25 @@ static constexpr unsigned char smith_build_untar[] = {
 // finds the source with smith_library and the compiles find the header through -I .smith/include.
 //
 // The registry. A library is its header and its source. A C library (lib/<name>.c, written to .smith/lib/<name>.c) has
-// a hand-written header, include/smith/<name>.h, embedded. A .smith module (lib/smith/<name>.smith, written to
-// .smith/lib/smith/<name>.smith, where the module smith::<name> lives at its path) has no header in git: smith embeds
+// a hand-written header, include/smith/<name>.h, embedded. A .smith module (lib/std/<name>.smith, written to
+// .smith/lib/std/<name>.smith, where the module smith::<name> lives at its path) has no header in git: smith embeds
 // the source, and this binary writes the header from it (`smith cc --smith-header`, smith_write_lang_headers), so the
 // program that reads a header is the one that wrote it. Porting a library is one change in each of two places below:
 // its source's #embed path, and the `false` of its row in smith_libraries.
 static constexpr unsigned char smith_arena_source[] = {
-#embed "lib/smith/arena.smith"
+#embed "lib/std/arena.smith"
 };
 
 static constexpr unsigned char smith_contract_source[] = {
-#embed "lib/smith/contract.smith"
+#embed "lib/std/contract.smith"
 };
 
 static constexpr unsigned char smith_inflate_source[] = {
-#embed "lib/smith/inflate.smith"
+#embed "lib/std/inflate.smith"
 };
 
 static constexpr unsigned char smith_io_source[] = {
-#embed "lib/smith/io.smith"
+#embed "lib/std/io.smith"
 };
 
 static constexpr unsigned char smith_json_header[] = {
@@ -1072,62 +1072,62 @@ static constexpr unsigned char smith_json_source[] = {
 };
 
 static constexpr unsigned char smith_process_source[] = {
-#embed "lib/smith/process.smith"
+#embed "lib/std/process.smith"
 };
 static constexpr unsigned char smith_random_source[] = {
-#embed "lib/smith/random.smith"
+#embed "lib/std/random.smith"
 };
 
 static constexpr unsigned char smith_text_source[] = {
-#embed "lib/smith/text.smith"
+#embed "lib/std/text.smith"
 };
 // The HTTPS client is smith's own for now, not a library a build.c can ask for: it goes to .smith/include/smith/ and
 // .smith/internal/, where the runtime's package.c finds it, and not to .smith/lib/ (which smith_library lists).
 static constexpr unsigned char smith_autodiff_source[] = {
-#embed "lib/smith/autodiff.smith"
+#embed "lib/std/autodiff.smith"
 };
 static constexpr unsigned char smith_effects_source[] = {
-#embed "lib/smith/effects.smith"
+#embed "lib/std/effects.smith"
 };
 static constexpr unsigned char smith_failing_source[] = {
-#embed "lib/smith/failing.smith"
+#embed "lib/std/failing.smith"
 };
 static constexpr unsigned char smith_files_source[] = {
-#embed "lib/smith/files.smith"
+#embed "lib/std/files.smith"
 };
 static constexpr unsigned char smith_format_source[] = {
-#embed "lib/smith/format.smith"
+#embed "lib/std/format.smith"
 };
 static constexpr unsigned char smith_clock_source[] = {
-#embed "lib/smith/clock.smith"
+#embed "lib/std/clock.smith"
 };
 static constexpr unsigned char smith_console_source[] = {
-#embed "lib/smith/console.smith"
+#embed "lib/std/console.smith"
 };
 static constexpr unsigned char smith_entropy_source[] = {
-#embed "lib/smith/entropy.smith"
+#embed "lib/std/entropy.smith"
 };
 static constexpr unsigned char smith_env_source[] = {
-#embed "lib/smith/env.smith"
+#embed "lib/std/env.smith"
 };
 static constexpr unsigned char smith_math_source[] = {
-#embed "lib/smith/math.smith"
+#embed "lib/std/math.smith"
 };
 static constexpr unsigned char smith_mem_source[] = {
-#embed "lib/smith/mem.smith"
+#embed "lib/std/mem.smith"
 };
 static constexpr unsigned char smith_net_source[] = {
-#embed "lib/smith/net.smith"
+#embed "lib/std/net.smith"
 };
 
 static constexpr unsigned char smith_ascii_source[] = {
-#embed "lib/smith/ascii.smith"
+#embed "lib/std/ascii.smith"
 };
 static constexpr unsigned char smith_categorical_source[] = {
-#embed "lib/smith/categorical.smith"
+#embed "lib/std/categorical.smith"
 };
 static constexpr unsigned char smith_slice_source[] = {
-#embed "lib/smith/slice.smith"
+#embed "lib/std/slice.smith"
 };
 
 static constexpr unsigned char smith_handlers_header[] = {
@@ -1144,7 +1144,7 @@ static constexpr unsigned char smith_embedded_http_source[] = {
 #embed "lib/http.c"
 };
 static constexpr unsigned char smith_test_source[] = {
-#embed "lib/smith/test.smith"
+#embed "lib/std/test.smith"
 };
 
 static constexpr unsigned char smith_trace_header[] = {
@@ -1488,7 +1488,7 @@ static size_t smith_build_program_manifest(char *out, size_t capacity, const cha
         const char *name = smith_build_program_libraries[i];
         const char *flags = strcmp(name, "random") == 0 ? "-ffp-contract=off" : "";
         int line = snprintf(out + written, capacity - (size_t)written,
-                            "build .smith/build-program/%s.o: cc_smith .smith/lib/smith/%s.smith\n  flags = %s\n", name,
+                            "build .smith/build-program/%s.o: cc_smith .smith/lib/std/%s.smith\n  flags = %s\n", name,
                             name, flags);
         SMITH_ASSERT(line > 0 && (size_t)line < capacity - (size_t)written);
         written += line;
@@ -1784,7 +1784,7 @@ static void smith_write_lang_headers(const char *self) {
 }
 
 // Writes each library's header to .smith/include/smith/<name>.h and its source to .smith/lib/<name>.c, or for a .smith
-// module to .smith/lib/smith/<name>.smith (removing a <name>.c an older smith left, which smith_library would find
+// module to .smith/lib/std/<name>.smith (removing a <name>.c an older smith left, which smith_library would find
 // first).
 static void smith_build_write_libraries(void) {
     for (size_t i = 0; i < sizeof smith_libraries / sizeof smith_libraries[0]; i++) {
@@ -1797,7 +1797,7 @@ static void smith_build_write_libraries(void) {
             written = snprintf(path, sizeof path, ".smith/lib/%s.c", library->name);
             SMITH_ASSERT(written > 0 && (size_t)written < sizeof path);
             unlink(path);
-            written = snprintf(path, sizeof path, ".smith/lib/smith/%s.smith", library->name);
+            written = snprintf(path, sizeof path, ".smith/lib/std/%s.smith", library->name);
         } else {
             written = snprintf(path, sizeof path, ".smith/lib/%s.c", library->name);
         }
@@ -1822,7 +1822,7 @@ static void smith_write_embedded_headers(const char *self) {
     smith_make_folder(".smith/include");
     smith_make_folder(".smith/include/smith");
     smith_make_folder(".smith/lib");
-    smith_make_folder(".smith/lib/smith");
+    smith_make_folder(".smith/lib/std");
     smith_make_folder(".smith/internal");
     smith_make_folder(".smith/internal/smith");
     smith_write_if_changed(".smith/.gitignore", (const unsigned char *)"*\n", 2);
@@ -1836,7 +1836,7 @@ static void smith_build_prepare(const char *self, const char *clang, bool in_pro
     smith_make_folder(".smith/include");
     smith_make_folder(".smith/include/smith");
     smith_make_folder(".smith/lib");
-    smith_make_folder(".smith/lib/smith");
+    smith_make_folder(".smith/lib/std");
     smith_make_folder(".smith/internal");
     smith_make_folder(".smith/build-program");
     static char manifest[smith_build_manifest_max];

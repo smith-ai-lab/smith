@@ -2,6 +2,6 @@ main.smith:13:24: `const char *` is not `arithmetic`: the initializer of `local`
 main.smith:14:16: `char *` is not `arithmetic`: the elements of `ns` have that type
 main.smith:15:18: `const char *` is not `arithmetic`
 main.smith:16:18: `enum Colour` is not `arithmetic`
-main.smith:17:17: `f32` is not `integer`: the pointee of `&real` has that type
-main.smith:18:18: `real`, the argument of `count`, has the type `f32`, but the parameter `xs` is a slice (`auto xs[:]`); pass a slice (`xs[0:n]` makes one of an array)
-main.smith:19:22: `f32` is not `pointer`
+main.smith:17:17: `F32` is not `integer`: the pointee of `&real` has that type
+main.smith:18:18: `real`, the argument of `count`, has the type `F32`, but the parameter `xs` is a slice (`auto xs[:]`); pass a slice (`xs[0:n]` makes one of an array)
+main.smith:19:22: `F32` is not `pointer`

@@ -4,15 +4,15 @@ import arguments;
 import <stdio.h>;
 
 int main() {
-    i32 a = arguments::total(1, 2, 3);
-    i32 b = arguments::total();
-    i32 c = arguments::total((u8)200, (i64)5, 2.5);
-    i32 d = arguments::weighted(10, 20);
-    i32 e = arguments::spread(5, 6);
-    i32 f = arguments::spread(5);
-    i32 g = arguments::shapes(1, 2);
-    i32 h = arguments::shapes();
-    i32 k = arguments::mixed(1, (u16)2, 2.5);
+    I32 a = arguments::total(1, 2, 3);
+    I32 b = arguments::total();
+    I32 c = arguments::total((U8)200, (I64)5, 2.5);
+    I32 d = arguments::weighted(10, 20);
+    I32 e = arguments::spread(5, 6);
+    I32 f = arguments::spread(5);
+    I32 g = arguments::shapes(1, 2);
+    I32 h = arguments::shapes();
+    I32 k = arguments::mixed(1, (U16)2, 2.5);
     c::printf("%d %d %d | %d | %d %d | %d %d | %d\n", a, b, c, d, e, f, g, h, k);
     return 0;
 }

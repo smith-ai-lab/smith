@@ -8,9 +8,9 @@
 // tests/build_fixtures/effects_check/expected/*.txt. The editor's case is in tests/lsp_test.smith.
 module effects_check_test;
 
-import smith::format;
-import smith::io;
-import smith::test;
+import std::format;
+import std::io;
+import std::test;
 import <string.h>;
 import scratch;
 

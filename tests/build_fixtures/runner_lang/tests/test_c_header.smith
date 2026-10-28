@@ -2,6 +2,6 @@ import <smith/test.h>;
 
 // The C header of the library imported as a C header: the names under c:: and the C spelling of the key are found too.
 void test_c_header_key(c::SmithKey key) {
-    u64 seed = key.bits;
+    U64 seed = key.bits;
     c::smith_check_equal_u64(c::smith_key_bits(c::smith_key_make(seed)), c::smith_key_bits(c::smith_key_make(seed)));
 }

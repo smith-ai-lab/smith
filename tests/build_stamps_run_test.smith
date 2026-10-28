@@ -2,11 +2,11 @@
 // (smith_run_combined) and 9s (a failed .run step names itself; what a .run step read reruns it).
 module build_stamps_run_test;
 
-import smith::io;
-import smith::test;
+import std::io;
+import std::test;
 import scratch;
 
-static const char *yes_no(bool value) {
+static const char *yes_no(Bool value) {
     return value ? "yes" : "no";
 }
 

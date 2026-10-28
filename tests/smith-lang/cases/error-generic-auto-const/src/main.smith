@@ -2,9 +2,9 @@ module main;
 
 import stats;
 
-i32 main() {
-    i32 raw[3] = {1, 2, 3};
-    i32 xs[:] = raw;
+I32 main() {
+    I32 raw[3] = {1, 2, 3};
+    I32 xs[:] = raw;
     stats::clear(xs);
     return 0;
 }

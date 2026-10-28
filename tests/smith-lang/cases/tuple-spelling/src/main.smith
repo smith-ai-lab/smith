@@ -3,22 +3,22 @@
 import <stdint.h>;
 import <stdio.h>;
 
-typedef f64 Meters;
+typedef F64 Meters;
 
-i32 take(struct { i32, f32 } t) {
+I32 take(struct { I32, F32 } t) {
     return t[0];
 }
 
-i32 main() {
-    struct { i32, f32 } a = {1, 2.0f};
+I32 main() {
+    struct { I32, F32 } a = {1, 2.0f};
     struct { c::int32_t, float } b = a;
     struct { int, float } c = b;
-    struct { signed, f32 } d = c;
-    struct { i64, u64, usize } e = {1, 2, 3};
+    struct { signed, F32 } d = c;
+    struct { I64, U64, Usize } e = {1, 2, 3};
     struct { long long, unsigned long long, c::size_t } f = e;
-    struct { const char *, i8 } g = {"x", 1};
+    struct { const char *, I8 } g = {"x", 1};
     struct { const char *, c::int8_t } h = g;
-    struct { Meters, f32 } m = {1.0, 2.0f};
+    struct { Meters, F32 } m = {1.0, 2.0f};
     c::printf("%d %d %d\n", take(d), take(c), take(b));
     c::printf("%lld %llu %zu %s %d %f\n", f[0], f[1], f[2], h[0], h[1], m[0]);
     return 0;

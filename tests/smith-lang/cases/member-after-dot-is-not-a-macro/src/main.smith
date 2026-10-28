@@ -2,7 +2,7 @@ import "lens.h";
 #include <stdio.h>
 
 typedef struct {
-    i32 vector_length;
+    I32 vector_length;
 } Lens;
 
 int main() {

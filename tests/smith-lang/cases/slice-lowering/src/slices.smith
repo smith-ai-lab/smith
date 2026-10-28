@@ -4,21 +4,21 @@ module slices;
 // defined where it is written, once in the header, and the same shape is one type.
 
 export typedef struct {
-    f32 weights[:];
+    F32 weights[:];
     char name[:];
 } Layer;
 
-export typedef i32 Numbers[:];
+export typedef I32 Numbers[:];
 
-export usize total(i32 xs[:], usize skip) {
-    usize sum = 0;
-    for (usize i = skip; i < countof(xs); i++) {
-        sum += (usize)xs[i];
+export Usize total(I32 xs[:], Usize skip) {
+    Usize sum = 0;
+    for (Usize i = skip; i < countof(xs); i++) {
+        sum += (Usize)xs[i];
     }
     return sum;
 }
 
-export typeof(i32[:]) middle(i32 xs[:]) {
+export typeof(I32[:]) middle(I32 xs[:]) {
     return xs[1:countof(xs) - 1];
 }
 

@@ -40,14 +40,14 @@ void build(SmithBuild *b) {
   includes by its header's name is not compiled, an include of a `.c` file (a unity build) is read and not compiled
   again, and a C file that includes a `.smith` module's header does not make that module part of the program. A project
   with such a file writes a build file, or renames to `.smith`.
-- **smith's libraries** need no declaration: `import smith::text;` or `import smith::io;` (`#include <smith/io.h>` in C)
+- **smith's libraries** need no declaration: `import std::text;` or `import std::io;` (`#include <smith/io.h>` in C)
   compiles the library with the profile's flags and links it, and so does what it needs (io needs the arena
   and random: its header and source are scanned the same way). `<smith/test.h>` needs no mention; `smith_tests` builds the test library.
   The same resolver serves `smith_library`: `smith_program` links, beside the objects it is given, the libraries that
   the libraries among them need (found by scanning their header and source, `smith_library_needs`), so naming
   `smith_library(b, "contract")` is enough (trace comes with it) and so is `"io"` (arena and random; arena brings contract, math and trace).
   **A library may declare compile flags** (`SMITH_LIBRARY_FLAGS` in smith.c: `-ffp-contract=off` for random): smith
-  writes them beside the source (`.smith/lib/smith/random.flags`, one flag a line), and every compile of that source
+  writes them beside the source (`.smith/lib/std/random.flags`, one flag a line), and every compile of that source
   (`smith_object`, `smith_compile_command` for the compile database) adds them after the project's own flags, so a
   project that compiles the library through `smith_library` with its own flags still gets them. A needed library
   is the object the project made of that source (any `smith_object` of it), else one compiled with the flags and

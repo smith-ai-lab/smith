@@ -1,6 +1,6 @@
 // The libraries json, text and inflate in the builds the units runner does not make, from tests/json.sh, tests/text.sh
-// and tests/inflate.sh (issue #292). Their tests (lib/json_test.smith, lib/smith/text_test.smith,
-// lib/smith/inflate_test.smith) run on smith's own runner under AddressSanitizer and UBSan; here each is built as a
+// and tests/inflate.sh (issue #292). Their tests (lib/json_test.smith, lib/std/text_test.smith,
+// lib/std/inflate_test.smith) run on smith's own runner under AddressSanitizer and UBSan; here each is built as a
 // scratch project's tests with smith_tests (the fixture tests/build_fixtures/library_units, whose -DMODE is fast, -O2,
 // or ndebug, -O2 -DNDEBUG) and must pass in the runner's workers and with a process per test (--isolate). Also the
 // heavy runs on more keys under the sanitizers, JSONTestSuite (fetched into $SMITH_JSON_SUITE_CACHE, else
@@ -8,9 +8,9 @@
 // library compiled alone under the warnings of a new project and naming no libc function.
 module library_modes_test;
 
-import smith::format;
-import smith::io;
-import smith::test;
+import std::format;
+import std::io;
+import std::test;
 import scratch;
 
 // What a library is: where its test file is in the repository and in the project, and its libraries.
@@ -18,12 +18,12 @@ typedef struct {
     const char *source; // the test file in the repository
     const char *path;   // where the project holds it (the module's path must end in it)
     const char *libs;   // comma separated
-    bool fixtures;      // tests/fixtures is copied to the project
+    Bool fixtures;      // tests/fixtures is copied to the project
 } Library;
 
 static const Library json = {"lib/json_test.smith", "json_test.smith", "arena,random,text,json", false};
-static const Library text = {"lib/smith/text_test.smith", "smith/text_test.smith", "arena,random,text", false};
-static const Library inflate = {"lib/smith/inflate_test.smith", "smith/inflate_test.smith", "arena,random,inflate",
+static const Library text = {"lib/std/text_test.smith", "smith/text_test.smith", "arena,random,text", false};
+static const Library inflate = {"lib/std/inflate_test.smith", "smith/inflate_test.smith", "arena,random,inflate",
                                 true};
 
 static scratch::Project units_project(io::Io *io, const Library *library) {
@@ -149,7 +149,7 @@ export void test_library_modes_inflate_damaged_input_never_misbehaves(io::Io *io
     scratch::Run built = build_mode(&p, &inflate, "asan");
     scratch::expect_status("the tests build", 0, &built);
     const char *seeds[5] = {"1", "2", "3", "4", "5"};
-    for (usize i = 0; i < 5; i++) {
+    for (Usize i = 0; i < 5; i++) {
         scratch::expect_text(format::push(&io->arena, "damaged input never misbehaves (--seed ", seeds[i], ")").data,
                              "1 passed, 0 failed",
                              summary(&p, format::push(&io->arena, "./build/tests --seed ", seeds[i],
@@ -159,7 +159,7 @@ export void test_library_modes_inflate_damaged_input_never_misbehaves(io::Io *io
 }
 
 // One header for C and for .smith: a project with smith_library(b, "text"), a C file that includes <smith/text.h> and
-// a .smith file that does `import smith::text;`. smith writes the header and the module's header step writes the same
+// a .smith file that does `import std::text;`. smith writes the header and the module's header step writes the same
 // bytes, so neither is "not a header smith wrote" and a second build has nothing to do.
 export void test_library_modes_text_c_and_smith_share_one_header(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", "text_both");
@@ -215,15 +215,15 @@ export void test_library_modes_json_names_no_libc_function(io::Io *io) {
 }
 
 export void test_library_modes_text_compiles_as_c23(io::Io *io) {
-    compiles_as(io, "lib/smith/text.smith", "gnu23");
+    compiles_as(io, "lib/std/text.smith", "gnu23");
 }
 
 export void test_library_modes_text_compiles_as_c2y(io::Io *io) {
-    compiles_as(io, "lib/smith/text.smith", "gnu2y");
+    compiles_as(io, "lib/std/text.smith", "gnu2y");
 }
 
 export void test_library_modes_text_names_no_libc_function(io::Io *io) {
-    names_no_libc_function(io, "lib/smith/text.smith", "-e _memcpy -e _memset -e _bzero -e _memmove -e '_smith_.*'");
+    names_no_libc_function(io, "lib/std/text.smith", "-e _memcpy -e _memset -e _bzero -e _memmove -e '_smith_.*'");
 }
 
 // lib/http.c compiled under the warnings of a new project (its behavior is lib/http_test.smith), from tests/http.sh.

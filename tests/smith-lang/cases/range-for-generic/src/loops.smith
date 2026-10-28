@@ -1,29 +1,29 @@
 module loops;
 
-// In a generic's body `xs` has the type of each instance; the loop is the same for a slice of i32 and of f64. The
+// In a generic's body `xs` has the type of each instance; the loop is the same for a slice of I32 and of F64. The
 // element is named by `auto`, or by a concept that the instance's element must be.
-export f64 sum(auto xs) {
-    f64 total = 0;
+export F64 sum(auto xs) {
+    F64 total = 0;
     for (auto x : xs) {
-        total += (f64)x;
+        total += (F64)x;
     }
     return total;
 }
 
-export i32 weighted(auto xs) {
-    i32 total = 0;
-    for (usize i, arithmetic x : xs) {
-        total += (i32)x * (i32)i;
+export I32 weighted(auto xs) {
+    I32 total = 0;
+    for (Usize i, Num x : xs) {
+        total += (I32)x * (I32)i;
     }
     return total;
 }
 
-export i32 scaled_total(auto xs, i32 scale) {
-    i32 total = 0;
+export I32 scaled_total(auto xs, I32 scale) {
+    I32 total = 0;
     for (auto x : xs) {
         defer total += 1;
         if (x == 2) continue;
-        total += (i32)x * scale;
+        total += (I32)x * scale;
     }
     return total;
 }

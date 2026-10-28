@@ -3,12 +3,12 @@ module conv;
 // Dropping `const` in an initializer or an assignment stays an error inside a generic's body, with the message an
 // ordinary function gets.
 
-export usize init(auto xs) {
-    u8 v[:] = xs;
+export Usize init(auto xs) {
+    U8 v[:] = xs;
     return countof(v);
 }
 
-export usize assign(auto xs, auto ys) {
+export Usize assign(auto xs, auto ys) {
     xs = ys;
     return countof(xs);
 }

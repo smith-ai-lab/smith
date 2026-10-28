@@ -8,8 +8,8 @@ tags: [build, executor]
 
 `smith build` runs the manifest itself: no ninja is installed or run. The code is `runtime/executor.c` and the five files
 it includes (`executor_manifest.c`, `executor_state.c`, `executor_plan.c`, `executor_run.c`, `executor_tools.c`), which
-`smith.c` includes; it stands on the `io` module, compiled from `lib/smith/io.smith` and linked. It uses
-`smith::io` (`<smith/io.h>`, on kqueue on macOS and epoll on Linux): the manifest and the graph live in `io.arena`, the
+`smith.c` includes; it stands on the `io` module, compiled from `lib/std/io.smith` and linked. It uses
+`std::io` (`<smith/io.h>`, on kqueue on macOS and epoll on Linux): the manifest and the graph live in `io.arena`, the
 files are read and written through `io.files`, and one event loop waits for every job's process and pipe.
 
 ## Who runs the graph

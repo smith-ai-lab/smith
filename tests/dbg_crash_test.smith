@@ -5,14 +5,14 @@
 // may not debug, has nothing to test, and the tests do nothing. The C program is tests/build_fixtures/dbg_crash/prog.c.
 module dbg_crash_test;
 
-import smith::format;
-import smith::io;
-import smith::test;
+import std::format;
+import std::io;
+import std::test;
 import scratch;
 import target;
 
 // The folder with prog.c built plain and under AddressSanitizer. False when this smith cannot debug here.
-static bool make(io::Io *io, scratch::Project *p) {
+static Bool make(io::Io *io, scratch::Project *p) {
     *p = scratch::project(io, "dbg", "dbg_crash");
     scratch::Run usable = scratch::sh(
         p, "[ \"$(smith cc --smith-which -c a.c | head -n 1 | cut -d ' ' -f 1,2)\" = 'clang in-process' ] && "
@@ -138,7 +138,7 @@ export void test_dbg_at_the_locals_at_a_line(io::Io *io) {
 }
 
 // 6. A .smith program, in the project smith new writes: a slice out of range and a failed contract in debug.
-static bool make_smith_app(io::Io *io, scratch::Project *p) {
+static Bool make_smith_app(io::Io *io, scratch::Project *p) {
     if (!make(io, p)) {
         return false;
     }

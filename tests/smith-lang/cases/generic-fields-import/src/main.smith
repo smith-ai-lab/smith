@@ -3,12 +3,12 @@ module main;
 import lib;
 
 typedef struct {
-    i32 id;
-    f32 weight;
-    u8 flag;
+    I32 id;
+    F32 weight;
+    U8 flag;
 } Sample;
 
-i32 main() {
+I32 main() {
     Sample s = {1, 2.5f, 4};
     lib::show(Sample, &s);
     return 0;

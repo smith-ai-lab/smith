@@ -7,13 +7,13 @@
 //     `import`, and `import <sys/wait.h>;`, `import a::b as x;`, `module a::b;` kept whole.
 module smith_fmt_test;
 
-import smith::arena;
-import smith::format;
-import smith::io;
-import smith::test;
+import std::arena;
+import std::format;
+import std::io;
+import std::test;
 import <string.h>;
 import scratch;
-import smith::mem;
+import std::mem;
 
 static typeof(const char[:]) slice_of(const char *text) {
     return text[0:c::strlen(text)];
@@ -63,7 +63,7 @@ export void test_tuple_types_and_slice_declarators_stay_as_written(io::Io *io) {
 static const char *next_line(io::Io *io, const char **at) {
     if (**at == '\0') return nullptr;
     const char *end = c::strchr(*at, '\n');
-    usize length = end != nullptr ? (usize)(end - *at) : c::strlen(*at);
+    Usize length = end != nullptr ? (Usize)(end - *at) : c::strlen(*at);
     char *copy = arena::push_slice(&io->arena, char, length + 1).data;
     const char *line = *at;
     mem::copy(copy[0:length], line[0:length]);
@@ -76,7 +76,7 @@ static const char *next_line(io::Io *io, const char **at) {
 // of files compared, the first that differs noted. The files (and the .clang-format files among them, so each gets
 // its folder's style) are copied into two folders, c/ as they are and s/ named .smith, and one `smith fmt -i` per
 // folder formats them all, instead of two processes per file.
-static usize same_as_c(io::Io *io, const char *root) {
+static Usize same_as_c(io::Io *io, const char *root) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     if (scratch::sh(&p, format::push(&io->arena, "[ -d \"", root, "\" ]").data).status != 0) return 0; // not there
     scratch::Run copied = scratch::sh(
@@ -94,10 +94,10 @@ static usize same_as_c(io::Io *io, const char *root) {
                 .data);
     scratch::expect_text("the files format without a message", "", copied.out);
     const char *listing = scratch::read(&p, "list");
-    usize same = 0;
-    usize different = 0;
+    Usize same = 0;
+    Usize different = 0;
     for (const char *file = next_line(io, &listing); file != nullptr; file = next_line(io, &listing)) {
-        usize length = c::strlen(file);
+        Usize length = c::strlen(file);
         if (length < 2 || c::strcmp(file + length - 2, ".c") != 0) continue; // a .clang-format
         const char *as_smith = format::push(&io->arena, "s/", file[0:length - 2], ".smith").data;
         const char *text_c = scratch::read(&p, format::push(&io->arena, "c/", file).data);
@@ -108,14 +108,14 @@ static usize same_as_c(io::Io *io, const char *root) {
             test::note("differs as .smith: %s/%s", root, file);
         }
     }
-    test::check_equal(different, (usize)0);
+    test::check_equal(different, (Usize)0);
     return same;
 }
 
 export void test_the_c_files_of_smith_format_the_same_as_c_and_as_smith(io::Io *io) {
-    usize same = same_as_c(io, io::args_env(&io->args, "SMITH_REPO"));
+    Usize same = same_as_c(io, io::args_env(&io->args, "SMITH_REPO"));
     // smith's own files among those checked: in an agent's worktree, under .claude/worktrees, they are not skipped
-    test::check_greater(same, (usize)20);
+    test::check_greater(same, (Usize)20);
 }
 
 export void test_the_c_files_of_game_format_the_same_as_c_and_as_smith(io::Io *io) {
@@ -136,15 +136,15 @@ export void test_the_c_files_of_checkers_format_the_same_as_c_and_as_smith(io::I
 export void test_a_c_name_that_is_a_cpp_keyword_stays_c(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     scratch::expect_text("a C name that is a C++ keyword stays C",
-                         "u32 f(u32 throw, u32 reach) {\n    return throw * reach;\n}",
-                         formatted(&p, "x.smith", "u32 f(u32 throw, u32 reach) {\nreturn throw*reach;\n}\n"));
+                         "U32 f(U32 throw, U32 reach) {\n    return throw * reach;\n}",
+                         formatted(&p, "x.smith", "U32 f(U32 throw, U32 reach) {\nreturn throw*reach;\n}\n"));
 }
 
 export void test_a_statement_that_starts_with_a_type_named_import_is_indented(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     scratch::expect_text("a statement that starts with a type named import is indented",
-                         "u32 f(void) {\n    import value = c.x + c.y;\n    return 1;\n}",
-                         formatted(&p, "x.smith", "u32 f(void) {\nimport value = c.x + c.y;\nreturn 1;\n}\n"));
+                         "U32 f(void) {\n    import value = c.x + c.y;\n    return 1;\n}",
+                         formatted(&p, "x.smith", "U32 f(void) {\nimport value = c.x + c.y;\nreturn 1;\n}\n"));
 }
 
 export void test_import_of_a_header_is_kept_whole(io::Io *io) {
@@ -170,8 +170,8 @@ export void test_paths_with_double_colons_are_kept(io::Io *io) {
 export void test_export_lines_are_laid_out(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     scratch::expect_text(
-        "export lines", "export u32 counter = 7;\nexport u64 checksum(const u8 *data, usize size);",
-        formatted(&p, "x.smith", "export   u32 counter=7;\nexport u64 checksum(const u8*data,usize size);\n"));
+        "export lines", "export U32 counter = 7;\nexport U64 checksum(const U8 *data, Usize size);",
+        formatted(&p, "x.smith", "export   U32 counter=7;\nexport U64 checksum(const U8*data,Usize size);\n"));
 }
 
 export void test_a_name_import_or_module_in_a_function_is_a_name(io::Io *io) {
@@ -184,8 +184,8 @@ export void test_a_name_import_or_module_in_a_function_is_a_name(io::Io *io) {
 export void test_c_files_still_read_import_as_a_name(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     scratch::expect_text(".c files still read import as a name",
-                         "u32 f(void) {\n    import value = 1;\n    return value;\n}",
-                         formatted(&p, "x.c", "u32 f(void) {\nimport value = 1;\nreturn value;\n}\n"));
+                         "U32 f(void) {\n    import value = 1;\n    return value;\n}",
+                         formatted(&p, "x.c", "U32 f(void) {\nimport value = 1;\nreturn value;\n}\n"));
 }
 
 // A file's own header sorts first (patches/smith-format-source-extension.patch): `#include "foo.h"` in foo.smith, as in
@@ -219,14 +219,14 @@ export void test_smith_fmt_with_no_arguments_formats_the_projects_smith_files(io
                         "&& git init -q");
     scratch::expect_status("a project", 0, &made);
     scratch::write(&p, "src/a/b.smith",
-                   "module   a::b ;\nimport <sys/wait.h> ;\nexport u32 f(x::T*p){\nimport value=1;\nreturn c::EOF;}\n");
+                   "module   a::b ;\nimport <sys/wait.h> ;\nexport U32 f(x::T*p){\nimport value=1;\nreturn c::EOF;}\n");
     scratch::Run checked = scratch::sh(&p, "smith fmt --dry-run --Werror src/a/b.smith");
     scratch::expect_failure("the project's .smith file is reported unformatted by clang-format", &checked);
     scratch::Run run = scratch::sh(&p, "smith fmt");
     scratch::expect_status("smith fmt with no arguments", 0, &run);
     scratch::expect_text(
         "smith fmt with no arguments formats the project's .smith files",
-        "module a::b;\nimport <sys/wait.h>;\nexport u32 f(x::T *p) {\n    import value = 1;\n    return c::EOF;\n}",
+        "module a::b;\nimport <sys/wait.h>;\nexport U32 f(x::T *p) {\n    import value = 1;\n    return c::EOF;\n}",
         scratch::read(&p, "src/a/b.smith"));
 }
 

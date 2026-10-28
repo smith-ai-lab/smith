@@ -1,6 +1,6 @@
 typedef struct smith_array_const_char_n {const char * data; __SIZE_TYPE__ count [1]; } pointers_Text;
-bool pointers_take_line(struct smith_array_const_char_n *text,struct smith_array_const_char_n *line) __asm__("_pointers::take_line");
-bool pointers_take_line(struct smith_array_const_char_n *text,struct smith_array_const_char_n *line) {
+Bool pointers_take_line(struct smith_array_const_char_n *text,struct smith_array_const_char_n *line) __asm__("_pointers::take_line");
+Bool pointers_take_line(struct smith_array_const_char_n *text,struct smith_array_const_char_n *line) {
 *line = (*text)[0:1];
 *text = (*text)[1:];
 return countof(*text) > 0;

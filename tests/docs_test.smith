@@ -5,9 +5,9 @@
 // which.
 module docs_test;
 
-import smith::format;
-import smith::io;
-import smith::test;
+import std::format;
+import std::io;
+import std::test;
 import <string.h>;
 import scratch;
 

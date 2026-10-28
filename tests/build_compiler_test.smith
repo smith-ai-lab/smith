@@ -4,8 +4,8 @@
 // by side with the rest.
 module build_compiler_test;
 
-import smith::io;
-import smith::test;
+import std::io;
+import std::test;
 import scratch;
 
 // 13. ninja sees the same command (`smith ...`) before and after, so the objects would look up to date. Each object and

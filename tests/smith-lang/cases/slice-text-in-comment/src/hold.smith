@@ -1,6 +1,6 @@
 module hold;
 
-import smith::contract;
+import std::contract;
 
 // The scan for slices skips comments and strings: neither this `xs[:]` nor the `a[1:2]` below puts the file in slice
 // mode, where a head such as `T *reset(` of a generic is not read (issue #121).
@@ -8,29 +8,29 @@ import smith::contract;
 
 export const char *note = "a string with zs[:] in it and a '['";
 
-T *clear(constexpr type T, T *slot, usize count, i32 flags) {
+T *clear(constexpr Type T, T *slot, Usize count, I32 flags) {
     contract::assert(slot != nullptr);
     (void)flags;
-    for (usize i = 0; i < count; i++) {
+    for (Usize i = 0; i < count; i++) {
         slot[i] = (T){};
     }
     return slot;
 }
 
-export T *reset(constexpr type T, T *slot) {
+export T *reset(constexpr Type T, T *slot) {
     return clear(T, slot, 1, 0);
 }
 
 // A head with a format attribute and a variadic list, as the library modules have.
-[[gnu::format(__printf__, 2, 3)]] i32 format_to(i32 level, const char *format, ...) {
+[[gnu::format(__printf__, 2, 3)]] I32 format_to(I32 level, const char *format, ...) {
     char buffer[64];
     __builtin_va_list arguments;
     __builtin_va_start(arguments, format);
-    i32 written = __builtin_vsnprintf(buffer, sizeof buffer, format, arguments);
+    I32 written = __builtin_vsnprintf(buffer, sizeof buffer, format, arguments);
     __builtin_va_end(arguments);
     return written + level;
 }
 
-export i32 say(i32 level) {
+export I32 say(I32 level) {
     return format_to(level, "%d-%d", 12, 34);
 }

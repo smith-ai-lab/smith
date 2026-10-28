@@ -1,4 +1,4 @@
-[[gnu::always_inline, maybe_unused]] static inline void hint_first(bool condition) {
+[[gnu::always_inline, maybe_unused]] static inline void hint_first(Bool condition) {
 (void)condition;
 }
 [[maybe_unused]] static inline __INT32_TYPE__ hint_second(__INT32_TYPE__ x) {

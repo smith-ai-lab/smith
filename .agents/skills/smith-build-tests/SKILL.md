@@ -18,6 +18,6 @@ SmithTests tests = {
 smith_tests(b, &tests);
 ```
 
-smith::test is a `.smith` module, so `smith_tests` needs a smith with clang inside (a stage0 cannot compile it).
+std::test is a `.smith` module, so `smith_tests` needs a smith with clang inside (a stage0 cannot compile it).
 
 Also in this family: [smith-test](../smith-test/SKILL.md), [smith-test-modules](../smith-test-modules/SKILL.md), [smith-test-checks](../smith-test-checks/SKILL.md), [smith-test-workers](../smith-test-workers/SKILL.md), [smith-test-c](../smith-test-c/SKILL.md).

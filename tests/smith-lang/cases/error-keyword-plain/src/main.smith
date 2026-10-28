@@ -1,11 +1,11 @@
-typedef i32 int;
+typedef I32 int;
 struct Pair {
-    f32 float;
-    u8 *char;
+    F32 float;
+    U8 *char;
 };
-i32 count(i32 double, u8 long) {
-    i32 return = 3;
+I32 count(I32 double, U8 long) {
+    I32 return = 3;
     return 0;
 }
-static i32 sizeof(i32 x);
-i32 const volatile *restrict while = 0;
+static I32 sizeof(I32 x);
+I32 const volatile *restrict while = 0;

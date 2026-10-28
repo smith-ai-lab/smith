@@ -5,16 +5,16 @@
 // The C programs are tests/handlers/*.c and print one `ok` or `FAIL` line per check.
 module handlers_test;
 
-import smith::format;
-import smith::io;
-import smith::test;
+import std::format;
+import std::io;
+import std::test;
 import scratch;
 import <string.h>;
 
 constexpr char flags[_] = "f='-std=gnu23 -Wall -Wextra -Wpedantic -Werror -I '$SMITH_REPO/.smith/include; "
                           "h=$SMITH_REPO/tests/handlers; ";
 
-static bool darwin(const scratch::Project *p) {
+static Bool darwin(const scratch::Project *p) {
     return scratch::same(scratch::capture(p, "uname -s"), "Darwin");
 }
 
@@ -25,7 +25,7 @@ static void must(const scratch::Project *p, const char *name, const char *comman
 }
 
 // A project with the runtime built as a dylib under the warnings, or a project on another system (`ok` is false).
-static scratch::Project runtime(io::Io *io, const char *name, bool *ok) {
+static scratch::Project runtime(io::Io *io, const char *name, Bool *ok) {
     scratch::Project p = scratch::project(io, name, nullptr);
     *ok = darwin(&p);
     if (*ok) {
@@ -43,7 +43,7 @@ static void passes(const scratch::Project *p, const char *name, const char *prog
 }
 
 export void test_handlers_the_program_passes_from_itself_a_linked_library_and_a_dlopened_one(io::Io *io) {
-    bool ok = false;
+    Bool ok = false;
     scratch::Project p = runtime(io, "p", &ok);
     if (!ok) {
         return;
@@ -55,14 +55,14 @@ export void test_handlers_the_program_passes_from_itself_a_linked_library_and_a_
 }
 
 export void test_handlers_an_arena_set_as_the_allocator_serves_the_c_allocator_functions(io::Io *io) {
-    bool ok = false;
+    Bool ok = false;
     scratch::Project p = runtime(io, "p", &ok);
     if (!ok) {
         return;
     }
-    must(&p, "handlers: the arena library builds", "smith cc $f -c $SMITH_REPO/lib/smith/arena.smith -o arena.o");
+    must(&p, "handlers: the arena library builds", "smith cc $f -c $SMITH_REPO/lib/std/arena.smith -o arena.o");
     must(&p, "handlers: the contract library builds",
-         "smith cc $f -c $SMITH_REPO/lib/smith/contract.smith -o contract.o");
+         "smith cc $f -c $SMITH_REPO/lib/std/contract.smith -o contract.o");
     must(&p, "handlers: the arena allocator test builds",
          "smith cc $f $h/arena.c arena.o contract.o $SMITH_REPO/lib/trace.c libsmith_handlers.dylib -o t_arena");
     passes(&p, "handlers: the arena allocator test passes", "./t_arena");
@@ -71,7 +71,7 @@ export void test_handlers_an_arena_set_as_the_allocator_serves_the_c_allocator_f
 // The files and console handlers: fakes set on the thread are reached by read, write, open, close, syscall, the stdio
 // functions and fopen, fdopen and freopen; with none set they are libc's.
 static void io_handlers(io::Io *io, const char *optimize) {
-    bool ok = false;
+    Bool ok = false;
     scratch::Project p = runtime(io, "p", &ok);
     if (!ok) {
         return;
@@ -96,7 +96,7 @@ export void test_handlers_the_io_test_at_o2(io::Io *io) {
 // The env and clock handlers: getenv is answered by the env handler, and clock_gettime, nanosleep, usleep and sleep by
 // the clock handler (a fake sleeps by advancing its time); with none set they are libc's.
 static void env_clock_handlers(io::Io *io, const char *optimize) {
-    bool ok = false;
+    Bool ok = false;
     scratch::Project p = runtime(io, "p", &ok);
     if (!ok) {
         return;
@@ -187,7 +187,7 @@ export void test_handlers_a_console_handler_catches_printf_puts_and_fputs_in_rel
 
 // ASan, with the handlers linked and its puts check off, still reports an overflow, a use after free and a puts that
 // reads past a string (our puts reaches ASan's interceptor, not libc's).
-static scratch::Project asan_project(io::Io *io, bool *ok) {
+static scratch::Project asan_project(io::Io *io, Bool *ok) {
     scratch::Project p = scratch::project(io, "bad", nullptr);
     *ok = darwin(&p);
     if (*ok) {
@@ -200,7 +200,7 @@ static scratch::Project asan_project(io::Io *io, bool *ok) {
 }
 
 export void test_handlers_asan_reports_a_write_past_a_malloced_block(io::Io *io) {
-    bool ok = false;
+    Bool ok = false;
     scratch::Project p = asan_project(io, &ok);
     if (ok) {
         scratch::expect_text("handlers: debug: a write past a malloc'd block is a heap-buffer-overflow",
@@ -210,7 +210,7 @@ export void test_handlers_asan_reports_a_write_past_a_malloced_block(io::Io *io)
 }
 
 export void test_handlers_asan_reports_a_read_after_free(io::Io *io) {
-    bool ok = false;
+    Bool ok = false;
     scratch::Project p = asan_project(io, &ok);
     if (ok) {
         scratch::expect_text("handlers: debug: a read after free is a heap-use-after-free", "heap-use-after-free",
@@ -219,7 +219,7 @@ export void test_handlers_asan_reports_a_read_after_free(io::Io *io) {
 }
 
 export void test_handlers_asan_reports_puts_of_an_unterminated_string(io::Io *io) {
-    bool ok = false;
+    Bool ok = false;
     scratch::Project p = asan_project(io, &ok);
     if (ok) {
         scratch::expect_text("handlers: debug: puts of an unterminated string is a heap-buffer-overflow read",

@@ -2,27 +2,27 @@ import pool;
 #include <stdio.h>
 
 typedef char *Text;
-constexpr type element = f64;
-constexpr type kinds[3] = {u16, i64, Text};
+constexpr Type Element = F64;
+constexpr Type kinds[3] = {U16, I64, Text};
 
 typedef struct {
-    constexpr type of;
-    i32 count;
+    constexpr Type Of;
+    I32 count;
 } Column;
-constexpr Column column = {.of = u8, .count = 3};
+constexpr Column column = {.of = U8, .count = 3};
 
 int main() {
-    constexpr type t = i32;
-    t a = 7;                    // `t x;` declares a variable of the type t holds
-    element b = 2.5;            // a file-scope type value
-    constexpr type second = kinds[1];
-    constexpr type of = column.of;
-    second c = 1;               // an element of an array of types
-    of d = 200;                 // a member of a struct
-    t *p = &a;
+    constexpr Type T = I32;
+    T a = 7;                    // `t x;` declares a variable of the type t holds
+    Element b = 2.5;            // a file-scope type value
+    constexpr Type Second = kinds[1];
+    constexpr Type Of = column.of;
+    Second c = 1;               // an element of an array of types
+    Of d = 200;                 // a member of a struct
+    T *p = &a;
     (void)p;
     printf("%d %g %lld %d\n", a, b, (long long)c, d);
-    printf("%zu %zu %zu\n", pool::width(t), pool::width(kinds[0]), pool::width(column.of));
-    printf("%d\n", (int)(second)1);
+    printf("%zu %zu %zu\n", pool::width(T), pool::width(kinds[0]), pool::width(column.of));
+    printf("%d\n", (int)(Second)1);
     return 0;
 }

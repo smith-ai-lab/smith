@@ -115,7 +115,7 @@ export Replay open(Handle *handle, const char *path) {
 export a function without a body
 ================================================================================
 
-export u64 checksum(const u8 *data, usize size);
+export U64 checksum(const U8 *data, Usize size);
 
 --------------------------------------------------------------------------------
 
@@ -139,7 +139,7 @@ export u64 checksum(const u8 *data, usize size);
 export a typedef
 ================================================================================
 
-export typedef struct { u64 frames; tx::Text name; } Replay;
+export typedef struct { U64 frames; tx::Text name; } Replay;
 
 --------------------------------------------------------------------------------
 
@@ -162,8 +162,8 @@ export typedef struct { u64 frames; tx::Text name; } Replay;
 export constexpr and a global
 ================================================================================
 
-export constexpr u32 version = 3;
-export u32 counter = 7;
+export constexpr U32 version = 3;
+export U32 counter = 7;
 
 --------------------------------------------------------------------------------
 
@@ -186,9 +186,9 @@ export u32 counter = 7;
 export a struct, a union and an enum tag
 ================================================================================
 
-export struct Circle { f64 radius; };
+export struct Circle { F64 radius; };
 export enum Mode { Fast, Slow };
-export union Word { u32 whole; u8 bytes[4]; };
+export union Word { U32 whole; U8 bytes[4]; };
 
 --------------------------------------------------------------------------------
 
@@ -229,9 +229,9 @@ module game::replay;
 import lib::text as tx;
 import <string.h>;
 
-export typedef struct Handle { i32 fd; } Handle;
+export typedef struct Handle { I32 fd; } Handle;
 
-u32 helper(void) {
+U32 helper(void) {
     return c::strlen("x");
 }
 
@@ -302,8 +302,8 @@ export int only_here(void);
 an attribute before export chooses the C name
 ================================================================================
 
-[[smith::c_name("SmithArena")]] export typedef struct { u64 used; } Arena;
-[[smith::c_name("smith_arena_make")]] export Arena make(u64 capacity) {
+[[std::c_name("SmithArena")]] export typedef struct { U64 used; } Arena;
+[[std::c_name("smith_arena_make")]] export Arena make(U64 capacity) {
     return (Arena){0};
 }
 
@@ -353,11 +353,11 @@ an attribute before export chooses the C name
 export inline and a foreign extern
 ================================================================================
 
-export inline u32 twice(u32 x) {
+export inline U32 twice(U32 x) {
     return x * 2;
 }
 extern char **environ;
-extern u32 foreign_counter;
+extern U32 foreign_counter;
 
 --------------------------------------------------------------------------------
 

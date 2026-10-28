@@ -3,9 +3,9 @@
 // .smith/compile_commands.json (knowledge/build-execution.md).
 module build_verbs_test;
 
-import smith::format;
-import smith::io;
-import smith::test;
+import std::format;
+import std::io;
+import std::test;
 import scratch;
 
 static void refuses_a_task_and_an_alias_named(io::Io *io, const char *verb) {

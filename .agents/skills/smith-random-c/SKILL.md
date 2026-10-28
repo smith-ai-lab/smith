@@ -1,6 +1,6 @@
 ---
 name: smith-random-c
-description: "smith::random from C (#include <smith/random.h>) and compiling it in build.c with smith_library(b, "random"). Load when C code includes <smith/random.h> or a build.c compiles random."
+description: "std::random from C (#include <smith/random.h>) and compiling it in build.c with smith_library(b, "random"). Load when C code includes <smith/random.h> or a build.c compiles random."
 ---
 
 # random from C
@@ -10,7 +10,7 @@ A C program includes the generated header `.smith/include/smith/random.h`, and t
 ```c
 #include <smith/random.h>
 
-SmithKey key = smith_key_make(seed);              // a seed is any uint64_t; a key is used once ([[smith::affine]])
+SmithKey key = smith_key_make(seed);              // a seed is any uint64_t; a key is used once ([[std::affine]])
 SmithKey k[8];
 smith_key_split_n(key, k, 8);                     // key is used here; each draw below has its own key
 uint64_t bits = smith_key_bits(k[0]);
@@ -31,7 +31,7 @@ double exponential_sample(SmithKey key, double rate) {
 
 ## Get the library in build.c
 
-random needs nothing else; a weighted index is `smith::categorical` ([smith-categorical](../smith-categorical/SKILL.md)). smith writes the headers and the sources into `.smith/` on every `smith build`. random is written in `.smith` (the module `smith::random`, source `.smith/lib/smith/random.smith`), so compiling it needs a smith with clang inside; C code that only includes `<smith/random.h>` works anywhere, and the C API (names, types, symbols) is the one it always had:
+random needs nothing else; a weighted index is `std::categorical` ([smith-categorical](../smith-categorical/SKILL.md)). smith writes the headers and the sources into `.smith/` on every `smith build`. random is written in `.smith` (the module `std::random`, source `.smith/lib/std/random.smith`), so compiling it needs a smith with clang inside; C code that only includes `<smith/random.h>` works anywhere, and the C API (names, types, symbols) is the one it always had:
 
 ```c
 SmithObject random = {.compiler = "smith-cc", .source = smith_library(b, "random"), .output = "build/smith/random.o", .flags = flags};

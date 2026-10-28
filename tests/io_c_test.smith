@@ -1,12 +1,12 @@
 // <smith/io.h> from C, from tests/io.sh (issue #292): the program tests/io.c compiled under AddressSanitizer and UBSan
 // and at -O2 and run in the modes it takes (all checks, the lazily committed reservation, SMITH_SEED, the console on
 // pipes and files), the module compiled under a new project's warnings, and a project that gets io with smith_library
-// (tests/build_fixtures/io_project). The behavior of the library is lib/smith/io_test.smith.
+// (tests/build_fixtures/io_project). The behavior of the library is lib/std/io_test.smith.
 module io_c_test;
 
-import smith::format;
-import smith::io;
-import smith::test;
+import std::format;
+import std::io;
+import std::test;
 import scratch;
 import <string.h>;
 
@@ -14,9 +14,9 @@ constexpr char warn[_] = "-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimpli
                          "-Wstrict-prototypes -Wvla -Werror";
 constexpr char game[_] = "-Wdouble-promotion -Wundef -Wpointer-arith -Wcast-qual -Wformat=2 "
                          "-Wmissing-variable-declarations -Wcomma -Wunreachable-code";
-constexpr char sources[_] = "\"$SMITH_REPO/tests/io.c\" \"$SMITH_REPO/lib/smith/io.smith\" "
-                            "\"$SMITH_REPO/lib/smith/arena.smith\" \"$SMITH_REPO/lib/smith/random.smith\" "
-                            "\"$SMITH_REPO/lib/smith/contract.smith\" \"$SMITH_REPO/lib/trace.c\"";
+constexpr char sources[_] = "\"$SMITH_REPO/tests/io.c\" \"$SMITH_REPO/lib/std/io.smith\" "
+                            "\"$SMITH_REPO/lib/std/arena.smith\" \"$SMITH_REPO/lib/std/random.smith\" "
+                            "\"$SMITH_REPO/lib/std/contract.smith\" \"$SMITH_REPO/lib/trace.c\"";
 
 // Compiles tests/io.c into `name` in the project: "asan" (-O0, sanitized) or "fast" (-O2).
 static void compile(const scratch::Project *p, const char *name) {
@@ -61,7 +61,7 @@ static void module_compiles(io::Io *io, const char *standard, const char *name, 
     scratch::Project p = scratch::project(io, "p", nullptr);
     scratch::Run built = scratch::sh(&p, format::push(&io->arena, "smith cc -std=", standard, " ", warn, " ", flags,
                                                       " -I \"$SMITH_REPO/.smith/include\" -c "
-                                                      "\"$SMITH_REPO/lib/smith/io.smith\" -o io.o")
+                                                      "\"$SMITH_REPO/lib/std/io.smith\" -o io.o")
                                              .data);
     scratch::expect_status(name, 0, &built);
 }
@@ -196,7 +196,7 @@ export void test_io_c_project_gets_io_with_smith_library(io::Io *io) {
     scratch::expect_text("project: the header is written", "yes",
                          scratch::capture(&p, "[ -f .smith/include/smith/io.h ] && echo yes"));
     scratch::expect_text("project: the source is written", "yes",
-                         scratch::capture(&p, "[ -f .smith/lib/smith/io.smith ] && echo yes"));
+                         scratch::capture(&p, "[ -f .smith/lib/std/io.smith ] && echo yes"));
     scratch::Run program = scratch::sh(&p, "./build/app");
     scratch::expect_status("project: the program runs", 0, &program);
     scratch::expect_text("project: the program runs (it prints)", "write 0, words 4, seed 1", program.out);

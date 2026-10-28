@@ -5,9 +5,9 @@
 // tests/build_fixtures/runner_workers, _many, _inproc and _explain.
 module test_runner_workers_test;
 
-import smith::format;
-import smith::io;
-import smith::test;
+import std::format;
+import std::io;
+import std::test;
 import runner;
 import scratch;
 
@@ -16,13 +16,13 @@ static scratch::Project workers_project(io::Io *io) {
 }
 
 // The forks a run is expected to make: the value of the workers, and of --isolate.
-static usize by_mode(usize mode, usize workers, usize isolated) {
+static Usize by_mode(Usize mode, Usize workers, Usize isolated) {
     return mode == 0 ? workers : isolated;
 }
 
 export void test_runner_workers_a_crash_midway_fails_its_test_and_costs_a_fresh_worker(io::Io *io) {
     scratch::Project p = workers_project(io);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run run = runner::tests(&p, iso, "--test crash_ --jobs 1 --stats");
         runner::expect_has(io, iso, "workers: a crash midway fails its test", &run,
@@ -37,7 +37,7 @@ export void test_runner_workers_a_crash_midway_fails_its_test_and_costs_a_fresh_
 
 export void test_runner_workers_a_hang_fails_its_test_and_replaces_the_worker(io::Io *io) {
     scratch::Project p = workers_project(io);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         // wall time on purpose: a test of the backstop
         scratch::Run run = runner::tests(&p, iso, "--test late_ --jobs 1 --wall-timeout 1 --stats");
@@ -50,7 +50,7 @@ export void test_runner_workers_a_hang_fails_its_test_and_replaces_the_worker(io
 
 export void test_runner_workers_a_sanitizer_report_fails_its_test_and_a_printed_one_does_not(io::Io *io) {
     scratch::Project p = workers_project(io);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run run = runner::tests(&p, iso, "--test report_ --jobs 1 --stats");
         runner::expect_has(io, iso, "workers: a sanitizer report fails its test", &run,
@@ -66,7 +66,7 @@ export void test_runner_workers_a_sanitizer_report_fails_its_test_and_a_printed_
 
 export void test_runner_workers_expected_aborts_end_their_worker_so_it_is_one_fork_a_test(io::Io *io) {
     scratch::Project p = workers_project(io);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run run = runner::tests(&p, iso, "--test aborts_ --jobs 1 --stats --verbose");
         runner::expect_has(io, iso, "workers: an expected abort passes", &run, "PASS aborts_1_assert");
@@ -90,7 +90,7 @@ export void test_runner_workers_expected_aborts_end_their_worker_so_it_is_one_fo
 
 export void test_runner_workers_a_failed_test_ends_its_worker(io::Io *io) {
     scratch::Project p = workers_project(io);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run run = runner::tests(&p, iso, "--test unwind_ --jobs 1 --stats");
         runner::expect_has(io, iso, "workers: failed checks fail their tests", &run, "1 passed, 2 failed");
@@ -101,8 +101,8 @@ export void test_runner_workers_a_failed_test_ends_its_worker(io::Io *io) {
 }
 
 // The first seed of 1 to 20 for which the run of the test fails; 0 when none does.
-static usize failing_seed(const scratch::Project *p, const char *iso, const char *test_name) {
-    for (usize number = 1; number <= 20; number++) {
+static Usize failing_seed(const scratch::Project *p, const char *iso, const char *test_name) {
+    for (Usize number = 1; number <= 20; number++) {
         scratch::Run run = runner::tests(
             p, iso, format::push(&p->io->arena, "--test ", test_name, " --seed ", number, " --shrink 0").data);
         if (scratch::contains(run.out, "FAIL shrink_leaky")) return number;
@@ -112,10 +112,10 @@ static usize failing_seed(const scratch::Project *p, const char *iso, const char
 
 export void test_runner_workers_a_shrunk_case_that_fails_only_on_leaked_state_is_not_reported_as_shrunk(io::Io *io) {
     scratch::Project p = workers_project(io);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
-        usize seed = failing_seed(&p, iso, "shrink_leaky");
-        scratch::expect_count(runner::label(io, iso, "leaky: some seed fails the first run"), 1, (usize)(seed != 0));
+        Usize seed = failing_seed(&p, iso, "shrink_leaky");
+        scratch::expect_count(runner::label(io, iso, "leaky: some seed fails the first run"), 1, (Usize)(seed != 0));
         if (seed == 0) seed = 1;
         scratch::Run run = runner::tests(&p, iso, format::push(&io->arena, "--test shrink_leaky --seed ", seed).data);
         if (mode == 1) {
@@ -136,7 +136,7 @@ export void test_runner_workers_a_shrunk_case_that_fails_only_on_leaked_state_is
 
 export void test_runner_workers_a_test_after_an_expected_abort_or_a_failure_sees_clean_globals(io::Io *io) {
     scratch::Project p = workers_project(io);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run run = runner::tests(&p, iso, "--test dirty_ --jobs 1 --stats");
         runner::expect_has(io, iso,
@@ -160,7 +160,7 @@ static const char *between(const scratch::Project *p, const char *text, const ch
 
 export void test_runner_workers_a_test_sees_only_its_own_output(io::Io *io) {
     scratch::Project p = workers_project(io);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run run = runner::tests(&p, iso, "--test out_ --jobs 1 --stats");
         const char *first = between(&p, run.out, "FAIL out_1_fails", "FAIL out_3_fails");
@@ -185,7 +185,7 @@ export void test_runner_workers_a_test_sees_only_its_own_output(io::Io *io) {
 
 export void test_runner_workers_the_arena_and_the_note_start_empty_for_every_test(io::Io *io) {
     scratch::Project p = workers_project(io);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run run = runner::tests(&p, iso, "--test fresh_ --jobs 1 --stats");
         runner::expect_has(io, iso, "fresh: the arena and the note start empty (the second test's failure is its own)",
@@ -208,13 +208,13 @@ export void test_runner_workers_shuffle_runs_the_tests_in_another_order_from_a_s
     scratch::Run table = runner::tests(&p, "", "--test order_ --jobs 1 --verbose");
     scratch::expect_contains("shuffle: in table order the order-dependent pair passes", table.out,
                              "2 passed, 0 failed");
-    usize found = 0;
-    for (usize number = 1; number <= 20 && found == 0; number++) {
+    Usize found = 0;
+    for (Usize number = 1; number <= 20 && found == 0; number++) {
         scratch::Run run = runner::tests(
             &p, "", format::push(&io->arena, "--test order_ --jobs 1 --shuffle ", number, " --verbose").data);
         if (scratch::contains(run.out, "FAIL order_b")) found = number;
     }
-    scratch::expect_count("shuffle: some seed runs order_b before order_a, and the test fails", 1, (usize)(found != 0));
+    scratch::expect_count("shuffle: some seed runs order_b before order_a, and the test fails", 1, (Usize)(found != 0));
     if (found == 0) found = 1;
     // the trace's addresses differ per run
     const char *same = format::push(&io->arena, "build/tests --test order_ --jobs 1 --shuffle ", found,
@@ -237,7 +237,7 @@ export void test_runner_workers_ninety_jobs_under_a_limit_of_a_hundred_descripto
     scratch::Project p = runner::project(io, "runner_base", "runner_many");
     scratch::Run built = runner::build(&p, "-DSAN=0");
     scratch::expect_status("many: the runner builds", 0, &built);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run run = scratch::sh(
             &p, format::push(&io->arena, "sh -c \"ulimit -S -n 100; build/tests ", iso, " --jobs 90\" 2>&1").data);
@@ -282,7 +282,7 @@ export void test_runner_workers_in_process_an_expected_abort_passes_and_nothing_
 export void test_runner_workers_in_process_smith_dbg_stops_at_a_breakpoint_inside_a_test(io::Io *io) {
     scratch::Project p = inprocess_project(io);
     if (scratch::sh(&p, "smith dbg --version").status != 0) return;
-    usize line = runner::line_of(&p, "tests/test_inproc.smith", "test::check_equal(answer, 42);");
+    Usize line = runner::line_of(&p, "tests/test_inproc.smith", "test::check_equal(answer, 42);");
     const char *command =
         format::push(
             &io->arena,
@@ -294,14 +294,14 @@ export void test_runner_workers_in_process_smith_dbg_stops_at_a_breakpoint_insid
     scratch::Run run = scratch::sh(&p, command);
     scratch::expect_contains("in-process: smith dbg stops at a breakpoint inside a test", run.out,
                              "stop reason = breakpoint 1.1");
-    scratch::expect_contains("in-process: ... and shows its local", run.out, "(i32) answer = 42");
+    scratch::expect_contains("in-process: ... and shows its local", run.out, "(I32) answer = 42");
 }
 
 // Section 12b. A failed check or contract shows the variables of its line, read from the stopped test by lldb
 // (--explain <smith>: `smith test` passes it): `check(a == b)` prints a and b, a member chain, an array element, an
 // enum and a pointer print too, a crash reports as before, and a machine that refuses to debug (or a smith with no
 // debugger) gets the report and one note saying why.
-static bool explain_available(const scratch::Project *p) {
+static Bool explain_available(const scratch::Project *p) {
     return scratch::sh(p, "smith --smith-explain --available").status == 0;
 }
 
@@ -319,14 +319,14 @@ static const char *explained(const scratch::Project *p, const char *iso, const c
 }
 
 // Whether the machine let the values be read (it may refuse to debug).
-static bool values_shown(const char *text) {
+static Bool values_shown(const char *text) {
     return !scratch::contains(text, "values not shown");
 }
 
 export void test_runner_workers_explain_prints_the_variables_of_a_failed_checks_line(io::Io *io) {
     scratch::Project p = explain_project(io);
     if (!explain_available(&p)) return;
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         const char *member = explained(&p, iso, "--test ex_member");
         if (!values_shown(member)) {
@@ -355,7 +355,7 @@ export void test_runner_workers_explain_prints_the_variables_of_a_failed_checks_
 export void test_runner_workers_explain_reads_a_contract_c_code_and_keeps_check_equal_as_it_was(io::Io *io) {
     scratch::Project p = explain_project(io);
     if (!explain_available(&p)) return;
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         if (!values_shown(explained(&p, iso, "--test ex_member"))) continue;
         const char *contract = explained(&p, iso, "--test ex_contract");
@@ -368,7 +368,7 @@ export void test_runner_workers_explain_reads_a_contract_c_code_and_keeps_check_
         scratch::expect_contains(runner::label(io, iso, "explain: ... both variables"), c_code, "expected = 8");
         const char *equal = explained(&p, iso, "--test ex_equal");
         scratch::expect_contains(runner::label(io, iso, "explain: check_equal keeps its own two values"), equal,
-                                 "count = 3, 4 (u64)");
+                                 "count = 3, 4 (U64)");
         scratch::expect_lacks(runner::label(io, iso, "explain: ... and reads nothing"), equal, "@");
         const char *filter =
             format::push(&io->arena, " 2>&1 | ", runner::plain_pipe(), " | grep -v 'smith-trace'").data;
@@ -384,7 +384,7 @@ export void test_runner_workers_explain_reads_a_contract_c_code_and_keeps_check_
 export void test_runner_workers_explain_reads_at_most_explain_max_and_no_explain_turns_it_off(io::Io *io) {
     scratch::Project p = explain_project(io);
     if (!explain_available(&p)) return;
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         if (!values_shown(explained(&p, iso, "--test ex_member"))) continue;
         const char *limited = explained(&p, iso, "--test ex_ --jobs 1 --explain-max 1");
@@ -405,7 +405,7 @@ export void test_runner_workers_smith_test_reads_the_values_without_being_asked(
     scratch::Project p = explain_project(io);
     if (!explain_available(&p)) return;
     if (!values_shown(explained(&p, "", "--test ex_member"))) return;
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run run = runner::smith_test(&p, iso, "--test ex_member");
         runner::expect_has(io, iso, "explain: smith test reads the values without being asked", &run,
@@ -417,7 +417,7 @@ export void test_runner_workers_smith_test_reads_the_values_without_being_asked(
 // them).
 export void test_runner_workers_stats_lists_the_cpu_time_of_each_test(io::Io *io) {
     scratch::Project p = workers_project(io);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run run = runner::tests(&p, iso, "--test report_ --jobs 1 --stats");
         runner::expect_has(io, iso, "stats: a line for a test", &run, "cpu\t0.");

@@ -1,15 +1,15 @@
 module main;
 
 // `try` returns the error as it is, so the function's error type is the call's; a change is written out (issue #211).
-static result(i32, i32) step(i32 n) {
+static Result(I32, I32) step(I32 n) {
     return {.ok = n};
 }
 
-static result(i32, i64) other_error(void) {
-    i32 a = try step(1);
+static Result(I32, I64) other_error(void) {
+    I32 a = try step(1);
     return {.ok = a};
 }
 
-i32 main() {
+I32 main() {
     return other_error() == .ok ? 0 : 1;
 }

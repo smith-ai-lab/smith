@@ -14,7 +14,7 @@ printf("%.2f %.2f\n", (double)half, wide);
 static_assert(_Generic((__UINT64_TYPE__)0, unsigned long long: 1, unsigned long: 1, default: 0), "u64 is an unsigned type");
 static_assert(_Generic((__SIZE_TYPE__)0, size_t: 1, default: 0), "usize is size_t");
 static_assert(_Generic((__PTRDIFF_TYPE__)0, ptrdiff_t: 1, default: 0), "isize is ptrdiff_t");
-bool flag = true;
+Bool flag = true;
 printf("%d\n", flag);
 return 0;
 }

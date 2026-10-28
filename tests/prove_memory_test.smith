@@ -6,9 +6,9 @@
 // See tests/prove_test.smith for the proofs' cache and budget.
 module prove_memory_test;
 
-import smith::format;
-import smith::io;
-import smith::test;
+import std::format;
+import std::io;
+import std::test;
 import scratch;
 import prove_cases;
 
@@ -97,7 +97,7 @@ export void test_prove_after_call_add_row_is_proved(io::Io *io) {
 export void test_prove_after_call_a_store_through_sret_after_a_trusted_call_is_proved(io::Io *io) {
     scratch::Project p = fresh(io);
     proved(&p, "after_call: a store through sret after a trusted call with a writable pointer is proved (#74)",
-           "--function=replay_make --library=\"$SMITH_REPO/lib/smith/arena.smith\" \"$c/arena_sret.c\"");
+           "--function=replay_make --library=\"$SMITH_REPO/lib/std/arena.smith\" \"$c/arena_sret.c\"");
 }
 
 // 7c2c. A pointer returned under an smith_ensures is valid or null, proved at the return and assumed by callers (#74).

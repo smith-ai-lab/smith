@@ -1,0 +1,392 @@
+// Tests of std::files, in smith's own test library (build.c's `test-units` runner links them with the module): the
+// calls over the fake files handler, which a test sets and restores with `defer`, and one over a real folder. The
+// memory a call returns is the current allocator's, so each test installs an arena first (a test runs under
+// mem::checked, which fails a block that is not freed). The checked failures (a bad mode, a double close, a limit of
+// the fake) stop the process and are not tested here.
+module std::files_test;
+
+import std::arena;
+import std::files;
+import std::io;
+import std::mem;
+import std::test;
+
+typedef struct {
+    arena::Arena memory;
+    arena::ArenaAllocator allocator;
+} Region;
+
+// The text as bytes.
+const U8 *bytes_of(const char *text) {
+    return (const U8 *)text;
+}
+
+// Unwrapping for the checks: the value of a result (a zero when it is an error: the test checked `== .ok` before) and
+// the error (a zero when it is a value).
+Usize value_count(files::CountResult r) {
+    switch (r) {
+    case .ok:
+        return r.ok;
+    case .error:
+        return 0;
+    }
+}
+
+files::File value_file(files::OpenResult r) {
+    switch (r) {
+    case .ok:
+        return r.ok;
+    case .error:
+        return (files::File){.descriptor = -1};
+    }
+}
+
+files::Info value_info(files::InfoResult r) {
+    switch (r) {
+    case .ok:
+        return r.ok;
+    case .error:
+        return (files::Info){};
+    }
+}
+
+files::Bytes value_bytes(files::BytesResult r) {
+    switch (r) {
+    case .ok:
+        return r.ok;
+    case .error:
+        return (files::Bytes){};
+    }
+}
+
+files::Entries value_entries(files::EntriesResult r) {
+    switch (r) {
+    case .ok:
+        return r.ok;
+    case .error:
+        return (files::Entries){};
+    }
+}
+
+files::Error failure_bytes(files::BytesResult r) {
+    switch (r) {
+    case .ok:
+        return files::Other;
+    case .error:
+        return r.error;
+    }
+}
+
+files::Error failure_info(files::InfoResult r) {
+    switch (r) {
+    case .ok:
+        return files::Other;
+    case .error:
+        return r.error;
+    }
+}
+
+// Whether the bytes are the text.
+Bool is_text(const U8 got[:], const char *text) {
+    Usize length = __builtin_strlen(text);
+    if (countof(got) != length) return false;
+    for (Usize i = 0; i < length; i++) {
+        if (got[i] != (U8)text[i]) return false;
+    }
+    return true;
+}
+
+// Whether the entry is named so.
+Bool is_named(files::Entry entry, const char *name) {
+    return countof(entry.name) == __builtin_strlen(name) &&
+           __builtin_strncmp(entry.name.data, name, countof(entry.name)) == 0;
+}
+
+// Writes the text to the path through the module and returns the error code (-1 for none).
+I32 put_text(const char *path, const char *text, Usize length, files::Mode mode) {
+    files::CountResult written = files::write_file(path[0:__builtin_strlen(path)], bytes_of(text)[0:length], mode);
+    if (written == .error) return (I32)written.error;
+    return -1;
+}
+
+export void test_files_a_whole_file_round_trips_through_the_fake() {
+    const U8 hello[:] = ((const U8 *)"hello")[0:5];
+    arena::Arena a = test::memory(1 << 16);
+    arena::ArenaAllocator allocator = arena::allocator(&a);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    files::Fake fake = files::fake();
+    files::Handler *before = files::set_handler(&fake.base);
+    defer files::set_handler(before);
+
+    files::CountResult written = files::write_file("notes.txt", hello, files::Replace);
+    test::check_condition(written == .ok);
+    test::check_equal(value_count(written), 5);
+    files::BytesResult text = files::read_file("notes.txt");
+    test::check_condition(text == .ok);
+    test::check_equal(countof(value_bytes(text)), 5);
+    test::check_condition(is_text(value_bytes(text), "hello"));
+    test::check_condition(allocator.base.owns(&allocator.base, value_bytes(text).data));
+}
+
+export void test_files_a_missing_file_is_a_value() {
+    arena::Arena a = test::memory(1 << 16);
+    arena::ArenaAllocator allocator = arena::allocator(&a);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    files::Fake fake = files::fake();
+    files::Handler *before = files::set_handler(&fake.base);
+    defer files::set_handler(before);
+
+    files::BytesResult text = files::read_file("nothing.txt");
+    test::check_condition(text == .error);
+    test::check_condition(failure_bytes(text) == files::NotFound);
+    files::InfoResult about = files::info("nothing.txt");
+    test::check_condition(about == .error);
+    test::check_condition(failure_info(about) == files::NotFound);
+    files::DoneResult removed = files::remove("nothing.txt");
+    test::check_condition(removed == .error && removed.error == files::NotFound);
+}
+
+export void test_files_write_modes_replace_append_and_new() {
+    arena::Arena a = test::memory(1 << 16);
+    arena::ArenaAllocator allocator = arena::allocator(&a);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    files::Fake fake = files::fake();
+    files::Handler *before = files::set_handler(&fake.base);
+    defer files::set_handler(before);
+
+    test::check_equal(put_text("log.txt", "one", 3, files::New), -1);
+    test::check_equal(put_text("log.txt", "two", 3, files::New),
+                      (I32)files::Exists); // New refuses a path that is taken
+    test::check_equal(put_text("log.txt", "+two", 4, files::Append), -1);
+    files::BytesResult appended = files::read_file("log.txt");
+    test::check_condition(appended == .ok && is_text(appended.ok, "one+two"));
+    test::check_equal(put_text("log.txt", "x", 1, files::Replace), -1);
+    files::BytesResult replaced = files::read_file("log.txt");
+    test::check_condition(replaced == .ok && is_text(replaced.ok, "x"));
+    test::check_equal(put_text("log.txt", "atomic", 6, files::Atomic), -1);
+    files::BytesResult atomic = files::read_file("log.txt");
+    test::check_condition(atomic == .ok && is_text(atomic.ok, "atomic"));
+    files::InfoResult check1 = files::info("log.txt.tmp");
+    test::check_condition(check1 == .error); // the temporary name was renamed away
+}
+
+export void test_files_open_read_write_and_close_by_pieces() {
+    const U8 abc[:] = ((const U8 *)"abc")[0:3];
+    const U8 defgh[:] = ((const U8 *)"defgh")[0:5];
+    arena::Arena a = test::memory(1 << 16);
+    arena::ArenaAllocator allocator = arena::allocator(&a);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    files::Fake fake = files::fake();
+    files::Handler *before = files::set_handler(&fake.base);
+    defer files::set_handler(before);
+
+    files::OpenResult opened = files::open("pieces.txt", files::Replace);
+    test::check_condition(opened == .ok);
+    files::File out = value_file(opened);
+    files::CountResult check2 = files::write(out, abc);
+    test::check_condition(check2 == .ok);
+    files::CountResult check3 = files::write(out, defgh);
+    test::check_condition(check3 == .ok);
+    files::CloseResult check4 = files::close(out);
+    test::check_condition(check4 == .none);
+
+    files::OpenResult reopened = files::open("pieces.txt", files::Read);
+    test::check_condition(reopened == .ok);
+    files::File in = value_file(reopened);
+    U8 buffer[:] = mem::alloc_slice(U8, 3);
+    files::CountResult first = files::read(in, buffer);
+    test::check_condition(first == .ok);
+    test::check_equal(value_count(first), 3);
+    test::check_condition(is_text(buffer, "abc"));
+    files::CountResult second = files::read(in, buffer);
+    test::check_equal(value_count(second), 3);
+    files::CountResult third = files::read(in, buffer);
+    test::check_equal(value_count(third), 2);
+    files::CountResult end = files::read(in, buffer);
+    test::check_condition(end == .ok);
+    test::check_equal(value_count(end), 0); // 0 is the end
+    files::CloseResult check5 = files::close(in);
+    test::check_condition(check5 == .none);
+    files::OpenResult check6 = files::open("absent.txt", files::Read);
+    test::check_condition(check6 == .error);
+}
+
+export void test_files_a_file_larger_than_a_chunk_is_read_whole() {
+    arena::Arena a = test::memory(1 << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&a);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    files::Fake fake = files::fake();
+    files::Handler *before = files::set_handler(&fake.base);
+    defer files::set_handler(before);
+
+    U8 big[:] = mem::alloc_slice(U8, 10000);
+    for (Usize i = 0; i < countof(big); i++)
+        big[i] = (U8)(i % 251);
+    files::CountResult check7 = files::write_file("big.bin", big, files::Replace);
+    test::check_condition(check7 == .ok);
+    files::BytesResult back = files::read_file("big.bin");
+    test::check_condition(back == .ok);
+    test::check_equal(countof(value_bytes(back)), 10000);
+    test::check_condition(mem::equal(value_bytes(back), big));
+}
+
+export void test_files_info_list_folders_and_sorting() {
+    arena::Arena a = test::memory(1 << 16);
+    arena::ArenaAllocator allocator = arena::allocator(&a);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    files::Fake fake = files::fake();
+    files::Handler *before = files::set_handler(&fake.base);
+    defer files::set_handler(before);
+
+    files::DoneResult check8 = files::make_folder("project/src/deep");
+    test::check_condition(check8 == .ok);
+    files::DoneResult check9 = files::make_folder("project/src/deep");
+    test::check_condition(check9 == .ok); // there already: success
+    test::check_equal(put_text("project/zeta.txt", "zz", 2, files::Replace), -1);
+    test::check_equal(put_text("project/alpha.txt", "a", 1, files::Replace), -1);
+    test::check_equal(put_text("project/src/main.c", "int", 3, files::Replace), -1);
+
+    files::InfoResult folder = files::info("project");
+    test::check_condition(folder == .ok && folder.ok.folder);
+    files::InfoResult file = files::info("project/zeta.txt");
+    test::check_condition(file == .ok && !file.ok.folder);
+    test::check_equal(value_info(file).size, 2);
+    files::InfoResult check10 = files::info("project/nothing");
+    test::check_condition(check10 == .error);
+
+    files::EntriesResult listed = files::list("project");
+    test::check_condition(listed == .ok);
+    test::check_equal(countof(value_entries(listed)), 3); // alpha.txt, src, zeta.txt: src once, sorted by name
+    test::check_condition(is_named(value_entries(listed)[0], "alpha.txt"));
+    test::check_condition(!value_entries(listed)[0].folder);
+    test::check_equal(value_entries(listed)[0].size, 1);
+    test::check_condition(is_named(value_entries(listed)[1], "src"));
+    test::check_condition(value_entries(listed)[1].folder);
+    test::check_condition(is_named(value_entries(listed)[2], "zeta.txt"));
+    files::EntriesResult none = files::list("project/src/deep");
+    test::check_condition(none == .ok);
+    test::check_equal(countof(value_entries(none)), 0);
+    files::EntriesResult check11 = files::list("absent");
+    test::check_condition(check11 == .error);
+}
+
+export void test_files_remove_and_move() {
+    arena::Arena a = test::memory(1 << 16);
+    arena::ArenaAllocator allocator = arena::allocator(&a);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    files::Fake fake = files::fake();
+    files::Handler *before = files::set_handler(&fake.base);
+    defer files::set_handler(before);
+
+    test::check_equal(put_text("from.txt", "data", 4, files::Replace), -1);
+    files::DoneResult check12 = files::move("from.txt", "to.txt");
+    test::check_condition(check12 == .ok);
+    files::InfoResult check13 = files::info("from.txt");
+    test::check_condition(check13 == .error);
+    files::InfoResult moved = files::info("to.txt");
+    test::check_condition(moved == .ok && moved.ok.size == 4);
+    files::DoneResult check14 = files::make_folder("folder");
+    test::check_condition(check14 == .ok);
+    files::DoneResult folder = files::remove("folder");
+    test::check_condition(folder == .error && folder.error == files::Denied); // a folder is not removed as a file
+    files::DoneResult check15 = files::remove("to.txt");
+    test::check_condition(check15 == .ok);
+    files::BytesResult check16 = files::read_file("to.txt");
+    test::check_condition(check16 == .error);
+}
+
+export void test_files_a_map_is_a_view_of_the_bytes() {
+    const U8 hello[:] = ((const U8 *)"hello")[0:5];
+    arena::Arena a = test::memory(1 << 16);
+    arena::ArenaAllocator allocator = arena::allocator(&a);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    files::Fake fake = files::fake();
+    files::Handler *before = files::set_handler(&fake.base);
+    defer files::set_handler(before);
+
+    files::fake_add(&fake, "asset.bin", hello);
+    files::BytesResult mapped = files::map("asset.bin");
+    test::check_condition(mapped == .ok);
+    test::check_equal(countof(value_bytes(mapped)), 5);
+    test::check_condition(is_text(value_bytes(mapped), "hello"));
+    files::unmap(value_bytes(mapped));
+    files::BytesResult check17 = files::map("absent.bin");
+    test::check_condition(check17 == .error);
+}
+
+export void test_files_fake_add_replaces_a_file() {
+    const U8 hello[:] = ((const U8 *)"hello")[0:5];
+    const U8 hi[:] = ((const U8 *)"hi")[0:2];
+    arena::Arena a = test::memory(1 << 16);
+    arena::ArenaAllocator allocator = arena::allocator(&a);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    files::Fake fake = files::fake();
+    files::Handler *before = files::set_handler(&fake.base);
+    defer files::set_handler(before);
+
+    files::fake_add(&fake, "config.txt", hello);
+    files::fake_add(&fake, "config.txt", hi);
+    files::BytesResult text = files::read_file("config.txt");
+    test::check_condition(text == .ok && is_text(text.ok, "hi"));
+}
+
+export void test_files_the_handler_is_restored() {
+    files::Handler *outside = files::current_handler();
+    {
+        files::Fake fake = files::fake();
+        files::Handler *before = files::set_handler(&fake.base);
+        test::check_condition(files::current_handler() == &fake.base);
+        files::set_handler(before);
+    }
+    test::check_condition(files::current_handler() == outside);
+}
+
+export void test_files_the_real_file_system_in_a_scratch_folder(io::Io *io) {
+    arena::Arena a = test::memory(1 << 16);
+    arena::ArenaAllocator allocator = arena::allocator(&a);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    const char *scratch = test::scratch(io);
+    test::check_condition(scratch != nullptr);
+    char folder[1024];
+    __builtin_snprintf(folder, sizeof folder, "%s/a/b", scratch);
+    char path[1100];
+    __builtin_snprintf(path, sizeof path, "%s/file.txt", folder);
+
+    files::DoneResult check18 = files::make_folder(folder[0:__builtin_strlen(folder)]);
+    test::check_condition(check18 == .ok);
+    files::DoneResult check19 = files::make_folder(folder[0:__builtin_strlen(folder)]);
+    test::check_condition(check19 == .ok);
+    test::check_equal(put_text(path, "real", 4, files::Replace), -1);
+    test::check_equal(put_text(path, "real", 4, files::New), (I32)files::Exists);
+    test::check_equal(put_text(path, "!", 1, files::Append), -1);
+    test::check_equal(put_text(path, "real!", 5, files::Atomic), -1);
+
+    files::BytesResult text = files::read_file(path[0:__builtin_strlen(path)]);
+    test::check_condition(text == .ok && is_text(text.ok, "real!"));
+    files::InfoResult about = files::info(path[0:__builtin_strlen(path)]);
+    test::check_condition(about == .ok && !about.ok.folder);
+    test::check_equal(value_info(about).size, 5);
+    files::EntriesResult listed = files::list(folder[0:__builtin_strlen(folder)]);
+    test::check_condition(listed == .ok);
+    test::check_equal(countof(value_entries(listed)), 1);
+    test::check_condition(is_named(value_entries(listed)[0], "file.txt"));
+
+    files::BytesResult mapped = files::map(path[0:__builtin_strlen(path)]);
+    test::check_condition(mapped == .ok && is_text(mapped.ok, "real!"));
+    files::unmap(value_bytes(mapped));
+
+    files::DoneResult check20 = files::remove(path[0:__builtin_strlen(path)]);
+    test::check_condition(check20 == .ok);
+    files::BytesResult gone = files::read_file(path[0:__builtin_strlen(path)]);
+    test::check_condition(gone == .error && gone.error == files::NotFound);
+}

@@ -2,10 +2,10 @@ module sizes;
 
 // A sized type written in a function over `type`: the importer's replay keeps the compiler's own name for it
 // (`__INT64_TYPE__`), and it is still a type value there (issue #143).
-export type small_of(type t) {
-    return sizeof(t) > 4 ? i64 : t;
+export Type SmallOf(Type t) {
+    return sizeof(t) > 4 ? I64 : t;
 }
 
-export small_of(T) convert(constexpr type T, auto x) {
+export SmallOf(T) convert(constexpr Type T, auto x) {
     return x;
 }

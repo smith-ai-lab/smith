@@ -45,4 +45,4 @@ On Linux `smith.c` also defines `_GNU_SOURCE` before its first include, because 
 lldb's debug server differs too: macOS's lldb runs the system's debugserver, which Apple signs; on Linux smith is
 lldb-server itself, a clone in the programs folder ([debugger](debugger.md)). The LLVM build's post-install steps are
 `scripts/llvm_linux.c` and smith's own link is `build.c`'s `BuildPlatform` table. What still has no Linux side is
-listed in issue #305: the prover's process accounting and `smith::io`.
+listed in issue #305: the prover's process accounting and `std::io`.

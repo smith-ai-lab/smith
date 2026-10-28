@@ -2,8 +2,8 @@
 // that sees only the exports; `smith test` finds any `*_test.smith` or `*_test.c`; `smith build` never links one.
 module build_layout_test;
 
-import smith::io;
-import smith::test;
+import std::io;
+import std::test;
 import scratch;
 
 export void test_build_layout_a_test_beside_its_module_is_run_by_smith_test(io::Io *io) {

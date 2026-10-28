@@ -1,22 +1,22 @@
 ---
 type: design
-title: Tests, smith_tests and smith::test
+title: Tests, smith_tests and std::test
 description: smith_tests links the test files with the libraries they import into a runner whose workers run the tests, with seeds, shrinking and isolation.
 tags: [test, build]
 ---
-# Tests, smith_tests and smith::test
+# Tests, smith_tests and std::test
 
 Tests are written once and done well, in smith: a plain function per test, checks that print both values with their
 types, workers that run the tests in parallel, and a runner that is the library's `main`. The library is the module
-`smith::test` (`lib/smith/test.smith`, issue #45); C includes its generated header `<smith/test.h>`. `smith_tests` (the
+`std::test` (`lib/std/test.smith`, issue #45); C includes its generated header `<smith/test.h>`. `smith_tests` (the
 call is in the API below, with the exact commands) builds the runner from the project's test files and adds the task
 `test` (a task with `.test`, which `smith test` runs). It needs a smith with clang inside, since the library is a
 `.smith` module.
 
 ```smith
 // random_test.smith, beside random.smith
-import smith::random;
-import smith::test;
+import std::random;
+import std::test;
 
 void test_addition() {                        // a test: found by name, no registration; pure
     test::check_equal(2 + 2, 4);
@@ -24,13 +24,13 @@ void test_addition() {                        // a test: found by name, no regis
 
 void test_uniform_stays_in_range(random::Key key) { // a property test: runs on 100 keys
     random::UniformInt64 range = {.low = 0, .high = 6};
-    i64 x = random::uniform_int64_sample(key, range);
+    I64 x = random::uniform_int64_sample(key, range);
     test::check_less_equal(x, range.high);
 }
 ```
 
-**Where tests live (issue #294).** A unit test sits beside the module it tests, `<module>_test.smith` (`lib/smith/arena.smith`
-has `lib/smith/arena_test.smith`, `module smith::arena_test;`; a C project has `<name>_test.c`), and the convention finds any
+**Where tests live (issue #294).** A unit test sits beside the module it tests, `<module>_test.smith` (`lib/std/arena.smith`
+has `lib/std/arena_test.smith`, `module std::arena_test;`; a C project has `<name>_test.c`), and the convention finds any
 `*_test.smith` and `*_test.c` below the root, never linking one into a program. A test module is an ordinary module with
 no special access: it sees only the module's exports, a private function is tested through the exports that use it, and
 contracts and `smith prove` check the inside (a helper that needs tests of its own is its own module). `tests/` holds the
@@ -59,13 +59,13 @@ smith_tests(b, &tests);                              // tests.step is the task "
   `test::check_equal(a, b)`, `check_not_equal`, `check_less`, `check_less_equal`, `check_greater`,
   `check_greater_equal`, `check_near(a, b, tolerance)`, `check_same_bits(a, b)` and `expect_abort()`. The type is
   `a`'s (`auto a`, smith-lang-generics) and `b` converts to it by C's rules, a conversion that changes the value being an
-  error at the call, fixed by a cast (`test::check_equal(my_u8, (u8)big)`). They check `bool`,
-  `char`, integers, `f32`, `f64` and pointers. A failed one prints `a` and `b` (and the tolerance and the distance of
-  `near`) with the sized type name: `a = 3   (u64)`. A NaN is unordered, so every comparison but `check_not_equal` fails
+  error at the call, fixed by a cast (`test::check_equal(my_u8, (U8)big)`). They check `Bool`,
+  `char`, integers, `F32`, `F64` and pointers. A failed one prints `a` and `b` (and the tolerance and the distance of
+  `near`) with the sized type name: `a = 3   (U64)`. A NaN is unordered, so every comparison but `check_not_equal` fails
   on one. The macros `SMITH_CHECK`, `SMITH_CHECK_NEAR` and `SMITH_CHECK_SAME_BITS` are gone, and the generated header
   defines no macro.
-- **C keeps its API as named instances:** `smith_check(bool)`; `smith_check_equal_<type>(a, b)` for `bool`, `char`,
-  `i8` `i16` `i32` `i64`, `u8` `u16` `u32` `u64`, `f32`, `f64` and `ptr`; `smith_check_near_f32(a, b, tolerance)` and
+- **C keeps its API as named instances:** `smith_check(Bool)`; `smith_check_equal_<type>(a, b)` for `Bool`, `char`,
+  `I8` `I16` `I32` `I64`, `U8` `U16` `U32` `U64`, `F32`, `F64` and `ptr`; `smith_check_near_f32(a, b, tolerance)` and
   `_f64`; `smith_check_same_bits_f32(a, b)` and `_f64`; and `smith_test_expect_abort()`. The type is in the name, as
   `<math.h>` names `sinf` and `sin`. C has the ordering checks only when a C caller needs one.
 - **Found by name, in the files build.c names.** build.c says which files are tests and how they compile and link,
@@ -80,7 +80,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
     the same lines are tests, with the same names. In a module (`module geometry::box_test;`) a test is
     `export void test_<name>(void) {`, `export void test_<name>(random::Key key) {` or
     `export void test_<name>(io::Io *io) {` (`c::SmithKey` is the same type as `random::Key` for a file that imports
-    `<smith/test.h>` or `<smith/random.h>`, and `c::SmithIo` the same as `io::Io`; with `import smith::io as sio;` the
+    `<smith/test.h>` or `<smith/random.h>`, and `c::SmithIo` the same as `io::Io`; with `import std::io as sio;` the
     type is `sio::Io`); an `export` is needed, since a private function is `static` and nothing can
     call it. Its C name is `geometry_box_test_test_area` and its symbol the export's `geometry::box_test::test_area`, so
     `tests_list.h` declares it with that `__asm__` label. The runner shows and `--test` selects a module's test by its name
@@ -95,7 +95,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
   the folder (with `rm -rf`, through its io's `processes`) when the test passed and keeps it, printing
   `scratch folder (kept): <path>` under the failure, when it failed. The working directory stays the project root, so
   fixtures resolve. The runner can make the io because `main` hands it `io::make` as a value (`Runner.make_io`).
-- **The runner's own effects are a capability.** The runner is `smith::test`'s `main`: it makes its io once
+- **The runner's own effects are a capability.** The runner is `std::test`'s `main`: it makes its io once
   (`io::make`, in `main`) and hands `run_tests` a `Runner` (`smith_test_run`), a type marked as a capability
   whose implementation is the module, so the forked workers, their pipes and sockets, the signals they catch and the
   memory they share are the module's own calls, and `smith lint` (smith-effects) checks them like any other module's:
@@ -106,7 +106,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
 - **The shrinking hook is a field of the key.** `random::Key` has a `tap` (`nullptr` for every key a program makes) and
   `random::split` copies it. The runner gives the keys of its shrinking worker a tap whose `word` records each
   `(key, n)` a property test draws and replaces it from an override table in shared memory; no global of
-  `smith::random` is set.
+  `std::random` is set.
 - **`test::expect_abort()`** (`smith_test_expect_abort()` in C) says that from this call on the running test must stop the program on purpose, and is
   a plain function: the test calls it and then runs the code that aborts,
   as its last statements. It records a flag and the call's stack in the block the worker shares with the runner, and the
@@ -149,7 +149,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
   the cores), `--timeout <seconds>` (10 seconds of CPU time, per test and per key: a loaded machine slows a test and never fails it, as for `smith prove`), `--wall-timeout <seconds>` (the backstop for a test that is blocked and so spends no CPU time: 600 s by default, reported as a hang), `--shrink 0|1`, `--shrink-seconds <seconds>` (10, the
   time one shrink may take), `--shuffle <seed>`, `--isolate`, `--in-process` (every test in the runner's own process with no fork, for a debugger that does not follow forks; a crash, an abort the test did not expect or a hang ends the whole run, state a test leaves reaches the next, and there is no timeout unless `--timeout` is given and no shrinking), `--stats`, `--trace`, `--color`, `--full`, `--update` (golden files, below), `--list` and `--verbose`. The run ends with `N passed, M failed in T s` and the five
   slowest tests; `--verbose` lists every test.
-- **Golden files: `test::golden(io, path, actual)`** (`lib/smith/test.smith`; owner-decided API, issue #292). The expected output of a case lives in a file in the repository and the test compares its text with it, so a corpus is one file per case and a change of output is a diff in version control, never a script's `UPDATE=1`. The path is relative to the project root (the working directory of the tests). A mismatch is a failed check with a unified diff (expected on the left, 3 lines of context, 40 lines at most, then `... N more lines`, last line `run smith test --update to accept`); a missing file is a failure that names the way to write it. `smith test --update` makes every golden that runs write its file when it differs and pass; the runner lists `wrote <path>` for each. `test::updating()` lets a test that checks a variable set of files write all it made. The diff is made in `smith::test` (a table of the longest common subsequence after the common head and tail are cut; a change too large for the table is shown whole), and `smith symbolize` keeps up to 48 detail lines for it.
+- **Golden files: `test::golden(io, path, actual)`** (`lib/std/test.smith`; owner-decided API, issue #292). The expected output of a case lives in a file in the repository and the test compares its text with it, so a corpus is one file per case and a change of output is a diff in version control, never a script's `UPDATE=1`. The path is relative to the project root (the working directory of the tests). A mismatch is a failed check with a unified diff (expected on the left, 3 lines of context, 40 lines at most, then `... N more lines`, last line `run smith test --update to accept`); a missing file is a failure that names the way to write it. `smith test --update` makes every golden that runs write its file when it differs and pass; the runner lists `wrote <path>` for each. `test::updating()` lets a test that checks a variable set of files write all it made. The diff is made in `std::test` (a table of the longest common subsequence after the common head and tail are cut; a change too large for the table is shown whole), and `smith symbolize` keeps up to 48 detail lines for it.
 - **Full size: `test::full()`** (`smith_test_full()`). It is false by default and true when the run was given `--full`. A test with a heavy check
   picks its size from it, such as 200 meshes by default and 20,000 with `--full`, and checks the same properties either
   way, so `smith test` stays fast and `smith test --full` is the slow pass. It replaces a second task such as game's
@@ -168,7 +168,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
   FAIL uniform_stays_in_range with seed 6387777158891554393, shrunk in 41 runs
     check failed at tests/test_random.smith:12
          12 |     test::check_less_equal(x, range.high);
-              x = 7, range.high = 6   (i64)
+              x = 7, range.high = 6   (I64)
     called from
       tests/test_random.smith:12  test_uniform_stays_in_range
       note: <the note, if any>
@@ -221,7 +221,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
 
     The failing frame is the first that is not smith's own machinery (a function whose name starts with `smith_test_`,
     `smith_check`, `smith_requires`, `smith_ensures`, `smith_invariant`, `smith_failure`, `smith_contract_` or
-    `smith_trace_`, or `smith::test::`, `smith::contract::` and `smith::trace::` for the libraries as modules, and the older
+    `smith_trace_`, or `std::test::`, `std::contract::` and `smith::trace::` for the libraries as modules, and the older
     `smith.test.` and `smith.contract.`) and not in a system library, so libc's
     abort path (`__pthread_kill`, `abort`, `__assert_rtn`) is skipped with no annotation. Inlined frames are listed as the
     debug info has them, innermost first. A `.smith` function is shown as written (`geometry::box::area`; the debug names
@@ -262,7 +262,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
   random, a failure's report uses trace, and code under test that makes a contract calls the contract library. Each is
   compiled by `smith_tests` with the test flags, unless `.objects` holds the project's own object of it (compiled from
   `smith_library(b, "arena")` and so on), so nothing is defined twice and a test of code with contracts links with
-  nothing added. The libraries the test files import or include (`import smith::inflate;`, `<smith/json.h>`), and those
+  nothing added. The libraries the test files import or include (`import std::inflate;`, `<smith/json.h>`), and those
   they need, are linked the same way. The explicit part is `.objects`, where a library only the code under test uses goes.
 - The test files get `compile_commands.json` entries through `smith_object`, so clangd reads them with the project's
   flags (`smith lsp --check` on a test file reports no errors).

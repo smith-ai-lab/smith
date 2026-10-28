@@ -1,6 +1,6 @@
-import smith::io;
+import std::io;
 
-i32 main(io::Io *io) {
+I32 main(io::Io *io) {
     io::Io other = io::make(1, nullptr);
     return other.count - io->count;
 }

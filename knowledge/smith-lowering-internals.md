@@ -22,7 +22,7 @@ tags: [lowering, internals]
     module its own file-scope names and the names its imported headers declared.
   - **The sized types are made by the hook**, with no macro in the way: at the first use of a sized name that nothing
     declares, the hook adds an implicit `TypedefDecl` to the translation unit (`Sema::PushOnScopeChains`), and the token
-    stays the name as written, so clang's diagnostics say `i32` (aka `int`) and print no "expanded from macro" notes. To the
+    stays the name as written, so clang's diagnostics say `I32` (aka `int`) and print no "expanded from macro" notes. To the
     lowering the name is still undeclared (the hook answers its questions that way), so a generated header gets the
     standard C types. Without a `Sema` (`clang -E`) the old macro text is used.
   - **After a sized type name** the hook looks at the next token whatever mode it is in (it is offered it, and passes over
@@ -35,7 +35,7 @@ tags: [lowering, internals]
     imports are read first, the deepest first (`smith_raw_prefetch`, by the text of the `import` lines, at most eight
     modules, found among the files beside it as `--smith-header` finds them), because the interface borrows the tables of
     the lowering that asked for it and cannot ask for a second; so an export that takes `core::Thing *` is written with
-    the `[[smith::c_name]]` that `core` chose (`CoreThing`), as the header `smith build` writes would, and
+    the `[[std::c_name]]` that `core` chose (`CoreThing`), as the header `smith build` writes would, and
     `smith cc main.smith rolls.smith core.smith` needs no `-I .smith/include`. Unlike the header
     on disk it keeps the module's lines: each declaration is on its line (the first line is `#pragma once`) and its name
     at its column where the text before allows, so a diagnostic that points into it is at the declaration in the module,
@@ -73,7 +73,7 @@ tags: [lowering, internals]
   An expression is evaluated with `value_query` (issue #98): the tokens (a generic's `T` and a `for constexpr` variable
   already replaced) are read as `__typeof__(expr)` in the parser's scope, as `expr_type` does, and the expression is
   evaluated in a constant context, so a C function runs as in `constexpr` (the target's `sizeof(long)`, issue #97). The
-  value is a tree (`SmithValue`: an integer with signedness and width, an `f32` or `f64`, a struct's fields, an array's
+  value is a tree (`SmithValue`: an integer with signedness and width, an `F32` or `F64`, a struct's fields, an array's
   elements; a string is `char`s) whose nodes the lowering provides, and a pointer, a union, an integer over 64 bits or a
   long double is an error. The lowering reads an integer from it where its own evaluator meets a name followed by
   `(`, `.`, `[` or `->` (`if constexpr (table_size(sizeof(T)) > 64)`, `i < config.count`); the function must be defined

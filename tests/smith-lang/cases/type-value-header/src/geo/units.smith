@@ -2,22 +2,22 @@ module geo::units;
 
 // A struct is exported by name; the aliases below are `constexpr type` and reach C as typedefs.
 export struct Request {
-    i32 id;
+    I32 id;
 };
 
 /// A length in meters.
-export constexpr type Meters = f64;
-export constexpr type Handler = i32 (*)(Request *);
-export constexpr type Block = u8[4];
-export constexpr type Row = i32 (*)[4];
-export constexpr type Pointers = Request *[2];
-[[smith::c_name("geo_feet")]] export constexpr type Feet = f32;
+export constexpr Type Meters = F64;
+export constexpr Type Handler = I32 (*)(Request *);
+export constexpr Type Block = U8[4];
+export constexpr Type Row = I32 (*)[4];
+export constexpr Type Pointers = Request *[2];
+[[std::c_name("geo_feet")]] export constexpr Type Feet = F32;
 
 export Meters add(Meters a, Meters b) {
     return a + b;
 }
 
-export i32 identify(Request *request) {
+export I32 identify(Request *request) {
     return request->id;
 }
 

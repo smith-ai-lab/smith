@@ -137,7 +137,7 @@ they are ordinary types
 typedef int module;
 module *a;
 import b = 7;
-type t;
+Type t;
 
 --------------------------------------------------------------------------------
 

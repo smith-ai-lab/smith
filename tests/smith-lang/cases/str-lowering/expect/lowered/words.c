@@ -13,8 +13,8 @@ __SIZE_TYPE__ n = 0;
 while (n < countof(xs) && xs[n] != ' ') n++;
 return xs[0:n];
 }
-bool words_pop(struct smith_array_const_char_n *p) __asm__("_words::pop");
-bool words_pop(struct smith_array_const_char_n *p) {
+Bool words_pop(struct smith_array_const_char_n *p) __asm__("_words::pop");
+Bool words_pop(struct smith_array_const_char_n *p) {
 if (countof(*p) == 0) return false;
 *p = (*p)[1:];
 return true;

@@ -2,11 +2,11 @@ import pick;
 #include <stdio.h>
 
 int main() {
-    i32 x = 0;
-    i32 *p = &x;
-    usize m = (usize)p % 64;
-    // A cast is the type, and the first argument's: usize, u8, u16 and the rest.
-    printf("%d %d %d\n", pick::larger((usize)p % 64, 0) == m, pick::larger((u8)200, (u8)7), pick::larger((u16)3, 9));
-    printf("%d\n", pick::larger((isize)-4, 2) == 2);
+    I32 x = 0;
+    I32 *p = &x;
+    Usize m = (Usize)p % 64;
+    // A cast is the type, and the first argument's: Usize, U8, U16 and the rest.
+    printf("%d %d %d\n", pick::larger((Usize)p % 64, 0) == m, pick::larger((U8)200, (U8)7), pick::larger((U16)3, 9));
+    printf("%d\n", pick::larger((Isize)-4, 2) == 2);
     return 0;
 }

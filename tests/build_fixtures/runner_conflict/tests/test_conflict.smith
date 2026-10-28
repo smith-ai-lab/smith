@@ -1,7 +1,7 @@
-import smith::test;
+import std::test;
 
 void test_conflict(void) {
-    u32 small = 3;
-    u64 big = 3;
+    U32 small = 3;
+    U64 big = 3;
     test::check_equal(small, big);
 }

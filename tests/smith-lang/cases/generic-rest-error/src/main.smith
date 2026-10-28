@@ -4,11 +4,11 @@ import bad;
 import plain;
 
 int main() {
-    i32 a = bad::run_time_bound(3);
-    i32 b = bad::bare(1);
-    i32 c = bad::out_of_range(1, 2);
-    i32 d = bad::runtime_index(1, 2);
-    i32 e = bad::forever();
-    i32 p = plain::not_generic(1);
+    I32 a = bad::run_time_bound(3);
+    I32 b = bad::bare(1);
+    I32 c = bad::out_of_range(1, 2);
+    I32 d = bad::runtime_index(1, 2);
+    I32 e = bad::forever();
+    I32 p = plain::not_generic(1);
     return a + b + c + d + e + p;
 }

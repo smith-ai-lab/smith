@@ -1,8 +1,8 @@
 module main;
 
-// An array of `str` takes no braces yet: each element would be initialized member by member, leaving a slice empty.
+// An array of `Str` takes no braces yet: each element would be initialized member by member, leaving a slice empty.
 
-i32 main() {
-    str names[1] = {"a"};
-    return (i32)sizeof names;
+I32 main() {
+    Str names[1] = {"a"};
+    return (I32)sizeof names;
 }

@@ -1,13 +1,13 @@
 module affine_member;
 
-export [[smith::affine]] typedef struct {
-    u64 bits;
+export [[std::affine]] typedef struct {
+    U64 bits;
 } Key;
 export typedef struct {
     Key key;
-    u64 n;
+    U64 n;
 } Holder;
-export u64 draw(Key key) {
+export U64 draw(Key key) {
     return key.bits;
 }
 export void split(Key key, Key keys[3]) {
@@ -18,14 +18,14 @@ export void split_all(Key key, Key keys[:]) {
     (void)key;
     (void)keys;
 }
-export u64 take(Key *key) {
+export U64 take(Key *key) {
     return key->bits;
 }
 
-u64 member(Holder h) {
-    u64 a = draw(h.key);
+U64 member(Holder h) {
+    U64 a = draw(h.key);
     return a + draw(h.key) + h.n;
 }
-u64 other(Holder h) {
+U64 other(Holder h) {
     return draw(h.key) + h.n;
 }

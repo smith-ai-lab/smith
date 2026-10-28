@@ -90,7 +90,7 @@ module.exports = grammar(C, {
     init_declarator: ($, original) =>
       choice(original,
         seq(field('declarator', $._declarator), '=', field('value', $.try_expression)),
-        // constexpr type Handler = Response (*)(Request *);  and  constexpr type Block = u8[16];  (a type value
+        // constexpr type Handler = Response (*)(Request *);  and  constexpr type Block = U8[16];  (a type value
         // written as a full C type, in the abstract-declarator form of a cast)
         seq(field('declarator', $._declarator), '=', field('value', prec.dynamic(-3, $.type_descriptor))),
         // register long a0 asm("x0") = fd; (a GNU asm label before the initializer)
@@ -147,7 +147,7 @@ module.exports = grammar(C, {
       repeat1(seq('::', field('name', alias($.identifier, $.type_identifier)))),
     )),
 
-    // The sized types are names to an expression (`u8 + 1` where a file declares its own u8) and types elsewhere.
+    // The sized types are names to an expression (`U8 + 1` where a file declares its own U8) and types elsewhere.
     expression: ($, original) => choice(
       original,
       $.scoped_identifier,
@@ -162,7 +162,7 @@ module.exports = grammar(C, {
       repeat(seq(',', $._initializer_item)), optional(','), '}'),
 
     // A sized type's name is a keyword where a type could begin (the first word in `enum { ... }` may be a payload's
-    // type), and still an enumerator's name there (`enum { i64 = 7, u8 }` in plain C).
+    // type), and still an enumerator's name there (`enum { I64 = 7, U8 }` in plain C).
     enumerator: $ => seq(
       field('name', choice($.identifier, alias(choice(...sized), $.identifier))),
       optional(seq('=', field('value', $.expression))),
@@ -197,7 +197,7 @@ module.exports = grammar(C, {
 
     // export on a declaration, a function definition, a typedef or a tag: only where a module declares (file scope),
     // so a field or a variable called export stays one.
-    // [[smith::c_name("Name")]] export ...: attributes before `export` give the export its C name.
+    // [[std::c_name("Name")]] export ...: attributes before `export` give the export its C name.
     export_declaration: $ => seq(
       repeat($.attribute_declaration),
       'export',
@@ -224,7 +224,7 @@ module.exports = grammar(C, {
     type_parameter: $ => seq('constexpr', 'type', field('name', $.identifier)),
     pack_parameter: $ => seq('auto', '...', field('name', $.identifier)),
 
-    // if constexpr (T == f32) { ... }
+    // if constexpr (T == F32) { ... }
     if_statement: ($, original) => choice(
       original,
       prec.right(seq(
@@ -236,8 +236,8 @@ module.exports = grammar(C, {
       )),
     ),
 
-    // for constexpr (usize i = 0; i < countof(rest); i++) { ... }: C's for, run at compile time
-    // and the range form (issue #243): for (i32 x : xs) { ... }, for (usize i, auto x : xs) { ... }, also with constexpr
+    // for constexpr (Usize i = 0; i < countof(rest); i++) { ... }: C's for, run at compile time
+    // and the range form (issue #243): for (I32 x : xs) { ... }, for (Usize i, auto x : xs) { ... }, also with constexpr
     for_statement: ($, original) => choice(
       original,
       seq('for', 'constexpr', '(', $._for_statement_body, ')', field('body', $.statement)),
@@ -285,7 +285,7 @@ module.exports = grammar(C, {
     ),
     _constexpr_term: $ => choice(prec.dynamic(1, $.expression), $.type_descriptor),
 
-    // arena.push(&a, f32) and SMITH_CHECK(a, ==, b): a type or an operator where an argument goes (a macro's).
+    // arena.push(&a, F32) and SMITH_CHECK(a, ==, b): a type or an operator where an argument goes (a macro's).
     argument_list: $ => seq(
       '(',
       optional(seq(
@@ -307,7 +307,7 @@ module.exports = grammar(C, {
     ),
 
     // `enum Mode : unsigned char { ... }`
-    // C23 attributes after the keyword: typedef struct [[clang::annotate("smith::capability")]] SmithOp { ... } SmithOp;
+    // C23 attributes after the keyword: typedef struct [[clang::annotate("std::capability")]] SmithOp { ... } SmithOp;
     struct_specifier: $ => prec.right(seq(
       'struct',
       optional($.attribute_specifier),
@@ -324,16 +324,16 @@ module.exports = grammar(C, {
       optional($.attribute_specifier),
     )),
 
-    // struct { i32, f32 }: a struct whose fields have no names, a list of types (issue #96)
-    // (a type name, stars and qualifiers: the parts of a field's type before its name, so that the parser reads `u8 *a;`
-    // and `u8 *,` with the same states up to the name or the comma)
+    // struct { I32, F32 }: a struct whose fields have no names, a list of types (issue #96)
+    // (a type name, stars and qualifiers: the parts of a field's type before its name, so that the parser reads `U8 *a;`
+    // and `U8 *,` with the same states up to the name or the comma)
     tuple_field_list: $ => seq('{', commaSep1($.tuple_field), '}'),
     tuple_field: $ => seq(
       $._declaration_specifiers,
       repeat(seq('*', repeat($.type_qualifier))),
     ),
 
-    // A run-time array (issue #82): `i32 xs[:]` declares a slice, `xs[a:b]`, `xs[:b]`, `xs[a:]` and `xs[:]` slice one
+    // A run-time array (issue #82): `I32 xs[:]` declares a slice, `xs[a:b]`, `xs[:b]`, `xs[a:]` and `xs[:]` slice one
     // (`xs[a:b:2]`, a step, is an error of the lowering and parses). Issue #126: the brackets take C's qualifiers,
     // `xs[const :]` and `xs[const restrict :]` (`static` and `volatile` parse and are errors of the lowering).
     array_declarator: ($, original) => choice(original, prec(1, seq(

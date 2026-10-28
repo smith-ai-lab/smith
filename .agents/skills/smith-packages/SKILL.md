@@ -34,7 +34,7 @@ SmithObject o = {.compiler = "smith-cc", .source = smith_fmt(b, "%s/src/lib.c", 
 smith_object(b, &o);
 ```
 
-(`build::package(b, &(build::Package){...})` in a build.smith is a `result(const char *, build::PackageError)`: `.ok` the path, `.error` with `kind` Fetch, Hash or Offline and `message`. A missing `.url` or `.hash` is a mistake in the build file and fails the build.)
+(`build::package(b, &(build::Package){...})` in a build.smith is a `Result(const char *, build::PackageError)`: `.ok` the path, `.error` with `kind` Fetch, Hash or Offline and `message`. A missing `.url` or `.hash` is a mistake in the build file and fails the build.)
 
 - The first call fetches, checks the hash and extracts (`.tar`, `.tar.gz`, `.tar.xz`, in smith itself; **a zip is refused**). A `.gz` that holds one file, not a tar (a release binary), is a package folder with that file in it, named as the URL without `.gz` and mode 0644 (`chmod +x` a copy); a `.xz` of one file is not read; later calls only look the folder up, so builds work offline. An archive with one top-level folder is returned as that folder's contents. The path is stable: use it in steps, `-I` flags and objects.
 - Extraction refuses absolute names, `..`, a path through a symlink and a symlink that points outside the package. File modes and times are kept.

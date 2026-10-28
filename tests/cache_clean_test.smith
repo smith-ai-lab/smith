@@ -2,9 +2,9 @@
 // Every case has a cache of its own (scratch::own_cache), so the real ~/.cache/smith is never touched.
 module cache_clean_test;
 
-import smith::format;
-import smith::io;
-import smith::test;
+import std::format;
+import std::io;
+import std::test;
 import scratch;
 
 constexpr char busy_build[_] =

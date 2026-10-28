@@ -174,7 +174,7 @@ constexpr size_t build_protocol_count = sizeof build_protocols / sizeof build_pr
 // Returns the program's step.
 static SmithStep build_protocol_program(SmithBuild *b, const BuildConfig *config, const char *folder) {
     const char *const sources[] = {
-        "scripts/protocol.c", "lib/smith/arena.smith", "lib/smith/contract.smith", "lib/smith/text.smith", "lib/json.c",
+        "scripts/protocol.c", "lib/std/arena.smith", "lib/std/contract.smith", "lib/std/text.smith", "lib/json.c",
         "lib/trace.c"};
     SmithObject objects[6] = {};
     const SmithObject *linked[7] = {};
@@ -222,7 +222,7 @@ static const char *const *build_protocol_steps(SmithBuild *b, const BuildConfig 
     return outputs;
 }
 
-// The headers of the libraries written in .smith (lib/smith/<name>.smith, the module smith::<name>) and of smith::build
+// The headers of the libraries written in .smith (lib/std/<name>.smith, the module smith::<name>) and of std::build
 // are build outputs, never committed (knowledge/smith-module-headers.md): `.smith/include/smith/<name>.h`, written by
 // the smith that compiles smith (CC, the previous release: the lag rule) from the module's source. A module that a
 // smith_object compiles (build_linked_libraries) has its header step from smith_object; the others are made here, and
@@ -244,7 +244,7 @@ static const char *const *build_header_steps(SmithBuild *b, const BuildConfig *c
     for (size_t i = 0; build_header_modules[i] != nullptr; i++) {
         const char *name = build_header_modules[i];
         const char *header = smith_fmt(b, ".smith/include/smith/%s.h", name);
-        const char *source = smith_fmt(b, "lib/smith/%s.smith", name);
+        const char *source = smith_fmt(b, "lib/std/%s.smith", name);
         SmithStep step = {
             .command = smith_list(b, config->cc, "--smith-header", source, "-o", header, nullptr),
             .inputs = smith_list(b, source, nullptr),
@@ -513,7 +513,7 @@ static const char *const *build_links(SmithBuild *b, const SmithStep *program, c
 
 // What smith.c embeds or includes, which its depfile may not list: a change to any recompiles it.
 static const char *const build_smith_inputs[] = {
-    "lib/smith/build.smith",
+    "lib/std/build.smith",
     "runtime/base.h",
     "runtime/build_runtime.c",
     "runtime/package.c",
@@ -534,37 +534,37 @@ static const char *const build_smith_inputs[] = {
     "runtime/mcp_serve.c",
     "runtime/protocol/protocol.h",
     "runtime/protocol/protocol.c",
-    "lib/smith/arena.smith",
-    "lib/smith/autodiff.smith",
-    "lib/smith/inflate.smith",
-    "lib/smith/io.smith",
-    "lib/smith/random.smith",
-    "lib/smith/contract.smith",
-    "lib/smith/effects.smith",
-    "lib/smith/failing.smith",
-    "lib/smith/files.smith",
-    "lib/smith/format.smith",
-    "lib/smith/clock.smith",
-    "lib/smith/console.smith",
-    "lib/smith/entropy.smith",
-    "lib/smith/env.smith",
-    "lib/smith/math.smith",
-    "lib/smith/process.smith",
-    "lib/smith/mem.smith",
-    "lib/smith/net.smith",
-    "lib/smith/option.smith",
-    "lib/smith/result.smith",
-    "lib/smith/slice.smith",
-    "lib/smith/categorical.smith",
-    "lib/smith/ascii.smith",
-    "lib/smith/text.smith",
+    "lib/std/arena.smith",
+    "lib/std/autodiff.smith",
+    "lib/std/inflate.smith",
+    "lib/std/io.smith",
+    "lib/std/random.smith",
+    "lib/std/contract.smith",
+    "lib/std/effects.smith",
+    "lib/std/failing.smith",
+    "lib/std/files.smith",
+    "lib/std/format.smith",
+    "lib/std/clock.smith",
+    "lib/std/console.smith",
+    "lib/std/entropy.smith",
+    "lib/std/env.smith",
+    "lib/std/math.smith",
+    "lib/std/process.smith",
+    "lib/std/mem.smith",
+    "lib/std/net.smith",
+    "lib/std/option.smith",
+    "lib/std/result.smith",
+    "lib/std/slice.smith",
+    "lib/std/categorical.smith",
+    "lib/std/ascii.smith",
+    "lib/std/text.smith",
     "include/smith/json.h",
     "lib/json.c",
     "include/smith/handlers.h",
     "lib/handlers.c",
     "include/smith/http.h",
     "lib/http.c",
-    "lib/smith/test.smith",
+    "lib/std/test.smith",
     "templates/new-c/main.c",
     "templates/new/gitignore",
     "templates/defaults/clang-format",
@@ -654,7 +654,7 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
     for (size_t i = 0; i < sizeof libraries / sizeof libraries[0]; i++) {
         libraries[i] = (SmithObject){
             .compiler = config->cc,
-            .source = smith_fmt(b, "lib/smith/%s.smith", build_linked_libraries[i]),
+            .source = smith_fmt(b, "lib/std/%s.smith", build_linked_libraries[i]),
             .output = smith_fmt(b, "%s/%s.o", folder, build_linked_libraries[i]),
             .flags = flags,
         };
@@ -722,7 +722,7 @@ static const char *const *build_test_modules(SmithBuild *b, const BuildConfig *c
     const char *smith_cc = smith_fmt(b, "%s/smith-cc", folder);
     const char *const *flags = build_smith_flags(b, config);
     const char *const *tests =
-        smith_glob(b, smith_list(b, "tests/*.smith", "lib/*_test.smith", "lib/smith/*_test.smith", nullptr));
+        smith_glob(b, smith_list(b, "tests/*.smith", "lib/*_test.smith", "lib/std/*_test.smith", nullptr));
     const char *const *headers = build_test_header_step(b, smith_cc, flags, tests);
     for (size_t i = 0; tests[i] != nullptr; i++) {
         const char *header = headers[i];
@@ -818,30 +818,30 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
     }
     // The modules are linted as written, and `.smith` is C2y (as `smith cc` compiles it), so `_Countof` works.
     const char *const *smith_flags = smith_cat(b, flags, smith_list(b, "-std=gnu2y", nullptr), nullptr);
-    smith_compile_command(b, config->cc, "lib/smith/arena.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/autodiff.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/contract.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/effects.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/failing.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/files.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/format.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/inflate.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/io.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/clock.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/console.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/entropy.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/env.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/math.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/mem.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/process.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/net.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/random.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/slice.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/categorical.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/ascii.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/test.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/text.smith", smith_flags);
-    smith_compile_command(b, config->cc, "lib/smith/build.smith", smith_flags);
+    smith_compile_command(b, config->cc, "lib/std/arena.smith", smith_flags);
+    smith_compile_command(b, config->cc, "lib/std/autodiff.smith", smith_flags);
+    smith_compile_command(b, config->cc, "lib/std/contract.smith", smith_flags);
+    smith_compile_command(b, config->cc, "lib/std/effects.smith", smith_flags);
+    smith_compile_command(b, config->cc, "lib/std/failing.smith", smith_flags);
+    smith_compile_command(b, config->cc, "lib/std/files.smith", smith_flags);
+    smith_compile_command(b, config->cc, "lib/std/format.smith", smith_flags);
+    smith_compile_command(b, config->cc, "lib/std/inflate.smith", smith_flags);
+    smith_compile_command(b, config->cc, "lib/std/io.smith", smith_flags);
+    smith_compile_command(b, config->cc, "lib/std/clock.smith", smith_flags);
+    smith_compile_command(b, config->cc, "lib/std/console.smith", smith_flags);
+    smith_compile_command(b, config->cc, "lib/std/entropy.smith", smith_flags);
+    smith_compile_command(b, config->cc, "lib/std/env.smith", smith_flags);
+    smith_compile_command(b, config->cc, "lib/std/math.smith", smith_flags);
+    smith_compile_command(b, config->cc, "lib/std/mem.smith", smith_flags);
+    smith_compile_command(b, config->cc, "lib/std/process.smith", smith_flags);
+    smith_compile_command(b, config->cc, "lib/std/net.smith", smith_flags);
+    smith_compile_command(b, config->cc, "lib/std/random.smith", smith_flags);
+    smith_compile_command(b, config->cc, "lib/std/slice.smith", smith_flags);
+    smith_compile_command(b, config->cc, "lib/std/categorical.smith", smith_flags);
+    smith_compile_command(b, config->cc, "lib/std/ascii.smith", smith_flags);
+    smith_compile_command(b, config->cc, "lib/std/test.smith", smith_flags);
+    smith_compile_command(b, config->cc, "lib/std/text.smith", smith_flags);
+    smith_compile_command(b, config->cc, "lib/std/build.smith", smith_flags);
     // The protocol code's hand-written base and its tests' support; the generated files are not linted.
     smith_compile_command(b, config->cc, "runtime/protocol/protocol.c", flags);
     smith_compile_command(b, config->cc, "tests/protocol/protocol_support.c",
@@ -984,7 +984,7 @@ static const char *const *build_test(SmithBuild *b, const BuildConfig *config, c
                 "work=${TMPDIR:-/tmp}/smith-text-$$.noindex; mkdir \"$work\"; trap 'rm -rf \"$work\"' "
                 "EXIT; export XDG_CACHE_HOME=$work/xdg-cache; "
                 "\"$0\" cc -std=gnu23 -O2 -Wall -Wextra -Werror -I include -I .smith/include tests/text_exhaustive.c "
-                "lib/smith/text.smith -pthread -o \"$work/exhaustive\" || exit 1; start=$(date +%s); "
+                "lib/std/text.smith -pthread -o \"$work/exhaustive\" || exit 1; start=$(date +%s); "
                 "\"$work/exhaustive\"; status=$?; "
                 "echo \"exhaustive: exit $status in $(($(date +%s) - start)) s\"; exit $status",
                 binary, nullptr},

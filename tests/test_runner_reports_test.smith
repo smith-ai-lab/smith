@@ -5,9 +5,9 @@
 // _contracts and _sanitized.
 module test_runner_reports_test;
 
-import smith::format;
-import smith::io;
-import smith::test;
+import std::format;
+import std::io;
+import std::test;
 import target;
 import runner;
 import scratch;
@@ -25,7 +25,7 @@ static const char *sym(const scratch::Project *p, const char *iso, const char *n
     return run.out;
 }
 
-static const char *at_line(io::Io *io, const char *prefix, usize line) {
+static const char *at_line(io::Io *io, const char *prefix, Usize line) {
     return format::push(&io->arena, prefix, line).data;
 }
 
@@ -34,7 +34,7 @@ export void test_runner_reports_a_sigsegv_without_the_sanitizers_is_named(io::Io
     scratch::Project p = runner::project(io, "runner_base", "runner_segv");
     scratch::Run built = runner::build(&p, "-DSAN=0");
     scratch::expect_status("crash: the runner builds without sanitizers", 0, &built);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run run = runner::tests(&p, iso, "");
         runner::expect_has(io, iso, "crash: a SIGSEGV is named", &run, "FAIL crash: killed by SIGSEGV");
@@ -45,7 +45,7 @@ export void test_runner_reports_a_sigsegv_without_the_sanitizers_is_named(io::Io
 
 export void test_runner_reports_the_plain_function_checks_print_a_raw_trace_with_the_values(io::Io *io) {
     scratch::Project p = reports_project(io);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run passes = runner::tests(&p, iso, "--test passes --verbose");
         runner::expect_has(io, iso, "reports: the plain-function checks pass", &passes, "PASS passes");
@@ -56,11 +56,11 @@ export void test_runner_reports_the_plain_function_checks_print_a_raw_trace_with
         runner::expect_has(io, iso, "raw: ... with frames", &check, "  smith-trace frame 0x");
         runner::expect_has(io, iso, "raw: ... and the image's UUID", &check, "  smith-trace image ");
         scratch::Run equal = runner::tests(&p, iso, "--test equal_fails");
-        runner::expect_has(io, iso, "raw: a failed check_equal shows a", &equal, "    a = 3   (u64)");
-        runner::expect_has(io, iso, "raw: ... and b", &equal, "    b = 4   (u64)");
+        runner::expect_has(io, iso, "raw: a failed check_equal shows a", &equal, "    a = 3   (U64)");
+        runner::expect_has(io, iso, "raw: ... and b", &equal, "    b = 4   (U64)");
         scratch::Run ordering = runner::tests(&p, iso, "--test ordering_fails");
-        runner::expect_has(io, iso, "raw: a failed ordering check shows a", &ordering, "    a = 4   (i32)");
-        runner::expect_has(io, iso, "raw: ... and b", &ordering, "    b = 3   (i32)");
+        runner::expect_has(io, iso, "raw: a failed ordering check shows a", &ordering, "    a = 4   (I32)");
+        runner::expect_has(io, iso, "raw: ... and b", &ordering, "    b = 3   (I32)");
         scratch::Run property = runner::tests(&p, iso, "--test prop_function --shrink-seconds 3600");
         runner::expect_has(io, iso, "raw: a property test's failed function check shrinks", &property, "shrunk in");
         runner::expect_has(io, iso, "raw: ... to the smallest case", &property, "    note: x = 500");
@@ -76,9 +76,9 @@ export void test_runner_reports_the_plain_function_checks_print_a_raw_trace_with
 export void test_runner_reports_a_failed_check_and_a_failed_equal_name_their_lines(io::Io *io) {
     scratch::Project p = reports_project(io);
     if (!runner::can_symbolize(&p)) return;
-    usize check_line = runner::line_of(&p, "tests/test_reports.smith", "test::check(moves > 0);");
-    usize equal_line = runner::line_of(&p, "tests/test_reports.smith", "test::check_equal(count, expected);");
-    for (usize mode = 0; mode < 2; mode++) {
+    Usize check_line = runner::line_of(&p, "tests/test_reports.smith", "test::check(moves > 0);");
+    Usize equal_line = runner::line_of(&p, "tests/test_reports.smith", "test::check_equal(count, expected);");
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         const char *check = sym(&p, iso, "check_fails");
         scratch::expect_contains(runner::label(io, iso, "report: a failed test::check names the line"), check,
@@ -90,8 +90,8 @@ export void test_runner_reports_a_failed_check_and_a_failed_equal_name_their_lin
                                  at_line(io, "tests/test_reports.smith:", check_line));
         scratch::expect_contains(runner::label(io, iso, "report: ... and whose last is the runner"), check,
                                  "smith_test_execute");
-        scratch::expect_lacks(runner::label(io, iso, "report: ... without the check machinery of smith::test"), check,
-                              "smith::test::");
+        scratch::expect_lacks(runner::label(io, iso, "report: ... without the check machinery of std::test"), check,
+                              "std::test::");
         scratch::expect_lacks(runner::label(io, iso, "report: ... or the raw trace"), check, "smith-trace");
 
         const char *equal = sym(&p, iso, "equal_fails");
@@ -101,7 +101,7 @@ export void test_runner_reports_a_failed_check_and_a_failed_equal_name_their_lin
             runner::label(io, iso, "report: ... and prints both values under the source line, named by their text"),
             equal,
             format::push(&io->arena, equal_line,
-                         " |     test::check_equal(count, expected);\n            count = 3, expected = 4   (u64)\n  "
+                         " |     test::check_equal(count, expected);\n            count = 3, expected = 4   (U64)\n  "
                          "called from")
                 .data);
     }
@@ -110,17 +110,17 @@ export void test_runner_reports_a_failed_check_and_a_failed_equal_name_their_lin
 export void test_runner_reports_an_assert_a_segfault_and_an_inlined_check_name_their_lines(io::Io *io) {
     scratch::Project p = reports_project(io);
     if (!runner::can_symbolize(&p)) return;
-    usize assert_line = runner::line_of(&p, "tests/test_reports.smith", "c::assert(moves == 2);");
-    usize segv_line = runner::line_of(&p, "tests/test_reports.smith", "*nothing = 7;");
-    usize inline_line = runner::line_of(&p, "tests/test_reports.smith", "test::check(value > 0);");
-    usize caller_line = runner::line_of(&p, "tests/test_reports.smith", "check_positive(-1);");
-    usize order_line = runner::line_of(&p, "tests/test_reports.smith", "test::check_less_equal(total, 3);");
+    Usize assert_line = runner::line_of(&p, "tests/test_reports.smith", "c::assert(moves == 2);");
+    Usize segv_line = runner::line_of(&p, "tests/test_reports.smith", "*nothing = 7;");
+    Usize inline_line = runner::line_of(&p, "tests/test_reports.smith", "test::check(value > 0);");
+    Usize caller_line = runner::line_of(&p, "tests/test_reports.smith", "check_positive(-1);");
+    Usize order_line = runner::line_of(&p, "tests/test_reports.smith", "test::check_less_equal(total, 3);");
     // assert's own message is libc's: Apple's and glibc's differ
     const char *assert_message = "Assertion `moves == 2' failed.";
     if constexpr (target::os == target::macos) {
         assert_message = "Assertion failed: (moves == 2)";
     }
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         const char *assert_report = sym(&p, iso, "assert_fails");
         scratch::expect_contains(runner::label(io, iso, "report: an assert names the line"), assert_report,
@@ -154,7 +154,7 @@ export void test_runner_reports_an_assert_a_segfault_and_an_inlined_check_name_t
         scratch::expect_contains(runner::label(io, iso, "report: an ordering check's failure has the same report"),
                                  ordering, at_line(io, "  check failed at tests/test_reports.smith:", order_line));
         scratch::expect_contains(runner::label(io, iso, "report: ... and its values"), ordering,
-                                 "    total = 4, 3   (i32)");
+                                 "    total = 4, 3   (I32)");
     }
 }
 
@@ -165,8 +165,8 @@ export void test_runner_reports_a_check_inside_an_objective_c_method_names_the_m
     }
     scratch::Project p = runner::project(io, "runner_base", "runner_objc");
     if (!runner::can_symbolize(&p)) return;
-    usize line = runner::line_of(&p, "tests/test_objc.m", "smith_check(value > 0);");
-    for (usize mode = 0; mode < 2; mode++) {
+    Usize line = runner::line_of(&p, "tests/test_objc.m", "smith_check(value > 0);");
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run run = runner::smith_test(&p, iso, "-DSAN=0");
         runner::expect_has(io, iso, "objc: a check inside a method names the line", &run,
@@ -180,9 +180,9 @@ export void test_runner_reports_a_check_inside_an_objective_c_method_names_the_m
 export void test_runner_reports_a_program_linked_by_apples_ld_has_lines_too(io::Io *io) {
     scratch::Project p = reports_project(io);
     if (!runner::can_symbolize(&p)) return;
-    usize line = runner::line_of(&p, "tests/test_reports.smith", "test::check(moves > 0);");
+    Usize line = runner::line_of(&p, "tests/test_reports.smith", "test::check(moves > 0);");
     (void)scratch::sh(&p, "rm -f build/tests");
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run run =
             scratch::sh(&p, format::push(&io->arena, "env SMITH_OUTPUT=full SMITH_LINKER=/usr/bin/ld smith test ", iso,
@@ -198,7 +198,7 @@ export void test_runner_reports_a_program_linked_by_apples_ld_has_lines_too(io::
 static void check_saved_trace(io::Io *io, const char *iso) {
     scratch::Project p = reports_project(io);
     if (!runner::can_symbolize(&p)) return;
-    usize line = runner::line_of(&p, "tests/test_reports.smith", "test::check(moves > 0);");
+    Usize line = runner::line_of(&p, "tests/test_reports.smith", "test::check(moves > 0);");
     const char *wanted = at_line(io, "  check failed at tests/test_reports.smith:", line);
     (void)scratch::sh(
         &p, format::push(&io->arena, "build/tests ", iso, " --test check_fails --trace >trace.txt 2>&1").data);
@@ -225,7 +225,7 @@ export void test_runner_reports_symbolize_reads_a_saved_trace_of_a_process_per_t
 static void check_changed_sources(io::Io *io, const char *iso) {
     scratch::Project p = reports_project(io);
     if (!runner::can_symbolize(&p)) return;
-    usize line = runner::line_of(&p, "tests/test_reports.smith", "test::check(moves > 0);");
+    Usize line = runner::line_of(&p, "tests/test_reports.smith", "test::check(moves > 0);");
     (void)scratch::sh(
         &p, format::push(&io->arena, "build/tests ", iso, " --test check_fails --trace >trace.txt 2>&1").data);
     // a source newer than the program is noted
@@ -291,9 +291,9 @@ export void test_runner_reports_smith_as_llvm_symbolizer_answers_the_sanitizers_
 export void test_runner_reports_a_failed_contract_has_the_report_of_a_failed_check(io::Io *io) {
     scratch::Project p = runner::project(io, "runner_base", "runner_contracts");
     if (!runner::can_symbolize(&p)) return;
-    usize line = runner::line_of(&p, "tests/test_contracts.c", "smith_requires(value % 2 == 0);");
-    usize caller = runner::line_of(&p, "tests/test_contracts.c", "(void)halve(odd);");
-    for (usize mode = 0; mode < 2; mode++) {
+    Usize line = runner::line_of(&p, "tests/test_contracts.c", "smith_requires(value % 2 == 0);");
+    Usize caller = runner::line_of(&p, "tests/test_contracts.c", "(void)halve(odd);");
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run run = runner::smith_test(&p, iso, "-DSAN=0");
         runner::expect_has(io, iso, "contract: a failed smith_requires names its line", &run,
@@ -314,9 +314,9 @@ export void test_runner_reports_a_failed_contract_has_the_report_of_a_failed_che
 export void test_runner_reports_a_sanitizer_report_is_symbolized_by_smith(io::Io *io) {
     scratch::Project p = runner::project(io, "runner_base", "runner_sanitized");
     if (!runner::can_symbolize(&p)) return;
-    usize read_line = runner::line_of(&p, "tests/test_overflow.c", "return values[count];");
-    usize signed_line = runner::line_of(&p, "tests/test_overflow.c", "volatile int more = big + 1;");
-    for (usize mode = 0; mode < 2; mode++) {
+    Usize read_line = runner::line_of(&p, "tests/test_overflow.c", "return values[count];");
+    Usize signed_line = runner::line_of(&p, "tests/test_overflow.c", "volatile int more = big + 1;");
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run asan = runner::smith_test(&p, iso, "--test overflow");
         runner::expect_has(io, iso, "asan: the report's innermost user frame is named", &asan, "in read_past ");

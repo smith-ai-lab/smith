@@ -1,23 +1,23 @@
 module affine_range_for;
 
-export [[smith::affine]] typedef struct {
-    u64 bits;
+export [[std::affine]] typedef struct {
+    U64 bits;
 } Key;
-export u64 draw(Key key) {
+export U64 draw(Key key) {
     return key.bits;
 }
 
 // A range `for` hands each element once, so a key drawn from in the body is used once per turn.
-u64 once(Key keys[:]) {
-    u64 total = 0;
+U64 once(Key keys[:]) {
+    U64 total = 0;
     for (Key k : keys) {
         total += draw(k);
     }
     return total;
 }
 
-u64 twice(Key keys[:]) {
-    u64 total = 0;
+U64 twice(Key keys[:]) {
+    U64 total = 0;
     for (Key k : keys) {
         total += draw(k);
         total += draw(k);

@@ -2,10 +2,10 @@
 // effects its function type states (`-` when it states none, so it is `c`) and each function made into a pointer.
 #include <stdio.h>
 
-typedef void (*Logger)(const char *) [[clang::annotate_type("smith::effects:console")]];
+typedef void (*Logger)(const char *) [[clang::annotate_type("std::effects:console")]];
 
 struct Hooks {
-    int (*step)(int) [[clang::annotate_type("smith::effects:")]];
+    int (*step)(int) [[clang::annotate_type("std::effects:")]];
     int (*other)(int);
 };
 

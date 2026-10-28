@@ -8,9 +8,9 @@
 // 500-key run under the sanitizers is by hand: `./build/tests --seeds 500` in the asan build.
 module protocol_test;
 
-import smith::format;
-import smith::io;
-import smith::test;
+import std::format;
+import std::io;
+import std::test;
 import scratch;
 
 // The scratch project: smith's libraries the protocol code needs (build.c), the protocol code, and the runner.

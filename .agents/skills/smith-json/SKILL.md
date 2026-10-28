@@ -10,8 +10,8 @@ description: "Reading JSON with smith's json (import smith::json; <smith/json.h>
 ## Read a tree
 
 ```smith
-import smith::arena;
-import smith::text;
+import std::arena;
+import std::text;
 import <smith/json.h>;
 
 // The name of a document's "name" member, or an empty text; the error goes to the console of the caller.
@@ -25,9 +25,9 @@ typeof(const char[:]) name_of(arena::Arena *a, const char input[:]) {
     return name->text;
 }
 
-usize total_items(const c::SmithJsonValue *list) {
-    usize total = 0;
-    for (usize i = 0; i < list->count; i++) total += list->items[i]->count; // arrays: elements; objects: member values, .key each
+Usize total_items(const c::SmithJsonValue *list) {
+    Usize total = 0;
+    for (Usize i = 0; i < list->count; i++) total += list->items[i]->count; // arrays: elements; objects: member values, .key each
     return total;
 }
 ```

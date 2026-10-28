@@ -20,7 +20,7 @@ clangd's stdin and stdout; `SMITH_LSP_RAW=1` turns it off) rewrites hover, symbo
 module's exports), signature help and hints. A module's header has a `// smith-names:` line of its exports, which depends
 on them only, so an edit to a body does not rebuild importers. A `c::name` that is no macro stays a plain token in the
 main file (a reinjected one is not in clangd's token buffer, so hover and go-to-definition found nothing there), and
-hover leaves out the `asm("_foo::f")` label of a module's name; the struct of a run-time array, `struct smith_array_f32_n`, is written `f32[:]` wherever the layer rewrites a name (the element is rewritten too, so `box::Box[:]`); an importer still reads a module's types as the header
+hover leaves out the `asm("_foo::f")` label of a module's name; the struct of a run-time array, `struct smith_array_f32_n`, is written `F32[:]` wherever the layer rewrites a name (the element is rewritten too, so `box::Box[:]`); an importer still reads a module's types as the header
 writes them (`int32_t`), since a generated header says the standard C types (`tests/lsp_test.smith`, [the language](smith-language.md)).
 
 **`smith lint` lints `.smith` files as written** (`shim/tidy.cpp`). clang-tidy builds each file's command with the
@@ -96,7 +96,7 @@ given (`tests/lint_smith_test.smith`).
 - **`smith-preprocessor`** (`shim/preprocessor.h`, registered in the same module) reports, in a `.smith` file, every
   preprocessor directive (`#define`, `#undef`, `#include`, `#if` and its kin, `#pragma`, `#error`, `#warning`, `#line`,
   `#embed`) and `_Pragma`, and every `c::` name that is a C macro, each with what to write instead (`import`,
-  `constexpr`, `if constexpr` with `target::`, `contract::assert`, `math::is_finite`, `math::max(usize)`; for another
+  `constexpr`, `if constexpr` with `target::`, `contract::assert`, `math::is_finite`, `math::max(Usize)`; for another
   macro, that the module that wraps the C API should provide it). The directives are found by the raw lexer over the
   file's text (so a branch the compiler did not take counts, and `#error`, `#warning` and `#line`, which have no
   preprocessor callback, are not missed); the macros are looked up when the file ends, among those the file's imports
@@ -107,7 +107,7 @@ given (`tests/lint_smith_test.smith`).
 - **`smith-module`** (issue #60; `shim/idiom.h`): a `.smith` file whose text has no `module` line (the raw lexer; comments are skipped) is reported at its first byte with the line its path implies, from the folder the check runs in (the project's root), `tests/` being a root of its own. The compiler never refuses such a file.
 - **The idiom checks** (issue #47; `shim/idiom.h`, registered in the same module, on in the default `.clang-tidy`).
   `smith-sized-types` and `smith-module-library` read the `.smith` file's text with the raw lexer (a typedef's name is
-  gone from the AST, and `unsigned` and `uint32_t` are one type): every C type spelling but `char` (`main` included: `i32 main(i32 argc, char **argv)`) with the sized type to write, and, for a header whose `// smith-module:` line says it is a
+  gone from the AST, and `unsigned` and `uint32_t` are one type): every C type spelling but `char` (`main` included: `I32 main(I32 argc, char **argv)`) with the sized type to write, and, for a header whose `// smith-module:` line says it is a
   module's, the `import <smith/arena.h>;` and every `c::` name of its `// smith-names:` pairs with the module's call.
   `smith-bounded-loop` and `smith-constexpr` match the AST (a loop whose condition is absent or a true constant outside
   `main`; a file-scope `const` of arithmetic, enum, or an array or record of them with a constant initializer, which a
@@ -117,5 +117,5 @@ given (`tests/lint_smith_test.smith`).
 - **`smith-effects`** (`shim/effects.h`, registered in the same module) is a check of smith's own: a raw call into a
   system header is reported at the `c::` where the source wrote it, with the callee as written (`c::fopen`), a main-only
   constructor is named as the module writes it, and the rules about capabilities (a type marked
-  `[[clang::annotate("smith::capability")]]`; the module that defines it may make raw calls) read the module's file as
+  `[[clang::annotate("std::capability")]]`; the module that defines it may make raw calls) read the module's file as
   its implementation. The skill smith-io has the rules and how to fix each finding.

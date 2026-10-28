@@ -1,5 +1,5 @@
 // Tests of <smith/arena.h> that need a process and a build of their own, run by tests/arena_c_test.smith with one
-// argument (the behavior checks are lib/smith/arena_test.smith, run by build.c's `test-units`):
+// argument (the behavior checks are lib/std/arena_test.smith, run by build.c's `test-units`):
 //   stop  a push past the capacity (built with -DNDEBUG, it must still stop with a message)
 //   oob   a write just past a push (built with -fsanitize=address, ASan must catch it)
 //   big   a 64 GiB reservation made into an arena, and a few pushes: prints how much memory that made resident

@@ -1,33 +1,33 @@
-import smith::test;
+import std::test;
 
 void test_same(void) {
-    i32 left[3] = {1, 2, 3};
-    i32 right[3] = {1, 2, 3};
-    i32 a[:] = left;
-    i32 b[:] = right;
+    I32 left[3] = {1, 2, 3};
+    I32 right[3] = {1, 2, 3};
+    I32 a[:] = left;
+    I32 b[:] = right;
     test::check_equal(a, b);
-    f32 rows[2][2] = {{1, 2}, {3, 4}};
-    f32 grid[:][2] = rows;
+    F32 rows[2][2] = {{1, 2}, {3, 4}};
+    F32 grid[:][2] = rows;
     test::check_equal(grid[1], grid[1]);
 }
 
 void test_element(void) {
-    i32 left[3] = {1, 2, 3};
-    i32 right[3] = {1, 5, 3};
-    i32 a[:] = left;
-    i32 b[:] = right;
+    I32 left[3] = {1, 2, 3};
+    I32 right[3] = {1, 5, 3};
+    I32 a[:] = left;
+    I32 b[:] = right;
     test::check_equal(a, b);
 }
 
 void test_count(void) {
-    i32 raw[3] = {1, 2, 3};
-    i32 a[:] = raw;
-    i32 b[:] = a[0:2];
+    I32 raw[3] = {1, 2, 3};
+    I32 a[:] = raw;
+    I32 b[:] = a[0:2];
     test::check_equal(a, b);
 }
 
 void test_row(void) {
-    f32 rows[2][2] = {{1, 2}, {3, 4}};
-    f32 grid[:][2] = rows;
+    F32 rows[2][2] = {{1, 2}, {3, 4}};
+    F32 grid[:][2] = rows;
     test::check_equal(grid[0], grid[1]);
 }

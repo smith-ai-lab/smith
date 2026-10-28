@@ -9,10 +9,10 @@ description: "The smith-effects clang-tidy check and the model behind it: a prog
 
 The rules:
 1. **A raw effect is a call into a system header that is not on the pure allow list** (`<string.h>`, `<math.h>`, `<ctype.h>`, `<stdint.h>`, `<stddef.h>`, `<float.h>`, `<limits.h>`, `<stdbit.h>`, `<stdckdint.h>`, `snprintf`, `vsnprintf`, `sscanf`, the `strto*` family, `qsort`, `bsearch`, `abs`, `div`, `__builtin_*`), or an Objective-C message to a system framework's class or object (`[NSFileManager defaultManager]`). The list is `shim/effects.h` in smith; a call the list does not name is reported. In a `.smith` file the finding names the callee as written (`c::fopen`).
-2. **Failure is not an effect:** `abort`, `assert`, `__builtin_trap`, `__builtin_unreachable`, `smith_failure`, the contract calls (`contract::assert` included) and the checks of `smith::test` are allowed everywhere.
-3. **Raw effects are allowed in a capability's implementation.** A capability is a type marked `[[clang::annotate("smith::capability")]]`: `io::Io`, `io::Console`, `io::Files`, `io::Clock`, `io::Processes`, `io::Net` and `io::Args` (the process's inputs: the live environment), and the handles `io::Op`, `io::Capture`, `io::Child` and `io::Connection`. (`random::Key` and `arena::Arena` are values, not capabilities.) Its implementation is the module that defines it: the `.smith` module file, or for C the `.c` file beside the header that defines it (`io.c` with `io.h`; `lib/io.c` or `src/io.c` with a header under the `include/` beside them); `smith::io` is itself a `.smith` module, so it is its own implementation. Every function there, private helpers included, may make raw calls.
+2. **Failure is not an effect:** `abort`, `assert`, `__builtin_trap`, `__builtin_unreachable`, `smith_failure`, the contract calls (`contract::assert` included) and the checks of `std::test` are allowed everywhere.
+3. **Raw effects are allowed in a capability's implementation.** A capability is a type marked `[[clang::annotate("std::capability")]]`: `io::Io`, `io::Console`, `io::Files`, `io::Clock`, `io::Processes`, `io::Net` and `io::Args` (the process's inputs: the live environment), and the handles `io::Op`, `io::Capture`, `io::Child` and `io::Connection`. (`random::Key` and `arena::Arena` are values, not capabilities.) Its implementation is the module that defines it: the `.smith` module file, or for C the `.c` file beside the header that defines it (`io.c` with `io.h`; `lib/io.c` or `src/io.c` with a header under the `include/` beside them); `std::io` is itself a `.smith` module, so it is its own implementation. Every function there, private helpers included, may make raw calls.
 4. **An exported function of that module that reaches a raw effect, directly or through the module's own static functions, must take or return a capability** (or a struct holding one). Otherwise make it `static`.
-5. **A main-only constructor may be called only inside `main`:** `io::make`, marked `[[clang::annotate("smith::main_only")]]`. `io::make_test` is not: tests make fakes anywhere. The io form of `main` (`i32 main(io::Io *io)`) is lowered to a `main` that calls `io::make`, so it satisfies the rule; the capability comes from its parameter.
+5. **A main-only constructor may be called only inside `main`:** `io::make`, marked `[[clang::annotate("std::main_only")]]`. `io::make_test` is not: tests make fakes anywhere. The io form of `main` (`I32 main(io::Io *io)`) is lowered to a `main` that calls `io::make`, so it satisfies the rule; the capability comes from its parameter.
 6. **No capability in static storage:** a global or `static` local of a capability type, a pointer to one, or a struct that holds one.
 
 One option, `smith-effects.CFiles` (default true): `false` makes the check skip `.c` and `.m` files and read `.smith` only (smith's own `.clang-tidy` does this while its C is ported).
@@ -22,17 +22,17 @@ One option, `smith-effects.CFiles` (default true): `false` makes the check skip 
 ```smith
 module window;
 
-export typedef struct [[clang::annotate("smith::capability")]] {
+export typedef struct [[clang::annotate("std::capability")]] {
     void *handle;
 } Window;
 
 // Raw calls into the platform go here, in the module, and every exported function takes a Window *.
-export bool is_open(const Window *window) {
+export Bool is_open(const Window *window) {
     return window->handle != nullptr;
 }
 
 // A constructor that may be called only in main.
-export [[nodiscard, clang::annotate("smith::main_only")]] Window make() {
+export [[nodiscard, clang::annotate("std::main_only")]] Window make() {
     return (Window){.handle = nullptr};
 }
 ```

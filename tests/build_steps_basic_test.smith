@@ -3,8 +3,8 @@
 // keeps its files. Each fixture is tests/build_fixtures/steps_<name>/build.c.
 module build_steps_basic_test;
 
-import smith::io;
-import smith::test;
+import std::io;
+import std::test;
 import scratch;
 
 export void test_build_steps_a_copy_step_reruns_when_its_input_changes(io::Io *io) {

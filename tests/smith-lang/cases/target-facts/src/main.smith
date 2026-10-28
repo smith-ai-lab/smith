@@ -2,30 +2,30 @@ import target;
 import <stdio.h>;
 
 // Each fact of the target, against the answer of C's own preprocessor in facts.c (`#if` and the predefined macros).
-extern i32 c_arch();
-extern i32 c_os();
-extern i32 c_address_sanitizer();
-extern i32 c_undefined_sanitizer();
-extern i32 c_thread_sanitizer();
-extern i32 c_assertions();
-extern i32 c_float_radix();
-extern i32 c_f32_mantissa_bits();
-extern i32 c_f64_mantissa_bits();
-extern i32 c_float_eval_method();
-extern i32 c_static_analyzer();
+extern I32 c_arch();
+extern I32 c_os();
+extern I32 c_address_sanitizer();
+extern I32 c_undefined_sanitizer();
+extern I32 c_thread_sanitizer();
+extern I32 c_assertions();
+extern I32 c_float_radix();
+extern I32 c_f32_mantissa_bits();
+extern I32 c_f64_mantissa_bits();
+extern I32 c_float_eval_method();
+extern I32 c_static_analyzer();
 
 // A fact is a constant expression: a static_assert, an array size, a constexpr initializer.
 static_assert(target::float_radix == 2);
-static_assert(target::f32_mantissa_bits == 24 && target::f64_mantissa_bits == 53, "f32 and f64 are IEEE");
+static_assert(target::f32_mantissa_bits == 24 && target::f64_mantissa_bits == 53, "F32 and F64 are IEEE");
 static_assert(target::aarch64 != target::x86_64 && target::macos != target::linux);
 static_assert(target::arch == target::aarch64 || target::arch == target::x86_64 || target::arch == 0);
 
-u8 mantissa[target::f32_mantissa_bits];
-constexpr i32 arch_copy = target::arch;
-constexpr bool sanitized = target::address_sanitizer;
+U8 mantissa[target::f32_mantissa_bits];
+constexpr I32 arch_copy = target::arch;
+constexpr Bool sanitized = target::address_sanitizer;
 static_assert(_Countof(mantissa) == 24);
 
-static i32 check(const char *name, i32 smith, i32 compiler) {
+static I32 check(const char *name, I32 smith, I32 compiler) {
     if (smith != compiler) {
         c::printf("%s: %d, and the compiler says %d\n", name, smith, compiler);
         return 1;
@@ -35,7 +35,7 @@ static i32 check(const char *name, i32 smith, i32 compiler) {
 }
 
 int main() {
-    i32 bad = 0;
+    I32 bad = 0;
     bad += check("arch", target::arch, c_arch());
     bad += check("os", target::os, c_os());
     bad += check("address_sanitizer", target::address_sanitizer, c_address_sanitizer());

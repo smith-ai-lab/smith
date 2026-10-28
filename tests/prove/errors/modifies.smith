@@ -1,8 +1,8 @@
 // contract::modifies takes &x or a slice: a value is an error that names the two forms.
 module errors::modifies;
-import smith::contract;
+import std::contract;
 
-export void f(i32 *p) {
+export void f(I32 *p) {
     contract::modifies(5);
     *p = 1;
 }

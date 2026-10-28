@@ -1,13 +1,13 @@
 module pre::good;
 
 import target;
-import smith::contract;
-import smith::math;
+import std::contract;
+import std::math;
 
-constexpr usize limit = 4;
+constexpr Usize limit = 4;
 
-export usize h(usize x) {
-    contract::assert(x < math::max(usize));
+export Usize h(Usize x) {
+    contract::assert(x < math::max(Usize));
     if constexpr (target::os == target::macos) {
         return x + limit;
     } else {

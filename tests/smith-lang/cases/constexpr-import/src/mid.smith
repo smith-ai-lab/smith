@@ -3,6 +3,6 @@ module mid;
 import calc;
 
 // Another module's function calls one of calc: the importer of mid runs both.
-export i32 fib_plus(i32 n) {
+export I32 fib_plus(I32 n) {
     return calc::fib(n) + calc::combine(n, 1);
 }

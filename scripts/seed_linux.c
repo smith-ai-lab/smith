@@ -10,7 +10,7 @@
 //   1. LLVM 23.1.3, pinned by SHA-256, built by scripts/llvm_linux.c into the package cache (as `smith build
 //      llvm` does), unless that install is there already;
 //   2. the libraries' headers, which are build outputs and not in git: scripts/header_tool.c, the writer of
-//      `smith cc --smith-header` as a program of its own, built with this compiler and run on lib/smith/*.smith;
+//      `smith cc --smith-header` as a program of its own, built with this compiler and run on lib/std/*.smith;
 //   3. stage A: smith.c without `smith mcp` (no -DSMITH_MCP: the protocol code does not exist yet), its shims and that
 //      LLVM, linked with weak stand-ins for the six libraries, which are .smith and need a smith to compile. Stage A
 //      has clang and the token hook, so it compiles .smith; any call into a stand-in stops it with a message;
@@ -40,7 +40,7 @@ static const char llvm_url[] =
     "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.3/llvm-project-23.1.3.src.tar.xz";
 static const char llvm_sha256[] = "c44186a7762ed28954be72e5ff6df9808e0779d4f1bf014ecc4e7e211d31ee34";
 static const char *const libraries[] = {"arena", "contract", "inflate", "io", "random", "text"}; // build.c's list
-// The modules whose headers smith.c includes: the libraries it links, and smith::build's, which build_runtime.c reads.
+// The modules whose headers smith.c includes: the libraries it links, and std::build's, which build_runtime.c reads.
 static const char *const header_modules[] = {"arena", "contract", "inflate", "io", "random", "text", "build"};
 static const char *const shims[] = {"clang",  "lld",           "format",      "tidy",     "clangd",       "symbolize",
                                     "hook",   "lsp",           "lldb",        "lldb_dap", "lldb_explain", "lldb_slices",
@@ -143,7 +143,7 @@ static void write_headers(const char *cc) {
     run((const char *[]){cc, "-std=gnu2x", "-O1", "-x", "c", "scripts/header_tool.c", "-o", ".smith/seed/header_tool",
                          "-lm", nullptr});
     for (size_t i = 0; i < sizeof header_modules / sizeof header_modules[0]; i++) {
-        run((const char *[]){".smith/seed/header_tool", path("lib/smith/%s.smith", header_modules[i], ""), "-o",
+        run((const char *[]){".smith/seed/header_tool", path("lib/std/%s.smith", header_modules[i], ""), "-o",
                              path(".smith/seed/include/smith/%s.h", header_modules[i], ""), nullptr});
     }
 }
@@ -278,7 +278,7 @@ static void write_protocol(void) {
     static const char *const modules[] = {"arena", "contract", "text"};
     for (size_t i = 0; i < sizeof modules / sizeof modules[0]; i++)
         add(&objects,
-            compile(".smith/seed/a/bin/smith-cc", path("lib/smith/%s.smith", modules[i], ""), "p", modules[i], &flags));
+            compile(".smith/seed/a/bin/smith-cc", path("lib/std/%s.smith", modules[i], ""), "p", modules[i], &flags));
     Args link = {};
     add(&link, clang);
     add(&link, "-o");
@@ -410,7 +410,7 @@ int main(int argc, char **argv) {
     Args stage_b = objects;
     add(&stage_b, compile(path("%s/bin/clang", llvm, ""), "smith.c", "b", "smith", &flags_b));
     for (size_t i = 0; i < sizeof libraries / sizeof libraries[0]; i++) {
-        add(&stage_b, compile(".smith/seed/a/bin/smith-cc", path("lib/smith/%s.smith", libraries[i], ""), "b",
+        add(&stage_b, compile(".smith/seed/a/bin/smith-cc", path("lib/std/%s.smith", libraries[i], ""), "b",
                               libraries[i], &flags_b));
     }
     link_smith(&stage_b, ".smith/seed/b/smith");

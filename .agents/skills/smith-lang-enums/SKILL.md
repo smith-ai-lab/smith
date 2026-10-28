@@ -8,25 +8,25 @@ description: "Enums with payloads in .smith: `typedef enum { Circle circle; Rect
 C's tagged union (a tag beside a union) lets you read a member the tag does not say is there. In a `.smith` file with a `module` line an enum can carry a payload, and the compiler checks the read. Plain C enums (`enum { A, B }`) keep C's meaning.
 
 ```smith
-typedef struct { f32 radius; } Circle;
-typedef struct { f32 w; f32 h; } Rect;
+typedef struct { F32 radius; } Circle;
+typedef struct { F32 w; F32 h; } Rect;
 typedef enum {
     Circle circle;        // a type and a name, as a union member
     Rect rect;
-    struct { i32 a; } one; // an anonymous struct for a one-off payload
+    struct { I32 a; } one; // an anonymous struct for a one-off payload
     empty;                // no payload: a name
 } Shape;
 
-Shape make(bool big) {
+Shape make(Bool big) {
     if (big) return {.rect = {.w = 2, .h = 3}};   // a payload: a designated initializer
     return .empty;                                 // no payload: a leading dot
 }
-bool is_big_circle(Shape s) { return s == .circle && s.circle.radius > 1.0f; }
-f32 area(Shape s) {
+Bool is_big_circle(Shape s) { return s == .circle && s.circle.radius > 1.0f; }
+F32 area(Shape s) {
     switch (s) {                                   // every variant named, no default:
     case .circle: return s.circle.radius * s.circle.radius * 3;
     case .rect: return s.rect.w * s.rect.h;
-    case .one: return (f32)s.one.a;
+    case .one: return (F32)s.one.a;
     case .empty: return 0;
     }
     return -1;
@@ -44,7 +44,7 @@ void grow(Shape *p) {
 - **No binding syntax:** the payload is the union member, `s.circle.radius`, read where narrowed.
 - **From C** the type is a struct with `tag` (an enum `<Type>_tag`, constants `<Type>_tag_<variant>`) and an unnamed union, unchecked, in the module's generated header; the check is smith's, in the compiler and `smith lsp`, not in `smith lint`.
 - **In a generic** a function whose result is a payload enum may `return .none;` and `return {.some = i};` (written per instance); any other `.name` in a generic's body is an error saying so (known gap): compare and assign with the constants there.
-- **`option(T)` and `result(T, E)` are built in**: in scope in every module with no import, `option(usize) find(...)` returning `i` (converted to `.some`) or `.none`, `result(f64, i32)` returning `v` (converted to `.ok`) or `{.error = e}` (skills `smith-option`, `smith-result`). A module cannot declare its own (an error names the built-in); the rules below are for a type function you write under another name.
-- **A type function that returns an enum** gives a generic-looking enum: `type maybe(type T) { return enum { T some; none; }; }`, used as `maybe(usize) find(...)` and `maybe(usize) x = {.some = 1};`; equal arguments are one struct, also across modules (an export's header defines it, and two modules or an importer that write `maybe(usize)` share it). A generic may return `maybe(usize)`. For now (each an error saying "known gap"): the body is exactly `return enum {...};` with `type` parameters, the arguments are written type names; a generic may also write `maybe(T)` (`constexpr type T`) and `maybe(typeof(x))` (`auto x`) in its head and body, and each instance gets the struct a written `maybe(usize)` is (an exported generic needs `export type maybe(...)`); the first mention of `maybe(usize)` may be anywhere a type is written, inside a function body too (its struct is defined in the block, the same type as the file-scope one); a module may `export type maybe(type T) {...}`: an importer writes `mod::maybe(X)` for any X and gets the same struct as the module's own `maybe(X)` (the header carries the shape); two modules that write the same `type maybe` unexported each define theirs.
+- **`Option(T)` and `Result(T, E)` are built in**: in scope in every module with no import, `Option(Usize) find(...)` returning `i` (converted to `.some`) or `.none`, `Result(F64, I32)` returning `v` (converted to `.ok`) or `{.error = e}` (skills `smith-option`, `smith-result`). A module cannot declare its own (an error names the built-in); the rules below are for a type function you write under another name.
+- **A type function that returns an enum** gives a generic-looking enum: `Type maybe(Type T) { return enum { T some; none; }; }`, used as `maybe(Usize) find(...)` and `maybe(Usize) x = {.some = 1};`; equal arguments are one struct, also across modules (an export's header defines it, and two modules or an importer that write `maybe(Usize)` share it). A generic may return `maybe(Usize)`. For now (each an error saying "known gap"): the body is exactly `return enum {...};` with `type` parameters, the arguments are written type names; a generic may also write `maybe(T)` (`constexpr type T`) and `maybe(typeof(x))` (`auto x`) in its head and body, and each instance gets the struct a written `maybe(Usize)` is (an exported generic needs `export Type maybe(...)`); the first mention of `maybe(Usize)` may be anywhere a type is written, inside a function body too (its struct is defined in the block, the same type as the file-scope one); a module may `export Type maybe(Type T) {...}`: an importer writes `mod::maybe(X)` for any X and gets the same struct as the module's own `maybe(X)` (the header carries the shape); two modules that write the same `type maybe` unexported each define theirs.
 
 Overview: `smith-lang`. Reference: [knowledge/smith-language.md](../../../knowledge/smith-language.md), [knowledge/affine-types.md](../../../knowledge/affine-types.md) (the plugin).

@@ -1,7 +1,7 @@
 module choice;
 import target;
 
-export i32 pick(i32 x) {
+export I32 pick(I32 x) {
     if constexpr (target::arch == target::aarch64) {
         return x + 1;
     } else {
@@ -9,7 +9,7 @@ export i32 pick(i32 x) {
     }
 }
 
-export i32 never(i32 y) {
+export I32 never(I32 y) {
     if constexpr (target::os == 0 && target::arch == 0) {
         return y;
     } else if constexpr (y > 1) {
@@ -18,7 +18,7 @@ export i32 never(i32 y) {
     return 0;
 }
 
-export i32 sized() {
+export I32 sized() {
     static_assert(target::f32_mantissa_bits == 24);
     return target::f32_mantissa_bits;
 }

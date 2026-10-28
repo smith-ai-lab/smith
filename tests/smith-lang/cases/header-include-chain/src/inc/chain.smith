@@ -23,10 +23,10 @@ import <math.h>;
 #include "chain_extra.h"
 #endif
 
-export u32 length(const char *text) {
-    return (u32)strlen(text);
+export U32 length(const char *text) {
+    return (U32)strlen(text);
 }
 
-export f64 root(f64 value) {
+export F64 root(F64 value) {
     return c::sqrt(value);
 }

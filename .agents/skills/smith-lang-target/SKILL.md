@@ -10,11 +10,11 @@ A `.smith` file needs no `#if`. A fact of the target is a constant of the module
 ```smith
 import target;
 
-constexpr usize size = 4;                                   // not `#define SIZE 4`
-constexpr bool sanitized = target::address_sanitizer;       // a constant expression: static_assert, array sizes, initializers
+constexpr Usize size = 4;                                   // not `#define SIZE 4`
+constexpr Bool sanitized = target::address_sanitizer;       // a constant expression: static_assert, array sizes, initializers
 static_assert(target::f32_mantissa_bits == 24 && target::float_radix == 2);
 
-i32 opaque(i32 value) {
+I32 opaque(I32 value) {
     if constexpr (target::arch == target::aarch64) {        // the branch not taken is dropped: it may not compile here
         __asm__("" : "+w"(value));
     } else {
@@ -23,11 +23,11 @@ i32 opaque(i32 value) {
     return value;
 }
 
-usize capacity() {
+Usize capacity() {
     return size;
 }
 
-bool poisons_memory() {
+Bool poisons_memory() {
     return sanitized;
 }
 ```
@@ -37,7 +37,7 @@ The facts: `arch` (`aarch64`, `x86_64`), `os` (`macos`, `linux`), `address_sanit
 ## Rules
 
 - The condition of `if constexpr` is `target::` facts, `constexpr` constants (the file's or the function's) and literals, with C's operators; branches are blocks (`else if constexpr (...) { }` continues a chain). The branch not taken is never parsed: no diagnostics and no hover in it.
-- Facts cannot be in an exported declaration, but the body of an exported `inline` function may ask them: the header gets the `#if` (`smith::contract` does).
+- Facts cannot be in an exported declaration, but the body of an exported `inline` function may ask them: the header gets the `#if` (`std::contract` does).
 - At file scope, `if constexpr` chooses declarations and imports for the target (`smith-lang-if-constexpr`).
 - `smith cc --smith-lower` has no preprocessor, so it writes the `SMITH_TARGET_ARCH` macros and `#if`/`#else`/`#endif` for the branches: the preprocessor is only in generated output.
 - In a generic, `if constexpr` also reads types (`smith-lang-generics`).
@@ -45,6 +45,6 @@ The facts: `arch` (`aarch64`, `x86_64`), `os` (`macos`, `linux`), `address_sanit
 ## Errors
 
 - ``in `if constexpr`: `n` is not a constant``: anything else in a condition, at the name.
-- `smith lint`, check `smith-preprocessor`: `` `#define` is the preprocessor, and a .smith file has none: a constant is `constexpr usize name = value;` ``. A macro of a C header used as `c::EOF` compiles but is reported the same way (`smith-lang-c-interop`).
+- `smith lint`, check `smith-preprocessor`: `` `#define` is the preprocessor, and a .smith file has none: a constant is `constexpr Usize name = value;` ``. A macro of a C header used as `c::EOF` compiles but is reported the same way (`smith-lang-c-interop`).
 
 Details: [smith-language](../../../knowledge/smith-language.md). Overview: `smith-lang`.

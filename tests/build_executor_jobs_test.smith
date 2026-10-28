@@ -4,17 +4,17 @@
 // bounded while for a mark that must not come, so a loaded machine can only make a check weaker, never fail it.
 module build_executor_jobs_test;
 
-import smith::arena;
-import smith::format;
-import smith::io;
-import smith::test;
+import std::arena;
+import std::format;
+import std::io;
+import std::test;
 import <string.h>;
 import scratch;
 
 static const char *flat(io::Io *io, const char *text) {
-    usize length = __builtin_strlen(text);
+    Usize length = __builtin_strlen(text);
     char *copy = arena::push_slice(&io->arena, char, length + 1).data;
-    for (usize i = 0; i < length; i++)
+    for (Usize i = 0; i < length; i++)
         copy[i] = text[i] == '\n' ? ' ' : text[i];
     copy[length] = '\0';
     return copy;

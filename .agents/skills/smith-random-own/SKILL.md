@@ -8,13 +8,13 @@ description: "Writing your own distribution on a random::Key: taking bits, split
 A distribution is a function of a key built only from the public primitives, written exactly like smith's. **Map the zero word to the simplest value, and let values move away from it as the word grows**, so a failing test shrinks to it: smith's test runner records the words a test drew and makes them smaller as unsigned integers. `random::key_unit_double(key)` is 0.0 for the word 0, so an exponential drawn as below gives 0 for it, the simplest value. A mixture splits its key for each part, so the parts are independent and each key is used once:
 
 ```smith
-import smith::random;
+import std::random;
 
-f64 exponential_sample(random::Key key, f64 rate) {
+F64 exponential_sample(random::Key key, F64 rate) {
     return -random::log_double(1.0 - random::key_unit_double(key)) / rate;
 }
 
-f64 mixture_sample(random::Key key, f64 rate, f64 mean, f64 deviation, f64 weight) {
+F64 mixture_sample(random::Key key, F64 rate, F64 mean, F64 deviation, F64 weight) {
     random::Key parts[3];
     random::split(key, parts);
     if (random::bernoulli_sample(parts[0], (random::Bernoulli){.probability = weight}))

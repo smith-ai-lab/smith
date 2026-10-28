@@ -6,7 +6,7 @@ for (__SIZE_TYPE__ i = 0; i < n; i++)
 if (xs[i] % 2 == 1) return {.some = xs[i]};
 return .none;
 }
-static bool heads_fifth(struct smith_enum_option_usize at) {
+static Bool heads_fifth(struct smith_enum_option_usize at) {
 if (at == .some) return at.some == 5;
 return false;
 }

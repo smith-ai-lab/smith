@@ -1,3 +1,3 @@
 status 1
-effects_unknown.c:8:12: error: smith-effect: `indirect` is [[smith::pure]], but it has the effects c: indirect -> a call through a function pointer (effects_unknown.c:8)
-effects_unknown.c:16:12: error: smith-effect: `promise_breaks_pure` is [[smith::pure]], but it has the effects alloc: promise_breaks_pure -> promised (effects_unknown.c:16)
+effects_unknown.c:8:12: error: smith-effect: `indirect` is [[std::pure]], but it has the effects c: indirect -> a call through a function pointer (effects_unknown.c:8)
+effects_unknown.c:16:12: error: smith-effect: `promise_breaks_pure` is [[std::pure]], but it has the effects alloc: promise_breaks_pure -> promised (effects_unknown.c:16)

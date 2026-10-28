@@ -82,7 +82,7 @@ static_assert(1 != 2 && 1 != 2);
 static_assert(SMITH_TARGET_ARCH == 1 || SMITH_TARGET_ARCH == 2 || SMITH_TARGET_ARCH == 0);
 __UINT8_TYPE__ mantissa[SMITH_TARGET_F32_MANTISSA_BITS];
 constexpr __INT32_TYPE__ arch_copy = SMITH_TARGET_ARCH;
-constexpr bool sanitized = SMITH_TARGET_ADDRESS_SANITIZER;
+constexpr Bool sanitized = SMITH_TARGET_ADDRESS_SANITIZER;
 static_assert(_Countof(mantissa) == 24);
 static __INT32_TYPE__ check(const char *name, __INT32_TYPE__ smith, __INT32_TYPE__ compiler) {
 if (smith != compiler) {

@@ -6,9 +6,9 @@
 // tests/prove_cases.smith. See tests/prove_test.smith for the proofs' cache and budget.
 module prove_misc_test;
 
-import smith::format;
-import smith::io;
-import smith::test;
+import std::format;
+import std::io;
+import std::test;
 import scratch;
 import prove_cases;
 
@@ -126,7 +126,7 @@ export void test_prove_cause_a_requires_after_a_write_names_the_write_and_the_re
         "cause.c:22: cannot be proved: cannot use the contract of swap_halves: its smith_requires reads memory at ");
     has("cause: ... names the read, with its line and instruction", &run, "cause.c:15: `");
     has("cause: ... and the write, with its line and instruction", &run, "after the function has written, at ");
-    has("cause: ... the store", &run, "cause.c:14: `store i32");
+    has("cause: ... the store", &run, "cause.c:14: `store I32");
     has("cause: ... and what to do", &run, "put every smith_requires before the first write");
 }
 
@@ -149,7 +149,7 @@ export void test_prove_emit_ir_writes_the_ir_with_the_proof_points_listed(io::Io
     scratch::expect_contains("emit-ir: ... and the promise", ir,
                              "smith_ensures, proved: 0 <= pixels && pixels <= 4 * max_health");
     scratch::expect_contains("emit-ir: has the function", ir, "define ");
-    scratch::expect_contains("emit-ir: ... with the contracts as points", ir, "call void @smith_point(i32 ");
+    scratch::expect_contains("emit-ir: ... with the contracts as points", ir, "call void @smith_point(I32 ");
 }
 
 // 15. -v lists every function, and a function proved before is cached, with the time it took then. The cache is the
@@ -213,10 +213,10 @@ export void test_prove_gate_the_default_output_is_the_same_without_v_and_has_no_
     lacks("gate: no phase lines without -v", &run, "phase");
 }
 
-// 16b. An assert in a function that calls the program's edge: the edge is a declaration marked smith::edge.
+// 16b. An assert in a function that calls the program's edge: the edge is a declaration marked std::edge.
 export void test_prove_edge_an_assert_is_proved_across_a_call_of_a_smith_edge_function(io::Io *io) {
     scratch::Project p = fresh(io);
-    proved(&p, "edge: an assert is proved across a call of a smith::edge function",
+    proved(&p, "edge: an assert is proved across a call of a std::edge function",
            "\"$c/main_edge.c\" --function=run_proved");
 }
 
@@ -234,12 +234,12 @@ export void test_prove_gate_a_contract_is_flattened_and_a_failing_assert_is_stil
     has("gate: ... a failing assert is still refuted", &run, "assertion.c:16: assert(x < 50) may fail");
 }
 
-// 16c. The library that defines the contract functions (lib/smith/contract.smith) in the program is no reason to inline
+// 16c. The library that defines the contract functions (lib/std/contract.smith) in the program is no reason to inline
 // them: the contracts stay points, and the function is still a unit. Only what a unit reaches is flattened.
 export void test_prove_contract_library_in_the_program_the_contracts_are_still_proved(io::Io *io) {
     scratch::Project p = fresh(io);
     scratch::Run run = proved(&p, "contract.c in the program: the contracts are still proved",
-                              "\"$c/clamp.c\" \"$SMITH_REPO/lib/smith/contract.smith\"");
+                              "\"$c/clamp.c\" \"$SMITH_REPO/lib/std/contract.smith\"");
     has("contract.c in the program: ... as before", &run, "proved, 0 failed");
 }
 

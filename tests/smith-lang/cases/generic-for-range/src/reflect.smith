@@ -4,12 +4,12 @@ import <stdio.h>;
 
 // `for constexpr (auto f : fields(T))` visits the fields of T. Each turn is a copy of the body with `f` the field of
 // that turn, so `f.name`, `x->[f]` and `typeof(T.[f])` mean what `fields(T)[i]` does in the index loop.
-export void show(constexpr type T, T *x) {
-    c::printf("%zu fields:", (usize)countof(fields(T)));
+export void show(constexpr Type T, T *x) {
+    c::printf("%zu fields:", (Usize)countof(fields(T)));
     for constexpr (auto f : fields(T)) {
-        if constexpr (is_float(typeof(x->[f]))) {
-            c::printf(" %s=%g", f.name, (f64)x->[f]);
-        } else if constexpr (is_integer(typeof(T.[f]))) {
+        if constexpr (Float(typeof(x->[f]))) {
+            c::printf(" %s=%g", f.name, (F64)x->[f]);
+        } else if constexpr (Int(typeof(T.[f]))) {
             c::printf(" %s=%lld", f.name, (long long)x->[f]);
         } else {
             c::printf(" %s=?", f.name);
@@ -18,30 +18,30 @@ export void show(constexpr type T, T *x) {
     c::printf("\n");
 }
 
-export f64 sum(constexpr type T, T value) {
-    f64 total = 0;
+export F64 sum(constexpr Type T, T value) {
+    F64 total = 0;
     for constexpr (auto f : fields(T)) {
-        if constexpr (is_float(typeof(T.[f])) || is_integer(typeof(T.[f]))) {
+        if constexpr (Float(typeof(T.[f])) || Int(typeof(T.[f]))) {
             typeof(T.[f]) part = value.[f];
-            total += (f64)part;
+            total += (F64)part;
         }
     }
     return total;
 }
 
 // Over a generic's `rest`, each `x` has its own type; with the index first, the index is a number in each turn.
-export i32 total(auto... rest) {
-    i32 acc = 0;
+export I32 total(auto... rest) {
+    I32 acc = 0;
     for constexpr (auto x : rest) {
-        acc += (i32)x;
+        acc += (I32)x;
     }
     return acc;
 }
 
-export i32 weighted(auto... rest) {
-    i32 acc = 0;
-    for constexpr (usize i, auto x : rest) {
-        acc += (i32)x * (i32)(i + 1);
+export I32 weighted(auto... rest) {
+    I32 acc = 0;
+    for constexpr (Usize i, auto x : rest) {
+        acc += (I32)x * (I32)(i + 1);
     }
     return acc;
 }
@@ -49,15 +49,15 @@ export i32 weighted(auto... rest) {
 // A different type for each element, a statement without braces, and a loop in a loop.
 export void each(auto... rest) {
     for constexpr (auto x : rest)
-        c::printf("[%g]", (f64)x);
+        c::printf("[%g]", (F64)x);
     c::printf("\n");
 }
 
-export i32 all_pairs(auto... rest) {
-    i32 acc = 0;
+export I32 all_pairs(auto... rest) {
+    I32 acc = 0;
     for constexpr (auto outer : rest) {
         for constexpr (auto inner : rest) {
-            acc += (i32)outer * (i32)inner;
+            acc += (I32)outer * (I32)inner;
         }
     }
     return acc;

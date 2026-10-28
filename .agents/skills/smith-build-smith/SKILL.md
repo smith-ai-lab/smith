@@ -1,6 +1,6 @@
 ---
 name: smith-build-smith
-description: "build.smith: the build file written in .smith with import smith::build and build::app, module names for the build API. Load when a project has a build.smith or you write one."
+description: "build.smith: the build file written in .smith with import std::build and build::app, module names for the build API. Load when a project has a build.smith or you write one."
 ---
 
 # build.smith
@@ -10,7 +10,7 @@ A root `build.smith` is the build file when there is no `build.c` (both is an er
 ```smith
 module build;
 
-import smith::build;
+import std::build;
 
 export void build(build::Build *b) {
     build::app(b, &(build::App){.entry = "main.smith"});
@@ -24,7 +24,7 @@ A `build::Step` is a C struct, so it is written as a declaration (`build::Step s
 ```smith fragment
 module build;
 
-import smith::build;
+import std::build;
 
 // One shape, a new Step on every call.
 build::Step greet(build::Build *b, const char *word) {
@@ -46,6 +46,6 @@ export void build(build::Build *b) {
 }
 ```
 
-`smith::build` is the API of this skill with module names: `SmithX` is `build::X` (`Build`, `Step`, `Run`, `Object`, `Program`, `Modules`, `Tests`, `Package`, `App`, `AppTests`) and `smith_x` is `build::x` (`build::app`, `build::object`, `build::program`, `build::tests`, `build::task`, `build::list`, `build::glob`, `build::fmt`, `build::run_lines`...), except `smith_default`, which is `build::default_targets`. They are the same functions a build.c calls (the module's header is `.smith/include/smith/build.h`, written by `smith build`), so everything below applies; read `smith_x` as `build::x`.
+`std::build` is the API of this skill with module names: `SmithX` is `build::X` (`Build`, `Step`, `Run`, `Object`, `Program`, `Modules`, `Tests`, `Package`, `App`, `AppTests`) and `smith_x` is `build::x` (`build::app`, `build::object`, `build::program`, `build::tests`, `build::task`, `build::list`, `build::glob`, `build::fmt`, `build::run_lines`...), except `smith_default`, which is `build::default_targets`. They are the same functions a build.c calls (the module's header is `.smith/include/smith/build.h`, written by `smith build`), so everything below applies; read `smith_x` as `build::x`.
 
 Also in this family: [smith-build](../smith-build/SKILL.md), [smith-build-c](../smith-build-c/SKILL.md), [smith-build-functions](../smith-build-functions/SKILL.md), [smith-build-objects](../smith-build-objects/SKILL.md), [smith-build-makefile](../smith-build-makefile/SKILL.md).

@@ -1,6 +1,6 @@
 ---
 name: smith-lang-type-values-more
-description: "Functions over `type` across modules and pointers in .smith: an exported `type slice_of(type element, usize count)` travels in the header (arena::slice_of(f32, 2) runs in an importer), `typeof(*(t)nullptr)` for a pointer's pointee, `leaf_of(T)` as a generic's result type, and the limits (900 tokens, no `if constexpr` in the body, one level of pointee). Load when exporting or importing a function over `type`, or on 'a pointer's pointee is known one level deep'."
+description: "Functions over `type` across modules and pointers in .smith: an exported `Type slice_of(Type element, Usize count)` travels in the header (arena::slice_of(F32, 2) runs in an importer), `typeof(*(t)nullptr)` for a pointer's pointee, `leaf_of(T)` as a generic's result type, and the limits (900 tokens, no `if constexpr` in the body, one level of pointee). Load when exporting or importing a function over `type`, or on 'a pointer's pointee is known one level deep'."
 ---
 
 # Functions over `type`: modules and pointees
@@ -8,19 +8,19 @@ description: "Functions over `type` across modules and pointers in .smith: an ex
 ```smith
 module shapes;
 
-export type slice_of(type element, usize count) {   // no symbol, no declaration for C: the header records its tokens
-    type t = element;
-    for (usize i = 0; i < count; i++) t = t[:];
+export Type slice_of(Type element, Usize count) {   // no symbol, no declaration for C: the header records its tokens
+    Type t = element;
+    for (Usize i = 0; i < count; i++) t = t[:];
     return t;
 }
 
-static type leaf_of(type t) {                       // the pointee of a pointer type, else the type itself
-    if (is_pointer(t)) return typeof(*(t)nullptr);
+static Type leaf_of(Type t) {                       // the pointee of a pointer type, else the type itself
+    if (Pointer(t)) return typeof(*(t)nullptr);
     return t;
 }
 
-export leaf_of(T) first(constexpr type T, T x) {    // a computed result type
-    if constexpr (is_pointer(T)) {
+export leaf_of(T) first(constexpr Type T, T x) {    // a computed result type
+    if constexpr (Pointer(T)) {
         return *x;
     } else {
         return x;
@@ -30,9 +30,9 @@ export leaf_of(T) first(constexpr type T, T x) {    // a computed result type
 
 ## Rules
 
-- **Exported functions over `type` travel in headers.** The header records the tokens (`// smith-types:`, `// smith-generic: ... f`), and a private function over `type` that an exported one calls too; an importer defines each, as a private function, after its last `import` line. So `arena::slice_of(f32, 2)` runs in the compiler of any module that imports `smith::arena`: in a `static_assert`, a `constexpr` initializer, a generic's result type or its `if constexpr`.
+- **Exported functions over `type` travel in headers.** The header records the tokens (`// smith-types:`, `// smith-generic: ... f`), and a private function over `type` that an exported one calls too; an importer defines each, as a private function, after its last `import` line. So `arena::slice_of(F32, 2)` runs in the compiler of any module that imports `std::arena`: in a `static_assert`, a `constexpr` initializer, a generic's result type or its `if constexpr`.
 - A private (`static`) function over `type` that an exported generic names in its computed result type (`same(T) keep(...)`) or calls in its body travels the same way, so every instance in an importing module finds it. An ordinary exported function (over numbers) is carried from the module's `.body` file, with no such limit (`smith-lang-constexpr`).
-- **`t[:]`** is "slice of `t`" and `f32[2]` an array type value; `typeof(xs)` is the type of an expression. Each `[:]` puts a run-time dimension in front (`f32[:][:]` is depth 2; at most 8), and the result is a real handle (`==`, `sizeof`, `is_record`, `t x;`). `t[1:2]` is an error.
+- **`t[:]`** is "slice of `t`" and `F32[2]` an array type value; `typeof(xs)` is the type of an expression. Each `[:]` puts a run-time dimension in front (`F32[:][:]` is depth 2; at most 8), and the result is a real handle (`==`, `sizeof`, `is_record`, `t x;`). `t[1:2]` is an error.
 - `sizeof(t)` is exact for the target: `long` is 4 with `--target=x86_64-pc-windows-msvc`, 8 on the host.
 - **Limits:** the host must have found the import's header (a module found by its source is not carried yet); a function over `type` is at most about 900 tokens, and its body has no `if constexpr`, `for constexpr` or call of a generic (an error at the import).
 - **The pointee of a pointer type:** `typeof(*(t)nullptr)` in a function over `type` is what pointer type `t` points to (C's own form, a cast of `nullptr`, dereferenced; `typeof` never evaluates it), and `typeof(expr)` is the type of any expression there. `leaf_of(T)` as a result type gives the struct for a pointer to a struct and the type itself for a scalar.

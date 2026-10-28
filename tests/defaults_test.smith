@@ -5,8 +5,8 @@
 // the project's. Each test is a scratch tree outside any project, with a data folder of its own where it matters.
 module defaults_test;
 
-import smith::io;
-import smith::test;
+import std::io;
+import std::test;
 import scratch;
 
 constexpr char c_file[_] = "int main(void) {\nif (1) {\nreturn 0;\n}\n}\n";

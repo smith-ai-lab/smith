@@ -4,12 +4,12 @@ import <stdio.h>;
 
 // The only use of an array parameter is `countof`: it still counts as a use, so -Wunused-parameter has nothing to say
 // (the conventions make it an error).
-usize cells(f32 m[3][2]) {
+Usize cells(F32 m[3][2]) {
     return countof(m) * countof(m[0]);
 }
 
-i32 main() {
-    f32 m[3][2] = {};
+I32 main() {
+    F32 m[3][2] = {};
     c::printf("%zu\n", cells(m));
     return 0;
 }

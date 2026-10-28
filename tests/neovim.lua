@@ -83,7 +83,7 @@ function tests.parser()
   local again = parser_ready()
   equal(path, again, "the second use finds the same parser")
   equal(before, vim.uv.fs_stat(path).mtime.nsec, "the parser is not written twice")
-  local _, root = captures("module a::b;\nimport lib::text as tx;\nexport u32 f(void) { return c::strlen(\"x\"); }\n")
+  local _, root = captures("module a::b;\nimport lib::text as tx;\nexport U32 f(void) { return c::strlen(\"x\"); }\n")
   check(not root:has_error(), "a module parses without an error node: " .. root:sexpr())
 end
 
@@ -95,9 +95,9 @@ function tests.highlights()
     "export tx::Text open(const char *path) {",
     "    return tx::make(c::strlen(path));",
     "}",
-    "T max(constexpr type T, T a, T b);",
-    "export int kind(constexpr type T, T v) {",
-    "    if constexpr (is_integer(T) && sizeof(T) == 8) { return 1; }",
+    "T max(constexpr Type T, T a, T b);",
+    "export int kind(constexpr Type T, T v) {",
+    "    if constexpr (Int(T) && sizeof(T) == 8) { return 1; }",
     "    return tx::make(v);",
     "}",
   }, "\n"))
@@ -360,7 +360,7 @@ function tests.dap_test_name_in_module()
   local buffer = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_lines(buffer, 0, -1, false, {
     "module test_primes;",
-    "import smith::test;",
+    "import std::test;",
     "",
     "export void test_one(void) {",
     "    test::check_equal_i32(1, 1);",
@@ -523,7 +523,7 @@ end
 
 local smith_test_source = table.concat({
   "module geometry::box_test;",
-  "import smith::test;",
+  "import std::test;",
   "",
   "export void test_area(void) {",
   "    test::check_equal_i32(1, 1);",

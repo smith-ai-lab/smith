@@ -1,10 +1,10 @@
 // contract::modifies (#54): `&x` names one object, with no argument the function writes nothing outside its locals.
 module geometry::pair;
-import smith::contract;
+import std::contract;
 
 export typedef struct {
-    i32 items[4];
-    i32 len;
+    I32 items[4];
+    I32 len;
 } List;
 
 export typedef struct {
@@ -12,10 +12,10 @@ export typedef struct {
     List second;
 } Pair;
 
-export void push(Pair *pair, i32 value) {
+export void push(Pair *pair, I32 value) {
     contract::requires(0 <= pair->first.len && pair->first.len < 4);
     contract::modifies(&pair->first);
-    const i32 old = pair->first.len;
+    const I32 old = pair->first.len;
     pair->first.items[pair->first.len] = value;
     pair->first.len += 1;
     contract::ensures(pair->first.len == old + 1 && pair->first.items[old] == value);
@@ -23,15 +23,15 @@ export void push(Pair *pair, i32 value) {
 
 export void keeps_second(Pair *pair) {
     contract::requires(0 <= pair->first.len && pair->first.len < 4);
-    const i32 second = pair->second.items[1];
-    const i32 len = pair->second.len;
+    const I32 second = pair->second.items[1];
+    const I32 len = pair->second.len;
     push(pair, 3);
     contract::assert(pair->second.items[1] == second && pair->second.len == len);
 }
 
-export i32 read_only(const Pair *pair) {
+export I32 read_only(const Pair *pair) {
     contract::modifies();
-    i32 result = pair->first.len;
+    I32 result = pair->first.len;
     contract::ensures(result == pair->first.len);
     return result;
 }

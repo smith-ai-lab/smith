@@ -1,0 +1,198 @@
+// std::console, <smith/console.h>: standard output, standard error and standard input, through the console handler
+// of the thread (include/smith/handlers.h), so a test can stand in for them: a fake console captures what a function
+// prints and answers what it reads. Called directly, no `io::Io` value:
+//
+//   console::print("moved ", dx, " ", dy, "\n");        // typed pieces, as format::to; no length limit
+//   console::print_error("cannot open ", path, "\n");
+//   console::Line line = try console::read_line();      // the next line of stdin
+//
+// An error the world makes (a closed pipe, a full disk, an input that fails) is a `result`; a bug (a buffer with no
+// room, a read of no bytes) is a checked failure. Its C API is the generated header include/smith/console.h
+// (committed; `smith build headers` regenerates it); the names follow the rule of arena.smith: `console::write` is
+// `smith_console_write`, `console::Error` is `SmithConsoleError`.
+module std::console;
+
+import std::arena;
+import std::contract;
+import std::format;
+import std::mem;
+import target;
+import <errno.h>;
+import <smith/handlers.h>; // SmithConsoleHandler, smith_handlers_set_console
+import <unistd.h>;         // read and write: the functions the handler of the thread answers
+
+// The console handler of the thread (include/smith/handlers.h): `write` takes a file descriptor (1 or 2), `read` stdin.
+[[std::c_name("SmithConsoleHandler")]] export typedef c::SmithConsoleHandler Handler;
+
+// Sets the console of the calling thread (null: the process's) and returns the one it had, as signal() does. Restore
+// it with `defer`:
+//   console::Handler *before = console::set_handler(&fake.base);
+//   defer console::set_handler(before);
+[[std::c_name("smith_console_set_handler")]] export Handler *set_handler(Handler *handler) {
+    return c::smith_handlers_set_console(handler);
+}
+
+// NOLINTBEGIN(readability-identifier-naming)
+// An enum's constants are written short in a module (console::Closed, C's SmithConsoleError_Closed), and the check
+// wants C's Type_Value.
+
+// Why the console could not be written or read.
+[[std::c_name("SmithConsoleError")]] export typedef enum {
+    Closed, // the other end is gone (EPIPE) or the stream is not open (EBADF)
+    Full,   // the disk or the quota is full (ENOSPC, EDQUOT)
+    Failed, // any other error of the system (EIO...)
+} Error;
+// NOLINTEND(readability-identifier-naming)
+
+// The bytes written, or why not; the type of every write and print.
+export typedef Result(Usize, Error) Written;
+
+// The bytes read (0 is the end of the input), or why not.
+export typedef Result(Usize, Error) Count;
+
+// A line of stdin without its newline, a terminator after it that the slice's count does not count, in memory of the
+// allocator in force (the caller's, `mem::free(line.text.data)` gives it back). `end` is set when the input was over
+// before any character; a last line with no newline is returned first, with `end` false.
+[[std::c_name("SmithConsoleLine")]] export typedef struct {
+    char text[:];
+    Bool end;
+} Line;
+export typedef Result(Line, Error) LineResult;
+
+// The platform's numbers. A C macro is the preprocessor's, and a .smith file has none: each is read once, here.
+// NOLINTBEGIN(smith-preprocessor, bugprone-signed-bitwise)
+constexpr I32 stdin_fd = c::STDIN_FILENO;
+constexpr I32 stdout_fd = c::STDOUT_FILENO;
+constexpr I32 stderr_fd = c::STDERR_FILENO;
+constexpr I32 ebadf = c::EBADF;
+constexpr I32 edquot = c::EDQUOT;
+constexpr I32 eintr = c::EINTR;
+constexpr I32 enospc = c::ENOSPC;
+constexpr I32 epipe = c::EPIPE;
+// NOLINTEND(smith-preprocessor, bugprone-signed-bitwise)
+
+// errno, which is a macro for the system's function.
+if constexpr (target::os == target::macos) {
+    I32 errno_now() {
+        return *c::__error();
+    }
+} else {
+    I32 errno_now() {
+        return *c::__errno_location();
+    }
+}
+
+Error error_of(I32 code) {
+    if (code == epipe || code == ebadf) return Closed;
+    if (code == enospc || code == edquot) return Full;
+    return Failed;
+}
+
+// Writes all of the bytes to the descriptor. Each pass writes at least one byte or ends, so the loop is bounded.
+Written write_all(I32 descriptor, const U8 *bytes, Usize size) {
+    contract::trusted(); // a call into the system, the edge a proof cannot read
+    Usize done = 0;
+    for (Usize passes = 0; done < size && passes <= size + 4096; passes++) {
+        Isize n = c::write(descriptor, bytes + done, size - done); // NOLINT(smith-effects): the edge
+        if (n < 0 && errno_now() == eintr) continue;
+        if (n < 0) return {.error = error_of(errno_now())};
+        if (n == 0) return {.error = Failed};
+        done += (Usize)n;
+    }
+    return done;
+}
+
+// Writes the bytes to stdout, all of them or an error.
+[[std::c_name("smith_console_write")]] export Written write(const U8 bytes[:]) {
+    return write_all(stdout_fd, bytes.data, countof(bytes));
+}
+
+// Writes the bytes to stderr, all of them or an error.
+[[std::c_name("smith_console_write_error")]] export Written write_error(const U8 bytes[:]) {
+    return write_all(stderr_fd, bytes.data, countof(bytes));
+}
+
+// Reads at most countof(buffer) bytes of stdin into the buffer, as many as are available: the count, 0 at the end of
+// the input. A buffer with no room is a bug: a checked failure.
+[[std::c_name("smith_console_read")]] export Count read(U8 buffer[:]) {
+    contract::trusted(); // a call into the system, the edge a proof cannot read
+    contract::requires(countof(buffer) > 0);
+    for (U32 passes = 0; passes < 4096; passes++) {                // each pass reads or follows a signal
+        Isize n = c::read(stdin_fd, buffer.data, countof(buffer)); // NOLINT(smith-effects): the edge
+        if (n >= 0) return (Usize)n;
+        if (errno_now() != eintr) return {.error = error_of(errno_now())};
+    }
+    return {.error = Failed};
+}
+
+constexpr Usize line_first = 128; // the first room of a line; it doubles
+
+// The next line of stdin without its newline. Input is read a byte at a time, so a line and a `read` can be mixed on
+// one input and nothing is held between calls; for a bulk read use `read`.
+[[std::c_name("smith_console_line")]] export LineResult read_line() {
+    contract::trusted(); // grows its memory and reads the system
+    char line[:] = mem::alloc_slice(char, line_first);
+    Usize count = 0;
+    Bool any = false;
+    Bool newline = false;
+    for (Usize passes = 0; !newline; passes++) {
+        U8 byte[1] = {};
+        Count got = read(byte[0:1]);
+        if (got == .error) {
+            mem::free(line.data);
+            return {.error = got.error};
+        }
+        if (got == .ok && got.ok == 0) break;
+        any = true;
+        if (byte[0] == '\n') {
+            newline = true;
+        } else {
+            if (count + 1 >= countof(line)) {
+                char bigger[:] = mem::alloc_slice(char, countof(line) * 2);
+                mem::copy(bigger[0:count], line[0:count]);
+                mem::free(line.data);
+                line = bigger;
+            }
+            line[count] = (char)byte[0];
+            count += 1;
+        }
+    }
+    line[count] = 0;
+    Line result = {.text = line[0:count], .end = !newline && !any};
+    return {.ok = result};
+}
+
+// Writes the characters to stdout or stderr: the whole text or an error.
+Written emit(Bool errors, const char *data, Usize count) {
+    return write_all(errors ? stderr_fd : stdout_fd, (const U8 *)data, count);
+}
+
+// The pieces printed with the room of `characters`, which is the length of their text.
+Written emit_long(Bool errors, char *memory, Usize characters) {
+    Written written = emit(errors, memory, characters);
+    mem::free(memory);
+    return written;
+}
+
+// The pieces as text on stdout, as format::to writes them: `print("x = ", x, "\n")`, each piece typed (see
+// smith-format). There is no limit on the text: a long one is formatted in memory of the allocator in force and given
+// back. A piece with no rule is a compile error. Not [[nodiscard]]: a program that prints a report has nowhere else to
+// say that stdout is closed.
+[[std::c_name("smith_console_print_pieces")]] export Written print(auto... pieces) {
+    char stack[512];
+    format::Written text = format::to(stack, sizeof stack, pieces...);
+    if (text.fits) return emit(false, stack, text.length);
+    char *memory = (char *)mem::alloc_raw(text.length + 1, alignof(char));
+    format::Written whole = format::to(memory, text.length + 1, pieces...);
+    return emit_long(false, memory, whole.length);
+}
+
+// As print, on stderr.
+[[std::c_name("smith_console_eprint_pieces")]] export Written print_error(auto... pieces) {
+    char stack[512];
+    format::Written text = format::to(stack, sizeof stack, pieces...);
+    if (text.fits) return emit(true, stack, text.length);
+    char *memory = (char *)mem::alloc_raw(text.length + 1, alignof(char));
+    format::Written whole = format::to(memory, text.length + 1, pieces...);
+    return emit_long(true, memory, whole.length);
+}

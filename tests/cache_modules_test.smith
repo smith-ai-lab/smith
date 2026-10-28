@@ -4,9 +4,9 @@
 // tests/build_fixtures/cache_modules/prelude count the cache's modules.
 module cache_modules_test;
 
-import smith::format;
-import smith::io;
-import smith::test;
+import std::format;
+import std::io;
+import std::test;
 import scratch;
 
 static scratch::Project modules_project(io::Io *io) {

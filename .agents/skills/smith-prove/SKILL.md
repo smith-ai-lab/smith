@@ -8,13 +8,13 @@ description: "smith prove: proving the contracts of a program with Alive2, Bitwu
 ```smith
 module primes;
 
-import smith::contract;
+import std::contract;
 
-export i32 sum(usize count) {
+export I32 sum(Usize count) {
     contract::requires(count <= 5);              // assumed here, proved at every call
-    constexpr i32 first[_] = {2, 3, 5, 7, 11};
-    i32 total = 0;
-    for (usize i = 0; i < count; i++) {
+    constexpr I32 first[_] = {2, 3, 5, 7, 11};
+    I32 total = 0;
+    for (Usize i = 0; i < count; i++) {
         total += first[i];
     }
     contract::ensures(total <= 28);              // proved for every input that meets the requires

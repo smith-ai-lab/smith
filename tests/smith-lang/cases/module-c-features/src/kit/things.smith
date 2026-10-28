@@ -2,16 +2,16 @@ module kit::things;
 import <stdio.h>;
 
 export typedef int (*Callback)(int value);
-export typedef union { u32 whole; u8 bytes[4]; } Word;
+export typedef union { U32 whole; U8 bytes[4]; } Word;
 export typedef struct Node {
     struct Node *next;
-    i32 value;
-    u32 flag : 1;
-    u32 mode : 3;
-    struct { i16 x, y; } point;
+    I32 value;
+    U32 flag : 1;
+    U32 mode : 3;
+    struct { I16 x, y; } point;
 } Node;
 
-export constexpr usize capacity = 4;
+export constexpr Usize capacity = 4;
 export const char *const names[_] = {"zero", "one", "two"};
 static_assert(sizeof(Word) == 4, "a word is four bytes");
 
@@ -35,7 +35,7 @@ export int sum(const Node *node) {
     return total;
 }
 
-export Word make_word(u32 whole) {
+export Word make_word(U32 whole) {
     Word word = {.whole = whole};
     return word;
 }
@@ -44,8 +44,8 @@ export int by_type(int value) {
     return _Generic(value, int: square(value), default: 0);
 }
 
-export u32 pick(u32 index) {
-    static const u32 table[_] = {10, 20, 30, 40};
+export U32 pick(U32 index) {
+    static const U32 table[_] = {10, 20, 30, 40};
     typeof(index) clamped = index < capacity ? index : capacity - 1;
     return table[clamped];
 }

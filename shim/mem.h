@@ -8,7 +8,7 @@
 // The list is a table (`replacements` below), one row for each wrapped C function, so a wrapper joins by adding a row;
 // a function joins only when its typed replacement exists. A `.c` file and a `.smith` file with no `module` line are
 // left alone (the C rule). A function that calls `contract::trusted()` (`smith_trusted()` in C) is the edge: smith's
-// own wrappers (lib/smith/mem.smith) mark themselves with it, and so does any function that implements one, so the
+// own wrappers (lib/std/mem.smith) mark themselves with it, and so does any function that implements one, so the
 // check skips it. `// NOLINT(smith-mem)` opts a line out as for any check.
 //
 // `memset(p, 0, sizeof *p)` and `memset(&x, 0, sizeof x)` carry a fix-it, `mem::zero(p)` and `mem::zero(&x)`, which

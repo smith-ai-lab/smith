@@ -3,11 +3,11 @@ import <stdio.h>;
 
 // A call of an ordinary C function where C requires a constant builds under -Wpedantic -Werror: folding it is no GNU
 // extension in a .smith file (issue #166).
-static i32 fib(i32 n) {
-    i32 a = 0;
-    i32 b = 1;
-    for (i32 i = 0; i < n; i++) { // a loop: a module has no recursion
-        i32 next = a + b;
+static I32 fib(I32 n) {
+    I32 a = 0;
+    I32 b = 1;
+    for (I32 i = 0; i < n; i++) { // a loop: a module has no recursion
+        I32 next = a + b;
         a = b;
         b = next;
     }
@@ -19,21 +19,21 @@ static_assert(fib(10) == 55);
 enum { Fib7 = fib(7) };
 
 struct Flags {
-    u32 low : fib(4) - 1;
-    u32 high : 3;
+    U32 low : fib(4) - 1;
+    U32 high : 3;
 };
 
-static type wider(type a, type b) {
+static Type Wider(Type a, Type b) {
     return sizeof(a) >= sizeof(b) ? a : b;
 }
 
-static_assert(wider(u8, f64) == f64);
+static_assert(Wider(U8, F64) == F64);
 
-i32 main() {
-    i32 n = 13;
+I32 main() {
+    I32 n = 13;
     switch (n) {
     case fib(7):
-        c::printf("seven %d\n", (i32)Fib7);
+        c::printf("seven %d\n", (I32)Fib7);
         break;
     default:
         c::printf("other %zu\n", sizeof(struct Flags));

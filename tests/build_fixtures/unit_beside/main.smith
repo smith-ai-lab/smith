@@ -2,6 +2,6 @@ module main;
 
 import geometry::box;
 
-i32 main(void) {
+I32 main(void) {
     return box::area(2, 3) == 6 ? 0 : 1;
 }

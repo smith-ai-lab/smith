@@ -3,12 +3,12 @@
 // new project's warnings, the refusals (-ffast-math, a normal with deviation 0) and a project that gets random,
 // categorical and the arena with smith_library (tests/build_fixtures/random_project). tests/random.c reaches the
 // module's static functions by including its raw lowering, what `smith cc --smith-lower` writes. The behavior of the
-// library is lib/smith/random_test.smith.
+// library is lib/std/random_test.smith.
 module random_c_test;
 
-import smith::format;
-import smith::io;
-import smith::test;
+import std::format;
+import std::io;
+import std::test;
 import scratch;
 import target;
 
@@ -16,13 +16,13 @@ import target;
 constexpr char expected_digest[_] = "df39a217d8c29f80";
 constexpr char warn[_] = "-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wmissing-prototypes "
                          "-Wstrict-prototypes -Wvla -Werror";
-constexpr char sources[_] = "-I lowered \"$SMITH_REPO/tests/random.c\" \"$SMITH_REPO/lib/smith/arena.smith\" "
-                            "\"$SMITH_REPO/lib/smith/contract.smith\" \"$SMITH_REPO/lib/trace.c\"";
+constexpr char sources[_] = "-I lowered \"$SMITH_REPO/tests/random.c\" \"$SMITH_REPO/lib/std/arena.smith\" "
+                            "\"$SMITH_REPO/lib/std/contract.smith\" \"$SMITH_REPO/lib/trace.c\"";
 
 static scratch::Project lowered_project(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     // the lowering is made in process: the text is all this needs (the compiles below stay end to end)
-    scratch::write_lowered(&p, "lib/smith/random.smith", "lowered/random_lowered.c");
+    scratch::write_lowered(&p, "lib/std/random.smith", "lowered/random_lowered.c");
     return p;
 }
 
@@ -63,7 +63,7 @@ static void compiles_as(io::Io *io, const char *standard) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     scratch::Run built = scratch::sh(&p, format::push(&io->arena, "smith cc -std=", standard, " ", warn,
                                                       " -I \"$SMITH_REPO/.smith/include\" -c "
-                                                      "\"$SMITH_REPO/lib/smith/random.smith\" -o r.o")
+                                                      "\"$SMITH_REPO/lib/std/random.smith\" -o r.o")
                                              .data);
     scratch::expect_status(
         format::push(&io->arena, "library: compiles as -std=", standard, " with the new project's warnings").data, 0,
@@ -118,7 +118,7 @@ export void test_random_c_digest_o3_march_native_fp_contract_fast(io::Io *io) {
 export void test_random_c_refusal_ffast_math_fails_to_compile(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     scratch::Run built = scratch::sh(&p, "smith cc -std=gnu23 -I \"$SMITH_REPO/.smith/include\" -ffast-math -c "
-                                         "\"$SMITH_REPO/lib/smith/random.smith\" -o r.o");
+                                         "\"$SMITH_REPO/lib/std/random.smith\" -o r.o");
     scratch::expect_failure("refusal: -ffast-math fails to compile", &built);
     scratch::expect_contains("refusal: ... with the reason", built.err, "-ffast-math changes floating-point results");
 }
@@ -126,7 +126,7 @@ export void test_random_c_refusal_ffast_math_fails_to_compile(io::Io *io) {
 export void test_random_c_refusal_ofast_fails_to_compile(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     scratch::Run built = scratch::sh(&p, "smith cc -std=gnu23 -I \"$SMITH_REPO/.smith/include\" -Ofast -c "
-                                         "\"$SMITH_REPO/lib/smith/random.smith\" -o r.o");
+                                         "\"$SMITH_REPO/lib/std/random.smith\" -o r.o");
     scratch::expect_failure("refusal: -Ofast fails to compile", &built);
 }
 
@@ -158,7 +158,7 @@ export void test_random_c_project_gets_random_and_the_arena_with_smith_library(i
     scratch::expect_text("project: the header is written", "yes",
                          scratch::capture(&p, "[ -f .smith/include/smith/random.h ] && echo yes"));
     scratch::expect_text("project: the source is written", "yes",
-                         scratch::capture(&p, "[ -f .smith/lib/smith/random.smith ] && echo yes"));
+                         scratch::capture(&p, "[ -f .smith/lib/std/random.smith ] && echo yes"));
     scratch::Run run = scratch::sh(&p, "./build/app");
     scratch::expect_status("project: the program runs", 0, &run);
     scratch::expect_text("project: the program runs (it prints)", "mean 0.5, normal 1, index 1", run.out);
@@ -166,9 +166,9 @@ export void test_random_c_project_gets_random_and_the_arena_with_smith_library(i
 
 export void test_random_c_project_unchanged_library_is_not_rewritten(io::Io *io) {
     scratch::Project p = built_project(io);
-    const char *stamp = "stat -c %Y .smith/lib/smith/random.smith"; // GNU stat's -f is the file system's status
+    const char *stamp = "stat -c %Y .smith/lib/std/random.smith"; // GNU stat's -f is the file system's status
     if constexpr (target::os == target::macos) {
-        stamp = "stat -f %m .smith/lib/smith/random.smith 2>/dev/null || stat -c %Y .smith/lib/smith/random.smith";
+        stamp = "stat -f %m .smith/lib/std/random.smith 2>/dev/null || stat -c %Y .smith/lib/std/random.smith";
     }
     const char *before = scratch::capture(&p, stamp);
     scratch::sleep(&p, 1100);

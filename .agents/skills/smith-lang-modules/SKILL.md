@@ -10,11 +10,11 @@ description: "Modules in .smith files: `module a::b;`, `import a::b::c as x;`, `
 module game::replay;                 // the path must end in game/replay.smith
 import std::text as tx;              // binds `tx`; `import std::text;` binds `text`
 export struct Replay { // the tag is the type's name: `Replay`, no typedef
-    u64 frames;
+    U64 frames;
     const char name[:];
 };
-export constexpr u32 version = 3;
-u32 helper() { // private
+export constexpr U32 version = 3;
+U32 helper() { // private
     return 1;
 }
 export Replay open(const char *path) {
@@ -28,7 +28,7 @@ C has a header, a `static` and a naming prefix for this; a module has one file, 
 
 - **Every `.smith` file starts with its `module` line**, from its path (`smith lint` says which, check `smith-module`): `main.smith` is `module main;`, `primes_test.smith` is `module primes_test;`, `tests/build_test.smith` too (`tests/` is a root of its own), `build.smith` is `module build;`. A file with no module line compiles as plain C with sized types and `import`, so a renamed `.c` works; adding the line is the first step of a port.
 - `x::name` reaches a module's member (`struct x::Pair`, `x::version`); `x.` is always a value. A variable may share its module's name (`io::Io io = io::make();`): `io` is a binding only where `::` follows, and never inside an attribute (`[[gnu::unused]]`).
-- An import named like the module's own last name takes `x::`: in `module build;` with `import smith::build;`, `build::app(...)` is the import's and the module's own `build` is unqualified (`export void build(build::Build *b)` keeps the C name `build`).
+- An import named like the module's own last name takes `x::`: in `module build;` with `import std::build;`, `build::app(...)` is the import's and the module's own `build` is unqualified (`export void build(build::Build *b)` keeps the C name `build`).
 - **A struct's, union's or enum's tag is a type name** (a payload enum's too): `struct Node { Node *next; };`, `struct Pending;` then `Pending *p;`, `enum Color { red, green };` then `Color c;`, also for a tag inside a function. `struct Point` still works. A tag and a variable, function or enum constant of one name are an error; `c::` tags are the header's, and a file with no `module` line keeps C's rule (a `typedef struct` there is C's own). `typedef struct {...} Point;` still compiles.
 - **The standard library is `std::`**: `import std::arena;`, `module std::arena;` in `lib/std/arena.smith`, and its attributes are `[[std::pure]]`, `[[std::effects(...)]]`, `[[std::affine]]`, `[[std::c_name("...")]]`. Its C names stay `smith_`, its headers `<smith/arena.h>`. A smith older than this rename knows only `smith::`; the two spellings are the same module and the same attribute.
 - `import` comes before any declaration; `#include` stays allowed anywhere.
@@ -39,4 +39,4 @@ C has a header, a `static` and a naming prefix for this; a module has one file, 
 ## Errors
 
 `import cycle`, `cannot find module`, `is private; export it`, a path that does not match the `module` line, `imports come before any declaration`, a stale header: `smith-lang-modules-errors` lists each with its fix. For C names (`import <h>;` puts them under `c::`), `smith-lang-c-interop`.
-- **`main` in a module** is `i32 main()` (C's `int main(void)`) or `i32 main(str args[:])`: `args` is a slice of the program's arguments, argc slices on the stack that point into argv's own characters (nothing is allocated or copied; each count is a `strlen`). `void main`, `int main(int argc, char **argv)` and any other signature are errors (`smith-main:`). A file with no `module` line keeps C's `main`. `i32 main(io::Io *io)` still works while `io` exists.
+- **`main` in a module** is `I32 main()` (C's `int main(void)`) or `I32 main(Str args[:])`: `args` is a slice of the program's arguments, argc slices on the stack that point into argv's own characters (nothing is allocated or copied; each count is a `strlen`). `void main`, `int main(int argc, char **argv)` and any other signature are errors (`smith-main:`). A file with no `module` line keeps C's `main`. `I32 main(io::Io *io)` still works while `io` exists.

@@ -1,0 +1,222 @@
+// std::autodiff, <smith/autodiff.h>: Enzyme's own interface, as Enzyme documents it, declared and never defined, and
+// `gradient` and `map`, the typed calls built on it (the last exports; a .smith file's, since they are generic).
+// Enzyme differentiates LLVM IR: it finds a call to __enzyme_autodiff (reverse mode) or __enzyme_fwddiff (forward mode)
+// when smith links the program, writes the derivative of the function it is given, and replaces the call with it. So
+// no declaration of Enzyme's has a body, and none may: a marker that had a definition would be folded to its value
+// before Enzyme reads it. A program that imports this module (or includes the header) is an autodiff program, and smith
+// builds it as one (the smith-autodiff skill): full LTO, each file compiled with the profile's -O level and no
+// optimization passes.
+//
+// The names follow Enzyme's; a .smith file writes the module's (autodiff::reverse), C the names of the header.
+//
+//   double f(double x, double y);
+//   double dx = 0, dy = 0;
+//   autodiff::reverse(f, autodiff::out, x, autodiff::out, y);   // C: __enzyme_autodiff((void *)f, enzyme_out, x, ...)
+//
+// Each argument of the differentiated function is written after a marker that says how it is differentiated:
+//
+//   autodiff::constant  the argument is not differentiated: it follows as it is
+//   autodiff::dup       a pointer: the pointer, then a pointer of the same shape that receives its derivative
+//                       (reverse mode adds the derivative into it, so zero it first; forward mode reads the tangent
+//                       from it and writes the derivative of the result's matching memory)
+//   autodiff::out       a scalar whose derivative the call returns (reverse mode only; the argument is a double)
+//   autodiff::dup_no_need   as dup, for a result the caller does not read
+//
+// The calls are declared to return double: the derivative of the first autodiff::out argument (reverse mode) or the
+// tangent of a double result (forward mode); the value is meaningless when there is neither, and may be ignored. Enzyme
+// builds the return value from the call's own type, so for a struct of several derivatives, or a float, call through a
+// pointer of the type you want, `((Pair (*)(void *, ...))autodiff::reverse)(...)`. The first argument is the function,
+// as `void *`: cast a function pointer to it. The markers are variables of type int that nothing defines, and the
+// functions are variadic, so the compiler checks no argument after the first. A float passed after a marker is
+// promoted to double by C's rules for variadic calls: pass the types the function takes (a double for a double).
+module std::autodiff;
+
+import std::contract;
+import std::effects;
+import std::mem;
+
+// The type of one argument's leaf: what a pointer points to, the type itself for anything else (a number `map` passes
+// through). A type function (it runs in the compiler), used as the result type of `map_at`. Written before the markers:
+// a type function after an `extern` declaration is not read.
+static Type LeafOf(Type t) {
+    if (Pointer(t)) return typeof(*(t) nullptr);
+    return t;
+}
+
+// What `map_down` returns: `down`, the pointer to the field's first element, for a pointer argument, else the type
+// itself.
+static Type DownOf(Type t, Type down) {
+    if (Pointer(t)) return down;
+    return t;
+}
+
+// <smith/autodiff.h>: the reverse mode derivative of a function: `autodiff::reverse(f, marker, argument, ...)`.
+// C: __enzyme_autodiff(void *function, ...)
+[[std::c_name("__enzyme_autodiff")]] export F64 reverse(void *function, ...); // NOLINT(bugprone-reserved-identifier)
+
+// The forward mode derivative of a function: the tangent of each autodiff::dup argument is read from its shadow, and
+// the call returns the tangent of the result. C: __enzyme_fwddiff(void *function, ...)
+[[std::c_name("__enzyme_fwddiff")]] export F64 forward(void *function, ...); // NOLINT(bugprone-reserved-identifier)
+
+// The markers. C: enzyme_const, enzyme_dup, enzyme_out, enzyme_dupnoneed.
+[[std::c_name("enzyme_const")]] export extern I32 constant;
+[[std::c_name("enzyme_dup")]] export extern I32 dup;
+[[std::c_name("enzyme_out")]] export extern I32 out;
+[[std::c_name("enzyme_dupnoneed")]] export extern I32 dup_no_need;
+[[std::c_name("enzyme_interleave")]] export extern I32 interleave;
+
+// The shape of a gradient: the `n` values `p` points to, in a row, are all set to zero, and each `[:]` field given a
+// new block of the same length from the current allocator (a `[:]` of structs is walked element by element, a fixed
+// array of structs too).
+void shadow_walk(auto p, Usize n) {
+    if constexpr (Struct(typeof(*p))) {
+        for (; n > 0; n--) {
+            for constexpr (Usize i = 0; i < countof(fields(typeof(*p))); i++) {
+                constexpr Field f = fields(typeof(*p))[i];
+                (void)f;
+                if constexpr (Array(typeof(p->[f]))) {
+                    shadow_walk(&p->[f][0], sizeof(p->[f]) / sizeof(p->[f][0]));
+                } else if constexpr (Slice(typeof(p->[f]))) {
+                    if (countof(p->[f]) > 0) { // an empty slice has no element to read
+                        typeof(p->[f].data) old = p->[f].data;
+                        p->[f].data =
+                            (typeof(old))mem::alloc_array_raw(sizeof(*old), countof(p->[f]), alignof(typeof(*old)));
+                        __builtin_memcpy(p->[f].data, old, countof(p->[f]) * sizeof(*old));
+                        shadow_walk(p->[f].data, countof(p->[f]));
+                    }
+                } else {
+                    shadow_walk(&p->[f], 1);
+                }
+            }
+            p += 1;
+        }
+    } else if constexpr (Pointer(typeof(*p))) {
+        static_assert(false, "gradient: a field is a pointer; use a [:] slice");
+    } else {
+        __builtin_memset(p, 0, n * sizeof(*p));
+    }
+}
+
+// `autodiff::zeros(params)` is a copy of `params` in the shape of a gradient: every number zero, every `[:]` field a
+// new array of the same length from the current allocator, which is the caller's region (nothing is freed one block at
+// a time). It is what an optimizer's state (momentum, Adam's moments)
+// starts as, and what `gradient` starts from. Takes the struct by value (a copy of its header, never of what a `[:]`
+// holds).
+export typeof(v) zeros(auto v) {
+    shadow_walk(&v, 1);
+    return v;
+}
+
+// The gradient of `f` with respect to `*x`, with every other argument held constant: `autodiff::gradient(loss, &params,
+// &batch)` is the derivative of `loss(&params, &batch)` with respect to what `&params` points to, a value of
+// the type of `*x`. The result has the shape of `*x`: a float
+// field is differentiated, an integer, bool or enum field comes back zero, a fixed array of floats is filled, a nested
+// struct is walked, and a `[:]` field (one dimension) gets a new array of the same length from the current allocator,
+// as does each element of a `[:]` of structs. A pointer field is an error that says to use `[:]`. `f` is the name of a
+// function (a compile time argument), `x` a pointer, and `rest` anything `f` takes after it; a pointer in `rest` is
+// read, never differentiated. A call `f` does not accept is an error at the call. A generic function: only .smith calls
+// it (C writes `__enzyme_autodiff` with `enzyme_interleave`).
+export typeof(*x) gradient(constexpr auto f, auto x, auto... rest) {
+    static_assert(effects::within(f, effects::alloc | effects::fails), "gradient: f may only allocate or fail");
+    (void)sizeof(f(x, rest...));
+    typeof_unqual(*x) dx = zeros(*x);
+    if constexpr (countof(rest) == 0) {
+        reverse((void *)f, dup, x, interleave, &dx);
+    } else {
+        reverse((void *)f, dup, x, constant, rest..., interleave, &dx);
+    }
+    return dx;
+}
+
+// The leaf `k` of one argument: `x[k]` for a pointer, `x` as it is for anything else.
+LeafOf(typeof(x)) map_at(auto x, Usize k) {
+    (void)k;
+    if constexpr (Pointer(typeof(x))) {
+        return x[k];
+    } else {
+        return x;
+    }
+}
+
+// One argument of the walk, moved on by `k` values: a pointer is advanced, anything else stays as it is.
+typeof(x) map_off(auto x, Usize k) {
+    if constexpr (Pointer(typeof(x))) {
+        return x + k;
+    } else {
+        (void)k;
+        return x;
+    }
+}
+
+// One argument of the walk, taken into field `i` of its struct: a pointer becomes the pointer to the first element of
+// the field (`&p->f`, `&p->f[0]` for an array, `p->f.data` for a slice, `n` long as `out`'s, checked); anything else
+// stays as it is. `like` is that pointer for `out`, which gives its type (a type function cannot read a field).
+DownOf(typeof(x), typeof(like)) map_down(auto like, auto x, constexpr Usize i, Usize n) {
+    (void)like;
+    (void)n;
+    if constexpr (Pointer(typeof(x))) {
+        constexpr Field fld = fields(typeof(*x))[i];
+        (void)fld;
+        if constexpr (Array(typeof(x->[fld]))) {
+            return &x->[fld][0];
+        } else if constexpr (Slice(typeof(x->[fld]))) {
+            contract::assert(countof(x->[fld]) == n);
+            return x->[fld].data;
+        } else {
+            return &x->[fld];
+        }
+    } else {
+        (void)i;
+        return x;
+    }
+}
+
+// The walker of `map`: `n` values of `*out` in a row, and the same of every pointer in `rest`; a leaf float is written
+// from `f` of the matching leaf of each argument, and the other arguments go to `f` as they are.
+void map_walk(constexpr auto f, Usize n, auto dst, auto... rest) {
+    (void)n;
+    (void)dst;
+    if constexpr (Struct(typeof(*dst))) {
+        if (n != 1) { // one struct at a time: its slices have their own lengths
+            for (Usize k = 0; k < n; k++) {
+                map_walk(f, 1, dst + k, map_off(rest, k)...);
+            }
+            return;
+        }
+        for constexpr (Usize i = 0; i < countof(fields(typeof(*dst))); i++) {
+            constexpr Field fld = fields(typeof(*dst))[i];
+            (void)fld;
+            if constexpr (Array(typeof(dst->[fld]))) {
+                constexpr Usize length = sizeof(dst->[fld]) / sizeof(dst->[fld][0]);
+                map_walk(f, length, &dst->[fld][0], map_down(&dst->[fld][0], rest, i, length)...);
+            } else if constexpr (Slice(typeof(dst->[fld]))) {
+                if (countof(dst->[fld]) > 0) { // an empty slice has no element to read
+                    map_walk(f, countof(dst->[fld]), dst->[fld].data,
+                             map_down(dst->[fld].data, rest, i, countof(dst->[fld]))...);
+                }
+            } else {
+                map_walk(f, 1, &dst->[fld], map_down(&dst->[fld], rest, i, 1)...);
+            }
+        }
+    } else if constexpr (Float(typeof(*dst))) {
+        for (Usize k = 0; k < n; k++) {
+            dst[k] = (typeof(*dst))f(map_at(rest, k)...);
+        }
+    } else if constexpr (Pointer(typeof(*dst)) || Array(typeof(*dst))) {
+        static_assert(false, "map: a field is a pointer or an array of arrays; use a [:] slice");
+    }
+}
+
+// `map` writes `*out` from `f` applied to each set of matching float leaves of what it is given:
+// `autodiff::map(f, &out, &a, &b)` is `out.leaf = f(a.leaf, b.leaf)` for every float leaf of the same type as `*out`,
+// walking nested structs, fixed arrays and `[:]` fields (each of `a` and `b` as long as `out`'s, checked), element by
+// element; an integer, bool or enum leaf is left as it is. Any number of inputs, and `out` may be one of them
+// (`map(sgd, &params, &params, &g)`). An argument that is not a pointer, a number such as the learning rate, is passed
+// to `f` as it is, at every leaf, in its place: `map(adam, &p, &p, &g, &m, &v, lr, t)` calls `adam(p, g, m, v, lr, t)`
+// for each leaf. `f` is the name of an ordinary function of one float per input and one value per number, so a step is
+// `map` and one small function (`F64 adam(F64 p, F64 g, F64 m, F64 v, F64 lr, I32 t)`); an `F32` leaf is converted to
+// `f`'s parameters and the result back. A generic function cannot be passed.
+export void map(constexpr auto f, auto out, auto... rest) {
+    static_assert(countof(rest) >= 1, "map takes the input structs, and the numbers for f, after the output");
+    map_walk(f, 1, out, rest...);
+}

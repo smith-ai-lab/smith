@@ -1,8 +1,8 @@
 // Fixed-size caps that used to drop input silently (issue #604): a count beyond the old cap is read whole.
 module caps_test;
 
-import smith::io;
-import smith::test;
+import std::io;
+import std::test;
 import scratch;
 
 // build.info kept 8192 lines of each kind, so `smith run` saw no program for a default that came after them.
@@ -36,7 +36,7 @@ export void test_caps_smith_inputs_and_flags_reach_the_compiler_whole(io::Io *io
                    "echo \"inputs=$(printf %s \"$SMITH_LANG_INPUTS\" | wc -l | tr -d ' ')\"\n"
                    "[ $(printf %s \"$SMITH_LANG_FLAGS\" | wc -c) -gt 12000 ] && echo flags=whole\n");
     (void)scratch::sh(&p, "chmod +x stub.sh; D=$(printf 'd%.0s' $(seq 1 150)); mkdir $D; "
-                          "for i in $(seq 0 59); do printf \"module m$i;\\nexport i32 f$i(void) { return $i; }\\n\" > "
+                          "for i in $(seq 0 59); do printf \"module m$i;\\nexport I32 f$i(void) { return $i; }\\n\" > "
                           "$D/m$i.smith; done; "
                           "printf 'module main;\\ni32 main(void) { return 0; }\\n' > $D/main.smith; "
                           "echo $D > dir.txt");

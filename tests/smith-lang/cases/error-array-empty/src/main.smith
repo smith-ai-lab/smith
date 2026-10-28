@@ -1,16 +1,16 @@
 module main;
 
 // `[]` is an error in a module, in every position (issue #423).
-i32 xs[] = {1, 2, 3};
+I32 xs[] = {1, 2, 3};
 
-extern const i32 table[];
+extern const I32 table[];
 
 typedef struct {
-    i32 count;
-    i32 items[];
+    I32 count;
+    I32 items[];
 } Bag;
 
-i32 main() {
-    i32 *p = (i32[]){1, 2};
+I32 main() {
+    I32 *p = (I32[]){1, 2};
     return xs[0] + p[0];
 }

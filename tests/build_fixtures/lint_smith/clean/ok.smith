@@ -1,8 +1,8 @@
 module clean::ok;
 
 export typedef struct {
-    u32 count;
-    f64 total;
+    U32 count;
+    F64 total;
 } Tally;
 
 export typedef enum {
@@ -10,12 +10,12 @@ export typedef enum {
     Mode_Slow,
 } Mode;
 
-export constexpr u32 limit = 4;
+export constexpr U32 limit = 4;
 
-export f64 mean(Tally t) {
-    return t.total / (f64)t.count;
+export F64 mean(Tally t) {
+    return t.total / (F64)t.count;
 }
 
-export Mode pick(i32 n) {
-    return n > (i32)limit ? Mode_Slow : Mode_Fast;
+export Mode pick(I32 n) {
+    return n > (I32)limit ? Mode_Slow : Mode_Fast;
 }

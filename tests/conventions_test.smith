@@ -3,9 +3,9 @@
 // tests/build_fixtures/conv_*; each test makes its own project from one and runs smith there.
 module conventions_test;
 
-import smith::format;
-import smith::io;
-import smith::test;
+import std::format;
+import std::io;
+import std::test;
 import scratch;
 
 // The last line of a command's output: the program's output follows the build's.
@@ -19,7 +19,7 @@ static const char *compiled(const scratch::Project *p) {
                                "sed 's/ $//'");
 }
 
-static const char *yes_no(bool value) {
+static const char *yes_no(Bool value) {
     return value ? "yes" : "no";
 }
 
@@ -93,7 +93,7 @@ export void test_conventions_smith_a_new_import_is_followed_on_the_next_build(io
                    "module geometry::volume;\n"
                    "import geometry::box;\n"
                    "\n"
-                   "export i32 of(i32 w, i32 h, i32 d) {\n"
+                   "export I32 of(I32 w, I32 h, I32 d) {\n"
                    "    return box::area(w, h) * d;\n"
                    "}\n");
     scratch::write(&p, "main.smith",
@@ -224,7 +224,7 @@ export void test_conventions_library_include_io_links_io(io::Io *io) {
 
 export void test_conventions_library_import_smith_text_links_text(io::Io *io) {
     scratch::Project p = scratch::project(io, "textual", "conv_textual");
-    scratch::expect_text("library: import smith::text links text", "42", last_line(&p, "smith run"));
+    scratch::expect_text("library: import std::text links text", "42", last_line(&p, "smith run"));
 }
 
 export void test_conventions_library_import_a_header_in_a_smith_file_links_io(io::Io *io) {

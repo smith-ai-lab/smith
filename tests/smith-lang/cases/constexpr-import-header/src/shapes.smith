@@ -1,19 +1,19 @@
 module shapes;
 
-export i32 dot(i32 n) {
-    i32 buf[4] = {n, n + 1, n + 2, n + 3};
-    i32 xs[:] = buf;
-    i32 total = 0;
-    for (usize i = 0; i < countof(xs); i++)
+export I32 dot(I32 n) {
+    I32 buf[4] = {n, n + 1, n + 2, n + 3};
+    I32 xs[:] = buf;
+    I32 total = 0;
+    for (Usize i = 0; i < countof(xs); i++)
         total += xs[i] * xs[i];
     return total;
 }
 
-export struct { i32, i32 } pair(i32 a) {
+export struct { I32, I32 } pair(I32 a) {
     return {a, a * 2};
 }
 
-export i32 second(i32 a) {
-    struct { i32, i32 } p = pair(a);
+export I32 second(I32 a) {
+    struct { I32, I32 } p = pair(a);
     return p[1];
 }

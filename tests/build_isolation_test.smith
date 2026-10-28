@@ -3,9 +3,9 @@
 // smith_modules, and every header of smith's libraries importing alone and together.
 module build_isolation_test;
 
-import smith::format;
-import smith::io;
-import smith::test;
+import std::format;
+import std::io;
+import std::test;
 import scratch;
 
 // 11d. Modules: isolation. A header that only worked after another include fails, and a textual header works.

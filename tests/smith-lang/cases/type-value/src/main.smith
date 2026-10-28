@@ -5,55 +5,55 @@
 // an ordinary function.
 typedef struct {
     char name[16];
-    constexpr type of;
+    constexpr Type of;
 } Field;
 
 typedef char *Text;
-constexpr type count_type = u32;
-constexpr type names[3] = {i32, f64, Text};
-constexpr Field fields[2] = {{"length", usize}, {"ratio", f32}};
+constexpr Type CountType = U32;
+constexpr Type names[3] = {I32, F64, Text};
+constexpr Field fields[2] = {{"length", Usize}, {"ratio", F32}};
 
-typedef i32 Meters;
-constexpr type distance = Meters;
+typedef I32 Meters;
+constexpr Type Distance = Meters;
 
 // Equal exactly when the types are the same, typedefs looked through.
-static_assert(count_type == uint32_t);
-static_assert(is_record(fields[0].of) == 0);
-static_assert(count_type == u32);
-static_assert(distance == i32);
-static_assert(distance == int);
+static_assert(CountType == uint32_t);
+static_assert(Struct(fields[0].of) == 0);
+static_assert(CountType == U32);
+static_assert(Distance == I32);
+static_assert(Distance == int);
 static_assert(names[0] != names[1]);
 static_assert(fields[0].of == size_t);
 static_assert(fields[1].of != fields[0].of);
 
 // The questions an `if constexpr` asks of T, asked of a value.
 static_assert(sizeof(names[2]) == 8 && alignof(names[1]) == 8);
-static_assert(is_integer(count_type) && !is_signed(count_type) && is_signed(distance));
-static_assert(is_float(names[1]) && !is_float(names[0]) && is_pointer(names[2]));
+static_assert(Int(CountType) && !Signed(CountType) && Signed(Distance));
+static_assert(Float(names[1]) && !Float(names[0]) && Pointer(names[2]));
 
 // An ordinary function takes and returns a type: it runs in the compiler.
-static bool small(type t) {
+static Bool small(Type t) {
     return sizeof(t) <= 4;
 }
 
-static type wider(type a, type b) {
+static Type Wider(Type a, Type b) {
     return sizeof(a) >= sizeof(b) ? a : b;
 }
 
-static_assert(small(i32) && small(u8) && !small(f64) && !small(Text));
-static_assert(wider(i32, f64) == double);
-static_assert(wider(u8, u16) == u16);
-static_assert(small(wider(i8, u16)) && !small(wider(i32, i64)));
+static_assert(small(I32) && small(U8) && !small(F64) && !small(Text));
+static_assert(Wider(I32, F64) == double);
+static_assert(Wider(U8, U16) == U16);
+static_assert(small(Wider(I8, U16)) && !small(Wider(I32, I64)));
 
 int main() {
-    constexpr type local = wider(u8, i64);
-    local big = 1;
+    constexpr Type Local = Wider(U8, I64);
+    Local big = 1;
     big <<= 40;
-    count_type small_one = 7;
-    constexpr type length_type = fields[0].of;
-    constexpr type ratio_type = names[1];
-    length_type length = 12;
-    ratio_type ratio = 0.5;
-    printf("%lld %u %zu %g %zu\n", (long long)big, small_one, (size_t)length, ratio, sizeof(local));
+    CountType small_one = 7;
+    constexpr Type LengthType = fields[0].of;
+    constexpr Type RatioType = names[1];
+    LengthType length = 12;
+    RatioType ratio = 0.5;
+    printf("%lld %u %zu %g %zu\n", (long long)big, small_one, (size_t)length, ratio, sizeof(Local));
     return 0;
 }

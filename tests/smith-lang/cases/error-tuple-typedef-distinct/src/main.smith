@@ -1,8 +1,8 @@
-// A typedef is not looked through: `Meters` is the field's name, so these are two types though both fields are f64.
-typedef f64 Meters;
+// A typedef is not looked through: `Meters` is the field's name, so these are two types though both fields are F64.
+typedef F64 Meters;
 
 void use() {
-    struct { Meters, f32 } m = {1.0, 2.0f};
-    struct { f64, f32 } plain = m;
+    struct { Meters, F32 } m = {1.0, 2.0f};
+    struct { F64, F32 } plain = m;
     (void)plain;
 }

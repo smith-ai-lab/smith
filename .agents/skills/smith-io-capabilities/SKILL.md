@@ -1,6 +1,6 @@
 ---
 name: smith-io-capabilities
-description: "Passing smith::io's capabilities down: a function takes the part of io::Io it needs (io::Console, io::Files, io::Clock, io::Processes, io::Net, io::Args), so its signature says what it can do. Load when writing a function that prints, reads files or runs processes, or when smith-effects asks for a capability parameter."
+description: "Passing std::io's capabilities down: a function takes the part of io::Io it needs (io::Console, io::Files, io::Clock, io::Processes, io::Net, io::Args), so its signature says what it can do. Load when writing a function that prints, reads files or runs processes, or when smith-effects asks for a capability parameter."
 ---
 
 # Pass only what is needed
@@ -8,11 +8,11 @@ description: "Passing smith::io's capabilities down: a function takes the part o
 main hands each function the narrowest thing that covers what it uses, so a function that takes no clock cannot depend on time and one that takes no files cannot touch the disk.
 
 ```smith
-import smith::arena;
-import smith::io;
+import std::arena;
+import std::io;
 
 typedef struct {
-    usize vertices;
+    Usize vertices;
 } Mesh;
 
 // One or two capabilities: those alone.
@@ -38,7 +38,7 @@ void editor_open(Editor *editor, const char *path) {
     (void)io::console_printf(editor->console, "%zu\n", mesh.vertices);
 }
 
-i32 main(i32 argc, char **argv) {
+I32 main(I32 argc, char **argv) {
     io::Io io = io::make(argc, argv);
     Mesh mesh = mesh_load(&io.files, &io.arena, "cube.obj");
     Editor editor = {&io.files, &io.console, &io.arena};

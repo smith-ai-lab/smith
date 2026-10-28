@@ -100,9 +100,9 @@ flip() { # file, offset, output
 # tests/untar.c under AddressSanitizer and UndefinedBehaviorSanitizer, as ./untar.
 build_untar() {
     smith cc -std=gnu23 -g -O1 -fsanitize=address,undefined -fno-sanitize-recover=undefined -Wall -Wextra -Werror \
-        -Wno-unused-function -I "$here/.smith/include" "$here/tests/untar.c" "$here/lib/smith/arena.smith" \
-        "$here/lib/smith/contract.smith" "$here/lib/smith/inflate.smith" "$here/lib/smith/io.smith" \
-        "$here/lib/smith/random.smith" -o "$PWD/untar"
+        -Wno-unused-function -I "$here/.smith/include" "$here/tests/untar.c" "$here/lib/std/arena.smith" \
+        "$here/lib/std/contract.smith" "$here/lib/std/inflate.smith" "$here/lib/std/io.smith" \
+        "$here/lib/std/random.smith" -o "$PWD/untar"
 }
 
 # The sanitized untar and the seeds, made once and shared by every test of the run and of the runs after it (#639: ten
@@ -117,8 +117,8 @@ shared_untar() {
     # the size and time of the files it is made of, and of the smith that compiles it (cheaper than their bytes)
     if [ "$(uname -s)" = Darwin ]; then statfmt='-f %N_%m_%z'; else statfmt='-c %n_%Y_%s'; fi
     key=$(stat $statfmt "${SMITH_SELF:-$(command -v smith)}" "$here/tests/untar.c" "$here"/runtime/*.c "$here"/runtime/*.h \
-        "$here/lib/smith/arena.smith" "$here/lib/smith/contract.smith" "$here/lib/smith/inflate.smith" \
-        "$here/lib/smith/io.smith" "$here/lib/smith/random.smith" "$here/tests/build_fixtures/untar/prelude" 2>/dev/null |
+        "$here/lib/std/arena.smith" "$here/lib/std/contract.smith" "$here/lib/std/inflate.smith" \
+        "$here/lib/std/io.smith" "$here/lib/std/random.smith" "$here/tests/build_fixtures/untar/prelude" 2>/dev/null |
         shasum -a 256 | cut -c1-16)
     dir=$base/$key
     if [ ! -e "$dir/done" ]; then

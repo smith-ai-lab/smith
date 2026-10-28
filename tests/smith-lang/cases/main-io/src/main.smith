@@ -1,12 +1,12 @@
-import smith::io;
+import std::io;
 import <stdio.h>;
 
-i32 helper(i32 x) {
+I32 helper(I32 x) {
     return x * 2;
 }
 
 // The io form: smith makes the io and closes it after, and the status is what main returns.
-i32 main(io::Io *io) {
+I32 main(io::Io *io) {
     c::printf("main has %d argument\n", io->count);
     if (io->count == 1) {
         return helper(21);

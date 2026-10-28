@@ -3,8 +3,8 @@
 // itself.
 module build_high_level_test;
 
-import smith::io;
-import smith::test;
+import std::io;
+import std::test;
 import scratch;
 
 // The mtime of a file in seconds, as perl reads it.

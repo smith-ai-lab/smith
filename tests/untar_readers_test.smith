@@ -1,4 +1,4 @@
-// smith's archive readers (runtime/gzip.c on lib/smith/inflate.smith, runtime/xz.c, runtime/untar.c) as functions, in
+// smith's archive readers (runtime/gzip.c on lib/std/inflate.smith, runtime/xz.c, runtime/untar.c) as functions, in
 // process (issue #646): the bytes of an archive in, a folder of files or the refusal out, through `smith_core_extract`
 // and `smith_core_tree` (include/smith_core.h, smith.c compiled as a library by tests/units/build.c). No process
 // starts. They replace the checks of tests/untar_formats_test.smith and tests/untar_refuse_test.smith that went
@@ -14,22 +14,22 @@
 // folder (the same format as `smith_core_tree`), so the golden does not come from the code under test.
 module untar_readers_test;
 
-import smith::arena;
-import smith::format;
-import smith::inflate;
-import smith::io;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::format;
+import std::inflate;
+import std::io;
+import std::mem;
+import std::test;
 import scratch;
 import <smith_core.h>;
 import <string.h>;
 
-typedef typeof(const u8[:]) Bytes;
+typedef typeof(const U8[:]) Bytes;
 
-constexpr usize text_capacity = 1U << 16;
-constexpr usize path_capacity = 4096;
-constexpr usize buffer_capacity = 1U << 19;
-constexpr u64 mtime = 1000000000;
+constexpr Usize text_capacity = 1U << 16;
+constexpr Usize path_capacity = 4096;
+constexpr Usize buffer_capacity = 1U << 19;
+constexpr U64 mtime = 1000000000;
 
 // The listing of the tree the fixtures hold.
 constexpr char source_tree[_] = "bin d\n"
@@ -64,15 +64,15 @@ static Bytes fixture(io::Io *io, const char *name) {
 }
 
 typedef struct {
-    u8 *data;
-    usize used;
+    U8 *data;
+    Usize used;
 } Buffer;
 
 static Buffer buffer(io::Io *io) {
-    return (Buffer){.data = arena::push_slice(&io->arena, u8, buffer_capacity).data, .used = 0};
+    return (Buffer){.data = arena::push_slice(&io->arena, U8, buffer_capacity).data, .used = 0};
 }
 
-static void put(Buffer *b, const u8 *bytes, usize size) {
+static void put(Buffer *b, const U8 *bytes, Usize size) {
     test::check_less_equal(b->used + size, buffer_capacity);
     if (size > 0) mem::copy(b->data[b->used:b->used + size], bytes[0:size]);
     b->used += size;
@@ -82,15 +82,15 @@ static void put_bytes(Buffer *b, Bytes bytes) {
     put(b, bytes.data, countof(bytes));
 }
 
-static void put_zeros(Buffer *b, usize count) {
+static void put_zeros(Buffer *b, Usize count) {
     test::check_less_equal(b->used + count, buffer_capacity);
-    for (usize i = 0; i < count; i++)
+    for (Usize i = 0; i < count; i++)
         b->data[b->used + i] = 0;
     b->used += count;
 }
 
 static Bytes text_bytes(const char *text) {
-    const u8 *bytes = (const u8 *)text;
+    const U8 *bytes = (const U8 *)text;
     return bytes[0:c::strlen(text)];
 }
 
@@ -99,18 +99,18 @@ static Bytes bytes_of(const Buffer *b) {
 }
 
 // The bytes of `from` from `start` to the end of the first `count` of them.
-static Bytes part(Bytes from, usize start, usize end) {
+static Bytes part(Bytes from, Usize start, Usize end) {
     return from[start:end];
 }
 
 // A copy with the byte at `at` (from the end when negative) changed, so that only a check can notice.
-static Bytes flip(io::Io *io, Bytes bytes, isize at) {
-    usize size = countof(bytes);
-    usize where = at < 0 ? size - (usize)(-at) : (usize)at;
+static Bytes flip(io::Io *io, Bytes bytes, Isize at) {
+    Usize size = countof(bytes);
+    Usize where = at < 0 ? size - (Usize)(-at) : (Usize)at;
     test::check_less(where, size);
     Buffer b = buffer(io);
     put_bytes(&b, bytes);
-    b.data[where] = (u8)(b.data[where] + 1);
+    b.data[where] = (U8)(b.data[where] + 1);
     return bytes_of(&b);
 }
 
@@ -122,14 +122,14 @@ static Bytes concat(io::Io *io, Bytes a, Bytes b) {
 }
 
 // Bytes that do not compress, the same on every run.
-static Bytes noise(io::Io *io, usize size) {
-    u8 *data = arena::push_slice(&io->arena, u8, size).data;
-    u32 state = 646;
-    for (usize i = 0; i < size; i++) {
+static Bytes noise(io::Io *io, Usize size) {
+    U8 *data = arena::push_slice(&io->arena, U8, size).data;
+    U32 state = 646;
+    for (Usize i = 0; i < size; i++) {
         state ^= state << 13;
         state ^= state >> 17;
         state ^= state << 5;
-        data[i] = (u8)(state >> 11);
+        data[i] = (U8)(state >> 11);
     }
     return data[0:size];
 }
@@ -140,13 +140,13 @@ typedef struct {
     const char *name;
     char type;        // '0' file, '5' folder, '2' symlink, '1' hard link, '6' FIFO, '3' device
     const char *link; // the target of a link
-    const u8 *data;   // the bytes of a file
-    usize size;
-    u32 mode;
+    const U8 *data;   // the bytes of a file
+    Usize size;
+    U32 mode;
 } Entry;
 
 static Entry file_of(const char *name, const char *text) {
-    return (Entry){.name = name, .type = '0', .data = (const u8 *)text, .size = c::strlen(text), .mode = 0o644};
+    return (Entry){.name = name, .type = '0', .data = (const U8 *)text, .size = c::strlen(text), .mode = 0o644};
 }
 
 static Entry folder_of(const char *name) {
@@ -157,39 +157,39 @@ static Entry link_of(const char *name, char type, const char *target) {
     return (Entry){.name = name, .type = type, .link = target, .mode = 0o777};
 }
 
-static void octal(u8 *field, usize width, u64 value) {
-    for (usize i = 0; i < width - 1; i++) {
-        field[width - 2 - i] = (u8)('0' + (value & 7));
+static void octal(U8 *field, Usize width, U64 value) {
+    for (Usize i = 0; i < width - 1; i++) {
+        field[width - 2 - i] = (U8)('0' + (value & 7));
         value >>= 3;
     }
     field[width - 1] = 0;
 }
 
-static void set_text(u8 *field, usize width, const char *text) {
-    usize length = c::strlen(text);
+static void set_text(U8 *field, Usize width, const char *text) {
+    Usize length = c::strlen(text);
     test::check_less_equal(length, width);
-    const u8 *bytes = (const u8 *)text;
+    const U8 *bytes = (const U8 *)text;
     if (length > 0) mem::copy(field[0:length], bytes[0:length]);
 }
 
 // One entry of a ustar archive: its header, its bytes and the padding to a block.
 static void tar_add(Buffer *tar, Entry entry) {
-    u8 header[512] = {};
+    U8 header[512] = {};
     set_text(header, 100, entry.name);
     octal(header + 100, 8, entry.mode);
     octal(header + 108, 8, 0);
     octal(header + 116, 8, 0);
     octal(header + 124, 12, entry.size);
     octal(header + 136, 12, mtime);
-    for (usize i = 148; i < 156; i++)
+    for (Usize i = 148; i < 156; i++)
         header[i] = ' ';
-    header[156] = (u8)entry.type;
+    header[156] = (U8)entry.type;
     if (entry.link != nullptr) set_text(header + 157, 100, entry.link);
     set_text(header + 257, 6, "ustar");
     header[263] = '0';
     header[264] = '0';
-    u64 sum = 0;
-    for (usize i = 0; i < 512; i++)
+    U64 sum = 0;
+    for (Usize i = 0; i < 512; i++)
         sum += header[i];
     octal(header + 148, 7, sum);
     header[155] = ' ';
@@ -198,9 +198,9 @@ static void tar_add(Buffer *tar, Entry entry) {
     put_zeros(tar, (512 - entry.size % 512) % 512);
 }
 
-static Bytes tar_of(io::Io *io, const Entry *entries, usize count) {
+static Bytes tar_of(io::Io *io, const Entry *entries, Usize count) {
     Buffer tar = buffer(io);
-    for (usize i = 0; i < count; i++)
+    for (Usize i = 0; i < count; i++)
         tar_add(&tar, entries[i]);
     put_zeros(&tar, 1024);
     return bytes_of(&tar);
@@ -208,37 +208,37 @@ static Bytes tar_of(io::Io *io, const Entry *entries, usize count) {
 
 // ---- gzip: stored blocks, which is what gzip makes of data that does not compress
 
-static void put_le32(Buffer *b, u32 value) {
-    u8 four[4] = {(u8)value, (u8)(value >> 8), (u8)(value >> 16), (u8)(value >> 24)};
+static void put_le32(Buffer *b, U32 value) {
+    U8 four[4] = {(U8)value, (U8)(value >> 8), (U8)(value >> 16), (U8)(value >> 24)};
     put(b, four, 4);
 }
 
 static Bytes gzip_stored(io::Io *io, Bytes data) {
     Buffer gz = buffer(io);
-    const u8 header[10] = {0x1F, 0x8B, 8, 0, 0, 0, 0, 0, 0, 3};
+    const U8 header[10] = {0x1F, 0x8B, 8, 0, 0, 0, 0, 0, 0, 3};
     put(&gz, header, 10);
-    usize size = countof(data);
-    usize at = 0;
-    for (usize block = 0; block < 1000; block++) {
-        usize take = size - at < 65535 ? size - at : 65535;
-        bool last = at + take == size;
-        u8 head[5] = {last ? 1 : 0, (u8)take, (u8)(take >> 8), (u8)~take, (u8)(~take >> 8)};
+    Usize size = countof(data);
+    Usize at = 0;
+    for (Usize block = 0; block < 1000; block++) {
+        Usize take = size - at < 65535 ? size - at : 65535;
+        Bool last = at + take == size;
+        U8 head[5] = {last ? 1 : 0, (U8)take, (U8)(take >> 8), (U8)~take, (U8)(~take >> 8)};
         put(&gz, head, 5);
         put(&gz, data.data + at, take);
         at += take;
         if (last) break;
     }
     put_le32(&gz, inflate::crc32(0, data.data, size));
-    put_le32(&gz, (u32)size);
+    put_le32(&gz, (U32)size);
     return bytes_of(&gz);
 }
 
 // ---- xz: LZMA2's uncompressed chunks, which is what xz makes of data that does not compress; one block, with CRC-32
 // (check 1) or no check (check 0)
 
-static void put_vli(Buffer *b, u64 value) {
-    for (usize i = 0; i < 9; i++) {
-        u8 byte = (u8)(value & 0x7F);
+static void put_vli(Buffer *b, U64 value) {
+    for (Usize i = 0; i < 9; i++) {
+        U8 byte = (U8)(value & 0x7F);
         value >>= 7;
         if (value == 0) {
             put(b, &byte, 1);
@@ -249,54 +249,54 @@ static void put_vli(Buffer *b, u64 value) {
     }
 }
 
-static Bytes xz_stored(io::Io *io, Bytes data, u8 check) {
-    usize size = countof(data);
+static Bytes xz_stored(io::Io *io, Bytes data, U8 check) {
+    Usize size = countof(data);
     Buffer xz = buffer(io);
-    const u8 flags[2] = {0, check};
-    const u8 magic[6] = {0xFD, '7', 'z', 'X', 'Z', 0};
+    const U8 flags[2] = {0, check};
+    const U8 magic[6] = {0xFD, '7', 'z', 'X', 'Z', 0};
     put(&xz, magic, 6);
     put(&xz, flags, 2);
     put_le32(&xz, inflate::crc32(0, flags, 2));
     // The block header: 12 bytes, one LZMA2 filter with a dictionary of 256 KiB and no sizes.
-    u8 header[12] = {2, 0, 0x21, 1, 0x0C, 0, 0, 0};
-    u32 header_crc = inflate::crc32(0, header, 8);
-    for (usize i = 0; i < 4; i++)
-        header[8 + i] = (u8)(header_crc >> (8 * i));
+    U8 header[12] = {2, 0, 0x21, 1, 0x0C, 0, 0, 0};
+    U32 header_crc = inflate::crc32(0, header, 8);
+    for (Usize i = 0; i < 4; i++)
+        header[8 + i] = (U8)(header_crc >> (8 * i));
     put(&xz, header, 12);
-    usize start = xz.used;
-    for (usize at = 0, chunk = 0; at < size || chunk == 0; chunk++) {
-        usize take = size - at < 65536 ? size - at : 65536;
-        u8 head[3] = {chunk == 0 ? 1 : 2, (u8)((take - 1) >> 8), (u8)(take - 1)};
+    Usize start = xz.used;
+    for (Usize at = 0, chunk = 0; at < size || chunk == 0; chunk++) {
+        Usize take = size - at < 65536 ? size - at : 65536;
+        U8 head[3] = {chunk == 0 ? 1 : 2, (U8)((take - 1) >> 8), (U8)(take - 1)};
         if (take > 0) put(&xz, head, 3);
         put(&xz, data.data + at, take);
         at += take;
         if (take == 0) break;
     }
     put_zeros(&xz, 1); // the end of the LZMA2 data
-    usize compressed = xz.used - start;
+    Usize compressed = xz.used - start;
     put_zeros(&xz, (4 - (12 + compressed) % 4) % 4);
-    usize check_size = check == 1 ? 4 : 0;
+    Usize check_size = check == 1 ? 4 : 0;
     if (check == 1) put_le32(&xz, inflate::crc32(0, data.data, size));
     // The index: one record (the block's size without padding, then the size of its data), padded, with its CRC-32.
-    usize index_start = xz.used;
+    Usize index_start = xz.used;
     put_zeros(&xz, 1);
     put_vli(&xz, 1);
     put_vli(&xz, 12 + compressed + check_size);
     put_vli(&xz, size);
     put_zeros(&xz, (4 - (xz.used - index_start) % 4) % 4);
     put_le32(&xz, inflate::crc32(0, xz.data + index_start, xz.used - index_start));
-    usize index_size = xz.used - index_start;
-    u8 footer[6] = {(u8)(index_size / 4 - 1), (u8)((index_size / 4 - 1) >> 8), 0, 0, 0, check};
+    Usize index_size = xz.used - index_start;
+    U8 footer[6] = {(U8)(index_size / 4 - 1), (U8)((index_size / 4 - 1) >> 8), 0, 0, 0, check};
     put_le32(&xz, inflate::crc32(0, footer, 6));
     put(&xz, footer, 6);
-    put(&xz, (const u8 *)"YZ", 2);
+    put(&xz, (const U8 *)"YZ", 2);
     return bytes_of(&xz);
 }
 
 // ---- Extraction
 
 typedef struct {
-    bool ok;
+    Bool ok;
     const char *contents; // the package's folder
     const char *error;
     const char *tree; // the listing of the package
@@ -319,10 +319,10 @@ static Extracted extract_from(io::Io *io, const char *name, Bytes archive, const
     char *contents = arena::push_slice(&io->arena, char, path_capacity).data;
     char *error = arena::push_slice(&io->arena, char, text_capacity).data;
     char *tree = arena::push_slice(&io->arena, char, text_capacity).data;
-    bool ok = c::smith_core_extract(archive.data, countof(archive), url, folder, contents, path_capacity, error,
+    Bool ok = c::smith_core_extract(archive.data, countof(archive), url, folder, contents, path_capacity, error,
                                     text_capacity);
     if (ok) {
-        bool listed = c::smith_core_tree(contents, tree, text_capacity);
+        Bool listed = c::smith_core_tree(contents, tree, text_capacity);
         test::check_equal(listed, true);
     }
     return (Extracted){.ok = ok, .contents = contents, .error = error, .tree = tree};
@@ -476,7 +476,7 @@ export void test_untar_tar_xz_of_random_data_under_each_check(io::Io *io) {
 export void test_untar_tar_xz_of_random_data_uncompressed_chunks(io::Io *io) {
     Bytes data = noise(io, 150000); // three chunks
     Entry entries[2] = {folder_of("pkg-1.0/"), random_file(data)};
-    for (u8 check = 0; check < 2; check++) {
+    for (U8 check = 0; check < 2; check++) {
         Extracted r = extract(io, "stored", xz_stored(io, tar_of(io, entries, 2), check));
         is_tree(io,
                 check == 0 ? "random data in uncompressed chunks (no check)"
@@ -505,9 +505,9 @@ export void test_untar_several_top_level_folders_are_kept_under_their_names(io::
 // ---- 2. Long names: a ustar name split over its prefix and name fields, a pax path, a GNU long name, and non-ASCII
 // names
 
-static const char *repeat(io::Io *io, char letter, usize count) {
+static const char *repeat(io::Io *io, char letter, Usize count) {
     char *text = arena::push_slice(&io->arena, char, count + 1).data;
-    for (usize i = 0; i < count; i++)
+    for (Usize i = 0; i < count; i++)
         text[i] = letter;
     text[count] = '\0';
     return text;
@@ -609,7 +609,7 @@ export void test_untar_refuses_a_device(io::Io *io) {
     hostile(io, "a device", link_of("pkg-1.0/null", '3', nullptr), "special file");
 }
 
-static bool exists(io::Io *io, const char *path) {
+static Bool exists(io::Io *io, const char *path) {
     io::FileInfo info = io::files_info(&io->files, path);
     return info.error.code == 0;
 }
@@ -676,7 +676,7 @@ export void test_untar_hard_links_both_names_have_the_bytes(io::Io *io) {
 // attributes, so they never become files, and the package is still one folder. smith drops them too, by the format's
 // magic number; a "._" file of anything else is a file like any other.
 static Bytes apple_tar(io::Io *io) {
-    const u8 magic[26] = {0x00, 0x05, 0x16, 0x07, 0x00, 0x02, 0x00, 0x00}; // the AppleDouble header, 26 bytes
+    const U8 magic[26] = {0x00, 0x05, 0x16, 0x07, 0x00, 0x02, 0x00, 0x00}; // the AppleDouble header, 26 bytes
     Entry entries[7] = {folder_of("pkg-1.0/"),
                         file_of("pkg-1.0/a", "first\n"),
                         {.name = "pkg-1.0/._a", .type = '0', .data = magic, .size = 26, .mode = 0o644},
@@ -690,10 +690,10 @@ static Bytes apple_tar(io::Io *io) {
 static const char *apple_listing(io::Io *io) {
     const char *plain = "a plain file that only has a name like metadata\n";
     return format::push(&io->arena, "._plain f 0644 ", c::strlen(plain), " ",
-                        format::hex(inflate::crc32(0, (const u8 *)plain, c::strlen(plain)), 8),
-                        " 1000000000\n._tiny f 0644 5 ", format::hex(inflate::crc32(0, (const u8 *)"tiny\n", 5), 8),
-                        " 1000000000\na f 0644 6 ", format::hex(inflate::crc32(0, (const u8 *)"first\n", 6), 8),
-                        " 1000000000\nb f 0644 7 ", format::hex(inflate::crc32(0, (const u8 *)"second\n", 7), 8),
+                        format::hex(inflate::crc32(0, (const U8 *)plain, c::strlen(plain)), 8),
+                        " 1000000000\n._tiny f 0644 5 ", format::hex(inflate::crc32(0, (const U8 *)"tiny\n", 5), 8),
+                        " 1000000000\na f 0644 6 ", format::hex(inflate::crc32(0, (const U8 *)"first\n", 6), 8),
+                        " 1000000000\nb f 0644 7 ", format::hex(inflate::crc32(0, (const U8 *)"second\n", 7), 8),
                         " 1000000000\n")
         .data;
 }
@@ -812,7 +812,7 @@ export void test_untar_refuses_a_single_gz_with_a_wrong_crc(io::Io *io) {
     Bytes gz = tool_bin_gz(io);
     Buffer bad = buffer(io);
     put_bytes(&bad, part(gz, 0, countof(gz) - 8));
-    const u8 four[4] = {1, 2, 3, 4};
+    const U8 four[4] = {1, 2, 3, 4};
     put(&bad, four, 4);
     put_bytes(&bad, part(gz, countof(gz) - 4, countof(gz)));
     refuses(io, "a single gz with a wrong CRC", bytes_of(&bad), "checksum of the data does not match");
@@ -822,7 +822,7 @@ export void test_untar_refuses_a_single_gz_with_a_wrong_size(io::Io *io) {
     Bytes gz = tool_bin_gz(io);
     Buffer bad = buffer(io);
     put_bytes(&bad, part(gz, 0, countof(gz) - 4));
-    const u8 four[4] = {1, 2, 3, 4};
+    const U8 four[4] = {1, 2, 3, 4};
     put(&bad, four, 4);
     refuses(io, "a single gz with a wrong size", bytes_of(&bad), "size of the data");
 }
@@ -847,7 +847,7 @@ export void test_untar_refuses_a_gzip_with_a_changed_byte_in_a_stored_block(io::
 
 // A one-block xz ends with the block's check, an index of 12 bytes and the footer of 12: the check is flipped at its
 // first byte. (Real xz compresses these tars, so there is no stored chunk to change; the next test has one.)
-static void xz_check_changed(io::Io *io, const char *check, isize from_end) {
+static void xz_check_changed(io::Io *io, const char *check, Isize from_end) {
     Bytes xz = fixture(io, join(io, join(io, "rand-", check), ".tar.xz"));
     refuses(io, join(io, "an xz with a changed check under ", check), flip(io, xz, from_end),
             "check does not match its data");

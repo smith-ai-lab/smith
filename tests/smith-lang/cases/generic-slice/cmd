@@ -1,1 +1,1 @@
--I @REPO@/.smith/include main.smith @REPO@/tests/smith-lang/cases/generic-slice/src/stats.smith @REPO@/lib/smith/contract.smith @REPO@/lib/trace.c -o @OUT@/program
+-I @REPO@/.smith/include main.smith @REPO@/tests/smith-lang/cases/generic-slice/src/stats.smith @REPO@/lib/std/contract.smith @REPO@/lib/trace.c -o @OUT@/program

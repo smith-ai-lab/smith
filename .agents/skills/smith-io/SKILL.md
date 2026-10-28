@@ -1,21 +1,21 @@
 ---
 name: smith-io
-description: "Using smith::io (import smith::io; io::Io, io::make, i32 main(io::Io *io)), the one value a program makes in main to touch the world: its arena, key, console, files, clock, processes, net and args. Load when code imports smith::io or includes <smith/io.h>, or on a question about doing io in .smith or C without globals."
+description: "Using std::io (import std::io; io::Io, io::make, I32 main(io::Io *io)), the one value a program makes in main to touch the world: its arena, key, console, files, clock, processes, net and args. Load when code imports std::io or includes <smith/io.h>, or on a question about doing io in .smith or C without globals."
 ---
 
 # One io in main: smith's io
 
 Everything a program does to the world outside it is a value you hold and pass on. It runs on macOS (kqueue) and Linux (epoll); operations complete in `io::Op`s the caller owns.
 
-**io is the module `smith::io`** (`lib/smith/io.smith`): `import smith::io;`, then `io::Io`, `io::make`, `io::console_printf`, as the arena is `arena::Arena` (`import smith::arena;`) and the key `random::Key`. Its C API is the generated header `.smith/include/smith/io.h` (read it for the exact declarations); C includes it and uses the C names, which are the module's with a prefix, under "From C". The prose below names everything by its module name. The io library compiles with a smith that has clang inside, as the other libraries do.
+**io is the module `std::io`** (`lib/std/io.smith`): `import std::io;`, then `io::Io`, `io::make`, `io::console_printf`, as the arena is `arena::Arena` (`import std::arena;`) and the key `random::Key`. Its C API is the generated header `.smith/include/smith/io.h` (read it for the exact declarations); C includes it and uses the C names, which are the module's with a prefix, under "From C". The prose below names everything by its module name. The io library compiles with a smith that has clang inside, as the other libraries do.
 
 ## One io in main
 
 ```smith
-import smith::console;
-import smith::io;
+import std::console;
+import std::io;
 
-i32 main(io::Io *io) {
+I32 main(io::Io *io) {
     // a format string, as printf's, or typed pieces with none (smith-format)
     (void)io::console_printf(&io->console, "%zu arguments\n", io->args.count);
     (void)console::print("seed ", io->seed, "\n");
@@ -23,14 +23,14 @@ i32 main(io::Io *io) {
 }
 ```
 
-In a `.smith` file `main` may take the io: smith makes it, calls your `main` with a pointer to it, closes it after, and the status you return is the program's (an early `return` is fine). The lowering writes `static int32_t smith_user_main(SmithIo *io) { ... }` for your function and, at the end of the file, a C `main(int argc, char **argv)` that runs `smith_io_make(argc, argv)`, `smith_user_main(&io)`, `smith_io_close(&io)` and returns the status. The debugger shows that `main` at the line of yours, and your body, with a `module` line or none, also as `main` (its linkage name is `smith_user_main`). The form is exactly `i32 main(io::Io *name)` with `import smith::io;` (under whatever name the file binds it); `io::make` anywhere in a file with this `main` is an error ("main already has the io"), since the io is made already. A program has one `main`.
+In a `.smith` file `main` may take the io: smith makes it, calls your `main` with a pointer to it, closes it after, and the status you return is the program's (an early `return` is fine). The lowering writes `static int32_t smith_user_main(SmithIo *io) { ... }` for your function and, at the end of the file, a C `main(int argc, char **argv)` that runs `smith_io_make(argc, argv)`, `smith_user_main(&io)`, `smith_io_close(&io)` and returns the status. The debugger shows that `main` at the line of yours, and your body, with a `module` line or none, also as `main` (its linkage name is `smith_user_main`). The form is exactly `I32 main(io::Io *name)` with `import std::io;` (under whatever name the file binds it); `io::make` anywhere in a file with this `main` is an error ("main already has the io"), since the io is made already. A program has one `main`.
 
 The C form stays, and it is how a renamed `.c` file works unchanged; it makes and closes the io itself, and so does `main` in a `.c` file (the io form is for `.smith`):
 
 ```smith
-import smith::io;
+import std::io;
 
-i32 main(i32 argc, char **argv) {
+I32 main(I32 argc, char **argv) {
     io::Io io = io::make(argc, argv);
     (void)io::console_printf(&io.console, "%zu arguments\n", io.args.count);
     io::close(&io);
@@ -57,4 +57,4 @@ There are no options.
 
 Also in this family: [smith-io-capabilities](../smith-io-capabilities/SKILL.md), [smith-effects](../smith-effects/SKILL.md), [smith-io-errors](../smith-io-errors/SKILL.md), [smith-io-files](../smith-io-files/SKILL.md), [smith-io-processes](../smith-io-processes/SKILL.md), [smith-io-async](../smith-io-async/SKILL.md), [smith-io-net](../smith-io-net/SKILL.md), [smith-io-fake](../smith-io-fake/SKILL.md), [smith-io-c](../smith-io-c/SKILL.md).
 
-A proved function may call io: every export of `smith::io` carries `[[clang::annotate("smith::edge")]]`, so `smith prove` treats a call of one as the edge of the program (smith-prove-trusted). `main` with a `contract::assert` is proved through io calls with no `contract::trusted()` of your own.
+A proved function may call io: every export of `std::io` carries `[[clang::annotate("std::edge")]]`, so `smith prove` treats a call of one as the edge of the program (smith-prove-trusted). `main` with a `contract::assert` is proved through io calls with no `contract::trusted()` of your own.

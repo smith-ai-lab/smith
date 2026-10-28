@@ -1223,7 +1223,7 @@ const char *const *smith_list(SmithBuild *b, const char *first, ...) {
 }
 
 // The libraries smith writes into .smith/lib; the list is in smith.c's smith_libraries. A library's source is C
-// (.smith/lib/<name>.c) or a .smith module (.smith/lib/smith/<name>.smith, the module smith::<name>); its header is
+// (.smith/lib/<name>.c) or a .smith module (.smith/lib/std/<name>.smith, the module smith::<name>); its header is
 // .smith/include/smith/<name>.h either way.
 // smith writes every library it ships before build.c runs, so that folder is the list: smith.c's table is the only
 // one, and the two cannot disagree.
@@ -1235,10 +1235,10 @@ const char *smith_library(SmithBuild *b, const char *name) {
         plain = plain && ((*c >= 'a' && *c <= 'z') || (*c >= '0' && *c <= '9') || *c == '_');
     const char *source = smith_fmt(b, ".smith/lib/%s.c", name);
     if (plain && access(source, R_OK) == 0) return source;
-    source = smith_fmt(b, ".smith/lib/smith/%s.smith", name);
+    source = smith_fmt(b, ".smith/lib/std/%s.smith", name);
     if (plain && access(source, R_OK) == 0) return source;
     const char *const *found = smith_glob(b, smith_list(b, ".smith/lib/*.c", nullptr));
-    const char *const *modules = smith_glob(b, smith_list(b, ".smith/lib/smith/*.smith", nullptr));
+    const char *const *modules = smith_glob(b, smith_list(b, ".smith/lib/std/*.smith", nullptr));
     const char *const *names = smith_list(b, nullptr);
     for (size_t i = 0; found[i] != nullptr; i++) // bounded by the glob's result
         names = smith_cat(b, names,
@@ -1246,7 +1246,7 @@ const char *smith_library(SmithBuild *b, const char *name) {
                           nullptr);
     for (size_t i = 0; modules[i] != nullptr; i++) // bounded by the glob's result
         names = smith_cat(
-            b, names, smith_list(b, smith_replace_extension(b, modules[i] + strlen(".smith/lib/smith/"), ""), nullptr),
+            b, names, smith_list(b, smith_replace_extension(b, modules[i] + strlen(".smith/lib/std/"), ""), nullptr),
             nullptr);
     smith_fail("smith_library: unknown library \"%s\"; known: %s", name, smith_join(b, names, ", "));
 }
@@ -1740,7 +1740,7 @@ static const char *const *smith_lines_required(SmithBuild *b, const char *path);
 static const char *const *smith_split_lines(char *text, size_t size);
 
 // The flags a library of smith's declares (the registry in smith.c writes them beside its source, one a line, as
-// .smith/lib/smith/random.flags). They come after the project's own, so that they win: random's results need
+// .smith/lib/std/random.flags). They come after the project's own, so that they win: random's results need
 // -ffp-contract=off whatever flags the project compiles it with.
 static const char *const *smith_library_flags(SmithBuild *b, const char *source) {
     if (strncmp(source, ".smith/lib/", strlen(".smith/lib/")) != 0) return smith_list(b, nullptr);
@@ -2200,7 +2200,7 @@ void smith_object(SmithBuild *b, SmithObject *object) {
         const char *header = nullptr;
         // A smith library's header is the formatted one smith wrote with its source (.smith/include/smith/): a step
         // would write it again as the generator makes it, unformatted, and the two would take turns
-        bool library = strncmp(copy.source, ".smith/lib/smith/", 17) == 0;
+        bool library = strncmp(copy.source, ".smith/lib/std/", 15) == 0;
         // one header step per module: the first compile's flags are the ones the header pass is given
         bool first = false;
         if (smith_lang_register(copy.source, &header, &first) != nullptr && first && !library)
@@ -2256,12 +2256,12 @@ static const char *const *smith_library_files(const char *const *libraries) {
 
 static const char *const *smith_library_needs(SmithBuild *b, const char *name);
 
-// The name of a library of smith's from its source (".smith/lib/arena.c", ".smith/lib/smith/text.smith"), else nullptr.
+// The name of a library of smith's from its source (".smith/lib/arena.c", ".smith/lib/std/text.smith"), else nullptr.
 static const char *smith_library_of(const char *source) {
     const char *prefix = ".smith/lib/";
     if (strncmp(source, prefix, strlen(prefix)) != 0) return nullptr;
     const char *name = source + strlen(prefix);
-    if (strncmp(name, "smith/", strlen("smith/")) == 0) name += strlen("smith/");
+    if (strncmp(name, "std/", strlen("std/")) == 0) name += strlen("std/");
     const char *dot = strrchr(name, '.');
     return dot == nullptr || strchr(name, '/') != nullptr ? nullptr : smith_text("%.*s", (int)(dot - name), name);
 }
@@ -3423,7 +3423,7 @@ static void smith_app_library(const char *name, size_t length) {
     memcpy(copy, name, length);
     copy[length] = '\0';
     bool known = smith_app_is_file(smith_text(".smith/lib/%s.c", copy)) ||
-                 smith_app_is_file(smith_text(".smith/lib/smith/%s.smith", copy));
+                 smith_app_is_file(smith_text(".smith/lib/std/%s.smith", copy));
     if (!known) return;
     for (size_t i = 0; i < smith_app_found.queue.count; i++) {
         if (strcmp(smith_app_found.queue.names[i], copy) == 0) return;
@@ -3997,7 +3997,8 @@ static SmithObject *smith_app_object(SmithBuild *b, const char *profile, const c
     const char *under = source;
     if (strncmp(source, library, strlen(library)) == 0) {
         under = source + strlen(library);
-        if (strncmp(under, "smith/", strlen("smith/")) != 0) under = smith_text("smith/%s", under);
+        if (strncmp(under, "std/", strlen("std/")) == 0) under += strlen("std/");
+        under = smith_text("smith/%s", under); // the objects of a library stay in build/<profile>/smith/
     }
     // An autodiff program's objects are made with other flags, so they are beside the others, never the same file.
     const char *output = smith_replace_extension(
@@ -4400,7 +4401,7 @@ static const char *smith_tests_symbolizer_link(SmithRun *run, const char *self) 
 }
 
 // `smith test --changed` (issue #456): the runner gives each test a folder of profiles, and merges them into the
-// test's record in .smith/records when it ends (lib/smith/test.smith, runtime/coverage.c). The runner's own exit
+// test's record in .smith/records when it ends (lib/std/test.smith, runtime/coverage.c). The runner's own exit
 // writes nowhere. SMITH_REPO is this project, not the one of a smith that runs us. `programs` are the paths the build
 // made, the runner first, separated by `:`: those that exist now and were built with the counters are read (llvm-cov
 // ignores one built without them).

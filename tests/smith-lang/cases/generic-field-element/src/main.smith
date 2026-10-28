@@ -3,10 +3,10 @@ module main;
 import walk;
 import <stdio.h>;
 
-struct Floats { f64 xs[:]; };
-struct Ints { i32 xs[:]; i32 n; };
-struct Point { f32 x; f32 y; };
-struct Mixed { f32 a[:]; u8 b[:]; f64 fixed[3]; struct Point points[:]; };
+struct Floats { F64 xs[:]; };
+struct Ints { I32 xs[:]; I32 n; };
+struct Point { F32 x; F32 y; };
+struct Mixed { F32 a[:]; U8 b[:]; F64 fixed[3]; struct Point points[:]; };
 
 int main() {
     struct Floats floats = {};

@@ -4,9 +4,9 @@
 // runs it as workers and with --isolate. Fixtures: tests/build_fixtures/runner_*.
 module test_runner_project_test;
 
-import smith::format;
-import smith::io;
-import smith::test;
+import std::format;
+import std::io;
+import std::test;
 import runner;
 import scratch;
 
@@ -31,7 +31,7 @@ export void test_runner_project_a_file_without_tests_adds_nothing_and_a_project_
     scratch::Project p = runner::project(io, "runner_base", "runner_find_helpers");
     scratch::Run built = runner::build(&p, "");
     scratch::expect_status("no tests: a file without tests is fine", 0, &built);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::expect_text(runner::label(io, iso, "no tests: ... and adds nothing"), "same",
                              runner::tests(&p, iso, "--list").out);
@@ -39,11 +39,11 @@ export void test_runner_project_a_file_without_tests_adds_nothing_and_a_project_
     (void)scratch::sh(&p, "rm tests/test_a.smith");
     scratch::Run again = runner::build(&p, "");
     scratch::expect_status("no tests: a project with none builds", 0, &again);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run run = runner::tests(&p, iso, "");
         runner::expect_has(io, iso, "no tests: ... and runs nothing", &run, "0 passed, 0 failed");
-        scratch::expect_count(runner::label(io, iso, "no tests: ... with status 0"), 0, (usize)run.status);
+        scratch::expect_count(runner::label(io, iso, "no tests: ... with status 0"), 0, (Usize)run.status);
     }
 }
 
@@ -53,7 +53,7 @@ export void test_runner_project_a_library_left_out_of_objects_is_linked_by_smith
     scratch::Project p = runner::project(io, "runner_base", "runner_missing");
     scratch::Run built = runner::build(&p, "");
     scratch::expect_status("objects: a library left out of .objects is linked by smith_tests", 0, &built);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run run = runner::tests(&p, iso, "");
         runner::expect_has(io, iso, "objects: ... and the test runs", &run, "1 passed, 0 failed");
@@ -65,7 +65,7 @@ export void test_runner_project_no_objects_at_all_builds_and_the_test_runs(io::I
     (void)scratch::sh(&p, "cp build.noobjects.c build.c");
     scratch::Run built = runner::build(&p, "");
     scratch::expect_status("objects: no .objects at all builds", 0, &built);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run run = runner::tests(&p, iso, "");
         runner::expect_has(io, iso, "objects: ... and the test runs without them", &run, "1 passed, 0 failed");
@@ -82,7 +82,7 @@ static scratch::Project extras_project(io::Io *io) {
 
 export void test_runner_project_a_test_sees_full_only_with_the_full_option(io::Io *io) {
     scratch::Project p = extras_project(io);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run size = runner::plain(&p, iso, "--test size");
         runner::expect_has(io, iso, "full: a test sees false by default", &size, "1 passed, 0 failed");
@@ -97,14 +97,14 @@ export void test_runner_project_a_test_sees_full_only_with_the_full_option(io::I
 
 export void test_runner_project_check_same_bits_compares_the_bits_and_shows_them_in_hex(io::Io *io) {
     scratch::Project p = extras_project(io);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run equal = runner::tests(&p, iso, "--test bits_equal");
         runner::expect_has(io, iso, "bits: equal bits pass, even a NaN and -0", &equal, "1 passed, 0 failed");
         if (runner::can_symbolize(&p)) {
             runner::expect_failure_block(&p, iso, "bits: 0.0 against -0.0 fails, with both in hex", "bits_zero",
                                          "tests/test_extras.smith", "test::check_same_bits(zero, -0.0);",
-                                         "zero = 0 [0x0p+0], -0.0 = -0 [-0x0p+0]   (f64)", "");
+                                         "zero = 0 [0x0p+0], -0.0 = -0 [-0x0p+0]   (F64)", "");
         }
         scratch::Run nan = runner::tests(&p, iso, "--test bits_nan");
         runner::expect_has(io, iso, "bits: two NaN payloads fail", &nan, "FAIL bits_nan");
@@ -117,7 +117,7 @@ export void test_runner_project_check_same_bits_compares_the_bits_and_shows_them
 
 export void test_runner_project_inputs_are_built_before_the_tests_and_rerun_them_when_they_change(io::Io *io) {
     scratch::Project p = extras_project(io);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::write(&p, "gen.txt", "one\n");
         (void)scratch::sh(&p, "rm -f build/data.txt");
@@ -173,7 +173,7 @@ export void test_runner_project_the_analyzer_takes_a_test_check_as_an_assumption
 static void check_library_compiles(io::Io *io, const char *source) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     const char *standards[2] = {"gnu2y", "gnu23"};
-    for (usize i = 0; i < 2; i++) {
+    for (Usize i = 0; i < 2; i++) {
         const char *command =
             format::push(
                 &io->arena,
@@ -194,15 +194,15 @@ static void check_library_compiles(io::Io *io, const char *source) {
 }
 
 export void test_runner_project_the_test_library_compiles_clean_under_the_conventions_warnings(io::Io *io) {
-    check_library_compiles(io, "lib/smith/test.smith");
+    check_library_compiles(io, "lib/std/test.smith");
 }
 
 export void test_runner_project_the_random_library_compiles_clean_under_the_conventions_warnings(io::Io *io) {
-    check_library_compiles(io, "lib/smith/random.smith");
+    check_library_compiles(io, "lib/std/random.smith");
 }
 
 export void test_runner_project_the_arena_library_compiles_clean_under_the_conventions_warnings(io::Io *io) {
-    check_library_compiles(io, "lib/smith/arena.smith");
+    check_library_compiles(io, "lib/std/arena.smith");
 }
 
 export void test_runner_project_the_trace_library_compiles_clean_under_the_conventions_warnings(io::Io *io) {
@@ -211,7 +211,7 @@ export void test_runner_project_the_trace_library_compiles_clean_under_the_conve
 
 // Section 13. Tests in .smith files: found by name in a file with no module line and in a module (`export void test_x()
 // {`, its C name a_b_test_x and its symbol a::b::test_x), shown and selected by the name as written, and a failure's
-// report names the .smith line and the function as written. A library in the module `smith::test` is machinery, like
+// report names the .smith line and the function as written. A library in the module `std::test` is machinery, like
 // the C one.
 static scratch::Project lang_project(io::Io *io) {
     scratch::Project p = runner::project(io, "runner_base", "runner_lang");
@@ -225,7 +225,7 @@ export void test_runner_project_smith_tests_are_found_and_selected_by_the_name_a
     scratch::Run prototype = scratch::sh(&p, "grep -F 'void geometry_box_test_test_area(void)' build/tests_list.h");
     scratch::expect_contains("smith tests: ... the prototype has the symbol of the export", prototype.out,
                              "__asm__(\"_geometry::box_test::test_area\")");
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run list = runner::tests(&p, iso, "--list");
         scratch::expect_text(runner::label(io, iso, "smith tests: found, a module's by its written name"),
@@ -270,10 +270,10 @@ export void test_runner_project_the_same_test_in_two_files_fails_the_build(io::I
 export void test_runner_project_a_failing_smith_test_names_the_smith_line_and_the_function_as_written(io::Io *io) {
     scratch::Project p = lang_project(io);
     if (!runner::can_symbolize(&p)) return;
-    usize area = runner::line_of(&p, "tests/geometry/box_test.smith", "test::check_equal_u64(area, expected);");
-    usize library = runner::line_of(&p, "tests/geometry/box_test.smith", "helpers::require(box::area(2, 3) == 7);");
-    usize plain = runner::line_of(&p, "tests/test_plain.smith", "test::check_equal(n, 4);");
-    for (usize mode = 0; mode < 2; mode++) {
+    Usize area = runner::line_of(&p, "tests/geometry/box_test.smith", "test::check_equal_u64(area, expected);");
+    Usize library = runner::line_of(&p, "tests/geometry/box_test.smith", "helpers::require(box::area(2, 3) == 7);");
+    Usize plain = runner::line_of(&p, "tests/test_plain.smith", "test::check_equal(n, 4);");
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run fails = runner::smith_test(&p, iso, "--test geometry::box_test::area_fails");
         runner::expect_has(io, iso, "smith tests: a failing check names the .smith line", &fails,
@@ -287,9 +287,9 @@ export void test_runner_project_a_failing_smith_test_names_the_smith_line_and_th
             format::push(&io->arena, "tests/geometry/box_test.smith:", area, " geometry::box_test::test_area_fails")
                 .data);
         scratch::Run through = runner::smith_test(&p, iso, "--test geometry::box_test::area_through_a_library");
-        runner::expect_has(io, iso, "smith tests: a frame of the module smith::test is not the failing line", &through,
+        runner::expect_has(io, iso, "smith tests: a frame of the module std::test is not the failing line", &through,
                            format::push(&io->arena, "check failed at tests/geometry/box_test.smith:", library).data);
-        runner::expect_lacks(io, iso, "smith tests: ... nor in the chain", &through, "smith::test::");
+        runner::expect_lacks(io, iso, "smith tests: ... nor in the chain", &through, "std::test::");
         scratch::Run no_module = runner::smith_test(&p, iso, "--test plain_fails");
         scratch::expect_contains(
             runner::label(io, iso, "smith tests: a test of a file with no module is named as written"),
@@ -322,17 +322,17 @@ static scratch::Run io_run(const scratch::Project *p, const char *iso, const cha
 
 export void test_runner_project_an_io_test_gets_a_real_io_with_a_scratch_folder_that_is_its_tmpdir(io::Io *io) {
     scratch::Project p = io_project(io);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run list = runner::tests(&p, iso, "--list");
         runner::expect_has(io, iso, "io tests: an io test is found beside the others", &list, "io_real");
-        runner::expect_has(io, iso, "io tests: ... one written io::Io *io (import smith::io;) too", &list,
+        runner::expect_has(io, iso, "io tests: ... one written io::Io *io (import std::io;) too", &list,
                            "io_module_name");
         scratch::Run real = io_run(&p, iso, "--test io_real --verbose");
         runner::expect_has(io, iso, "io tests: a test gets a real io, with a scratch folder that is its TMPDIR", &real,
                            "PASS io_real");
         const char *folder = scratch::read(&p, "probe/real");
-        bool gone =
+        Bool gone =
             folder[0] != '\0' && scratch::sh(&p, format::push(&io->arena, "test -e '", folder, "'").data).status != 0;
         scratch::expect_text(runner::label(io, iso, "io tests: ... the folder is removed after a pass"), "gone",
                              gone ? "gone" : "kept");
@@ -348,7 +348,7 @@ export void test_runner_project_an_io_test_gets_a_real_io_with_a_scratch_folder_
 // (a failed test keeps its folder, and a pid comes round again) must not be the test's: the test gets a fresh one.
 export void test_runner_project_an_io_test_never_reuses_a_scratch_folder_a_run_before_left(io::Io *io) {
     scratch::Project p = io_project(io);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         // `exec` keeps the shell's pid, so $$ is the pid the runner names its folders with.
         const char *command =
@@ -371,7 +371,7 @@ export void test_runner_project_an_io_test_never_reuses_a_scratch_folder_a_run_b
 export void test_runner_project_the_working_directory_of_an_io_test_is_the_project_root(io::Io *io) {
     scratch::Project p = io_project(io);
     const char *here = scratch::capture(&p, "pwd -P");
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run fixture = io_run(&p, iso, "--test io_fixture");
         runner::expect_has(io, iso, "io tests: the working directory is the project root, so a fixture resolves",
@@ -383,7 +383,7 @@ export void test_runner_project_the_working_directory_of_an_io_test_is_the_proje
 
 export void test_runner_project_a_failed_io_test_keeps_its_scratch_folder_and_names_the_seed(io::Io *io) {
     scratch::Project p = io_project(io);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run failed = io_run(&p, iso, "--test io_fails");
         const char *folder = scratch::read(&p, "probe/fails");
@@ -403,7 +403,7 @@ export void test_runner_project_a_failed_io_test_keeps_its_scratch_folder_and_na
 
 export void test_runner_project_an_io_test_runs_on_the_seed_it_is_given(io::Io *io) {
     scratch::Project p = io_project(io);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run seeded = io_run(&p, iso, "--test io_seed --seed 12345 --verbose");
         runner::expect_has(io, iso, "io tests: --seed N runs an io test on N", &seeded, "PASS io_seed (seed 12345)");
@@ -426,7 +426,7 @@ export void test_runner_project_an_io_test_runs_on_the_seed_it_is_given(io::Io *
 
 export void test_runner_project_two_io_tests_run_side_by_side_each_in_a_folder_of_its_own(io::Io *io) {
     scratch::Project p = io_project(io);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         (void)scratch::sh(&p, "rm -f probe/a probe/b");
         scratch::Run run = io_run(&p, iso, "--test io_parallel --jobs 2");

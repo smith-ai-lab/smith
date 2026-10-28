@@ -3,21 +3,21 @@ module list;
 import arena;
 
 // A generic that asks for another module's generic, and for one of its own: the instances nest.
-export T *make(arena::Arena *a, constexpr type T) {
+export T *make(arena::Arena *a, constexpr Type T) {
     return arena::push(a, T);
 }
 
-export T *make_two(arena::Arena *a, constexpr type T) {
+export T *make_two(arena::Arena *a, constexpr Type T) {
     make(a, T);
     return make(a, T);
 }
 
 // An ordinary function of the module, called from a generic's body.
-export usize bytes(arena::Arena *a) {
+export Usize bytes(arena::Arena *a) {
     return a->used;
 }
 
-export usize measure(arena::Arena *a, constexpr type T) {
+export Usize measure(arena::Arena *a, constexpr Type T) {
     T *value = make(a, T);
     (void)value;
     return bytes(a);

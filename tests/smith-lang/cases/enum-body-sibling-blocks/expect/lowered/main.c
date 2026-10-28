@@ -1,6 +1,6 @@
 #include <stdio.h>
 
-static __SIZE_TYPE__ main_first(bool left) {
+static __SIZE_TYPE__ main_first(Bool left) {
 if (left) { struct smith_enum_option_usize {enum smith_enum_option_usize_tag {smith_enum_option_usize_tag_some, smith_enum_option_usize_tag_none } tag; union { __SIZE_TYPE__ some; }; } __attribute__((annotate("smith::enum")));
 struct smith_enum_option_usize a = {.some = 1};
 if (a == .some) return a.some;

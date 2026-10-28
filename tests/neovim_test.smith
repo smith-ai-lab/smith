@@ -6,9 +6,9 @@
 // the smith under test (`smith cc --smith-tree-sitter`).
 module neovim_test;
 
-import smith::format;
-import smith::io;
-import smith::test;
+import std::format;
+import std::io;
+import std::test;
 import scratch;
 
 // The scratch home: the fixture (a project, a folder with a .smith file alone, and a nvim-dap that is only a table),
@@ -38,8 +38,8 @@ constexpr char fakedap[_] = "--cmd \"set runtimepath+=$d/fakedap\"";
 typedef struct {
     const char *before;
     const char *front;
-    bool bare;
-    bool needs_git;
+    Bool bare;
+    Bool needs_git;
     const char *data;
     const char *extra;
 } Start;

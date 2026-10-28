@@ -2,20 +2,20 @@
 // (removed when the test passes), a fixture copied into it, and commands run there through io's processes with the
 // smith under test first on PATH. The smith under test is the one running the tests, `$SMITH_SELF` (set by
 // `smith test`; set it to run a runner by hand). Each test is a process of its own, so the environment it sets is its.
-// NOLINTBEGIN(smith-mem): #421: importing smith::mem breaks every test that imports scratch; convert to mem:: after it
+// NOLINTBEGIN(smith-mem): #421: importing std::mem breaks every test that imports scratch; convert to mem:: after it
 module scratch;
 
-import smith::arena;
-import smith::format;
-import smith::io;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::format;
+import std::io;
+import std::mem;
+import std::test;
 import <smith_core.h>;
 import <string.h>;
 
 // The bytes of a buffer, for the calls of io that take a slice.
-static typeof(const u8[:]) test_io_bytes(const void *data, usize size) {
-    const u8 *bytes = (const u8 *)data;
+static typeof(const U8[:]) test_io_bytes(const void *data, Usize size) {
+    const U8 *bytes = (const U8 *)data;
     return bytes[0:size];
 }
 
@@ -27,12 +27,12 @@ export typedef struct {
 } Project;
 
 export typedef struct {
-    i32 status; // the exit status; 128 and the signal when killed
+    I32 status; // the exit status; 128 and the signal when killed
     const char *out;
     const char *err;
 } Run;
 
-constexpr u64 nanoseconds = 1'000'000'000;
+constexpr U64 nanoseconds = 1'000'000'000;
 
 // The text of a process's pipe, which io leaves unterminated when empty.
 static const char *text_of(const char *data) {
@@ -125,8 +125,8 @@ export void write(const Project *p, const char *name, const char *text) {
     test::check_equal(written.code, 0);
 }
 
-constexpr usize lowered_capacity = 1U << 23;
-constexpr usize lowered_errors_capacity = 1U << 16;
+constexpr Usize lowered_capacity = 1U << 23;
+constexpr Usize lowered_errors_capacity = 1U << 16;
 static char lowered_text[lowered_capacity];
 static char lowered_errors[lowered_errors_capacity];
 
@@ -134,7 +134,7 @@ static char lowered_errors[lowered_errors_capacity];
 static void write_in_new_folder(const Project *p, const char *name, const char *text) {
     const char *slash = c::strrchr(name, '/');
     if (slash != nullptr) {
-        usize length = (usize)(slash - name);
+        Usize length = (Usize)(slash - name);
         char *folder = arena::push_slice(&p->io->arena, char, length + 1).data;
         mem::copy(folder[0:length], name[0:length]);
         folder[length] = '\0';
@@ -148,7 +148,7 @@ static void write_in_new_folder(const Project *p, const char *name, const char *
 // made in process (issue #646) where the test only needs the text. A lowering that reports an error fails the test.
 export void write_lowered(const Project *p, const char *source, const char *name) {
     const char *repo = io::args_env(&p->io->args, "SMITH_REPO");
-    bool done = c::smith_core_lower(repo, source, nullptr, lowered_text, lowered_capacity, lowered_errors,
+    Bool done = c::smith_core_lower(repo, source, nullptr, lowered_text, lowered_capacity, lowered_errors,
                                     lowered_errors_capacity);
     if (!done) {
         test::note("%s could not be lowered:\n%s", source, lowered_errors);
@@ -160,7 +160,7 @@ export void write_lowered(const Project *p, const char *source, const char *name
 static char header_buffer[1U << 21];
 
 static void header_to(const Project *p, const char *folder, const char *source, const char *name) {
-    bool done = c::smith_core_header(folder, source, nullptr, header_buffer, sizeof header_buffer, lowered_errors,
+    Bool done = c::smith_core_header(folder, source, nullptr, header_buffer, sizeof header_buffer, lowered_errors,
                                      lowered_errors_capacity);
     if (!done) {
         test::note("%s has no header:\n%s", source, lowered_errors);
@@ -188,36 +188,36 @@ export const char *read(const Project *p, const char *name) {
     return file.error.code == 0 ? text_of((const char *)file.data.data) : "";
 }
 
-export bool exists(const Project *p, const char *name) {
+export Bool exists(const Project *p, const char *name) {
     return io::files_info(&p->io->files, path_in(p, name)).error.code == 0;
 }
 
 // The number of lines of a file, 0 when it is absent.
-export usize lines(const Project *p, const char *name) {
-    usize count = 0;
+export Usize lines(const Project *p, const char *name) {
+    Usize count = 0;
     for (const char *c = read(p, name); *c != '\0'; c++)
         count += *c == '\n' ? 1U : 0U;
     return count;
 }
 
-export void sleep(const Project *p, u64 milliseconds) {
+export void sleep(const Project *p, U64 milliseconds) {
     test::check_equal(io::clock_sleep(&p->io->clock, milliseconds * (nanoseconds / 1000)).code, 0);
 }
 
-export bool contains(const char *text, const char *needle) {
+export Bool contains(const char *text, const char *needle) {
     return c::strstr(text, needle) != nullptr;
 }
 
 // Both texts as a shell's $(...) gives them: without trailing newlines.
-static usize trimmed(const char *text) {
-    usize length = c::strlen(text);
+static Usize trimmed(const char *text) {
+    Usize length = c::strlen(text);
     while (length > 0 && text[length - 1] == '\n')
         length--;
     return length;
 }
 
-export bool same(const char *a, const char *b) {
-    usize length = trimmed(a);
+export Bool same(const char *a, const char *b) {
+    Usize length = trimmed(a);
     return length == trimmed(b) && c::strncmp(a, b, length) == 0;
 }
 
@@ -243,7 +243,7 @@ export void expect_text(const char *name, const char *expected, const char *actu
     test::check_condition(same(expected, actual));
 }
 
-export void expect_status(const char *name, i32 expected, const Run *run) {
+export void expect_status(const char *name, I32 expected, const Run *run) {
     if (run->status != expected) {
         test::note("%s: status %d\n%s\n%s", name, run->status, run->out, run->err);
     }
@@ -257,7 +257,7 @@ export void expect_failure(const char *name, const Run *run) {
     test::check_not_equal(run->status, 0);
 }
 
-export void expect_count(const char *name, usize expected, usize actual) {
+export void expect_count(const char *name, Usize expected, Usize actual) {
     if (expected != actual) {
         test::note("%s: expected %zu, got %zu", name, expected, actual);
     }
@@ -267,7 +267,7 @@ export void expect_count(const char *name, usize expected, usize actual) {
 // The output of a shell command as $(...) gives it: without trailing newlines.
 export const char *capture(const Project *p, const char *command) {
     const char *out = sh(p, command).out;
-    usize length = trimmed(out);
+    Usize length = trimmed(out);
     char *copy = arena::push_slice(&p->io->arena, char, length + 1).data;
     __builtin_memcpy(copy, out, length);
     return copy;

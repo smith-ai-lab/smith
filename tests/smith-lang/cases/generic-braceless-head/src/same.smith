@@ -1,6 +1,6 @@
 module same;
 
 // A generic whose first argument's type is read from the call.
-export bool equal(auto a, typeof(a) b) {
+export Bool equal(auto a, typeof(a) b) {
     return a == b;
 }

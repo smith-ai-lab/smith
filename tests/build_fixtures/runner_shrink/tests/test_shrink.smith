@@ -1,6 +1,6 @@
 import <stdint.h>;
-import smith::random;
-import smith::test;
+import std::random;
+import std::test;
 
 // The next key of a stream: `stream` moves on and the key returned is for one use.
 static random::Key take(random::Key *stream) {
@@ -11,27 +11,27 @@ static random::Key take(random::Key *stream) {
 }
 
 void test_shrink_int(random::Key key) {
-    i64 x = random::uniform_int64_sample(key, (random::UniformInt64){.low = 0, .high = 1000});
+    I64 x = random::uniform_int64_sample(key, (random::UniformInt64){.low = 0, .high = 1000});
     test::check_less(x, 500);
 }
 
 void test_shrink_list(random::Key key) {
     random::Key *stream = &key;
-    i64 length = random::uniform_int64_sample(take(stream), (random::UniformInt64){.low = 0, .high = 8});
-    for (i64 i = 0; i < length; i++) {
-        i64 item = random::uniform_int64_sample(take(stream), (random::UniformInt64){.low = 0, .high = 100});
+    I64 length = random::uniform_int64_sample(take(stream), (random::UniformInt64){.low = 0, .high = 8});
+    for (I64 i = 0; i < length; i++) {
+        I64 item = random::uniform_int64_sample(take(stream), (random::UniformInt64){.low = 0, .high = 100});
         test::note("length %jd, item %jd", (c::intmax_t)length, (c::intmax_t)i);
         test::check_less_equal(item, 90);
     }
 }
 
 void test_shrink_normal(random::Key key) {
-    f64 z = random::normal_double_sample(key, (random::NormalDouble){.mean = 0, .deviation = 1});
+    F64 z = random::normal_double_sample(key, (random::NormalDouble){.mean = 0, .deviation = 1});
     test::check_less(z, 3.0);
 }
 
 void test_shrink_moves(random::Key key) {
-    i64 x = random::uniform_int64_sample(key, (random::UniformInt64){.low = 0, .high = 1000});
+    I64 x = random::uniform_int64_sample(key, (random::UniformInt64){.low = 0, .high = 1000});
     test::check_less(x, 500);
     test::check_not_equal(x, 0); // the failure that shrinking to 0 would move to
 }

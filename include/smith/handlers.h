@@ -52,7 +52,7 @@ struct SmithFileHandler {
     ssize_t (*read)(SmithFileHandler *self, int fd, void *buffer, size_t size);
     ssize_t (*write)(SmithFileHandler *self, int fd, const void *buffer, size_t size);
     int (*close)(SmithFileHandler *self, int fd);
-    // The members below are called by smith::files (lib/smith/files.smith), not by an interposed libc function; each
+    // The members below are called by std::files (lib/std/files.smith), not by an interposed libc function; each
     // may be null, which is libc's own call (stat, mkdir, unlink, rename, opendir, mmap, munmap). They return 0 for
     // success and -1 with errno set, as the libc calls do.
     int (*stat)(SmithFileHandler *self, const char *path, SmithFileStatus *status);
@@ -119,7 +119,7 @@ SmithClockHandler *smith_handlers_set_clock(SmithClockHandler *clock);
 
 // The clock of the calling thread, null when none is set.
 SmithClockHandler *smith_handlers_clock(void);
-// The child processes of the calling thread: smith::process (lib/smith/process.smith) calls these members itself, with
+// The child processes of the calling thread: std::process (lib/std/process.smith) calls these members itself, with
 // no libc function behind them, so a thread with a handler never starts a real process. A child is an id the handler
 // chooses (greater than 0). Calls return 0 (or a count) for success and -1 with errno set, as the libc calls do. No
 // process handler set is the real posix_spawn, pipes and waitpid. Issue #240; knowledge/process.md.
@@ -159,7 +159,7 @@ SmithProcessHandler *smith_handlers_set_process(SmithProcessHandler *process);
 // The processes of the calling thread, null when the real ones are in force.
 SmithProcessHandler *smith_handlers_process(void);
 
-// The network of the calling thread: smith::net (lib/smith/net.smith) calls these members itself, with no libc function
+// The network of the calling thread: std::net (lib/std/net.smith) calls these members itself, with no libc function
 // behind them, so a thread with a handler never opens a real socket. A connection or a listener is an id the handler
 // chooses (greater than 0). Calls return an id, a count or 0 for success and -1 with errno set, as the libc calls do.
 // No net handler set is the real sockets, with TLS from the system's stack. Issue #240; knowledge/net.md.

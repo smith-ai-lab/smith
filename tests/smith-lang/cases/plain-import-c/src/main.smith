@@ -1,7 +1,7 @@
 import <stdio.h>;
 import <sys/stat.h>;
 
-i32 main() {
+I32 main() {
   struct c::stat info;
   c::printf("hello smith %d\n", c::EOF + (int)sizeof info - (int)sizeof info);
   return 0;

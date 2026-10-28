@@ -1,33 +1,33 @@
 module args;
 
-export i32 twice(auto x) {
-    return (i32)(x + x);
+export I32 twice(auto x) {
+    return (I32)(x + x);
 }
 
-export i32 product(auto a, typeof(a) b) {
-    return (i32)(a * b);
+export I32 product(auto a, typeof(a) b) {
+    return (I32)(a * b);
 }
 
 // A local, `rest[k]` inside an expression, and `*p` for a parameter written as a type and a name, are arguments.
-export i32 locals(auto first, auto... rest) {
-    i32 local = 7;
-    i64 wide = 100;
-    i32 total = twice(local) + twice(first) + twice(wide);
-    for constexpr (usize i = 0; i < countof(rest); i++) {
+export I32 locals(auto first, auto... rest) {
+    I32 local = 7;
+    I64 wide = 100;
+    I32 total = twice(local) + twice(first) + twice(wide);
+    for constexpr (Usize i = 0; i < countof(rest); i++) {
         total += twice(rest[i] + 1);
     }
     return total;
 }
 
-export i32 pointers(auto proto, typeof(proto) *p, auto... rest) {
+export I32 pointers(auto proto, typeof(proto) *p, auto... rest) {
     typeof(proto) *q = p;
-    i32 total = twice(*p) + product(*q, proto);
-    for constexpr (usize i = 0; i < countof(rest); i++) {
+    I32 total = twice(*p) + product(*q, proto);
+    for constexpr (Usize i = 0; i < countof(rest); i++) {
         total += twice(*rest[i]);
     }
     return total;
 }
 
-export i32 second(auto first, auto... rest) {
+export I32 second(auto first, auto... rest) {
     return product(first, rest[0]) + product(rest[0], first);
 }

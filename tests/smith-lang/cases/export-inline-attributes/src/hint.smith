@@ -1,19 +1,19 @@
 module hint;
 
-// Attributes after `export` stay before `static inline` in the module and in the header, beside [[smith::c_name]]: an
+// Attributes after `export` stay before `static inline` in the module and in the header, beside [[std::c_name]]: an
 // inline function nothing calls is not an unused function, and always_inline needs no __attribute__ spelling.
-[[smith::c_name("hint_first")]] export [[gnu::always_inline, maybe_unused]] inline void first(bool condition) {
+[[std::c_name("hint_first")]] export [[gnu::always_inline, maybe_unused]] inline void first(Bool condition) {
     (void)condition;
 }
 
-export [[maybe_unused]] inline i32 second(i32 x) {
+export [[maybe_unused]] inline I32 second(I32 x) {
     return x + 1;
 }
 
-export [[nodiscard]] inline i32 third(i32 x) {
+export [[nodiscard]] inline I32 third(I32 x) {
     return x + 2;
 }
 
-export i32 used(i32 x) {
+export I32 used(I32 x) {
     return third(x);
 }

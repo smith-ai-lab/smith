@@ -3,40 +3,40 @@
 // Nothing here touches the internet. The module is C, not yet a smith library, so tests/units/build.c links lib/http.c.
 module http_test;
 
-import smith::arena;
-import smith::format;
-import smith::io;
-import smith::test;
+import std::arena;
+import std::format;
+import std::io;
+import std::test;
 import target;
 import <errno.h>;
 import <smith/http.h>;
 
 // The bytes of a buffer, for the calls of io that take a slice.
-static typeof(const u8[:]) test_io_bytes(const void *data, usize size) {
-    const u8 *bytes = (const u8 *)data;
+static typeof(const U8[:]) test_io_bytes(const void *data, Usize size) {
+    const U8 *bytes = (const U8 *)data;
     return bytes[0:size];
 }
 
 // The platform's numbers. A C macro is the preprocessor's, and a .smith file has none: each is read once, here.
 // NOLINTBEGIN(smith-preprocessor)
 if constexpr (target::os == target::macos) {
-    constexpr i32 eauth = c::EAUTH;
+    constexpr I32 eauth = c::EAUTH;
 } else {
-    constexpr i32 eauth = 80; // smith::io's TLS failure on Linux, which has no EAUTH: macOS's number
+    constexpr I32 eauth = 80; // std::io's TLS failure on Linux, which has no EAUTH: macOS's number
 }
-constexpr i32 econnrefused = c::ECONNREFUSED;
-constexpr i32 econnreset = c::ECONNRESET;
-constexpr i32 eio = c::EIO;
-constexpr i32 einval = c::EINVAL;
-constexpr i32 eloop = c::ELOOP;
-constexpr i32 enoent = c::ENOENT;
-constexpr i32 eproto = c::EPROTO;
-constexpr i32 eprotonosupport = c::EPROTONOSUPPORT;
-constexpr i32 etimedout = c::ETIMEDOUT;
+constexpr I32 econnrefused = c::ECONNREFUSED;
+constexpr I32 econnreset = c::ECONNRESET;
+constexpr I32 eio = c::EIO;
+constexpr I32 einval = c::EINVAL;
+constexpr I32 eloop = c::ELOOP;
+constexpr I32 enoent = c::ENOENT;
+constexpr I32 eproto = c::EPROTO;
+constexpr I32 eprotonosupport = c::EPROTONOSUPPORT;
+constexpr I32 etimedout = c::ETIMEDOUT;
 // NOLINTEND(smith-preprocessor)
 
-constexpr usize fake_memory = 4 << 20;
-constexpr usize large_size = 3 << 20;
+constexpr Usize fake_memory = 4 << 20;
+constexpr Usize large_size = 3 << 20;
 
 // An io and the two paths the checks use: the downloaded file and a local source. On the disk they are in the test's
 // scratch folder; in the fake's memory they are plain names.
@@ -46,11 +46,11 @@ typedef struct {
     char source[256];
 } Client;
 
-static bool contains(const char *text, const char *needle) {
+static Bool contains(const char *text, const char *needle) {
     return __builtin_strstr(text, needle) != nullptr;
 }
 
-static bool is(const char *text, const char *expected) {
+static Bool is(const char *text, const char *expected) {
     return __builtin_strcmp(text, expected) == 0;
 }
 
@@ -67,7 +67,7 @@ static void serve(Client *client, const char *host, const char *response) {
     test::check_equal(io::test_add_server(client->io, server).code, 0);
 }
 
-static void serve_chunks(Client *client, const char *host, const char *response, usize chunk) {
+static void serve_chunks(Client *client, const char *host, const char *response, Usize chunk) {
     io::NetServer server = {
         .host = host, .port = 443, .response = response, .response_size = __builtin_strlen(response), .chunk = chunk};
     test::check_equal(io::test_add_server(client->io, server).code, 0);
@@ -83,7 +83,7 @@ static const char *body_of(Client *client) {
     return (const char *)read.data.data;
 }
 
-static bool request_starts(Client *client, const char *host, u16 port, usize n, const char *prefix) {
+static Bool request_starts(Client *client, const char *host, U16 port, Usize n, const char *prefix) {
     const char *request = io::test_request(client->io, host, port, n);
     return request != nullptr && __builtin_strncmp(request, prefix, __builtin_strlen(prefix)) == 0;
 }
@@ -141,7 +141,7 @@ static void check_chunked(Client *client) {
     test::check_equal(result.error.code, 0);
     test::check_equal(result.size, 22);
     test::check(is(body_of(client), "hello, world0123456789"));
-    for (usize chunk = 1; chunk <= 5; chunk++) { // the framing split anywhere
+    for (Usize chunk = 1; chunk <= 5; chunk++) { // the framing split anywhere
         serve_chunks(client, "g.example", response, chunk);
         result = get(client, "https://g.example/g");
         test::check_equal(result.error.code, 0);
@@ -179,7 +179,7 @@ static void check_redirects_followed(Client *client) {
 static void check_redirects_refused(Client *client) {
     // Only https: a redirect to http, to file or to ftp is refused and nothing is requested from it.
     const char *schemes[3] = {"http://s.example/x", "file:///etc/passwd", "ftp://s.example/x"};
-    for (usize i = 0; i < 3; i++) {
+    for (Usize i = 0; i < 3; i++) {
         char response[256];
         (void)format::to(response, sizeof response, "HTTP/1.1 302 Found\r\nLocation: ", schemes[i], "\r\n\r\n");
         serve(client, "t.example", response);
@@ -195,7 +195,7 @@ static void check_redirects_refused(Client *client) {
 }
 
 static void check_redirect_loop(Client *client) {
-    for (usize i = 0; i < 12; i++) {
+    for (Usize i = 0; i < 12; i++) {
         serve(client, "loop.example", "HTTP/1.1 302 Found\r\nLocation: https://loop.example/again\r\n\r\n");
     }
     c::SmithHttpResult result = get(client, "https://loop.example/start");
@@ -263,7 +263,7 @@ static void check_bad_responses(Client *client) {
 static void check_urls(Client *client) {
     const char *refused[7] = {"http://a.example/x",    "ftp://a.example/x",        "a.example/x",          "https://",
                               "https://u@a.example/x", "https://a.example:port/x", "https://a.example/a b"};
-    for (usize i = 0; i < 7; i++) {
+    for (Usize i = 0; i < 7; i++) {
         c::SmithHttpResult result = get(client, refused[i]);
         test::check_equal(result.error.code, einval);
         test::check(contains(result.error.message, refused[i]));
@@ -284,7 +284,7 @@ static void check_local(Client *client) {
     test::check_equal(result.error.code, enoent);
     // The error message is a fixed buffer, and a message shows only the first 100 characters of a url
     // (smith_http_shown), which a long scratch path reaches.
-    constexpr usize shown = 100;
+    constexpr Usize shown = 100;
     if (c::strlen(url) > shown) {
         url[shown] = '\0';
     }
@@ -294,16 +294,16 @@ static void check_local(Client *client) {
 // A body of several blocks, in the order the writes land: the file has every byte, the arena gets back what the call
 // used, and the body was never all in memory at once (the arena of the real io is big, so this checks the accounting).
 static void check_large(Client *client) {
-    static u8 response[large_size];
-    usize body = sizeof response - 128;
-    usize head = format::to((char *)response, 128, "HTTP/1.1 200 OK\r\nContent-Length: ", body, "\r\n\r\n").length;
-    for (usize i = 0; i < body; i++) {
-        response[head + i] = (u8)(i * 31 + i / 251);
+    static U8 response[large_size];
+    Usize body = sizeof response - 128;
+    Usize head = format::to((char *)response, 128, "HTTP/1.1 200 OK\r\nContent-Length: ", body, "\r\n\r\n").length;
+    for (Usize i = 0; i < body; i++) {
+        response[head + i] = (U8)(i * 31 + i / 251);
     }
     io::NetServer server = {
         .host = "big.example", .port = 443, .response = response, .response_size = head + body, .chunk = 100000};
     test::check_equal(io::test_add_server(client->io, server).code, 0);
-    usize used = client->io->arena.used;
+    Usize used = client->io->arena.used;
     c::SmithHttpResult result = get(client, "https://big.example/big");
     test::check_equal(result.error.code, 0);
     test::check_equal(result.size, body);
@@ -311,8 +311,8 @@ static void check_large(Client *client) {
     io::Read read = io::files_read(&client->io->files, &client->io->arena, client->path);
     test::check_equal(read.error.code, 0);
     test::check_equal(countof(read.data), body);
-    for (usize i = 0; i < body; i++) {
-        if (read.data[i] != (u8)(i * 31 + i / 251)) {
+    for (Usize i = 0; i < body; i++) {
+        if (read.data[i] != (U8)(i * 31 + i / 251)) {
             test::check_equal(i, body); // the first byte that differs
             break;
         }
@@ -322,14 +322,14 @@ static void check_large(Client *client) {
 // A server that sends part of its answer and then says nothing: the download fails after smith_http_idle_ns of the
 // io's clock, which the fake io lets pass. The message names the URL and what had arrived, and the file keeps the body
 // so far.
-static void check_stall_after(Client *client, usize which, const char *answer, usize size) {
+static void check_stall_after(Client *client, Usize which, const char *answer, Usize size) {
     const char *hosts[3] = {"stall1.example", "stall2.example", "stall3.example"};
     io::NetServer server = {
         .host = hosts[which], .port = 443, .response = answer, .response_size = size, .stall = true};
     test::check_equal(io::test_add_server(client->io, server).code, 0);
     char url[64];
     (void)format::to(url, sizeof url, "https://", hosts[which], "/slow");
-    u64 before = io::clock_now(&client->io->clock);
+    U64 before = io::clock_now(&client->io->clock);
     c::SmithHttpResult result = get(client, url);
     test::check_equal(result.error.code, etimedout);
     test::check(contains(result.error.message, url));
@@ -341,7 +341,7 @@ static void check_stall_after(Client *client, usize which, const char *answer, u
 }
 
 export void test_http_stalled_servers_time_out_on_the_io_clock() {
-    alignas(arena::align_max) static u8 memory[fake_memory];
+    alignas(arena::align_max) static U8 memory[fake_memory];
     io::Io fake = io::make_test((io::Test){.memory = memory, .capacity = sizeof memory});
     Client client = {};
     client_make(&client, &fake, "");
@@ -361,7 +361,7 @@ export void test_http_stalled_servers_time_out_on_the_io_clock() {
 // ---------------------------------------------------------------- on the fake io
 
 export void test_http_fake_basics() {
-    alignas(arena::align_max) static u8 memory[fake_memory];
+    alignas(arena::align_max) static U8 memory[fake_memory];
     io::Io fake = io::make_test((io::Test){.memory = memory, .capacity = sizeof memory});
     Client client = {};
     client_make(&client, &fake, "");
@@ -370,7 +370,7 @@ export void test_http_fake_basics() {
 }
 
 export void test_http_fake_chunked() {
-    alignas(arena::align_max) static u8 memory[fake_memory];
+    alignas(arena::align_max) static U8 memory[fake_memory];
     io::Io fake = io::make_test((io::Test){.memory = memory, .capacity = sizeof memory});
     Client client = {};
     client_make(&client, &fake, "");
@@ -378,7 +378,7 @@ export void test_http_fake_chunked() {
 }
 
 export void test_http_fake_redirects() {
-    alignas(arena::align_max) static u8 memory[fake_memory];
+    alignas(arena::align_max) static U8 memory[fake_memory];
     io::Io fake = io::make_test((io::Test){.memory = memory, .capacity = sizeof memory});
     Client client = {};
     client_make(&client, &fake, "");
@@ -388,7 +388,7 @@ export void test_http_fake_redirects() {
 }
 
 export void test_http_fake_failures() {
-    alignas(arena::align_max) static u8 memory[fake_memory];
+    alignas(arena::align_max) static U8 memory[fake_memory];
     io::Io fake = io::make_test((io::Test){.memory = memory, .capacity = sizeof memory});
     Client client = {};
     client_make(&client, &fake, "");
@@ -398,7 +398,7 @@ export void test_http_fake_failures() {
 }
 
 export void test_http_fake_urls_and_local_files() {
-    alignas(arena::align_max) static u8 memory[fake_memory];
+    alignas(arena::align_max) static U8 memory[fake_memory];
     io::Io fake = io::make_test((io::Test){.memory = memory, .capacity = sizeof memory});
     Client client = {};
     client_make(&client, &fake, "");

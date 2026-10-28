@@ -1,6 +1,6 @@
-src/main.smith:12:21: the argument `300` of `find` converts to u8, the element type of its first argument `bs`, and changes its value; cast it, `(u8)300`
-src/main.smith:13:21: the argument `wide` of `find` is i32 and converts to u8, the element type of its first argument `bs`, which may change its value; cast it, `(u8)wide`
-src/main.smith:14:21: the argument `-1` of `fill` converts to u8, the element type of its first argument `bs`, and changes its value; cast it, `(u8)-1`
-src/main.smith:15:21: the argument `0.1` of `fill` converts to f32, the element type of its first argument `fs`, and changes its value; cast it, `(f32)0.1`
-src/main.smith:17:25: the argument `300` of `bump` converts to u8, the element type of its first argument `&small`, and changes its value; cast it, `(u8)300`
-src/main.smith:18:21: the argument `256` of `cmax` converts to u8, the element type of its first argument `bs`, and changes its value; cast it, `(u8)256`
+src/main.smith:12:21: the argument `300` of `find` converts to U8, the element type of its first argument `bs`, and changes its value; cast it, `(U8)300`
+src/main.smith:13:21: the argument `wide` of `find` is I32 and converts to U8, the element type of its first argument `bs`, which may change its value; cast it, `(U8)wide`
+src/main.smith:14:21: the argument `-1` of `fill` converts to U8, the element type of its first argument `bs`, and changes its value; cast it, `(U8)-1`
+src/main.smith:15:21: the argument `0.1` of `fill` converts to F32, the element type of its first argument `fs`, and changes its value; cast it, `(F32)0.1`
+src/main.smith:17:25: the argument `300` of `bump` converts to U8, the element type of its first argument `&small`, and changes its value; cast it, `(U8)300`
+src/main.smith:18:21: the argument `256` of `cmax` converts to U8, the element type of its first argument `bs`, and changes its value; cast it, `(U8)256`

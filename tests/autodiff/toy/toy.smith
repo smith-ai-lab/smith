@@ -5,47 +5,47 @@ import <math.h>;
 import "kernel.h";
 
 // f(x, y) = x^2 sin(y) + 3xy
-export f64 f(f64 x, f64 y) {
+export F64 f(F64 x, F64 y) {
     return c::kernel_weighted_square(c::sin(y), x) + 3.0 * x * y;
 }
 
 // loss(p, n) = sum of w_i p_i^2 with w_i = i + 1, over n values
-export f64 loss(const f64 *p, usize n) {
-    f64 total = 0.0;
-    for (usize i = 0; i < n; i++) {
-        total += c::kernel_weighted_square((f64)(i + 1), p[i]);
+export F64 loss(const F64 *p, Usize n) {
+    F64 total = 0.0;
+    for (Usize i = 0; i < n; i++) {
+        total += c::kernel_weighted_square((F64)(i + 1), p[i]);
     }
     return total;
 }
 
 // A model of fixed arrays (the gradient of a struct has memory behind every part of it): sum of scale w_i^2 x_i, and b.
 export typedef struct {
-    f64 w[3];
-    f64 b;
+    F64 w[3];
+    F64 b;
 } Params;
 
 export typedef struct {
-    f64 x[3];
-    f64 scale;
+    F64 x[3];
+    F64 scale;
 } Batch;
 
-export f64 model(Params *p, Batch *batch) {
-    f64 total = p->b;
-    for (usize i = 0; i < 3; i++) {
+export F64 model(Params *p, Batch *batch) {
+    F64 total = p->b;
+    for (Usize i = 0; i < 3; i++) {
         total += c::kernel_weighted_square(batch->scale * batch->x[i], p->w[i]);
     }
     return total;
 }
 
 // No extra argument, a read-only pointer, and a scalar through a pointer.
-export f64 product(Params *p) {
+export F64 product(Params *p) {
     return p->w[0] * p->w[1] + p->b;
 }
 
-export f64 first_square(const Params *p) {
+export F64 first_square(const Params *p) {
     return p->w[0] * p->w[0];
 }
 
-export f64 cube(f64 *x) {
+export F64 cube(F64 *x) {
     return *x * *x * *x;
 }

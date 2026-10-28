@@ -1,11 +1,11 @@
 module enum_narrowed;
 
 typedef struct {
-    f32 radius;
+    F32 radius;
 } Circle;
 typedef struct {
-    f32 w;
-    f32 h;
+    F32 w;
+    F32 h;
 } Rect;
 typedef enum {
     Circle circle;
@@ -17,11 +17,11 @@ void reset(Shape *p) {
     *p = none;
 }
 
-f32 if_test(Shape s) {
+F32 if_test(Shape s) {
     if (s == .circle) return s.circle.radius;
     return 0;
 }
-f32 chain(Shape s) {
+F32 chain(Shape s) {
     if (s == .circle) {
         return s.circle.radius;
     } else if (s == .rect) {
@@ -30,24 +30,24 @@ f32 chain(Shape s) {
         return 0;
     }
 }
-f32 early_return(Shape s) {
+F32 early_return(Shape s) {
     if (s != .circle) return 0;
     return s.circle.radius * 2;
 }
-f32 negated(Shape s) {
+F32 negated(Shape s) {
     if (!(s == .circle)) return 0;
     return s.circle.radius;
 }
-bool and_test(Shape s) {
+Bool and_test(Shape s) {
     return s == .circle && s.circle.radius > 1;
 }
-bool or_test(Shape s) {
+Bool or_test(Shape s) {
     return s != .circle || s.circle.radius > 1;
 }
-f32 conditional(Shape s) {
+F32 conditional(Shape s) {
     return s == .rect ? s.rect.w : 0;
 }
-f32 area(Shape s) {
+F32 area(Shape s) {
     switch (s) {
     case .circle:
         return s.circle.radius * s.circle.radius * 3;
@@ -71,33 +71,33 @@ void grow(Shape *p) {
         break;
     }
 }
-f32 pointer_if(Shape *p) {
+F32 pointer_if(Shape *p) {
     if (*p == .circle) {
         p->circle.radius = 1;
         return p->circle.radius;
     }
     return 0;
 }
-f32 loop_body(Shape *list, i32 n) {
-    f32 sum = 0;
-    for (i32 i = 0; i < n; i++) {
+F32 loop_body(Shape *list, I32 n) {
+    F32 sum = 0;
+    for (I32 i = 0; i < n; i++) {
         if (list[i] == .circle) sum += 1;
     }
     Shape first = list[0];
-    for (i32 i = 0; i < n; i++) {
+    for (I32 i = 0; i < n; i++) {
         if (first == .rect) sum += first.rect.w;
     }
     return sum;
 }
-f32 while_test(Shape s, i32 n) {
-    f32 sum = 0;
+F32 while_test(Shape s, I32 n) {
+    F32 sum = 0;
     while (s == .circle && n > 0) {
         sum += s.circle.radius;
         n--;
     }
     return sum;
 }
-f32 shared_case(Shape s) {
+F32 shared_case(Shape s) {
     switch (s) {
     case .circle:
     case .rect:
@@ -107,13 +107,13 @@ f32 shared_case(Shape s) {
     }
     return 0;
 }
-f32 member_of_a_struct(Shape *list) {
+F32 member_of_a_struct(Shape *list) {
     if (list[0] == .circle) return 1;
     return 0;
 }
-f32 reread_after_payload_write(Shape *p) {
+F32 reread_after_payload_write(Shape *p) {
     if (*p != .circle) return 0;
     p->circle.radius = 2;
-    f32 r = p->circle.radius;
+    F32 r = p->circle.radius;
     return r + p->circle.radius;
 }

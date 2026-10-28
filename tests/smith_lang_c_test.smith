@@ -9,9 +9,9 @@
 // must leave alone) is built and run as x.c and as x.smith, and both must print what x.out holds.
 module smith_lang_c_test;
 
-import smith::format;
-import smith::io;
-import smith::test;
+import std::format;
+import std::io;
+import std::test;
 import <string.h>;
 import scratch;
 
@@ -56,7 +56,7 @@ static scratch::Project tree_project(io::Io *io, const char *stem) {
 }
 
 // The two files are compiled to assembly as `stem.c` and as `stem.smith` with the same flags, and must be identical.
-static void compare(io::Io *io, const char *stem, const char *extra, bool from_smith) {
+static void compare(io::Io *io, const char *stem, const char *extra, Bool from_smith) {
     scratch::Project p = tree_project(io, stem);
     if (from_smith) {
         scratch::Run copied =
@@ -84,7 +84,7 @@ static void compare(io::Io *io, const char *stem, const char *extra, bool from_s
     scratch::expect_status("the compiles ran", 0, &compiled);
     const char *plain_status = scratch::read(&p, "plain.status");
     const char *lowered_status = scratch::read(&p, "lowered.status");
-    bool plain_ok = c::strcmp(plain_status, "0\n") == 0;
+    Bool plain_ok = c::strcmp(plain_status, "0\n") == 0;
     test::check(plain_ok); // the .c compiles
     if (c::strcmp(plain_status, lowered_status) != 0) {
         test::note("exit %s as .c, %s as .smith:\n%s", plain_status, lowered_status, scratch::read(&p, "lowered.err"));
@@ -167,7 +167,7 @@ static void behave(io::Io *io, const char *name) {
                                               .data);
     scratch::expect_status("the program is copied", 0, &copied);
     const char *kinds[2] = {"c", "smith"};
-    for (usize i = 0; i < 2; i++) {
+    for (Usize i = 0; i < 2; i++) {
         const char *build = format::push(&io->arena,
                                          "smith cc -std=gnu23 -O1 -g0 -Wno-builtin-macro-redefined "
                                          "-D'__FILE__=\"unit\"' -I \"$SMITH_REPO/.smith/include\" -w ",

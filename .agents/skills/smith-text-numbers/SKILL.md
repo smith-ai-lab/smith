@@ -1,19 +1,19 @@
 ---
 name: smith-text-numbers
-description: "Parsing and writing numbers with smith::text: u64, i64, hex, f32 and f64, exact round trips and what is refused. Load when converting text to numbers or numbers to text without libc."
+description: "Parsing and writing numbers with smith::text: U64, I64, hex, F32 and F64, exact round trips and what is refused. Load when converting text to numbers or numbers to text without libc."
 ---
 
 # Numbers
 
 ```smith
-import smith::text;
+import std::text;
 
 void parse(const char word[:]) {
-    u64 u, h;
-    i64 i;
-    f32 f;
-    f64 d;
-    bool ok = text::parse_u64(word, &u);    // decimal digits
+    U64 u, h;
+    I64 i;
+    F32 f;
+    F64 d;
+    Bool ok = text::parse_u64(word, &u);    // decimal digits
     ok = text::parse_i64(word, &i);         // an optional leading -
     ok = text::parse_hex(word, &h);         // lowercase hex digits, as text::write_hex writes them
     ok = text::parse_f32(word, &f);         // -90, 0.25, .5, 5., 1e-5, 2.5E+3
@@ -30,10 +30,10 @@ void parse(const char word[:]) {
 ## Write numbers
 
 ```smith
-import smith::text;
+import std::text;
 
-usize write_line(char out[:], u64 tick, u64 hash) {   // out has room for the three numbers and two spaces
-    usize length = text::write_u64(out, tick);       // each write needs countof(out) >= text::number_capacity (20), the longest: -9223372036854775808
+Usize write_line(char out[:], U64 tick, U64 hash) {   // out has room for the three numbers and two spaces
+    Usize length = text::write_u64(out, tick);       // each write needs countof(out) >= text::number_capacity (20), the longest: -9223372036854775808
     out[length++] = ' ';
     length += text::write_i64(out[length:countof(out)], -7);
     out[length++] = ' ';

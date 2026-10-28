@@ -22,21 +22,21 @@
 // which.
 module readme_test;
 
-import smith::arena;
-import smith::format;
-import smith::io;
-import smith::test;
+import std::arena;
+import std::format;
+import std::io;
+import std::test;
 import <string.h>;
 import scratch;
-import smith::mem;
+import std::mem;
 
-constexpr usize blocks_max = 96;
-constexpr usize placed_max = 32;
+constexpr Usize blocks_max = 96;
+constexpr Usize placed_max = 32;
 
 // A fenced block of the README.
 typedef struct {
-    usize number;        // the block's number, counting every block of the README
-    usize line;          // the line of its fence
+    Usize number;        // the block's number, counting every block of the README
+    Usize line;          // the line of its fence
     const char *kind;    // the first word of its info string: smith, c, make, output, sh...
     const char *project; // project=NAME, or block-<number> for a block that is a folder of its own
     const char *path;    // file=PATH, or nullptr
@@ -46,10 +46,10 @@ typedef struct {
 
 typedef struct {
     Block items[blocks_max];
-    usize count;
+    Usize count;
 } Blocks;
 
-static const char *copy_of(io::Io *io, const char *at, usize length) {
+static const char *copy_of(io::Io *io, const char *at, Usize length) {
     char *copy = arena::push_slice(&io->arena, char, length + 1).data;
     mem::copy(copy[0:length], at[0:length]);
     return copy;
@@ -61,15 +61,15 @@ static void parse_info(io::Io *io, const char *info, Block *block) {
     block->project = format::push(&io->arena, "block-", block->number).data;
     block->path = nullptr;
     char *flags = arena::push_slice(&io->arena, char, c::strlen(info) + 3).data;
-    usize used = 0;
+    Usize used = 0;
     flags[used++] = ',';
-    bool first = true;
+    Bool first = true;
     for (const char *at = info; *at != '\0';) {
         if (*at == ' ') {
             at++;
             continue;
         }
-        usize length = c::strcspn(at, " ");
+        Usize length = c::strcspn(at, " ");
         if (first) {
             block->kind = copy_of(io, at, length);
         } else if (c::strncmp(at, "project=", 8) == 0) {
@@ -95,8 +95,8 @@ static const char *line_end(const char *at) {
 }
 
 // The info string after a fence that starts at `at + spaces`, without its trailing blanks.
-static const char *info_after_fence(io::Io *io, const char *at, usize spaces, const char *next) {
-    usize length = (usize)(next - at) - spaces - 3;
+static const char *info_after_fence(io::Io *io, const char *at, Usize spaces, const char *next) {
+    Usize length = (Usize)(next - at) - spaces - 3;
     while (length > 0 && (at[spaces + 2 + length] == '\n' || at[spaces + 2 + length] == ' ')) {
         length--;
     }
@@ -109,12 +109,12 @@ static void read_blocks(io::Io *io, const scratch::Project *p, Blocks *blocks) {
     scratch::expect_status("the README is copied", 0, &copied);
     const char *at = scratch::read(p, "README.md");
     char *body = arena::push_slice(&io->arena, char, c::strlen(at) + 1).data;
-    usize indent = 0;
-    usize used = 0;
-    bool open = false;
-    for (usize line = 1; *at != '\0'; line++) {
+    Usize indent = 0;
+    Usize used = 0;
+    Bool open = false;
+    for (Usize line = 1; *at != '\0'; line++) {
         const char *next = line_end(at);
-        usize spaces = 0;
+        Usize spaces = 0;
         while (at[spaces] == ' ') {
             spaces++;
         }
@@ -133,18 +133,18 @@ static void read_blocks(io::Io *io, const scratch::Project *p, Blocks *blocks) {
             blocks->items[blocks->count].body = copy_of(io, body, used);
             blocks->count++;
         } else if (open) {
-            usize skip = 0;
+            Usize skip = 0;
             while (skip < indent && at[skip] == ' ') {
                 skip++;
             }
-            mem::copy(body[used:used + (usize)(next - at) - skip], at[skip:skip + (usize)(next - at) - skip]);
-            used += (usize)(next - at) - skip;
+            mem::copy(body[used:used + (Usize)(next - at) - skip], at[skip:skip + (Usize)(next - at) - skip]);
+            used += (Usize)(next - at) - skip;
         }
         at = next;
     }
 }
 
-static bool has(const char *flags, const char *flag) {
+static Bool has(const char *flags, const char *flag) {
     return c::strstr(flags, flag) != nullptr;
 }
 
@@ -152,7 +152,7 @@ static bool has(const char *flags, const char *flag) {
 
 typedef struct {
     const char *paths[placed_max];
-    usize count;
+    Usize count;
 } Placed;
 
 // The file a block is written to: file=PATH, else Makefile, c-N.c, or the path its module line implies (example-N.smith
@@ -171,7 +171,7 @@ static const char *path_of(io::Io *io, const scratch::Project *p, const Block *b
         .data;
 }
 
-static bool is_file_block(const Block *block) {
+static Bool is_file_block(const Block *block) {
     return c::strcmp(block->kind, "smith") == 0 || c::strcmp(block->kind, "c") == 0 ||
            c::strcmp(block->kind, "make") == 0;
 }
@@ -179,9 +179,9 @@ static bool is_file_block(const Block *block) {
 // Places the blocks of a project in the folder of the project (the scratch project's own). The blocks of a project that
 // the project starts from (`base=NAME`) are placed first by a call of their own, with `files_only`: their files and
 // nothing else, so that the project's own blocks replace them.
-static void place_blocks(io::Io *io, const scratch::Project *p, const Blocks *blocks, const char *name, bool files_only,
+static void place_blocks(io::Io *io, const scratch::Project *p, const Blocks *blocks, const char *name, Bool files_only,
                          Placed *placed) {
-    for (usize i = 0; i < blocks->count; i++) {
+    for (Usize i = 0; i < blocks->count; i++) {
         const Block *block = &blocks->items[i];
         if (c::strcmp(block->project, name) != 0) continue;
         if (c::strcmp(block->kind, "output") == 0 && !files_only) {
@@ -189,7 +189,7 @@ static void place_blocks(io::Io *io, const scratch::Project *p, const Blocks *bl
         }
         if (!is_file_block(block)) continue;
         const char *path = path_of(io, p, block);
-        for (usize j = 0; j < placed->count; j++) {
+        for (Usize j = 0; j < placed->count; j++) {
             if (c::strcmp(placed->paths[j], path) == 0) {
                 test::note("README.md:%zu: %s/%s is written by two blocks", block->line, name, path);
                 test::check_condition(false);
@@ -206,7 +206,7 @@ static void place_blocks(io::Io *io, const scratch::Project *p, const Blocks *bl
 // The flags of all the blocks of a project, as ",run,test,".
 static const char *flags_of(io::Io *io, const Blocks *blocks, const char *name) {
     const char *flags = ",";
-    for (usize i = 0; i < blocks->count; i++) {
+    for (Usize i = 0; i < blocks->count; i++) {
         if (c::strcmp(blocks->items[i].project, name) == 0) {
             flags = format::push(&io->arena, flags, blocks->items[i].flags).data;
         }
@@ -221,8 +221,8 @@ static const char *base_of(io::Io *io, const char *flags) {
     return copy_of(io, at + 6, c::strcspn(at + 6, ","));
 }
 
-static usize first_line_of(const Blocks *blocks, const char *name) {
-    for (usize i = 0; i < blocks->count; i++) {
+static Usize first_line_of(const Blocks *blocks, const char *name) {
+    for (Usize i = 0; i < blocks->count; i++) {
         if (c::strcmp(blocks->items[i].project, name) == 0) return blocks->items[i].line;
     }
     return 0;
@@ -266,9 +266,9 @@ static void check_run(io::Io *io, const scratch::Project *p, const char *label) 
     }
 }
 
-static void check_project(io::Io *io, const scratch::Project *p, const char *name, const char *flags, usize line) {
+static void check_project(io::Io *io, const scratch::Project *p, const char *name, const char *flags, Usize line) {
     const char *label = format::push(&io->arena, "README.md:", line, " (", name, ")").data;
-    bool checked = false;
+    Bool checked = false;
     if (has(flags, ",port,")) {
         check_port(io, p, label);
         return;
@@ -368,16 +368,16 @@ export void test_readme_blocks_that_are_a_folder_of_their_own_compile(io::Io *io
     scratch::Project p = scratch::project(io, "p", nullptr);
     Blocks blocks = {};
     read_blocks(io, &p, &blocks);
-    usize checked = 0;
-    for (usize i = 0; i < blocks.count; i++) {
+    Usize checked = 0;
+    for (Usize i = 0; i < blocks.count; i++) {
         const Block *block = &blocks.items[i];
-        bool own_folder = c::strcmp(block->project, format::push(&io->arena, "block-", block->number).data) == 0;
+        Bool own_folder = c::strcmp(block->project, format::push(&io->arena, "block-", block->number).data) == 0;
         if (!own_folder || !is_file_block(block)) continue;
         if (c::strcmp(block->kind, "c") == 0) check_compiled_c(io, &p, block, block->project);
         if (c::strcmp(block->kind, "smith") == 0) check_compiled_smith(io, &p, block, block->project);
         checked++;
     }
-    test::check_greater(checked, (usize)0);
+    test::check_greater(checked, (Usize)0);
 }
 
 // --- every smith block, whatever its project -----------------------------------------------------------------------
@@ -386,7 +386,7 @@ export void test_readme_smith_blocks_are_what_smith_fmt_writes(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     Blocks blocks = {};
     read_blocks(io, &p, &blocks);
-    for (usize i = 0; i < blocks.count; i++) {
+    for (Usize i = 0; i < blocks.count; i++) {
         if (c::strcmp(blocks.items[i].kind, "smith") != 0) continue;
         scratch::write(&p, "block.smith", blocks.items[i].body);
         scratch::Run run = scratch::sh(&p, "smith fmt --dry-run --Werror block.smith 2>&1");
@@ -399,7 +399,7 @@ export void test_readme_smith_blocks_are_not_c_renamed(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     Blocks blocks = {};
     read_blocks(io, &p, &blocks);
-    for (usize i = 0; i < blocks.count; i++) {
+    for (Usize i = 0; i < blocks.count; i++) {
         if (c::strcmp(blocks.items[i].kind, "smith") != 0) continue;
         scratch::write(&p, "block.smith", blocks.items[i].body);
         scratch::Run run = scratch::sh(

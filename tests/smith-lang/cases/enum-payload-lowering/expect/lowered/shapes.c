@@ -26,7 +26,7 @@ shapes_Shape shapes_unit() __asm__("_shapes::unit");
 shapes_Shape shapes_unit() {
 return {.circle = {.radius = 1}};
 }
-bool shapes_is_empty(shapes_Shape s) __asm__("_shapes::is_empty");
-bool shapes_is_empty(shapes_Shape s) {
+Bool shapes_is_empty(shapes_Shape s) __asm__("_shapes::is_empty");
+Bool shapes_is_empty(shapes_Shape s) {
 return s == .empty;
 }

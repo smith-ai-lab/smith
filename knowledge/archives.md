@@ -6,7 +6,7 @@ tags: [archives, untar]
 ---
 # smith reads its archives itself
 
-**smith reads its archives itself, in its own C** (`runtime/gzip.c`, `xz.c`, `untar.c`): DEFLATE is the library `smith::inflate` (`lib/smith/inflate.smith`, skill smith-inflate; also learner's), gzip's members loop is `gzip.c`, then LZMA2 and tar, no
+**smith reads its archives itself, in its own C** (`runtime/gzip.c`, `xz.c`, `untar.c`): DEFLATE is the library `std::inflate` (`lib/std/inflate.smith`, skill smith-inflate; also learner's), gzip's members loop is `gzip.c`, then LZMA2 and tar, no
 vendored library and no zip, which no package uses. Extraction refuses absolute names, `..`, a path through a
 symlink, and a symlink that points outside the package; it keeps file modes and times. Tests: `tests/untar_readers_test.smith`
 (the readers as functions in process, #646), `tests/untar_*_test.smith` for the fetch around them and the sanitizers. See [the build file](build-file.md).
@@ -17,7 +17,7 @@ as `.tar.xz`. A `.gz` whose content is not a tar (the first 512 bytes are no tar
 folder holding it, named as the URL without `.gz` (`file` when nothing is left), mode 0644, as tree-sitter's release is. A
 zip is refused by name (`zip archives are not supported`), as are bzip2 and zstd; nothing needs them.
 
-- **The code is smith's own**, not a vendored library: `lib/smith/inflate.smith` (DEFLATE, the zlib and gzip wrappers, CRC-32 and Adler-32: the library `smith::inflate`, skill smith-inflate, which learner uses too; `runtime/gzip.c` is the loop over a file's members),
+- **The code is smith's own**, not a vendored library: `lib/std/inflate.smith` (DEFLATE, the zlib and gzip wrappers, CRC-32 and Adler-32: the library `std::inflate`, skill smith-inflate, which learner uses too; `runtime/gzip.c` is the loop over a file's members),
   `runtime/xz.c` (the xz container, LZMA2, CRC-64 and SHA-256 checks; about 670) and `runtime/untar.c` (tar and the safe
   extraction; about 720). They are written in the rules of the rest of smith: no malloc (the LZMA2 dictionary is one
   anonymous `mmap` of the size the block asks for, at most 1 GiB, and the rest is static), every loop bounded by an input

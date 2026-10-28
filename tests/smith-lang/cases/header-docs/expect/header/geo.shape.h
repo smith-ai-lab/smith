@@ -26,7 +26,7 @@ uint64_t geo_shape_norm2(geo_shape_Point p) __asm__("_geo::shape::norm2");
 extern uint32_t geo_shape_origin_count __asm__("_geo::shape::origin_count"); // how many origins there are
 
 /** Whether the point is the origin. */
-bool geo_is_origin(geo_shape_Point p);
+Bool geo_is_origin(geo_shape_Point p);
 
 uint32_t geo_shape_seven() __asm__("_geo::shape::seven"); // declared here, defined in C
 

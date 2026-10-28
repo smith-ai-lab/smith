@@ -1,5 +1,5 @@
 module idiom::all;
 
-export usize f(usize n) {
+export Usize f(Usize n) {
     return n + 1;
 }

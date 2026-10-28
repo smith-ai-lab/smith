@@ -2,8 +2,8 @@
 // still accepted until the tree is moved. The project is tests/build_fixtures/std_scope.
 module std_scope_test;
 
-import smith::io;
-import smith::test;
+import std::io;
+import std::test;
 import scratch;
 
 export void test_std_scope_imports_and_attributes_of_std_build_and_run(io::Io *io) {
@@ -21,7 +21,7 @@ export void test_std_scope_attributes_of_std_are_checked(io::Io *io) {
     (void)scratch::sh(&p, "cp pure_calls_alloc.smith main.smith");
     scratch::Run pure = scratch::build(&p, "");
     scratch::expect_failure("std: [[std::pure]] calling alloc is an error", &pure);
-    scratch::expect_contains("std: ... that names the promise", pure.out, "is [[smith::pure]], but it has the effects");
+    scratch::expect_contains("std: ... that names the promise", pure.out, "is [[std::pure]], but it has the effects");
     scratch::Run affine = scratch::sh(&p, "smith cc -std=gnu23 -I .smith/include -c affine_twice.smith -o /dev/null");
     scratch::expect_failure("std: a second use of a [[std::affine]] value is an error", &affine);
     scratch::expect_contains("std: ... naming the first use", affine.err, "already used");

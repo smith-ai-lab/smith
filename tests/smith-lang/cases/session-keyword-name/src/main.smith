@@ -1,4 +1,4 @@
 module main;
 import foo;
 
-i32 main() { return foo::double_(1); }
+I32 main() { return foo::double_(1); }

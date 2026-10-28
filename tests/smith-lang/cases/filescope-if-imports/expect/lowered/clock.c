@@ -17,8 +17,8 @@
 #endif
 #include <stdint.h>
 
-bool clock_ticks(void) __asm__("_clock::ticks");
-bool clock_ticks(void) {
+Bool clock_ticks(void) __asm__("_clock::ticks");
+Bool clock_ticks(void) {
 #if SMITH_TARGET_OS == 1
  {
 return mach_absolute_time() > 0;

@@ -153,7 +153,7 @@ static void read_task_row(const char *line) {
         add(&tasks, name, wall, cpu);
 }
 
-// `     97.56 s  smith::inflate_test::prop_inflate_round_trips_stored_blocks`
+// `     97.56 s  std::inflate_test::prop_inflate_round_trips_stored_blocks`
 static void read_slowest_row(const char *line) {
     char name[name_size];
     double seconds = 0;

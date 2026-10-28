@@ -3,10 +3,10 @@ module main;
 import <stdio.h>;
 
 typedef struct Ball {
-    i32 size;
+    I32 size;
 } Ball;
 
-static i32 read_size(void *data) {
+static I32 read_size(void *data) {
     Ball *ball = (Ball *)data;
     return ball->size;
 }
@@ -25,7 +25,7 @@ static void take(void *data, const void *constant) {
 }
 
 // A written cast is fine, `T *` goes to `void *` with none, and `nullptr` is not a `void *` value.
-i32 main() {
+I32 main() {
     Ball ball = {.size = 7};
     void *data = &ball;
     const void *constant = &ball;

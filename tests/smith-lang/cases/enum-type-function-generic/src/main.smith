@@ -2,48 +2,48 @@ module main;
 
 import <stdio.h>;
 
-type maybe(type T) {
+Type Maybe(Type T) {
     return enum {
         T some;
         none;
     };
 }
 
-typedef maybe(usize) Maybe;
-typedef maybe(f64) MaybeF;
+typedef Maybe(Usize) Maybe;
+typedef Maybe(F64) MaybeF;
 
-// A type function used with a generic's own parameters: each instance writes the struct a written `maybe(usize)` is.
-maybe(T) first(constexpr type T, T *xs, usize n) {
+// A type function used with a generic's own parameters: each instance writes the struct a written `maybe(Usize)` is.
+Maybe(T) first(constexpr Type T, T *xs, Usize n) {
     if (n == 0) return .none;
     return {.some = xs[0]};
 }
 
-maybe(typeof(x)) wrap(auto x) {
-    maybe(typeof(x)) out = {.some = x};
+Maybe(typeof(x)) wrap(auto x) {
+    Maybe(typeof(x)) out = {.some = x};
     return out;
 }
 
-maybe(T) pass(constexpr type T, maybe(T) o) {
-    maybe(T) copy = o;
+Maybe(T) pass(constexpr Type T, Maybe(T) o) {
+    Maybe(T) copy = o;
     return copy;
 }
 
-static usize or_else(Maybe m, usize otherwise) {
+static Usize or_else(Maybe m, Usize otherwise) {
     if (m == .some) return m.some;
     return otherwise;
 }
 
-static f64 or_zero(MaybeF m) {
+static F64 or_zero(MaybeF m) {
     if (m == .some) return m.some;
     return 0;
 }
 
-i32 main(void) {
-    usize xs[2] = {7, 8};
-    Maybe a = first(usize, xs, 2);
-    Maybe none = first(usize, xs, 0);
+I32 main(void) {
+    Usize xs[2] = {7, 8};
+    Maybe a = first(Usize, xs, 2);
+    Maybe none = first(Usize, xs, 0);
     MaybeF w = wrap(2.5);
-    Maybe p = pass(usize, a);
+    Maybe p = pass(Usize, a);
     c::printf("%zu %zu %g %zu\n", or_else(a, 0), or_else(none, 99), or_zero(w), or_else(p, 0));
     return 0;
 }

@@ -3,17 +3,17 @@ module geo::b;
 import geo::a;
 
 // The same shape in another module is the same type: a tuple made here is passed to a function there.
-export i32 twice(struct { i32, f32 } t) {
+export I32 twice(struct { I32, F32 } t) {
     return a::sum(t) * 2;
 }
 
 // `a::Meters` written here and `Meters` in geo::a are one spelling, so these are one type.
-export struct { a::Meters, f32 } mk() {
+export struct { a::Meters, F32 } mk() {
     return a::reach2(5.0);
 }
 
 export a::Reach longer(a::Reach r) {
-    struct { a::Meters, f32 } copy = r;
+    struct { a::Meters, F32 } copy = r;
     a::scale(&copy, 2.0);
     return copy;
 }

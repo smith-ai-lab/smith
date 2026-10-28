@@ -1,7 +1,7 @@
 ---
 type: architecture
 title: Effect inference, a plugin linked into smith
-description: "Effects are inferred for every function a compile reads, from its body and its callees, and [[smith::pure]] and one attribute for each effect are ceilings checked by one more clang plugin linked into smith."
+description: "Effects are inferred for every function a compile reads, from its body and its callees, and [[std::pure]] and one attribute for each effect are ceilings checked by one more clang plugin linked into smith."
 tags: [language, plugin, effects]
 ---
 # Effect inference (issue #207, first step)
@@ -18,12 +18,12 @@ diagnostic it has no id for). Skill `smith-lang-effects`.
   `console`...), a declaration with an attribute and no body has the attribute's set (a promise), any other is `c`, as is a
   call through a function pointer, inline assembly and an Objective-C message. Writing a global or a function-local
   static is `globals`. Failing is the effect `fails` (issue #325, owner: effects are never a bad thing, what matters is knowing and controlling them): a call of `abort`, `__builtin_trap` or `smith_failure*` (the table has them as `fails`) is a failure point, which a checked slice index, a contract and an arena budget lower to, and every caller inherits it, in the file and across files through the summaries. A check that `smith prove` proved adds no `fails` in any build (the lowering reads `.smith/proved/<source>.pts`; an optimized build leaves it out, debug keeps it under a name that is no failure point). `smith prove`'s own compile does not judge `fails` ceilings (`SMITH_PROVING`): it must keep every check as a point to prove, so a ceiling would reject the function before it could be proved; nothing escapes, because every build's compile judges the ceiling after the proofs are known, with the proved checks no longer failure points.
-- **Annotations are ceilings.** `[[smith::pure]]` is the empty set and `[[smith::effects(alloc, net)]]` lists what the
+- **Annotations are ceilings.** `[[std::pure]]` is the empty set and `[[std::effects(alloc, net)]]` lists what the
   function may do (the same spelling in C, in a module and on a declaration with no source, where it is a promise). It
   reaches the plugin's handler with its arguments through LLVM's `patches/clang-plugin-attr-args.patch` (r9): clang's
   parser read the arguments of a scoped C23 attribute only for an attribute it knew without the plugins, and a bare
   identifier after the first as an expression. Still accepted and not taught: one attribute for each effect
-  (`[[smith::alloc, smith::files]]`) and `__attribute__((smith_effects("alloc", "net")))`; tests/effects/effects_internal.c.
+  (`[[std::alloc, std::files]]`) and `__attribute__((smith_effects("alloc", "net")))`; tests/effects/effects_internal.c.
   The declared set, not the inferred one, is what a caller sees.
 - **The error** is at the first call that adds an effect beyond the ceiling and names the chain, `bad -> log_it (log.c:12) ->
   printf`; it is reported wherever a function carries an attribute (module, `.smith` without a module line, C) and in

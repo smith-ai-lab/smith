@@ -1,13 +1,13 @@
 module finder;
 
-export option(usize) find(const auto xs[:], typeof(xs[0]) v) {
-    for (usize i = 0; i < countof(xs); i++)
+export Option(Usize) find(const auto xs[:], typeof(xs[0]) v) {
+    for (Usize i = 0; i < countof(xs); i++)
         if (xs[i] == v) return {.some = i};
     return .none;
 }
 
-export option(usize) find_plain(const char xs[:], char v) {
-    for (usize i = 0; i < countof(xs); i++)
+export Option(Usize) find_plain(const char xs[:], char v) {
+    for (Usize i = 0; i < countof(xs); i++)
         if (xs[i] == v) return i;
     return .none;
 }

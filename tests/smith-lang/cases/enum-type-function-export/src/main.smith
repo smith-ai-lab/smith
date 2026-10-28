@@ -4,29 +4,29 @@ import <stdio.h>;
 import opt;
 import other;
 
-typedef opt::maybe(usize) Maybe;
-typedef opt::maybe(f64) MaybeF;
+typedef opt::Maybe(Usize) Maybe;
+typedef opt::Maybe(F64) MaybeF;
 
-static usize or_else(Maybe m, usize otherwise) {
+static Usize or_else(Maybe m, Usize otherwise) {
     if (m == .some) return m.some;
     return otherwise;
 }
 
-static f64 or_zero(MaybeF m) {
+static F64 or_zero(MaybeF m) {
     if (m == .some) return m.some;
     return 0;
 }
 
-opt::maybe(i32) twice(i32 x) {
+opt::Maybe(I32) twice(I32 x) {
     return {.some = x * 2};
 }
 
-i32 main(void) {
-    usize xs[2] = {7, 8};
-    Maybe a = opt::first(usize, xs, 2);
-    Maybe n = opt::first(usize, xs, 0);
+I32 main(void) {
+    Usize xs[2] = {7, 8};
+    Maybe a = opt::first(Usize, xs, 2);
+    Maybe n = opt::first(Usize, xs, 0);
     Maybe f = opt::find("key=value", '=');
-    MaybeF w = opt::first(f64, (f64[_]){2.5}, 1);
+    MaybeF w = opt::first(F64, (F64[_]){2.5}, 1);
     Maybe p = other::pick(5);
     c::printf("%zu\n", or_else(p, 0));
     c::printf("%zu %zu %zu %g\n", or_else(a, 0), or_else(n, 99), or_else(f, 99), or_zero(w));

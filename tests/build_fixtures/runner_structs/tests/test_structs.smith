@@ -1,15 +1,15 @@
-import smith::test;
+import std::test;
 
 typedef struct {
-    i32 m;
-    f32 b;
+    I32 m;
+    F32 b;
 } Pair;
 
 typedef struct {
     Pair pair;
-    u8 flags : 3;
-    i32 values[3];
-    f64 scale;
+    U8 flags : 3;
+    I32 values[3];
+    F64 scale;
 } Wide;
 
 void test_same(void) {

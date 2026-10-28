@@ -1,12 +1,12 @@
 module main;
 
-i32 take(i32 xs[2]) {
+I32 take(I32 xs[2]) {
     return xs[0];
 }
 
-i32 main() {
-    i32 same[2] = {};
-    i32 longer[3] = {};
-    i32 *pointer = same;
+I32 main() {
+    I32 same[2] = {};
+    I32 longer[3] = {};
+    I32 *pointer = same;
     return take(same) + take(longer) + take(pointer) + take(nullptr);
 }

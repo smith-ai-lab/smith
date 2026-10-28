@@ -3,8 +3,8 @@ module hw::dev;
 import <stdio.h>;
 import <string.h>;
 
-export typedef struct [[clang::annotate("smith::capability")]] {
-    i32 fd;
+export typedef struct [[clang::annotate("std::capability")]] {
+    I32 fd;
 } Dev;
 
 static void helper(const char *text) {
@@ -20,7 +20,7 @@ export void leak(const char *text) {
     helper(text);
 }
 
-export usize size(const char *text) {
+export Usize size(const char *text) {
     return c::strlen(text);
 }
 

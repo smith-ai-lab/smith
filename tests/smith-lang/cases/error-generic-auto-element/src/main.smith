@@ -2,10 +2,10 @@ module main;
 
 import stats;
 
-i32 main() {
-    i32 n = 5;
-    i32 raw[4] = {1, 2, 3, 4};
-    i32 xs[:] = raw;
+I32 main() {
+    I32 n = 5;
+    I32 raw[4] = {1, 2, 3, 4};
+    I32 xs[:] = raw;
     stats::count(n);
     stats::count(raw);
     stats::rows(xs);

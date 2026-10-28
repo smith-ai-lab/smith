@@ -20,7 +20,7 @@
 #define SMITH_TARGET_FLOAT_RADIX __FLT_RADIX__
 #endif
 static constexpr __INT32_TYPE__ kind_wide = 8;
-static constexpr bool kind_both = kind_wide == 8 && SMITH_TARGET_FLOAT_RADIX == 2;
+static constexpr Bool kind_both = kind_wide == 8 && SMITH_TARGET_FLOAT_RADIX == 2;
 __INT32_TYPE__ kind_arch_name() __asm__("_kind::arch_name");
 __INT32_TYPE__ kind_arch_name() {
 #if SMITH_TARGET_ARCH == 1

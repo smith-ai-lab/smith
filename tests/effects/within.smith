@@ -2,36 +2,36 @@ module within;
 
 import <stdio.h>;
 import <stdlib.h>;
-import smith::effects;
+import std::effects;
 
-static i32 quiet(i32 x) {
+static I32 quiet(I32 x) {
     return x + 1;
 }
 
-static i32 allocating(i32 x) {
+static I32 allocating(I32 x) {
     void *p = c::malloc(8);
     c::free(p);
     return x;
 }
 
-static i32 noisy(i32 x) {
+static I32 noisy(I32 x) {
     c::printf("%d\n", x);
     return x;
 }
 
-static i32 viaNoisy(i32 x) {
+static I32 viaNoisy(I32 x) {
     return noisy(x);
 }
 
-export i32 run(constexpr auto f, i32 x) {
+export I32 run(constexpr auto f, I32 x) {
     static_assert(effects::within(f, effects::alloc), "run: f may only allocate");
     return f(x);
 }
 
-export i32 good(i32 x) {
+export I32 good(I32 x) {
     return run(quiet, x) + run(allocating, x);
 }
 
-export i32 bad(i32 x) {
+export I32 bad(I32 x) {
     return run(viaNoisy, x);
 }

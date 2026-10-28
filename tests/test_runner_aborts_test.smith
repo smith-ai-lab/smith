@@ -3,9 +3,9 @@
 // runs as workers and with --isolate. Fixtures: tests/build_fixtures/runner_*.
 module test_runner_aborts_test;
 
-import smith::format;
-import smith::io;
-import smith::test;
+import std::format;
+import std::io;
+import std::test;
 import runner;
 import scratch;
 
@@ -18,7 +18,7 @@ static scratch::Project built(io::Io *io, const char *base, const char *files, c
 
 export void test_runner_aborts_an_expected_abort_passes_and_hides_the_childs_output(io::Io *io) {
     scratch::Project p = built(io, "runner_base", "runner_aborts", "");
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run assert_run = runner::tests(&p, iso, "--test abort_assert --verbose");
         runner::expect_has(io, iso, "aborts: an abort passes", &assert_run, "PASS abort_assert");
@@ -38,7 +38,7 @@ export void test_runner_aborts_an_expected_abort_passes_and_hides_the_childs_out
 
 export void test_runner_aborts_a_sanitizer_report_is_a_failure_not_an_expected_stop(io::Io *io) {
     scratch::Project p = built(io, "runner_base", "runner_aborts", "");
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run read = runner::tests(&p, iso, "--test sanitized_read");
         runner::expect_has(io, iso, "aborts: an ASan report fails", &read, "FAIL sanitized_read");
@@ -56,8 +56,8 @@ export void test_runner_aborts_a_sanitizer_report_is_a_failure_not_an_expected_s
 
 export void test_runner_aborts_an_exit_a_return_and_a_failed_check_are_not_aborts(io::Io *io) {
     scratch::Project p = built(io, "runner_base", "runner_aborts", "");
-    usize call = runner::line_of(&p, "tests/test_aborts.smith", "c::printf(\"child output\\n\");") - 1;
-    for (usize mode = 0; mode < 2; mode++) {
+    Usize call = runner::line_of(&p, "tests/test_aborts.smith", "c::printf(\"child output\\n\");") - 1;
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run exit = runner::tests(&p, iso, "--test abort_exit");
         runner::expect_has(io, iso, "aborts: exit(3) fails", &exit, "it exited with status 3");
@@ -85,7 +85,7 @@ export void test_runner_aborts_an_exit_a_return_and_a_failed_check_are_not_abort
 
 export void test_runner_aborts_jobs_one_gives_the_same_results_as_the_default(io::Io *io) {
     scratch::Project p = built(io, "runner_base", "runner_aborts", "");
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         // the addresses of the trace differ per run
         const char *filter = " 2>&1 | sed -e '/^slowest:/,/^$/d' -e 's/ in [0-9.]* s$//' | grep -v 'smith-trace "
@@ -99,7 +99,7 @@ export void test_runner_aborts_jobs_one_gives_the_same_results_as_the_default(io
 }
 
 // A crash without the sanitizers, in a project of its own.
-static void case_a_crash_a_hang_and_an_exit_of_zero_fail_and_the_rest_still_run(io::Io *io, usize mode) {
+static void case_a_crash_a_hang_and_an_exit_of_zero_fail_and_the_rest_still_run(io::Io *io, Usize mode) {
     scratch::Project p = built(io, "runner_base", "runner_crash", "-DSAN=0");
 
     const char *iso = runner::flag(mode);
@@ -142,7 +142,7 @@ static scratch::Project profile_project(io::Io *io, const char *flags) {
 
 export void test_runner_aborts_the_release_profile_keeps_asserts(io::Io *io) {
     scratch::Project p = profile_project(io, "\"-O2\"");
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run run = runner::tests(&p, iso, "--test profile_ --verbose");
         runner::expect_has(io, iso, "profiles: release: abort() passes", &run, "PASS profile_abort");
@@ -159,7 +159,7 @@ export void test_runner_aborts_the_release_profile_keeps_asserts(io::Io *io) {
 
 export void test_runner_aborts_the_fast_profile_loses_asserts_so_that_test_returns(io::Io *io) {
     scratch::Project p = profile_project(io, "\"-O2\", \"-DNDEBUG\"");
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run run = runner::tests(&p, iso, "--test profile_ --verbose");
         runner::expect_has(io, iso, "profiles: fast: abort() passes", &run, "PASS profile_abort");
@@ -178,7 +178,7 @@ export void test_runner_aborts_the_fast_profile_loses_asserts_so_that_test_retur
 // Section 3. Isolation: a crash, a sanitizer report and a timeout each fail one test and the rest still run.
 export void test_runner_aborts_a_sanitizer_report_an_exit_and_a_later_test_are_isolated(io::Io *io) {
     scratch::Project p = built(io, "runner_base", "runner_isolation", "");
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run overflow = runner::tests(&p, iso, "--test overflow");
         runner::expect_has(io, iso, "isolation: an ASan report is shown", &overflow,
@@ -196,7 +196,7 @@ export void test_runner_aborts_a_sanitizer_report_an_exit_and_a_later_test_are_i
 
 // The cases of the hang test run side by side (each waits its second of wall time): `part` 0 is a hang and a busy test,
 // 1 a blocked test, 2 an alarm.
-static void case_a_hang_a_busy_test_and_an_alarm_is_reported(io::Io *io, usize mode, usize part) {
+static void case_a_hang_a_busy_test_and_an_alarm_is_reported(io::Io *io, Usize mode, Usize part) {
     scratch::Project p = built(io, "runner_base", "runner_isolation", "");
     const char *iso = runner::flag(mode);
     // wall time on purpose: a test of the backstop
@@ -250,7 +250,7 @@ export void test_runner_aborts_an_alarm_is_reported_isolated(io::Io *io) {
 
 export void test_runner_aborts_a_note_shows_in_full_up_to_four_kib(io::Io *io) {
     scratch::Project p = built(io, "runner_base", "runner_isolation", "");
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run board = runner::tests(&p, iso, "--test board_note");
         runner::expect_has(io, iso, "note: several lines show in full", &board,
@@ -278,18 +278,18 @@ export void test_runner_aborts_a_test_whose_worker_was_lost_gets_a_fresh_one(io:
     scratch::expect_lacks("lost workers: ... and does not blame the test", never.out, "over its CPU time limit");
 }
 
-static void case_the_whole_run_reports_every_test_and_a_bad_option_exits_two(io::Io *io, usize mode) {
+static void case_the_whole_run_reports_every_test_and_a_bad_option_exits_two(io::Io *io, Usize mode) {
     scratch::Project p = built(io, "runner_base", "runner_isolation", "");
 
     const char *iso = runner::flag(mode);
     scratch::Run whole = runner::tests(&p, iso, "--wall-timeout 1");
     runner::expect_has(io, iso, "isolation: the whole run reports every test", &whole, "failed in");
-    scratch::expect_count(runner::label(io, iso, "isolation: ... and exits 1"), 1, (usize)whole.status);
+    scratch::expect_count(runner::label(io, iso, "isolation: ... and exits 1"), 1, (Usize)whole.status);
     scratch::Run jobs = runner::tests(&p, iso, "--jobs 0");
-    scratch::expect_count(runner::label(io, iso, "options: a bad option exits 2"), 2, (usize)jobs.status);
+    scratch::expect_count(runner::label(io, iso, "options: a bad option exits 2"), 2, (Usize)jobs.status);
     runner::expect_has(io, iso, "options: ... and prints the usage", &jobs, "usage:");
     scratch::Run none = runner::tests(&p, iso, "--test nothing_like_this");
-    scratch::expect_count(runner::label(io, iso, "options: no matching test exits 1"), 1, (usize)none.status);
+    scratch::expect_count(runner::label(io, iso, "options: no matching test exits 1"), 1, (Usize)none.status);
     runner::expect_has(io, iso, "options: ... and says no test matches", &none,
                        "no test matches \"nothing_like_this\"");
 }
@@ -314,7 +314,7 @@ static scratch::Project properties_project(io::Io *io) {
 
 export void test_runner_aborts_a_property_test_runs_on_keys_and_the_seed_options_count_them(io::Io *io) {
     scratch::Project p = properties_project(io);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run keys = runner::tests(&p, iso, "--test prop_ok --verbose");
         runner::expect_has(io, iso, "properties: a property test runs on 100 keys", &keys, "PASS prop_ok (100 seeds)");
@@ -327,7 +327,7 @@ export void test_runner_aborts_a_property_test_runs_on_keys_and_the_seed_options
 
 export void test_runner_aborts_smith_test_runs_the_runner_and_passes_its_options_on(io::Io *io) {
     scratch::Project p = properties_project(io);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run plain_run = runner::smith_test(&p, iso, "--test prop_ok --seeds 3");
         scratch::expect_status(runner::label(io, iso, "task: smith test runs the runner"), 0, &plain_run);
@@ -344,7 +344,7 @@ export void test_runner_aborts_smith_test_runs_the_runner_and_passes_its_options
         scratch::expect_status(runner::label(io, iso, "task: --test filters, and a passing run exits 0"), 0, &filtered);
         scratch::Run failing = runner::smith_test(&p, iso, "--test stops");
         runner::expect_has(io, iso, "task: a failing test is printed", &failing, "FAIL stops");
-        scratch::expect_count(runner::label(io, iso, "task: ... and the task fails"), 1, (usize)failing.status);
+        scratch::expect_count(runner::label(io, iso, "task: ... and the task fails"), 1, (Usize)failing.status);
     }
 }
 
@@ -356,14 +356,14 @@ constexpr char digest[_] =
 
 export void test_runner_aborts_a_failure_names_its_seed_and_the_rerun_line_reproduces_it(io::Io *io) {
     scratch::Project p = properties_project(io);
-    for (usize mode = 0; mode < 2; mode++) {
+    for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run failed = runner::tests(&p, iso, "--test prop_fails --shrink 0");
         scratch::write(&p, "failed.txt", failed.out);
         const char *seed =
             scratch::capture(&p, "sed -n 's/^FAIL prop_fails with seed \\([0-9]*\\).*/\\1/p' failed.txt");
         scratch::expect_count(runner::label(io, iso, "properties: a failure names its seed"), 1,
-                              (usize)(seed[0] != '\0'));
+                              (Usize)(seed[0] != '\0'));
         runner::expect_has(io, iso, "properties: ... and a rerun line", &failed,
                            format::push(&io->arena, "    rerun: smith test --test prop_fails --seed ", seed).data);
         const char *first = scratch::capture(&p, format::push(&io->arena, "cat failed.txt", digest).data);

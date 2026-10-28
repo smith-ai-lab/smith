@@ -1,23 +1,23 @@
 module affine_random_misuse;
 
-import smith::random;
+import std::random;
 
-export f64 address(random::Key key) {
+export F64 address(random::Key key) {
     random::Key *p = &key;
     random::UniformDouble uniform = {.low = 0, .high = 1};
-    f64 x = random::uniform_double_sample(key, uniform);
-    return x + (f64)(p != nullptr);
+    F64 x = random::uniform_double_sample(key, uniform);
+    return x + (F64)(p != nullptr);
 }
 
-export void loop_outside(random::Key key, f64 xs[:]) {
+export void loop_outside(random::Key key, F64 xs[:]) {
     random::UniformDouble uniform = {.low = 0, .high = 1};
-    for (usize i = 0; i < countof(xs); i++)
+    for (Usize i = 0; i < countof(xs); i++)
         xs[i] = random::uniform_double_sample(key, uniform);
 }
 
-export void loop_other_index(random::Key key, random::Key per_item[:], f64 xs[:], usize j) {
+export void loop_other_index(random::Key key, random::Key per_item[:], F64 xs[:], Usize j) {
     random::split(key, per_item);
     random::UniformDouble uniform = {.low = 0, .high = 1};
-    for (usize i = 0; i < countof(xs); i++)
+    for (Usize i = 0; i < countof(xs); i++)
         xs[i] = random::uniform_double_sample(per_item[j], uniform);
 }

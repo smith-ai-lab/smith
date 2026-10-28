@@ -1,27 +1,27 @@
-import smith::contract;
-import smith::test;
+import std::contract;
+import std::test;
 
 typedef struct {
-    u64 count;
-    u64 capacity;
+    U64 count;
+    U64 capacity;
 } Moves;
 
-typedef enum : u8 { Red, Green } Color;
+typedef enum : U8 { Red, Green } Color;
 
 typedef struct {
-    i32 cells[3][3];
+    I32 cells[3][3];
     Moves *moves;
     Color color;
 } Board;
 
-static i32 clamp(usize count) {
+static I32 clamp(Usize count) {
     contract::requires(count <= 5);
-    return (i32)count;
+    return (I32)count;
 }
 
 void test_ex_member(void) {
     Moves moves = {.count = 7, .capacity = 9};
-    u64 expected = 8;
+    U64 expected = 8;
     test::check(moves.count == expected);
 }
 
@@ -29,22 +29,22 @@ void test_ex_board(void) {
     Moves moves = {.count = 7, .capacity = 9};
     Board board = {.cells = {{1, 2, 3}, {4, 5, 6}, {7, 8, 9}}, .moves = &moves, .color = Green};
     Board *b = &board;
-    usize row = 1;
-    usize col = 2;
+    Usize row = 1;
+    Usize col = 2;
     test::check(b->cells[row][col] == 7 && b->color == Red && b->moves != nullptr);
 }
 
 void test_ex_contract(void) {
-    usize count = 6;
+    Usize count = 6;
     (void)clamp(count);
 }
 
 void test_ex_equal(void) {
-    u64 count = 3;
+    U64 count = 3;
     test::check_equal(count, 4);
 }
 
 void test_ex_crash(void) {
-    i32 *p = nullptr;
+    I32 *p = nullptr;
     test::check_equal(*p, 1);
 }

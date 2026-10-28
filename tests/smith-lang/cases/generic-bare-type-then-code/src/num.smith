@@ -1,14 +1,14 @@
 module num;
 
-export T add(type T, T a, T b) {
+export T add(Type T, T a, T b) {
     T sum = a + b;
     { return sum; }
 }
 
-export i32 twice(i32 x) {
+export I32 twice(I32 x) {
     return x * 2;
 }
 
-export i32 broken(i32 x) {
+export I32 broken(I32 x) {
     return x + missing;
 }

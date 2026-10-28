@@ -1,8 +1,8 @@
 module num;
 
 export typedef struct {
-    i32 x;
-    i32 y;
+    I32 x;
+    I32 y;
 } Pair;
 
 // `typeof(x)` is the parameter's type in later parameters, in the body and in the return type written before the name.
@@ -12,12 +12,12 @@ export typeof(a) add(auto a, typeof(a) b) {
 }
 
 // `if constexpr` tests `typeof(x)` as it tests a `T`.
-export u32 kind(auto v) {
-    if constexpr (typeof(v) == f32) {
+export U32 kind(auto v) {
+    if constexpr (typeof(v) == F32) {
         return 1;
-    } else if constexpr (is_integer(typeof(v)) && sizeof(typeof(v)) == 8) {
+    } else if constexpr (Int(typeof(v)) && sizeof(typeof(v)) == 8) {
         return 2;
-    } else if constexpr (is_pointer(typeof(v))) {
+    } else if constexpr (Pointer(typeof(v))) {
         return 4;
     } else {
         return 3;
@@ -25,24 +25,24 @@ export u32 kind(auto v) {
 }
 
 // Two `auto` parameters make one instance for each pair of types.
-export f64 mix(auto a, auto b) {
-    f64 sum = (f64)a + (f64)b;
+export F64 mix(auto a, auto b) {
+    F64 sum = (F64)a + (F64)b;
     return sum;
 }
 
 // An `auto` beside a `constexpr type`: the type is passed, and the other is told from its argument.
-export typeof(a) *make(auto a, constexpr type T, usize count) {
+export typeof(a) *make(auto a, constexpr Type T, Usize count) {
     (void)a;
     (void)count;
     return (typeof(a) *)(T *)nullptr;
 }
 
 // `typeof` of a parameter that is no `auto` is plain C.
-export i32 first(const Pair *p, typeof(p) other) {
+export I32 first(const Pair *p, typeof(p) other) {
     return p != nullptr ? p->x : other->y;
 }
 
-export usize width(auto v) {
+export Usize width(auto v) {
     (void)v;
     return sizeof(typeof(v));
 }

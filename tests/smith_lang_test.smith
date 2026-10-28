@@ -32,13 +32,13 @@
 // it. The expectations are golden files: `smith test --update` writes what each case produced (read the diff).
 module smith_lang_test;
 
-import smith::arena;
-import smith::format;
-import smith::io;
-import smith::test;
+import std::arena;
+import std::format;
+import std::io;
+import std::test;
 import <string.h>;
 import scratch;
-import smith::mem;
+import std::mem;
 import <smith_core.h>;
 
 typedef struct {
@@ -49,22 +49,22 @@ typedef struct {
 
 // What the compiles and the link made: 0 when all worked, and the objects (each after a space).
 typedef struct {
-    i32 status;
+    I32 status;
     const char *objects;
 } Built;
 
 // The raw lowering in process (include/smith_core.h): what `smith cc --smith-header` writes. The command asks the
 // compiler which of a module's C imports declared a name when several are possible, and the function does not, so a
 // case whose header is checked by its golden here, because it has several, is made by the command.
-constexpr usize header_capacity = 1U << 21;
-constexpr usize report_capacity = 1U << 16;
+constexpr Usize header_capacity = 1U << 21;
+constexpr Usize report_capacity = 1U << 16;
 
 static char header_text[header_capacity];
 static char report_text[report_capacity];
 
-static bool header_by_command(const char *name) {
+static Bool header_by_command(const char *name) {
     static const char *const cases[_] = {"filescope-if-header", "filescope-if-reflect"};
-    for (usize i = 0; i < countof(cases); i++) {
+    for (Usize i = 0; i < countof(cases); i++) {
         if (c::strcmp(name, cases[i]) == 0) return true;
     }
     return false;
@@ -82,7 +82,7 @@ static const char *join(const Case *kase, const char *a, const char *b, const ch
 static const char *next_line(io::Io *io, const char **at) {
     if (**at == '\0') return nullptr;
     const char *end = c::strchr(*at, '\n');
-    usize length = end != nullptr ? (usize)(end - *at) : c::strlen(*at);
+    Usize length = end != nullptr ? (Usize)(end - *at) : c::strlen(*at);
     char *copy = arena::push_slice(&io->arena, char, length + 1).data;
     const char *line = *at;
     mem::copy(copy[0:length], line[0:length]);
@@ -92,17 +92,17 @@ static const char *next_line(io::Io *io, const char **at) {
 
 // `a/b.smith` as the module `a.b`, `a/b` the stem.
 static const char *module_of(io::Io *io, const char *file) {
-    usize length = c::strlen(file);
+    Usize length = c::strlen(file);
     if (length > 6 && c::strcmp(file + length - 6, ".smith") == 0) length -= 6;
     char *copy = arena::push_slice(&io->arena, char, length + 1).data;
-    for (usize i = 0; i < length; i++) {
+    for (Usize i = 0; i < length; i++) {
         copy[i] = file[i] == '/' ? '.' : file[i];
     }
     return copy;
 }
 
 static const char *stem_of(io::Io *io, const char *file) {
-    usize length = c::strlen(file);
+    Usize length = c::strlen(file);
     if (length > 6 && c::strcmp(file + length - 6, ".smith") == 0) length -= 6;
     char *copy = arena::push_slice(&io->arena, char, length + 1).data;
     mem::copy(copy[0:length], file[0:length]);
@@ -111,9 +111,9 @@ static const char *stem_of(io::Io *io, const char *file) {
 
 // The object of a file that is not a module: its path with the dots for slashes.
 static const char *object_of(io::Io *io, const char *file) {
-    usize length = c::strlen(file);
+    Usize length = c::strlen(file);
     char *copy = arena::push_slice(&io->arena, char, length + 1).data;
-    for (usize i = 0; i < length; i++) {
+    for (Usize i = 0; i < length; i++) {
         copy[i] = file[i] == '/' ? '.' : file[i];
     }
     return copy;
@@ -129,10 +129,10 @@ static void write_header(const Case *kase, const char *file, const char *stem) {
     io::Io *io = kase->io;
     const scratch::Project *p = kase->project;
     const char *source = format::push(&io->arena, "src/", file).data;
-    bool made =
+    Bool made =
         c::smith_core_header(p->dir, source, nullptr, header_text, header_capacity, report_text, report_capacity);
     if (report_text[0] != '\0') {
-        const u8 *bytes = (const u8 *)report_text;
+        const U8 *bytes = (const U8 *)report_text;
         io::Error added = io::files_write(&io->files, format::push(&io->arena, p->dir, "/out/stderr").data,
                                           bytes[0:c::strlen(report_text)], io::Append);
         test::check_equal(added.code, 0);
@@ -140,11 +140,11 @@ static void write_header(const Case *kase, const char *file, const char *stem) {
     if (!made) return;
     const char *path = format::push(&io->arena, p->dir, "/out/include/", stem, ".h").data;
     const char *slash = c::strrchr(path, '/');
-    char *folder = arena::push_slice(&io->arena, char, (usize)(slash - path) + 1).data;
-    mem::copy(folder[0:(usize)(slash - path)], path[0:(usize)(slash - path)]);
+    char *folder = arena::push_slice(&io->arena, char, (Usize)(slash - path) + 1).data;
+    mem::copy(folder[0:(Usize)(slash - path)], path[0:(Usize)(slash - path)]);
     folder[slash - path] = '\0';
     test::check_equal(io::files_make_folder(&io->files, folder).code, 0);
-    const u8 *header = (const u8 *)header_text;
+    const U8 *header = (const U8 *)header_text;
     io::Error written = io::files_write(&io->files, path, header[0:c::strlen(header_text)], io::Replace);
     test::check_equal(written.code, 0);
 }
@@ -199,7 +199,7 @@ static void build_others(const Case *kase, Built *built) {
     const char *linker = "cc"; // the verb that links: C++ needs smith c++
     for (const char *at = others, *file = next_line(io, &at); file != nullptr; file = next_line(io, &at)) {
         const char *object = format::push(&io->arena, "out/obj/", object_of(io, file), ".o").data;
-        bool cpp = c::strcmp(file + c::strlen(file) - 4, ".cpp") == 0;
+        Bool cpp = c::strcmp(file + c::strlen(file) - 4, ".cpp") == 0;
         const char *compile =
             cpp ? format::push(&io->arena, "smith c++ -std=c++20 -g0 -fno-color-diagnostics -I out/include -c src/",
                                file, " -o ", object, " 2>>out/stderr")
@@ -210,7 +210,7 @@ static void build_others(const Case *kase, Built *built) {
         built->objects = format::push(&io->arena, built->objects, " ", object).data;
     }
     (void)scratch::sh(p, ": >out/stdout");
-    bool has_main =
+    Bool has_main =
         scratch::exists(p, "src/main.smith") || scratch::exists(p, "src/main.c") || scratch::exists(p, "src/main.cpp");
     if (built->status != 0 || !has_main) return;
     // -lm: glibc keeps libm apart; macOS's is in libSystem, which links anyway
@@ -250,14 +250,14 @@ static const char *errors_of(const Case *kase, const char *file) {
 }
 
 // A case with no expect folder is new: an update writes what it made.
-static bool fresh(const scratch::Project *p) {
+static Bool fresh(const scratch::Project *p) {
     return !scratch::exists(p, "expect");
 }
 
-static void check_errors(const Case *kase, const Built *built, bool update) {
+static void check_errors(const Case *kase, const Built *built, Bool update) {
     const scratch::Project *p = kase->project;
     const char *errors = errors_of(kase, "out/stderr");
-    bool wants_error = scratch::exists(p, "expect/error") || (update && errors[0] != '\0');
+    Bool wants_error = scratch::exists(p, "expect/error") || (update && errors[0] != '\0');
     if (wants_error) {
         golden_at(kase, "expect/error", errors);
         if (built->status == 0) {
@@ -270,7 +270,7 @@ static void check_errors(const Case *kase, const Built *built, bool update) {
     }
 }
 
-static void check_outputs(const Case *kase, bool update) {
+static void check_outputs(const Case *kase, Bool update) {
     const scratch::Project *p = kase->project;
     const char *stderr_text = scratch::read(p, "out/stderr");
     const char *stdout_text = scratch::read(p, "out/stdout");
@@ -284,7 +284,7 @@ static void check_outputs(const Case *kase, bool update) {
 
 // The generated headers of the cases in `header_by_command` and what the compile wrote for generics, as the case holds
 // them. A run to update takes the files a successful build made as the expectation.
-static void check_files(const Case *kase, const Built *built, bool update) {
+static void check_files(const Case *kase, const Built *built, Bool update) {
     io::Io *io = kase->io;
     const char *files;
     if (update && built->status != 0) return;
@@ -336,7 +336,7 @@ static void corpus_case(io::Io *io, const char *name) {
              "{ [ -e ../target-facts ] || ln -s \"$SMITH_REPO/tests/smith-lang/cases/target-facts\" ../target-facts; }",
              ""));
     scratch::expect_status("the case is copied", 0, &copied);
-    bool update = test::updating();
+    Bool update = test::updating();
     Built built;
     if (scratch::exists(&p, "cmd")) {
         built = build_command(&kase);

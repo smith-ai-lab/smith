@@ -5,8 +5,8 @@
 // its own.
 module lint_cache_test;
 
-import smith::io;
-import smith::test;
+import std::io;
+import std::test;
 import scratch;
 
 static scratch::Project prepared(io::Io *io) {

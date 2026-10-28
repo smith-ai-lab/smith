@@ -1,6 +1,6 @@
 module sa;
 export typeof(v) twice(auto v) {
-    if constexpr (is_integer(typeof(v))) {
+    if constexpr (Int(typeof(v))) {
         return v * 2;
     } else {
         static_assert(false, "twice needs an integer");

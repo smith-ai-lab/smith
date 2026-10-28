@@ -1,6 +1,6 @@
 import pick;
 
 int main() {
-    u64 big = 5;
+    U64 big = 5;
     return (int)pick::larger(big, 1);
 }

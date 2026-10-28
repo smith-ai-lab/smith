@@ -3,9 +3,9 @@
 // build.c in tests/build_fixtures that the test copies over build.c (the variants are `.txt` files).
 module build_stamps_errors_test;
 
-import smith::format;
-import smith::io;
-import smith::test;
+import std::format;
+import std::io;
+import std::test;
 import scratch;
 
 // Copies the variant (`<name>.txt` of the fixture) over build.c and builds.

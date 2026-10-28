@@ -2,7 +2,7 @@ import <signal.h>;
 import <stdio.h>;
 import <stdlib.h>;
 import <unistd.h>;
-import smith::test;
+import std::test;
 
 void test_abort_segv(void) {
     test::expect_abort();

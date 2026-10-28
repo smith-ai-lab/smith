@@ -1,4 +1,4 @@
-// A ceiling: [[smith::effects(alloc)]] may allocate and nothing else; several effects are listed in one attribute.
+// A ceiling: [[std::effects(alloc)]] may allocate and nothing else; several effects are listed in one attribute.
 #include <stdio.h>
 #include <stdlib.h>
 

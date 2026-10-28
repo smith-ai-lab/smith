@@ -3,9 +3,9 @@
 // changes some, and reads `smith test --changed --dry-run`, which names the tests and why.
 module changed_test;
 
-import smith::format;
-import smith::io;
-import smith::test;
+import std::format;
+import std::io;
+import std::test;
 import scratch;
 
 // A repository: a module a, tests of it, a test of b that imports a, a test of c that imports nothing, a test that runs
@@ -13,12 +13,12 @@ import scratch;
 constexpr char repository[_] =
     "export SMITH_OUTPUT=full; git init -q -b main . && "
     "mkdir -p lib tests docs runtime src && "
-    "printf 'module a;\\nexport i32 one() { return 1; }\\n' > lib/a.smith && "
+    "printf 'module a;\\nexport I32 one() { return 1; }\\n' > lib/a.smith && "
     "printf 'module a_test;\\nimport a;\\nexport void test_one() {}\\n' > lib/a_test.smith && "
-    "printf 'module b;\\nimport a;\\nexport i32 two() { return 2; }\\n' > lib/b.smith && "
+    "printf 'module b;\\nimport a;\\nexport I32 two() { return 2; }\\n' > lib/b.smith && "
     "printf 'module b_test;\\nimport b;\\nexport void test_two() {}\\n' > lib/b_test.smith && "
     "printf 'module c_test;\\nexport void test_three() {}\\n' > lib/c_test.smith && "
-    "printf 'module lone;\\nexport i32 four() { return 4; }\\n' > src/lone.smith && "
+    "printf 'module lone;\\nexport I32 four() { return 4; }\\n' > src/lone.smith && "
     "printf 'module runs_test;\\nimport scratch;\\nexport void test_runs() { scratch::sh(); }\\n' > "
     "tests/runs_test.smith && "
     "printf 'module scratch;\\n' > tests/scratch.smith && "

@@ -3,55 +3,55 @@
 // The same functions as recursion.smith in a .smith file with no `module` line: nothing is said (the strictness
 // ladder).
 
-u64 fib(u64 n) {
+U64 fib(U64 n) {
     return n < 2 ? n : fib(n - 1) + fib(n - 2);
 }
 
-bool is_even(u32 n);
+Bool is_even(U32 n);
 
-bool is_odd(u32 n) {
+Bool is_odd(U32 n) {
     return n != 0 && is_even(n - 1);
 }
 
-bool is_even(u32 n) {
+Bool is_even(U32 n) {
     return n == 0 || is_odd(n - 1);
 }
 
-u64 sum_to(u64 n, u64 total) {
+U64 sum_to(U64 n, U64 total) {
     if (n == 0) return total;
     [[clang::musttail]] return sum_to(n - 1, total + n);
 }
 
-u64 ping(u64 n);
+U64 ping(U64 n);
 
-u64 pong(u64 n) {
+U64 pong(U64 n) {
     if (n == 0) return 0;
     [[clang::musttail]] return ping(n - 1);
 }
 
-u64 ping(u64 n) {
+U64 ping(U64 n) {
     if (n == 0) return 1;
     [[clang::musttail]] return pong(n - 1);
 }
 
 // One call that is not a jump on a cycle of jumps is enough.
-u64 mixed(u64 n);
+U64 mixed(U64 n);
 
-u64 mixed_back(u64 n) {
+U64 mixed_back(U64 n) {
     if (n == 0) return 0;
     [[clang::musttail]] return mixed(n - 1);
 }
 
-u64 mixed(u64 n) {
+U64 mixed(U64 n) {
     if (n == 0) return 1;
     return mixed_back(n - 1) + 1;
 }
 
 // A call through a pointer is not followed, and nor is a call into code with no source.
-u32 apply(u32 (*step)(u32), u32 n) {
+U32 apply(U32 (*step)(U32), U32 n) {
     return step(n);
 }
 
-u32 not_recursive(u32 n) {
+U32 not_recursive(U32 n) {
     return apply(not_recursive, n);
 }

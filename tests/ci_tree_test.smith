@@ -2,9 +2,9 @@
 // both branches of the skip rule against a stub gh (tests/build_fixtures/ci_tree/gh) that answers from the environment.
 module ci_tree_test;
 
-import smith::format;
-import smith::io;
-import smith::test;
+import std::format;
+import std::io;
+import std::test;
 import scratch;
 
 // Every command: the stub gh first on PATH, the script, and the trees of the two commits.

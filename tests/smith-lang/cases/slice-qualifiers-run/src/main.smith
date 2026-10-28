@@ -5,66 +5,66 @@ import <stdio.h>;
 // A slice takes C's qualifiers as a pointer does (issue #126): the element's go with the element type, west or east,
 // and the slice's own go inside the brackets, after C99's `int a[const 10]`.
 
-static usize sum(const u8 xs[:]) {
-    usize total = 0;
-    for (usize i = 0; i < countof(xs); i++) {
+static Usize sum(const U8 xs[:]) {
+    Usize total = 0;
+    for (Usize i = 0; i < countof(xs); i++) {
         total += xs[i];
     }
     return total;
 }
 
-static usize east(u8 const xs[:]) {
+static Usize east(U8 const xs[:]) {
     return countof(xs) + sum(xs);
 }
 
-static void copy(u8 dst[restrict :], const u8 src[const restrict :]) {
-    for (usize i = 0; i < countof(dst) && i < countof(src); i++) {
+static void copy(U8 dst[restrict :], const U8 src[const restrict :]) {
+    for (Usize i = 0; i < countof(dst) && i < countof(src); i++) {
         dst[i] = src[i];
     }
 }
 
-static usize fixed(u8 xs[const :]) {
+static Usize fixed(U8 xs[const :]) {
     xs[0] = 9; // the elements are writable, the slice itself is fixed
     return countof(xs);
 }
 
-static typeof(u8[:]) keep(u8 xs[:]) {
+static typeof(U8[:]) keep(U8 xs[:]) {
     return xs;
 }
 
-static f32 corner(const f32 m[:][:]) {
+static F32 corner(const F32 m[:][:]) {
     return m[countof(m) - 1][countof(m[0]) - 1];
 }
 
-static f32 rows(f32 m[const :][2]) {
-    f32 row[:] = m[1];
+static F32 rows(F32 m[const :][2]) {
+    F32 row[:] = m[1];
     return row[0] + m[0][1];
 }
 
-i32 main() {
-    u8 raw[6] = {1, 2, 3, 4, 5, 6};
-    u8 all[:] = raw;
-    const u8 read[:] = all;       // u8[:] to const u8[:] is implicit
-    u8 const same[:] = read;      // east const is the same type
-    const u8 cut[:] = read[1:4];  // a cut keeps const
+I32 main() {
+    U8 raw[6] = {1, 2, 3, 4, 5, 6};
+    U8 all[:] = raw;
+    const U8 read[:] = all;       // U8[:] to const U8[:] is implicit
+    U8 const same[:] = read;      // east const is the same type
+    const U8 cut[:] = read[1:4];  // a cut keeps const
     c::printf("%zu %zu %zu %zu\n", sum(all), sum(read), east(same), sum(cut));
     c::printf("%zu %zu\n", sum(raw), sum(all[2:]));
 
-    u8 out[6] = {};
+    U8 out[6] = {};
     copy(out, raw);               // arrays and cuts become the slices the parameters want
     copy(out[4:6], read[0:2]);
     c::printf("%d %d %d %d %d\n", out[0], out[3], out[4], out[5], (int)fixed(all));
 
-    u8 fixed_slice[const restrict :] = all;
-    u8 *const first = &fixed_slice[0];
+    U8 fixed_slice[const restrict :] = all;
+    U8 *const first = &fixed_slice[0];
     c::printf("%d %zu %d\n", *first, countof(fixed_slice), keep(fixed_slice)[1]);
 
-    f32 grid[3][2] = {{1, 2}, {3, 4}, {5, 6}};
-    f32 g[:][:] = grid;
-    const f32 cg[:][:] = g;
-    f32 outer[const :][2] = grid;
+    F32 grid[3][2] = {{1, 2}, {3, 4}, {5, 6}};
+    F32 g[:][:] = grid;
+    const F32 cg[:][:] = g;
+    F32 outer[const :][2] = grid;
     c::printf("%g %g %g\n", corner(g), corner(cg), rows(outer));
-    const f32 part[:] = cg[1][0:1];
+    const F32 part[:] = cg[1][0:1];
     c::printf("%zu %g\n", countof(part), part[0]);
 
     // A string literal is read-only data: const char[:] points into it, with no copy.

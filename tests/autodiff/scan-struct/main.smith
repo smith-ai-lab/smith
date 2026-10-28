@@ -1,94 +1,94 @@
-// learner's scan reference differentiated with autodiff::gradient over a struct of `f64[:]` fields (the gradient's
+// learner's scan reference differentiated with autodiff::gradient over a struct of `F64[:]` fields (the gradient's
 // arrays come from the arena), against the hand-written backward. Exits 1 when they differ by
 // more than the tolerance relative to the largest gradient entry.
 module main;
 
-import smith::arena;
-import smith::autodiff;
-import smith::io;
+import std::arena;
+import std::autodiff;
+import std::io;
 import <math.h>;
 import "base/reference_scan.h";
 
-constexpr f64 tolerance = 1e-12;
+constexpr F64 tolerance = 1e-12;
 
 typedef struct {
-    f64 x[:];
-    f64 dt[:];
-    f64 a[:];
-    f64 b[:];
-    f64 c[:];
-    f64 keep[:];
-    f64 state0[:];
+    F64 x[:];
+    F64 dt[:];
+    F64 a[:];
+    F64 b[:];
+    F64 c[:];
+    F64 keep[:];
+    F64 state0[:];
 } Scan;
 
 typedef struct {
-    f64 dy[:];
-    f64 dse[:];
+    F64 dy[:];
+    F64 dse[:];
 } Seeds;
 
 // sum(y * dy) + sum(state_end * dse): the scalar whose gradient the backward computes.
-f64 scan_loss(Scan *scan, const Seeds *seeds) {
+F64 scan_loss(Scan *scan, const Seeds *seeds) {
     c::ReferenceScanShape shape = {2, 3, 2, 3, 4};
     c::ReferenceScanInputs in = {scan->x.data, scan->dt.data, scan->a.data,
                                  scan->b.data, scan->c.data,  scan->keep.data};
-    f64 y[36] = {};
-    f64 state_end[48] = {};
+    F64 y[36] = {};
+    F64 state_end[48] = {};
     c::reference_scan_forward(&shape, &in, scan->state0.data, y, state_end, nullptr);
-    f64 total = 0.0;
-    for (usize i = 0; i < 36; i++) {
+    F64 total = 0.0;
+    for (Usize i = 0; i < 36; i++) {
         total += y[i] * seeds->dy[i];
     }
-    for (usize i = 0; i < 48; i++) {
+    for (Usize i = 0; i < 48; i++) {
         total += state_end[i] * seeds->dse[i];
     }
     return total;
 }
 
-u64 rng = 88172645463325252ULL;
+U64 rng = 88172645463325252ULL;
 
-f64 urand(f64 lo, f64 hi) {
+F64 urand(F64 lo, F64 hi) {
     rng ^= rng << 13;
     rng ^= rng >> 7;
     rng ^= rng << 17;
-    return lo + (hi - lo) * ((f64)(rng >> 11) / 9007199254740992.0);
+    return lo + (hi - lo) * ((F64)(rng >> 11) / 9007199254740992.0);
 }
 
-void fill(f64 *p, usize n, f64 lo, f64 hi) {
-    for (usize i = 0; i < n; i++) {
+void fill(F64 *p, Usize n, F64 lo, F64 hi) {
+    for (Usize i = 0; i < n; i++) {
         p[i] = urand(lo, hi);
     }
 }
 
-f64 worst = 0.0;
+F64 worst = 0.0;
 
-void compare(io::Console *console, const char *name, const f64 *got, const f64 *want, usize n) {
-    f64 scale = 0.0;
-    f64 difference = 0.0;
-    for (usize i = 0; i < n; i++) {
+void compare(io::Console *console, const char *name, const F64 *got, const F64 *want, Usize n) {
+    F64 scale = 0.0;
+    F64 difference = 0.0;
+    for (Usize i = 0; i < n; i++) {
         scale = c::fmax(scale, c::fabs(want[i]));
         difference = c::fmax(difference, c::fabs(got[i] - want[i]));
     }
-    f64 relative = scale > 0.0 ? difference / scale : difference;
+    F64 relative = scale > 0.0 ? difference / scale : difference;
     (void)io::console_printf(console, "  %-8s n=%-4zu max|ref|=%.3e  maxrel=%.3e\n", name, n, scale, relative);
     worst = c::fmax(worst, relative);
 }
 
-i32 main(io::Io *io) {
+I32 main(io::Io *io) {
     arena::Arena *arena = &io->arena;
-    Scan scan = {.x = arena::push_slice(arena, f64, 36),
-                 .dt = arena::push_slice(arena, f64, 12),
-                 .a = arena::push_slice(arena, f64, 2),
-                 .b = arena::push_slice(arena, f64, 24),
-                 .c = arena::push_slice(arena, f64, 24),
-                 .keep = arena::push_slice(arena, f64, 6),
-                 .state0 = arena::push_slice(arena, f64, 48)};
-    Seeds seeds = {.dy = arena::push_slice(arena, f64, 36), .dse = arena::push_slice(arena, f64, 48)};
+    Scan scan = {.x = arena::push_slice(arena, F64, 36),
+                 .dt = arena::push_slice(arena, F64, 12),
+                 .a = arena::push_slice(arena, F64, 2),
+                 .b = arena::push_slice(arena, F64, 24),
+                 .c = arena::push_slice(arena, F64, 24),
+                 .keep = arena::push_slice(arena, F64, 6),
+                 .state0 = arena::push_slice(arena, F64, 48)};
+    Seeds seeds = {.dy = arena::push_slice(arena, F64, 36), .dse = arena::push_slice(arena, F64, 48)};
     fill(scan.x.data, 36, -1.0, 1.0);
     fill(scan.dt.data, 12, 0.01, 0.5);
     fill(scan.a.data, 2, -2.0, -0.1);
     fill(scan.b.data, 24, -1.0, 1.0);
     fill(scan.c.data, 24, -1.0, 1.0);
-    for (usize i = 0; i < 6; i++) {
+    for (Usize i = 0; i < 6; i++) {
         scan.keep[i] = urand(0.0, 1.0) < 0.1 ? 0.0 : 1.0;
     }
     fill(scan.state0.data, 48, -1.0, 1.0);
@@ -99,16 +99,16 @@ i32 main(io::Io *io) {
 
     c::ReferenceScanShape shape = {2, 3, 2, 3, 4};
     c::ReferenceScanInputs in = {scan.x.data, scan.dt.data, scan.a.data, scan.b.data, scan.c.data, scan.keep.data};
-    f64 states[144] = {};
-    f64 y[36] = {};
-    f64 state_end[48] = {};
+    F64 states[144] = {};
+    F64 y[36] = {};
+    F64 state_end[48] = {};
     c::reference_scan_forward(&shape, &in, scan.state0.data, y, state_end, states);
-    f64 hx[36] = {};
-    f64 hdt[12] = {};
-    f64 ha[2] = {};
-    f64 hb[24] = {};
-    f64 hc[24] = {};
-    f64 hstate0[48] = {};
+    F64 hx[36] = {};
+    F64 hdt[12] = {};
+    F64 ha[2] = {};
+    F64 hb[24] = {};
+    F64 hc[24] = {};
+    F64 hstate0[48] = {};
     c::ReferenceScanGradients hand = {hx, hdt, ha, hb, hc, hstate0, nullptr};
     c::reference_scan_backward(&shape, &in, scan.state0.data, states, seeds.dy.data, seeds.dse.data, &hand);
 

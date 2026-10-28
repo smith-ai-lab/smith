@@ -19,7 +19,7 @@ schemas are in git.
 
 | Path | What |
 | --- | --- |
-| `scripts/protocol.c` | the generator, a program of the build like `scripts/pack.c` (built by build.c from `lib/smith/arena.smith`, `contract.smith` and `text.smith`, and `json.c`) |
+| `scripts/protocol.c` | the generator, a program of the build like `scripts/pack.c` (built by build.c from `lib/std/arena.smith`, `contract.smith` and `text.smith`, and `json.c`) |
 | `schemas/dap/`, `schemas/mcp/` | the vendored inputs: the schema (`debugAdapterProtocol.json`, `schema.json`) and the project's `LICENSE`, byte for byte as released |
 | `runtime/protocol/protocol.h`, `protocol.c` | hand-written: the error a parse reports, the types a schema starts from (string, integer, number, boolean, any JSON), the checks the generated code shares |
 | `.smith/protocol/dap.h`, `dap.c`, `mcp.h`, `mcp.c` | generated, not in git: a struct and four functions per type; smith.c includes `dap.c` and `mcp.c` with `-I .smith/protocol -I runtime/protocol` |
@@ -60,21 +60,21 @@ compiles the generator with stage A's `smith-cc` and runs it on `schemas/` into 
 ## What a schema becomes
 
 Every type has four functions named for it (`smith_dap_stopped_event_parse`, `_write`, `_equal`, `_random`) with the same shapes as the
-hand-written types in `protocol.h`: `bool parse(arena, const SmithJsonValue *, T *, SmithProtocolError *)` reads a tree from
-`smith_json_parse`; `void write(SmithJsonWriter *, const T *)`; `bool equal(const T *, const T *)`; `void random(arena, key, T *)`
+hand-written types in `protocol.h`: `Bool parse(arena, const SmithJsonValue *, T *, SmithProtocolError *)` reads a tree from
+`smith_json_parse`; `void write(SmithJsonWriter *, const T *)`; `Bool equal(const T *, const T *)`; `void random(arena, key, T *)`
 makes a value from a key. Members keep the schema's names (`threadId`, `request_seq`), not snake case.
 
 | Schema | C |
 | --- | --- |
-| object with `properties` | a struct; a required member is a member, an optional one is `bool has_x; T x;` |
+| object with `properties` | a struct; a required member is a member, an optional one is `Bool has_x; T x;` |
 | `allOf` (DAP's requests extend `Request`, which extends `ProtocolMessage`) | the members of every part, base first, flattened; a later part replaces a member of an earlier one (`Request.command` becomes the constant `"launch"`) |
 | a `const`, or an `enum` of one value | no member: the parse requires it, the write puts it, so `type`/`event`/`command`/`method` discriminators cost nothing |
 | members the schema does not list (anything but `additionalProperties: false`) | `SmithProtocolExtra additionalProperties`, the keys and raw values, written back; a launch request's adapter attributes and a tool's input schema survive |
-| `string` / `integer` / `number` / `boolean` | `struct smith_array_const_char_n` (not copied), `int64_t`, `double`, `bool` |
+| `string` / `integer` / `number` / `boolean` | `struct smith_array_const_char_n` (not copied), `int64_t`, `double`, `Bool` |
 | `enum` of strings | a C `enum`; a string outside it is refused |
 | `_enum`, or `anyOf` of an enum and a string (an open enum) | `{ known; struct smith_array_const_char_n text; }`: `known` is the enum value or `_Other`, `text` the string as written |
 | `anyOf` / `oneOf`, `type: [a, b]` | a tagged union `{ kind; union as; }`. Where every alternative is a struct with a constant string member of one name and a value of its own (`method`, `type`), that member picks the alternative; otherwise the alternatives are tried most specific first (most required members), the ones that take any JSON last |
-| `type: [T, "null"]` | `{ bool is_null; T value; }` |
+| `type: [T, "null"]` | `{ Bool is_null; T value; }` |
 | `array` | `{ const T *items; size_t count; }` |
 | `additionalProperties: schema` on an object with no properties | `{ const struct smith_array_const_char_n *keys; const T *values; size_t count; }` |
 | `{}`, `true`, `{"type": "object"}`, the list of every JSON type | `SmithProtocolAny`, the `const SmithJsonValue *` tree, so nothing is lost; `nullptr` writes as null. An optional `Any` member counts as present when it is `null` |

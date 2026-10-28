@@ -1,9 +1,9 @@
 ---
 name: smith-io-c
-description: "Using smith::io from C (#include <smith/io.h>): the C names (SmithIo, smith_io_make, smith_files_read) that follow from the module's, a C capability in a header, and compiling the library in build.c with smith_library(b, "io"). Load when C code includes <smith/io.h> or a build.c compiles io."
+description: "Using std::io from C (#include <smith/io.h>): the C names (SmithIo, smith_io_make, smith_files_read) that follow from the module's, a C capability in a header, and compiling the library in build.c with smith_library(b, "io"). Load when C code includes <smith/io.h> or a build.c compiles io."
 ---
 
-# smith::io from C
+# std::io from C
 
 Everything a program does to the world outside it is a value you hold and pass on. It runs on macOS (kqueue) and Linux (epoll); operations complete in `io::Op`s the caller owns.
 
@@ -19,7 +19,7 @@ A module's name is its C name without the prefix, and the C name is the one the 
 | the fake io: `io::Test`, `io::make_test`, `io::test_add_file`, `io::test_output`... | `SmithIoTest`, `smith_io_make_test`, `smith_io_test_add_file`, `smith_io_test_output`... |
 | an enum's constant: `io::Replace`, `io::Atomic`, `io::Never`, `io::InputClosed` | the type's C name and the constant: `SmithWrite_Replace`, `SmithChildExit_Never`... |
 
-**Bytes are slices.** `io::files_write`, `io::net_send` and `io::child_write_async` take a `const u8[:]` (C: `struct smith_array_const_u8_n`, `{.data = (const uint8_t *)p, .count = {n}}`), and the reads that fill a buffer (`io::net_receive`, `io::child_read_async`) a `u8[:]` (`struct smith_array_u8_n`); the count is the size or capacity. What a read returns is a `const u8[:]` too: `SmithRead.data` and `SmithOp.data` (`.data.data`, `.data.count[0]`; a file read or a line has a zero after it, not counted), and `SmithOp.taken` is the bytes a write took.
+**Bytes are slices.** `io::files_write`, `io::net_send` and `io::child_write_async` take a `const U8[:]` (C: `struct smith_array_const_u8_n`, `{.data = (const uint8_t *)p, .count = {n}}`), and the reads that fill a buffer (`io::net_receive`, `io::child_read_async`) a `U8[:]` (`struct smith_array_u8_n`); the count is the size or capacity. What a read returns is a `const U8[:]` too: `SmithRead.data` and `SmithOp.data` (`.data.data`, `.data.count[0]`; a file read or a line has a zero after it, not counted), and `SmithOp.taken` is the bytes a write took.
 
 Nested modules do not exist, so a capability's functions are `io::<capability>_<name>` (`io::files_read`) where a future `io::files::read` might be; the capabilities and what they do would stay.
 
@@ -44,11 +44,11 @@ int main(int argc, char **argv) {
 }
 ```
 
-A project's own capability in a C header: `typedef struct [[clang::annotate("smith::capability")]] { void *handle; } Window;`, its raw calls in `window.c` beside `window.h`, and `[[nodiscard, clang::annotate("smith::main_only")]] Window window_make(...)` for a constructor that only `main` may call. The fake io in C: `alignas(smith_arena_align_max) static unsigned char memory[1 << 20]; SmithIo io = smith_io_make_test((SmithIoTest){.memory = memory, .capacity = sizeof memory, .seed = 7});`.
+A project's own capability in a C header: `typedef struct [[clang::annotate("std::capability")]] { void *handle; } Window;`, its raw calls in `window.c` beside `window.h`, and `[[nodiscard, clang::annotate("std::main_only")]] Window window_make(...)` for a constructor that only `main` may call. The fake io in C: `alignas(smith_arena_align_max) static unsigned char memory[1 << 20]; SmithIo io = smith_io_make_test((SmithIoTest){.memory = memory, .capacity = sizeof memory, .seed = 7});`.
 
 ## Get the library in build.c
 
-io uses the arena and random, so compile all three, each with the project's own flags and `-I .smith/include` (see smith-build-objects for the `smith_object` form). io is written in `.smith`, so compiling it needs a smith with clang inside, as the arena and random do; C code that only includes `<smith/io.h>` compiles anywhere. A `.smith` project that imports it needs no build.c line: naming `import smith::io;` is enough to link it and the arena and random it uses.
+io uses the arena and random, so compile all three, each with the project's own flags and `-I .smith/include` (see smith-build-objects for the `smith_object` form). io is written in `.smith`, so compiling it needs a smith with clang inside, as the arena and random do; C code that only includes `<smith/io.h>` compiles anywhere. A `.smith` project that imports it needs no build.c line: naming `import std::io;` is enough to link it and the arena and random it uses.
 
 ```c
 SmithObject io = {.compiler = "smith-cc", .source = smith_library(b, "io"), .output = "build/smith/io.o", .flags = flags};

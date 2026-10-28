@@ -1,12 +1,12 @@
 ---
 type: architecture
-title: smith::net, the direct-call TCP and TLS module
+title: std::net, the direct-call TCP and TLS module
 description: Sockets and TLS connections as direct calls returning result(T, net::Error) (connect, connect_tls, listen, accept, read, write), over a net handler of the thread, with an in-memory fake that scripts servers and pairs clients with listeners; the fourth replacement of io::Io's parts (issue #240).
 tags: [net, tls, handlers, result]
 ---
-# smith::net
+# std::net
 
-`lib/smith/net.smith` (skill smith-net) is `io::Io`'s net part without the `Io` value (issue #240, phase 1), and adds what io had no call for: `listen` and `accept`. It is additive: `io` is unchanged until the migration phases. A child's stdio pipes belong to smith::process (#483); `net` is TCP and TLS only.
+`lib/std/net.smith` (skill smith-net) is `io::Io`'s net part without the `Io` value (issue #240, phase 1), and adds what io had no call for: `listen` and `accept`. It is additive: `io` is unchanged until the migration phases. A child's stdio pipes belong to std::process (#483); `net` is TCP and TLS only.
 
 - **A handler of its own.** `SmithNetHandler` (`include/smith/handlers.h`) has `connect`, `listen`, `port`, `accept`, `read`, `write` and `close`. No libc function is interposed (a socket is a descriptor the files handler would take): the module calls the members itself, so a thread with a handler never opens a socket, and none set is the real network. A connection or listener is an id the handler chooses; the module's `Connection` keeps the descriptor of a real one. The setter returns the previous handler.
 - **The real network.** Plain TCP is POSIX sockets, blocking, on both systems (`getaddrinfo`, every address tried; SIGPIPE never reaches the program). TLS is the platform's stack, loaded with `dlopen` on the first TLS connect so a program that never connects pays nothing: Network.framework on macOS (its callbacks run on a serial queue and signal a semaphore the call waits on) and OpenSSL 3 on Linux (over the blocking socket). The system's trust decides and nothing turns the check off. A failed certificate is its own `Error` (`Expired`, `NotYetValid`, `WrongHost`, `Untrusted`, `BadCertificate`); Network.framework's TLS-domain status names only an expired or not-yet-valid certificate (checked by hand: wrong.host.badssl.com gives the generic -9808 rejection), so every other rejection is `BadCertificate` there; a finer cause would need a `sec_protocol_options_set_verify_block` running `SecTrustEvaluateWithError`, not built. A TLS server is out of scope here: it is the HTTP server's decision (#334).

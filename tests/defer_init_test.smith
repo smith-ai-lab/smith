@@ -4,16 +4,16 @@
 // only.
 module defer_init_test;
 
-import smith::io;
-import smith::test;
+import std::io;
+import std::test;
 import scratch;
 
-static bool darwin(const scratch::Project *p) {
+static Bool darwin(const scratch::Project *p) {
     return scratch::same(scratch::capture(p, "uname -s"), "Darwin");
 }
 
 // A project with the tool built and the three objects compiled; nullptr-free: `ok` is false off macOS.
-static scratch::Project objects(io::Io *io, bool *ok) {
+static scratch::Project objects(io::Io *io, Bool *ok) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     *ok = darwin(&p);
     if (!*ok) {
@@ -48,7 +48,7 @@ static scratch::Project objects(io::Io *io, bool *ok) {
 }
 
 export void test_defer_before_both_initializers_run_at_load(io::Io *io) {
-    bool ok = false;
+    Bool ok = false;
     scratch::Project p = objects(io, &ok);
     if (!ok) {
         return;
@@ -60,7 +60,7 @@ export void test_defer_before_both_initializers_run_at_load(io::Io *io) {
 }
 
 export void test_defer_the_tool_says_what_it_did(io::Io *io) {
-    bool ok = false;
+    Bool ok = false;
     scratch::Project p = objects(io, &ok);
     if (!ok) {
         return;
@@ -70,7 +70,7 @@ export void test_defer_the_tool_says_what_it_did(io::Io *io) {
 }
 
 export void test_defer_an_object_with_no_initializer_is_unchanged(io::Io *io) {
-    bool ok = false;
+    Bool ok = false;
     scratch::Project p = objects(io, &ok);
     if (!ok) {
         return;
@@ -83,7 +83,7 @@ export void test_defer_an_object_with_no_initializer_is_unchanged(io::Io *io) {
 }
 
 export void test_defer_after_nothing_runs_at_load_and_the_section_holds_both(io::Io *io) {
-    bool ok = false;
+    Bool ok = false;
     scratch::Project p = objects(io, &ok);
     if (!ok) {
         return;
@@ -99,7 +99,7 @@ export void test_defer_after_nothing_runs_at_load_and_the_section_holds_both(io:
 }
 
 export void test_defer_the_section_is_plain_data_and_no_mod_init_func_is_left(io::Io *io) {
-    bool ok = false;
+    Bool ok = false;
     scratch::Project p = objects(io, &ok);
     if (!ok) {
         return;
@@ -115,7 +115,7 @@ export void test_defer_the_section_is_plain_data_and_no_mod_init_func_is_left(io
 }
 
 export void test_defer_a_missing_input_fails(io::Io *io) {
-    bool ok = false;
+    Bool ok = false;
     scratch::Project p = objects(io, &ok);
     if (!ok) {
         return;
@@ -125,7 +125,7 @@ export void test_defer_a_missing_input_fails(io::Io *io) {
 }
 
 export void test_defer_a_wrong_usage_is_2(io::Io *io) {
-    bool ok = false;
+    Bool ok = false;
     scratch::Project p = objects(io, &ok);
     if (!ok) {
         return;
@@ -135,7 +135,7 @@ export void test_defer_a_wrong_usage_is_2(io::Io *io) {
 }
 
 export void test_defer_a_file_that_is_no_mach_o_object_is_refused(io::Io *io) {
-    bool ok = false;
+    Bool ok = false;
     scratch::Project p = objects(io, &ok);
     if (!ok) {
         return;

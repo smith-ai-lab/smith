@@ -2,20 +2,20 @@
 #include <stdio.h>
 
 int main() {
-    printf("%zu %zu %zu %zu\n", sizeof(u8), sizeof(u16), sizeof(u32), sizeof(u64));
-    printf("%zu %zu %zu %zu\n", sizeof(i8), sizeof(i16), sizeof(i32), sizeof(i64));
-    printf("%zu %zu\n", sizeof(usize), sizeof(isize));
-    printf("%zu %zu %zu\n", sizeof(f16), sizeof(f32), sizeof(f64));
-    i8 minus = -1;
-    u8 wrap = (u8)minus;
+    printf("%zu %zu %zu %zu\n", sizeof(U8), sizeof(U16), sizeof(U32), sizeof(U64));
+    printf("%zu %zu %zu %zu\n", sizeof(I8), sizeof(I16), sizeof(I32), sizeof(I64));
+    printf("%zu %zu\n", sizeof(Usize), sizeof(Isize));
+    printf("%zu %zu %zu\n", sizeof(F16), sizeof(F32), sizeof(F64));
+    I8 minus = -1;
+    U8 wrap = (U8)minus;
     printf("%d %u\n", minus, wrap);
-    f32 half = 0.5f;
-    f64 wide = half;
+    F32 half = 0.5f;
+    F64 wide = half;
     printf("%.2f %.2f\n", (double)half, wide);
-    static_assert(_Generic((u64)0, unsigned long long: 1, unsigned long: 1, default: 0), "u64 is an unsigned type");
-    static_assert(_Generic((usize)0, size_t: 1, default: 0), "usize is size_t");
-    static_assert(_Generic((isize)0, ptrdiff_t: 1, default: 0), "isize is ptrdiff_t");
-    bool flag = true;
+    static_assert(_Generic((U64)0, unsigned long long: 1, unsigned long: 1, default: 0), "U64 is an unsigned type");
+    static_assert(_Generic((Usize)0, size_t: 1, default: 0), "Usize is size_t");
+    static_assert(_Generic((Isize)0, ptrdiff_t: 1, default: 0), "Isize is ptrdiff_t");
+    Bool flag = true;
     printf("%d\n", flag);
     return 0;
 }

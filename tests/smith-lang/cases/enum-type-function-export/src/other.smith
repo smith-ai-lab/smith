@@ -2,7 +2,7 @@ module other;
 
 import opt;
 
-// A second importer of the exported type function: its `opt::maybe(usize)` is the struct the others have.
-export opt::maybe(usize) pick(usize v) {
+// A second importer of the exported type function: its `opt::maybe(Usize)` is the struct the others have.
+export opt::Maybe(Usize) pick(Usize v) {
     return {.some = v};
 }

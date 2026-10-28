@@ -6,9 +6,9 @@
 // tests/prove_test.smith for the proofs' cache and budget.
 module prove_smith_test;
 
-import smith::format;
-import smith::io;
-import smith::test;
+import std::format;
+import std::io;
+import std::test;
 import scratch;
 import prove_cases;
 
@@ -263,15 +263,15 @@ export void test_prove_slices_in_a_project_the_unguarded_index_is_refuted_and_th
                           "neither a body nor a contract");
 }
 
-// 11e. The messages (issue #155): an instance is named as written in smith (clamp<i32>), and the note that a callee
+// 11e. The messages (issue #155): an instance is named as written in smith (clamp<I32>), and the note that a callee
 // "may write memory it was not given" is only for a function that does, never a pure generic.
 export void test_prove_messages_an_instance_is_named_as_written(io::Io *io) {
     scratch::Project p = fresh(io);
     scratch::Run run = in_folder(&p, "clamp", "-v");
     scratch::expect_status("messages: a call that breaks a requires fails", 1, &run);
     has("messages: the failure names the instance as written", &run,
-        "the call of stats::clamp<i32> may break smith_requires(low <= high)");
-    has("messages: -v names it the same way", &run, "ok    stats::clamp<i32>  (");
+        "the call of stats::clamp<I32> may break smith_requires(low <= high)");
+    has("messages: -v names it the same way", &run, "ok    stats::clamp<I32>  (");
     scratch::expect_lacks("messages: no C type in an instance's name", run.out, "<int>");
     scratch::expect_lacks("messages: a pure generic is not said to write memory", run.out, "may write memory");
 }
@@ -289,12 +289,12 @@ export void test_prove_write_note_a_callee_that_stores_to_a_global_says_so(io::I
 // lose its entry for the dropped edge, or the linked module does not verify.
 constexpr char printing_stats[_] = "module stats;\n"
                                    "\n"
-                                   "import smith::contract;\n"
+                                   "import std::contract;\n"
                                    "\n"
-                                   "export i32 largest(i32 xs[:]) {\n"
+                                   "export I32 largest(I32 xs[:]) {\n"
                                    "    contract::requires(countof(xs) > 0);\n"
-                                   "    i32 best = xs[0];\n"
-                                   "    for (usize i = 1; i < countof(xs); i++) {\n"
+                                   "    I32 best = xs[0];\n"
+                                   "    for (Usize i = 1; i < countof(xs); i++) {\n"
                                    "        contract::invariant(1 <= i && i <= countof(xs));\n"
                                    "        best = xs[i] > best ? xs[i] : best;\n"
                                    "    }\n"
@@ -303,12 +303,12 @@ constexpr char printing_stats[_] = "module stats;\n"
 
 constexpr char printing_main[_] = "module main;\n"
                                   "\n"
-                                  "import smith::console;\n"
+                                  "import std::console;\n"
                                   "import stats;\n"
                                   "\n"
-                                  "i32 main() {\n"
-                                  "    i32 raw[_] = {-3, 1, 9, 4};\n"
-                                  "    i32 readings[:] = raw;\n"
+                                  "I32 main() {\n"
+                                  "    I32 raw[_] = {-3, 1, 9, 4};\n"
+                                  "    I32 readings[:] = raw;\n"
                                   "    console::print(\"largest \", stats::largest(readings[1:]), \"\\n\");\n"
                                   "    return 0;\n"
                                   "}\n";

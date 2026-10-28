@@ -1,5 +1,5 @@
 import vector_check;
 
-i32 twice(i32 x) {
+I32 twice(I32 x) {
     return vector_check::sum(x, x);
 }

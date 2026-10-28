@@ -1,4 +1,4 @@
-// [[smith::effects(...)]]: a ceiling with the names as written (LLVM r9, patches/clang-plugin-attr-args.patch).
+// [[std::effects(...)]]: a ceiling with the names as written (LLVM r9, patches/clang-plugin-attr-args.patch).
 #include <stdio.h>
 #include <stdlib.h>
 

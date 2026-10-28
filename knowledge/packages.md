@@ -41,7 +41,7 @@ smith_build_PackageResult cmake_package = smith_package(b, &(SmithPackage){
   `ETIMEDOUT`, and reports statuses, redirect loops, short bodies and TLS failures as messages that name the URL.
   smith.c and the build runtime include the client with the libraries it needs (`arena`, `random`, `io`,
   `http.c`; the runtime gets the headers from `.smith/include/`, `.smith/internal/http.c`, and links the `.smith` modules
-  `.smith/lib/smith/*.smith` that its manifest compiles (knowledge/smith-bootstrap.md), and `smith_library` does not offer
+  `.smith/lib/std/*.smith` that its manifest compiles (knowledge/smith-bootstrap.md), and `smith_library` does not offer
   http until a second project needs it); the TLS library is
   loaded with `dlopen` on the first download, so nothing else pays for it. SHA-256 is in smith, checked against the NIST
   test vectors in `tests/build_*_test.smith`. The network cases are tested in `tests/package_checks_test.smith` (a real cache, a scripted

@@ -7,13 +7,13 @@
 // has nothing to test, and the tests do nothing.
 module lsp_test;
 
-import smith::arena;
-import smith::format;
-import smith::io;
-import smith::test;
+import std::arena;
+import std::format;
+import std::io;
+import std::test;
 import scratch;
 import <string.h>;
-import smith::mem;
+import std::mem;
 
 // The project is smith's lsp fixture; its folders hold what each test opens.
 static scratch::Project folder(const scratch::Project *root, const char *name) {
@@ -31,7 +31,7 @@ constexpr char probe_script[_] =
 // The fixture, the client built, and (checks off, as the original's) smith's default clang-tidy replaced by one that
 // reports nothing, since these tests are about the lowering's and the compiler's diagnostics. False when the smith
 // under test has no editor support.
-static bool make(io::Io *io, scratch::Project *root, bool tidy_off) {
+static Bool make(io::Io *io, scratch::Project *root, Bool tidy_off) {
     *root = scratch::project(io, "lsp", "lsp");
     if (scratch::sh(root, probe_script).status != 0) {
         return false;
@@ -59,7 +59,7 @@ constexpr char built_script[_] =
     "else i=0; while [ ! -d \"$c\" ] && [ -d \"$lock\" ] && [ $i -lt 3000 ]; do sleep 0.2; i=$((i + 1)); done; fi; "
     "[ ! -d \"$c\" ] || cp -Rp \"$c/.\" \"$name\"";
 
-static bool make_built(io::Io *io, scratch::Project *root, scratch::Project *p, const char *name) {
+static Bool make_built(io::Io *io, scratch::Project *root, scratch::Project *p, const char *name) {
     if (!make(io, root, true)) {
         return false;
     }
@@ -80,7 +80,7 @@ static const char *session(io::Io *io, const scratch::Project *p, const char *co
 }
 
 // The log has the whole line.
-static bool has_line(io::Io *io, const char *log, const char *line) {
+static Bool has_line(io::Io *io, const char *log, const char *line) {
     const char *haystack = format::push(&io->arena, "\n", log, "\n").data;
     const char *needle = format::push(&io->arena, "\n", line, "\n").data;
     return scratch::contains(haystack, needle);
@@ -94,10 +94,10 @@ static void expect_line(io::Io *io, const char *name, const char *log, const cha
 }
 
 // How many lines of the log start with the prefix.
-static usize count_prefix(io::Io *io, const char *log, const char *prefix) {
+static Usize count_prefix(io::Io *io, const char *log, const char *prefix) {
     const char *haystack = format::push(&io->arena, "\n", log).data;
     const char *needle = format::push(&io->arena, "\n", prefix).data;
-    usize count = 0;
+    Usize count = 0;
     for (const char *at = c::strstr(haystack, needle); at != nullptr; at = c::strstr(at + 1, needle)) {
         count++;
     }
@@ -106,12 +106,12 @@ static usize count_prefix(io::Io *io, const char *log, const char *prefix) {
 
 // The lines that start with the prefix, joined by a space.
 static const char *joined(io::Io *io, const char *log, const char *prefix) {
-    usize length = c::strlen(log);
-    usize prefix_length = c::strlen(prefix);
+    Usize length = c::strlen(log);
+    Usize prefix_length = c::strlen(prefix);
     char *out = arena::push_slice(&io->arena, char, length + 2).data;
-    usize used = 0;
+    Usize used = 0;
     for (const char *line = log; *line != '\0';) {
-        usize size = c::strcspn(line, "\n");
+        Usize size = c::strcspn(line, "\n");
         if (size >= prefix_length && c::strncmp(line, prefix, prefix_length) == 0) {
             if (used > 0) {
                 out[used++] = ' ';
@@ -126,10 +126,10 @@ static const char *joined(io::Io *io, const char *log, const char *prefix) {
 }
 
 // How many lines of the log are the line.
-static usize count_line(io::Io *io, const char *log, const char *line) {
+static Usize count_line(io::Io *io, const char *log, const char *line) {
     const char *haystack = format::push(&io->arena, "\n", log, "\n").data;
     const char *needle = format::push(&io->arena, "\n", line, "\n").data;
-    usize count = 0;
+    Usize count = 0;
     for (const char *at = c::strstr(haystack, needle); at != nullptr; at = c::strstr(at + 1, needle)) {
         count++;
     }
@@ -226,8 +226,8 @@ export void test_lsp_hover_definition_and_symbols_across_modules(io::Io *io) {
     expect_line(io, "definition: so is the type", log, "definition main.smith:6:10 -> geometry/box.smith:3:50");
     expect_line(io, "symbols: main", log, "symbol main.smith: main");
     expect_line(io, "hover at the definition: the function's name, in the module itself", log,
-                "hover geometry/box.smith:5:12: function area |  | → f32 (aka float) |  | Parameters: |  | - Box b "
-                "|  | pure |  | f32 area(Box b)");
+                "hover geometry/box.smith:5:12: function area |  | → F32 (aka float) |  | Parameters: |  | - Box b "
+                "|  | pure |  | F32 area(Box b)");
     expect_line(io, "hover at the definition: and the type's", log,
                 "hover geometry/box.smith:3:50: type-alias Box |  | Type: struct Box |  | typedef struct Box Box");
     scratch::expect_text(
@@ -238,7 +238,7 @@ export void test_lsp_hover_definition_and_symbols_across_modules(io::Io *io) {
         joined(io, log, "symbol geometry/box.smith"));
 }
 
-// A run-time array `T xs[:]` (issue #106) is shown as the source writes it, `f32[:]`, never as the struct the lowering
+// A run-time array `T xs[:]` (issue #106) is shown as the source writes it, `F32[:]`, never as the struct the lowering
 // made (`struct smith_array_f32_n`): in the hover of the function, of the parameter and of its use, and in the outline.
 export void test_lsp_a_slice_is_shown_as_the_source_writes_it(io::Io *io) {
     scratch::Project root, p;
@@ -249,11 +249,11 @@ export void test_lsp_a_slice_is_shown_as_the_source_writes_it(io::Io *io) {
                               "open geometry/slices.smith -- hover geometry/slices.smith 3 12 -- hover "
                               "geometry/slices.smith 3 21 -- hover geometry/slices.smith 4 12 -- symbols "
                               "geometry/slices.smith");
-    expect_line(io, "slice: the hover of a function shows its slice parameter as f32[:]", log,
-                "hover geometry/slices.smith:3:12: function pick |  | → f32 (aka float) |  | Parameters: |  | - "
-                "f32[:] xs | - usize i (aka unsigned long) |  | effects: fails |  | f32 pick(f32[:] xs, usize i)");
-    expect_line(io, "slice: the hover of the parameter shows its type as f32[:]", log,
-                "hover geometry/slices.smith:3:21: param xs |  | Type: f32[:] |  | // In pick | f32[:] xs");
+    expect_line(io, "slice: the hover of a function shows its slice parameter as F32[:]", log,
+                "hover geometry/slices.smith:3:12: function pick |  | → F32 (aka float) |  | Parameters: |  | - "
+                "F32[:] xs | - Usize i (aka unsigned long) |  | effects: fails |  | F32 pick(F32[:] xs, Usize i)");
+    expect_line(io, "slice: the hover of the parameter shows its type as F32[:]", log,
+                "hover geometry/slices.smith:3:21: param xs |  | Type: F32[:] |  | // In pick | F32[:] xs");
 }
 
 // A function after one with a slice parameter (issue #133): the end of the first function's body (its `}` is read while
@@ -270,11 +270,11 @@ export void test_lsp_a_function_after_a_slice_parameter(io::Io *io) {
                               "3 18 -- references m.smith 3 12 -- definition users.smith 5 15 m.smith:3:12 -- "
                               "symbols m.smith");
     expect_line(io, "after a slice: hover on the first function", log,
-                "hover m.smith:2:12: function a |  | → i32 (aka int) |  | Parameters: |  | - f32[:] g |  | pure |  | "
-                "i32 a(f32[:] g)");
+                "hover m.smith:2:12: function a |  | → I32 (aka int) |  | Parameters: |  | - F32[:] g |  | pure |  | "
+                "I32 a(F32[:] g)");
     expect_line(io, "after a slice: hover on the second function", log,
-                "hover m.smith:3:12: function b |  | → i32 (aka int) |  | Parameters: |  | - i32[:] m |  | pure |  | "
-                "i32 b(i32[:] m)");
+                "hover m.smith:3:12: function b |  | → I32 (aka int) |  | Parameters: |  | - I32[:] m |  | pure |  | "
+                "I32 b(I32[:] m)");
     expect_one_line(io, "after a slice: hover on its parameter", log, "hover m.smith:3:18: param m");
     expect_one_line(io, "after a slice: references of the second function find it", log, "reference m.smith:3:12");
     expect_line(io, "after a slice: go-to-definition of the second function, from a call", log,
@@ -309,17 +309,17 @@ export void test_lsp_many_dimensions_and_qualifier_tags_as_written(io::Io *io) {
     const char *log = session(io, &p,
                               "open geometry/dims.smith -- hover geometry/dims.smith 6 12 -- hover "
                               "geometry/dims.smith 10 14 -- symbols geometry/dims.smith");
-    expect_line(io, "dims: the hover of a function shows an f32[:][2] parameter as written", log,
-                "hover geometry/dims.smith:6:12: function rows |  | → f32 (aka float) |  | Parameters: |  | - "
-                "f32[:][2] m | - usize i (aka unsigned long) |  | effects: fails |  | f32 rows(f32[:][2] m, usize i)");
+    expect_line(io, "dims: the hover of a function shows an F32[:][2] parameter as written", log,
+                "hover geometry/dims.smith:6:12: function rows |  | → F32 (aka float) |  | Parameters: |  | - "
+                "F32[:][2] m | - Usize i (aka unsigned long) |  | effects: fails |  | F32 rows(F32[:][2] m, Usize i)");
     expect_line(io, "dims: the hover shows the tags of qualified slices as written", log,
-                "hover geometry/dims.smith:10:14: function tags |  | → usize (aka unsigned long) |  | Parameters: "
-                "|  | - u8[const restrict :] a | - const char[:] b |  | pure |  | usize tags(u8[const restrict :] a, "
+                "hover geometry/dims.smith:10:14: function tags |  | → Usize (aka unsigned long) |  | Parameters: "
+                "|  | - U8[const restrict :] a | - const char[:] b |  | pure |  | Usize tags(U8[const restrict :] a, "
                 "const char[:] b)");
     log = session(io, &p, "open geometry/grid.smith -- hover geometry/grid.smith 3 12");
-    expect_line(io, "dims: the hover of a function shows an f32[:][:] parameter as written", log,
-                "hover geometry/grid.smith:3:12: function grid |  | → f32 (aka float) |  | Parameters: |  | - "
-                "f32[:][:] g | - usize i (aka unsigned long) |  | effects: fails |  | f32 grid(f32[:][:] g, usize i)");
+    expect_line(io, "dims: the hover of a function shows an F32[:][:] parameter as written", log,
+                "hover geometry/grid.smith:3:12: function grid |  | → F32 (aka float) |  | Parameters: |  | - "
+                "F32[:][:] g | - Usize i (aka unsigned long) |  | effects: fails |  | F32 grid(F32[:][:] g, Usize i)");
 }
 
 // A slice element in a generic call's argument: the editor answers (it used to loop in the token collector, #264).
@@ -350,12 +350,12 @@ export void test_lsp_a_call_to_a_generic(io::Io *io) {
                 "argument",
                 log,
                 "hover genuse.smith:7:26: generic function pick::larger |  | typeof(a) pick::larger(auto a, "
-                "typeof(a) b) |  | instance pick::larger(i32)");
+                "typeof(a) b) |  | instance pick::larger(I32)");
     expect_line(io, "generic call: go-to-definition is the generic's name in its module", log,
                 "definition genuse.smith:7:26 -> pick.smith:4:18");
     expect_line(io, "generic call: hover, the second instance", log,
                 "hover genuse.smith:8:26: generic function pick::larger |  | typeof(a) pick::larger(auto a, "
-                "typeof(a) b) |  | instance pick::larger(f64)");
+                "typeof(a) b) |  | instance pick::larger(F64)");
 }
 
 // A function passed to `constexpr auto f`: the hover shows the head as written, and the instance names the function.
@@ -385,8 +385,8 @@ export void test_lsp_a_generic_argument_list(io::Io *io) {
                               "open genuse.smith pick.smith -- hover genuse.smith 21 20 -- definition genuse.smith 21 "
                               "20 pick.smith:14:14");
     expect_line(io, "generic argument list: hover shows the head as written and every type in the instance", log,
-                "hover genuse.smith:21:20: generic function pick::count_args |  | usize pick::count_args(auto x, "
-                "auto... rest) |  | instance pick::count_args(int, f64, int)");
+                "hover genuse.smith:21:20: generic function pick::count_args |  | Usize pick::count_args(auto x, "
+                "auto... rest) |  | instance pick::count_args(int, F64, int)");
     expect_line(io, "generic argument list: go-to-definition is the generic's name", log,
                 "definition genuse.smith:21:20 -> pick.smith:14:14");
     expect_no_lines(io, "generic argument list: no diagnostics", log, "diag genuse.smith");
@@ -403,7 +403,7 @@ export void test_lsp_a_generic_argument_list_and_for_constexpr(io::Io *io) {
                               "open genuse.smith pick.smith -- hover genuse.smith 25 20 -- definition genuse.smith 25 "
                               "20 pick.smith:20:12");
     expect_line(io, "generic argument list and for constexpr: hover shows the head as written and the instance", log,
-                "hover genuse.smith:25:20: generic function pick::gathered |  | i32 pick::gathered(auto... rest) |  "
+                "hover genuse.smith:25:20: generic function pick::gathered |  | I32 pick::gathered(auto... rest) |  "
                 "| instance pick::gathered(int, int)");
     expect_line(io, "generic argument list and for constexpr: go-to-definition is the generic's name", log,
                 "definition genuse.smith:25:20 -> pick.smith:20:12");
@@ -430,7 +430,7 @@ export void test_lsp_if_constexpr(io::Io *io) {
                     "diag choice.smith:15:26: In `if constexpr`: `y` is not a constant");
 }
 
-// A tuple, `struct { i32, f32 }`, `t[0]` and `countof(t)`: no diagnostics, and a hover on the member finds its type.
+// A tuple, `struct { I32, F32 }`, `t[0]` and `countof(t)`: no diagnostics, and a hover on the member finds its type.
 export void test_lsp_tuples(io::Io *io) {
     scratch::Project root, p;
     if (!make_built(io, &root, &p, "p")) {
@@ -540,7 +540,7 @@ static const char *query(const scratch::Project *p, const char *arguments, io::I
     return scratch::sh(p, format::push(&io->arena, "smith lsp ", arguments, " 2>/dev/null").data).out;
 }
 
-constexpr char dot_definition[_] = "geom/vec.smith:8:12: function: geom::vec::dot: export f32 dot(Vec a, Vec b) {";
+constexpr char dot_definition[_] = "geom/vec.smith:8:12: function: geom::vec::dot: export F32 dot(Vec a, Vec b) {";
 
 export void test_lsp_query_the_first_query_says_it_waits_for_the_index(io::Io *io) {
     scratch::Project root, p;
@@ -563,7 +563,7 @@ export void test_lsp_query_def(io::Io *io) {
     scratch::expect_text("query def: a bare name is every module's, and each line says which", dot_definition,
                          query(&p, "def dot", io));
     scratch::expect_text("query def: a C name",
-                         "geom/vec.smith:8:12: function: geom_vec_dot: export f32 dot(Vec a, Vec b) {",
+                         "geom/vec.smith:8:12: function: geom_vec_dot: export F32 dot(Vec a, Vec b) {",
                          query(&p, "def geom_vec_dot", io));
 }
 
@@ -575,7 +575,7 @@ export void test_lsp_query_refs(io::Io *io) {
     scratch::expect_text(
         "query refs: every spelling (an alias, the module's own name, the C name in a C file) of a function",
         "c_use.c:4:12: ref: return geom_vec_dot(a, a);\n"
-        "geom/vec.smith:8:12: ref: export f32 dot(Vec a, Vec b) {\n"
+        "geom/vec.smith:8:12: ref: export F32 dot(Vec a, Vec b) {\n"
         "user.smith:7:17: ref: auto n = v::dot(a, a);\n"
         "user.smith:12:29: ref: return vec::larger(vec::dot(a, a), vec::dot(b, b));\n"
         "user.smith:12:45: ref: return vec::larger(vec::dot(a, a), vec::dot(b, b));",
@@ -587,7 +587,7 @@ export void test_lsp_query_refs(io::Io *io) {
     // review).
     scratch::expect_text(
         "query refs: a function with a c_name, asked by its written name",
-        "geom/vec.smith:16:50: ref: [[smith::c_name(\"geom_vec_squared\")]] export f32 length2(Vec a) {\n"
+        "geom/vec.smith:16:50: ref: [[std::c_name(\"geom_vec_squared\")]] export F32 length2(Vec a) {\n"
         "user.smith:16:17: ref: return vec::length2(a);",
         query(&p, "refs vec::length2", io));
 }
@@ -642,7 +642,7 @@ export void test_lsp_query_batch_from_the_standard_input(io::Io *io) {
         return;
     }
     scratch::expect_text("query batch: queries one a line from the standard input, answered in order",
-                         "geom/vec.smith:8:12: function: geom::vec::dot: export f32 dot(Vec a, Vec b) {\n"
+                         "geom/vec.smith:8:12: function: geom::vec::dot: export F32 dot(Vec a, Vec b) {\n"
                          "user.smith:12:17: ref: return vec::larger(vec::dot(a, a), vec::dot(b, b));",
                          scratch::capture(&p, "printf 'def vec::dot\\nrefs vec::larger\\n' | smith lsp - 2>/dev/null"));
 }
@@ -683,7 +683,7 @@ export void test_lsp_solo_a_single_file_with_no_database(io::Io *io) {
     expect_no_lines(io, "solo: and has no diagnostics", log, "diag ");
 }
 
-// `i32 main(str args[:])` lowers to a head and the statements that make `args`; the editor's token buffer used to walk
+// `I32 main(Str args[:])` lowers to a head and the statements that make `args`; the editor's token buffer used to walk
 // them for ever (issue #523), one core at 100%. The client gives the server 10 s of CPU time to answer.
 export void test_lsp_main_with_args_ends(io::Io *io) {
     scratch::Project root;
@@ -772,8 +772,8 @@ export void test_lsp_modules_hover_definition_symbols_references(io::Io *io) {
     expect_line(io, "modules: go-to-definition lands in the other module's source", log,
                 "definition main.smith:6:18 -> foo.smith:3:12");
     expect_line(io, "modules: hover at the function's definition", log,
-                "hover foo.smith:3:12: function f |  | → i32 (aka int) |  | Parameters: |  | - i32 x (aka int) |  | "
-                "pure |  | i32 f(i32 x)");
+                "hover foo.smith:3:12: function f |  | → I32 (aka int) |  | Parameters: |  | - I32 x (aka int) |  | "
+                "pure |  | I32 f(I32 x)");
     expect_line(io, "modules: hover at the type's definition", log,
                 "hover foo.smith:7:41: type-alias Pair |  | Type: struct Pair |  | typedef struct Pair Pair");
     scratch::expect_text("modules: symbols, as written, each once",
@@ -794,8 +794,8 @@ export void test_lsp_modules_hover_on_a_function_with_a_declared_set(io::Io *io)
     scratch::Project p = folder(&root, "modules");
     const char *log = session(io, &p, "open declared.smith -- hover declared.smith 3 31");
     expect_line(io, "modules: hover on a function with a declared set", log,
-                "hover declared.smith:3:31: function grab |  | → i32 (aka int) |  | Parameters: |  | - i32 x (aka int) "
-                "|  | effects: alloc (declared) |  | static i32 grab(i32 x)");
+                "hover declared.smith:3:31: function grab |  | → I32 (aka int) |  | Parameters: |  | - I32 x (aka int) "
+                "|  | effects: alloc (declared) |  | static I32 grab(I32 x)");
 }
 
 export void test_lsp_modules_completion_after_a_module_name(io::Io *io) {
@@ -863,7 +863,7 @@ export void test_lsp_cinterop_exactly_one_definition(io::Io *io) {
     scratch::Project p = folder(&root, "cinterop");
     const char *log = session(io, &p, cinterop_hovers);
     const char *places[7] = {"7:19", "9:8", "9:21", "10:8", "10:58", "10:104", "10:112"};
-    for (usize i = 0; i < 7; i++) {
+    for (Usize i = 0; i < 7; i++) {
         const char *want = format::push(&io->arena, "definitions main.smith:", places[i], ": 1").data;
         scratch::expect_text(format::push(&io->arena, "cinterop: exactly one definition at ", places[i]).data, want,
                              joined(io, log, format::push(&io->arena, "definitions main.smith:", places[i], ":").data));
@@ -1050,7 +1050,7 @@ export void test_lsp_effects_across_files_show_the_chain_and_clear_on_save(io::I
     scratch::expect_status("effects: the database and the summary of b.c", 0, &made);
     const char *log = session(io, &p, "open a.c b.c -- replace b.c '    printf(\"%d\\n\", x);\n' '' -- save b.c");
     expect_line(io, "effects: a.c shows the error through b.c, with the chain", log,
-                "diag a.c:2:41: Smith-effect: `bad` is [[smith::pure]], but it has the effects console: bad -> noisy "
+                "diag a.c:2:41: Smith-effect: `bad` is [[std::pure]], but it has the effects console: bad -> noisy "
                 "(a.c:2) -> printf (b.c:4)");
     scratch::expect_count("effects: after b.c is saved without the print, a.c has no diagnostics again", 1,
                           count_prefix(io, log, "diag a.c"));
@@ -1083,22 +1083,22 @@ export void test_lsp_hover_has_no_fails_for_a_proved_index(io::Io *io) {
     scratch::sh(&root, "mkdir -p proof");
     scratch::Project p = folder(&root, "proof");
     scratch::write(&p, "pick.smith",
-                   "module pick;\nimport bounds;\nimport smith::contract;\n"
-                   "export i32 at(usize i) {\n"
-                   "    i32 buffer[8] = {1, 2, 3, 4, 5, 6, 7, 8};\n"
-                   "    i32 window[:] = buffer;\n"
-                   "    usize j = bounds::clamp(i);\n"
+                   "module pick;\nimport bounds;\nimport std::contract;\n"
+                   "export I32 at(Usize i) {\n"
+                   "    I32 buffer[8] = {1, 2, 3, 4, 5, 6, 7, 8};\n"
+                   "    I32 window[:] = buffer;\n"
+                   "    Usize j = bounds::clamp(i);\n"
                    "    contract::ensures(true);\n"
                    "    return window[j];\n"
                    "}\n");
     scratch::write(&p, "bounds.smith",
-                   "module bounds;\nimport smith::contract;\n"
-                   "export usize clamp(usize n) {\n"
-                   "    usize r = n < 8 ? n : 7;\n"
+                   "module bounds;\nimport std::contract;\n"
+                   "export Usize clamp(Usize n) {\n"
+                   "    Usize r = n < 8 ? n : 7;\n"
                    "    contract::ensures(r < 8);\n"
                    "    return r;\n"
                    "}\n");
-    scratch::write(&p, "main.smith", "module main;\nimport pick;\ni32 main() { return pick::at(1) - 2; }\n");
+    scratch::write(&p, "main.smith", "module main;\nimport pick;\nI32 main() { return pick::at(1) - 2; }\n");
     scratch::Run built = scratch::build(&p, "");
     scratch::expect_status("the project builds", 0, &built);
     const char *before = session(io, &p, "open pick.smith -- hover pick.smith 4 12");

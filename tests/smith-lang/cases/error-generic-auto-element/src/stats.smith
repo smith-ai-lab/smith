@@ -1,10 +1,10 @@
 module stats;
 
-export usize count(const auto xs[:]) {
+export Usize count(const auto xs[:]) {
     return countof(xs);
 }
 
-export usize rows(const auto grid[:][:]) {
+export Usize rows(const auto grid[:][:]) {
     return countof(grid);
 }
 

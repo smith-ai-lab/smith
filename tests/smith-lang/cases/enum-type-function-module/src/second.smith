@@ -1,21 +1,21 @@
 module second;
 
-type maybe(type T) {
+Type Maybe(Type T) {
     return enum {
         T some;
         none;
     };
 }
 
-// A generic whose outcome is `maybe(usize)`: the instance is written in the importer, against the struct the header
+// A generic whose outcome is `maybe(Usize)`: the instance is written in the importer, against the struct the header
 // defines.
-export maybe(usize) position(auto xs, auto v) {
-    for (usize i = 0; i < countof(xs); i++)
+export Maybe(Usize) position(auto xs, auto v) {
+    for (Usize i = 0; i < countof(xs); i++)
         if (xs[i] == v) return {.some = i};
     return .none;
 }
 
-export maybe(usize) last(usize v) {
+export Maybe(Usize) last(Usize v) {
     if (v < 2) return .none;
     return {.some = v - 1};
 }

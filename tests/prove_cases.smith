@@ -3,13 +3,13 @@
 // with a text, each failing name in the note of the failure.
 module prove_cases;
 
-import smith::arena;
-import smith::format;
-import smith::io;
-import smith::test;
+import std::arena;
+import std::format;
+import std::io;
+import std::test;
 import scratch;
 import <string.h>;
-import smith::mem;
+import std::mem;
 
 // `smith prove args -- -I include`, both streams together. $c in args is tests/prove.
 export scratch::Run prove(const scratch::Project *p, const char *args) {
@@ -19,14 +19,14 @@ export scratch::Run prove(const scratch::Project *p, const char *args) {
 }
 
 // The word number `index` of a text separated by spaces, or nullptr when there are fewer.
-static const char *word(io::Io *io, const char *text, usize index) {
-    usize at = 0;
-    for (usize n = 0; n <= index; n++) {
+static const char *word(io::Io *io, const char *text, Usize index) {
+    Usize at = 0;
+    for (Usize n = 0; n <= index; n++) {
         while (text[at] == ' ') {
             at++;
         }
         if (text[at] == '\0') return nullptr;
-        usize start = at;
+        Usize start = at;
         while (text[at] != ' ' && text[at] != '\0') {
             at++;
         }
@@ -48,8 +48,8 @@ static scratch::Run function(const scratch::Project *p, const char *file, const 
 // "$c/memory.c").
 export void each_proved(const scratch::Project *p, const char *what, const char *file, const char *prefix,
                         const char *names) {
-    bool failed = false;
-    for (usize i = 0; word(p->io, names, i) != nullptr; i++) {
+    Bool failed = false;
+    for (Usize i = 0; word(p->io, names, i) != nullptr; i++) {
         const char *name = word(p->io, names, i);
         scratch::Run run = function(p, file, prefix, name);
         if (run.status != 0) {
@@ -63,8 +63,8 @@ export void each_proved(const scratch::Project *p, const char *what, const char 
 // Every function of `names` fails in `file` (status 1) with `needle` in its output.
 export void each_refuted(const scratch::Project *p, const char *what, const char *file, const char *prefix,
                          const char *needle, const char *names) {
-    bool failed = false;
-    for (usize i = 0; word(p->io, names, i) != nullptr; i++) {
+    Bool failed = false;
+    for (Usize i = 0; word(p->io, names, i) != nullptr; i++) {
         const char *name = word(p->io, names, i);
         scratch::Run run = function(p, file, prefix, name);
         if (run.status != 1 || !scratch::contains(run.out, needle)) {
@@ -79,8 +79,8 @@ export void each_refuted(const scratch::Project *p, const char *what, const char
 // counterexample is a value.
 export void each_value_counterexample(const scratch::Project *p, const char *what, const char *file,
                                       const char *names) {
-    bool failed = false;
-    for (usize i = 0; word(p->io, names, i) != nullptr; i++) {
+    Bool failed = false;
+    for (Usize i = 0; word(p->io, names, i) != nullptr; i++) {
         const char *name = word(p->io, names, i);
         scratch::Run run = function(p, file, "", name);
         if (scratch::contains(run.out, "poison") || scratch::contains(run.out, "undefined behaviour")) {

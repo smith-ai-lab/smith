@@ -3,6 +3,6 @@ module box;
 import pick;
 
 // A module's header is written without a compiler: the call in this body, whose type nothing can tell there, is skipped.
-export i32 bigger(i32 a, i32 b) {
+export I32 bigger(I32 a, I32 b) {
     return pick::larger(a + 1, b * 2);
 }

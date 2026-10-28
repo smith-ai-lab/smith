@@ -2,10 +2,10 @@ import kind;
 import target;
 import <stdio.h>;
 
-constexpr bool fast = target::assertions == false;
+constexpr Bool fast = target::assertions == false;
 
 int main() {
-    i32 answer = 0;
+    I32 answer = 0;
     // In a file with no module line the branches flow the same.
     if constexpr (target::os == target::macos) {
         answer = 7;
@@ -20,6 +20,6 @@ int main() {
         c::printf("neither\n");
     }
     c::printf("%d %d %d\n", kind::arch_name(), kind::opaque(5), kind::nested(20));
-    c::printf("%d %d %d\n", kind::describe(f32, 1.5f), kind::describe(u64, 9), kind::describe(u8, 1));
+    c::printf("%d %d %d\n", kind::describe(F32, 1.5f), kind::describe(U64, 9), kind::describe(U8, 1));
     return answer == 7 ? 0 : 1;
 }

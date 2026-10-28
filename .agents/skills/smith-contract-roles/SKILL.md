@@ -8,17 +8,17 @@ description: "Where each contract call goes: a precondition at entry is requires
 ```smith
 module checks;
 
-import smith::contract;
+import std::contract;
 
-export i32 first(const i32 *xs, usize count) {
+export I32 first(const I32 *xs, Usize count) {
     contract::requires(count > 0);                // the precondition: callers prove it, the body assumes it
-    i32 head = xs[0];
+    I32 head = xs[0];
     contract::assert(head == xs[0]);              // a fact in the middle that follows from what is known
     contract::ensures(head == xs[0]);             // the promise about the result, before the return
     return head;
 }
 
-export void check_input(bool holds) {
+export void check_input(Bool holds) {
     contract::trusted();                          // the prover never reads this body: a run-time check with a report
     contract::assert(holds);
     if (!holds) __builtin_trap();                 // a bare trap writes no report

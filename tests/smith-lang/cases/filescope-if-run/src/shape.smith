@@ -4,50 +4,50 @@ module shape;
 
 import target;
 
-constexpr bool wide = true;
+constexpr Bool wide = true;
 
 if constexpr (wide) {
-    constexpr i32 columns = 80;
+    constexpr I32 columns = 80;
 
-    export i32 width(void) {
+    export I32 width(void) {
         return columns;
     }
 } else {
-    export i32 width(void) {
+    export I32 width(void) {
         return undeclared_function();
     }
 }
 
 if constexpr (target::os == target::macos || target::os == target::linux) {
-    export i32 platform(void) {
+    export I32 platform(void) {
         return 1;
     }
 } else if constexpr (target::arch == target::aarch64) {
-    export i32 platform(void) {
+    export I32 platform(void) {
         return 2;
     }
 } else {
-    export i32 platform(void) {
+    export I32 platform(void) {
         return undeclared_function();
     }
 }
 
 // The same export, with its C name, in each branch: the header has both, between the `#if` lines.
 if constexpr (target::os == target::macos) {
-    [[smith::c_name("shape_sides")]] export i32 sides(void) {
+    [[std::c_name("shape_sides")]] export I32 sides(void) {
         return 4;
     }
 } else {
-    [[smith::c_name("shape_sides")]] export i32 sides(void) {
+    [[std::c_name("shape_sides")]] export I32 sides(void) {
         return 4;
     }
 }
 
 // A function's own `if constexpr` still keeps its braces.
-export i32 both(void) {
-    i32 sum = 0;
+export I32 both(void) {
+    I32 sum = 0;
     if constexpr (wide) {
-        i32 extra = 1;
+        I32 extra = 1;
         sum = width() + extra;
     }
     return sum + platform();

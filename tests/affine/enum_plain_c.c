@@ -1,4 +1,4 @@
-// Plain C with a tag and a union and no `smith::enum` annotation: the plugin leaves it alone.
+// Plain C with a tag and a union and no `std::enum` annotation: the plugin leaves it alone.
 typedef struct {
     enum { circle_tag, rect_tag } tag;
     union {

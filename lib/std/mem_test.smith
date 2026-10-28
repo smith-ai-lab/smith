@@ -1,0 +1,225 @@
+// Tests of std::mem, in smith's own test library (build.c's `test-units` runner links them with the module). A
+// refusal that stops the process (a fixed arena's budget under set_allocator) needs a process of its own and is
+// tests/arena.sh's.
+module std::mem_test;
+
+import std::arena;
+import std::mem;
+import std::test;
+
+constexpr Usize capacity = 4096;
+
+typedef struct {
+    alignas(arena::align_max) U8 bytes[capacity];
+} Memory;
+
+typedef struct {
+    U8 bytes[2 * capacity];
+} Huge;
+
+typedef struct {
+    F64 value;
+    I32 count;
+} Record;
+
+typedef Option(Huge *) MaybeHuge;
+typedef Option(Record *) MaybeRecord;
+
+// Allocates inside a scope that sets the allocator and restores it with `defer`.
+void allocate_from(arena::ArenaAllocator *allocator, Record **record, U64 *sum) {
+    mem::Allocator *before = mem::set_allocator(&allocator->base);
+    defer mem::set_allocator(before);
+    test::check_condition(mem::allocator() == &allocator->base);
+    *record = mem::alloc(Record);
+    U64 numbers[:] = mem::alloc_slice(U64, 5);
+    test::check_equal(countof(numbers), 5);
+    for (Usize i = 0; i < countof(numbers); i++) {
+        test::check_equal(numbers[i], 0);
+        numbers[i] = i + 1;
+        *sum += numbers[i];
+    }
+    test::check_condition(allocator->base.owns(&allocator->base, numbers.data));
+}
+
+export void test_mem_alloc_reaches_the_allocator_in_force_and_defer_restores_it() {
+    static Memory memory;
+    arena::Arena a = arena::fixed(memory.bytes, sizeof memory.bytes);
+    arena::ArenaAllocator allocator = arena::allocator(&a);
+    mem::Allocator *outside = mem::allocator();
+    Record *record = nullptr;
+    U64 sum = 0;
+    allocate_from(&allocator, &record, &sum);
+    test::check_equal(sum, 15);
+    test::check_condition(mem::allocator() == outside);                  // the defer put the old one back
+    test::check_condition(allocator.base.owns(&allocator.base, record)); // from the arena
+    test::check_equal(record->count, 0);                                 // zeroed
+    test::check_condition(a.used > 0);
+}
+
+export void test_mem_alloc_without_an_allocator_set_is_the_systems_and_never_null() {
+    Record *record = mem::alloc(Record);
+    test::check_condition(record != nullptr);
+    test::check_equal(record->value, 0.0);
+    F32 grid[:][:] = mem::alloc_slice(F32, 3, 4);
+    test::check_equal(countof(grid), 3);
+    test::check_equal(countof(grid[2]), 4);
+    grid[2][3] = 5.0f;
+    void *aligned = mem::alloc_raw(100, 64);
+    test::check_equal((Usize)aligned & 63, 0);
+    mem::free(aligned);
+    mem::free(grid.data);
+    mem::free(record);
+}
+
+// The tests of an option sit in functions with no generic call: a `== .some` after a call to a generic in the same
+// function does not find the option's type (smith issue #353).
+MaybeRecord try_record() {
+    return mem::try_alloc(Record);
+}
+
+MaybeHuge try_huge() {
+    return mem::try_alloc(Huge);
+}
+
+I32 count_of(MaybeRecord record) {
+    if (record == .some) return record.some->count;
+    return -1;
+}
+
+Bool is_some(MaybeHuge huge) {
+    return huge == .some;
+}
+
+export void test_mem_try_alloc_is_an_option() {
+    static Memory memory;
+    arena::Arena a = arena::fixed(memory.bytes, sizeof memory.bytes);
+    arena::ArenaAllocator allocator = arena::allocator(&a);
+    mem::Allocator *before = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(before);
+    test::check_equal(count_of(try_record()), 0); // some, zeroed
+    test::check_condition(!is_some(try_huge()));  // 8 KB in a 4 KB arena: the allocator answers null, so none
+    test::check_condition(mem::try_alloc_raw(2 * capacity, 16) == nullptr);
+}
+
+// ---- copy, move, zero, fill, equal, bytes and view -----------------------------------------------------------------
+
+export void test_mem_copy_moves_elements_between_slices_of_one_length() {
+    I32 from[4] = {1, 2, 3, 4};
+    I32 to[4] = {};
+    I32 source[:] = from;
+    I32 target[:] = to;
+    mem::copy(target, source);
+    test::check_condition(mem::equal(target, source));
+    test::check_equal(to[3], 4);
+    mem::copy(target[0:0], source[0:0]); // empty to empty is nothing
+}
+
+export void test_mem_copy_with_unequal_lengths_is_a_failed_check() {
+    I32 from[4] = {1, 2, 3, 4};
+    I32 to[3] = {};
+    I32 source[:] = from;
+    I32 target[:] = to;
+    test::expect_abort();
+    mem::copy(target, source);
+}
+
+export void test_mem_move_allows_overlap() {
+    U8 data[6] = {1, 2, 3, 4, 5, 6};
+    U8 all[:] = data;
+    mem::move(all[1:6], all[0:5]);
+    test::check_equal(data[0], 1);
+    test::check_equal(data[1], 1);
+    test::check_equal(data[5], 5);
+    mem::move(all[0:5], all[1:6]);
+    test::check_equal(data[0], 1);
+    test::check_equal(data[4], 5);
+}
+
+export void test_mem_move_with_unequal_lengths_is_a_failed_check() {
+    U8 data[6] = {};
+    U8 all[:] = data;
+    test::expect_abort();
+    mem::move(all[1:6], all[0:4]);
+}
+
+export void test_mem_zero_clears_a_slice_or_one_value() {
+    F64 values[3] = {1.5, 2.5, 3.5};
+    F64 all[:] = values;
+    mem::zero(all[1:3]);
+    test::check_equal(values[0], 1.5);
+    test::check_equal(values[1], 0.0);
+    test::check_equal(values[2], 0.0);
+    Record record = {.value = 2.0, .count = 7};
+    mem::zero(&record);
+    test::check_equal(record.value, 0.0);
+    test::check_equal(record.count, 0);
+}
+
+export void test_mem_fill_sets_every_element() {
+    F32 values[4] = {};
+    F32 all[:] = values;
+    mem::fill(all, 1.5f);
+    test::check_equal(values[0], 1.5f);
+    test::check_equal(values[3], 1.5f);
+    mem::fill(all[1:3], 0.0f);
+    test::check_equal(values[0], 1.5f);
+    test::check_equal(values[1], 0.0f);
+    test::check_equal(values[3], 1.5f);
+}
+
+export void test_mem_equal_compares_lengths_first_then_bytes() {
+    U8 a[3] = {1, 2, 3};
+    U8 b[3] = {1, 2, 3};
+    U8 c[3] = {1, 2, 4};
+    U8 sa[:] = a;
+    U8 sb[:] = b;
+    U8 sc[:] = c;
+    test::check_condition(mem::equal(sa, sb));
+    test::check_condition(!mem::equal(sa, sc));
+    test::check_condition(!mem::equal(sa, sb[0:2])); // a prefix is not equal
+    test::check_condition(mem::equal(sa[0:0], sc[0:0]));
+}
+
+export void test_mem_bytes_carries_the_size_of_the_value() {
+    U32 value = 0x01020304;
+    U8 as_bytes[:] = mem::bytes(&value);
+    test::check_equal(countof(as_bytes), 4);
+    as_bytes[0] ^= 0xff;
+    test::check_equal(value, 0x010203fb); // the write went through the view (little-endian targets)
+    const U8 read[:] = mem::read_bytes(&value);
+    test::check_equal(countof(read), 4);
+    Record record = {};
+    U8 record_bytes[:] = mem::bytes(&record);
+    test::check_equal(countof(record_bytes), sizeof(Record));
+}
+
+export void test_mem_view_is_a_typed_slice_for_whole_aligned_elements() {
+    alignas(16) U8 storage[17] = {};
+    F32 source[2] = {1.5f, -2.0f};
+    const U8 raw[:] = mem::read_bytes(&source);
+    mem::copy(storage[0:8], raw);
+    U8 whole[:] = storage[0:8];
+    test::check_condition(mem::can_view(whole, F32));
+    F32 floats[:] = mem::view(whole, F32);
+    test::check_equal(countof(floats), 2);
+    test::check_equal(floats[1], -2.0f);
+    test::check_condition(!mem::can_view(storage[0:7], F32)); // not a whole number of elements
+    test::check_condition(!mem::can_view(storage[1:9], F32)); // misaligned for F32
+    test::check_condition(mem::can_view(storage[0:0], F32));  // zero elements
+    F32 none[:] = mem::view(storage[0:0], F32);
+    test::check_equal(countof(none), 0);
+}
+
+export void test_mem_view_of_a_partial_element_is_a_failed_check() {
+    alignas(16) U8 storage[8] = {};
+    test::expect_abort();
+    F32 floats[:] = mem::view(storage[0:7], F32);
+    test::check_equal(countof(floats), 1);
+}
+
+export void test_mem_view_of_misaligned_bytes_is_a_failed_check() {
+    alignas(16) U8 storage[9] = {};
+    test::expect_abort();
+    F32 floats[:] = mem::view(storage[1:9], F32);
+    test::check_equal(countof(floats), 2);
+}

@@ -1,29 +1,29 @@
-// A project's build file written in .smith (issue #43, part 3), from tests/build-smith.sh: `import smith::build;`, the
+// A project's build file written in .smith (issue #43, part 3), from tests/build-smith.sh: `import std::build;`, the
 // verbs on it, `smith build --dump-config`, and the build file that does what the conventions do.
 module build_smith_test;
 
-import smith::format;
-import smith::io;
-import smith::test;
+import std::format;
+import std::io;
+import std::test;
 import scratch;
 import <string.h>;
 
 // The last line of a text: the program's output follows the build's.
 static const char *last_line(const char *text) {
-    usize end = c::strlen(text);
+    Usize end = c::strlen(text);
     while (end > 0 && text[end - 1] == '\n')
         end--;
-    usize start = end;
+    Usize start = end;
     while (start > 0 && text[start - 1] != '\n')
         start--;
     return text + start; // expect_text ignores the newlines at its end
 }
 
-static void expect_yes(const char *name, bool yes) {
+static void expect_yes(const char *name, Bool yes) {
     scratch::expect_text(name, "yes", yes ? "yes" : "no");
 }
 
-static void expect_exists(const char *name, const scratch::Project *p, const char *file, bool exists) {
+static void expect_exists(const char *name, const scratch::Project *p, const char *file, Bool exists) {
     scratch::expect_text(name, exists ? "yes" : "no", scratch::exists(p, file) ? "yes" : "no");
 }
 
@@ -112,7 +112,7 @@ export void test_build_smith_dump_config_of_a_smith_project_is_a_build_smith(io:
     scratch::Project p = scratch::project(io, "dump", "smith_dump");
     scratch::Run dump = scratch::sh(&p, "smith build --dump-config");
     scratch::expect_status("dump: a .smith project: status 0", 0, &dump);
-    scratch::expect_contains("dump: ... is a build.smith of the high-level calls", dump.out, "import smith::build;");
+    scratch::expect_contains("dump: ... is a build.smith of the high-level calls", dump.out, "import std::build;");
     scratch::expect_contains("dump: ... is the module build", dump.out, "module build;");
     scratch::expect_contains("dump: ... exports the entry point", dump.out, "export void build(build::Build *b) {");
     scratch::expect_contains("dump: ... names the entry", dump.out, ".entry = \"main.smith\",");
@@ -253,7 +253,7 @@ export void test_build_smith_check_reads_a_build_smith_with_no_main(io::Io *io) 
     scratch::Run checked = scratch::sh(&p, "smith check");
     const char *err = checked.err;
     const char *lint = c::strstr(err, "smith check: lint ");
-    bool ok =
+    Bool ok =
         c::strstr(err, "are skipped") == nullptr && lint != nullptr && c::strstr(lint, "smith check: test ") != nullptr;
     expect_yes("check: a build.smith with no main is linted and tested", ok);
 }

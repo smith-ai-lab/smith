@@ -1,4 +1,4 @@
-// `[[smith::affine]]` (shim/affine.cpp; skill smith-lang-affine): a value of an affine type is used at most once, a
+// `[[std::affine]]` (shim/affine.cpp; skill smith-lang-affine): a value of an affine type is used at most once, a
 // compile error at the second use naming the first. Each tests/affine/*.c and *.smith is compiled with `smith cc -c`
 // and what it prints (the status, then each error and note, the path left off) is the golden file beside it,
 // `<file>.expected`: the rules (a second use, an unused value, `&key`, a join, an assignment, an element of an array, a
@@ -9,9 +9,9 @@
 // plain C is left alone. A file added to tests/affine needs a test here: `test_every_file_has_a_test` says which.
 module affine_test;
 
-import smith::format;
-import smith::io;
-import smith::test;
+import std::format;
+import std::io;
+import std::test;
 import <string.h>;
 import scratch;
 

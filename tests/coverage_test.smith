@@ -5,9 +5,9 @@
 // table by hand on a scratch git repository (never this checkout).
 module coverage_test;
 
-import smith::format;
-import smith::io;
-import smith::test;
+import std::format;
+import std::io;
+import std::test;
 import scratch;
 
 // Exit status 77 (the test is skipped) for a smith with no LLVM inside (the stage0), which cannot read profiles.

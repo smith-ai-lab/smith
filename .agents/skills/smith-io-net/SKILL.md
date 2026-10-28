@@ -8,13 +8,13 @@ description: "The network in smith::io: io::net_connect, TLS connections, io::Co
 `io.net` makes TLS connections with the platform's stack (Network.framework on macOS, OpenSSL's `libssl.so.3` on Linux, each loaded with `dlopen` on the first connection, so a program that never connects pays nothing at start and a Linux machine without OpenSSL runs everything else). An `io::Connection` is a struct you own and keep in place until its close is done. Everything is an op, with a blocking form:
 
 ```smith
-import smith::io;
+import std::io;
 
-void fetch(io::Io *io, const u8 request[:]) {
+void fetch(io::Io *io, const U8 request[:]) {
     io::Connection connection = {};
     io::Error error = io::net_connect(&io->net, &connection, "example.com", 443, true); // tls
     error = io::net_send(&io->net, &connection, request);
-    u8 buffer[4096];
+    U8 buffer[4096];
     io::Read reply = io::net_receive(&io->net, &connection, buffer); // countof(reply.data) bytes, or reply.end
     (void)reply;
     error = io::net_close(&io->net, &connection);

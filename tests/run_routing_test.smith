@@ -4,16 +4,16 @@
 // build.
 module run_routing_test;
 
-import smith::arena;
-import smith::format;
-import smith::io;
-import smith::test;
+import std::arena;
+import std::format;
+import std::io;
+import std::test;
 import scratch;
 import <string.h>;
-import smith::mem;
+import std::mem;
 
 // The first `length` bytes of a text, terminated.
-static const char *prefix(io::Io *io, const char *text, usize length) {
+static const char *prefix(io::Io *io, const char *text, Usize length) {
     char *copy = arena::push_slice(&io->arena, char, length + 1).data;
     mem::copy(copy[0:length], text[0:length]);
     copy[length] = '\0';
@@ -38,7 +38,7 @@ constexpr char stubs_script[_] =
     "ln -s \"$SMITH_SELF\" 'smith++' && ln -s \"$SMITH_SELF\" bin/selfclang && ln -s \"$SMITH_SELF\" driver/clang && "
     "ln -s \"$SMITH_SELF\" driver/clang++";
 
-static Rig make_rig(io::Io *io, bool link, const char *stubs) {
+static Rig make_rig(io::Io *io, Bool link, const char *stubs) {
     scratch::Project p = scratch::project(io, "r", nullptr);
     scratch::Run made = scratch::sh(&p, format::push(&io->arena, "STUBS='", stubs, "'; ", stubs_script).data);
     scratch::expect_status("the stub compilers are built", 0, &made);
@@ -68,32 +68,32 @@ static void expect_nothing_ran(const char *name, const scratch::Run *run) {
     scratch::expect_text(name, "", run->out);
 }
 
-static bool starts_with(const char *text, const char *prefix) {
+static Bool starts_with(const char *text, const char *prefix) {
     return c::strncmp(text, prefix, c::strlen(prefix)) == 0;
 }
 
-static bool ends_with(const char *text, const char *suffix) {
-    usize n = c::strlen(text);
-    usize m = c::strlen(suffix);
+static Bool ends_with(const char *text, const char *suffix) {
+    Usize n = c::strlen(text);
+    Usize m = c::strlen(suffix);
     return n >= m && c::strcmp(text + n - m, suffix) == 0;
 }
 
 // The first line of a text.
 static const char *first_line(io::Io *io, const char *text) {
-    usize length = 0;
+    Usize length = 0;
     while (text[length] != '\0' && text[length] != '\n') {
         length++;
     }
     return prefix(io, text, length);
 }
 
-static bool is_darwin(const Rig *r) {
+static Bool is_darwin(const Rig *r) {
     return scratch::same(scratch::capture(&r->p, "uname -s"), "Darwin");
 }
 
 // ---- the compiler, in both forms ----
 
-static void clang_route(io::Io *io, bool link) {
+static void clang_route(io::Io *io, Bool link) {
     Rig r = make_rig(io, link, "clang");
     scratch::Run run = go_clang(&r, "", "-c \"a b.c\" \"\" -DX=\"y z\" -o out.o");
     scratch::expect_text(
@@ -128,7 +128,7 @@ export void test_run_link_clang_route(io::Io *io) {
 static const char *mixed_refusal =
     "smith: .metal and other inputs need different compilers and flags; compile the shaders in their own command";
 
-static void metal_route(io::Io *io, bool link) {
+static void metal_route(io::Io *io, Bool link) {
     Rig r = make_rig(io, link, "clang xcrun metal");
     const char *path = format::push(&io->arena, "PATH=\"", r.dir, "/bin:$PATH\"").data;
     scratch::Run xcrun = go(&r, path, r.cc, "-o shaders.metallib a.metal b.metal");
@@ -158,7 +158,7 @@ export void test_run_link_metal_route(io::Io *io) {
 }
 
 // A .smith input needs a smith whose clang has the token hook; any other refuses it, and does not compile it as C.
-static void smith_inputs(io::Io *io, bool link) {
+static void smith_inputs(io::Io *io, Bool link) {
     Rig r = make_rig(io, link, "clang");
     scratch::Run which = go_clang(&r, "", "--smith-which -c a.smith");
     if (which.status == 0) {
@@ -215,7 +215,7 @@ export void test_run_link_smith_inputs(io::Io *io) {
     smith_inputs(io, true);
 }
 
-static void plus_plus(io::Io *io, bool link) {
+static void plus_plus(io::Io *io, Bool link) {
     Rig r = make_rig(io, link, "clang clang++");
     scratch::Run run =
         go(&r, format::push(&io->arena, "SMITH_CLANGXX=", r.dir, "/bin/clang++").data, r.plus, "-c a.cpp");
@@ -233,7 +233,7 @@ export void test_run_link_smith_plus_plus(io::Io *io) {
 }
 
 // On a smith with clang inside, the default compiler is that one, in a folder of its own; otherwise Homebrew's.
-static void in_process_default(io::Io *io, bool link) {
+static void in_process_default(io::Io *io, Bool link) {
     Rig r = make_rig(io, link, "clang");
     if (!is_darwin(&r)) {
         test::note("not macOS: the default compiler is not checked");
@@ -244,12 +244,12 @@ static void in_process_default(io::Io *io, bool link) {
     if (starts_with(head, "clang in-process ")) {
         const char *llvm_clang = head + c::strlen("clang in-process ");
         // The program is in the folder smith makes for itself on first use, which --smith-which does not make.
-        bool found = scratch::contains(llvm_clang, "/smith/programs/") && ends_with(llvm_clang, "/bin/clang");
+        Bool found = scratch::contains(llvm_clang, "/smith/programs/") && ends_with(llvm_clang, "/bin/clang");
         scratch::expect_text(
             nm(&r, "in-process: the default is clang inside smith, run as the bin/clang of a folder of its own"), "yes",
             found ? "yes" : llvm_clang);
         const char *identity = c::strchr(which.out, '\n');
-        bool named = identity != nullptr && starts_with(identity + 1, "identity llvm-") &&
+        Bool named = identity != nullptr && starts_with(identity + 1, "identity llvm-") &&
                      c::strchr(identity + 1 + c::strlen("identity llvm-"), ' ') != nullptr;
         scratch::expect_text(nm(&r, "in-process: --smith-which names the identity of the clang inside"), "yes",
                              named ? "yes" : "identity llvm-<version> <hash>");
@@ -295,7 +295,7 @@ export void test_run_link_in_process_default(io::Io *io) {
 }
 
 // The SDK is chosen through the environment, never a flag, and only for what the caller left unset.
-static void sdk_environment(io::Io *io, bool link) {
+static void sdk_environment(io::Io *io, Bool link) {
     Rig r = make_rig(io, link, "clang xcrun");
     if (!is_darwin(&r)) {
         test::note("not macOS: the SDK is not chosen");
@@ -415,7 +415,7 @@ export void test_run_dap_is_lldb_dap_with_the_arguments_untouched(io::Io *io) {
 
 // The tools are inside smith: the same LLVM as the compiler, run on the arguments, in smith's process. Only a smith
 // with clang inside has them (the default compiler says which), as on macOS.
-static bool tools_inside(const Rig *r) {
+static Bool tools_inside(const Rig *r) {
     if (!is_darwin(r)) {
         return false;
     }
@@ -489,7 +489,7 @@ export void test_run_in_process_lsp_is_clangd_23(io::Io *io) {
 
 // ---- the refusals and --smith-which of both forms ----
 
-static void compile_tail(io::Io *io, bool link) {
+static void compile_tail(io::Io *io, Bool link) {
     Rig r = make_rig(io, link, "clang xcrun");
     scratch::Run self = go(&r, format::push(&io->arena, "SMITH_CLANG=", r.dir, "/bin/selfclang").data, r.cc, "a.c");
     scratch::expect_text(nm(&r, "a compiler that is smith itself is refused"),
@@ -597,7 +597,7 @@ export void test_run_test_with_an_option_needs_a_build_c(io::Io *io) {
 
 // The first line of the failure with the seconds it took taken off: `smith lint: FAILED (status 2, 0.1 s)`.
 static const char *without_seconds(io::Io *io, const char *line) {
-    usize end = c::strlen(line);
+    Usize end = c::strlen(line);
     if (end >= 3 && c::strcmp(line + end - 3, " s)") == 0) {
         end -= 3;
         while (end > 0 && (line[end - 1] == '.' || (line[end - 1] >= '0' && line[end - 1] <= '9'))) {

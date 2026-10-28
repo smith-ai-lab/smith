@@ -1,6 +1,6 @@
 ---
 name: smith-arena-c
-description: "smith::arena from C (#include <smith/arena.h>, smith_arena_push with sizeof and alignof), carving arenas out of a reservation, compiling it in build.c with smith_library(b, "arena"), and what a stop means. Load when C code includes <smith/arena.h> or an arena stops with a failure report."
+description: "std::arena from C (#include <smith/arena.h>, smith_arena_push with sizeof and alignof), carving arenas out of a reservation, compiling it in build.c with smith_library(b, "arena"), and what a stop means. Load when C code includes <smith/arena.h> or an arena stops with a failure report."
 ---
 
 # arena from C

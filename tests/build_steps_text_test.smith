@@ -4,26 +4,26 @@
 // reads. Each fixture is tests/build_fixtures/steps_<name>/build.c.
 module build_steps_text_test;
 
-import smith::io;
-import smith::test;
+import std::io;
+import std::test;
 import scratch;
-import smith::mem;
+import std::mem;
 
 // The last line of a text without its trailing newlines, as `echo "$out" | tail -n 1` gives it.
 static const char *last_line(const char *text) {
     static char line[512];
-    usize end = 0;
+    Usize end = 0;
     while (text[end] != '\0') {
         end++;
     }
     while (end > 0 && text[end - 1] == '\n') {
         end--;
     }
-    usize start = end;
+    Usize start = end;
     while (start > 0 && text[start - 1] != '\n') {
         start--;
     }
-    usize length = end - start < sizeof line - 1 ? end - start : sizeof line - 1;
+    Usize length = end - start < sizeof line - 1 ? end - start : sizeof line - 1;
     mem::copy(line[0:length], text[start:start + length]);
     line[length] = '\0';
     return line;

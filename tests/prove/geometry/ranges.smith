@@ -1,9 +1,9 @@
 // contract::modifies (#54): a slice names a range, `xs` or `p[a:b]`; what is outside it is kept.
 module geometry::ranges;
-import smith::contract;
+import std::contract;
 
 // The first two elements of a slice, and nothing else.
-export void set_two(i32 xs[:], i32 value) {
+export void set_two(I32 xs[:], I32 value) {
     contract::requires(2 <= countof(xs));
     contract::modifies(xs[0:2]);
     xs[0] = value;
@@ -12,23 +12,23 @@ export void set_two(i32 xs[:], i32 value) {
 }
 
 // A caller relies on an element the callee never named.
-export void keeps_the_tail(i32 xs[:]) {
+export void keeps_the_tail(I32 xs[:]) {
     contract::requires(3 <= countof(xs));
-    const i32 third = xs[2];
+    const I32 third = xs[2];
     set_two(xs, 7);
     contract::assert(xs[2] == third);
 }
 
 // ... but not on one the range names.
-export void relies_on_the_head(i32 xs[:]) {
+export void relies_on_the_head(I32 xs[:]) {
     contract::requires(3 <= countof(xs));
-    const i32 first = xs[0];
+    const I32 first = xs[0];
     set_two(xs, 7);
     contract::assert(xs[0] == first);
 }
 
 // A write one element past the range is refuted at its line.
-export void writes_past(i32 xs[:]) {
+export void writes_past(I32 xs[:]) {
     contract::requires(3 <= countof(xs));
     contract::modifies(xs[0:2]);
     xs[2] = 1;
@@ -36,14 +36,14 @@ export void writes_past(i32 xs[:]) {
 }
 
 // The whole slice, and a write to another slice.
-export void whole(i32 xs[:]) {
+export void whole(I32 xs[:]) {
     contract::requires(1 <= countof(xs));
     contract::modifies(xs);
     xs[countof(xs) - 1] = 1;
     contract::ensures(true);
 }
 
-export void other_slice(i32 xs[:], i32 ys[:]) {
+export void other_slice(I32 xs[:], I32 ys[:]) {
     contract::requires(1 <= countof(xs) && 1 <= countof(ys));
     contract::modifies(xs);
     ys[0] = 1;
@@ -51,16 +51,16 @@ export void other_slice(i32 xs[:], i32 ys[:]) {
 }
 
 // A range of a pointer to an array of 4.
-export void middle(i32 p[4]) {
+export void middle(I32 p[4]) {
     contract::modifies(p[1:3]);
     p[1] = 1;
     p[2] = 2;
     contract::ensures(p[1] == 1 && p[2] == 2);
 }
 
-export void keeps_the_ends(i32 p[4]) {
-    const i32 first = p[0];
-    const i32 last = p[3];
+export void keeps_the_ends(I32 p[4]) {
+    const I32 first = p[0];
+    const I32 last = p[3];
     middle(p);
     contract::assert(p[0] == first && p[3] == last);
 }

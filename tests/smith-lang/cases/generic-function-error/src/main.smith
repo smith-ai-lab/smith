@@ -2,25 +2,25 @@ module main;
 
 import apply;
 
-static i32 inc(i32 x) {
+static I32 inc(I32 x) {
     return x + 1;
 }
 
-static i32 plus(i32 a, i32 b) {
+static I32 plus(I32 a, I32 b) {
     return a + b;
 }
 
 int main() {
-    i32 (*pointer)(i32) = inc;
-    i32 number = 3;
+    I32 (*pointer)(I32) = inc;
+    I32 number = 3;
     // A pointer is known only when the program runs: the parameter takes a function by its name.
-    i32 a = apply::twice(pointer, 5);
-    i32 b = apply::twice(&inc, 5);
-    i32 c = apply::twice(number, 5);
-    i32 d = apply::twice((inc), 5);
-    i32 e = apply::twice(missing, 5);
+    I32 a = apply::twice(pointer, 5);
+    I32 b = apply::twice(&inc, 5);
+    I32 c = apply::twice(number, 5);
+    I32 d = apply::twice((inc), 5);
+    I32 e = apply::twice(missing, 5);
     // The signature is checked by the body's call, in the instance asked for here.
-    i32 f = apply::twice(plus, 5);
-    i32 ok = apply::twice(inc, 5);
+    I32 f = apply::twice(plus, 5);
+    I32 ok = apply::twice(inc, 5);
     return a + b + c + d + e + f + ok;
 }

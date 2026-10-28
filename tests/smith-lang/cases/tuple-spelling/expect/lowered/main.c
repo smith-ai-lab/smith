@@ -1,7 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
-typedef f64 Meters;
+typedef F64 Meters;
 __INT32_TYPE__ take(struct smith_tuple_i32__f32 { __INT32_TYPE__ _0; float _1; } t) {
 return t[0];
 }

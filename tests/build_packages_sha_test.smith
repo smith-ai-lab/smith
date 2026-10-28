@@ -2,9 +2,9 @@
 // empty message), and shasum on random data around the padding boundaries.
 module build_packages_sha_test;
 
-import smith::format;
-import smith::io;
-import smith::test;
+import std::format;
+import std::io;
+import std::test;
 import scratch;
 
 static const char *sha(const scratch::Project *p, const char *file) {
@@ -40,7 +40,7 @@ export void test_build_packages_sha256_equals_shasum_on_random_bytes(io::Io *io)
     scratch::Project p = scratch::project(io, "p", nullptr);
     equals_shasum(&p, "sha256: 300000 random bytes equal shasum", "300000");
     const char *sizes[9] = {"55", "56", "57", "63", "64", "65", "119", "120", "128"}; // around the padding boundaries
-    for (usize i = 0; i < 9; i++) {
+    for (Usize i = 0; i < 9; i++) {
         char name[64];
         (void)format::to(name, sizeof name, "sha256: ", sizes[i], " bytes equal shasum");
         equals_shasum(&p, name, sizes[i]);

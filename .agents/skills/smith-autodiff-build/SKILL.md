@@ -5,7 +5,7 @@ description: "How an autodiff program is built (full LTO, no passes, ASan but no
 
 # How an autodiff program is built
 
-`smith build`, `run`, `test`, `lint` and the other verbs find that a program (or the tests) reaches `smith::autodiff` (a lexical scan of its imports and includes, as for every library) and then, in **every profile** (debug, release, fast, and the test runner):
+`smith build`, `run`, `test`, `lint` and the other verbs find that a program (or the tests) reaches `std::autodiff` (a lexical scan of its imports and includes, as for every library) and then, in **every profile** (debug, release, fast, and the test runner):
 
 - links with **full LTO** (`-flto=full`, never ThinLTO: Enzyme needs the function and its callees in one module, and under ThinLTO it fails with "failed to find fn to differentiate");
 - compiles each file with the profile's `-O` level and **`-Xclang -disable-llvm-passes`**: Enzyme wants IR that is not yet optimized (after `-O2` the gradient is 3.1 times a hand-written one; before it, 1.1 to 1.3 times), and the link's LTO pipeline optimizes after Enzyme;
@@ -18,13 +18,13 @@ Enzyme runs **inside smith's own lld**, linked statically (Enzyme is built by `s
 
 Not supported, and what happens:
 
-- **The stage0, and a smith run with `SMITH_CLANG` or `SMITH_LINKER`** (an external clang or linker, which have no Enzyme): `smith build` of an autodiff program stops with `smith::autodiff needs a smith with Enzyme linked in`. Build the full smith (`smith build llvm`, then `smith build` in smith's repository).
+- **The stage0, and a smith run with `SMITH_CLANG` or `SMITH_LINKER`** (an external clang or linker, which have no Enzyme): `smith build` of an autodiff program stops with `std::autodiff needs a smith with Enzyme linked in`. Build the full smith (`smith build llvm`, then `smith build` in smith's repository).
 - **An object compiled without `-flto=full`** (a library you built by hand, an archive) has no bitcode: if the differentiated function or a callee is in it, the link fails with Enzyme's "failed to find fn to differentiate" or "No reverse pass found".
 - **`smith cc` is a pure passthrough and adds no flag.** A command of your own links through smith's lld, so it differentiates too: `smith cc -O2 -flto=full -Xclang -disable-llvm-passes main.c kernel.c -o app` (one command compiles and links; with separate compiles, give each `-flto=full -Xclang -disable-llvm-passes` and the link `-flto=full`). Without `-flto=full` there is no bitcode for Enzyme to read.
 - **A low-level `build.c`** that calls `smith_object` and `smith_program` itself writes those flags itself (`smith_library(b, "autodiff")` gives the declarations only); `build::profile_flags` and `build::source_flags` return the conventions' flags, which are never the autodiff ones.
 
 ## Testing a derivative
 
-Check a gradient against a hand-written one or a finite difference, as the tests of smith do (`tests/autodiff/`): the toy compares each derivative with its analytic value, learner's scan reference compares Enzyme with the hand-written backward to 1e-12 relative (also through a struct of `f64[:]` fields), and an SGD and an Adam step written with `autodiff::map` are compared with a loop over the same numbers. A test that differentiates is an ordinary `test_*` file that imports `smith::autodiff`; `smith test` builds it as an autodiff program.
+Check a gradient against a hand-written one or a finite difference, as the tests of smith do (`tests/autodiff/`): the toy compares each derivative with its analytic value, learner's scan reference compares Enzyme with the hand-written backward to 1e-12 relative (also through a struct of `F64[:]` fields), and an SGD and an Adam step written with `autodiff::map` are compared with a loop over the same numbers. A test that differentiates is an ordinary `test_*` file that imports `std::autodiff`; `smith test` builds it as an autodiff program.
 
 Also in this family: [smith-autodiff](../smith-autodiff/SKILL.md), [smith-autodiff-c](../smith-autodiff-c/SKILL.md).

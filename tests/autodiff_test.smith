@@ -1,4 +1,4 @@
-// End-to-end tests for smith::autodiff (Enzyme, run at link time inside smith's lld), from tests/autodiff.sh (issue
+// End-to-end tests for std::autodiff (Enzyme, run at link time inside smith's lld), from tests/autodiff.sh (issue
 // #292): a toy across .smith and C files in the three profiles and under `smith test`, a copy of learner's scan
 // reference against its hand-written backward, AddressSanitizer after Enzyme in the debug profile (an out-of-bounds
 // read in the primal and in the gradient), the commands of a program that does not differentiate, the calls
@@ -6,9 +6,9 @@
 // tests/autodiff/<case>.
 module autodiff_test;
 
-import smith::format;
-import smith::io;
-import smith::test;
+import std::format;
+import std::io;
+import std::test;
 import scratch;
 
 // A project holding a copy of tests/autodiff/<from> (a command's arguments), in a git repository of its own.
@@ -52,7 +52,7 @@ export void test_autodiff_toy_runs_in_each_profile_with_derivatives_equal_to_the
     builds(&p, "autodiff: toy: debug builds", "");
     builds(&p, "autodiff: toy: release and fast build", "release fast");
     const char *profiles[3] = {"debug", "release", "fast"};
-    for (usize i = 0; i < 3; i++) {
+    for (Usize i = 0; i < 3; i++) {
         const char *program = format::push(&io->arena, "build/", profiles[i], "/toy").data;
         scratch::Run run = scratch::sh(&p, program);
         scratch::expect_status(format::push(&io->arena, "autodiff: toy: ", profiles[i], " runs").data, 0, &run);
@@ -130,7 +130,7 @@ static void reference_equals_backward(io::Io *io, const char *name, const char *
     builds(&p, format::push(&io->arena, "autodiff: ", name, ": release builds").data, "release");
     builds(&p, format::push(&io->arena, "autodiff: ", name, ": debug builds").data, "");
     const char *profiles[2] = {"release", "debug"};
-    for (usize i = 0; i < 2; i++) {
+    for (Usize i = 0; i < 2; i++) {
         scratch::Run run =
             scratch::sh(&p, format::push(&io->arena, "build/", profiles[i], "/", program, " 2>/dev/null").data);
         scratch::expect_status(format::push(&io->arena, "autodiff: ", name, ": ", profiles[i],
@@ -165,7 +165,7 @@ export void test_autodiff_structs_gradients_sgd_and_adam_equal_their_references(
     builds(&p, "autodiff: structs: release builds", "release");
     builds(&p, "autodiff: structs: debug builds", "");
     const char *profiles[2] = {"release", "debug"};
-    for (usize i = 0; i < 2; i++) {
+    for (Usize i = 0; i < 2; i++) {
         scratch::Run run =
             scratch::sh(&p, format::push(&io->arena, "build/", profiles[i], "/structs 2>/dev/null").data);
         scratch::expect_status(format::push(&io->arena, "autodiff: structs: ", profiles[i],
@@ -303,5 +303,5 @@ export void test_autodiff_a_smith_with_an_external_clang_refuses_an_autodiff_pro
     scratch::Run built = scratch::sh(&p, "env SMITH_CLANG=/usr/bin/clang smith build");
     scratch::expect_status("autodiff: refusal: a smith with an external clang fails", 2, &built);
     scratch::expect_contains("autodiff: refusal: ... saying it needs Enzyme", built.err,
-                             "smith::autodiff needs a smith with Enzyme linked in");
+                             "std::autodiff needs a smith with Enzyme linked in");
 }

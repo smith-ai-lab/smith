@@ -8,10 +8,10 @@ description: "The pull parser and the bounded writer of smith's json: reading wi
 ## Pull, without a tree
 
 ```smith
-import smith::text;
+import std::text;
 import <smith/json.h>;
 
-bool has_model(const char input[:], c::SmithJsonLimits limits) {
+Bool has_model(const char input[:], c::SmithJsonLimits limits) {
     c::SmithJsonReader reader = c::smith_json_reader_make(input, limits);
     for (c::SmithJsonToken t = c::smith_json_read(&reader); t != c::SmithJsonToken_End; t = c::smith_json_read(&reader)) {
         if (t == c::SmithJsonToken_Error) return false; // reader.error
@@ -28,10 +28,10 @@ A number is kept as its text, checked for JSON's grammar only. Convert it yourse
 ## Write
 
 ```smith
-import smith::text;
+import std::text;
 import <smith/json.h>;
 
-bool write_pi(const char (*out)[:]) {
+Bool write_pi(const char (*out)[:]) {
     char buffer[4096];
     c::SmithJsonWriter w = c::smith_json_writer_make(buffer, sizeof buffer, 2); // 0 for compact, else spaces per level
     c::smith_json_write_object_begin(&w);

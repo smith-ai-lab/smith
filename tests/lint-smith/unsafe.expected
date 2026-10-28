@@ -1,7 +1,7 @@
 idiom/unsafe.smith:10:8: error: `longjmp` skips every `defer` and `errdefer` on the way, so cleanup silently does not run: return a `result`, or let the task fail
 idiom/unsafe.smith:14:15: error: `setjmp` skips every `defer` and `errdefer` on the way, so cleanup silently does not run: return a `result`, or let the task fail
-idiom/unsafe.smith:41:36: error: the bound of `xs` is not a constant expression, so the compiler cannot count it: take `i32 a[:]` (a slice) for a length known at run time, or a constant bound `i32 a[4]`
-idiom/unsafe.smith:46:24: error: `xs` is a plain pointer here, with no size to check: write the array parameter as `i32 a[4]` (a checked array) or take `i32 a[:]` (a slice)
-idiom/unsafe.smith:52:22: error: `xs` is a plain pointer here, with no size to check: write the array parameter as `i32 a[4]` (a checked array) or take `i32 a[:]` (a slice)
-idiom/unsafe.smith:61:5: error: the stack cannot hold a size known only at run time: use `arena::push_slice(&a, i32, n)`, or a fixed array when `n` has a maximum
-idiom/unsafe.smith:62:20: error: the stack cannot hold a size known only at run time: use `arena::push_slice(&a, i32, n)`, or a fixed array when `n` has a maximum
+idiom/unsafe.smith:41:36: error: the bound of `xs` is not a constant expression, so the compiler cannot count it: take `I32 a[:]` (a slice) for a length known at run time, or a constant bound `I32 a[4]`
+idiom/unsafe.smith:46:24: error: `xs` is a plain pointer here, with no size to check: write the array parameter as `I32 a[4]` (a checked array) or take `I32 a[:]` (a slice)
+idiom/unsafe.smith:52:22: error: `xs` is a plain pointer here, with no size to check: write the array parameter as `I32 a[4]` (a checked array) or take `I32 a[:]` (a slice)
+idiom/unsafe.smith:61:5: error: the stack cannot hold a size known only at run time: use `arena::push_slice(&a, I32, n)`, or a fixed array when `n` has a maximum
+idiom/unsafe.smith:62:20: error: the stack cannot hold a size known only at run time: use `arena::push_slice(&a, I32, n)`, or a fixed array when `n` has a maximum

@@ -3,7 +3,7 @@ module fx;
 import <stdio.h>;
 import <string.h>;
 
-usize measure(const char *text) {
+Usize measure(const char *text) {
     return c::strlen(text);
 }
 

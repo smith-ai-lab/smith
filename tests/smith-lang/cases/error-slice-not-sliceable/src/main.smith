@@ -1,7 +1,7 @@
 module main;
 
-i32 main() {
-    i32 number = 5;
-    i32 view[:] = number[0:1];
+I32 main() {
+    I32 number = 5;
+    I32 view[:] = number[0:1];
     return view[0];
 }

@@ -6,17 +6,17 @@ import <smith/contract.h>;
 void copy(auto dst[restrict :], const auto src[const restrict :]) {
     c::smith_requires(countof(dst) <= countof(src));
     c::smith_ensures(true);
-    for (usize i = 0; i < countof(dst) && i < 4; i++) dst[i] = src[i];
+    for (Usize i = 0; i < countof(dst) && i < 4; i++) dst[i] = src[i];
 }
 
 export void apart() {
     c::smith_ensures(true);
-    u8 b[8] = {0};
+    U8 b[8] = {0};
     copy(b[0:4], b[4:8]);
 }
 
 export void shifted() {
     c::smith_ensures(true);
-    u8 b[8] = {0};
+    U8 b[8] = {0};
     copy(b[1:5], b[0:4]);
 }

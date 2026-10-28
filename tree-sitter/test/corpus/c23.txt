@@ -247,7 +247,7 @@ Apple blocks
 
 void f(void) {
     __block size_t copied = 0;
-    apply(content, ^bool(dispatch_data_t region, size_t size) { return true; });
+    apply(content, ^Bool(dispatch_data_t region, size_t size) { return true; });
     set(handle, ^(int state) { copied = state; });
 }
 
@@ -305,7 +305,7 @@ void f(void) {
 auto local and typeof of a member in a parameter
 ================================================================================
 
-u32 f(struct P *p, typeof(p->x) y) {
+U32 f(struct P *p, typeof(p->x) y) {
   auto q = y;
   auto n = 4;
   return q + n;
@@ -349,7 +349,7 @@ u32 f(struct P *p, typeof(p->x) y) {
 reflection: a member named by a field
 ================================================================================
 
-void f(type T, T *x) {
+void f(Type T, T *x) {
   y = x->[fields(T)[i]];
   z = x.[g];
 }
@@ -392,7 +392,7 @@ void f(type T, T *x) {
 reflection: a field kept in a constexpr auto
 ================================================================================
 
-void f(type T, T *x) {
+void f(Type T, T *x) {
   constexpr auto g = fields(T)[i];
   y = x->[g];
 }

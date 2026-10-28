@@ -2074,7 +2074,7 @@ static void smith_lang_eshape_import(const char *text, uint32_t length, const ch
 }
 
 // `option` and `result` are in scope in every module, with no import: their shapes are the ones the library modules
-// `smith::option` and `smith::result` (lib/smith/option.smith, result.smith) export. Those headers are not in git, so
+// `smith::option` and `smith::result` (lib/std/option.smith, result.smith) export. Those headers are not in git, so
 // the two lines the lowering needs of them are written here; `tests/headers_test.smith` checks that each module's
 // generated header has exactly its line.
 static constexpr char smith_option_header[] = "// smith-eshape: option(T) { T some ; none ; }\n";

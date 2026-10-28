@@ -4,8 +4,8 @@ typedef struct {
 
 int main(void) {
     const char *name = "x";
-    integer n = 2.5;
-    arithmetic text = name;
-    floating pair = (Pair){1};
+    Int n = 2.5;
+    Num text = name;
+    Float pair = (Pair){1};
     return n;
 }

@@ -7,9 +7,9 @@
 // (frameworks, ARC, libLTO) runs on macOS only, with a comment where it is.
 module resource_test;
 
-import smith::format;
-import smith::io;
-import smith::test;
+import std::format;
+import std::io;
+import std::test;
 import scratch;
 import target;
 
@@ -105,7 +105,7 @@ constexpr char lock_script[_] =
     "echo \"binary_exists_still=$(yn \"$folder_e\")\"\n";
 
 // A project with the sources; false when this smith has no clang inside (the stage0), whose tests do nothing.
-static bool begin(io::Io *io, scratch::Project *p, bool own_cache) {
+static Bool begin(io::Io *io, scratch::Project *p, Bool own_cache) {
     *p = scratch::project(io, "p", "resource");
     if (own_cache) {
         scratch::own_cache(p);

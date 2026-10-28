@@ -1,7 +1,7 @@
 ---
 type: architecture
 title: Contracts are C23 attributes and calls that smith reads
-description: Contracts are calls of smith::contract that smith prove reads from the IR, are not a clang plugin and do not depend on -fbounds-safety.
+description: Contracts are calls of std::contract that smith prove reads from the IR, are not a clang plugin and do not depend on -fbounds-safety.
 tags: [contracts, prove]
 ---
 # Contracts are C23 attributes and calls that smith reads

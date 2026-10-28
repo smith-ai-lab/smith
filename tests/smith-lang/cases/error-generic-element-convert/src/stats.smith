@@ -1,5 +1,5 @@
 module stats;
-export usize find(const auto xs[:], typeof(xs[0]) v) { for (usize i = 0; i < countof(xs); i++) if (xs[i] == v) return i; return countof(xs); }
-export void fill(auto xs[:], typeof(xs[0]) v) { for (usize i = 0; i < countof(xs); i++) xs[i] = v; }
+export Usize find(const auto xs[:], typeof(xs[0]) v) { for (Usize i = 0; i < countof(xs); i++) if (xs[i] == v) return i; return countof(xs); }
+export void fill(auto xs[:], typeof(xs[0]) v) { for (Usize i = 0; i < countof(xs); i++) xs[i] = v; }
 export void bump(auto *p, typeof(*p) by) { *p += by; }
-export usize cmax(const arithmetic xs[:], typeof(xs[0]) v) { return countof(xs) + (usize)v; }
+export Usize cmax(const Num xs[:], typeof(xs[0]) v) { return countof(xs) + (Usize)v; }

@@ -5,8 +5,8 @@
 // its own, with the working tree edited after the commit.
 module lint_changed_test;
 
-import smith::io;
-import smith::test;
+import std::io;
+import std::test;
 import scratch;
 
 static scratch::Project committed(io::Io *io) {

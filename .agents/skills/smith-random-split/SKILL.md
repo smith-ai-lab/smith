@@ -12,11 +12,11 @@ description: "Moving code from many key_derive calls to random::split: a key is 
 Where a key was derived by names (`Draw_A`, `Draw_B`), make the enum 0-based with a count, split once, use each lane once:
 
 ```smith
-import smith::random;
+import std::random;
 
-typedef enum : usize { Draw_A, Draw_B, Draw_count } Draw;
+typedef enum : Usize { Draw_A, Draw_B, Draw_count } Draw;
 
-f64 pair(random::Key key) {
+F64 pair(random::Key key) {
     random::Key lanes[Draw_count];
     random::split(key, lanes);
     return random::key_unit_double(lanes[Draw_A]) + random::key_unit_double(lanes[Draw_B]);
@@ -25,16 +25,16 @@ f64 pair(random::Key key) {
 
 ## An item index
 
-One key per item: an array sized by the count (a constant bound, or an arena slice), used in the plain loop `for (usize i = 0; i < countof(keys); i++)` with `keys[i]` once in the body. The loop bound must be `countof(keys)`; another bound, an `i32` counter or an index computed from `i` is reported (`smith-lang-affine`). An item that also needs lanes splits its own key.
+One key per item: an array sized by the count (a constant bound, or an arena slice), used in the plain loop `for (Usize i = 0; i < countof(keys); i++)` with `keys[i]` once in the body. The loop bound must be `countof(keys)`; another bound, an `I32` counter or an index computed from `i` is reported (`smith-lang-affine`). An item that also needs lanes splits its own key.
 
 ```smith
-import smith::random;
+import std::random;
 
-f64 total(random::Key key) {
+F64 total(random::Key key) {
     random::Key items[8];
     random::split(key, items);
-    f64 sum = 0;
-    for (usize i = 0; i < countof(items); i++) sum += random::key_unit_double(items[i]);
+    F64 sum = 0;
+    for (Usize i = 0; i < countof(items); i++) sum += random::key_unit_double(items[i]);
     return sum;
 }
 ```
@@ -50,6 +50,6 @@ brain->key = two[0];             // the next draw splits this one
 return two[1];                   // this draw's key
 ```
 
-To use one key in two places that must agree (a reference and the code under test), make it twice from a seed: `u64 seed = random::key_bits(parts[0]);`, then `random::key_make(seed)` each time. A key that a function draws from several times and a caller reads again needs a split in the caller (`random::Key parts[2];`), one part per use.
+To use one key in two places that must agree (a reference and the code under test), make it twice from a seed: `U64 seed = random::key_bits(parts[0]);`, then `random::key_make(seed)` each time. A key that a function draws from several times and a caller reads again needs a split in the caller (`random::Key parts[2];`), one part per use.
 
 Also in this family: [smith-random](../smith-random/SKILL.md), [smith-lang-affine](../smith-lang-affine/SKILL.md).

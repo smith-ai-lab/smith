@@ -3,9 +3,9 @@ module main;
 import <stdio.h>;
 import geo::shapes;
 
-extern i32 user(void); // C names the same types (user.c)
+extern I32 user(void); // C names the same types (user.c)
 
-i32 main() {
+I32 main() {
     shapes::Point p = shapes::make(1, 2);
     shapes::Node b = {.value = 3};
     shapes::Node a = {.next = &b, .value = 4};

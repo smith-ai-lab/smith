@@ -1,16 +1,16 @@
-import smith::random;
-import smith::test;
+import std::random;
+import std::test;
 
 void test_plain_works(void) {
     test::check_equal(2 + 2, 4);
 }
 
 void test_plain_fails(void) {
-    u64 n = 3;
+    U64 n = 3;
     test::check_equal(n, 4);
 }
 
 void test_plain_property(random::Key key) {
-    u64 seed = key.bits; // the same seed makes the same key, and a key is one draw
+    U64 seed = key.bits; // the same seed makes the same key, and a key is one draw
     test::check_equal(random::key_bits(random::key_make(seed)), random::key_bits(random::key_make(seed)));
 }

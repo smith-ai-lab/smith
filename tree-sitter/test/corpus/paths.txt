@@ -103,7 +103,7 @@ a type in a cast and in sizeof
 ================================================================================
 
 void f(void) {
-    usize n = sizeof(tx::Text);
+    Usize n = sizeof(tx::Text);
     tx::Text *t = (tx::Text *)p;
 }
 

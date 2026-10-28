@@ -6,27 +6,27 @@ int a;
 typedef enum { red, green } Color;
 typedef int Three[3];
 typedef char *Text;
-constexpr type kinds[10] = {__INT32_TYPE__, __UINT8_TYPE__, double, Pair, bool, Text, Color, Three, __INT32_TYPE__, __SIZE_TYPE__};
-static type to_slice(type T) {
+constexpr Type kinds[10] = {__INT32_TYPE__, __UINT8_TYPE__, double, Pair, Bool, Text, Color, Three, __INT32_TYPE__, __SIZE_TYPE__};
+static Type to_slice(Type T) {
 return T[:];
 }
-constexpr type sliced = to_slice(__INT32_TYPE__);
-static_assert(integer(kinds[0]) && integer(kinds[1]) && !integer(kinds[2]) && !integer(kinds[4]) && !integer(kinds[6]));
-static_assert(floating(kinds[2]) && !floating(kinds[0]));
-static_assert(signed_integer(kinds[0]) && !signed_integer(kinds[1]) && !signed_integer(kinds[2]));
-static_assert(unsigned_integer(kinds[1]) && unsigned_integer(kinds[9]) && !unsigned_integer(kinds[0]) &&
-!unsigned_integer(kinds[2]));
-static_assert(arithmetic(kinds[0]) && arithmetic(kinds[2]) && !arithmetic(kinds[3]) && !arithmetic(kinds[5]));
-static_assert(boolean(kinds[4]) && !boolean(kinds[0]));
-static_assert(pointer(kinds[5]) && !pointer(kinds[0]));
-static_assert(enumeration(kinds[6]) && !enumeration(kinds[0]));
-static_assert(structure(kinds[3]) && !structure(kinds[0]));
-static_assert(array(kinds[7]) && !array(kinds[0]));
-static_assert(slice(sliced) && !slice(kinds[5]));
-static_assert(integer(kinds[0]) == is_integer(kinds[0]) && arithmetic(kinds[2]) == (is_integer(kinds[2]) || is_float(kinds[2])));
+constexpr Type sliced = to_slice(__INT32_TYPE__);
+static_assert(Int(kinds[0]) && Int(kinds[1]) && !Int(kinds[2]) && !Int(kinds[4]) && !Int(kinds[6]));
+static_assert(Float(kinds[2]) && !Float(kinds[0]));
+static_assert(Signed(kinds[0]) && !Signed(kinds[1]) && !Signed(kinds[2]));
+static_assert(Unsigned(kinds[1]) && Unsigned(kinds[9]) && !Unsigned(kinds[0]) &&
+!Unsigned(kinds[2]));
+static_assert(Num(kinds[0]) && Num(kinds[2]) && !Num(kinds[3]) && !Num(kinds[5]));
+static_assert((Bool == (kinds[4])) && !(Bool == (kinds[0])));
+static_assert(Pointer(kinds[5]) && !Pointer(kinds[0]));
+static_assert(Enum(kinds[6]) && !Enum(kinds[0]));
+static_assert(Struct(kinds[3]) && !Struct(kinds[0]));
+static_assert(Array(kinds[7]) && !Array(kinds[0]));
+static_assert(Slice(sliced) && !Slice(kinds[5]));
+static_assert(Int(kinds[0]) == Int(kinds[0]) && Num(kinds[2]) == (Int(kinds[2]) || Float(kinds[2])));
 int main() {
 printf("%d %d %d %d\n", (int)integer(kinds[0]), (int)arithmetic(kinds[2]), (int)unsigned_integer(kinds[2]),
-(int)signed_integer(kinds[2]));
+(int)Signed(kinds[2]));
 __INT32_TYPE__ a = 1;
 __UINT8_TYPE__ b = 2;
 double c = 3;

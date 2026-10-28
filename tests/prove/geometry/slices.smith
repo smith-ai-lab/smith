@@ -3,49 +3,49 @@
 module geometry::slices;
 import <smith/contract.h>;
 
-export i32 at(i32 xs[:], usize i) {
+export I32 at(I32 xs[:], Usize i) {
     c::smith_ensures(true);
     if (i < countof(xs)) return xs[i];
     return 0;
 }
 
-export i32 unchecked(i32 xs[:], usize i) {
+export I32 unchecked(I32 xs[:], Usize i) {
     c::smith_ensures(true);
     return xs[i];
 }
 
-export i32 total(i32 xs[:]) {
+export I32 total(I32 xs[:]) {
     c::smith_requires(countof(xs) <= 5);
     c::smith_ensures(true);
-    i32 sum = 0;
-    for (usize i = 0; i < countof(xs); i++) {
+    I32 sum = 0;
+    for (Usize i = 0; i < countof(xs); i++) {
         if (xs[i] > 0 && xs[i] < 100) sum += xs[i];
     }
     return sum;
 }
 
-export i32 last_of_tail(i32 xs[:], usize skip) {
+export I32 last_of_tail(I32 xs[:], Usize skip) {
     c::smith_ensures(true);
     if (skip > countof(xs)) return 0;
-    i32 rest[:] = xs[skip:];
+    I32 rest[:] = xs[skip:];
     if (countof(rest) == 0) return 0;
     return rest[countof(rest) - 1];
 }
 
-export i32 first_of_one(i32 *p) {
+export I32 first_of_one(I32 *p) {
     c::smith_ensures(true);
-    i32 view[:] = p[0:1];
+    I32 view[:] = p[0:1];
     return view[0];
 }
 
-export i32 second_of_one(i32 *p) {
+export I32 second_of_one(I32 *p) {
     c::smith_ensures(true);
-    i32 view[:] = p[0:2];
+    I32 view[:] = p[0:2];
     return view[1];
 }
 
-export i32 of_four(i32 p[4]) {
+export I32 of_four(I32 p[4]) {
     c::smith_ensures(true);
-    i32 view[:] = p[0:4];
+    I32 view[:] = p[0:4];
     return view[3];
 }

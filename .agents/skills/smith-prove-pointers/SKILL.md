@@ -8,11 +8,11 @@ description: "smith prove and returned pointers: a pointer returned under smith_
 ```smith
 module pool;
 
-import smith::contract;
+import std::contract;
 
-export i32 *at(i32 xs[4], usize i) {
+export I32 *at(I32 xs[4], Usize i) {
     contract::requires(i < 4);
-    i32 *result = &xs[i];
+    I32 *result = &xs[i];
     contract::ensures(result != nullptr);        // without it a caller's load through the result fails as a possible null
     return result;
 }

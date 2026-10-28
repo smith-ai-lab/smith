@@ -3,21 +3,21 @@
 // the line of the read.
 module main;
 
-import smith::autodiff;
-import smith::io;
+import std::autodiff;
+import std::io;
 import <string.h>;
 
 typedef struct {
-    f64 v[4];
+    F64 v[4];
 } Data;
 
-f64 pick(Data *d, usize n) {
+F64 pick(Data *d, Usize n) {
     return d->v[n] * d->v[n];
 }
 
-i32 main(io::Io *io) {
+I32 main(io::Io *io) {
     Data d = {.v = {1.0, 2.0, 3.0, 4.0}};
-    usize n = c::strcmp(io::args_get(&io->args, 1), "ok") == 0 ? 3 : 4;
+    Usize n = c::strcmp(io::args_get(&io->args, 1), "ok") == 0 ? 3 : 4;
     Data g = autodiff::gradient(pick, &d, n);
     (void)io::console_printf(&io->console, "gradient %.3f %.3f\n", g.v[0], g.v[3]);
     return 0;

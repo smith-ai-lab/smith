@@ -1,14 +1,14 @@
 module idiom::sized_ok;
 
-export u64 wide(usize n, u32 x, u64 y, f64 d, f32 f) {
-    u8 byte = 1;
-    i64 count = 2;
-    i32 plain = 3;
-    i16 half = 4;
+export U64 wide(Usize n, U32 x, U64 y, F64 d, F32 f) {
+    U8 byte = 1;
+    I64 count = 2;
+    I32 plain = 3;
+    I16 half = 4;
     char letter = 'a';
-    return n + x + y + (u64)d + (u64)f + byte + (u64)count + (u64)plain + (u64)half + (u64)letter;
+    return n + x + y + (U64)d + (U64)f + byte + (U64)count + (U64)plain + (U64)half + (U64)letter;
 }
 
-i32 main(str args[:]) {
-    return (i32)countof(args);
+I32 main(Str args[:]) {
+    return (I32)countof(args);
 }

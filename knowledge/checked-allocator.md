@@ -6,7 +6,7 @@ tags: [handlers, allocator, test, sanitizer]
 ---
 # The checked allocator
 
-`mem::checked(parent)` (`lib/smith/mem.smith`, C: `smith_mem_checked`) is an allocator, a `SmithAllocator` first in its
+`mem::checked(parent)` (`lib/std/mem.smith`, C: `smith_mem_checked`) is an allocator, a `SmithAllocator` first in its
 struct like the arena's, that makes its blocks from a parent (null: the system's) and keeps a record of each: the size,
 a serial number, the stack of the allocation (16 frames) and, once freed, of the first free (8 frames). It is set like
 any allocator, `mem::set_allocator(&checked.base)`, so `malloc`, `mem::alloc` and third-party C reach it
@@ -28,11 +28,11 @@ any allocator, `mem::set_allocator(&checked.base)`, so `malloc`, `mem::alloc` an
 - **The user's pointer is the parent's own block**, with the records kept apart. A block still live when the checked
   allocator is released is an ordinary block of the parent's, so code that frees it later (libc keeping a string it
   was given) frees it right.
-- **The runner sets one around each test** (`checked_begin` / `checked_finish` in `lib/smith/test.smith`, around the
+- **The runner sets one around each test** (`checked_begin` / `checked_finish` in `lib/std/test.smith`, around the
   test function alone, not the runner's own setup). A test that returns with a live block fails with `memory leaked` and
   the stack of the allocation, which the report shows as the line that allocated. `--unchecked` turns it off for a run.
   The runner links `mem` (`smith_tests_libraries`) and imports it by its header, `<smith/mem.h>` with the C names,
-  because a module import of `smith::mem` makes the C names of its headers (`index`) errors in a file that uses them as
+  because a module import of `std::mem` makes the C names of its headers (`index`) errors in a file that uses them as
   variables.
 - **The C library's own blocks are not leaks.** `libc` keeps some of what it allocates for the life of the process (the
   cache of its number printing, `__Balloc_D2A`). At the end of a test each live block is looked at with `dladdr`: walking
@@ -46,12 +46,12 @@ any allocator, `mem::set_allocator(&checked.base)`, so `malloc`, `mem::alloc` an
 
 ## The failing allocator (step D2b)
 
-`failing::make(parent, key)` (`lib/smith/failing.smith`, C: `smith_failing_make`; until issue #500 it was `mem::failing` in `mem`, which then imported `random`, which imports `arena`: a cycle that kept `arena` from building on `mem`) is an allocator over a parent (null: the
+`failing::make(parent, key)` (`lib/std/failing.smith`, C: `smith_failing_make`; until issue #500 it was `mem::failing` in `mem`, which then imported `random`, which imports `arena`: a cycle that kept `arena` from building on `mem`) is an allocator over a parent (null: the
 system's) that refuses some allocations, so a test reaches every allocation-failure path of the code under test and a
 failure replays from its seed.
 
 - **The decision is a draw from the key.** The key is used once, at creation (`key_bits`); after that the allocator holds
-  a `u64` chain: each allocation or reallocation splits it with `random::split` into the decision and the next link. The
+  a `U64` chain: each allocation or reallocation splits it with `random::split` into the decision and the next link. The
   decision for call n therefore depends on the key and n alone (it draws even when `one_in` is 0), and the same key with
   the same sequence of calls refuses the same allocations. There is no `key_derive`.
 - **The schedule is `one_in`:** a field, 8 at creation (one allocation in eight), 1 for every one, 0 for none; `calls` and
@@ -64,7 +64,7 @@ failure replays from its seed.
   first half, the failing allocator the second, over the checked allocator (so what was not refused is still leak
   checked), installed as the thread's allocator for the call of the test alone. `--seed` replays it. `tests_list.h`
   declares `struct SmithFailing;` and does not include `<smith/failing.h>`, because a plain include before a `.smith` file
-  that imports `smith::failing` hides the module's instance section.
+  that imports `std::failing` hides the module's instance section.
 - **`.checked_allocator`** is a `build::Setting` (`Default`, `On`, `Off`; zero is the default) on `build::AppTests` and
   `build::Tests`: `Off` passes `--unchecked` to the runner, so the tests run without `mem::checked` (and the
   `Failing` of a failing test then has the system's allocator as its parent). Tests are built in the debug profile,

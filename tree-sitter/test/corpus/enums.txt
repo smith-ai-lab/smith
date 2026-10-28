@@ -4,7 +4,7 @@ an enum with payloads (issue #198)
 
 typedef enum {
     Circle circle;
-    struct { i32 a; } inline_one;
+    struct { I32 a; } inline_one;
     empty;
 } Shape;
 
@@ -102,7 +102,7 @@ void f(Shape s) {
 a type function that returns an enum
 ==================
 
-type option(type T) {
+Type option(Type T) {
     return enum { T some; none; };
 }
 
