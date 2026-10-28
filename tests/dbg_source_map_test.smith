@@ -66,8 +66,9 @@ export void test_dbg_source_map_dap_from_another_folder(io::Io *io) {
     scratch::Run client = scratch::sh(&p, "smith cc -std=gnu23 \"$SMITH_REPO/tests/dap_client.c\" -o dap_client");
     scratch::expect_status("tests/dap_client.c builds", 0, &client);
     // The frame's source is named by its absolute path when lldb resolved it, and by `main.c` alone when it did not.
+    // The root is a real path (macOS's temporary folder is under the link /var), so the folder is `pwd -P`.
     scratch::Run run =
-        scratch::sh(&p, "D=\"$PWD\"; P=\"$D/build/debug/$(basename \"$D\")\"; cd / && "
+        scratch::sh(&p, "D=\"$(pwd -P)\"; P=\"$D/build/debug/$(basename \"$D\")\"; cd / && "
                         "\"$D/dap_client\" \"$(command -v smith)\" \"$P\" \"$D/main.c\" 4 x 41 2>&1 | "
                         "grep -q \"\\\"name\\\":\\\"main.c\\\",\\\"path\\\":\\\"$D/main.c\\\"\" && echo resolved");
     scratch::expect_contains("the frame's source is resolved to the project's file, from /", run.out, "resolved");
