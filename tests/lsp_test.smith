@@ -683,6 +683,19 @@ export void test_lsp_solo_a_single_file_with_no_database(io::Io *io) {
     expect_no_lines(io, "solo: and has no diagnostics", log, "diag ");
 }
 
+// In a module a local `T t;` is a zero value (issue #415): the editor, with smith's default checks on, reports no read
+// of an uninitialized variable for it.
+export void test_lsp_a_local_without_an_initializer_is_zero(io::Io *io) {
+    scratch::Project root;
+    if (!make(io, &root, false)) {
+        return;
+    }
+    scratch::Project p = folder(&root, "zero");
+    const char *log = session(io, &p, "open main.smith");
+    expect_line(io, "zero: the file is read", log, "diagnostics main.smith");
+    expect_no_lines(io, "zero: and `T t;` read before a write is no diagnostic", log, "diag ");
+}
+
 // `i32 main(str args[:])` lowers to a head and the statements that make `args`; the editor's token buffer used to walk
 // them for ever (issue #523), one core at 100%. The client gives the server 10 s of CPU time to answer.
 export void test_lsp_main_with_args_ends(io::Io *io) {

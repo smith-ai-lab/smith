@@ -670,12 +670,12 @@ struct Tally {
 };
 
 I32 main() {
-    // every byte zero, padding too; `Tally fresh;` is the same
-    Tally fresh = {};
+    // every byte zero, padding too; `Tally fresh = {};` is the same
+    Tally fresh;
     // zero is .none
-    Option(I32) last = {};
+    Option(I32) last;
     // zero is .error
-    Result(I32, I32) outcome = {};
+    Result(I32, I32) outcome;
     bool has_last = last == .some;
     bool succeeded = outcome == .ok;
     console::print("total ", fresh.total, ", has last ", has_last, ", succeeded ", succeeded, "\n");

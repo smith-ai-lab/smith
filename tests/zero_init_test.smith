@@ -65,3 +65,13 @@ export void test_zero_init_declared_and_braced_are_all_zero_bytes(io::Io *io) {
     scratch::Run ran = scratch::sh(&p, "build/debug/p");
     scratch::expect_status("T t; and T t = {}; leave no nonzero byte, in padding or a union", 0, &ran);
 }
+
+// `T t;` is a zero value for the static analyzer too (issue #415): reading an Option never written is no "garbage
+// value" in smith lint, with smith's default checks. The editor's half is tests/lsp_test.smith.
+export void test_zero_init_lint_sees_a_zero_value(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "lsp/zero");
+    scratch::Run tidy = scratch::sh(&p, "cp \"$SMITH_REPO/templates/defaults/clang-tidy\" .clang-tidy");
+    scratch::expect_status("the default checks are in", 0, &tidy);
+    scratch::Run lint = scratch::sh(&p, "smith lint --quiet main.smith -- -I. -I.smith/include 2>&1");
+    scratch::expect_status("T t; read before a write passes smith lint", 0, &lint);
+}

@@ -1,0 +1,15 @@
+module main;
+
+struct Tally {
+    char kind;
+    I64 total;
+};
+
+I32 main() {
+    Tally fresh;
+    Option(I32) last;
+    Result(I32, I32) outcome;
+    bool has_last = last == .some;
+    bool succeeded = outcome == .ok;
+    return (I32)fresh.total + has_last + succeeded;
+}
