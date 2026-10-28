@@ -442,3 +442,13 @@ export void test_runner_workers_fail_fast_starts_no_test_after_the_first_failure
     runner::expect_has(io, "", "fail-fast: the rest is not started", &run, "1 passed, 1 failed");
     runner::expect_has(io, "", "fail-fast: and counted", &run, "2 not run (--fail-fast)");
 }
+
+// --progress <file> (preflight, #638): one byte for each reported test, so a run that is killed can be counted. The
+// run stops after the first failure, and the file counts the two tests that ran, not the two that did not.
+export void test_runner_workers_progress_has_a_byte_for_each_reported_test(io::Io *io) {
+    scratch::Project p = workers_project(io);
+    scratch::Run run = runner::tests(&p, "", "--test crash_ --jobs 1 --fail-fast --progress progress.txt");
+    runner::expect_has(io, "", "progress: the run", &run, "1 passed, 1 failed");
+    scratch::Run counted = scratch::sh(&p, "wc -c < progress.txt | tr -d ' '");
+    scratch::expect_text("progress: a byte for each test that ran", "2\n", counted.out);
+}

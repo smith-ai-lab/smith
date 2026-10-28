@@ -2364,8 +2364,8 @@ static const char *build_preflight_duration(SmithBuild *b, double seconds) {
 }
 
 // How many of the selected tests ran, and of how many (#638). A finished run says it in its summary ("N passed, M
-// failed", "K not run"). A run the cap cut short has no summary: the tests that ran left a record in .smith/records
-// after the step began, and the runner's --list names the selected tests. Anything unknown stays -1.
+// failed", "K not run"). A run the cap cut short has no summary: the runner's --progress file has a byte for each
+// test it reported, and the runner's --list names the selected tests. Anything unknown stays -1.
 static long build_preflight_number(SmithBuild *b, const char *name, const char *script) {
     const char *text = build_preflight_capture(b, name, smith_list(b, "sh", "-c", script, nullptr));
     return text[0] == '\0' ? -1 : strtol(text, nullptr, 10);
@@ -2394,6 +2394,14 @@ static void build_preflight_count(SmithBuild *b, const char *built, PreflightRes
                   "if [ -n \"$f\" ]; then build/%s-%s/units-project/build/tests --list --test \"$f\"; "
                   "else build/%s-%s/units-project/build/tests --list; fi 2>/dev/null | wc -l | tr -d ' '",
                   built, system, machine, system, machine));
+}
+
+// The runner's --progress file of the test step (absolute: the runner may run elsewhere), made empty.
+static const char *build_preflight_progress(SmithBuild *b) {
+    char here[PATH_MAX];
+    const char *path = smith_fmt(b, "%s/.smith/preflight-test.progress", getcwd(here, sizeof here) ? here : ".");
+    (void)unlink(path);
+    return path;
 }
 
 static int build_preflight(SmithRun *run) {
@@ -2425,16 +2433,16 @@ static int build_preflight(SmithRun *run) {
     if (built_status != 0) {
         failed = "build";
     } else {
+        const char *progress = build_preflight_progress(b);
         const char *const names[] = {"fmt", "docs", "lint", "test"};
-        const char *const *commands[] = {
-            smith_list(b, built, "fmt", nullptr), smith_list(b, built, "docs", nullptr),
-            smith_list(b, built, "lint", "--changed", nullptr),
-            smith_list(b, built, "test", "--changed", "--cheapest-first", "--fail-fast", nullptr)};
+        const char *const *commands[] = {smith_list(b, built, "fmt", nullptr), smith_list(b, built, "docs", nullptr),
+                                         smith_list(b, built, "lint", "--changed", nullptr),
+                                         smith_list(b, built, "test", "--changed", "--cheapest-first", "--fail-fast",
+                                                    "--progress", progress, nullptr)};
         for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
             double step_started = build_preflight_now();
             bool is_test = strcmp(names[i], "test") == 0;
             if (is_test) { // capped: a run cut short is a failure
-                (void)build_preflight_capture(b, "mark", smith_list(b, "touch", ".smith/preflight-test.mark", nullptr));
                 int status = build_preflight_capped(b, commands[i], ".smith/preflight-test.log", &result.test_capped);
                 if (status != 0) build_print_tail(".smith/preflight-test.log", 12);
                 fprintf(stderr, "preflight: test %s\n", status != 0 ? "FAILED" : result.test_capped ? "CAPPED" : "ok");

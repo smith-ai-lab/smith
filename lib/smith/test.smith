@@ -162,41 +162,42 @@ import <unistd.h>;
 // ---------------------------------------------------------------------------------------------------------------
 // The platform's numbers. A C macro is the preprocessor's, and a .smith file has none: each is read once, here.
 
-constexpr i32 sig_abrt = c::SIGABRT;                              // NOLINT(smith-preprocessor)
-constexpr i32 sig_alrm = c::SIGALRM;                              // NOLINT(smith-preprocessor)
-constexpr i32 sig_bus = c::SIGBUS;                                // NOLINT(smith-preprocessor)
-constexpr i32 sig_fpe = c::SIGFPE;                                // NOLINT(smith-preprocessor)
-constexpr i32 sig_ill = c::SIGILL;                                // NOLINT(smith-preprocessor)
-constexpr i32 sig_kill = c::SIGKILL;                              // NOLINT(smith-preprocessor)
-constexpr i32 sig_term = c::SIGTERM;                              // NOLINT(smith-preprocessor)
-constexpr i32 sig_pipe = c::SIGPIPE;                              // NOLINT(smith-preprocessor)
-constexpr i32 sig_prof = c::SIGPROF;                              // NOLINT(smith-preprocessor)
-constexpr i32 sig_segv = c::SIGSEGV;                              // NOLINT(smith-preprocessor)
-constexpr i32 sig_trap = c::SIGTRAP;                              // NOLINT(smith-preprocessor)
-constexpr i32 sig_xfsz = c::SIGXFSZ;                              // NOLINT(smith-preprocessor)
-constexpr i32 on_stack = c::SA_ONSTACK;                           // NOLINT(smith-preprocessor)
-constexpr i32 with_info = c::SA_SIGINFO;                          // NOLINT(smith-preprocessor)
-constexpr i32 stdout_fd = c::STDOUT_FILENO;                       // NOLINT(smith-preprocessor)
-constexpr i32 stderr_fd = c::STDERR_FILENO;                       // NOLINT(smith-preprocessor)
-constexpr i32 protect_read = c::PROT_READ;                        // NOLINT(smith-preprocessor)
-constexpr i32 protect_write = c::PROT_WRITE;                      // NOLINT(smith-preprocessor)
-constexpr i32 map_anonymous = c::MAP_ANON;                        // NOLINT(smith-preprocessor)
-constexpr i32 map_private = c::MAP_PRIVATE;                       // NOLINT(smith-preprocessor)
-constexpr i32 map_shared = c::MAP_SHARED;                         // NOLINT(smith-preprocessor)
-constexpr i32 set_flags = c::F_SETFL;                             // NOLINT(smith-preprocessor)
-constexpr i32 non_blocking = c::O_NONBLOCK;                       // NOLINT(smith-preprocessor)
-constexpr i16 poll_in = c::POLLIN;                                // NOLINT(smith-preprocessor)
-constexpr i32 files_limit = c::RLIMIT_NOFILE;                     // NOLINT(smith-preprocessor)
-constexpr i32 timer_real = c::ITIMER_REAL;                        // NOLINT(smith-preprocessor)
-constexpr i32 timer_cpu = c::ITIMER_PROF;                         // NOLINT(smith-preprocessor)
-constexpr i32 again = c::EAGAIN;                                  // NOLINT(smith-preprocessor)
-constexpr i32 not_permitted = c::EPERM;                           // NOLINT(smith-preprocessor)
-constexpr i32 token_open = c::O_RDWR | c::O_CREAT | c::O_CLOEXEC; // NOLINT(smith-preprocessor)
-constexpr i32 lock_exclusive_now = c::LOCK_EX | c::LOCK_NB;       // NOLINT(smith-preprocessor)
-constexpr i32 processors_online = c::_SC_NPROCESSORS_ONLN;        // NOLINT(smith-preprocessor)
-constexpr i32 interrupted = c::EINTR;                             // NOLINT(smith-preprocessor)
-constexpr i32 write_only = c::O_WRONLY;                           // NOLINT(smith-preprocessor)
-constexpr c::clockid_t clock_monotonic = c::CLOCK_MONOTONIC;      // NOLINT(smith-preprocessor)
+constexpr i32 sig_abrt = c::SIGABRT;                                // NOLINT(smith-preprocessor)
+constexpr i32 sig_alrm = c::SIGALRM;                                // NOLINT(smith-preprocessor)
+constexpr i32 sig_bus = c::SIGBUS;                                  // NOLINT(smith-preprocessor)
+constexpr i32 sig_fpe = c::SIGFPE;                                  // NOLINT(smith-preprocessor)
+constexpr i32 sig_ill = c::SIGILL;                                  // NOLINT(smith-preprocessor)
+constexpr i32 sig_kill = c::SIGKILL;                                // NOLINT(smith-preprocessor)
+constexpr i32 sig_term = c::SIGTERM;                                // NOLINT(smith-preprocessor)
+constexpr i32 sig_pipe = c::SIGPIPE;                                // NOLINT(smith-preprocessor)
+constexpr i32 sig_prof = c::SIGPROF;                                // NOLINT(smith-preprocessor)
+constexpr i32 sig_segv = c::SIGSEGV;                                // NOLINT(smith-preprocessor)
+constexpr i32 sig_trap = c::SIGTRAP;                                // NOLINT(smith-preprocessor)
+constexpr i32 sig_xfsz = c::SIGXFSZ;                                // NOLINT(smith-preprocessor)
+constexpr i32 on_stack = c::SA_ONSTACK;                             // NOLINT(smith-preprocessor)
+constexpr i32 with_info = c::SA_SIGINFO;                            // NOLINT(smith-preprocessor)
+constexpr i32 stdout_fd = c::STDOUT_FILENO;                         // NOLINT(smith-preprocessor)
+constexpr i32 stderr_fd = c::STDERR_FILENO;                         // NOLINT(smith-preprocessor)
+constexpr i32 protect_read = c::PROT_READ;                          // NOLINT(smith-preprocessor)
+constexpr i32 protect_write = c::PROT_WRITE;                        // NOLINT(smith-preprocessor)
+constexpr i32 map_anonymous = c::MAP_ANON;                          // NOLINT(smith-preprocessor)
+constexpr i32 map_private = c::MAP_PRIVATE;                         // NOLINT(smith-preprocessor)
+constexpr i32 map_shared = c::MAP_SHARED;                           // NOLINT(smith-preprocessor)
+constexpr i32 set_flags = c::F_SETFL;                               // NOLINT(smith-preprocessor)
+constexpr i32 non_blocking = c::O_NONBLOCK;                         // NOLINT(smith-preprocessor)
+constexpr i16 poll_in = c::POLLIN;                                  // NOLINT(smith-preprocessor)
+constexpr i32 files_limit = c::RLIMIT_NOFILE;                       // NOLINT(smith-preprocessor)
+constexpr i32 timer_real = c::ITIMER_REAL;                          // NOLINT(smith-preprocessor)
+constexpr i32 timer_cpu = c::ITIMER_PROF;                           // NOLINT(smith-preprocessor)
+constexpr i32 again = c::EAGAIN;                                    // NOLINT(smith-preprocessor)
+constexpr i32 not_permitted = c::EPERM;                             // NOLINT(smith-preprocessor)
+constexpr i32 token_open = c::O_RDWR | c::O_CREAT | c::O_CLOEXEC;   // NOLINT(smith-preprocessor)
+constexpr i32 lock_exclusive_now = c::LOCK_EX | c::LOCK_NB;         // NOLINT(smith-preprocessor)
+constexpr i32 processors_online = c::_SC_NPROCESSORS_ONLN;          // NOLINT(smith-preprocessor)
+constexpr i32 interrupted = c::EINTR;                               // NOLINT(smith-preprocessor)
+constexpr i32 append_only = c::O_WRONLY | c::O_APPEND | c::O_CREAT; // NOLINT(smith-preprocessor)
+constexpr i32 write_only = c::O_WRONLY;                             // NOLINT(smith-preprocessor)
+constexpr c::clockid_t clock_monotonic = c::CLOCK_MONOTONIC;        // NOLINT(smith-preprocessor)
 
 // __builtin_trap's signal: brk raises SIGTRAP on aarch64, ud2 SIGILL on x86_64.
 constexpr i32 sig_builtin_trap = target::arch == target::x86_64 ? sig_ill : sig_trap;
@@ -1448,6 +1449,8 @@ typedef struct {
     bool list;
     const char
         *costs; // --costs <file>: lines `cpu<TAB>seconds<TAB>name`; the cheapest tests start first, unknown ones before
+    const char
+        *progress;  // --progress <file>: one byte appended to it for each test reported, so a killed run can count
     bool fail_fast; // --fail-fast: no test starts after one has failed; the ones running finish
     bool verbose;
     bool color;
@@ -2519,7 +2522,17 @@ void print_failure(const Test *test, const Options *options, const Run *run) {
         say(options, "    rerun: smith test --test %s --seed %ju\n", test->name, (c::uintmax_t)run->seed);
 }
 
+// --progress: one byte appended for each reported test (preflight counts a run its cap killed by the file's size).
+void note_progress(const Options *options) {
+    if (options->progress == nullptr) return;
+    i32 file = c::open(options->progress, append_only, 0o644);
+    if (file < 0) return;
+    (void)c::write(file, ".", 1);
+    c::close(file);
+}
+
 void report(const Test *test, const Options *options, const Run *run) {
+    note_progress(options);
     if (run->outcome.end != End_Passed) {
         print_failure(test, options, run);
     } else if (options->verbose) {
@@ -3093,6 +3106,10 @@ bool parse_value(Options *options, const char *flag, const char *value) {
         options->costs = value;
         return value[0] != '\0';
     }
+    if (c::strcmp(flag, "--progress") == 0) {
+        options->progress = value;
+        return value[0] != '\0';
+    }
     if (c::strcmp(flag, "--explain") == 0) {
         options->explain = value;
         return value[0] != '\0';
@@ -3339,7 +3356,8 @@ static void say_usage(const Options *options, const Runner *runner) {
              "usage: %s [--test <substring>] [--seed <n>] [--seeds <1 to %ju>] [--jobs <1 to %zu>] "
              "[--timeout <cpu seconds>] [--wall-timeout <seconds>] [--shrink 0|1] [--shrink-seconds <seconds>] "
              "[--shuffle <seed>] [--isolate] "
-             "[--in-process] [--full] [--update] [--list] [--fail-fast] [--costs <file>] [--verbose] [--stats] "
+             "[--in-process] [--full] [--update] [--list] [--fail-fast] [--costs <file>] [--progress <file>] "
+             "[--verbose] [--stats] "
              "[--trace] [--color] "
              "[--explain <smith>] [--explain-max <n>] [--no-explain] [--unchecked]\n",
              runner->argv[0], (c::uintmax_t)seeds_max, jobs_max);
