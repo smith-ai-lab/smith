@@ -33,7 +33,7 @@ export void test_caps_smith_inputs_and_flags_reach_the_compiler_whole(io::Io *io
     scratch::Project p = scratch::project(io, "p", nullptr);
     scratch::write(&p, "stub.sh",
                    "#!/bin/sh\n"
-                   "echo \"inputs=$(printf %s \"$SMITH_LANG_INPUTS\" | wc -l)\"\n"
+                   "echo \"inputs=$(printf %s \"$SMITH_LANG_INPUTS\" | wc -l | tr -d ' ')\"\n"
                    "[ $(printf %s \"$SMITH_LANG_FLAGS\" | wc -c) -gt 12000 ] && echo flags=whole\n");
     (void)scratch::sh(&p, "chmod +x stub.sh; D=$(printf 'd%.0s' $(seq 1 150)); mkdir $D; "
                           "for i in $(seq 0 59); do printf \"module m$i;\\nexport i32 f$i(void) { return $i; }\\n\" > "
