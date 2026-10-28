@@ -390,6 +390,7 @@ static void smith_lang_begin_declaration(SmithLang *lang, const SmithHost *host,
     lang->tee = host->previous == nullptr && host->expr_type == nullptr && !lang->dump_enabled;
     lang->generic_result_call = false;
     lang->generic_plain = false;
+    lang->concept_head = false;
     lang->generic_next = smith_lang_generic_candidate(lang, host, token) && smith_lang_generic_ahead(lang, host, token);
     SmithToken shown = *token;
     smith_lang_module_main_begin(lang, host, token);
@@ -1232,15 +1233,13 @@ static bool smith_lang_concept_local(SmithLang *lang, const SmithHost *host, con
         !host->expr_type(host->context, text, (uint32_t)strlen(text), &found)) {
         return false; // not read here: the declaration stays, and the compiler says what it does not know
     }
-    unsigned id = 0;
-    for (size_t i = 0; i < sizeof smith_lang_concepts / sizeof smith_lang_concepts[0]; i++) { // 11 concepts
-        if (smith_lang_equals(token->text, token->length, smith_lang_concepts[i])) id = (unsigned)i + 1;
-    }
-    if (!smith_lang_concept_holds(host, id, found.canonical)) {
+    unsigned id = smith_lang_concept_id_text(token->text, token->length);
+    if (!smith_lang_concept_holds(lang, host, id, found.canonical,
+                                  init[0].location != 0 ? init[0].location : token->location)) {
         uint32_t place = init[0].location != 0 ? init[0].location : token->location; // at the initializer
         smith_lang_concept_why(lang, host, place, id, found.canonical);
         smith_lang_error(lang, host, place, "`%s` is not `%s`: the initializer of `%.*s` has that type", found.written,
-                         smith_lang_concepts[id - 1], (int)name->length, name->text);
+                         smith_lang_concept_name(id), (int)name->length, name->text);
     } // and the declaration goes on as `auto`, so that nothing else is said about the name
     SmithToken automatic = smith_lang_tuple_made(SmithTokenKind_Identifier, "auto", 4, token, token->space_before);
     automatic.line_start = token->line_start;

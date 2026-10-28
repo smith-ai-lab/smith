@@ -491,6 +491,7 @@ struct SmithLang {
     uint32_t skip_mark;       // where in smith_lang_gt the dropped body begins
     bool generic_next;        // the declaration about to begin is generic
     uint32_t array_result_open; // the `[` of a generic's result `T[n]` (runtime/lang_array.c): what is before it is a type
+    bool concept_head;        // the head being read is a concept's, `Bool Ordered(constexpr Type T)` (issue #193)
     bool generic_plain;       // ... a plain one: a function over `type` that is exported (issue #107)
     bool type_import;         // an import has functions over `type`: their records are defined after the last import
     bool generic_result_call; // ... and its result type is a call
@@ -906,6 +907,7 @@ static const SmithLangCapital smith_lang_capitals[] = {
     {"Struct", "structure"},
     {"Array", "array"},
     {"Slice", "slice"},
+    {"Any", "any"},
     {"Signed", "signed_integer"},
     {"Unsigned", "unsigned_integer"},
 };
