@@ -118,8 +118,15 @@ static bool smith_lang_wants_static(SmithLang *lang, const SmithHost *host, cons
         return false;
     }
     if (word != SmithLangWord_Tag) return !smith_lang_is_main(lang, host, token);
-    const SmithToken *next = smith_lang_peek(lang, host, 0, false);
-    const SmithToken *after = next->kind == SmithTokenKind_Identifier ? smith_lang_peek(lang, host, 1, false) : next;
+    size_t at = 0;
+    const SmithToken *next = smith_lang_peek(lang, host, at, false);
+    for (size_t depth = 0; smith_lang_punct(next, "[") || depth > 0; at++) { // `struct [[attribute]] S {`: skip the [[ ]]
+        if (at >= 64 || next->kind == SmithTokenKind_Eof) return true;      // bounded
+        depth += smith_lang_punct(next, "[") ? 1 : 0;
+        depth -= smith_lang_punct(next, "]") ? 1 : 0;
+        next = smith_lang_peek(lang, host, at + 1, false);
+    }
+    const SmithToken *after = next->kind == SmithTokenKind_Identifier ? smith_lang_peek(lang, host, at + 1, false) : next;
     return !(smith_lang_punct(after, "{") || smith_lang_punct(after, ";") || smith_lang_punct(after, ":"));
 }
 
@@ -188,6 +195,7 @@ static void smith_lang_head_punctuator(SmithLang *lang, const SmithHost *host, c
     SmithLangDecl *decl = &lang->decl;
     char c = token->length == 1 ? token->text[0] : 0;
     decl->prev_star = c == '*';
+    bool after_tag = decl->prev_tag;
     decl->prev_tag = false;
     if (token->tuple_brace) { // a tuple's definition is part of the head, as a parenthesis is
         if (c == '{') {
@@ -211,9 +219,14 @@ static void smith_lang_head_punctuator(SmithLang *lang, const SmithHost *host, c
         if (lang->paren_depth > 0) lang->paren_depth -= 1;
         if (lang->paren_depth == 0) decl->in_params = false;
     } else if (c == '[') {
+        if (after_tag || lang->tag_attr > 0) lang->tag_attr += 1; // `struct [[attribute]] Name`: the name follows
         lang->bracket_depth += 1;
     } else if (c == ']') {
         if (lang->bracket_depth > 0) lang->bracket_depth -= 1;
+        if (lang->tag_attr > 0) {
+            lang->tag_attr -= 1;
+            decl->prev_tag = lang->tag_attr == 0;
+        }
     } else if (lang->paren_depth == 0 && lang->bracket_depth == 0) {
         if (c == ',') {
             decl->name_found = false;

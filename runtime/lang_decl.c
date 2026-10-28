@@ -197,7 +197,7 @@ static void smith_lang_track_attribute(SmithLang *lang, const SmithToken *token)
 }
 
 // Remembers what a token was, for the one after it.
-static void smith_lang_track(SmithLang *lang, const SmithToken *token, bool is_type) {
+static void smith_lang_track_token(SmithLang *lang, const SmithToken *token, bool is_type) {
     smith_lang_track_attribute(lang, token);
     lang->prev_member = false;
     lang->prev_tag = false;
@@ -222,6 +222,18 @@ static void smith_lang_track(SmithLang *lang, const SmithToken *token, bool is_t
     lang->prev_member = smith_lang_punct(token, ".") || smith_lang_punct(token, "->");
     lang->typeish = false;
     lang->prev_name_length = 0;
+}
+
+// `struct [[attribute]] Name`: the attributes between the keyword and the tag's name do not end the tag's turn.
+static void smith_lang_track(SmithLang *lang, const SmithToken *token, bool is_type) {
+    bool was_tag = lang->prev_tag;
+    smith_lang_track_token(lang, token, is_type);
+    if (smith_lang_punct(token, "[") && (was_tag || lang->tag_attr > 0)) {
+        lang->tag_attr += 1;
+    } else if (smith_lang_punct(token, "]") && lang->tag_attr > 0) {
+        lang->tag_attr -= 1;
+        lang->prev_tag = lang->tag_attr == 0;
+    }
 }
 
 // ---- Declared names -------------------------------------------------------------------------------------------------

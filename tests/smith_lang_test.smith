@@ -1803,6 +1803,10 @@ export void test_typetag_run(io::Io *io) {
     corpus_case(io, "typetag-run");
 }
 
+export void test_typetag_attribute(io::Io *io) {
+    corpus_case(io, "typetag-attribute");
+}
+
 export void test_typetag_module(io::Io *io) {
     corpus_case(io, "typetag-module");
 }

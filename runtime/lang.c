@@ -544,6 +544,7 @@ struct SmithLang {
     bool statement_typedef;    // `typedef` seen in this statement
     uint8_t own_words;         // module, import or export, typedef'd by this file: they are names, not keywords
     // The token before, and the type tracking.
+    uint32_t tag_attr;  // the depth of the [[ ]] between struct, union or enum and the tag's name (the name follows)
     bool prev_member;
     bool prev_tag;
     char prev_tag_word; // 's', 'u' or 'e' for the struct, union or enum that prev_tag says

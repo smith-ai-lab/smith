@@ -107,7 +107,7 @@ u32 helper(void) { … }                              // private
     lowers to plain C: the typedef (`typedef struct m_Point m_Point;`) is written before the next declaration, where
     the definition is complete (an enum cannot be named before), after the `;` for a block's tag, and in the generated
     header after an exported tag, so C callers write `m_Point` or `struct m_Point`; until then the tag's own braces
-    name it `struct m_Point`. C11 accepts a typedef twice, so `typedef struct Point {...} Point;` compiles unchanged.
+    name it `struct m_Point`. C11 accepts a typedef twice, so `typedef struct Point {...} Point;` compiles unchanged. Attributes between the keyword and the name (`struct [[clang::annotate("x")]] Point {`) leave the name the type's, with a `[[smith::c_name]]` before an `export` choosing its C name.
     No special case for a collision (C++ lets a variable hide a class): a tag and a variable, function or enum
     constant of one name at file scope are an error that says so. `c::` tags are the header's, untouched, and a `.c`
     file or a `.smith` file without a `module` line keeps C's meaning (`struct Point {}; int Point;` is valid there;
