@@ -37,7 +37,10 @@
 #include <smith/contract.h>
 #include <smith/io.h>
 #include <smith/random.h>
-#if __has_include("internal/http.c")
+#ifdef SMITH_CORE // the units runner links these two as objects of its own (include/smith_core.h)
+#include <smith/http.h>
+#include <smith/trace.h>
+#elif __has_include("internal/http.c")
 #include "internal/http.c"
 #include "lib/trace.c"
 #else

@@ -2024,10 +2024,10 @@ static void smith_make_dump(const char *makefile) {
     FILE *raw = tmpfile();
     FILE *formatted = tmpfile();
     if (raw == nullptr || formatted == nullptr) {
-        smith_make_translate(makefile, stdout);
+        smith_make_translate(makefile, stdout, stderr);
         return;
     }
-    smith_make_translate(makefile, raw);
+    smith_make_translate(makefile, raw, stderr);
     bool formatted_ok = smith_make_format_files(raw, formatted);
     smith_copy_to_stdout(formatted_ok ? formatted : raw);
     fclose(raw);
@@ -3426,6 +3426,7 @@ static void smith_usage(FILE *out) {
     exit(smith_exit_usage);
 }
 
+#ifndef SMITH_CORE // the units runner links this file as a library (runtime/core.h), without the program's main
 int main(int argc, char **argv) {
     SMITH_ASSERT(argc >= 1 && argv[0] != nullptr);
     smith_account_start();
@@ -3474,3 +3475,4 @@ int main(int argc, char **argv) {
     if (smith_slots_verb(verb->name)) smith_slots_arm(verb->name);
     return smith_dispatch(verb, argc, argv, self);
 }
+#endif

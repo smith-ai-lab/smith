@@ -278,8 +278,11 @@ static void smith_changed_build_graph(void) {
 
 // ---- The rules
 
+// A test runs smith when it starts it (`scratch::`, `SMITH_SELF`) or links its core as a library (include/smith_core.h,
+// issue #646): the sources of smith are compiled into the runner that runs it.
 static bool smith_changed_runs_smith(const char *text) {
-    return strstr(text, "scratch::") != nullptr || strstr(text, "SMITH_SELF") != nullptr;
+    return strstr(text, "scratch::") != nullptr || strstr(text, "SMITH_SELF") != nullptr ||
+           strstr(text, "smith_core.h") != nullptr;
 }
 
 static bool smith_changed_in_smith(const char *path) {
