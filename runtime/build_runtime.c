@@ -1868,7 +1868,9 @@ static const char *smith_lang_register(const char *source, const char **header, 
     const char *path = smith_text("%s%s", smith_lang_slashed(name), ".smith");
     bool placed = strcmp(source, path) == 0 || smith_ends_with(source, smith_text("/%s", path));
     if (!placed) smith_fail("smith_object: %s declares module %s, so its path must end in %s", source, name, path);
-    *header = smith_text(".smith/include/%s.h", smith_lang_slashed(name));
+    // the header of std::arena is smith/arena.h: C has no namespaces (#366)
+    *header = strncmp(name, "std::", 5) == 0 ? smith_text(".smith/include/smith/%s.h", smith_lang_slashed(name + 5))
+                                             : smith_text(".smith/include/%s.h", smith_lang_slashed(name));
     *first = false;
     for (size_t i = 0; i < smith_lang_module_count; i++) {
         if (strcmp(smith_lang_module_names[i], name) != 0) continue;
