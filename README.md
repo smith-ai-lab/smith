@@ -192,32 +192,6 @@ export i32 median(i32 xs[:]) {
 
 [smith-slice](.agents/skills/smith-slice/SKILL.md), [smith-ascii](.agents/skills/smith-ascii/SKILL.md).
 
-A list that grows is `smith::list`'s `List(T)`: its zero value is the empty list, its memory comes from the allocator in force (a fixed arena stops at its budget, a growing arena extends its last block in place, the heap reallocates), and its functions take the list as a pattern, `List(constexpr Type T) *xs`, so `T` is the element of whatever list you pass:
-
-```smith
-module lines;
-
-import smith::list;
-
-typedef list::List(i32) Numbers;
-
-export i32 total(i32 first, i32 last) {
-    Numbers numbers = {};
-    for (i32 n = first; n <= last; n++) {
-        list::push(&numbers, n);
-    }
-    i32 all[:] = list::items(&numbers);
-    i32 sum = 0;
-    for (usize i = 0; i < countof(all); i++) {
-        sum += all[i];
-    }
-    list::free(&numbers);
-    return sum;
-}
-```
-
-[smith-list](.agents/skills/smith-list/SKILL.md), [smith-lang-generics-pattern](.agents/skills/smith-lang-generics-pattern/SKILL.md).
-
 ### Typed memory, not `memcpy`
 
 ```c
