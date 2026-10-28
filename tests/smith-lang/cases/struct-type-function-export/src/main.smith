@@ -1,0 +1,19 @@
+module main;
+
+import <stdio.h>;
+import pairs;
+
+typedef pairs::Pair(usize) Indexes;
+typedef pairs::Pair(f64) Points;
+
+static usize total(Indexes pair) {
+    return pair.first + pair.second + pair.count;
+}
+
+i32 main(void) {
+    Indexes a = pairs::both(5, 6);
+    Points b = {.first = 1.5, .second = 2.5, .count = 1};
+    Indexes zero = {};
+    c::printf("%zu %g %zu\n", total(a), b.first + b.second, total(zero));
+    return 0;
+}

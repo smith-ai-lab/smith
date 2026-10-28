@@ -1011,6 +1011,7 @@ typedef struct {
     char module[64]; // the import's name that an importer writes before it (`opt::option(...)`); empty: this file's own
     bool exported;   // `export type option(...)`: the header carries the shape
     bool builtin;    // `option` and `result`: in scope in every module, from the library's own headers
+    bool is_struct;  // `return struct { T *items; usize count; };`: the fields of a struct, not the variants of an enum
 } SmithLangEnumShape;
 
 typedef struct {
@@ -1191,8 +1192,9 @@ static bool smith_lang_eshape_declare(SmithLang *lang, const SmithHost *host, co
     }
     size_t right = smith_lang_eshape_close(lang, host, token, 2, "(", ")");
     if (right == 0 || !smith_lang_punct(smith_lang_eshape_at(lang, host, token, right + 1), "{")) return false;
+    bool is_struct = smith_lang_ident(smith_lang_eshape_at(lang, host, token, right + 3), "struct");
     if (!smith_lang_ident(smith_lang_eshape_at(lang, host, token, right + 2), "return") ||
-        !smith_lang_ident(smith_lang_eshape_at(lang, host, token, right + 3), "enum") ||
+        !(is_struct || smith_lang_ident(smith_lang_eshape_at(lang, host, token, right + 3), "enum")) ||
         !smith_lang_punct(smith_lang_eshape_at(lang, host, token, right + 4), "{")) {
         return smith_lang_eshape_other(lang, host, token, name, right);
     }
@@ -1211,6 +1213,7 @@ static bool smith_lang_eshape_declare(SmithLang *lang, const SmithHost *host, co
     }
     SmithLangEnumShape *shape = &smith_lang_eshapes[smith_lang_eshape_count];
     memset(shape, 0, sizeof *shape);
+    shape->is_struct = is_struct;
     snprintf(shape->name, sizeof shape->name, "%.*s", (int)name->length, name->text);
     for (size_t at = 3; at < right; at += 3) { // `type T` then `,` or `)`
         const SmithToken *word = smith_lang_eshape_at(lang, host, token, at);
@@ -1393,7 +1396,8 @@ static bool smith_lang_eshape_tag(SmithLang *lang, const SmithHost *host, const 
     snprintf(joined, sizeof joined, "%s_%s", shape->name, spelled);
     char hashed[smith_lang_tuple_name_max];
     smith_lang_tuple_tag(joined, hashed, sizeof hashed);
-    snprintf(tag, capacity, "smith_enum_%s", hashed + sizeof smith_lang_tuple_prefix - 1);
+    snprintf(tag, capacity, shape->is_struct ? "smith_struct_%s" : "smith_enum_%s",
+             hashed + sizeof smith_lang_tuple_prefix - 1);
     return true;
 }
 
@@ -1474,7 +1478,8 @@ static size_t smith_lang_eshape_define(SmithLang *lang, const SmithHost *host, c
                                        SmithToken *made, size_t capacity) {
     static SmithToken span[smith_lang_queue_max];
     size_t used = 0;
-    span[used++] = smith_lang_tuple_made(SmithTokenKind_Identifier, "enum", 4, like, false);
+    span[used++] = smith_lang_tuple_made(SmithTokenKind_Identifier, shape->is_struct ? "struct" : "enum",
+                                         shape->is_struct ? 6 : 4, like, false);
     span[used++] = smith_lang_tuple_made(SmithTokenKind_Punctuator, "{", 1, like, true);
     for (size_t at = 0; at < shape->token_count; at++) {
         const SmithToken *token = &shape->tokens[at];
@@ -1499,6 +1504,16 @@ static size_t smith_lang_eshape_define(SmithLang *lang, const SmithHost *host, c
     size_t close = used;
     span[used++] = smith_lang_tuple_made(SmithTokenKind_Punctuator, "}", 1, like, true);
     SmithToken name = smith_lang_tuple_made(SmithTokenKind_Identifier, tag, strlen(tag), like, true);
+    if (shape->is_struct) { // `struct tag { fields };`: the fields are the shape's tokens with the arguments put in
+        if (used + 2 >= capacity) return 0;
+        made[0] = smith_lang_tuple_made(SmithTokenKind_Identifier, "struct", 6, like, false);
+        made[1] = name;
+        memcpy(made + 2, span + 1, (close - 1) * sizeof span[0]); // `{` fields
+        size_t total = 2 + close - 1;
+        made[total++] = span[close];
+        made[total++] = smith_lang_tuple_made(SmithTokenKind_Punctuator, ";", 1, like, false);
+        return total;
+    }
     size_t count = smith_lang_enum_build(lang, host, like, span, 1, close, &name, made, capacity - 2);
     if (count == 0) return 0;
     made[count++] = smith_lang_tuple_made(SmithTokenKind_Punctuator, ";", 1, like, false);
@@ -1551,10 +1566,38 @@ static size_t smith_lang_eshape_words(SmithLang *lang, const SmithToken *tokens,
     return used;
 }
 
+// The definition of a struct shape's struct for a header, as the text of C: its fields with the arguments put in.
+static bool smith_lang_eshape_struct_text(SmithLang *lang, const SmithLangEnumShape *shape,
+                                          const SmithLangEnumCall *call, const char *tag, char *out, size_t capacity) {
+    SmithToken fields[smith_lang_eshape_tokens_max + smith_lang_eshape_params_max * smith_lang_eshape_tokens_max];
+    size_t length = 0;
+    for (size_t at = 0; at < shape->token_count; at++) {
+        const SmithToken *token = &shape->tokens[at];
+        size_t param = shape->param_count;
+        for (size_t p = 0; p < shape->param_count; p++) {
+            if (smith_lang_equals(token->text, token->length, shape->params[p])) param = p;
+        }
+        if (param == shape->param_count) {
+            if (length + 1 < sizeof fields / sizeof fields[0]) fields[length++] = *token;
+            continue;
+        }
+        for (size_t i = call->begin[param]; i < call->end[param]; i++)
+            if (length + 1 < sizeof fields / sizeof fields[0]) fields[length++] = call->tokens[i];
+    }
+    char members[2048] = "";
+    smith_lang_eshape_words(lang, fields, length, members, sizeof members);
+    size_t used = (size_t)snprintf(out, capacity,
+                                   "#ifndef SMITH_STRUCT_%s\n#define SMITH_STRUCT_%s // "
+                                   "NOLINT(readability-identifier-naming)\nstruct %s {%s };\n#endif\n",
+                                   tag, tag, tag, members);
+    return used < capacity;
+}
+
 // The definition for the module's header, as C reads it, guarded by a macro of the struct's name so that two headers
 // that define the same struct (`option(usize)` in two modules) are included together: one type.
 static bool smith_lang_eshape_header_text(SmithLang *lang, const SmithLangEnumShape *shape,
                                           const SmithLangEnumCall *call, const char *tag, char *out, size_t capacity) {
+    if (shape->is_struct) return smith_lang_eshape_struct_text(lang, shape, call, tag, out, capacity);
     size_t used = (size_t)snprintf(out, capacity,
                                    "#ifndef SMITH_ENUM_%s\n#define SMITH_ENUM_%s // "
                                    "NOLINT(readability-identifier-naming)\nstruct %s { enum %s_tag {",
@@ -2011,7 +2054,7 @@ static size_t smith_lang_eshape_lines(const SmithLang *lang, char *out, size_t c
         used = smith_lang_append(out, capacity, used, "// smith-eshape: %s(", shape->name);
         for (size_t p = 0; p < shape->param_count; p++)
             used = smith_lang_append(out, capacity, used, p > 0 ? ",%s" : "%s", shape->params[p]);
-        used = smith_lang_append(out, capacity, used, ") {");
+        used = smith_lang_append(out, capacity, used, shape->is_struct ? ") struct {" : ") {");
         for (size_t t = 0; t < shape->token_count; t++)
             used = smith_lang_append(out, capacity, used, " %.*s", (int)shape->tokens[t].length, shape->tokens[t].text);
         used = smith_lang_append(out, capacity, used, " }\n");
@@ -2044,7 +2087,8 @@ static void smith_lang_eshape_import(const char *text, uint32_t length, const ch
             memcpy(shape->params[shape->param_count++], cursor, each);
             cursor += each;
         }
-        cursor += 4; // `) {` and the space
+        shape->is_struct = strncmp(cursor, ") struct {", 10) == 0;
+        cursor += shape->is_struct ? 11 : 4; // `) {` or `) struct {` and the space
         bool duplicate = false;
         for (size_t i = 0; i < smith_lang_eshape_count; i++)
             duplicate = duplicate || (strcmp(smith_lang_eshapes[i].name, shape->name) == 0 &&

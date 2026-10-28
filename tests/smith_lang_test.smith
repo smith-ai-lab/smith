@@ -1834,3 +1834,11 @@ export void test_generic_some_operand_derived(io::Io *io) {
 export void test_postfix_after_compound_literal(io::Io *io) {
     corpus_case(io, "postfix-after-compound-literal");
 }
+
+export void test_struct_type_function(io::Io *io) {
+    corpus_case(io, "struct-type-function");
+}
+
+export void test_struct_type_function_export(io::Io *io) {
+    corpus_case(io, "struct-type-function-export");
+}

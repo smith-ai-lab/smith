@@ -1,0 +1,33 @@
+module main;
+
+import <stdio.h>;
+
+// A type function that returns a struct: `Pair(usize)` is one struct for every use, defined at the first declaration
+// that names it, and its fields may be of the argument's type.
+
+Type Pair(Type T) {
+    return struct {
+        T first;
+        T second;
+        usize count;
+    };
+}
+
+typedef Pair(usize) Indexes;
+typedef Pair(f64) Points;
+
+static usize total(Indexes pair) {
+    return pair.first + pair.second + pair.count;
+}
+
+static f64 mid(Points pair) {
+    return (pair.first + pair.second) / 2;
+}
+
+i32 main(void) {
+    Indexes a = {.first = 3, .second = 4, .count = 2};
+    Points b = {.first = 1.5, .second = 2.5};
+    Indexes zero = {};
+    c::printf("%zu %g %zu\n", total(a), mid(b), total(zero));
+    return 0;
+}
