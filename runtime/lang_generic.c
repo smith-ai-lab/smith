@@ -2291,6 +2291,13 @@ static void smith_lang_gen_put_shaped(SmithLang *lang, const SmithHost *host, co
 static void smith_lang_gen_put_result(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
                                       const SmithLangInstance *instance, uint32_t location, uint32_t instance_id);
 
+// runtime/lang_array.c, which comes after this file: a generic whose result is `T[n]`
+static bool smith_lang_aret_generic(const SmithLangGeneric *generic);
+static void smith_lang_aret_put_result(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
+                                       const SmithLangInstance *instance, uint32_t location, uint32_t id);
+static void smith_lang_aret_define(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
+                                   const SmithLangInstance *instance, uint32_t location, uint32_t id);
+
 // `R name(P)` for an instance: the head with the type arguments for T, the instance's name, and the parameters that are
 // no `type`. `attributes` keeps the head's own leading attributes (a definition has them, a declaration cannot).
 static void smith_lang_gen_signature(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
@@ -2302,6 +2309,8 @@ static void smith_lang_gen_signature(SmithLang *lang, const SmithHost *host, con
         smith_lang_gen_put_subst(lang, host, generic, instance, &tokens[at], location, instance_id, false);
     if (smith_lang_result_call(generic)) {
         smith_lang_gen_put_result(lang, host, generic, instance, location, instance_id);
+    } else if (smith_lang_aret_generic(generic)) {
+        smith_lang_aret_put_result(lang, host, generic, instance, location, instance_id);
     } else {
         smith_lang_gen_put_run(lang, host, generic, instance, generic->first + result,
                                generic->first + generic->name_index, location, instance_id);
@@ -2426,6 +2435,7 @@ static void smith_lang_gen_call_start(SmithLang *lang, const SmithHost *host, co
                                            {SmithTokenKind_Punctuator, "{"}};
     smith_lang_gen_puts(lang, host, start, sizeof start / sizeof start[0], location, instance_id);
     smith_lang_instance_define_slices(lang, host, instance, location, instance_id);
+    smith_lang_aret_define(lang, host, generic, instance, location, instance_id);
     smith_lang_gen_declaration(lang, host, generic, instance, location, instance_id);
     if (real == UINT32_MAX) {
         smith_lang_gen_put(lang, host, SmithTokenKind_Identifier, smith_lang_str(instance->cname), location,
@@ -2548,6 +2558,8 @@ static bool smith_lang_enum_replay(SmithLang *lang, const SmithHost *host, Smith
                                    SmithLangFrame *frame);
 static bool smith_lang_try_replay(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
                                   SmithLangFrame *frame);
+static bool smith_lang_aret_replay(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                   SmithLangFrame *frame);
 static const char *smith_lang_tuple_keep(const char *text, size_t length);
 
 // Writes the words of a frame, then the frame is done.
@@ -5413,6 +5425,7 @@ static bool smith_lang_replay_rewritten(SmithLang *lang, const SmithHost *host, 
                                         SmithLangFrame *frame) {
     return smith_lang_fields_replay(lang, host, replay, frame) || smith_lang_slice_replay(lang, host, replay, frame) ||
            smith_lang_try_replay(lang, host, replay, frame) || smith_lang_enum_replay(lang, host, replay, frame) ||
+           smith_lang_aret_replay(lang, host, replay, frame) ||
            smith_lang_replay_shape(lang, host, replay, frame) || smith_lang_list_gone(lang, host, replay, frame);
 }
 
@@ -5531,6 +5544,7 @@ static void smith_lang_instance_emit(SmithLang *lang, const SmithHost *host, siz
     smith_lang_gen_note_break(lang);
     smith_lang_fields_declare(lang, host, generic, instance, id, location);
     smith_lang_instance_define_slices(lang, host, instance, location, id);
+    smith_lang_aret_define(lang, host, generic, instance, location, id);
     smith_lang_instance_define_enums(lang, host, generic, instance, location, id);
     smith_lang_gen_declaration(lang, host, generic, instance, location, id);
     static const SmithLangPiece weak[] = {{SmithTokenKind_Punctuator, "["},    {SmithTokenKind_Punctuator, "["},

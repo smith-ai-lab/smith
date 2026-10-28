@@ -1,0 +1,10 @@
+module main;
+
+i32[2] two(i32 x) {
+    return {x, x};
+}
+
+i32 main() {
+    i32 three[3] = two(1);
+    return three[0];
+}

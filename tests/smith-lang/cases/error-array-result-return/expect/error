@@ -1,0 +1,1 @@
+src/main.smith:5:12: static assertion failed due to requirement 'sizeof smith_r2.data == sizeof (two)': the array returned has another size than the function's result

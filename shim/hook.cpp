@@ -700,7 +700,7 @@ class SmithHook final : public TokenHook, public NameSource {
             scan.contains("type ") || scan.contains("auto ") || scan.contains("auto...") || namesConcept(scan);
         host.maybe_if_constexpr = hasIfConstexpr(scan);
         host.maybe_local_tag = hasNestedTag(scan);
-        host.maybe_slice = hasSlice(scan) || hasStr(scan);
+        host.maybe_slice = hasSlice(scan) || hasStr(scan) || hasArrayResult(scan);
         host.maybe_brackets = hasEmptyBrackets(scan);
         host.maybe_shape = hasShapeCall(scan);
         host.maybe_tuple =
@@ -2881,6 +2881,89 @@ class SmithHook final : public TokenHook, public NameSource {
     // run-time array (runtime/lang_slice.c). Comments and strings do not count.
     static bool hasSlice(StringRef text) {
         return hasSliceBrackets(text) || hasRangeFor(text);
+    }
+
+    // Whether the code has a fixed-size array result or an array initialized from a call (runtime/lang_array.c): a name
+    // between a `]` and a `(`, `T[3] f(`; or a declaration `T xs[3] = value` whose value is no list and no string.
+    // (runtime/lang_slice.c's smith_lang_text_has_array_result is the same scan.)
+    static bool isIdentifierChar(char c) {
+        return isAsciiIdentifierContinue(c);
+    }
+
+    static size_t skipBlanks(StringRef text, size_t at) {
+        while (at < text.size() && isWhitespace(text[at]))
+            at += 1;
+        return at;
+    }
+
+    static size_t closingBracket(StringRef text, size_t open) {
+        int depth = 0;
+        for (size_t at = open; at < text.size(); at++) {
+            size_t next = skipLiteral(text, at);
+            if (next != at) {
+                at = next - 1;
+                continue;
+            }
+            depth += text[at] == '[' ? 1 : 0;
+            depth -= text[at] == ']' ? 1 : 0;
+            if (depth == 0) return at;
+            if (text[at] == ';' || text[at] == '{') break;
+        }
+        return text.size();
+    }
+
+    // Whether the two words before the `[` at `open` are a type and a name, and the type is no statement's keyword.
+    static bool declaresBefore(StringRef text, size_t open) {
+        size_t end = open;
+        while (end > 0 && isWhitespace(text[end - 1]))
+            end -= 1;
+        size_t start = end;
+        while (start > 0 && isIdentifierChar(text[start - 1]))
+            start -= 1;
+        size_t gap = start;
+        while (gap > 0 && isWhitespace(text[gap - 1]))
+            gap -= 1;
+        if (start == end || gap == start || gap == 0 || !isIdentifierChar(text[gap - 1])) return false;
+        size_t type = gap;
+        while (type > 0 && isIdentifierChar(text[type - 1]))
+            type -= 1;
+        StringRef word = text.slice(type, gap);
+        for (StringRef statement : {"else", "return", "case", "goto", "do", "sizeof", "typeof", "defer"}) {
+            if (word == statement) return false;
+        }
+        return true;
+    }
+
+    static bool hasArrayResult(StringRef text) {
+        for (size_t at = 0; at < text.size(); at++) {
+            size_t after = skipLiteral(text, at);
+            if (after != at) {
+                at = after - 1;
+                continue;
+            }
+            if (text[at] != '[' || (at > 0 && text[at - 1] == '[')) continue;
+            size_t close = closingBracket(text, at);
+            if (close >= text.size()) continue;
+            size_t next = skipBlanks(text, close + 1);
+            if (next < text.size() && (isAsciiIdentifierStart(text[next]))) { // `] name (`
+                size_t end = next;
+                while (end < text.size() && isIdentifierChar(text[end]))
+                    end += 1;
+                end = skipBlanks(text, end);
+                if (end < text.size() && text[end] == '(' && at > 0 && isIdentifierChar(text[at - 1])) return true;
+            }
+            if (next + 1 < text.size() && text[next] == '=' && text[next + 1] != '=' && declaresBefore(text, at)) {
+                size_t value = skipBlanks(text, next + 1);
+                size_t letters = value;
+                while (letters < text.size() && letters < value + 2 &&
+                       (text[letters] == 'L' || text[letters] == 'u' || text[letters] == 'U' || text[letters] == '8')) {
+                    letters += 1;
+                }
+                bool literal = letters < text.size() && (text[letters] == '"' || text[letters] == '\'');
+                if (value < text.size() && text[value] != '{' && !literal) return true;
+            }
+        }
+        return false;
     }
 
     // Whether the code has a range `for` (runtime/lang_rfor.c): `for (` and a `:` at the top of its header that is

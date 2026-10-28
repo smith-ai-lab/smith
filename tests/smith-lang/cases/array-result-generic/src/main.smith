@@ -1,0 +1,15 @@
+module main;
+
+import <stdio.h>;
+import split;
+
+i32 main() {
+    split::Key key = {10, 20};
+    split::Key keys[3] = split::split(key, 3);
+    split::Key pair[2] = split::split(key, 2);
+    i32 sevens[4] = split::fill(i32, 7, 4);
+    f32 halves[2] = split::both(f32, 0.5f, 1.5f);
+    c::printf("%llu %llu %llu %llu\n", keys[0].high, keys[1].low, keys[2].low, pair[1].high);
+    c::printf("%d %d %d %.1f %.1f\n", sevens[0], sevens[3], (i32)countof(sevens), halves[0], halves[1]);
+    return 0;
+}

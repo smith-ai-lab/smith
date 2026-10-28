@@ -490,6 +490,7 @@ struct SmithLang {
     bool recording_skip;      // its head had an error: the body is read to its end and dropped
     uint32_t skip_mark;       // where in smith_lang_gt the dropped body begins
     bool generic_next;        // the declaration about to begin is generic
+    uint32_t array_result_open; // the `[` of a generic's result `T[n]` (runtime/lang_array.c): what is before it is a type
     bool concept_head;        // the head being read is a concept's, `Bool Ordered(constexpr Type T)` (issue #193)
     bool generic_plain;       // ... a plain one: a function over `type` that is exported (issue #107)
     bool type_import;         // an import has functions over `type`: their records are defined after the last import
@@ -1024,6 +1025,9 @@ static const char *smith_lang_str(SmithLangText text) {
 
 // Run-time arrays: `T xs[:]`, `xs[i]`, `xs[a:b]`.
 #include "lang_slice.c"
+
+// Fixed-size arrays as results: `T[3] f()`, `T[n] f(constexpr usize n)`, `T[:] f()`.
+#include "lang_array.c"
 
 // Range `for`: `for (T x : xs) { ... }`.
 #include "lang_rfor.c"
