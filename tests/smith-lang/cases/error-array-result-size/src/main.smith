@@ -1,0 +1,13 @@
+module main;
+
+i32 limit() {
+    return 3;
+}
+
+i32[limit] bad(i32 x) {
+    return 0;
+}
+
+i32 main() {
+    return 0;
+}

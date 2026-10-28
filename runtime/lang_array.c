@@ -268,16 +268,21 @@ static bool smith_lang_aret_init_begin(SmithLang *lang, const SmithHost *host, c
         if (token->kind == SmithTokenKind_Eof || token->foreign) return false;
         if (token->kind != SmithTokenKind_Identifier && !smith_lang_punct(token, "::")) break;
     }
+    // Each token is read only when the ones before it fit: reading ahead pulls the next statement's questions to the
+    // compiler into a batch it has not parsed yet.
     const SmithToken *open = smith_lang_slice_at(lang, host, first, at);
     const SmithToken *name = smith_lang_slice_at(lang, host, first, at - 1);
-    const SmithToken *size = smith_lang_slice_at(lang, host, first, at + 1);
-    const SmithToken *close = smith_lang_slice_at(lang, host, first, at + 2);
-    const SmithToken *equals = smith_lang_slice_at(lang, host, first, at + 3);
-    const SmithToken *value = smith_lang_slice_at(lang, host, first, at + 4);
     if (at < 2 || at >= smith_lang_slice_scan_max - 8 || !smith_lang_punct(open, "[") ||
-        name->kind != SmithTokenKind_Identifier || smith_lang_word(name->text, name->length) != SmithLangWord_Other ||
-        size->kind != SmithTokenKind_Number || !smith_lang_punct(close, "]") || !smith_lang_punct(equals, "=") ||
-        value->kind == SmithTokenKind_Eof || value->foreign || value->kind == SmithTokenKind_String ||
+        name->kind != SmithTokenKind_Identifier || smith_lang_word(name->text, name->length) != SmithLangWord_Other) {
+        return false;
+    }
+    const SmithToken *size = smith_lang_slice_at(lang, host, first, at + 1);
+    if (size->kind != SmithTokenKind_Number || !smith_lang_punct(smith_lang_slice_at(lang, host, first, at + 2), "]") ||
+        !smith_lang_punct(smith_lang_slice_at(lang, host, first, at + 3), "=")) {
+        return false;
+    }
+    const SmithToken *value = smith_lang_slice_at(lang, host, first, at + 4);
+    if (value->kind == SmithTokenKind_Eof || value->foreign || value->kind == SmithTokenKind_String ||
         smith_lang_punct(value, "{")) {
         return false;
     }
