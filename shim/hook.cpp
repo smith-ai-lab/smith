@@ -698,8 +698,8 @@ class SmithHook final : public TokenHook, public NameSource {
         const StringRef scan = lowered;
         host.maybe_main = scan.contains("main");
         host.maybe_concepts = scan.contains("smith_concepts_") || namesConcept(scan);
-        host.maybe_generic =
-            scan.contains("type ") || scan.contains("auto ") || scan.contains("auto...") || host.maybe_concepts;
+        host.maybe_generic = scan.contains("type ") || scan.contains("auto ") || scan.contains("auto...") ||
+                             host.maybe_concepts || hasNumberParameter(scan);
         host.maybe_if_constexpr = hasIfConstexpr(scan);
         host.maybe_local_tag = hasNestedTag(scan);
         host.maybe_slice = hasSlice(scan) || hasStr(scan) || hasArrayResult(scan);
@@ -2893,6 +2893,24 @@ class SmithHook final : public TokenHook, public NameSource {
     // run-time array (runtime/lang_slice.c). Comments and strings do not count.
     static bool hasSlice(StringRef text) {
         return hasSliceBrackets(text) || hasRangeFor(text);
+    }
+
+    // Whether the code has a parameter `constexpr usize n` (a number known at compile time, which makes a function
+    // generic): `constexpr`, a type and a name, then `,` or `)`.
+    static bool hasNumberParameter(StringRef text) {
+        for (size_t at = text.find("constexpr"); at != StringRef::npos; at = text.find("constexpr", at + 9)) {
+            if (at > 0 && isIdentifierChar(text[at - 1])) continue;
+            size_t scan = skipBlanks(text, at + 9);
+            for (int word = 0; word < 2; word++) { // the type, then the name
+                size_t start = scan;
+                while (scan < text.size() && isIdentifierChar(text[scan]))
+                    scan += 1;
+                if (scan == start) break;
+                scan = skipBlanks(text, scan);
+                if (word == 1 && scan < text.size() && (text[scan] == ',' || text[scan] == ')')) return true;
+            }
+        }
+        return false;
     }
 
     // Whether the code has a fixed-size array result or an array initialized from a call (runtime/lang_array.c): a name

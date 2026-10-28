@@ -168,11 +168,9 @@ export void skip(const char (*text)[:], usize n) {
 C cannot return an array, so a function that makes a fixed number of values fills an out parameter. In a module it returns them, and the size is a number or a `constexpr` parameter:
 
 ```smith project=pairs run
-module main;
+module counting;
 
-import smith::console;
-
-i32[n] counted(i32 start, constexpr usize n) {
+export i32[n] counted(i32 start, constexpr usize n) {
     i32 out[n];
     for constexpr (usize i = 0; i < n; i++) {
         out[i] = start + (i32)i;
@@ -180,13 +178,20 @@ i32[n] counted(i32 start, constexpr usize n) {
     return out;
 }
 
-i32[2] twin(i32 x) {
+export i32[2] twin(i32 x) {
     return {x, x + 1};
 }
+```
+
+```smith project=pairs
+module main;
+
+import smith::console;
+import counting;
 
 i32 main() {
-    i32 four[4] = counted(10, 4); // an array is initialized from the call
-    i32 pair[2] = twin(7);
+    i32 four[4] = counting::counted(10, 4); // an array is initialized from the call
+    i32 pair[2] = counting::twin(7);
     console::print(four[0], " ", four[3], " ", pair[0], " ", pair[1], "\n");
     return 0;
 }
