@@ -10,6 +10,9 @@
 //   KEEP_IDENTITY   the contents of the smith-clang.id of the previous release's LLVM ("llvm-23.1.3 <hash>")
 // A folder with no id file (a build in progress, or not an LLVM at all) is never touched. Enzyme's folders are the
 // siblings <cache>/smith/enzyme/<version>-<name>. Prints each folder it removes.
+#if defined(__linux__)
+#define _GNU_SOURCE // glibc declares nftw only for X/Open or GNU code, not plain -std=c23
+#endif
 #include <dirent.h>
 #include <ftw.h>
 #include <limits.h>

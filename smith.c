@@ -1079,6 +1079,9 @@ static constexpr unsigned char smith_autodiff_source[] = {
 static constexpr unsigned char smith_effects_source[] = {
 #embed "lib/smith/effects.smith"
 };
+static constexpr unsigned char smith_failing_source[] = {
+#embed "lib/smith/failing.smith"
+};
 static constexpr unsigned char smith_files_source[] = {
 #embed "lib/smith/files.smith"
 };
@@ -1182,6 +1185,7 @@ static const SmithLibrary smith_libraries[] = {
     SMITH_LIBRARY(contract, true),
     SMITH_LIBRARY(effects, true),
     SMITH_LIBRARY(entropy, true),
+    SMITH_LIBRARY(failing, true),
     SMITH_LIBRARY(env, true),
     SMITH_LIBRARY(files, true),
     SMITH_LIBRARY(format, true),
@@ -3233,6 +3237,41 @@ static int smith_tool_main(const SmithTool *tool, int argc, char **argv, const c
     return status != 0 ? status : (before > 0 ? before : 0);
 }
 
+// `smith cc --smith-headers [compile flags] -- source header [source header ...]`: `--smith-header` for each pair, in
+// this one process (#639). A smith process costs about 10 ms to start (a 240 MB image and 400,000 fixups), the header
+// itself about 2, so the build writes the headers of many modules in one step. Each pair runs in a child of its own
+// (the lowering keeps its tables in statics), one after the other: a header names the headers of what it imports, so
+// they are never written at the same time. The status is 0 when every header was written (only when its bytes change).
+static int smith_headers_main(int count, char **args) {
+    constexpr int arguments_max = 80;
+    const char *usage = "usage: smith cc --smith-headers [compile flags] -- source header [source header ...]";
+    int split = 0;
+    while (split < count && strcmp(args[split], "--") != 0)
+        split++; // bounded by the arguments
+    if (split == count || (count - split - 1) % 2 != 0 || split + 3 > arguments_max)
+        smith_die(smith_exit_usage, usage, nullptr);
+    int failed = 0;
+    fflush(nullptr);
+    for (int i = split + 1; i < count; i += 2) { // bounded by the arguments
+        char *child[arguments_max];
+        int used = 0;
+        child[used++] = args[i];
+        child[used++] = (char *)"-o";
+        child[used++] = args[i + 1];
+        for (int j = 0; j < split; j++)
+            child[used++] = args[j];
+        pid_t pid = fork();
+        if (pid < 0) smith_die(smith_exit_missing, "cannot fork", args[i]);
+        if (pid == 0) _exit(smith_lang_main(used, child, true));
+        int status = 0;
+        pid_t waited = -1;
+        for (int tries = 0; tries < 1000 && waited < 0; tries++)
+            waited = waitpid(pid, &status, 0); // bounded; a signal
+        if (waited < 0 || !WIFEXITED(status) || WEXITSTATUS(status) != 0) failed = 1;
+    }
+    return failed;
+}
+
 // The compiler: `smith cc <args>` and `smith c++ <args>`, and the links smith-cc and smith-c++, which act as them by
 // their name. The program is argv[at]; --smith-which, when it comes first, names the compiler without running it,
 // and --smith-header, --smith-lower and --smith-tree-sitter are the .smith helpers.
@@ -3243,6 +3282,8 @@ static int smith_compile_main(int argc, char **argv, int at, bool plus, const ch
     // file's lowering (knowledge/smith-language.md).
     if (first < argc && strcmp(argv[first], "--smith-header") == 0)
         return smith_lang_main(argc - first - 1, argv + first + 1, true);
+    if (first < argc && strcmp(argv[first], "--smith-headers") == 0)
+        return smith_headers_main(argc - first - 1, argv + first + 1);
     if (first < argc && strcmp(argv[first], "--smith-lower") == 0)
         return smith_lang_main(argc - first - 1, argv + first + 1, false);
     if (first < argc && strcmp(argv[first], "--smith-tree-sitter") == 0) return smith_tree_sitter_main(self);

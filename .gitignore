@@ -15,6 +15,7 @@ compile_commands.json
 /include/smith/console.h
 /include/smith/clock.h
 /include/smith/effects.h
+/include/smith/failing.h
 /include/smith/format.h
 /include/smith/inflate.h
 /include/smith/io.h

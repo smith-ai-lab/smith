@@ -9,6 +9,7 @@ import smith::format;
 import smith::io;
 import smith::test;
 import scratch;
+import target;
 
 // The folder with prog.c built plain and under AddressSanitizer. False when this smith cannot debug here.
 static bool make(io::Io *io, scratch::Project *p) {
@@ -81,7 +82,12 @@ export void test_dbg_crash_signal(io::Io *io) {
     scratch::Run run = crash(&p, io, "--crash ./prog n");
     const char *err = scratch::read(&p, "err.txt");
     scratch::expect_status("signal: the status is 128 + SIGSEGV", 139, &run);
-    scratch::expect_contains("signal: the stop reason", err, "smith dbg: stopped: EXC_BAD_ACCESS");
+    // The stop reason is the platform's own text: a Mach exception on macOS, the signal on Linux.
+    if constexpr (target::os == target::macos) {
+        scratch::expect_contains("signal: the stop reason", err, "smith dbg: stopped: EXC_BAD_ACCESS");
+    } else {
+        scratch::expect_contains("signal: the stop reason", err, "smith dbg: stopped: signal SIGSEGV");
+    }
     scratch::expect_contains("signal: the failing line", err, "smith dbg: prog.c:19: main");
     scratch::expect_contains("signal: a local as @", err, "@ argc  = 2");
     scratch::expect_contains("signal: the program's standard error passes through", err, "err");
