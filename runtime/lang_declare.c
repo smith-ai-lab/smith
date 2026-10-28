@@ -120,13 +120,15 @@ static bool smith_lang_wants_static(SmithLang *lang, const SmithHost *host, cons
     if (word != SmithLangWord_Tag) return !smith_lang_is_main(lang, host, token);
     size_t at = 0;
     const SmithToken *next = smith_lang_peek(lang, host, at, false);
-    for (size_t depth = 0; smith_lang_punct(next, "[") || depth > 0; at++) { // `struct [[attribute]] S {`: skip the [[ ]]
-        if (at >= 64 || next->kind == SmithTokenKind_Eof) return true;      // bounded
+    for (size_t depth = 0; smith_lang_punct(next, "[") || depth > 0;
+         at++) {                                                       // `struct [[attribute]] S {`: skip the [[ ]]
+        if (at >= 64 || next->kind == SmithTokenKind_Eof) return true; // bounded
         depth += smith_lang_punct(next, "[") ? 1 : 0;
         depth -= smith_lang_punct(next, "]") ? 1 : 0;
         next = smith_lang_peek(lang, host, at + 1, false);
     }
-    const SmithToken *after = next->kind == SmithTokenKind_Identifier ? smith_lang_peek(lang, host, at + 1, false) : next;
+    const SmithToken *after =
+        next->kind == SmithTokenKind_Identifier ? smith_lang_peek(lang, host, at + 1, false) : next;
     return !(smith_lang_punct(after, "{") || smith_lang_punct(after, ";") || smith_lang_punct(after, ":"));
 }
 
