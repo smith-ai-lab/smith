@@ -44,11 +44,27 @@ static bool make(io::Io *io, scratch::Project *root, bool tidy_off) {
     return true;
 }
 
-// A project that builds: the folder, built with smith build.
+// A project that builds: the folder, built with smith build. The built folder is made once for each smith under test
+// and each name, in the tests' cache ($SMITH_TEST_CACHE/lsp-<smith's size and time>/<name>, the way new_test.smith's
+// `generate` does), and a test copies it and runs `smith build` there, which writes the paths of the copy again (a
+// no-op build: 0.2 s of CPU against 1.5 s for the first build, for 28 tests that each built the same folder).
+constexpr char built_script[_] =
+    "key=$(stat -c %Y-%s \"$SMITH_SELF\" 2>/dev/null || stat -f %m-%z \"$SMITH_SELF\"); "
+    "base=$SMITH_TEST_CACHE/lsp-$key; c=$base/$name; lock=$base.lock-$name; "
+    "if [ ! -d \"$c\" ] && mkdir \"$lock\" 2>/dev/null; then "
+    "find \"$SMITH_TEST_CACHE\" -maxdepth 1 -name 'lsp-*' -mtime +1 -exec rm -rf {} + 2>/dev/null; "
+    "tmp=$base.$$; mkdir -p \"$tmp\" && cp -Rp \"$name\" \"$tmp/$name\" && (cd \"$tmp/$name\" && smith build "
+    ">/dev/null "
+    "2>&1) && mkdir -p \"$base\" && mv \"$tmp/$name\" \"$c\"; rm -rf \"$tmp\"; rmdir \"$lock\"; "
+    "else i=0; while [ ! -d \"$c\" ] && [ -d \"$lock\" ] && [ $i -lt 3000 ]; do sleep 0.2; i=$((i + 1)); done; fi; "
+    "[ ! -d \"$c\" ] || cp -Rp \"$c/.\" \"$name\"";
+
 static bool make_built(io::Io *io, scratch::Project *root, scratch::Project *p, const char *name) {
     if (!make(io, root, true)) {
         return false;
     }
+    scratch::Run copied = scratch::sh(root, format::push(&io->arena, "name=", name, "; ", built_script).data);
+    scratch::expect_status("lsp: the built folder is copied", 0, &copied);
     *p = folder(root, name);
     scratch::Run built = scratch::build(p, "");
     scratch::expect_status("lsp: the project builds", 0, &built);
