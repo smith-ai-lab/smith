@@ -4,9 +4,9 @@ import <stdio.h>;
 import text;
 
 I32 main() {
-    text::str s = "hello world";
-    text::str w = text::first_word(s);
-    text::str *p = &s;
+    text::Str s = "hello world";
+    text::Str w = text::first_word(s);
+    text::Str *p = &s;
     Usize n = 0;
     while (text::pop(p)) n++;
     struct text::Pair pair = {.key = w};

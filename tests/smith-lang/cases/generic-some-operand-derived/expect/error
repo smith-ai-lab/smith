@@ -1,6 +1,0 @@
-main.smith:10:17: use of undeclared identifier 'finder::Maybe'
-main.smith:10:35: `.some` needs a type to look in: write `Shape x = .some;`, assign it to a variable, return it from a function that names the type, or pass it where a parameter does
-main.smith:10:35: expected expression
-main.smith:11:17: use of undeclared identifier 'finder::Maybe'
-main.smith:11:36: `.some` needs a type to look in: write `Shape x = .some;`, assign it to a variable, return it from a function that names the type, or pass it where a parameter does
-main.smith:11:36: expected expression
