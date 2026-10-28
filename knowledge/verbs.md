@@ -84,6 +84,9 @@ between the fields, and `.smith/compile_commands.json`, and the manifest has two
   the runner `smith_tests` makes); `runner<TAB>path`: the program `smith_tests` makes, the tests' runner (also a
   `program` line), which a debugger launches with `--test <name> --in-process`; `default<TAB>target`: a target of
   `smith_default`, aliases opened.
+- `need<TAB>source<TAB>file...`: the generated files one compile of an own source waits for (no line for a source the
+  build only declares); `smith lint --changed` builds those of the files it chooses, after the build wrote this file
+  with the empty target `smith_info`.
 - the target `smith_needs` is the generated files those compiles read (their implicit and order-only inputs that a step
   makes: the tests' list header, a module's header), and `smith_tests` is the test tasks. `smith lint` and `smith prove`
   build `smith_needs`, `smith test` builds `smith_tests`; both exist in every manifest, empty for none.

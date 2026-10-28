@@ -105,7 +105,11 @@ export void test_build_verbs_build_info_and_the_compile_database_say_what_the_ve
                          matches(&p, info, "'^compile\tother.c\t.*-DOTHER'"));
     scratch::expect_text("verbs: ... the tests' source", "1", matches(&p, info, "'^compile\ttests/test_one.c\t'"));
     scratch::expect_text("verbs: ... build.c itself", "1", matches(&p, info, "'^compile\tbuild.c\t'"));
-    scratch::expect_text("verbs: ... no generated source", "0", matches(&p, info, "made.c"));
+    scratch::expect_text("verbs: ... no generated source", "0", matches(&p, info, "'^compile.*made.c'"));
+    scratch::expect_text("verbs: ... but helper.c's need line names the one it waits for", "1",
+                         matches(&p, info, "'^need\thelper.c\tbuild/made.c$'"));
+    scratch::expect_text("verbs: ... and other.c's, which smith_compile_needs declares", "1",
+                         matches(&p, info, "'^need\tother.c\tbuild/made.c$'"));
     scratch::expect_text("verbs: ... no source under .smith/", "0", matches(&p, info, "'^compile\t.smith/'"));
     scratch::expect_text("verbs: ... the task of smith_tests is a test", "1", matches(&p, info, "'^test\ttest$'"));
     scratch::expect_text("verbs: ... the programs", "1", matches(&p, info, "'^program\tbuild/program$'"));

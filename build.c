@@ -2155,12 +2155,13 @@ static int build_coverage_fetch(SmithRun *run) {
 }
 
 // `smith build preflight` (issue #578): the whole local check of the commit checked out, with a verdict the train
-// reads. It needs a clean tree, builds with the running smith, then runs fmt, docs, lint (the whole project: a change
-// anywhere can break a rule elsewhere) and `test --changed --cheapest-first --fail-fast` (the tests the diff against
-// origin/main can reach, capped at 10 minutes: a timeout is a pass) with the smith it built, and posts the commit
-// status `smith/preflight` on the head's SHA: success with the counts, or failure naming the steps. A push makes a new
-// head with no status, so the train takes only what was checked as it is. smith never runs gh itself: this task does,
-// like coverage-fetch. Logs are .smith/preflight-<step>.log.
+// reads. It needs a clean tree, builds with the running smith, then runs fmt, docs, `lint --changed` (the files the
+// diff against origin/main reaches and the files that include them; the train lints the whole project, and a clean file
+// is a cache hit there) and `test --changed --cheapest-first --fail-fast` (the tests the diff against origin/main can
+// reach, capped at 10 minutes: a timeout is a pass) with the smith it built, and posts the commit status
+// `smith/preflight` on the head's SHA: success with the counts, or failure naming the steps. A push makes a new head
+// with no status, so the train takes only what was checked as it is. smith never runs gh itself: this task does, like
+// coverage-fetch. Logs are .smith/preflight-<step>.log.
 static int build_preflight_step(SmithBuild *b, const char *name, const char *const *argv) {
     // Each step runs in a session of its own, so a signal to the terminal's or the tool's process group (a hangup after
     // a timeout: status 129) does not reach the checks.
@@ -2255,7 +2256,7 @@ static int build_preflight(SmithRun *run) {
         const char *const names[] = {"fmt", "docs", "lint", "test"};
         const char *const *commands[] = {
             smith_list(b, built, "fmt", nullptr), smith_list(b, built, "docs", nullptr),
-            smith_list(b, built, "lint", nullptr),
+            smith_list(b, built, "lint", "--changed", nullptr),
             smith_list(b, built, "test", "--changed", "--cheapest-first", "--fail-fast", nullptr)};
         for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
             if (strcmp(names[i], "test") == 0) { // capped: a timeout is a pass
