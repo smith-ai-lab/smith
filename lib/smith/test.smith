@@ -1458,6 +1458,7 @@ typedef struct {
     bool trace;         // print a failure's stack as a trace block, for smith to turn into the report
     bool stats;         // print the forks the run made
     bool unchecked;     // --unchecked: no checked allocator around the tests
+    bool no_region;     // --no-region: a test with no io runs on the checked allocator, not on a region of its own
     const char
         *explain;     // --explain <smith>: the program that reads the failing frame of a check (smith --smith-explain)
     u64 explain_max;  // the failures explained in a run; the others are counted, not read
@@ -1742,10 +1743,34 @@ bool checked_active;
 c::SmithAllocator *region_outside;
 bool region_active;
 
+arena::Arena region_arena; // the region of a test with no io: chunks from the checked allocator, given back after
+arena::ArenaAllocator region_base; // ... and the allocator over it, which must outlive the test's frame
+bool region_owned;                 // the region is region_arena, not an io's arena
+
 void region_end() {
     if (!region_active) return;
     region_active = false;
     c::smith_mem_set_allocator(region_outside); // NOLINT(smith-module-library): mem by its C names (issue #405)
+    if (!region_owned) return;
+    region_owned = false;
+    arena::release(&region_arena);
+}
+
+constexpr usize region_first = 1U << 16; // the first chunk of a test's region
+
+// The region of a test with no io (issue #240): what the test gets from the current allocator (mem::alloc,
+// format::push, a library's result, malloc) belongs to a growing arena, which the runner releases when the test ends,
+// so nothing is freed one block at a time. Its chunks come from the checked allocator, when there is one. --no-region
+// leaves the checked allocator itself as the test's current allocator (the tests of mem::checked need it).
+void region_begin(const Options *options) {
+    if (options->no_region) return;
+    region_arena = arena::growing(region_first, checked_active ? &checked_state.base : nullptr);
+    region_base = arena::allocator(&region_arena);
+    region_owned = true;
+    // NOLINTBEGIN(smith-module-library): mem by its C names, as checked_begin (issue #405)
+    region_outside = c::smith_mem_set_allocator(&region_base.base);
+    // NOLINTEND(smith-module-library)
+    region_active = true;
 }
 
 void checked_begin(const Options *options) {
@@ -1828,7 +1853,9 @@ void run_key(const Test *test, const Options *options, u64 seed) {
         test->with_failing(halves[0], &failing_state);
         failing_end();
     } else {
+        region_begin(options);
         test->property(key);
+        region_end();
     }
     checked_finish();
 }
@@ -1877,6 +1904,7 @@ void run_io(const Test *test, const Options *options, const Command *command) {
     // NOLINTBEGIN(smith-module-library): mem by its C names, as checked_begin (issue #405)
     region_outside = c::smith_mem_set_allocator(&region.base);
     region_active = true;
+    region_owned = false;
     test->with_io(&io);
     region_end();
     // NOLINTEND(smith-module-library)
@@ -1969,7 +1997,9 @@ void coverage_end(const Test *test, bool passed, f64 cpu) {
         reset();
         arm(options);
         checked_begin(options);
+        region_begin(options);
         test->plain();
+        region_end();
         checked_finish();
     } else if (test->with_io != nullptr) {
         run_io(test, options, command);
@@ -3177,6 +3207,8 @@ bool parse_options(i32 argc, char **argv, Options *options) {
             options->trace = true;
         } else if (c::strcmp(flag, "--unchecked") == 0) {
             options->unchecked = true;
+        } else if (c::strcmp(flag, "--no-region") == 0) {
+            options->no_region = true;
         } else if (c::strcmp(flag, "--no-explain") == 0) {
             options->explain = nullptr;
         } else if (c::strcmp(flag, "--color") == 0) {
@@ -3354,7 +3386,7 @@ static void say_usage(const Options *options, const Runner *runner) {
              "[--shuffle <seed>] [--isolate] "
              "[--in-process] [--full] [--update] [--list] [--fail-fast] [--costs <file>] [--verbose] [--stats] "
              "[--trace] [--color] "
-             "[--explain <smith>] [--explain-max <n>] [--no-explain] [--unchecked]\n",
+             "[--explain <smith>] [--explain-max <n>] [--no-explain] [--unchecked] [--no-region]\n",
              runner->argv[0], (c::uintmax_t)seeds_max, jobs_max);
 }
 

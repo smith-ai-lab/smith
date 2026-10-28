@@ -1,0 +1,19 @@
+// scratch:: with no io (issue #240): a test with no io parameter makes a project, writes and reads a file and runs a
+// command, in the memory of its region.
+module scratch_free_test;
+
+import smith::test;
+import scratch;
+
+export void test_scratch_free_a_project_with_no_io_runs_commands_and_keeps_files() {
+    scratch::Project p = scratch::make("proj", nullptr);
+    scratch::write(&p, "note.txt", "hello\n");
+    test::check_condition(scratch::exists(&p, "note.txt"));
+    test::check_condition(!scratch::exists(&p, "absent.txt"));
+    scratch::expect_text("the file reads back", "hello", scratch::read(&p, "note.txt"));
+    scratch::Run run = scratch::sh(&p, "cat note.txt && pwd");
+    scratch::expect_status("the command runs in the project", 0, &run);
+    scratch::expect_contains("... and sees the file", run.out, "hello");
+    scratch::expect_contains("... in the project's folder", run.out, "proj");
+    scratch::clean(&p);
+}

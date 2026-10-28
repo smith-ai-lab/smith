@@ -6,9 +6,12 @@
 module scratch;
 
 import smith::arena;
+import smith::env;
+import smith::files;
 import smith::format;
 import smith::io;
 import smith::mem;
+import smith::process;
 import smith::test;
 import <smith_core.h>;
 import <string.h>;
@@ -20,7 +23,7 @@ static typeof(const u8[:]) test_io_bytes(const void *data, usize size) {
 }
 
 export typedef struct {
-    io::Io *io;
+    io::Io *io;         // nullptr in a project made by scratch::make: a test with no io (issue #240)
     const char *dir;    // where commands run
     const char *tested; // a folder with smith, smith-cc and smith-c++ for PATH
     const char *cache;  // XDG_CACHE_HOME of the commands
@@ -37,6 +40,53 @@ constexpr u64 nanoseconds = 1'000'000'000;
 // The text of a process's pipe, which io leaves unterminated when empty.
 static const char *text_of(const char *data) {
     return data != nullptr ? data : "";
+}
+
+// The io-free calls of the files module as values (a failure fails the test; `exists` asks instead).
+static files::File opened_file(const char *path, files::Mode mode) {
+    files::OpenResult opened = files::open(path[0:c::strlen(path)], mode);
+    switch (opened) {
+    case .ok:
+        return opened.ok;
+    case .error:
+        test::note("%s could not be opened", path);
+        test::check_equal(0, 1);
+        return (files::File){.descriptor = -1};
+    }
+}
+
+// A file written with no io: the whole text in one go.
+static void write_free(const char *path, const char *text) {
+    files::File file = opened_file(path, files::Replace);
+    usize length = c::strlen(text);
+    files::CountResult wrote = files::write(file, test_io_bytes(text, length));
+    test::check_equal(wrote.tag == files::CountResult_tag_ok, true);
+    (void)files::close(file);
+}
+
+// A file read with no io: its whole text, or "" when it is absent.
+static const char *read_free(const char *path) {
+    files::OpenResult opened = files::open(path[0:c::strlen(path)], files::Read);
+    if (opened.tag != files::OpenResult_tag_ok) return "";
+    files::File file = opened.ok;
+    usize used = 0;
+    usize capacity = 4096;
+    char *text = mem::alloc_slice(char, capacity).data;
+    for (usize rounds = 0; rounds < 1U << 20; rounds++) {
+        if (used + 1 == capacity) {
+            char *bigger = mem::alloc_slice(char, capacity * 2).data;
+            mem::copy(bigger[0:used], text[0:used]);
+            text = bigger;
+            capacity *= 2;
+        }
+        u8 *at = (u8 *)text + used;
+        files::CountResult got = files::read(file, at[0:capacity - 1 - used]);
+        if (got.tag != files::CountResult_tag_ok || got.ok == 0) break;
+        used += got.ok;
+    }
+    text[used] = '\0';
+    (void)files::close(file);
+    return text;
 }
 
 // The cache of the commands ($3) is the project's own when it has one; else it is shared by every test of the run and
@@ -66,11 +116,38 @@ constexpr char setup_script[_] =
     ">\"$0/tested/cc\" && chmod +x \"$0/tested/cc\"; fi; "
     "if [ -n \"$2\" ]; then cp -R \"${SMITH_REPO:-.}/tests/build_fixtures/$2/.\" \"$1\"; fi";
 
+static const char *bytes_text(process::Bytes bytes) {
+    char *copy = mem::alloc_slice(char, countof(bytes) + 1).data;
+    for (usize i = 0; i < countof(bytes); i++)
+        copy[i] = (char)bytes[i];
+    copy[countof(bytes)] = '\0';
+    return copy;
+}
+
+// The run of a command with no io: the process module, in the memory of the current allocator.
+static Run run_free(const char *const argv[:]) {
+    process::OutputResult done = process::run(argv);
+    switch (done) {
+    case .error:
+        test::note("the command could not start");
+        test::check_equal(0, 1);
+        return {};
+    case .ok:
+        process::Output output = done.ok;
+        return (Run){
+            .status = output.exit.signal != 0 ? 128 + output.exit.signal : output.exit.status,
+            .out = bytes_text(output.output),
+            .err = bytes_text(output.errors),
+        };
+    }
+}
+
 // Runs `sh -c command` in a folder and waits. The commands see the smith under test first on PATH, a cache of their own
 // (never the real one) and the repository as $SMITH_REPO (where the runner was started). Nothing is set in this
 // process: the environment is made by the shell that runs the command.
 static Run run_in(const Project *p, const char *command) {
     const char *argv[_] = {"sh", "-c", run_script, p->dir, command, p->tested, p->cache, nullptr};
+    if (p->io == nullptr) return run_free(argv[0:7]);
     io::ProcessResult result = io::processes_run(&p->io->processes, &p->io->arena, argv);
     test::check_equal(result.error.code, 0);
     return (Run){
@@ -105,8 +182,39 @@ export Project project(io::Io *io, const char *name, const char *fixture) {
     return p;
 }
 
+// The same project for a test with no io (issue #240): a folder made under $TMPDIR (its own, named by mkdtemp), the
+// files of the fixture in it, and the commands run through the process module in the current allocator's memory.
+// `scratch::clean(&p)` removes the folder; a test that fails keeps it, as the runner keeps an io test's.
+export Project make(const char *name, const char *fixture) {
+    env::Value tmp = env::get("TMPDIR");
+    const char *base = tmp.tag == env::Value_tag_some ? format::push(tmp.some, "/smith-scratch-XXXXXX").data
+                                                      : "/tmp/smith-scratch-XXXXXX";
+    char *folder = (char *)mem::alloc_slice(char, c::strlen(base) + 1).data;
+    mem::copy(folder[0:c::strlen(base) + 1], base[0:c::strlen(base) + 1]);
+    test::check_condition(c::mkdtemp(folder) != nullptr);
+    Project p = {
+        .io = nullptr, .dir = join(nullptr, folder, name), .tested = join(nullptr, folder, "tested"), .cache = ""};
+    const char *argv[_] = {"sh", "-c", setup_script, folder, p.dir, fixture != nullptr ? fixture : "", nullptr};
+    Run made = run_free(argv[0:6]);
+    if (made.status != 0) {
+        test::note("the project could not be made: %s", made.err);
+    }
+    test::check_equal(made.status, 0);
+    return p;
+}
+
+// Removes the folder of a project made by `make`.
+export void clean(const Project *p) {
+    const char *argv[_] = {"sh", "-c", "rm -rf \"$(dirname \"$0\")\"", p->tested, nullptr};
+    (void)run_free(argv[0:4]);
+}
+
 // The project gets a cache of its own, empty, for a test of the cache or of what a cold one does.
 export void own_cache(Project *p) {
+    if (p->io == nullptr) {
+        p->cache = format::push(p->tested, "/../xdg-cache").data;
+        return;
+    }
     p->cache = join(p->io, test::scratch(p->io), "xdg-cache");
 }
 
@@ -121,6 +229,10 @@ export Run build(const Project *p, const char *arguments) {
 }
 
 export void write(const Project *p, const char *name, const char *text) {
+    if (p->io == nullptr) {
+        write_free(path_in(p, name), text);
+        return;
+    }
     io::Error written =
         io::files_write(&p->io->files, path_in(p, name), test_io_bytes(text, c::strlen(text)), io::Replace);
     test::check_equal(written.code, 0);
@@ -184,11 +296,16 @@ export void write_header_of(const Project *p, const char *source, const char *na
 
 // The file's text, or "" when it is absent.
 export const char *read(const Project *p, const char *name) {
+    if (p->io == nullptr) return read_free(path_in(p, name));
     io::Read file = io::files_read(&p->io->files, &p->io->arena, path_in(p, name));
     return file.error.code == 0 ? text_of((const char *)file.data.data) : "";
 }
 
 export bool exists(const Project *p, const char *name) {
+    if (p->io == nullptr) {
+        const char *path = path_in(p, name);
+        return files::info(path[0:c::strlen(path)]).tag == files::InfoResult_tag_ok;
+    }
     return io::files_info(&p->io->files, path_in(p, name)).error.code == 0;
 }
 

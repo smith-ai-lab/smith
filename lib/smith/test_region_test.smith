@@ -1,0 +1,30 @@
+// The two signatures of a test during the migration off io (issue #240): a test with no io parameter runs on a region
+// of its own, and a test that takes an io::Io still runs, on the region of its io's arena.
+module smith::test_region_test;
+
+import smith::io;
+import smith::mem;
+import smith::test;
+
+// Allocates a block and never frees it; the current allocator owns it, so the checked allocator has nothing to report.
+static void allocate_and_keep() {
+    mem::Allocator *current = mem::allocator();
+    test::check_condition(current != nullptr);
+    u64 numbers[:] = mem::alloc_slice(u64, 8);
+    test::check_equal(countof(numbers), 8);
+    test::check_condition(current->owns(current, numbers.data));
+}
+
+export void test_region_a_test_with_no_io_allocates_from_its_region() {
+    allocate_and_keep();
+}
+
+export void test_region_a_property_test_with_no_io_allocates_from_its_region(random::Key key) {
+    (void)key;
+    allocate_and_keep();
+}
+
+export void test_region_a_test_with_an_io_still_runs(io::Io *io) {
+    test::check_condition(test::scratch(io) != nullptr);
+    allocate_and_keep();
+}

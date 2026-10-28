@@ -72,7 +72,9 @@ smith_tests(b, &tests);                              // tests.step is the task "
   because only build.c knows that. A step scans them for lines that are exactly `void test_<name>(void) {`,
   `void test_<name>(SmithKey key) {` or `void test_<name>(SmithIo *io) {` (`<name>` in `[a-z0-9_]`, the parameter's name
   in `[a-z_]`) and writes `tests_list.h` (prototypes) and `tests_list.c` (the table, `{name, plain, property, with_io}`)
-  beside the runner. Each test file compiles with
+  beside the runner. A test with no `io` runs with a region as the current allocator (`region_begin` in `lib/smith/test.smith`: a
+  growing arena with chunks from the checked allocator, released when the test ends; `--no-region` leaves the checked
+  allocator itself), as an io test runs on its io's arena (issue #240, step 2). Each test file compiles with
   `-include <tests_list.h> -Werror=missing-prototypes`, so a `test_` function the scan missed because it is formatted
   another way (`void test_x (void) {`) is a compile error. A `static` helper is not a test. A name defined twice is an
   error that names both files; a file with no tests is fine.
