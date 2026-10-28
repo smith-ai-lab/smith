@@ -36,7 +36,7 @@ export Usize commas(const char line[:]) {
 - `find(xs, v)` and `find_last(xs, v)` return `Option(Usize)` (`smith-option`): `.none` when `v` is absent, no sentinel. `count(xs, v)` returns a `Usize`.
 - `find_if(xs, pred)` and `find_slice(xs, needle)` also return `Option(Usize)`; `pred` is a `constexpr auto` function of one element (`ascii::space`). `trim(xs, pred)` is a cut of `xs` without the elements at both ends for which `pred` is true; nothing is copied.
 - `fill(xs, v)` sets every element; `reverse(xs)` reverses in place. Both write through a non-const slice.
-- `sort(xs)` sorts an `arithmetic` slice ascending in place and `sort_by(xs, less)` by `less(a, b)`, true when `a` sorts strictly before `b` (a `constexpr auto` function, never a generic one): a heapsort, `count * log2(count)` worst case, no allocation, not stable. `search(sorted, v)` is the first index whose element is not less than `v` (`countof(sorted)` when none; the slice must be sorted, unchecked), by halving.
+- `sort(xs)` sorts an `arithmetic` slice ascending in place and `sort_by(xs, less)` by `less(a, b)`, true when `a` sorts strictly before `b` (a `constexpr auto` function, a generic one too, as `sort` passes its `ascending`): a heapsort, `count * log2(count)` worst case, no allocation, not stable. `search(sorted, v)` is the first index whose element is not less than `v` (`countof(sorted)` when none; the slice must be sorted, unchecked), by halving.
 - `sum(xs)` is `0` for an empty slice (an integer overflow is a failed check); `min`, `max`, `argmin` and `argmax` require `countof(xs) > 0` (a failed contract otherwise) and pick the first of equal elements. `all(xs, pred)` and `any(xs, pred)` take a `constexpr auto` predicate, true and false for an empty slice.
 
 ## What trips

@@ -132,85 +132,15 @@ export Usize search(const Num sorted[:], typeof(sorted[0]) v) {
     return low;
 }
 
-// Moves the element at root down the heap xs[0:end] until both its children sort after it.
-void sift_down(auto xs[:], Usize root, Usize end, constexpr auto less) {
-    contract::requires(end <= countof(xs) && root < end);
-    Usize parent = root;
-    while (2 * parent + 1 < end) {
-        contract::invariant(parent < end);
-        Usize child = 2 * parent + 1;
-        if (child + 1 < end && less(xs[child], xs[child + 1])) child += 1;
-        if (!less(xs[parent], xs[child])) return;
-        typeof_unqual(xs[0]) held = xs[parent];
-        xs[parent] = xs[child];
-        xs[child] = held;
-        parent = child;
-    }
-}
-
-// Whether no element of xs sorts before the one in front of it, by less.
-Bool ordered_by(const auto xs[:], constexpr auto less) {
-    for (Usize i = 1; i < countof(xs); i++) {
-        if (less(xs[i], xs[i - 1])) return false;
-    }
-    return true;
-}
-
-// Puts the elements in the order less gives, in place: less(a, b) is true when a sorts strictly before b. A heapsort,
-// so the worst case is count * log2(count) comparisons, nothing allocates and nothing recurses. Not stable.
-export void sort_by(auto xs[:], constexpr auto less) {
-    Usize length = countof(xs);
-    for (Usize i = length / 2; i > 0; i--) {
-        sift_down(xs, i - 1, length, less);
-    }
-    for (Usize end = length; end > 1; end--) {
-        typeof_unqual(xs[0]) held = xs[0];
-        xs[0] = xs[end - 1];
-        xs[end - 1] = held;
-        sift_down(xs, 0, end - 1, less);
-    }
-    contract::ensures(ordered_by(xs, less));
-}
-
-// Moves the element at root down the heap xs[0:end] until both its children are not less than it (sift_down with `<`:
-// a generic function cannot be passed as `less`, so sort cannot call sort_by).
-void sift_down_ascending(Num xs[:], Usize root, Usize end) {
-    contract::requires(end <= countof(xs) && root < end);
-    Usize parent = root;
-    while (2 * parent + 1 < end) {
-        contract::invariant(parent < end);
-        Usize child = 2 * parent + 1;
-        if (child + 1 < end && xs[child] < xs[child + 1]) child += 1;
-        if (!(xs[parent] < xs[child])) return;
-        typeof_unqual(xs[0]) held = xs[parent];
-        xs[parent] = xs[child];
-        xs[child] = held;
-        parent = child;
-    }
-}
-
-// Whether no element of xs is less than the one in front of it.
-Bool ordered(const Num xs[:]) {
-    for (Usize i = 1; i < countof(xs); i++) {
-        if (xs[i] < xs[i - 1]) return false;
-    }
-    return true;
+// Whether a sorts strictly before b in ascending order: the `less` that sort gives sort_by.
+Bool ascending(Num a, typeof(a) b) {
+    return a < b;
 }
 
 // Puts the elements in ascending order, in place: sort_by with `<`, a heapsort. NaN of a floating slice has no place
 // in the order, so a slice holding one ends in no particular order.
 export void sort(Num xs[:]) {
-    Usize length = countof(xs);
-    for (Usize i = length / 2; i > 0; i--) {
-        sift_down_ascending(xs, i - 1, length);
-    }
-    for (Usize end = length; end > 1; end--) {
-        typeof_unqual(xs[0]) held = xs[0];
-        xs[0] = xs[end - 1];
-        xs[end - 1] = held;
-        sift_down_ascending(xs, 0, end - 1);
-    }
-    contract::ensures(ordered(xs));
+    sort_by(xs, ascending);
 }
 
 // The sum of the elements, 0 for an empty slice. An integer sum that overflows is a failed check.

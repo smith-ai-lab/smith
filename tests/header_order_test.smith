@@ -56,7 +56,7 @@ export void test_an_import_that_is_no_module_of_the_set_is_ignored() {
 
 export void test_an_import_cycle_does_not_hang() {
     const char *names[3] = {"a", "b", "c"};
-    const char *texts[3] = {"import smith::b;\n", "import smith::a;\n", "import smith::a;\nimport std::c;\n"};
+    const char *texts[3] = {"import std::b;\n", "import std::a;\n", "import std::a;\nimport std::c;\n"};
     Usize waves[3] = {};
     test::check_equal(waves_of(names, texts, waves), 1);
     test::check_equal(waves[0], 0);
@@ -66,7 +66,7 @@ export void test_an_import_cycle_does_not_hang() {
 
 export void test_an_import_with_leading_blanks_and_no_final_newline_counts() {
     const char *names[2] = {"a", "b"};
-    const char *texts[2] = {"module smith::a;\nif constexpr (x) {\n\timport smith::b;", "module smith::b;"};
+    const char *texts[2] = {"module std::a;\nif constexpr (x) {\n\timport std::b;", "module std::b;"};
     Usize waves[2] = {};
     test::check_equal(waves_of(names, texts, waves), 2);
     test::check_equal(waves[0], 1);
