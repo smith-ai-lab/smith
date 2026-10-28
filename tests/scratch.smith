@@ -174,8 +174,8 @@ static void header_to(const Project *p, const char *folder, const char *source, 
 // as `smith cc --smith-header` writes it, made in process. It is the text of the header pass, which does not ask the
 // compiler which import declared a C name: a module with two C imports takes the command.
 export void write_header(const Project *p, const char *module) {
-    header_to(p, p->dir, format::push(&p->io->arena, module, ".smith").data,
-              format::push(&p->io->arena, "include/", module, ".h").data);
+    header_to(p, p->dir, format::push(module, ".smith").data,
+              format::push("include/", module, ".h").data);
 }
 
 // The same for `$SMITH_REPO/<source>`, written to `name` in the project.

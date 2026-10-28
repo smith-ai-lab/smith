@@ -25,7 +25,7 @@ typedef struct {
 } Translation;
 
 static const char *join(io::Io *io, const char *folder, const char *name) {
-    return format::push(&io->arena, folder, "/", name).data;
+    return format::push(folder, "/", name).data;
 }
 
 static void copy_file(io::Io *io, const char *from, const char *to) {
@@ -55,7 +55,7 @@ static const char *project_named(io::Io *io, const char *name, const char *fixtu
     test::check_equal(made.code, 0);
     if (fixture == nullptr) return folder;
     const char *from =
-        format::push(&io->arena, io::args_env(&io->args, "SMITH_REPO"), "/tests/build_fixtures/", fixture).data;
+        format::push(io::args_env(&io->args, "SMITH_REPO"), "/tests/build_fixtures/", fixture).data;
     copy_files(io, from, folder);
     io::FileList list = io::files_list(&io->files, &io->arena, from);
     for (usize i = 0; i < list.count; i++) {
@@ -113,8 +113,8 @@ typedef struct {
 
 static void defines(io::Io *io, const char *label, const Translation *t, const Define *table, usize count) {
     for (usize i = 0; i < count; i++) {
-        const char *flag = format::push(&io->arena, "\"-D", table[i].name, "=\\\"", table[i].value, "\\\"\"").data;
-        scratch::expect_contains(format::push(&io->arena, label, ": ", table[i].name).data, t->build, flag);
+        const char *flag = format::push("\"-D", table[i].name, "=\\\"", table[i].value, "\\\"\"").data;
+        scratch::expect_contains(format::push(label, ": ", table[i].name).data, t->build, flag);
     }
 }
 
@@ -337,7 +337,7 @@ export void test_which_makefile(io::Io *io) {
 export void test_a_makefile_too_big_for_one_function(io::Io *io) {
     const char *folder = project(io, nullptr);
     for (i32 i = 1; i <= 45; i++) {
-        write(io, folder, format::push(&io->arena, "src", i, ".dat").data, "");
+        write(io, folder, format::push("src", i, ".dat").data, "");
     }
     char *makefile = arena::push_slice(&io->arena, char, 1U << 16).data;
     usize used = (usize)__builtin_snprintf(makefile, 1U << 16, "DATA := $(sort $(wildcard src*.dat))\nPREFIX ?= out\n");

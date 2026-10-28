@@ -52,12 +52,12 @@ constexpr char random_tree[_] = "random.bin f 0644 4000 e144e5c0 1000000000\n";
 // ---- Bytes: the fixtures, a buffer to write archives into, and damage
 
 static const char *join(io::Io *io, const char *a, const char *b) {
-    return format::push(&io->arena, a, b).data;
+    return format::push(a, b).data;
 }
 
 static Bytes fixture(io::Io *io, const char *name) {
     const char *path =
-        format::push(&io->arena, io::args_env(&io->args, "SMITH_REPO"), "/tests/fixtures/untar/", name).data;
+        format::push(io::args_env(&io->args, "SMITH_REPO"), "/tests/fixtures/untar/", name).data;
     io::Read file = io::files_read(&io->files, &io->arena, path);
     test::check_equal(file.error.code, 0);
     return file.data;
@@ -343,7 +343,7 @@ static void is_refused(io::Io *io, const char *name, const Result *r, const char
     scratch::expect_text(join(io, name, ": is refused"), "refused", r->ok ? "extracted" : "refused");
     scratch::expect_contains(join(io, name, ": says why"), r->error, reason);
     scratch::expect_contains(join(io, name, ": names the archive"), r->error,
-                             format::push(&io->arena, "cannot extract ", url).data);
+                             format::push("cannot extract ", url).data);
 }
 
 static void refuses(io::Io *io, const char *name, Bytes archive, const char *reason) {
@@ -454,7 +454,7 @@ static Entry random_file(Bytes data) {
 }
 
 static const char *random_listing(io::Io *io, Bytes data) {
-    return format::push(&io->arena, "random.bin f 0644 ", countof(data), " ",
+    return format::push("random.bin f 0644 ", countof(data), " ",
                         format::hex(inflate::crc32(0, data.data, countof(data)), 8), " 1000000000\n")
         .data;
 }
@@ -518,7 +518,7 @@ static const char *long_tree(io::Io *io) {
     const char *first = repeat(io, 'a', 80);
     const char *second = repeat(io, 'b', 80);
     const char *third = repeat(io, 'c', 80);
-    return format::push(&io->arena, first, " d\n", first, "/", second, " d\n", first, "/", second, "/", third, " d\n",
+    return format::push(first, " d\n", first, "/", second, " d\n", first, "/", second, "/", third, " d\n",
                         first, "/", second, "/", third,
                         "/file.txt f 0644 5 279eb882 1000000000\n\xc3\xbc d\n\xc3\xbc/\xc3\xa9.txt f 0644 7 05685cb1 "
                         "1000000000\n")
@@ -551,7 +551,7 @@ export void test_untar_long_names_ustar_prefix_field(io::Io *io) {
     Result r = extract(io, "prefix", fixture(io, "prefix.tar"));
     is_tree(
         io, "long names (ustar prefix field)", &r,
-        format::push(&io->arena, p, " d\n", p, "/", q, " d\n", p, "/", q, "/file f 0644 9 6a0d1daa 1000000000\n").data);
+        format::push(p, " d\n", p, "/", q, " d\n", p, "/", q, "/file f 0644 9 6a0d1daa 1000000000\n").data);
 }
 
 // ---- 3. Hostile archives, which no tar program writes: each is refused with the reason, and nothing is written
@@ -689,7 +689,7 @@ static Bytes apple_tar(io::Io *io) {
 
 static const char *apple_listing(io::Io *io) {
     const char *plain = "a plain file that only has a name like metadata\n";
-    return format::push(&io->arena, "._plain f 0644 ", c::strlen(plain), " ",
+    return format::push("._plain f 0644 ", c::strlen(plain), " ",
                         format::hex(inflate::crc32(0, (const u8 *)plain, c::strlen(plain)), 8),
                         " 1000000000\n._tiny f 0644 5 ", format::hex(inflate::crc32(0, (const u8 *)"tiny\n", 5), 8),
                         " 1000000000\na f 0644 6 ", format::hex(inflate::crc32(0, (const u8 *)"first\n", 6), 8),
@@ -763,7 +763,7 @@ static void single_gz_extracts(io::Io *io, const char *name, Bytes content, cons
     scratch::expect_text(join(io, label, ": extracts"), "", r.ok ? "" : r.error);
     scratch::expect_text(join(io, label, ": the package is the extraction folder"), folder_for_name(io, "single"),
                          r.contents);
-    const char *line = format::push(&io->arena, file, " f 0644 ", countof(content), " ",
+    const char *line = format::push(file, " f 0644 ", countof(content), " ",
                                     format::hex(inflate::crc32(0, content.data, countof(content)), 8), " ")
                            .data;
     scratch::expect_contains(join(io, label, ": one file, named without .gz, mode 0644, the same bytes"), r.tree, line);

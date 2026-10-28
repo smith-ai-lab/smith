@@ -31,7 +31,7 @@ static char header_text[header_capacity];
 static char report_text[report_capacity];
 
 static const char *join3(io::Io *io, const char *a, const char *b, const char *c) {
-    return format::push(&io->arena, a, b, c).data;
+    return format::push(a, b, c).data;
 }
 
 static const char *copy_text(io::Io *io, const char *text) {
@@ -252,7 +252,7 @@ static const char *sorted_unique(io::Io *io, const char **lines, usize count) {
     const char *text = "";
     for (usize i = 0; i < count; i++) {
         if (i > 0 && c::strcmp(lines[i], lines[i - 1]) == 0) continue;
-        text = format::push(&io->arena, text, lines[i], "\n").data;
+        text = format::push(text, lines[i], "\n").data;
     }
     return text;
 }
@@ -291,14 +291,14 @@ static void check_case(io::Io *io, const char *kase, Pass pass, const char **slo
         if (pass == Pass_Record && i < slots_per_case) slots[i] = copy_text(io, lowered_text);
         if (pass == Pass_Compare && i < slots_per_case) test::check_equal(c::strcmp(slots[i], lowered_text), 0);
         if (pass != Pass_Files) continue;
-        const char *golden = join3(io, folder, "/expect/lowered/", format::push(&io->arena, module, ".c").data);
+        const char *golden = join3(io, folder, "/expect/lowered/", format::push(module, ".c").data);
         if (exists(io, golden) || (test::updating() && fresh))
             test::golden(io, slice_of(golden), slice_of(lowered_text));
         // the header of the module, as `smith cc --smith-header` writes it
         if (header_by_command(kase)) continue;
         bool made =
             c::smith_core_header(folder, file, nullptr, header_text, header_capacity, report_text, report_capacity);
-        const char *header_golden = join3(io, folder, "/expect/header/", format::push(&io->arena, module, ".h").data);
+        const char *header_golden = join3(io, folder, "/expect/header/", format::push(module, ".h").data);
         if (made && (exists(io, header_golden) || (test::updating() && fresh)))
             test::golden(io, slice_of(header_golden), slice_of(header_text));
     }
