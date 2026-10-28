@@ -1221,10 +1221,18 @@ static bool smith_core_raw(const char *folder, const char *file, const char *tex
         smith_lang_reset(); // as a new process has it, for the next call
         if (folder != nullptr) ok = fchdir(home) == 0 && ok;
     }
+    // A lowering that did not fit, with its NUL, was cut short. How fmemopen says so differs: glibc stops a byte early
+    // and terminates the text, macOS's (FreeBSD's) fills the buffer with no NUL and fails the next write. The count
+    // of bytes written and the stream's error say it on both. Both texts are terminated here, whatever happened.
+    long written = lowered != nullptr ? ftell(lowered) : 0;
+    bool cut = lowered != nullptr &&
+               (fflush(lowered) != 0 || ferror(lowered) != 0 || written < 0 || (size_t)written >= out_size);
     if (lowered != nullptr) fclose(lowered);
     if (report != nullptr) fclose(report);
     if (home >= 0) close(home);
-    return ok && (header || strlen(out) + 1 < out_size); // a lowering that filled the buffer was cut short
+    out[out_size - 1] = 0;
+    errors[errors_size - 1] = 0;
+    return ok && !cut;
 }
 
 bool smith_core_lower(const char *folder, const char *file, const char *text, char *out, size_t out_size, char *errors,
