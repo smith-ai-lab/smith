@@ -9,11 +9,12 @@
 #include <sys/proc_info.h>
 
 constexpr uint32_t smith_platform_stopped = 4; // SSTOP of <sys/proc.h>, a kernel header
+constexpr size_t smith_platform_id_bytes = 16; // an LC_UUID, as an ELF build-id of smith's link is on Linux
 
 // The hex of the running executable's LC_UUID, which the linker derives from its contents: the same smith is the same
 // name, another build another.
 static void smith_platform_self_id(char *out, size_t size) {
-    SMITH_ASSERT(size >= 33);
+    SMITH_ASSERT(size >= 2 * smith_platform_id_bytes + 1);
     const struct mach_header_64 *header = (const struct mach_header_64 *)_dyld_get_image_header(0);
     SMITH_ASSERT(header != nullptr && header->magic == MH_MAGIC_64);
     const struct load_command *command = (const struct load_command *)(header + 1);
