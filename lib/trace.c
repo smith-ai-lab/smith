@@ -488,3 +488,35 @@ void smith_failure(SmithFailureKind kind) {
 void smith_failure_proved(SmithFailureKind kind) {
     smith_failure_detail(kind, nullptr);
 }
+
+// No macOS crash report for a deliberate crash, and the count of the crash exception types that still have a handler
+// (declared in <smith/trace.h>; issue #622). Linux has no such cost.
+#ifdef __APPLE__
+#include <mach/mach.h>
+
+void smith_silence_crash_reports(void) {
+    task_set_exception_ports(mach_task_self(), EXC_MASK_CRASH | EXC_MASK_CORPSE_NOTIFY, MACH_PORT_NULL,
+                             EXCEPTION_DEFAULT, THREAD_STATE_NONE);
+}
+
+unsigned smith_crash_handlers(void) {
+    exception_mask_t masks[EXC_TYPES_COUNT] = {};
+    mach_port_t ports[EXC_TYPES_COUNT] = {};
+    exception_behavior_t behaviors[EXC_TYPES_COUNT] = {};
+    thread_state_flavor_t flavors[EXC_TYPES_COUNT] = {};
+    mach_msg_type_number_t count = EXC_TYPES_COUNT;
+    if (task_get_exception_ports(mach_task_self(), EXC_MASK_CRASH | EXC_MASK_CORPSE_NOTIFY, masks, &count, ports,
+                                 behaviors, flavors) != KERN_SUCCESS)
+        return 1000;
+    unsigned found = 0;
+    for (mach_msg_type_number_t i = 0; i < count; i++) {
+        if (ports[i] != MACH_PORT_NULL) found++;
+    }
+    return found;
+}
+#else
+void smith_silence_crash_reports(void) {}
+unsigned smith_crash_handlers(void) {
+    return 0;
+}
+#endif
