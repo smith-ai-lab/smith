@@ -522,6 +522,19 @@ typedef struct {
     unsigned errors;
 } SmithRawNames;
 
+// A capitalized concept (`Int`, `Num`, issue #366) is read as its lowercase name; a member or a C name is as written.
+static void smith_raw_concept(const SmithRawNames *names, SmithToken *token) {
+    if (token->kind != SmithTokenKind_Identifier || names == nullptr) return;
+    if (smith_lang_punct(&names->before, ".") || smith_lang_punct(&names->before, "->") ||
+        smith_lang_punct(&names->before, "::")) {
+        return;
+    }
+    const char *name = smith_lang_capital_name(token->text, token->length);
+    if (name == nullptr) return;
+    token->text = name;
+    token->length = (uint32_t)strlen(name);
+}
+
 static void smith_raw_names(SmithLangRaw *raw, SmithRawNames *names, SmithToken *token) {
     bool after_member = smith_lang_punct(&names->before, ".") || smith_lang_punct(&names->before, "->") ||
                         (names->before.kind == SmithTokenKind_Identifier &&
@@ -643,6 +656,7 @@ static size_t smith_lang_column_of(uint32_t offset) {
 static void smith_raw_next_named(void *context, SmithToken *token, bool unexpanded) {
     SmithLangRaw *raw = context;
     smith_raw_next(context, token, unexpanded);
+    smith_raw_concept(raw->names, token);
     smith_raw_names(raw, raw->names, token);
 }
 
@@ -664,6 +678,7 @@ static SmithLang *smith_lang_run_interface(const char *file, const char *text, s
     smith_lang_keep_aside(true);
     memcpy(smith_lang_source, text, length);
     smith_lang_source[length] = 0;
+    smith_lang_capitals_lower(smith_lang_source, length, smith_lang_source, false);
     smith_lang_index_lines(length);
     SmithLangRaw raw = {
         .file = file, .length = length, .line_start = true, .capture = error, .capture_capacity = error_capacity};
@@ -1075,10 +1090,15 @@ static void smith_lang_reset(void) {
 
 // Reads the source of a run into smith_lang_source. False when the file cannot be read or the text is too long.
 static bool smith_raw_load(const SmithRawRun *run, size_t *length) {
-    if (run->text == nullptr) return smith_raw_read_source(run->path, length);
+    if (run->text == nullptr) {
+        if (!smith_raw_read_source(run->path, length)) return false;
+        smith_lang_capitals_lower(smith_lang_source, *length, smith_lang_source, false);
+        return true;
+    }
     if (run->text_length > smith_lang_source_max) return false;
     memcpy(smith_lang_source, run->text, run->text_length);
     smith_lang_source[run->text_length] = 0;
+    smith_lang_capitals_lower(smith_lang_source, run->text_length, smith_lang_source, false);
     *length = run->text_length;
     return true;
 }

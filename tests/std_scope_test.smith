@@ -1,0 +1,62 @@
+// std:: (issue #366, step 1): the standard library's modules and attribute scope are written `std::`, and `smith::` is
+// still accepted until the tree is moved. The project is tests/build_fixtures/std_scope.
+module std_scope_test;
+
+import smith::io;
+import smith::test;
+import scratch;
+
+export void test_std_scope_imports_and_attributes_of_std_build_and_run(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "std_scope");
+    scratch::Run built = scratch::build(&p, "");
+    scratch::expect_status("std: import std::arena and [[std::pure]], effects, alloc and affine build", 0, &built);
+    scratch::expect_text("std: the program runs", "3 4", scratch::sh(&p, "./build/app").out);
+    scratch::expect_contains("std: [[std::c_name]] names the C export", scratch::read(&p, ".smith/include/main.h"),
+                             "std_scope_doubled");
+}
+
+export void test_std_scope_attributes_of_std_are_checked(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "std_scope");
+    (void)scratch::build(&p, "");
+    (void)scratch::sh(&p, "cp pure_calls_alloc.smith main.smith");
+    scratch::Run pure = scratch::build(&p, "");
+    scratch::expect_failure("std: [[std::pure]] calling alloc is an error", &pure);
+    scratch::expect_contains("std: ... that names the promise", pure.out, "is [[smith::pure]], but it has the effects");
+    scratch::Run affine = scratch::sh(&p, "smith cc -std=gnu23 -I .smith/include -c affine_twice.smith -o /dev/null");
+    scratch::expect_failure("std: a second use of a [[std::affine]] value is an error", &affine);
+    scratch::expect_contains("std: ... naming the first use", affine.err, "already used");
+}
+
+export void test_std_scope_attributes_of_std_work_in_c(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "std_scope");
+    scratch::Run run = scratch::sh(&p, "smith cc -std=gnu23 -c attributes.c -o /dev/null");
+    scratch::expect_failure("std: in C, [[std::pure]] calling [[std::alloc]] is an error", &run);
+    scratch::expect_contains("std: ... on `broken` only", run.err, "broken");
+    scratch::expect_lacks("std: ... not on `forwards`", run.err, "forwards");
+}
+
+export void test_std_scope_module_line_follows_the_path_rule(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "std_scope");
+    scratch::Run inside = scratch::sh(&p, "smith cc -std=gnu23 -I .smith/include -c std/mine.smith -o /dev/null");
+    scratch::expect_status("std: `module std::mine;` in std/mine.smith compiles", 0, &inside);
+    scratch::Run outside =
+        scratch::sh(&p, "smith cc -std=gnu23 -I .smith/include -c elsewhere/mine.smith -o /dev/null");
+    scratch::expect_failure("std: ... and not in elsewhere/mine.smith", &outside);
+    scratch::expect_contains("std: ... which names the path", outside.err, "must be in a file whose path ends in");
+}
+
+// Types are capitalized (issue #366): the capitalized names are the old lowercase ones until the tree is rewritten.
+export void test_std_scope_capitalized_types_and_concepts_are_the_lowercase_ones(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "std_scope");
+    scratch::Run built = scratch::sh(&p, "smith cc -std=gnu23 capitals.smith -o capitals");
+    scratch::expect_status("capitals: I32, U8, Usize, F64, Bool and the concepts compile in a plain file", 0, &built);
+    scratch::expect_text("capitals: ... and mean what the lowercase ones do", "3 0.5 5 -4 12 3 7 5 250 2 1.5 1",
+                         scratch::sh(&p, "./capitals").out);
+}
+
+export void test_std_scope_capitalized_names_work_in_a_module(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "std_scope");
+    scratch::Run built = scratch::sh(&p, "smith cc -std=gnu23 -c capitals_module.smith -o /dev/null");
+    scratch::expect_status("capitals: Option, Result, Str, Type, slices of I32 and a Type alias in a module", 0,
+                           &built);
+}

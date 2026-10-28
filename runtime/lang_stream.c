@@ -423,7 +423,8 @@ static bool smith_lang_name_char(char c);
 // Whether the tokens from `at` on are `[smith::c_name`: the attribute that gives the export after it a C name.
 static bool smith_lang_c_name_at(SmithLang *lang, const SmithHost *host, size_t at) {
     return smith_lang_punct(smith_lang_peek(lang, host, at, false), "[") &&
-           smith_lang_ident(smith_lang_peek(lang, host, at + 1, false), "smith") &&
+           (smith_lang_ident(smith_lang_peek(lang, host, at + 1, false), "smith") ||
+            smith_lang_ident(smith_lang_peek(lang, host, at + 1, false), "std")) &&
            smith_lang_punct(smith_lang_peek(lang, host, at + 2, false), "::") &&
            smith_lang_ident(smith_lang_peek(lang, host, at + 3, false), "c_name");
 }

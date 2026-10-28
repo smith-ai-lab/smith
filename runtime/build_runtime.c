@@ -3535,16 +3535,17 @@ static bool smith_app_name_byte(char c) {
     return smith_lang_word_byte(c) || c == ':';
 }
 
-// `import a::b::c [as x]`: smith::<library> is a library of smith's, anything else a module found by its source at
-// a/b/c.smith under a root (the importing module's, as the compiler looks). Not finding one is the compile's to report.
+// `import a::b::c [as x]`: std::<library> (or smith::) is a library of smith's, anything else a module found by its
+// source at a/b/c.smith under a root (the importing module's, as the compiler looks). Not finding one is the compile's
+// to report.
 static void smith_app_module(const char *rest, bool libraries_only) {
     size_t length = 0;
     while (smith_app_name_byte(rest[length]))
         length += 1;
     if (length == 0) return;
-    size_t folder = strlen("smith::");
-    if (length > folder && strncmp(rest, "smith::", folder) == 0) {
-        smith_app_library(rest + folder, length - folder);
+    size_t skip = strncmp(rest, "smith::", 7) == 0 ? 7 : strncmp(rest, "std::", 5) == 0 ? 5 : 0; // either spelling
+    if (skip > 0 && length > skip) {
+        smith_app_library(rest + skip, length - skip);
         return;
     }
     if (libraries_only) return;

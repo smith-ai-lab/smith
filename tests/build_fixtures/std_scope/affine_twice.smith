@@ -1,0 +1,12 @@
+module affine_twice;
+
+[[std::affine]] typedef struct {
+    i32 id;
+} Handle;
+
+export i32 total(void) {
+    Handle h = {.id = 1};
+    Handle a = h;
+    Handle b = h;
+    return a.id + b.id;
+}

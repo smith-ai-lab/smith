@@ -439,6 +439,12 @@ const char *smith_lang_module_name(const SmithLang *lang);
 // for something: `i32 double(i32 x)`. Hosts that read the text report it themselves, once, at the name, with
 // smith_lang_keyword_message; what it names is read from the text around it (null: it is no name). Plain functions of
 // text, with no state.
+// Capitalized type names (issue #366): the lowercase name `I32`, `Type`, `Int` stand for, or null; and a source text
+// written with the lowercase names (`concepts`: the concepts too, which makes it longer; `out` has room for 3 * length
+// + 1).
+bool smith_lang_capital_at(size_t index, const char **written, const char **name);
+const char *smith_lang_capital_name(const char *text, size_t length);
+size_t smith_lang_capitals_lower(const char *text, size_t length, char *out, bool concepts);
 bool smith_lang_misused_keyword(const char *text, size_t length);
 const char *smith_lang_keyword_name_use(const char *text, size_t size, size_t start, size_t end);
 size_t smith_lang_keyword_message(char *out, size_t capacity, const char *keyword, size_t length, const char *noun);
