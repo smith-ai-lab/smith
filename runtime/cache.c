@@ -115,9 +115,27 @@ static void smith_cache_show_one(SmithCacheKind kind, bool verbose) {
     if (total > kept) printf("  and %zu more\n", total - kept);
 }
 
+// The lint cache (runtime/lint_cache.c) is files in two levels of folders, so it is counted by its files.
+static void smith_cache_show_lint(void) {
+    char folder[PATH_MAX];
+    SmithPackageFault error;
+    if (!smith_cache_folder(SmithCache_Lint, folder, &error)) smith_die(smith_exit_usage, "cache:", error.text);
+    uint64_t bytes = 0;
+    time_t newest = 0;
+    uint64_t files = 0;
+    if (smith_package_is_folder(folder)) {
+        smith_cache_measure(folder, &bytes, &newest);
+        files = smith_cache_walk_regular;
+    }
+    char size[32];
+    smith_cache_format_size(bytes, size);
+    printf("lint: %s\n  %llu %s, %s\n", folder, (unsigned long long)files, files == 1 ? "file" : "files", size);
+}
+
 static void smith_cache_show(bool verbose) {
     smith_cache_show_one(SmithCache_Modules, verbose);
     smith_cache_show_one(SmithCache_Packages, verbose);
+    smith_cache_show_lint();
     printf("an entry unused for %d days is removed, checked at most once a week\n",
            smith_cache_prune_after / (24 * 60 * 60));
 }
@@ -149,9 +167,26 @@ static void smith_cache_clean_one(SmithCacheKind kind) {
     printf("removed %s: %zu %s, %s\n", folder, total, total == 1 ? "entry" : "entries", size);
 }
 
-// `smith cache [-v]` and `smith cache clean [modules|packages]`.
+static void smith_cache_clean_lint(void) {
+    char folder[PATH_MAX];
+    SmithPackageFault error;
+    if (!smith_cache_folder(SmithCache_Lint, folder, &error)) smith_die(smith_exit_usage, "cache:", error.text);
+    uint64_t bytes = 0;
+    time_t newest = 0;
+    uint64_t files = 0;
+    if (smith_package_is_folder(folder)) {
+        smith_cache_measure(folder, &bytes, &newest);
+        files = smith_cache_walk_regular;
+    }
+    smith_package_remove(folder);
+    char size[32];
+    smith_cache_format_size(bytes, size);
+    printf("removed %s: %llu %s, %s\n", folder, (unsigned long long)files, files == 1 ? "file" : "files", size);
+}
+
+// `smith cache [-v]` and `smith cache clean [modules|packages|lint]`.
 static int smith_cache_main(int count, char **args) {
-    constexpr char usage[] = "usage: smith cache [-v] | smith cache clean [modules|packages]";
+    constexpr char usage[] = "usage: smith cache [-v] | smith cache clean [modules|packages|lint]";
     if (count == 0 || (count == 1 && strcmp(args[0], "-v") == 0)) {
         smith_cache_show(count == 1);
         return 0;
@@ -159,9 +194,11 @@ static int smith_cache_main(int count, char **args) {
     if (strcmp(args[0], "clean") != 0 || count > 2) smith_die(smith_exit_usage, usage, nullptr);
     bool modules = count == 1 || strcmp(args[1], "modules") == 0;
     bool packages = count == 1 || strcmp(args[1], "packages") == 0;
-    if (!modules && !packages) smith_die(smith_exit_usage, usage, nullptr);
+    bool lint = count == 1 || strcmp(args[1], "lint") == 0;
+    if (!modules && !packages && !lint) smith_die(smith_exit_usage, usage, nullptr);
     smith_cache_exclude_builds();
     if (modules) smith_cache_clean_one(SmithCache_Modules);
     if (packages) smith_cache_clean_one(SmithCache_Packages);
+    if (lint) smith_cache_clean_lint();
     return 0;
 }

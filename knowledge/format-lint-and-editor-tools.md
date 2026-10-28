@@ -23,9 +23,15 @@ effective one and makes it the project's (`smith fmt --dump-config > .clang-form
 **Project `smith lint` is a gate over every `.smith` source** (issue #424, `smith_lint_project`, runtime/verbs.c): the
 build's compiles (with their own command from `.smith/compile_commands.json`) and every other `.smith` file git sees
 that `.clang-format-ignore` does not name (the one list of test inputs, generated and copied files; clang-tidy reads the
-nearest compile's command for it). A finding fails it, the last line is `smith lint: linted N files` (`smith check`:
+nearest compile's command for it). A finding fails it, the last line is `smith lint: linted N files (R run, C cached, T s)` (`smith check`:
 `lint ok: N files`), and a project with `.smith` sources that lints none fails. A stage0, whose clang cannot read
 `.smith`, leaves them out and says so.
+
+**`smith lint` is incremental** (issue #621, `runtime/lint_cache.c`, [the caches](caches.md)): clang-tidy's output and exit
+status for a file are kept under `<cache>/smith/lint` and replayed when nothing the lint read has changed, so a lint
+of an unchanged tree runs clang-tidy on no file (about 1 s for smith's 180 files, from 50 s) and one changed file runs
+only itself and the files that include it. `SMITH_LINT_CACHE=0` turns it off, `SMITH_LINT_CACHE=why` says why a file
+ran. Tests: `tests/lint_cache_test.smith`.
 
 **The editor finds `.smith/compile_commands.json`:** `smith lsp` adds clangd's `--compile-commands-dir` for it when
 the project has no root or `build/` one. **The editor has smith's defaults too** (`patches/smith-editor-defaults.patch`):

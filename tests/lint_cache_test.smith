@@ -1,0 +1,107 @@
+// `smith lint` keeps clang-tidy's result for each file (issue #621, knowledge/caches.md): a second lint runs clang-tidy
+// on no file and prints what the first did, a change reruns exactly the files it reaches, and a finding comes back
+// from the cache with its failing status. A scratch project of three C files and the build file
+// (tests/build_fixtures/lint_cache with its build.c: a.c and b.c include common.h, c.c includes nothing) in a cache of
+// its own.
+module lint_cache_test;
+
+import smith::io;
+import smith::test;
+import scratch;
+
+static scratch::Project prepared(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "lint_cache");
+    scratch::own_cache(&p);
+    return p;
+}
+
+// A lint, all of it printed: its output and status are in the run.
+static scratch::Run lint(const scratch::Project *p) {
+    return scratch::sh(p, "SMITH_OUTPUT=full smith lint 2>&1");
+}
+
+// How many files the last line of a lint says ran and were cached: "4 run, 0 cached".
+static const char *counts(const scratch::Project *p) {
+    return scratch::capture(p, "SMITH_OUTPUT=full smith lint 2>&1 | grep -o '[0-9]* run, [0-9]* cached'");
+}
+
+export void test_lint_a_second_time_runs_clang_tidy_on_no_file(io::Io *io) {
+    scratch::Project p = prepared(io);
+    scratch::Run first = lint(&p);
+    scratch::expect_status("the first lint passes", 0, &first);
+    scratch::expect_contains("... and runs clang-tidy on every file", first.out, "4 run, 0 cached");
+    scratch::Run second = lint(&p);
+    scratch::expect_status("the second lint passes", 0, &second);
+    scratch::expect_contains("... and runs it on none", second.out, "0 run, 4 cached");
+}
+
+export void test_lint_with_one_file_changed_runs_only_it(io::Io *io) {
+    scratch::Project p = prepared(io);
+    scratch::Run first = lint(&p);
+    scratch::expect_status("the first lint passes", 0, &first);
+    scratch::Run edited = scratch::sh(&p, "printf '// edited\\n' >> b.c");
+    scratch::expect_status("b.c is edited", 0, &edited);
+    scratch::expect_text("only b.c runs", "1 run, 3 cached", counts(&p));
+    scratch::expect_text("... and the next lint runs none", "0 run, 4 cached", counts(&p));
+}
+
+export void test_lint_with_a_header_changed_runs_the_files_that_include_it(io::Io *io) {
+    scratch::Project p = prepared(io);
+    scratch::Run first = lint(&p);
+    scratch::expect_status("the first lint passes", 0, &first);
+    scratch::Run edited = scratch::sh(&p, "printf '// edited\\n' >> common.h");
+    scratch::expect_status("common.h is edited", 0, &edited);
+    scratch::expect_text("a.c and b.c run, c.c does not", "2 run, 2 cached", counts(&p));
+}
+
+export void test_lint_with_a_config_changed_runs_every_file(io::Io *io) {
+    scratch::Project p = prepared(io);
+    scratch::Run first = lint(&p);
+    scratch::expect_status("the first lint passes", 0, &first);
+    scratch::Run edited = scratch::sh(&p, "printf '# edited\\n' >> .clang-tidy");
+    scratch::expect_status(".clang-tidy is edited", 0, &edited);
+    scratch::expect_text("every file runs", "4 run, 0 cached", counts(&p));
+}
+
+export void test_lint_replays_a_finding_and_the_failing_status_from_the_cache(io::Io *io) {
+    scratch::Project p = prepared(io);
+    scratch::Run written =
+        scratch::sh(&p, "printf 'int third(int value, int unused) {\\n    return value;\\n}\\n' > c.c");
+    scratch::expect_status("c.c has an unused parameter", 0, &written);
+    scratch::Run first = lint(&p);
+    scratch::expect_status("the first lint fails on the finding", 1, &first);
+    scratch::expect_contains("... and reports it", first.out, "c.c:1:26: error: parameter 'unused' is unused");
+    scratch::Run second = lint(&p);
+    scratch::expect_status("the second lint fails too", 1, &second);
+    scratch::expect_contains("... from the cache", second.out, "0 run, 4 cached");
+    scratch::expect_contains("... with the same finding", second.out, "c.c:1:26: error: parameter 'unused' is unused");
+    scratch::expect_text(
+        "... printed once", "1",
+        scratch::capture(&p, "SMITH_OUTPUT=full smith lint 2>&1 | grep -c \"parameter 'unused' is unused\""));
+}
+
+export void test_lint_cache_off_runs_every_file_each_time(io::Io *io) {
+    scratch::Project p = prepared(io);
+    scratch::Run first = scratch::sh(&p, "SMITH_LINT_CACHE=0 SMITH_OUTPUT=full smith lint 2>&1");
+    scratch::expect_contains("with SMITH_LINT_CACHE=0 every file runs", first.out, "4 run, 0 cached");
+    scratch::Run second = scratch::sh(&p, "SMITH_LINT_CACHE=0 SMITH_OUTPUT=full smith lint 2>&1");
+    scratch::expect_contains("... again", second.out, "4 run, 0 cached");
+    scratch::expect_text("... and nothing was stored", "no",
+                         scratch::capture(&p, "test -e \"$XDG_CACHE_HOME/smith/lint/r\" && echo yes || echo no"));
+}
+
+export void test_cache_shows_and_cleans_the_lint_results(io::Io *io) {
+    scratch::Project p = prepared(io);
+    scratch::Run first = lint(&p);
+    scratch::expect_status("the lint passes", 0, &first);
+    scratch::Run shown = scratch::sh(&p, "smith cache");
+    scratch::expect_contains("smith cache lists the lint cache", shown.out, "lint: ");
+    scratch::expect_text(
+        "... which holds files", "yes",
+        scratch::capture(&p, "[ -n \"$(find \"$XDG_CACHE_HOME/smith/lint/r\" -type f)\" ] && echo yes || echo no"));
+    scratch::Run cleaned = scratch::sh(&p, "smith cache clean lint");
+    scratch::expect_status("smith cache clean lint exits 0", 0, &cleaned);
+    scratch::expect_text("... and the lint results are gone", "no",
+                         scratch::capture(&p, "test -e \"$XDG_CACHE_HOME/smith/lint\" && echo yes || echo no"));
+    scratch::expect_text("... so the next lint runs every file", "4 run, 0 cached", counts(&p));
+}

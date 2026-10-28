@@ -285,7 +285,7 @@ static size_t smith_fmt_pass(const char *self, bool check, size_t chunk, size_t 
     SmithFmtPass pass = {.self = self, .check = check, .chunk = chunk, .count = count};
     size_t jobs = (count + chunk - 1) / chunk;
     size_t workers = smith_verbs_jobs();
-    size_t failed = smith_verbs_parallel_status(jobs, workers < jobs ? workers : jobs, smith_fmt_job, &pass,
+    size_t failed = smith_verbs_parallel_status(jobs, workers < jobs ? workers : jobs, smith_fmt_job, nullptr, &pass,
                                                 smith_fmt_passed, !check || chunk == 1);
     for (size_t job = 0; job < jobs; job++) // bounded by the jobs
         for (size_t i = job * chunk; i < count && i < (job + 1) * chunk; i++)
