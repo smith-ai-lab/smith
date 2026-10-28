@@ -1,0 +1,5 @@
+status 1
+ownership_module_bad.smith:5:3: error: smith-ownership: `returns_borrowed(2)`: parameter 2 is `i32`, not a pointer or a slice
+ownership_module_bad.smith:6:3: error: smith-ownership: `smith::returns_internal` is for a function that returns a pointer or a slice, and this one returns `i32`
+ownership_module_bad.smith:7:31: error: smith-ownership: a declaration has at most one ownership attribute (returns_owned, returns_borrowed or returns_internal)
+ownership_module_bad.smith:8:3: error: smith-ownership: `returns_owned(nonexistent)`: `nonexistent` is not a declared function

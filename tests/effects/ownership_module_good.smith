@@ -1,0 +1,11 @@
+module ownership_module_good;
+
+import <stdlib.h>;
+
+export [[smith::returns_owned(free)]] char *duplicate(const char *text);
+export [[smith::returns_borrowed(1)]] u8 *middle(u8 xs[:]);
+[[smith::returns_internal]] const char *message(i32 code);
+
+i32 main() {
+    return 0;
+}

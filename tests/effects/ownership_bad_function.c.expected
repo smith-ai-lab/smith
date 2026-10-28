@@ -1,0 +1,8 @@
+status 1
+ownership_bad_function.c:3:3: error: smith-ownership: `returns_owned(nonexistent)`: `nonexistent` is not a declared function
+ownership_bad_function.c:4:3: error: smith-ownership: `smith::returns_owned` is for a function that returns a pointer or a slice, and this one returns `int`
+ownership_bad_function.c:5:3: error: smith-ownership: `returns_borrowed(3)`: there is no parameter 3 (the function has 2)
+ownership_bad_function.c:6:3: error: smith-ownership: `returns_borrowed(2)`: parameter 2 is `int`, not a pointer or a slice
+ownership_bad_function.c:7:31: error: smith-ownership: a declaration has at most one ownership attribute (returns_owned, returns_borrowed or returns_internal)
+ownership_bad_function.c:8:34: error: smith-ownership: a declaration has at most one ownership attribute (returns_owned, returns_borrowed or returns_internal)
+ownership_bad_function.c:9:3: error: smith-ownership: `returns_owned(abs)`: `abs` must take one pointer
