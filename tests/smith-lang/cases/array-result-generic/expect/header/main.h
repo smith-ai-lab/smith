@@ -3,8 +3,6 @@
 // smith-module: main
 // smith-imports: split
 // smith-names:
-// smith-tuples
-// smith-slices
 // clang-format on
 #pragma once
 #include <stddef.h>
