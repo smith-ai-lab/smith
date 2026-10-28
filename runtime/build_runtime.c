@@ -2194,7 +2194,7 @@ void smith_object(SmithBuild *b, SmithObject *object) {
     copy.implicit_inputs = smith_copy_list(object->implicit_inputs);
     const char *depfile = smith_replace_extension(b, copy.output, ".d");
     if (strcmp(depfile, copy.output) == 0) smith_fail("smith_object: the output '%s' already ends in .d", copy.output);
-    const char *const tail[] = {"-MMD", "-MF", depfile, "-c", copy.source, "-o", copy.output, nullptr};
+    const char *const tail[] = {"-MD", "-MF", depfile, "-c", copy.source, "-o", copy.output, nullptr};
     bool lang = smith_ends_with(copy.source, ".smith");
     bool headers = lang || smith_reads_module_headers(&copy);
     if (headers) smith_lang_sources_used = true;

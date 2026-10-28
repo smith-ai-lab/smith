@@ -48,16 +48,17 @@ static void smith_run_emit(SmithExec *exec, const char *text, size_t length) {
 }
 
 // The progress line for an edge: [finished/total] and what it does, cut in the middle to fit a terminal.
-static void smith_run_progress(SmithExec *exec, const SmithEdge *edge) {
+static void smith_run_progress(SmithExec *exec, const SmithEdge *edge, bool cached) {
     SmithPrinter *printer = &exec->printer;
     if (exec->options.quiet || printer->locked) return;
     const char *what = exec->options.verbose || edge->description == nullptr ? edge->command : edge->description;
+    const char *note = cached ? " (cached)" : "";
     if (!printer->smart) {
-        printf("[%zu/%zu] %s\n", exec->finished_edges, exec->command_edges, what);
+        printf("[%zu/%zu] %s%s\n", exec->finished_edges, exec->command_edges, what, note);
         return;
     }
     char line[1024];
-    int length = snprintf(line, sizeof line, "[%zu/%zu] %s", exec->finished_edges, exec->command_edges, what);
+    int length = snprintf(line, sizeof line, "[%zu/%zu] %s%s", exec->finished_edges, exec->command_edges, what, note);
     size_t size = length > 0 && (size_t)length < sizeof line ? (size_t)length : sizeof line - 1;
     size_t columns = printer->columns;
     if (size > columns && columns > 3) {
@@ -326,7 +327,14 @@ static bool smith_run_take_depfile(SmithExec *exec, const SmithEdge *edge, Smith
     (void)smith_files_remove(&exec->io->files, edge->depfile);
     static const char *none[1];
     if (deps == nullptr) deps = none;
-    smith_state_record_deps(exec, edge, smith_plan_stat_path(output), deps, count);
+    // a compile of the step cache names the system's headers too: the graph tracks the project's alone
+    const char **tracked = nullptr;
+    uint32_t tracked_count = smith_stepcache_graph_deps(exec, edge, deps, count, &tracked);
+    job->step_deps = deps;
+    job->step_dep_count = count;
+    job->depfile_text = file.error.code == 0 ? (const char *)file.data.data : nullptr;
+    job->depfile_size = file.error.code == 0 ? file.data.count[0] : 0;
+    smith_state_record_deps(exec, edge, smith_plan_stat_path(output), tracked, tracked_count);
     return true;
 }
 
@@ -445,9 +453,10 @@ static void smith_run_finish(SmithExec *exec, SmithJob *job, uint32_t *stack) {
         return;
     }
     if (success && edge->has_deps && !exec->options.dry_run) success = smith_run_take_depfile(exec, edge, job);
+    if (success && !job->cached && job->key.valid) smith_stepcache_store(exec, edge, job, smith_run_wall_ns());
     if (!success && job->status == 0) job->status = smith_exec_failed;
     exec->finished_edges += 1;
-    if (edge->pool != smith_exec_pool_console) smith_run_progress(exec, edge);
+    if (edge->pool != smith_exec_pool_console) smith_run_progress(exec, edge, job->cached);
     if (!success) {
         smith_run_report_failure(exec, job, edge);
         exec->failures += 1;
@@ -537,7 +546,7 @@ static void smith_run_start(SmithExec *exec, SmithJob *job, uint32_t number) {
         fflush(stdout);
         smith_run_lock(exec, true);
     } else if (exec->printer.smart) {
-        smith_run_progress(exec, edge);
+        smith_run_progress(exec, edge, false);
     }
     if (!job->kind->start(exec, job)) job->status = smith_exec_failed;
 }
@@ -548,12 +557,41 @@ static bool smith_run_may_start(const SmithExec *exec) {
     return exec->stopped == 0 && exec->failures_left != 0 && exec->ready_count > 0;
 }
 
+// A step whose outputs the step cache holds: no command runs, and the job is over as it starts. The compile's own
+// steps follow (its depfile is read, the log written), as after a command that made the same files.
+static void smith_run_start_cached(SmithExec *exec, SmithJob *job, uint32_t number, int64_t wall,
+                                   const SmithStepKey *key) {
+    SmithEdge *edge = &exec->graph.edges[number];
+    edge->want = SmithWant_Running;
+    SmithArena arena = job->arena;
+    *job = (SmithJob){.active = true,
+                      .edge = number,
+                      .started = smith_run_now_ms(exec),
+                      .wall = wall,
+                      .arena = arena,
+                      .kind = &smith_job_dry,
+                      .token = smith_slots_unlimited,
+                      .key = *key,
+                      .cached = true};
+    exec->started_edges += 1;
+    exec->running += 1;
+}
+
 static void smith_run_start_ready(SmithExec *exec, uint32_t *stack) {
     for (size_t guard = 0; smith_run_may_start(exec) && guard <= exec->graph.edge_count; guard++) {
         SmithJob *job = smith_run_free_job(exec);
         size_t pick = smith_run_pick(exec);
         if (job == nullptr || pick == SIZE_MAX) return;
         uint32_t number = exec->ready[pick];
+        // The step cache first: a hit takes no core of the host's pool and no process.
+        SmithStepKey key = {};
+        int64_t wall = smith_run_wall_ns();
+        if (smith_stepcache_restore(exec, number, &key, wall)) {
+            exec->ready[pick] = exec->ready[--exec->ready_count];
+            smith_run_start_cached(exec, job, number, wall, &key);
+            smith_run_finish(exec, job, stack);
+            continue;
+        }
         // A heavy step is a worker that needs a core of the host's pool: the first rides on the run's base token, each
         // other takes one more and the step waits (the loop asks again) when none is free (slots.c).
         bool heavy = !exec->options.dry_run && strncmp(exec->graph.edges[number].command, ".smith/program ", 15) != 0;
@@ -565,6 +603,7 @@ static void smith_run_start_ready(SmithExec *exec, uint32_t *stack) {
         }
         exec->ready[pick] = exec->ready[--exec->ready_count];
         smith_run_start(exec, job, number);
+        job->key = key;
         job->heavy = heavy;
         job->token = token;
         if (heavy) exec->heavy_running += 1;

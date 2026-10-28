@@ -1,0 +1,35 @@
+module order;
+
+// A generic function, written once: an instance for each type of its arguments.
+export bool ascending(arithmetic a, typeof(a) b) {
+    return a < b;
+}
+
+// A helper that takes the function again: `less` is forwarded to it by `smallest`.
+export bool before(constexpr auto less, const auto xs[:], usize a, usize b) {
+    return less(xs[a], xs[b]);
+}
+
+// A second helper that takes it, called in the same body.
+export usize rank(constexpr auto less, const auto xs[:], usize at) {
+    usize below = 0;
+    for (usize i = 0; i < countof(xs); i++) {
+        if (before(less, xs, i, at)) below += 1;
+    }
+    return below;
+}
+
+// `less` is the whole argument of two calls whose parameters are `constexpr auto`: the generic is passed on, and each
+// callee makes the instances its own calls ask for.
+export usize smallest(constexpr auto less, const auto xs[:]) {
+    usize best = 0;
+    for (usize i = 1; i < countof(xs); i++) {
+        if (before(less, xs, i, best)) best = i;
+    }
+    return best + 10 * rank(less, xs, 0);
+}
+
+// The same, from a generic that knows its element type at each instance.
+export usize smallest_of(arithmetic xs[:]) {
+    return smallest(ascending, xs);
+}

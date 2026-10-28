@@ -298,27 +298,70 @@ static const char *const *build_enzyme_libraries(SmithBuild *b, const BuildConfi
     return smith_list(b, smith_fmt(b, "%s/lib/libEnzymeStatic-23.a", config->enzyme), nullptr);
 }
 
-// shim/clang.cpp, which gives smith.c clang's main. The LLVM headers are system headers, so the build's warnings stay
-// smith's own.
+// The flags of the shims that read clang's AST and of their precompiled header, which must be the same ones. The LLVM
+// headers are system headers, so the build's warnings stay smith's own.
+static const char *const *build_shim_flags(SmithBuild *b, const BuildConfig *config) {
+    return smith_cat(b,
+                     (const char *[]){"-std=c++17", "-O1", "-g", "-Wall", "-Wextra", "-fno-exceptions", "-fno-rtti",
+                                      "-D__STDC_CONSTANT_MACROS", "-D__STDC_FORMAT_MACROS", "-D__STDC_LIMIT_MACROS",
+                                      "-isystem", smith_fmt(b, "%s/include", config->llvm), "-isystem", "shim/lldb",
+                                      nullptr},
+                     smith_when(b, config->werror[0] != '\0', (const char *[]){config->werror, nullptr}),
+                     smith_when(b, config->hook, (const char *[]){"-DSMITH_HOOK", nullptr}),
+                     smith_when(b, config->enzyme[0] != '\0', (const char *[]){"-DSMITH_ENZYME", nullptr}), nullptr);
+}
+
+// The shims whose compile is mostly clang's and LLVM's headers (knowledge/precompiled-shim-headers.md): they are
+// compiled with the header shim/pch.h precompiled (build_shim_pch). The rest are small (`lsp` and `clangd` measured
+// slower with it: loading the header costs more than their includes).
+static bool build_shim_uses_pch(const char *name) {
+    const char *const names[] = {"hook", "tidy", "affine", "effects_infer"};
+    for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
+        if (strcmp(name, names[i]) == 0) return true;
+    }
+    return false;
+}
+
+// shim/pch.h compiled to `<folder>/shim.pch` as one more object of the graph: its command holds the compiler and the
+// flags (the identity of LLVM is in the path of both, and an LLVM is never edited in place, so a new one makes it
+// again), its inputs are the compiler's file and, from its depfile, shim/pch.h (the system headers are not in a
+// depfile), and the shims that use it depend on it.
+// `-fpch-instantiate-templates` puts the templates' instantiations in the header too: the part of the saving that
+// matters, since the headers' parse alone is a third of the compile.
+static const char *build_shim_pch(SmithBuild *b, const BuildConfig *config, const char *folder) {
+    static SmithObject pch; // the build keeps the pointer
+    pch = (SmithObject){
+        .compiler = config->cxx,
+        .source = "shim/pch.h",
+        .output = smith_fmt(b, "%s/shim.pch", folder),
+        .flags = smith_cat(b, build_shim_flags(b, config),
+                           (const char *[]){"-fpch-instantiate-templates", "-x", "c++-header", nullptr},
+                           // hook's coverage flags (build_shim) are in the header's too, so the two agree.
+                           smith_when(b, config->coverage,
+                                      (const char *[]){"-fprofile-instr-generate", "-fcoverage-mapping", nullptr}),
+                           nullptr),
+    };
+    smith_object(b, &pch);
+    return pch.output;
+}
+
+// shim/clang.cpp, which gives smith.c clang's main. `pch` is the precompiled header, or nullptr.
 static void build_shim(SmithBuild *b, const BuildConfig *config, const char *folder, const char *source,
-                       const char *name, SmithObject *shim) {
+                       const char *name, const char *pch, SmithObject *shim) {
+    bool uses_pch = pch != nullptr && build_shim_uses_pch(name);
     *shim = (SmithObject){
         .compiler = config->cxx,
         .source = source,
-        .output = smith_fmt(b, "%s/%s.o", folder, name),
-        .flags = smith_cat(
-            b,
-            (const char *[]){"-std=c++17", "-O1", "-g", "-Wall", "-Wextra", "-fno-exceptions", "-fno-rtti",
-                             "-D__STDC_CONSTANT_MACROS", "-D__STDC_FORMAT_MACROS", "-D__STDC_LIMIT_MACROS", "-isystem",
-                             smith_fmt(b, "%s/include", config->llvm), "-isystem", "shim/lldb", nullptr},
-            smith_when(b, config->werror[0] != '\0', (const char *[]){config->werror, nullptr}),
-            smith_when(b, config->hook, (const char *[]){"-DSMITH_HOOK", nullptr}),
-            smith_when(b, config->enzyme[0] != '\0', (const char *[]){"-DSMITH_ENZYME", nullptr}),
-            // The token hook counts the lines it runs too (COVERAGE=1): the records then select the tests that ran a
-            // function of it, and a change to shim/hook.cpp no longer selects every test (#638).
-            smith_when(b, config->coverage && strcmp(name, "hook_shim") == 0,
-                       (const char *[]){"-fprofile-instr-generate", "-fcoverage-mapping", nullptr}),
-            nullptr),
+        .output = smith_fmt(b, "%s/%s_shim.o", folder, name),
+        .flags = smith_cat(b, build_shim_flags(b, config),
+                           smith_when(b, uses_pch, (const char *[]){"-include-pch", pch, nullptr}),
+                           // The token hook counts the lines it runs too (COVERAGE=1): the records then select the
+                           // tests that ran a function of it, and a change to shim/hook.cpp no longer selects every
+                           // test (#638).
+                           smith_when(b, config->coverage && strcmp(name, "hook") == 0,
+                                      (const char *[]){"-fprofile-instr-generate", "-fcoverage-mapping", nullptr}),
+                           nullptr),
+        .implicit_inputs = smith_when(b, uses_pch, (const char *[]){pch, nullptr}),
     };
     smith_object(b, shim);
 }
@@ -471,6 +514,7 @@ static void build_shims(SmithBuild *b, const BuildConfig *config, const char *fo
     const char *const sources[] = {"clang",  "lld",           "format",      "tidy",     "clangd",       "symbolize",
                                    "hook",   "lsp",           "lldb",        "lldb_dap", "lldb_explain", "lldb_slices",
                                    "affine", "effects_infer", "lldb_server", "coverage"};
+    const char *pch = build_shim_pch(b, config, folder);
     size_t count = 0;
     for (size_t i = 0; i < sizeof sources / sizeof sources[0]; i++) {
         bool is_hook = strcmp(sources[i], "hook") == 0 || strcmp(sources[i], "lsp") == 0 ||
@@ -479,7 +523,7 @@ static void build_shims(SmithBuild *b, const BuildConfig *config, const char *fo
         bool is_server = strcmp(sources[i], "lldb_server") == 0;
         if ((is_hook && !config->hook) || (is_lldb && !config->lldb) || (is_server && !config->platform->lldb_server))
             continue;
-        build_shim(b, config, folder, smith_fmt(b, "shim/%s.cpp", sources[i]), smith_fmt(b, "%s_shim", sources[i]),
+        build_shim(b, config, folder, smith_fmt(b, "shim/%s.cpp", sources[i]), sources[i], pch,
                    &shims->objects[count + 1]);
         count += 1;
     }
@@ -2151,6 +2195,25 @@ static int build_ci_times(SmithRun *run) {
     return build_exec(smith_cat(b, smith_list(b, tool, root, nullptr), ids, nullptr));
 }
 
+// `smith build bench [-Dfull=1] [-Dpreflight=1] [-Dsmith=<path>]` (issue #639): measures each budget line of the speed
+// table (no-op build, one-file build, fresh worktree, fmt, lint, a .smith module's compile, optionally the full test
+// suite's CPU and preflight) with the smith this build made, prints the table and writes it to .smith/bench.tsv.
+// scripts/bench.c, compiled here, does the measuring.
+static int build_bench(SmithRun *run) {
+    SmithBuild *b = run->b;
+    const char *folder = ".smith/bench";
+    const char *tool = smith_fmt(b, "%s/bench", folder);
+    if (build_make_folder(b, ".smith") != 0 || build_make_folder(b, folder) != 0) return 1;
+    const char *const compile[] = {
+        smith_env(b, "CC", "smith-cc"), "-std=c23", "-O1", "scripts/bench.c", "-o", tool, nullptr};
+    int status = build_exec(compile);
+    if (status != 0) return status;
+    const char *const *argv = smith_list(b, tool, run->args[0], ".smith/bench.tsv", nullptr);
+    if (run->args[1][0] != '\0') argv = smith_cat(b, argv, smith_list(b, "full", nullptr), nullptr);
+    if (run->args[2][0] != '\0') argv = smith_cat(b, argv, smith_list(b, "preflight", nullptr), nullptr);
+    return build_exec(argv);
+}
+
 // `smith build coverage-fetch` (issue #456), run by `smith test --changed` when it finds no records and this build file
 // defines the task: brings the records of the last green run of the train (the artifact `smith-records`) into
 // .smith/records, keeping any record already there. Records are keyed by content, so one from CI is valid wherever its
@@ -2337,7 +2400,7 @@ static int build_preflight(SmithRun *run) {
     return ok && posted == 0 ? 0 : 1;
 }
 
-static void build_developer_tasks(SmithBuild *b) {
+static void build_developer_tasks(SmithBuild *b, const char *binary) {
     SmithStep preflight = {.run = build_preflight};
     smith_task(b, "preflight", &preflight);
     SmithStep friction = {
@@ -2355,6 +2418,14 @@ static void build_developer_tasks(SmithBuild *b) {
         .description = "reporting where CI's time goes",
     };
     smith_task(b, "ci-times", &ci_times);
+    SmithStep bench = {
+        .run = build_bench,
+        .args = smith_list(b, smith_option_value(b, "smith", binary, "bench: the smith to measure"),
+                           smith_option_value(b, "full", "", "bench: 1 also runs the full test suite"),
+                           smith_option_value(b, "preflight", "", "bench: 1 also runs preflight"), nullptr),
+        .description = "measuring the speed budgets of #639",
+    };
+    smith_task(b, "bench", &bench);
     SmithStep gate = {
         .run = build_docs_gate,
         .args = smith_list(b, "origin/main", nullptr),
@@ -2456,7 +2527,7 @@ void build(SmithBuild *b) {
     build_install(b, &config, config.binary, tested);
     build_release(b, config.binary);
     build_llvm(b);
-    build_developer_tasks(b);
+    build_developer_tasks(b, config.binary);
     SmithStep clean = {.command = (const char *[]){"rm", "-rf", "build", nullptr}};
     smith_task(b, "clean", &clean);
     // clangd reads this: the exact command of each compile, and build.c's own.

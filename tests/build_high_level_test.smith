@@ -22,7 +22,7 @@ export void test_build_high_level_objects_programs_and_the_compile_database(io::
     scratch::expect_text("high level: the program runs", "hi 7", scratch::sh(&p, "./build/app 2>/dev/null").out);
     scratch::expect_contains(
         "high level: -v shows the compile", built.out,
-        "cc -std=gnu23 '-DGREETING=\"hi\"' -MMD -MF build/main.d -c 'src dir/main.c' -o build/main.o");
+        "cc -std=gnu23 '-DGREETING=\"hi\"' -MD -MF build/main.d -c 'src dir/main.c' -o build/main.o");
     scratch::expect_contains(
         "high level: -v shows the link", built.out,
         "cc build/main.o build/util.o -lm -framework Foundation libextra.a -Lbuild -lsmith_handlers "

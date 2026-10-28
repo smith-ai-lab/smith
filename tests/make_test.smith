@@ -155,16 +155,23 @@ static void name_the_compiler(char *line) {
     }
 }
 
-// ` -MMD -MF <file>.d `, ` -MMD ` and ` -MP ` become a space (the first of each), and runs of spaces one.
+// ` -MMD -MF <file>.d ` and ` -MD -MF <file>.d ` (smith's builds write the second, make's rules the first), ` -MMD `,
+// ` -MD ` and ` -MP ` become a space (the first of each), and runs of spaces one.
 static void drop_dependency_flags(char *line) {
-    Usize at = find_text(line, " -MMD -MF ");
-    if (at != no_match) {
-        Usize end = word_end(line, at + 10);
-        if (end >= at + 12 && line[end] == ' ' && c::strncmp(line + end - 2, ".d", 2) == 0) cut(line, at, end + 1, " ");
+    const char *with_file[2] = {" -MMD -MF ", " -MD -MF "};
+    const char *alone[2] = {" -MMD ", " -MD "};
+    for (Usize f = 0; f < countof(with_file); f++) {
+        Usize length = c::strlen(with_file[f]);
+        Usize at = find_text(line, with_file[f]);
+        if (at != no_match) {
+            Usize end = word_end(line, at + length);
+            if (end >= at + length + 2 && line[end] == ' ' && c::strncmp(line + end - 2, ".d", 2) == 0)
+                cut(line, at, end + 1, " ");
+        }
+        at = find_text(line, alone[f]);
+        if (at != no_match) cut(line, at, at + c::strlen(alone[f]), " ");
     }
-    at = find_text(line, " -MMD ");
-    if (at != no_match) cut(line, at, at + 6, " ");
-    at = find_text(line, " -MP ");
+    usize at = find_text(line, " -MP ");
     if (at != no_match) cut(line, at, at + 5, " ");
     for (Usize i = 0; line[i] != '\0'; i++)
         while (line[i] == ' ' && line[i + 1] == ' ') {

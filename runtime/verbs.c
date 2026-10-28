@@ -731,6 +731,7 @@ static bool smith_prove_drops(const char *word, bool *skip_next) {
     }
     static const char *const prefixes[] = {
         "-MMD",
+        "-MD",
         "-fsanitize",
         "-fno-sanitize",
         "-fmodule",
