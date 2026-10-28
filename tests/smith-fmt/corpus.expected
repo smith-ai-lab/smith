@@ -6062,6 +6062,106 @@ int main() {
     i32 ok = apply::twice(inc, 5);
     return a + b + c + d + e + f + ok;
 }
+==> generic-function-generic-error/src/main.smith <==
+module main;
+
+import order;
+
+typedef struct {
+    i32 x;
+} Point;
+
+int main() {
+    Point points[2] = {{1}, {2}};
+    // `ascending` takes arithmetic types: the instance for a `Point` cannot be made.
+    usize a = order::smallest_of(points[0:2]);
+    return (int)a;
+}
+==> generic-function-generic-error/src/order.smith <==
+module order;
+
+bool ascending(arithmetic a, typeof(a) b) {
+    return a < b;
+}
+
+export usize smallest(constexpr auto less, const auto xs[:]) {
+    usize best = 0;
+    for (usize i = 1; i < countof(xs); i++) {
+        if (less(xs[i], xs[best])) best = i;
+    }
+    return best;
+}
+
+export usize smallest_of(auto xs[:]) {
+    return smallest(ascending, xs);
+}
+
+export void take(auto x) {
+    (void)x;
+}
+
+export void take_use() {
+    take(ascending);
+}
+
+// In an instance the parameter is only called: a generic function has no address.
+export usize address_of(constexpr auto f, auto x) {
+    (void)x;
+    return (void *)f == nullptr ? 0 : 1;
+}
+
+export usize address_use() {
+    return address_of(ascending, 1);
+}
+==> generic-function-generic/src/main.smith <==
+module main;
+
+import order;
+import <stdio.h>;
+import <stdlib.h>;
+
+// What a failed check of an index calls.
+[[smith::c_name("smith_failure")]] export void failure(u8 code) {
+    c::exit(code);
+}
+
+int main() {
+    i32 ints[3] = {5, 2, 9};
+    f64 reals[3] = {2.5, 9.5, 1.5};
+    usize a = order::smallest(order::descending, ints[0:3]);
+    usize b = order::smallest(order::descending, reals[0:3]);
+    usize c = order::smallest_of(ints[0:3]);
+    usize d = order::smallest_of(reals[0:3]);
+    c::printf("%zu %zu %zu %zu\n", a, b, c, d);
+    return 0;
+}
+==> generic-function-generic/src/order.smith <==
+module order;
+
+// A generic function, written once: an instance for each type of its arguments.
+bool ascending(arithmetic a, typeof(a) b) {
+    return a < b;
+}
+
+// A generic function named where `constexpr auto` is expected is instantiated at the use: each call of `less` makes the
+// instance its argument types ask for, as a direct call would.
+export usize smallest(constexpr auto less, const auto xs[:]) {
+    usize best = 0;
+    for (usize i = 1; i < countof(xs); i++) {
+        if (less(xs[i], xs[best])) best = i;
+    }
+    return best;
+}
+
+// The same function from inside a generic of the module: its element type is known at each instance.
+export usize smallest_of(arithmetic xs[:]) {
+    return smallest(ascending, xs);
+}
+
+// A generic of this module given to a generic of another, by its name.
+export bool descending(arithmetic a, typeof(a) b) {
+    return a > b;
+}
 ==> generic-function/src/apply.smith <==
 module apply;
 
