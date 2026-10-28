@@ -7,7 +7,7 @@
       "cc",
       "-std=gnu23",
       "-DGREETING=\"hi\"",
-      "-MMD",
+      "-MD",
       "-MF",
       "build/main.d",
       "-c",
@@ -22,7 +22,7 @@
     "output": "build/util.o",
     "arguments": [
       "cc",
-      "-MMD",
+      "-MD",
       "-MF",
       "build/util.d",
       "-c",
