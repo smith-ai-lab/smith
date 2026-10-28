@@ -2,8 +2,8 @@
 // included (issue #415, knowledge/zero-value.md). A .c file is unchanged.
 module zero_init_test;
 
-import std::io;
-import std::test;
+import smith::io;
+import smith::test;
 import scratch;
 
 static const char *both_spellings =
@@ -66,10 +66,21 @@ export void test_zero_init_declared_and_braced_are_all_zero_bytes(io::Io *io) {
     scratch::expect_status("T t; and T t = {}; leave no nonzero byte, in padding or a union", 0, &ran);
 }
 
+static const char *reads_unwritten = "module main;\n"
+                                     "\n"
+                                     "I32 main() {\n"
+                                     "    Option(I32) last;\n"
+                                     "    Result(I32, I32) outcome;\n"
+                                     "    bool has_last = last == .some;\n"
+                                     "    bool succeeded = outcome == .ok;\n"
+                                     "    return has_last + succeeded;\n"
+                                     "}\n";
+
 // `T t;` is a zero value for the static analyzer too (issue #415): reading an Option never written is no "garbage
-// value" in smith lint, with smith's default checks. The editor's half is tests/lsp_test.smith.
+// value" in smith lint, with smith's default checks.
 export void test_zero_init_lint_sees_a_zero_value(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "lsp/zero");
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::write(&p, "main.smith", reads_unwritten);
     scratch::Run tidy = scratch::sh(&p, "cp \"$SMITH_REPO/templates/defaults/clang-tidy\" .clang-tidy");
     scratch::expect_status("the default checks are in", 0, &tidy);
     scratch::Run lint = scratch::sh(&p, "smith lint --quiet main.smith -- -I. -I.smith/include 2>&1");
