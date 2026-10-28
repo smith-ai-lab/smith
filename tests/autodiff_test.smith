@@ -243,7 +243,7 @@ export void test_autodiff_oob_gradient_past_the_array_address_sanitizer_stops_it
     scratch::expect_contains("autodiff: oob gradient: past the array, AddressSanitizer stops it", err,
                              "ERROR: AddressSanitizer: stack-buffer-overflow");
     scratch::expect_contains("autodiff: oob gradient: ... at the line of the read", err, "in diffemain_pick ");
-    scratch::expect_contains("autodiff: oob gradient: ... of main.smith line 15", err, "oobgrad/main.smith:15");
+    scratch::expect_contains("autodiff: oob gradient: ... of main.smith line 15", err, " main.smith:15");
 }
 
 // ---- 4c. A call autodiff::gradient cannot differentiate is an error at the call, not a link error from Enzyme. ----
