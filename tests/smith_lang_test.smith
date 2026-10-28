@@ -1207,6 +1207,10 @@ export void test_generic_function_error(io::Io *io) {
     corpus_case(io, "generic-function-error");
 }
 
+export void test_generic_function_forward(io::Io *io) {
+    corpus_case(io, "generic-function-forward");
+}
+
 export void test_generic_function_generic(io::Io *io) {
     corpus_case(io, "generic-function-generic");
 }
