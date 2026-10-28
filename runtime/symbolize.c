@@ -331,8 +331,11 @@ static size_t smith_sym_rows(SmithSymTrace *trace, SmithSymRow *rows, SmithSymNo
 
 // Text.
 
-// A path relative to the current folder when it is under it.
+// A path relative to the current folder when it is under it. A debug object names no folder (its compilation directory
+// is `.`, issue #621), so a file it reads by a path under the project comes as ./dir/file: the ./ is not shown.
 static const char *smith_sym_short(const char *path) {
+    while (path[0] == '.' && path[1] == '/')
+        path += 2;
     // The system's /var, /tmp and /etc are links into /private: getcwd names the real folder, a compile's paths may
     // not.
     const char *folder = smith_sym_directory;

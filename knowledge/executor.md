@@ -62,9 +62,13 @@ Written in C, not `.smith`: it works on the executor's own types (`SmithExec`, `
   command names with `-isystem`, `-isysroot`, `--sysroot`, `SDKROOT`; a folder named with `-I`, `-iquote`, `-idirafter`,
   `-F` is the project's even then). A project file is keyed by content (with its folder a token, so the generated module
   map of two folders is one file), a system file by path, size and time.
-- **A hit is what a rebuild makes.** An output that holds the folder as bytes (a `-g` object's debug info names it) is
-  stored under a key that has the folder in it: only a build in that folder is served it. So a `release` or `fast`
-  object is shared by every worktree, and a debug one by a build at the same path. The `.d` and `.fx` are stored with the
+- **A hit is what a rebuild makes.** An output that holds the folder as bytes is stored under a key that has the folder
+  in it: only a build in that folder is served it. A `-g` object does not hold it: `smith_object` adds
+  `-fdebug-prefix-map=<folder>=.` to a compile with debug information (the folder as clang spells it, and as `getcwd`
+  does when that differs), so the compilation directory is `.` and a file read by an absolute path is `./path`, and the
+  object is the same bytes in every folder (#621). So every profile's object is shared by every worktree. Lldb reads the
+  sources from the folder it runs in (`smith dbg` from the project's root; `smith dap` gets absolute paths); elsewhere
+  `settings set target.source-map . <root>` finds them. The `.d` and `.fx` are stored with the
   folder a token and restored with this one. A compile that printed anything (a warning), read a file written after it
   began, or names `__TIME__`, `__DATE__` or `__TIMESTAMP__` is not stored; nor are compiles with a flag that reads or
   writes more than the depfile names (`@file`, `-fprofile-*`, `--coverage`, `-save-temps`, plugins, ...).
