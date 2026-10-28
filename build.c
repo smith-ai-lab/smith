@@ -237,6 +237,28 @@ static const char *build_compiler_file(SmithBuild *b, const BuildConfig *config)
     return smith_capture_or(b, (const char *[]){"which", config->cc, nullptr}, config->cc);
 }
 
+// The headers a header step waits for: a module's header pass reads the headers of the modules it imports, so each
+// `import smith::<name>;` of its source that names another of build_header_modules makes that header an input of the
+// step (the others are written first by smith itself, smith_write_lang_headers, which orders them the same way).
+static const char *const *build_header_imports(SmithBuild *b, const char *source, const char *self) {
+    const char *const *inputs = smith_list(b, nullptr);
+    const char *lines =
+        smith_capture_or(b, (const char *[]){"grep", "-h", "^[ \t]*import smith::", source, nullptr}, "");
+    for (const char *at = strstr(lines, "import smith::"); at != nullptr; at = strstr(at + 1, "import smith::")) {
+        const char *name = at + strlen("import smith::");
+        size_t length = strcspn(name, ";\n");
+        for (size_t i = 0; build_header_modules[i] != nullptr; i++) { // bounded by the table
+            if (strlen(build_header_modules[i]) != length || strncmp(build_header_modules[i], name, length) != 0)
+                continue;
+            if (strcmp(build_header_modules[i], self) == 0) continue;
+            inputs = smith_cat(
+                b, inputs, smith_list(b, smith_fmt(b, ".smith/include/smith/%s.h", build_header_modules[i]), nullptr),
+                nullptr);
+        }
+    }
+    return inputs;
+}
+
 // Makes the steps of the headers no smith_object makes; returns their outputs.
 static const char *const *build_header_steps(SmithBuild *b, const BuildConfig *config) {
     const char *compiler = build_compiler_file(b, config);
@@ -248,7 +270,8 @@ static const char *const *build_header_steps(SmithBuild *b, const BuildConfig *c
         SmithStep step = {
             .command = smith_list(b, config->cc, "--smith-header", source, "-o", header, nullptr),
             .inputs = smith_list(b, source, nullptr),
-            .implicit_inputs = smith_list(b, compiler, nullptr),
+            .implicit_inputs =
+                smith_cat(b, smith_list(b, compiler, nullptr), build_header_imports(b, source, name), nullptr),
             .outputs = smith_list(b, header, nullptr),
             .description = smith_fmt(b, "header %s", source),
             .restat = true, // the header is written only when its bytes change
