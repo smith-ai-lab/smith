@@ -12,6 +12,8 @@
 // -DPREFIX=...), release (CI only), llvm and clean.
 #include <smith/build.h>
 
+#include "scripts/preflight_status.h"
+
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -2275,10 +2277,11 @@ static int build_coverage_fetch(SmithRun *run) {
 // reads. It needs a clean tree, builds with the running smith, then runs fmt, docs, `lint --changed` (the files the
 // diff against origin/main reaches and the files that include them; the train lints the whole project, and a clean file
 // is a cache hit there) and `test --changed --cheapest-first --fail-fast` (the tests the diff against origin/main can
-// reach, capped at 10 minutes: a timeout is a pass) with the smith it built, and posts the commit status
-// `smith/preflight` on the head's SHA: success with the counts, or failure naming the steps. A push makes a new head
-// with no status, so the train takes only what was checked as it is. smith never runs gh itself: this task does, like
-// coverage-fetch. Logs are .smith/preflight-<step>.log.
+// reach, capped at 10 minutes: a run the cap cut short is a failure naming the slowest steps) with the smith it built,
+// and posts the commit status `smith/preflight` on the head's SHA: success, or failure naming the steps; the
+// description says how many selected tests ran of how many. A push makes a new head with no status, so the train takes
+// only what was checked as it is. smith never runs gh itself: this task does, like coverage-fetch. Logs are
+// .smith/preflight-<step>.log.
 static int build_preflight_step(SmithBuild *b, const char *name, const char *const *argv) {
     // Each step runs in a session of its own, so a signal to the terminal's or the tool's process group (a hangup after
     // a timeout: status 129) does not reach the checks.
@@ -2293,9 +2296,9 @@ static int build_preflight_step(SmithBuild *b, const char *name, const char *con
 
 // The test step of preflight is capped like CI's "Changed tests first" (#627): the cheapest tests first by the records,
 // stopping at the first failure, in a process group of its own so that the watchdog ends every process the tests
-// started when the cap (10 minutes, SMITH_PREFLIGHT_CAP seconds) is reached. A run that reached the cap counts as a
-// pass: only a failed test is red, and the train's full check stays the gate. Returns the exit status of the run, 0
-// when it was capped.
+// started when the cap (10 minutes, SMITH_PREFLIGHT_CAP seconds) is reached. A run that reached the cap is a
+// failure (#638): tests that did not run are unchecked, so the status never passes a run it cut short. Returns the
+// exit status of the run, 0 when it was capped (the caller reads `capped`).
 constexpr unsigned build_preflight_cap_seconds = 600;
 
 static int build_preflight_capped(SmithBuild *b, const char *const *argv, const char *log, bool *capped) {
@@ -2360,6 +2363,39 @@ static const char *build_preflight_duration(SmithBuild *b, double seconds) {
     return smith_fmt(b, "%.0fs", seconds);
 }
 
+// How many of the selected tests ran, and of how many (#638). A finished run says it in its summary ("N passed, M
+// failed", "K not run"). A run the cap cut short has no summary: the tests that ran left a record in .smith/records
+// after the step began, and the runner's --list names the selected tests. Anything unknown stays -1.
+static long build_preflight_number(SmithBuild *b, const char *name, const char *script) {
+    const char *text = build_preflight_capture(b, name, smith_list(b, "sh", "-c", script, nullptr));
+    return text[0] == '\0' ? -1 : strtol(text, nullptr, 10);
+}
+
+static void build_preflight_count(SmithBuild *b, const char *built, PreflightResult *result) {
+    const char *log = ".smith/preflight-test.log";
+    if (!result->test_capped) {
+        result->ran = build_preflight_number(
+            b, "ran",
+            smith_fmt(b, "grep -Eo '[0-9]+ (passed|failed)' %s 2>/dev/null | awk '{n+=$1} END{if (NR) print n}'", log));
+        long left = build_preflight_number(
+            b, "left", smith_fmt(b, "grep -Eo '[0-9]+ not run' %s 2>/dev/null | awk '{n+=$1} END{print n+0}'", log));
+        result->total = result->ran >= 0 && left >= 0 ? result->ran + left : -1;
+        return;
+    }
+    result->ran = build_preflight_number(
+        b, "ran",
+        "find .smith/records -name '*.rec' -newer .smith/preflight-test.mark 2>/dev/null | wc -l | tr -d ' '");
+    const char *system = build_preflight_capture(b, "uname", smith_list(b, "uname", "-s", nullptr));
+    const char *machine = build_preflight_capture(b, "machine", smith_list(b, "uname", "-m", nullptr));
+    result->total = build_preflight_number(
+        b, "total",
+        smith_fmt(b,
+                  "f=$(%s test --changed --dry-run 2>&1 | sed -n 's/^smith test --changed: --test //p'); "
+                  "if [ -n \"$f\" ]; then build/%s-%s/units/tests --list --test \"$f\"; "
+                  "else build/%s-%s/units/tests --list; fi 2>/dev/null | wc -l | tr -d ' '",
+                  built, system, machine, system, machine));
+}
+
 static int build_preflight(SmithRun *run) {
     SmithBuild *b = run->b;
     if (build_make_folder(b, ".smith") != 0) return 1;
@@ -2379,10 +2415,13 @@ static int build_preflight(SmithRun *run) {
     const char *built = smith_fmt(b, "build/%s-%s/smith", system, machine);
     const char *failed = "";
     const char *times = ""; // "build 41s, fmt 3s, ..." for the summary and the description
-    bool test_capped = false;
+    PreflightResult result = {.failed = "", .ran = -1, .total = -1};
     double started = build_preflight_now();
     int built_status = build_preflight_step(b, "build", smith_list(b, self, "build", nullptr));
-    times = smith_fmt(b, "build %s", build_preflight_duration(b, build_preflight_now() - started));
+    double built_seconds = build_preflight_now() - started;
+    times = smith_fmt(b, "build %s", build_preflight_duration(b, built_seconds));
+    result.step_names[result.step_count] = "build";
+    result.step_seconds[result.step_count++] = built_seconds;
     if (built_status != 0) {
         failed = "build";
     } else {
@@ -2393,30 +2432,28 @@ static int build_preflight(SmithRun *run) {
             smith_list(b, built, "test", "--changed", "--cheapest-first", "--fail-fast", nullptr)};
         for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
             double step_started = build_preflight_now();
-            if (strcmp(names[i], "test") == 0) { // capped: a timeout is a pass
-                int status = build_preflight_capped(b, commands[i], ".smith/preflight-test.log", &test_capped);
+            bool is_test = strcmp(names[i], "test") == 0;
+            if (is_test) { // capped: a run cut short is a failure
+                (void)build_preflight_capture(b, "mark", smith_list(b, "touch", ".smith/preflight-test.mark", nullptr));
+                int status = build_preflight_capped(b, commands[i], ".smith/preflight-test.log", &result.test_capped);
                 if (status != 0) build_print_tail(".smith/preflight-test.log", 12);
-                fprintf(stderr, "preflight: test %s\n", status != 0 ? "FAILED" : test_capped ? "capped" : "ok");
+                fprintf(stderr, "preflight: test %s\n", status != 0 ? "FAILED" : result.test_capped ? "CAPPED" : "ok");
                 if (status != 0) failed = smith_fmt(b, "%s test", failed);
             } else if (build_preflight_step(b, names[i], commands[i]) != 0) {
                 failed = smith_fmt(b, "%s %s", failed, names[i]);
             }
-            times = smith_fmt(b, "%s, %s %s%s", times, strcmp(names[i], "test") == 0 ? "tests" : names[i],
-                              build_preflight_duration(b, build_preflight_now() - step_started),
-                              strcmp(names[i], "test") == 0 && test_capped ? " capped" : "");
+            double seconds = build_preflight_now() - step_started;
+            result.step_names[result.step_count] = names[i];
+            result.step_seconds[result.step_count++] = seconds;
+            times = smith_fmt(b, "%s, %s %s%s", times, is_test ? "tests" : names[i],
+                              build_preflight_duration(b, seconds), is_test && result.test_capped ? " capped" : "");
         }
+        build_preflight_count(b, built, &result);
     }
-    const char *tests = build_preflight_capture(
-        b, "count",
-        smith_list(b, "sh", "-c", "grep -Eo '[0-9]+ passed' .smith/preflight-test.log 2>/dev/null | tail -1; true",
-                   nullptr));
-    bool ok = failed[0] == '\0';
-    // Under GitHub's 140 characters: the times, then the count.
-    const char *description = ok ? smith_fmt(b, "ok: %s (%s)", times,
-                                             tests[0] != '\0' ? tests
-                                             : test_capped    ? "no count before the cap"
-                                                              : "no tests selected")
-                                 : smith_fmt(b, "failed:%s (%s)", failed, times);
+    result.failed = failed;
+    bool ok = preflight_ok(&result);
+    char description[256];
+    preflight_description(&result, times, description, sizeof description);
     fprintf(stderr, "preflight: %s, %s in all\n", times, build_preflight_duration(b, build_preflight_now() - started));
     int posted = build_spawn(&(BuildSpawn){
         .argv = smith_list(b, "gh", "api", smith_fmt(b, "repos/{owner}/{repo}/statuses/%s", sha), "-f",

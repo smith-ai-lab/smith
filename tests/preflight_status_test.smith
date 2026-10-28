@@ -1,0 +1,49 @@
+// The text of the `smith/preflight` status (issue #638, scripts/preflight_status.h): a run the cap cut short never
+// passes and names its slowest steps, and the description always says how many selected tests ran of how many. The
+// header is plain C that build.c includes, so the cases are a C program compiled by `smith cc` and run: this is a
+// `scratch::` test because the header is C that only a C compiler reads (a unit test in the runner cannot include it
+// without making the runner's own build depend on a build.c helper). Nothing is posted: no gh runs.
+module preflight_status_test;
+
+import smith::io;
+import smith::test;
+import scratch;
+
+static const char *program =
+    "#include \"scripts/preflight_status.h\"\n"
+    "static void show(const char *label, PreflightResult r, const char *times) {\n"
+    "    char text[256];\n"
+    "    preflight_description(&r, times, text, sizeof text);\n"
+    "    printf(\"%s %s | %s\\n\", label, preflight_ok(&r) ? \"success\" : \"failure\", text);\n"
+    "}\n"
+    "int main(void) {\n"
+    "    PreflightResult capped = {.failed = \"\", .test_capped = true, .ran = 1200, .total = 2054, .step_count = 5,\n"
+    "        .step_names = {\"build\", \"fmt\", \"docs\", \"lint\", \"test\"},\n"
+    "        .step_seconds = {130, 2, 0, 21, 600}};\n"
+    "    show(\"capped\", capped, \"t\");\n"
+    "    PreflightResult unknown = capped; unknown.ran = -1; unknown.total = -1;\n"
+    "    show(\"unknown\", unknown, \"t\");\n"
+    "    PreflightResult done = {.failed = \"\", .ran = 391, .total = 391};\n"
+    "    show(\"done\", done, \"build 21s, fmt 2s\");\n"
+    "    PreflightResult red = {.failed = \" lint test\", .ran = 10, .total = 391};\n"
+    "    show(\"red\", red, \"build 21s\");\n"
+    "    PreflightResult long_text = capped; long_text.failed = \" test\";\n"
+    "    char text[256];\n"
+    "    preflight_description(&long_text, \"build 21s, fmt 2s, docs 0s, lint 21s, tests 10m capped\", text, sizeof "
+    "text);\n"
+    "    printf(\"length %d\\n\", (int)strlen(text) <= 140);\n"
+    "}\n";
+
+export void test_a_run_the_cap_cut_short_fails_and_names_the_slowest_steps(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::write(&p, "main.c", program);
+    scratch::Run run = scratch::sh(&p, "smith cc -std=c23 -I\"$SMITH_REPO\" main.c -o main && ./main");
+    scratch::expect_status("builds and runs", 0, &run);
+    scratch::expect_text("the verdicts and their text",
+                         "capped failure | preflight exceeded its budget: test 10m, build 2m (1200 of 2054 tests ran)\n"
+                         "unknown failure | preflight exceeded its budget: test 10m, build 2m (? of ? tests ran)\n"
+                         "done success | ok: build 21s, fmt 2s (391 of 391 tests ran)\n"
+                         "red failure | failed: lint test (build 21s; 10 of 391 tests ran)\n"
+                         "length 1\n",
+                         run.out);
+}
