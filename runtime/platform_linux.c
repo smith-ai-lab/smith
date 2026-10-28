@@ -78,6 +78,19 @@ static bool smith_platform_clone(const char *from, const char *to) {
     return link(from, to) == 0 || symlink(from, to) == 0;
 }
 
+// Makes `to`, which must not exist, a copy of the file `from` that shares its blocks (FICLONE, on a file system with
+// copy on write: btrfs, XFS). False, with nothing left behind, when this one cannot: the caller copies the bytes.
+static bool smith_platform_clone_file(const char *from, const char *to) {
+    int source = open(from, O_RDONLY | O_CLOEXEC);
+    if (source < 0) return false;
+    int target = open(to, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0666);
+    bool cloned = target >= 0 && ioctl(target, FICLONE, source) == 0;
+    if (target >= 0) close(target);
+    if (target >= 0 && !cloned) unlink(to);
+    close(source);
+    return cloned;
+}
+
 // The monotonic clock in nanoseconds.
 [[maybe_unused]] static unsigned long long smith_platform_monotonic_ns(void) {
     struct timespec now;
