@@ -81,6 +81,7 @@
     "./.agents/skills/smith-lang-for/",
     "./.agents/skills/smith-lang-array-dims/",
     "./.agents/skills/smith-lang-array-params/",
+    "./.agents/skills/smith-lang-array-results/",
     "./.agents/skills/smith-lang-c-interop/",
     "./.agents/skills/smith-lang-c-headers/",
     "./.agents/skills/smith-lang-defer/",

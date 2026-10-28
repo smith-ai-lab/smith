@@ -159,6 +159,11 @@ static bool smith_lang_aret_result_begin(SmithLang *lang, const SmithHost *host,
     size_t elem_count = shape.open - leading;
     static SmithToken made[smith_lang_slice_scan_max + 40];
     size_t used = 0;
+    // A private function of a module is `static`, which the lowering decides from the declaration's first token, and the
+    // struct this head now begins with looks like a definition of its own.
+    if (leading == 0 && lang->is_module && host->previous != nullptr && !lang->pending_export && !lang->decl.generic) {
+        made[used++] = smith_lang_tuple_made(SmithTokenKind_Identifier, "static", 6, first, first->space_before);
+    }
     for (size_t at = 0; at < leading; at++)
         made[used++] = span[at];
     char tag[smith_lang_tuple_name_max];

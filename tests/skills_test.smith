@@ -367,6 +367,10 @@ export void test_skill_smith_lang_array_dims(io::Io *io) {
     skill_case(io, "smith-lang-array-dims");
 }
 
+export void test_skill_smith_lang_array_results(io::Io *io) {
+    skill_case(io, "smith-lang-array-results");
+}
+
 export void test_skill_smith_lang_array_params(io::Io *io) {
     skill_case(io, "smith-lang-array-params");
 }
