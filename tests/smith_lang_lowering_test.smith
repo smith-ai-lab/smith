@@ -30,7 +30,7 @@ static char lowered_text[lowered_capacity];
 static char header_text[header_capacity];
 static char report_text[report_capacity];
 
-static const char *join3(io::Io *io, const char *a, const char *b, const char *c) {
+static const char *join3(const char *a, const char *b, const char *c) {
     return format::push(a, b, c).data;
 }
 
@@ -163,7 +163,7 @@ constexpr usize lines_max = 512;
 
 // The `.smith` files of a case's src/, as `a/b.smith`, sorted.
 static usize sources_of(io::Io *io, const char *kase, const char **files, usize capacity) {
-    const char *src = join3(io, "tests/smith-lang/cases/", kase, "/src");
+    const char *src = join3("tests/smith-lang/cases/", kase, "/src");
     const char *top[files_max];
     usize count = 0;
     usize tops = names_of(io, src, false, top, files_max);
@@ -174,10 +174,10 @@ static usize sources_of(io::Io *io, const char *kase, const char **files, usize 
     usize nested = names_of(io, src, true, folders, files_max);
     for (usize f = 0; f < nested; f++) {
         const char *inside[files_max];
-        const char *folder = join3(io, src, "/", folders[f]);
+        const char *folder = join3(src, "/", folders[f]);
         usize found = names_of(io, folder, false, inside, files_max);
         for (usize i = 0; i < found && count < capacity; i++) {
-            if (ends_with(inside[i], ".smith")) files[count++] = join3(io, folders[f], "/", inside[i]);
+            if (ends_with(inside[i], ".smith")) files[count++] = join3(folders[f], "/", inside[i]);
         }
     }
     for (usize i = 1; i < count; i++) { // sorted as a whole, as `find | sort` gives them
@@ -208,7 +208,7 @@ static bool exists(io::Io *io, const char *path) {
 
 // What a case holds to be checked: it has no `cmd`, which runs smith cc as a user does and lowers nothing by itself.
 static bool lowers(io::Io *io, const char *kase) {
-    return !exists(io, join3(io, "tests/smith-lang/cases/", kase, "/cmd"));
+    return !exists(io, join3("tests/smith-lang/cases/", kase, "/cmd"));
 }
 
 // The lines of `errors` that name an error, as `file:line:column: message`, appended to `lines`.
@@ -239,7 +239,7 @@ static usize add_errors(io::Io *io, const char *errors, const char **lines, usiz
 }
 
 // The lines sorted and each once, as `sort -u` gives them, as one text.
-static const char *sorted_unique(io::Io *io, const char **lines, usize count) {
+static const char *sorted_unique(const char **lines, usize count) {
     for (usize i = 1; i < count; i++) {
         const char *held = lines[i];
         usize at = i;
@@ -274,36 +274,35 @@ typedef enum { Pass_Files, Pass_Record, Pass_Compare } Pass;
 // case's folder; `Pass_Record` keeps the C of each file in `slots`, and `Pass_Compare` lowers again and checks it is
 // the same.
 static void check_case(io::Io *io, const char *kase, Pass pass, const char **slots) {
-    const char *folder = join3(io, "tests/smith-lang/cases/", kase, "");
+    const char *folder = join3("tests/smith-lang/cases/", kase, "");
     const char *files[files_max];
     usize count = sources_of(io, kase, files, files_max);
     const char *errors[lines_max];
     usize error_count = 0;
     // new: nothing of the lowering is held yet (the build's own goldens, expect/stdout and the rest, may be: an update
     // of both tests at once writes them side by side)
-    bool fresh =
-        !exists(io, join3(io, folder, "/expect/lowered", "")) && !exists(io, join3(io, folder, "/expect/header", ""));
+    bool fresh = !exists(io, join3(folder, "/expect/lowered", "")) && !exists(io, join3(folder, "/expect/header", ""));
     for (usize i = 0; i < count; i++) {
-        const char *file = join3(io, "src/", files[i], "");
+        const char *file = join3("src/", files[i], "");
         const char *module = module_of(io, files[i]);
         (void)c::smith_core_lower(folder, file, nullptr, lowered_text, lowered_capacity, report_text, report_capacity);
         error_count = add_errors(io, report_text, errors, error_count, lines_max);
         if (pass == Pass_Record && i < slots_per_case) slots[i] = copy_text(io, lowered_text);
         if (pass == Pass_Compare && i < slots_per_case) test::check_equal(c::strcmp(slots[i], lowered_text), 0);
         if (pass != Pass_Files) continue;
-        const char *golden = join3(io, folder, "/expect/lowered/", format::push(module, ".c").data);
+        const char *golden = join3(folder, "/expect/lowered/", format::push(module, ".c").data);
         if (exists(io, golden) || (test::updating() && fresh))
             test::golden(io, slice_of(golden), slice_of(lowered_text));
         // the header of the module, as `smith cc --smith-header` writes it
         if (header_by_command(kase)) continue;
         bool made =
             c::smith_core_header(folder, file, nullptr, header_text, header_capacity, report_text, report_capacity);
-        const char *header_golden = join3(io, folder, "/expect/header/", format::push(module, ".h").data);
+        const char *header_golden = join3(folder, "/expect/header/", format::push(module, ".h").data);
         if (made && (exists(io, header_golden) || (test::updating() && fresh)))
             test::golden(io, slice_of(header_golden), slice_of(header_text));
     }
-    const char *error_golden = join3(io, folder, "/expect/lower-error", "");
-    const char *joined = sorted_unique(io, errors, error_count);
+    const char *error_golden = join3(folder, "/expect/lower-error", "");
+    const char *joined = sorted_unique(errors, error_count);
     if (pass == Pass_Files && (exists(io, error_golden) || (test::updating() && fresh && joined[0] != '\0')))
         test::golden(io, slice_of(error_golden), slice_of(joined));
 }

@@ -90,8 +90,7 @@ export void test_runner_aborts_jobs_one_gives_the_same_results_as_the_default(io
         // the addresses of the trace differ per run
         const char *filter = " 2>&1 | sed -e '/^slowest:/,/^$/d' -e 's/ in [0-9.]* s$//' | grep -v 'smith-trace "
                              "\\(image\\|frame\\)'";
-        const char *all =
-            scratch::capture(&p, format::push("build/tests ", iso, " --test abort", filter).data);
+        const char *all = scratch::capture(&p, format::push("build/tests ", iso, " --test abort", filter).data);
         const char *one =
             scratch::capture(&p, format::push("build/tests ", iso, " --test abort --jobs 1", filter).data);
         scratch::expect_text(runner::label(io, iso, "jobs: --jobs 1 gives the same results"), all, one);
@@ -124,8 +123,7 @@ export void test_runner_aborts_a_crash_a_hang_and_an_exit_of_zero_fail_and_the_r
 // it returns.
 static scratch::Project profile_project(io::Io *io, const char *flags) {
     scratch::Project p = runner::project(io, "runner_c", "runner_profile");
-    const char *edit =
-        format::push("sed -i.bak 's/\"-Wconversion\",/\"-Wconversion\", ", flags, ",/' build.c").data;
+    const char *edit = format::push("sed -i.bak 's/\"-Wconversion\",/\"-Wconversion\", ", flags, ",/' build.c").data;
     scratch::Run edited = scratch::sh(&p, edit);
     scratch::expect_status("profiles: the flags are set", 0, &edited);
     scratch::Run run = runner::build(&p, "-DSAN=0");
@@ -324,15 +322,13 @@ export void test_runner_aborts_a_failure_names_its_seed_and_the_rerun_line_repro
                            format::push("    rerun: smith test --test prop_fails --seed ", seed).data);
         const char *first = scratch::capture(&p, format::push("cat failed.txt", digest).data);
         const char *second =
-            scratch::capture(&p, format::push("env SMITH_OUTPUT=full smith test ", iso,
-                                              " --test prop_fails --seed ", seed, " --shrink 0 2>&1", digest)
+            scratch::capture(&p, format::push("env SMITH_OUTPUT=full smith test ", iso, " --test prop_fails --seed ",
+                                              seed, " --shrink 0 2>&1", digest)
                                      .data);
         scratch::expect_text(runner::label(io, iso, "properties: the rerun line reproduces the failure"), first,
                              second);
-        const char *third =
-            scratch::capture(&p, format::push("build/tests ", iso, " --test prop_fails --seed ", seed,
-                                              " --shrink 0 2>&1", digest)
-                                     .data);
+        const char *third = scratch::capture(
+            &p, format::push("build/tests ", iso, " --test prop_fails --seed ", seed, " --shrink 0 2>&1", digest).data);
         scratch::expect_text(runner::label(io, iso, "properties: --seed reproduces it too"), first, third);
     }
 }

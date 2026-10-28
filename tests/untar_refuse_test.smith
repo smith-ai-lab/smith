@@ -33,16 +33,15 @@ static void setup(const scratch::Project *p, const char *body) {
     scratch::expect_status("the setup of the case", 0, &made);
 }
 
-static const char *join(const scratch::Project *p, const char *a, const char *b) {
+static const char *join(const char *a, const char *b) {
     return format::push(a, b).data;
 }
 
 // Fetches an archive (a path in the project) into a cache of its own; the package folder is in *package, or
 // "/nonexistent" when it failed.
 static scratch::Run fetch(const scratch::Project *p, const char *cache, const char *archive, const char **package) {
-    scratch::Run fetched = run(p, format::push("XDG_CACHE_HOME=\"$PWD/cache-", cache,
-                                               "\" smith fetch \"file://$PWD/", archive, "\"")
-                                      .data);
+    scratch::Run fetched = run(
+        p, format::push("XDG_CACHE_HOME=\"$PWD/cache-", cache, "\" smith fetch \"file://$PWD/", archive, "\"").data);
     *package = "/nonexistent";
     const char *start = fetched.status == 0 ? c::strstr(fetched.out, "\"sha256:") : nullptr;
     if (start != nullptr) {
@@ -58,13 +57,13 @@ static scratch::Run fetch(const scratch::Project *p, const char *cache, const ch
 static void refuse(const scratch::Project *p, const char *name, const char *archive, const char *needle) {
     const char *package = nullptr;
     scratch::Run fetched = fetch(p, "r", archive, &package);
-    scratch::expect_failure(join(p, name, ": fails"), &fetched);
-    scratch::expect_contains(join(p, name, ": says why"), fetched.err, needle);
-    scratch::expect_contains(join(p, name, ": names the archive"), fetched.err,
+    scratch::expect_failure(join(name, ": fails"), &fetched);
+    scratch::expect_contains(join(name, ": says why"), fetched.err, needle);
+    scratch::expect_contains(join(name, ": names the archive"), fetched.err,
                              format::push("cannot extract file://", text(p, "pwd"), "/", archive).data);
-    scratch::expect_text(join(p, name, ": leaves no package"), "0",
+    scratch::expect_text(join(name, ": leaves no package"), "0",
                          text(p, "ls \"$PWD/cache-r/smith/packages\" 2>/dev/null | grep -c '^[0-9a-f]\\{64\\}$'"));
-    scratch::expect_text(join(p, name, ": and no temporary"), "0",
+    scratch::expect_text(join(name, ": and no temporary"), "0",
                          text(p, "ls -A \"$PWD/cache-r/smith/packages\" 2>/dev/null | grep -c '^\\.tmp'"));
 }
 
@@ -72,10 +71,8 @@ static void refuse(const scratch::Project *p, const char *name, const char *arch
 static void refuse_hostile(io::Io *io, const char *name, const char *archive, const char *tar_arguments,
                            const char *needle) {
     scratch::Project p = untar_project(io);
-    setup(&p,
-          format::push("hostile_tree; (cd \"$h\" && tar -cf \"$arc/", archive, "\" ", tar_arguments, ")")
-              .data);
-    refuse(&p, name, join(&p, "arc/", archive), needle);
+    setup(&p, format::push("hostile_tree; (cd \"$h\" && tar -cf \"$arc/", archive, "\" ", tar_arguments, ")").data);
+    refuse(&p, name, join("arc/", archive), needle);
 }
 
 // Hostile archives, made with tar's -P and -s so that it writes the names it would normally refuse. This one is refused
@@ -97,15 +94,13 @@ static void single_gz_extracts(io::Io *io, const char *f) {
     scratch::Project p = untar_project(io);
     setup(&p, make_single);
     const char *package = nullptr;
-    scratch::Run fetched = fetch(&p, "a", join(&p, join(&p, "arc/", f), ".gz"), &package);
-    const char *name = join(&p, "single gz ", f);
-    scratch::expect_status(join(&p, name, ": extracts"), 0, &fetched);
-    scratch::expect_text(join(&p, name, ": one file, named without .gz"), f,
-                         text(&p, join(&p, "ls 2>/dev/null ", package)));
-    scratch::expect_text(
-        join(&p, name, ": the same bytes"), text(&p, join(&p, "shasum -a 256 <single/", f)),
-        text(&p, format::push("shasum -a 256 <\"", package, "/", f, "\" 2>/dev/null").data));
-    scratch::expect_text(join(&p, name, ": mode 0644"), "-rw-r--r--",
+    scratch::Run fetched = fetch(&p, "a", join(join("arc/", f), ".gz"), &package);
+    const char *name = join("single gz ", f);
+    scratch::expect_status(join(name, ": extracts"), 0, &fetched);
+    scratch::expect_text(join(name, ": one file, named without .gz"), f, text(&p, join("ls 2>/dev/null ", package)));
+    scratch::expect_text(join(name, ": the same bytes"), text(&p, join("shasum -a 256 <single/", f)),
+                         text(&p, format::push("shasum -a 256 <\"", package, "/", f, "\" 2>/dev/null").data));
+    scratch::expect_text(join(name, ": mode 0644"), "-rw-r--r--",
                          text(&p, format::push("f=\"", package, "/", f,
                                                "\"; stat -c %A \"$f\" 2>/dev/null || stat -f %Sp \"$f\" 2>/dev/null")
                                       .data));

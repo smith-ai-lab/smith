@@ -37,8 +37,8 @@ static const char *math_library() {
 
 // Builds tests/random.c with the flags into `name`.
 static scratch::Run compile(const scratch::Project *p, const char *warnings, const char *flags, const char *name) {
-    return scratch::sh(p, format::push("smith cc ", warnings, " -I \"$SMITH_REPO/.smith/include\" ",
-                                       flags, " ", sources, math_library(), " -o ", name)
+    return scratch::sh(p, format::push("smith cc ", warnings, " -I \"$SMITH_REPO/.smith/include\" ", flags, " ",
+                                       sources, math_library(), " -o ", name)
                               .data);
 }
 
@@ -66,8 +66,7 @@ static void compiles_as(io::Io *io, const char *standard) {
                                                       "\"$SMITH_REPO/lib/smith/random.smith\" -o r.o")
                                              .data);
     scratch::expect_status(
-        format::push("library: compiles as -std=", standard, " with the new project's warnings").data, 0,
-        &built);
+        format::push("library: compiles as -std=", standard, " with the new project's warnings").data, 0, &built);
 }
 
 export void test_random_c_library_compiles_as_c23(io::Io *io) {

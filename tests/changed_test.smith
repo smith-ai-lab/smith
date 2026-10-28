@@ -138,9 +138,8 @@ export void test_a_selection_of_thousands_of_tests_is_listed_whole(io::Io *io) {
                       "i=$((i+1)); done; echo 'int z;' > tests/base.h; git add -A; "
                       "git -c user.name=t -c user.email=t@t commit -q -m big; echo 'int w;' >> tests/base.h; ";
     scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run run = scratch::sh(&p, format::push(repository, big,
-                                                    "smith test --changed --list HEAD 2>/dev/null | wc -l | tr -d ' '")
-                                           .data);
+    scratch::Run run = scratch::sh(
+        &p, format::push(repository, big, "smith test --changed --list HEAD 2>/dev/null | wc -l | tr -d ' '").data);
     scratch::expect_text("every test of the file is listed", "3000", run.out);
     scratch::Project q = scratch::project(io, "q", nullptr);
     run = scratch::sh(&q, format::push(repository, big, "smith test --changed --dry-run 2>&1").data);
@@ -151,10 +150,10 @@ export void test_a_selection_of_thousands_of_tests_is_listed_whole(io::Io *io) {
 // `--list` says on stderr, without -v, what it selected.
 export void test_list_says_what_it_selected_on_stderr(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run run = scratch::sh(&p, format::push(repository,
-                                                    "echo '// x' >> lib/c_test.smith; smith test --changed --list HEAD "
-                                                    "2>&1 >/dev/null")
-                                           .data);
+    scratch::Run run =
+        scratch::sh(&p, format::push(repository, "echo '// x' >> lib/c_test.smith; smith test --changed --list HEAD "
+                                                 "2>&1 >/dev/null")
+                            .data);
     scratch::expect_contains("the summary", run.out, "selects the tests listed on stdout");
     scratch::expect_contains("the count", run.out, "1 entries");
 }

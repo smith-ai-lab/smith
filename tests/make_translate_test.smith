@@ -24,7 +24,7 @@ typedef struct {
     const char *report; // standard error of `smith build --dump-config`
 } Translation;
 
-static const char *join(io::Io *io, const char *folder, const char *name) {
+static const char *join(const char *folder, const char *name) {
     return format::push(folder, "/", name).data;
 }
 
@@ -42,25 +42,23 @@ static void copy_files(io::Io *io, const char *from, const char *to) {
     io::FileList list = io::files_list(&io->files, &io->arena, from);
     test::check_equal(list.error.code, 0);
     for (usize i = 0; i < list.count; i++) {
-        if (!list.entries[i].folder)
-            copy_file(io, join(io, from, list.entries[i].name), join(io, to, list.entries[i].name));
+        if (!list.entries[i].folder) copy_file(io, join(from, list.entries[i].name), join(to, list.entries[i].name));
     }
 }
 
 // A project in the test's scratch folder: the files of tests/build_fixtures/<fixture> (none when it is nullptr), and
 // the folders in it with their files.
 static const char *project_named(io::Io *io, const char *name, const char *fixture) {
-    const char *folder = join(io, test::scratch(io), name);
+    const char *folder = join(test::scratch(io), name);
     io::Error made = io::files_make_folder(&io->files, folder);
     test::check_equal(made.code, 0);
     if (fixture == nullptr) return folder;
-    const char *from =
-        format::push(io::args_env(&io->args, "SMITH_REPO"), "/tests/build_fixtures/", fixture).data;
+    const char *from = format::push(io::args_env(&io->args, "SMITH_REPO"), "/tests/build_fixtures/", fixture).data;
     copy_files(io, from, folder);
     io::FileList list = io::files_list(&io->files, &io->arena, from);
     for (usize i = 0; i < list.count; i++) {
         if (list.entries[i].folder)
-            copy_files(io, join(io, from, list.entries[i].name), join(io, folder, list.entries[i].name));
+            copy_files(io, join(from, list.entries[i].name), join(folder, list.entries[i].name));
     }
     return folder;
 }
@@ -71,7 +69,7 @@ static const char *project(io::Io *io, const char *fixture) {
 
 // A file of the project, in a folder made for it.
 static void write(io::Io *io, const char *folder, const char *name, const char *text) {
-    const char *path = join(io, folder, name);
+    const char *path = join(folder, name);
     const char *slash = c::strrchr(path, '/');
     char *parent = arena::push_slice(&io->arena, char, c::strlen(path) + 1).data;
     mem::copy(parent[0:(usize)(slash - path)], path[0:(usize)(slash - path)]);
@@ -111,7 +109,7 @@ typedef struct {
     const char *value;
 } Define;
 
-static void defines(io::Io *io, const char *label, const Translation *t, const Define *table, usize count) {
+static void defines(const char *label, const Translation *t, const Define *table, usize count) {
     for (usize i = 0; i < count; i++) {
         const char *flag = format::push("\"-D", table[i].name, "=\\\"", table[i].value, "\\\"\"").data;
         scratch::expect_contains(format::push(label, ": ", table[i].name).data, t->build, flag);
@@ -127,7 +125,7 @@ export void test_variables(io::Io *io) {
     has("variables: a command-line variable is an option", &t, "smith_option_value(b, \"UNDEFINED_VARIABLE\"");
     has("variables: the option has the Makefile's line", &t, "Makefile:");
     const Define table[_] = {{"R1", "2"}, {"R2", "1"}, {"R7", "2y"}, {"R8", "2-1"}, {"R9", "j"}, {"R10", "changed"}};
-    defines(io, "variables: the value make computes", &t, table, countof(table));
+    defines("variables: the value make computes", &t, table, countof(table));
 }
 
 // 2. The functions of the subset.
@@ -142,7 +140,7 @@ export void test_functions(io::Io *io) {
         {"R11", ".c_.h"},      {"R12", "b-a-a-a_c"}, {"R13", "a1_b2"},      {"R14", "11_22_33"}, {"R15", "yes-no-z-b"},
         {"R16", "bx"},         {"R17", "b_A_c_A"},   {"R18", "main.c"},     {"R19", "a b-a;b"},  {"R20", "a_b_c"},
     };
-    defines(io, "functions: the value make computes", &t, table, countof(table));
+    defines("functions: the value make computes", &t, table, countof(table));
 }
 
 // 3. Rules: explicit and pattern rules, order-only prerequisites, the automatic variables, a recipe that is not a
@@ -179,7 +177,7 @@ export void test_phony_targets_and_the_default_goal(io::Io *io) {
     has("phony: check is an alias of another name", &t, "smith_alias(b, \"make-check\", ");
     has("phony: another phony target is a task", &t, "smith_task(b, \"extra\", &");
     lacks("phony: no task named after a verb", &t, "smith_task(b, \"test\"");
-    copy_file(io, join(io, folder, "Makefile.default"), join(io, folder, "Makefile"));
+    copy_file(io, join(folder, "Makefile.default"), join(folder, "Makefile"));
     Translation other = translate(io, folder);
     has(".DEFAULT_GOAL names the default", &other, "smith_default(b, (const char *[]){\"second\", nullptr});");
 }
@@ -193,7 +191,7 @@ export void test_include(io::Io *io) {
     has("include: dependency files are dropped, with a note", &t, "smith tracks the headers");
     lacks("include: -MMD is not kept", &t, "\"-MMD\"");
     const Define table[_] = {{"R1", "included"}};
-    defines(io, "include: the value make computes", &t, table, countof(table));
+    defines("include: the value make computes", &t, table, countof(table));
 }
 
 // 7. Conditionals: ifeq, ifneq, ifdef, ifndef, else, else ifeq.
@@ -206,7 +204,7 @@ export void test_conditionals(io::Io *io) {
                              {"R4", "empty"}, {"R6", "quoted"}, {"R7", "nested"}};
     has("conditionals: ifndef of an option is undefined while the option is empty", &t,
         "(build_never)[0] == '\\0') ? \"undefined\" : \"\"");
-    defines(io, "conditionals: the value make computes", &t, table, countof(table));
+    defines("conditionals: the value make computes", &t, table, countof(table));
 }
 
 // 8. A test of the platform keeps both branches, as an if on b->os and b->arch.
@@ -326,7 +324,7 @@ export void test_which_makefile(io::Io *io) {
     Translation t = translate(io, folder);
     has("files: GNUmakefile comes first", &t, "\"b\"");
     lacks("files: and Makefile is left", &t, "\"a\"");
-    io::Error removed = io::files_remove(&io->files, join(io, folder, "GNUmakefile"));
+    io::Error removed = io::files_remove(&io->files, join(folder, "GNUmakefile"));
     test::check_equal(removed.code, 0);
     Translation other = translate(io, folder);
     has("files: otherwise Makefile", &other, "\"a\"");

@@ -74,7 +74,7 @@ static typeof(const char[:]) slice_of(const char *text) {
     return text[0:c::strlen(text)];
 }
 
-static const char *join(const Case *kase, const char *a, const char *b, const char *c, const char *d) {
+static const char *join(const char *a, const char *b, const char *c, const char *d) {
     return format::push(a, b, c, d).data;
 }
 
@@ -163,11 +163,11 @@ static Built build_sources(const Case *kase) {
         // the headers first, as the build will: no compile waits on another
         const char *stem = stem_of(io, file);
         if (header_by_command(kase->name)) {
-            const char *command = format::push("mkdir -p \"out/include/$(dirname ", file,
-                                               ")\" && smith cc --smith-header src/", file, " -o out/include/", stem,
-                                               ".h 2>>out/stderr; [ -f out/include/", stem, ".h ] && cp out/include/",
-                                               stem, ".h out/header/", module_of(io, file), ".h")
-                                      .data;
+            const char *command =
+                format::push("mkdir -p \"out/include/$(dirname ", file, ")\" && smith cc --smith-header src/", file,
+                             " -o out/include/", stem, ".h 2>>out/stderr; [ -f out/include/", stem,
+                             ".h ] && cp out/include/", stem, ".h out/header/", module_of(io, file), ".h")
+                    .data;
             (void)scratch::sh(p, command);
         } else {
             write_header(kase, file, stem);
@@ -177,8 +177,8 @@ static Built build_sources(const Case *kase) {
     for (const char *at = sources, *file = next_line(io, &at); file != nullptr; file = next_line(io, &at)) {
         const char *module = module_of(io, file);
         const char *compile =
-            format::push("SMITH_LANG_GENERICS=out/generics/", module, ".c SMITH_LANG_ASK='", ask,
-                         "' smith cc ", flags, " -c src/", file, " -o out/obj/", module, ".o 2>>out/stderr")
+            format::push("SMITH_LANG_GENERICS=out/generics/", module, ".c SMITH_LANG_ASK='", ask, "' smith cc ", flags,
+                         " -c src/", file, " -o out/obj/", module, ".o 2>>out/stderr")
                 .data;
         if (scratch::sh(p, compile).status != 0) built.status = 1;
         built.objects = format::push(built.objects, " out/obj/", module, ".o").data;
@@ -201,8 +201,8 @@ static void build_others(const Case *kase, Built *built) {
         const char *object = format::push("out/obj/", object_of(io, file), ".o").data;
         bool cpp = c::strcmp(file + c::strlen(file) - 4, ".cpp") == 0;
         const char *compile =
-            cpp ? format::push("smith c++ -std=c++20 -g0 -fno-color-diagnostics -I out/include -c src/",
-                               file, " -o ", object, " 2>>out/stderr")
+            cpp ? format::push("smith c++ -std=c++20 -g0 -fno-color-diagnostics -I out/include -c src/", file, " -o ",
+                               object, " 2>>out/stderr")
                       .data
                 : format::push("smith cc ", flags, " -c src/", file, " -o ", object, " 2>>out/stderr").data;
         if (scratch::sh(p, compile).status != 0) built->status = 1;
@@ -214,8 +214,8 @@ static void build_others(const Case *kase, Built *built) {
         scratch::exists(p, "src/main.smith") || scratch::exists(p, "src/main.c") || scratch::exists(p, "src/main.cpp");
     if (built->status != 0 || !has_main) return;
     // -lm: glibc keeps libm apart; macOS's is in libSystem, which links anyway
-    scratch::Run linked = scratch::sh(
-        p, format::push("smith ", linker, built->objects, " -lm -o out/program 2>>out/stderr").data);
+    scratch::Run linked =
+        scratch::sh(p, format::push("smith ", linker, built->objects, " -lm -o out/program 2>>out/stderr").data);
     if (linked.status != 0) {
         built->status = 1;
         return;
@@ -239,13 +239,12 @@ static Built build_command(const Case *kase) {
 
 // The golden file of the case.
 static void golden_at(const Case *kase, const char *relative, const char *actual) {
-    test::golden(kase->io, slice_of(join(kase, "tests/smith-lang/cases/", kase->name, "/", relative)),
-                 slice_of(actual));
+    test::golden(kase->io, slice_of(join("tests/smith-lang/cases/", kase->name, "/", relative)), slice_of(actual));
 }
 
 // The errors: file:line:column: message, and nothing else (no warnings, notes, source lines or counts).
 static const char *errors_of(const Case *kase, const char *file) {
-    return listed(kase, join(kase, "sed -n 's/^\\([^ :]*:[0-9]*:[0-9]*\\): error: \\(.*\\)$/\\1: \\2/p' ", file,
+    return listed(kase, join("sed -n 's/^\\([^ :]*:[0-9]*:[0-9]*\\): error: \\(.*\\)$/\\1: \\2/p' ", file,
                              " 2>/dev/null | LC_ALL=C sort -u", ""));
 }
 
@@ -300,8 +299,7 @@ static void check_files(const Case *kase, const Built *built, bool update) {
                       : "for f in expect/generics/*; do [ -f \"$f\" ] && echo \"${f#expect/}\"; done");
     }
     for (const char *at = files, *file = next_line(io, &at); file != nullptr; file = next_line(io, &at)) {
-        golden_at(kase, join(kase, "expect/", file, "", ""),
-                  scratch::read(kase->project, join(kase, "out/", file, "", "")));
+        golden_at(kase, join("expect/", file, "", ""), scratch::read(kase->project, join("out/", file, "", "")));
     }
 }
 
@@ -320,17 +318,17 @@ static void check_asked_and_symbols(const Case *kase, const Built *built) {
     }
 }
 
-static const char *join_name(io::Io *io, const char *name) {
+static const char *join_name(const char *name) {
     return format::push("cases/", name).data;
 }
 
 static void corpus_case(io::Io *io, const char *name) {
     // The folder is cases/<name>, as in the corpus, so that a case names a sibling as ../../<other>/src/main.smith.
-    scratch::Project p = scratch::project(io, join_name(io, name), nullptr);
+    scratch::Project p = scratch::project(io, join_name(name), nullptr);
     Case kase = {.io = io, .name = name, .project = &p};
     scratch::Run copied = scratch::sh(
         &p,
-        join(&kase, "cp -R \"$SMITH_REPO/tests/smith-lang/cases/", name,
+        join("cp -R \"$SMITH_REPO/tests/smith-lang/cases/", name,
              "/.\" . && mkdir -p out/include "
              "out/header out/generics out/obj && : >out/stderr && "
              "{ [ -e ../target-facts ] || ln -s \"$SMITH_REPO/tests/smith-lang/cases/target-facts\" ../target-facts; }",
