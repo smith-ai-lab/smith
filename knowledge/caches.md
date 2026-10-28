@@ -34,6 +34,8 @@ from either is simply fetched or built again:
   plain one's. A module file is checked against its headers when it is used and rebuilt if one changed, so a warm cache
   can only be stale in a way clang detects.
 
+**A third, small list: `fmt/<identity of the smith>`** (issue #639): the keys of file contents `smith fmt` has seen formatted (see [format-lint-and-editor-tools](format-lint-and-editor-tools.md)). One file for each smith, appended to, 16 bytes a key; a file over 262,144 keys is dropped and started again, and when a smith writes its first the lists of other smiths unused for 31 days are removed. It is no part of `smith cache`'s listing or the byte cap yet.
+
 **A byte cap on every cache root (issue #618), beside the 31 days.** The 31 days are far too slow for a cache that
 tests fill (the tests' module cache reached 337 GB in 47,329 context-hash folders), so each root, `modules` and
 `packages`, also has a cap in bytes: 10 GB, or `SMITH_CACHE_MAX` (bytes, with a `k`, `M`, `G` or `T` suffix counting thousands,
