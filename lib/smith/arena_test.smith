@@ -404,3 +404,30 @@ export void test_arena_allocator_serves_a_growing_arena() {
     for (usize i = 0; i < 16; i++)
         base->free(base, blocks[i]); // only the last of the current chunk goes back; none touches another chunk's
 }
+
+export void test_arena_allocator_grows_its_last_block_in_place() {
+    static Memory memory;
+    arena::Arena a = arena::fixed(memory.bytes, sizeof memory.bytes);
+    arena::ArenaAllocator allocator = arena::allocator(&a);
+    typeof(allocator.base) *base = &allocator.base;
+    u8 *block = (u8 *)base->alloc(base, 100, 16);
+    mem::fill(block[0:100], 0xAA);
+    usize top = a.used;
+    test::check_condition(base->grow(base, block, 100, 300)); // the last block: the cursor moves, nothing copies
+    test::check_condition(a.used > top);
+    test::check_equal(base->size(base, block), 300);
+    test::check_equal(block[99], 0xAA); // what was there stays
+    test::check_equal(block[100], 0);   // what is new is zero
+    u8 *later = (u8 *)base->alloc(base, 16, 16);
+    test::check_condition(later != nullptr);
+    usize after = a.used;
+    test::check_condition(!base->grow(base, block, 300, 400)); // something was pushed after it: no, nothing changed
+    test::check_equal(a.used, after);
+    test::check_condition(!base->grow(base, later, 16, sizeof memory.bytes)); // past the capacity: no
+}
+
+export void test_mem_grow_is_no_for_the_system_allocator() {
+    void *block = mem::alloc_raw(16, 16);
+    test::check_condition(!mem::grow_raw(block, 16, 32));
+    mem::free(block);
+}

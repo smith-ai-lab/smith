@@ -576,11 +576,40 @@ void allocator_free(c::SmithAllocator *self, void *block) {
     if (sanitized) poison_unused(arena);
 }
 
+// Makes the arena's last block size bytes by moving the cursor: no copy, no waste. False when something was pushed
+// after the block, or the current chunk has no room (a growing arena does not move a block into a new chunk here).
+bool allocator_grow(c::SmithAllocator *self, void *block, usize old_size, usize size) {
+    contract::trusted(); // the new bytes are zeroed and unpoisoned by hand
+    Arena *arena = ((ArenaAllocator *)self)->arena;
+    if (block == nullptr || !in_block(arena, block)) return false;
+    Block *header = (Block *)((u8 *)block - sizeof(Block));
+    if (arena->used != header->after) return false;
+    usize old = header->size;
+    if (old != old_size) return false;
+    if (size <= old) return true;
+    usize start = (usize)((u8 *)block - arena->memory);
+    if (size > arena->capacity - start) return false;
+    usize end = start + size;
+    if (sanitized) c::__asan_unpoison_memory_region((u8 *)block + old, size - old);
+    __builtin_memset((u8 *)block + old, 0, size - old);
+    if (sanitized) {
+        usize gap = arena->capacity - end;
+        usize poisoned = gap < poison_gap ? gap : poison_gap;
+        c::__asan_poison_memory_region((u8 *)block + size, poisoned);
+        end += poisoned;
+    }
+    arena->used = end;
+    if (sanitized) poison_ahead(arena);
+    header->size = size;
+    header->after = arena->used;
+    return true;
+}
+
 void *allocator_realloc(c::SmithAllocator *self, void *block, usize size, usize align) {
     contract::trusted();
     if (block == nullptr) return allocator_alloc(self, size, align);
     usize old = allocator_size(self, block);
-    if (size <= old) return block;
+    if (size <= old || allocator_grow(self, block, old, size)) return block;
     void *result = allocator_alloc(self, size, align);
     if (result == nullptr) return nullptr;
     __builtin_memcpy(result, block, old);
@@ -595,6 +624,7 @@ void *allocator_realloc(c::SmithAllocator *self, void *block, usize size, usize 
                                      .realloc = allocator_realloc,
                                      .free = allocator_free,
                                      .owns = allocator_owns,
-                                     .size = allocator_size},
+                                     .size = allocator_size,
+                                     .grow = allocator_grow},
                             .arena = arena};
 }

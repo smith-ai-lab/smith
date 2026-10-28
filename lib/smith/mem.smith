@@ -86,6 +86,16 @@ const char *allocator_name(const Allocator *allocator);
     c::free(block); // NOLINT(smith-effects): the edge, as try_alloc_raw
 }
 
+// Makes a block of the allocator in force, old_size bytes now, size bytes (at least old_size) without moving it, the new bytes zeroed, and
+// says true; false when that allocator cannot (the system's never can, an arena can for its last block) and nothing
+// changed. smith::list calls it before it copies.
+[[smith::c_name("smith_mem_grow")]] export [[nodiscard]] bool grow_raw(void *block, usize old_size, usize size) {
+    contract::trusted(); // the allocator is the edge
+    Allocator *current = c::smith_handlers_allocator();
+    if (current == nullptr || current->grow == nullptr || !current->owns(current, block)) return false;
+    return current->grow(current, block, old_size, size);
+}
+
 // A zeroed T, the size and the alignment of the type, from the allocator in force. For .smith; C passes sizeof and
 // alignof to smith_mem_alloc.
 [[smith::c_name("smith_mem_alloc_type")]] export [[nodiscard]] T *alloc(constexpr type T) {

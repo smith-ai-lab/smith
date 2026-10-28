@@ -13,13 +13,16 @@ typedef struct SmithAllocator SmithAllocator;
 
 // An allocator is a struct whose first member is a SmithAllocator, passed as &x.allocator. `owns` says whether a block
 // came from it (a free or realloc of any other block goes to libc); `size` is the usable size of a block it owns, and
-// may be null (malloc_size then says 0 for its blocks).
+// may be null (malloc_size then says 0 for its blocks). `grow` makes a block it owns `new_size` bytes (at least `old_size`, its
+// current size) without moving it and returns true, or returns false and changes nothing; it may be null, which is
+// "never in place". It is what smith::list asks before it copies. Nothing in libc reaches it.
 struct SmithAllocator {
     void *(*alloc)(SmithAllocator *self, size_t size, size_t align);
     void *(*realloc)(SmithAllocator *self, void *block, size_t size, size_t align);
     void (*free)(SmithAllocator *self, void *block);
     bool (*owns)(SmithAllocator *self, const void *block);
     size_t (*size)(SmithAllocator *self, const void *block);
+    bool (*grow)(SmithAllocator *self, void *block, size_t old_size, size_t new_size);
 };
 
 // Sets the allocator of the calling thread (null: libc's) and returns the one it had, as signal() does; restoring it is
