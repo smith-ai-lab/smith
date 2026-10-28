@@ -1,0 +1,17 @@
+module main;
+
+import stats;
+import <stdio.h>;
+
+i32 main() {
+    u8 raw[3] = {1, 2, 3};
+    u8 bytes[:] = raw;
+    f32 reals[2] = {1.5f, 2.5f};
+    f32 rs[:] = reals;
+    u8 small = 3;
+    stats::fill(rs, 0.5);
+    stats::bump(&small, 1);
+    c::printf("%zu %zu %zu\n", stats::find(bytes, 3), stats::find(bytes, small), stats::position(bytes, 2));
+    c::printf("%g %d\n", (double)reals[1], small);
+    return 0;
+}

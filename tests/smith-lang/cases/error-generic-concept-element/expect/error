@@ -1,5 +1,5 @@
-src/main.smith:12:18: `char *` is not `arithmetic`: `ns`, the argument of `count`, has the type `struct smith_array_char_ptr_n`; the parameter `xs` is `arithmetic xs`
+src/main.smith:12:18: `char *` is not `arithmetic`: the elements of `ns` have that type
 src/main.smith:13:18: `n`, the argument of `count`, has the type `i32`, but the parameter `xs` is a slice (`arithmetic xs[:]`); pass a slice (`xs[0:n]` makes one of an array)
-src/main.smith:14:17: `__INT32_TYPE__` is not `floating`: `is`, the argument of `rows`, has the type `struct smith_array_i32_n_n`; the parameter `grid` is `floating grid`
-src/main.smith:15:17: `f32` is not `integer`: `&f`, the argument of `read`, has the type `f32 *`; the parameter `p` is `integer p`
-src/main.smith:16:18: `char *` is not `arithmetic`: `names`, the argument of `third`, has the type `char * *`; the parameter `xs` is `arithmetic xs`
+src/main.smith:14:17: `i32` is not `floating`: the elements of `is` have that type
+src/main.smith:15:17: `f32` is not `integer`: the pointee of `&f` has that type
+src/main.smith:16:18: `char *` is not `arithmetic`: the elements of `names` have that type

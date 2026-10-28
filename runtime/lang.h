@@ -330,6 +330,10 @@ typedef struct {
     // A note for the error the compiler reports at this place (a name it will not find): the lowering knows why, and
     // the compiler does not. A host without diagnostics leaves this null.
     void (*hint)(void *context, uint32_t location, const char *message);
+    // A note for the error the lowering is about to report at `error_location`, at `location` (a place in another
+    // file: the parameter of the generic that asked for the type). Given before the error; the notes follow it in the
+    // order they were given. A host without diagnostics leaves this null.
+    void (*note)(void *context, uint32_t error_location, uint32_t location, const char *message);
     // Whether the check an index, a cut or a contract makes at this source location is proved (`smith prove` wrote that
     // line to the file's proof file), in every build, so that the verdict of an effect does not depend on the build. A
     // host with no proofs leaves this null. Where `omit_proved` is true (an optimized build) the lowering leaves the

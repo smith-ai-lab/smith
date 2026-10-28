@@ -693,6 +693,18 @@ export void test_error_generic_auto_element(io::Io *io) {
     corpus_case(io, "error-generic-auto-element");
 }
 
+export void test_error_generic_element_convert(io::Io *io) {
+    corpus_case(io, "error-generic-element-convert");
+}
+
+export void test_generic_element_convert(io::Io *io) {
+    corpus_case(io, "generic-element-convert");
+}
+
+export void test_error_concept_notes(io::Io *io) {
+    corpus_case(io, "error-concept-notes");
+}
+
 export void test_error_generic_concept_element(io::Io *io) {
     corpus_case(io, "error-generic-concept-element");
 }
