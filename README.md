@@ -640,17 +640,17 @@ d/dm = 12, d/db = 4
 ```smith project=unused run
 module main;
 
-import std::console;
+import smith::console;
 
-[[nodiscard]] I32 compute(I32 x) {
+[[nodiscard]] i32 compute(i32 x) {
     return x * 2;
 }
 
-I32 pick(I32 _, I32 _, I32 third) {
+i32 pick(i32 _, i32 _, i32 third) {
     return third;
 }
 
-I32 main() {
+i32 main() {
     _ = compute(3); // drops a [[nodiscard]] result on purpose
     console::print(pick(1, 2, 7), "\n");
     return 0;

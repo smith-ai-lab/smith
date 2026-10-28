@@ -11974,6 +11974,28 @@ i32 main() {
               holder.later->count, legacy.a, bare.b, (int)q.x, l.inner);
     return 0;
 }
+==> unused-capital/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import <unistd.h>;
+
+// The capitalized spelling (issue #366) with `_` and `_name` (issue #413): `c::_exit` is C's own name, not a module's.
+[[nodiscard]] I32 compute(I32 x) {
+    return x * 2;
+}
+
+I32 pick(I32 _, I32 _, I32 third) {
+    return third;
+}
+
+I32 main() {
+    _ = compute(3);
+    I32 _spare = 1;
+    c::printf("%d\n", pick(1, 2, compute(5)));
+    c::fflush(c::stdout);
+    c::_exit(0);
+}
 ==> unused-run/src/main.smith <==
 module main;
 
