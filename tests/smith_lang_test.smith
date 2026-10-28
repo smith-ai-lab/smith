@@ -109,6 +109,13 @@ static const char *stem_of(io::Io *io, const char *file) {
     return copy;
 }
 
+// Where the header of a module is written under out/include: C has no namespaces, so the header of std::arena (in the
+// file std/arena.smith) is smith/arena.h (#366).
+static const char *header_stem(io::Io *io, const char *stem) {
+    if (c::strncmp(stem, "std/", 4) != 0) return stem;
+    return format::push(&io->arena, "smith/", stem + 4).data;
+}
+
 // The object of a file that is not a module: its path with the dots for slashes.
 static const char *object_of(io::Io *io, const char *file) {
     Usize length = c::strlen(file);
@@ -138,7 +145,7 @@ static void write_header(const Case *kase, const char *file, const char *stem) {
         test::check_equal(added.code, 0);
     }
     if (!made) return;
-    const char *path = format::push(&io->arena, p->dir, "/out/include/", stem, ".h").data;
+    const char *path = format::push(&io->arena, p->dir, "/out/include/", header_stem(io, stem), ".h").data;
     const char *slash = c::strrchr(path, '/');
     char *folder = arena::push_slice(&io->arena, char, (Usize)(slash - path) + 1).data;
     mem::copy(folder[0:(Usize)(slash - path)], path[0:(Usize)(slash - path)]);
@@ -163,10 +170,11 @@ static Built build_sources(const Case *kase) {
         // the headers first, as the build will: no compile waits on another
         const char *stem = stem_of(io, file);
         if (header_by_command(kase->name)) {
-            const char *command = format::push(&io->arena, "mkdir -p \"out/include/$(dirname ", file,
-                                               ")\" && smith cc --smith-header src/", file, " -o out/include/", stem,
-                                               ".h 2>>out/stderr; [ -f out/include/", stem, ".h ] && cp out/include/",
-                                               stem, ".h out/header/", module_of(io, file), ".h")
+            const char *place = header_stem(io, stem);
+            const char *command = format::push(&io->arena, "mkdir -p \"out/include/$(dirname ", place,
+                                               ")\" && smith cc --smith-header src/", file, " -o out/include/", place,
+                                               ".h 2>>out/stderr; [ -f out/include/", place, ".h ] && cp out/include/",
+                                               place, ".h out/header/", module_of(io, file), ".h")
                                       .data;
             (void)scratch::sh(p, command);
         } else {

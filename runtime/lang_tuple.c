@@ -602,6 +602,7 @@ static void smith_lang_tuple_shown(const char *tag, char *out, size_t capacity) 
         }
     }
     snprintf(out + used, capacity - used, " }");
+    smith_lang_show_sized(out);
 }
 
 // `[` after an expression of tuple type: `t[1]` is `t._1`; the index is a number or a constant. Returns true when the

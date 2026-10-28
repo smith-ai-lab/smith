@@ -9,7 +9,7 @@ Type Maybe(Type T) {
     };
 }
 
-typedef Maybe(Usize) Maybe;
+typedef Maybe(Usize) Slot;
 typedef Maybe(F64) MaybeF;
 
 // A type function used with a generic's own parameters: each instance writes the struct a written `maybe(Usize)` is.
@@ -28,7 +28,7 @@ Maybe(T) pass(constexpr Type T, Maybe(T) o) {
     return copy;
 }
 
-static Usize or_else(Maybe m, Usize otherwise) {
+static Usize or_else(Slot m, Usize otherwise) {
     if (m == .some) return m.some;
     return otherwise;
 }
@@ -40,10 +40,10 @@ static F64 or_zero(MaybeF m) {
 
 I32 main(void) {
     Usize xs[2] = {7, 8};
-    Maybe a = first(Usize, xs, 2);
-    Maybe none = first(Usize, xs, 0);
+    Slot a = first(Usize, xs, 2);
+    Slot none = first(Usize, xs, 0);
     MaybeF w = wrap(2.5);
-    Maybe p = pass(Usize, a);
+    Slot p = pass(Usize, a);
     c::printf("%zu %zu %g %zu\n", or_else(a, 0), or_else(none, 99), or_zero(w), or_else(p, 0));
     return 0;
 }

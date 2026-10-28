@@ -1680,6 +1680,7 @@ static void smith_lang_slice_tag_words(const char *tag, char *out, size_t capaci
     for (size_t i = 0; i < length; i++) { // `_ptr` is a star
         if (out[i] == '_') out[i] = ' ';
     }
+    smith_lang_show_sized(out);
 }
 
 // A slice where a slice of another tag is wanted (`T[:]` to `const T[:]`, `restrict` added or taken off): the same

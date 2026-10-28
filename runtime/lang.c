@@ -875,6 +875,27 @@ static const SmithLangSized *smith_lang_find_sized(const char *text, size_t leng
     return nullptr;
 }
 
+// A type spelled from a C name (a tag spells `i32` in lowercase) as the program writes it: `I32`, in place.
+static void smith_lang_show_sized(char *text) {
+    for (char *at = text; *at != 0;) {
+        size_t end = 0;
+        while (isalnum((unsigned char)at[end]) || at[end] == '_')
+            end += 1;
+        if (end == 0) {
+            at += 1;
+            continue;
+        }
+        for (size_t i = 0; i < sizeof smith_lang_sized / sizeof smith_lang_sized[0]; i++) { // 14 entries
+            const char *name = smith_lang_sized[i].name;
+            bool same = strlen(name) == end;
+            for (size_t k = 0; same && k < end; k++)
+                same = tolower((unsigned char)name[k]) == at[k];
+            if (same) memcpy(at, name, end);
+        }
+        at += end;
+    }
+}
+
 static SmithLangText smith_lang_store(SmithLang *lang, const char *text, size_t length) {
     if (lang->chars_used + length + 1 > smith_lang_chars_max) {
         lang->broken = true;
