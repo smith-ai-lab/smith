@@ -495,6 +495,12 @@ static int smith_lint_project(int count, char **args, const char *self) {
     int quiet = smith_quiet_verb("lint", count, args, self, false);
     if (quiet >= 0) return quiet;
     SmithVerbArgs *split = smith_verb_split(count, args);
+    bool changed = false; // --changed [--base=<ref>]: lint what a change can break (runtime/lint_changed.c)
+    const char *base = nullptr;
+    for (size_t i = 0; i < split->own_count; i++) { // bounded by smith_build_args_max
+        if (strcmp(split->own[i], "--changed") == 0) changed = true;
+        if (strncmp(split->own[i], "--base=", 7) == 0) base = split->own[i] + 7;
+    }
     const char *const targets[] = {"smith_needs", nullptr};
     int status = smith_verb_build(self, split, targets, false);
     if (status != 0) return status;
@@ -516,6 +522,15 @@ static int smith_lint_project(int count, char **args, const char *self) {
 #ifdef SMITH_HOOK
     files_count = smith_lint_unbuilt(files, files_count, &smith_sources);
 #endif
+    if (changed) {
+        size_t before = files_count;
+        files_count = smith_lint_changed(files, files_count, base);
+        if (files_count == 0 && before > 0) {
+            fprintf(stderr, "smith lint: nothing that changed is linted\n");
+            fprintf(stderr, "smith lint: linted 0 files\n");
+            return 0;
+        }
+    }
     if (skipped > 0) {
         fprintf(stderr, "smith lint: %zu .smith source(s) left out: this smith's clang has no token hook\n", skipped);
     }

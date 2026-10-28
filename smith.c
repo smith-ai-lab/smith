@@ -3237,7 +3237,7 @@ static bool smith_only_options(int count, char **args) {
 static bool smith_project_arguments(const char *verb, int count, char **args) {
     const char *const *own = nullptr;
     static const char *const fmt_options[] = {"--dry-run", "-n", "--Werror", "-i", nullptr};
-    static const char *const lint_options[] = {"--quiet", nullptr};
+    static const char *const lint_options[] = {"--quiet", "--changed", nullptr};
     static const char *const prove_options[] = {"-v", "--no-cache", "--induction", "--unroll", nullptr};
     if (strcmp(verb, "fmt") == 0) own = fmt_options;
     if (strcmp(verb, "lint") == 0) own = lint_options;
@@ -3250,6 +3250,7 @@ static bool smith_project_arguments(const char *verb, int count, char **args) {
             (strncmp(args[i], "--budget=", 9) == 0 || strncmp(args[i], "--emit-ir=", 10) == 0 ||
              strncmp(args[i], "--induction-from=", 17) == 0 || strncmp(args[i], "--function=", 11) == 0))
             continue;
+        if (strcmp(verb, "lint") == 0 && strncmp(args[i], "--base=", 7) == 0) continue; // with --changed
         bool known = false;
         for (size_t j = 0; own != nullptr && own[j] != nullptr; j++)
             known = known || strcmp(args[i], own[j]) == 0;
@@ -3280,6 +3281,7 @@ static bool smith_project_arguments(const char *verb, int count, char **args) {
 #include "runtime/record.c"
 
 #include "runtime/changed.c"
+#include "runtime/lint_changed.c"
 #include "runtime/verbs.c"
 
 // smith's top level is only verbs. This table is where they are: a new verb is a row and, when it is none of these
