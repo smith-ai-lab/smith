@@ -1,0 +1,107 @@
+// `smith fmt` skips what is already formatted, found by content (issue #639, runtime/fmt_cache.c): the second run of a
+// project formats no file, an edited file is formatted again, a changed .clang-format formats everything, and a file
+// that was cached as formatted under another .clang-format still fails the check. The summary line says how many files
+// were skipped. Every case has a cache of its own (scratch::own_cache).
+module fmt_cache_test;
+
+import smith::io;
+import smith::test;
+import scratch;
+
+constexpr char messy[_] = "int main(void){return   0;}\n";
+constexpr char eight[_] = "BasedOnStyle: LLVM\nIndentWidth: 8\n";
+constexpr char two[_] = "BasedOnStyle: LLVM\nIndentWidth: 2\nColumnLimit: 20\n";
+
+// A git project of two messy files and a .clang-format.
+static scratch::Project project_of(io::Io *io, const char *style) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::own_cache(&p);
+    scratch::write(&p, "a.c", messy);
+    scratch::write(&p, "b.c", "int f( int x ){return x;}\n");
+    scratch::write(&p, ".clang-format", style);
+    scratch::Run made = scratch::sh(&p, "git init -q && git add -A");
+    scratch::expect_status("a git project", 0, &made);
+    return p;
+}
+
+export void test_the_second_run_formats_no_file_and_leaves_the_bytes(io::Io *io) {
+    scratch::Project p = project_of(io, eight);
+    scratch::Run first = scratch::sh(&p, "smith fmt 2>&1");
+    scratch::expect_status("the first run", 0, &first);
+    scratch::expect_contains("the first run formats both", first.out, "2 files (0 already formatted, 2 checked)");
+    const char *after = scratch::read(&p, "a.c");
+    scratch::expect_text("the file is formatted", "int main(void) { return 0; }\n", after);
+    scratch::Run second = scratch::sh(&p, "smith fmt 2>&1");
+    scratch::expect_status("the second run", 0, &second);
+    scratch::expect_contains("the second run formats none", second.out, "2 files (2 already formatted, 0 checked)");
+    scratch::expect_text("the bytes are unchanged", after, scratch::read(&p, "a.c"));
+    scratch::Run check = scratch::sh(&p, "smith fmt --dry-run --Werror 2>&1");
+    scratch::expect_status("the check of the same files", 0, &check);
+    scratch::expect_contains("the check skips them too", check.out, "2 already formatted");
+}
+
+export void test_an_edited_file_is_formatted_again(io::Io *io) {
+    scratch::Project p = project_of(io, eight);
+    scratch::Run first = scratch::sh(&p, "smith fmt 2>&1");
+    scratch::expect_status("the first run", 0, &first);
+    scratch::write(&p, "a.c", "int  g;\n");
+    scratch::Run second = scratch::sh(&p, "smith fmt 2>&1");
+    scratch::expect_contains("only the edited file is run", second.out, "2 files (1 already formatted, 1 checked)");
+    scratch::expect_text("the edited file is formatted", "int g;\n", scratch::read(&p, "a.c"));
+}
+
+export void test_a_changed_clang_format_formats_everything(io::Io *io) {
+    scratch::Project p = project_of(io, eight);
+    scratch::Run first = scratch::sh(&p, "smith fmt 2>&1");
+    scratch::expect_status("the first run", 0, &first);
+    scratch::write(&p, ".clang-format", two);
+    scratch::Run second = scratch::sh(&p, "smith fmt 2>&1");
+    scratch::expect_contains("every file is run again", second.out, "2 files (0 already formatted, 2 checked)");
+    scratch::expect_text("in the new style", "int main(void) {\n  return 0;\n}\n", scratch::read(&p, "a.c"));
+}
+
+export void test_the_check_fails_on_a_file_cached_under_another_clang_format(io::Io *io) {
+    scratch::Project p = project_of(io, eight);
+    scratch::Run first = scratch::sh(&p, "smith fmt 2>&1");
+    scratch::expect_status("the first run", 0, &first);
+    scratch::write(&p, ".clang-format", two);
+    scratch::Run check = scratch::sh(&p, "smith fmt --dry-run --Werror 2>&1");
+    scratch::expect_failure("the files are unformatted in the new style", &check);
+    scratch::expect_contains("... and it says so", check.out, "code should be clang-formatted");
+    scratch::Run named = scratch::sh(&p, "smith fmt --dry-run --Werror a.c b.c 2>&1");
+    scratch::expect_failure("the same with the files named", &named);
+}
+
+export void test_named_files_use_the_cache_and_are_written(io::Io *io) {
+    scratch::Project p = project_of(io, eight);
+    scratch::Run first = scratch::sh(&p, "smith fmt a.c b.c 2>&1");
+    scratch::expect_status("named files", 0, &first);
+    scratch::expect_text("a.c is written", "int main(void) { return 0; }\n", scratch::read(&p, "a.c"));
+    scratch::Run second = scratch::sh(&p, "smith fmt 2>&1");
+    scratch::expect_contains("the project run knows them", second.out, "2 files (2 already formatted, 0 checked)");
+    scratch::Run check = scratch::sh(&p, "smith fmt --dry-run --Werror a.c 2>&1");
+    scratch::expect_status("the named check passes", 0, &check);
+}
+
+export void test_the_cache_can_be_turned_off(io::Io *io) {
+    scratch::Project p = project_of(io, eight);
+    scratch::Run first = scratch::sh(&p, "SMITH_FMT_CACHE=0 smith fmt 2>&1; SMITH_FMT_CACHE=0 smith fmt 2>&1");
+    scratch::expect_contains("every run formats every file", first.out, "2 files (0 already formatted, 2 checked)");
+    scratch::expect_lacks("none is skipped", first.out, "2 already formatted");
+}
+
+// A bad file among many: the check reports it once (the process that found it is run again file by file), and the
+// others are cached.
+export void test_one_bad_file_among_many_is_reported_once_and_the_rest_are_cached(io::Io *io) {
+    scratch::Project p = project_of(io, eight);
+    scratch::Run made =
+        scratch::sh(&p, "smith fmt >/dev/null 2>&1; for i in $(seq 1 40); do echo \"int v$i;\" > g$i.c; done; "
+                        "echo 'int  bad;' > bad.c; git add -A");
+    scratch::expect_status("many files", 0, &made);
+    scratch::Run check = scratch::sh(&p, "smith fmt --dry-run --Werror 2>&1");
+    scratch::expect_failure("the check fails", &check);
+    scratch::Run count = scratch::sh(&p, "smith fmt --dry-run --Werror 2>&1 | grep -c 'bad.c:1.*error'");
+    scratch::expect_text("the bad file is reported once", "1", count.out);
+    scratch::Run again = scratch::sh(&p, "smith fmt --dry-run --Werror 2>&1 | grep 'smith fmt: 43 files'");
+    scratch::expect_contains("the good files are skipped", again.out, "42 already formatted, 1 checked");
+}

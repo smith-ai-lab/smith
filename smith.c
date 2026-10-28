@@ -3169,6 +3169,44 @@ static void smith_fmt_rewrite(int *argc, char ***argv) {
     *argv = smith_fmt_rewrite_argv;
 }
 
+// `smith fmt` with file names and nothing else but -i, or --dry-run --Werror (the forms the project's check and a
+// person's habit use) runs through smith_fmt_run (runtime/fmt_cache.c): the files the cache knows to be formatted are
+// skipped and the others are formatted side by side. Anything else is clang-format's own. Returns the exit status, or
+// -1 when the arguments are not that form (or when this is one of the processes smith_fmt_run started).
+static int smith_fmt_run(const char *self, bool check, const char *const *files, size_t count, bool summary);
+
+constexpr size_t smith_fmt_named_max = 16384; // smith_verbs_files_max
+
+static int smith_fmt_named_files(int argc, char **argv, const char *self) {
+    static const char *named[smith_fmt_named_max];
+    if (getenv("SMITH_FMT_BATCH") != nullptr || argc < 3) return -1;
+    bool in_place = false;
+    bool dry = false;
+    bool strict = false;
+    size_t count = 0;
+    for (int i = 2; i < argc; i++) { // bounded by the arguments
+        const char *arg = argv[i];
+        if (arg[0] != '-') {
+            struct stat info;
+            if (!smith_fmt_formats(arg) || stat(arg, &info) != 0 || !S_ISREG(info.st_mode) ||
+                count >= smith_fmt_named_max)
+                return -1;
+            named[count++] = arg;
+        } else if (strcmp(arg, "-i") == 0) {
+            in_place = true;
+        } else if (strcmp(arg, "--dry-run") == 0 || strcmp(arg, "-n") == 0) {
+            dry = true;
+        } else if (strcmp(arg, "--Werror") == 0) {
+            strict = true;
+        } else {
+            return -1;
+        }
+    }
+    bool check = dry && strict && !in_place;
+    if (count == 0 || (!check && (dry || strict))) return -1;
+    return smith_fmt_run(self, check, named, count, false);
+}
+
 // The tool, after smith's defaults: its arguments with smith's style or tidy config where the project has none
 // (`smith fmt`, `smith lint`), or with the compile commands of .smith/ (`smith lsp`).
 static int smith_tool_main(const SmithTool *tool, int argc, char **argv, const char *self) {
@@ -3181,7 +3219,11 @@ static int smith_tool_main(const SmithTool *tool, int argc, char **argv, const c
         snprintf(found, sizeof found, "%d", argc);
         smith_die(smith_exit_usage, "too many arguments for smith's defaults (limit 262136, found):", found);
     }
-    if (strcmp(tool->command, "fmt") == 0) smith_fmt_rewrite(&argc, &argv);
+    if (strcmp(tool->command, "fmt") == 0) {
+        int done = smith_fmt_named_files(argc, argv, self);
+        if (done >= 0) return done;
+        smith_fmt_rewrite(&argc, &argv);
+    }
     if (strcmp(tool->command, "fmt") == 0 || strcmp(tool->command, "lint") == 0) {
         before = smith_defaults_apply(tool, &argc, &argv, self);
     } else if (strcmp(tool->command, "lsp") == 0 && smith_lsp_commands_option(argc, argv)) {
