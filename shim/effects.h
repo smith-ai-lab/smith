@@ -245,7 +245,9 @@ inline Verdict classify(const FunctionDecl *fn, const SourceManager &sm) {
 
 // ---- Capabilities --------------------------------------------------------------------------------------------------
 
-inline bool is_annotation(llvm::StringRef written, llvm::StringRef text) { return written == text; }
+inline bool is_annotation(llvm::StringRef written, llvm::StringRef text) {
+    return written == text;
+}
 
 inline bool has_annotation(const Decl *decl, llvm::StringRef text) {
     for (const auto *attribute : decl->specific_attrs<AnnotateAttr>())

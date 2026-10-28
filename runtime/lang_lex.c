@@ -919,7 +919,8 @@ static void smith_raw_want(const char *file, const char *text, size_t length, Sm
                 }
             }
             memcpy(relative + used, ".h", 3);
-            char source_relative[smith_lang_name_max]; // where the source is: std/arena.h, though C calls it smith/arena.h
+            char source_relative[smith_lang_name_max]; // where the source is: std/arena.h, though C calls it
+                                                       // smith/arena.h
             memcpy(source_relative, relative, used + 3);
             if (strncmp(relative, "std/", 4) == 0) { // the header of std::arena is smith/arena.h (#366)
                 memmove(relative + 6, relative + 4, used - 1);
@@ -931,8 +932,8 @@ static void smith_raw_want(const char *file, const char *text, size_t length, Sm
             for (size_t i = 0; i < *count; i++) // wanted already
                 known = known || strcmp(wanted[i].relative, relative) == 0;
             char path[PATH_MAX];
-            bool fits = (size_t)snprintf(path, sizeof path, "%s/%.*s.smith", root,
-                                         (int)(strlen(source_relative) - 2), source_relative) < sizeof path;
+            bool fits = (size_t)snprintf(path, sizeof path, "%s/%.*s.smith", root, (int)(strlen(source_relative) - 2),
+                                         source_relative) < sizeof path;
             if (!known && cursor > name && fits) {
                 if (*count >= smith_raw_modules_max - smith_raw_modules_count) smith_raw_modules_full();
                 snprintf(wanted[*count].relative, sizeof wanted[0].relative, "%s", relative);

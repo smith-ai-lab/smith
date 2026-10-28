@@ -353,8 +353,7 @@ export void test_lint_smith_designated_init_a_positional_initializer_of_another_
 export void
 test_lint_smith_module_library_import_smith_arena_is_clean_and_so_is_a_c_header_that_is_no_module(io::Io *io) {
     scratch::Project p = prepared(io, false);
-    scratch::expect_text("smith-module-library: import std::arena is clean, and so is a C header that is no module",
-                         "",
+    scratch::expect_text("smith-module-library: import std::arena is clean, and so is a C header that is no module", "",
                          lint_text(&p, "idiom smith-module-library idiom/library_ok.smith idiom/library_c.smith "
                                        ">library-ok.out; idiom_findings <library-ok.out"));
 }

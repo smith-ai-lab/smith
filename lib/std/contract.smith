@@ -159,8 +159,8 @@ check_assert(Bool condition) {
     (void)size;
 }
 
-[[std::c_name("smith_modifies")]] export [[gnu::always_inline, maybe_unused]] inline void
-modifies_range(const void *p, Usize size) {
+[[std::c_name("smith_modifies")]] export [[gnu::always_inline, maybe_unused]] inline void modifies_range(const void *p,
+                                                                                                         Usize size) {
     if constexpr (target::static_analyzer) {
         (void)p;
         (void)size;

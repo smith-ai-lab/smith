@@ -2033,9 +2033,8 @@ console_print_error(Console *console, const char *text) {
 
 // printf for the console: formats into a buffer of 4 KiB and prints it. Longer output is EMSGSIZE and prints nothing.
 // Not [[nodiscard]], since a program that prints a report has nowhere else to say that stdout is closed.
-[[std::c_name("smith_console_printf")]] export
-    [[clang::annotate("std::edge")]] [[gnu::format(__printf__, 2, 3)]] Error
-    console_printf(Console *console, const char *format, ...) {
+[[std::c_name("smith_console_printf")]] export [[clang::annotate("std::edge")]] [[gnu::format(__printf__, 2, 3)]] Error
+console_printf(Console *console, const char *format, ...) {
     __builtin_va_list arguments;
     __builtin_va_start(arguments, format);
     Error error = console_format(console, false, format, arguments);
@@ -2043,9 +2042,8 @@ console_print_error(Console *console, const char *text) {
     return error;
 }
 
-[[std::c_name("smith_console_eprintf")]] export
-    [[clang::annotate("std::edge")]] [[gnu::format(__printf__, 2, 3)]] Error
-    console_eprintf(Console *console, const char *format, ...) {
+[[std::c_name("smith_console_eprintf")]] export [[clang::annotate("std::edge")]] [[gnu::format(__printf__, 2, 3)]] Error
+console_eprintf(Console *console, const char *format, ...) {
     __builtin_va_list arguments;
     __builtin_va_start(arguments, format);
     Error error = console_format(console, true, format, arguments);
@@ -2142,7 +2140,7 @@ clock_wall(const Clock *clock) {
 
 // Moves the fake clock forward, and only the fake clock (required). Both the monotonic and the wall time move.
 [[std::c_name("smith_clock_advance")]] export [[clang::annotate("std::edge")]] void clock_advance(Clock *clock,
-                                                                                                      U64 ns) {
+                                                                                                  U64 ns) {
     contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
     contract::requires(clock->loop->fake != nullptr); // only the fake clock can be advanced
     contract::requires(ns <= math::max(U64) >> 1);
@@ -2261,8 +2259,8 @@ processes_wait_async(Processes *processes, Op *op, Process process) {
 // Completes when the child has exited, with op->exit_status or op->signal, like io::processes_wait_async; afterwards
 // io::child_kill does not signal the child's id, which is free for another program from then on. The child stays
 // where it is until the op is done.
-[[std::c_name("smith_child_wait_async")]] export [[clang::annotate("std::edge")]] void
-child_wait_async(Child *child, Op *op) {
+[[std::c_name("smith_child_wait_async")]] export [[clang::annotate("std::edge")]] void child_wait_async(Child *child,
+                                                                                                        Op *op) {
     contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
     contract::requires(child->process.id != 0);
     op_start(op, child->internal.loop, ProcessWait);
@@ -2393,8 +2391,8 @@ child_close_input(Child *child) {
 
 // Sends the signal to the child's process group. ESRCH if there is nothing left to signal: also, with no signal
 // sent, once the wait of io::child_wait_async has completed, since the id could then be another program's.
-[[std::c_name("smith_child_kill")]] export [[clang::annotate("std::edge")]] [[nodiscard]] Error
-child_kill(Child *child, I32 signal) {
+[[std::c_name("smith_child_kill")]] export [[clang::annotate("std::edge")]] [[nodiscard]] Error child_kill(Child *child,
+                                                                                                           I32 signal) {
     contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
     contract::requires(signal > 0);
     Fake *fake = child->internal.loop->fake;
@@ -3692,8 +3690,7 @@ U64 seed_read() {
 
 // Same type as the real one. Files, programs and the console's output are inside the arena: the fake holds up to 64
 // files and folders and 16 programs, and captures up to 64 KiB of stdout and 64 KiB of stderr (more is ENOSPC).
-[[std::c_name("smith_io_make_test")]] export [[clang::annotate("std::edge")]] [[nodiscard]] Io
-make_test(Test test) {
+[[std::c_name("smith_io_make_test")]] export [[clang::annotate("std::edge")]] [[nodiscard]] Io make_test(Test test) {
     contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
     contract::requires(test.memory != nullptr && test.capacity > 0);
     Io io = {.arena = arena::fixed(test.memory, test.capacity)};

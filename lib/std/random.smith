@@ -557,7 +557,7 @@ I64 int_value(I64 low, I64 high, U64 index) {
 }
 
 [[std::c_name("smith_uniform_int64_sample")]] export [[nodiscard]] I64 uniform_int64_sample(Key key,
-                                                                                              UniformInt64 uniform) {
+                                                                                            UniformInt64 uniform) {
     contract::requires(uniform.low <= uniform.high);
     U64 span = (U64)uniform.high - (U64)uniform.low + 1;
     if (span == 0) return zigzag(word(&key, 0)); // the whole I64 range
@@ -605,7 +605,7 @@ U64 origin_double(F64 low, F64 high) {
 // the simplest value (see the top). Parameters are
 // required: low < high and both finite, deviation > 0, a probability in [0, 1].
 [[std::c_name("smith_uniform_float_sample")]] export [[nodiscard]] F32 uniform_float_sample(Key key,
-                                                                                              UniformFloat uniform) {
+                                                                                            UniformFloat uniform) {
     contract::trusted(); // the floating-point arithmetic of a draw costs a proof far more than it is worth; the tests
                          // cover the values
     contract::requires(__builtin_isfinite(uniform.low) && __builtin_isfinite(uniform.high) &&
@@ -618,7 +618,7 @@ U64 origin_double(F64 low, F64 high) {
 }
 
 [[std::c_name("smith_uniform_double_sample")]] export [[nodiscard]] F64 uniform_double_sample(Key key,
-                                                                                                UniformDouble uniform) {
+                                                                                              UniformDouble uniform) {
     contract::trusted(); // the floating-point arithmetic of a draw costs a proof far more than it is worth; the tests
                          // cover the values
     contract::requires(__builtin_isfinite(uniform.low) && __builtin_isfinite(uniform.high) &&
@@ -733,15 +733,14 @@ F32 normal_u_float(Key key) {
 }
 
 [[std::c_name("smith_normal_double_sample")]] export [[nodiscard]] F64 normal_double_sample(Key key,
-                                                                                              NormalDouble normal) {
+                                                                                            NormalDouble normal) {
     contract::trusted(); // the polynomial of the normal quantile costs a proof far more than it is worth; the tests
                          // cover the values
     contract::requires(__builtin_isfinite(normal.mean) && __builtin_isfinite(normal.deviation) && normal.deviation > 0);
     return normal.mean + mul_double(normal.deviation, ppnd16(normal_u_double(key)));
 }
 
-[[std::c_name("smith_normal_float_sample")]] export [[nodiscard]] F32 normal_float_sample(Key key,
-                                                                                            NormalFloat normal) {
+[[std::c_name("smith_normal_float_sample")]] export [[nodiscard]] F32 normal_float_sample(Key key, NormalFloat normal) {
     contract::trusted(); // the polynomial of the normal quantile costs a proof far more than it is worth; the tests
                          // cover the values
     contract::requires(__builtin_isfinite(normal.mean) && __builtin_isfinite(normal.deviation) && normal.deviation > 0);
@@ -758,7 +757,7 @@ F32 normal_u_float(Key key) {
 
 // Writes 0..count-1 to out in a uniformly random order (Fisher-Yates); a count of 0 writes nothing.
 [[std::c_name("smith_permutation_sample")]] export void permutation_sample(Key key, Permutation permutation,
-                                                                             Usize *out) {
+                                                                           Usize *out) {
     contract::trusted(); // its loops run over the count, which has no bound a proof can use
     contract::requires(out != nullptr || permutation.count == 0);
     for (Usize i = 0; i < permutation.count; i++)

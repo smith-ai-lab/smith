@@ -320,8 +320,7 @@ Bool grow(Arena *arena, Usize size, Usize align) {
 
 // Zeroed memory for size bytes at align (a power of two, at most align_max), or null when a fixed arena's memory, or
 // the backing of a growing one, cannot hold it. For code that refuses; push_raw stops instead.
-[[std::c_name("smith_arena_try_push")]] export [[nodiscard]] void *try_push_raw(Arena *arena, Usize size,
-                                                                                  Usize align) {
+[[std::c_name("smith_arena_try_push")]] export [[nodiscard]] void *try_push_raw(Arena *arena, Usize size, Usize align) {
     contract::trusted(); // it writes the memory it hands out, whose extent a proof does not know
     contract::requires(arena->used <= arena->capacity);
     contract::requires(align_valid(align));
@@ -367,7 +366,7 @@ Bool grow(Arena *arena, Usize size, Usize align) {
 
 // count items of size bytes.
 [[std::c_name("smith_arena_push_array")]] export [[nodiscard]] void *push_array_raw(Arena *arena, Usize size,
-                                                                                      Usize count, Usize align) {
+                                                                                    Usize count, Usize align) {
     contract::trusted(); // a count that overflows ends in the failure report, which is the edge
     contract::requires(arena->used <= arena->capacity);
     contract::requires(align_valid(align));
@@ -377,8 +376,8 @@ Bool grow(Arena *arena, Usize size, Usize align) {
 }
 
 // count items of size bytes, or null when they do not fit (or their size overflows).
-[[std::c_name("smith_arena_try_push_array")]] export [[nodiscard]] void *
-try_push_array_raw(Arena *arena, Usize size, Usize count, Usize align) {
+[[std::c_name("smith_arena_try_push_array")]] export [[nodiscard]] void *try_push_array_raw(Arena *arena, Usize size,
+                                                                                            Usize count, Usize align) {
     contract::trusted();
     contract::requires(arena->used <= arena->capacity);
     contract::requires(align_valid(align));

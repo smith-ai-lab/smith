@@ -62,7 +62,8 @@ export void test_std_scope_capitalized_names_work_in_a_module(io::Io *io) {
                            &built);
 }
 
-// The old forms are gone, with no special message: `smith::arena` is a module nobody wrote, `i32` a name nobody declared.
+// The old forms are gone, with no special message: `smith::arena` is a module nobody wrote, `i32` a name nobody
+// declared.
 export void test_std_scope_the_old_spellings_are_unknown(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", "std_scope");
     scratch::Run module = scratch::sh(&p, "smith cc -std=gnu23 -I .smith/include -c old_module.smith -o /dev/null");
@@ -71,7 +72,8 @@ export void test_std_scope_the_old_spellings_are_unknown(io::Io *io) {
     scratch::Run type = scratch::sh(&p, "smith cc -std=gnu23 -c old_type.smith -o /dev/null");
     scratch::expect_failure("old: i32 in a module is an unknown type", &type);
     scratch::expect_contains("old: ... named as written", type.err, "i32");
-    scratch::Run attribute = scratch::sh(&p, "smith cc -std=gnu23 -I .smith/include -c old_attribute.smith -o /dev/null");
+    scratch::Run attribute =
+        scratch::sh(&p, "smith cc -std=gnu23 -I .smith/include -c old_attribute.smith -o /dev/null");
     scratch::expect_failure("old: [[smith::pure]] is an attribute nobody registered", &attribute);
 }
 
@@ -80,13 +82,17 @@ export void test_std_scope_a_lowercase_type_of_the_program_is_an_error(io::Io *i
     scratch::Project p = scratch::project(io, "p", "std_scope");
     scratch::Run tag = scratch::sh(&p, "smith cc -std=gnu23 -c lowercase_tag.smith -o /dev/null");
     scratch::expect_failure("capital: a lowercase struct tag in a module is an error", &tag);
-    scratch::expect_contains("capital: ... that names the capitalized spelling", tag.err, "write `RedPoint`, not `red_point`");
+    scratch::expect_contains("capital: ... that names the capitalized spelling", tag.err,
+                             "write `RedPoint`, not `red_point`");
     scratch::Run alias = scratch::sh(&p, "smith cc -std=gnu23 -c lowercase_alias.smith -o /dev/null");
     scratch::expect_failure("capital: a lowercase constexpr Type alias is an error", &alias);
-    scratch::expect_contains("capital: ... that names the capitalized spelling", alias.err, "write `Small`, not `small`");
+    scratch::expect_contains("capital: ... that names the capitalized spelling", alias.err,
+                             "write `Small`, not `small`");
     scratch::Run function = scratch::sh(&p, "smith cc -std=gnu23 -c lowercase_function.smith -o /dev/null");
     scratch::expect_failure("capital: a lowercase type function is an error", &function);
-    scratch::expect_contains("capital: ... that names the capitalized spelling", function.err, "write `SliceOf`, not `slice_of`");
+    scratch::expect_contains("capital: ... that names the capitalized spelling", function.err,
+                             "write `SliceOf`, not `slice_of`");
     scratch::Run plain = scratch::sh(&p, "smith cc -std=gnu23 -c lowercase_plain.smith -o /dev/null");
-    scratch::expect_status("capital: a file with no module line means what C means: a lowercase tag is fine", 0, &plain);
+    scratch::expect_status("capital: a file with no module line means what C means: a lowercase tag is fine", 0,
+                           &plain);
 }

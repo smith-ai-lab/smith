@@ -181,8 +181,7 @@ void mark_edges(Module &module) {
         auto *text = dyn_cast<GlobalVariable>(record->getOperand(1)->stripPointerCasts());
         if (function == nullptr || text == nullptr || !text->hasInitializer()) continue;
         auto *data = dyn_cast<ConstantDataArray>(text->getInitializer());
-        if (data != nullptr && data->isCString() &&
-            data->getAsCString() == "std::edge")
+        if (data != nullptr && data->isCString() && data->getAsCString() == "std::edge")
             function->addFnAttr("smith.edge");
     }
 }

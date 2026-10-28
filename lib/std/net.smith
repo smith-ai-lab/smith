@@ -943,7 +943,7 @@ void connection_open(const Connection *connection) {
 // for `host`, and there is no way to turn the check off. A refusal is `Expired`, `NotYetValid`, `WrongHost`,
 // `Untrusted`, `BadCertificate` or `HandshakeFailed`; a machine without the TLS stack answers `Unsupported`.
 [[std::c_name("smith_network_connect_tls")]] export [[nodiscard]] ConnectionResult connect_tls(const char host[:],
-                                                                                                 U16 port) {
+                                                                                               U16 port) {
     return open_connection(host, port, true);
 }
 
@@ -972,7 +972,7 @@ void connection_open(const Connection *connection) {
 // Writes all of data and returns how many bytes it wrote (all of them, or an error: `Reset` when the peer has gone).
 // A socket takes only so much at a time, so a program that sends a lot while the peer sends back must read as it goes.
 [[std::c_name("smith_network_write")]] export [[nodiscard]] CountResult write(Connection *connection,
-                                                                                const U8 data[:]) {
+                                                                              const U8 data[:]) {
     connection_open(connection);
     c::SmithNetHandler *handler = handler_of(connection->handled);
     Usize done = 0;

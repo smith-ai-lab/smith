@@ -1304,7 +1304,8 @@ static void smith_lang_check_capital(SmithLang *lang, const SmithHost *host, con
         bool declares = smith_lang_punct(after, "{") || smith_lang_punct(after, ";") ||
                         (smith_lang_punct(after, ":") && token->text[0] == 'e' &&
                          smith_lang_punct(smith_lang_peek(lang, host, 3, false), "{"));
-        if (declares) noun = token->text[0] == 's' ? "a struct tag" : token->text[0] == 'u' ? "a union tag" : "an enum tag";
+        if (declares)
+            noun = token->text[0] == 's' ? "a struct tag" : token->text[0] == 'u' ? "a union tag" : "an enum tag";
     } else if (smith_lang_ident(token, "Type")) {
         bool alias = smith_lang_punct(after, "=") && after_constexpr;
         bool function = smith_lang_punct(after, "(") && lang->brace_depth == 0 && lang->paren_depth == 0;

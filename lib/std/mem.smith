@@ -74,7 +74,7 @@ const char *allocator_name(const Allocator *allocator);
 
 // count items of size bytes, zeroed; a count that overflows is a refusal of the largest size.
 [[std::c_name("smith_mem_alloc_array")]] export [[nodiscard]] void *alloc_array_raw(Usize size, Usize count,
-                                                                                      Usize align) {
+                                                                                    Usize align) {
     contract::trusted();
     if (size > 0 && count > math::max(Usize) / size) refuse(math::max(Usize), align);
     return alloc_raw(size * count, align);
@@ -357,7 +357,7 @@ Usize checked_size(Allocator *self, const void *block) {
 // Names of the C library's functions that give the caller a block to free: a block made inside one of these is the
 // caller's to free (a leak if it does not). A block made in any other function of a system library is that library's
 // own bookkeeping (the cache of its number printing, its locale tables), which it keeps for the life of the process.
-const char *const machinery_names[10] = {"smith_mem_", "std::mem::",   "smith_handlers_", "malloc", "calloc",
+const char *const machinery_names[10] = {"smith_mem_", "std::mem::",     "smith_handlers_", "malloc", "calloc",
                                          "realloc",    "posix_memalign", "aligned_alloc",   "valloc", "reallocf"};
 
 const char *const owning[14] = {"strdup",  "strndup",   "asprintf", "vasprintf", "fopen",   "fdopen",   "freopen",
@@ -449,7 +449,7 @@ CheckedSite site_of(const CheckedRecord *record) {
 // for the next. serial is 0 when there is none. The order is the order of allocation, so a report is the same on every
 // run. A block the C library keeps for itself (see library_held) is not a leak.
 [[std::c_name("smith_mem_checked_leak")]] export [[nodiscard]] CheckedSite checked_leak(const Checked *self,
-                                                                                          Usize after) {
+                                                                                        Usize after) {
     contract::trusted();
     CheckedSite site = {};
     if (self->buckets == nullptr) return site;

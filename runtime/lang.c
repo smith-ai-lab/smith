@@ -156,12 +156,12 @@ typedef struct {
     SmithLangText name;
     SmithLangNameKind kind;
     bool exported;
-    uint32_t location;    // of the declaration's name in the source, in the host's own measure
-    SmithLangText c_name; // the C name `[[std::c_name("...")]]` chose for an export (length 0: the prefixed name)
-    uint16_t generic;     // 1 + the index of the generic function this name is (0: it is not one)
-    bool needed;          // the body of an exported generic names it: it is in the header's instance section
-    char tag_word;        // a tag: 's', 'u' or 'e' for struct, union or enum, or 0
-    bool typedef_due;     // a tag whose typedef is not written yet: it goes before the next declaration
+    uint32_t location;          // of the declaration's name in the source, in the host's own measure
+    SmithLangText c_name;       // the C name `[[std::c_name("...")]]` chose for an export (length 0: the prefixed name)
+    uint16_t generic;           // 1 + the index of the generic function this name is (0: it is not one)
+    bool needed;                // the body of an exported generic names it: it is in the header's instance section
+    char tag_word;              // a tag: 's', 'u' or 'e' for struct, union or enum, or 0
+    bool typedef_due;           // a tag whose typedef is not written yet: it goes before the next declaration
     SmithLangText tag_spelling; // the tag as C spells it when that is not the name's own (a payload enum's struct)
 } SmithLangName;
 

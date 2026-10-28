@@ -71,7 +71,7 @@ Bool is_space(char c) {
 // Takes the next line off text into line, without its newline, a trailing carriage return, or a # comment and the
 // spaces before it. Returns false once text is empty.
 [[std::c_name("smith_text_take_line")]] export [[nodiscard]] Bool take_line(typeof(const char[:]) *text,
-                                                                              typeof(const char[:]) *line) {
+                                                                            typeof(const char[:]) *line) {
     const char all[:] = *text; // locals: a write through `line` cannot change what the checks below read
     Usize count = countof(all);
     if (count == 0) return false;
@@ -94,7 +94,7 @@ Bool is_space(char c) {
 
 // Takes the next word off line, a run without spaces or tabs, into word. Returns false when only spaces are left.
 [[std::c_name("smith_text_take_word")]] export [[nodiscard]] Bool take_word(typeof(const char[:]) *line,
-                                                                              typeof(const char[:]) *word) {
+                                                                            typeof(const char[:]) *word) {
     const char rest[:] = *line;
     while (countof(rest) > 0 && is_space(rest[0])) {
         rest = rest[1:];

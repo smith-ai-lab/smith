@@ -468,9 +468,8 @@ static bool smith_lang_cx_builtin(SmithLangCx *cx, uint32_t *at, uint32_t last, 
 }
 
 static bool smith_lang_cx_is_builtin(const SmithLangGenToken *token) {
-    static const char *const names[] = {"sizeof", "alignof", "_Alignof", "Int",  "Float",  "Signed",
-                                        "Unsigned", "Num",   "Pointer",  "Enum", "Struct", "Array",
-                                        "Slice"};
+    static const char *const names[] = {"sizeof", "alignof", "_Alignof", "Int",    "Float", "Signed", "Unsigned",
+                                        "Num",    "Pointer", "Enum",     "Struct", "Array", "Slice"};
     if (token->kind != SmithTokenKind_Identifier || token->special != SmithLangGen_Plain || token->param != 0) {
         return false;
     }

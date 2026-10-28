@@ -137,8 +137,7 @@ export void test_arena_c_project_gets_the_library_with_smith_library(io::Io *io)
 
 export void test_arena_c_project_unchanged_library_is_not_rewritten(io::Io *io) {
     scratch::Project p = built_project(io, "arena_project", "the build succeeds");
-    const char *stamp =
-        "stat -c %Y .smith/lib/std/arena.smith 2>/dev/null || stat -f %m .smith/lib/std/arena.smith";
+    const char *stamp = "stat -c %Y .smith/lib/std/arena.smith 2>/dev/null || stat -f %m .smith/lib/std/arena.smith";
     const char *before = scratch::capture(&p, stamp);
     scratch::sleep(&p, 1100);
     scratch::Run again = scratch::build(&p, "");

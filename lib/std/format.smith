@@ -68,7 +68,7 @@ import std::text;
 
 // The text of length characters at begin, for what a printf wrote as %.*s.
 [[std::c_name("smith_format_bytes")]] export [[nodiscard]] typeof(const char[:]) bytes(const char *begin,
-                                                                                         Usize length) {
+                                                                                       Usize length) {
     return begin[0:length];
 }
 

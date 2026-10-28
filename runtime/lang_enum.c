@@ -123,8 +123,7 @@ static size_t smith_lang_enum_build(SmithLang *lang, const SmithHost *host, cons
     }
     made[used] = span[close]; // the attribute that follows is placed before it in the source
     made[used++].synthetic = true;
-    static const char *const attribute[] = {"__attribute__",   "(", "(", "annotate", "(",
-                                            "\"std::enum\"", ")", ")", ")"};
+    static const char *const attribute[] = {"__attribute__", "(", "(", "annotate", "(", "\"std::enum\"", ")", ")", ")"};
     for (size_t at = 0; at < sizeof attribute / sizeof attribute[0]; at++) { // the plugin knows the struct by it
         SmithTokenKind kind = at == 0 || at == 3 ? SmithTokenKind_Identifier
                               : at == 5          ? SmithTokenKind_String

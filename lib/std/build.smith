@@ -97,8 +97,8 @@ module std::build;
 // nullptr, so a build::defer callback can read what build() read. The other kind is an error
 [[std::c_name("smith_option")]] export Bool option(Build *b, const char *name, const char *description);
 // -Dname=value; fallback may be nullptr
-[[std::c_name("smith_option_value")]] export const char *option_value(Build *b, const char *name,
-                                                                        const char *fallback, const char *description);
+[[std::c_name("smith_option_value")]] export const char *option_value(Build *b, const char *name, const char *fallback,
+                                                                      const char *description);
 // the arguments `smith run` and `smith test` were given (not their -D options): a list, empty for none. A task passes
 // them on, as build::tests does to the test runner
 [[std::c_name("smith_args")]] export const char *const *args(Build *b);
@@ -115,7 +115,7 @@ module std::build;
 // like build::capture, but returns fallback (may be nullptr) when the program cannot start, exits non-zero or is
 // killed; its stderr goes to /dev/null
 [[std::c_name("smith_capture_or")]] export const char *capture_or(Build *b, const char *const *argv,
-                                                                    const char *fallback);
+                                                                  const char *fallback);
 // Writes a file when the build file runs, through a temporary file and a rename, and only when its bytes differ, so its
 // mtime moves only when its content does. It creates missing parent folders. The path must be relative, with no '..'
 // component and nothing under .smith/. For files whose content the build file computes; a step that reads one lists it
@@ -189,7 +189,7 @@ export typedef Result(const char *, PackageError) PackageResult; // NOLINT(reada
 [[std::c_name("smith_list")]] export const char *const *list(Build *b, const char *first, ...);
 // ("src/a.c", ".o") gives "src/a.o"
 [[std::c_name("smith_replace_extension")]] export const char *replace_extension(Build *b, const char *path,
-                                                                                  const char *extension);
+                                                                                const char *extension);
 
 // Steps that exist only once a generated file is read.
 // `needs` are paths: outputs of steps already declared, or source files. Once they all exist, `more` is called, and it
@@ -223,13 +223,12 @@ export typedef Result(const char *const *, LinesError) Lines; // NOLINT(readabil
 // Like build::run_lines, but the exit status is the answer: the program's exit status, 128 plus the signal that killed
 // it, or 127 when it cannot start. *lines (may be nullptr) receives its stdout lines, or nullptr when it did not start.
 // It prints no message.
-[[std::c_name("smith_run_status")]] export I32 run_status(Run *run, const char *const *argv,
-                                                            const char *const **lines);
+[[std::c_name("smith_run_status")]] export I32 run_status(Run *run, const char *const *argv, const char *const **lines);
 // Like build::run_status, but the program's stderr goes into the same pipe as its stdout, so *lines holds both in the
 // order the program wrote them, as 2>&1 does. For comparing a program's whole output with an expected text. The 1 MiB
 // limit covers both streams together.
 [[std::c_name("smith_run_combined")]] export I32 run_combined(Run *run, const char *const *argv,
-                                                                const char *const **lines);
+                                                              const char *const **lines);
 // Records that this run read path, so a change to it reruns the step: the program writes the step's .depfile from
 // these paths when the function returns. A .run step that records a path must have a .depfile.
 [[std::c_name("smith_run_depend")]] export void run_depend(Run *run, const char *path);
@@ -239,7 +238,7 @@ export typedef Result(const char *const *, LinesError) Lines; // NOLINT(readabil
 // cannot start. stdout and stderr are flushed first, so the function's own printing comes before the program's. The
 // same flush happens before build::run_lines and build::run_status spawn.
 [[std::c_name("smith_run_program")]] export I32 run_program(Run *run, const char *const *argv,
-                                                              const char *const *environment);
+                                                            const char *const *environment);
 
 // High level: compiles and links that smith knows are compiles and links, so it can write compile_commands.json.
 // Each emits ordinary steps, the same as calling build::step yourself; the command is written out in its comment.
@@ -279,14 +278,14 @@ export typedef Result(const char *const *, LinesError) Lines; // NOLINT(readabil
 // Entries follow the build::object entries, in call order, before the build file's. A source that already has a
 // build::object entry or an earlier build::compile_command is skipped: the first entry for a file wins. Call it before
 // build::compile_commands, which writes the file; after it, it is an error.
-[[std::c_name("smith_compile_command")]] export void compile_command(Build *b, const char *compiler,
-                                                                       const char *source, const char *const *flags);
+[[std::c_name("smith_compile_command")]] export void compile_command(Build *b, const char *compiler, const char *source,
+                                                                     const char *const *flags);
 // Says which generated files the compile of source (an earlier build::compile_command) reads, a list of outputs of
 // steps ending in nullptr: `smith lint --changed` builds those for the files it lints, where for a source with no such
 // declaration it builds everything the compiles read. An empty list says it reads none. A source that a build::object
 // compiles keeps what that object waits for; any other source with no build::compile_command before it is an error.
 [[std::c_name("smith_compile_needs")]] export void compile_needs(Build *b, const char *source,
-                                                                   const char *const *files);
+                                                                 const char *const *files);
 // Clang modules, off until the build file calls this, and then for every C and Objective-C source passed to
 // build::object afterwards (never .metal, never C++; call it before the first build::object, or it is an error). Each
 // header under the folders becomes its own module, so a source depends on exactly the headers it includes; smith's own
@@ -389,12 +388,11 @@ export typedef Result(const char *const *, LinesError) Lines; // NOLINT(readabil
 [[std::c_name("smith_profile_flags")]] export const char *const *profile_flags(Build *b, const char *profile);
 // The flags the conventions give the links of a profile: the sanitizers in debug, ThinLTO in release and fast, then the
 // project's build::defaults .link_flags.
-[[std::c_name("smith_profile_link_flags")]] export const char *const *profile_link_flags(Build *b,
-                                                                                           const char *profile);
+[[std::c_name("smith_profile_link_flags")]] export const char *const *profile_link_flags(Build *b, const char *profile);
 // The flags the profile's build compiles `source` with: build::profile_flags and the build::defaults folder rows that
 // cover `source`, then the first program's .flags. For a check that must see a source as the build does.
 [[std::c_name("smith_source_flags")]] export const char *const *source_flags(Build *b, const char *profile,
-                                                                               const char *source);
+                                                                             const char *source);
 // The sources the programs compile that lie below `folder` ("" for all), such as "src/base", in the order they were
 // found; smith's libraries are not among them. Call it after build::app.
 [[std::c_name("smith_sources")]] export const char *const *sources(Build *b, const char *folder);

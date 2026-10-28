@@ -234,8 +234,8 @@ static bool smith_sym_apply(SmithSymTrace *trace, const char *word, const char *
 // Rows.
 
 static const char *smith_sym_skipped[] = {
-    "smith_test_",       "smith_check",     "smith_requires", "smith_ensures",   "smith_invariant", "smith_assert",
-    "smith_failure",     "smith_contract_", "smith_trace_",   "smith.test.",     "smith.contract.", "std::test::",
+    "smith_test_",     "smith_check",     "smith_requires", "smith_ensures",   "smith_invariant", "smith_assert",
+    "smith_failure",   "smith_contract_", "smith_trace_",   "smith.test.",     "smith.contract.", "std::test::",
     "std::contract::", "smith::trace::",  "smith_mem_",     "smith_handlers_", "std::mem::"};
 
 static bool smith_sym_machinery(const char *function) {

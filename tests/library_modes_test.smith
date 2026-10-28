@@ -23,8 +23,7 @@ typedef struct {
 
 static const Library json = {"lib/json_test.smith", "json_test.smith", "arena,random,text,json", false};
 static const Library text = {"lib/std/text_test.smith", "smith/text_test.smith", "arena,random,text", false};
-static const Library inflate = {"lib/std/inflate_test.smith", "smith/inflate_test.smith", "arena,random,inflate",
-                                true};
+static const Library inflate = {"lib/std/inflate_test.smith", "smith/inflate_test.smith", "arena,random,inflate", true};
 
 static scratch::Project units_project(io::Io *io, const Library *library) {
     scratch::Project p = scratch::project(io, "p", "library_units");

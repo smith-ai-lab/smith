@@ -446,8 +446,8 @@ CountResult write_in_place(const char path[:], const U8 data[:], Mode mode) {
 }
 
 // Writes all of data to the path as the mode says (Replace, Append, New or Atomic) and returns the bytes written.
-[[std::c_name("smith_fs_write_file")]] export [[nodiscard]] CountResult write_file(const char path[:],
-                                                                                     const U8 data[:], Mode mode) {
+[[std::c_name("smith_fs_write_file")]] export [[nodiscard]] CountResult write_file(const char path[:], const U8 data[:],
+                                                                                   Mode mode) {
     if (mode != Atomic) return write_in_place(path, data, mode);
     char temporary[path_max];
     I32 length = __builtin_snprintf(temporary, sizeof temporary, "%.*s.tmp", (I32)countof(path), path.data);

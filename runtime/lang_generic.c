@@ -3942,8 +3942,8 @@ static void smith_lang_concept_why(const SmithLang *lang, const SmithHost *host,
     const char *name = smith_lang_concepts[concept_id - 1];
     if (concept_id == 5) { // Num
         smith_lang_note(host, error_location, 0,
-                        "`Num(%s)` is false: `Int(%s)` and `Float(%s)` are both false; `%s` is %s",
-                        written, written, written, written, smith_lang_type_kind(&query));
+                        "`Num(%s)` is false: `Int(%s)` and `Float(%s)` are both false; `%s` is %s", written, written,
+                        written, written, smith_lang_type_kind(&query));
         return;
     }
     smith_lang_note(host, error_location, 0, "`%s(%s)` is false: `%s` is %s", name, written, written,

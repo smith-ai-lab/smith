@@ -173,9 +173,8 @@ constexpr size_t build_protocol_count = sizeof build_protocols / sizeof build_pr
 // scripts/pack.c, a tool of the build. arena, contract and text are the modules of smith, compiled from their sources.
 // Returns the program's step.
 static SmithStep build_protocol_program(SmithBuild *b, const BuildConfig *config, const char *folder) {
-    const char *const sources[] = {
-        "scripts/protocol.c", "lib/std/arena.smith", "lib/std/contract.smith", "lib/std/text.smith", "lib/json.c",
-        "lib/trace.c"};
+    const char *const sources[] = {"scripts/protocol.c", "lib/std/arena.smith", "lib/std/contract.smith",
+                                   "lib/std/text.smith", "lib/json.c",          "lib/trace.c"};
     SmithObject objects[6] = {};
     const SmithObject *linked[7] = {};
     for (size_t i = 0; i < 6; i++) {

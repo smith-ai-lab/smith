@@ -232,8 +232,7 @@ export void test_arena_push_slice_with_a_size_for_each_dimension() {
     test::check_equal(cube[0][0][0], 0.0f); // one contiguous block, row-major: no write reached its neighbors
     // The type of the result is SliceOf(T, countof(dims)), computed by an ordinary function over types.
     constexpr Bool types_match = arena::SliceOf(F32, 2) == typeof(matrix) &&arena::SliceOf(F32[2], 1) ==
-                                 typeof(rows) &&arena::SliceOf(F32, 3) == typeof(cube) &&arena::SliceOf(F32, 0) ==
-                                 F32;
+                                 typeof(rows) &&arena::SliceOf(F32, 3) == typeof(cube) &&arena::SliceOf(F32, 0) == F32;
     test::check_condition(types_match);
 }
 

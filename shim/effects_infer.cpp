@@ -243,9 +243,8 @@ template <size_t Index> struct EffectAttr final : ParsedAttrInfo {
 
 struct PureAttr final : ParsedAttrInfo {
     PureAttr() {
-        static constexpr Spelling spellings[] = {{ParsedAttr::AS_C23, "std::pure"},
-                                                 {ParsedAttr::AS_CXX11, "std::pure"},
-                                                 {ParsedAttr::AS_GNU, "smith_pure"}};
+        static constexpr Spelling spellings[] = {
+            {ParsedAttr::AS_C23, "std::pure"}, {ParsedAttr::AS_CXX11, "std::pure"}, {ParsedAttr::AS_GNU, "smith_pure"}};
         Spellings = spellings;
     }
     bool diagAppertainsToDecl(Sema &S, const ParsedAttr &Attr, const Decl *D) const override {

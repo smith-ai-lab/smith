@@ -372,11 +372,10 @@ export void test_the_editor_shows_the_same_verdict_as_the_link_for_modules(io::I
     (void)first; // the build fails on the error: the summaries are what the editor needs
     const char *check = "timeout -s KILL 120 smith lsp --check=\"$PWD/main.smith\" 2>&1 | grep -o 'smith-effect: .*' | "
                         "sed 's/^smith-effect: //'";
-    scratch::expect_text(
-        "editor, modules: lsp --check shows the error through the other module, with the chain",
-        "`bad` is [[std::pure]], but it has the effects console: bad -> fx::lib::noisy (main.smith:4) "
-        "-> printf (lib.smith:4)",
-        scratch::sh(&p, check).out);
+    scratch::expect_text("editor, modules: lsp --check shows the error through the other module, with the chain",
+                         "`bad` is [[std::pure]], but it has the effects console: bad -> fx::lib::noisy (main.smith:4) "
+                         "-> printf (lib.smith:4)",
+                         scratch::sh(&p, check).out);
     scratch::write(&p, "fx/lib.smith", lib_quiet);
     scratch::Run second = scratch::sh(&p, "smith build >/dev/null 2>&1");
     (void)second;
@@ -549,9 +548,8 @@ export void test_fails_a_callee_in_another_file_reaches_a_pure_caller_at_the_lin
         "I32 main() { return good(1) - 2; }\n");
     scratch::Run run =
         scratch::sh(&p, "smith build 2>&1 | grep -E 'smith-effect' | sed 's/^main.smith:[45]:[0-9]*: //'");
-    scratch::expect_contains(
-        "fails: the chain through the other file", run.out,
-        "`main::bad` is [[std::pure]], but it has the effects fails: main::bad -> fx4::lib::get");
+    scratch::expect_contains("fails: the chain through the other file", run.out,
+                             "`main::bad` is [[std::pure]], but it has the effects fails: main::bad -> fx4::lib::get");
     scratch::expect_contains(
         "fails: an assert of another file", run.out,
         "`main::asserts` is [[std::pure]], but it has the effects fails: main::asserts -> fx4::lib::checked");
