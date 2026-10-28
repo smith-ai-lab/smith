@@ -22,8 +22,9 @@ import smith::mem;
 
 // The flags of the harnesses: the sanitizers, the includes of the library and of the raw lowering of two modules, and
 // the files every harness links.
-constexpr char cc_flags[_] = "-std=gnu23 -g -O0 -fsanitize=address,undefined -fno-sanitize-recover=all "
-                             "-ftrivial-auto-var-init=pattern -I \"$SMITH_REPO/.smith/include\" -I lowered -DSMITH_HANDLERS_TABLES_ONLY -w";
+constexpr char cc_flags[_] =
+    "-std=gnu23 -g -O0 -fsanitize=address,undefined -fno-sanitize-recover=all "
+    "-ftrivial-auto-var-init=pattern -I \"$SMITH_REPO/.smith/include\" -I lowered -DSMITH_HANDLERS_TABLES_ONLY -w";
 constexpr char cc_common[_] = "\"$SMITH_REPO/lib/trace.c\" \"$SMITH_REPO/lib/smith/contract.smith\"";
 
 // Two harnesses reach the modules' static functions by including their raw lowering (`smith cc --smith-lower`), made
