@@ -309,8 +309,9 @@ typedef struct {
     // Whether the file's text uses `fields(` or the `Field` type (runtime/lang_fields.c): `Field` is defined at the
     // file's first declaration. The host also sets maybe_type_value, which offers every token.
     bool maybe_field;
-    bool maybe_shape;    // the text calls `option(` or `result(` (the built-in type functions, runtime/lang_enum.c)
-    bool maybe_effects_type; // the text has `) [[smith::effects` or `) [[smith::pure` (runtime/lang_effects.c): every token is offered
+    bool maybe_shape;        // the text calls `option(` or `result(` (the built-in type functions, runtime/lang_enum.c)
+    bool maybe_effects_type; // the text has `) [[smith::effects` or `) [[smith::pure` (runtime/lang_effects.c): every
+                             // token is offered
     bool maybe_brackets; // the text has `[]` or `[_]` (runtime/lang_unused.c): every token is offered, no slice mode
     bool maybe_slice; // the text has a run-time array (`T xs[:]`, `xs[a:b]`): every token is offered, none by the hook
                       // alone

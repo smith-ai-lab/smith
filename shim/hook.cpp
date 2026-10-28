@@ -2931,8 +2931,8 @@ class SmithHook final : public TokenHook, public NameSource {
         return next < text.size() && text[next] == ']';
     }
 
-    // Whether the code of the text has `) [[smith::effects` or `) [[smith::pure` (or `std::`): the effects of a function
-    // type, which the lowering writes as `annotate_type` (runtime/lang_effects.c).
+    // Whether the code of the text has `) [[smith::effects` or `) [[smith::pure` (or `std::`): the effects of a
+    // function type, which the lowering writes as `annotate_type` (runtime/lang_effects.c).
     static bool hasEffectsType(StringRef text) {
         for (size_t at = text.find("[["); at != StringRef::npos; at = text.find("[[", at + 2)) {
             size_t before = at;

@@ -1,6 +1,7 @@
 // The effects of a function type (issue #396). Included by runtime/lang.c, after runtime/lang_unused.c.
 //
-//   void (*log)(const char *) [[smith::effects(console)]];   =>   ... [[clang::annotate_type("smith::effects:console")]];
+//   void (*log)(const char *) [[smith::effects(console)]];   =>   ...
+//   [[clang::annotate_type("smith::effects:console")]];
 //
 // C23 puts an attribute after a function declarator's parameter list on the function type, but a plugin's attribute
 // cannot sit on a type (clang refuses it), while its own `annotate_type` can and is kept through a typedef, a field, a
