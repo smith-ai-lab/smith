@@ -46,6 +46,6 @@ smith_object(b, &o);
 smith keeps two under `$XDG_CACHE_HOME/smith/` (else `~/.cache/smith/`): `packages/<hex>/` and `modules/` (Clang's module cache, shared by every project so the SDK's modules are built once per machine). One rule: an entry unused for 31 days is removed, checked at most once a week. Each root also has a byte cap, 10 GB or `SMITH_CACHE_MAX` (bytes, or `500M`, `10G`): over it, the least recently used entries go first, never one in use or the package just fetched; `smith cache` shows the cap. Both are keyed by hash, so a removed entry is fetched or built again.
 
 - `smith cache` shows each cache's path, entries and size (`-v` lists the entries and their last use).
-- `smith cache clean [modules|packages]` empties them. It refuses while a `smith build` is running (builds hold a shared lock on `<cache>/smith/lock`).
+- `smith cache clean [modules|packages|lint]` empties them. It refuses while a `smith build` is running (builds hold a shared lock on `<cache>/smith/lock`).
 - Not here: the compiler's runtime files (`$XDG_DATA_HOME/smith/clang/...`, `.../programs/...`) are outside these caches and are never removed by smith, because built sanitized binaries point into them (`smith-trace`). The project's `.smith/` is rebuilt by `rm -rf .smith`, always safe.
 - Tests that touch caches must use a temporary `XDG_CACHE_HOME`; never clean the real one to fix a build.
