@@ -248,7 +248,7 @@ int main() {
     c::printf("%zu\n", small);
     return 0;
 }
-==> c-name/src/smith/arena.smith <==
+==> c-name/src/std/arena.smith <==
 module std::arena;
 
 // A C API that keeps its names: the module's prefix would make smith_arena_Arena of these.
@@ -272,7 +272,7 @@ export U64 take(Arena *arena, U64 size) {
 
 // Defined in C, by its C name.
 [[std::c_name("smith_arena_checksum")]] export U64 checksum(const U8 *data, Usize size);
-==> c-name/src/smith/text.smith <==
+==> c-name/src/std/text.smith <==
 module std::text;
 import std::arena;
 
@@ -348,11 +348,11 @@ struct Flags {
     U32 high : 3;
 };
 
-static Type wider(Type a, Type b) {
+static Type Wider(Type a, Type b) {
     return sizeof(a) >= sizeof(b) ? a : b;
 }
 
-static_assert(wider(U8, F64) == F64);
+static_assert(Wider(U8, F64) == F64);
 
 I32 main() {
     I32 n = 13;
@@ -466,7 +466,7 @@ export Usize dims(Usize rows, Usize columns) {
 module kinds;
 
 // A function over `type`, which an importer runs where a type is computed (issue #107).
-export Type slice_of(Type element, Usize count) {
+export Type SliceOf(Type element, Usize count) {
     Type t = element;
     for (Usize i = 0; i < count; i++)
         t = t[:];
@@ -480,7 +480,7 @@ import counts;
 import kinds;
 
 // The result type is a function over types applied to the result of another module's ordinary function.
-export kinds::slice_of(T, counts::dims(2, 3)) make(constexpr Type T, Usize rows, Usize columns) {
+export kinds::SliceOf(T, counts::dims(2, 3)) make(constexpr Type T, Usize rows, Usize columns) {
     struct smith_array_T_n result = {};
     result.count[0] = rows;
     result.count[1] = columns;
@@ -790,7 +790,7 @@ module main;
 
 import <stdio.h>;
 
-Type maybe(Type T) {
+Type Maybe(Type T) {
     return enum {
         T some;
         none;
@@ -804,7 +804,7 @@ static Usize divide(Usize a, Usize b) {
     if (b != 0) {
         r = {.ok = a / b};
     }
-    maybe(I32) m = {.some = 5};
+    Maybe(I32) m = {.some = 5};
     if (r == .ok && m == .some) return r.ok + (Usize)m.some;
     return 0;
 }
@@ -1347,8 +1347,8 @@ import <stdio.h>;
 import opt;
 import other;
 
-typedef opt::maybe(Usize) Maybe;
-typedef opt::maybe(F64) MaybeF;
+typedef opt::Maybe(Usize) Maybe;
+typedef opt::Maybe(F64) MaybeF;
 
 static Usize or_else(Maybe m, Usize otherwise) {
     if (m == .some) return m.some;
@@ -1360,7 +1360,7 @@ static F64 or_zero(MaybeF m) {
     return 0;
 }
 
-opt::maybe(I32) twice(I32 x) {
+opt::Maybe(I32) twice(I32 x) {
     return {.some = x * 2};
 }
 
@@ -1378,21 +1378,21 @@ I32 main(void) {
 ==> enum-type-function-export/src/opt.smith <==
 module opt;
 
-export Type maybe(Type T) {
+export Type Maybe(Type T) {
     return enum {
         T some;
         none;
     };
 }
 
-typedef maybe(Usize) Index;
+typedef Maybe(Usize) Index;
 
-export maybe(T) first(constexpr Type T, T *xs, Usize n) {
+export Maybe(T) first(constexpr Type T, T *xs, Usize n) {
     if (n == 0) return .none;
     return {.some = xs[0]};
 }
 
-export maybe(Usize) find(const char *text, char wanted) {
+export Maybe(Usize) find(const char *text, char wanted) {
     for (Usize i = 0; text[i] != 0; i++)
         if (text[i] == wanted) return {.some = i};
     return .none;
@@ -1403,7 +1403,7 @@ module other;
 import opt;
 
 // A second importer of the exported type function: its `opt::maybe(Usize)` is the struct the others have.
-export opt::maybe(Usize) pick(Usize v) {
+export opt::Maybe(Usize) pick(Usize v) {
     return {.some = v};
 }
 ==> enum-type-function-generic/src/main.smith <==
@@ -1411,33 +1411,33 @@ module main;
 
 import <stdio.h>;
 
-Type maybe(Type T) {
+Type Maybe(Type T) {
     return enum {
         T some;
         none;
     };
 }
 
-typedef maybe(Usize) Maybe;
-typedef maybe(F64) MaybeF;
+typedef Maybe(Usize) Slot;
+typedef Maybe(F64) MaybeF;
 
 // A type function used with a generic's own parameters: each instance writes the struct a written `maybe(Usize)` is.
-maybe(T) first(constexpr Type T, T *xs, Usize n) {
+Maybe(T) first(constexpr Type T, T *xs, Usize n) {
     if (n == 0) return .none;
     return {.some = xs[0]};
 }
 
-maybe(typeof(x)) wrap(auto x) {
-    maybe(typeof(x)) out = {.some = x};
+Maybe(typeof(x)) wrap(auto x) {
+    Maybe(typeof(x)) out = {.some = x};
     return out;
 }
 
-maybe(T) pass(constexpr Type T, maybe(T) o) {
-    maybe(T) copy = o;
+Maybe(T) pass(constexpr Type T, Maybe(T) o) {
+    Maybe(T) copy = o;
     return copy;
 }
 
-static Usize or_else(Maybe m, Usize otherwise) {
+static Usize or_else(Slot m, Usize otherwise) {
     if (m == .some) return m.some;
     return otherwise;
 }
@@ -1449,10 +1449,10 @@ static F64 or_zero(MaybeF m) {
 
 I32 main(void) {
     Usize xs[2] = {7, 8};
-    Maybe a = first(Usize, xs, 2);
-    Maybe none = first(Usize, xs, 0);
+    Slot a = first(Usize, xs, 2);
+    Slot none = first(Usize, xs, 0);
     MaybeF w = wrap(2.5);
-    Maybe p = pass(Usize, a);
+    Slot p = pass(Usize, a);
     c::printf("%zu %zu %g %zu\n", or_else(a, 0), or_else(none, 99), or_zero(w), or_else(p, 0));
     return 0;
 }
@@ -1462,14 +1462,14 @@ module first;
 // `maybe(Usize)` written in a module and exported: its struct is in the module's header, guarded, so that the other
 // module that writes it, and the importer that writes it too, share one type.
 
-Type maybe(Type T) {
+Type Maybe(Type T) {
     return enum {
         T some;
         none;
     };
 }
 
-export maybe(Usize) head(Usize v) {
+export Maybe(Usize) head(Usize v) {
     if (v == 0) return .none;
     return {.some = v};
 }
@@ -1480,7 +1480,7 @@ import <stdio.h>;
 import first;
 import second;
 
-Type maybe(Type T) {
+Type Maybe(Type T) {
     return enum {
         T some;
         none;
@@ -1489,7 +1489,7 @@ Type maybe(Type T) {
 
 // `maybe(Usize)` from `first`, from `second` and the importer's own is one type: a value of one is a value of the
 // others.
-static Usize or_zero(maybe(Usize) o) {
+static Usize or_zero(Maybe(Usize) o) {
     if (o == .some) return o.some;
     return 0;
 }
@@ -1497,16 +1497,16 @@ static Usize or_zero(maybe(Usize) o) {
 I32 main(void) {
     U8 raw[5] = {1, 2, 3, 4, 5};
     U8 bytes[:] = raw;
-    maybe(Usize) a = first::head(7);
-    maybe(Usize) b = second::last(1);
-    maybe(Usize) c = second::position(bytes, 4);
+    Maybe(Usize) a = first::head(7);
+    Maybe(Usize) b = second::last(1);
+    Maybe(Usize) c = second::position(bytes, 4);
     c::printf("%zu %zu %zu %zu\n", or_zero(a), or_zero(b), or_zero(c), or_zero(first::head(0)));
     return 0;
 }
 ==> enum-type-function-module/src/second.smith <==
 module second;
 
-Type maybe(Type T) {
+Type Maybe(Type T) {
     return enum {
         T some;
         none;
@@ -1515,13 +1515,13 @@ Type maybe(Type T) {
 
 // A generic whose outcome is `maybe(Usize)`: the instance is written in the importer, against the struct the header
 // defines.
-export maybe(Usize) position(auto xs, auto v) {
+export Maybe(Usize) position(auto xs, auto v) {
     for (Usize i = 0; i < countof(xs); i++)
         if (xs[i] == v) return {.some = i};
     return .none;
 }
 
-export maybe(Usize) last(Usize v) {
+export Maybe(Usize) last(Usize v) {
     if (v < 2) return .none;
     return {.some = v - 1};
 }
@@ -1537,53 +1537,53 @@ typedef struct {
     F32 radius;
 } Circle;
 
-Type maybe(Type T) {
+Type Maybe(Type T) {
     return enum {
         T some;
         none;
     };
 }
 
-Type outcome(Type T, Type E) {
+Type Outcome(Type T, Type E) {
     return enum {
         T ok;
         E error;
     };
 }
 
-static maybe(Usize) find(const char *text, char wanted) {
+static Maybe(Usize) find(const char *text, char wanted) {
     for (Usize i = 0; text[i] != 0; i++)
         if (text[i] == wanted) return {.some = i};
     return .none;
 }
 
-static maybe(Usize) again(Usize v) {
-    maybe(Usize) x = {.some = v};
+static Maybe(Usize) again(Usize v) {
+    Maybe(Usize) x = {.some = v};
     return x;
 }
 
-static outcome(Circle, I32) make(Bool good) {
+static Outcome(Circle, I32) make(Bool good) {
     if (good) return {.ok = {.radius = 2}};
     return {.error = 7};
 }
 
-typedef maybe(Circle *) MaybeCircle;
+typedef Maybe(Circle *) MaybeCircle;
 
 static F32 radius_of(MaybeCircle c) {
     if (c == .some) return c.some->radius;
     return -1;
 }
 
-static Usize unwrap(maybe(Usize) o, Usize otherwise) {
+static Usize unwrap(Maybe(Usize) o, Usize otherwise) {
     if (o == .some) return o.some;
     return otherwise;
 }
 
 I32 main(void) {
-    maybe(Usize) at = find("key=value", '=');
-    maybe(Usize) missing = find("none", '=');
-    outcome(Circle, I32) good = make(true);
-    outcome(Circle, I32) bad = make(false);
+    Maybe(Usize) at = find("key=value", '=');
+    Maybe(Usize) missing = find("none", '=');
+    Outcome(Circle, I32) good = make(true);
+    Outcome(Circle, I32) bad = make(false);
     c::printf("%zu %zu\n", unwrap(at, 99), unwrap(missing, 99));
     c::printf("%zu\n", unwrap(again(5), 0));
     Circle unit = {.radius = 3};
@@ -1917,7 +1917,7 @@ export typeof(x) twice(Num x) {
     return x + x;
 }
 
-export typeof(*p) read(const integer *p) {
+export typeof(*p) read(const Int *p) {
     return *p;
 }
 
@@ -2062,14 +2062,14 @@ module main;
 
 // `option` and `result` are built in: a module cannot declare its own.
 
-Type option(Type T) {
+Type Option(Type T) {
     return enum {
         T some;
         none;
     };
 }
 
-Type result(Type T, Type E) {
+Type Result(Type T, Type E) {
     return enum {
         T ok;
         E error;
@@ -2186,28 +2186,28 @@ I32 main(void) {
 ==> error-enum-type-function-export/src/opt.smith <==
 module opt;
 
-Type maybe(Type T) {
+Type Maybe(Type T) {
     return enum {
         T some;
         none;
     };
 }
 
-export maybe(T) first(constexpr Type T, T *xs, Usize n) {
+export Maybe(T) first(constexpr Type T, T *xs, Usize n) {
     if (n == 0) return .none;
     return {.some = xs[0]};
 }
 ==> error-enum-type-function-generic/src/main.smith <==
 module main;
 
-Type maybe(Type T) {
+Type Maybe(Type T) {
     return enum {
         T some;
         none;
     };
 }
 
-maybe(T) first(constexpr Type T, T *xs, Usize n) {
+Maybe(T) first(constexpr Type T, T *xs, Usize n) {
     if (n == 0) return .none;
     return {.some = xs[0]};
 }
@@ -2223,20 +2223,20 @@ module main;
 
 // Each line below is an error with its fix; none is accepted and misread. The limits are the implementation's.
 
-Type pair(Type T) {
+Type Pair(Type T) {
     return enum {
         T first;
         T second;
     };
 }
 
-Type many(Type T, Usize n) {
+Type Many(Type T, Usize n) {
     return enum {
         T some;
     };
 }
 
-Type branchy(Type T) {
+Type Branchy(Type T) {
     if (sizeof(T) > 4) return enum {
             T big;
         };
@@ -2245,14 +2245,14 @@ Type branchy(Type T) {
     };
 }
 
-Type opt(Type T) {
+Type Opt(Type T) {
     return enum {
         T some;
         none;
     };
 }
 
-static opt(Usize, Usize) two(void);
+static Opt(Usize, Usize) two(void);
 ==> error-errdefer-plain/src/main.smith <==
 module main;
 import <stdio.h>;
@@ -2417,7 +2417,7 @@ export Usize rows(Float grid[:][:]) {
     return countof(grid);
 }
 
-export typeof(*p) read(const integer *p) {
+export typeof(*p) read(const Int *p) {
     return *p;
 }
 
@@ -2671,7 +2671,7 @@ static I32 three(Type T) {
 }
 
 // A division by zero is no constant.
-static Type divided(Type T, Usize k) {
+static Type Divided(Type T, Usize k) {
     return k / (k - k) == 0 ? T : I64;
 }
 
@@ -2679,7 +2679,7 @@ export three(T) not_a_type(constexpr Type T, auto x) {
     return x;
 }
 
-export divided(T, countof(rest)) not_computable(constexpr Type T, auto... rest) {
+export Divided(T, countof(rest)) not_computable(constexpr Type T, auto... rest) {
     return 0;
 }
 
@@ -2857,7 +2857,7 @@ I32 main(io::Io *io) {
     io::Io other = io::make(1, nullptr);
     return other.count - io->count;
 }
-==> error-main-io-make/src/smith/io.smith <==
+==> error-main-io-make/src/std/io.smith <==
 // A stand-in for std::io, which the language knows by its name: an io that counts its arguments and says when it is
 // closed.
 module std::io;
@@ -3184,7 +3184,7 @@ U64 widen(uint32_t x, size_t n, ptrdiff_t d) {
 ==> error-str-array/src/main.smith <==
 module main;
 
-// An array of `str` takes no braces yet: each element would be initialized member by member, leaving a slice empty.
+// An array of `Str` takes no braces yet: each element would be initialized member by member, leaving a slice empty.
 
 I32 main() {
     Str names[1] = {"a"};
@@ -3193,7 +3193,7 @@ I32 main() {
 ==> error-str-name/src/main.smith <==
 module main;
 
-// `str` is a type in a module, as `I32` is: it cannot name a variable, a parameter, a field or a function.
+// `Str` is a type in a module, as `I32` is: it cannot name a variable, a parameter, a field or a function.
 
 struct Holder {
     const char *Str;
@@ -3262,7 +3262,7 @@ static Option(I32) pick(I32 n) {
     return {.some = n};
 }
 
-// The kind is checked per instance: a function returning Result(T, I32) cannot `try` an option.
+// The kind is checked per instance: a function returning result(T, I32) cannot `try` an option.
 Result(T, I32) wrong(constexpr Type T, T x) {
     I32 v = try pick(1);
     return {.ok = x};
@@ -3275,7 +3275,7 @@ I32 main() {
 ==> error-try-kind/src/main.smith <==
 module main;
 
-// A function returns the same kind as the call it `try`s: a result for a result, an option for an Option (issue #211).
+// A function returns the same kind as the call it `try`s: a result for a result, an option for an option (issue #211).
 static Result(I32, I32) step(I32 n) {
     return {.ok = n};
 }
@@ -3300,7 +3300,7 @@ I32 main() {
 ==> error-try-plain-function/src/main.smith <==
 module main;
 
-// `try` needs a function that returns a result or an Option (issue #211).
+// `try` needs a function that returns a result or an option (issue #211).
 static Result(I32, I32) step(I32 n) {
     return {.ok = n};
 }
@@ -3368,16 +3368,16 @@ module main;
 import <stdio.h>;
 
 // A pointer's pointee is known one level deep: `T **` cannot be walked twice.
-static Type twice(Type t) {
+static Type Twice(Type t) {
     if (Pointer(t)) return typeof(*(t) nullptr);
     return t;
 }
 
 int main() {
-    constexpr Type once = twice(I32 *);
-    constexpr Type deep = twice(twice(I32 **));
-    once x = 1;
-    deep y = 2;
+    constexpr Type Once = Twice(I32 *);
+    constexpr Type Deep = Twice(Twice(I32 **));
+    Once x = 1;
+    Deep y = 2;
     c::printf("%d %d\n", x, y);
     return 0;
 }
@@ -3387,7 +3387,7 @@ module main;
 import shapes;
 
 // The result type is another module's function, and the body checks the sizes: no size is a message at the call.
-export shapes::slice_of(T, countof(sizes)) make(constexpr Type T, auto... sizes) {
+export shapes::SliceOf(T, countof(sizes)) make(constexpr Type T, auto... sizes) {
     static_assert(countof(sizes) > 0, "make needs a size for each [:]");
     struct smith_array_T_n result = {};
     for constexpr (Usize i = 0; i < countof(sizes); i++)
@@ -3412,12 +3412,12 @@ export Bool small(Type t) {
     return !is_wide(t);
 }
 
-export Type wider(Type a, Type b) {
+export Type Wider(Type a, Type b) {
     return sizeof(a) >= sizeof(b) ? a : b;
 }
 
 // `t[:]` once for each size: `slice_of(F32, 2)` is `F32[:][:]`.
-export Type slice_of(Type element, Usize count) {
+export Type SliceOf(Type element, Usize count) {
     Type t = element;
     for (Usize i = 0; i < count; i++)
         t = t[:];
@@ -3425,8 +3425,8 @@ export Type slice_of(Type element, Usize count) {
 }
 
 // A function over types may call another, exported or not.
-export Type slice_if_small(Type t) {
-    return small(t) ? slice_of(t, 1) : t;
+export Type SliceIfSmall(Type t) {
+    return small(t) ? SliceOf(t, 1) : t;
 }
 ==> error-type-value-runtime/src/main.smith <==
 typedef struct {
@@ -3440,54 +3440,54 @@ Column table = {"a", U8};
 int main() {
     Type local = I32;
     Column column = {"b", F64};
-    constexpr Type fine = I32;
+    constexpr Type Fine = I32;
     constexpr Column also_fine = {"c", F32};
-    return (int)sizeof(fine) + (int)sizeof(also_fine.of);
+    return (int)sizeof(Fine) + (int)sizeof(also_fine.of);
 }
 ==> error-type-value-slice-bounds/src/main.smith <==
 module main;
 
 // A type has no elements to pick: `t[:]` is the only subscript it takes.
-static Type bad(Type T) {
+static Type Bad(Type T) {
     Type t = T;
     t = t[1:2];
     return t;
 }
 
-static Type worse(Type T) {
+static Type Worse(Type T) {
     return T[:3];
 }
 
 int main() {
-    constexpr Type q = bad(F32);
-    constexpr Type r = worse(F32);
+    constexpr Type Q = Bad(F32);
+    constexpr Type R = Worse(F32);
     return 0;
 }
 ==> error-typetag-collision-reverse/src/main.smith <==
 module main;
 
-I32 count = 1;
+I32 Count = 1;
 
-struct count {
+struct Count {
     I32 total;
 };
 
 I32 main() {
-    return count;
+    return Count;
 }
 ==> error-typetag-collision/src/main.smith <==
 module main;
 
-struct stat {
+struct Stat {
     I32 size;
 };
 
-I32 stat(I32 fd) {
+I32 Stat(I32 fd) {
     return fd;
 }
 
 I32 main() {
-    return stat(0);
+    return Stat(0);
 }
 ==> error-unused-discard-braces/src/main.smith <==
 module main;
@@ -3825,7 +3825,7 @@ export I32 both(void) {
 module kinds;
 
 // A function over `type`, which an importer runs where a type is computed (issue #107).
-export Type slice_of(Type element, Usize count) {
+export Type SliceOf(Type element, Usize count) {
     Type t = element;
     for (Usize i = 0; i < count; i++)
         t = t[:];
@@ -3845,7 +3845,7 @@ if constexpr (target::os == target::macos) {
     import <dispatch/dispatch.h>;
 }
 
-export kinds::slice_of(T, 2) make(constexpr Type T, Usize rows, Usize columns) {
+export kinds::SliceOf(T, 2) make(constexpr Type T, Usize rows, Usize columns) {
     struct smith_array_T_n result = {};
     result.count[0] = rows;
     result.count[1] = columns;
@@ -4561,7 +4561,7 @@ export F64 mix(auto a, auto b) {
     return sum;
 }
 
-// An `auto` beside a `constexpr Type`: the type is passed, and the other is told from its argument.
+// An `auto` beside a `constexpr type`: the type is passed, and the other is told from its argument.
 export typeof(a) *make(auto a, constexpr Type T, Usize count) {
     (void)a;
     (void)count;
@@ -5040,11 +5040,11 @@ export Usize rows(Float grid[:][:]) {
     return countof(grid);
 }
 
-export typeof(*p) read(const integer *p) {
+export typeof(*p) read(const Int *p) {
     return *p;
 }
 
-export void bump(arithmetic *p, typeof(*p) by) {
+export void bump(Num *p, typeof(*p) by) {
     *p += by;
 }
 
@@ -6692,7 +6692,7 @@ I32 main(void) {
 ==> generic-option-slice-of/src/rows.smith <==
 module rows;
 
-export Type slice_of(Type element, Usize count) {
+export Type SliceOf(Type element, Usize count) {
     Type t = element;
     for (Usize i = 0; i < count; i++)
         t = t[:];
@@ -6700,7 +6700,7 @@ export Type slice_of(Type element, Usize count) {
 }
 
 // The result is an option over a slice type that a function computes: the argument of `option` is a call.
-export Option(slice_of(T, 1)) view(constexpr Type T, T *xs, Usize n) {
+export Option(SliceOf(T, 1)) view(constexpr Type T, T *xs, Usize n) {
     if (n == 0) return .none;
     return {.some = (struct smith_array_T_n){.data = xs, .count = {n}}};
 }
@@ -7424,21 +7424,21 @@ module main;
 import <stdio.h>;
 
 // Ordinary functions over types and numbers: they run in the compiler.
-static Type by_count(Type T, Usize k) {
+static Type ByCount(Type T, Usize k) {
     return k == 0 ? T : k == 1 ? I16 : F64;
 }
 
-static Type wide_of(Type T) {
+static Type WideOf(Type T) {
     return sizeof(T) <= 2 ? I64 : T;
 }
 
 // The result type is computed from `countof(rest)`: one body, the type settled for each instance.
-export by_count(T, countof(rest)) from_count(constexpr Type T, auto... rest) {
+export ByCount(T, countof(rest)) from_count(constexpr Type T, auto... rest) {
     return 7;
 }
 
-// ... or from a `constexpr Type` parameter alone.
-export wide_of(T) widen(constexpr Type T, auto x) {
+// ... or from a `constexpr type` parameter alone.
+export WideOf(T) widen(constexpr Type T, auto x) {
     return x;
 }
 
@@ -7494,10 +7494,10 @@ I32 main() {
     char writable[:] = stats::tail(plain);
     c::printf("%zu %zu\n", countof(rest), countof(writable));
 
-    constexpr Type plain_type = typeof(plain);
-    constexpr Type read_type = typeof(read);
-    static_assert(plain_type != read_type);
-    static_assert(Slice(read_type) && read_type == typeof(cut));
+    constexpr Type PlainType = typeof(plain);
+    constexpr Type ReadType = typeof(read);
+    static_assert(PlainType != ReadType);
+    static_assert(Slice(ReadType) && ReadType == typeof(cut));
     c::printf("%zu %zu %zu %zu\n", stats::calls(plain), stats::calls(read), stats::calls(plain),
               stats::calls(cut)); // the instance for const char[:] is not the one for char[:]
 
@@ -7984,17 +7984,17 @@ import <stdio.h>;
 I32 main() {
     U8 raw[4] = {1, 2, 3, 4};
     U8 plain[:] = raw;
-    constexpr Type plain_type = typeof(plain);
-    constexpr Type wide = U16;
-    constexpr Type other_type = wide[:];
-    c::printf("%d %d %d\n", probe::same_size(plain, plain_type), probe::same_size(plain, other_type),
-              probe::same_size(raw[0], plain_type));
+    constexpr Type PlainType = typeof(plain);
+    constexpr Type Wide = U16;
+    constexpr Type OtherType = Wide[:];
+    c::printf("%d %d %d\n", probe::same_size(plain, PlainType), probe::same_size(plain, OtherType),
+              probe::same_size(raw[0], PlainType));
     return 0;
 }
 ==> generic-slice-type-argument/src/probe.smith <==
 module probe;
 
-// A type argument after an auto argument: the slice's type binds like any other constexpr Type.
+// A type argument after an auto argument: the slice's type binds like any other constexpr type.
 
 export Bool same_size(auto x, constexpr Type T) {
     return sizeof(typeof(x)) == sizeof(T);
@@ -8036,7 +8036,7 @@ struct Point {
 };
 
 // is_slice is true for T[:] and for more dimensions, false for the rest, a fixed array included.
-static Type slice_of(Type T) {
+static Type SliceOf(Type T) {
     return T[:];
 }
 
@@ -8049,15 +8049,15 @@ I32 main() {
     I32 xs[:] = raw;
     F32 rows_type[:][2];
     F32 grid_type[:][:];
-    constexpr Type one = slice_of(I32);
-    constexpr Type plain = I32;
-    constexpr Type fixed = I32[4];
-    constexpr Type of_xs = typeof(xs);
-    constexpr Type of_rows = typeof(rows_type);
-    constexpr Type of_grid = typeof(grid_type);
-    static_assert(Slice(one) && Slice(of_xs) && Slice(of_rows) && Slice(of_grid) && one == of_xs);
-    static_assert(slicy(one) && slicy(slice_of(F32[2])) && !slicy(plain) && !slicy(fixed));
-    static_assert(!Slice(plain) && !Slice(fixed) && !Array(one) && Array(fixed));
+    constexpr Type One = SliceOf(I32);
+    constexpr Type Plain = I32;
+    constexpr Type Fixed = I32[4];
+    constexpr Type OfXs = typeof(xs);
+    constexpr Type OfRows = typeof(rows_type);
+    constexpr Type OfGrid = typeof(grid_type);
+    static_assert(Slice(One) && Slice(OfXs) && Slice(OfRows) && Slice(OfGrid) && One == OfXs);
+    static_assert(slicy(One) && slicy(SliceOf(F32[2])) && !slicy(Plain) && !slicy(Fixed));
+    static_assert(!Slice(Plain) && !Slice(Fixed) && !Array(One) && Array(Fixed));
     c::printf("%lld %zu %d\n", (long long)stats::total_i(xs), stats::count(xs), stats::last_i32(xs));
 
     // A row of a slice of rows is a slice: F32[:][2] has rows of two, F32[:][:] rows of any count.
@@ -8874,7 +8874,7 @@ I32 main(program_io::Io *io) {
     c::printf("main has %d argument\n", helper(io->count - 1));
     return 4;
 }
-==> main-io-module/src/smith/io.smith <==
+==> main-io-module/src/std/io.smith <==
 // A stand-in for std::io, which the language knows by its name: an io that counts its arguments and says when it is
 // closed.
 module std::io;
@@ -8903,7 +8903,7 @@ I32 main(I32 argc, char *argv[]) {
     io::close(&io);
     return 0;
 }
-==> main-io-two-forms/src/smith/io.smith <==
+==> main-io-two-forms/src/std/io.smith <==
 // A stand-in for std::io, which the language knows by its name: an io that counts its arguments and says when it is
 // closed.
 module std::io;
@@ -8937,7 +8937,7 @@ I32 main(io::Io *io) {
     }
     return 0;
 }
-==> main-io/src/smith/io.smith <==
+==> main-io/src/std/io.smith <==
 // A stand-in for std::io, which the language knows by its name: an io that counts its arguments and says when it is
 // closed.
 module std::io;
@@ -8958,7 +8958,7 @@ import <stdio.h>;
 ==> main-old-form-error/src/main.smith <==
 module main;
 
-// C's form is an error in a module: the arguments are `str args[:]`.
+// C's form is an error in a module: the arguments are `Str args[:]`.
 int main(int argc, char **argv) {
     return argc;
 }
@@ -9867,9 +9867,9 @@ int main() {
     F32 half = 0.5f;
     F64 wide = half;
     printf("%.2f %.2f\n", (double)half, wide);
-    static_assert(_Generic((U64)0, unsigned long long: 1, unsigned long: 1, default: 0), "u64 is an unsigned type");
-    static_assert(_Generic((Usize)0, size_t: 1, default: 0), "usize is size_t");
-    static_assert(_Generic((Isize)0, ptrdiff_t: 1, default: 0), "isize is ptrdiff_t");
+    static_assert(_Generic((U64)0, unsigned long long: 1, unsigned long: 1, default: 0), "U64 is an unsigned type");
+    static_assert(_Generic((Usize)0, size_t: 1, default: 0), "Usize is size_t");
+    static_assert(_Generic((Isize)0, ptrdiff_t: 1, default: 0), "Isize is ptrdiff_t");
     Bool flag = true;
     printf("%d\n", flag);
     return 0;
@@ -10003,7 +10003,7 @@ module main;
 import <stdio.h>;
 
 // A slice member takes a slice expression in an initializer list as it does in an assignment (issue #173): a string
-// literal, an array or another slice, by designator, by position, nested, as a typedef'd `str`, in a compound literal.
+// literal, an array or another slice, by designator, by position, nested, as a typedef'd `Str`, in a compound literal.
 
 typedef const char Str[:];
 
@@ -10478,10 +10478,10 @@ I32 main() {
 #include <stdio.h>
 
 struct Holder {
-    const char *Str;
+    const char *str;
 };
 
-static int measure(const char *Str) {
+static int measure(const char *str) {
     int n = 0;
     while (str[n] != 0)
         n++;
@@ -10489,9 +10489,9 @@ static int measure(const char *Str) {
 }
 
 int main() {
-    const char *Str = "abcd";
-    struct Holder holder = {.str = Str};
-    printf("%d %d\n", measure(Str), measure(holder.str));
+    const char *str = "abcd";
+    struct Holder holder = {.str = str};
+    printf("%d %d\n", measure(str), measure(holder.str));
     return 0;
 }
 ==> str-lowering/src/words.smith <==
@@ -10564,7 +10564,7 @@ module main;
 
 import <stdio.h>;
 
-// `str` is a type of every module, `const char[:]` (issue #85), as `U8` is a type: no typedef, no import.
+// `Str` is a type of every module, `const char[:]` (issue #85), as `U8` is a type: no typedef, no import.
 
 struct Named {
     Str name;
@@ -10601,7 +10601,7 @@ I32 main() {
 
     char raw[4] = {'a', 'b', 'c', 'd'};
     char w[:] = raw;
-    str r = w;    // const is added implicitly
+    Str r = w;    // const is added implicitly
     Str *pr = &w; // a pointer to char[:] is a pointer to str (C23, N2607)
     poke(&w);
     c::printf("%zu %c %zu %c\n", length(w), (*pr)[0], countof(tail(r)), tail(w)[0]);
@@ -10652,9 +10652,9 @@ import <stdio.h>;
 import text;
 
 I32 main() {
-    text::str s = "hello world";
-    text::str w = text::first_word(s);
-    text::str *p = &s;
+    text::Str s = "hello world";
+    text::Str w = text::first_word(s);
+    text::Str *p = &s;
     Usize n = 0;
     while (text::pop(p))
         n++;
@@ -10700,7 +10700,7 @@ module main;
 
 import <stdio.h>;
 
-// C's typedef of an array declarator names a slice type (issue #148): `typedef const char str[:];`, `typedef char
+// C's typedef of an array declarator names a slice type (issue #148): `typedef const char Str[:];`, `typedef char
 // bytes[:];`.
 
 typedef const char Str[:];
@@ -10740,7 +10740,7 @@ I32 main() {
 
     char raw[4] = {'a', 'b', 'c', 'd'};
     bytes w = raw;
-    str r = w;    // const is added implicitly
+    Str r = w;    // const is added implicitly
     Str *pr = &w; // a pointer to bytes is a pointer to str (C23, N2607)
     poke(&w);
     c::printf("%zu %c %zu %c\n", length(w), (*pr)[0], countof(tail(r)), tail(w)[0]);
@@ -10770,7 +10770,7 @@ extern I32 c_static_analyzer();
 
 // A fact is a constant expression: a static_assert, an array size, a constexpr initializer.
 static_assert(target::float_radix == 2);
-static_assert(target::f32_mantissa_bits == 24 && target::f64_mantissa_bits == 53, "f32 and f64 are IEEE");
+static_assert(target::f32_mantissa_bits == 24 && target::f64_mantissa_bits == 53, "F32 and F64 are IEEE");
 static_assert(target::aarch64 != target::x86_64 && target::macos != target::linux);
 static_assert(target::arch == target::aarch64 || target::arch == target::x86_64 || target::arch == 0);
 
@@ -10813,7 +10813,7 @@ import <stdio.h>;
 typedef Result(Usize, I32) Wide;
 typedef Result(F64, I32) Real;
 typedef Option(U8) Small;
-typedef Option(F64) Real;
+typedef Option(F64) Scalar;
 
 static Result(I32, I32) step(I32 n) {
     if (n < 0) return {.error = n};
@@ -10871,7 +10871,7 @@ static void show_small(Small o) {
     }
 }
 
-static void show_float(Real o) {
+static void show_float(Scalar o) {
     switch (o) {
     case .some:
         c::printf("some %g\n", o.some);
@@ -11206,12 +11206,12 @@ module marks;
 // A declaration with a C name, then a function over `type`: the attribute must not leave the file inside brackets.
 [[std::c_name("marks_const")]] export extern I32 marker;
 
-static Type leaf_of(Type t) {
+static Type LeafOf(Type t) {
     if (Pointer(t)) return typeof(*(t) nullptr);
     return t;
 }
 
-export leaf_of(typeof(x)) at(auto x) {
+export LeafOf(typeof(x)) at(auto x) {
     if constexpr (Pointer(typeof(x))) {
         return x[0];
     } else {
@@ -11223,12 +11223,12 @@ module leaves;
 
 // The type a pointer points to, and a scalar's own: a function over `type` that reads the pointee of a type value in
 // C's own way (issue #143).
-static Type leaf_of(Type t) {
+static Type LeafOf(Type t) {
     if (Pointer(t)) return typeof(*(t) nullptr);
     return t;
 }
 
-export leaf_of(T) first(constexpr Type T, T x) {
+export LeafOf(T) first(constexpr Type T, T x) {
     if constexpr (Pointer(T)) {
         return *x;
     } else {
@@ -11277,11 +11277,11 @@ static Bool wide(Type t) {
 
 // A private function over `type`: the exported generics below call it, in a computed result type and in an
 // `if constexpr`, and an importing module's instance finds it (issue #143).
-static Type same(Type t) {
+static Type Same(Type t) {
     return wide(t) ? t : t;
 }
 
-export same(T) keep(constexpr Type T, auto x) {
+export Same(T) keep(constexpr Type T, auto x) {
     return x;
 }
 
@@ -11307,27 +11307,27 @@ module sizes;
 
 // A sized type written in a function over `type`: the importer's replay keeps the compiler's own name for it
 // (`__INT64_TYPE__`), and it is still a type value there (issue #143).
-export Type small_of(Type t) {
+export Type SmallOf(Type t) {
     return sizeof(t) > 4 ? I64 : t;
 }
 
-export small_of(T) convert(constexpr Type T, auto x) {
+export SmallOf(T) convert(constexpr Type T, auto x) {
     return x;
 }
 ==> type-function-typeof/src/main.smith <==
 module main;
 import <stdio.h>;
 // `typeof(expr)` in a function over `type` is the type of the expression, as it is anywhere (issue #143).
-static Type element(Type t) {
+static Type Element(Type t) {
     I32 *p = nullptr;
     if (sizeof(t) > 4) return typeof(*p);
     return t;
 }
 int main() {
-    constexpr Type once = element(F64);
-    constexpr Type small = element(U8);
-    once x = 1.5;
-    small y = 7;
+    constexpr Type Once = Element(F64);
+    constexpr Type Small = Element(U8);
+    Once x = 1.5;
+    Small y = 7;
     c::printf("%zu %zu\n", sizeof(x), sizeof(y));
     return 0;
 }
@@ -11341,7 +11341,7 @@ typedef struct {
     int size;
 } Item;
 
-constexpr Type wide = I64;
+constexpr Type Wide = I64;
 
 static int scaled(int type, int n) {
     return (type * n + 1) * 2;
@@ -11356,7 +11356,7 @@ static int total(const Item *item, int n) {
 
 int main() {
     Item item = {3, 4};
-    wide big = 5; // the keyword again, once `type` is out of scope
+    Wide big = 5; // the keyword again, once `type` is out of scope
     printf("%d %d %lld\n", scaled(2, 5), total(&item, 2), (long long)big);
     return 0;
 }
@@ -11457,7 +11457,7 @@ export I32 run() {
 ==> type-value-header/src/geo/units.smith <==
 module geo::units;
 
-// A struct is exported by name; the aliases below are `constexpr Type` and reach C as typedefs.
+// A struct is exported by name; the aliases below are `constexpr type` and reach C as typedefs.
 export struct Request {
     I32 id;
 };
@@ -11506,7 +11506,7 @@ import <stdio.h>;
 import shapes;
 
 // The result type is computed by another module's function; the instance is written here.
-export shapes::slice_of(T, countof(sizes)) make(constexpr Type T, auto... sizes) {
+export shapes::SliceOf(T, countof(sizes)) make(constexpr Type T, auto... sizes) {
     static_assert(countof(sizes) > 0, "make needs a size");
     struct smith_array_T_n result = {};
     for constexpr (Usize i = 0; i < countof(sizes); i++)
@@ -11531,16 +11531,16 @@ int main() {
     F32 vector[:];
     F32 grid[:][:];
     F32 rows[:][2];
-    constexpr Type of_vector = shapes::slice_of(F32, 1);
-    constexpr Type of_grid = shapes::slice_of(F32, 2);
-    constexpr Type of_rows = shapes::slice_of(F32[2], 1);
-    static_assert(of_vector == typeof(vector));
-    static_assert(of_grid == typeof(grid));
-    static_assert(of_rows == typeof(rows));
-    static_assert(shapes::wider(U8, F64) == F64);
+    constexpr Type OfVector = shapes::SliceOf(F32, 1);
+    constexpr Type OfGrid = shapes::SliceOf(F32, 2);
+    constexpr Type OfRows = shapes::SliceOf(F32[2], 1);
+    static_assert(OfVector == typeof(vector));
+    static_assert(OfGrid == typeof(grid));
+    static_assert(OfRows == typeof(rows));
+    static_assert(shapes::Wider(U8, F64) == F64);
     static_assert(shapes::small(U8) && !shapes::small(Pair));
-    constexpr Type chosen = shapes::slice_if_small(I16);
-    static_assert(chosen == typeof(vector) || sizeof(chosen) == 16);
+    constexpr Type Chosen = shapes::SliceIfSmall(I16);
+    static_assert(Chosen == typeof(vector) || sizeof(Chosen) == 16);
     grid = make(F32, 3, 4);
     rows = make(F32[2], 5);
     c::printf("%zu %zu %zu %d %d\n", countof(grid), countof(grid[0]), countof(rows), describe(U8), describe(Pair));
@@ -11559,12 +11559,12 @@ export Bool small(Type t) {
     return !is_wide(t);
 }
 
-export Type wider(Type a, Type b) {
+export Type Wider(Type a, Type b) {
     return sizeof(a) >= sizeof(b) ? a : b;
 }
 
 // `t[:]` once for each size: `slice_of(F32, 2)` is `F32[:][:]`.
-export Type slice_of(Type element, Usize count) {
+export Type SliceOf(Type element, Usize count) {
     Type t = element;
     for (Usize i = 0; i < count; i++)
         t = t[:];
@@ -11572,33 +11572,33 @@ export Type slice_of(Type element, Usize count) {
 }
 
 // A function over types may call another, exported or not.
-export Type slice_if_small(Type t) {
-    return small(t) ? slice_of(t, 1) : t;
+export Type SliceIfSmall(Type t) {
+    return small(t) ? SliceOf(t, 1) : t;
 }
 ==> type-value-main-only/src/main.smith <==
 // A file whose only type values are in main is read in type-value mode (issue #174).
-typedef const char Str[:];
+typedef const char str[:];
 
 I32 main() {
-    constexpr Type t = Str;
-    static_assert(Slice(t));
-    t words = "abc";
+    constexpr Type T = str;
+    static_assert(Slice(T));
+    T words = "abc";
     return (I32)countof(words) - 3;
 }
 ==> type-value-module-variable/src/main.smith <==
 module main;
 import <stdio.h>;
 
-// A file-scope `constexpr Type` declares variables in a module's functions and at file scope (issue #165).
-constexpr Type big = U32;
-constexpr Type small = F32;
+// A file-scope `constexpr type` declares variables in a module's functions and at file scope (issue #165).
+constexpr Type Big = U32;
+constexpr Type Small = F32;
 
-big total = 7;
+Big total = 7;
 
 I32 main() {
-    big x = 1;
-    static_assert(sizeof(big) == 4);
-    small y = 2.5;
+    Big x = 1;
+    static_assert(sizeof(Big) == 4);
+    Small y = 2.5;
     c::printf("%u %u %.1f\n", (U32)x, (U32)total, (F64)y);
     return 0;
 }
@@ -11618,30 +11618,27 @@ typedef int Three[3];
 typedef char *Text;
 
 constexpr Type kinds[10] = {I32, U8, F64, Pair, Bool, Text, Color, Three, I32, Usize};
-static Type to_slice(Type T) {
+static Type ToSlice(Type T) {
     return T[:];
 }
 
-constexpr Type sliced = to_slice(I32);
+constexpr Type Sliced = ToSlice(I32);
 
 static_assert(Int(kinds[0]) && Int(kinds[1]) && !Int(kinds[2]) && !Int(kinds[4]) && !Int(kinds[6]));
 static_assert(Float(kinds[2]) && !Float(kinds[0]));
 static_assert(Signed(kinds[0]) && !Signed(kinds[1]) && !Signed(kinds[2]));
-static_assert(Unsigned(kinds[1]) && Unsigned(kinds[9]) && !Unsigned(kinds[0]) &&
-              !Unsigned(kinds[2]));
+static_assert(Unsigned(kinds[1]) && Unsigned(kinds[9]) && !Unsigned(kinds[0]) && !Unsigned(kinds[2]));
 static_assert(Num(kinds[0]) && Num(kinds[2]) && !Num(kinds[3]) && !Num(kinds[5]));
 static_assert((Bool == (kinds[4])) && !(Bool == (kinds[0])));
 static_assert(Pointer(kinds[5]) && !Pointer(kinds[0]));
 static_assert(Enum(kinds[6]) && !Enum(kinds[0]));
 static_assert(Struct(kinds[3]) && !Struct(kinds[0]));
 static_assert(Array(kinds[7]) && !Array(kinds[0]));
-static_assert(Slice(sliced) && !Slice(kinds[5]));
-static_assert(Int(kinds[0]) == Int(kinds[0]) &&
-              Num(kinds[2]) == (Int(kinds[2]) || Float(kinds[2])));
+static_assert(Slice(Sliced) && !Slice(kinds[5]));
+static_assert(Int(kinds[0]) == Int(kinds[0]) && Num(kinds[2]) == (Int(kinds[2]) || Float(kinds[2])));
 
 int main() {
-    printf("%d %d %d %d\n", (int)integer(kinds[0]), (int)arithmetic(kinds[2]), (int)unsigned_integer(kinds[2]),
-           (int)Signed(kinds[2]));
+    printf("%d %d %d %d\n", (int)Int(kinds[0]), (int)Num(kinds[2]), (int)Unsigned(kinds[2]), (int)Signed(kinds[2]));
     I32 a = 1;
     U8 b = 2;
     F64 c = 3;
@@ -11679,14 +11676,14 @@ import <stdio.h>;
 // `t[:]` on a type value is the type "slice of t" (the spelling follows `I32 xs[:]`). An ordinary function over `type`
 // builds a slice type with one `[:]` for each size; the result is a real type handle: `==`, `sizeof` and a declaration
 // `t x;` all work.
-static Type slice_of(Type T, Usize k) {
+static Type SliceOf(Type T, Usize k) {
     Type t = T;
     for (Usize i = 0; i < k; i++)
         t = t[:];
     return t;
 }
 
-static Type twice(Type T) {
+static Type Twice(Type T) {
     return T[:][:];
 }
 
@@ -11694,23 +11691,23 @@ int main() {
     F32 xs[:];
     F32 rows[:][2];
     F32 grid[:][:];
-    constexpr Type one = slice_of(F32, 1);
-    constexpr Type two = slice_of(F32, 2);
-    constexpr Type of_rows = slice_of(F32[2], 1);
+    constexpr Type One = SliceOf(F32, 1);
+    constexpr Type Two = SliceOf(F32, 2);
+    constexpr Type OfRows = SliceOf(F32[2], 1);
 
-    static_assert(one == typeof(xs));
-    static_assert(two == typeof(grid));
-    static_assert(of_rows == typeof(rows));
-    static_assert(two == twice(F32));
-    static_assert(one != two && one != of_rows);
-    static_assert(sizeof(one) == sizeof(typeof(xs)) && sizeof(two) == sizeof(typeof(grid)));
-    static_assert(Struct(one) && !Array(one) && !Int(one));
-    static_assert(alignof(two) == alignof(typeof(grid)));
+    static_assert(One == typeof(xs));
+    static_assert(Two == typeof(grid));
+    static_assert(OfRows == typeof(rows));
+    static_assert(Two == Twice(F32));
+    static_assert(One != Two && One != OfRows);
+    static_assert(sizeof(One) == sizeof(typeof(xs)) && sizeof(Two) == sizeof(typeof(grid)));
+    static_assert(Struct(One) && !Array(One) && !Int(One));
+    static_assert(alignof(Two) == alignof(typeof(grid)));
 
     F32 data[6] = {1, 2, 3, 4, 5, 6};
-    of_rows a = {.data = data, .count = {3}};
-    two b = {.data = data, .count = {2, 3}};
-    one c = {.data = data, .count = {6}};
+    OfRows a = {.data = data, .count = {3}};
+    Two b = {.data = data, .count = {2, 3}};
+    One c = {.data = data, .count = {6}};
     rows = a;
     xs = c;
     grid = b;
@@ -11723,7 +11720,7 @@ import pool;
 #include <stdio.h>
 
 typedef char *Text;
-constexpr Type element = F64;
+constexpr Type Element = F64;
 constexpr Type kinds[3] = {U16, I64, Text};
 
 typedef struct {
@@ -11733,18 +11730,18 @@ typedef struct {
 constexpr Column column = {.of = U8, .count = 3};
 
 int main() {
-    constexpr Type t = I32;
-    t a = 7;         // `t x;` declares a variable of the type t holds
-    element b = 2.5; // a file-scope type value
-    constexpr Type second = kinds[1];
-    constexpr Type of = column.of;
-    second c = 1; // an element of an array of types
-    of d = 200;   // a member of a struct
-    t *p = &a;
+    constexpr Type T = I32;
+    T a = 7;         // `t x;` declares a variable of the type t holds
+    Element b = 2.5; // a file-scope type value
+    constexpr Type Second = kinds[1];
+    constexpr Type Of = column.of;
+    Second c = 1; // an element of an array of types
+    Of d = 200;   // a member of a struct
+    T *p = &a;
     (void)p;
     printf("%d %g %lld %d\n", a, b, (long long)c, d);
-    printf("%zu %zu %zu\n", pool::width(t), pool::width(kinds[0]), pool::width(column.of));
-    printf("%d\n", (int)(second)1);
+    printf("%zu %zu %zu\n", pool::width(T), pool::width(kinds[0]), pool::width(column.of));
+    printf("%d\n", (int)(Second)1);
     return 0;
 }
 ==> type-value-use/src/pool.smith <==
@@ -11759,15 +11756,15 @@ module wide;
 
 // The size of a type value is the target's: `long` is four bytes for Windows and eight elsewhere. A function over a
 // type value runs in the compiler with the same answer.
-constexpr Type wide = long;
+constexpr Type Wide = long;
 
 static Bool long_is_four(Type t) {
     return sizeof(t) == 4;
 }
 
-static_assert(!long_is_four(wide), "long is four bytes here");
-static_assert(sizeof(wide) != 4, "sizeof of a type value is four bytes here");
-static_assert(alignof(wide) != 4, "alignof of a type value is four here");
+static_assert(!long_is_four(Wide), "long is four bytes here");
+static_assert(sizeof(Wide) != 4, "sizeof of a type value is four bytes here");
+static_assert(alignof(Wide) != 4, "alignof of a type value is four here");
 static_assert(sizeof(char *) == 8);
 
 export I32 eight() {
@@ -11785,26 +11782,26 @@ typedef struct {
 } Field;
 
 typedef char *Text;
-constexpr Type count_type = U32;
+constexpr Type CountType = U32;
 constexpr Type names[3] = {I32, F64, Text};
 constexpr Field fields[2] = {{"length", Usize}, {"ratio", F32}};
 
 typedef I32 Meters;
-constexpr Type distance = Meters;
+constexpr Type Distance = Meters;
 
 // Equal exactly when the types are the same, typedefs looked through.
-static_assert(count_type == uint32_t);
+static_assert(CountType == uint32_t);
 static_assert(Struct(fields[0].of) == 0);
-static_assert(count_type == U32);
-static_assert(distance == I32);
-static_assert(distance == int);
+static_assert(CountType == U32);
+static_assert(Distance == I32);
+static_assert(Distance == int);
 static_assert(names[0] != names[1]);
 static_assert(fields[0].of == size_t);
 static_assert(fields[1].of != fields[0].of);
 
 // The questions an `if constexpr` asks of T, asked of a value.
 static_assert(sizeof(names[2]) == 8 && alignof(names[1]) == 8);
-static_assert(Int(count_type) && !Signed(count_type) && Signed(distance));
+static_assert(Int(CountType) && !Signed(CountType) && Signed(Distance));
 static_assert(Float(names[1]) && !Float(names[0]) && Pointer(names[2]));
 
 // An ordinary function takes and returns a type: it runs in the compiler.
@@ -11812,25 +11809,25 @@ static Bool small(Type t) {
     return sizeof(t) <= 4;
 }
 
-static Type wider(Type a, Type b) {
+static Type Wider(Type a, Type b) {
     return sizeof(a) >= sizeof(b) ? a : b;
 }
 
 static_assert(small(I32) && small(U8) && !small(F64) && !small(Text));
-static_assert(wider(I32, F64) == double);
-static_assert(wider(U8, U16) == U16);
-static_assert(small(wider(I8, U16)) && !small(wider(I32, I64)));
+static_assert(Wider(I32, F64) == double);
+static_assert(Wider(U8, U16) == U16);
+static_assert(small(Wider(I8, U16)) && !small(Wider(I32, I64)));
 
 int main() {
-    constexpr Type local = wider(U8, I64);
-    local big = 1;
+    constexpr Type Local = Wider(U8, I64);
+    Local big = 1;
     big <<= 40;
-    count_type small_one = 7;
-    constexpr Type length_type = fields[0].of;
-    constexpr Type ratio_type = names[1];
-    length_type length = 12;
-    ratio_type ratio = 0.5;
-    printf("%lld %u %zu %g %zu\n", (long long)big, small_one, (size_t)length, ratio, sizeof(local));
+    CountType small_one = 7;
+    constexpr Type LengthType = fields[0].of;
+    constexpr Type RatioType = names[1];
+    LengthType length = 12;
+    RatioType ratio = 0.5;
+    printf("%lld %u %zu %g %zu\n", (long long)big, small_one, (size_t)length, ratio, sizeof(Local));
     return 0;
 }
 ==> typetag-module/src/geo/shapes.smith <==
