@@ -27,10 +27,17 @@ export Key[n] split(Key key, constexpr usize n) {      // each n is an instance 
 export i32[2] twin(i32 x) {
     return {x, x + 1};
 }
+```
 
-export i32 first_low(Key key) {
-    Key halves[2] = split(key, 2);                  // an array is initialized from the call
-    return (i32)halves[0].low;
+```smith
+module use;
+
+import keys;
+
+export u64 low_of_second(keys::Key key) {
+    keys::Key halves[2] = keys::split(key, 2);      // an array is initialized from the call
+    i32 pair[2] = keys::twin(1);
+    return halves[1].low + (u64)pair[1];
 }
 ```
 

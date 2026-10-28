@@ -133,6 +133,141 @@ i32 main() {
     c::memset(xs, 0, sizeof xs);
     return 0;
 }
+==> array-result-generic/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import split;
+
+i32 main() {
+    split::Key key = {10, 20};
+    split::Key keys[3] = split::split(key, 3);
+    split::Key pair[2] = split::split(key, 2);
+    i32 sevens[4] = split::fill(i32, 7, 4);
+    f32 halves[2] = split::both(f32, 0.5f, 1.5f);
+    c::printf("%llu %llu %llu %llu\n", keys[0].high, keys[1].low, keys[2].low, pair[1].high);
+    c::printf("%d %d %d %.1f %.1f\n", sevens[0], sevens[3], (i32)countof(sevens), halves[0], halves[1]);
+    return 0;
+}
+==> array-result-generic/src/split.smith <==
+module split;
+
+// The size of the array is a `constexpr` parameter of the generic: each size is an instance with its own struct.
+
+export struct Key {
+    u64 high;
+    u64 low;
+};
+
+export Key[n] split(Key key, constexpr usize n) {
+    Key out[n];
+    for constexpr (usize i = 0; i < n; i++) {
+        out[i].high = key.high + i;
+        out[i].low = key.low * 2 + i;
+    }
+    return out;
+}
+
+export T[n] fill(constexpr type T, T value, constexpr usize n) {
+    T out[n];
+    for constexpr (usize i = 0; i < n; i++) {
+        out[i] = value;
+    }
+    return out;
+}
+
+export T[2] both(constexpr type T, T a, T b) {
+    return {a, b};
+}
+==> array-result-lowering/src/local.smith <==
+module local;
+
+// Not exported: the struct is defined where the function is, and a second function with the same result names it.
+
+i32[2] two(i32 x) {
+    return {x, x + 1};
+}
+
+i32[2] again(i32 x) {
+    i32 keep[2] = two(x);
+    return keep;
+}
+
+i32 first(i32 x) {
+    i32 pair[2] = again(x);
+    return pair[0];
+}
+==> array-result-lowering/src/pairs.smith <==
+module pairs;
+
+// A function returns a fixed-size array: `T[3]`, written bare. It lowers to a function that returns a struct wrapping
+// the array (`struct smith_array_i32_3 { i32 data[3]; }`), and an array is initialized from the call.
+
+export struct Pair {
+    i32 left;
+    i32 right;
+};
+
+export Pair[2] twin(Pair p) {
+    return {p, {p.right, p.left}};
+}
+
+export i32[3] count_from(i32 start) {
+    i32 out[3] = {start, start + 1, start + 2};
+    return out;
+}
+
+export i32[3] counted(i32 start) {
+    return count_from(start);
+}
+
+export i32[:] tail(i32 xs[:]) {
+    return xs[1:];
+}
+==> array-result/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import pairs;
+
+i32 main() {
+    pairs::Pair p = {1, 2};
+    pairs::Pair both[2] = pairs::twin(p);
+    i32 three[3] = pairs::count_from(10);
+    i32 more[3] = pairs::counted(20);
+    i32 raw[4] = {5, 6, 7, 8};
+    i32 rest[:] = pairs::tail(raw);
+    c::printf("%d %d %d %d\n", both[0].left, both[1].left, both[1].right, three[2]);
+    c::printf("%d %d %zu %d\n", more[0], more[2], countof(rest), rest[0]);
+    return 0;
+}
+==> array-result/src/pairs.smith <==
+module pairs;
+
+// A function returns a fixed-size array: `T[3]`, written bare. It lowers to a function that returns a struct wrapping
+// the array (`struct smith_array_i32_3 { i32 data[3]; }`), and an array is initialized from the call.
+
+export struct Pair {
+    i32 left;
+    i32 right;
+};
+
+export Pair[2] twin(Pair p) {
+    return {p, {p.right, p.left}};
+}
+
+export i32[3] count_from(i32 start) {
+    i32 out[3] = {start, start + 1, start + 2};
+    return out;
+}
+
+export i32[3] counted(i32 start) {
+    return count_from(start);
+}
+
+export i32[:] tail(i32 xs[:]) {
+    return xs[1:];
+}
 ==> attribute-c-names/src/log/fmt.smith <==
 module log::fmt;
 import <stdio.h>;
@@ -1787,6 +1922,43 @@ i32 mine(i32 argc, char *argv[]) {
     i32 xs[1] = {};
     return first(xs) + argc;
 }
+==> error-array-result-count/src/main.smith <==
+module main;
+
+i32[2] two(i32 x) {
+    return {x, x};
+}
+
+i32 main() {
+    i32 three[3] = two(1);
+    return three[0];
+}
+==> error-array-result-return/src/main.smith <==
+module main;
+
+i32[3] three(i32 x) {
+    i32 two[2] = {x, x};
+    return two;
+}
+
+i32 main() {
+    i32 xs[3] = three(1);
+    return xs[0];
+}
+==> error-array-result-size/src/main.smith <==
+module main;
+
+i32 limit() {
+    return 3;
+}
+
+i32[limit] bad(i32 x) {
+    return 0;
+}
+
+i32 main() {
+    return 0;
+}
 ==> error-c-name-function/src/uses/math.smith <==
 module uses::math;
 import <math.h>;
@@ -2435,6 +2607,22 @@ int main(void) {
     arithmetic text = name;
     floating pair = (Pair){1};
     return n;
+}
+==> error-generic-concept-pack/src/main.smith <==
+module main;
+
+import tally;
+
+i32 main(void) {
+    const char *name = "x";
+    tally::count(1, name, 2.5);
+    return 0;
+}
+==> error-generic-concept-pack/src/tally.smith <==
+module tally;
+
+export usize count(Num... rest) {
+    return countof(rest);
 }
 ==> error-generic-concept-param/src/main.smith <==
 module main;
@@ -5077,6 +5265,35 @@ int main(void) {
     printf("%d %g %d %d %u %d %d\n", n, ratio, total, delta, bits, *(int *)where, pair.a);
     return 0;
 }
+==> generic-concept-pack/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import tally;
+
+i32 main(void) {
+    c::printf("%zu %g\n", tally::count(1, 2.5, (u8)3), tally::total(1, 2.5, (u8)3));
+    return 0;
+}
+==> generic-concept-pack/src/tally.smith <==
+module tally;
+
+// A concept names the rest pack (issue #193): each argument is judged by it, as `Any... rest` judges none.
+Bool Ordered(constexpr Type T) {
+    return Int(T) || Float(T);
+}
+
+export usize count(Ordered... rest) {
+    return countof(rest);
+}
+
+export f64 total(Num... rest) {
+    f64 sum = 0;
+    for constexpr (usize i = 0; i < countof(rest); i++) {
+        sum += (f64)rest[i];
+    }
+    return sum;
+}
 ==> generic-concept-param/src/main.smith <==
 module main;
 
@@ -5122,6 +5339,67 @@ export typeof(x) shifted(arithmetic x) {
 export i32 plain(i32 q) {
     integer r = q * 2;
     return r;
+}
+==> generic-concept-range/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+// A concept the program writes for a local and for the element of a range `for` (issue #193).
+Bool Narrow(constexpr Type T) {
+    return Int(T) && sizeof(T) <= 2;
+}
+
+i32 main(void) {
+    Narrow small = (i16)7;
+    i16 xs[:] = (i16[3]){1, 2, 3};
+    i32 sum = small;
+    for (Narrow x : xs) {
+        sum += x;
+    }
+    c::printf("%d\n", sum);
+    return 0;
+}
+==> generic-concept-user/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import stats;
+
+i32 main(void) {
+    i32 a = 21;
+    f64 b = 1.25;
+    i16 c = 7;
+    c::printf("%d %g %d\n", stats::twice(a), stats::twice(b), stats::smaller(c, (i16)3));
+    c::printf("%zu\n", stats::bytes(b));
+    return 0;
+}
+==> generic-concept-user/src/stats.smith <==
+module stats;
+
+// A concept the program writes: an ordinary function over a type, named where a parameter's type goes (issue #193).
+Bool Ordered(constexpr Type T) {
+    return Int(T) || Float(T);
+}
+
+export Bool Narrow(constexpr Type T) {
+    return Int(T) && sizeof(T) <= 2;
+}
+
+export typeof(x) twice(Ordered x) {
+    return x + x;
+}
+
+export typeof(a) smaller(Narrow a, typeof(a) b) {
+    return a < b ? a : b;
+}
+
+export Bool Sized(constexpr Type T) {
+    return sizeof(T) == 8;
+}
+
+export usize bytes(Sized x) {
+    return sizeof(x);
 }
 ==> generic-countof-member/src/main.smith <==
 module main;
