@@ -1,4 +1,0 @@
-src/main.smith:15:18: `Ordered(const char *)` is false
-src/main.smith:16:18: `Ordered(Pair)` is false
-src/main.smith:17:18: `Ordered(char *)` is false
-src/main.smith:18:18: `Ordered(Pair)` is false

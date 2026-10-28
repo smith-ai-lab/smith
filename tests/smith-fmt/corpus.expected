@@ -2476,46 +2476,6 @@ export usize width(pointer p) {
 export i32 sign_of(signed_integer n) {
     return n < 0 ? -1 : 1;
 }
-==> error-generic-concept-user/src/main.smith <==
-module main;
-
-import stats;
-
-typedef struct {
-    i32 a;
-} Pair;
-
-i32 main(void) {
-    const char *name = "x";
-    Pair pair = {1};
-    char *names[2] = {"a", "b"};
-    char *ns[:] = names;
-    Pair *pairs = &pair;
-    stats::twice(name);
-    stats::twice(pair);
-    stats::first(ns);
-    stats::width(pairs);
-    return 0;
-}
-==> error-generic-concept-user/src/stats.smith <==
-module stats;
-
-// A concept the program writes is false for a type: the call says so in one line, with no trace (issue #193).
-export Bool Ordered(constexpr Type T) {
-    return Int(T) || Float(T);
-}
-
-export typeof(x) twice(Ordered x) {
-    return x + x;
-}
-
-export typeof(xs[0]) first(const Ordered xs[:]) {
-    return xs[0];
-}
-
-export usize width(Ordered *p) {
-    return sizeof(*p);
-}
 ==> error-generic-element-convert/src/main.smith <==
 module main;
 import stats;
@@ -5039,42 +4999,6 @@ int main() {
     printf("%d %d %llu %d used %zu\n", p->x, p->y, (unsigned long long)*n, q->x, a.used);
     return 0;
 }
-==> generic-concept-any/src/anything.smith <==
-module anything;
-
-// `Any` accepts every type (issue #193): a parameter, a rest pack, an element.
-export usize width(Any x) {
-    return sizeof(x);
-}
-
-export typeof(a) pick(Any a, typeof(a) b) {
-    return a > b ? a : b;
-}
-
-export usize count(Any... rest) {
-    return countof(rest);
-}
-
-export usize size(const Any xs[:]) {
-    return countof(xs);
-}
-==> generic-concept-any/src/main.smith <==
-module main;
-
-import <stdio.h>;
-import anything;
-
-i32 main(void) {
-    f64 d = 2.5;
-    i16 s = 3;
-    i32 xs[3] = {7, 8, 9};
-    i32 ys[:] = xs;
-    c::printf("%zu %zu %zu\n", anything::width(d), anything::width(s), anything::width(&d));
-    c::printf("%d %g\n", anything::pick(4, 9), anything::pick(d, 1.5));
-    c::printf("%zu %zu\n", anything::count(d, s, &d), anything::count());
-    c::printf("%zu\n", anything::size(ys));
-    return 0;
-}
 ==> generic-concept-element/src/main.smith <==
 module main;
 
@@ -5198,47 +5122,6 @@ export typeof(x) shifted(arithmetic x) {
 export i32 plain(i32 q) {
     integer r = q * 2;
     return r;
-}
-==> generic-concept-user/src/main.smith <==
-module main;
-
-import <stdio.h>;
-import stats;
-
-i32 main(void) {
-    i32 a = 21;
-    f64 b = 1.25;
-    i16 c = 7;
-    c::printf("%d %g %d\n", stats::twice(a), stats::twice(b), stats::smaller(c, (i16)3));
-    c::printf("%zu\n", stats::bytes(b));
-    return 0;
-}
-==> generic-concept-user/src/stats.smith <==
-module stats;
-
-// A concept the program writes: an ordinary function over a type, named where a parameter's type goes (issue #193).
-Bool Ordered(constexpr Type T) {
-    return Int(T) || Float(T);
-}
-
-export Bool Narrow(constexpr Type T) {
-    return Int(T) && sizeof(T) <= 2;
-}
-
-export typeof(x) twice(Ordered x) {
-    return x + x;
-}
-
-export typeof(a) smaller(Narrow a, typeof(a) b) {
-    return a < b ? a : b;
-}
-
-export Bool Sized(constexpr Type T) {
-    return sizeof(T) == 8;
-}
-
-export usize bytes(Sized x) {
-    return sizeof(x);
 }
 ==> generic-countof-member/src/main.smith <==
 module main;
@@ -6595,48 +6478,6 @@ int main() {
            kind::describe(u8, byte), kind::describe(Point, p));
     printf("%d %d %d\n", kind::describe(i32, small), kind::floats_only(f32, f), kind::floats_only(i32, small));
     printf("%d %d %d\n", kind::bytes(u8), kind::bytes(u64), kind::bytes(Point));
-    return 0;
-}
-==> generic-kind/src/kinds.smith <==
-module kinds;
-
-// `kind(T)` is the one question of a type's kind (issue #193); a concept is a function over it.
-Bool Scalar(constexpr Type T) {
-    return kind(T) == Kind::integer || kind(T) == Kind::floating || kind(T) == Kind::boolean;
-}
-
-export usize bytes(Scalar x) {
-    return sizeof(x);
-}
-
-export i32 code(Any x) {
-    if constexpr (kind(typeof(x)) == Kind::pointer) {
-        return 1;
-    } else if constexpr (kind(typeof(x)) == Kind::structure) {
-        return 2;
-    } else if constexpr (kind(typeof(x)) == Kind::floating) {
-        return 3;
-    } else {
-        return 0;
-    }
-}
-==> generic-kind/src/main.smith <==
-module main;
-
-import <stdio.h>;
-import kinds;
-
-typedef struct {
-    i32 a;
-} Pair;
-
-i32 main(void) {
-    f32 f = 1.5f;
-    u8 b = 1;
-    bool flag = true;
-    Pair pair = {1};
-    c::printf("%zu %zu %zu\n", kinds::bytes(f), kinds::bytes(b), kinds::bytes(flag));
-    c::printf("%d %d %d %d\n", kinds::code(&pair), kinds::code(pair), kinds::code(f), kinds::code(b));
     return 0;
 }
 ==> generic-many-parameters/src/main.smith <==

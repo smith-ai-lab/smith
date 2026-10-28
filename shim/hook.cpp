@@ -2785,7 +2785,7 @@ class SmithHook final : public TokenHook, public NameSource {
     static bool namesConcept(StringRef text) {
         static const char *const concepts[] = {"integer ",    "floating ", "signed_integer ", "unsigned_integer ",
                                                "arithmetic ", "boolean ",  "pointer ",        "enumeration ",
-                                               "structure ",  "array ",    "slice ",          "any "};
+                                               "structure ",  "array ",    "slice "};
         for (const char *name : concepts) {
             if (text.contains(name)) return true;
         }
@@ -2795,8 +2795,6 @@ class SmithHook final : public TokenHook, public NameSource {
     static bool hasTypeValue(StringRef text) {
         int paren = 0;
         StringRef previous;
-        StringRef beforePrevious;
-        StringRef third;
         for (size_t at = 0; at < text.size();) {
             char c = text[at];
             if (c == '/' && at + 1 < text.size() && (text[at + 1] == '/' || text[at + 1] == '*')) {
@@ -2817,12 +2815,7 @@ class SmithHook final : public TokenHook, public NameSource {
                 while (next < text.size() && isWhitespace(text[next]))
                     next += 1;
                 bool named = next < text.size() && (isAsciiIdentifierStart(text[next]) || text[next] == '*');
-                // `bool Ordered(constexpr type T)`: a concept (issue #193) is a function over a type, not a generic.
-                bool isConcept = third == "bool" && !beforePrevious.empty() && beforePrevious[0] >= 'A' &&
-                                 beforePrevious[0] <= 'Z' && previous == "constexpr";
-                if (word == "type" && named && (!(paren > 0 && previous == "constexpr") || isConcept)) return true;
-                third = beforePrevious;
-                beforePrevious = previous;
+                if (word == "type" && named && !(paren > 0 && previous == "constexpr")) return true;
                 previous = word;
                 at = end;
             } else {
