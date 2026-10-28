@@ -1,3 +1,3 @@
-src/main.smith:7:17: `double` is not `integer`: the initializer of `n` has that type
-src/main.smith:8:23: `const char *` is not `arithmetic`: the initializer of `text` has that type
-src/main.smith:9:21: `Pair` is not `floating`: the initializer of `pair` has that type
+src/main.smith:10:16: `Num(const char *)` is false: the initializer of `text` has that type
+src/main.smith:11:18: `Float(Pair)` is false: the initializer of `pair` has that type
+src/main.smith:9:13: `Int(double)` is false: the initializer of `n` has that type

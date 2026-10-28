@@ -1,46 +1,25 @@
-main.smith:13:24: error: `const char *` is not `arithmetic`: the initializer of `local` has that type
+main.smith:13:24: error: `Num(const char *)` is false: the initializer of `local` has that type
    13 |     arithmetic local = name;
       |                        ^
-note: `arithmetic(const char *)` is false: `integer(const char *)` and `floating(const char *)` are both false; `const char *` is a pointer type
-main.smith:14:16: error: `char *` is not `arithmetic`: the elements of `ns` have that type
+main.smith:14:16: error: `Num(char *)` is false
    14 |     stats::sum(ns);
       |                ^
-stats.smith:3:32: note: `stats::sum` takes `const arithmetic xs[:]`
-    3 | export typeof(xs[0]) sum(const arithmetic xs[:]) {
-      |                                ^
-note: `arithmetic(char *)` is false: `integer(char *)` and `floating(char *)` are both false; `char *` is a pointer type
-main.smith:15:18: error: `const char *` is not `arithmetic`
+main.smith:15:18: error: `Num(const char *)` is false
    15 |     stats::twice(name);
       |                  ^
-stats.smith:7:24: note: `stats::twice` takes `arithmetic x`
-    7 | export typeof(x) twice(arithmetic x) {
-      |                        ^
-note: `arithmetic(const char *)` is false: `integer(const char *)` and `floating(const char *)` are both false; `const char *` is a pointer type
-main.smith:16:18: error: `enum Colour` is not `arithmetic`
+main.smith:16:18: error: `Num(enum Colour)` is false
    16 |     stats::twice(colour);
       |                  ^
-stats.smith:7:24: note: `stats::twice` takes `arithmetic x`
-    7 | export typeof(x) twice(arithmetic x) {
-      |                        ^
-note: `arithmetic(enum Colour)` is false: `integer(enum Colour)` and `floating(enum Colour)` are both false; `enum Colour` is an enumerated type
-main.smith:17:17: error: `f32` is not `integer`: the pointee of `&real` has that type
+main.smith:17:17: error: `Int(f32)` is false
    17 |     stats::read(&real);
       |                 ^
-stats.smith:11:30: note: `stats::read` takes `const integer *p`
-   11 | export typeof(*p) read(const integer *p) {
-      |                              ^
-note: `integer(f32)` is false: `f32` is a floating type
 main.smith:18:18: error: `real`, the argument of `count`, has the type `f32`, but the parameter `xs` is a slice (`auto xs[:]`); pass a slice (`xs[0:n]` makes one of an array)
    18 |     stats::count(real);
       |                  ^
 stats.smith:15:26: note: `stats::count` takes `const auto xs[:]`
    15 | export usize count(const auto xs[:]) {
       |                          ^
-main.smith:19:22: error: `f32` is not `pointer`
+main.smith:19:22: error: `Pointer(f32)` is false
    19 |     stats::same_kind(real, real);
       |                      ^
-stats.smith:19:23: note: `stats::same_kind` takes `pointer p`
-   19 | export bool same_kind(pointer p, typeof(p) q) {
-      |                       ^
-note: `pointer(f32)` is false: `f32` is a floating type
 7 errors generated.

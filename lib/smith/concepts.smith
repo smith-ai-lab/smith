@@ -1,0 +1,68 @@
+// smith::concepts: the standard concepts. A concept is an ordinary function over a type, `Bool Name(constexpr Type T)`,
+// that a parameter names where a type goes (`Num x`, `Int xs[:]`, `Any... rest`) and that the compiler runs on the
+// argument's type. These are in scope in every module with no import, like `Option` and `Result`: the compiler depends
+// on them (the lowering carries this module's header lines, runtime/lang_std.c, and tests/headers_test.smith checks
+// them).
+//
+//   Num twice(Num x) { return x + x; }
+//
+// `kind(T)` (the compiler's one question of a type's kind) is the primitive; everything here is written over it.
+module smith::concepts;
+
+// Every type.
+export Bool Any(constexpr Type T) {
+    (void)T;
+    return true;
+}
+
+// The integer types (`char` and `I32` among them); a boolean or an enumeration is its own kind.
+export Bool Int(constexpr Type T) {
+    return kind(T) == Kind::integer;
+}
+
+export Bool Float(constexpr Type T) {
+    return kind(T) == Kind::floating;
+}
+
+// An integer or a floating-point type.
+export Bool Num(constexpr Type T) {
+    return Int(T) || Float(T);
+}
+
+// The signed integer types: the sized ones and C's own (`signed char` ... `long long`, and `char` where it is signed).
+export Bool Signed(constexpr Type T) {
+    return T == I8 || T == I16 || T == I32 || T == I64 || T == Isize || T == typeof((signed char)0) ||
+           T == typeof((short)0) || T == typeof((int)0) || T == typeof((long)0) || T == typeof((long long)0) ||
+           (T == typeof((char)0) &&(char)-1 < 0);
+}
+
+// The unsigned integer types: the sized ones and C's own (`unsigned char` ... `unsigned long long`, and `char` where it
+// is unsigned).
+export Bool Unsigned(constexpr Type T) {
+    return T == U8 || T == U16 || T == U32 || T == U64 || T == Usize || T == typeof((unsigned char)0) ||
+           T == typeof((unsigned short)0) || T == typeof((unsigned)0) || T == typeof((unsigned long)0) ||
+           T == typeof((unsigned long long)0) || (T == typeof((char)0) &&(char)-1 > 0);
+}
+
+export Bool Pointer(constexpr Type T) {
+    return kind(T) == Kind::pointer;
+}
+
+export Bool Enum(constexpr Type T) {
+    return kind(T) == Kind::enumeration;
+}
+
+// A struct or a union.
+export Bool Struct(constexpr Type T) {
+    return kind(T) == Kind::structure;
+}
+
+// A C array of known size (`I32[4]`).
+export Bool Array(constexpr Type T) {
+    return kind(T) == Kind::array;
+}
+
+// A slice (`I32[:]`).
+export Bool Slice(constexpr Type T) {
+    return kind(T) == Kind::slice;
+}

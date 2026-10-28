@@ -690,14 +690,16 @@ class SmithHook final : public TokenHook, public NameSource {
             mainName = entry->getName().str();
         }
         host.main_file = mainName.c_str();
+        conceptsFile = smith_lang_concepts_file(host.main_file);
         // The text the scans below read has the lowercase names for the capitalized ones (issue #366).
         StringRef buffer = SM.getBufferData(MainFile);
         std::string lowered(buffer.size() * 3 + 1, '\0');
         lowered.resize(smith_lang_capitals_lower(buffer.data(), buffer.size(), lowered.data(), true));
         const StringRef scan = lowered;
         host.maybe_main = scan.contains("main");
+        host.maybe_concepts = scan.contains("smith_concepts_") || namesConcept(scan);
         host.maybe_generic =
-            scan.contains("type ") || scan.contains("auto ") || scan.contains("auto...") || namesConcept(scan);
+            scan.contains("type ") || scan.contains("auto ") || scan.contains("auto...") || host.maybe_concepts;
         host.maybe_if_constexpr = hasIfConstexpr(scan);
         host.maybe_local_tag = hasNestedTag(scan);
         host.maybe_slice = hasSlice(scan) || hasStr(scan) || hasArrayResult(scan);
@@ -744,6 +746,7 @@ class SmithHook final : public TokenHook, public NameSource {
         }
     }
 
+    bool conceptsFile = false; // the main file is lib/smith/concepts.smith, where `Int` is its own function
     llvm::DenseMap<const IdentifierInfo *, IdentifierInfo *> capitals; // `I32` to `i32`, `Int` to `integer` (#366)
     tok::TokenKind lastKind = tok::unknown;                            // the token before the one a lookahead reads
 
@@ -754,6 +757,7 @@ class SmithHook final : public TokenHook, public NameSource {
         }
         auto found = capitals.find(tok.getIdentifierInfo());
         if (found == capitals.end() || !spelledInMain(tok.getLocation())) return;
+        if (conceptsFile && found->second->getName().starts_with("smith_concepts_")) return; // lib/smith/concepts.smith
         tok.setIdentifierInfo(found->second);
         tok.setKind(found->second->getTokenID()); // `Bool` is the keyword `bool`
     }
@@ -2671,9 +2675,17 @@ class SmithHook final : public TokenHook, public NameSource {
     // `constexpr type T`, which is inside parentheses: a type value is declared (runtime/lang_type.c).
     // Whether the text has a concept's name and a space (`arithmetic x`, issue #193): it may declare a generic.
     static bool namesConcept(StringRef text) {
-        static const char *const concepts[] = {"integer ",    "floating ", "signed_integer ", "unsigned_integer ",
-                                               "arithmetic ", "boolean ",  "pointer ",        "enumeration ",
-                                               "structure ",  "array ",    "slice ",          "any "};
+        static const char *const concepts[] = {"integer ",
+                                               "floating ",
+                                               "signed_integer ",
+                                               "unsigned_integer ",
+                                               "arithmetic ",
+                                               "pointer ",
+                                               "enumeration ",
+                                               "structure ",
+                                               "array ",
+                                               "slice ",
+                                               "any "};
         for (const char *name : concepts) {
             if (text.contains(name)) return true;
         }

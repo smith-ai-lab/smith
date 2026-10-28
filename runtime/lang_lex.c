@@ -520,6 +520,7 @@ typedef struct {
     SmithToken before;    // the token before
     char renamed[128];
     unsigned errors;
+    bool concepts_file; // lib/smith/concepts.smith, where the standard concepts keep their names
 } SmithRawNames;
 
 // A capitalized concept (`Int`, `Num`, issue #366) is read as its lowercase name; a member or a C name is as written.
@@ -530,7 +531,7 @@ static void smith_raw_concept(const SmithRawNames *names, SmithToken *token) {
         return;
     }
     const char *name = smith_lang_capital_name(token->text, token->length);
-    if (name == nullptr) return;
+    if (name == nullptr || (names->concepts_file && strncmp(name, "smith_concepts_", 15) == 0)) return;
     token->text = name;
     token->length = (uint32_t)strlen(name);
 }
@@ -699,12 +700,13 @@ static SmithLang *smith_lang_run_interface(const char *file, const char *text, s
         .main_file = file,
         .declarations_only = true, // an importer reads the names, not the bodies: a call there needs no instance
         .maybe_generic = true,
+        .maybe_concepts = true,
         .maybe_if_constexpr = true,
         .maybe_slice = smith_lang_text_has_slice(smith_lang_source, raw.length) ||
                        smith_lang_text_has_str(smith_lang_source, raw.length) ||
                        smith_lang_text_has_array_result(smith_lang_source, raw.length),
     };
-    SmithRawNames names = {};
+    SmithRawNames names = {.concepts_file = smith_lang_concepts_file(file)};
     raw.names = &names;
     smith_raw_cache_only = true;
     for (size_t guard = 0; guard < raw.length + 2; guard++) { // one pass per token at most
@@ -1134,12 +1136,13 @@ static int smith_lang_run_raw(const SmithRawRun *run) {
         .main_file = path,
         .declarations_only = run->header,
         .maybe_generic = true,
+        .maybe_concepts = true,
         .maybe_if_constexpr = true,
         .maybe_slice = smith_lang_text_has_slice(smith_lang_source, raw.length) ||
                        smith_lang_text_has_str(smith_lang_source, raw.length) ||
                        smith_lang_text_has_array_result(smith_lang_source, raw.length),
     };
-    SmithRawNames names = {};
+    SmithRawNames names = {.concepts_file = smith_lang_concepts_file(path)};
     raw.names = &names;
     smith_header_source = path;
     smith_lang_import_asker = run->header && run->ask ? smith_lang_ask_compiler : nullptr;

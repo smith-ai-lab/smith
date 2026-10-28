@@ -38,13 +38,10 @@ CheckOptions:
   # so 69 allows 70 lines from the opening brace's line through the closing brace.
   readability-function-size.LineThreshold: 69
   readability-identifier-naming.FunctionCase: lower_case
-  # A concept is a function over a type with a capitalized name: `Bool Ordered(constexpr Type T)` (issue #193).
-  readability-identifier-naming.FunctionIgnoredRegexp: '^[A-Z][A-Za-z0-9]*$'
   readability-identifier-naming.VariableCase: lower_case
   # constexpr constants are named like variables, with the module prefix: arena_align_max.
   readability-identifier-naming.ConstexprVariableCase: lower_case
   readability-identifier-naming.ParameterCase: lower_case
-  readability-identifier-naming.ParameterIgnoredRegexp: '^T$' # a concept's type parameter
   readability-identifier-naming.MemberCase: lower_case
   readability-identifier-naming.TypedefCase: CamelCase
   # base/base.h names the fixed-width types u8…u64, i8…i64, f32 and f64.

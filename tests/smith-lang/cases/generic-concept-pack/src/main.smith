@@ -1,0 +1,9 @@
+module main;
+
+import <stdio.h>;
+import tally;
+
+i32 main(void) {
+    c::printf("%zu %g\n", tally::count(1, 2.5, (u8)3), tally::total(1, 2.5, (u8)3));
+    return 0;
+}

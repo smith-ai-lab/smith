@@ -1737,8 +1737,8 @@ static void smith_lang_types_define(SmithLang *lang, const SmithHost *host, uint
     for (size_t i = 0; i < lang->generics_count; i++) { // in the order the modules wrote them
         const SmithLangGeneric *generic = &smith_lang_generics[i];
         if (!generic->plain || generic->own) continue;
-        bool bound = false;
-        for (size_t b = 0; b < lang->bindings_count; b++) {
+        bool bound = smith_lang_equals(smith_lang_str(generic->module), generic->module.length, "smith::concepts");
+        for (size_t b = 0; b < lang->bindings_count; b++) { // or the module is the standard concepts: no import
             const SmithLangBinding *binding = &lang->bindings[b];
             bound = bound || (!binding->is_c && !binding->missing &&
                               smith_lang_equals(smith_lang_str(binding->module), binding->module.length,
@@ -1758,6 +1758,91 @@ static void smith_lang_types_define(SmithLang *lang, const SmithHost *host, uint
         used += count;
     }
     if (used > 0) smith_lang_ty_put(lang, 0, made, used);
+}
+
+// ---- The standard concepts, in scope with no import (issue #193)
+
+// The `// smith-generic:` lines of lib/smith/concepts.smith's generated header, which are the definitions of `Any`,
+// `Int`, `Float`, `Num`, `Signed`, `Unsigned`, `Pointer`, `Enum`, `Struct`, `Array` and `Slice`: the headers are not in
+// git, so the lowering carries the lines it needs (as it does for `option` and `result`, runtime/lang_enum.c), and
+// `tests/headers_test.smith` checks that the generated header has exactly them.
+static const char *const smith_concepts_header[] = {
+    // BEGIN concepts header
+    "// smith-generic: smith::concepts Any smith_concepts_Any lib/smith/concepts.smith f@12 1 2 6 7 | iw@0:8=bool "
+    "iw@0:13=smith_concepts_Any p@0:16=( i@0:17=constexpr iw@0:27=type iP1w@0:32=T p@0:33=) pw@0:35={ pw@1:5=( "
+    "i@1:6=void p@1:10=) iP1@1:11=T p@1:12=; iw@2:5=return iw@2:12=true p@2:16=; p@3:1=}\n",
+    "// smith-generic: smith::concepts Int smith_concepts_Int lib/smith/concepts.smith f@18 1 2 6 7 | iw@0:8=bool "
+    "iw@0:13=smith_concepts_Int p@0:16=( i@0:17=constexpr iw@0:27=type iP1w@0:32=T p@0:33=) pw@0:35={ iw@1:5=return "
+    "iw@1:12=kind p@1:16=( iP1@1:17=T p@1:18=) pw@1:20=== iw@1:23=Kind p@1:27=:: i@1:29=integer p@1:36=; p@2:1=}\n",
+    "// smith-generic: smith::concepts Float smith_concepts_Float lib/smith/concepts.smith f@22 1 2 6 7 | iw@0:8=bool "
+    "iw@0:13=smith_concepts_Float p@0:18=( i@0:19=constexpr iw@0:29=type iP1w@0:34=T p@0:35=) pw@0:37={ iw@1:5=return "
+    "iw@1:12=kind p@1:16=( iP1@1:17=T p@1:18=) pw@1:20=== iw@1:23=Kind p@1:27=:: i@1:29=floating p@1:37=; p@2:1=}\n",
+    "// smith-generic: smith::concepts Num smith_concepts_Num lib/smith/concepts.smith f@27 1 2 6 7 | iw@0:8=bool "
+    "iw@0:13=smith_concepts_Num p@0:16=( i@0:17=constexpr iw@0:27=type iP1w@0:32=T p@0:33=) pw@0:35={ iw@1:5=return "
+    "B@1:12=smith::concepts::Int p@1:15=( iP1@1:16=T p@1:17=) E@1:12= pw@1:19=|| B@1:22=smith::concepts::Float "
+    "p@1:27=( iP1@1:28=T p@1:29=) E@1:22= p@1:30=; p@2:1=}\n",
+    "// smith-generic: smith::concepts Signed smith_concepts_Signed lib/smith/concepts.smith f@32 1 2 6 7 | "
+    "iw@0:8=bool iw@0:13=smith_concepts_Signed p@0:19=( i@0:20=constexpr iw@0:30=type iP1w@0:35=T p@0:36=) pw@0:38={ "
+    "iw@1:5=return iP1w@1:12=T pw@1:14=== ixw@1:17=__INT8_TYPE__ pw@1:20=|| iP1w@1:23=T pw@1:25=== "
+    "ixw@1:28=__INT16_TYPE__ pw@1:32=|| iP1w@1:35=T pw@1:37=== ixw@1:40=__INT32_TYPE__ pw@1:44=|| iP1w@1:47=T "
+    "pw@1:49=== ixw@1:52=__INT64_TYPE__ pw@1:56=|| iP1w@1:59=T pw@1:61=== ixw@1:64=__PTRDIFF_TYPE__ pw@1:70=|| "
+    "iP1w@1:73=T pw@1:75=== iw@1:78=typeof p@1:84=( p@1:85=( i@1:86=signed iw@1:93=char p@1:97=) n@1:98=0 p@1:99=) "
+    "pw@1:101=|| iP1w@2:12=T pw@2:14=== iw@2:17=typeof p@2:23=( p@2:24=( i@2:25=short p@2:30=) n@2:31=0 p@2:32=) "
+    "pw@2:34=|| iP1w@2:37=T pw@2:39=== iw@2:42=typeof p@2:48=( p@2:49=( i@2:50=int p@2:53=) n@2:54=0 p@2:55=) "
+    "pw@2:57=|| iP1w@2:60=T pw@2:62=== iw@2:65=typeof p@2:71=( p@2:72=( i@2:73=long p@2:77=) n@2:78=0 p@2:79=) "
+    "pw@2:81=|| iP1w@2:84=T pw@2:86=== iw@2:89=typeof p@2:95=( p@2:96=( i@2:97=long iw@2:102=long p@2:106=) n@2:107=0 "
+    "p@2:108=) pw@2:110=|| pw@3:12=( iP1@3:13=T pw@3:15=== iw@3:18=typeof p@3:24=( p@3:25=( i@3:26=char p@3:30=) "
+    "n@3:31=0 p@3:32=) pw@3:34=&& pw@3:37=( i@3:38=char p@3:42=) p@3:43=- n@3:44=1 pw@3:46=< nw@3:48=0 p@3:49=) "
+    "p@3:50=; p@4:1=}\n",
+    "// smith-generic: smith::concepts Unsigned smith_concepts_Unsigned lib/smith/concepts.smith f@40 1 2 6 7 | "
+    "iw@0:8=bool iw@0:13=smith_concepts_Unsigned p@0:21=( i@0:22=constexpr iw@0:32=type iP1w@0:37=T p@0:38=) pw@0:40={ "
+    "iw@1:5=return iP1w@1:12=T pw@1:14=== ixw@1:17=__UINT8_TYPE__ pw@1:20=|| iP1w@1:23=T pw@1:25=== "
+    "ixw@1:28=__UINT16_TYPE__ pw@1:32=|| iP1w@1:35=T pw@1:37=== ixw@1:40=__UINT32_TYPE__ pw@1:44=|| iP1w@1:47=T "
+    "pw@1:49=== ixw@1:52=__UINT64_TYPE__ pw@1:56=|| iP1w@1:59=T pw@1:61=== ixw@1:64=__SIZE_TYPE__ pw@1:70=|| "
+    "iP1w@1:73=T pw@1:75=== iw@1:78=typeof p@1:84=( p@1:85=( i@1:86=unsigned iw@1:95=char p@1:99=) n@1:100=0 p@1:101=) "
+    "pw@1:103=|| iP1w@2:12=T pw@2:14=== iw@2:17=typeof p@2:23=( p@2:24=( i@2:25=unsigned iw@2:34=short p@2:39=) "
+    "n@2:40=0 p@2:41=) pw@2:43=|| iP1w@2:46=T pw@2:48=== iw@2:51=typeof p@2:57=( p@2:58=( i@2:59=unsigned p@2:67=) "
+    "n@2:68=0 p@2:69=) pw@2:71=|| iP1w@2:74=T pw@2:76=== iw@2:79=typeof p@2:85=( p@2:86=( i@2:87=unsigned iw@2:96=long "
+    "p@2:100=) n@2:101=0 p@2:102=) pw@2:104=|| iP1w@3:12=T pw@3:14=== iw@3:17=typeof p@3:23=( p@3:24=( i@3:25=unsigned "
+    "iw@3:34=long iw@3:39=long p@3:43=) n@3:44=0 p@3:45=) pw@3:47=|| pw@3:50=( iP1@3:51=T pw@3:53=== iw@3:56=typeof "
+    "p@3:62=( p@3:63=( i@3:64=char p@3:68=) n@3:69=0 p@3:70=) pw@3:72=&& pw@3:75=( i@3:76=char p@3:80=) p@3:81=- "
+    "n@3:82=1 pw@3:84=> nw@3:86=0 p@3:87=) p@3:88=; p@4:1=}\n",
+    "// smith-generic: smith::concepts Pointer smith_concepts_Pointer lib/smith/concepts.smith f@46 1 2 6 7 | "
+    "iw@0:8=bool iw@0:13=smith_concepts_Pointer p@0:20=( i@0:21=constexpr iw@0:31=type iP1w@0:36=T p@0:37=) pw@0:39={ "
+    "iw@1:5=return iw@1:12=kind p@1:16=( iP1@1:17=T p@1:18=) pw@1:20=== iw@1:23=Kind p@1:27=:: i@1:29=pointer p@1:36=; "
+    "p@2:1=}\n",
+    "// smith-generic: smith::concepts Enum smith_concepts_Enum lib/smith/concepts.smith f@50 1 2 6 7 | iw@0:8=bool "
+    "iw@0:13=smith_concepts_Enum p@0:17=( i@0:18=constexpr iw@0:28=type iP1w@0:33=T p@0:34=) pw@0:36={ iw@1:5=return "
+    "iw@1:12=kind p@1:16=( iP1@1:17=T p@1:18=) pw@1:20=== iw@1:23=Kind p@1:27=:: i@1:29=enumeration p@1:40=; p@2:1=}\n",
+    "// smith-generic: smith::concepts Struct smith_concepts_Struct lib/smith/concepts.smith f@55 1 2 6 7 | "
+    "iw@0:8=bool iw@0:13=smith_concepts_Struct p@0:19=( i@0:20=constexpr iw@0:30=type iP1w@0:35=T p@0:36=) pw@0:38={ "
+    "iw@1:5=return iw@1:12=kind p@1:16=( iP1@1:17=T p@1:18=) pw@1:20=== iw@1:23=Kind p@1:27=:: i@1:29=structure "
+    "p@1:38=; p@2:1=}\n",
+    "// smith-generic: smith::concepts Array smith_concepts_Array lib/smith/concepts.smith f@60 1 2 6 7 | iw@0:8=bool "
+    "iw@0:13=smith_concepts_Array p@0:18=( i@0:19=constexpr iw@0:29=type iP1w@0:34=T p@0:35=) pw@0:37={ iw@1:5=return "
+    "iw@1:12=kind p@1:16=( iP1@1:17=T p@1:18=) pw@1:20=== iw@1:23=Kind p@1:27=:: i@1:29=array p@1:34=; p@2:1=}\n",
+    "// smith-generic: smith::concepts Slice smith_concepts_Slice lib/smith/concepts.smith f@65 1 2 6 7 | iw@0:8=bool "
+    "iw@0:13=smith_concepts_Slice p@0:18=( i@0:19=constexpr iw@0:29=type iP1w@0:34=T p@0:35=) pw@0:37={ iw@1:5=return "
+    "iw@1:12=kind p@1:16=( iP1@1:17=T p@1:18=) pw@1:20=== iw@1:23=Kind p@1:27=:: i@1:29=slice p@1:34=; p@2:1=}\n",
+    // END concepts header
+};
+
+// After the `module` line of a module that uses a standard concept, or at an import whose header does (its generics
+// name one in a parameter or run one in a body, here): the concepts are known (a parameter may name one),
+// and where the host has a compiler they are defined, as an import's functions over `type` are, after the last import.
+static void smith_lang_concepts_enter(SmithLang *lang, const SmithHost *host, bool imported) {
+    if (!(host->maybe_concepts || imported) || !lang->is_module || lang->concepts_in ||
+        smith_lang_concepts_file(host->main_file)) {
+        return;
+    }
+    lang->concepts_in = true;
+    for (size_t i = 0; i < sizeof smith_concepts_header / sizeof smith_concepts_header[0]; i++) // 11 lines
+        smith_lang_generics_read(lang, smith_concepts_header[i], strlen(smith_concepts_header[i]));
+    if (host->type_query == nullptr || lang->recording) return;
+    lang->type_import = true;
+    if (host->type_values != nullptr) host->type_values(host->context);
+    if (host->watch_mode != nullptr) host->watch_mode(host->context, SmithWatch_All);
+    if (host->import_lines == 0) smith_lang_types_define(lang, host, 0); // no import line to follow
 }
 
 // ---- `Field`, the element of `fields(T)` (runtime/lang_fields.c)

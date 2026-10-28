@@ -1208,8 +1208,9 @@ static bool smith_lang_concept_local(SmithLang *lang, const SmithHost *host, con
                !(smith_lang_punct(&before, ";") || smith_lang_punct(&before, "{") || smith_lang_punct(&before, "}"))) {
         return false;
     }
-    if (host->lookup(host->context, token->text, token->length, SmithLookup_Type).kind != SmithLookup_None ||
-        host->lookup(host->context, token->text, token->length, SmithLookup_Value).kind != SmithLookup_None) {
+    if (!smith_lang_concept_standard(token) &&
+        (host->lookup(host->context, token->text, token->length, SmithLookup_Type).kind != SmithLookup_None ||
+         host->lookup(host->context, token->text, token->length, SmithLookup_Value).kind != SmithLookup_None)) {
         return false; // a name of the program's, which shadows the concept as it shadows any name
     }
     if (!judge) {
@@ -1237,9 +1238,8 @@ static bool smith_lang_concept_local(SmithLang *lang, const SmithHost *host, con
     if (!smith_lang_concept_holds(lang, host, id, found.canonical,
                                   init[0].location != 0 ? init[0].location : token->location)) {
         uint32_t place = init[0].location != 0 ? init[0].location : token->location; // at the initializer
-        smith_lang_concept_why(lang, host, place, id, found.canonical);
-        smith_lang_error(lang, host, place, "`%s` is not `%s`: the initializer of `%.*s` has that type", found.written,
-                         smith_lang_concept_name(id), (int)name->length, name->text);
+        smith_lang_error(lang, host, place, "`%s(%s)` is false: the initializer of `%.*s` has that type",
+                         smith_lang_concept_name(id), found.written, (int)name->length, name->text);
     } // and the declaration goes on as `auto`, so that nothing else is said about the name
     SmithToken automatic = smith_lang_tuple_made(SmithTokenKind_Identifier, "auto", 4, token, token->space_before);
     automatic.line_start = token->line_start;

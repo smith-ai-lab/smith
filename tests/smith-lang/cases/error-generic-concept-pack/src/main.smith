@@ -1,0 +1,9 @@
+module main;
+
+import tally;
+
+i32 main(void) {
+    const char *name = "x";
+    tally::count(1, name, 2.5);
+    return 0;
+}

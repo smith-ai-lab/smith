@@ -17,6 +17,7 @@
 #include "unsafe.h"
 #endif
 
+#include "clang/Basic/CharInfo.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringRef.h"
 
@@ -93,6 +94,7 @@ class SmithNaming final : public RenamerClangTidyCheck {
         // to ask for, and Objective-C naming is not smith's to enforce: ivars, properties and methods are skipped.
         if (!Decl->getDeclName().isIdentifier() || isObjC(Decl)) return std::nullopt;
         if (isTuplePart(Decl) || isEnumPart(Decl)) return std::nullopt;
+        if (isTypeName(Decl)) return std::nullopt;
         const smith::WrittenName *written = writtenName(Decl, SM);
         if (written == nullptr || written->member.empty()) return (inner.*reach(DeclFn{}))(Decl, SM);
         // The first declaration of an exported function is the lowering's copy of its prototype, which is in no file
@@ -165,6 +167,32 @@ class SmithNaming final : public RenamerClangTidyCheck {
         if (const auto *field = dyn_cast<FieldDecl>(Decl))
             return field->getName() == "tag" && isEnumRecord(field->getParent());
         return false;
+    }
+
+    // A type handle is the `unsigned __int128` clang sees for a `Type` (runtime/lang_type.c).
+    static bool isHandle(QualType type) {
+        return type.getCanonicalType().getUnqualifiedType().getAsString() == "unsigned __int128";
+    }
+
+    // Types are capitalized (issue #366): a concept `Bool Ordered(constexpr Type T)`, a type function over `Type`, and
+    // a `Type T` parameter of either are names of types, so the case rule of functions and variables does not apply to
+    // them; every other name keeps the project's rule. The test is the declaration's own shape, never a pattern.
+    static bool isTypeFunction(const FunctionDecl *function) {
+        const StringRef name = function->getName();
+        if (name.empty() || !clang::isUppercase(name[0])) return false;
+        if (isHandle(function->getReturnType())) return true;
+        for (const ParmVarDecl *each : function->parameters())
+            if (isHandle(each->getType())) return true;
+        return false;
+    }
+
+    static bool isTypeName(const NamedDecl *Decl) {
+        if (const auto *function = dyn_cast<FunctionDecl>(Decl)) return isTypeFunction(function);
+        const auto *parameter = dyn_cast<ParmVarDecl>(Decl);
+        if (parameter == nullptr || !isHandle(parameter->getType())) return false;
+        const auto *owner = dyn_cast_or_null<FunctionDecl>(parameter->getDeclContext());
+        return owner != nullptr && isTypeFunction(owner) && !parameter->getName().empty() &&
+               clang::isUppercase(parameter->getName()[0]);
     }
 
     static const NamedDecl *definitionOf(const NamedDecl *Decl) {

@@ -1,0 +1,18 @@
+module tally;
+
+// A concept names the rest pack (issue #193): each argument is judged by it, as `Any... rest` judges none.
+Bool Ordered(constexpr Type T) {
+    return Int(T) || Float(T);
+}
+
+export usize count(Ordered... rest) {
+    return countof(rest);
+}
+
+export f64 total(Num... rest) {
+    f64 sum = 0;
+    for constexpr (usize i = 0; i < countof(rest); i++) {
+        sum += (f64)rest[i];
+    }
+    return sum;
+}

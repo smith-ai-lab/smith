@@ -15,8 +15,13 @@ void smith_lang_watch_basics(const SmithHost *host) {
     static const char *const words[] = {"module", "import", "export", "countof", "defer"};
     for (size_t i = 0; i < sizeof words / sizeof words[0]; i++) // 5 entries
         host->watch(host->context, words[i], (uint32_t)strlen(words[i]));
-    for (size_t i = 0; i < sizeof smith_lang_concepts / sizeof smith_lang_concepts[0]; i++) // 11 entries
-        host->watch(host->context, smith_lang_concepts[i], (uint32_t)strlen(smith_lang_concepts[i]));
+    for (size_t i = 0; i < sizeof smith_lang_concept_nouns / sizeof smith_lang_concept_nouns[0]; i++) // 11 entries
+        host->watch(host->context, smith_lang_concept_nouns[i].old, (uint32_t)strlen(smith_lang_concept_nouns[i].old));
+    for (size_t i = 0; i < sizeof smith_lang_standard_concepts / sizeof smith_lang_standard_concepts[0]; i++) { // 11
+        char name[smith_lang_name_max];
+        int length = snprintf(name, sizeof name, "%s%s", smith_lang_concepts_prefix, smith_lang_standard_concepts[i]);
+        host->watch(host->context, name, (uint32_t)length);
+    }
     for (size_t i = 0; i < sizeof smith_lang_sized / sizeof smith_lang_sized[0]; i++) // 13 entries
         host->watch(host->context, smith_lang_sized[i].name, (uint32_t)strlen(smith_lang_sized[i].name));
     // `if` and `else` are keywords, which a host offers only in its all-tokens mode.

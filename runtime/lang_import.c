@@ -81,6 +81,9 @@ static bool smith_lang_path_matches(const char *file, const char *path) {
 static bool smith_lang_add_binding(SmithLang *lang, const SmithHost *host, const char *name, size_t length,
                                    uint32_t location, const SmithLangModuleName *module, bool is_c);
 
+// runtime/lang_type.c, which comes after this file: the standard concepts are in scope in a module that uses one
+static void smith_lang_concepts_enter(SmithLang *lang, const SmithHost *host, bool imported);
+
 static void smith_lang_module_line(SmithLang *lang, const SmithHost *host, const SmithToken *keyword) {
     SmithLangModuleName name = {};
     bool good = smith_lang_read_module_name(lang, host, &name);
@@ -121,6 +124,7 @@ static void smith_lang_module_line(SmithLang *lang, const SmithHost *host, const
         smith_lang_binding_find(lang, name.last, strlen(name.last))->is_self = true;
     }
     smith_lang_linked_read(lang, host); // the private names an exported generic's instance calls have a symbol
+    smith_lang_concepts_enter(lang, host, false);
 }
 
 // ---- Imports
@@ -257,12 +261,35 @@ static bool smith_lang_import_reflects(const char *text, uint32_t length) {
 static void smith_lang_eshape_import(const char *text, uint32_t length, const char *bind, size_t bind_length);
 static void smith_lang_eshape_builtins(SmithLang *lang);
 
+// Whether a module's header has a generic that names a standard concept in a parameter or calls one in a body (a token
+// `smith_concepts_Num`, or an old noun such as `arithmetic` that is read as one).
+static bool smith_lang_header_uses_concepts(const char *text, uint32_t length) {
+    if (memmem(text, length, "smith_concepts_", 15) != nullptr) return true;
+    if (memmem(text, length, "// smith-generic:", 17) == nullptr) return false;
+    static const char *const nouns[] = {"=integer ",
+                                        "=floating ",
+                                        "=signed_integer ",
+                                        "=unsigned_integer ",
+                                        "=arithmetic ",
+                                        "=pointer ",
+                                        "=enumeration ",
+                                        "=structure ",
+                                        "=array ",
+                                        "=slice ",
+                                        "=any "};
+    for (size_t i = 0; i < sizeof nouns / sizeof nouns[0]; i++) { // 11 old nouns
+        if (memmem(text, length, nouns[i], strlen(nouns[i])) != nullptr) return true;
+    }
+    return false;
+}
+
 static void smith_lang_import_tuples(SmithLang *lang, const SmithHost *host, const char *text, uint32_t length,
                                      const char *bind, size_t bind_length) {
     if (text == nullptr) return;
     if (memmem(text, length, "// smith-eshape: ", 17) != nullptr)
         smith_lang_eshape_import(text, length, bind, bind_length);
     if (memmem(text, length, "// smith-enums", 14) != nullptr) smith_lang_eshape_builtins(lang);
+    if (smith_lang_header_uses_concepts(text, length)) smith_lang_concepts_enter(lang, host, true);
     if (!lang->field_import && smith_lang_import_reflects(text, length)) { // a generic that keeps a field (#100)
         lang->field_import = true;
         if (host->watch_mode != nullptr) host->watch_mode(host->context, SmithWatch_All);
