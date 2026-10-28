@@ -45,6 +45,40 @@ first build runs every command. After that nothing differs. The other way works 
 finds its own logs, which are older than the files smith made since, so it reruns at most what its log says changed; a
 tree is never left wrong, at worst built twice.
 
+## The step cache
+
+A compile (an edge with `deps = gcc`, one object and at most its `.fx` effects summary, `-MD` and `-MF` in a command with
+no shell feature) is served from `<cache>/smith/steps` when a build has made it before (#621, `runtime/executor_cache.c`).
+Written in C, not `.smith`: it works on the executor's own types (`SmithExec`, `SmithEdge`, `SmithJob`), which move to
+`.smith` with the executor (#45); its one pure part, SHA-256, is `runtime/package.c`'s.
+- **Two levels, as ccache's direct mode.** The inputs of a compile are known only after it ran, so a *manifest*
+  `m/<xx>/<key>` (key = SHA-256 of the command with the folder a token, the compiler's build-id or LC_UUID, the
+  environment (`SMITH_LANG_FLAGS`, `SMITH_LANG_INPUTS`, `SDKROOT`, `SMITH_CLANG`, `CPATH`, ...) and the content of the
+  step's explicit and implicit inputs) keeps up to 8 *variants*: the files a compile read and a spec of each. A *result*
+  `r/<xx>/<rkey>/` holds the object, the `.fx` and the depfile of a variant.
+- **The compile writes `-MD`**, so the depfile names the system's headers too. The graph tracks what `-MMD` named: after
+  the command ends the executor drops the system's files from the list it logs (`.smith_deps`), so a no-op build stats
+  no more than before (system = under `/usr`, `/lib`, the macOS SDK and Xcode, smith's embedded runtime, or a folder the
+  command names with `-isystem`, `-isysroot`, `--sysroot`, `SDKROOT`; a folder named with `-I`, `-iquote`, `-idirafter`,
+  `-F` is the project's even then). A project file is keyed by content (with its folder a token, so the generated module
+  map of two folders is one file), a system file by path, size and time.
+- **A hit is what a rebuild makes.** An output that holds the folder as bytes (a `-g` object's debug info names it) is
+  stored under a key that has the folder in it: only a build in that folder is served it. So a `release` or `fast`
+  object is shared by every worktree, and a debug one by a build at the same path. The `.d` and `.fx` are stored with the
+  folder a token and restored with this one. A compile that printed anything (a warning), read a file written after it
+  began, or names `__TIME__`, `__DATE__` or `__TIMESTAMP__` is not stored; nor are compiles with a flag that reads or
+  writes more than the depfile names (`@file`, `-fprofile-*`, `--coverage`, `-save-temps`, plugins, ...), nor a
+  precompiled header, read or written (`-include-pch`, `-x *-header`, a `.pch` or `.gch`): it records each input's time,
+  so one restored after a checkout gave its header a new time is rejected by every compile that includes it (#728).
+- **Restoring** clones the files (FICLONE on Linux, `clonefile` on macOS, else a copy), writes the depfile as a compile
+  would, and the job ends as one does: the depfile log and command log are written, `-v` shows `(cached)` after the
+  step, `-d explain` says it was restored. A hit takes no core of the host's pool. Stores and restores are a temporary
+  file and a rename, so builds in other worktrees can share the folder.
+- `SMITH_STEP_CACHE=0` turns it off. An entry unused for 31 days is removed, and the results are kept within `SMITH_CACHE_MAX` (#618), checked at most once an hour (`smith cache`
+  shows the folder; `smith cache clean steps` empties it). Like the depfile model it cannot see a header that appears
+  earlier on the include path, or (with `-fmodules`) a system header that only a module reads. Module header steps and
+  lint are not covered yet.
+
 ## Keep writing `build.ninja`
 
 Yes. It is the executor's input, so it is not a fallback format that can be dropped; what stays optional is ninja. Keep
