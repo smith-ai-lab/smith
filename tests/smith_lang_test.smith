@@ -1133,6 +1133,14 @@ export void test_generic_function_error(io::Io *io) {
     corpus_case(io, "generic-function-error");
 }
 
+export void test_generic_function_generic(io::Io *io) {
+    corpus_case(io, "generic-function-generic");
+}
+
+export void test_generic_function_generic_error(io::Io *io) {
+    corpus_case(io, "generic-function-generic-error");
+}
+
 export void test_generic_gradient_shape(io::Io *io) {
     corpus_case(io, "generic-gradient-shape");
 }

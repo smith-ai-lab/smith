@@ -78,6 +78,12 @@ Point *p = arena::push(&a, Point);                  // the type is the argument 
   (`(void)sizeof(f(x, rest...))` writes it explicitly). An instance is identified by the function's spelling (`inc` and
   `main_inc` are the same function written two ways, and so two instances) and named `twice<apply::triple, int>` in the
   debugger. Its symbol carries the file too, because a `static` function of two files may share a name.
+  A generic function named there (issue #669: `sort_by(xs, ascending)`) is the argument as one token `module::name`
+  (`smith_lang_generic_as_argument`, a whole argument of a call being read, in a body or outside one; the module's
+  own generic is qualified by its module) and is no instance of its own: `smith_lang_infer_function` accepts it with
+  no question to the compiler, and in the instance each call `f(...)` is replayed as a call to that generic
+  (`smith_lang_replay_function_call`, sharing `smith_lang_replay_call` with a recorded call), so it makes the
+  instance its arguments ask for. Anywhere else the name has no meaning (`&f`, an `auto` parameter) and is an error.
 - **Argument lists** (issue #70). `auto... rest` is the last parameter and takes the arguments that remain, each of its
   own type; each distinct list of types (with the other slots') is one instance. In the instance `rest` is the tuple
   of the arguments, written as the C that it lowers to: the parameters `rest_0, rest_1, ...` (marked

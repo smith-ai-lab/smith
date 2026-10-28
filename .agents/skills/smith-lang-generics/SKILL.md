@@ -40,7 +40,7 @@ Every error is at the generic's source, with a note at the call that asked: ``ma
 
 - ``push is called without its type `T`; pass the type: arena::push(&a, T)``
 - ``a type parameter is compile-time: write `constexpr type T` ``
-- ``` `larger` is a generic function: it can only be called, with its type ```: a generic is not a value (no pointer to one).
+- ``` `larger` is a generic function: it can only be called, with its type ```: a generic is not a value (no pointer to one); its name is an argument only where `constexpr auto f` expects it (`smith-lang-generics-more`).
 - a call that cannot be written, or a generic with an error in its head, is one error and nothing after it.
 
 ## Not built

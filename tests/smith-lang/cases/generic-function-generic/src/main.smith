@@ -1,0 +1,21 @@
+module main;
+
+import order;
+import <stdio.h>;
+import <stdlib.h>;
+
+// What a failed check of an index calls.
+[[smith::c_name("smith_failure")]] export void failure(u8 code) {
+    c::exit(code);
+}
+
+int main() {
+    i32 ints[3] = {5, 2, 9};
+    f64 reals[3] = {2.5, 9.5, 1.5};
+    usize a = order::smallest(order::descending, ints[0:3]);
+    usize b = order::smallest(order::descending, reals[0:3]);
+    usize c = order::smallest_of(ints[0:3]);
+    usize d = order::smallest_of(reals[0:3]);
+    c::printf("%zu %zu %zu %zu\n", a, b, c, d);
+    return 0;
+}
