@@ -29,6 +29,7 @@ One command, one answer: the program's state at a crash or a line, with no edit 
 - **A payload enum** (`enum { Circle circle; empty; }`) shows its active variant and only that payload: `(main::Shape) a = circle { circle = (r = 2) }`, `b = empty {}`; the inactive members and the raw `tag` are hidden. Its C struct is `smith_enum_<module>_<Name>`.
 - No Python scripting, no `gui` (curses): the `script` command is absent. Everything else is lldb's.
 
+- **Sources.** A program `smith build` makes records `.` as its compilation directory (so its objects are shared by every folder); `smith dbg`, `smith dap` and `smith mcp` map it to the program's project root themselves (the nearest folder above the program with a `build.c`, `build.smith` or `.smith/build.info`), so the sources show from any folder. A program no smith built has no root, and nothing is mapped. Your own `settings set target.source-map` or a DAP `sourceMap`/`sourcePath` wins.
 - **`.smith` programs** (compile each source to a `.o` and link, or use `smith build`): frames, `bt` and types show the whole module name, `geometry::box::area(b=...)` and `(geometry::box::Box) b`, and `p (geometry::box::Box)b` and `type lookup geometry::box::Box` work. Break with `b geometry::box::area` or `br set -r box::area`; `b box::area` and `b area` do not resolve. A function cannot be called from `p` by its module name.
 
 ## smith dap: an editor

@@ -187,7 +187,12 @@ extern "C" size_t smith_explain_frames(SmithExplainFrame *out, size_t capacity) 
         out[used].line = 0;
         if (entry.IsValid() && entry.GetFileSpec().IsValid()) {
             lldb::SBFileSpec spec = entry.GetFileSpec();
-            std::snprintf(out[used].file, sizeof out[used].file, "%s/%s", spec.GetDirectory(), spec.GetFilename());
+            // a debug object's compilation directory is `.` (issue #621), which lldb gives as no directory at all
+            const char *directory = spec.GetDirectory();
+            if (directory == nullptr || directory[0] == '\0')
+                std::snprintf(out[used].file, sizeof out[used].file, "%s", spec.GetFilename());
+            else
+                std::snprintf(out[used].file, sizeof out[used].file, "%s/%s", directory, spec.GetFilename());
             out[used].line = entry.GetLine();
         }
     }

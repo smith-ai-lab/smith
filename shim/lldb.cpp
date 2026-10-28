@@ -8,8 +8,10 @@
 extern "C" void smith_lldb_slice_formatters(void);
 extern "C" int smith_lldb_driver_main(int argc, const char **argv);
 
-// Runs lldb on argv[1 .. argc), as argv[0] (a path in smith's programs folder). Returns its exit status.
-extern "C" int smith_lldb_main(int argc, char **argv) {
+// Runs lldb on argv[1 .. argc), as argv[0] (a path in smith's programs folder). Returns its exit status. A debug
+// object's compilation directory is `.` (issue #621): `source_map`, when not null, is the command that maps it to the
+// project root.
+extern "C" int smith_lldb_main(int argc, char **argv, const char *source_map) {
     smith_tool_start("__smith_lldb", argv[0]);
     smith_lldb_slice_formatters();
     // `run` and `r` are aliases of `process launch --shell-expand-args true`, whose shell gives up after ~10 s of wall
@@ -19,7 +21,7 @@ extern "C" int smith_lldb_main(int argc, char **argv) {
                                            "-O", "command unalias r",
                                            "-O", "command alias run process launch -X false --",
                                            "-O", "command alias r process launch -X false --"};
-    constexpr int extra = sizeof(no_shell) / sizeof(no_shell[0]);
+    constexpr int extra = sizeof(no_shell) / sizeof(no_shell[0]) + 2;
     constexpr int capacity = 512;
     if (argc + extra >= capacity) return smith_lldb_driver_main(argc, const_cast<const char **>(argv));
     const char *args[capacity];
@@ -27,6 +29,10 @@ extern "C" int smith_lldb_main(int argc, char **argv) {
     args[n++] = argv[0];
     for (const char *option : no_shell)
         args[n++] = option;
+    if (source_map != nullptr) {
+        args[n++] = "-O";
+        args[n++] = source_map;
+    }
     for (int i = 1; i < argc; i++)
         args[n++] = argv[i];
     args[n] = nullptr;

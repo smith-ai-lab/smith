@@ -77,8 +77,8 @@ void smith_clangd_defaults(const char *style, const char *tidy);
 constexpr bool smith_has_lldb = true;
 // shim/lldb.cpp and shim/lldb_dap.cpp: the mains of lldb and lldb-dap (`smith dbg`, `smith dap`), run the same way. A
 // smith built against an LLVM install without lldb (scripts/llvm.sh, the lldb step) runs an external lldb instead.
-int smith_lldb_main(int argc, char **argv);
-int smith_lldb_dap_main(int argc, char **argv);
+int smith_lldb_main(int argc, char **argv, const char *source_map);
+int smith_lldb_dap_main(int argc, char **argv, const char *source_map);
 #ifdef __linux__
 int smith_lldb_server_main(int argc, char **argv); // shim/lldb_server.cpp: lldb's debug server on Linux
 #endif
@@ -1215,6 +1215,10 @@ static const SmithLibrary smith_libraries[] = {
 };
 // clang-format on
 
+// The root a debug object's `.` stands for (issue #621): `smith dbg`, `smith dap`, `smith mcp` and `smith symbolize`.
+#include "runtime/debug_root.c"
+// `smith dap` adds the root to the launch request.
+#include "runtime/dap_filter.c"
 // `smith symbolize` and smith as llvm-symbolizer: stack traces turned into lines.
 #include "runtime/symbolize.c"
 // `smith --smith-explain`: the values of a failed check, read from the stopped test with lldb.
@@ -2744,6 +2748,49 @@ static void smith_debugserver_environment(const char *self) {
 }
 #endif
 
+#ifdef SMITH_LLDB
+// lldb's options whose next argument is a value that is no program (a command, a script, a process, a language).
+static bool smith_debug_takes_value(const char *option) {
+    static const char *const names[] = {"-a", "--arch",
+                                        "-n", "--attach-name",
+                                        "-p", "--attach-pid",
+                                        "-k", "--one-line-on-crash",
+                                        "-K", "--source-on-crash",
+                                        "-o", "--one-line",
+                                        "-O", "--one-line-before-file",
+                                        "-s", "--source",
+                                        "-S", "--source-before-file",
+                                        "-l", "--script-language",
+                                        "-c", "--core"};
+    for (size_t i = 0; i < sizeof names / sizeof names[0]; i++)
+        if (strcmp(option, names[i]) == 0) return true;
+    return false;
+}
+
+// The root for `smith dbg`'s arguments (those after the verb): that of the first argument before `--` that is a file
+// with a root above it (the program), else of the current folder.
+static bool smith_debug_root(int argc, char **argv, char *root, size_t capacity) {
+    for (int i = 0; i < argc && strcmp(argv[i], "--") != 0; i++) {
+        if (argv[i][0] == '-') {
+            if (smith_debug_takes_value(argv[i])) i++;
+            continue;
+        }
+        struct stat info;
+        if (stat(argv[i], &info) == 0 && S_ISREG(info.st_mode) && smith_project_root(argv[i], root, capacity))
+            return true;
+    }
+    return smith_project_root(".", root, capacity);
+}
+
+// The lldb command that maps the debug objects' `.` to the root, or false when there is no root or its name would need
+// quoting. `append` keeps a map the user's own settings made.
+static bool smith_debug_source_map(const char *root, char *command, size_t capacity) {
+    if (strpbrk(root, "\"\\'\n") != nullptr) return false;
+    int written = snprintf(command, capacity, "settings append target.source-map . \"%s\"", root);
+    return written > 0 && (size_t)written < capacity;
+}
+#endif
+
 static int smith_tool_in_process(const SmithTool *tool, int argc, char **argv, const char *self) {
     char folder[PATH_MAX];
     char programs[PATH_MAX];
@@ -2764,8 +2811,18 @@ static int smith_tool_in_process(const SmithTool *tool, int argc, char **argv, c
     if (strcmp(tool->command, "fmt") == 0) return smith_format_main(argc, argv);
     if (strcmp(tool->command, "lint") == 0) return smith_tidy_main(argc, argv);
 #ifdef SMITH_LLDB
-    if (strcmp(tool->command, "dbg") == 0) return smith_lldb_main(argc, argv);
-    if (strcmp(tool->command, "dap") == 0) return smith_lldb_dap_main(argc, argv);
+    if (strcmp(tool->command, "dbg") == 0 || strcmp(tool->command, "dap") == 0) {
+        // A debug object's compilation directory is `.` (issue #621): the debugger maps it to the program's project
+        // root.
+        char root[PATH_MAX];
+        char map[PATH_MAX + 64];
+        bool dbg = strcmp(tool->command, "dbg") == 0;
+        bool found =
+            dbg ? smith_debug_root(argc - 1, argv + 1, root, sizeof root) : smith_project_root(".", root, sizeof root);
+        const char *source_map = found && smith_debug_source_map(root, map, sizeof map) ? map : nullptr;
+        if (!dbg) (void)smith_dap_filter_start(); // the launch request names the program, and so the root
+        return dbg ? smith_lldb_main(argc, argv, source_map) : smith_lldb_dap_main(argc, argv, source_map);
+    }
 #endif
     return smith_clangd_main(argc, argv);
 }

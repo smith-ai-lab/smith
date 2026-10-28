@@ -1,7 +1,7 @@
 // The shared cache of compile steps (#621): a compile whose command and inputs another build has seen is not run, its
 // outputs are cloned from <cache>/smith/steps. Each test has a cache of its own, shared by its projects. The projects
-// are built `release`: a debug object holds the folder it was compiled in (its debug info), so a debug build is served
-// only to a build in that folder.
+// are built `release`, but the one that builds the debug profile: a debug object names no folder (its debug info says
+// `.` where it would say the folder, issue #621), so the second folder is served it too.
 module build_step_cache_test;
 
 import smith::format;
@@ -37,6 +37,23 @@ export void test_build_step_cache_a_second_folder_runs_no_compile(io::Io *io) {
     scratch::expect_status("cache: its objects are the first's", 0, &same);
     scratch::expect_status("cache: and the program built from them runs", 0,
                            &(scratch::Run){.status = scratch::sh(&b, "build/release/b").status});
+}
+
+// 1b. The same for the debug profile: no folder is in the objects, so the second folder is served them too.
+export void test_build_step_cache_a_debug_build_is_served_to_a_second_folder(io::Io *io) {
+    scratch::Project a = made(io, "a");
+    scratch::Project b = made(io, "b");
+    (void)scratch::sh(&a, "env SMITH_STEP_CACHE=1 smith build 2>&1");
+    scratch::expect_text(
+        "debug: the first folder's objects do not name it", "",
+        scratch::capture(
+            &a, format::push(&io->arena, "grep -c -a '", a.dir, "' build/debug/*.o | grep -v ':0$'; true").data));
+    scratch::Run second = scratch::sh(&b, "env SMITH_STEP_CACHE=1 smith build 2>&1");
+    scratch::expect_contains("debug: the second folder is served", second.out, "compile util.c (cached)");
+    scratch::expect_lacks("debug: and compiles nothing", second.out, "compile main.c\n");
+    scratch::Run same =
+        scratch::sh(&b, "for f in main other util; do cmp build/debug/$f.o ../a/build/debug/$f.o || exit 1; done");
+    scratch::expect_status("debug: its objects are the first's", 0, &same);
 }
 
 // 2. A header changed: the files that include it compile again, the others are up to date.

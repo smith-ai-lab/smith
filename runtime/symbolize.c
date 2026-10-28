@@ -126,6 +126,15 @@ typedef struct {
 static const char *smith_sym_binary_override;
 static char smith_sym_directory[PATH_MAX];
 
+// The root of the project whose program is symbolized (issue #621): a debug object's source is `./dir/file.c`, relative
+// to the root, not to the folder the report runs in. Empty until a program with a root is seen.
+static char smith_sym_root[PATH_MAX];
+
+static void smith_sym_root_from(const char *program) {
+    if (smith_sym_root[0] == '\0' && !smith_project_root(program, smith_sym_root, sizeof smith_sym_root))
+        smith_sym_root[0] = '\0';
+}
+
 static bool smith_sym_starts(const char *text, const char *prefix) {
     return strncmp(text, prefix, strlen(prefix)) == 0;
 }
@@ -284,6 +293,7 @@ static void smith_sym_check_image(SmithSymImage *image, SmithSymNotes *notes) {
         return;
     }
     image->usable = true;
+    smith_sym_root_from(image->resolved);
 }
 
 static size_t smith_sym_row_add(SmithSymRow *rows, size_t count, const SmithSymbol *symbol, int image_index) {
@@ -331,8 +341,11 @@ static size_t smith_sym_rows(SmithSymTrace *trace, SmithSymRow *rows, SmithSymNo
 
 // Text.
 
-// A path relative to the current folder when it is under it.
+// A path relative to the current folder when it is under it. A debug object names no folder (its compilation directory
+// is `.`, issue #621), so a file it reads by a path under the project comes as ./dir/file: the ./ is not shown.
 static const char *smith_sym_short(const char *path) {
+    while (path[0] == '.' && path[1] == '/')
+        path += 2;
     // The system's /var, /tmp and /etc are links into /private: getcwd names the real folder, a compile's paths may
     // not.
     const char *folder = smith_sym_directory;
@@ -342,9 +355,17 @@ static const char *smith_sym_short(const char *path) {
     return path;
 }
 
+// The path to open for a source file: a relative one is under the root when it is there, else under the current folder.
+static const char *smith_sym_open_path(const char *file, char *buffer, size_t capacity) {
+    if (file[0] == '/' || smith_sym_root[0] == '\0') return file;
+    int written = snprintf(buffer, capacity, "%s/%s", smith_sym_root, file);
+    return written > 0 && (size_t)written < capacity && access(buffer, R_OK) == 0 ? buffer : file;
+}
+
 // Line number `line` of the file, without its newline and trailing blanks. False when it cannot be read.
 static bool smith_sym_source(const char *file, uint32_t line, char *text, size_t capacity) {
-    FILE *source = fopen(file, "r");
+    char buffer[PATH_MAX + 1024];
+    FILE *source = fopen(smith_sym_open_path(file, buffer, sizeof buffer), "r");
     if (source == nullptr) return false;
     bool found = false;
     for (uint32_t current = 1; current <= line; current++) { // bounded by the line asked for
@@ -366,7 +387,9 @@ static bool smith_sym_source(const char *file, uint32_t line, char *text, size_t
 static bool smith_sym_newer(const char *source, const char *binary) {
     struct stat source_info;
     struct stat binary_info;
-    if (stat(source, &source_info) != 0 || stat(binary, &binary_info) != 0) return false;
+    char buffer[PATH_MAX + 1024];
+    if (stat(smith_sym_open_path(source, buffer, sizeof buffer), &source_info) != 0 || stat(binary, &binary_info) != 0)
+        return false;
     return smith_platform_mtime(&source_info).tv_sec > smith_platform_mtime(&binary_info).tv_sec;
 }
 

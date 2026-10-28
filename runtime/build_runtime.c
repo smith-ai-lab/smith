@@ -2179,6 +2179,38 @@ static const char *const *smith_proved_flags(SmithBuild *b, const SmithObject *o
     return smith_list(b, flag, nullptr);
 }
 
+// Whether a flag asks for debug information: -g, -g1 to -g3, -ggdb, -gdwarf-5, -gline-tables-only; not -g0, -gno-* or
+// -gz.
+static bool smith_flag_is_debug(const char *flag) {
+    if (strncmp(flag, "-g", 2) != 0) return false;
+    if (flag[2] == '\0') return true;
+    return strcmp(flag, "-g0") != 0 && strncmp(flag, "-gno-", 5) != 0 && strncmp(flag, "-gz", 3) != 0;
+}
+
+// A debug compile's object names no folder (issue #621): the root the build runs in, which clang writes as the
+// compilation directory of every unit and in the name of each file it reads by an absolute path, is `.`. The same
+// source in another folder then compiles to the same bytes, which is what lets the step cache serve it there. The
+// root is spelled as clang spells it ($PWD when it is this folder), and as getcwd does when that differs; a root
+// that holds '=' cannot be written in the flag, and the object keeps it.
+static const char *const *smith_debug_map_flags(SmithBuild *b, const char *const *flags) {
+    bool debug = false;
+    for (size_t i = 0; flags[i] != nullptr; i++)
+        debug = debug || smith_flag_is_debug(flags[i]);
+    char physical[PATH_MAX];
+    if (!debug || getcwd(physical, sizeof physical) == nullptr || strcmp(physical, "/") == 0)
+        return smith_list(b, nullptr);
+    const char *logical = getenv("PWD");
+    struct stat here = {};
+    struct stat named = {};
+    bool differs = logical != nullptr && logical[0] == '/' && strcmp(logical, physical) != 0 &&
+                   stat(logical, &named) == 0 && stat(".", &here) == 0 && named.st_ino == here.st_ino &&
+                   named.st_dev == here.st_dev;
+    if (strchr(physical, '=') != nullptr || (differs && strchr(logical, '=') != nullptr)) return smith_list(b, nullptr);
+    if (!differs) return smith_list(b, smith_text("-fdebug-prefix-map=%s=.", physical), nullptr);
+    return smith_list(b, smith_text("-fdebug-prefix-map=%s=.", logical),
+                      smith_text("-fdebug-prefix-map=%s=.", physical), nullptr);
+}
+
 void smith_object(SmithBuild *b, SmithObject *object) {
     SMITH_ASSERT(b != nullptr && object != nullptr);
     smith_require_program("smith_object", "compiler", object->compiler);
@@ -2209,9 +2241,10 @@ void smith_object(SmithBuild *b, SmithObject *object) {
     const char *const *proved_inputs = nullptr;
     const char *const *proved_flags = smith_proved_flags(b, &copy, &proved_inputs);
     copy.step = (SmithStep){
-        .command = smith_cat(b, smith_one(copy.compiler), smith_modules_for(b, copy.source),
-                             smith_lang_flags(b, copy.source), copy.flags, proved_flags,
-                             smith_library_flags(b, copy.source), smith_module_flags(b, copy.source), tail, nullptr),
+        .command =
+            smith_cat(b, smith_one(copy.compiler), smith_modules_for(b, copy.source), smith_lang_flags(b, copy.source),
+                      copy.flags, smith_debug_map_flags(b, copy.flags), proved_flags,
+                      smith_library_flags(b, copy.source), smith_module_flags(b, copy.source), tail, nullptr),
         .inputs = smith_one(copy.source),
         .implicit_inputs =
             smith_cat(b, copy.implicit_inputs, smith_one(smith_compiler_file(copy.compiler)), proved_inputs, nullptr),

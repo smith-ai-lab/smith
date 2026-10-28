@@ -27,6 +27,7 @@
 #include <smith/io.h>
 #include <smith/json.h>
 #include "dap.h"
+#include "debug_root.c"
 
 #include <errno.h>
 #include <limits.h>

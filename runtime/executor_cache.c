@@ -9,10 +9,10 @@
 //             for a system file.
 //   result    r/<xx>/<rkey>/: the object, its .fx effects summary if any, and the depfile, for the variant whose specs
 //             all hold now. rkey = SHA-256 of (the key, the variant, and the root when an output holds it).
-// The worktree's root is a token in everything stored. An output that holds the root as bytes (the debug info of a -g
-// object names the folder it was compiled in) is stored under a key that has the root in it: a hit must be what a
-// rebuild here makes, byte for byte, and a rebuild here writes this root.
-// A hit is only ever a compile with no output (a warning is not hidden), whose inputs were all older than the compile.
+// The worktree's root is a token in everything stored. An output that holds the root as bytes (a -g object does not:
+// smith_object maps the root to `.` in its debug info, #621) is stored under a key that has the root in it: a hit must
+// be what a rebuild here makes, byte for byte, and a rebuild here writes this root. A hit is only ever a compile with
+// no output (a warning is not hidden), whose inputs were all older than the compile.
 
 constexpr size_t smith_stepcache_hex = 65;
 constexpr size_t smith_stepcache_text_max = (size_t)1 << 20;    // a manifest, the lines of a variant
@@ -293,11 +293,14 @@ static bool smith_stepcache_contains_root(const char *path) {
 
 // ---------------------------------------------------------------- hashing the inputs
 
-// Whether the bytes name a macro whose value no key can know.
+// Whether the bytes name a macro whose value no key can know. The names are put together here, so that this file, which
+// smith.c includes, does not name them itself and smith.c's compile can be cached.
 static bool smith_stepcache_time_macro(const char *bytes, size_t size) {
-    static const char *const names[] = {"__TIME__", "__DATE__", "__TIMESTAMP__"};
+    static const char *const names[] = {"TIME", "DATE", "TIMESTAMP"};
     for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
-        if (memmem(bytes, size, names[i], strlen(names[i])) != nullptr) return true;
+        char macro[32];
+        int length = snprintf(macro, sizeof macro, "__%s__", names[i]);
+        if (length > 0 && memmem(bytes, size, macro, (size_t)length) != nullptr) return true;
     }
     return false;
 }
@@ -330,7 +333,7 @@ static bool smith_stepcache_hash_small(const char *path, size_t size, char hex[s
 }
 
 // SHA-256 of a file, which must still be what `expected` says when it has been read. *time_macro says whether it names
-// __TIME__, __DATE__ or __TIMESTAMP__. False when it cannot be read whole.
+// one of the time macros. False when it cannot be read whole.
 static bool smith_stepcache_hash_file(const char *path, const struct stat *expected, char hex[smith_stepcache_hex],
                                       bool *time_macro) {
     if ((size_t)expected->st_size < sizeof smith_stepcache_whole - 1) {

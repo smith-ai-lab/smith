@@ -322,13 +322,25 @@ static bool smith_mcp_launch_initialize(SmithMcpServer *server, SmithMcpSession 
 static bool smith_mcp_launch_send(SmithMcpServer *server, SmithMcpSession *session, const char *program,
                                   const char *const *list, size_t count, bool stop_on_entry, int64_t *seq,
                                   SmithMcpText *out) {
+    // A debug object's compilation directory is `.` (issue #621): sourcePath maps it to the program's project root.
+    char root[PATH_MAX];
+    bool has_root = smith_project_root(program, root, sizeof root);
     struct smith_array_const_char_n keys[] = {smith_text_make("program"), smith_text_make("args"),
-                                              smith_text_make("cwd"), smith_text_make("stopOnEntry")};
+                                              smith_text_make("cwd"), smith_text_make("stopOnEntry"),
+                                              smith_text_make("sourcePath")};
     SmithProtocolAny values[] = {smith_mcp_json_string(&server->scratch, smith_text_make(program)),
                                  smith_mcp_json_strings(&server->scratch, list, count),
                                  smith_mcp_json_string(&server->scratch, smith_text_make(session->cwd)),
-                                 stop_on_entry ? smith_mcp_json_true(&server->scratch) : nullptr};
-    SmithDapLaunchRequest request = {.arguments = {.additionalProperties = {keys, values, stop_on_entry ? 4 : 3}}};
+                                 stop_on_entry ? smith_mcp_json_true(&server->scratch) : nullptr,
+                                 has_root ? smith_mcp_json_string(&server->scratch, smith_text_make(root)) : nullptr};
+    // The properties that are set, in order: stopOnEntry and sourcePath are optional.
+    size_t used = 3;
+    if (stop_on_entry) used++;
+    if (has_root) {
+        keys[used] = keys[4];
+        values[used++] = values[4];
+    }
+    SmithDapLaunchRequest request = {.arguments = {.additionalProperties = {keys, values, used}}};
     bool sent = false;
     SMITH_MCP_DAP_SEND(server, session, launch_request, request, sent);
     *seq = request.seq;
