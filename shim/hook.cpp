@@ -694,7 +694,7 @@ class SmithHook final : public TokenHook, public NameSource {
         // The text the scans below read has the lowercase names for the capitalized ones (issue #366).
         StringRef buffer = SM.getBufferData(MainFile);
         std::string lowered(buffer.size() * 3 + 1, '\0');
-        lowered.resize(smith_lang_capitals_lower(buffer.data(), buffer.size(), lowered.data(), true));
+        lowered.resize(smith_lang_capitals_lower(buffer.data(), buffer.size(), lowered.data(), !conceptsFile));
         const StringRef scan = lowered;
         host.maybe_main = scan.contains("main");
         host.maybe_concepts = scan.contains("smith_concepts_") || namesConcept(scan);

@@ -116,14 +116,15 @@ export void test_the_shapes_the_lowering_carries_are_the_ones_the_headers_write(
 export void test_the_concepts_the_lowering_carries_are_the_ones_the_header_writes(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     scratch::write_header_of(&p, "lib/smith/concepts.smith", "concepts.h");
-    scratch::Run missing = scratch::sh(&p, "grep '^// smith-generic: ' concepts.h | while IFS= read -r line; do "
-                                           "grep -qF -- \"$line\" \"$SMITH_REPO/runtime/lang_type.c\" || "
-                                           "echo \"missing: $line\"; done");
-    scratch::expect_text("a concept's line the lowering does not carry", "", missing.out);
-    scratch::Run counted = scratch::sh(
-        &p, "echo $(grep -c '^// smith-generic: ' concepts.h) $(grep -c '^    \"// smith-generic: smith::concepts ' "
-            "\"$SMITH_REPO/runtime/lang_type.c\")");
-    scratch::expect_text("the lines in the header and the lines carried", "11 11\n", counted.out);
+    // The carried lines are string literals that the formatter may split over several lines: join them first.
+    scratch::Run missing = scratch::sh(
+        &p, "carried=$(sed -n '/BEGIN concepts header/,/END concepts header/p' \"$SMITH_REPO/runtime/lang_type.c\" | "
+            "awk '/^ *\\/\\//{next} {l=$0; sub(/^ *\"/,\"\",l); if (l ~ /\\\\n\",$/) {sub(/\\\\n\",$/,\"\",l); "
+            "print a l; a=\"\"} else {sub(/\"$/,\"\",l); a=a l}}'); grep '^// smith-generic: ' concepts.h | while IFS= read -r line; do "
+            "printf '%s\\n' \"$carried\" | grep -qxF -- \"$line\" || echo \"missing: $line\"; done; "
+            "echo \"$(grep -c '^// smith-generic: ' concepts.h) $(printf '%s\\n' \"$carried\" | grep -c "
+            "'^// smith-generic: ')\"");
+    scratch::expect_text("a concept's line the lowering does not carry, then the counts", "11 11\n", missing.out);
 }
 
 export void test_the_concepts_header_compiles_alone(io::Io *io) {

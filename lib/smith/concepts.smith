@@ -29,6 +29,8 @@ export Bool Num(constexpr Type T) {
     return Int(T) || Float(T);
 }
 
+// NOLINTBEGIN(smith-sized-types): these two concepts are the lists of C's integer types, so they name them.
+
 // The signed integer types: the sized ones and C's own (`signed char` ... `long long`, and `char` where it is signed).
 export Bool Signed(constexpr Type T) {
     return T == I8 || T == I16 || T == I32 || T == I64 || T == Isize || T == typeof((signed char)0) ||
@@ -43,6 +45,8 @@ export Bool Unsigned(constexpr Type T) {
            T == typeof((unsigned short)0) || T == typeof((unsigned)0) || T == typeof((unsigned long)0) ||
            T == typeof((unsigned long long)0) || (T == typeof((char)0) &&(char)-1 > 0);
 }
+
+// NOLINTEND(smith-sized-types)
 
 export Bool Pointer(constexpr Type T) {
     return kind(T) == Kind::pointer;
