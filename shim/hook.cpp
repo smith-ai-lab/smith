@@ -690,14 +690,10 @@ class SmithHook final : public TokenHook, public NameSource {
             mainName = entry->getName().str();
         }
         host.main_file = mainName.c_str();
-        // The text the scans below read has the lowercase names for the capitalized ones (issue #366).
-        StringRef buffer = SM.getBufferData(MainFile);
-        std::string lowered(buffer.size() * 3 + 1, '\0');
-        lowered.resize(smith_lang_capitals_lower(buffer.data(), buffer.size(), lowered.data(), true));
-        const StringRef scan = lowered;
+        const StringRef scan = SM.getBufferData(MainFile);
         host.maybe_main = scan.contains("main");
         host.maybe_generic =
-            scan.contains("type ") || scan.contains("auto ") || scan.contains("auto...") || namesConcept(scan);
+            scan.contains("Type ") || scan.contains("auto ") || scan.contains("auto...") || namesConcept(scan);
         host.maybe_if_constexpr = hasIfConstexpr(scan);
         host.maybe_local_tag = hasNestedTag(scan);
         host.maybe_slice = hasSlice(scan) || hasStr(scan);
@@ -731,31 +727,10 @@ class SmithHook final : public TokenHook, public NameSource {
         smith_lang_watch_basics(&host);
         watchUnusedNames(SM.getBufferData(MainFile));
         PP.addPPCallbacks(std::make_unique<Macros>(*this));
-        for (unsigned i = 0; i < 13; i++) {
+        for (unsigned i = 0; i < 14; i++) {
             sizedInfos[i] = PP.getIdentifierInfo(sizedTable[i].name);
             sizedNames[sizedInfos[i]] = i;
         }
-        const char *written = nullptr;
-        const char *name = nullptr;
-        for (size_t i = 0; smith_lang_capital_at(i, &written, &name); i++) { // `I32` is read as `i32`
-            IdentifierInfo *capital = PP.getIdentifierInfo(written);
-            capital->setHookWatched(true);
-            capitals[capital] = PP.getIdentifierInfo(name);
-        }
-    }
-
-    llvm::DenseMap<const IdentifierInfo *, IdentifierInfo *> capitals; // `I32` to `i32`, `Int` to `integer` (#366)
-    tok::TokenKind lastKind = tok::unknown;                            // the token before the one a lookahead reads
-
-    // A capitalized type name is the lowercase one, unless it names a member or a C name (after `.`, `->`, `::`).
-    void lowerCapital(Token &tok, tok::TokenKind before) {
-        if (tok.isNot(tok::identifier) || before == tok::period || before == tok::arrow || before == tok::coloncolon) {
-            return;
-        }
-        auto found = capitals.find(tok.getIdentifierInfo());
-        if (found == capitals.end() || !spelledInMain(tok.getLocation())) return;
-        tok.setIdentifierInfo(found->second);
-        tok.setKind(found->second->getTokenID()); // `Bool` is the keyword `bool`
     }
 
     void semaCreated(Sema &s) override {
@@ -823,9 +798,6 @@ class SmithHook final : public TokenHook, public NameSource {
     // (`i32 double(i32 x)`), and is reported as that, once, at the name. The hook is offered everything for as long as
     // the look lasts, and what it would not have been offered is passed over.
     bool offer(Token &tok) {
-        const IdentifierInfo *capitalBefore = nullptr;
-        lowerCapital(tok, PP.getHookPrevious(1, capitalBefore));
-        lastKind = tok.getKind();
         if (!spelledInMain(tok.getLocation()) || tok.is(tok::eof)) {
             if (afterSized > 0) endLook();
             return offerLowered(tok);
@@ -1007,7 +979,7 @@ class SmithHook final : public TokenHook, public NameSource {
         if (declaredByProgram(info)) return Fast::No; // the program's own u32, perhaps
         if (mayEndType(before)) return Fast::No;
         if (enumConstantHere(before)) return Fast::Kept; // an enum's constant is the program's name
-        if (!body && smith_lang_io_import(lang) && info->getName() == "i32") return Fast::No; // `i32 main(io::Io *io)`
+        if (!body && smith_lang_io_import(lang) && info->getName() == "I32") return Fast::No; // `i32 main(io::Io *io)`
         ensureSized(sized->second, tok.getLocation());
         return Fast::Kept;
     }
@@ -1125,7 +1097,10 @@ class SmithHook final : public TokenHook, public NameSource {
         ASTContext &ast = sema->getASTContext();
         if (entry.macro != nullptr) return sizedType(entry.macro);
         StringRef keyword(entry.keyword);
-        return keyword == "float" ? ast.FloatTy : keyword == "double" ? ast.DoubleTy : ast.Float16Ty;
+        return keyword == "float"    ? ast.FloatTy
+               : keyword == "double" ? ast.DoubleTy
+               : keyword == "bool"   ? ast.BoolTy
+                                     : ast.Float16Ty;
     }
 
   private:
@@ -1156,17 +1131,17 @@ class SmithHook final : public TokenHook, public NameSource {
         const char *macro;   // the compiler's macro for its type, or null
         const char *keyword; // else the keyword
     };
-    static constexpr SizedName sizedTable[13] = {
-        {"u8", "__UINT8_TYPE__", nullptr},   {"u16", "__UINT16_TYPE__", nullptr},
-        {"u32", "__UINT32_TYPE__", nullptr}, {"u64", "__UINT64_TYPE__", nullptr},
-        {"i8", "__INT8_TYPE__", nullptr},    {"i16", "__INT16_TYPE__", nullptr},
-        {"i32", "__INT32_TYPE__", nullptr},  {"i64", "__INT64_TYPE__", nullptr},
-        {"usize", "__SIZE_TYPE__", nullptr}, {"isize", "__PTRDIFF_TYPE__", nullptr},
-        {"f16", nullptr, "_Float16"},        {"f32", nullptr, "float"},
-        {"f64", nullptr, "double"}};
+    static constexpr SizedName sizedTable[14] = {
+        {"U8", "__UINT8_TYPE__", nullptr},   {"U16", "__UINT16_TYPE__", nullptr},
+        {"U32", "__UINT32_TYPE__", nullptr}, {"U64", "__UINT64_TYPE__", nullptr},
+        {"I8", "__INT8_TYPE__", nullptr},    {"I16", "__INT16_TYPE__", nullptr},
+        {"I32", "__INT32_TYPE__", nullptr},  {"I64", "__INT64_TYPE__", nullptr},
+        {"Usize", "__SIZE_TYPE__", nullptr}, {"Isize", "__PTRDIFF_TYPE__", nullptr},
+        {"F16", nullptr, "_Float16"},        {"F32", nullptr, "float"},
+        {"F64", nullptr, "double"},          {"Bool", nullptr, "bool"}};
     llvm::DenseMap<const IdentifierInfo *, unsigned> sizedNames; // the sized type names, by IdentifierInfo
-    IdentifierInfo *sizedInfos[13];
-    NamedDecl *sizedDecls[13] = {};                                   // the typedefs this hook made
+    IdentifierInfo *sizedInfos[14];
+    NamedDecl *sizedDecls[14] = {};                                   // the typedefs this hook made
     llvm::DenseMap<const IdentifierInfo *, IdentifierInfo *> renames; // a module's names, to their prefixed spelling
     std::string headerBuffer;
     std::unique_ptr<llvm::MemoryBuffer> headerFile;
@@ -1770,8 +1745,6 @@ class SmithHook final : public TokenHook, public NameSource {
         } else {
             self->PP.Lex(next);
         }
-        self->lowerCapital(next, self->lastKind);
-        self->lastKind = next.getKind();
         self->pool.push_back(next);
         *token = self->convert(next, self->pool.size() - 1);
     }
@@ -1854,7 +1827,7 @@ class SmithHook final : public TokenHook, public NameSource {
         if (token->expand && token->handle == smith_token_no_handle && self->sema != nullptr) {
             // A sized type name the lowering made into the compiler's name for the type (__UINT32_TYPE__): it stays the
             // name as written, a typedef, so that no macro expands and a diagnostic names the type as the program did.
-            for (unsigned i = 0; i < 13; i++) {
+            for (unsigned i = 0; i < 14; i++) {
                 const SizedName &entry = sizedTable[i];
                 if (token->length == strlen(entry.macro ? entry.macro : entry.keyword) &&
                     memcmp(token->text, entry.macro ? entry.macro : entry.keyword, token->length) == 0) {
@@ -2068,7 +2041,7 @@ class SmithHook final : public TokenHook, public NameSource {
                 at = end == at ? at + 1 : end;
                 continue;
             }
-            for (unsigned i = 0; i < 13; i++) {
+            for (unsigned i = 0; i < 14; i++) {
                 const SizedName &entry = sizedTable[i];
                 bool named = text.compare(at, end - at, entry.name) == 0;
                 bool macro = !named && entry.macro != nullptr && text.compare(at, end - at, entry.macro) == 0;
@@ -2203,7 +2176,7 @@ class SmithHook final : public TokenHook, public NameSource {
             const llvm::fltSemantics &semantics = value.getFloat().getSemantics();
             bool single = &semantics == &llvm::APFloat::IEEEsingle();
             if (!single && &semantics != &llvm::APFloat::IEEEdouble()) {
-                why = "only an f32 or an f64 is a float value";
+                why = "only an F32 or an F64 is a float value";
                 return false;
             }
             node->kind = SmithValue_Float;
@@ -2454,7 +2427,7 @@ class SmithHook final : public TokenHook, public NameSource {
     }
 
     // The enum whose constants `fields` lists: a plain enum, or the tag enum of a payload enum's struct (annotated
-    // `smith::enum`, runtime/lang_enum.c), whose variants are the tag's constants.
+    // `std::enum`, runtime/lang_enum.c), whose variants are the tag's constants.
     // The name of an enum's constant as the source writes it: C's is prefixed by the module (`docs_Low`) or, for an
     // enum with a C name, by the type (`Volume_Low`). The module's prefix is what the constant shares with the type's
     // own (prefixed) name, up to a `_`.
@@ -2471,7 +2444,7 @@ class SmithHook final : public TokenHook, public NameSource {
         if (const auto *plain = type.getCanonicalType()->getAs<EnumType>()) return plain->getDecl()->getDefinition();
         if (record == nullptr || record->getDefinition() == nullptr) return nullptr;
         const auto *annotation = record->getDefinition()->getAttr<AnnotateAttr>();
-        if (annotation == nullptr || annotation->getAnnotation() != "smith::enum") return nullptr;
+        if (annotation == nullptr || annotation->getAnnotation() != "std::enum") return nullptr;
         for (const FieldDecl *field : record->getDefinition()->fields()) {
             if (field->getName() == "tag") {
                 if (const auto *tag = field->getType().getCanonicalType()->getAs<EnumType>())
@@ -2671,9 +2644,8 @@ class SmithHook final : public TokenHook, public NameSource {
     // `constexpr type T`, which is inside parentheses: a type value is declared (runtime/lang_type.c).
     // Whether the text has a concept's name and a space (`arithmetic x`, issue #193): it may declare a generic.
     static bool namesConcept(StringRef text) {
-        static const char *const concepts[] = {"integer ",    "floating ", "signed_integer ", "unsigned_integer ",
-                                               "arithmetic ", "boolean ",  "pointer ",        "enumeration ",
-                                               "structure ",  "array ",    "slice "};
+        static const char *const concepts[] = {"Int ",     "Float ", "Signed ", "Unsigned ", "Num ",
+                                               "Pointer ", "Enum ",  "Struct ", "Array ",    "Slice "};
         for (const char *name : concepts) {
             if (text.contains(name)) return true;
         }
@@ -2703,7 +2675,7 @@ class SmithHook final : public TokenHook, public NameSource {
                 while (next < text.size() && isWhitespace(text[next]))
                     next += 1;
                 bool named = next < text.size() && (isAsciiIdentifierStart(text[next]) || text[next] == '*');
-                if (word == "type" && named && !(paren > 0 && previous == "constexpr")) return true;
+                if (word == "Type" && named && !(paren > 0 && previous == "constexpr")) return true;
                 previous = word;
                 at = end;
             } else {
@@ -2753,7 +2725,7 @@ class SmithHook final : public TokenHook, public NameSource {
                 size_t next = end;
                 while (next < text.size() && isWhitespace(text[next]))
                     next += 1;
-                if ((word == "option" || word == "result") && next < text.size() && text[next] == '(') return true;
+                if ((word == "Option" || word == "Result") && next < text.size() && text[next] == '(') return true;
                 at = end;
             } else {
                 at += 1;
@@ -2865,7 +2837,7 @@ class SmithHook final : public TokenHook, public NameSource {
             }
             bool before = at > 0 && (isalnum((unsigned char)text[at - 1]) || text[at - 1] == '_');
             bool follows = at + 3 < text.size() && (isalnum((unsigned char)text[at + 3]) || text[at + 3] == '_');
-            if (!before && !follows && text.substr(at, 3) == "str") return true;
+            if (!before && !follows && text.substr(at, 3) == "Str") return true;
         }
         return false;
     }

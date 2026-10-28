@@ -1,4 +1,4 @@
-struct smith_enum_maybe_usize {enum smith_enum_maybe_usize_tag {smith_enum_maybe_usize_tag_some, smith_enum_maybe_usize_tag_none } tag; union { __SIZE_TYPE__ some; }; } __attribute__((annotate("smith::enum")));
+struct smith_enum_maybe_usize {enum smith_enum_maybe_usize_tag {smith_enum_maybe_usize_tag_some, smith_enum_maybe_usize_tag_none } tag; union { __SIZE_TYPE__ some; }; } __attribute__((annotate("std::enum")));
 typedef struct smith_enum_maybe_usize opt_Index; [ [ clang :: unavailable ( "opt::first is a generic function: call it from a .smith module" ) ] ] void opt_first ( void ) ;
 struct smith_enum_maybe_usize opt_find(const char *text, char wanted) __asm__("_opt::find");
 struct smith_enum_maybe_usize opt_find(const char *text, char wanted) {

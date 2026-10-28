@@ -186,12 +186,12 @@ static void smith_lang_reset_declaration(SmithLang *lang) {
 // slice's count is its strlen), written as source, so the rest of the lowering reads them like the program's own.
 
 constexpr char smith_lang_main_wrong[] =
-    "smith-main: main in a module takes no arguments or str args[:]; write i32 main(str args[:]) (the characters are "
+    "smith-main: main in a module takes no arguments or Str args[:]; write I32 main(Str args[:]) (the characters are "
     "not copied)";
 
 // Whether the queue holds `main ( str NAME [ : ] ) {`.
 static bool smith_lang_main_args_ahead(SmithLang *lang, const SmithHost *host) {
-    return smith_lang_ident(smith_lang_peek(lang, host, 2, false), "str") &&
+    return smith_lang_ident(smith_lang_peek(lang, host, 2, false), "Str") &&
            smith_lang_peek(lang, host, 3, false)->kind == SmithTokenKind_Identifier &&
            smith_lang_punct(smith_lang_peek(lang, host, 4, false), "[") &&
            smith_lang_punct(smith_lang_peek(lang, host, 5, false), ":") &&
@@ -363,13 +363,13 @@ static void smith_lang_module_main_begin(SmithLang *lang, const SmithHost *host,
     if (!lang->is_module || (host->expr_type != nullptr && !host->maybe_main) || lang->brace_depth != 0 ||
         lang->recording)
         return;
-    bool returns = smith_lang_ident(first, "i32") || smith_lang_ident(first, "int");
+    bool returns = smith_lang_ident(first, "I32") || smith_lang_ident(first, "int");
     if (!returns && !smith_lang_ident(first, "void")) return;
     const SmithToken *name = smith_lang_peek(lang, host, 0, false);
     if (!smith_lang_ident(name, "main") || !smith_lang_punct(smith_lang_peek(lang, host, 1, false), "(")) return;
     if (smith_lang_io_main_ahead(lang, host, first)) return; // the io form, until the io is gone
     if (!returns) {
-        smith_lang_error(lang, host, first->location, "smith-main: main returns i32: write i32 main()");
+        smith_lang_error(lang, host, first->location, "smith-main: main returns I32: write I32 main()");
         return;
     }
     const SmithToken *third = smith_lang_peek(lang, host, 2, false);
@@ -417,14 +417,13 @@ static void smith_lang_begin_declaration(SmithLang *lang, const SmithHost *host,
 
 static bool smith_lang_name_char(char c);
 
-// ---- [[smith::c_name("...")]]
+// ---- [[std::c_name("...")]]
 // ---------------------------------------------------------------------------------------------------
 
-// Whether the tokens from `at` on are `[smith::c_name`: the attribute that gives the export after it a C name.
+// Whether the tokens from `at` on are `[std::c_name`: the attribute that gives the export after it a C name.
 static bool smith_lang_c_name_at(SmithLang *lang, const SmithHost *host, size_t at) {
     return smith_lang_punct(smith_lang_peek(lang, host, at, false), "[") &&
-           (smith_lang_ident(smith_lang_peek(lang, host, at + 1, false), "smith") ||
-            smith_lang_ident(smith_lang_peek(lang, host, at + 1, false), "std")) &&
+           smith_lang_ident(smith_lang_peek(lang, host, at + 1, false), "std") &&
            smith_lang_punct(smith_lang_peek(lang, host, at + 2, false), "::") &&
            smith_lang_ident(smith_lang_peek(lang, host, at + 3, false), "c_name");
 }
@@ -446,13 +445,13 @@ static bool smith_lang_c_name_text(SmithLang *lang, const SmithHost *host, uint3
     }
     if (!identifier) {
         smith_lang_error(lang, host, location,
-                         "[[smith::c_name]] needs a C identifier that is no keyword, as in "
-                         "[[smith::c_name(\"SmithArena\")]]");
+                         "[[std::c_name]] needs a C identifier that is no keyword, as in "
+                         "[[std::c_name(\"SmithArena\")]]");
     }
     return identifier;
 }
 
-// After `[[smith::c_name`: `(` string `)` `]` `]`. Gives the name through `name`; false, with the error reported and
+// After `[[std::c_name`: `(` string `)` `]` `]`. Gives the name through `name`; false, with the error reported and
 // the attribute skipped, when it is some other shape.
 static bool smith_lang_c_name_argument(SmithLang *lang, const SmithHost *host, uint32_t location, char *name,
                                        size_t capacity) {
@@ -476,7 +475,7 @@ static bool smith_lang_c_name_argument(SmithLang *lang, const SmithHost *host, u
         smith_lang_take(lang, host);
     }
     if (shaped) return smith_lang_c_name_text(lang, host, string_location, quoted, strlen(quoted), name, capacity);
-    smith_lang_error(lang, host, location, "write [[smith::c_name(\"Name\")]]: the C name is one string");
+    smith_lang_error(lang, host, location, "write [[std::c_name(\"Name\")]]: the C name is one string");
     for (size_t guard = 0; guard < smith_lang_batch_max; guard++) { // to the end of the attribute
         const SmithToken *next = smith_lang_peek(lang, host, 0, false);
         if (next->kind == SmithTokenKind_Eof || smith_lang_punct(next, ";")) break;
@@ -490,7 +489,7 @@ static bool smith_lang_c_name_argument(SmithLang *lang, const SmithHost *host, u
     return false;
 }
 
-// Reads `[[smith::c_name("Name")]]` (the first `[` is the token being processed) and keeps the name for the export
+// Reads `[[std::c_name("Name")]]` (the first `[` is the token being processed) and keeps the name for the export
 // that must follow. Returns false when these tokens are some other attribute, which then goes on as a declaration.
 static bool smith_lang_c_name_attribute(SmithLang *lang, const SmithHost *host, const SmithToken *open) {
     if (!smith_lang_c_name_at(lang, host, 0)) return false;
@@ -517,7 +516,7 @@ static bool smith_lang_c_name_attribute(SmithLang *lang, const SmithHost *host, 
     const SmithToken *after = smith_lang_peek(lang, host, 0, false);
     if (!smith_lang_ident(after, "export") || smith_lang_is_own_word(lang, host, after)) {
         smith_lang_error(lang, host, open->location,
-                         "[[smith::c_name]] goes before `export`: it names an export's C API");
+                         "[[std::c_name]] goes before `export`: it names an export's C API");
         lang->pending_c_name = (SmithLangText){0, 0};
     }
     smith_lang_ty_attribute_taken();
@@ -814,30 +813,29 @@ static size_t smith_lang_kept_includes(SmithLang *lang, char *out, size_t capaci
     return used;
 }
 
-// The path by which a header finds another module's header from its own folder: for smith::random importing
-// smith::arena, `arena.h`; for game::main importing lib::text, `../lib/text.h`. A quoted include looks in the
+// The path by which a header finds another module's header from its own folder: for std::random importing
+// std::arena, `arena.h`; for game::main importing lib::text, `../lib/text.h`. A quoted include looks in the
 // including file's folder first, so a header that names its imports this way needs no include path of its own, and
 // the generated headers of one tree (include/smith, .smith/include/smith, an installed copy) find each other.
 static void smith_lang_relative_header(const char *from, const char *to, char *path, size_t capacity) {
-    size_t common = 0;  // the bytes of `to` that are folders `from` is in too
-    size_t folders = 0; // the folders `from` has below the common ones
-    for (size_t at = 0; from[at] != 0 && to[at] == from[at]; at++) { // bounded by the names
-        if (from[at] == ':' && from[at + 1] == ':') common = at + 2;
+    char from_path[smith_lang_name_max];
+    char to_path[smith_lang_name_max];
+    smith_lang_module_to_path(from, from_path, sizeof from_path); // std::arena is smith/arena.h
+    smith_lang_module_to_path(to, to_path, sizeof to_path);
+    size_t common = 0;  // the bytes of `to_path` that are folders `from_path` is in too
+    size_t folders = 0; // the folders `from_path` has below the common ones
+    for (size_t at = 0; from_path[at] != 0 && to_path[at] == from_path[at]; at++) { // bounded by the names
+        if (from_path[at] == '/') common = at + 1;
     }
-    for (size_t i = common; from[i] != 0; i++) { // bounded by the name
-        if (from[i] == ':' && from[i + 1] == ':') {
-            folders += 1;
-            i += 1;
-        }
+    for (size_t i = common; from_path[i] != 0; i++) { // bounded by the name
+        if (from_path[i] == '/') folders += 1;
     }
     size_t used = 0;
     for (size_t i = 0; i < folders && used + 4 < capacity; i++) { // bounded by the name
         smith_copy_bytes(path + used, "../", 3);
         used += 3;
     }
-    char rest[smith_lang_name_max];
-    smith_lang_module_to_path(to + common, rest, sizeof rest);
-    snprintf(path + used, capacity - used, "%s", rest);
+    snprintf(path + used, capacity - used, "%s", to_path + common);
 }
 
 // The `#include` lines a module's interface needs. For the header file, a module is included relative to the header
@@ -1037,7 +1035,7 @@ static void smith_lang_ask_imports(const SmithHost *host) {
 // One leaf of a value, as SMITH_LANG_ASK shows it: `i32 -5`, `u8 255`, `f32 1.5`.
 static void smith_lang_ask_leaf(const SmithValue *value) {
     if (value->kind == SmithValue_Float) {
-        fprintf(stderr, "%s %.17g", value->is_f32 ? "f32" : "f64", value->real);
+        fprintf(stderr, "%s %.17g", value->is_f32 ? "F32" : "F64", value->real);
         return;
     }
     fprintf(stderr, "%c%u %s%llu", value->is_signed ? 'i' : 'u', value->bits, value->negative ? "-" : "",
@@ -1269,6 +1267,56 @@ static bool smith_lang_slice_process(SmithLang *lang, const SmithHost *host, con
     return false;
 }
 
+// ---- Capitalized type names (issue #366)
+// ---------------------------------------------------------------------------------------------------
+
+// The name a program's type is spelled with a capital: `point` is `Point`, `slice_of` is `SliceOf`.
+static void smith_lang_capitalized(const char *name, size_t length, char *out, size_t capacity) {
+    size_t used = 0;
+    bool upper = true;
+    for (size_t i = 0; i < length && used + 1 < capacity; i++) { // bounded by the name
+        if (name[i] == '_') {
+            upper = true;
+            continue;
+        }
+        out[used++] = upper && name[i] >= 'a' && name[i] <= 'z' ? (char)(name[i] - 'a' + 'A') : name[i];
+        upper = false;
+    }
+    out[used] = 0;
+}
+
+// In a module a struct, union or enum tag, a `constexpr Type` alias and a type function a program declares start with a
+// capital letter: types are capitalized so that a type reads as one at a glance. The error names the spelling.
+static void smith_lang_check_capital(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+    if (!lang->is_module || token->kind != SmithTokenKind_Identifier || token->synthetic || token->foreign ||
+        token->declared || lang->in_attribute) {
+        return;
+    }
+    const char *noun = nullptr;
+    const SmithToken *name = smith_lang_peek(lang, host, 0, false);
+    const SmithToken *after = smith_lang_peek(lang, host, 1, false);
+    if (smith_lang_word(token->text, token->length) == SmithLangWord_Tag) {
+        bool declares = smith_lang_punct(after, "{") || smith_lang_punct(after, ";") || smith_lang_punct(after, ":");
+        if (declares) noun = token->text[0] == 's' ? "a struct tag" : token->text[0] == 'u' ? "a union tag" : "an enum tag";
+    } else if (smith_lang_ident(token, "Type")) {
+        SmithToken before;
+        bool alias = smith_lang_punct(after, "=") && smith_lang_previous(lang, host, 1, &before) &&
+                     smith_lang_ident(&before, "constexpr");
+        bool function = smith_lang_punct(after, "(") && lang->brace_depth == 0 && lang->paren_depth == 0;
+        if (alias) noun = "a `constexpr Type` alias";
+        if (function) noun = "a type function";
+    }
+    if (noun == nullptr || name->kind != SmithTokenKind_Identifier || name->synthetic || name->length == 0 ||
+        name->text[0] < 'a' || name->text[0] > 'z' || smith_lang_is_word(name)) {
+        return;
+    }
+    char written[128];
+    smith_lang_capitalized(name->text, name->length, written, sizeof written);
+    smith_lang_error(lang, host, name->location,
+                     "%s in a module starts with a capital letter, as every type does: write `%s`, not `%.*s`", noun,
+                     written, (int)name->length, name->text);
+}
+
 // What `if constexpr` and the constants it names do with a token (runtime/lang_target.c), then the token's own path.
 static void smith_lang_process_token(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     bool closes = false;
@@ -1276,6 +1324,7 @@ static void smith_lang_process_token(SmithLang *lang, const SmithHost *host, con
         if (token->synthetic || !smith_lang_ty_token(lang, host, token)) smith_lang_emit_code(lang, host, *token);
         return;
     }
+    smith_lang_check_capital(lang, host, token);
     if (smith_lang_try_token(lang, host, token)) return;
     if (smith_lang_unused_token(lang, host, token)) return;
     if ((lang->due_count > 0 || lang->local_count > 0) && smith_lang_tag_bare(lang, host, token)) return;
@@ -1383,7 +1432,7 @@ bool smith_lang_feed(SmithLang *lang, const SmithHost *host, const SmithToken *t
     if (lang->unnamed_c_name) {
         lang->unnamed_c_name = false;
         smith_lang_error(lang, host, lang->unnamed_c_name_location,
-                         "[[smith::c_name]] names a typedef, a tag, a function or a variable; this export declares "
+                         "[[std::c_name]] names a typedef, a tag, a function or a variable; this export declares "
                          "none");
     }
     lang->queue[0] = *token;

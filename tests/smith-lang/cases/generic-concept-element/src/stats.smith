@@ -14,11 +14,11 @@ export Usize rows(Float grid[:][:]) {
     return countof(grid);
 }
 
-export typeof(*p) read(const integer *p) {
+export typeof(*p) read(const Int *p) {
     return *p;
 }
 
-export void bump(arithmetic *p, typeof(*p) by) {
+export void bump(Num *p, typeof(*p) by) {
     *p += by;
 }
 

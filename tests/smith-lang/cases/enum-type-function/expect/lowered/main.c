@@ -2,7 +2,7 @@
 
 typedef struct {
 float radius;
-} main_Circle;struct smith_enum_maybe_usize {enum smith_enum_maybe_usize_tag {smith_enum_maybe_usize_tag_some, smith_enum_maybe_usize_tag_none } tag; union { __SIZE_TYPE__ some; }; } __attribute__((annotate("smith::enum")));
+} main_Circle;struct smith_enum_maybe_usize {enum smith_enum_maybe_usize_tag {smith_enum_maybe_usize_tag_some, smith_enum_maybe_usize_tag_none } tag; union { __SIZE_TYPE__ some; }; } __attribute__((annotate("std::enum")));
 static struct smith_enum_maybe_usize main_find(const char *text, char wanted) {
 for (__SIZE_TYPE__ i = 0; text[i] != 0; i++)
 if (text[i] == wanted) return {.some = i};
@@ -11,11 +11,11 @@ return .none;
 static struct smith_enum_maybe_usize main_again(__SIZE_TYPE__ v) {
 struct smith_enum_maybe_usize x = {.some = v};
 return x;
-}struct smith_enum_outcome_main_Circle__i32 {enum smith_enum_outcome_main_Circle__i32_tag {smith_enum_outcome_main_Circle__i32_tag_ok, smith_enum_outcome_main_Circle__i32_tag_error } tag; union { main_Circle ok; __INT32_TYPE__ error; }; } __attribute__((annotate("smith::enum")));
+}struct smith_enum_outcome_main_Circle__i32 {enum smith_enum_outcome_main_Circle__i32_tag {smith_enum_outcome_main_Circle__i32_tag_ok, smith_enum_outcome_main_Circle__i32_tag_error } tag; union { main_Circle ok; __INT32_TYPE__ error; }; } __attribute__((annotate("std::enum")));
 static struct smith_enum_outcome_main_Circle__i32 main_make(Bool good) {
 if (good) return {.ok = {.radius = 2}};
 return {.error = 7};
-}struct smith_enum_maybe_main_Circle_ptr {enum smith_enum_maybe_main_Circle_ptr_tag {smith_enum_maybe_main_Circle_ptr_tag_some, smith_enum_maybe_main_Circle_ptr_tag_none } tag; union { main_Circle * some; }; } __attribute__((annotate("smith::enum")));
+}struct smith_enum_maybe_main_Circle_ptr {enum smith_enum_maybe_main_Circle_ptr_tag {smith_enum_maybe_main_Circle_ptr_tag_some, smith_enum_maybe_main_Circle_ptr_tag_none } tag; union { main_Circle * some; }; } __attribute__((annotate("std::enum")));
 typedef struct smith_enum_maybe_main_Circle_ptr main_MaybeCircle;
 static float main_radius_of(main_MaybeCircle c) {
 if (c == .some) return c.some->radius;

@@ -8,7 +8,7 @@ export Usize rows(Float grid[:][:]) {
     return countof(grid);
 }
 
-export typeof(*p) read(const integer *p) {
+export typeof(*p) read(const Int *p) {
     return *p;
 }
 

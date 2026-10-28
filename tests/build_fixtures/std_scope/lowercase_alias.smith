@@ -1,0 +1,3 @@
+module lowercase_alias;
+
+export constexpr Type small = I8;

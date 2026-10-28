@@ -1,6 +1,6 @@
 ---
 name: smith-text-numbers
-description: "Parsing and writing numbers with smith::text: U64, I64, hex, F32 and F64, exact round trips and what is refused. Load when converting text to numbers or numbers to text without libc."
+description: "Parsing and writing numbers with std::text: U64, I64, hex, F32 and F64, exact round trips and what is refused. Load when converting text to numbers or numbers to text without libc."
 ---
 
 # Numbers

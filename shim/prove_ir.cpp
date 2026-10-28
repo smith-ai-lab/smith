@@ -167,7 +167,7 @@ unsigned owner_id(const Instruction &instruction) {
     return id_of(instruction.getMetadata("smith.owner"));
 }
 
-// A function with no body in the module that its header marks [[clang::annotate("smith::edge")]] (smith::io's exports)
+// A function with no body in the module that its header marks [[clang::annotate("std::edge")]] (std::io's exports)
 // is the edge of the program, as a trusted function is, with no contract: it gets the attribute "smith.edge".
 void mark_edges(Module &module) {
     GlobalVariable *annotations = module.getGlobalVariable("llvm.global.annotations");
@@ -182,7 +182,7 @@ void mark_edges(Module &module) {
         if (function == nullptr || text == nullptr || !text->hasInitializer()) continue;
         auto *data = dyn_cast<ConstantDataArray>(text->getInitializer());
         if (data != nullptr && data->isCString() &&
-            (data->getAsCString() == "smith::edge" || data->getAsCString() == "std::edge"))
+            data->getAsCString() == "std::edge")
             function->addFnAttr("smith.edge");
     }
 }
@@ -988,7 +988,7 @@ namespace {
 
 // A function of a smith library the program links: read so that its callers use its contract (a trusted one is assumed,
 // one with an smith_ensures is used through it, any other is part of its caller), and never proved here, since the
-// library's own proof covers it. An edge export (smith::io's) loses its body: it stays the edge, as when only its
+// library's own proof covers it. An edge export (std::io's) loses its body: it stays the edge, as when only its
 // header is read.
 void mark_library(Module &module) {
     for (Function &function : module) {
@@ -3067,7 +3067,7 @@ void describe_unbounded_loop(const Unit &unit, int index, Unprovable &failure) {
                        (info->controls.empty() ? std::string("a value") : names) + " reaches zero, and " +
                        info->shrink_what + " each pass is not a count LLVM can derive, so no requires gives one";
         failure.fix = "count the passes in a variable that a constant bounds: at most " +
-                      std::to_string(info->shrink_passes) + " (a loop `for (usize pass = 0; pass < " +
+                      std::to_string(info->shrink_passes) + " (a loop `for (Usize pass = 0; pass < " +
                       std::to_string(info->shrink_passes) + "; pass++)` that breaks when the value is zero)";
     } else if (info != nullptr && !info->controls.empty()) {
         failure.what = "the loop has no bound the prover can see: its exit depends on " + names;

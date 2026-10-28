@@ -95,7 +95,7 @@ static void generated(io::Io *io, const char *name) {
 export void test_every_library_module_has_a_header_test(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     scratch::Run run = scratch::sh(
-        &p, "cd \"$SMITH_REPO/lib/smith\" && for f in $(ls *.smith | grep -v '_test.smith'); do "
+        &p, "cd \"$SMITH_REPO/lib/std\" && for f in $(ls *.smith | grep -v '_test.smith'); do "
             "grep -q \"generated(io, \\\"${f%.smith}\\\")\" ../../tests/headers_test.smith || echo \"$f\"; done");
     scratch::expect_text("library modules with no header test", "", run.out);
 }

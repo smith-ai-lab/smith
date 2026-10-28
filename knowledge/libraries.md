@@ -27,7 +27,7 @@ tags: [libraries, stdlib]
 **How a project uses one:** it compiles the library from source with its own flags (`smith_library`).
 
 **C or `.smith`, one registry:** a library is its header and its source, `lib/<name>.c`
-or a `.smith` module `lib/std/<name>.smith` (`module smith::<name>;`), one row of `smith_libraries` in
+or a `.smith` module `lib/std/<name>.smith` (`module std::<name>;`), one row of `smith_libraries` in
 `smith.c`. A C library's header is hand-written (`include/smith/<name>.h`). A `.smith` library's header is a build
 output, never committed ([smith-module-headers](smith-module-headers.md)): smith embeds the source and the installed
 smith writes the header into `.smith/include/smith/` at first use; its C API (names, symbols via `[[std::c_name]]`,

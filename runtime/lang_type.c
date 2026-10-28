@@ -47,7 +47,6 @@ typedef enum : uint8_t {
     SmithLangTy_Holder,    // a typedef name of a struct that holds a type
     SmithLangTy_HolderTag, // the tag of such a struct
     SmithLangTy_Func,      // a function that takes or returns a type
-    SmithLangTy_Plain,     // a variable, parameter or member named `type` of an ordinary type: C's identifier
 } SmithLangTyKind;
 
 typedef enum : uint8_t {
@@ -145,7 +144,7 @@ static const char *const smith_lang_ty_basic[] = {"void",     "char",     "short
                                                   "volatile", "restrict", "_Complex", "struct", "union", "enum"};
 
 static const char *smith_lang_ty_standard(const char *name, size_t length) {
-    for (size_t i = 0; i < sizeof smith_lang_sized / sizeof smith_lang_sized[0]; i++) { // 13 entries
+    for (size_t i = 0; i < sizeof smith_lang_sized / sizeof smith_lang_sized[0]; i++) { // 14 entries
         if (smith_lang_equals(name, length, smith_lang_sized[i].name)) return smith_lang_sized[i].standard;
     }
     return nullptr;
@@ -154,7 +153,7 @@ static const char *smith_lang_ty_standard(const char *name, size_t length) {
 // Whether the text is the compiler's own name for a sized type (`__INT64_TYPE__`): what a replayed record keeps of
 // `i64`.
 static bool smith_lang_ty_is_standard_macro(const char *name, size_t length) {
-    for (size_t i = 0; i < sizeof smith_lang_sized / sizeof smith_lang_sized[0]; i++) { // 13 entries
+    for (size_t i = 0; i < sizeof smith_lang_sized / sizeof smith_lang_sized[0]; i++) { // 14 entries
         if (smith_lang_equals(name, length, smith_lang_sized[i].standard)) return true;
     }
     return false;
@@ -575,7 +574,7 @@ static void smith_lang_ty_forget(uint32_t depth) {
     size_t kept = 0;
     for (size_t i = 0; i < smith_lang_ty.name_count; i++) { // the names
         const SmithLangTyName *entry = &smith_lang_ty.names[i];
-        if ((entry->kind == SmithLangTy_Var || entry->kind == SmithLangTy_Plain) && entry->depth > depth) continue;
+        if (entry->kind == SmithLangTy_Var && entry->depth > depth) continue;
         smith_lang_ty.names[kept++] = *entry;
     }
     smith_lang_ty.name_count = kept;
@@ -894,7 +893,7 @@ static bool smith_lang_ty_chain_value(SmithLang *lang, const SmithHost *host, co
     SmithValueQuery query = {.nodes = nodes, .capacity = 4};
     if (!host->value_query(host->context, chain->text, (uint32_t)strlen(chain->text), &query)) {
         smith_lang_error(lang, host, location,
-                         "the type `%.*s` has no value here: %s (a `constexpr type` initialized from an array or a "
+                         "the type `%.*s` has no value here: %s (a `constexpr Type` initialized from an array or a "
                          "member is known to the compiler only once the next statement has begun: use it from the "
                          "statement after)",
                          (int)chain->tokens[0].length, chain->tokens[0].text,
@@ -928,7 +927,7 @@ static size_t smith_lang_ty_spelling_tokens(const char *spelling, const SmithTok
         }
         char piece[smith_lang_ty_spelling_max];
         snprintf(piece, sizeof piece, "%.*s", (int)(end - at), spelling + at);
-        for (size_t k = 0; k < sizeof smith_lang_sized / sizeof smith_lang_sized[0]; k++) { // 13 entries
+        for (size_t k = 0; k < sizeof smith_lang_sized / sizeof smith_lang_sized[0]; k++) { // 14 entries
             if (strcmp(piece, smith_lang_sized[k].standard) == 0) { // the lowering reads the sized name, not the macro
                 snprintf(piece, sizeof piece, "%s", smith_lang_sized[k].name);
                 break;
@@ -1016,7 +1015,7 @@ static bool smith_lang_ty_slice_op(SmithLang *lang, const SmithHost *host, const
     const SmithLangTySliceFacts *facts = smith_lang_ty_slice_facts(host);
     if (!facts->supported) {
         smith_lang_error(lang, host, token->location,
-                         "this target's pointer and `usize` differ in size or alignment: a slice type is not built");
+                         "this target's pointer and `Usize` differ in size or alignment: a slice type is not built");
     }
     char pattern[512];
     char count[16];
@@ -1143,27 +1142,16 @@ typedef struct {
 } SmithLangTyQuestion;
 
 static const SmithLangTyQuestion smith_lang_ty_questions[] = {
-    {"is_integer", 16, 0, 0},
-    {"is_float", 17, 0, 0},
-    {"is_signed", 18, 0, 0},
-    {"is_pointer", 19, 0, 0},
-    {"is_bool", 20, 0, 0},
-    {"is_enum", 21, 0, 0},
-    {"is_record", 22, 0, 0},
-    {"is_array", 23, 0, 0},
-    {"is_slice", 12, 0, 0}, // the handle's slice depth (bits 12 to
-                            // 15), as 0 or 1
-    {"integer", 16, 0, 0},
-    {"floating", 17, 0, 0},
-    {"pointer", 19, 0, 0},
-    {"boolean", 20, 0, 0},
-    {"enumeration", 21, 0, 0},
-    {"structure", 22, 0, 0},
-    {"array", 23, 0, 0},
-    {"slice", 12, 0, 0},
-    {"arithmetic", 16, 3, 0},       // integer or floating: bits 16 and 17
-    {"signed_integer", 16, 5, 5},   // integer and signed: bits 16 and 18
-    {"unsigned_integer", 16, 5, 1}, // integer and not signed
+    {"Int", 16, 0, 0},
+    {"Float", 17, 0, 0},
+    {"Pointer", 19, 0, 0},
+    {"Enum", 21, 0, 0},
+    {"Struct", 22, 0, 0},
+    {"Array", 23, 0, 0},
+    {"Slice", 12, 0, 0},            // the handle's slice depth (bits 12 to 15), as 0 or 1
+    {"Num", 16, 3, 0},              // integer or floating: bits 16 and 17
+    {"Signed", 16, 5, 5},           // integer and signed: bits 16 and 18
+    {"Unsigned", 16, 5, 1},         // integer and not signed
 };
 
 // `sizeof(t)` and its kin, where `t` holds a type: an expression over the handle, written in the C given to the
@@ -1172,7 +1160,7 @@ static bool smith_lang_ty_question(SmithLang *lang, const SmithHost *host, const
     bool size = smith_lang_ident(token, "sizeof");
     bool align = smith_lang_ident(token, "alignof") || smith_lang_ident(token, "_Alignof");
     const SmithLangTyQuestion *question = nullptr;
-    for (size_t i = 0; i < sizeof smith_lang_ty_questions / sizeof smith_lang_ty_questions[0]; i++) { // 17 questions
+    for (size_t i = 0; i < sizeof smith_lang_ty_questions / sizeof smith_lang_ty_questions[0]; i++) { // 10 questions
         if (smith_lang_ident(token, smith_lang_ty_questions[i].name)) question = &smith_lang_ty_questions[i];
     }
     if ((!size && !align && question == nullptr) || !smith_lang_punct(smith_lang_peek(lang, host, 0, false), "(")) {
@@ -1259,7 +1247,7 @@ static void smith_lang_ty_runtime_error(SmithLang *lang, const SmithHost *host, 
     SmithLangTy *ty = &smith_lang_ty;
     if (ty->decl_spec_type) {
         smith_lang_error(lang, host, token->location,
-                         "`%.*s` is a `type`, which exists only at compile time: declare it `constexpr`",
+                         "`%.*s` is a `Type`, which exists only at compile time: declare it `constexpr`",
                          (int)token->length, token->text);
         return;
     }
@@ -1489,21 +1477,18 @@ static void smith_lang_ty_track(SmithLang *lang, const SmithHost *host, const Sm
 
 // ---- The tokens
 
-// `constexpr type t;` as a member: `constexpr` is not valid on a member of C, so the member is a plain integer.
+// `constexpr Type t;` as a member: `constexpr` is not valid on a member of C, so the member is a plain integer.
 static bool smith_lang_ty_member_constexpr(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     return smith_lang_ident(token, "constexpr") && smith_lang_ty.paren == 0 && smith_lang_ty_in_struct() &&
-           smith_lang_ident(smith_lang_peek(lang, host, 0, false), "type");
+           smith_lang_ident(smith_lang_peek(lang, host, 0, false), "Type");
 }
 
-// `type` where a type is written (a declaration's specifier): an `unsigned __int128`, the handle's type.
+// `Type` where a type is written (a declaration's specifier): an `unsigned __int128`, the handle's type.
 static bool smith_lang_ty_specifier(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     SmithLangTy *ty = &smith_lang_ty;
-    if (!smith_lang_ident(token, "type") || ty->decl_name || !smith_lang_ty_at_start()) return false;
+    if (!smith_lang_ident(token, "Type") || ty->decl_name || !smith_lang_ty_at_start()) return false;
     if (ty->paren > 0 && smith_lang_ty_last_is(0, "constexpr")) return false; // a generic's `constexpr type T`
     const SmithToken *next = smith_lang_peek(lang, host, 0, false);
-    // `type * x` where `type` is a variable declared here: the product, as in C. (`type x` is no C at all: the
-    // keyword.)
-    if (smith_lang_punct(next, "*") && smith_lang_ty_find("type", 4, SmithLangTy_Plain) != nullptr) return false;
     if (!smith_lang_ty_is_name_token(next) && !smith_lang_punct(next, "*")) return false;
     SmithToken made[3];
     made[0] = smith_lang_ty_made(SmithTokenKind_Identifier, "unsigned", token, token->space_before);
@@ -1512,17 +1497,6 @@ static bool smith_lang_ty_specifier(SmithLang *lang, const SmithHost *host, cons
     smith_lang_ty_put(lang, 0, made, 2);
     ty->specifier = true;
     return true;
-}
-
-// `type` as the name of a variable, parameter or member of another type (`c::Kind type`, `int type;`): C's identifier,
-// which `type * n` after it must not read as the keyword. Remembered for the scope it is declared in.
-static void smith_lang_ty_plain(const SmithToken *token) {
-    SmithLangTy *ty = &smith_lang_ty;
-    if (!smith_lang_ident(token, "type") || ty->decl_name || smith_lang_ty_at_start() ||
-        !smith_lang_ty_declaration_before() || smith_lang_ty_last_is(0, ".") || smith_lang_ty_last_is(0, "->")) {
-        return;
-    }
-    smith_lang_ty_add("type", 4, SmithLangTy_Plain, (uint32_t)ty->frame_count + (ty->paren == 1 ? 1U : 0U));
 }
 
 // `m::f(` where `f` is a function over types of an import: the arguments of the call are in a region of type values, as
@@ -1550,7 +1524,7 @@ static void smith_lang_ty_qualified(SmithLang *lang, const SmithHost *host, cons
         ty->call_pending = true;
 }
 
-// `[[smith::c_name("...")]]` is read whole by the lowering, so the tracker saw its first `[` and none of the rest: the
+// `[[std::c_name("...")]]` is read whole by the lowering, so the tracker saw its first `[` and none of the rest: the
 // bracket it counted is closed here, or every declaration after it would read as inside brackets.
 static void smith_lang_ty_attribute_taken(void) {
     if (smith_lang_ty.paren > 0) smith_lang_ty.paren -= 1;
@@ -1574,7 +1548,6 @@ static bool smith_lang_ty_token(SmithLang *lang, const SmithHost *host, const Sm
         if (!replaced) replaced = as_value = smith_lang_ty_pointee(lang, host, token);
         if (!replaced) replaced = as_value = smith_lang_ty_use(lang, host, token);
         if (!replaced) replaced = as_value = smith_lang_ty_leaf(lang, host, token);
-        if (!replaced) smith_lang_ty_plain(token);
     }
     smith_lang_ty_track(lang, host, token, as_value);
     return replaced;
@@ -1583,7 +1556,7 @@ static bool smith_lang_ty_token(SmithLang *lang, const SmithHost *host, const Sm
 // ---- Functions over `type` of the imports (issue #107)
 
 // An exported function over `type` is recorded in its module's header (a plain generic), and each importer defines it,
-// at its first declaration, as a private function: `slice_of` of smith::arena may be called at compile time from any
+// at its first declaration, as a private function: `slice_of` of std::arena may be called at compile time from any
 // module. The record is the tokens the exporting module's lowering wrote; they are queued as the source's, marked
 // `replay`: only type values are lowered in them (smith_lang_ty_token), then they go to the parser. A function is at
 // most as long as the queue.
@@ -1613,7 +1586,7 @@ static size_t smith_lang_plain_tokens(SmithLang *lang, const SmithHost *host, co
         if (used + 2 >= capacity) break;
         if (token->special == SmithLangGen_IfConstexpr || token->special == SmithLangGen_ForConstexpr) {
             smith_lang_error(lang, host, fallback,
-                             "`%s::%s` is a function over `type` that an import defines here, and it uses `%s`, which "
+                             "`%s::%s` is a function over `Type` that an import defines here, and it uses `%s`, which "
                              "only a generic's instance can write",
                              smith_lang_str(generic->module), smith_lang_str(generic->member),
                              token->special == SmithLangGen_IfConstexpr ? "if constexpr" : "for constexpr");
@@ -1671,7 +1644,7 @@ static void smith_lang_types_define(SmithLang *lang, const SmithHost *host, uint
         if (count == 0 || used + count + 2 >= smith_lang_queue_max) {
             if (count != 0)
                 smith_lang_error(lang, host, location,
-                                 "the functions over `type` of the imports are too long to define");
+                                 "the functions over `Type` of the imports are too long to define");
             continue;
         }
         used += count;

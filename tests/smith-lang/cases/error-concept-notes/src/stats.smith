@@ -8,7 +8,7 @@ export typeof(x) twice(Num x) {
     return x + x;
 }
 
-export typeof(*p) read(const integer *p) {
+export typeof(*p) read(const Int *p) {
     return *p;
 }
 

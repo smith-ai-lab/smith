@@ -200,7 +200,7 @@ SmithNetHandler *smith_handlers_set_net(SmithNetHandler *net);
 // The network of the calling thread, null when the real one is in force.
 SmithNetHandler *smith_handlers_net(void);
 
-// The entropy of the calling thread: the random bytes getentropy fills (smith::random::seed asks it). `fill` writes
+// The entropy of the calling thread: the random bytes getentropy fills (std::random::seed asks it). `fill` writes
 // `size` bytes of buffer and never fails (a fake writes the bytes of a number it holds, so a test scripts the seed). No
 // entropy handler set is the system's. arc4random and getrandom are not reached.
 typedef struct SmithEntropyHandler SmithEntropyHandler;

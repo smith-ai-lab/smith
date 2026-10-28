@@ -1,0 +1,5 @@
+module old_type;
+
+export i32 twice(i32 x) {
+    return x * 2;
+}

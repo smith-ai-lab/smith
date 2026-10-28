@@ -1,0 +1,5 @@
+module old_module;
+
+import smith::arena;
+
+export void unused(void) {}

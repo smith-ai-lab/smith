@@ -1,0 +1,5 @@
+module old_attribute;
+
+[[smith::pure]] export I32 twice(I32 x) {
+    return x * 2;
+}

@@ -2,7 +2,7 @@
 // shim/tidy.cpp beside the idiom checks (so `smith check`, `smith lint` and smith lsp's built-in checks run it). In a
 // .smith file with a `module` line it reports every call of `memcpy`, `memmove`, `memset` or `memcmp` (`c::memcpy`,
 // `__builtin_memcpy` and the fortified `__builtin___memcpy_chk` the SDK's macro makes of it) and names the typed
-// function in smith::mem that replaces it: the type and the length of a buffer travel apart from its data in C, and
+// function in std::mem that replaces it: the type and the length of a buffer travel apart from its data in C, and
 // `mem::copy(dst, src)` checks that they agree.
 //
 // The list is a table (`replacements` below), one row for each wrapped C function, so a wrapper joins by adding a row;
@@ -110,7 +110,7 @@ class MemCheck final : public ClangTidyCheck {
         }
         std::string written = row->name;
         auto report = diag(at, "`%0` is unchecked, since its type and its length travel apart from the data: use %1 "
-                               "(import smith::mem;), or mark the function `contract::trusted()` if it implements a "
+                               "(import std::mem;), or mark the function `contract::trusted()` if it implements a "
                                "wrapper")
                       << written << llvm::StringRef(row->use);
         fix_zero(report, call, written, Result);

@@ -73,6 +73,14 @@ static const char *smith_lang_tuple_alias(const char *name) {
     for (size_t i = 0; i < sizeof pairs / sizeof pairs[0]; i++) { // 15 entries
         if (strcmp(name, pairs[i][0]) == 0) return pairs[i][1];
     }
+    static char lowered[16]; // a sized name is spelled in lowercase in the C names of what is built of it
+    if (smith_lang_find_sized(name, strlen(name)) != nullptr && strlen(name) < sizeof lowered) {
+        size_t i = 0;
+        for (; name[i] != 0; i++)
+            lowered[i] = (char)tolower((unsigned char)name[i]);
+        lowered[i] = 0;
+        return lowered;
+    }
     return name;
 }
 
@@ -430,7 +438,7 @@ static void smith_lang_tuple_begin(SmithLang *lang, const SmithHost *host, const
         span[at] = *smith_lang_peek(lang, host, at, false);
     if (close == 1) {
         smith_lang_error(lang, host, span[0].location,
-                         "a tuple has at least one field: `struct { i32, f32 }`; C has no empty struct");
+                         "a tuple has at least one field: `struct { I32, F32 }`; C has no empty struct");
         smith_lang_tuple_recover(lang, token, span, close);
         return;
     }
@@ -482,7 +490,7 @@ static void smith_lang_tuple_in_generic(SmithLang *lang, const SmithHost *host, 
     if (smith_lang_tuple_extent(lang, host) == 0) return;
     smith_lang_error(lang, host, token->location,
                      "a tuple type cannot be written in a generic function yet: name it outside the generic with a "
-                     "typedef (`typedef struct { i32, f32 } Pair;`)");
+                     "typedef (`typedef struct { I32, F32 } Pair;`)");
 }
 
 static bool smith_lang_slice_countof(SmithLang *lang, const SmithHost *host, const SmithToken *token,

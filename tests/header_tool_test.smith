@@ -1,7 +1,7 @@
 // scripts/header_tool.c is the writer of the libraries' headers as a program of its own, which the Linux seed
 // (scripts/seed_linux.c) builds with the host's C compiler where no smith exists yet. There is no Linux CI to keep it
 // working, so this builds it with the host compiler here (with -lm, as the seed does: glibc keeps floor in libm) and
-// checks that, for every module of lib/smith, its output is byte for byte what `smith cc --smith-header` of the smith
+// checks that, for every module of lib/std, its output is byte for byte what `smith cc --smith-header` of the smith
 // under test writes.
 module header_tool_test;
 

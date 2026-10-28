@@ -1,6 +1,6 @@
 ---
 name: smith-io-processes
-description: "Processes in smith::io: io::processes_run for many children with each output whole, and io::child_* for a child you talk to over pipes (io::Child, io::Capture, io::child_kill). Load when running a command, capturing its output or driving a child over stdin and stdout."
+description: "Processes in std::io: io::processes_run for many children with each output whole, and io::child_* for a child you talk to over pipes (io::Child, io::Capture, io::child_kill). Load when running a command, capturing its output or driving a child over stdin and stdout."
 ---
 
 # Processes and children

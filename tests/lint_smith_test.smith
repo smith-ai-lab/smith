@@ -102,7 +102,7 @@ export void test_lint_a_finding_shows_the_source_line_its_fix_at_the_written_nam
     scratch::expect_text(
         "a finding shows the source line, its fix at the written name",
         "   17 | export F32 Perimeter(Box b) {\n      |            ^~~~~~~~~\n      |            perimeter",
-        lint_text(&p, "run geometry/box.smith >carets; grep -A2 ' 17 | export f32' carets"));
+        lint_text(&p, "run geometry/box.smith >carets; grep -A2 ' 17 | export F32' carets"));
 }
 
 export void test_lint_fix_rewrites_the_written_names_in_the_source(io::Io *io) {

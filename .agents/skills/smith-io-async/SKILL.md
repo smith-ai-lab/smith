@@ -1,6 +1,6 @@
 ---
 name: smith-io-async
-description: "Asynchronous calls in smith::io: io::Op values the caller owns, io::run and io::forever, kqueue (macOS) or epoll (Linux) underneath, timers from io::clock_*. Load when issuing overlapped reads, timers or connections, or on io::Op, io::run or io::forever."
+description: "Asynchronous calls in std::io: io::Op values the caller owns, io::run and io::forever, kqueue (macOS) or epoll (Linux) underneath, timers from io::clock_*. Load when issuing overlapped reads, timers or connections, or on io::Op, io::run or io::forever."
 ---
 
 # Asynchronous calls

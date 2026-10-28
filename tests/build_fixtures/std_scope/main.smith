@@ -1,5 +1,4 @@
-// The standard library is std:: (issue #366): its modules and its attributes, spelled as the tree still spells them
-// (smith::) or the new way.
+// The standard library is std:: (issue #366): its modules and its attributes.
 module main;
 
 import <stdio.h>;

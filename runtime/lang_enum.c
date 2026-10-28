@@ -7,7 +7,7 @@
 // (`Shape_tag_empty` and the others are module names like any: `main_Shape_tag_empty`). A variant is written with a dot
 // and looked up in the type the context gives, as a designated initializer's member is (`.circle`, `{.circle = {...}}`,
 // `s == .empty`, `case .rect:`): the lowering asks the compiler for that type and writes the tag, or a compound
-// literal. The generated struct carries `__attribute__((annotate("smith::enum")))` so a tool can tell it from other
+// literal. The generated struct carries `__attribute__((annotate("std::enum")))` so a tool can tell it from other
 // structs. Included by runtime/lang.c after runtime/lang_slice.c.
 
 constexpr size_t smith_lang_enum_variants_max = 64;
@@ -124,7 +124,7 @@ static size_t smith_lang_enum_build(SmithLang *lang, const SmithHost *host, cons
     made[used] = span[close]; // the attribute that follows is placed before it in the source
     made[used++].synthetic = true;
     static const char *const attribute[] = {"__attribute__",   "(", "(", "annotate", "(",
-                                            "\"smith::enum\"", ")", ")", ")"};
+                                            "\"std::enum\"", ")", ")", ")"};
     for (size_t at = 0; at < sizeof attribute / sizeof attribute[0]; at++) { // the plugin knows the struct by it
         SmithTokenKind kind = at == 0 || at == 3 ? SmithTokenKind_Identifier
                               : at == 5          ? SmithTokenKind_String
@@ -303,18 +303,18 @@ static const char *smith_lang_enum_wrap_refusal(const SmithHost *host, const Smi
     bool inner_result;
     if (smith_lang_enum_type(host, good->canonical, &inner) && smith_lang_enum_builtin(&inner, &inner_result) &&
         strcmp(good->canonical, given->canonical) != 0) {
-        return "a value could be the payload of the inner `result` or `option` as well as of this one, so it does not "
+        return "a value could be the payload of the inner `Result` or `Option` as well as of this one, so it does not "
                "convert: write the variants out, as `{.some = {.some = v}}` or `{.some = .none}`";
     }
     if (is_result) {
         SmithExprType bad = {};
         if (smith_lang_enum_payload(host, type, "error", &bad) && strcmp(bad.canonical, good->canonical) == 0) {
-            return "the `.ok` and the `.error` of this `result` have the same type, so a value could be either and "
+            return "the `.ok` and the `.error` of this `Result` have the same type, so a value could be either and "
                    "does not convert: write `{.ok = v}` or `{.error = v}`";
         }
     }
     if (is_nullptr && !is_result && strchr(good->canonical, '*') != nullptr) {
-        return "`nullptr` does not convert to an `option` of a pointer: write `.none` for no value, or `{.some = "
+        return "`nullptr` does not convert to an `Option` of a pointer: write `.none` for no value, or `{.some = "
                "nullptr}` for a null one";
     }
     return nullptr;
@@ -847,8 +847,8 @@ static bool smith_lang_try_replay_try(SmithLang *lang, const SmithHost *host, Sm
     if (!smith_lang_enum_result(lang, host, replay->generic, replay->instance, &type) ||
         smith_lang_try_kind(type.type) == SmithLangTryKind_None) {
         smith_lang_error(lang, host, place,
-                         "`try` returns the failure from the function, so the function must return a `result(T, E)` "
-                         "or an `option(T)`; this one returns something else. Test the value by hand: `if (r == "
+                         "`try` returns the failure from the function, so the function must return a `Result(T, E)` "
+                         "or an `Option(T)`; this one returns something else. Test the value by hand: `if (r == "
                          ".error) return ...;`");
         frame->pos += 1;
         return true;
@@ -895,8 +895,8 @@ static bool smith_lang_try_replay_errdefer(SmithLang *lang, const SmithHost *hos
     if (!smith_lang_enum_result(lang, host, replay->generic, replay->instance, &type) ||
         smith_lang_try_kind(type.type) == SmithLangTryKind_None) {
         smith_lang_error(lang, host, place,
-                         "`errdefer` runs when the function fails, and only a function that returns a `result` or "
-                         "an `option` has a failure to mark; use `defer` here");
+                         "`errdefer` runs when the function fails, and only a function that returns a `Result` or "
+                         "an `Option` has a failure to mark; use `defer` here");
         return true;
     }
     smith_lang_try_replay_prune(replay);
@@ -1112,7 +1112,7 @@ static const SmithLangEnumShape *smith_lang_eshape_find(const SmithToken *token)
 }
 
 constexpr char smith_lang_eshape_gap[] = "a type function that returns an enum must be exactly `return enum {...};` "
-                                         "with only `type` parameters for now (known gap)";
+                                         "with only `Type` parameters for now (known gap)";
 
 // The index of the `)` that closes the `(` at `open`, within the scan limit, or 0.
 static size_t smith_lang_eshape_close(SmithLang *lang, const SmithHost *host, const SmithToken *first, size_t open,
@@ -1172,15 +1172,15 @@ static void smith_lang_enum_generic_dot(SmithLang *lang, const SmithHost *host, 
 // for any other function (the type values read it), true when this one was consumed (or reported).
 // A module that declares `option` or `result` (the library's own two are the exceptions): an error naming the built-in.
 static bool smith_lang_eshape_builtin_clash(SmithLang *lang, const SmithHost *host, const SmithToken *name) {
-    bool library = strcmp(lang->module, "smith::option") == 0 || strcmp(lang->module, "smith::result") == 0;
-    if (library || !(smith_lang_equals(name->text, name->length, "option") ||
-                     smith_lang_equals(name->text, name->length, "result"))) {
+    bool library = strcmp(lang->module, "std::option") == 0 || strcmp(lang->module, "std::result") == 0;
+    if (library || !(smith_lang_equals(name->text, name->length, "Option") ||
+                     smith_lang_equals(name->text, name->length, "Result"))) {
         return false;
     }
     smith_lang_error(lang, host, name->location,
-                     "`%.*s` is a built-in type function (smith::%.*s), in scope in every module: a module cannot "
+                     "`%.*s` is a built-in type function, in scope in every module: a module cannot "
                      "declare its own; pick another name",
-                     (int)name->length, name->text, (int)name->length, name->text);
+                     (int)name->length, name->text);
     return true;
 }
 
@@ -1216,7 +1216,7 @@ static bool smith_lang_eshape_declare(SmithLang *lang, const SmithHost *host, co
         const SmithToken *word = smith_lang_eshape_at(lang, host, token, at);
         const SmithToken *param = smith_lang_eshape_at(lang, host, token, at + 1);
         const SmithToken *after = smith_lang_eshape_at(lang, host, token, at + 2);
-        bool good = smith_lang_ident(word, "type") && param->kind == SmithTokenKind_Identifier &&
+        bool good = smith_lang_ident(word, "Type") && param->kind == SmithTokenKind_Identifier &&
                     (at + 2 == right ? smith_lang_punct(after, ")") : smith_lang_punct(after, ",")) &&
                     shape->param_count < smith_lang_eshape_params_max;
         if (!good) {
@@ -1390,7 +1390,11 @@ static bool smith_lang_eshape_tag(SmithLang *lang, const SmithHost *host, const 
         return false;
     }
     char joined[smith_lang_tuple_name_max];
-    snprintf(joined, sizeof joined, "%s_%s", shape->name, spelled);
+    char function[64]; // the C name of the instance is lowercase: `Result(F64, I32)` is `smith_enum_result_f64__i32`
+    snprintf(function, sizeof function, "%s", shape->name);
+    for (char *letter = function; *letter != 0; letter++)
+        *letter = (char)tolower((unsigned char)*letter);
+    snprintf(joined, sizeof joined, "%s_%s", function, spelled);
     char hashed[smith_lang_tuple_name_max];
     smith_lang_tuple_tag(joined, hashed, sizeof hashed);
     snprintf(tag, capacity, "smith_enum_%s", hashed + sizeof smith_lang_tuple_prefix - 1);
@@ -1592,7 +1596,7 @@ static bool smith_lang_eshape_header_text(SmithLang *lang, const SmithLangEnumSh
         length = 0;
     }
     used += (size_t)snprintf(out + used, capacity - used,
-                             " } tag; union {%s }; } __attribute__((annotate(\"smith::enum\")));\n#endif\n", members);
+                             " } tag; union {%s }; } __attribute__((annotate(\"std::enum\")));\n#endif\n", members);
     return used < capacity;
 }
 
@@ -2074,11 +2078,11 @@ static void smith_lang_eshape_import(const char *text, uint32_t length, const ch
 }
 
 // `option` and `result` are in scope in every module, with no import: their shapes are the ones the library modules
-// `smith::option` and `smith::result` (lib/std/option.smith, result.smith) export. Those headers are not in git, so
+// `std::option` and `std::result` (lib/std/option.smith, result.smith) export. Those headers are not in git, so
 // the two lines the lowering needs of them are written here; `tests/headers_test.smith` checks that each module's
 // generated header has exactly its line.
-static constexpr char smith_option_header[] = "// smith-eshape: option(T) { T some ; none ; }\n";
-static constexpr char smith_result_header[] = "// smith-eshape: result(T,E) { T ok ; E error ; }\n";
+static constexpr char smith_option_header[] = "// smith-eshape: Option(T) { T some ; none ; }\n";
+static constexpr char smith_result_header[] = "// smith-eshape: Result(T,E) { T ok ; E error ; }\n";
 
 static void smith_lang_eshape_builtins(SmithLang *lang) {
     if (smith_lang_eshape_builtins_done || !lang->is_module) return;
@@ -2291,7 +2295,7 @@ static bool smith_lang_enum_function(SmithLang *lang, const SmithHost *host, con
     bool recording =
         lang->recording; // a generic's body: its uses are written as they are in any body, nothing is defined
     if (recording) smith_lang_enum_generic_dot(lang, host, token);
-    if (!recording && start && smith_lang_eshape_depth == 0 && smith_lang_ident(token, "type") &&
+    if (!recording && start && smith_lang_eshape_depth == 0 && smith_lang_ident(token, "Type") &&
         smith_lang_eshape_declare(lang, host, token)) {
         return true;
     }

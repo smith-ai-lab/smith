@@ -132,7 +132,7 @@ static SmithLangAct smith_lang_head_begin(SmithLang *lang, const SmithHost *host
         return smith_lang_act(SmithLangAct_Slow);
     }
     if (smith_lang_punct(token, ";")) return smith_lang_act(SmithLangAct_Keep);
-    if (!forced && smith_lang_punct(token, "[")) return smith_lang_act(SmithLangAct_Slow); // [[smith::c_name("...")]]
+    if (!forced && smith_lang_punct(token, "[")) return smith_lang_act(SmithLangAct_Slow); // [[std::c_name("...")]]
     if (!forced && smith_lang_generic_candidate(lang, host, token)) return smith_lang_act(SmithLangAct_Slow);
     if (!forced && lang->linked_count > 0) return smith_lang_act(SmithLangAct_Slow); // held, as an export's is
     bool slow = false;
@@ -424,7 +424,7 @@ static SmithLangActKind smith_lang_sized_act(SmithLang *lang, const SmithHost *h
     const SmithLangSized *sized = smith_lang_find_sized(token->text, token->length);
     if (sized == nullptr) return SmithLangAct_Slow;
     if (lang->io_import && !lang->is_module && !lang->body_sparse &&
-        smith_lang_equals(token->text, token->length, "i32")) {
+        smith_lang_equals(token->text, token->length, "I32")) {
         return SmithLangAct_Slow; // `i32 main(io::Io *io)` is read whole (runtime/lang_sparse.c)
     }
     SmithToken before;

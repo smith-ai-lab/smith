@@ -3,17 +3,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-[[smith::alloc]] void *grab(unsigned size) {
+[[std::alloc]] void *grab(unsigned size) {
     return malloc(size);
 }
 
-[[smith::alloc]] void *too_much(unsigned size) {
+[[std::alloc]] void *too_much(unsigned size) {
     FILE *file = fopen("data", "r");
     (void)file;
     return malloc(size);
 }
 
-[[smith::alloc, smith::files]] void *both(unsigned size) {
+[[std::alloc, std::files]] void *both(unsigned size) {
     FILE *file = fopen("data", "r");
     (void)file;
     return malloc(size);

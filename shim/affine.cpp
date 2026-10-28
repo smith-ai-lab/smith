@@ -1,9 +1,9 @@
-// [[smith::affine]]: a value of a type marked with it is used at most once (issue #189, skill smith-lang-affine).
+// [[std::affine]]: a value of a type marked with it is used at most once (issue #189, skill smith-lang-affine).
 // The same plugin narrows payload enums (issue #198, below: "Narrowing of a payload enum").
 //
 // Linked into smith and run on every compile, with no flag, by two entries of clang's static registries:
-//   - a ParsedAttrInfo makes `[[smith::affine]]` a known attribute (the compiler, clang-tidy and clangd all read the
-//     registry), kept in the AST as AnnotateAttr("smith::affine"), on a typedef or a tag;
+//   - a ParsedAttrInfo makes `[[std::affine]]` a known attribute (the compiler, clang-tidy and clangd all read the
+//     registry), kept in the AST as AnnotateAttr("std::affine"), on a typedef or a tag;
 //   - a PluginASTAction of type AddAfterMainAction, which clang adds to every frontend action (the compiler's,
 //   clangd's)
 //     without a command-line flag, runs the analysis. clang-tidy cannot report a diagnostic it has no id for, so
@@ -50,7 +50,7 @@ namespace {
 
 bool annotated(const Decl *decl) {
     for (const auto *attr : decl->specific_attrs<AnnotateAttr>())
-        if (attr->getAnnotation() == "smith::affine" || attr->getAnnotation() == "std::affine") return true;
+        if (attr->getAnnotation() == "std::affine") return true;
     return false;
 }
 
@@ -484,7 +484,7 @@ class Flow {
 
 // ---- Narrowing of a payload enum (issue #198, skill smith-lang-enums) ----------------------------------------------
 //
-// A struct with the annotation `smith::enum` is a payload enum as the lowering writes it: a member `tag` of an enum
+// A struct with the annotation `std::enum` is a payload enum as the lowering writes it: a member `tag` of an enum
 // type whose constants are `<struct>_tag_<variant>`, and an anonymous union with one member per variant that has a
 // payload. Reading the member `x.circle` (or `x->circle`) is an error unless on every path the tag was established: by
 // `x.tag == ..._tag_circle` (an if, `&&`, `||`, `!`, a conditional, a loop's condition) or by a `case` of a switch on
@@ -498,7 +498,7 @@ bool enumRecord(const RecordDecl *record) {
     if (record == nullptr) return false;
     for (const Decl *each : record->redecls())
         for (const auto *attr : each->specific_attrs<AnnotateAttr>())
-            if (attr->getAnnotation() == "smith::enum") return true;
+            if (attr->getAnnotation() == "std::enum") return true;
     return false;
 }
 
@@ -816,7 +816,7 @@ class NarrowFlow {
 
 // ---- The messages --------------------------------------------------------------------------------------------------
 
-const char *const hint = "write the plain loop `for (usize i = 0; i < countof(keys); i++)` and use `keys[i]` once in "
+const char *const hint = "write the plain loop `for (Usize i = 0; i < countof(keys); i++)` and use `keys[i]` once in "
                          "its body, or reassign the value in the loop (`key = next[0];`)";
 
 class Reporter {
@@ -1031,9 +1031,7 @@ class Consumer : public ASTConsumer {
 
 struct AffineAttr final : ParsedAttrInfo {
     AffineAttr() {
-        static constexpr Spelling spellings[] = {{ParsedAttr::AS_C23, "smith::affine"},
-                                                 {ParsedAttr::AS_CXX11, "smith::affine"},
-                                                 {ParsedAttr::AS_C23, "std::affine"},
+        static constexpr Spelling spellings[] = {{ParsedAttr::AS_C23, "std::affine"},
                                                  {ParsedAttr::AS_CXX11, "std::affine"},
                                                  {ParsedAttr::AS_GNU, "smith_affine"}};
         Spellings = spellings;
@@ -1045,7 +1043,7 @@ struct AffineAttr final : ParsedAttrInfo {
         return false;
     }
     AttrHandling handleDeclAttribute(Sema &S, Decl *D, const ParsedAttr &Attr) const override {
-        D->addAttr(AnnotateAttr::Create(S.Context, "smith::affine", nullptr, 0, Attr.getRange()));
+        D->addAttr(AnnotateAttr::Create(S.Context, "std::affine", nullptr, 0, Attr.getRange()));
         return AttributeApplied;
     }
 };
@@ -1063,7 +1061,7 @@ struct AffinePlugin final : PluginASTAction {
     }
 };
 
-const ParsedAttrInfoRegistry::Add<AffineAttr> attribute("smith-affine-attr", "[[smith::affine]]");
+const ParsedAttrInfoRegistry::Add<AffineAttr> attribute("smith-affine-attr", "[[std::affine]]");
 const FrontendPluginRegistry::Add<AffinePlugin> plugin("smith-affine", "a value of an affine type is used once");
 
 } // namespace

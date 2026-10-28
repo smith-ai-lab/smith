@@ -1,6 +1,6 @@
 ---
 name: smith-json
-description: "Reading JSON with smith's json (import smith::json; <smith/json.h>): an arena tree and from C. Load for JSON, code that calls smith_json_ or includes <smith/json.h>, tokenizer.json, MCP, DAP or JSON-RPC messages."
+description: "Reading JSON with smith's json (import std::json; <smith/json.h>): an arena tree and from C. Load for JSON, code that calls smith_json_ or includes <smith/json.h>, tokenizer.json, MCP, DAP or JSON-RPC messages."
 ---
 
 # JSON: smith's json

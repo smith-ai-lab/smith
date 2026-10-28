@@ -132,7 +132,7 @@ static bool smith_lang_text_has_str(const char *text, size_t length) {
         }
         bool before = at > 0 && (isalnum((unsigned char)text[at - 1]) != 0 || text[at - 1] == '_');
         bool follows = at + 3 < length && (isalnum((unsigned char)text[at + 3]) != 0 || text[at + 3] == '_');
-        if (!before && !follows && memcmp(text + at, "str", 3) == 0) return true;
+        if (!before && !follows && memcmp(text + at, "Str", 3) == 0) return true;
     }
     return false;
 }
@@ -499,7 +499,7 @@ static size_t smith_lang_slice_bracket(SmithLang *lang, const SmithHost *host, c
                     ? "`static` has no meaning for a slice: it has no size to promise (C's `int a[static 4]`); "
                       "write `[const :]` or `[restrict :]`"
                     : "`volatile` has no meaning in a slice's brackets: write it on the element, "
-                      "`volatile u8 xs[:]`; the brackets take `const` and `restrict`";
+                      "`volatile U8 xs[:]`; the brackets take `const` and `restrict`";
         }
     }
     return words;
@@ -576,7 +576,7 @@ static size_t smith_lang_slice_groups(SmithLang *lang, const SmithHost *host, co
             break;
         size_t words = smith_lang_slice_bracket(lang, host, first, last + 1, nullptr);
         if (words != SIZE_MAX && words > 0 && dims->count < smith_lang_slice_dims_max) {
-            *problem = "only the outermost bracket may carry qualifiers, as in C (`f32 m[const :][:]`): the "
+            *problem = "only the outermost bracket may carry qualifiers, as in C (`F32 m[const :][:]`): the "
                        "rows of a slice of more dimensions are views, with no pointer of their own to qualify";
             *where = open->location;
             dims->runtime[dims->count] = true;
@@ -600,7 +600,7 @@ static size_t smith_lang_slice_groups(SmithLang *lang, const SmithHost *host, co
             last += 3;
             continue;
         } else {
-            *problem = "a dimension of a run-time array is `[:]` or a number: `f32 xs[:][2]`";
+            *problem = "a dimension of a run-time array is `[:]` or a number: `F32 xs[:][2]`";
             *where = open->location;
         }
         for (size_t guard = 0; guard < 32; guard++) { // to its `]`
@@ -811,14 +811,14 @@ static bool smith_lang_slice_typeof(SmithLang *lang, const SmithHost *host, cons
 static bool smith_lang_slice_str(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     if (!lang->is_module || token->foreign || token->synthetic || token->declared || lang->recording ||
         lang->in_attribute || lang->prev_member || token->location == lang->slice.skip ||
-        !smith_lang_ident(token, "str") || smith_lang_name_find(lang, token->text, token->length) != nullptr ||
+        !smith_lang_ident(token, "Str") || smith_lang_name_find(lang, token->text, token->length) != nullptr ||
         (lang->statement_typedef && lang->brace_depth == lang->typedef_depth)) {
         return false;
     }
     if (lang->prev_tag) return false;                           // `struct str`
     if (lang->prev_char == '*' || lang->prev_name_length > 0) { // after a type: `str` names what is declared
         smith_lang_error(lang, host, token->location,
-                         "`str` is a type in a module, `const char[:]`, as `i32` is one: it cannot name a variable, "
+                         "`Str` is a type in a module, `const char[:]`, as `I32` is one: it cannot name a variable, "
                          "a field or a function; use another name");
         return false;
     }
@@ -1473,7 +1473,7 @@ static size_t smith_lang_slice_subscript_element(SmithLang *lang, const SmithHos
     }
     if (type.kind == SmithLangSlice_Array && type.rank > 1) {
         smith_lang_error(lang, host, like->location,
-                         "a fixed array of more than one dimension has no slice: convert it, `f32 xs[:][2] = a;`");
+                         "a fixed array of more than one dimension has no slice: convert it, `F32 xs[:][2] = a;`");
         cur->changed = true;
         return 1; // the subscript is dropped: the array stays
     }
@@ -1591,7 +1591,7 @@ static void smith_lang_slice_convert_rows(SmithLang *lang, const SmithHost *host
     if (!same) {
         smith_lang_error(lang, host, expr[0].location,
                          "the array has not the shape of the slice: a `[:]` takes any size, a number must be the "
-                         "array's own (an `f32[4][2]` is an `f32[:][2]`)");
+                         "array's own (an `F32[4][2]` is an `F32[:][2]`)");
         char empty[smith_lang_tuple_name_max + 24];
         snprintf(empty, sizeof empty, "( struct %s ) { }", tag); // a value of the type, so that nothing else is said
         cur->count = smith_lang_slice_pattern(cur->tokens, cur->count, smith_lang_slice_cur_max, empty, nullptr, expr);
@@ -2720,7 +2720,7 @@ static size_t smith_lang_slice_local_element(uint32_t first, uint32_t last, Smit
                                    .text = smith_lang_gt_str(token),
                                    .length = token->length,
                                    .location = token->location};
-        for (size_t s = 0; s < sizeof smith_lang_sized / sizeof smith_lang_sized[0]; s++) { // 13 entries
+        for (size_t s = 0; s < sizeof smith_lang_sized / sizeof smith_lang_sized[0]; s++) { // 14 entries
             if (!smith_lang_equals(elem[count].text, elem[count].length, smith_lang_sized[s].standard)) continue;
             elem[count].text = smith_lang_sized[s].name;
             elem[count].length = (uint32_t)strlen(smith_lang_sized[s].name);

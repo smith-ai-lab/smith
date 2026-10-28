@@ -15,28 +15,28 @@
 
 typedef int Vector __attribute__((vector_size(16)));
 
-[[smith::pure]] Vector simd_add(Vector a, Vector b) {
+[[std::pure]] Vector simd_add(Vector a, Vector b) {
     Vector sum;
     asm("add %0.4s, %1.4s, %2.4s" : "=w"(sum) : "w"(a), "w"(b));
     return sum;
 }
 
-[[smith::pure]] unsigned long counter(void) {
+[[std::pure]] unsigned long counter(void) {
     unsigned long ticks;
     asm volatile("mrs %0, cntvct_el0" : "=r"(ticks));
     return ticks;
 }
 
-[[smith::pure]] void barrier(void) {
+[[std::pure]] void barrier(void) {
     asm volatile("dmb ish" ::: "memory");
 }
 
-[[smith::pure]] void compiler_barrier(void) {
+[[std::pure]] void compiler_barrier(void) {
     asm volatile("" ::: "memory");
 }
 
 // The number is a constant in a register variable.
-[[smith::pure]] long raw_write(int fd, const char *text, unsigned long count) {
+[[std::pure]] long raw_write(int fd, const char *text, unsigned long count) {
     register long number asm(NUMBER_REGISTER) = SYS_WRITE_NUMBER;
     register long a0 asm("x0") = fd;
     register long a1 asm("x1") = (long)text;
@@ -46,7 +46,7 @@ typedef int Vector __attribute__((vector_size(16)));
 }
 
 // The number is loaded by the block from an immediate operand.
-[[smith::pure]] long raw_write_immediate(int fd, const char *text, unsigned long count) {
+[[std::pure]] long raw_write_immediate(int fd, const char *text, unsigned long count) {
     register long a0 asm("x0") = fd;
     register long a1 asm("x1") = (long)text;
     register long a2 asm("x2") = (long)count;
@@ -58,7 +58,7 @@ typedef int Vector __attribute__((vector_size(16)));
 }
 
 // The same call, allowed: write is files and net in the table.
-[[smith::effects(files, net)]] long raw_write_declared(int fd, const char *text, unsigned long count) {
+[[std::effects(files, net)]] long raw_write_declared(int fd, const char *text, unsigned long count) {
     register long number asm(NUMBER_REGISTER) = SYS_WRITE_NUMBER;
     register long a0 asm("x0") = fd;
     register long a1 asm("x1") = (long)text;
@@ -68,7 +68,7 @@ typedef int Vector __attribute__((vector_size(16)));
 }
 
 // A number only known at run time.
-[[smith::pure]] long raw_unknown(long which) {
+[[std::pure]] long raw_unknown(long which) {
     register long number asm(NUMBER_REGISTER) = which;
     register long a0 asm("x0") = 0;
     asm volatile("svc #0" : "+r"(a0) : "r"(number) : "memory");
@@ -76,13 +76,13 @@ typedef int Vector __attribute__((vector_size(16)));
 }
 
 // A call out of the block to a named symbol takes its effects.
-[[smith::pure]] void calls_puts(const char *text) {
+[[std::pure]] void calls_puts(const char *text) {
     register long a0 asm("x0") = (long)text;
     asm volatile("bl " SYMBOL(puts) : "+r"(a0) : : "x30", "memory");
 }
 
 // A call through a register is `c`.
-[[smith::pure]] void calls_register(void (*function)(void)) {
+[[std::pure]] void calls_register(void (*function)(void)) {
     asm volatile("blr %0" : : "r"(function) : "x30", "memory");
 }
 #endif

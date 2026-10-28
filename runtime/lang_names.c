@@ -122,7 +122,7 @@ static void smith_lang_written_from_header(SmithLang *lang, const char *text, si
     size_t start = 0;
     size_t end = 0;
     while (smith_lang_header_word(text, length, "// smith-names:", &cursor, &start, &end)) { // each export
-        // `member`, or `member=CName` for an export whose C name was chosen with [[smith::c_name("CName")]]
+        // `member`, or `member=CName` for an export whose C name was chosen with [[std::c_name("CName")]]
         const char *equals = memchr(text + start, '=', end - start);
         size_t member = equals != nullptr ? (size_t)(equals - (text + start)) : end - start;
         size_t c_name = equals != nullptr ? end - start - member - 1 : 0;

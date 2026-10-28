@@ -18,7 +18,7 @@ F64 sum_floats(constexpr Type T, T *x) {
     F64 total = 0;
     for constexpr (Usize i = 0; i < countof(fields(T)); i++) {
         [[maybe_unused]] constexpr Field f = fields(T)[i];      // or `constexpr auto f`
-        if constexpr (is_floating(f)) total += (F64)x->[f];     // x.[f], x->[f], typeof(T.[f]), is_float(f.type)
+        if constexpr (is_floating(f)) total += (F64)x->[f];     // x.[f], x->[f], typeof(T.[f]), Float(f.type)
     }
     return total;
 }

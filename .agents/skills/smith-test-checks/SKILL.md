@@ -1,6 +1,6 @@
 ---
 name: smith-test-checks
-description: "The checks of smith::test: check_equal, check_less, check_near and the rest, what a failure prints, and expect_abort. Load when choosing a check or reading a failed check's report."
+description: "The checks of std::test: check_equal, check_less, check_near and the rest, what a failure prints, and expect_abort. Load when choosing a check or reading a failed check's report."
 ---
 
 # The checks

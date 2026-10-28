@@ -2,22 +2,22 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-[[smith::effects(alloc)]] void *grab(unsigned size) {
+[[std::effects(alloc)]] void *grab(unsigned size) {
     return malloc(size);
 }
 
-[[smith::effects(alloc)]] void *too_much(unsigned size) {
+[[std::effects(alloc)]] void *too_much(unsigned size) {
     FILE *file = fopen("data", "r");
     (void)file;
     return malloc(size);
 }
 
-[[smith::effects(alloc, files)]] void *both(unsigned size) {
+[[std::effects(alloc, files)]] void *both(unsigned size) {
     FILE *file = fopen("data", "r");
     (void)file;
     return malloc(size);
 }
 
-[[smith::effects(alloc, net)]] void *with_net(unsigned size) {
+[[std::effects(alloc, net)]] void *with_net(unsigned size) {
     return malloc(size);
 }

@@ -1,4 +1,4 @@
-// Tests of smith::entropy: the fake set on the thread scripts what `seed()` returns, and the system's answer when no
+// Tests of std::entropy: the fake set on the thread scripts what `seed()` returns, and the system's answer when no
 // handler is set. A checked failure (a system that cannot answer) stops the process and is not a test here.
 module std::entropy_test;
 

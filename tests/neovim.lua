@@ -674,7 +674,7 @@ slowest:
             primes::sum(0) = 0, 1   (i32)
   called from
     tests/test_primes.smith:12     test_primes::test_no_primes_add_up_to_nothing
-    .smith/lib/smith/test.smith:1065   smith_test_execute
+    .smith/lib/std/test.smith:1065   smith_test_execute
 smith: test: failed (status 1)
 ]]
 piped_output = piped_output:gsub("<ESC>", "\27")

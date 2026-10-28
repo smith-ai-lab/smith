@@ -1,10 +1,10 @@
 // Effects, inferred (issue #207, skill smith-lang-effects): what a function does to the world, from its body and its
 // callees, and the two annotations that state it.
 //
-//   [[smith::pure]]                    nothing at all
-//   [[smith::effects(alloc, net)]]     a ceiling: what the function may do (a promise on a declaration with no body)
+//   [[std::pure]]                    nothing at all
+//   [[std::effects(alloc, net)]]     a ceiling: what the function may do (a promise on a declaration with no body)
 //   no attribute                       inferred
-// `[[smith::alloc]]`, one attribute for each effect, is also accepted, undocumented. The arguments of a scoped C23
+// `[[std::alloc]]`, one attribute for each effect, is also accepted, undocumented. The arguments of a scoped C23
 // attribute reach a plugin's handler only with patches/clang-plugin-attr-args.patch (LLVM r9): clang read them only for
 // an attribute it knew without the plugins, and a bare identifier after the first as an expression.
 //
@@ -18,8 +18,8 @@
 // naming the chain
 // (`bad -> log_it (log.c:12) -> printf`); the declared set, not the inferred one, is what a caller sees.
 //
-// Linked into smith and run on every compile with no flag, like [[smith::affine]] (shim/affine.cpp): a ParsedAttrInfo
-// makes the attributes known (kept as AnnotateAttr, "smith::effects:alloc,net"), and a PluginASTAction of type
+// Linked into smith and run on every compile with no flag, like [[std::affine]] (shim/affine.cpp): a ParsedAttrInfo
+// makes the attributes known (kept as AnnotateAttr, "std::effects:alloc,net"), and a PluginASTAction of type
 // AddAfterMainAction reads the translation unit when it is complete. clang-tidy cannot report a diagnostic it has no
 // id for, so smith_effects_disable() (shim/tidy.cpp) turns it off there. Only the functions the main file defines are
 // judged. Across files (a module's header, a C file's summary) is a later step: today a function with no body and no
@@ -79,10 +79,10 @@ llvm::StringRef plain_name(const NamedDecl *decl) {
     return decl->getDeclName().isIdentifier() ? decl->getName() : llvm::StringRef();
 }
 
-constexpr const char *prefix = "smith::effects:";
+constexpr const char *prefix = "std::effects:";
 
 // The effects a function type states after its parameter list (#396), read from the type of a callee: clang keeps
-// `[[clang::annotate_type("smith::effects:alloc")]]` as sugar through a typedef, a field, a parameter and a call.
+// `[[clang::annotate_type("std::effects:alloc")]]` as sugar through a typedef, a field, a parameter and a call.
 bool statedByType(QualType type, uint32_t &set) {
     bool found = false;
     set = 0;
@@ -172,16 +172,14 @@ template <class Info> auto allowIdentifiers(Info &info, int) -> decltype(info.Ha
 }
 template <class Info> void allowIdentifiers(Info &, long) {}
 
-// `[[smith::effects(alloc, net)]]`, and `__attribute__((smith_effects("alloc", "net")))`: the names are identifiers or
+// `[[std::effects(alloc, net)]]`, and `__attribute__((smith_effects("alloc", "net")))`: the names are identifiers or
 // strings.
 struct EffectsAttr final : ParsedAttrInfo {
     EffectsAttr() {
         OptArgs = 15;
         AcceptsExprPack = 0;
         allowIdentifiers(*this, 0);
-        static constexpr Spelling spellings[] = {{ParsedAttr::AS_C23, "smith::effects"},
-                                                 {ParsedAttr::AS_CXX11, "smith::effects"},
-                                                 {ParsedAttr::AS_C23, "std::effects"},
+        static constexpr Spelling spellings[] = {{ParsedAttr::AS_C23, "std::effects"},
                                                  {ParsedAttr::AS_CXX11, "std::effects"},
                                                  {ParsedAttr::AS_GNU, "smith_effects"}};
         Spellings = spellings;
@@ -219,17 +217,14 @@ struct EffectsAttr final : ParsedAttrInfo {
     }
 };
 
-// `[[smith::alloc]]`, `[[smith::files]]`... one for each effect, with no arguments: the set of a function is the union
+// `[[std::alloc]]`, `[[std::files]]`... one for each effect, with no arguments: the set of a function is the union
 // of the ones it has.
 template <size_t Index> struct EffectAttr final : ParsedAttrInfo {
     EffectAttr() {
-        static const std::string scoped = std::string("smith::") + names[Index].text;
-        static const std::string library = std::string("std::") + names[Index].text;
+        static const std::string scoped = std::string("std::") + names[Index].text;
         static const std::string plain = std::string("smith_") + names[Index].text;
         static const Spelling spellings[] = {{ParsedAttr::AS_C23, scoped.c_str()},
                                              {ParsedAttr::AS_CXX11, scoped.c_str()},
-                                             {ParsedAttr::AS_C23, library.c_str()},
-                                             {ParsedAttr::AS_CXX11, library.c_str()},
                                              {ParsedAttr::AS_GNU, plain.c_str()}};
         Spellings = spellings;
     }
@@ -248,9 +243,7 @@ template <size_t Index> struct EffectAttr final : ParsedAttrInfo {
 
 struct PureAttr final : ParsedAttrInfo {
     PureAttr() {
-        static constexpr Spelling spellings[] = {{ParsedAttr::AS_C23, "smith::pure"},
-                                                 {ParsedAttr::AS_CXX11, "smith::pure"},
-                                                 {ParsedAttr::AS_C23, "std::pure"},
+        static constexpr Spelling spellings[] = {{ParsedAttr::AS_C23, "std::pure"},
                                                  {ParsedAttr::AS_CXX11, "std::pure"},
                                                  {ParsedAttr::AS_GNU, "smith_pure"}};
         Spellings = spellings;
@@ -286,8 +279,8 @@ struct PointerUse {
     SourceLocation loc;
     const FunctionDecl *target = nullptr;
     bool stated =
-        false; // a call whose function type states its effects: `[[clang::annotate_type("smith::effects:...")]]`
-    uint32_t statedSet = 0; // the set it states (none for `smith::effects:`)
+        false; // a call whose function type states its effects: `[[clang::annotate_type("std::effects:...")]]`
+    uint32_t statedSet = 0; // the set it states (none for `std::effects:`)
 };
 
 struct Node {
@@ -1049,13 +1042,13 @@ class Analysis {
             }
         }
         if (first == nullptr) return;
-        std::string kind = node.declared == 0 ? "[[smith::pure]]" : "limited to " + describe(node.declared);
+        std::string kind = node.declared == 0 ? "[[std::pure]]" : "limited to " + describe(node.declared);
         { // the diagnostic is emitted when the builder goes, before the note
             auto report = engine.Report(first->loc, bad);
             report << node.function->getNameAsString() << kind << describe(extra) << chain(node, bit);
             // The fix: the function gets the whole set it needs, declared and inferred. With no attribute one is
             // written
-            // before it; with `[[smith::effects(...)]]`, `[[smith::pure]]` or an effect's own attribute that one is
+            // before it; with `[[std::effects(...)]]`, `[[std::pure]]` or an effect's own attribute that one is
             // replaced (never a second one added).
             std::string whole = describe(node.declared | node.inferred);
             const SourceManager &sm = context.getSourceManager();
@@ -1067,12 +1060,12 @@ class Analysis {
                 SourceRange range = own->getRange();
                 if (range.isValid() && !range.getBegin().isMacroID() && sm.isWrittenInMainFile(range.getBegin())) {
                     report << FixItHint::CreateReplacement(CharSourceRange::getTokenRange(range),
-                                                           "smith::effects(" + whole + ")");
+                                                           "std::effects(" + whole + ")");
                 }
             } else {
                 SourceLocation start = node.function->getBeginLoc();
                 if (start.isValid() && !start.isMacroID() && !node.function->isImplicit())
-                    report << FixItHint::CreateInsertion(start, "[[smith::effects(" + whole + ")]] ");
+                    report << FixItHint::CreateInsertion(start, "[[std::effects(" + whole + ")]] ");
             }
         }
         if ((extra & (extra - 1)) != 0)
@@ -1307,24 +1300,24 @@ struct EffectsPlugin final : PluginASTAction {
 };
 
 const ParsedAttrInfoRegistry::Add<EffectsAttr> effects_attribute("smith-effects-attr", "smith_effects(\"alloc\", ...)");
-const ParsedAttrInfoRegistry::Add<EffectAttr<0>> alloc_attribute("smith-alloc-attr", "[[smith::alloc]]");
-const ParsedAttrInfoRegistry::Add<EffectAttr<1>> files_attribute("smith-files-attr", "[[smith::files]]");
-const ParsedAttrInfoRegistry::Add<EffectAttr<2>> net_attribute("smith-net-attr", "[[smith::net]]");
-const ParsedAttrInfoRegistry::Add<EffectAttr<3>> console_attribute("smith-console-attr", "[[smith::console]]");
-const ParsedAttrInfoRegistry::Add<EffectAttr<4>> clock_attribute("smith-clock-attr", "[[smith::clock]]");
-const ParsedAttrInfoRegistry::Add<EffectAttr<5>> process_attribute("smith-process-attr", "[[smith::process]]");
-const ParsedAttrInfoRegistry::Add<EffectAttr<6>> env_attribute("smith-env-attr", "[[smith::env]]");
-const ParsedAttrInfoRegistry::Add<EffectAttr<7>> entropy_attribute("smith-entropy-attr", "[[smith::entropy]]");
-const ParsedAttrInfoRegistry::Add<EffectAttr<8>> globals_attribute("smith-globals-attr", "[[smith::globals]]");
-const ParsedAttrInfoRegistry::Add<EffectAttr<9>> c_attribute("smith-c-attr", "[[smith::c]]");
-const ParsedAttrInfoRegistry::Add<EffectAttr<10>> fails_attribute("smith-fails-attr", "[[smith::fails]]");
-const ParsedAttrInfoRegistry::Add<PureAttr> pure_attribute("smith-pure-attr", "[[smith::pure]]");
+const ParsedAttrInfoRegistry::Add<EffectAttr<0>> alloc_attribute("smith-alloc-attr", "[[std::alloc]]");
+const ParsedAttrInfoRegistry::Add<EffectAttr<1>> files_attribute("smith-files-attr", "[[std::files]]");
+const ParsedAttrInfoRegistry::Add<EffectAttr<2>> net_attribute("smith-net-attr", "[[std::net]]");
+const ParsedAttrInfoRegistry::Add<EffectAttr<3>> console_attribute("smith-console-attr", "[[std::console]]");
+const ParsedAttrInfoRegistry::Add<EffectAttr<4>> clock_attribute("smith-clock-attr", "[[std::clock]]");
+const ParsedAttrInfoRegistry::Add<EffectAttr<5>> process_attribute("smith-process-attr", "[[std::process]]");
+const ParsedAttrInfoRegistry::Add<EffectAttr<6>> env_attribute("smith-env-attr", "[[std::env]]");
+const ParsedAttrInfoRegistry::Add<EffectAttr<7>> entropy_attribute("smith-entropy-attr", "[[std::entropy]]");
+const ParsedAttrInfoRegistry::Add<EffectAttr<8>> globals_attribute("smith-globals-attr", "[[std::globals]]");
+const ParsedAttrInfoRegistry::Add<EffectAttr<9>> c_attribute("smith-c-attr", "[[std::c]]");
+const ParsedAttrInfoRegistry::Add<EffectAttr<10>> fails_attribute("smith-fails-attr", "[[std::fails]]");
+const ParsedAttrInfoRegistry::Add<PureAttr> pure_attribute("smith-pure-attr", "[[std::pure]]");
 const FrontendPluginRegistry::Add<EffectsPlugin> plugin("smith-effect-inference", "what a function does to the world");
 
 } // namespace
 
 // The editor's hover (patches/clangd-plugin-hover.patch, LLVM r10): clangd calls this for each hovered declaration, and
-// the lines of its `smith::hover:` annotations are shown. The declarations below are clangd's (Hover.h), written out
+// the lines of its `std::hover:` annotations are shown. The declarations below are clangd's (Hover.h), written out
 // because the shim has no clangd headers; they are the same types.
 namespace clang::clangd {
 struct HoverSection {
@@ -1340,7 +1333,7 @@ namespace {
 bool hoverProvider(const NamedDecl &decl, clang::clangd::HoverSection &section) {
     if (!isa<FunctionDecl>(decl)) return false;
     uint32_t declared = 0;
-    if (declaredSet(&decl, declared)) { // a ceiling, a promise or [[smith::pure]]: the attribute says it
+    if (declaredSet(&decl, declared)) { // a ceiling, a promise or [[std::pure]]: the attribute says it
         section.Lines.push_back(hoverText(declared, true));
         return true;
     }
@@ -1499,7 +1492,7 @@ class Program {
                 }
             }
             if (first == nullptr) continue;
-            std::string kind = declared == 0 ? "[[smith::pure]]" : "limited to " + describe(declared);
+            std::string kind = declared == 0 ? "[[std::pure]]" : "limited to " + describe(declared);
             found.push_back(
                 {entry.first, function.name, first->place, kind, describe(extra), chain(entry.first, bit), "", -1});
         }

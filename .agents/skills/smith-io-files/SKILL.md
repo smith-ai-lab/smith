@@ -1,6 +1,6 @@
 ---
 name: smith-io-files
-description: "Files in smith::io: write modes (io::Replace, io::Atomic), folders, maps, the environment (io::args_env) and file info. Load when reading, writing, listing or mapping files, or reading the environment, with io::files_* or io::args_*."
+description: "Files in std::io: write modes (io::Replace, io::Atomic), folders, maps, the environment (io::args_env) and file info. Load when reading, writing, listing or mapping files, or reading the environment, with io::files_* or io::args_*."
 ---
 
 # Files, folders, maps and the environment

@@ -216,7 +216,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
            42 |     smith_check(moves.count == expected);
       called from
         tests/moves_test.c:42  moves_every_step
-        .smith/lib/smith/test.smith:1065  smith_test_execute
+        .smith/lib/std/test.smith:1065  smith_test_execute
     ```
 
     The failing frame is the first that is not smith's own machinery (a function whose name starts with `smith_test_`,

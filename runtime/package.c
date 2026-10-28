@@ -217,7 +217,7 @@ static void smith_package_remove(const char *path) {
     if (nftw(path, smith_package_remove_entry, 64, FTW_DEPTH | FTW_PHYS) != 0) remove(path);
 }
 
-// The archive readers, in smith's own code, so extraction runs no other process: gzip (on smith::inflate), then xz,
+// The archive readers, in smith's own code, so extraction runs no other process: gzip (on std::inflate), then xz,
 // then tar (which uses both). The order matters, so each include is a block of its own that clang-format leaves
 // be.
 #include "gzip.c"

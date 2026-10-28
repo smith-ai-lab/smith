@@ -131,7 +131,7 @@ static bool smith_lang_alias_name(const SmithLang *lang, size_t index, const Smi
     }
     const SmithLangHeld *before = &lang->head[index - 1];
     return before->kind == SmithTokenKind_Identifier &&
-           smith_lang_equals(smith_lang_scratch_str(before->original), before->original.length, "type");
+           smith_lang_equals(smith_lang_scratch_str(before->original), before->original.length, "Type");
 }
 
 static void smith_lang_resolve(SmithLang *lang, const SmithHost *host, const SmithToken *next) {
@@ -772,7 +772,7 @@ static void smith_lang_generic_flush_head(SmithLang *lang, const SmithHost *host
 
 // `i32` that begins `i32 main(io::Io *name)`: the declaration is the program's body, a static function.
 static bool smith_lang_io_main_ahead(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
-    if (!lang->io_import || !smith_lang_equals(token->text, token->length, "i32")) return false;
+    if (!lang->io_import || !smith_lang_equals(token->text, token->length, "I32")) return false;
     if (!smith_lang_ident(smith_lang_peek(lang, host, 0, false), "main") ||
         !smith_lang_punct(smith_lang_peek(lang, host, 1, false), "(")) {
         return false;

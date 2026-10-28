@@ -1,0 +1,8 @@
+struct red_point {
+    int x;
+};
+
+int first(void) {
+    struct red_point p = {1};
+    return p.x;
+}

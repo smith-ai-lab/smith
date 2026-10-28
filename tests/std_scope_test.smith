@@ -1,5 +1,6 @@
-// std:: (issue #366, step 1): the standard library's modules and attribute scope are written `std::`, and `smith::` is
-// still accepted until the tree is moved. The project is tests/build_fixtures/std_scope.
+// std:: (issue #366): the standard library's modules and attribute scope are written `std::`, types are capitalized,
+// and the old forms (`smith::`, the lowercase type names, a lowercase type of a program's own) are errors. The project
+// is tests/build_fixtures/std_scope.
 module std_scope_test;
 
 import std::io;
@@ -45,12 +46,12 @@ export void test_std_scope_module_line_follows_the_path_rule(io::Io *io) {
     scratch::expect_contains("std: ... which names the path", outside.err, "must be in a file whose path ends in");
 }
 
-// Types are capitalized (issue #366): the capitalized names are the old lowercase ones until the tree is rewritten.
-export void test_std_scope_capitalized_types_and_concepts_are_the_lowercase_ones(io::Io *io) {
+// Types are capitalized (issue #366): the sized types, the concepts and the type functions.
+export void test_std_scope_capitalized_types_and_concepts_compile_and_run(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", "std_scope");
     scratch::Run built = scratch::sh(&p, "smith cc -std=gnu23 capitals.smith -o capitals");
     scratch::expect_status("capitals: I32, U8, Usize, F64, Bool and the concepts compile in a plain file", 0, &built);
-    scratch::expect_text("capitals: ... and mean what the lowercase ones do", "3 0.5 5 -4 12 3 7 5 250 2 1.5 1",
+    scratch::expect_text("capitals: ... and mean what they say", "3 0.5 5 -4 12 3 7 5 250 2 1.5 1",
                          scratch::sh(&p, "./capitals").out);
 }
 
@@ -59,4 +60,33 @@ export void test_std_scope_capitalized_names_work_in_a_module(io::Io *io) {
     scratch::Run built = scratch::sh(&p, "smith cc -std=gnu23 -c capitals_module.smith -o /dev/null");
     scratch::expect_status("capitals: Option, Result, Str, Type, slices of I32 and a Type alias in a module", 0,
                            &built);
+}
+
+// The old forms are gone, with no special message: `smith::arena` is a module nobody wrote, `i32` a name nobody declared.
+export void test_std_scope_the_old_spellings_are_unknown(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "std_scope");
+    scratch::Run module = scratch::sh(&p, "smith cc -std=gnu23 -I .smith/include -c old_module.smith -o /dev/null");
+    scratch::expect_failure("old: import smith::arena is an unknown module", &module);
+    scratch::expect_contains("old: ... the module cannot be found", module.err, "smith::arena");
+    scratch::Run type = scratch::sh(&p, "smith cc -std=gnu23 -c old_type.smith -o /dev/null");
+    scratch::expect_failure("old: i32 in a module is an unknown type", &type);
+    scratch::expect_contains("old: ... named as written", type.err, "i32");
+    scratch::Run attribute = scratch::sh(&p, "smith cc -std=gnu23 -I .smith/include -c old_attribute.smith -o /dev/null");
+    scratch::expect_failure("old: [[smith::pure]] is an attribute nobody registered", &attribute);
+}
+
+// A program's own types start with a capital (issue #366).
+export void test_std_scope_a_lowercase_type_of_the_program_is_an_error(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "std_scope");
+    scratch::Run tag = scratch::sh(&p, "smith cc -std=gnu23 -c lowercase_tag.smith -o /dev/null");
+    scratch::expect_failure("capital: a lowercase struct tag in a module is an error", &tag);
+    scratch::expect_contains("capital: ... that names the capitalized spelling", tag.err, "write `RedPoint`, not `red_point`");
+    scratch::Run alias = scratch::sh(&p, "smith cc -std=gnu23 -c lowercase_alias.smith -o /dev/null");
+    scratch::expect_failure("capital: a lowercase constexpr Type alias is an error", &alias);
+    scratch::expect_contains("capital: ... that names the capitalized spelling", alias.err, "write `Small`, not `small`");
+    scratch::Run function = scratch::sh(&p, "smith cc -std=gnu23 -c lowercase_function.smith -o /dev/null");
+    scratch::expect_failure("capital: a lowercase type function is an error", &function);
+    scratch::expect_contains("capital: ... that names the capitalized spelling", function.err, "write `SliceOf`, not `slice_of`");
+    scratch::Run plain = scratch::sh(&p, "smith cc -std=gnu23 -c lowercase_plain.smith -o /dev/null");
+    scratch::expect_status("capital: a file with no module line means what C means: a lowercase tag is fine", 0, &plain);
 }

@@ -2,16 +2,16 @@
 static int counter;
 static const int limit = 4;
 
-[[smith::pure]] int reads(void) {
+[[std::pure]] int reads(void) {
     return limit;
 }
 
-[[smith::pure]] int bump(void) {
+[[std::pure]] int bump(void) {
     counter++;
     return counter;
 }
 
-[[smith::pure]] int remember(int value) {
+[[std::pure]] int remember(int value) {
     static int last;
     last = value;
     return last;

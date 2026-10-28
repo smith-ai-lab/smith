@@ -157,7 +157,7 @@ typedef struct {
     SmithLangNameKind kind;
     bool exported;
     uint32_t location;    // of the declaration's name in the source, in the host's own measure
-    SmithLangText c_name; // the C name `[[smith::c_name("...")]]` chose for an export (length 0: the prefixed name)
+    SmithLangText c_name; // the C name `[[std::c_name("...")]]` chose for an export (length 0: the prefixed name)
     uint16_t generic;     // 1 + the index of the generic function this name is (0: it is not one)
     bool needed;          // the body of an exported generic names it: it is in the header's instance section
     char tag_word;        // a tag: 's', 'u' or 'e' for struct, union or enum, or 0
@@ -370,7 +370,7 @@ typedef struct {
     bool prev_ident;      // the token before was a name (not a keyword)
     bool param_bracket;   // the token before was the `[` of an array parameter: its size follows
     bool attribute_first; // the declaration begins with [[ ]]: `static` goes after them, before the token that follows
-    SmithLangText c_name; // [[smith::c_name("...")]] before this export (length 0: none)
+    SmithLangText c_name; // [[std::c_name("...")]] before this export (length 0: none)
     SmithLangText enum_prefix; // an exported enum's C name when its tag is declared: its constants are `<it>_<Value>`
     uint32_t c_name_location;
     bool c_name_used;  // a name this declaration introduces took it
@@ -437,7 +437,7 @@ struct SmithLang {
     bool enums_seen;    // an enum with payloads was written in this file, or an import's header has one (lang_enum.c)
     bool slices_seen;   // a slice was written in this file, or an import's header has one (runtime/lang_slice.c)
     bool tuples_seen;   // a tuple type was written in this file, or an import's header has one (runtime/lang_tuple.c)
-    bool io_import;     // the file imports smith::io: its `main` may take the io (runtime/lang_head.c)
+    bool io_import;     // the file imports std::io: its `main` may take the io (runtime/lang_head.c)
     bool io_main;       // `i32 main(io::Io *io)` was read: it is `smith_user_main`, and a `main` is written at the end
     uint32_t io_main_location; // of that function's name
     SmithLangText io_type; // how this file's lowering writes `io::Io` (SmithIo, or the module's name without a header)
@@ -450,7 +450,7 @@ struct SmithLang {
     size_t header_full_used;
     size_t pending;               // the held identifier waiting for the token after it (SIZE_MAX: none)
     bool pending_export;          // `export` was read, and the declaration it applies to is next
-    SmithLangText pending_c_name; // [[smith::c_name("...")]] was read: the export after it has that C name
+    SmithLangText pending_c_name; // [[std::c_name("...")]] was read: the export after it has that C name
     uint32_t pending_c_name_location;
     bool pending_c_name_line; // the attribute was the first token of its line
     SmithLangCond conds[smith_lang_cond_depth_max];
@@ -469,7 +469,7 @@ struct SmithLang {
     const SmithTrivia *doc_export_to;
     bool export_tail;    // the header has the export's end, though export_active is off (a variable, a prototype)
     bool tail_open;      // an export just ended in the header: a comment after it on its line follows it there
-    bool unnamed_c_name; // an export ended that took no name from its [[smith::c_name]]
+    bool unnamed_c_name; // an export ended that took no name from its [[std::c_name]]
     uint32_t unnamed_c_name_location;
     size_t c_name_count; // how many of the module's own names have a C name chosen
     SmithLangCName cnames[smith_lang_cnames_max];
@@ -790,19 +790,20 @@ typedef struct {
 } SmithLangSized;
 
 static const SmithLangSized smith_lang_sized[] = {
-    {"f16", "_Float16", "_Float16"},
-    {"f32", "float", "float"},
-    {"f64", "double", "double"},
-    {"i16", "__INT16_TYPE__", "int16_t"},
-    {"i32", "__INT32_TYPE__", "int32_t"},
-    {"i64", "__INT64_TYPE__", "int64_t"},
-    {"i8", "__INT8_TYPE__", "int8_t"},
-    {"isize", "__PTRDIFF_TYPE__", "ptrdiff_t"},
-    {"u16", "__UINT16_TYPE__", "uint16_t"},
-    {"u32", "__UINT32_TYPE__", "uint32_t"},
-    {"u64", "__UINT64_TYPE__", "uint64_t"},
-    {"u8", "__UINT8_TYPE__", "uint8_t"},
-    {"usize", "__SIZE_TYPE__", "size_t"},
+    {"Bool", "bool", "bool"},
+    {"F16", "_Float16", "_Float16"},
+    {"F32", "float", "float"},
+    {"F64", "double", "double"},
+    {"I16", "__INT16_TYPE__", "int16_t"},
+    {"I32", "__INT32_TYPE__", "int32_t"},
+    {"I64", "__INT64_TYPE__", "int64_t"},
+    {"I8", "__INT8_TYPE__", "int8_t"},
+    {"Isize", "__PTRDIFF_TYPE__", "ptrdiff_t"},
+    {"U16", "__UINT16_TYPE__", "uint16_t"},
+    {"U32", "__UINT32_TYPE__", "uint32_t"},
+    {"U64", "__UINT64_TYPE__", "uint64_t"},
+    {"U8", "__UINT8_TYPE__", "uint8_t"},
+    {"Usize", "__SIZE_TYPE__", "size_t"},
 };
 
 // Whether the file has tuples (the text has one, or an import's header does): the host offers every token, and `t[0]`
@@ -867,98 +868,8 @@ static bool smith_lang_is_word(const SmithToken *token) {
            smith_lang_word(token->text, token->length) != SmithLangWord_Other;
 }
 
-// ---- Capitalized type names (issue #366) --------------------------------------------------------------------------
-//
-// Types are written with a capital (`I32`, `Str`, `Type`, `Option(T)`, the concepts `Int` and `Num`) beside the old
-// lowercase names, which are the ones the lowering knows: a capitalized name is read as its lowercase one, the same
-// type, silently, until the tree is rewritten.
-
-typedef struct {
-    const char *written;
-    const char *name;
-} SmithLangCapital;
-
-static const SmithLangCapital smith_lang_capitals[] = {
-    {"I8", "i8"},
-    {"I16", "i16"},
-    {"I32", "i32"},
-    {"I64", "i64"},
-    {"U8", "u8"},
-    {"U16", "u16"},
-    {"U32", "u32"},
-    {"U64", "u64"},
-    {"F16", "f16"},
-    {"F32", "f32"},
-    {"F64", "f64"},
-    {"Usize", "usize"},
-    {"Isize", "isize"},
-    {"Bool", "bool"},
-    {"Str", "str"},
-    {"Type", "type"},
-    {"Option", "option"},
-    {"Result", "result"},
-    {"Int", "integer"},
-    {"Float", "floating"},
-    {"Num", "arithmetic"},
-    {"Pointer", "pointer"},
-    {"Enum", "enumeration"},
-    {"Struct", "structure"},
-    {"Array", "array"},
-    {"Slice", "slice"},
-    {"Signed", "signed_integer"},
-    {"Unsigned", "unsigned_integer"},
-};
-
-// The capitalized name number `index` and the lowercase name it stands for; false past the last.
-bool smith_lang_capital_at(size_t index, const char **written, const char **name) {
-    if (index >= sizeof smith_lang_capitals / sizeof smith_lang_capitals[0]) return false;
-    *written = smith_lang_capitals[index].written;
-    *name = smith_lang_capitals[index].name;
-    return true;
-}
-
-// The lowercase name a capitalized one stands for, or null.
-const char *smith_lang_capital_name(const char *text, size_t length) {
-    if (length < 3 || length > 8 || text[0] < 'A' || text[0] > 'Z') return nullptr;
-    for (size_t i = 0; i < sizeof smith_lang_capitals / sizeof smith_lang_capitals[0]; i++) { // 28 names
-        if (smith_lang_equals(text, length, smith_lang_capitals[i].written)) return smith_lang_capitals[i].name;
-    }
-    return nullptr;
-}
-
-static bool smith_lang_word_char(char c);
-static size_t smith_lang_text_skip(const char *text, size_t length, size_t at);
-
-// Writes a source text into `out` (room for `length * 3 + 1`) with the lowercase names in place of the capitalized
-// ones: the same length for every type, a longer name for a concept when `concepts` is set. Comments and strings are
-// copied as they are, and so is a name after `.`, `->` or `::` (a member or a C name). Returns the length written.
-size_t smith_lang_capitals_lower(const char *text, size_t length, char *out, bool concepts) {
-    size_t used = 0;
-    for (size_t at = 0; at < length;) {                      // each piece of the text once
-        size_t end = smith_lang_text_skip(text, length, at); // a comment or a literal
-        if (end == at) {
-            end = at + 1;
-            while (smith_lang_word_char(text[at]) && end < length && smith_lang_word_char(text[end]))
-                end += 1;
-        }
-        const char *name = smith_lang_capital_name(text + at, end - at);
-        bool member = at > 0 && (text[at - 1] == '.' || (at > 1 && text[at - 1] == '>' && text[at - 2] == '-') ||
-                                 (at > 1 && text[at - 1] == ':' && text[at - 2] == ':'));
-        if (name != nullptr && !member && (concepts || strlen(name) == end - at)) {
-            memcpy(out + used, name, strlen(name));
-            used += strlen(name);
-        } else {
-            memmove(out + used, text + at, end - at);
-            used += end - at;
-        }
-        at = end;
-    }
-    out[used] = 0;
-    return used;
-}
-
 static const SmithLangSized *smith_lang_find_sized(const char *text, size_t length) {
-    for (size_t i = 0; i < sizeof smith_lang_sized / sizeof smith_lang_sized[0]; i++) { // 13 entries
+    for (size_t i = 0; i < sizeof smith_lang_sized / sizeof smith_lang_sized[0]; i++) { // 14 entries
         if (smith_lang_equals(text, length, smith_lang_sized[i].name)) return &smith_lang_sized[i];
     }
     return nullptr;

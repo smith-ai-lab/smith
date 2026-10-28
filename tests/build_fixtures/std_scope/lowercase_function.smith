@@ -1,0 +1,6 @@
+module lowercase_function;
+
+export Type slice_of(Type element, Usize count) {
+    Type t = element;
+    return t;
+}

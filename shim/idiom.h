@@ -4,7 +4,7 @@
 // is smith-idiom.
 //
 //   smith-sized-types     .smith    uint32_t, size_t, float, unsigned, long, int...: write the sized type (u32, usize,
-//   f32) smith-module-library  .smith    a library that is a module, used through its C header: import smith::arena
+//   f32) smith-module-library  .smith    a library that is a module, used through its C header: import std::arena
 //   smith-bounded-loop    .smith, C a loop with no condition or a constant one, outside main: bound it by a count
 //   smith-c23             .smith, C NULL, _Bool, <stdbool.h>, {0}, __attribute__((noreturn)): nullptr, bool, {},
 //   [[noreturn]] smith-constexpr       .smith, C a file-scope const object with a constant initializer: constexpr
@@ -167,8 +167,8 @@ class SizedTypesCheck final : public ClangTidyCheck {
 
         void report(const Token &token, const std::string &spelled, const std::string &sized) {
             check.diag(token.getLocation(),
-                       "`%0` is a C type, and a .smith file has the sized types: write `%1` (u8 u16 u32 u64, i8 i16 "
-                       "i32 i64, usize, isize, f32, f64)")
+                       "`%0` is a C type, and a .smith file has the sized types: write `%1` (U8 U16 U32 U64, I8 I16 "
+                       "I32 I64, Usize, Isize, F32, F64)")
                 << spelled << sized;
         }
     };
@@ -176,7 +176,7 @@ class SizedTypesCheck final : public ClangTidyCheck {
 
 // ---- smith-module-library -------------------------------------------------------------------------------------------
 
-// A library that is a module has `// smith-module: smith::arena` in its generated header, and `// smith-names:
+// A library that is a module has `// smith-module: std::arena` in its generated header, and `// smith-names:
 // push_raw= smith_arena_push ...` pairs the module's names with the C names. Headers are read as the file includes
 // them.
 struct ModuleHeader {
@@ -289,7 +289,7 @@ class ModuleLibraryCheck final : public ClangTidyCheck {
         }
 
         static std::string example(const ModuleHeader &module) {
-            if (module.module == "smith::arena") return " (a typed push is `arena::push(&a, T)`)";
+            if (module.module == "std::arena") return " (a typed push is `arena::push(&a, T)`)";
             return "";
         }
 
@@ -355,7 +355,7 @@ class BoundedLoopCheck final : public ClangTidyCheck {
             return;
         if (!seen.insert(sm.getExpansionLoc(loop->getBeginLoc()).getRawEncoding()).second) return;
         diag(loop->getBeginLoc(),
-             "%0 never ends on its own: bound the loop by a count (`for (usize i = 0; i < limit; i++)`); only `main` "
+             "%0 never ends on its own: bound the loop by a count (`for (Usize i = 0; i < limit; i++)`); only `main` "
              "runs forever")
             << spelled;
     }

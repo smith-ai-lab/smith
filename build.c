@@ -222,7 +222,7 @@ static const char *const *build_protocol_steps(SmithBuild *b, const BuildConfig 
     return outputs;
 }
 
-// The headers of the libraries written in .smith (lib/std/<name>.smith, the module smith::<name>) and of std::build
+// The headers of the libraries written in .smith (lib/std/<name>.smith, the module std::<name>) and of std::build
 // are build outputs, never committed (knowledge/smith-module-headers.md): `.smith/include/smith/<name>.h`, written by
 // the smith that compiles smith (CC, the previous release: the lag rule) from the module's source. A module that a
 // smith_object compiles (build_linked_libraries) has its header step from smith_object; the others are made here, and

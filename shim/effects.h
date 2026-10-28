@@ -5,12 +5,12 @@
 //      to a system framework's class or object). It is reported unless the function that makes it is in a
 //      capability's implementation.
 //   2. Failure is not an effect: abort, assert, __builtin_trap, __builtin_unreachable and smith's failure path.
-//   3. A capability is a record marked [[clang::annotate("smith::capability")]]. Its implementation is the module
+//   3. A capability is a record marked [[clang::annotate("std::capability")]]. Its implementation is the module
 //      that defines it: for .smith the module file, for C the source file beside the header that defines it (io.c
 //      with io.h; lib/io.c or src/io.c with include/.../io.h).
 //   4. An exported function of a capability's implementation that reaches a raw effect, directly or through the file's
 //      own static functions, must take or return a capability.
-//   5. A function marked [[clang::annotate("smith::main_only")]] (smith_io_make) may be called only in main.
+//   5. A function marked [[clang::annotate("std::main_only")]] (smith_io_make) may be called only in main.
 //   6. No capability, or pointer to one, in static storage.
 // A record that holds a capability (a field of one, or of one that holds one) is a capability for rules 4 and 6, so a
 // project's bundle of capabilities passes the signature test, but it does not make the module its implementation.
@@ -245,11 +245,7 @@ inline Verdict classify(const FunctionDecl *fn, const SourceManager &sm) {
 
 // ---- Capabilities --------------------------------------------------------------------------------------------------
 
-// `smith::capability` is also written `std::capability` (the standard library's scope, issue #366).
-inline bool is_annotation(llvm::StringRef written, llvm::StringRef text) {
-    if (written == text) return true;
-    return text.starts_with("smith::") && written.starts_with("std::") && written.drop_front(5) == text.drop_front(7);
-}
+inline bool is_annotation(llvm::StringRef written, llvm::StringRef text) { return written == text; }
 
 inline bool has_annotation(const Decl *decl, llvm::StringRef text) {
     for (const auto *attribute : decl->specific_attrs<AnnotateAttr>())
@@ -283,7 +279,7 @@ inline const RecordDecl *record_of(QualType type) {
 inline bool is_marked(const RecordDecl *record) {
     if (record == nullptr) return false;
     for (const TagDecl *redeclaration : record->redecls())
-        if (has_annotation(redeclaration, "smith::capability")) return true;
+        if (has_annotation(redeclaration, "std::capability")) return true;
     return false;
 }
 
@@ -522,7 +518,7 @@ class Effects final : public ClangTidyCheck {
         if (objc) {
             diag(where,
                  "`%0` touches the world: wrap it in a capability's implementation (a module that defines a type "
-                 "marked [[clang::annotate(\"smith::capability\")]]) and take that capability as a parameter")
+                 "marked [[clang::annotate(\"std::capability\")]]) and take that capability as a parameter")
                 << callee;
         } else if (replacement != nullptr && replacement->capability == nullptr) {
             diag(where, "`%0` touches the world: %1") << callee << replacement->how;
@@ -539,7 +535,7 @@ class Effects final : public ClangTidyCheck {
 
     void reference(Walker &walker, const FunctionDecl *callee, SourceLocation at) {
         const SourceManager &sm = walker.sm;
-        if (function_has_annotation(callee, "smith::main_only")) {
+        if (function_has_annotation(callee, "std::main_only")) {
             bool in_main = walker.fn->isMain();
             if (!in_main) {
                 SourceLocation where = written_place(sm, at, true);

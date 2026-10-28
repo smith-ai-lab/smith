@@ -15,9 +15,9 @@ void smith_lang_watch_basics(const SmithHost *host) {
     static const char *const words[] = {"module", "import", "export", "countof", "defer"};
     for (size_t i = 0; i < sizeof words / sizeof words[0]; i++) // 5 entries
         host->watch(host->context, words[i], (uint32_t)strlen(words[i]));
-    for (size_t i = 0; i < sizeof smith_lang_concepts / sizeof smith_lang_concepts[0]; i++) // 11 entries
+    for (size_t i = 0; i < sizeof smith_lang_concepts / sizeof smith_lang_concepts[0]; i++) // 10 entries
         host->watch(host->context, smith_lang_concepts[i], (uint32_t)strlen(smith_lang_concepts[i]));
-    for (size_t i = 0; i < sizeof smith_lang_sized / sizeof smith_lang_sized[0]; i++) // 13 entries
+    for (size_t i = 0; i < sizeof smith_lang_sized / sizeof smith_lang_sized[0]; i++) // 14 entries
         host->watch(host->context, smith_lang_sized[i].name, (uint32_t)strlen(smith_lang_sized[i].name));
     // `if` and `else` are keywords, which a host offers only in its all-tokens mode.
     if (host->maybe_if_constexpr || host->maybe_tuple || host->maybe_type_value || host->maybe_brackets)
@@ -30,7 +30,7 @@ static bool smith_lang_previous(SmithLang *lang, const SmithHost *host, unsigned
         *token = lang->recent[back - 1];
         return true;
     }
-    return host->previous(host->context, back - (unsigned)lang->recent_count, token);
+    return host->previous != nullptr && host->previous(host->context, back - (unsigned)lang->recent_count, token);
 }
 
 static void smith_lang_remember(SmithLang *lang, const SmithToken *token) {
@@ -378,7 +378,7 @@ static void smith_lang_body(SmithLang *lang, const SmithHost *host, const SmithT
     if (name && smith_lang_countof_parameter(lang, host, token)) return;
     const SmithLangName *known = name ? smith_lang_name_find(lang, token->text, token->length) : nullptr;
     if (known != nullptr && known->generic != 0 && smith_lang_generic_call_here(lang, host, token, known)) return;
-    // An import named as a name of the module wins when it is written with `::` (`import smith::build;` in `module
+    // An import named as a name of the module wins when it is written with `::` (`import std::build;` in `module
     // build;`: `build::app` is the import's, `build(b)` the module's).
     if (known != nullptr && smith_lang_binding_find(lang, token->text, token->length) != nullptr &&
         smith_lang_punct(smith_lang_peek(lang, host, 0, false), "::")) {

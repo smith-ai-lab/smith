@@ -1,6 +1,6 @@
 ---
 name: smith-io-net
-description: "The network in smith::io: io::net_connect, TLS connections, io::Connection and its reads and writes, on Network.framework (macOS) or OpenSSL (Linux). Load when opening a TLS or TCP connection with io::net_connect."
+description: "The network in std::io: io::net_connect, TLS connections, io::Connection and its reads and writes, on Network.framework (macOS) or OpenSSL (Linux). Load when opening a TLS or TCP connection with io::net_connect."
 ---
 
 # The network

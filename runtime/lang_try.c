@@ -16,8 +16,8 @@
 static bool smith_lang_enum_return(SmithLang *lang, const SmithHost *host);
 
 static constexpr char smith_lang_try_hint[] =
-    "`try` returns the failure to the caller as it is: the function must return the same kind as the call (a `result` "
-    "with the same error type, or an `option`); to change the error, write it out: `if (r == .error) return {.error = "
+    "`try` returns the failure to the caller as it is: the function must return the same kind as the call (a `Result` "
+    "with the same error type, or an `Option`); to change the error, write it out: `if (r == .error) return {.error = "
     "...};`";
 
 typedef enum { SmithLangTryKind_None, SmithLangTryKind_Result, SmithLangTryKind_Option } SmithLangTryKind;
@@ -233,8 +233,8 @@ static void smith_lang_try_open(SmithLang *lang, const SmithHost *host, const Sm
     SmithLangTryKind kind = smith_lang_try_kind(type);
     if (kind == SmithLangTryKind_None) {
         smith_lang_error(lang, host, token->location,
-                         "`try` returns the failure from the function, so the function must return a `result(T, E)` "
-                         "or an `option(T)`; this one returns something else. Test the value by hand: `if (r == "
+                         "`try` returns the failure from the function, so the function must return a `Result(T, E)` "
+                         "or an `Option(T)`; this one returns something else. Test the value by hand: `if (r == "
                          ".error) return ...;`");
         return;
     }
@@ -266,8 +266,8 @@ static void smith_lang_errdefer(SmithLang *lang, const SmithHost *host, const Sm
     char type[256];
     if (!host->return_type(host->context, type, sizeof type) || smith_lang_try_kind(type) == SmithLangTryKind_None) {
         smith_lang_error(lang, host, token->location,
-                         "`errdefer` runs when the function fails, and only a function that returns a `result` or "
-                         "an `option` has a failure to mark; use `defer` here");
+                         "`errdefer` runs when the function fails, and only a function that returns a `Result` or "
+                         "an `Option` has a failure to mark; use `defer` here");
         return;
     }
     if (tr->flag_count == sizeof tr->flags / sizeof tr->flags[0]) {

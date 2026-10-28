@@ -1,6 +1,6 @@
 ---
 name: smith-io-errors
-description: "Errors in smith::io: errors are values (io::Error, .error.code), and the blocking calls (io::files_read, io::console_print, io::console_printf, reading lines to the end of input). Load when handling a failed io call or reading a file or lines at once."
+description: "Errors in std::io: errors are values (io::Error, .error.code), and the blocking calls (io::files_read, io::console_print, io::console_printf, reading lines to the end of input). Load when handling a failed io call or reading a file or lines at once."
 ---
 
 # Errors are values, and blocking calls

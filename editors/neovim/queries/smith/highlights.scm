@@ -17,7 +17,7 @@
 
 ; T max(constexpr Type T, T a, T b)
 (type_parameter "constexpr" @keyword.modifier)
-(type_parameter "type" @keyword.type)
+(type_parameter "Type" @keyword.type)
 (type_parameter name: (identifier) @type)
 
 ; SMITH_CHECK(a, ==, b)

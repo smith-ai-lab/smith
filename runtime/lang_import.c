@@ -22,12 +22,13 @@ typedef struct {
     char underscored[smith_lang_name_max];
     char last[smith_lang_name_max];
     uint32_t location;
-    bool std; // written `std::...`: the standard library, whose modules are `smith::...` inside (#366)
+    bool std; // written `std::...`: the standard library (#366): C names are `smith_...`, headers `smith/...`
 } SmithLangModuleName;
 
 static bool smith_lang_read_module_name(SmithLang *lang, const SmithHost *host, SmithLangModuleName *name) {
     size_t used = 0;       // in colons
-    size_t short_used = 0; // in path and underscored
+    size_t short_used = 0; // in path
+    size_t under_used = 0; // in underscored
     size_t last = 0;
     for (size_t i = 0; i < smith_lang_name_max / 2; i++) { // bounded by the name's size
         const SmithToken *part = smith_lang_peek(lang, host, 0, false);
@@ -42,25 +43,25 @@ static bool smith_lang_read_module_name(SmithLang *lang, const SmithHost *host, 
         if (used > 0) {
             memcpy(name->colons + used, "::", 2);
             used += 2;
-            name->path[short_used] = '/';
-            name->underscored[short_used] = '_';
-            short_used += 1;
+            name->path[short_used++] = '/';
+            name->underscored[under_used++] = '_';
         }
         last = used;
         bool library = i == 0 && smith_lang_equals(taken.text, taken.length, "std") &&
                        smith_lang_punct(smith_lang_peek(lang, host, 0, false), "::");
-        const char *text = library ? "smith" : taken.text; // `std::arena` is the module `smith::arena`
-        size_t text_length = library ? 5 : taken.length;
         if (i == 0) name->std = library;
-        memcpy(name->colons + used, text, text_length);
-        memcpy(name->path + short_used, text, text_length);
-        memcpy(name->underscored + short_used, text, text_length);
-        used += text_length;
-        short_used += text_length;
+        const char *c_text = library ? "smith" : taken.text; // C has no namespaces: `std::arena` is `smith_arena_...`
+        size_t c_length = library ? 5 : taken.length;
+        memcpy(name->colons + used, taken.text, taken.length);
+        memcpy(name->path + short_used, taken.text, taken.length);
+        memcpy(name->underscored + under_used, c_text, c_length);
+        used += taken.length;
+        short_used += taken.length;
+        under_used += c_length;
         if (!smith_lang_punct(smith_lang_peek(lang, host, 0, false), "::")) break;
         smith_lang_take(lang, host);
     }
-    name->colons[used] = name->path[short_used] = name->underscored[short_used] = 0;
+    name->colons[used] = name->path[short_used] = name->underscored[under_used] = 0;
     memcpy(name->last, name->colons + last, used - last + 1);
     return true;
 }
@@ -102,10 +103,7 @@ static void smith_lang_module_line(SmithLang *lang, const SmithHost *host, const
         return;
     }
     lang->seen_module_line = true;
-    char std_path[smith_lang_name_max] = "std"; // a std module is also in a file whose path ends in std/x.smith
-    if (name.std) snprintf(std_path + 3, sizeof std_path - 3, "%s", name.path + 5);
-    if (host->main_file != nullptr && !smith_lang_path_matches(host->main_file, name.path) &&
-        !(name.std && smith_lang_path_matches(host->main_file, std_path))) {
+    if (host->main_file != nullptr && !smith_lang_path_matches(host->main_file, name.path)) {
         smith_lang_error(lang, host, name.location,
                          "module `%s` must be in a file whose path ends in `%s.smith`; this one is `%s`", name.colons,
                          name.path, host->main_file);
@@ -149,9 +147,14 @@ static size_t smith_lang_header_imports(const char *text, size_t length, char na
     return count;
 }
 
-// a::b::c into a/b/c.h
+// a::b::c into a/b/c.h; the header of std::arena is smith/arena.h (C has no namespaces, #366)
 static void smith_lang_module_to_path(const char *module, char *path, size_t capacity) {
     size_t used = 0;
+    if (strncmp(module, "std::", 5) == 0) {
+        memcpy(path, "smith/", 6);
+        used = 6;
+        module += 5;
+    }
     for (size_t i = 0; module[i] != 0 && used + 4 < capacity; i++) { // bounded by the name
         if (module[i] == ':' && module[i + 1] == ':') {
             path[used++] = '/';
@@ -336,7 +339,7 @@ static void smith_lang_import_smith(SmithLang *lang, const SmithHost *host, cons
     }
     if (!smith_lang_add_binding(lang, host, bind, bind_length, name.location, &name, false)) return;
     if (smith_lang_import_is_target(lang, name.colons, bind, bind_length)) return;
-    if (strcmp(name.colons, "smith::io") == 0) lang->io_import = true; // its `main` may take the io
+    if (strcmp(name.colons, "std::io") == 0) lang->io_import = true; // its `main` may take the io
     if (lang->is_module && strcmp(name.colons, lang->module) == 0) {
         smith_lang_error(lang, host, name.location, "module `%s` imports itself", name.colons);
         smith_lang_binding_find(lang, bind, bind_length)->missing = true;
