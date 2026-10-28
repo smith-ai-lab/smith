@@ -79,7 +79,8 @@ export void test_lsp_effects_chain_smith(io::Io *io) {
 // checks the calls that cross files (smith-cc runs `--smith-effects`): an unannotated function of another file is
 // inferred, a function nobody defines is `c`, in C and in modules (a build).
 constexpr char cross_expected[_] =
-    "a.c:3:52: error: smith-effect: `bad` is [[smith::pure]], but it has the effects console: bad -> noisy (a.c:3) -> "
+    "a.c:3:52: error: smith-effect: `bad` is [[smith::pure]], but it has the effects console, globals: bad -> noisy "
+    "(a.c:3) -> "
     "printf (b.c:4)\n"
     "a.c:4:41: error: smith-effect: `lost` is [[smith::pure]], but it has the effects c: lost -> ghost (a.c:4)";
 
@@ -131,9 +132,10 @@ export void test_across_files_in_c_a_link_of_many_objects_reads_every_summary(io
                          linked.out);
 }
 
-constexpr char loud_error[_] = "error: smith-effect: `bad` is [[smith::pure]], but it has the effects console: bad -> "
-                               "fx::lib::noisy (main.smith:4) "
-                               "-> printf (lib.smith:4)";
+constexpr char loud_error[_] =
+    "error: smith-effect: `bad` is [[smith::pure]], but it has the effects console, globals: bad -> "
+    "fx::lib::noisy (main.smith:4) "
+    "-> printf (lib.smith:4)";
 constexpr char lib_loud[_] = "module fx::lib;\nimport <stdio.h>;\nexport i32 plain(i32 x) { return x + 1; }\n"
                              "export i32 noisy(i32 x) { c::printf(\"%d\\n\", x); return x; }\n";
 constexpr char lib_quiet[_] = "module fx::lib;\nimport <stdio.h>;\nexport i32 plain(i32 x) { return x + 1; }\nexport "
@@ -188,9 +190,9 @@ export void test_a_c_build_gives_the_verdict_of_a_clean_one_when_lib_c_changes(i
                    "#include \"lib.h\"\n[[smith::pure]] static int bad(int x) { return noisy(x); }\n"
                    "int main(void) { return bad(1) - 1; }\n");
     const char *build = "smith build 2>&1 | grep -E 'smith-effect' | sed 's/^main.c:2:[0-9]*: //'";
-    const char *expected =
-        "error: smith-effect: `bad` is [[smith::pure]], but it has the effects console: bad -> noisy (main.c:2) -> "
-        "printf (lib.c:3)";
+    const char *expected = "error: smith-effect: `bad` is [[smith::pure]], but it has the effects console, globals: "
+                           "bad -> noisy (main.c:2) -> "
+                           "printf (lib.c:3)";
     scratch::expect_text("C build: the first build names the chain through lib.c", expected,
                          scratch::sh(&p, build).out);
     scratch::write(&p, "lib.c", "#include \"lib.h\"\nint noisy(int x) { return x; }\n");
@@ -358,7 +360,8 @@ export void test_names_the_link_shows_functions_as_written(io::Io *io) {
     scratch::expect_text(
         "names: the link shows the importer's private function, the export and the module's private function as "
         "written",
-        "error: smith-effect: `bad2` is [[smith::pure]], but it has the effects console: bad2 -> fx2::lib::loud "
+        "error: smith-effect: `bad2` is [[smith::pure]], but it has the effects console, globals: bad2 -> "
+        "fx2::lib::loud "
         "(main.smith:3) -> shout (lib.smith:4) -> printf (lib.smith:3)",
         run.out);
 }
@@ -374,7 +377,7 @@ export void test_the_editor_shows_the_same_verdict_as_the_link_for_modules(io::I
                         "sed 's/^smith-effect: //'";
     scratch::expect_text(
         "editor, modules: lsp --check shows the error through the other module, with the chain",
-        "`bad` is [[smith::pure]], but it has the effects console: bad -> fx::lib::noisy (main.smith:4) "
+        "`bad` is [[smith::pure]], but it has the effects console, globals: bad -> fx::lib::noisy (main.smith:4) "
         "-> printf (lib.smith:4)",
         scratch::sh(&p, check).out);
     scratch::write(&p, "fx/lib.smith", lib_quiet);
@@ -401,13 +404,15 @@ export void test_the_fix_it_of_an_effects_error_replaces_the_attribute_and_the_f
         scratch::Run compiled = scratch::sh(&p, join(&p, "smith cc ", flags, " -fsyntax-only ", file));
         scratch::expect_status(join(&p, "fix-it: ", file, " compiles", ""), 0, &compiled);
     }
-    scratch::Run ceiling = scratch::sh(&p, "grep -q '^\\[\\[smith::effects(alloc, files)\\]\\] void \\*too_much' c.c");
+    scratch::Run ceiling =
+        scratch::sh(&p, "grep -q '^\\[\\[smith::effects(alloc, files, globals)\\]\\] void \\*too_much' c.c");
     scratch::expect_status("fix-it: the ceiling is replaced by the whole set", 0, &ceiling);
-    scratch::Run noisy = scratch::sh(&p, "grep -q '^\\[\\[smith::effects(console)\\]\\] int noisy' p.c");
+    scratch::Run noisy = scratch::sh(&p, "grep -q '^\\[\\[smith::effects(console, globals)\\]\\] int noisy' p.c");
     scratch::expect_status("fix-it: a pure function that prints gets console", 0, &noisy);
     scratch::Run twice = scratch::sh(&p, "grep -q '^\\[\\[smith::pure\\]\\] int twice' p.c");
     scratch::expect_status("fix-it: a pure function that is right stays pure", 0, &twice);
-    scratch::Run single = scratch::sh(&p, "grep -q '^\\[\\[smith::effects(alloc, files)\\]\\] void \\*single' p.c");
+    scratch::Run single =
+        scratch::sh(&p, "grep -q '^\\[\\[smith::effects(alloc, files, globals)\\]\\] void \\*single' p.c");
     scratch::expect_status("fix-it: a single effect's attribute gets the whole set", 0, &single);
 }
 
@@ -475,6 +480,48 @@ export void test_recursion_plain_smith(io::Io *io) {
     effects_case(io, "recursion_plain.smith");
 }
 
+// libc's hidden state and the idiom of a returned pointer (issue #724): a printf with a float conversion is `globals`,
+// a module may call a pointer-returning libc function the table gives an idiom, and one it does not is an error.
+export void test_effects_printf_float_c(io::Io *io) {
+    effects_case(io, "effects_printf_float.c");
+}
+
+export void test_effects_libc_idioms_smith(io::Io *io) {
+    effects_case(io, "effects_libc_idioms.smith");
+}
+
+export void test_effects_libc_unknown_pointer_smith(io::Io *io) {
+    effects_case(io, "effects_libc_unknown_pointer.smith");
+}
+
+// A C file with the libc headers, compiled in the plugin's idiom mode (`SMITH_EFFECTS_IDIOMS=missing|list`).
+static scratch::Run idiom_report(io::Io *io, const char *mode) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::write(&p, "headers.c",
+                   "#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <strings.h>\n"
+                   "#include <time.h>\n#include <locale.h>\n#include <pwd.h>\n#include <dlfcn.h>\n"
+                   "#include <dirent.h>\n#include <netdb.h>\n#include <sys/mman.h>\n#include <unistd.h>\n"
+                   "#include <libgen.h>\n#include <signal.h>\n#include <errno.h>\n#include <sys/socket.h>\n");
+    return scratch::sh(&p, format::push(&io->arena, "SMITH_EFFECTS_IDIOMS=", mode,
+                                        " smith cc -D_GNU_SOURCE -c headers.c -o /dev/null 2>&1 | grep smith-ownership")
+                               .data);
+}
+
+// Every function of the table that a system header declares and that returns a pointer has an idiom; a name the
+// platform does not declare (`__error`, `__errno_location`) is not looked for.
+export void test_every_pointer_returning_function_of_the_table_has_an_idiom(io::Io *io) {
+    scratch::Run run = idiom_report(io, "missing");
+    scratch::expect_text("functions of the table that return a pointer and have no idiom", "", run.out);
+}
+
+export void test_the_table_records_the_idiom_of_a_returned_pointer(io::Io *io) {
+    scratch::Run run = idiom_report(io, "list");
+    scratch::expect_contains("strdup is owned, freed by free", run.out, "smith-ownership: strdup owned:free\n");
+    scratch::expect_contains("strerror is internal", run.out, "smith-ownership: strerror internal\n");
+    scratch::expect_contains("strchr points into argument 1", run.out, "smith-ownership: strchr borrowed:1\n");
+    scratch::expect_contains("fopen is owned, freed by fclose", run.out, "smith-ownership: fopen owned:fclose\n");
+}
+
 // effects::within in a generic (skill smith-lang-effects): a function of another module is judged by the link, which
 // names the chain through that module; one that fits builds.
 export void test_within_in_modules_the_link_judges_a_function_of_another_module_and_names_the_chain(io::Io *io) {
@@ -493,7 +540,7 @@ export void test_within_in_modules_the_link_judges_a_function_of_another_module_
     scratch::Run run = scratch::sh(&p, "smith build 2>&1 | grep -E 'smith-effect' | sed 's/^main.smith:5:[0-9]*: //'");
     scratch::expect_text("within, modules: the link judges a function of another module and names the chain",
                          "error: smith-effect: static assertion failed: run: f may only allocate: `fx3::lib::noisy` "
-                         "has the effects console "
+                         "has the effects console, globals "
                          "beyond the allowed ones: fx3::lib::noisy -> printf (lib.smith:4)",
                          run.out);
 }

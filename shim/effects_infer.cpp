@@ -300,7 +300,39 @@ struct Node {
     bool grows = false;   // a variable-length array or alloca: the frame is not one size
     bool trusted = false; // the body calls smith_trusted(): a promise the prover and this check do not examine
     std::string symbol;
+    std::vector<std::pair<SourceLocation, std::string>> unowned; // calls of a pointer-returning libc function, no idiom
 };
+
+// Whether a function returns an object pointer (a function pointer is not memory anyone owns).
+bool returnsObjectPointer(const FunctionDecl *function) {
+    QualType type = function->getReturnType();
+    return type->isPointerType() && !type->getPointeeType()->isFunctionType();
+}
+
+// Whether a printf-family call (by name) may keep libc state: its format is not a literal, or has a float conversion
+// (`%f %e %g %a`, any case), whose digits come from a cache of allocator blocks (issue #724). `name` is the callee.
+bool formatKeepsState(llvm::StringRef name, const CallExpr *call) {
+    static const std::pair<const char *, unsigned> formats[] = {
+        {"printf", 0},  {"vprintf", 0},  {"fprintf", 1},   {"vfprintf", 1}, {"sprintf", 1},  {"vsprintf", 1},
+        {"dprintf", 1}, {"asprintf", 1}, {"vasprintf", 1}, {"snprintf", 2}, {"vsnprintf", 2}};
+    for (const auto &[function, at] : formats) {
+        if (name != function) continue;
+        if (call->getNumArgs() <= at) return true;
+        const auto *text = dyn_cast<StringLiteral>(call->getArg(at)->IgnoreParenImpCasts());
+        if (text == nullptr) return true;
+        llvm::StringRef format = text->getString();
+        for (size_t i = format.find('%'); i != llvm::StringRef::npos; i = format.find('%', i + 1)) {
+            size_t end = format.find_first_not_of("0123456789-+ #'$*.hlLqjzt", i + 1);
+            if (end == llvm::StringRef::npos) return false;
+            if (format[end] == '%')
+                i = end;
+            else if (llvm::StringRef("fFeEgGaA").contains(format[end]))
+                return true;
+        }
+        return false;
+    }
+    return false;
+}
 
 // The root variable of an lvalue (`g`, `g.a[1]`, `p->x` has none: a write through a pointer is the caller's).
 const VarDecl *writtenGlobal(const Expr *expr) {
@@ -412,6 +444,7 @@ class Collector {
             return;
         }
         if (plain_name(callee) == "smith_trusted") node.trusted = true;
+        noteOwnership(call, callee);
         if (const FunctionDecl *definition = callee->getDefinition()) {
             Edge edge;
             edge.callee = definition;
@@ -425,7 +458,9 @@ class Collector {
         std::string name = callee->getNameAsString();
         uint32_t set = 0;
         bool builtin = llvm::StringRef(name).starts_with("__builtin_") || callee->getBuiltinID() != 0;
-        if (declaredSet(callee, set) || lookup(name, set)) {
+        bool declared = declaredSet(callee, set);
+        if (declared || lookup(name, set)) {
+            if (!declared && formatKeepsState(name, call)) set |= Globals;
             if ((name == "mmap" || name == "mprotect") && call->getNumArgs() >= 3) {
                 // The protection is the third argument of both.
                 Expr::EvalResult result;
@@ -447,6 +482,17 @@ class Collector {
         } else {
             leaf(call->getBeginLoc(), builtin ? None : C, name); // a builtin the table does not name has no effect
         }
+    }
+
+    // A call of a function of a system header that returns a pointer: the table must give its idiom (issue #724).
+    void noteOwnership(const CallExpr *call, const FunctionDecl *callee) {
+        std::string name = callee->getNameAsString();
+        llvm::StringRef kind;
+        if (!sm.isInSystemHeader(callee->getLocation()) || !returnsObjectPointer(callee) ||
+            llvm::StringRef(name).starts_with("__builtin_") || smith_effects::idiom(name, kind))
+            return;
+        if (sm.isWrittenInMainFile(sm.getExpansionLoc(call->getBeginLoc())))
+            node.unowned.emplace_back(call->getBeginLoc(), name);
     }
 
     // An `asm` statement: the assembler reads it (shim/effects_asm.h), and each thing it does is a call: a system call
@@ -600,6 +646,9 @@ class Analysis {
         recursion = engine.getCustomDiagID(
             DiagnosticsEngine::Error, "smith-effect: recursion in a module: %0 (write a loop; a call that ends the "
                                       "function can be `[[clang::musttail]] return f(...);`)");
+        ownership = engine.getCustomDiagID(
+            DiagnosticsEngine::Error, "smith-ownership: '%0' returns a pointer and the C library table gives it no "
+                                      "idiom; add it to shim/effects_table.h");
     }
 
     void run() {
@@ -610,7 +659,11 @@ class Analysis {
             Node &node = nodes[function];
             if (node.annotated && inMain(node.function)) check(node);
         }
-        if (isModule()) checkRecursion();
+        if (isModule()) {
+            checkRecursion();
+            checkOwnership();
+        }
+        if (const char *mode = getenv("SMITH_EFFECTS_IDIOMS")) reportIdioms(mode);
         checkAssertions();
         attachHover();
         writeSummary();
@@ -620,7 +673,7 @@ class Analysis {
   private:
     ASTContext &context;
     DiagnosticsEngine &engine;
-    unsigned bad, note, recursion, assertion, misuse;
+    unsigned bad, note, recursion, assertion, misuse, ownership;
     ASTNameGenerator generator;
     bool syntaxOnly;       // a parse that only reads the file (the editor's, not the preamble's)
     std::string output;    // the object file being written: the summary goes beside it, `<object>.fx`
@@ -823,6 +876,33 @@ class Analysis {
             if ((set & bit) != 0) return &edge;
         }
         return nullptr;
+    }
+
+    // A call in a module of a pointer-returning libc function the table gives no idiom is an error naming it.
+    void checkOwnership() {
+        for (const FunctionDecl *function : order)
+            for (const auto &[loc, name] : nodes[function].unowned)
+                engine.Report(loc, ownership) << name;
+    }
+
+    // `SMITH_EFFECTS_IDIOMS=missing|list`: for each function of the effects table that a system header declares and
+    // that returns a pointer, a line `smith-ownership-missing: <name>` when the table gives it no idiom (`missing`, the
+    // test of the table walks it), or `smith-ownership: <name> <idiom>` when it does (`list`).
+    void reportIdioms(llvm::StringRef mode) {
+        std::set<std::string> lines;
+        for (const Decl *decl : context.getTranslationUnitDecl()->decls()) {
+            const auto *function = dyn_cast<FunctionDecl>(decl);
+            if (function == nullptr || !context.getSourceManager().isInSystemHeader(function->getLocation())) continue;
+            std::string name = function->getNameAsString();
+            uint32_t set = 0;
+            llvm::StringRef kind;
+            if (!returnsObjectPointer(function) || !lookup(name, set)) continue;
+            bool known = smith_effects::idiom(name, kind);
+            if (mode == "missing" && !known) lines.insert("smith-ownership-missing: " + name);
+            if (mode == "list" && known) lines.insert("smith-ownership: " + name + " " + kind.str());
+        }
+        for (const std::string &line : lines)
+            llvm::errs() << line << "\n";
     }
 
     // Whether the main file is a module: a `module a::b;` line begins a line of it.

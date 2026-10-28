@@ -13,7 +13,7 @@
     return malloc(size);
 }
 
-[[smith::alloc, smith::files]] void *both(unsigned size) {
+[[smith::alloc, smith::files, smith::globals]] void *both(unsigned size) {
     FILE *file = fopen("data", "r");
     (void)file;
     return malloc(size);

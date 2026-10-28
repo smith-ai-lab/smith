@@ -1049,9 +1049,10 @@ export void test_lsp_effects_across_files_show_the_chain_and_clear_on_save(io::I
     scratch::Run made = scratch::sh(&p, effects_database);
     scratch::expect_status("effects: the database and the summary of b.c", 0, &made);
     const char *log = session(io, &p, "open a.c b.c -- replace b.c '    printf(\"%d\\n\", x);\n' '' -- save b.c");
-    expect_line(io, "effects: a.c shows the error through b.c, with the chain", log,
-                "diag a.c:2:41: Smith-effect: `bad` is [[smith::pure]], but it has the effects console: bad -> noisy "
-                "(a.c:2) -> printf (b.c:4)");
+    expect_line(
+        io, "effects: a.c shows the error through b.c, with the chain", log,
+        "diag a.c:2:41: Smith-effect: `bad` is [[smith::pure]], but it has the effects console, globals: bad -> noisy "
+        "(a.c:2) -> printf (b.c:4)");
     scratch::expect_count("effects: after b.c is saved without the print, a.c has no diagnostics again", 1,
                           count_prefix(io, log, "diag a.c"));
 }
@@ -1067,10 +1068,10 @@ export void test_lsp_effects_hover_on_a_call_into_another_file(io::Io *io) {
     scratch::Run made = scratch::sh(&p, effects_database);
     scratch::expect_status("effects: the database and the summary of b.c", 0, &made);
     const char *log = session(io, &p, "open a.c -- hover a.c 2 41");
-    expect_line(
-        io, "effects: hover on a call into b.c shows the callee's effects, with b.c closed", log,
-        "hover a.c:2:41: function noisy |  | → int |  | Parameters: |  | - int x |  | effects: console |  | int "
-        "noisy(int x)");
+    expect_line(io, "effects: hover on a call into b.c shows the callee's effects, with b.c closed", log,
+                "hover a.c:2:41: function noisy |  | → int |  | Parameters: |  | - int x |  | effects: console, "
+                "globals |  | int "
+                "noisy(int x)");
 }
 
 // A proved index is no failure point in the editor either (issue #325): the hover of a function whose index `smith
