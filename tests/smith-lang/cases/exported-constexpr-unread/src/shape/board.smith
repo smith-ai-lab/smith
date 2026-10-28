@@ -1,0 +1,6 @@
+module shape::board;
+
+// An exported constant is used by definition: its importers read it, so a module that never does compiles with
+// -Wall -Wextra -Werror (this case's flags) and no `[[maybe_unused]]`.
+export constexpr u32 width = 8;
+export constexpr u32 cells[3] = {1, 2, 3};
