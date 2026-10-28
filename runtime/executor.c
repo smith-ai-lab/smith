@@ -11,6 +11,7 @@
 //   executor_manifest.c  the reader of the manifest, and the graph it makes
 //   executor_state.c     what is kept between builds: the command log and the depfile log
 //   executor_plan.c      what is out of date, and the order to do it in
+//   executor_cache.c     the shared cache of compile steps
 //   executor_run.c       the progress line, the jobs and the loop that runs them
 //   executor_tools.c     -t clean, compdb, targets, deps, commands and cleandead
 
@@ -92,6 +93,7 @@ typedef struct {
     bool deps_missing;
     uint8_t scan;
     uint8_t want;
+    uint8_t step_cache; // 0 not looked at, 1 a compile the step cache serves, 2 not
 } SmithEdge;
 
 typedef struct {
@@ -200,6 +202,12 @@ static void smith_grow_append(SmithGrow *grow, const void *bytes, size_t size) {
 typedef struct SmithJob SmithJob;
 typedef struct SmithExec SmithExec;
 
+// How the step cache keyed a compile before it ran (executor_cache.c): the key of its manifest.
+typedef struct {
+    char manifest[65];
+    bool valid;
+} SmithStepKey;
+
 // A unit of work. Today every job is a process; a job that runs in this process later (a compile) is another kind with
 // the same three functions.
 typedef struct {
@@ -229,6 +237,12 @@ struct SmithJob {
     SmithCapture capture;
     SmithOp wait;
     SmithProcess process;
+    SmithStepKey key;             // the step cache's key of a compile; valid when it was keyed
+    bool cached;                  // its outputs came from the step cache, no command ran
+    const char *const *step_deps; // every file the compile read, the system's included
+    uint32_t step_dep_count;
+    const char *depfile_text; // what the compile's depfile said
+    size_t depfile_size;
 };
 
 typedef struct {
@@ -376,6 +390,8 @@ static size_t smith_exec_canonical(char *path, size_t length) {
 
 #include "executor_plan.c"
 
+#include "executor_cache.c"
+
 #include "executor_run.c"
 
 #include "executor_tools.c"
@@ -396,6 +412,7 @@ static int smith_exec_run(SmithIo *io, const char *manifest, const SmithExecOpti
         smith_manifest_read(exec);
         if (!exec->state.ready) smith_state_open(exec);
         if (options->tool != nullptr) return smith_tool_run(exec);
+        smith_stepcache_prune(exec);
         uint32_t node = smith_run_manifest_node(exec);
         exec->first_reason[0] = '\0';
         if (node == UINT32_MAX || !smith_plan_build(exec, &node, 1)) break;

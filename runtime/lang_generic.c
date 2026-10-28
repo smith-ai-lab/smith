@@ -3586,6 +3586,24 @@ static int smith_lang_generic_named(SmithLang *lang, const SmithHost *host, Smit
     return smith_lang_generic_of(lang, host, smith_lang_gt_str(token), token->length);
 }
 
+// The generic function that `span`, a `constexpr auto` parameter of the generic being replayed, was given (`less` in
+// `sift_down(xs, i, n, less)` inside `sort_by`, whose instance was given `module::ascending`), or -1.
+static int smith_lang_forwarded_generic(SmithLang *lang, const SmithHost *host, const SmithLangReplay *replay,
+                                        SmithLangSpan span) {
+    if (replay->instance == nullptr || replay->generic == nullptr || span.end != span.start + 1) return -1;
+    const SmithLangGenToken *token = &smith_lang_gt.tokens[span.start];
+    if (token->kind != SmithTokenKind_Identifier || token->special != SmithLangGen_Plain || token->param == 0)
+        return -1;
+    const SmithLangGeneric *own = &smith_lang_generics[replay->instance->generic];
+    unsigned slot = (unsigned)token->param - 1;
+    if (slot >= own->type_count || own->type_kind[slot] != SmithLangSlot_Function ||
+        replay->instance->arg_count[slot] != 1) {
+        return -1;
+    }
+    const SmithLangGenToken *arg = &smith_lang_it.tokens[replay->instance->arg_first[slot]];
+    return smith_lang_generic_of(lang, host, smith_lang_pool_text(&smith_lang_it, arg), arg->length);
+}
+
 // The function passed to `constexpr auto f` at `span`, staged in smith_lang_it as its name. It must be a function
 // designator (a name the compiler says is a function, not a pointer to one): False after the error.
 static bool smith_lang_infer_function(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
@@ -3597,7 +3615,10 @@ static bool smith_lang_infer_function(SmithLang *lang, const SmithHost *host, Sm
     uint32_t place = smith_lang_infer_place(host, replay, span, location);
     SmithLangArgType type = {};
     const char *why = nullptr;
-    if (smith_lang_generic_named(lang, host, span) >= 0) { // a generic function: its calls make the instances
+    // a generic function, or a `constexpr auto` parameter of the instance that holds one (forwarded): its calls make
+    // the instances
+    if (smith_lang_generic_named(lang, host, span) >= 0 ||
+        smith_lang_forwarded_generic(lang, host, replay, span) >= 0) {
         return smith_lang_stage_type(span, replay->instance, location, first, count) && *count == 1;
     }
     if (!smith_lang_arg_type(lang, host, replay, span, location, &type, &why, true)) {
@@ -5452,6 +5473,15 @@ static void smith_lang_replay_plain(SmithLang *lang, const SmithHost *host, Smit
                          "parameter",
                          (int)token->length, smith_lang_gt_str(token));
         smith_lang_generic_poison(lang, host, place);
+        return;
+    }
+    uint32_t here = (uint32_t)(token - smith_lang_gt.tokens);
+    if (replay->typing && smith_lang_forwarded_generic(lang, host, replay, (SmithLangSpan){here, here + 1}) >= 0) {
+        // `less` in the arguments of a call that is typed first, given a generic: the generic's name, which the
+        // call's own `constexpr auto` parameter takes (smith_lang_infer_function), not an address.
+        const SmithLangGenToken *arg = &smith_lang_it.tokens[replay->instance->arg_first[token->param - 1]];
+        smith_lang_gen_put(lang, host, SmithTokenKind_Identifier, smith_lang_pool_text(&smith_lang_it, arg), place,
+                           replay->instance_id);
         return;
     }
     smith_lang_gen_put_subst(lang, host, replay->generic, replay->instance, token, replay->location,

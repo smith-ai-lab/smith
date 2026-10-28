@@ -513,6 +513,24 @@ static bool smith_lang_cx_is_builtin(const SmithLangGenToken *token) {
     return false;
 }
 
+// `Kind::integer` and the others at `*at` (issue #193): 1 and the number, -1 after an error, 0 when it is none of them.
+static int smith_lang_cx_kind_constant(SmithLangCx *cx, uint32_t *at, uint32_t last, SmithLangCxValue *value) {
+    const SmithLangGenToken *token = smith_lang_cx_token(*at);
+    if (!smith_lang_cx_word(token, "Kind") || *at + 2 >= last || !smith_lang_gt_punct(token + 1, "::") ||
+        token[2].kind != SmithTokenKind_Identifier) {
+        return 0;
+    }
+    for (size_t i = 0; i < sizeof smith_lang_kind_names / sizeof smith_lang_kind_names[0]; i++) { // 9 kinds
+        if (smith_lang_equals(smith_lang_gt_str(token + 2), token[2].length, smith_lang_kind_names[i])) {
+            value->number = (int64_t)i;
+            *at += 3;
+            return 1;
+        }
+    }
+    smith_lang_cx_fail(cx, "`Kind` has no `%s`", smith_lang_gt_str(token + 2));
+    return -1;
+}
+
 // runtime/lang_target.c: the value of the fact whose macro the raw lowering wrote (`SMITH_TARGET_STATIC_ANALYZER`), as
 // the compiler says it: 1 with the value, 0 when `name` is no such macro, -1 when it is one the host cannot answer
 // (the raw lowering has no compiler).
@@ -604,17 +622,8 @@ static bool smith_lang_cx_operand(SmithLangCx *cx, uint32_t *at, uint32_t last, 
                                   "raw lowering (`smith cc --smith-lower`) cannot choose the branch");
     }
     if (smith_lang_cx_is_builtin(token)) return smith_lang_cx_builtin(cx, at, last, value);
-    if (smith_lang_cx_word(token, "Kind") && *at + 2 < last && smith_lang_gt_punct(token + 1, "::") &&
-        token[2].kind == SmithTokenKind_Identifier) {
-        for (size_t i = 0; i < sizeof smith_lang_kind_names / sizeof smith_lang_kind_names[0]; i++) { // 9 kinds
-            if (smith_lang_equals(smith_lang_gt_str(token + 2), token[2].length, smith_lang_kind_names[i])) {
-                value->number = (int64_t)i;
-                *at += 3;
-                return true;
-            }
-        }
-        return smith_lang_cx_fail(cx, "`Kind` has no `%s`", smith_lang_gt_str(token + 2));
-    }
+    int kind = smith_lang_cx_kind_constant(cx, at, last, value);
+    if (kind != 0) return kind > 0;
     if (smith_lang_cx_type_start(cx, *at)) {
         uint32_t end = smith_lang_cx_type_end(cx, *at, last);
         SmithTypeQuery query;
