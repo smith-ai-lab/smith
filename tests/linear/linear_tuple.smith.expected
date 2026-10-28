@@ -1,0 +1,5 @@
+status 1
+linear_tuple.smith:26:5: error: smith-linear: 'pair[1]' is never used on this path (the `return` at line 26 returns); close it with `defer`, move it, or write `_ = pair[1];`
+linear_tuple.smith:30:33: error: smith-linear: 'pair[0]' is used again; it was already used at line 30
+linear_tuple.smith:30:17: note: 'pair[0]' was first used here
+linear_tuple.smith:37:5: error: smith-linear: 'pair[1]' is never used on this path (the `return` at line 37 returns); close it with `defer`, move it, or write `_ = pair[1];`

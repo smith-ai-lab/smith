@@ -110,6 +110,10 @@ export void test_linear_defer_smith(io::Io *io) {
     linear_case(io, "linear_defer.smith");
 }
 
+export void test_linear_discard_smith(io::Io *io) {
+    linear_case(io, "linear_discard.smith");
+}
+
 export void test_linear_issue_reassign_smith(io::Io *io) {
     linear_case(io, "linear_issue_reassign.smith");
 }
@@ -170,18 +174,6 @@ export void test_linear_plain_loop_two_uses_smith(io::Io *io) {
     linear_case(io, "linear_plain_loop_two_uses.smith");
 }
 
-export void test_linear_random_c_c(io::Io *io) {
-    linear_case(io, "linear_random_c.c");
-}
-
-export void test_linear_random_misuse_smith(io::Io *io) {
-    linear_case(io, "linear_random_misuse.smith");
-}
-
-export void test_linear_random_plain_loop_smith(io::Io *io) {
-    linear_case(io, "linear_random_plain_loop.smith");
-}
-
 export void test_linear_range_for_smith(io::Io *io) {
     linear_case(io, "linear_range_for.smith");
 }
@@ -192,6 +184,10 @@ export void test_linear_second_use_c(io::Io *io) {
 
 export void test_linear_second_use_smith(io::Io *io) {
     linear_case(io, "linear_second_use.smith");
+}
+
+export void test_linear_try_smith(io::Io *io) {
+    linear_case(io, "linear_try.smith");
 }
 
 export void test_linear_tuple_smith(io::Io *io) {

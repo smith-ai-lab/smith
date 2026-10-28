@@ -1,0 +1,4 @@
+status 1
+linear_array.smith:26:5: error: smith-linear: 'keys[1]' is never used on this path (the `return` at line 26 returns); close it with `defer`, move it, or write `_ = keys[1];`
+linear_array.smith:30:33: error: smith-linear: 'keys[0]' is used again; it was already used at line 30
+linear_array.smith:30:17: note: 'keys[0]' was first used here

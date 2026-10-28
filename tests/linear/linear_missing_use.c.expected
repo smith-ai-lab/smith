@@ -1,0 +1,7 @@
+status 1
+linear_missing_use.c:16:5: error: smith-linear: 'other' is never used on this path (the `return` at line 16 returns); close it with `defer`, move it, or write `_ = other;`
+linear_missing_use.c:19:12: error: smith-linear: 'key' is never used on this path (the `return` at line 19 returns); close it with `defer`, move it, or write `_ = key;`
+linear_missing_use.c:25:5: error: smith-linear: 'key' is never used on this path (the `return` at line 25 returns); close it with `defer`, move it, or write `_ = key;`
+linear_missing_use.c:35:21: error: smith-linear: 'inner' is never used on this path (the `continue` at line 35 starts the next turn); close it with `defer`, move it, or write `_ = inner;`
+linear_missing_use.c:34:21: error: smith-linear: 'inner' is never used on this path (the `break` at line 34 leaves the loop); close it with `defer`, move it, or write `_ = inner;`
+linear_missing_use.c:42:1: error: smith-linear: 'made' is never used on this path (the block ends at line 42); close it with `defer`, move it, or write `_ = made;`

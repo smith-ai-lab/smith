@@ -1,3 +1,3 @@
 status 1
-linear_plain_loop_two_uses.smith:30:39: error: smith-linear: 'keys[i]' is used again; it was already used at line 30
-linear_plain_loop_two_uses.smith:30:23: note: 'keys[i]' was first used here
+linear_plain_loop_two_uses.smith:24:39: error: smith-linear: 'keys[i]' is used again; it was already used at line 24
+linear_plain_loop_two_uses.smith:24:23: note: 'keys[i]' was first used here

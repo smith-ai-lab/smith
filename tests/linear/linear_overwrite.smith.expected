@@ -1,0 +1,2 @@
+status 1
+linear_overwrite.smith:21:9: error: smith-linear: 'key' is assigned a new value while the old one was never used; use it, or write `_ = key;` first

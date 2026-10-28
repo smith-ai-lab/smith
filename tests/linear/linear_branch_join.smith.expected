@@ -1,3 +1,4 @@
 status 1
-linear_branch_join.smith:28:21: error: smith-linear: 'key' is used again; it was already used at line 27
-linear_branch_join.smith:27:21: note: 'key' was first used here
+linear_branch_join.smith:23:21: error: smith-linear: 'key' is used again; it was already used at line 22
+linear_branch_join.smith:22:21: note: 'key' was first used here
+linear_branch_join.smith:23:5: error: smith-linear: 'key' is never used on this path (the `return` at line 23 returns); close it with `defer`, move it, or write `_ = key;`

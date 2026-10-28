@@ -1,3 +1,4 @@
 status 1
-linear_loop_outer.c:15:23: error: smith-linear: 'key' is used in a loop, so it would be used once per iteration
-linear_loop_outer.c:15:23: note: write the plain loop `for (usize i = 0; i < countof(keys); i++)` and use `keys[i]` once in its body, or reassign the value in the loop (`key = next[0];`)
+linear_loop_outer.c:15:5: error: smith-linear: 'key' is never used on this path (the `return` at line 15 returns); close it with `defer`, move it, or write `_ = key;`
+linear_loop_outer.c:14:23: error: smith-linear: 'key' is used in a loop, so it would be used once per iteration
+linear_loop_outer.c:14:23: note: write the plain loop `for (usize i = 0; i < countof(keys); i++)` and use `keys[i]` once in its body, or reassign the value in the loop (`key = next[0];`)

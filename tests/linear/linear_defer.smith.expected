@@ -1,3 +1,4 @@
 status 1
-linear_defer.smith:23:17: error: smith-linear: 'key' is used again; it was already used at line 22
-linear_defer.smith:22:20: note: 'key' was first used here
+linear_defer.smith:34:17: error: smith-linear: 'key' is used again; it was already used at line 33
+linear_defer.smith:33:20: note: 'key' was first used here
+linear_defer.smith:44:12: error: smith-linear: 'key' is never used on this path (the `return` at line 44 returns); close it with `defer`, move it, or write `_ = key;`

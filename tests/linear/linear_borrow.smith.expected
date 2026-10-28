@@ -1,0 +1,4 @@
+status 1
+linear_borrow.smith:23:22: error: smith-linear: 'keys' is used again; it was already used at line 22
+linear_borrow.smith:22:17: note: 'keys' was first used here
+linear_borrow.smith:33:17: error: smith-linear: 'keys[0]' is borrowed: a `const` array or slice lets its callee read an element but not use it up; drop the `const` to take the elements
