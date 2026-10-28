@@ -6,7 +6,7 @@ extern const char *const counter_state_names[2] __asm__("_counter::state::names"
 const char *const counter_state_names[2] __asm__("_counter::state::names") = {"low", "high"};
 extern __UINT64_TYPE__ counter_state_chosen;
 __UINT64_TYPE__ counter_state_chosen = 9;
-constexpr __UINT32_TYPE__ counter_state_limit = 4;
+[[maybe_unused]] constexpr __UINT32_TYPE__ counter_state_limit = 4;
 static __UINT32_TYPE__ counter_state_hidden = 2;
 __UINT32_TYPE__ counter_state_sum() __asm__("_counter::state::sum");
 __UINT32_TYPE__ counter_state_sum() {
