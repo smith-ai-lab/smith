@@ -49,8 +49,9 @@ static const char *summary(const scratch::Project *p, const char *command) {
                                    .data);
 }
 
-// Both builds of a library pass every test, in the workers and with a process per test.
-static void passes_in_mode(io::Io *io, const Library *library, const char *mode) {
+// Both builds of a library pass every test, in the workers and with a process per test. The project, built in the mode,
+// is returned for the heavier runs of the same build (one build for them all).
+static scratch::Project passes_in_mode(io::Io *io, const Library *library, const char *mode) {
     scratch::Project p = units_project(io, library);
     scratch::Run built = build_mode(&p, library, mode);
     scratch::expect_status(format::push(&io->arena, mode, ": the tests build").data, 0, &built);
@@ -61,18 +62,18 @@ static void passes_in_mode(io::Io *io, const Library *library, const char *mode)
                          summary(&p, "env SMITH_JSON_SUITE= ./build/tests"));
     scratch::expect_text(format::push(&io->arena, mode, ": all pass with a process per test").data, all,
                          summary(&p, "env SMITH_JSON_SUITE= ./build/tests --isolate"));
-}
-
-export void test_library_modes_json_fast(io::Io *io) {
-    passes_in_mode(io, &json, "fast");
+    return p;
 }
 
 export void test_library_modes_json_ndebug(io::Io *io) {
     passes_in_mode(io, &json, "ndebug");
 }
 
+// The build of text in the fast mode: its tests, and then the full size of the sweep on the same build.
 export void test_library_modes_text_fast(io::Io *io) {
-    passes_in_mode(io, &text, "fast");
+    scratch::Project p = passes_in_mode(io, &text, "fast");
+    scratch::expect_text("full: the sweep of the float patterns, sixteen times denser", "1 passed, 0 failed",
+                         summary(&p, "./build/tests --full --test f32_sweep"));
 }
 
 export void test_library_modes_text_ndebug(io::Io *io) {
@@ -85,15 +86,6 @@ export void test_library_modes_inflate_fast(io::Io *io) {
 
 export void test_library_modes_inflate_ndebug(io::Io *io) {
     passes_in_mode(io, &inflate, "ndebug");
-}
-
-// The full size of the sweep, in the fast build.
-export void test_library_modes_text_full_sweep_of_the_float_patterns(io::Io *io) {
-    scratch::Project p = units_project(io, &text);
-    scratch::Run built = build_mode(&p, &text, "fast");
-    scratch::expect_status("the tests build", 0, &built);
-    scratch::expect_text("full: the sweep of the float patterns, sixteen times denser", "1 passed, 0 failed",
-                         summary(&p, "./build/tests --full --test f32_sweep"));
 }
 
 // JSONTestSuite, pinned by the hash of its archive: the folder of its test_parsing, or "" when it cannot be fetched.
@@ -112,44 +104,43 @@ static const char *json_suite(const scratch::Project *p) {
                : "";
 }
 
-// What was done with the suite: the counts, and each implementation-defined case. Skipped with no network.
-export void test_library_modes_json_conformance_with_jsontestsuite(io::Io *io) {
-    scratch::Project p = units_project(io, &json);
-    const char *suite = json_suite(&p);
+// What was done with the suite: the counts, and each implementation-defined case. Skipped with no network. Runs on the
+// project built in the fast mode.
+static void json_conformance(const scratch::Project *p) {
+    const char *suite = json_suite(p);
     if (suite[0] == '\0') return; // no network
-    scratch::Run built = build_mode(&p, &json, "fast");
-    scratch::expect_status("the tests build", 0, &built);
     scratch::Run run =
-        scratch::sh(&p, format::push(&io->arena, "env SMITH_JSON_SUITE=", suite,
-                                     " SMITH_JSON_LISTING=\"$PWD/listing\" ./build/tests --test json_conformance")
-                            .data);
+        scratch::sh(p, format::push(&p->io->arena, "env SMITH_JSON_SUITE=", suite,
+                                    " SMITH_JSON_LISTING=\"$PWD/listing\" ./build/tests --test json_conformance")
+                           .data);
     scratch::expect_status("the conformance test runs", 0, &run);
     scratch::expect_text("suite: every y_ accepted, every n_ refused, every i_ as listed",
                          "y_: 95 of 95 accepted; n_: 188 of 188 refused; i_: 35 of 35 as listed",
-                         scratch::capture(&p, "tail -1 listing"));
+                         scratch::capture(p, "tail -1 listing"));
+}
+
+// The build of json in the fast mode: its tests, and then JSONTestSuite on the same build.
+export void test_library_modes_json_fast(io::Io *io) {
+    scratch::Project p = passes_in_mode(io, &json, "fast");
+    json_conformance(&p);
 }
 
 // Fuzzing under AddressSanitizer and UBSan: many more keys for the damaged documents, the random bytes and the written
 // documents.
-static void fuzz(io::Io *io, const char *name) {
+static void fuzz(const scratch::Project *p, const char *name) {
+    scratch::expect_text(format::push(&p->io->arena, "fuzz: ", name, " on 5000 keys under ASan and UBSan").data,
+                         "1 passed, 0 failed",
+                         summary(p, format::push(&p->io->arena, "./build/tests --test ", name, " --seeds 5000").data));
+}
+
+// The three fuzzers run on one build.
+export void test_library_modes_json_fuzz_damaged_documents_random_bytes_and_written_values(io::Io *io) {
     scratch::Project p = units_project(io, &json);
     scratch::Run built = build_mode(&p, &json, "asan");
     scratch::expect_status("the tests build", 0, &built);
-    scratch::expect_text(format::push(&io->arena, "fuzz: ", name, " on 5000 keys under ASan and UBSan").data,
-                         "1 passed, 0 failed",
-                         summary(&p, format::push(&io->arena, "./build/tests --test ", name, " --seeds 5000").data));
-}
-
-export void test_library_modes_json_fuzz_damaged_documents(io::Io *io) {
-    fuzz(io, "json_damaged_documents_never_misbehave");
-}
-
-export void test_library_modes_json_fuzz_random_bytes(io::Io *io) {
-    fuzz(io, "json_random_bytes_never_misbehave");
-}
-
-export void test_library_modes_json_fuzz_any_value_written(io::Io *io) {
-    fuzz(io, "json_any_value_written");
+    fuzz(&p, "json_damaged_documents_never_misbehave");
+    fuzz(&p, "json_random_bytes_never_misbehave");
+    fuzz(&p, "json_any_value_written");
 }
 
 // More trials for the damage, under the sanitizers: the heavy runs by hand are in the units runner's notes.
