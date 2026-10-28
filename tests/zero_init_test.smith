@@ -86,3 +86,29 @@ export void test_zero_init_lint_sees_a_zero_value(io::Io *io) {
     scratch::Run lint = scratch::sh(&p, "smith lint --quiet main.smith -- -I. -I.smith/include 2>&1");
     scratch::expect_status("T t; read before a write passes smith lint", 0, &lint);
 }
+
+static const char *constructors = "module main;\n"
+                                  "\n"
+                                  "export struct Board {\n"
+                                  "    I32 cells[9];\n"
+                                  "};\n"
+                                  "\n"
+                                  "export Board initial() {\n"
+                                  "    return (Board){.cells = {1, 2, 3}};\n"
+                                  "}\n"
+                                  "\n"
+                                  "I32 main() {\n"
+                                  "    return initial().cells[0];\n"
+                                  "}\n";
+
+// A function with no parameters and no effects is a constant (issue #415): the compile says so, and a function that
+// calls something (the clock, entropy, the allocator) is not one.
+export void test_zero_init_a_pure_function_with_no_parameters_is_a_constant(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::write(&p, "main.smith", constructors);
+    scratch::Run run = scratch::build(&p, "");
+    scratch::expect_failure("an exported function with no parameters and no effects is an error", &run);
+    static char text[16384];
+    __builtin_snprintf(text, sizeof text, "%s%s", run.out, run.err);
+    scratch::expect_contains("the message says it is a constant", text, "write `constexpr");
+}

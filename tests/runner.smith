@@ -13,12 +13,8 @@ import <string.h>;
 import scratch;
 
 // The runner's output without the timings: the slowest list is dropped and the summary's seconds are masked.
-constexpr char plain_filter[_] = "sed -e '/^slowest:/,/^$/d' -e 's/ in [0-9.]* s$//' | sed '/./,$!d'";
-
 // The shell filter that drops the timings from the runner's output.
-export const char *plain_pipe() {
-    return plain_filter;
-}
+export constexpr char plain_pipe[_] = "sed -e '/^slowest:/,/^$/d' -e 's/ in [0-9.]* s$//' | sed '/./,$!d'";
 
 // A project: the build.c of `base` (runner_base, or runner_c for C only) with the files of the fixture `files` over it.
 export scratch::Project project(io::Io *io, const char *base, const char *files) {
@@ -107,10 +103,10 @@ export scratch::Run tests(const scratch::Project *p, const char *iso, const char
     return scratch::sh(p, format::push(&p->io->arena, "build/tests ", iso, " ", arguments, " 2>&1").data);
 }
 
-// The runner's output through plain_filter.
+// The runner's output through plain_pipe.
 export scratch::Run plain(const scratch::Project *p, const char *iso, const char *arguments) {
     return scratch::sh(p,
-                       format::push(&p->io->arena, "build/tests ", iso, " ", arguments, " 2>&1 | ", plain_filter).data);
+                       format::push(&p->io->arena, "build/tests ", iso, " ", arguments, " 2>&1 | ", plain_pipe).data);
 }
 
 // The runner's trace turned into the report by smith symbolize, with the timings left out; the text is the same under
@@ -118,14 +114,14 @@ export scratch::Run plain(const scratch::Project *p, const char *iso, const char
 export const char *report(const scratch::Project *p, const char *iso, const char *arguments) {
     const char *command =
         format::push(&p->io->arena, "build/tests ", iso, " --trace ", arguments, " 2>&1 | smith symbolize 2>&1 | ",
-                     plain_filter, " | sed -e '/smith_test_execute/d' -e '/smith_test_run_key/d' | tr -s ' '")
+                     plain_pipe, " | sed -e '/smith_test_execute/d' -e '/smith_test_run_key/d' | tr -s ' '")
             .data;
     return scratch::capture(p, command);
 }
 
 // The report of a trace saved in a file of the project, in the form `report` gives.
 export const char *report_of(const scratch::Project *p, const char *file) {
-    const char *command = format::push(&p->io->arena, "smith symbolize 2>&1 <", file, " | ", plain_filter,
+    const char *command = format::push(&p->io->arena, "smith symbolize 2>&1 <", file, " | ", plain_pipe,
                                        " | sed -e '/smith_test_execute/d' -e '/smith_test_run_key/d' | tr -s ' '")
                               .data;
     return scratch::capture(p, command);
