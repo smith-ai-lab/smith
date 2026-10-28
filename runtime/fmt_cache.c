@@ -302,9 +302,11 @@ static size_t smith_fmt_remember(size_t todo_count, bool check, SmithFmtKey *key
         if (!todo->passed || !todo->keyed) continue;
         struct stat info;
         bool same = check;
-        if (!check && stat(todo->file, &info) == 0)
-            same = info.st_size == todo->size && info.st_mtim.tv_sec == todo->modified.tv_sec &&
-                   info.st_mtim.tv_nsec == todo->modified.tv_nsec;
+        if (!check && stat(todo->file, &info) == 0) {
+            struct timespec modified = smith_platform_mtime(&info);
+            same = info.st_size == todo->size && modified.tv_sec == todo->modified.tv_sec &&
+                   modified.tv_nsec == todo->modified.tv_nsec;
+        }
         if (same)
             keys[count++] = todo->key;
         else if (!check && smith_fmt_key_of(todo->file, &keys[count]))
@@ -321,7 +323,7 @@ static bool smith_fmt_cached(const char *file, SmithFmtTodo *todo, bool cache) {
     struct stat info;
     if (!cache || stat(file, &info) != 0 || !smith_fmt_key_of(file, &todo->key)) return false;
     todo->keyed = true;
-    todo->modified = info.st_mtim;
+    todo->modified = smith_platform_mtime(&info);
     todo->size = info.st_size;
     return smith_fmt_cache_has(&todo->key);
 }
