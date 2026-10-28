@@ -248,7 +248,8 @@ static bool smith_sym_machinery(const char *function) {
 
 static bool smith_sym_system_path(const char *path) {
     return smith_sym_starts(path, "/usr/lib/") || smith_sym_starts(path, "/System/") ||
-           smith_sym_starts(path, "/Library/Apple/");
+           smith_sym_starts(path, "/Library/Apple/") || smith_sym_starts(path, "/lib/") ||
+           smith_sym_starts(path, "/lib64/");
 }
 
 static int smith_sym_find_image(const SmithSymTrace *trace, uint64_t address) {

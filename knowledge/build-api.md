@@ -266,6 +266,12 @@ void smith_program(SmithBuild *b, SmithProgram *program);
 // smith_compile_commands, which writes the file; after it, it is an error.
 void smith_compile_command(SmithBuild *b, const char *compiler, const char *source, const char *const *flags);
 
+// Says which generated files the compile of source (an earlier smith_compile_command) reads, a list of outputs of steps
+// ending in nullptr: `smith lint --changed` builds those for the files it lints, where for a source with no such
+// declaration it builds everything the compiles read. An empty list says it reads none. A source that a smith_object
+// compiles keeps what that object waits for; any other source with no smith_compile_command before it is an error.
+void smith_compile_needs(SmithBuild *b, const char *source, const char *const *files);
+
 // Clang modules, off until the build file calls this, and then for every C and Objective-C source passed to
 // smith_object afterwards (never .metal, never C++; call it before the first smith_object, or it is an error). Each
 // header under the folders becomes its own module, so a source depends on exactly the headers it includes; smith's own

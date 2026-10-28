@@ -1,7 +1,7 @@
 // The translation as a whole: the options, the named arrays, the declarations in order, the default, the header and
 // what was not translated. Included by smith.c after make_print.c.
 
-static int smith_make_translate(const char *path, FILE *out);
+static int smith_make_translate(const char *path, FILE *out, FILE *errors);
 
 // ---- Options
 
@@ -542,8 +542,39 @@ static void smith_make_put_functions(FILE *out, const SmithMakeUnits *head, cons
     fputs("}\n", out);
 }
 
-// Prints the translation of the Makefile at path to out. Warnings about what is not translated go to stderr.
-static int smith_make_translate(const char *path, FILE *out) {
+// Forgets what the last translation left: the pool of memory and every table, so that a translation starts as the first
+// of the process does. The unit tests translate many Makefiles in one process (include/smith_core.h).
+static void smith_make_reset(void) {
+    if (smith_make.pool != nullptr) munmap(smith_make.pool, smith_make_memory_size);
+    memset(&smith_make, 0, sizeof smith_make);
+    memset(&smith_make_reader, 0, sizeof smith_make_reader);
+    memset(&smith_make_graph, 0, sizeof smith_make_graph);
+    memset(&smith_make_machine, 0, sizeof smith_make_machine);
+    memset(&smith_make_auto, 0, sizeof smith_make_auto);
+    memset(&smith_make_output, 0, sizeof smith_make_output);
+    memset(&smith_make_idents, 0, sizeof smith_make_idents);
+    memset(&smith_make_saved_make, 0, sizeof smith_make_saved_make);
+    memset(&smith_make_saved_reader, 0, sizeof smith_make_saved_reader);
+    memset(&smith_make_saved_graph, 0, sizeof smith_make_saved_graph);
+    memset(&smith_make_saved_auto, 0, sizeof smith_make_saved_auto);
+    memset(smith_make_subs, 0, sizeof smith_make_subs);
+    memset(smith_make_ref_log, 0, sizeof smith_make_ref_log);
+    memset((void *)smith_make_reported, 0, sizeof smith_make_reported);
+    memset(&smith_make_joined, 0, sizeof smith_make_joined);
+    memset(&smith_make_define_body, 0, sizeof smith_make_define_body);
+    smith_make_infos = nullptr;
+    smith_make_object_count = 0;
+    smith_make_program_count = 0;
+    smith_make_step_count = 0;
+    smith_make_ref_log_count = 0;
+    smith_make_reported_count = 0;
+    smith_make_sub_count = 0;
+    smith_make_unit_list = nullptr;
+}
+
+// Prints the translation of the Makefile at path to out. Warnings about what is not translated go to errors.
+static int smith_make_translate(const char *path, FILE *out, FILE *errors) {
+    smith_make_reset();
     smith_make.file = path;
     smith_make_read(path);
     smith_make_graph_build();
@@ -585,7 +616,28 @@ static int smith_make_translate(const char *path, FILE *out) {
     for (size_t i = 0; i < smith_make.diag_count; i++) {
         const SmithMakeDiag *diag = &smith_make.diags[i];
         if (strncmp(diag->message, "note: ", 6) != 0)
-            fprintf(stderr, "smith: %s:%u: not translated: %s\n", diag->where.file, diag->where.line, diag->message);
+            fprintf(errors, "smith: %s:%u: not translated: %s\n", diag->where.file, diag->where.line, diag->message);
     }
     return 0;
 }
+
+#ifdef SMITH_CORE
+// include/smith_core.h: the translation in process, for the units runner.
+bool smith_core_make_translate(const char *folder, const char *makefile, char *build, size_t build_size, char *errors,
+                               size_t errors_size) {
+    int home = open(".", O_RDONLY);
+    FILE *out = fmemopen(build, build_size, "w");
+    FILE *err = fmemopen(errors, errors_size, "w");
+    bool ok = home >= 0 && out != nullptr && err != nullptr && chdir(folder) == 0;
+    if (ok) {
+        const char *file = makefile != nullptr ? makefile : smith_make_find_makefile();
+        if (file != nullptr) smith_make_translate(file, out, err);
+        ok = file != nullptr;
+        ok = fchdir(home) == 0 && ok;
+    }
+    if (out != nullptr) fclose(out);
+    if (err != nullptr) fclose(err);
+    if (home >= 0) close(home);
+    return ok;
+}
+#endif

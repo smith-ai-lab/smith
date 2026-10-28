@@ -16,3 +16,5 @@ url() { echo "file://$PWD/arc/pkg$1.tar.gz"; }
 fetch1() { mkpkgs && smith fetch "$(url 1)" >/dev/null 2>&1; }
 count_modules() { find "$modules" -name '*.pcm' | wc -l | tr -d ' '; }
 sdk_signature() { find "$modules" -name '*.pcm' ! -name 'inc_*' ! -name 'smith_*' -exec sh -c 'stat -c "%n %Y" "$@" 2>/dev/null || stat -f "%N %m" "$@"' sh {} + | sort | cksum; }
+# Sets a file's time to N hours ago.
+ago() { touch -t "$(date -v-$1H +%Y%m%d%H%M 2>/dev/null || date -d "$1 hours ago" +%Y%m%d%H%M)" "$2"; }

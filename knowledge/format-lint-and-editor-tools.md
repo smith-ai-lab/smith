@@ -21,9 +21,37 @@ effective one and makes it the project's (`smith fmt --dump-config > .clang-form
 **Project `smith lint` is a gate over every `.smith` source** (issue #424, `smith_lint_project`, runtime/verbs.c): the
 build's compiles (with their own command from `.smith/compile_commands.json`) and every other `.smith` file git sees
 that `.clang-format-ignore` does not name (the one list of test inputs, generated and copied files; clang-tidy reads the
-nearest compile's command for it). A finding fails it, the last line is `smith lint: linted N files` (`smith check`:
+nearest compile's command for it). A finding fails it, the last line is `smith lint: linted N files (R run, C cached, T s)` (`smith check`:
 `lint ok: N files`), and a project with `.smith` sources that lints none fails. A stage0, whose clang cannot read
 `.smith`, leaves them out and says so.
+
+**`smith lint` is incremental** (issue #621, `runtime/lint_cache.c`, [the caches](caches.md)): clang-tidy's output and exit
+status for a file are kept under `<cache>/smith/lint` and replayed when nothing the lint read has changed, so a lint
+of an unchanged tree runs clang-tidy on no file (about 1 s for smith's 180 files, from 50 s) and one changed file runs
+only itself and the files that include it. `SMITH_LINT_CACHE=0` turns it off, `SMITH_LINT_CACHE=why` says why a file
+ran. Tests: `tests/lint_cache_test.smith`.
+
+**`smith lint --changed[=<ref>]` lints what a change reaches** (issue #638, `smith_lint_changed`, runtime/verbs.c, and
+`runtime/changed.c`, which `smith test --changed` shares): the files that differ from the merge-base of `HEAD` and `<ref>`
+(default `origin/main`, else `main`; the working tree counts, so do untracked files) and every file that includes or
+imports one of them, transitively, by the same graph as the tests'. A file the graph does not know is linted. These
+paths select every file: a `.clang-tidy` anywhere, `build.c`, `build.smith`, a `Makefile` (they move what clang-tidy
+says or the flags of a compile), and `shim/` and `patches/` (smith's own checks). The line `smith lint --changed: N
+changed files since <sha>: M of K files to lint` says what was chosen, and no file affected is a success that says so
+and `linted 0 files`. Plain `smith lint` still lints everything, as the merge train does. A path outside the project
+folder is not seen (`git diff --relative`), and a file a source `#embed`s is not an edge of the graph. `smith build
+preflight` runs `lint --changed`. Tests: `tests/lint_changed_test.smith`.
+
+**`smith lint` builds what the files it lints wait for, not the program.** Plain `smith lint` builds `smith_needs`: the
+generated files every compile reads (and, in smith's own build.c, the smith-cc link and the header of each of ~120 test
+modules, which the smith under test must make). With `--changed` the build first runs only to write `.smith/build.info`
+(the empty target `smith_info`), then builds the `need<TAB>source<TAB>file...` lines of the chosen sources, so editing a
+`runtime/*.c` rebuilds nothing but the headers it includes (about 7 s for clang-tidy on a large file, from 50 s for the
+relink and the 116 headers); a chosen source with no such line (a `.smith` module or a C file the build only declares with
+`smith_compile_command`, unless build.c says what it reads with `smith_compile_needs`) builds `smith_needs`. Smith's own
+build.c declares none yet, so its test modules and unbuilt sources do. A no-op `smith lint` after a build by the same smith builds nothing
+(0.8 s); a build by another smith (a new compiler) rebuilds every object, which is that smith's doing, not the
+executor's.
 
 **The editor finds `.smith/compile_commands.json`:** `smith lsp` adds clangd's `--compile-commands-dir` for it when
 the project has no root or `build/` one. **The editor has smith's defaults too** (`patches/smith-editor-defaults.patch`):

@@ -1914,6 +1914,10 @@ typedef struct {
     uint32_t end;
 } SmithLangSpan;
 
+static int smith_lang_generic_of(SmithLang *lang, const SmithHost *host, const char *text, size_t length);
+static int smith_lang_generic_named(SmithLang *lang, const SmithHost *host, SmithLangSpan span);
+static void smith_lang_generic_poison(SmithLang *lang, const SmithHost *host, uint32_t location);
+
 // A type argument in place of its T: its tokens, as a `__typeof__` when it has parentheses (a function pointer's). A
 // function (`constexpr auto f`) is its name, as it is.
 static void smith_lang_gen_put_arg(SmithLang *lang, const SmithHost *host, const SmithLangInstance *instance,
@@ -1924,6 +1928,17 @@ static void smith_lang_gen_put_arg(SmithLang *lang, const SmithHost *host, const
     bool function = param < generic->type_count && generic->type_kind[param] == SmithLangSlot_Function;
     bool wrap = !function && smith_lang_it_has_paren(first, count);
     uint32_t location = smith_lang_it.tokens[first].location;
+    if (function && count == 1 &&
+        smith_lang_generic_of(lang, host, smith_lang_pool_text(&smith_lang_it, &smith_lang_it.tokens[first]),
+                              smith_lang_it.tokens[first].length) >= 0) {
+        // A generic function is no one function: only a call of the parameter makes its instance.
+        smith_lang_error(lang, host, location,
+                         "`%.*s` is a generic function: in an instance it can only be called, so it has no address",
+                         (int)smith_lang_it.tokens[first].length,
+                         smith_lang_pool_text(&smith_lang_it, &smith_lang_it.tokens[first]));
+        smith_lang_generic_poison(lang, host, location);
+        return;
+    }
     if (wrap) {
         smith_lang_gen_put(lang, host, SmithTokenKind_Identifier, "__typeof__", location, instance_id);
         smith_lang_gen_put(lang, host, SmithTokenKind_Punctuator, "(", location, instance_id);
@@ -3370,6 +3385,15 @@ static bool smith_lang_infer_auto(SmithLang *lang, const SmithHost *host, SmithL
         *count = smith_lang_it.count - *first;
         return true;
     }
+    if (smith_lang_generic_named(lang, host, span) >= 0) { // a generic function is no value
+        char shown[256];
+        smith_lang_infer_written(span, shown, sizeof shown);
+        smith_lang_error(lang, host, smith_lang_infer_place(host, replay, span, location),
+                         "`%s`, the argument of `%s`, is a generic function: it can only be called, or given to a "
+                         "`constexpr auto` parameter",
+                         shown, smith_lang_str(generic->member));
+        return false;
+    }
     SmithLangArgType type = {};
     const char *why = nullptr;
     if (!smith_lang_arg_type(lang, host, replay, span, location, &type, &why, true)) {
@@ -3388,6 +3412,28 @@ static bool smith_lang_infer_auto(SmithLang *lang, const SmithHost *host, SmithL
     return true;
 }
 
+static int smith_lang_generic_resolve(SmithLang *lang, const SmithHost *host, const char *module, size_t module_length,
+                                      const char *member, size_t member_length);
+
+// The generic function that a token names (`module::member`, one token: smith_lang_generic_as_argument), or -1.
+static int smith_lang_generic_of(SmithLang *lang, const SmithHost *host, const char *text, size_t length) {
+    const char *colons = text + length;
+    while (colons > text && !(colons[0] == ':' && colons[-1] == ':'))
+        colons -= 1;
+    if (colons <= text) return -1;
+    size_t module_length = (size_t)(colons - 1 - text);
+    return smith_lang_generic_resolve(lang, host, text, module_length, colons + 1, length - module_length - 2);
+}
+
+// The generic function that `span` names, or -1.
+static int smith_lang_generic_named(SmithLang *lang, const SmithHost *host, SmithLangSpan span) {
+    if (span.end != span.start + 1) return -1;
+    const SmithLangGenToken *token = &smith_lang_gt.tokens[span.start];
+    if (token->kind != SmithTokenKind_Identifier || token->special != SmithLangGen_Plain || token->param != 0)
+        return -1;
+    return smith_lang_generic_of(lang, host, smith_lang_gt_str(token), token->length);
+}
+
 // The function passed to `constexpr auto f` at `span`, staged in smith_lang_it as its name. It must be a function
 // designator (a name the compiler says is a function, not a pointer to one): False after the error.
 static bool smith_lang_infer_function(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
@@ -3399,6 +3445,9 @@ static bool smith_lang_infer_function(SmithLang *lang, const SmithHost *host, Sm
     uint32_t place = smith_lang_infer_place(host, replay, span, location);
     SmithLangArgType type = {};
     const char *why = nullptr;
+    if (smith_lang_generic_named(lang, host, span) >= 0) { // a generic function: its calls make the instances
+        return smith_lang_stage_type(span, replay->instance, location, first, count) && *count == 1;
+    }
     if (!smith_lang_arg_type(lang, host, replay, span, location, &type, &why, true)) {
         smith_lang_error(lang, host, place,
                          "cannot tell what `%s`, the argument of `%s`, is: %s; the parameter `%.*s` is `constexpr "
@@ -3515,6 +3564,31 @@ static int smith_lang_converts_to(const SmithLangGeneric *generic, const SmithLa
     return type;
 }
 
+// The parameter at `position` is `typeof(xs[0]) name` or `typeof(*p) name` for an `auto` parameter written with a
+// shape (`const auto xs[:]`, `auto *p`): the index of that parameter's type, else -1. Its argument converts to the
+// element, as `typeof(a) b` converts to a's type.
+static int smith_lang_converts_to_element(const SmithLangGeneric *generic, const SmithLangParam *param,
+                                          size_t position) {
+    const SmithLangGenToken *t = &smith_lang_gt.tokens[param->start];
+    size_t length = param->end - param->start;
+    bool indexed = length == 8 && smith_lang_gt_punct(&t[3], "[") &&
+                   smith_lang_gt_is(&t[4], SmithTokenKind_Number, "0") && smith_lang_gt_punct(&t[5], "]") &&
+                   smith_lang_gt_punct(&t[6], ")");
+    bool pointee = length == 6 && smith_lang_gt_punct(&t[2], "*") && smith_lang_gt_punct(&t[4], ")");
+    if ((!indexed && !pointee) || !smith_lang_gt_is(&t[0], SmithTokenKind_Identifier, "typeof") ||
+        !smith_lang_gt_punct(&t[1], "(") || t[length - 1].kind != SmithTokenKind_Identifier) {
+        return -1;
+    }
+    const SmithLangGenToken *of = indexed ? &t[2] : &t[3];
+    if (of->param == 0) return -1;
+    int type = (int)of->param - 1;
+    if ((size_t)type >= generic->type_count || generic->type_kind[type] != SmithLangSlot_Auto ||
+        generic->type_position[type] == position) {
+        return -1;
+    }
+    return type;
+}
+
 // An expression as the operand of a cast: in parentheses unless it is one name, field chain or literal.
 static void smith_lang_parenthesize(char *text, size_t capacity) {
     bool simple = text[0] == '-' || text[0] == '+' ? text[1] != 0 : true;
@@ -3532,12 +3606,41 @@ static void smith_lang_parenthesize(char *text, size_t capacity) {
 
 // Whether the argument at `span` converts to the staged type unchanged, as the module for `auto` says; the error
 // otherwise. `first` is the argument that gave the type.
+static bool smith_lang_convert_to(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                  const SmithLangGeneric *generic, SmithLangSpan span, SmithLangSpan first_span,
+                                  const char *to_spelling, const char *to_written, bool element, uint32_t location);
+static void smith_lang_element_spelling(const SmithHost *host, const SmithLangGeneric *generic, size_t slot,
+                                        char *spelling, size_t capacity);
+static void smith_lang_spell_written(const SmithLang *lang, const char *spelling, char *out, size_t capacity);
+
 static bool smith_lang_convert_ok(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
                                   const SmithLangGeneric *generic, SmithLangSpan span, SmithLangSpan first_span,
                                   const uint32_t type_first, const uint32_t type_count, uint32_t location) {
     char to_spelling[256];
     char to_written[256];
     smith_lang_it_spelling(type_first, type_count, to_spelling, sizeof to_spelling);
+    smith_lang_it_written(lang, type_first, type_count, to_written, sizeof to_written);
+    return smith_lang_convert_to(lang, host, replay, generic, span, first_span, to_spelling, to_written, false,
+                                 location);
+}
+
+// The same for a later argument of the element of a shaped parameter: `slice::find(bytes, 300)` where bytes is `u8[:]`.
+static bool smith_lang_convert_element_ok(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                          const SmithLangGeneric *generic, size_t type, SmithLangSpan span,
+                                          SmithLangSpan first_span, const uint32_t type_first,
+                                          const uint32_t type_count, uint32_t location) {
+    char to_spelling[256];
+    char to_written[256];
+    smith_lang_it_spelling(type_first, type_count, to_spelling, sizeof to_spelling);
+    smith_lang_element_spelling(host, generic, type, to_spelling, sizeof to_spelling);
+    smith_lang_spell_written(lang, to_spelling, to_written, sizeof to_written);
+    return smith_lang_convert_to(lang, host, replay, generic, span, first_span, to_spelling, to_written, true,
+                                 location);
+}
+
+static bool smith_lang_convert_to(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                  const SmithLangGeneric *generic, SmithLangSpan span, SmithLangSpan first_span,
+                                  const char *to_spelling, const char *to_written, bool element, uint32_t location) {
     SmithLangNumber to = smith_lang_number_of(host, to_spelling);
     if (!to.known) return true;
     SmithLangArgType from = {};
@@ -3550,7 +3653,6 @@ static bool smith_lang_convert_ok(SmithLang *lang, const SmithHost *host, SmithL
     char argument[256];
     char first[256];
     char from_spelling[256];
-    smith_lang_it_written(lang, type_first, type_count, to_written, sizeof to_written);
     smith_lang_infer_written(span, argument, sizeof argument);
     smith_lang_infer_written(first_span, first, sizeof first);
     smith_lang_smith_spelling(from.written, from_spelling, sizeof from_spelling);
@@ -3562,6 +3664,20 @@ static bool smith_lang_convert_ok(SmithLang *lang, const SmithHost *host, SmithL
     snprintf(first_cast, sizeof first_cast, "%s", first);
     smith_lang_parenthesize(argument_cast, sizeof argument_cast);
     smith_lang_parenthesize(first_cast, sizeof first_cast);
+    if (element && is_literal) { // the first argument is a slice or a pointer: only the argument can be cast
+        smith_lang_error(lang, host, place,
+                         "the argument `%s` of `%s` converts to %s, the element type of its first argument `%s`, and "
+                         "changes its value; cast it, `(%s)%s`",
+                         argument, name, to_written, first, to_written, argument_cast);
+        return false;
+    }
+    if (element) {
+        smith_lang_error(lang, host, place,
+                         "the argument `%s` of `%s` is %s and converts to %s, the element type of its first argument "
+                         "`%s`, which may change its value; cast it, `(%s)%s`",
+                         argument, name, from_spelling, to_written, first, to_written, argument_cast);
+        return false;
+    }
     if (is_literal) {
         smith_lang_error(
             lang, host, place,
@@ -3730,8 +3846,95 @@ static void smith_lang_element_spelling(const SmithHost *host, const SmithLangGe
     snprintf(spelling, capacity, "%s", bare);
 }
 
+static const char *smith_lang_written_spelling(const SmithLang *lang, const char *text, size_t *length);
+
+// A type's spelling as the source writes it: the lowering's `__INT32_TYPE__` is `i32`, `main_Colour` is `Colour`.
+static void smith_lang_spell_written(const SmithLang *lang, const char *spelling, char *out, size_t capacity) {
+    size_t used = 0;
+    out[0] = 0;
+    for (size_t at = 0; spelling[at] != 0 && used + 2 < capacity;) {
+        size_t word = 0;
+        while (smith_lang_word_char(spelling[at + word]))
+            word++;
+        if (word == 0) {
+            out[used++] = spelling[at++];
+            out[used] = 0;
+            continue;
+        }
+        size_t length = word;
+        const char *text = smith_lang_written_spelling(lang, spelling + at, &length);
+        if (used + length + 1 >= capacity) break;
+        memcpy(out + used, text, length);
+        used += length;
+        out[used] = 0;
+        at += word;
+    }
+}
+
+// The parameter as its module wrote it: `const arithmetic xs[:]`.
+static void smith_lang_param_text(const SmithLangParam *param, char *out, size_t capacity) {
+    size_t used = 0;
+    out[0] = 0;
+    for (uint32_t at = param->start; at < param->end; at++) {
+        const SmithLangGenToken *token = &smith_lang_gt.tokens[at];
+        size_t length = token->length;
+        size_t space = at > param->start && (token->flags & smith_lang_gen_flag_space) != 0 ? 1 : 0;
+        if (used + space + length + 1 >= capacity) break;
+        if (space == 1) out[used++] = ' ';
+        memcpy(out + used, smith_lang_gt_str(token), length);
+        used += length;
+    }
+    out[used] = 0;
+}
+
+// The note at the generic's parameter that asked for the type: `lib::sum` takes `const arithmetic xs[:]`.
+static void smith_lang_takes_note(const SmithHost *host, const SmithLangGeneric *generic, const SmithLangParam *param,
+                                  uint32_t word_at, uint32_t error_location) {
+    char taken[256];
+    smith_lang_param_text(param, taken, sizeof taken);
+    SmithLangGenToken *word = &smith_lang_gt.tokens[word_at]; // the `auto` or the concept
+    uint32_t declared = smith_lang_gen_place(host, generic, word, UINT32_MAX);
+    smith_lang_note(host, error_location, declared, "`%s::%s` takes `%s`", smith_lang_str(generic->module),
+                    smith_lang_str(generic->member), taken);
+}
+
+// What a type is among the standard's kinds, for the line that says why a concept is false.
+static const char *smith_lang_type_kind(const SmithTypeQuery *query) {
+    if (strncmp(query->canonical, "struct smith_array_", 19) == 0) return "a slice";
+    if (query->is_bool) return "the boolean type";
+    if (query->is_enum) return "an enumerated type";
+    if (query->is_integer) return query->is_signed ? "a signed integer type" : "an unsigned integer type";
+    if (query->is_float) return "a floating type";
+    if (query->is_pointer) return "a pointer type";
+    if (query->is_array) return "an array type";
+    if (query->is_record) return "a structure or union type";
+    return "no arithmetic, pointer, array or structure type";
+}
+
+// The note that says why the type is not of the concept, and the facts it rests on: `arithmetic(char)` is
+// `integer(char) || floating(char)`; every other concept is a leaf, a question of the type the compiler answers.
+static void smith_lang_concept_why(const SmithLang *lang, const SmithHost *host, uint32_t error_location,
+                                   unsigned concept_id, const char *judged) {
+    SmithTypeQuery query = {};
+    char written[256];
+    smith_lang_spell_written(lang, judged, written, sizeof written);
+    if (host->type_query == nullptr || !host->type_query(host->context, judged, (uint32_t)strlen(judged), &query)) {
+        return;
+    }
+    const char *name = smith_lang_concepts[concept_id - 1];
+    if (concept_id == 5) { // arithmetic
+        smith_lang_note(host, error_location, 0,
+                        "`arithmetic(%s)` is false: `integer(%s)` and `floating(%s)` are both false; `%s` is %s",
+                        written, written, written, written, smith_lang_type_kind(&query));
+        return;
+    }
+    smith_lang_note(host, error_location, 0, "`%s(%s)` is false: `%s` is %s", name, written, written,
+                    smith_lang_type_kind(&query));
+}
+
 // An `auto` parameter written with a concept (`arithmetic x`): the argument's type must be of it, else the error is at
-// the argument, the call that asked.
+// the argument, the call that asked. The error says the main thing first (`char *` is not `arithmetic`), then come the
+// notes: the parameter that asked, and why.
 static bool smith_lang_concept_check(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
                                      const SmithLangGeneric *generic, size_t slot, SmithLangSpan span,
                                      uint32_t location, const uint32_t *first, const uint32_t *count) {
@@ -3743,15 +3946,29 @@ static bool smith_lang_concept_check(SmithLang *lang, const SmithHost *host, Smi
     snprintf(judged, sizeof judged, "%s", spelling);
     smith_lang_element_spelling(host, generic, slot, judged, sizeof judged); // the element of `const arithmetic xs[:]`
     if (smith_lang_concept_holds(host, concept_id, judged)) return true;
-    const SmithLangGenToken *parameter = &smith_lang_gt.tokens[generic->first + generic->type_token[slot] + 1];
     char shown[256];
     smith_lang_infer_written(span, shown, sizeof shown);
-    smith_lang_error(
-        lang, host, smith_lang_infer_place(host, replay, span, location),
-        "`%s` is not `%s`: `%s`, the argument of `%s`, has the type `%s`; the parameter `%.*s` is `%s %.*s`", judged,
-        smith_lang_concepts[concept_id - 1], shown, smith_lang_str(generic->member), spelling, (int)parameter->length,
-        smith_lang_gt_str(parameter), smith_lang_concepts[concept_id - 1], (int)parameter->length,
-        smith_lang_gt_str(parameter));
+    char written[256];
+    smith_lang_spell_written(lang, judged, written, sizeof written);
+    uint32_t place = smith_lang_infer_place(host, replay, span, location);
+    SmithLangParam params[smith_lang_call_params_max];
+    size_t total = smith_lang_generic_params(generic, params, smith_lang_call_params_max);
+    size_t position = generic->type_position[slot];
+    SmithLangShape shape = {};
+    bool element = total != SIZE_MAX && position < total && smith_lang_param_shape(&params[position], &shape);
+    if (total != SIZE_MAX && position < total) {
+        smith_lang_takes_note(host, generic, &params[position], element ? shape.auto_at : params[position].start,
+                              place);
+    }
+    smith_lang_concept_why(lang, host, place, concept_id, judged);
+    if (element) {
+        bool pointer = shape.kind == SmithLangShape_Pointer;
+        smith_lang_error(lang, host, place, "`%s` is not `%s`: the %s of `%s` %s that type", written,
+                         smith_lang_concepts[concept_id - 1], pointer ? "pointee" : "elements", shown,
+                         pointer ? "has" : "have");
+    } else {
+        smith_lang_error(lang, host, place, "`%s` is not `%s`", written, smith_lang_concepts[concept_id - 1]);
+    }
     return false;
 }
 
@@ -3811,6 +4028,8 @@ static bool smith_lang_shape_check(SmithLang *lang, const SmithHost *host, Smith
         snprintf(want, sizeof want, "a fixed array (`%s %.*s[N]`)", word, (int)parameter->length,
                  smith_lang_gt_str(parameter));
     }
+    smith_lang_takes_note(host, generic, &params[position], shape.auto_at,
+                          smith_lang_infer_place(host, replay, span, location));
     smith_lang_error(lang, host, smith_lang_infer_place(host, replay, span, location),
                      "`%s`, the argument of `%s`, has the type `%s`, but the parameter `%.*s` is %s%s", shown,
                      smith_lang_str(generic->member), spelling, (int)parameter->length, smith_lang_gt_str(parameter),
@@ -3989,7 +4208,15 @@ static bool smith_lang_call_types(SmithLang *lang, const SmithHost *host, SmithL
     smith_lang_generic_params(generic, params, smith_lang_call_params_max);
     for (size_t i = 0; good && i < count && i < generic->param_count; i++) { // a later argument converts to `auto`'s
         int type = smith_lang_converts_to(generic, &params[i], i);
-        if (type < 0) continue;
+        if (type < 0) {
+            type = smith_lang_converts_to_element(generic, &params[i], i);
+            if (type >= 0) {
+                good = smith_lang_convert_element_ok(lang, host, replay, generic, (size_t)type, spans[i],
+                                                     spans[generic->type_position[type]], types->first[type],
+                                                     types->count[type], location);
+            }
+            continue;
+        }
         good = smith_lang_convert_ok(lang, host, replay, generic, spans[i], spans[generic->type_position[type]],
                                      types->first[type], types->count[type], location);
     }
@@ -4605,7 +4832,9 @@ static void smith_lang_typed_finish(SmithLang *lang, const SmithHost *host, Smit
         (void)smith_lang_junk_add(replay, done.pool_first, captured_end);
     }
     if (!replay->typing) replay->junk_count = 0;
-    if (!written) {
+    if (!written && smith_lang_gt.tokens[done.group].special != SmithLangGen_CallBegin) {
+        smith_lang_generic_poison(lang, host, done.place); // a call of a `constexpr auto` parameter: the error is told
+    } else if (!written) {
         const SmithLangGenToken *token = &smith_lang_gt.tokens[done.group];
         const char *text = smith_lang_gt_str(token);
         const char *colons = text + token->length;
@@ -4811,6 +5040,71 @@ static bool smith_lang_expression_of_param(const SmithLangReplay *replay, uint32
     return false;
 }
 
+// The call of generic `found` whose arguments are the `( ... )` at [open, end), the call itself at `group` (a group's
+// start, or the name of a `constexpr auto` parameter that is a generic). True when the call was written, or its
+// arguments were queued to be typed first; False after an error, or when it is no call to make.
+static bool smith_lang_replay_call(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay, uint32_t found,
+                                   uint32_t group, uint32_t open, uint32_t end, uint32_t location) {
+    if (replay->instance != nullptr &&
+        (smith_lang_span_has_group((SmithLangSpan){open, end}) || smith_lang_fields_in(open, end) ||
+         smith_lang_pack_has_pattern(replay, open + 1, end - 1) ||
+         smith_lang_expression_of_param(replay, open, end, &smith_lang_generics[found])) &&
+        replay->count + 3 <= smith_lang_replay_depth_max) {
+        // Its arguments hold a call: they are written to the pool first, to be typed (smith_lang_typed_start).
+        smith_lang_replay_push(replay, 0, 0, 0);
+        SmithLangFrame *finish = &replay->frames[replay->count - 1];
+        finish->action = SmithLangFrame_TypedFinish;
+        finish->group = group;
+        finish->end = end;
+        finish->generic_index = (uint16_t)found;
+        finish->place = location;
+        size_t finish_at = replay->count - 1;
+        smith_lang_replay_push(replay, open, end, 0);
+        smith_lang_replay_push(replay, 0, 0, 0);
+        SmithLangFrame *start = &replay->frames[replay->count - 1];
+        start->action = SmithLangFrame_TypedStart;
+        start->source = (int32_t)finish_at;
+        return true;
+    }
+    return smith_lang_call_finish(lang, host, replay, found, open, end, location, UINT32_MAX);
+}
+
+// `f(...)` in an instance whose `f` is a generic function (a `constexpr auto` parameter given `module::name`): the
+// call makes the instance its own arguments ask for, as a direct call to the generic would. True when it took tokens.
+static bool smith_lang_replay_function_call(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                            SmithLangFrame *frame) {
+    uint32_t at = frame->pos;
+    const SmithLangGenToken *token = &smith_lang_gt.tokens[at];
+    if (replay->instance == nullptr || token->kind != SmithTokenKind_Identifier || token->param == 0 ||
+        token->special != SmithLangGen_Plain || at + 1 >= frame->end || !smith_lang_gt_punct(token + 1, "(")) {
+        return false;
+    }
+    const SmithLangGeneric *own = &smith_lang_generics[replay->instance->generic];
+    unsigned slot = (unsigned)token->param - 1;
+    if (slot >= own->type_count || own->type_kind[slot] != SmithLangSlot_Function ||
+        replay->instance->arg_count[slot] != 1) {
+        return false;
+    }
+    const SmithLangGenToken *arg = &smith_lang_it.tokens[replay->instance->arg_first[slot]];
+    int found = smith_lang_generic_of(lang, host, smith_lang_pool_text(&smith_lang_it, arg), arg->length);
+    if (found < 0) return false;
+    uint32_t end = at + 1;
+    int depth = 0;
+    for (; end < frame->end; end++) { // the call's parentheses
+        depth += smith_lang_gt_open(&smith_lang_gt.tokens[end])    ? 1
+                 : smith_lang_gt_close(&smith_lang_gt.tokens[end]) ? -1
+                                                                   : 0;
+        if (depth == 0) break;
+    }
+    if (end >= frame->end) return false;
+    frame->pos = end + 1;
+    uint32_t location = smith_lang_gen_place(host, replay->generic, (SmithLangGenToken *)token, replay->location);
+    if (!smith_lang_replay_call(lang, host, replay, (uint32_t)found, at, at + 1, end + 1, location)) {
+        smith_lang_generic_poison(lang, host, location); // the error is told; the call's place is a name it cannot find
+    }
+    return true;
+}
+
 static void smith_lang_replay_group(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay, uint32_t begin) {
     SmithLangFrame *frame = &replay->frames[replay->count - 1];
     SmithLangGenToken *token = &smith_lang_gt.tokens[begin];
@@ -4824,31 +5118,8 @@ static void smith_lang_replay_group(SmithLang *lang, const SmithHost *host, Smit
     size_t member_length = token->length - module_length - 2;
     int found = smith_lang_generic_resolve(lang, host, text, module_length, colons + 1, member_length);
     uint32_t location = smith_lang_gen_place(host, replay->generic, token, replay->location);
-    if (found >= 0 && replay->instance != nullptr &&
-        (smith_lang_span_has_group((SmithLangSpan){begin + 1, end}) || smith_lang_fields_in(begin + 1, end) ||
-         smith_lang_pack_has_pattern(replay, begin + 2, end - 1) ||
-         smith_lang_expression_of_param(replay, begin + 1, end, &smith_lang_generics[found])) &&
-        replay->count + 3 <= smith_lang_replay_depth_max) {
-        // Its arguments hold a call: they are written to the pool first, to be typed (smith_lang_typed_start).
-        smith_lang_replay_push(replay, 0, 0, 0);
-        SmithLangFrame *finish = &replay->frames[replay->count - 1];
-        finish->action = SmithLangFrame_TypedFinish;
-        finish->group = begin;
-        finish->end = end;
-        finish->generic_index = (uint16_t)found;
-        finish->place = location;
-        size_t finish_at = replay->count - 1;
-        smith_lang_replay_push(replay, begin + 1, end, 0);
-        smith_lang_replay_push(replay, 0, 0, 0);
-        SmithLangFrame *start = &replay->frames[replay->count - 1];
-        start->action = SmithLangFrame_TypedStart;
-        start->source = (int32_t)finish_at;
+    if (found >= 0 && smith_lang_replay_call(lang, host, replay, (uint32_t)found, begin, begin + 1, end, location))
         return;
-    }
-    if (found >= 0 &&
-        smith_lang_call_finish(lang, host, replay, (uint32_t)found, begin + 1, end, location, UINT32_MAX)) {
-        return;
-    }
     char callee[smith_lang_name_max];
     smith_lang_callee_name(lang, text, module_length, colons + 1, member_length, callee, sizeof callee);
     smith_lang_gen_put(lang, host, SmithTokenKind_Identifier, callee, location, replay->instance_id);
@@ -4995,14 +5266,16 @@ static bool smith_lang_replay_list(SmithLang *lang, const SmithHost *host, Smith
     return true;
 }
 
+// The previous token of a body being replayed was a `[`; reset by smith_lang_reset.
+static bool smith_lang_replay_after_open;
+
 // One token of the generic, written with the instance's types for T.
 static void smith_lang_replay_plain(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
                                     SmithLangGenToken *token) {
     if (token->special != SmithLangGen_Plain) return;
     // The `_` of a `[_]` in the body is not written (runtime/lang_unused.c): the body was recorded as written.
-    static bool after_open;
-    bool inferred = after_open && smith_lang_gt_is(token, SmithTokenKind_Identifier, "_");
-    after_open = smith_lang_gt_punct(token, "[");
+    bool inferred = smith_lang_replay_after_open && smith_lang_gt_is(token, SmithTokenKind_Identifier, "_");
+    smith_lang_replay_after_open = smith_lang_gt_punct(token, "[");
     if (inferred) return;
     if (smith_lang_gt_punct(token, "{")) replay->braces += 1;
     if (smith_lang_gt_punct(token, "}") && replay->braces > 0) replay->braces -= 1;
@@ -5011,6 +5284,18 @@ static void smith_lang_replay_plain(SmithLang *lang, const SmithHost *host, Smit
         smith_lang_pack_clash(lang, host, replay, token, place);
     }
     if (replay->typing && smith_lang_typing_param(lang, host, replay, token, place)) return;
+    if (token->kind == SmithTokenKind_Identifier && token->param == 0 &&
+        memchr(smith_lang_gt_str(token), ':', token->length) &&
+        smith_lang_generic_named(lang, host,
+                                 (SmithLangSpan){(uint32_t)(token - smith_lang_gt.tokens),
+                                                 (uint32_t)(token - smith_lang_gt.tokens) + 1}) >= 0) {
+        smith_lang_error(lang, host, place,
+                         "`%.*s` is a generic function: it can only be called, or given to a `constexpr auto` "
+                         "parameter",
+                         (int)token->length, smith_lang_gt_str(token));
+        smith_lang_generic_poison(lang, host, place);
+        return;
+    }
     smith_lang_gen_put_subst(lang, host, replay->generic, replay->instance, token, replay->location,
                              replay->instance_id, replay->instance_id == 0);
 }
@@ -5028,6 +5313,7 @@ static void smith_lang_replay_run(SmithLang *lang, const SmithHost *host, SmithL
         if (replay->instance != nullptr && smith_lang_replay_pattern(lang, host, replay, frame)) continue;
         SmithLangGenToken *token = &smith_lang_gt.tokens[frame->pos];
         if (smith_lang_replay_special(lang, host, replay, frame, token)) continue;
+        if (smith_lang_replay_function_call(lang, host, replay, frame)) continue;
         if (smith_lang_replay_rewritten(lang, host, replay, frame)) continue;
         if (smith_lang_replay_list(lang, host, replay, frame)) continue;
         frame->pos += 1;
@@ -5326,6 +5612,29 @@ static void smith_lang_generic_unclosed(SmithLang *lang, const SmithHost *host) 
     if (lang->call_top > 0) smith_lang_generic_abandon(lang, host, nullptr);
 }
 
+// A generic function named as a whole argument of a call that is read (`sort_by(xs, ascending)`, in a function or in a
+// generic's body): the argument is the generic's name, `module::member`, as one token. The parameter it goes to is
+// `constexpr auto` (smith_lang_infer_function makes the instance each call of it asks for) or the call says it is not
+// (smith_lang_generic_name_error). True when the name was written so.
+static bool smith_lang_generic_as_argument(SmithLang *lang, const SmithHost *host, const char *module,
+                                           size_t module_length, const char *member, size_t member_length,
+                                           uint32_t location, const SmithToken *next) {
+    if (lang->call_top == 0 || lang->calls[lang->call_top - 1].depth != 1) return false;
+    if (smith_lang_gt.count == 0 || !(smith_lang_punct(next, ",") || smith_lang_punct(next, ")"))) return false;
+    const SmithLangGenToken *before = &smith_lang_gt.tokens[smith_lang_gt.count - 1]; // the argument begins here
+    if (before->special != SmithLangGen_Plain ||
+        !(smith_lang_gt_punct(before, "(") || smith_lang_gt_punct(before, ","))) {
+        return false;
+    }
+    char text[smith_lang_name_max];
+    int length = snprintf(text, sizeof text, "%.*s::%.*s", (int)module_length, module, (int)member_length, member);
+    if (length <= 0 || (size_t)length >= sizeof text) return false;
+    smith_lang_generic_use_member(lang, module, module_length, member, member_length);
+    smith_lang_gen_put(lang, host, SmithTokenKind_Identifier, text, location, 0);
+    lang->namespace_done = true;
+    return true;
+}
+
 // The call that `name` begins, when it is to a generic (or, in a generic's body, to anything of a module). Returns
 // false when it is not one and the name is to be written as any other.
 static bool smith_lang_generic_call_core(SmithLang *lang, const SmithHost *host, const char *module,
@@ -5336,6 +5645,9 @@ static bool smith_lang_generic_call_core(SmithLang *lang, const SmithHost *host,
     const SmithToken *open = smith_lang_peek(lang, host, 0, false);
     if (!smith_lang_punct(open, "(")) {
         if (generic_index < 0) return false;
+        if (smith_lang_generic_as_argument(lang, host, module, module_length, member, member_length, location, open)) {
+            return true;
+        }
         smith_lang_error(lang, host, location, "`%.*s` is a generic function: it can only be called, with its type",
                          (int)member_length, member);
         smith_lang_generic_call_done(lang);

@@ -1,0 +1,26 @@
+module order;
+
+// A generic function, written once: an instance for each type of its arguments.
+bool ascending(arithmetic a, typeof(a) b) {
+    return a < b;
+}
+
+// A generic function named where `constexpr auto` is expected is instantiated at the use: each call of `less` makes the
+// instance its argument types ask for, as a direct call would.
+export usize smallest(constexpr auto less, const auto xs[:]) {
+    usize best = 0;
+    for (usize i = 1; i < countof(xs); i++) {
+        if (less(xs[i], xs[best])) best = i;
+    }
+    return best;
+}
+
+// The same function from inside a generic of the module: its element type is known at each instance.
+export usize smallest_of(arithmetic xs[:]) {
+    return smallest(ascending, xs);
+}
+
+// A generic of this module given to a generic of another, by its name.
+export bool descending(arithmetic a, typeof(a) b) {
+    return a > b;
+}

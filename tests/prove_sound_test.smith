@@ -26,12 +26,11 @@ constexpr char cc_flags[_] = "-std=gnu23 -g -O0 -fsanitize=address,undefined -fn
                              "-ftrivial-auto-var-init=pattern -I \"$SMITH_REPO/.smith/include\" -I lowered -w";
 constexpr char cc_common[_] = "\"$SMITH_REPO/lib/trace.c\" \"$SMITH_REPO/lib/smith/contract.smith\"";
 
-// Two harnesses reach the modules' static functions by including their raw lowering (`smith cc --smith-lower`).
+// Two harnesses reach the modules' static functions by including their raw lowering (`smith cc --smith-lower`), made
+// in process (issue #646).
 static void lower_modules(const scratch::Project *p) {
-    scratch::Run run = scratch::sh(
-        p, "mkdir lowered && for m in arena random; do smith cc --smith-lower \"$SMITH_REPO/lib/smith/$m.smith\" "
-           ">lowered/${m}_lowered.c || exit 1; done");
-    scratch::expect_status("prove_sound: the modules are lowered", 0, &run);
+    scratch::write_lowered(p, "lib/smith/arena.smith", "lowered/arena_lowered.c");
+    scratch::write_lowered(p, "lib/smith/random.smith", "lowered/random_lowered.c");
 }
 
 // The values after `prefix` on each line of `text` that starts with it, joined by spaces.

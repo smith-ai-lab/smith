@@ -29,6 +29,41 @@ export scratch::Project project(io::Io *io, const char *base, const char *files)
     return p;
 }
 
+// The script of `built_project`: the runner of a project is built once for every test of the run and of the runs after
+// it (#639: each test of a file built the same runner, 3 s of CPU a test, 16 steps of which 14 compile the same
+// libraries). The key is what the runner is made of: the project's files (and which build arguments), the libraries it
+// compiles and the smith that compiles them. The first test to need one takes a lock by making a folder and builds a
+// copy of the project in the cache; the others wait for its mark (the 600 s hang backstop, and a builder that failed
+// removes the lock, which ends the wait); each test links `build/tests` (a copy would be a new program that macOS scans
+// before it runs, seconds on a loaded host) and keeps the rest of its own project.
+constexpr char shared_script[_] =
+    "here=$SMITH_REPO; root=$SMITH_TEST_CACHE/runner; mkdir -p \"$root\"; "
+    "if [ \"$(uname -s)\" = Darwin ]; then sf='-f %N_%m_%z'; else sf='-c %n_%Y_%s'; fi; "
+    "key=$( { echo \"$ARGS\"; stat $sf \"$SMITH_SELF\" \"$here\"/lib/smith/*.smith \"$here\"/lib/*.c \"$here\"/lib/*.h "
+    "2>/dev/null; find . -name build -prune -o -name .smith -prune -o -type f -print | sort | while read -r f; do "
+    "echo \"$f\"; cat \"$f\"; done; } | shasum -a 256 | cut -c1-20 ); c=$root/$key; "
+    "if [ ! -e \"$c/done\" ]; then "
+    "if mkdir \"$c.lock\" 2>/dev/null; then "
+    "rm -rf \"$c\"; mkdir -p \"$c\" && cp -R . \"$c/proj\" && "
+    "(cd \"$c/proj\" && env SMITH_OUTPUT=full smith build $ARGS >\"$c/log\" 2>&1) && : >\"$c/done\" || "
+    "{ cp \"$c/log\" shared-build.log 2>/dev/null; cat shared-build.log; rm -rf \"$c\" \"$c.lock\"; exit 1; }; "
+    "else n=0; until [ -e \"$c/done\" ]; do "
+    "[ -d \"$c.lock\" ] || { echo \"the shared build of the runner failed\"; exit 1; }; "
+    "n=$((n + 1)); [ $n -lt 3000 ] || { echo \"timed out waiting for the shared build\"; exit 1; }; "
+    "perl -e 'select(undef, undef, undef, 0.2)'; done; fi; fi; "
+    "mkdir -p build && ln -sf \"$c/proj/build/tests\" \"$c/proj/build/tests.stack\" "
+    "\"$c\"/proj/build/libsmith_handlers.dylib* build/";
+
+// A project whose runner is built (or taken from the one an earlier test built): `project` and `build` in one, for a
+// test that only runs `build/tests`; a test that builds again, or expects a failed build, uses those two.
+export scratch::Project built_project(io::Io *io, const char *base, const char *files, const char *arguments) {
+    scratch::Project p = project(io, base, files);
+    scratch::Run run =
+        scratch::sh(&p, format::push(&io->arena, "ARGS='", arguments, "'; ", shared_script, " 2>&1").data);
+    scratch::expect_status("runner: the runner builds", 0, &run);
+    return p;
+}
+
 // More files over a project: the files of another fixture.
 export void add(const scratch::Project *p, const char *files) {
     const char *copy = format::push(&p->io->arena, "cp -R \"$SMITH_REPO/tests/build_fixtures/", files, "/.\" .").data;

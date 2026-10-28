@@ -22,7 +22,9 @@ export void test_build_modules_a_header_is_a_module_with_its_flags_maps_and_depe
         scratch::capture(&p, "ls \"$XDG_CACHE_HOME/smith/modules\" | grep -v '^[.]' | head -1 | tr -d '\\n'");
     (void)format::to(text, sizeof text, "cc -fmodules -fmodules-cache-path=", p.cache, "/smith/modules/", id,
                      " -fmodules-prune-interval=604800 -fmodules-prune-after=2678400 "
-                     "-fmodule-map-file=.smith/modules/inc.modulemap -fmodule-map-file=.smith/modules/smith.modulemap "
+                     "-fmodules-ignore-macro=SMITH_PROVED -fmodules-ignore-macro=SMITH_PROFILING "
+                     "-fmodules-ignore-macro=SMITH_RECORD -fmodule-map-file=.smith/modules/inc.modulemap "
+                     "-fmodule-map-file=.smith/modules/smith.modulemap "
                      "-std=gnu23");
     scratch::expect_contains("modules: the compile has -fmodules", built.out, text);
     scratch::expect_text("modules: the program runs", "2", scratch::sh(&p, "./build/app").out);

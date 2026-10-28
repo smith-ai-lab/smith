@@ -30,14 +30,20 @@ static const char *formatted(const scratch::Project *p, const char *name, const 
 // --- the corpus ----------------------------------------------------------------------------------------------------
 
 // The cases are in .clang-format-ignore (they are inputs written as the case needs them), so the text is formatted
-// under another name, in the style of this folder.
+// under another name, in the style of this folder. Each case is copied as case.smith into a folder of its own (the
+// name decides how a file's own header sorts) and one `smith fmt -i` formats all of them, instead of a process per
+// case.
 export void test_the_corpus_formats_to_its_expected_file(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     scratch::Run run = scratch::sh(
-        &p, "cd \"$SMITH_REPO\" && for file in $(find tests/smith-lang/cases -name '*.smith' -path '*/src/*' | "
-            "LC_ALL=C sort); "
-            "do echo \"==> ${file#tests/smith-lang/cases/} <==\"; smith fmt --style=\"file:$SMITH_REPO/.clang-format\" "
-            "--assume-filename=\"$TMPDIR/case.smith\" < \"$file\" 2>&1; done");
+        &p, "w=\"$PWD\"; mkdir \"$w/m\"; cd \"$SMITH_REPO\" && "
+            "find tests/smith-lang/cases -name '*.smith' -path '*/src/*' | LC_ALL=C sort > \"$w/list\" && "
+            "pax -rw -s ',/\\([^/]*\\)\\.smith$,__\\1/case.smith,' \"$w/m\" < \"$w/list\" && cd \"$w\" && "
+            "sed 's,/\\([^/]*\\)\\.smith$,__\\1/case.smith,; s,^,m/,' list > mirrored && "
+            "xargs smith fmt -i --style=\"file:$SMITH_REPO/.clang-format\" < mirrored 2>&1 && "
+            "sed 's,^tests/smith-lang/cases/,,' list | "
+            "awk 'NR==FNR { name[NR] = $0; next } FNR == 1 { k += 1; print \"==> \" name[k] \" <==\" } { print }' "
+            "- $(cat mirrored)");
     test::golden(io, "tests/smith-fmt/corpus.expected", slice_of(run.out));
 }
 
@@ -67,39 +73,39 @@ static const char *next_line(io::Io *io, const char **at) {
 
 // Every .c file of a root that its .clang-format-ignore does not name (clang-format skips such a file under its own
 // name, not under the .smith one, so it is not compared) formats the same as itself and as a .smith file: the number
-// of files compared, the first that differs noted.
+// of files compared, the first that differs noted. The files (and the .clang-format files among them, so each gets
+// its folder's style) are copied into two folders, c/ as they are and s/ named .smith, and one `smith fmt -i` per
+// folder formats them all, instead of two processes per file.
 static usize same_as_c(io::Io *io, const char *root) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     if (scratch::sh(&p, format::push(&io->arena, "[ -d \"", root, "\" ]").data).status != 0) return 0; // not there
-    const char *listing =
-        scratch::sh(
-            &p,
-            format::push(
-                &io->arena, "set -f; find \"", root,
-                "\" -name '*.c' -not -path '*/.smith/*' -not -path '*/build/*' "
-                "-not -path \"",
-                root,
-                "/.claude/*\" -not -path '*/.git/*' -not -path '*/node_modules/*' "
+    scratch::Run copied = scratch::sh(
+        &p, format::push(
+                &io->arena, "set -f; R='", root,
+                "'; w=\"$PWD\"; mkdir c s; "
+                "find \"$R\" \\( -name '*.c' -o -name .clang-format \\) -not -path '*/.smith/*' -not -path '*/build/*' "
+                "-not -path \"$R/.claude/*\" -not -path '*/.git/*' -not -path '*/node_modules/*' "
                 "-not -path '*/tree-sitter/src/*' -not -path '*/expect/*' $(awk '!/^#/ && NF { gsub(/\\*\\*/, \"*\"); "
-                "print \"-not -path \" root \"/\" $0 }' root=\"",
-                root, "\" \"", root, "/.clang-format-ignore\" 2>/dev/null) | LC_ALL=C sort")
-                .data)
-            .out;
+                "print \"-not -path \" root \"/\" $0 }' root=\"$R\" \"$R/.clang-format-ignore\" 2>/dev/null) "
+                "| LC_ALL=C sort | sed \"s,^$R/,,\" > list; "
+                "(cd \"$R\" && pax -rw \"$w/c\" < \"$w/list\" && pax -rw -s ',\\.c$,.smith,' \"$w/s\" < \"$w/list\"); "
+                "(cd c && grep '\\.c$' ../list | xargs smith fmt -i 2>&1); "
+                "(cd s && sed 's,\\.c$,.smith,' ../list | grep '\\.smith$' | xargs smith fmt -i 2>&1)")
+                .data);
+    scratch::expect_text("the files format without a message", "", copied.out);
+    const char *listing = scratch::read(&p, "list");
     usize same = 0;
     usize different = 0;
     for (const char *file = next_line(io, &listing); file != nullptr; file = next_line(io, &listing)) {
-        const char *command_c =
-            format::push(&io->arena, "smith fmt --assume-filename=\"", file, "\" < \"", file, "\" 2>&1").data;
-        const char *command_smith =
-            format::push(&io->arena, "f='", file, "'; smith fmt --assume-filename=\"${f%.c}.smith\" < \"$f\" 2>&1")
-                .data;
-        const char *text_c = scratch::sh(&p, command_c).out;
-        const char *text_smith = scratch::sh(&p, command_smith).out;
-        if (c::strcmp(text_c, text_smith) == 0) {
+        usize length = c::strlen(file);
+        if (length < 2 || c::strcmp(file + length - 2, ".c") != 0) continue; // a .clang-format
+        const char *as_smith = format::push(&io->arena, "s/", file[0:length - 2], ".smith").data;
+        const char *text_c = scratch::read(&p, format::push(&io->arena, "c/", file).data);
+        if (c::strcmp(text_c, scratch::read(&p, as_smith)) == 0) {
             same += 1;
         } else {
             different += 1;
-            test::note("differs as .smith: %s", file);
+            test::note("differs as .smith: %s/%s", root, file);
         }
     }
     test::check_equal(different, (usize)0);

@@ -467,6 +467,10 @@ export void test_readme_project_slices(io::Io *io) {
     project_case(io, "slices");
 }
 
+export void test_readme_project_refuse(io::Io *io) {
+    project_case(io, "refuse");
+}
+
 export void test_readme_project_memcopy(io::Io *io) {
     project_case(io, "memcopy");
 }

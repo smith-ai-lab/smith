@@ -760,6 +760,48 @@ static bool smith_body_import(const SmithHost *host, const SmithLangBinding *bin
     return any;
 }
 
+// What the compile read of a module, named for the depfile. The copies are a system buffer, and everything included
+// from a system file is a system header, which `-MMD` leaves out of the depfile; a `__has_include` is recorded by what
+// it finds (an `-I` folder is a user one), so each file is named by one, and then included when there is a body file:
+// the body file, the module's source (the second line of a body, which a body made in memory has too) and the C
+// headers its text includes.
+static size_t smith_body_depend(size_t used, const SmithBodyModule *module) {
+    static const char guard[] = "#if __has_include(";
+    const char *file = module->file;
+    char *out = smith_body_out;
+    size_t capacity = sizeof smith_body_out - sizeof "#endif\n#include \"\"\n" - PATH_MAX;
+    if (module->path[0] != 0 && used < capacity) {
+        used += (size_t)snprintf(out + used, sizeof smith_body_out - used,
+                                 "#if __has_include(\"%s\")\n#endif\n#include \"%s\"\n", module->path, module->path);
+    }
+    const char *source = file != nullptr ? memmem(file, module->length, guard, sizeof guard - 1) : nullptr;
+    if (module->path[0] == 0 && source != nullptr) { // the line of the module's source
+        const char *end = memchr(source, '\n', (size_t)(file + module->length - source));
+        if (end != nullptr && (size_t)(end - source) < PATH_MAX && used < capacity) {
+            used += (size_t)snprintf(out + used, sizeof smith_body_out - used, "%.*s\n#endif\n", (int)(end - source),
+                                     source);
+        }
+    }
+    for (uint32_t i = module->first; i < module->first + module->count; i++) { // the headers of its includes
+        const SmithBodyEntry *entry = &smith_body_entries[i];
+        if (!entry->selected || entry->kind != 'H') continue;
+        const char *text = module->file + entry->text;
+        const char *stop = text + entry->text_length;
+        while (text < stop) {
+            const char *end = memchr(text, '\n', (size_t)(stop - text));
+            end = end != nullptr ? end : stop;
+            static const char include[] = "#include ";
+            if ((size_t)(end - text) > sizeof include && memcmp(text, include, sizeof include - 1) == 0 &&
+                used < capacity && (size_t)(end - text) < PATH_MAX) {
+                used += (size_t)snprintf(out + used, sizeof smith_body_out - used, "#if __has_include(%.*s)\n#endif\n",
+                                         (int)(end - text - (sizeof include - 1)), text + sizeof include - 1);
+            }
+            text = end + 1;
+        }
+    }
+    return used;
+}
+
 // The text that defines what was selected: the headers its names need first, the modules the last reached first (what a
 // module uses is defined before it), and the `#include` of each body file, for the depfile (every section of it is
 // closed: no name is defined for it).
@@ -779,9 +821,8 @@ static size_t smith_body_assemble(const SmithHost *host) {
             smith_lang_module_to_path(module->name, header, sizeof header);
             host->include(host->context, header, false);
         }
-        if (!module->any || module->path[0] == 0) continue;
-        int written = snprintf(smith_body_out + used, sizeof smith_body_out - used, "#include \"%s\"\n", module->path);
-        used += written > 0 ? (size_t)written : 0;
+        if (!module->any) continue;
+        used = smith_body_depend(used, module);
     }
     for (size_t m = smith_body_module_count; m > 0; m--)
         used = smith_body_write_module(used, &smith_body_modules[m - 1]);

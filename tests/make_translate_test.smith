@@ -1,0 +1,370 @@
+// The translation of a Makefile into a build.c (issue #44, runtime/make*.c) as a function, in process (issue #646): a
+// folder with a Makefile in, the build.c text and the report of what was not translated out, through
+// `smith_core_make_translate` (include/smith_core.h, smith.c compiled as a library by tests/units/build.c). No process
+// starts: the fixtures of tests/build_fixtures/make_NN are copied into the test's scratch folder, with the files a case
+// adds, and the text is checked for what it says. What needs a real make, a compiler or the verb (the translation built
+// and compared with make's, lint and format of the result, which Makefile `smith build --dump-config` picks) is in
+// tests/make_test.smith. The text here is the translation before `smith fmt` has laid it out.
+module make_translate_test;
+
+import smith::arena;
+import smith::format;
+import smith::io;
+import smith::mem;
+import smith::test;
+import scratch;
+import <smith_core.h>;
+import <string.h>;
+
+constexpr usize build_capacity = 1U << 20;
+constexpr usize report_capacity = 1U << 16;
+
+typedef struct {
+    const char *build;  // the build.c
+    const char *report; // standard error of `smith build --dump-config`
+} Translation;
+
+static const char *join(io::Io *io, const char *folder, const char *name) {
+    return format::push(&io->arena, folder, "/", name).data;
+}
+
+static void copy_file(io::Io *io, const char *from, const char *to) {
+    io::Read file = io::files_read(&io->files, &io->arena, from);
+    test::check_equal(file.error.code, 0);
+    io::Error written = io::files_write(&io->files, to, file.data, io::Replace);
+    test::check_equal(written.code, 0);
+}
+
+// The plain files of a folder, copied into another that is made.
+static void copy_files(io::Io *io, const char *from, const char *to) {
+    io::Error made = io::files_make_folder(&io->files, to);
+    test::check_equal(made.code, 0);
+    io::FileList list = io::files_list(&io->files, &io->arena, from);
+    test::check_equal(list.error.code, 0);
+    for (usize i = 0; i < list.count; i++) {
+        if (!list.entries[i].folder)
+            copy_file(io, join(io, from, list.entries[i].name), join(io, to, list.entries[i].name));
+    }
+}
+
+// A project in the test's scratch folder: the files of tests/build_fixtures/<fixture> (none when it is nullptr), and
+// the folders in it with their files.
+static const char *project_named(io::Io *io, const char *name, const char *fixture) {
+    const char *folder = join(io, test::scratch(io), name);
+    io::Error made = io::files_make_folder(&io->files, folder);
+    test::check_equal(made.code, 0);
+    if (fixture == nullptr) return folder;
+    const char *from =
+        format::push(&io->arena, io::args_env(&io->args, "SMITH_REPO"), "/tests/build_fixtures/", fixture).data;
+    copy_files(io, from, folder);
+    io::FileList list = io::files_list(&io->files, &io->arena, from);
+    for (usize i = 0; i < list.count; i++) {
+        if (list.entries[i].folder)
+            copy_files(io, join(io, from, list.entries[i].name), join(io, folder, list.entries[i].name));
+    }
+    return folder;
+}
+
+static const char *project(io::Io *io, const char *fixture) {
+    return project_named(io, "p", fixture);
+}
+
+// A file of the project, in a folder made for it.
+static void write(io::Io *io, const char *folder, const char *name, const char *text) {
+    const char *path = join(io, folder, name);
+    const char *slash = c::strrchr(path, '/');
+    char *parent = arena::push_slice(&io->arena, char, c::strlen(path) + 1).data;
+    mem::copy(parent[0:(usize)(slash - path)], path[0:(usize)(slash - path)]);
+    parent[slash - path] = '\0';
+    io::Error made = io::files_make_folder(&io->files, parent);
+    test::check_equal(made.code, 0);
+    const u8 *bytes = (const u8 *)text;
+    io::Error written = io::files_write(&io->files, path, bytes[0:c::strlen(text)], io::Replace);
+    test::check_equal(written.code, 0);
+}
+
+// `main.c`, which most Makefiles name and the translation looks for.
+static void main_c(io::Io *io, const char *folder) {
+    write(io, folder, "main.c", "int main(void) { return 0; }\n");
+}
+
+static Translation translate(io::Io *io, const char *folder) {
+    char *build = arena::push_slice(&io->arena, char, build_capacity).data;
+    char *report = arena::push_slice(&io->arena, char, report_capacity).data;
+    bool done = c::smith_core_make_translate(folder, nullptr, build, build_capacity, report, report_capacity);
+    test::check_equal(done, true);
+    return (Translation){.build = build, .report = report};
+}
+
+static void has(const char *name, const Translation *t, const char *text) {
+    scratch::expect_contains(name, t->build, text);
+}
+
+static void lacks(const char *name, const Translation *t, const char *text) {
+    scratch::expect_lacks(name, t->build, text);
+}
+
+// The compile flags `-D<name>="<value>"` the translation writes, as GNU make computes the values (the table is what
+// `make -n -B` printed for the fixture).
+typedef struct {
+    const char *name;
+    const char *value;
+} Define;
+
+static void defines(io::Io *io, const char *label, const Translation *t, const Define *table, usize count) {
+    for (usize i = 0; i < count; i++) {
+        const char *flag = format::push(&io->arena, "\"-D", table[i].name, "=\\\"", table[i].value, "\\\"\"").data;
+        scratch::expect_contains(format::push(&io->arena, label, ": ", table[i].name).data, t->build, flag);
+    }
+}
+
+// 1. Variables: their flavors, expansion, += and ?=, substitution references, ${X}, override.
+export void test_variables(io::Io *io) {
+    const char *folder = project(io, "make_01");
+    main_c(io, folder);
+    Translation t = translate(io, folder);
+    has("variables: the flags of the compile are written out", &t, "\"-DR1=\\\"2\\\"\"");
+    has("variables: a command-line variable is an option", &t, "smith_option_value(b, \"UNDEFINED_VARIABLE\"");
+    has("variables: the option has the Makefile's line", &t, "Makefile:");
+    const Define table[_] = {{"R1", "2"}, {"R2", "1"}, {"R7", "2y"}, {"R8", "2-1"}, {"R9", "j"}, {"R10", "changed"}};
+    defines(io, "variables: the value make computes", &t, table, countof(table));
+}
+
+// 2. The functions of the subset.
+export void test_functions(io::Io *io) {
+    const char *folder = project(io, "make_02");
+    main_c(io, folder);
+    Translation t = translate(io, folder);
+    scratch::expect_text("functions: no construct is reported", "", t.report);
+    const Define table[_] = {
+        {"R1", "a_b_c"},       {"R2", "4"},          {"R3", "x.o_y.o_z.h"}, {"R4", "x.c_z.h"},   {"R5", "y.o_z.h"},
+        {"R6", "pre-a_pre-b"}, {"R7", "a.x_b.x"},    {"R8", "a/b_d"},       {"R9", "b.c_e.h"},   {"R10", "a/_./"},
+        {"R11", ".c_.h"},      {"R12", "b-a-a-a_c"}, {"R13", "a1_b2"},      {"R14", "11_22_33"}, {"R15", "yes-no-z-b"},
+        {"R16", "bx"},         {"R17", "b_A_c_A"},   {"R18", "main.c"},     {"R19", "a b-a;b"},  {"R20", "a_b_c"},
+    };
+    defines(io, "functions: the value make computes", &t, table, countof(table));
+}
+
+// 3. Rules: explicit and pattern rules, order-only prerequisites, the automatic variables, a recipe that is not a
+// compile.
+export void test_rules(io::Io *io) {
+    const char *folder = project(io, "make_03");
+    main_c(io, folder);
+    write(io, folder, "a.in", "one\n");
+    write(io, folder, "b.in", "two\n");
+    Translation t = translate(io, folder);
+    has("rules: a pattern rule's compile is a smith_object", &t, "smith_object(b, &object_1);");
+    has("rules: a link is a smith_program", &t, "smith_program(b, &program_1);");
+    has("rules: another recipe is a smith_step", &t, "smith_step(b, &step_");
+    has("rules: each block says where it came from", &t, "// Makefile:");
+}
+
+// 4. Recipes: @ and -, line continuations, several lines.
+export void test_recipes(io::Io *io) {
+    const char *folder = project(io, "make_04");
+    Translation t = translate(io, folder);
+    has("recipes: several lines are one script", &t, "set -e");
+}
+
+// 5. Phony targets, the default goal, and the names of smith's verbs.
+export void test_phony_targets_and_the_default_goal(io::Io *io) {
+    const char *folder = project(io, "make_05");
+    main_c(io, folder);
+    Translation t = translate(io, folder);
+    has("phony: the first target is the default", &t, "smith_default(b, (const char *[]){\"prog\", nullptr});");
+    has("phony: clean is dropped, with the reason", &t, "`clean` is dropped");
+    has("phony: a verb's name becomes make-test, which smith test runs", &t, "smith_task(b, \"make-test\", &");
+    has("phony: and it is one of the tests", &t, ".test = true,");
+    has("phony: run is smith run", &t, "`run` is `smith run`");
+    has("phony: check is an alias of another name", &t, "smith_alias(b, \"make-check\", ");
+    has("phony: another phony target is a task", &t, "smith_task(b, \"extra\", &");
+    lacks("phony: no task named after a verb", &t, "smith_task(b, \"test\"");
+    copy_file(io, join(io, folder, "Makefile.default"), join(io, folder, "Makefile"));
+    Translation other = translate(io, folder);
+    has(".DEFAULT_GOAL names the default", &other, "smith_default(b, (const char *[]){\"second\", nullptr});");
+}
+
+// 6. include and -include.
+export void test_include(io::Io *io) {
+    const char *folder = project(io, "make_06");
+    main_c(io, folder);
+    Translation t = translate(io, folder);
+    scratch::expect_text("include: nothing is reported", "", t.report);
+    has("include: dependency files are dropped, with a note", &t, "smith tracks the headers");
+    lacks("include: -MMD is not kept", &t, "\"-MMD\"");
+    const Define table[_] = {{"R1", "included"}};
+    defines(io, "include: the value make computes", &t, table, countof(table));
+}
+
+// 7. Conditionals: ifeq, ifneq, ifdef, ifndef, else, else ifeq.
+export void test_conditionals(io::Io *io) {
+    const char *folder = project(io, "make_07");
+    main_c(io, folder);
+    Translation t = translate(io, folder);
+    has("conditionals: a test of an option the Makefile never sets is an option", &t, "build_never");
+    const Define table[_] = {{"R1", "fast"},  {"R2", "other"},  {"R3", "defined"},
+                             {"R4", "empty"}, {"R6", "quoted"}, {"R7", "nested"}};
+    has("conditionals: ifndef of an option is undefined while the option is empty", &t,
+        "(build_never)[0] == '\\0') ? \"undefined\" : \"\"");
+    defines(io, "conditionals: the value make computes", &t, table, countof(table));
+}
+
+// 8. A test of the platform keeps both branches, as an if on b->os and b->arch.
+export void test_platform(io::Io *io) {
+    const char *folder = project(io, "make_08");
+    main_c(io, folder);
+    Translation t = translate(io, folder);
+    has("platform: Darwin is a test of b->os", &t, "strcmp(b->os, \"Darwin\") == 0");
+    has("platform: and Linux", &t, "strcmp(b->os, \"Linux\") == 0");
+    has("platform: OS == Windows_NT is a test of b->os too", &t, "strcmp(b->os, \"Windows_NT\") == 0");
+    has("platform: the architecture is b->arch", &t, "b->arch");
+    scratch::expect_text("platform: a test of the platform is not reported as unsupported", "", t.report);
+}
+
+// 9. Command-line knobs are -D options of the build file.
+export void test_knobs(io::Io *io) {
+    const char *folder = project(io, "make_09");
+    main_c(io, folder);
+    Translation t = translate(io, folder);
+    has("knobs: the first line names the options", &t, "// Options the Makefile reads from the command line");
+    has("knobs: DEBUG", &t, "-DDEBUG=...");
+    has("knobs: VERBOSE", &t, "-DVERBOSE=...");
+}
+
+// 10. make's built-in rules for C: a compile and a link nobody wrote.
+export void test_built_in_rules(io::Io *io) {
+    const char *folder = project(io, "make_10");
+    write(io, folder, "prog.c", "int helper(void);\nint main(void) { return helper(); }\n");
+    write(io, folder, "helper.c", "int helper(void) { return 1; }\n");
+    Translation t = translate(io, folder);
+    has("built-in rules: the compile is a smith_object", &t, "smith_object(b, &object_1);");
+    has("built-in rules: with the CFLAGS", &t, "\"-O1\"");
+    has("built-in rules: the link is a smith_program", &t, "smith_program(b, &program_1);");
+    has("built-in rules: with the value make computes", &t, "-DR1=\\\"built-in\\\"");
+}
+
+// 11. An archive is a step, and the program that links it names it a library.
+export void test_archive(io::Io *io) {
+    const char *folder = project(io, "make_11");
+    main_c(io, folder);
+    write(io, folder, "lib.c", "const char *name(void) { return \"lib\"; }\n");
+    Translation t = translate(io, folder);
+    has("archive: ar is a step", &t, "\"ar\", \"rcs\"");
+    has("archive: the library of the link", &t, ".libraries = (const char *[]){\"libx.a\", nullptr}");
+    has("archive: with the value make computes", &t, "-DR1=\\\"archive\\\"");
+}
+
+// 12. Recursive make: a goal of the same Makefile, and -C another folder.
+export void test_recursive_make(io::Io *io) {
+    const char *folder = project(io, "make_12");
+    main_c(io, folder);
+    write(io, folder, "sub/lib.c", "const char *name(void) { return \"sub\"; }\n");
+    Translation t = translate(io, folder);
+    has("recursive make: the other folder's targets are named under it", &t, "\"sub/lib.a\"");
+    has("recursive make: and run in it", &t, "cd 'sub'");
+    has("recursive make: the other Makefile is the source of the comment", &t, "sub/Makefile:");
+    scratch::expect_text("recursive make: nothing is reported", "", t.report);
+    has("recursive make: with the value make computes", &t, "-DR1=\\\"recursive\\\"");
+}
+
+// 13. What is outside the subset is reported by name, file and line, and the rest still translates.
+export void test_what_is_outside_the_subset_is_reported(io::Io *io) {
+    const char *folder = project(io, "make_13");
+    main_c(io, folder);
+    write(io, folder, "other", "other\n");
+    Translation t = translate(io, folder);
+    scratch::expect_contains("reported: VPATH by line", t.report, "Makefile:1: not translated: VPATH is not supported");
+    scratch::expect_contains("reported: .SECONDEXPANSION", t.report,
+                             "Makefile:2: not translated: .SECONDEXPANSION is not supported");
+    scratch::expect_contains("reported: a double-colon rule", t.report,
+                             "Makefile:5: not translated: a double-colon rule is not supported");
+    scratch::expect_contains("reported: a target-specific variable", t.report,
+                             "Makefile:7: not translated: a target-specific variable is not supported");
+    scratch::expect_contains("reported: $(shell) is frozen", t.report,
+                             "Makefile:11: not translated: $(shell echo frozen) was run now and is frozen");
+    scratch::expect_contains("reported: eval in a recipe", t.report,
+                             "Makefile:10: not translated: $(eval) in a recipe is not supported");
+    has("reported: the build.c says so too", &t, "// NOT TRANSLATED");
+    has("reported: with the line", &t, "//   Makefile:1: VPATH is not supported");
+}
+
+// 14. A flags variable and a pattern rule.
+export void test_readable_names(io::Io *io) {
+    const char *folder = project(io, "make_14");
+    main_c(io, folder);
+    write(io, folder, "second.c", "int second_main(void) { return 0; }\n");
+    Translation t = translate(io, folder);
+    has("readable: a flags variable is an array with the Makefile's name", &t, "const char *const *build_warn =");
+    has("readable: and the other uses it", &t, "smith_cat(b, build_warn, ");
+    has("readable: the compiler is smith-cc", &t, ".compiler = \"smith-cc\"");
+    has("readable: the header names the Makefile", &t, "// build.c, translated from Makefile");
+}
+
+// 15. A rule under a test of the platform is a step that build.c declares only there; two that differ are reported.
+export void test_a_rule_under_a_test_of_the_platform(io::Io *io) {
+    const char *folder = project(io, "make_15");
+    Translation t = translate(io, folder);
+    has("guarded rule: the step is declared under the test", &t, "if ((strcmp(b->os, \"NotAnOs\") != 0)) {");
+    scratch::expect_contains("guarded rule: two recipes under different tests are reported", t.report,
+                             "other.txt has recipes under different tests");
+}
+
+// A wildcard of a command-line variable is read at its default, and said so.
+export void test_a_wildcard_of_an_option_is_read_at_its_default(io::Io *io) {
+    const char *folder = project(io, "make_16");
+    write(io, folder, "font.bdf", "font\n");
+    Translation t = translate(io, folder);
+    scratch::expect_contains("wildcard of an option: reported", t.report,
+                             "$(wildcard $(FONT)) was read now, with the option at its default (font.bdf)");
+    has("wildcard of an option: its default is the file", &t, "\"font.bdf\"");
+}
+
+// 16. Which Makefile, and when: GNUmakefile comes first, then Makefile (the folder with a build.c is a case of the
+// verb, in tests/make_test.smith).
+export void test_which_makefile(io::Io *io) {
+    const char *folder = project(io, "make_17");
+    Translation t = translate(io, folder);
+    has("files: GNUmakefile comes first", &t, "\"b\"");
+    lacks("files: and Makefile is left", &t, "\"a\"");
+    io::Error removed = io::files_remove(&io->files, join(io, folder, "GNUmakefile"));
+    test::check_equal(removed.code, 0);
+    Translation other = translate(io, folder);
+    has("files: otherwise Makefile", &other, "\"a\"");
+}
+
+// 19. A Makefile too big for one function of 70 lines: build.c is a function for each run of targets, the variables are
+// statics.
+export void test_a_makefile_too_big_for_one_function(io::Io *io) {
+    const char *folder = project(io, nullptr);
+    for (i32 i = 1; i <= 45; i++) {
+        write(io, folder, format::push(&io->arena, "src", i, ".dat").data, "");
+    }
+    char *makefile = arena::push_slice(&io->arena, char, 1U << 16).data;
+    usize used = (usize)__builtin_snprintf(makefile, 1U << 16, "DATA := $(sort $(wildcard src*.dat))\nPREFIX ?= out\n");
+    for (i32 i = 1; i <= 30; i++) {
+        used += (usize)__builtin_snprintf(makefile + used, (1U << 16) - used,
+                                          "step%d: $(DATA)\n\t@touch $(PREFIX)%d.txt $(DATA)\n", i, i);
+    }
+    __builtin_snprintf(makefile + used, (1U << 16) - used, ".PHONY: all\nall: step1 step30\n");
+    write(io, folder, "Makefile", makefile);
+    Translation t = translate(io, folder);
+    has("split: the variables are statics", &t, "static const char *const *build_data;");
+    has("split: a long list is written in pieces", &t, "build_data = smith_cat(b, build_data,");
+    has("split: a function for each run of targets", &t, "static void part_2(SmithBuild *b) {");
+    has("split: build() calls them", &t, "    part_1(b);");
+}
+
+// The translation starts afresh each time it runs: the same Makefile twice in a process gives the same text, and one
+// that reported something does not leave its reports to the next (tests/units/build.c links the core once for all).
+export void test_a_translation_does_not_remember_the_last(io::Io *io) {
+    const char *folder = project(io, "make_13");
+    main_c(io, folder);
+    Translation first = translate(io, folder);
+    Translation again = translate(io, folder);
+    scratch::expect_text("twice: the same build.c", first.build, again.build);
+    scratch::expect_text("twice: and the same report", first.report, again.report);
+    const char *plain = project_named(io, "q", "make_02");
+    main_c(io, plain);
+    Translation other = translate(io, plain);
+    scratch::expect_text("after a Makefile with reports: nothing is reported", "", other.report);
+}

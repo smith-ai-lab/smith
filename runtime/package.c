@@ -37,7 +37,10 @@
 #include <smith/contract.h>
 #include <smith/io.h>
 #include <smith/random.h>
-#if __has_include("internal/http.c")
+#ifdef SMITH_CORE // the units runner links these two as objects of its own (include/smith_core.h)
+#include <smith/http.h>
+#include <smith/trace.h>
+#elif __has_include("internal/http.c")
 #include "internal/http.c"
 #include "lib/trace.c"
 #else
@@ -246,10 +249,11 @@ static bool smith_package_download(SmithIo *io, const char *url, const char *des
 typedef enum {
     SmithCache_Modules,
     SmithCache_Packages,
+    SmithCache_Lint,
 } SmithCacheKind;
 
 static const char *smith_cache_name(SmithCacheKind kind) {
-    return kind == SmithCache_Modules ? "modules" : "packages";
+    return kind == SmithCache_Modules ? "modules" : kind == SmithCache_Packages ? "packages" : "lint";
 }
 
 // $XDG_CACHE_HOME/smith, or ~/.cache/smith: the folder of every smith cache.
@@ -300,10 +304,133 @@ static bool smith_cache_older(const struct stat *info, time_t now, int seconds) 
     return now - info->st_mtime > seconds;
 }
 
+// A byte cap on every cache, with least-recently-used eviction (issue #618), beside the 31-day rule. SMITH_CACHE_MAX
+// is the cap of each cache root in bytes (a k, M, G or T suffix counts thousands, as `smith cache` shows sizes), 10 GB
+// when it is not set. An entry is measured by its disk space and its last use; the entries' bytes are counted in steps
+// of age (half an hour) so that the oldest go first without a table of entries (smith's own code has no malloc): the
+// cutoff is the age from which everything goes so that what is left fits.
+constexpr uint64_t smith_cache_max_default = (uint64_t)10 * 1000 * 1000 * 1000;
+constexpr time_t smith_cache_age_step = 1800;
+constexpr size_t smith_cache_age_steps = 2048; // 42 days; the older ones share the last step
+constexpr int smith_cache_walk_files = 64;
+
+typedef struct {
+    uint64_t bytes[smith_cache_age_steps];
+    uint64_t total;
+} SmithCacheAges;
+
+static SmithCacheAges smith_cache_ages;
+static uint64_t smith_cache_walk_bytes;
+static uint64_t smith_cache_walk_regular; // the regular files under the path
+static time_t smith_cache_walk_newest;
+
+static int smith_cache_walk_visit(const char *path, const struct stat *info, int type, struct FTW *where) {
+    (void)path;
+    (void)type;
+    (void)where;
+    smith_cache_walk_bytes += (uint64_t)info->st_blocks * 512U;
+    if (S_ISREG(info->st_mode)) smith_cache_walk_regular += 1;
+    if (info->st_mtime > smith_cache_walk_newest) smith_cache_walk_newest = info->st_mtime;
+    return 0;
+}
+
+// The disk space of everything under path (itself included) and the newest modification time in it.
+static void smith_cache_measure(const char *path, uint64_t *bytes, time_t *newest) {
+    smith_cache_walk_bytes = 0;
+    smith_cache_walk_regular = 0;
+    smith_cache_walk_newest = 0;
+    nftw(path, smith_cache_walk_visit, smith_cache_walk_files, FTW_PHYS);
+    *bytes = smith_cache_walk_bytes;
+    *newest = smith_cache_walk_newest;
+}
+
+// The cap of one cache root, in bytes.
+static uint64_t smith_cache_limit(void) {
+    const char *text = getenv("SMITH_CACHE_MAX");
+    if (text == nullptr || *text == '\0') return smith_cache_max_default;
+    char *end = nullptr;
+    unsigned long long value = strtoull(text, &end, 10);
+    if (end == text) return smith_cache_max_default;
+    switch (*end) {
+    case 'k':
+    case 'K':
+        return (uint64_t)value * 1000;
+    case 'm':
+    case 'M':
+        return (uint64_t)value * 1000 * 1000;
+    case 'g':
+    case 'G':
+        return (uint64_t)value * 1000 * 1000 * 1000;
+    case 't':
+    case 'T':
+        return (uint64_t)value * 1000 * 1000 * 1000 * 1000;
+    default:
+        return (uint64_t)value;
+    }
+}
+
+static void smith_cache_ages_reset(void) {
+    memset(&smith_cache_ages, 0, sizeof smith_cache_ages);
+}
+
+static void smith_cache_ages_add(uint64_t bytes, time_t used, time_t now) {
+    time_t age = now > used ? now - used : 0;
+    size_t step = (size_t)(age / smith_cache_age_step);
+    if (step >= smith_cache_age_steps) step = smith_cache_age_steps - 1;
+    smith_cache_ages.bytes[step] += bytes;
+    smith_cache_ages.total += bytes;
+}
+
+// The age in seconds from which the entries go (an entry at least that old) so that `excess` bytes are shed; -1 when
+// nothing needs to go. When even everything is not enough, 0: every entry that may go.
+static long smith_cache_cutoff(uint64_t excess) {
+    if (excess == 0) return -1;
+    uint64_t shed = 0;
+    for (size_t step = smith_cache_age_steps; step-- > 0;) {
+        shed += smith_cache_ages.bytes[step];
+        if (shed >= excess) return (long)step * (long)smith_cache_age_step;
+    }
+    return 0;
+}
+
+// Whether an entry last used at `used` goes at this cutoff.
+static bool smith_cache_goes(time_t used, time_t now, long cutoff) {
+    return cutoff >= 0 && (long)(now > used ? now - used : 0) >= cutoff;
+}
+
 // Records that a build uses the package <hex>: <packages>/<hex>.used.
 static void smith_package_use(const char *packages, const char *digits) {
     char stamp[PATH_MAX];
     if (smith_cache_join(stamp, packages, digits, ".used")) smith_cache_touch(stamp);
+}
+
+// Removes the package <name> when its stamp says it was last used more than `seconds` ago (the rule above: renamed out
+// of the way, the stamp read again, renamed back if a build touched it meanwhile). A package with no stamp is stamped
+// now, not removed. Returns whether it was removed.
+static bool smith_package_evict(const char *packages, const char *name, time_t now, int seconds) {
+    char path[PATH_MAX];
+    char stamp[PATH_MAX];
+    char parked[PATH_MAX];
+    if (!smith_cache_join(path, packages, name, "")) return false;
+    int stamp_length = snprintf(stamp, sizeof stamp, "%s.used", path);
+    int parked_length = snprintf(parked, sizeof parked, "%s/.tmp-prune-%d-%s", packages, (int)getpid(), name);
+    struct stat info;
+    if (lstat(path, &info) != 0 || !S_ISDIR(info.st_mode) || stamp_length >= PATH_MAX || parked_length >= PATH_MAX)
+        return false;
+    struct stat used;
+    if (stat(stamp, &used) != 0) {
+        smith_cache_touch(stamp);
+        return false;
+    }
+    if (!smith_cache_older(&used, now, seconds)) return false;
+    if (rename(path, parked) != 0) return false;
+    if (stat(stamp, &used) == 0 && !smith_cache_older(&used, now, seconds)) {
+        if (rename(parked, path) != 0) smith_package_remove(parked);
+        return false;
+    }
+    smith_package_remove(parked);
+    remove(stamp);
+    return true;
 }
 
 // Prunes one entry of the packages folder.
@@ -332,24 +459,7 @@ static void smith_package_prune_entry(const char *packages, const char *name, ti
         if (!smith_package_is_folder(folder) && smith_cache_older(&info, now, smith_cache_prune_after)) remove(path);
         return;
     }
-    char stamp[PATH_MAX];
-    char parked[PATH_MAX];
-    int stamp_length = snprintf(stamp, sizeof stamp, "%s.used", path);
-    int parked_length = snprintf(parked, sizeof parked, "%s/.tmp-prune-%d-%s", packages, (int)getpid(), name);
-    if (!S_ISDIR(info.st_mode) || stamp_length >= PATH_MAX || parked_length >= PATH_MAX) return;
-    struct stat used;
-    if (stat(stamp, &used) != 0) {
-        smith_cache_touch(stamp);
-        return;
-    }
-    if (!smith_cache_older(&used, now, smith_cache_prune_after)) return;
-    if (rename(path, parked) != 0) return;
-    if (stat(stamp, &used) == 0 && !smith_cache_older(&used, now, smith_cache_prune_after)) {
-        if (rename(parked, path) != 0) smith_package_remove(parked);
-        return;
-    }
-    smith_package_remove(parked);
-    remove(stamp);
+    smith_package_evict(packages, name, now, smith_cache_prune_after);
 }
 
 // The weekly check, as part of every smith_package. When it is not due this is one stat of prune.timestamp. When it is
@@ -369,6 +479,58 @@ static void smith_package_prune(const char *packages) {
         if (entry == nullptr) break;
         if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
         smith_package_prune_entry(packages, entry->d_name, now);
+    }
+    closedir(dir);
+}
+
+// Whether a name in the packages folder is a package (a folder of a hash), not a stamp, a temporary or the timestamp.
+static bool smith_package_is_entry(const char *packages, const char *name) {
+    char path[PATH_MAX];
+    return name[0] != '.' && smith_cache_join(path, packages, name, "") && smith_package_is_folder(path);
+}
+
+// The last use of the package <name>: its stamp, else its folder's own time.
+static time_t smith_package_used(const char *packages, const char *name, time_t folder_time) {
+    char stamp[PATH_MAX];
+    struct stat info;
+    if (smith_cache_join(stamp, packages, name, ".used") && stat(stamp, &info) == 0) return info.st_mtime;
+    return folder_time;
+}
+
+// The cap (issue #618): when the packages are over it, the least recently used go until they fit, never `keep` (the
+// package this build just made). Each goes by smith_package_evict, so a build that touched its stamp meanwhile keeps
+// it. Run after a fetch, which is the only write.
+static void smith_package_cap(const char *packages, const char *keep) {
+    uint64_t cap = smith_cache_limit();
+    time_t now = time(nullptr);
+    smith_cache_ages_reset();
+    DIR *dir = opendir(packages);
+    if (dir == nullptr) return;
+    for (size_t i = 0; i < 1000000; i++) { // bounded by the entries
+        struct dirent *entry = readdir(dir);
+        if (entry == nullptr) break;
+        char path[PATH_MAX];
+        if (!smith_package_is_entry(packages, entry->d_name) || !smith_cache_join(path, packages, entry->d_name, ""))
+            continue;
+        uint64_t bytes = 0;
+        time_t newest = 0;
+        smith_cache_measure(path, &bytes, &newest);
+        smith_cache_ages_add(bytes, smith_package_used(packages, entry->d_name, newest), now);
+    }
+    closedir(dir);
+    long cutoff = smith_cache_cutoff(smith_cache_ages.total > cap ? smith_cache_ages.total - cap : 0);
+    dir = opendir(packages);
+    if (dir == nullptr || cutoff < 0) {
+        if (dir != nullptr) closedir(dir);
+        return;
+    }
+    for (size_t i = 0; i < 1000000; i++) { // bounded by the entries
+        struct dirent *entry = readdir(dir);
+        if (entry == nullptr) break;
+        if (!smith_package_is_entry(packages, entry->d_name) || strcmp(entry->d_name, keep) == 0) continue;
+        time_t used = smith_package_used(packages, entry->d_name, 0);
+        if (used != 0 && smith_cache_goes(used, now, cutoff))
+            smith_package_evict(packages, entry->d_name, now, cutoff > 0 ? (int)cutoff - 1 : -1);
     }
     closedir(dir);
 }
@@ -440,6 +602,25 @@ static void smith_package_file_name(const char *url, char *name, size_t size) {
     name[count] = '\0';
 }
 
+// The error of an extraction, said with the URL: "cannot extract <url>: <reason>".
+static bool smith_package_extract_failed(const char *url, SmithPackageFault *error) {
+    char reason[smith_package_error_size];
+    snprintf(reason, sizeof reason, "%s", error->text);
+    return smith_package_fail(error, "cannot extract %s: %s", url, reason);
+}
+
+// What the extraction folder holds as a package: the folder to move into place (see smith_package_contents), unless
+// the package is one top-level folder and a symlink in it leaves that folder.
+static bool smith_package_settle(const char *extract, const SmithExtracted *extracted, char *contents,
+                                 SmithPackageFault *error) {
+    bool single = false;
+    if (!smith_package_contents(extract, contents, &single, error)) return false;
+    if (single && extracted->climbing[0] != '\0')
+        return smith_package_fail(error, "the symlink \"%.200s\" points outside the package folder",
+                                  extracted->climbing);
+    return true;
+}
+
 // Verifies the downloaded archive, extracts it and moves it to its folder. The temporaries are the caller's to remove.
 static bool smith_package_install(const char *url, const char *wanted, const SmithPackageTemps *temps, char *folder,
                                   char hash[smith_package_hash_size], SmithPackageFault *error) {
@@ -460,17 +641,10 @@ static bool smith_package_install(const char *url, const char *wanted, const Smi
     SmithExtracted extracted;
     char name[256];
     smith_package_file_name(url, name, sizeof name);
-    if (!smith_package_extract(temps->download, name, temps->extract, &extracted, error)) {
-        char reason[smith_package_error_size];
-        snprintf(reason, sizeof reason, "%s", error->text);
-        return smith_package_fail(error, "cannot extract %s: %s", url, reason);
-    }
     char contents[PATH_MAX];
-    bool single = false;
-    if (!smith_package_contents(temps->extract, contents, &single, error)) return false;
-    if (single && extracted.climbing[0] != '\0') {
-        return smith_package_fail(error, "cannot extract %s: the symlink \"%.200s\" points outside the package folder",
-                                  url, extracted.climbing);
+    if (!smith_package_extract(temps->download, name, temps->extract, &extracted, error) ||
+        !smith_package_settle(temps->extract, &extracted, contents, error)) {
+        return smith_package_extract_failed(url, error);
     }
     if (rename(contents, folder) != 0 && !smith_package_is_folder(folder)) { // another process may have won
         return smith_package_fail(error, "cannot move the package into %s: %s", folder, strerror(errno));
@@ -513,6 +687,97 @@ static bool smith_package_ensure(SmithIo *io, const char *url, const char *wante
               smith_package_install(url, wanted != nullptr ? expected : nullptr, &temps, folder, hash, error);
     smith_package_remove(temps.download);
     smith_package_remove(temps.extract);
-    if (ok) smith_package_use(temps.packages, hash + 7);
+    if (ok) {
+        smith_package_use(temps.packages, hash + 7);
+        smith_package_cap(temps.packages, hash + 7);
+    }
     return ok;
 }
+
+#ifdef SMITH_CORE
+// include/smith_core.h: the archive readers in process, for the units runner.
+bool smith_core_extract(const uint8_t *archive, size_t size, const char *url, const char *folder, char *contents,
+                        size_t contents_size, char *error, size_t error_size) {
+    SmithPackageFault fault = {};
+    SmithExtracted extracted = {};
+    char name[256];
+    char found[PATH_MAX];
+    smith_package_file_name(url, name, sizeof name);
+    bool ok = smith_package_extract_bytes(archive, size, name, folder, &extracted, &fault) &&
+              smith_package_settle(folder, &extracted, found, &fault);
+    if (!ok) smith_package_extract_failed(url, &fault);
+    snprintf(contents, contents_size, "%s", ok ? found : "");
+    snprintf(error, error_size, "%s", ok ? "" : fault.text);
+    return ok;
+}
+
+// The lines of a listing, collected by the walk of nftw: a pool of text and the pointers into it, sorted at the end.
+static struct {
+    size_t base; // the length of the folder's path and its slash
+    size_t used;
+    size_t count;
+    bool full;
+    char pool[1U << 18];
+    const char *lines[2048];
+} smith_core_walk;
+
+static unsigned smith_core_crc_of_file(const char *path) {
+    FILE *file = fopen(path, "rb");
+    unsigned crc = 0;
+    uint8_t buffer[8192];
+    for (size_t chunk = 0; file != nullptr && chunk < (1U << 20); chunk++) {
+        size_t got = fread(buffer, 1, sizeof buffer, file);
+        if (got == 0) break;
+        crc = smith_inflate_crc32(crc, buffer, got);
+    }
+    if (file != nullptr) fclose(file);
+    return crc;
+}
+
+static int smith_core_walk_visit(const char *path, const struct stat *info, int kind, struct FTW *where) {
+    if (where->level == 0) return 0;
+    char *line = smith_core_walk.pool + smith_core_walk.used;
+    size_t room = sizeof smith_core_walk.pool - smith_core_walk.used;
+    const char *relative = path + smith_core_walk.base;
+    int written = 0;
+    if (kind == FTW_SL) {
+        char target[PATH_MAX];
+        ssize_t length = readlink(path, target, sizeof target - 1);
+        target[length > 0 ? length : 0] = '\0';
+        written = snprintf(line, room, "%s l -> %s", relative, target);
+    } else if (kind == FTW_D || kind == FTW_DP) {
+        written = snprintf(line, room, "%s d", relative);
+    } else {
+        written = snprintf(line, room, "%s f %04o %lld %08x %lld", relative, (unsigned)(info->st_mode & 0777U),
+                           (long long)info->st_size, smith_core_crc_of_file(path),
+                           (long long)smith_platform_mtime(info).tv_sec);
+    }
+    if (written < 0 || (size_t)written >= room || smith_core_walk.count == 2048) {
+        smith_core_walk.full = true;
+        return 1;
+    }
+    smith_core_walk.lines[smith_core_walk.count++] = line;
+    smith_core_walk.used += (size_t)written + 1;
+    return 0;
+}
+
+static int smith_core_compare_lines(const void *a, const void *b) {
+    return strcmp(*(const char *const *)a, *(const char *const *)b);
+}
+
+bool smith_core_tree(const char *folder, char *out, size_t out_size) {
+    memset(&smith_core_walk, 0, sizeof smith_core_walk);
+    smith_core_walk.base = strlen(folder) + 1;
+    bool ok = nftw(folder, smith_core_walk_visit, 16, FTW_PHYS) == 0 && !smith_core_walk.full;
+    qsort((void *)smith_core_walk.lines, smith_core_walk.count, sizeof smith_core_walk.lines[0],
+          smith_core_compare_lines);
+    size_t at = 0;
+    for (size_t i = 0; ok && i < smith_core_walk.count; i++) {
+        int written = snprintf(out + at, out_size - at, "%s\n", smith_core_walk.lines[i]);
+        ok = written > 0 && (size_t)written < out_size - at;
+        at += ok ? (size_t)written : 0;
+    }
+    if (out_size > 0) out[ok ? at : 0] = '\0';
+    return ok;
+}
+#endif

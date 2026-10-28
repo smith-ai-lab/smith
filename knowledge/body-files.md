@@ -35,7 +35,12 @@ lowered with the parser's types. The module's own compile has the whole lowered 
   and constants, and the exports of the modules it imports (their headers are included, and those with a body are
   taken in turn: an import of an import works without the file importing it). The copies come in an included buffer
   that is a system file, with `-Weverything` off in it: no check or warning of the importing file reads them, and the
-  effects check ignores its redeclarations. State is the one limit by design: a function that names a variable of the
+  effects check ignores its redeclarations.
+- **The depfile.** Everything included from a system buffer is a system header, which `-MMD` leaves out, so the
+  assembled text names each file it reads with a `#if __has_include(...)` (a lookup is recorded by where it finds the
+  file, not by who asks): each taken module's `.body`, its source (a body made in memory has no file, so its source
+  line is copied from the body's text) and the C headers of its `H` section. An edit to any of them rebuilds the
+  importer. The compile that first makes a body file starts before it, so ninja's rule runs that compile once more. State is the one limit by design: a function that names a variable of the
   module that is not constant is not carried (a copy would be a second variable), and a call to it is the error it was.
   A function whose evaluation calls a generic's instance is not carried yet (the instance is written at the end of the
   module's file).

@@ -1,17 +1,17 @@
 ---
 type: design
 title: The caches and smith cache
-description: Modules and packages are cached under one rule, an entry unused for 31 days is removed, and smith cache shows and cleans them.
+description: Modules and packages are cached under one rule, an entry unused for 31 days is removed, each root has a byte cap with least-recently-used eviction, and smith cache shows and cleans them.
 tags: [cache]
 ---
 # The caches and smith cache
 
-**Two caches, one rule:** modules (`<cache>/smith/modules`) and packages (`<cache>/smith/packages`), `<cache>` being
+**Three caches, one rule:** modules (`<cache>/smith/modules`), packages (`<cache>/smith/packages`) and lint results (`<cache>/smith/lint`, below), `<cache>` being
 `$XDG_CACHE_HOME` or `~/.cache`. An entry unused for 31 days is removed, checked at most once a week: clang does it for
 modules (smith passes `-fmodules-prune-interval=604800 -fmodules-prune-after=2678400`), `smith_package` for packages
 (a `<hex>.used` stamp per package and `prune.timestamp`). Both are keyed by hash, so a removed entry is fetched or built
 again. `smith cache` shows each cache's path, entries and size (`-v` lists the entries and their last use);
-`smith cache clean [modules|packages]` empties them, and refuses while a `smith build` runs (builds hold a shared flock
+`smith cache clean [modules|packages|lint]` empties them, and refuses while a `smith build` runs (builds hold a shared flock
 on `<cache>/smith/lock`). Tests: `tests/cache_*_test.smith`, with caches of their own. See [the build file](build-file.md).
 
 smith keeps two caches under `$XDG_CACHE_HOME/smith/` (or `~/.cache/smith/`), each keyed by hash, so anything removed
@@ -33,6 +33,31 @@ from either is simply fetched or built again:
   differ (different paths) never share or overwrite one another's module files, and a sanitized compile never reuses a
   plain one's. A module file is checked against its headers when it is used and rebuilt if one changed, so a warm cache
   can only be stale in a way clang detects.
+
+**A byte cap on every cache root (issue #618), beside the 31 days.** The 31 days are far too slow for a cache that
+tests fill (the tests' module cache reached 337 GB in 47,329 context-hash folders), so each root, `modules` and
+`packages`, also has a cap in bytes: 10 GB, or `SMITH_CACHE_MAX` (bytes, with a `k`, `M`, `G` or `T` suffix counting thousands,
+as `smith cache` shows sizes; `smith cache` prints the cap). It is checked when a write can have crossed it, and the oldest-used go first:
+
+- **Modules:** when a build opens the cache, at most every ten minutes (every build when `SMITH_CACHE_MAX` is set, which a
+  test does; the stamp is `modules/.cap-checked`). When the root is over the cap: first the folders of other smiths, least
+  recently used (their `.used`) first, never one a running smith holds (the pruning's exclusive lock without waiting) and
+  never this smith's; if that is not enough, this smith's own module files (`.pcm`), least recently used first, as
+  clang's pruning removes them (clang touches a module file whenever it uses it), never one used in the last hour. A
+  module a later compile needs is built again.
+- **Packages:** after a fetch, the least recently used (their `<hex>.used`) until the packages fit, never the one just
+  fetched, each by the weekly pruning's safe removal (renamed away, the stamp read again, renamed back if a build touched
+  it meanwhile).
+- **How:** an entry's bytes are counted in steps of age (half an hour), so the oldest are found without a table of entries:
+  the cutoff is the age from which everything goes so that the rest fits (`smith_cache_cutoff` in `runtime/package.c`).
+
+**What keeps new context-hash folders from starting** (measured with `clang -module-file-info` on the folders of one smith):
+clang hashes the language options, the target, the sysroot and resource directory, the optimization level and sanitizers and
+every `-D` into a module's context, and not the warnings, the diagnostics' colours or `-I` paths; a scratch folder's path
+is no part of it. The macros smith itself defines per source or run and no header reads (`SMITH_PROVED`, `SMITH_PROFILING`,
+`SMITH_RECORD`) are given as `-fmodules-ignore-macro=`, so they start no folder. A module file's name carries the hash
+of its module map's path, so a project's own and smith's modules (`.smith/modules/*.modulemap`) have one file for each
+project path in the folder; the cap bounds that growth.
 
 **One rule for what is inside: an entry unused for 31 days is removed, checked at most once a week** (the module folders of smiths are the exception above: they go sooner). For modules smith states it
 in every compile, as `-fmodules-prune-interval=604800 -fmodules-prune-after=2678400`, and clang applies it (named
@@ -61,3 +86,21 @@ in smith, which every job inherits, so the lock lasts as long as the build's pro
 drops it if smith is killed). `smith cache clean` takes the lock exclusively without waiting, and refuses with exit
 status 2 while any build, in any project or worktree, holds it. That costs one `open` and one `flock` per build.
 Showing the caches never takes the lock, and pruning does not need it: it is safe as above.
+
+**The lint cache** (issue #621, `runtime/lint_cache.c`) keeps what clang-tidy said about one file so that `smith lint`
+runs it only on a file whose lint could differ. It is in two levels, like a compiler cache with a manifest. The *first
+key* is the SHA-256 of smith (build-id on Linux, LC_UUID on macOS: clang-tidy and smith's own checks are in the
+binary), the environment that moves a compile (`SDKROOT`, `CPATH`, ...), the file's name, its compile command (the
+root of the project replaced by a fixed word, so a clone elsewhere shares entries; a `.smith` file the build does not
+compile has the whole `compile_commands.json` there) and the content of every `.clang-tidy` from its folder up to `/`.
+Under it, `m/<xx>/<key>` is the *manifest* of the last run: the files clang-tidy read, which a miss collects through
+`-Wp,-MMD` (so no build or object is needed, and a `.smith` file's imports are in it). The *second key* adds the
+content of those files, and `r/<xx>/<key>` is the *result*: the exit status and the output with the root replaced. A hit
+prints the stored output and returns the stored status; a miss runs clang-tidy as before and stores the result by
+writing a temporary file and renaming it, so lints in other worktrees are safe together. Only a run that completed
+(exit status 0 or 1) is stored, and not one that read a file changed during it or in the 20 ms before it. A system
+header is not in a manifest (nor is a header found only because a new file shadows an earlier one in the include path),
+so an SDK update is seen only through `SDKROOT`, `DEVELOPER_DIR` and smith's own identity. The rule is the other caches':
+a hit touches its entries when a day old, and once a week (`lint/prune.timestamp`) entries unused for 31 days and
+stale `t/` files go. `SMITH_LINT_CACHE=0` turns it off and `=why` prints why each file ran. `smith cache` counts the
+files and `smith cache clean lint` removes them.

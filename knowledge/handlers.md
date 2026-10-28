@@ -45,7 +45,7 @@ prebuilt library's and one loaded with `dlopen`. Owner (2026-10-24): "always int
   the file calls a function it defines. Streams are `fopencookie`'s; `getchar`, `putchar`, `vprintf` and `getline`,
   which glibc's `<stdio.h>` makes extern inline when optimized, are defined under those names by asm labels, and
   `getdelim`/`__getdelim` (an optimized `getline`) are the stream's too. `malloc_usable_size` stands for `malloc_size`;
-  there are no zones. A sanitized program also links a weak `__asan_default_options` of `abort_on_error=1`, so a report
+  there are no zones. A sanitized program also links an `__asan_default_options` (strong: the runtime's weak one is first in the link) of `abort_on_error=1`, so a report
   stops with SIGABRT as on macOS. Known gap: a program built with `_FORTIFY_SOURCE` calls `__printf_chk` and its kind,
   which the runtime does not define.
 - **An optimizer knows malloc**: it may drop or fold a malloc/free pair, so a handler is seen only through calls it cannot
@@ -78,7 +78,7 @@ prebuilt library's and one loaded with `dlopen`. Owner (2026-10-24): "always int
   a container with the `SmithAllocator` first, not a `ctx` field, because a field added to handlers.h waits for a smith
   release (the lag rule: arena is built into smith).
 
-- **Refusing (step D2b):** `mem::failing(parent, key)` refuses allocations by draws from a random key, and the test
+- **Refusing (step D2b):** `failing::make(parent, key)` (smith::failing) refuses allocations by draws from a random key, and the test
   runner gives a test one beside its key; `.checked_allocator` turns the runner's checked allocator off. See
   [checked-allocator](checked-allocator.md).
 

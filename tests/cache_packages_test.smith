@@ -188,3 +188,31 @@ export void test_cache_prune_smith_fetch_also_checks_and_keeps_what_it_fetched(i
     scratch::expect_text("prune: smith fetch also checks, and keeps what it fetched (the package)", "yes",
                          text(&p, "exists \"$packages/$(hex 1)/file.txt\""));
 }
+
+// The byte cap (issue #618): a fetch that leaves the packages over SMITH_CACHE_MAX removes the least recently used
+// until they fit, and never the package it just made. Three packages of 200 kB, the first used 100 hours ago and the
+// second 50.
+export void test_cache_cap_a_fetch_over_the_cap_removes_the_least_recently_used_package(io::Io *io) {
+    scratch::Project p = cache_project(io);
+    scratch::Run fetched =
+        run(&p, "mkbig; smith fetch \"$(url 1)\" >/dev/null 2>&1; smith fetch \"$(url 2)\" >/dev/null 2>&1; "
+                "ago 100 \"$packages/$(hex 1).used\"; ago 50 \"$packages/$(hex 2).used\"; "
+                "SMITH_CACHE_MAX=450000 smith fetch \"$(url 3)\"");
+    scratch::expect_status("cap: the fetch over the cap succeeds", 0, &fetched);
+    scratch::expect_text("cap: the least recently used package is gone, with its stamp", "no no",
+                         text(&p, "echo \"$(exists \"$packages/$(hex 1)\") $(exists \"$packages/$(hex 1).used\")\""));
+    scratch::expect_text("cap: the others stay, the one just fetched among them", "yes yes",
+                         text(&p, "echo \"$(exists \"$packages/$(hex 2)/file.txt\") "
+                                  "$(exists \"$packages/$(hex 3)/file.txt\")\""));
+}
+
+export void test_cache_cap_the_package_just_fetched_stays_even_when_alone_it_is_over_the_cap(io::Io *io) {
+    scratch::Project p = cache_project(io);
+    scratch::Run fetched =
+        run(&p, "mkbig; smith fetch \"$(url 1)\" >/dev/null 2>&1; "
+                "ago 100 \"$packages/$(hex 1).used\"; SMITH_CACHE_MAX=1000 smith fetch \"$(url 2)\"");
+    scratch::expect_status("cap: a cap smaller than one package", 0, &fetched);
+    scratch::expect_text(
+        "cap: the old one goes, the new one stays", "no yes",
+        text(&p, "echo \"$(exists \"$packages/$(hex 1)\") $(exists \"$packages/$(hex 2)/file.txt\")\""));
+}

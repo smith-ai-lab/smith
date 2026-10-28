@@ -1,0 +1,10 @@
+src/main.smith:10:17: cannot tell the type of `bs`, the argument of `find`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:11:17: cannot tell the type of `bs`, the argument of `find`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:12:17: cannot tell the type of `bs`, the argument of `find`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:13:17: cannot tell the type of `bs`, the argument of `find`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:14:17: cannot tell the type of `bs`, the argument of `fill`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:15:17: cannot tell the type of `fs`, the argument of `fill`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:16:17: cannot tell the type of `fs`, the argument of `fill`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:17:17: cannot tell the type of `&small`, the argument of `bump`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:18:17: cannot tell the type of `bs`, the argument of `cmax`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:19:17: cannot tell the type of `fs`, the argument of `cmax`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable

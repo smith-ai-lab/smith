@@ -8,7 +8,6 @@
 #include <sys/file.h>
 
 constexpr size_t smith_cache_entries_max = 4096;
-constexpr int smith_cache_walk_files = 64;
 constexpr double smith_cache_unit = 1000.0;
 
 typedef struct {
@@ -18,8 +17,6 @@ typedef struct {
 } SmithCacheEntry;
 
 static SmithCacheEntry smith_cache_entries[smith_cache_entries_max];
-static uint64_t smith_cache_walk_bytes;
-static time_t smith_cache_walk_newest;
 
 // <base>/lock: smith build holds it shared for as long as the build runs, `smith cache clean` takes it exclusively.
 static bool smith_cache_lock_path(char *out) {
@@ -42,24 +39,6 @@ static void smith_cache_hold(void) {
     int fd = open(lock, O_RDWR | O_CREAT, 0666);
     if (fd < 0) return;
     if (flock(fd, LOCK_SH) != 0) close(fd);
-}
-
-static int smith_cache_walk_visit(const char *path, const struct stat *info, int type, struct FTW *where) {
-    (void)path;
-    (void)type;
-    (void)where;
-    smith_cache_walk_bytes += (uint64_t)info->st_blocks * 512U;
-    if (info->st_mtime > smith_cache_walk_newest) smith_cache_walk_newest = info->st_mtime;
-    return 0;
-}
-
-// The disk space of everything under path (itself included) and the newest modification time in it.
-static void smith_cache_measure(const char *path, uint64_t *bytes, time_t *newest) {
-    smith_cache_walk_bytes = 0;
-    smith_cache_walk_newest = 0;
-    nftw(path, smith_cache_walk_visit, smith_cache_walk_files, FTW_PHYS);
-    *bytes = smith_cache_walk_bytes;
-    *newest = smith_cache_walk_newest;
 }
 
 static void smith_cache_format_size(uint64_t bytes, char out[32]) {
@@ -119,7 +98,10 @@ static void smith_cache_show_one(SmithCacheKind kind, bool verbose) {
     if (smith_package_is_folder(folder)) smith_cache_measure(folder, &bytes, &newest);
     char size[32];
     smith_cache_format_size(bytes, size);
-    printf("%s: %s\n  %zu %s, %s\n", smith_cache_name(kind), folder, total, total == 1 ? "entry" : "entries", size);
+    char cap[32];
+    smith_cache_format_size(smith_cache_limit(), cap);
+    printf("%s: %s\n  %zu %s, %s (cap %s)\n", smith_cache_name(kind), folder, total, total == 1 ? "entry" : "entries",
+           size, cap);
     if (!verbose) return;
     for (size_t i = 0; i < kept; i++) {
         char entry_size[32];
@@ -133,9 +115,27 @@ static void smith_cache_show_one(SmithCacheKind kind, bool verbose) {
     if (total > kept) printf("  and %zu more\n", total - kept);
 }
 
+// The lint cache (runtime/lint_cache.c) is files in two levels of folders, so it is counted by its files.
+static void smith_cache_show_lint(void) {
+    char folder[PATH_MAX];
+    SmithPackageFault error;
+    if (!smith_cache_folder(SmithCache_Lint, folder, &error)) smith_die(smith_exit_usage, "cache:", error.text);
+    uint64_t bytes = 0;
+    time_t newest = 0;
+    uint64_t files = 0;
+    if (smith_package_is_folder(folder)) {
+        smith_cache_measure(folder, &bytes, &newest);
+        files = smith_cache_walk_regular;
+    }
+    char size[32];
+    smith_cache_format_size(bytes, size);
+    printf("lint: %s\n  %llu %s, %s\n", folder, (unsigned long long)files, files == 1 ? "file" : "files", size);
+}
+
 static void smith_cache_show(bool verbose) {
     smith_cache_show_one(SmithCache_Modules, verbose);
     smith_cache_show_one(SmithCache_Packages, verbose);
+    smith_cache_show_lint();
     printf("an entry unused for %d days is removed, checked at most once a week\n",
            smith_cache_prune_after / (24 * 60 * 60));
 }
@@ -167,9 +167,26 @@ static void smith_cache_clean_one(SmithCacheKind kind) {
     printf("removed %s: %zu %s, %s\n", folder, total, total == 1 ? "entry" : "entries", size);
 }
 
-// `smith cache [-v]` and `smith cache clean [modules|packages]`.
+static void smith_cache_clean_lint(void) {
+    char folder[PATH_MAX];
+    SmithPackageFault error;
+    if (!smith_cache_folder(SmithCache_Lint, folder, &error)) smith_die(smith_exit_usage, "cache:", error.text);
+    uint64_t bytes = 0;
+    time_t newest = 0;
+    uint64_t files = 0;
+    if (smith_package_is_folder(folder)) {
+        smith_cache_measure(folder, &bytes, &newest);
+        files = smith_cache_walk_regular;
+    }
+    smith_package_remove(folder);
+    char size[32];
+    smith_cache_format_size(bytes, size);
+    printf("removed %s: %llu %s, %s\n", folder, (unsigned long long)files, files == 1 ? "file" : "files", size);
+}
+
+// `smith cache [-v]` and `smith cache clean [modules|packages|lint]`.
 static int smith_cache_main(int count, char **args) {
-    constexpr char usage[] = "usage: smith cache [-v] | smith cache clean [modules|packages]";
+    constexpr char usage[] = "usage: smith cache [-v] | smith cache clean [modules|packages|lint]";
     if (count == 0 || (count == 1 && strcmp(args[0], "-v") == 0)) {
         smith_cache_show(count == 1);
         return 0;
@@ -177,9 +194,11 @@ static int smith_cache_main(int count, char **args) {
     if (strcmp(args[0], "clean") != 0 || count > 2) smith_die(smith_exit_usage, usage, nullptr);
     bool modules = count == 1 || strcmp(args[1], "modules") == 0;
     bool packages = count == 1 || strcmp(args[1], "packages") == 0;
-    if (!modules && !packages) smith_die(smith_exit_usage, usage, nullptr);
+    bool lint = count == 1 || strcmp(args[1], "lint") == 0;
+    if (!modules && !packages && !lint) smith_die(smith_exit_usage, usage, nullptr);
     smith_cache_exclude_builds();
     if (modules) smith_cache_clean_one(SmithCache_Modules);
     if (packages) smith_cache_clean_one(SmithCache_Packages);
+    if (lint) smith_cache_clean_lint();
     return 0;
 }

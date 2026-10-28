@@ -164,12 +164,11 @@ export void test_a_file_nothing_places_selects_every_test(io::Io *io) {
     scratch::expect_contains("every test", out, "every test runs");
 }
 
-// A changed file no record names, but that the executed file includes, selects the tests whose program is built from
-// it.
+// A changed header an executed file includes is a record of its own (#638): its code outside functions moved, so the
+// tests that ran the program are stale.
 export void test_a_file_the_graph_places_selects_the_tests_built_from_it(io::Io *io) {
     const char *out = changed(io, "printf '#define K 2\\n' > runtime/helper.h");
-    scratch::expect_contains("the reason", out,
-                             "its program is built from a changed file no record names (through runtime/prog.c)");
+    scratch::expect_contains("the reason", out, "code outside functions changed");
     scratch::expect_contains("a", out, "runs_test::a");
     scratch::expect_contains("b", out, "runs_test::b");
     scratch::expect_contains("c", out, "runs_test::c");

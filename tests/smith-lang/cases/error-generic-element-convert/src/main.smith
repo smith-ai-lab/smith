@@ -1,0 +1,21 @@
+module main;
+import stats;
+i32 main() {
+    u8 raw[3] = {1, 2, 3};
+    u8 bs[:] = raw;
+    f32 fl[2] = {1, 2};
+    f32 fs[:] = fl;
+    i32 wide = 5;
+    u8 small = 4;
+    stats::find(bs, 3);
+    stats::find(bs, small);
+    stats::find(bs, 300);
+    stats::find(bs, wide);
+    stats::fill(bs, -1);
+    stats::fill(fs, 0.1);
+    stats::fill(fs, 0.5);
+    stats::bump(&small, 300);
+    stats::cmax(bs, 256);
+    stats::cmax(fs, 2);
+    return 0;
+}

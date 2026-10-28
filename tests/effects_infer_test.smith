@@ -39,6 +39,16 @@ static void effects_case(io::Io *io, const char *file) {
     test::golden(io, slice_of(format::push(&io->arena, "tests/effects/", file, ".expected").data), slice_of(run.out));
 }
 
+// The report-only pointer rule: the lines SMITH_EFFECTS_POINTERS gets, a call with the effects its type states.
+export void test_effects_pointers_report(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Run run = scratch::sh(
+        &p, "cd \"$SMITH_REPO/tests/effects_pointers\" && SMITH_EFFECTS_POINTERS=\"$TMPDIR/report\" smith cc "
+            "-std=gnu2y -I \"$SMITH_REPO/.smith/include\" -c pointers.c -o /dev/null >\"$TMPDIR/out\" 2>&1; "
+            "echo \"status $?\"; cat \"$TMPDIR/report\"");
+    test::golden(io, slice_of("tests/effects_pointers/pointers.c.expected"), slice_of(run.out));
+}
+
 export void test_every_file_has_a_test(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     scratch::Run run =
@@ -103,6 +113,21 @@ export void test_across_files_in_c_one_command_that_compiles_and_links_names_the
     write_cross(&p);
     scratch::Run linked = scratch::sh(&p, "smith cc a.c b.c -o program_one 2>&1 | grep -E 'smith-effect'");
     scratch::expect_text("across files, C: one command that compiles and links names the same chain", cross_expected,
+                         linked.out);
+}
+
+// A link of more objects than any fixed count the check once had (it skipped the objects past 128, so a function of the
+// last one had no source and was `c`): the object that defines `noisy` comes last, after 200 others.
+export void test_across_files_in_c_a_link_of_many_objects_reads_every_summary(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    write_cross(&p);
+    scratch::Run compiled =
+        scratch::sh(&p, "smith cc -c b.c -o b.o && smith cc -c a.c -o a.o && list= && for i in $(seq 1 200); do "
+                        "echo \"int filler_$i(void) { return $i; }\" > f$i.c && smith cc -c f$i.c -o f$i.o && "
+                        "list=\"$list f$i.o\"; done && echo \"$list\" > list.txt");
+    scratch::expect_status("many objects: the objects", 0, &compiled);
+    scratch::Run linked = scratch::sh(&p, "smith cc a.o $(cat list.txt) b.o -o program 2>&1 | grep -E 'smith-effect'");
+    scratch::expect_text("many objects: the link still names the chain through the last object", cross_expected,
                          linked.out);
 }
 

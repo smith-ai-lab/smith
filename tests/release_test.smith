@@ -10,11 +10,12 @@ import smith::test;
 import scratch;
 
 // Every command: the stub gh first on PATH, its releases in ../gh and its log in ../gh.log, the script, and the file
-// name of the package. The package is xz of a 235 MB program: level 6 is 56 s of CPU, level 1 is 9 s, and the test is
-// not about the ratio (#116).
+// name of the package. The package is xz of the program it holds: of the 235 MB smith, level 6 is 56 s of CPU and level
+// 1 is 9 s, so the packaging tests package the small fake smith (../fake-smith, a script that says its commit): the
+// script does not look at what the program is, only at its name and its commit (#116, #639).
 constexpr char prelude[_] =
     "export PATH=\"$PWD/../bin:$PATH\" RELEASE_XZ_LEVEL=1 GH_LOG=\"$PWD/../gh.log\" GH_DIR=\"$PWD/../gh\" "
-    "GITHUB_ACTIONS=; script=\"$SMITH_REPO/scripts/release.sh\"; smith=\"$SMITH_SELF\"; head=$(git rev-parse HEAD); "
+    "GITHUB_ACTIONS=; script=\"$SMITH_REPO/scripts/release.sh\"; head=$(git rev-parse HEAD); "
     "name=smith-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m).tar.xz; ";
 
 // A scratch repository with one commit and a bare origin that has no branch yet, the stub gh in ../bin, and a fake
@@ -45,7 +46,7 @@ static scratch::Run run(io::Io *io, const scratch::Project *p, const char *comma
 // 1. package: the name, the checksum and what is inside
 export void test_release_package_name_checksum_and_contents(io::Io *io) {
     scratch::Project p = repository(io);
-    scratch::Run packaged = run(io, &p, "sh \"$script\" package \"$smith\" ../pkg");
+    scratch::Run packaged = run(io, &p, "sh \"$script\" package ../fake-smith ../pkg");
     scratch::expect_status("release: package", 0, &packaged);
     scratch::expect_text("release: package-files", capture(io, &p, "echo $name; echo $name.sha256"),
                          capture(io, &p, "ls ../pkg"));
@@ -55,7 +56,7 @@ export void test_release_package_name_checksum_and_contents(io::Io *io) {
                          capture(io, &p, "tar -tJf \"../pkg/$name\" | sort"));
     scratch::Run extracted = run(io, &p, "mkdir ../x && tar -C ../x -xJf \"../pkg/$name\"");
     scratch::expect_status("release: package extracts", 0, &extracted);
-    scratch::expect_text("release: package-runs", capture(io, &p, "\"$smith\" version"),
+    scratch::expect_text("release: package-runs", capture(io, &p, "../fake-smith version"),
                          capture(io, &p, "../x/bin/smith version"));
     scratch::expect_text("release: package-link", "smith", capture(io, &p, "readlink ../x/bin/smith-c++"));
 }
@@ -149,12 +150,12 @@ export void test_release_ci_releases_only_a_push_to_main(io::Io *io) {
 export void test_release_fetch_checks_the_checksum_and_runs(io::Io *io) {
     scratch::Project p = repository(io);
     scratch::Run packaged = run(io, &p,
-                                "sh \"$script\" package \"$smith\" ../pkg && mkdir ../gh/stage0-real && "
+                                "sh \"$script\" package ../fake-smith ../pkg && mkdir ../gh/stage0-real && "
                                 "cp \"../pkg/$name\" \"../pkg/$name.sha256\" ../gh/stage0-real/");
     scratch::expect_status("release: package for fetch", 0, &packaged);
     scratch::Run fetched = run(io, &p, "sh \"$script\" fetch stage0-real ../dl");
     scratch::expect_status("release: fetch", 0, &fetched);
-    scratch::expect_text("release: fetch-runs", capture(io, &p, "\"$smith\" version"),
+    scratch::expect_text("release: fetch-runs", capture(io, &p, "../fake-smith version"),
                          capture(io, &p, "../dl/bin/smith version"));
     scratch::Run corrupted = run(io, &p, "printf x >>\"../gh/stage0-real/$name\"");
     scratch::expect_status("release: corrupt the package", 0, &corrupted);

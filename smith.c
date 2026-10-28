@@ -33,6 +33,7 @@
 #include <string.h>
 #include <sys/file.h>
 #include <sys/ioctl.h>
+#include <sys/mman.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
 #ifdef __APPLE__
@@ -249,10 +250,10 @@ static void smith_find_clang(const char *tool, const char *override_name, const 
 }
 
 #ifdef __APPLE__
+#include "runtime/sdk_cache.c"
+
 // Runs `xcrun --show-sdk-path` and writes its one line to out. False when xcrun is missing or fails.
-static bool smith_xcrun_sdk(const char *self, char *out) {
-    char xcrun[PATH_MAX];
-    if (!smith_find_in_path("xcrun", self, xcrun)) return false;
+static bool smith_xcrun_run(const char *xcrun, char *out) {
     int pipes[2];
     if (pipe(pipes) != 0) return false;
     posix_spawn_file_actions_t actions;
@@ -260,7 +261,7 @@ static bool smith_xcrun_sdk(const char *self, char *out) {
     SMITH_ASSERT(posix_spawn_file_actions_adddup2(&actions, pipes[1], 1) == 0);
     SMITH_ASSERT(posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0) == 0);
     SMITH_ASSERT(posix_spawn_file_actions_addclose(&actions, pipes[0]) == 0);
-    char *args[] = {xcrun, (char *)"--show-sdk-path", nullptr};
+    char *args[] = {(char *)xcrun, (char *)"--show-sdk-path", nullptr};
     pid_t pid = 0;
     int spawned = posix_spawn(&pid, xcrun, &actions, nullptr, args, environ);
     posix_spawn_file_actions_destroy(&actions);
@@ -280,6 +281,16 @@ static bool smith_xcrun_sdk(const char *self, char *out) {
         length -= 1;
     out[length] = '\0';
     return length > 0 && strchr(out, '\n') == nullptr;
+}
+
+// The SDK path: remembered for the real xcrun (runtime/sdk_cache.c), else what xcrun says.
+static bool smith_xcrun_sdk(const char *self, char *out) {
+    char xcrun[PATH_MAX];
+    if (!smith_find_in_path("xcrun", self, xcrun)) return false;
+    if (smith_sdk_cache_get(xcrun, out)) return true;
+    if (!smith_xcrun_run(xcrun, out)) return false;
+    smith_sdk_cache_put(xcrun, out);
+    return true;
 }
 
 // Homebrew's clang reads a default config that forces -isysroot to the Command Line Tools SDK, which can differ from
@@ -759,8 +770,6 @@ bool smith_effects_summary_path(const char *object, char *out, size_t capacity) 
     return written > 0 && (size_t)written < capacity;
 }
 
-constexpr size_t smith_effects_files_max = 128;
-
 // Whether a path is in the folder of temporary files (the objects clang makes for `smith cc a.c b.c -o p` are there,
 // with their summaries beside them, and are removed after the link).
 static bool smith_in_temp_folder(const char *path) {
@@ -777,9 +786,19 @@ static bool smith_in_temp_folder(const char *path) {
 // driver starts (`smith cc a.c b.c -o p` makes its objects in the temporary folder); the first leaves
 // SMITH_EFFECTS_CHECKED for the second. Returns the status to exit with, or -1 for a command that is no such link.
 static int smith_check_effects(int count, char **args) {
-    static char paths[smith_effects_files_max][PATH_MAX];
-    char *files[smith_effects_files_max];
-    const char *objects[smith_effects_files_max];
+    // Sized from the command: every object with a summary is read, however many there are (a cap here once skipped the
+    // objects past it, and a function of a skipped one looked like a function with no source).
+    size_t candidates = 0;
+    for (int i = 0; i < count; i++) {
+        if (args[i][0] != '-' && smith_ends_with(args[i], ".o")) candidates += 1;
+    }
+    if (candidates == 0) return -1;
+    size_t room = candidates * (PATH_MAX + 2 * sizeof(char *));
+    void *block = mmap(nullptr, room, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    if (block == MAP_FAILED) smith_die(smith_exit_missing, "cannot allocate the effect summaries of the link", args[0]);
+    char **file_list = (char **)block;
+    const char **objects = (const char **)(file_list + candidates);
+    char (*paths)[PATH_MAX] = (char (*)[PATH_MAX])(objects + candidates);
     size_t found = 0;
     const char *program = "a.out";
     for (int i = 0; i < count; i++) {
@@ -792,20 +811,24 @@ static int smith_check_effects(int count, char **args) {
             program = args[i];
             continue;
         }
-        if (args[i][0] == '-' || !smith_ends_with(args[i], ".o") || found >= smith_effects_files_max) continue;
+        if (args[i][0] == '-' || !smith_ends_with(args[i], ".o")) continue;
         if (!smith_effects_summary_path(args[i], paths[found], PATH_MAX) || access(paths[found], R_OK) != 0) continue;
-        files[found] = paths[found];
+        file_list[found] = paths[found];
         objects[found] = args[i];
         found += 1;
     }
-    if (found == 0) return -1;
+    if (found == 0) {
+        munmap(block, room);
+        return -1;
+    }
     char stack[PATH_MAX]; // the worst-case stack of the program's functions, beside it: `<program>.stack`
     int written = snprintf(stack, sizeof stack, "%s.stack", program);
     int status =
-        smith_effects_check((int)found, files, written > 0 && (size_t)written < sizeof stack ? stack : nullptr);
+        smith_effects_check((int)found, file_list, written > 0 && (size_t)written < sizeof stack ? stack : nullptr);
     for (size_t i = 0; i < found; i++) { // the summary of a temporary object goes with it
-        if (smith_in_temp_folder(objects[i])) unlink(files[i]);
+        if (smith_in_temp_folder(objects[i])) unlink(file_list[i]);
     }
+    munmap(block, room);
     return status;
 }
 #endif
@@ -860,13 +883,18 @@ static int smith_route_in_process(int argc, char **argv, int first, bool which, 
 
 #include "runtime/lang.h"
 
-constexpr size_t smith_smith_args_max = 8192; // arguments of a command with .smith inputs
+constexpr size_t smith_smith_args_max = 8192;            // arguments of a command with .smith inputs
+constexpr size_t smith_smith_environment_max = 4U << 20; // SMITH_LANG_INPUTS and SMITH_LANG_FLAGS, each
+
+[[noreturn]] static void smith_smith_environment_full(const char *name) {
+    smith_die(smith_exit_usage, "the arguments of this command are too long for", name);
+}
 
 // The .smith files of the command, for the compile of each: an `import foo` that finds no foo.h looks for foo.smith
 // among them first (the hook reads SMITH_LANG_INPUTS, one path to a line). The environment is smith's own and inherited
 // by the compiles the driver runs.
 static void smith_set_smith_inputs(int argc, char **argv, int first) {
-    static char inputs[smith_smith_args_max];
+    static char inputs[smith_smith_environment_max];
     size_t used = 0;
     inputs[0] = 0;
     for (int i = first; i < argc; i++) { // bounded by argc
@@ -874,7 +902,7 @@ static void smith_set_smith_inputs(int argc, char **argv, int first) {
             i += 1;
         } else if (argv[i][0] != '-' && smith_ends_with(argv[i], ".smith")) {
             size_t length = strlen(argv[i]);
-            if (used + length + 2 > sizeof inputs) break; // a command with that many keeps the rest to the path search
+            if (used + length + 2 > sizeof inputs) smith_smith_environment_full("SMITH_LANG_INPUTS (4 MiB)");
             memcpy(inputs + used, argv[i], length);
             inputs[used + length] = '\n';
             used += length + 1;
@@ -888,7 +916,7 @@ static void smith_set_smith_inputs(int argc, char **argv, int first) {
 // -std,
 // ...), one to a line, for the compile that makes another module's body file (issue #107): it is given the same ones.
 static void smith_set_smith_flags(int argc, char **argv, int first) {
-    static char flags[smith_smith_args_max];
+    static char flags[smith_smith_environment_max];
     static const char *const separate[] = {"-I", "-isystem", "-iquote", "-include", "-isysroot", "-D", "-U"};
     static const char *const joined[] = {"-I", "-isystem", "-iquote", "-D", "-U", "-std=", "-isysroot", "-F"};
     size_t used = 0;
@@ -901,7 +929,8 @@ static void smith_set_smith_flags(int argc, char **argv, int first) {
         for (size_t k = 0; k < sizeof joined / sizeof joined[0]; k++)
             keep = keep || strncmp(argv[i], joined[k], strlen(joined[k])) == 0;
         size_t need = strlen(argv[i]) + 1 + (pair && i + 1 < argc ? strlen(argv[i + 1]) + 1 : 0);
-        if ((!pair && !keep) || used + need + 1 > sizeof flags) {
+        if ((pair || keep) && used + need + 1 > sizeof flags) smith_smith_environment_full("SMITH_LANG_FLAGS (4 MiB)");
+        if (!pair && !keep) {
             i += argv[i][0] == '-' && smith_takes_value(argv[i]) && i + 1 < argc ? 1 : 0;
             continue;
         }
@@ -1060,6 +1089,9 @@ static constexpr unsigned char smith_autodiff_source[] = {
 static constexpr unsigned char smith_effects_source[] = {
 #embed "lib/smith/effects.smith"
 };
+static constexpr unsigned char smith_failing_source[] = {
+#embed "lib/smith/failing.smith"
+};
 static constexpr unsigned char smith_files_source[] = {
 #embed "lib/smith/files.smith"
 };
@@ -1163,6 +1195,7 @@ static const SmithLibrary smith_libraries[] = {
     SMITH_LIBRARY(contract, true),
     SMITH_LIBRARY(effects, true),
     SMITH_LIBRARY(entropy, true),
+    SMITH_LIBRARY(failing, true),
     SMITH_LIBRARY(env, true),
     SMITH_LIBRARY(files, true),
     SMITH_LIBRARY(format, true),
@@ -2011,10 +2044,10 @@ static void smith_make_dump(const char *makefile) {
     FILE *raw = tmpfile();
     FILE *formatted = tmpfile();
     if (raw == nullptr || formatted == nullptr) {
-        smith_make_translate(makefile, stdout);
+        smith_make_translate(makefile, stdout, stderr);
         return;
     }
-    smith_make_translate(makefile, raw);
+    smith_make_translate(makefile, raw, stderr);
     bool formatted_ok = smith_make_format_files(raw, formatted);
     smith_copy_to_stdout(formatted_ok ? formatted : raw);
     fclose(raw);
@@ -2090,7 +2123,7 @@ static void smith_build_effects_argument(const char *self, char *out, size_t cap
 }
 
 // verb is nullptr for `smith build`, and the project verb that runs this build otherwise (runtime/verbs.c passes
-// nullptr: its targets are smith's own, smith_needs and smith_tests).
+// nullptr: its targets are smith's own, smith_needs, smith_tests and smith_info, and the files a lint needs).
 static int smith_build_main(int count, char **args, const char *self, const char *verb) {
     SMITH_ASSERT(count >= 0);
     if (verb == nullptr && count == 1 && strcmp(args[0], "--dump-config") == 0) return smith_build_dump_config();
@@ -2745,7 +2778,7 @@ static int smith_tool_in_process(const SmithTool *tool, int argc, char **argv, c
 // by their content) and passed as `--style=file:<path>` and `--config-file=<path>`. A project's file replaces smith's
 // whole, and an explicit option of the tool wins. `--dump-config` is the tool's own, so it prints the effective one.
 // `smith lsp` points clangd at `.smith/compile_commands.json` when the project has no root one.
-constexpr int smith_defaults_args_max = 4096;
+constexpr int smith_defaults_args_max = 262144; // arguments of smith fmt, lint and lsp; more is an error
 constexpr int smith_defaults_depth_max = 256;
 
 // Whether the folder or one above it holds a file of one of the names (null-terminated list). A path that cannot be
@@ -2957,7 +2990,6 @@ static int smith_defaults_apply(const SmithTool *tool, int *argc, char ***argv, 
     bool fmt = strcmp(tool->command, "fmt") == 0;
     int count = *argc;
     char **args = *argv;
-    if (count > smith_defaults_args_max - 8) return -1;
     smith_defaults_read(fmt, count, args);
     SmithDefaultsScan *scan = &smith_defaults_scan;
     if (fmt) smith_fmt_refuse_non_c(scan, args);
@@ -2973,7 +3005,7 @@ static int smith_defaults_apply(const SmithTool *tool, int *argc, char ***argv, 
     bool all = scan->count == 0 || scan->missing_count == scan->count;
     int status = -1;
     if (!all) { // the files without run in a process of their own, with the default
-        char *child[smith_defaults_args_max];
+        static char *child[smith_defaults_args_max];
         int used = 0;
         child[used++] = (char *)self;
         child[used++] = args[1];
@@ -3135,7 +3167,7 @@ static bool smith_fmt_names_a_file_only(int argc, char **argv) {
 }
 
 static void smith_fmt_rewrite(int *argc, char ***argv) {
-    if (*argc >= smith_defaults_args_max - 2 || !smith_fmt_names_a_file_only(*argc, *argv)) return;
+    if (!smith_fmt_names_a_file_only(*argc, *argv)) return;
     int out = 0;
     smith_fmt_rewrite_argv[out++] = (*argv)[0];
     smith_fmt_rewrite_argv[out++] = (*argv)[1];
@@ -3152,11 +3184,17 @@ static void smith_fmt_rewrite(int *argc, char ***argv) {
 static int smith_tool_main(const SmithTool *tool, int argc, char **argv, const char *self) {
     SMITH_ASSERT(tool != nullptr && argc >= 2 && argv[0] != nullptr);
     int before = -1;
+    if (argc > smith_defaults_args_max - 8 &&
+        (strcmp(tool->command, "fmt") == 0 || strcmp(tool->command, "lint") == 0 ||
+         strcmp(tool->command, "lsp") == 0)) {
+        char found[32];
+        snprintf(found, sizeof found, "%d", argc);
+        smith_die(smith_exit_usage, "too many arguments for smith's defaults (limit 262136, found):", found);
+    }
     if (strcmp(tool->command, "fmt") == 0) smith_fmt_rewrite(&argc, &argv);
     if (strcmp(tool->command, "fmt") == 0 || strcmp(tool->command, "lint") == 0) {
         before = smith_defaults_apply(tool, &argc, &argv, self);
-    } else if (strcmp(tool->command, "lsp") == 0 && argc < smith_defaults_args_max - 2 &&
-               smith_lsp_commands_option(argc, argv)) {
+    } else if (strcmp(tool->command, "lsp") == 0 && smith_lsp_commands_option(argc, argv)) {
         for (int i = 0; i < argc; i++)
             smith_defaults_argv[i] = argv[i];
         smith_defaults_argv[argc++] = smith_lsp_option;
@@ -3165,6 +3203,41 @@ static int smith_tool_main(const SmithTool *tool, int argc, char **argv, const c
     }
     int status = smith_tool_launch(tool, argc, argv, self);
     return status != 0 ? status : (before > 0 ? before : 0);
+}
+
+// `smith cc --smith-headers [compile flags] -- source header [source header ...]`: `--smith-header` for each pair, in
+// this one process (#639). A smith process costs about 10 ms to start (a 240 MB image and 400,000 fixups), the header
+// itself about 2, so the build writes the headers of many modules in one step. Each pair runs in a child of its own
+// (the lowering keeps its tables in statics), one after the other: a header names the headers of what it imports, so
+// they are never written at the same time. The status is 0 when every header was written (only when its bytes change).
+static int smith_headers_main(int count, char **args) {
+    constexpr int arguments_max = 80;
+    const char *usage = "usage: smith cc --smith-headers [compile flags] -- source header [source header ...]";
+    int split = 0;
+    while (split < count && strcmp(args[split], "--") != 0)
+        split++; // bounded by the arguments
+    if (split == count || (count - split - 1) % 2 != 0 || split + 3 > arguments_max)
+        smith_die(smith_exit_usage, usage, nullptr);
+    int failed = 0;
+    fflush(nullptr);
+    for (int i = split + 1; i < count; i += 2) { // bounded by the arguments
+        char *child[arguments_max];
+        int used = 0;
+        child[used++] = args[i];
+        child[used++] = (char *)"-o";
+        child[used++] = args[i + 1];
+        for (int j = 0; j < split; j++)
+            child[used++] = args[j];
+        pid_t pid = fork();
+        if (pid < 0) smith_die(smith_exit_missing, "cannot fork", args[i]);
+        if (pid == 0) _exit(smith_lang_main(used, child, true));
+        int status = 0;
+        pid_t waited = -1;
+        for (int tries = 0; tries < 1000 && waited < 0; tries++)
+            waited = waitpid(pid, &status, 0); // bounded; a signal
+        if (waited < 0 || !WIFEXITED(status) || WEXITSTATUS(status) != 0) failed = 1;
+    }
+    return failed;
 }
 
 // The compiler: `smith cc <args>` and `smith c++ <args>`, and the links smith-cc and smith-c++, which act as them by
@@ -3177,6 +3250,8 @@ static int smith_compile_main(int argc, char **argv, int at, bool plus, const ch
     // file's lowering (knowledge/smith-language.md).
     if (first < argc && strcmp(argv[first], "--smith-header") == 0)
         return smith_lang_main(argc - first - 1, argv + first + 1, true);
+    if (first < argc && strcmp(argv[first], "--smith-headers") == 0)
+        return smith_headers_main(argc - first - 1, argv + first + 1);
     if (first < argc && strcmp(argv[first], "--smith-lower") == 0)
         return smith_lang_main(argc - first - 1, argv + first + 1, false);
     if (first < argc && strcmp(argv[first], "--smith-tree-sitter") == 0) return smith_tree_sitter_main(self);
@@ -3224,7 +3299,7 @@ static bool smith_only_options(int count, char **args) {
 static bool smith_project_arguments(const char *verb, int count, char **args) {
     const char *const *own = nullptr;
     static const char *const fmt_options[] = {"--dry-run", "-n", "--Werror", "-i", nullptr};
-    static const char *const lint_options[] = {"--quiet", nullptr};
+    static const char *const lint_options[] = {"--quiet", "--changed", nullptr};
     static const char *const prove_options[] = {"-v", "--no-cache", "--induction", "--unroll", nullptr};
     if (strcmp(verb, "fmt") == 0) own = fmt_options;
     if (strcmp(verb, "lint") == 0) own = lint_options;
@@ -3237,6 +3312,7 @@ static bool smith_project_arguments(const char *verb, int count, char **args) {
             (strncmp(args[i], "--budget=", 9) == 0 || strncmp(args[i], "--emit-ir=", 10) == 0 ||
              strncmp(args[i], "--induction-from=", 17) == 0 || strncmp(args[i], "--function=", 11) == 0))
             continue;
+        if (strcmp(verb, "lint") == 0 && strncmp(args[i], "--changed=", 10) == 0 && args[i][10] != '\0') continue;
         bool known = false;
         for (size_t j = 0; own != nullptr && own[j] != nullptr; j++)
             known = known || strcmp(args[i], own[j]) == 0;
@@ -3267,6 +3343,7 @@ static bool smith_project_arguments(const char *verb, int count, char **args) {
 #include "runtime/record.c"
 
 #include "runtime/changed.c"
+#include "runtime/lint_cache.c"
 #include "runtime/verbs.c"
 
 // smith's top level is only verbs. This table is where they are: a new verb is a row and, when it is none of these
@@ -3413,6 +3490,7 @@ static void smith_usage(FILE *out) {
     exit(smith_exit_usage);
 }
 
+#ifndef SMITH_CORE // the units runner links this file as a library (runtime/core.h), without the program's main
 int main(int argc, char **argv) {
     SMITH_ASSERT(argc >= 1 && argv[0] != nullptr);
     smith_account_start();
@@ -3458,6 +3536,13 @@ int main(int argc, char **argv) {
     if (strcmp(argv[1], "--smith-slots") == 0) return smith_slots_main(argc - 2, argv + 2);
     const SmithVerb *verb = smith_find_verb(argv[1]);
     if (verb == nullptr) smith_bare_arguments(argc, argv);
-    if (smith_slots_verb(verb->name)) smith_slots_arm(verb->name);
+    // `smith build preflight` takes its base token at once and holds it for the whole check: its build, fmt, lint and
+    // test are children that ride on it (SMITH_SLOT_HELD) and take tokens only for their further workers, so a
+    // preflight waits for the machine once, at its start, not between its steps.
+    if (strcmp(verb->name, "build") == 0 && argc > 2 && strcmp(argv[2], "preflight") == 0)
+        smith_slots_take("preflight");
+    else if (smith_slots_verb(verb->name))
+        smith_slots_arm(verb->name);
     return smith_dispatch(verb, argc, argv, self);
 }
+#endif

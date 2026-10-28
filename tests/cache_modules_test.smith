@@ -115,3 +115,89 @@ export void test_cache_modules_old_folders_of_other_smiths_are_pruned_on_use(io:
         "pruning: this smith's folder is there", "1",
         scratch::capture(&p, "ls -d $XDG_CACHE_HOME/smith/modules/*/ | grep -c '/[0-9a-f]\\{32\\}/$'"));
 }
+
+// Stable hashes (issue #618): clang puts a module in a folder named by the hash of the compile's flags, so builds whose
+// flags are the same share one folder, whatever folder the project is in. Two clones of one project, built from two
+// folders of the scratch folder, leave one context-hash folder in this smith's folder, not one for each.
+export void test_cache_modules_builds_in_different_folders_share_one_context_hash_folder(io::Io *io) {
+    scratch::Project p = modules_project(io);
+    scratch::Run cloned = scratch::sh(&p, "cp -R . ../two && cp -R . ../three");
+    scratch::expect_status("the clones of the project", 0, &cloned);
+    scratch::Run first = scratch::build(&p, "");
+    scratch::expect_status("the first folder builds", 0, &first);
+    builds_and_runs(&p, "two", "modules: the second folder builds", "7");
+    builds_and_runs(&p, "three", "modules: the third folder builds", "7");
+    scratch::expect_text("modules: one context-hash folder holds the modules of all three", "1",
+                         text(&p, "ls -d \"$modules\"/*/*/ | wc -l | tr -d ' '"));
+}
+
+// The cap on the folders (issue #618): four folders of other smiths of 400 kB, the oldest (100 hours; held by a running
+// smith too: 300) and a build with SMITH_CACHE_MAX=1000k. The least recently used goes, the one a process holds stays,
+// and so do the younger.
+export void test_cache_cap_the_least_recently_used_folder_goes_and_one_in_use_stays(io::Io *io) {
+    scratch::Project p = modules_project(io);
+    scratch::Run made = scratch::sh(
+        &p, ". ./prelude; m=$modules; mkdir -p $m; for f in a:100 b:50 c:2 h:300; do mkdir -p $m/${f%:*}; "
+            "head -c 400000 /dev/zero >$m/${f%:*}/x.pcm; : >$m/${f%:*}/.used; ago ${f#*:} $m/${f%:*}/.used; done; "
+            "perl -MFcntl=:flock -e 'open F, \">>\", $ARGV[0]; flock F, LOCK_SH; sleep 40' $m/h/.in-use & "
+            "holder=$!; sleep 1; SMITH_CACHE_MAX=1000k smith build >/dev/null 2>&1; echo \"built $?\"; kill $holder");
+    scratch::expect_text("cap: the build runs while the lock is held", "built 0\n", made.out);
+    scratch::expect_text("cap: the least recently used folder is gone, the held and the younger stay", "b c h",
+                         scratch::capture(&p, "cd $XDG_CACHE_HOME/smith/modules && ls -d */ | tr -d / | "
+                                              "grep -v '^[0-9a-f]\\{32\\}$' | tr '\\n' ' ' | sed 's/ $//'"));
+}
+
+// The cap on this smith's own folder: when the folders of others cannot make room, its module files go, least recently
+// used first, but never one used in the last hour (a build's own).
+export void test_cache_cap_this_smiths_old_module_files_go_when_the_cache_is_over_the_cap(io::Io *io) {
+    scratch::Project p = modules_project(io);
+    scratch::Run first = scratch::build(&p, "");
+    scratch::expect_status("cap: the first build fills the folder", 0, &first);
+    scratch::Run second = scratch::sh(
+        &p, ". ./prelude; own=$(ls -d $modules/*/ | grep '/[0-9a-f]\\{32\\}/$' | head -1); mkdir -p $own/old; "
+            "head -c 400000 /dev/zero >$own/old/a.pcm; head -c 400000 /dev/zero >$own/old/b.pcm; "
+            "ago 100 $own/old/a.pcm; ago 50 $own/old/b.pcm; "
+            "kb=$(du -sk $modules | cut -f1); SMITH_CACHE_MAX=$((kb * 1024 - 300000)) smith build >/dev/null 2>&1; "
+            "echo \"built $? $(exists $own/old/a.pcm) $(exists $own/old/b.pcm)\"");
+    scratch::expect_text("cap: the oldest module file goes, the younger stays", "built 0 no yes", second.out);
+    scratch::expect_text("cap: the module files of the last build stay", "yes",
+                         text(&p, "[ \"$(count_modules)\" -gt 1 ] && echo yes || echo no"));
+}
+
+// The cleaning after `smith build llvm` (issue #618, scripts/llvm_prune.c): every LLVM folder of the cache goes, with
+// its Enzyme, but the one just built and the previous release's. The whole tree is in the test's scratch folder; the
+// real
+// ~/.cache/smith/llvm is never read.
+constexpr char make_tree[_] =
+    "mkdir -p c/smith/llvm c/smith/enzyme; for n in r8:none r9:bbb r10:aaa r11:ccc; do d=c/smith/llvm/23.1.3-${n%:*}; "
+    "mkdir -p $d/install/lib $d/build; [ ${n#*:} = none ] || echo \"llvm-23.1.3 ${n#*:}\" "
+    ">$d/install/lib/smith-clang.id; "
+    "echo x >$d/build/big; mkdir -p c/smith/enzyme/0.0.303-23.1.3-${n%:*}/lib; done; "
+    "smith cc -std=c23 \"$SMITH_REPO/scripts/llvm_prune.c\" -o prune && echo made";
+
+export void test_llvm_prune_keeps_the_new_build_and_the_previous_releases_and_removes_the_rest(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::own_cache(&p);
+    scratch::Run made = scratch::sh(&p, make_tree);
+    scratch::expect_text("prune: the tree and the tool are made", "made", made.out);
+    scratch::Run pruned = scratch::sh(&p, "./prune $PWD/c/smith/llvm 23.1.3-r11 'llvm-23.1.3 aaa'");
+    scratch::expect_status("prune: the tool runs", 0, &pruned);
+    scratch::expect_contains("prune: it says what it removed", pruned.out, "23.1.3-r9");
+    scratch::expect_text("prune: the new build, the previous release's and one with no id (in progress) stay",
+                         "23.1.3-r10 23.1.3-r11 23.1.3-r8",
+                         scratch::capture(&p, "ls c/smith/llvm | tr '\\n' ' ' | sed 's/ $//'"));
+    scratch::expect_text("prune: Enzyme of a removed build goes, the others stay",
+                         "0.0.303-23.1.3-r10 0.0.303-23.1.3-r11 0.0.303-23.1.3-r8",
+                         scratch::capture(&p, "ls c/smith/enzyme | tr '\\n' ' ' | sed 's/ $//'"));
+}
+
+export void test_llvm_prune_without_a_previous_identity_keeps_only_the_new_build(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::own_cache(&p);
+    scratch::Run made = scratch::sh(&p, make_tree);
+    scratch::expect_text("prune: the tree and the tool are made", "made", made.out);
+    scratch::Run pruned = scratch::sh(&p, "./prune $PWD/c/smith/llvm 23.1.3-r11 ''");
+    scratch::expect_status("prune: the tool runs", 0, &pruned);
+    scratch::expect_text("prune: the new build and the one with no id stay", "23.1.3-r11 23.1.3-r8",
+                         scratch::capture(&p, "ls c/smith/llvm | tr '\\n' ' ' | sed 's/ $//'"));
+}

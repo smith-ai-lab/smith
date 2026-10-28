@@ -671,6 +671,21 @@ static char smith_lang_header_full[smith_lang_header_max + 4096];
 static char smith_lang_dump[smith_lang_dump_max];
 static SmithLang smith_lang_instance;
 
+// The counters that make the names of a file's temporaries unique (`smith_s3`, `smith_rfor_i2`). They count over one
+// lowering, so a second lowering in the same process (smith_lang_reset, runtime/lang_lex.c) starts them again and
+// writes the same names as the first.
+constexpr unsigned smith_lang_counter_cut_start = 1000000;
+constexpr unsigned smith_lang_counter_convert_start = 3000000;
+
+static struct {
+    unsigned rfor_pattern;
+    unsigned slice_pattern;
+    unsigned slice_subscript;
+    unsigned slice_element;
+    unsigned slice_cut;
+    unsigned slice_convert;
+} smith_lang_counter = {.slice_cut = smith_lang_counter_cut_start, .slice_convert = smith_lang_counter_convert_start};
+
 typedef struct {
     const char *text;
     size_t length;

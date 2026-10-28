@@ -149,6 +149,8 @@ struct PresenterLink {
     unsigned noteId = 0; // a custom note that shows its text
     std::set<unsigned> suppressed;
     std::map<unsigned, std::string> hints; // by place: a note for the error the compiler reports there
+    // by place: the notes of an error the lowering reports there, each at a place of its own (issue #193)
+    std::map<unsigned, std::vector<std::pair<unsigned, std::string>>> notes;
 };
 
 // The engine a tool reports its own findings from, which the next hook of this thread puts its Presenter in front of
@@ -224,6 +226,16 @@ class Presenter final : public DiagnosticConsumer {
             if (hint != link->hints.end()) { // the lowering knows why the name is not found
                 pendingNotes.insert(pendingNotes.begin(), {at, hint->second});
                 engine = info.getDiags();
+            }
+            auto noted = level == DiagnosticsEngine::Error && at.isValid() ? link->notes.find(at.getRawEncoding())
+                                                                           : link->notes.end();
+            if (noted != link->notes.end()) { // the lowering's notes of its own error, before the instances'
+                std::vector<std::pair<SourceLocation, std::string>> own;
+                for (auto &[place, text] : noted->second)
+                    own.emplace_back(SourceLocation::getFromRawEncoding(place), text);
+                pendingNotes.insert(pendingNotes.begin(), own.begin(), own.end());
+                engine = info.getDiags();
+                link->notes.erase(noted);
             }
             if (origin.isValid()) at = origin;
             // A place in a module's generated header is where the module's source declares it.
@@ -607,6 +619,24 @@ class ArrayParameters {
     }
 };
 
+// A query of the compiler that is expected to fail, often (is this name a variable?), must not search the whole
+// identifier table for a correction: it throws its message away, and a corrected name is an error to it all the same.
+// The words of the message it keeps (the second parse that explains a failure) are read with the correction on.
+class TypoGuard {
+    Sema &sema;
+    bool before;
+
+  public:
+    TypoGuard(Sema &s, bool correct) : sema(s), before(s.DisableTypoCorrection) {
+        if (!correct) sema.DisableTypoCorrection = true;
+    }
+    ~TypoGuard() {
+        sema.DisableTypoCorrection = before;
+    }
+    TypoGuard(const TypoGuard &) = delete;
+    TypoGuard &operator=(const TypoGuard &) = delete;
+};
+
 class SmithHook;
 
 class ArrayEnd final : public ExternalSemaSource {
@@ -654,6 +684,7 @@ class SmithHook final : public TokenHook, public NameSource {
         host.read_problem = &SmithHook::readProblem;
         host.suppress = &SmithHook::suppressUse;
         host.hint = &SmithHook::hintAt;
+        host.note = &SmithHook::noteAt;
         host.proved = &SmithHook::provedAt;
         if (OptionalFileEntryRef entry = SM.getFileEntryRefForID(MainFile)) {
             mainName = entry->getName().str();
@@ -1909,6 +1940,7 @@ class SmithHook final : public TokenHook, public NameSource {
         bool wasSuppressed = diags.getSuppressAllDiagnostics();
         diags.setSuppressAllDiagnostics(true);
         DiagnosticErrorTrap trap(diags);
+        TypoGuard guard(*sema, false);
         TypeResult parsed = sema->ParseTypeFromStringCallback(text, "<smith>", SourceLocation());
         bool failed = trap.hasErrorOccurred();
         diags.setSuppressAllDiagnostics(wasSuppressed);
@@ -1964,8 +1996,9 @@ class SmithHook final : public TokenHook, public NameSource {
     // reads the string's tokens in a child scope of the one the parser is in, so the locals declared so far are seen,
     // and puts the token back). The operand of typeof is never evaluated, so nothing is marked used. Diagnostics are
     // off while it runs, and asked again with them on when the parse fails, so the compiler says why itself.
-    bool parseTypeof(const std::string &text, QualType *type, const Expr **expression) {
+    bool parseTypeof(const std::string &text, QualType *type, const Expr **expression, bool correct = true) {
         if (!sema->ParseTypeFromStringCallback || sema->getCurScope() == nullptr) return false;
+        TypoGuard guard(*sema, correct);
         std::string source = "__typeof__(" + text + ")";
         DiagnosticErrorTrap trap(sema->getDiagnostics());
         TypeResult parsed = sema->ParseTypeFromStringCallback(source, "<smith>", SourceLocation());
@@ -2054,7 +2087,7 @@ class SmithHook final : public TokenHook, public NameSource {
         diags.setSuppressAllDiagnostics(true);
         QualType type;
         const Expr *expression = nullptr;
-        bool good = self->parseTypeof(text, &type, &expression);
+        bool good = self->parseTypeof(text, &type, &expression, false);
         diags.setSuppressAllDiagnostics(wasSuppressed);
         if (!good) {
             self->queryText = "the compiler does not accept it here";
@@ -2247,7 +2280,7 @@ class SmithHook final : public TokenHook, public NameSource {
         diags.setSuppressAllDiagnostics(true);
         QualType type;
         const Expr *expression = nullptr;
-        bool good = self->parseTypeof(text, &type, &expression);
+        bool good = self->parseTypeof(text, &type, &expression, false);
         diags.setSuppressAllDiagnostics(wasSuppressed);
         if (!good) {
             self->queryText = "the compiler does not accept it here";
@@ -3589,6 +3622,11 @@ class SmithHook final : public TokenHook, public NameSource {
     // (Not in the editor: clangd shows a note in the file it is in as a diagnostic of its own, beside the error.)
     static void hintAt(void *context, uint32_t location, const char *message) {
         if (!inEditor) static_cast<SmithHook *>(context)->link->hints[location] = message;
+    }
+
+    // A note for the error the lowering is about to report at `error`: it follows the error, at `location`.
+    static void noteAt(void *context, uint32_t error, uint32_t location, const char *message) {
+        static_cast<SmithHook *>(context)->link->notes[error].emplace_back(location, message);
     }
 
     // ---- The names as written

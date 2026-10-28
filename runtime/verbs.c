@@ -15,10 +15,11 @@ constexpr size_t smith_verb_args_max = 16384;
 constexpr size_t smith_verbs_files_max = 16384;
 constexpr size_t smith_verbs_names_max = 16U << 20;
 constexpr size_t smith_verbs_batch = 128;
-constexpr size_t smith_verbs_info_max = 8U << 20;
-constexpr size_t smith_verbs_lines_max = 8192;
+constexpr size_t smith_verbs_info_max = 64U << 20; // .smith/build.info; bss, so only the pages a project fills are used
+constexpr size_t smith_verbs_lines_max = 131072;   // lines of one kind (twice smith_objects_max)
+constexpr size_t smith_verbs_targets_max = 1024;
 constexpr size_t smith_verbs_jobs_max = 64;
-constexpr size_t smith_verbs_words_max = 8192;
+constexpr size_t smith_verbs_words_max = 131072;
 
 // ---- Arguments
 
@@ -74,7 +75,7 @@ static SmithVerbArgs *smith_verb_split(int count, char **args) {
 // Builds `targets` (none: the build's default), the verb's -D options as the build's. With pass_args the verb's own
 // arguments go to build.c as -DSMITH_ARGS, which smith_args reads (the test runner's options).
 static int smith_verb_build(const char *self, const SmithVerbArgs *split, const char *const *targets, bool pass_args) {
-    static char *build_args[smith_build_args_max + 8];
+    static char *build_args[smith_build_args_max + smith_verbs_targets_max + 4];
     static char joined[smith_verb_args_max] = "-DSMITH_ARGS=";
     constexpr size_t prefix = sizeof "-DSMITH_ARGS=" - 1;
     size_t used = 0;
@@ -85,7 +86,7 @@ static int smith_verb_build(const char *self, const SmithVerbArgs *split, const 
         joined_used = smith_encode_argument(joined, sizeof joined, joined_used, split->own[i]);
     joined[joined_used] = '\0';
     if (joined_used > prefix) build_args[used++] = joined;
-    for (size_t i = 0; targets[i] != nullptr && i < 4; i++) // a verb names at most four targets
+    for (size_t i = 0; targets[i] != nullptr && i < smith_verbs_targets_max; i++) // bounded: a verb names few targets
         build_args[used++] = (char *)targets[i];
     return smith_build_main((int)used, build_args, self, nullptr);
 }
@@ -102,6 +103,9 @@ typedef struct {
     size_t unit_count;
     const char *libraries[smith_verbs_lines_max]; // the library sources of the program of the same index in units
     size_t library_count;
+    const char
+        *needs[smith_verbs_lines_max]; // a source and, after its first tab, the generated files one compile waits for
+    size_t need_count;
     const char *defaults[smith_verbs_lines_max];
     size_t default_count;
     const char *runners[smith_verbs_lines_max]; // the programs smith_tests made (a build.info without them has none)
@@ -112,19 +116,33 @@ typedef struct {
 static SmithInfo smith_info;
 static char smith_info_text[smith_verbs_info_max + 1];
 
+[[noreturn]] static void smith_info_too_many(const char *things, size_t limit) {
+    fprintf(stderr,
+            "smith: .smith/build.info has more than %zu %s (the limit); split the build or raise the limit in "
+            "runtime/verbs.c\n",
+            limit, things);
+    exit(smith_exit_usage);
+}
+
+static void smith_info_add(const char **list, size_t *count, const char *what, const char *value) {
+    if (*count >= smith_verbs_lines_max) smith_info_too_many(what, smith_verbs_lines_max);
+    list[(*count)++] = value;
+}
+
 // Reads .smith/build.info, which build.c's run wrote: `compile<TAB>source<TAB>flag...`, `test<TAB>task`,
-// `program<TAB>path`, `runner<TAB>path`, `default<TAB>target` (runtime/build_runtime.c). Each line is cut at its end in
-// place.
+// `need<TAB>source<TAB>file...`, `program<TAB>path`, `runner<TAB>path`, `default<TAB>target` (runtime/build_runtime.c).
+// Each line is cut at its end in place.
 static const SmithInfo *smith_info_read(const char *verb) {
     FILE *file = fopen(".smith/build.info", "rb");
     if (file == nullptr)
         smith_die(smith_exit_usage, verb, "the build left no .smith/build.info; is there a build.c or build.smith?");
-    size_t size = fread(smith_info_text, 1, smith_verbs_info_max, file);
+    size_t size = fread(smith_info_text, 1, smith_verbs_info_max + 1, file);
     fclose(file);
+    if (size > smith_verbs_info_max) smith_info_too_many("bytes", smith_verbs_info_max);
     smith_info_text[size] = '\0';
     smith_info = (SmithInfo){};
     char *line = smith_info_text;
-    for (size_t guard = 0; *line != '\0' && guard < 4 * smith_verbs_lines_max; guard++) { // bounded by the lines
+    for (size_t guard = 0; *line != '\0' && guard < smith_verbs_info_max; guard++) { // bounded by the bytes
         char *end = strchr(line, '\n');
         if (end == nullptr) end = line + strlen(line);
         bool last = *end == '\0';
@@ -136,23 +154,26 @@ static const SmithInfo *smith_info_read(const char *verb) {
             } else {
                 tab = end;
             }
-            if (strcmp(line, "compile") == 0 && smith_info.compile_count < smith_verbs_lines_max) {
+            if (strcmp(line, "compile") == 0) {
                 char *flags = strchr(tab, '\t');
                 if (flags != nullptr) *flags++ = '\0';
-                smith_info.compile_flags[smith_info.compile_count] = flags != nullptr ? flags : "";
-                smith_info.compiles[smith_info.compile_count++] = tab;
+                size_t at = smith_info.compile_count;
+                smith_info_add(smith_info.compiles, &smith_info.compile_count, "compile lines", tab);
+                smith_info.compile_flags[at] = flags != nullptr ? flags : "";
+            } else if (strcmp(line, "need") == 0) {
+                smith_info_add(smith_info.needs, &smith_info.need_count, "need lines", tab);
             } else if (strcmp(line, "test") == 0) {
                 smith_info.test_count++;
-            } else if (strcmp(line, "unit") == 0 && smith_info.unit_count < smith_verbs_lines_max) {
-                smith_info.units[smith_info.unit_count++] = tab;
-            } else if (strcmp(line, "library") == 0 && smith_info.library_count < smith_verbs_lines_max) {
-                smith_info.libraries[smith_info.library_count++] = tab;
-            } else if (strcmp(line, "program") == 0 && smith_info.program_count < smith_verbs_lines_max) {
-                smith_info.programs[smith_info.program_count++] = tab;
-            } else if (strcmp(line, "runner") == 0 && smith_info.runner_count < smith_verbs_lines_max) {
-                smith_info.runners[smith_info.runner_count++] = tab;
-            } else if (strcmp(line, "default") == 0 && smith_info.default_count < smith_verbs_lines_max) {
-                smith_info.defaults[smith_info.default_count++] = tab;
+            } else if (strcmp(line, "unit") == 0) {
+                smith_info_add(smith_info.units, &smith_info.unit_count, "unit lines", tab);
+            } else if (strcmp(line, "library") == 0) {
+                smith_info_add(smith_info.libraries, &smith_info.library_count, "library lines", tab);
+            } else if (strcmp(line, "program") == 0) {
+                smith_info_add(smith_info.programs, &smith_info.program_count, "program lines", tab);
+            } else if (strcmp(line, "runner") == 0) {
+                smith_info_add(smith_info.runners, &smith_info.runner_count, "runner lines", tab);
+            } else if (strcmp(line, "default") == 0) {
+                smith_info_add(smith_info.defaults, &smith_info.default_count, "default lines", tab);
             }
         }
         if (last) break;
@@ -211,7 +232,9 @@ typedef struct {
     size_t job;
 } SmithVerbsSlot;
 
+// With `ended`, each job's wait status and log go to it before the log is printed.
 static size_t smith_verbs_parallel(size_t count, size_t jobs, char *const *(*argv_of)(size_t job, void *context),
+                                   void (*ended)(size_t job, int wait_status, FILE *log, void *context),
                                    void *context) {
     SMITH_ASSERT(jobs >= 1 && jobs <= smith_verbs_jobs_max);
     SmithVerbsSlot slots[smith_verbs_jobs_max] = {};
@@ -236,6 +259,7 @@ static size_t smith_verbs_parallel(size_t count, size_t jobs, char *const *(*arg
         for (size_t at = 0; at < jobs; at++) { // bounded by the slots
             if (slots[at].pid != done) continue;
             if (smith_verbs_status(wait_status) != 0) failed++;
+            if (ended != nullptr) ended(slots[at].job, wait_status, slots[at].log, context);
             smith_verbs_replay(slots[at].log);
             fclose(slots[at].log);
             slots[at] = (SmithVerbsSlot){};
@@ -424,12 +448,27 @@ static int smith_fmt_project(const char *self, bool check) {
 
 // ---- lint
 
-static char *smith_lint_argv[8];
+static char *smith_lint_argv[16];
+
+// The files to lint, the flags of the compile of each (nullptr: none, so no cache key) and, of the ones the cache did
+// not answer, their numbers: job n lints files[order[n]].
+typedef struct {
+    const char *const *files;
+    const char *const *flags;
+    size_t *order;
+} SmithLintRun;
 
 static char *const *smith_lint_job(size_t job, void *context) {
-    const char *const *files = (const char *const *)context;
-    smith_lint_argv[5] = (char *)files[job];
+    const SmithLintRun *run = (const SmithLintRun *)context;
+    size_t at = 5 + smith_lc_extra(run->order[job], smith_lint_argv + 5);
+    smith_lint_argv[at++] = (char *)run->files[run->order[job]];
+    smith_lint_argv[at] = nullptr;
     return smith_lint_argv;
+}
+
+static void smith_lint_done(size_t job, int wait_status, FILE *log, void *context) {
+    const SmithLintRun *run = (const SmithLintRun *)context;
+    smith_lc_store(run->order[job], wait_status, log);
 }
 
 static size_t smith_verbs_jobs(void) {
@@ -484,6 +523,122 @@ static size_t smith_lint_unbuilt(const char **files, size_t count, size_t *sourc
     return count;
 }
 
+// Lints the files: those the cache has a result for replay it, the others run clang-tidy side by side with the flags of
+// their compile (.smith/compile_commands.json) and are stored when it completes. The last line says how many were
+// linted and how many of those ran. Returns the exit status.
+static int smith_lint_run(SmithLintRun *run, size_t count, const char *self) {
+    uint64_t began = smith_account_now_ms();
+    bool cache = smith_lc_open();
+    size_t misses = 0;
+    size_t failed = 0;
+    for (size_t i = 0; i < count; i++) { // bounded by the files
+        int status = 0;
+        if (cache) smith_lc_plan(i, run->files[i], run->flags[i]);
+        if (cache && smith_lc_replay(i, &status)) {
+            if (status != 0) failed++;
+        } else {
+            run->order[misses++] = i;
+        }
+    }
+    smith_lint_argv[0] = (char *)self;
+    smith_lint_argv[1] = (char *)"lint";
+    smith_lint_argv[2] = (char *)"--quiet";
+    smith_lint_argv[3] = (char *)"-p";
+    smith_lint_argv[4] = (char *)".smith";
+    failed += smith_verbs_parallel(misses, smith_verbs_jobs(), smith_lint_job, smith_lint_done, run);
+    if (failed > 0) fprintf(stderr, "smith lint: clang-tidy failed on %zu of %zu files\n", failed, count);
+    uint64_t took = smith_account_now_ms() - began;
+    fprintf(stderr, "smith lint: linted %zu files (%zu run, %zu cached, %.1f s)\n", count, misses, count - misses,
+            (double)took / 1000.0);
+    return failed > 0 ? 1 : 0;
+}
+
+// `--changed[=<ref>]` out of the arguments of `smith lint`: true when it is there, `base` the ref (default: where the
+// branch left origin/main).
+static bool smith_lint_take_changed(SmithVerbArgs *split, const char **base) {
+    bool found = false;
+    size_t kept = 0;
+    for (size_t i = 0; i < split->own_count; i++) { // bounded by smith_build_args_max
+        char *arg = split->own[i];
+        if (strcmp(arg, "--changed") == 0) {
+            found = true;
+        } else if (strncmp(arg, "--changed=", 10) == 0 && arg[10] != '\0') {
+            found = true;
+            *base = arg + 10;
+        } else {
+            split->own[kept++] = arg;
+        }
+    }
+    split->own_count = kept;
+    return found;
+}
+
+// Keeps of the first `count` files those `--changed` wants (runtime/changed.c), flags and all; returns how many. Says
+// what the change was, and, when it is all of them, which path made it so.
+static size_t smith_lint_changed(const char **files, const char **flags, size_t count, const char *given) {
+    char base[256];
+    const char *why = nullptr;
+    SmithChangedResult result = smith_changed_lint_select(given, base, sizeof base, &why);
+    if (result == SmithChanged_Failed)
+        smith_die(smith_exit_usage, "git cannot say what changed", "pass --changed=<ref>");
+    if (result == SmithChanged_Full) {
+        fprintf(stderr, "smith lint --changed: %s changed, so every file is linted\n", why);
+        return count;
+    }
+    size_t kept = 0;
+    for (size_t i = 0; i < count; i++) { // bounded by the files
+        if (!smith_changed_lint_wants(files[i])) continue;
+        files[kept] = files[i];
+        flags[kept++] = flags[i];
+    }
+    size_t changed = smith_changed_lint_paths();
+    fprintf(stderr, "smith lint --changed: %zu changed file%s since %.12s: %zu of %zu files to lint\n", changed,
+            changed == 1 ? "" : "s", base, kept, count);
+    if (kept == 0) fputs("smith lint --changed: no file is affected, so nothing is linted\n", stderr);
+    return kept;
+}
+
+// Builds what the compiles of the chosen files wait for (their `need` lines of .smith/build.info, each file once), the
+// generated headers; the whole of `smith_needs` when one of them has no line, as a module the build only declares has
+// none (the headers of tests are made by the smith the build links).
+static int smith_lint_build_needs(const char *self, const SmithVerbArgs *split, const SmithInfo *info,
+                                  const char **files, size_t count) {
+    static const char *targets[smith_verbs_targets_max + 1];
+    static char pool[smith_verbs_info_max / 8];
+    size_t used = 0;
+    size_t wanted = 0;
+    bool everything = false;
+    for (size_t i = 0; i < count && !everything; i++) { // bounded by the files
+        bool found = false;
+        for (size_t n = 0; n < info->need_count; n++) { // bounded by the lines
+            size_t length = strcspn(info->needs[n], "\t");
+            if (strlen(files[i]) != length || strncmp(info->needs[n], files[i], length) != 0) continue;
+            found = true;
+            for (const char *at = info->needs[n] + length; *at == '\t' && !everything;) { // a file after each tab
+                size_t size = strcspn(at + 1, "\t");
+                bool known = false;
+                for (size_t t = 0; t < wanted && !known; t++)
+                    known = strlen(targets[t]) == size && strncmp(targets[t], at + 1, size) == 0;
+                everything = !known && (wanted >= smith_verbs_targets_max || used + size + 1 > sizeof pool);
+                if (!known && !everything) {
+                    memcpy(pool + used, at + 1, size);
+                    pool[used + size] = '\0';
+                    targets[wanted++] = pool + used;
+                    used += size + 1;
+                }
+                at += 1 + size;
+            }
+        }
+        everything = everything || !found;
+    }
+    if (everything) {
+        targets[0] = "smith_needs";
+        wanted = 1;
+    }
+    targets[wanted] = nullptr;
+    return wanted == 0 ? 0 : smith_verb_build(self, split, targets, false);
+}
+
 // `smith lint` with no arguments: builds what the project's compiles read (the generated headers), then runs clang-tidy
 // on each of its own C-family sources, side by side, with the flags of the compile (.smith/compile_commands.json). A
 // `.smith` source is linted as written (shim/tidy.cpp) by a smith whose clang has the token hook, the way `smith lint
@@ -495,11 +650,17 @@ static int smith_lint_project(int count, char **args, const char *self) {
     int quiet = smith_quiet_verb("lint", count, args, self, false);
     if (quiet >= 0) return quiet;
     SmithVerbArgs *split = smith_verb_split(count, args);
-    const char *const targets[] = {"smith_needs", nullptr};
+    const char *changed_base = nullptr;
+    bool changed = smith_lint_take_changed(split, &changed_base);
+    // `--changed` first has the build write .smith/build.info and nothing else: it builds only what the files it
+    // chooses wait for, once it knows which they are.
+    const char *const targets[] = {changed ? "smith_info" : "smith_needs", nullptr};
     int status = smith_verb_build(self, split, targets, false);
     if (status != 0) return status;
     const SmithInfo *info = smith_info_read("smith lint");
     static const char *files[smith_verbs_files_max + 1];
+    static const char *flags[smith_verbs_files_max + 1]; // of each file's compile; the unbuilt ones have none
+    static size_t order[smith_verbs_files_max + 1];
     size_t files_count = 0;
     size_t skipped = 0;
     size_t smith_sources = 0;
@@ -511,6 +672,8 @@ static int smith_lint_project(int count, char **args, const char *self) {
             continue;
 #endif
         }
+        if (files_count >= smith_verbs_files_max) smith_die(smith_exit_usage, "too many files to lint", nullptr);
+        flags[files_count] = info->compile_flags[i];
         files[files_count++] = info->compiles[i];
     }
 #ifdef SMITH_HOOK
@@ -524,16 +687,17 @@ static int smith_lint_project(int count, char **args, const char *self) {
         fprintf(stderr, "smith lint: linted 0 files\n");
         return smith_sources > skipped ? 1 : 0; // .smith sources and nothing linted: the gate is empty
     }
-    smith_lint_argv[0] = (char *)self;
-    smith_lint_argv[1] = (char *)"lint";
-    smith_lint_argv[2] = (char *)"--quiet";
-    smith_lint_argv[3] = (char *)"-p";
-    smith_lint_argv[4] = (char *)".smith";
-    smith_lint_argv[6] = nullptr;
-    size_t failed = smith_verbs_parallel(files_count, smith_verbs_jobs(), smith_lint_job, (void *)files);
-    if (failed > 0) fprintf(stderr, "smith lint: clang-tidy failed on %zu of %zu files\n", failed, files_count);
-    fprintf(stderr, "smith lint: linted %zu files\n", files_count);
-    return failed > 0 ? 1 : 0;
+    if (changed) {
+        files_count = smith_lint_changed(files, flags, files_count, changed_base);
+        if (files_count == 0) {
+            fprintf(stderr, "smith lint: linted 0 files\n");
+            return 0;
+        }
+        status = smith_lint_build_needs(self, split, info, files, files_count);
+        if (status != 0) return status;
+    }
+    SmithLintRun run = {.files = files, .flags = flags, .order = order};
+    return smith_lint_run(&run, files_count, self);
 }
 
 // ---- prove
@@ -589,7 +753,13 @@ static bool smith_proves(const char *source) {
     return smith_ends_with(source, ".c") || smith_ends_with(source, ".smith");
 }
 
-static char *smith_prove_argv[smith_verbs_lines_max + smith_verbs_words_max + 8];
+static char *smith_prove_argv[2 * smith_verbs_lines_max + smith_verbs_words_max + 8];
+
+// Room for one more argument of the prover, or an error naming the limit.
+static void smith_prove_room(size_t used) {
+    if (used + 2 >= sizeof smith_prove_argv / sizeof smith_prove_argv[0])
+        smith_die(smith_exit_usage, "smith prove: too many arguments for one group of sources (limit 393216)", nullptr);
+}
 
 // Keeps, in place, the words of a tab-separated compile that the prover may see (smith_prove_drops).
 static void smith_prove_filter(char *flags) {
@@ -632,8 +802,8 @@ static void smith_prove_pass_options(size_t *used) {
             snprintf(append, sizeof append, "--emit-ir-append=%s", option + sizeof emit - 1);
             option = append;
         }
-        if (*used + 2 < sizeof smith_prove_argv / sizeof smith_prove_argv[0])
-            smith_prove_argv[(*used)++] = (char *)option;
+        smith_prove_room(*used);
+        smith_prove_argv[(*used)++] = (char *)option;
     }
 }
 
@@ -641,16 +811,17 @@ static void smith_prove_pass_options(size_t *used) {
 // for its contracts and does not prove.
 static void smith_prove_libraries(const char *libraries, size_t *used) {
     static char copy[smith_verbs_info_max + 1];
-    static char words[smith_verbs_lines_max][PATH_MAX + 16];
+    static char words[smith_verbs_info_max + 16 * smith_verbs_lines_max];
     snprintf(copy, sizeof copy, "%s", libraries);
-    size_t count = 0;
+    size_t text = 0;
     char *source = copy;
-    while (*source != '\0' && count < smith_verbs_lines_max) { // bounded by the sources
+    for (size_t guard = 0; *source != '\0' && guard < smith_verbs_info_max; guard++) { // bounded by the bytes
         char *tab = strchr(source, '\t');
         if (tab != nullptr) *tab = '\0';
-        snprintf(words[count], sizeof words[count], "--library=%s", source);
-        if (*used + 2 < sizeof smith_prove_argv / sizeof smith_prove_argv[0])
-            smith_prove_argv[(*used)++] = words[count++];
+        smith_prove_room(*used);
+        SMITH_ASSERT(text + strlen(source) + 12 <= sizeof words);
+        smith_prove_argv[(*used)++] = words + text;
+        text += (size_t)snprintf(words + text, sizeof words - text, "--library=%s", source) + 1;
         if (tab == nullptr) break;
         source = tab + 1;
     }
@@ -700,7 +871,7 @@ static int smith_prove_group(const char *self, const SmithInfo *info, const size
     for (size_t guard = 0; *flags != '\0' && guard < smith_verbs_words_max; guard++) { // bounded by the words
         char *tab = strchr(flags, '\t');
         if (tab != nullptr) *tab = '\0';
-        if (used + 2 >= sizeof smith_prove_argv / sizeof smith_prove_argv[0]) break;
+        smith_prove_room(used);
         if (*flags != '\0') smith_prove_argv[used++] = flags;
         if (tab == nullptr) break;
         flags = tab + 1;
@@ -722,11 +893,15 @@ static size_t smith_prove_compile_of(const SmithInfo *info, const char *source) 
 static int smith_prove_unit(const char *self, const SmithInfo *info, char *sources, const char *libraries) {
     static size_t found[smith_verbs_lines_max];
     size_t found_count = 0;
-    for (char *source = sources; source != nullptr && *source != '\0' && found_count < smith_verbs_lines_max;) {
+    for (char *source = sources; source != nullptr && *source != '\0';) {
         char *tab = strchr(source, '\t');
         if (tab != nullptr) *tab = '\0';
         size_t at = smith_prove_compile_of(info, source);
-        if (at < smith_verbs_lines_max && smith_proves(source)) found[found_count++] = at;
+        if (at < smith_verbs_lines_max && smith_proves(source)) {
+            if (found_count >= smith_verbs_lines_max)
+                smith_info_too_many("sources in one program", smith_verbs_lines_max);
+            found[found_count++] = at;
+        }
         source = tab != nullptr ? tab + 1 : nullptr;
     }
     static size_t members[smith_verbs_lines_max];
@@ -916,8 +1091,8 @@ static int smith_test_take_changed(SmithVerbArgs *split, const char *self) {
     if (result == SmithChanged_Failed) return smith_exit_usage;
     const char *filter = smith_changed_buffer_text(&selection);
     if (list) return smith_test_print_selection(result, filter);
-    // The selection is one argument of the runner; an argument has a limit (128 KiB on Linux), so a longer one runs
-    // everything, and says so (never silently).
+    // The selection is one argument of the runner; the arguments of a verb travel to build.c in 16384 bytes
+    // (smith_verb_args_max), so a longer one runs everything, and says so (never silently).
     if (result == SmithChanged_Some && selection.used > smith_changed_argument_max) {
         fprintf(stderr,
                 "smith test --changed: the selection (%zu bytes) is longer than one argument, so every test runs\n",
@@ -992,7 +1167,7 @@ static int smith_run_project(int count, char **args, const char *self) {
     int status = smith_verb_build(self, split, targets, false);
     if (status != 0) return status;
     const SmithInfo *info = smith_info_read("smith run");
-    const char *named[smith_verbs_lines_max];
+    static const char *named[smith_verbs_lines_max];
     size_t named_count = 0;
     for (size_t i = 0; i < info->default_count; i++) {
         for (size_t j = 0; j < info->program_count; j++) {

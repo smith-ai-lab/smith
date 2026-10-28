@@ -8,6 +8,7 @@ module test_runner_reports_test;
 import smith::format;
 import smith::io;
 import smith::test;
+import target;
 import runner;
 import scratch;
 
@@ -114,6 +115,11 @@ export void test_runner_reports_an_assert_a_segfault_and_an_inlined_check_name_t
     usize inline_line = runner::line_of(&p, "tests/test_reports.smith", "test::check(value > 0);");
     usize caller_line = runner::line_of(&p, "tests/test_reports.smith", "check_positive(-1);");
     usize order_line = runner::line_of(&p, "tests/test_reports.smith", "test::check_less_equal(total, 3);");
+    // assert's own message is libc's: Apple's and glibc's differ
+    const char *assert_message = "Assertion `moves == 2' failed.";
+    if constexpr (target::os == target::macos) {
+        assert_message = "Assertion failed: (moves == 2)";
+    }
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         const char *assert_report = sym(&p, iso, "assert_fails");
@@ -122,7 +128,7 @@ export void test_runner_reports_an_assert_a_segfault_and_an_inlined_check_name_t
         scratch::expect_contains(runner::label(io, iso, "report: ... shows it"), assert_report,
                                  format::push(&io->arena, assert_line, " |     c::assert(moves == 2);").data);
         scratch::expect_contains(runner::label(io, iso, "report: ... and keeps assert's own message"), assert_report,
-                                 "Assertion failed: (moves == 2)");
+                                 assert_message);
         scratch::expect_lacks(runner::label(io, iso, "report: ... without libc's abort path"), assert_report,
                               "pthread_kill");
 
@@ -154,6 +160,9 @@ export void test_runner_reports_an_assert_a_segfault_and_an_inlined_check_name_t
 
 // Objective-C frames and methods.
 export void test_runner_reports_a_check_inside_an_objective_c_method_names_the_method(io::Io *io) {
+    if constexpr (target::os != target::macos) {
+        return; // Objective-C here needs Apple's Foundation
+    }
     scratch::Project p = runner::project(io, "runner_base", "runner_objc");
     if (!runner::can_symbolize(&p)) return;
     usize line = runner::line_of(&p, "tests/test_objc.m", "smith_check(value > 0);");
@@ -255,9 +264,20 @@ export void test_runner_reports_smith_as_llvm_symbolizer_answers_the_sanitizers_
     if (!runner::can_symbolize(&p)) return;
     scratch::Run linked = scratch::sh(&p, "ln -s \"$SMITH_SELF\" llvm-symbolizer");
     scratch::expect_status("protocol: the link is made", 0, &linked);
-    const char *address = scratch::capture(&p, "nm build/tests | awk '$3 == \"_test_check_fails\" {print $1}'");
+    // Mach-O symbols have a leading underscore and the request names the architecture
+    const char *symbol = "test_check_fails";
+    const char *arch = "x86_64";
+    if constexpr (target::arch == target::aarch64) {
+        arch = "aarch64";
+    }
+    if constexpr (target::os == target::macos) {
+        symbol = "_test_check_fails";
+        arch = "arm64";
+    }
+    const char *address =
+        scratch::capture(&p, format::push(&io->arena, "nm build/tests | awk '$3 == \"", symbol, "\" {print $1}'").data);
     const char *code =
-        scratch::capture(&p, format::push(&io->arena, "printf 'CODE \"%s:arm64\" 0x%s\\n' \"$PWD/build/tests\" '",
+        scratch::capture(&p, format::push(&io->arena, "printf 'CODE \"%s:", arch, "\" 0x%s\\n' \"$PWD/build/tests\" '",
                                           address, "' | ./llvm-symbolizer --demangle --inlines")
                                  .data);
     scratch::expect_contains("protocol: a CODE request names the function", code, "test_check_fails");

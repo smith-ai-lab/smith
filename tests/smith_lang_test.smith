@@ -5,14 +5,17 @@
 //   linked with
 //                    the other .smith files and any .c or .cpp beside them (C++ as C++20), and run
 //   expect/lower-error  the errors `smith cc --smith-lower` reports (it has no compiler, so a generic call whose type
-//                    nothing writes is one); only a case with this file is checked
+//                    nothing writes is one); only a case with this file is checked, in process, by
+//                    tests/smith_lang_lowering_test.smith
 //   expect/stdout    what the program prints
 //   expect/error     the errors the build must report, as `file:line:column: message`, one per line (the build must
 //   fail) expect/lowered/  the C each file is lowered to (a.b.c), by `smith cc --smith-lower`: the lowering of the text
 //   as
 //                    written, with no macros and no parser (the build's own run is checked by the program, the symbols
-//                    and the headers)
-//   expect/header/   the generated header of each module (a.b.h)
+//                    and the headers); checked in process by tests/smith_lang_lowering_test.smith
+//   expect/header/   the generated header of each module (a.b.h); checked there too, but for the cases in
+//                    `header_by_command` (below), whose header needs the compiler's answer and is made by
+//                    `smith cc --smith-header` here
 //   expect/generics/ what the compile wrote for generic functions (a.b.c; SMITH_LANG_GENERICS): the calls, each as its
 //                    statement expression, and the instances, in order. `--smith-lower` cannot show them, because it
 //                    reads no header. Only a case with this folder is checked against it
@@ -36,6 +39,7 @@ import smith::test;
 import <string.h>;
 import scratch;
 import smith::mem;
+import <smith_core.h>;
 
 typedef struct {
     io::Io *io;
@@ -48,6 +52,23 @@ typedef struct {
     i32 status;
     const char *objects;
 } Built;
+
+// The raw lowering in process (include/smith_core.h): what `smith cc --smith-header` writes. The command asks the
+// compiler which of a module's C imports declared a name when several are possible, and the function does not, so a
+// case whose header is checked by its golden here, because it has several, is made by the command.
+constexpr usize header_capacity = 1U << 21;
+constexpr usize report_capacity = 1U << 16;
+
+static char header_text[header_capacity];
+static char report_text[report_capacity];
+
+static bool header_by_command(const char *name) {
+    static const char *const cases[_] = {"filescope-if-header", "filescope-if-reflect"};
+    for (usize i = 0; i < countof(cases); i++) {
+        if (c::strcmp(name, cases[i]) == 0) return true;
+    }
+    return false;
+}
 
 static typeof(const char[:]) slice_of(const char *text) {
     return text[0:c::strlen(text)];
@@ -103,6 +124,31 @@ static const char *listed(const Case *kase, const char *command) {
     return scratch::sh(kase->project, command).out;
 }
 
+// The header of a module, made in process into out/include, with the errors it reports added to out/stderr.
+static void write_header(const Case *kase, const char *file, const char *stem) {
+    io::Io *io = kase->io;
+    const scratch::Project *p = kase->project;
+    const char *source = format::push(&io->arena, "src/", file).data;
+    bool made =
+        c::smith_core_header(p->dir, source, nullptr, header_text, header_capacity, report_text, report_capacity);
+    if (report_text[0] != '\0') {
+        const u8 *bytes = (const u8 *)report_text;
+        io::Error added = io::files_write(&io->files, format::push(&io->arena, p->dir, "/out/stderr").data,
+                                          bytes[0:c::strlen(report_text)], io::Append);
+        test::check_equal(added.code, 0);
+    }
+    if (!made) return;
+    const char *path = format::push(&io->arena, p->dir, "/out/include/", stem, ".h").data;
+    const char *slash = c::strrchr(path, '/');
+    char *folder = arena::push_slice(&io->arena, char, (usize)(slash - path) + 1).data;
+    mem::copy(folder[0:(usize)(slash - path)], path[0:(usize)(slash - path)]);
+    folder[slash - path] = '\0';
+    test::check_equal(io::files_make_folder(&io->files, folder).code, 0);
+    const u8 *header = (const u8 *)header_text;
+    io::Error written = io::files_write(&io->files, path, header[0:c::strlen(header_text)], io::Replace);
+    test::check_equal(written.code, 0);
+}
+
 // Every compile of the case, into out/.
 static Built build_sources(const Case *kase) {
     io::Io *io = kase->io;
@@ -116,12 +162,16 @@ static Built build_sources(const Case *kase) {
     for (const char *at = sources, *file = next_line(io, &at); file != nullptr; file = next_line(io, &at)) {
         // the headers first, as the build will: no compile waits on another
         const char *stem = stem_of(io, file);
-        const char *command =
-            format::push(&io->arena, "mkdir -p \"out/include/$(dirname ", file, ")\" && smith cc --smith-header src/",
-                         file, " -o out/include/", stem, ".h 2>>out/stderr; [ -f out/include/", stem,
-                         ".h ] && cp out/include/", stem, ".h out/header/", module_of(io, file), ".h")
-                .data;
-        (void)scratch::sh(p, command);
+        if (header_by_command(kase->name)) {
+            const char *command = format::push(&io->arena, "mkdir -p \"out/include/$(dirname ", file,
+                                               ")\" && smith cc --smith-header src/", file, " -o out/include/", stem,
+                                               ".h 2>>out/stderr; [ -f out/include/", stem, ".h ] && cp out/include/",
+                                               stem, ".h out/header/", module_of(io, file), ".h")
+                                      .data;
+            (void)scratch::sh(p, command);
+        } else {
+            write_header(kase, file, stem);
+        }
     }
     const char *ask = scratch::exists(p, "ask") ? scratch::capture(p, "cat ask") : "";
     for (const char *at = sources, *file = next_line(io, &at); file != nullptr; file = next_line(io, &at)) {
@@ -131,9 +181,6 @@ static Built build_sources(const Case *kase) {
                          "' smith cc ", flags, " -c src/", file, " -o out/obj/", module, ".o 2>>out/stderr")
                 .data;
         if (scratch::sh(p, compile).status != 0) built.status = 1;
-        (void)scratch::sh(p, format::push(&io->arena, "smith cc --smith-lower src/", file, " >out/lowered/", module,
-                                          ".c 2>>out/lower-stderr")
-                                 .data);
         built.objects = format::push(&io->arena, built.objects, " out/obj/", module, ".o").data;
     }
     return built;
@@ -221,12 +268,6 @@ static void check_errors(const Case *kase, const Built *built, bool update) {
         test::note("the build failed:\n%s", scratch::read(p, "out/stderr"));
         test::check(false);
     }
-    const char *lower_stderr = scratch::read(p, "out/lower-stderr");
-    if (scratch::exists(p, "expect/lower-error") ||
-        (update && fresh(p) && scratch::contains(lower_stderr, ": error: "))) {
-        // The raw lowering (`--smith-lower`) has no compiler to type a generic call: it says so.
-        golden_at(kase, "expect/lower-error", errors_of(kase, "out/lower-stderr"));
-    }
 }
 
 static void check_outputs(const Case *kase, bool update) {
@@ -241,17 +282,22 @@ static void check_outputs(const Case *kase, bool update) {
     }
 }
 
-// The lowered C, the generated headers and what the compile wrote for generics, as the case holds them. A run to update
-// takes the files a successful build made as the expectation.
+// The generated headers of the cases in `header_by_command` and what the compile wrote for generics, as the case holds
+// them. A run to update takes the files a successful build made as the expectation.
 static void check_files(const Case *kase, const Built *built, bool update) {
     io::Io *io = kase->io;
     const char *files;
     if (update && built->status != 0) return;
     if (update && fresh(kase->project)) { // a new case: what the build made, each file that is not empty
-        files = listed(kase, "cd out && for f in lowered/*.c header/*.h; do [ -s \"$f\" ] && echo \"$f\"; done");
-    } else { // the files the case holds, which an update rewrites
-        files = listed(kase, "for f in expect/lowered/* expect/header/* expect/generics/*; do [ -f \"$f\" ] && echo "
-                             "\"${f#expect/}\"; done");
+        files = header_by_command(kase->name)
+                    ? listed(kase, "cd out && for f in header/*.h; do [ -s \"$f\" ] && echo \"$f\"; done")
+                    : "";
+    } else { // the files the case holds, which an update rewrites (the lowering and most headers are checked in
+             // process)
+        files = listed(
+            kase, header_by_command(kase->name)
+                      ? "for f in expect/header/* expect/generics/*; do [ -f \"$f\" ] && echo \"${f#expect/}\"; done"
+                      : "for f in expect/generics/*; do [ -f \"$f\" ] && echo \"${f#expect/}\"; done");
     }
     for (const char *at = files, *file = next_line(io, &at); file != nullptr; file = next_line(io, &at)) {
         golden_at(kase, join(kase, "expect/", file, "", ""),
@@ -285,7 +331,7 @@ static void corpus_case(io::Io *io, const char *name) {
     scratch::Run copied = scratch::sh(
         &p,
         join(&kase, "cp -R \"$SMITH_REPO/tests/smith-lang/cases/", name,
-             "/.\" . && mkdir -p out/include out/lowered "
+             "/.\" . && mkdir -p out/include "
              "out/header out/generics out/obj && : >out/stderr && "
              "{ [ -e ../target-facts ] || ln -s \"$SMITH_REPO/tests/smith-lang/cases/target-facts\" ../target-facts; }",
              ""));
@@ -691,6 +737,18 @@ export void test_error_generic_auto_const(io::Io *io) {
 
 export void test_error_generic_auto_element(io::Io *io) {
     corpus_case(io, "error-generic-auto-element");
+}
+
+export void test_error_generic_element_convert(io::Io *io) {
+    corpus_case(io, "error-generic-element-convert");
+}
+
+export void test_generic_element_convert(io::Io *io) {
+    corpus_case(io, "generic-element-convert");
+}
+
+export void test_error_concept_notes(io::Io *io) {
+    corpus_case(io, "error-concept-notes");
 }
 
 export void test_error_generic_concept_element(io::Io *io) {
@@ -1131,6 +1189,14 @@ export void test_generic_function(io::Io *io) {
 
 export void test_generic_function_error(io::Io *io) {
     corpus_case(io, "generic-function-error");
+}
+
+export void test_generic_function_generic(io::Io *io) {
+    corpus_case(io, "generic-function-generic");
+}
+
+export void test_generic_function_generic_error(io::Io *io) {
+    corpus_case(io, "generic-function-generic-error");
 }
 
 export void test_generic_gradient_shape(io::Io *io) {

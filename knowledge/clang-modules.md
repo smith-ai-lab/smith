@@ -37,7 +37,8 @@ void build(SmithBuild *b) {
   what the build already does without modules. Each module is `module <name> { header "<absolute path>" export * }`; `export
   *` makes a header's own includes visible to its users, as textual inclusion did.
 - **The flags:** `-fmodules -fmodules-cache-path=<cache>/smith/modules/<smith LC_UUID> -fmodules-prune-interval=604800
-  -fmodules-prune-after=2678400` and one `-fmodule-map-file=<map>` per map. `<cache>` is `$XDG_CACHE_HOME`, or
+  -fmodules-prune-after=2678400`, `-fmodules-ignore-macro=` for smith's own per-source macros (`SMITH_PROVED`,
+  `SMITH_PROFILING`, `SMITH_RECORD`: clang hashes every `-D` into the context folder) and one `-fmodule-map-file=<map>` per map. `<cache>` is `$XDG_CACHE_HOME`, or
   `~/.cache`, as for packages. The cache is clang's own (implicit modules), so clang does the locking when many compiles
   fill it at once. A sanitized compile and a plain one hash differently, so each has its own folder inside the cache.
   See "The caches" below for why it is shared and for the pruning flags.

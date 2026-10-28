@@ -1,0 +1,21 @@
+module stats;
+
+export typeof(xs[0]) sum(const arithmetic xs[:]) {
+    return xs[0];
+}
+
+export typeof(x) twice(arithmetic x) {
+    return x + x;
+}
+
+export typeof(*p) read(const integer *p) {
+    return *p;
+}
+
+export usize count(const auto xs[:]) {
+    return countof(xs);
+}
+
+export bool same_kind(pointer p, typeof(p) q) {
+    return p == q;
+}

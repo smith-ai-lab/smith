@@ -8,7 +8,9 @@ module scratch;
 import smith::arena;
 import smith::format;
 import smith::io;
+import smith::mem;
 import smith::test;
+import <smith_core.h>;
 import <string.h>;
 
 // The bytes of a buffer, for the calls of io that take a slice.
@@ -46,9 +48,11 @@ static const char *text_of(const char *data) {
 // that is already made (#442). The folder is keyed by the smith's LC_UUID, a running smith holds a lock on its programs
 // folder, so a smith that another test rebuilds can never prune the programs this test runs; a test that is about the
 // data folder sets its own XDG_DATA_HOME.
-// A command with no shell feature in it is run in place of the shell that starts it.
+// A command with no shell feature in it is run in place of the shell that starts it. The smith a test starts takes no
+// cores of the host's pool (SMITH_SLOTS=0): the test's own worker already holds one, and a test of the executor's
+// concurrency must not wait for a core a busy host does not have; tests/slots_test.smith sets its own pool.
 constexpr char run_script[_] =
-    "unset SMITH_ACCOUNT_FILE; here=$PWD; repo=${SMITH_REPO:-$PWD}; cd \"$0\" || exit 97; "
+    "unset SMITH_ACCOUNT_FILE; export SMITH_SLOTS=0; here=$PWD; repo=${SMITH_REPO:-$PWD}; cd \"$0\" || exit 97; "
     "cache=$3; [ -n \"$cache\" ] || cache=${SMITH_TEST_CACHE:-$HOME/.cache/smith-tests}/xdg; "
     "data=${SMITH_TEST_CACHE:-$HOME/.cache/smith-tests}/data; mkdir -p \"$cache\" \"$data\"; "
     "export PATH=\"$2:$PATH\" XDG_CACHE_HOME=\"$cache\" XDG_DATA_HOME=\"$data\" SMITH_REPO=\"$repo\" "
@@ -119,6 +123,63 @@ export void write(const Project *p, const char *name, const char *text) {
     io::Error written =
         io::files_write(&p->io->files, path_in(p, name), test_io_bytes(text, c::strlen(text)), io::Replace);
     test::check_equal(written.code, 0);
+}
+
+constexpr usize lowered_capacity = 1U << 23;
+constexpr usize lowered_errors_capacity = 1U << 16;
+static char lowered_text[lowered_capacity];
+static char lowered_errors[lowered_errors_capacity];
+
+// A file of the project, in a folder made for it.
+static void write_in_new_folder(const Project *p, const char *name, const char *text) {
+    const char *slash = c::strrchr(name, '/');
+    if (slash != nullptr) {
+        usize length = (usize)(slash - name);
+        char *folder = arena::push_slice(&p->io->arena, char, length + 1).data;
+        mem::copy(folder[0:length], name[0:length]);
+        folder[length] = '\0';
+        io::Error made = io::files_make_folder(&p->io->files, path_in(p, folder));
+        test::check_equal(made.code, 0);
+    }
+    write(p, name, text);
+}
+
+// The raw lowering of `$SMITH_REPO/<source>` (what `smith cc --smith-lower` prints) written to `name` in the project,
+// made in process (issue #646) where the test only needs the text. A lowering that reports an error fails the test.
+export void write_lowered(const Project *p, const char *source, const char *name) {
+    const char *repo = io::args_env(&p->io->args, "SMITH_REPO");
+    bool done = c::smith_core_lower(repo, source, nullptr, lowered_text, lowered_capacity, lowered_errors,
+                                    lowered_errors_capacity);
+    if (!done) {
+        test::note("%s could not be lowered:\n%s", source, lowered_errors);
+    }
+    test::check_equal(done, true);
+    write_in_new_folder(p, name, lowered_text);
+}
+
+static char header_buffer[1U << 21];
+
+static void header_to(const Project *p, const char *folder, const char *source, const char *name) {
+    bool done = c::smith_core_header(folder, source, nullptr, header_buffer, sizeof header_buffer, lowered_errors,
+                                     lowered_errors_capacity);
+    if (!done) {
+        test::note("%s has no header:\n%s", source, lowered_errors);
+    }
+    test::check_equal(done, true);
+    write_in_new_folder(p, name, header_buffer);
+}
+
+// The header of the module `<module>.smith` of the project (`t/body` is t/body.smith) written to `include/<module>.h`,
+// as `smith cc --smith-header` writes it, made in process. It is the text of the header pass, which does not ask the
+// compiler which import declared a C name: a module with two C imports takes the command.
+export void write_header(const Project *p, const char *module) {
+    header_to(p, p->dir, format::push(&p->io->arena, module, ".smith").data,
+              format::push(&p->io->arena, "include/", module, ".h").data);
+}
+
+// The same for `$SMITH_REPO/<source>`, written to `name` in the project.
+export void write_header_of(const Project *p, const char *source, const char *name) {
+    header_to(p, io::args_env(&p->io->args, "SMITH_REPO"), source, name);
 }
 
 // The file's text, or "" when it is absent.

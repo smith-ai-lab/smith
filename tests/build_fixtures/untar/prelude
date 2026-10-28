@@ -9,6 +9,32 @@ src=$PWD/src
 arc=$PWD/arc
 mkdir -p "$arc"
 
+# The tests spell tar's options as bsdtar does (macOS, and what the archives were first made with); GNU tar (Linux)
+# spells -n, -s and the format name differently, so there tar is a function that translates those.
+case $(command tar --version 2>&1) in
+*"GNU tar"*)
+    tar() {
+        n=$#
+        while [ "$n" -gt 0 ]; do
+            a=$1
+            shift
+            n=$((n - 1))
+            case $a in
+            -n) a=--no-recursion ;;
+            gnutar) a=gnu ;;
+            -s)
+                a=--transform=s$1
+                shift
+                n=$((n - 1))
+                ;;
+            esac
+            set -- "$@" "$a"
+        done
+        command tar "$@"
+    }
+    ;;
+esac
+
 # The files of a tree: type, permission bits and size, then the bytes by checksum. Equal listings are equal trees.
 listing() {
     (cd "$1" && find . -type f -exec sh -c 'for f; do printf "%s %s %s " "$(stat -c "%A %s" "$f" 2>/dev/null || stat -f "%Sp %z" "$f")" "$f" "$(shasum -a 256 <"$f" | cut -c1-16)"; echo; done' sh {} + | sort
@@ -77,6 +103,47 @@ build_untar() {
         -Wno-unused-function -I "$here/.smith/include" "$here/tests/untar.c" "$here/lib/smith/arena.smith" \
         "$here/lib/smith/contract.smith" "$here/lib/smith/inflate.smith" "$here/lib/smith/io.smith" \
         "$here/lib/smith/random.smith" -o "$PWD/untar"
+}
+
+# The sanitized untar and the seeds, made once and shared by every test of the run and of the runs after it (#639: ten
+# tests built the same program, which costs 14 s of CPU a test on a loaded host). They live in
+# $SMITH_TEST_CACHE/untar/<key>, the key the checksum of what the program is made of and the identity of the smith that
+# compiles it; the first test to need them takes a lock by making a folder and builds, the others wait for its mark
+# (never a fixed sleep: up to the 600 s hang backstop, and a lock older than 20 minutes is a builder that died). The
+# project gets `untar` and `seeds` as links, and the folders the cases write into.
+shared_untar() {
+    base=${SMITH_TEST_CACHE:-$HOME/.cache/smith-tests}/untar
+    mkdir -p "$base"
+    # the size and time of the files it is made of, and of the smith that compiles it (cheaper than their bytes)
+    if [ "$(uname -s)" = Darwin ]; then statfmt='-f %N_%m_%z'; else statfmt='-c %n_%Y_%s'; fi
+    key=$(stat $statfmt "${SMITH_SELF:-$(command -v smith)}" "$here/tests/untar.c" "$here"/runtime/*.c "$here"/runtime/*.h \
+        "$here/lib/smith/arena.smith" "$here/lib/smith/contract.smith" "$here/lib/smith/inflate.smith" \
+        "$here/lib/smith/io.smith" "$here/lib/smith/random.smith" "$here/tests/build_fixtures/untar/prelude" 2>/dev/null |
+        shasum -a 256 | cut -c1-16)
+    dir=$base/$key
+    if [ ! -e "$dir/done" ]; then
+        find "$base" -maxdepth 1 -name "lock-$key" -mmin +20 -exec rmdir {} + 2>/dev/null
+        if mkdir "$base/lock-$key" 2>/dev/null; then
+            mkdir -p "$dir"
+            if (cd "$dir" && work=$PWD && build_untar && make_seeds); then
+                : >"$dir/done"
+            else
+                rm -rf "$dir" "$base/lock-$key" # a failed build is not left for the others to wait on
+                return 1
+            fi
+        else
+            waited=0
+            until [ -e "$dir/done" ]; do
+                [ $waited -lt 3000 ] || { echo "shared_untar: timed out waiting for $dir" >&2; return 1; }
+                [ -d "$base/lock-$key" ] || { echo "shared_untar: the build of $dir failed" >&2; return 1; }
+                waited=$((waited + 1))
+                perl -e 'select(undef, undef, undef, 0.2)'
+            done
+        fi
+    fi
+    ln -s "$dir/untar" "$work/untar"
+    ln -s "$dir/seeds" "$work/seeds"
+    mkdir -p "$work/scratch" "$work/untar-out"
 }
 
 # Smaller seeds, so that every prefix is quick: a few files and a short random one, in seeds/.

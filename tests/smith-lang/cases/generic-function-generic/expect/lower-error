@@ -1,0 +1,4 @@
+src/main.smith:15:50: cannot tell the type of `ints[0:3]`, the argument of `smallest`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:16:50: cannot tell the type of `reals[0:3]`, the argument of `smallest`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:17:34: cannot tell the type of `ints[0:3]`, the argument of `smallest_of`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:18:34: cannot tell the type of `reals[0:3]`, the argument of `smallest_of`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable

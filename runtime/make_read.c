@@ -157,44 +157,48 @@ typedef struct {
     bool recipe;
 } SmithMakeLine;
 
+// The buffers of the reader, made on first use in the pool (smith_make_reset forgets them).
+static SmithMakeBuffer smith_make_joined;
+static SmithMakeBuffer smith_make_define_body;
+
 // The next logical line: a backslash and the newline join the next line (kept in a recipe line, one space otherwise).
 static bool smith_make_next_line(SmithMakeSource *source, bool in_rule, SmithMakeLine *out) {
     const char *line = nullptr;
     size_t length = 0;
-    static SmithMakeBuffer buffer;
-    if (buffer.data == nullptr) smith_make_buffer_init(&buffer, smith_make_input_max);
-    buffer.length = 0;
+    if (smith_make_joined.data == nullptr) smith_make_buffer_init(&smith_make_joined, smith_make_input_max);
+    smith_make_joined.length = 0;
     uint32_t first = source->line + 1;
     if (!smith_make_physical(source, &line, &length)) return false;
     bool recipe = in_rule && length > 0 && line[0] == '\t';
-    smith_make_put(&buffer, line, length);
+    smith_make_put(&smith_make_joined, line, length);
     for (size_t joined = 0; joined < smith_make_recipe_lines_max; joined++) { // bounded by the input
-        if (smith_make_trailing_backslashes(buffer.data, buffer.length) % 2 == 0) break;
+        if (smith_make_trailing_backslashes(smith_make_joined.data, smith_make_joined.length) % 2 == 0) break;
         const char *next = nullptr;
         size_t next_length = 0;
         if (!smith_make_physical(source, &next, &next_length)) {
-            if (!recipe) buffer.length--;
+            if (!recipe) smith_make_joined.length--;
             break;
         }
         if (recipe) {
-            smith_make_put_char(&buffer, '\n');
+            smith_make_put_char(&smith_make_joined, '\n');
             if (next_length > 0 && next[0] == '\t') {
                 next++;
                 next_length--;
             }
         } else {
-            buffer.length--;
-            while (buffer.length > 0 && smith_make_blank(buffer.data[buffer.length - 1]))
-                buffer.length--;
+            smith_make_joined.length--;
+            while (smith_make_joined.length > 0 &&
+                   smith_make_blank(smith_make_joined.data[smith_make_joined.length - 1]))
+                smith_make_joined.length--;
             while (next_length > 0 && smith_make_blank(*next)) {
                 next++;
                 next_length--;
             }
-            smith_make_put_char(&buffer, ' ');
+            smith_make_put_char(&smith_make_joined, ' ');
         }
-        smith_make_put(&buffer, next, next_length);
+        smith_make_put(&smith_make_joined, next, next_length);
     }
-    *out = (SmithMakeLine){smith_make_take(&buffer, 0), {source->name, first}, recipe};
+    *out = (SmithMakeLine){smith_make_take(&smith_make_joined, 0), {source->name, first}, recipe};
     return true;
 }
 
@@ -658,9 +662,9 @@ static void smith_make_define(SmithMakeSource *source, const char *header) {
     SmithMakeOp op = SmithMakeOp_Recursive;
     const char *name = header;
     if (smith_make_find_assignment(header, &name_end, &op, &value_at)) name = smith_make_dup(header, name_end);
-    static SmithMakeBuffer body;
-    if (body.data == nullptr) smith_make_buffer_init(&body, smith_make_input_max);
-    body.length = 0;
+    SmithMakeBuffer *body = &smith_make_define_body;
+    if (body->data == nullptr) smith_make_buffer_init(body, smith_make_input_max);
+    body->length = 0;
     size_t depth = 1;
     const char *line = nullptr;
     size_t length = 0;
@@ -676,11 +680,11 @@ static void smith_make_define(SmithMakeSource *source, const char *header) {
             closed = true;
             break;
         }
-        if (body.length > 0) smith_make_put_char(&body, '\n');
-        smith_make_put(&body, line, length);
+        if (body->length > 0) smith_make_put_char(body, '\n');
+        smith_make_put(body, line, length);
     }
     if (!closed) smith_make_report("define with no endef");
-    smith_make_assign(smith_make_trim(name), op, smith_make_take(&body, 0));
+    smith_make_assign(smith_make_trim(name), op, smith_make_take(body, 0));
 }
 
 // ---- Rules

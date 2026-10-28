@@ -1324,6 +1324,7 @@ static bool smith_making_tests;
 typedef struct {
     const char *source;
     const char *const *arguments; // compiler, flags, -c, source
+    const char *const *needs;     // smith_compile_needs: the generated files it reads (nullptr: not said)
 } SmithCommandRow;
 
 static SmithCommandRow smith_command_rows[smith_objects_max];
@@ -1520,6 +1521,115 @@ static void smith_modules_prune(const char *base, const char *name) {
     }
 }
 
+// The byte cap (issue #618; SMITH_CACHE_MAX, 10 GB: runtime/package.c) of the modules root, beside the rules above and
+// the 31 days. It is checked when a build opens the cache, at most every ten minutes (every build when SMITH_CACHE_MAX
+// is set, which a test does), and when the root is over it: (1) the folders of other smiths go, least recently used
+// first, unless a running smith holds one (the same exclusive lock without waiting as the pruning), then (2) if that
+// is not enough, the module files (.pcm) of this smith's own folder, least recently used first, as clang's own pruning
+// removes them (clang touches a module file whenever it uses it); a file used in the last hour stays, and clang builds
+// a missing one again.
+constexpr time_t smith_modules_check_seconds = 600;
+constexpr time_t smith_modules_young_seconds = 3600;
+
+static time_t smith_modules_walk_now;
+static long smith_modules_walk_cutoff;
+
+// The last use of a smith's folder: its stamp, else the folder itself (an old layout's).
+static time_t smith_modules_folder_used(const char *path) {
+    char used[PATH_MAX + 8];
+    struct stat info;
+    snprintf(used, sizeof used, "%s/.used", path);
+    return stat(used, &info) == 0 || stat(path, &info) == 0 ? info.st_mtime : 0;
+}
+
+static bool smith_modules_is_entry(const char *base, const char *name, char *path) {
+    return name[0] != '.' && smith_cache_join(path, base, name, "") && smith_package_is_folder(path);
+}
+
+// Counts the bytes of each folder of the root by the age of its last use.
+static void smith_modules_count_folders(const char *base, time_t now) {
+    smith_cache_ages_reset();
+    DIR *dir = opendir(base);
+    if (dir == nullptr) return;
+    for (size_t guard = 0; guard < 1000000; guard++) { // bounded by the entries
+        const struct dirent *entry = readdir(dir);
+        if (entry == nullptr) break;
+        char path[PATH_MAX];
+        if (!smith_modules_is_entry(base, entry->d_name, path)) continue;
+        uint64_t bytes = 0;
+        time_t newest = 0;
+        smith_cache_measure(path, &bytes, &newest);
+        smith_cache_ages_add(bytes, smith_modules_folder_used(path), now);
+    }
+    closedir(dir);
+}
+
+// Removes the folders that go at the cutoff, except `own` and any that a running smith holds.
+static void smith_modules_evict_folders(const char *base, const char *own, long cutoff, time_t now) {
+    DIR *dir = opendir(base);
+    if (dir == nullptr) return;
+    for (size_t guard = 0; guard < 1000000; guard++) { // bounded by the entries
+        const struct dirent *entry = readdir(dir);
+        if (entry == nullptr) break;
+        char path[PATH_MAX];
+        if (!smith_modules_is_entry(base, entry->d_name, path) || strcmp(entry->d_name, own) == 0) continue;
+        if (smith_cache_goes(smith_modules_folder_used(path), now, cutoff)) smith_modules_remove_if_free(path);
+    }
+    closedir(dir);
+}
+
+static bool smith_modules_old_module_file(const char *path, const struct stat *info, int type) {
+    size_t length = strlen(path);
+    return type == FTW_F && length > 4 && strcmp(path + length - 4, ".pcm") == 0 &&
+           smith_modules_walk_now - info->st_mtime >= smith_modules_young_seconds;
+}
+
+static int smith_modules_count_file(const char *path, const struct stat *info, int type, struct FTW *where) {
+    (void)where;
+    if (smith_modules_old_module_file(path, info, type))
+        smith_cache_ages_add((uint64_t)info->st_blocks * 512U, info->st_mtime, smith_modules_walk_now);
+    return 0;
+}
+
+static int smith_modules_remove_file(const char *path, const struct stat *info, int type, struct FTW *where) {
+    (void)where;
+    if (smith_modules_old_module_file(path, info, type) &&
+        smith_cache_goes(info->st_mtime, smith_modules_walk_now, smith_modules_walk_cutoff))
+        remove(path);
+    return 0;
+}
+
+// Step 2: the module files of this smith's folder, oldest first, until the root fits (or the folder has no more that
+// are old enough). The folders of other smiths are left whole to step 1: one may be held by a running smith.
+static void smith_modules_evict_files(const char *base, const char *own, uint64_t cap, time_t now) {
+    uint64_t bytes = 0;
+    time_t newest = 0;
+    char folder[PATH_MAX];
+    smith_cache_measure(base, &bytes, &newest);
+    if (bytes <= cap || !smith_cache_join(folder, base, own, "")) return;
+    smith_modules_walk_now = now;
+    smith_cache_ages_reset();
+    nftw(folder, smith_modules_count_file, smith_cache_walk_files, FTW_PHYS);
+    smith_modules_walk_cutoff = smith_cache_cutoff(bytes - cap);
+    if (smith_modules_walk_cutoff >= 0) nftw(folder, smith_modules_remove_file, smith_cache_walk_files, FTW_PHYS);
+}
+
+static void smith_modules_cap(const char *base, const char *own) {
+    time_t now = time(nullptr);
+    uint64_t cap = smith_cache_limit();
+    char stamp[PATH_MAX + 16];
+    struct stat info;
+    snprintf(stamp, sizeof stamp, "%s/.cap-checked", base);
+    bool every_build = getenv("SMITH_CACHE_MAX") != nullptr;
+    if (!every_build && stat(stamp, &info) == 0 && now - info.st_mtime < smith_modules_check_seconds) return;
+    (void)smith_cache_touch(stamp); // first, so a build that starts meanwhile skips the check
+    smith_modules_count_folders(base, now);
+    uint64_t total = smith_cache_ages.total;
+    if (total <= cap) return;
+    smith_modules_evict_folders(base, own, smith_cache_cutoff(total - cap), now);
+    smith_modules_evict_files(base, own, cap, now);
+}
+
 static bool smith_modules_cache_folder(char *out, SmithPackageFault *error) {
     char base[PATH_MAX];
     if (!smith_cache_folder(SmithCache_Modules, base, error)) return false;
@@ -1537,8 +1647,14 @@ static bool smith_modules_cache_folder(char *out, SmithPackageFault *error) {
     int held = open(stamp, O_RDWR | O_CREAT, 0666); // not close-on-exec: the compiles of the build hold it too
     if (held >= 0 && flock(held, LOCK_SH) != 0) close(held);
     smith_modules_prune(base, name);
+    smith_modules_cap(base, name);
     return true;
 }
+
+// The macros smith itself defines on a compile that no header reads (a proof's hash, the record mode): clang hashes
+// every -D into the module's context, so each value would be a folder of its own (issue #618).
+static const char *const smith_modules_ignored[] = {"SMITH_PROVED", "SMITH_PROFILING", "SMITH_RECORD"};
+constexpr size_t smith_modules_ignored_count = sizeof smith_modules_ignored / sizeof smith_modules_ignored[0];
 
 void smith_modules(SmithBuild *b, const SmithModules *modules) {
     SMITH_ASSERT(b != nullptr && modules != nullptr);
@@ -1553,16 +1669,19 @@ void smith_modules(SmithBuild *b, const SmithModules *modules) {
     char cache[PATH_MAX];
     SmithPackageFault error;
     if (!smith_modules_cache_folder(cache, &error)) smith_fail("smith_modules: %s", error.text);
-    const char **flags = smith_new_list(count + 5);
+    const char **flags = smith_new_list(count + 5 + smith_modules_ignored_count);
     flags[0] = "-fmodules";
     flags[1] = smith_text("-fmodules-cache-path=%s", cache); // one cache for every project and worktree
     // The pruning rule is the same as the package cache's, and written in every command: clang removes a module unused
     // for 31 days, and checks at most once a week.
     flags[2] = smith_text("-fmodules-prune-interval=%d", smith_cache_prune_interval);
     flags[3] = smith_text("-fmodules-prune-after=%d", smith_cache_prune_after);
+    for (size_t i = 0; i < smith_modules_ignored_count; i++)
+        flags[4 + i] = smith_text("-fmodules-ignore-macro=%s", smith_modules_ignored[i]);
+    size_t maps = 4 + smith_modules_ignored_count; // the module maps come after the fixed flags
     for (size_t i = 0; i < count; i++)
-        flags[4 + i] = smith_modules_write(b, smith_modules_folder(folders[i]), textual);
-    flags[4 + count] = smith_modules_write(b, smith_modules_library_folder, textual);
+        flags[maps + i] = smith_modules_write(b, smith_modules_folder(folders[i]), textual);
+    flags[maps + count] = smith_modules_write(b, smith_modules_library_folder, textual);
     for (size_t i = 0; textual[i] != nullptr; i++) {
         if (!smith_modules_textual_used[i])
             smith_fail("smith_modules: the textual header '%s' is not under any of the folders (spell it as a glob "
@@ -2279,8 +2398,8 @@ static const char *const *smith_handlers_link(SmithBuild *b, const SmithProgram 
 // of malloc, write... win over a shared library's; lib/handlers.c), compiled once for each folder of programs with the
 // program's compiler. AddressSanitizer exits with status 1 after a report where macOS's aborts (abort_on_error is
 // Darwin's default), so the test runner, a failure's report and the debugger, which read a report as a stop by
-// SIGABRT, would see an exit: a weak __asan_default_options in an object of each sanitized program gives Linux the
-// same (the program's own, strong, wins).
+// SIGABRT, would see an exit: an __asan_default_options in an object of each sanitized program gives Linux the same.
+// It is strong: the runtime ahead of the program on the link line has a weak one, and the first weak definition wins.
 constexpr size_t smith_handlers_folders_max = 64;
 static const char *smith_handlers_made[smith_handlers_folders_max];
 static bool smith_handlers_made_asan[smith_handlers_folders_max];
@@ -2302,10 +2421,9 @@ static void smith_handlers_object(SmithBuild *b, const SmithProgram *program, co
 }
 
 static void smith_asan_abort_options(SmithBuild *b, const SmithProgram *program, const char *object) {
-    const char *script =
-        "printf '%s\\n' 'const char *__asan_default_options(void);' "
-        "'__attribute__((weak)) const char *__asan_default_options(void) { return \"abort_on_error=1\"; }' "
-        "| \"$0\" -x c - -c -o \"$1\"";
+    const char *script = "printf '%s\\n' 'const char *__asan_default_options(void);' "
+                         "'const char *__asan_default_options(void) { return \"abort_on_error=1\"; }' "
+                         "| \"$0\" -x c - -c -o \"$1\"";
     SmithStep step = {
         .command = smith_list(b, "sh", "-c", script, smith_copy_string(program->linker), object, nullptr),
         .implicit_inputs = smith_one(smith_compiler_file(program->linker)),
@@ -2395,6 +2513,10 @@ void smith_program(SmithBuild *b, SmithProgram *program) {
     copy.libraries = smith_copy_list(program->libraries);
     copy.objects = (const SmithObject *const *)rows;
     const char *const tail[] = {"-o", copy.output, nullptr};
+    // ld64 gives every program an LC_UUID and dladdr sees its symbols; on Linux the ELF build-id (16 bytes) names the
+    // image in a failure's trace, and the exported symbols are the names of its raw frames (lib/trace.c).
+    const char *const *identity = smith_when(b, strcmp(b->os, "Linux") == 0,
+                                             smith_list(b, "-Wl,--build-id=md5", "-Wl,--export-dynamic", nullptr));
     // The effect summaries of the objects (an output of each compile that writes one): the link checks them (skill
     // smith-lang-effects), so a summary that changed reruns it even when its object did not (an attribute moved).
     const char **summaries = smith_new_list(count);
@@ -2407,8 +2529,8 @@ void smith_program(SmithBuild *b, SmithProgram *program) {
     const char *const *handlers_files = nullptr;
     const char *const *handlers = smith_program_handlers(b, &copy, &handlers_files);
     copy.step = (SmithStep){
-        .command = smith_cat(b, smith_one(copy.linker), copy.flags, (const char *const *)outputs, copy.libraries,
-                             handlers, tail, nullptr),
+        .command = smith_cat(b, smith_one(copy.linker), identity, copy.flags, (const char *const *)outputs,
+                             copy.libraries, handlers, tail, nullptr),
         .inputs = (const char *const *)outputs,
         .implicit_inputs = smith_cat(b, smith_library_files(copy.libraries),
                                      smith_one(smith_compiler_file(copy.linker)), summaries, handlers_files, nullptr),
@@ -2488,7 +2610,22 @@ void smith_compile_command(SmithBuild *b, const char *compiler, const char *sour
     const char *const *arguments =
         smith_cat(b, smith_one(smith_copy_string(compiler)), smith_modules_for(b, copy), smith_lang_flags(b, copy),
                   smith_copy_list(flags), smith_library_flags(b, copy), smith_module_flags(b, copy), tail, nullptr);
-    smith_command_rows[smith_command_row_count++] = (SmithCommandRow){copy, arguments};
+    smith_command_rows[smith_command_row_count++] = (SmithCommandRow){copy, arguments, nullptr};
+}
+
+void smith_compile_needs(SmithBuild *b, const char *source, const char *const *files) {
+    SMITH_ASSERT(b != nullptr);
+    smith_require_text("smith_compile_needs", "source", source);
+    if (files == nullptr) smith_fail("smith_compile_needs: the files are required (a list ending in nullptr)");
+    for (size_t i = 0; i < smith_command_row_count; i++) { // bounded by the rows
+        if (strcmp(smith_command_rows[i].source, source) != 0) continue;
+        smith_command_rows[i].needs = smith_copy_list(files);
+        return;
+    }
+    for (size_t i = 0; i < smith_object_row_count; i++) { // a compile of its own already knows what it waits for
+        if (strcmp(smith_object_rows[i].object.source, source) == 0) return;
+    }
+    smith_fail("smith_compile_needs: %s has no smith_compile_command before it", source);
 }
 
 // Whether an earlier compile is of the same source: `smith lint` reads the first of each.
@@ -2550,6 +2687,10 @@ void smith_compile_commands(SmithBuild *b, const char *path) {
 //   compile<TAB>source<TAB>word...   a source of the project's own that the build compiles, with the words of its first
 //                      compile after the compiler; not a generated file, not under .smith/, not an absolute path (a
 //                      package)
+//   need<TAB>source<TAB>file...  the generated files one compile of the source waits for: of an object, its
+//                      inputs that a step makes; of a source the build only declares (smith_compile_command), those
+//                      smith_compile_needs names, and none when it was not called: unknown, so `smith lint --changed`
+//                      builds smith_needs for it
 //   test<TAB>task      a task that `smith test` runs
 //   program<TAB>path   the output of a smith_program
 //   unit<TAB>source... the own sources of a program's objects (not of the tests' runner): what `smith prove` proves
@@ -2587,6 +2728,18 @@ static bool smith_is_own_source(const char *source) {
     return smith_find_output(smith_one(source), &shared) == nullptr; // a generated file is not the project's own
 }
 
+// The generated files one compile reads: its implicit and order-only inputs that a step makes.
+static const char *const *smith_object_needs(SmithBuild *b, const SmithObject *object) {
+    const char *const *needs = smith_list(b, nullptr);
+    const char *const *inputs = smith_cat(b, object->step.implicit_inputs, object->step.order_only_inputs, nullptr);
+    for (size_t j = 0; inputs[j] != nullptr; j++) {
+        const char *shared = nullptr;
+        if (smith_find_output(smith_one(inputs[j]), &shared) != nullptr)
+            needs = smith_cat(b, needs, smith_one(inputs[j]), nullptr);
+    }
+    return needs;
+}
+
 // The generated files the project's sources read: the implicit and order-only inputs of their compiles that a step
 // makes.
 static const char *const *smith_needed_files(SmithBuild *b) {
@@ -2594,12 +2747,7 @@ static const char *const *smith_needed_files(SmithBuild *b) {
     for (size_t i = 0; i < smith_object_row_count; i++) {
         const SmithObject *object = &smith_object_rows[i].object;
         if (!smith_is_own_source(object->source)) continue;
-        const char *const *inputs = smith_cat(b, object->step.implicit_inputs, object->step.order_only_inputs, nullptr);
-        for (size_t j = 0; inputs[j] != nullptr; j++) {
-            const char *shared = nullptr;
-            if (smith_find_output(smith_one(inputs[j]), &shared) != nullptr)
-                needs = smith_cat(b, needs, smith_one(inputs[j]), nullptr);
-        }
+        needs = smith_cat(b, needs, smith_object_needs(b, object), nullptr);
     }
     return needs;
 }
@@ -2649,12 +2797,26 @@ static void smith_put_build_info(FILE *out, SmithBuild *b) {
             fprintf(out, "\t%s", command[j]);
         fputc('\n', out);
     }
+    for (size_t i = 0; i < smith_object_row_count; i++) { // what each compile of a source waits for, to build only that
+        const SmithObject *object = &smith_object_rows[i].object;
+        if (!smith_is_own_source(object->source)) continue;
+        fprintf(out, "need\t%s", object->source);
+        const char *const *needs = smith_object_needs(b, object);
+        for (size_t j = 0; needs[j] != nullptr; j++)
+            fprintf(out, "\t%s", needs[j]);
+        fputc('\n', out);
+    }
     for (size_t i = 0; i < smith_command_row_count; i++) { // sources the build never compiles (smith_compile_command)
         const SmithCommandRow *row = &smith_command_rows[i];
         if (!smith_is_own_source(row->source)) continue;
         fprintf(out, "compile\t%s", row->source);
         for (size_t j = 1; row->arguments[j] != nullptr; j++)
             fprintf(out, "\t%s", row->arguments[j]);
+        fputc('\n', out);
+        if (row->needs == nullptr) continue;
+        fprintf(out, "need\t%s", row->source);
+        for (size_t j = 0; row->needs[j] != nullptr; j++)
+            fprintf(out, "\t%s", row->needs[j]);
         fputc('\n', out);
     }
     const char *build_file = smith_build_file_name();
@@ -2761,7 +2923,8 @@ static const char *smith_tests_match(const char *line, bool module, const char *
     size_t key_size = strspn(rest, "abcdefghijklmnopqrstuvwxyz_");
     if (key_size == 0) return nullptr;
     rest += key_size;
-    if (*kind == SmithTestKind_Property && strncmp(rest, ", ", 2) == 0) { // (random::Key key, mem::Failing *failing)
+    if (*kind == SmithTestKind_Property &&
+        strncmp(rest, ", ", 2) == 0) { // (random::Key key, failing::Failing *failing)
         rest += 2;
         if (strncmp(rest, "SmithFailing *", strlen("SmithFailing *")) == 0) {
             rest += strlen("SmithFailing *");
@@ -2799,10 +2962,10 @@ static const char *smith_tests_key_type(const char *line) {
     return smith_tests_type_of_import(line, "random", "Key");
 }
 
-// The spelling of smith::mem's failing allocator a `.smith` file's import line gives, "mem::Failing" or
+// The spelling of smith::failing's allocator a `.smith` file's import line gives, "failing::Failing" or
 // "<alias>::Failing", or nullptr.
 static const char *smith_tests_failing_type(const char *line) {
-    return smith_tests_type_of_import(line, "mem", "Failing");
+    return smith_tests_type_of_import(line, "failing", "Failing");
 }
 
 // The spelling of smith::io's type a `.smith` file's import line gives, "io::Io" or "<alias>::Io", or nullptr.
@@ -2921,8 +3084,8 @@ static int smith_tests_scan(SmithRun *run) {
         rows[i] = smith_text("    {\"%s\", %s, %s, %s, %s},\n", found[i].name, slot_names[0], slot_names[1],
                              slot_names[2], slot_names[3]);
     }
-    // The header declares the allocator's tag and does not include <smith/mem.h>: a test file that imports smith::mem
-    // reads that header's instance section, which an earlier plain include would have skipped.
+    // The header declares the allocator's tag and does not include <smith/failing.h>: a test file that imports
+    // smith::failing reads that header's instance section, which an earlier plain include would have skipped.
     const char *header = smith_text("// Generated by smith_tests from the test files; do not edit.\n#pragma once\n\n"
                                     "#include <smith/io.h>\n#include <smith/random.h>\n\nstruct SmithFailing;\n\n%s",
                                     smith_join(run->b, prototypes, ""));
@@ -3014,12 +3177,13 @@ static const char *const *smith_tests_arguments(SmithBuild *b, const char *runne
 static const char *const *smith_tests_imported(SmithBuild *b, const char *const *sources);
 
 // The libraries the runner and the code under test call: the arena and random (the test library draws its keys and
-// memory from them), mem (the checked allocator it sets around each test), trace (a failure's report), contract
+// memory from them), mem (the checked allocator it sets around each test) and failing (the refusing one a test may ask
+// for), trace (a failure's report), contract
 // (<smith/contract.h>) and io, then those the test files import. Each is compiled here, with the test flags, unless the
 // project links it itself in .objects, so no library is defined twice. Returns the new count of objects.
 static size_t smith_tests_libraries(SmithBuild *b, const SmithTests *copy, const SmithTests *tests,
                                     const char *const *imported, const char **objects, size_t used) {
-    static const char *const libraries[] = {"arena", "random", "trace", "contract", "io", "mem"};
+    static const char *const libraries[] = {"arena", "random", "trace", "contract", "io", "mem", "failing"};
     for (size_t i = 0; i < sizeof libraries / sizeof libraries[0]; i++) {
         const char *source = smith_library(b, libraries[i]); // C or a .smith module
         if (smith_tests_links(tests, source)) continue;
@@ -4600,6 +4764,7 @@ static void smith_put_manifest(FILE *out, SmithBuild *b) {
     if (smith_defer_count > 0) smith_put_regenerate_edge(out);
     smith_put_phony(out, "smith_needs", smith_needed_files(b));
     smith_put_phony(out, "smith_tests", smith_test_tasks(b));
+    smith_put_phony(out, "smith_info", smith_list(b, nullptr)); // builds nothing: build.c's run wrote .smith/build.info
     // ninja builds every target when there is no default line, so an empty default names a target that does nothing.
     if (smith_default_count == 0) fputs("build smith_nothing: phony\ndefault smith_nothing", out);
     if (smith_default_count > 0) fputs("default", out);
