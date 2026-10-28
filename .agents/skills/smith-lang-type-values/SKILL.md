@@ -15,12 +15,12 @@ typedef struct {
     constexpr Type of;                             // `constexpr` on a member is invalid C: this is smith's
 } Column;
 
-constexpr Type count = U32;                        // a type is a value
+constexpr Type Count = U32;                        // a type is a value
 constexpr Type Block = U8[16];                     // a full C type, as in a cast
 constexpr Type kinds[2] = {I32, F64};
 constexpr Column length = {"length", Usize};
 
-static_assert(count == U32 && sizeof(count) == 4 && Int(count));   // == and != compare types
+static_assert(Count == U32 && sizeof(Count) == 4 && Int(Count));   // == and != compare types
 static_assert(alignof(length.of) == 8 && sizeof(Block) == 16);
 
 Bool small(Type t) {                               // an ordinary function: it runs in the compiler
@@ -34,10 +34,10 @@ Type Wider(Type a, Type b) {
 constexpr Bool fits = small(I32);                  // true: a call with a type name as its argument
 
 export Usize demo() {
-    constexpr Type local = Wider(U8, I64);         // a function over types, at compile time
-    constexpr Type second = kinds[1];
-    local big = 1;                                 // `t x;` declares a variable of the type t holds
-    second ratio = 0.5;                            // a type read from an array: use it a statement later
+    constexpr Type Local = Wider(U8, I64);         // a function over types, at compile time
+    constexpr Type Second = kinds[1];
+    Local big = 1;                                 // `t x;` declares a variable of the type t holds
+    Second ratio = 0.5;                            // a type read from an array: use it a statement later
     return sizeof(big) + (fits ? 1 : 0) + (Usize)(ratio * 2);   // 8 + 1 + 1
 }
 ```

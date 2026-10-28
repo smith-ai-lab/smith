@@ -439,25 +439,29 @@ Types are values too, so a function over types runs in the compiler like any oth
 ```smith
 module widths;
 
+// NOLINTNEXTLINE(readability-identifier-naming): a function over types is capitalized, as a type is
 static Type Wider(Type a, Type b) {
     return sizeof(a) >= sizeof(b) ? a : b; // runs in the compiler
 }
 
-constexpr Type big = Wider(U8, I64);
-static_assert(sizeof(big) == 8);
+// NOLINTNEXTLINE(readability-identifier-naming)
+constexpr Type Big = Wider(U8, I64);
+static_assert(sizeof(Big) == 8);
 ```
 
 A type value may be any C type, written as in a cast, and an exported one is a typedef in the module's C header
-(`geo_meters`, `geo_handler` and `geo_block` to a C caller):
+(`geo_Meters`, `geo_Handler` and `geo_Block` to a C caller):
 
 ```smith
 module geo;
 
-export constexpr Type meters = F64;
-export constexpr Type handler = I32 (*)(I32);
-export constexpr Type block = U8[16];
+// NOLINTBEGIN(readability-identifier-naming): a type value is capitalized, as a type is
+export constexpr Type Meters = F64;
+export constexpr Type Handler = I32 (*)(I32);
+export constexpr Type Block = U8[16];
+// NOLINTEND(readability-identifier-naming)
 
-static_assert(sizeof(block) == 16);
+static_assert(sizeof(Block) == 16);
 ```
 
 [smith-lang-type-values](.agents/skills/smith-lang-type-values/SKILL.md).
