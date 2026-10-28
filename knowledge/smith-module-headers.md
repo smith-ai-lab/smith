@@ -125,7 +125,10 @@ What the header keeps of the source (written by the plain lexer, `runtime/lang_t
   `#endif`, after the exports (and a `// smith-linked: helper counter` line, the functions and variables among them, and
   a `// smith-hidden:` line, all the names of the section). C, C++ and `.smith` code that is not an importer never see
   the section: `shim/hook.cpp` defines `SMITH_INSTANCES` around the `#include` of the header it enters for an
-  `import`. What the section names through imports (`c::FILE`) is included by the header, like the record of an
+  `import`. A header with a section has no `#pragma once` (an importer would skip the section when another header had
+  included it plainly first): `#ifndef SMITH_HEADER_<module>` on its first line, the `#define` at the end of the
+  declarations, and the section under a guard of its own, `SMITH_HEADER_<module>_INSTANCES`, so it is read at the first
+  include with `SMITH_INSTANCES` whatever came before (issue #761). What the section names through imports (`c::FILE`) is included by the header, like the record of an
   exported generic; an unmarked private declaration adds nothing, so the header is as wide as its exports and
   generics need. The module's own compile reads `// smith-linked:` from its header (the interface made from its source
   when there is none) and gives those functions and variables the symbol `_m::helper` instead of `static` (and drops
