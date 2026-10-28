@@ -2391,8 +2391,8 @@ static void build_preflight_count(SmithBuild *b, const char *built, PreflightRes
         b, "total",
         smith_fmt(b,
                   "f=$(%s test --changed --dry-run 2>&1 | sed -n 's/^smith test --changed: --test //p'); "
-                  "if [ -n \"$f\" ]; then build/%s-%s/units/tests --list --test \"$f\"; "
-                  "else build/%s-%s/units/tests --list; fi 2>/dev/null | wc -l | tr -d ' '",
+                  "if [ -n \"$f\" ]; then build/%s-%s/units-project/build/tests --list --test \"$f\"; "
+                  "else build/%s-%s/units-project/build/tests --list; fi 2>/dev/null | wc -l | tr -d ' '",
                   built, system, machine, system, machine));
 }
 
