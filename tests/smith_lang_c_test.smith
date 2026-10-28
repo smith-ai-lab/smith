@@ -15,34 +15,48 @@ import smith::test;
 import <string.h>;
 import scratch;
 
+// -O0: the optimizer is the same for both and costs most of a compile (smith.c: 7.7 s of CPU at -O1, 1 s at -O0); code
+// that is identical before it is identical after, and the cases that are about it say -O2.
 constexpr char flags[_] =
-    "-std=gnu23 -O1 -g0 -Wno-builtin-macro-redefined -D'__FILE__=\"unit\"' -I include -I .smith/include";
-constexpr char in_process[_] =
-    "-DSMITH_IN_PROCESS -D'SMITH_CLANG_RESOURCE=\"tests/stub.c\"' -D'SMITH_CLANG_ID=\"llvm-0 0\"'";
+    "-std=gnu23 -O0 -g0 -Wno-builtin-macro-redefined -D'__FILE__=\"unit\"' -I include -I .smith/include";
+// smith.c alone is compared at -O1: at -O0 `query.why != nullptr ? query.why : "..."` in lang_type.c is a branch as .c
+// and a select as .smith (the same program; the optimizer makes the two one).
+constexpr char in_process_o1[_] = "-O1 -DSMITH_IN_PROCESS -D'SMITH_CLANG_RESOURCE=\"tests/stub.c\"' "
+                                  "-D'SMITH_CLANG_ID=\"llvm-0 0\"'";
 
 static typeof(const char[:]) slice_of(const char *text) {
     return text[0:c::strlen(text)];
 }
 
-static const char *text(const scratch::Project *p, const char *a, const char *b, const char *c, const char *d) {
-    (void)p;
+static const char *text(const char *a, const char *b, const char *c, const char *d) {
     return format::push(a, b, c, d).data;
 }
 
-// The sources are compiled in a copy of the tree, where a renamed file sits beside the original.
-static scratch::Project tree_project(io::Io *io) {
+// The sources are compiled in a tree where a renamed file sits beside the original. The tree is links to the
+// repository's items (a copy of them was most of what each case cost); the folders on the way to `stem` are real
+// folders of links, and the source itself is a real file, so that the .smith written beside it is a real file too.
+static scratch::Project tree_project(io::Io *io, const char *stem) {
     scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run copied = scratch::sh(
-        &p, "mkdir tree && for item in smith.c build.c include lib runtime scripts templates tests shim; do "
-            "cp -R \"$SMITH_REPO/$item\" tree/; done && mkdir -p tree/.smith && "
-            "cp -R \"$SMITH_REPO/.smith/include\" tree/.smith/");
-    scratch::expect_status("the tree is copied", 0, &copied);
+    const char *command =
+        format::push("mkdir tree && for item in smith.c build.c include lib runtime scripts templates tests "
+                     "shim; do ln -s \"$SMITH_REPO/$item\" tree/$item; done && mkdir -p tree/.smith && "
+                     "ln -s \"$SMITH_REPO/.smith/include\" tree/.smith/include && "
+                     "dir=$(dirname ",
+                     stem,
+                     ") && rel= && if [ \"$dir\" != . ]; then "
+                     "for part in $(echo \"$dir\" | tr / ' '); do rel=\"$rel$part\"; rm tree/$rel && "
+                     "mkdir tree/$rel && for f in \"$SMITH_REPO/$rel\"/*; do ln -s \"$f\" tree/$rel/; done; "
+                     "rel=\"$rel/\"; done; fi && rm tree/",
+                     stem, ".c && cp \"$SMITH_REPO/", stem, ".c\" tree/", stem, ".c")
+            .data;
+    scratch::Run copied = scratch::sh(&p, command);
+    scratch::expect_status("the tree is made", 0, &copied);
     return p;
 }
 
 // The two files are compiled to assembly as `stem.c` and as `stem.smith` with the same flags, and must be identical.
 static void compare(io::Io *io, const char *stem, const char *extra, bool from_smith) {
-    scratch::Project p = tree_project(io);
+    scratch::Project p = tree_project(io, stem);
     if (from_smith) {
         scratch::Run copied = scratch::sh(&p, format::push("cp tree/", stem, ".smith tree/", stem, ".c").data);
         scratch::expect_status("the .smith is copied to .c", 0, &copied);
@@ -54,20 +68,27 @@ static void compare(io::Io *io, const char *stem, const char *extra, bool from_s
     scratch::write(&p, "own.sed",
                    format::push("s|\\([^A-Za-z0-9_/.-]\\)", base, "\\.smith\"|\\1", base, ".c\"|g\n").data);
     scratch::write(&p, "messages.sed", "s/\\.c\\([: ]\\)/.smith\\1/g\n");
-    const char *plain_command =
-        format::push("cd tree && smith cc ", flags, " ", extra, " -S ", stem, ".c -o ../plain.s 2> ../plain.err").data;
-    scratch::Run plain = scratch::sh(&p, plain_command);
-    scratch::expect_status("the .c compiles", 0, &plain);
-    const char *lowered_command =
-        format::push("cd tree && cp ", stem, ".c ", stem, ".smith && { smith cc ", flags, " ", extra, " -S ", stem,
-                     ".smith -o ../lowered.s 2> ../lowered.err; s=$?; rm -f ", stem, ".smith; exit $s; }")
-            .data;
-    scratch::Run lowered = scratch::sh(&p, lowered_command);
-    if (plain.status != lowered.status) {
-        test::note("exit %d as .c, %d as .smith:\n%s", plain.status, lowered.status, scratch::read(&p, "lowered.err"));
+    // The two compiles run side by side (each in its own files; the .smith is a copy removed when it is done), and
+    // each writes its exit status.
+    const char *both = format::push("cd tree; { smith cc ", flags, " ", extra, " -S ", stem,
+                                    ".c -o ../plain.s 2> ../plain.err; echo $? > ../plain.status; } & "
+                                    "cp ",
+                                    stem, ".c ", stem, ".smith && { smith cc ", flags, " ", extra, " -S ", stem,
+                                    ".smith -o ../lowered.s 2> ../lowered.err; echo $? > ../lowered.status; "
+                                    "rm -f ",
+                                    stem, ".smith; }; wait")
+                           .data;
+    scratch::Run compiled = scratch::sh(&p, both);
+    scratch::expect_status("the compiles ran", 0, &compiled);
+    const char *plain_status = scratch::read(&p, "plain.status");
+    const char *lowered_status = scratch::read(&p, "lowered.status");
+    bool plain_ok = c::strcmp(plain_status, "0\n") == 0;
+    test::check(plain_ok); // the .c compiles
+    if (c::strcmp(plain_status, lowered_status) != 0) {
+        test::note("exit %s as .c, %s as .smith:\n%s", plain_status, lowered_status, scratch::read(&p, "lowered.err"));
     }
-    test::check_equal(plain.status, lowered.status);
-    if (plain.status == 0) {
+    test::check(c::strcmp(plain_status, lowered_status) == 0);
+    if (plain_ok) {
         scratch::Run same = scratch::sh(&p, "sed -f own.sed lowered.s > lowered.n && cmp plain.s lowered.n");
         scratch::expect_status("the code is identical as .c and as .smith", 0, &same);
     }
@@ -76,7 +97,7 @@ static void compare(io::Io *io, const char *stem, const char *extra, bool from_s
 }
 
 export void test_smith_c_compiles_the_same_as_smith(io::Io *io) {
-    compare(io, "smith", in_process, false);
+    compare(io, "smith", in_process_o1, false);
 }
 
 export void test_build_c_compiles_the_same_as_smith(io::Io *io) {
@@ -150,7 +171,7 @@ static void behave(io::Io *io, const char *name) {
                                          name, ".", kinds[i], " -o ", name, ".", kinds[i], ".bin")
                                 .data;
         scratch::Run built = scratch::sh(&p, build);
-        scratch::expect_status(text(&p, "the .", kinds[i], " builds", ""), 0, &built);
+        scratch::expect_status(text("the .", kinds[i], " builds", ""), 0, &built);
         scratch::Run ran = scratch::sh(&p, format::push("./", name, ".", kinds[i], ".bin 2>&1").data);
         test::golden(io, slice_of(format::push("tests/smith-lang-c/", name, ".out").data), slice_of(ran.out));
     }
@@ -199,10 +220,10 @@ static void constexpr_c(io::Io *io, const char *width, const char *flags_for_tar
                              .data;
     scratch::write(&p, "x.c", source);
     scratch::write(&p, "x.smith", source);
-    scratch::Run plain = scratch::sh(&p, text(&p, "smith cc -std=gnu23 -fsyntax-only ", flags_for_target, " x.c", ""));
+    scratch::Run plain = scratch::sh(&p, text("smith cc -std=gnu23 -fsyntax-only ", flags_for_target, " x.c", ""));
     scratch::expect_failure("the .c reports the error it always did", &plain);
     scratch::Run lowered =
-        scratch::sh(&p, text(&p, "smith cc -std=gnu23 -fsyntax-only ", flags_for_target, " x.smith", ""));
+        scratch::sh(&p, text("smith cc -std=gnu23 -fsyntax-only ", flags_for_target, " x.smith", ""));
     scratch::expect_status("the .smith runs the function", 0, &lowered);
 }
 
