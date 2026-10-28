@@ -1,6 +1,7 @@
 // A test's deliberate crash writes no macOS crash report (issue #622): the runner sets the crash exception ports of its
 // test processes to none, so ReportCrash (about half a core under load) is never told. This reads the ports of the
-// process the test runs in, which is a worker of the runner, and so is every process the test starts, which inherits them.
+// process the test runs in, which is a worker of the runner, and so is every process the test starts, which inherits
+// them.
 module crash_reports_test;
 
 import smith::test;
@@ -17,7 +18,8 @@ static usize handlers(u32 mask) {
         i32 behaviors[14] = {};
         i32 flavors[14] = {};
         u32 count = 14;
-        c::kern_return_t status = c::task_get_exception_ports(c::mach_task_self_, mask, masks, &count, ports, behaviors, flavors);
+        c::kern_return_t status =
+            c::task_get_exception_ports(c::mach_task_self_, mask, masks, &count, ports, behaviors, flavors);
         if (status != 0) return 1000;
         usize found = 0;
         for (u32 i = 0; i < count; i++) {

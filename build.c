@@ -2279,6 +2279,19 @@ static const char *build_preflight_duration(SmithBuild *b, double seconds) {
     return smith_fmt(b, "%.0fs", seconds);
 }
 
+// The capped test step of preflight, reported with its wall-clock-free CPU like the others (issue #622).
+static int build_preflight_test(SmithBuild *b, const char *const *argv, bool *capped) {
+    double cpu_before = build_children_cpu();
+    int status = build_preflight_capped(b, argv, ".smith/preflight-test.log", capped);
+    if (status != 0) build_print_tail(".smith/preflight-test.log", 12);
+    fprintf(stderr, "preflight: test %s (%.1f s cpu)\n",
+            status != 0 ? "FAILED"
+            : *capped   ? "capped"
+                        : "ok",
+            build_children_cpu() - cpu_before);
+    return status;
+}
+
 static int build_preflight(SmithRun *run) {
     SmithBuild *b = run->b;
     if (build_make_folder(b, ".smith") != 0) return 1;
@@ -2313,12 +2326,7 @@ static int build_preflight(SmithRun *run) {
         for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
             double step_started = build_preflight_now();
             if (strcmp(names[i], "test") == 0) { // capped: a timeout is a pass
-                double cpu_before = build_children_cpu();
-                int status = build_preflight_capped(b, commands[i], ".smith/preflight-test.log", &test_capped);
-                if (status != 0) build_print_tail(".smith/preflight-test.log", 12);
-                fprintf(stderr, "preflight: test %s (%.1f s cpu)\n", status != 0 ? "FAILED" : test_capped ? "capped" : "ok",
-                        build_children_cpu() - cpu_before);
-                if (status != 0) failed = smith_fmt(b, "%s test", failed);
+                if (build_preflight_test(b, commands[i], &test_capped) != 0) failed = smith_fmt(b, "%s test", failed);
             } else if (build_preflight_step(b, names[i], commands[i]) != 0) {
                 failed = smith_fmt(b, "%s %s", failed, names[i]);
             }
