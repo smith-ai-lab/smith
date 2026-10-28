@@ -1155,6 +1155,10 @@ export void test_generic_concept_user(io::Io *io) {
     corpus_case(io, "generic-concept-user");
 }
 
+export void test_generic_own_call_slice(io::Io *io) {
+    corpus_case(io, "generic-own-call-slice");
+}
+
 export void test_generic_concept_pack(io::Io *io) {
     corpus_case(io, "generic-concept-pack");
 }

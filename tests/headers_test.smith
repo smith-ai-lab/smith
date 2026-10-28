@@ -120,7 +120,8 @@ export void test_the_concepts_the_lowering_carries_are_the_ones_the_header_write
     scratch::Run missing = scratch::sh(
         &p, "carried=$(sed -n '/BEGIN concepts header/,/END concepts header/p' \"$SMITH_REPO/runtime/lang_type.c\" | "
             "awk '/^ *\\/\\//{next} {l=$0; sub(/^ *\"/,\"\",l); if (l ~ /\\\\n\",$/) {sub(/\\\\n\",$/,\"\",l); "
-            "print a l; a=\"\"} else {sub(/\"$/,\"\",l); a=a l}}'); grep '^// smith-generic: ' concepts.h | while IFS= read -r line; do "
+            "print a l; a=\"\"} else {sub(/\"$/,\"\",l); a=a l}}'); grep '^// smith-generic: ' concepts.h | while IFS= "
+            "read -r line; do "
             "printf '%s\\n' \"$carried\" | grep -qxF -- \"$line\" || echo \"missing: $line\"; done; "
             "echo \"$(grep -c '^// smith-generic: ' concepts.h) $(printf '%s\\n' \"$carried\" | grep -c "
             "'^// smith-generic: ')\"");

@@ -1846,7 +1846,15 @@ static void smith_lang_slice_call(SmithLang *lang, const SmithHost *host, const 
     char text[smith_lang_slice_text_max];
     SmithExprType found = {};
     size_t params = 0;
-    if (smith_lang_slice_text(lang, cur->tokens, cur->count, text, sizeof text) && host->expr_type != nullptr &&
+    // A generic of this module stands as an unavailable placeholder until a call makes its instance (#751): asking the
+    // compiler for its type is an error, and the instance's own parameters are not the placeholder's.
+    bool typed = smith_lang_slice_text(lang, cur->tokens, cur->count, text, sizeof text);
+    bool generic = false;
+    for (size_t g = 0; typed && g < lang->generics_count; g++) {
+        const SmithLangGeneric *each = &smith_lang_generics[g];
+        generic = generic || (each->own && strcmp(text, smith_lang_str(each->lowered)) == 0);
+    }
+    if (typed && !generic && host->expr_type != nullptr &&
         host->expr_type(host->context, text, (uint32_t)strlen(text), &found)) {
         params = smith_lang_slice_params(found.canonical, tags, smith_lang_slice_args_max);
     }

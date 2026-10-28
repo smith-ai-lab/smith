@@ -1,0 +1,19 @@
+module main;
+
+import <stdio.h>;
+
+// A module with a slice calls its own generic (issue #751): the call is an instance, as in a file with no slice.
+export i32 twice(constexpr Type T, T x) {
+    return (i32)(x + x);
+}
+
+export i32 use(i32 xs[:]) {
+    i32 y = twice(I32, 3);
+    return y + (i32)countof(xs);
+}
+
+i32 main(void) {
+    i32 values[2] = {10, 20};
+    c::printf("%d %d\n", use(values), twice(F64, 2.5));
+    return 0;
+}
