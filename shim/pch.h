@@ -1,4 +1,4 @@
-// The precompiled header of the shims that read clang's AST and are big (hook, tidy, affine, effects_infer): the
+// The precompiled header of the shims that read clang's AST and are big (hook, tidy, linear, effects_infer): the
 // clang and LLVM headers they include between them, then the standard library's. build.c compiles it once, with the
 // shims' own flags, to build/<OS>-<arch>/shim.pch, and each of those shims is compiled with `-include-pch`; the
 // shims keep their own #includes (the guards make them free). See knowledge/precompiled-shim-headers.md.

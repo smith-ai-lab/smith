@@ -1807,8 +1807,7 @@ void run_key(const Test *test, const Options *options, u64 seed) {
     key.tap = active_tap;
     checked_begin(options);
     if (test->with_failing != nullptr) {
-        random::Key halves[2];
-        random::split(key, halves);
+        random::Key halves[2] = random::split(key, 2);
         // NOLINTBEGIN(smith-module-library): mem by its C names, as checked_begin (issue #405)
         failing_state = c::smith_failing_make(checked_active ? &checked_state.base : nullptr, halves[1]);
         failing_outside = c::smith_mem_set_allocator(&failing_state.base);
@@ -1966,8 +1965,7 @@ void coverage_end(const Test *test, bool passed, f64 cpu) {
     } else {
         random::Key root = random::key_make(seed_root);
         for (u64 i = 0; i < options->seed_count; i++) { // each case's key comes from the root, which moves on
-            random::Key next[2];
-            random::split(root, next);
+            random::Key next[2] = random::split(root, 2);
             root = next[0];
             run_key(test, options, random::key_bits(next[1]));
         }

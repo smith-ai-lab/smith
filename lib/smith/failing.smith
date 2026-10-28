@@ -37,8 +37,7 @@ constexpr u32 failing_one_in = 8; // the default rate: one allocation in eight
 bool refuses(Failing *self) {
     contract::trusted(); // the key is split once a call: a chain, which a proof of the callers need not follow
     self->calls += 1;
-    random::Key pair[2];
-    random::split(random::key_make(self->state), pair);
+    random::Key pair[2] = random::split(random::key_make(self->state), 2);
     self->state = random::key_bits(pair[0]);
     u64 bits = random::key_bits(pair[1]);
     if (self->one_in == 0 || bits % self->one_in != 0) return false;

@@ -5,8 +5,7 @@ import smith::test;
 
 // The next key of a stream: `stream` moves on and the key returned is for one use.
 static random::Key take(random::Key *stream) {
-    random::Key next[2];
-    random::split(*stream, next);
+    random::Key next[2] = random::split(*stream, 2);
     *stream = next[0];
     return next[1];
 }

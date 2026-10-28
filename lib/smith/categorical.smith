@@ -83,8 +83,7 @@ void alias_build(f64 *probability, usize *alias, usize *small, usize *large, usi
     contract::trusted(); // its tables are pointers inside a struct passed by value, which a proof does not know to be
                          // valid
     contract::requires(table.count >= 1);
-    random::Key parts[2];
-    random::split(key, parts);
+    random::Key parts[2] = random::split(key, 2);
     usize index =
         (usize)random::uniform_int64_sample(parts[0], (random::UniformInt64){.low = 0, .high = (i64)table.count - 1});
     bool keep = random::key_unit_double(parts[1]) < table.probability[index];

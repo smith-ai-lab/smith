@@ -31,8 +31,7 @@ static f64 chi_square(const usize *observed, const f64 *expected, usize cells) {
 
 // The next key of a stream: `stream` moves on (the reassignment pattern) and the key returned is for one use.
 static random::Key take(random::Key *stream) {
-    random::Key next[2];
-    random::split(*stream, next);
+    random::Key next[2] = random::split(*stream, 2);
     *stream = next[0];
     return next[1];
 }
@@ -117,8 +116,7 @@ export void test_categorical_pinned_values() {
         test::check_equal(double_bits(table.probability[i]), pinned_values[at++]);
         test::check_equal((u64)table.alias[i], pinned_values[at++]);
     }
-    random::Key cases[4];
-    random::split(random::key_make(42), cases);
+    random::Key cases[4] = random::split(random::key_make(42), 4);
     for (usize i = 0; i < 4; i++) {
         test::check_equal((u64)categorical::sample(random::key_make(cases[i].bits), table), pinned_values[at++]);
     }

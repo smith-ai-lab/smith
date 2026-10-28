@@ -37,8 +37,7 @@ constexpr usize repeat_size = repeat_period * 10;
 // A fixture's bytes, in the arena of the test's io.
 // The next key of a stream: `stream` moves on (the reassignment pattern) and the key returned is for one use.
 static random::Key take(random::Key *stream) {
-    random::Key next[2];
-    random::split(*stream, next);
+    random::Key next[2] = random::split(*stream, 2);
     *stream = next[0];
     return next[1];
 }

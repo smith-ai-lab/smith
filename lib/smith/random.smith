@@ -5,8 +5,10 @@
 module smith::random;
 
 import target;
+import smith::arena;
 import smith::contract;
 import smith::math;
+import smith::mem;
 
 // <smith/random.h>: random numbers from keys, as in JAX. A key is an immutable value, and every draw is a pure function
 // of a key: the same key gives the same numbers on every platform, in any thread and in any order. There is no global
@@ -23,25 +25,23 @@ import smith::math;
 //   SmithKey key = smith_key_make(seed);
 //   double x = smith_uniform_double_sample(key, (SmithUniformDouble){.low = 0, .high = 1});
 //
-// A key is used once. Drawing twice from the same key repeats the same numbers, which is a bug. split(key, keys) uses
-// key and fills an array or a slice with independent keys, each for one use:
-//   random::Key keys[2];
-//   random::split(key, keys);
+// A key is used exactly once (it is [[std::linear]]): drawing twice from the same key repeats the same numbers, a bug, and
+// a key never used is a mistake too, so both are compile errors. split(key, n) uses key and returns an array of n
+// independent keys, each for one use:
+//   random::Key keys[2] = random::split(key, 2);
 //   f64 a = random::normal_double_sample(keys[0], n);
 //   f64 b = random::normal_double_sample(keys[0], n);   // error: 'keys[0]' is used again; it was already used at line
 //   N
 //
 // Filling an array is the plain loop over keys, which works for any distribution and parallelizes, since no draw
-// depends on another:
-//   random::Key per_item[count];
-//   random::split(key, per_item);
+// depends on another (split_many gives a count known at run time):
+//   random::Key per_item[:] = random::split_many(key, count);
 //   for (usize i = 0; i < countof(per_item); i++)
 //       out[i] = random::normal_float_sample(per_item[i], (random::NormalFloat){.mean = 0, .deviation = 1});
 //
 // A loop that needs a key for each turn reassigns it:
 //   for (usize i = 0; i < count; i++) {
-//       random::Key next[2];
-//       random::split(key, next);
+//       random::Key next[2] = random::split(key, 2);
 //       key = next[0];
 //       out[i] = random::uniform_double_sample(next[1], u);
 //   }
@@ -83,8 +83,8 @@ import smith::math;
 } Tap;
 
 // A key: a 64-bit value that names a stream of random bits, and the tap of the runner that made it, if any. A key is
-// used once, and split(key, keys) is how one key becomes many.
-[[smith::c_name("SmithKey")]] export typedef struct {
+// used exactly once (it is linear), and split(key, n) is how one key becomes many.
+[[smith::c_name("SmithKey")]] export [[clang::annotate("std::linear")]] typedef struct {
     u64 bits;
     const Tap *tap; // nullptr, except for a key the test runner made
 } Key;
@@ -303,14 +303,32 @@ Key derive(const Key *key, u64 i) {
         keys[i] = derive(parent, i);
 }
 
-// Uses key and fills keys with countof(keys) new keys, independent of each other and of key: the way one key becomes
-// many, each then used once. The keys of a count are the first keys of a larger count, so adding a part never changes
-// the others. An array or a slice (a plain loop gives each item its key):
-//   random::Key keys[3];
-//   random::split(key, keys);
+// A run of keys of a count known only at run time (the header names a slice result by a type, as files does).
+export typedef typeof(Key[:]) Keys;
+
+// Uses key and returns n new keys, independent of each other and of key: the way one key becomes many, each then used
+// once. The keys of a count are the first keys of a larger count, so adding a part never changes the others. An array
+// whose size is a number:
+//   random::Key keys[3] = random::split(key, 3);
 //   for (usize i = 0; i < countof(keys); i++) out[i] = random::uniform_double_sample(keys[i], u);
-[[smith::c_name("smith_key_split")]] export void split(Key key, Key keys[:]) {
-    split_n(key, keys.data, keys.count[0]);
+// C has split_n.
+export Key[n] split(Key key, constexpr usize n) {
+    const Key *parent = &key;
+    Key keys[n];
+    for constexpr (usize i = 0; i < n; i++)
+        keys[i] = derive(parent, i);
+    return keys;
+}
+
+// split for a count known only at run time: the slice is allocated through the current allocator (mem::free of its
+// data), and a plain loop over it, or moving it to a call, uses each key.
+//   random::Key keys[:] = random::split_many(key, count);
+[[smith::c_name("smith_key_split_many")]] export [[nodiscard]] Keys split_many(Key key, usize n) {
+    Key keys[:] = mem::alloc_slice(Key, n);
+    const Key *parent = &key;
+    for (usize i = 0; i < n; i++)
+        keys[i] = derive(parent, i);
+    return keys;
 }
 
 // The key's n-th 64 random bits, through the tap, if the key carries one: every distribution draws through here, so the

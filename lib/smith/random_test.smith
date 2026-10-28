@@ -56,8 +56,7 @@ static i64 ulps_float(f32 a, f32 b) {
 
 // The next key of a stream: `stream` moves on (the reassignment pattern) and the key returned is for one use.
 static random::Key take(random::Key *stream) {
-    random::Key next[2];
-    random::split(*stream, next);
+    random::Key next[2] = random::split(*stream, 2);
     *stream = next[0];
     return next[1];
 }
@@ -72,15 +71,13 @@ static random::UniformInt64 range(i64 low, i64 high) {
 export void test_random_keys_are_pure_and_distinct(random::Key key) {
     u64 seed_of_key = key.bits; // a read of the key's bits: its one use
     test::check_equal(random::key_bits(random::key_make(seed_of_key)), random::key_bits(random::key_make(seed_of_key)));
-    random::Key parts[3];
-    random::split(random::key_make(seed_of_key), parts);
+    random::Key parts[3] = random::split(random::key_make(seed_of_key), 3);
     u64 part_0 = parts[0].bits;
     u64 part_1 = parts[1].bits;
     u64 part_2 = parts[2].bits;
     test::check_not_equal(part_0, part_1);
     test::check_not_equal(part_1, part_2);
-    random::Key again[3];
-    random::split(random::key_make(seed_of_key), again);
+    random::Key again[3] = random::split(random::key_make(seed_of_key), 3);
     test::check_equal(again[1].bits, part_1); // split is pure
     u64 again_0 = again[0].bits;
     test::check_not_equal(again_0, seed_of_key); // split's domain is not the words'
@@ -89,8 +86,7 @@ export void test_random_keys_are_pure_and_distinct(random::Key key) {
     random::Key *stream = &root;
     u64 top = 0;
     for (u64 n = 0; n < 1000; n++) {
-        random::Key unit[3];
-        random::split(take(stream), unit);
+        random::Key unit[3] = random::split(take(stream), 3);
         f32 f = random::key_unit_float(unit[0]);
         f64 d = random::key_unit_double(unit[1]);
         test::check(f >= 0.0F && f < 1.0F);
@@ -252,8 +248,7 @@ export void test_random_bernoulli_frequency(random::Key key) {
     random::Key *stream = &key;
     usize hits = 0;
     for (u64 i = 0; i < draws; i++) {
-        random::Key k[3];
-        random::split(take(stream), k);
+        random::Key k[3] = random::split(take(stream), 3);
         test::check(!random::bernoulli_sample(k[0], (random::Bernoulli){0.0}));
         test::check(random::bernoulli_sample(k[1], (random::Bernoulli){1.0}));
         hits += random::bernoulli_sample(k[2], (random::Bernoulli){0.3}) ? 1 : 0;
@@ -311,8 +306,7 @@ static i64 log_worst_double() {
     random::Key root = random::key_make(seed + 11);
     random::Key *stream = &root;
     for (u64 i = 0; i < 1000000; i++) {
-        random::Key parts[2];
-        random::split(take(stream), parts);
+        random::Key parts[2] = random::split(take(stream), 2);
         u64 bits = random::key_bits(parts[0]);
         f64 x = 0;
         switch (i % 4) {
@@ -345,8 +339,7 @@ static i64 log_worst_float() {
     random::Key root = random::key_make(seed + 12);
     random::Key *stream = &root;
     for (u64 i = 0; i < 1000000; i++) {
-        random::Key parts[2];
-        random::split(take(stream), parts);
+        random::Key parts[2] = random::split(take(stream), 2);
         u64 bits = random::key_bits(parts[0]);
         f32 x = 0;
         switch (i % 4) {
@@ -499,14 +492,12 @@ export void test_random_pinned_values() {
     const u64 seeds[_] = {0, 1, 18446744073709551615ULL};
     for (usize s = 0; s < 3; s++) {
         pin(&pins, random::key_bits(random::key_make(seeds[s])));
-        random::Key parts[3];
-        random::split(random::key_make(seeds[s]), parts);
+        random::Key parts[3] = random::split(random::key_make(seeds[s]), 3);
         for (usize i = 0; i < 3; i++) {
             pin(&pins, parts[i].bits);
         }
     }
-    random::Key cases[4];
-    random::split(random::key_make(42), cases);
+    random::Key cases[4] = random::split(random::key_make(42), 4);
     for (usize i = 0; i < 4; i++) {
         u64 word = cases[i].bits; // every draw below is made from a key of this seed
         pin(&pins, float_bits(random::key_unit_float(random::key_make(word))));
