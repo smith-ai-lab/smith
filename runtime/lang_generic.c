@@ -5173,14 +5173,16 @@ static bool smith_lang_replay_list(SmithLang *lang, const SmithHost *host, Smith
     return true;
 }
 
+// The previous token of a body being replayed was a `[`; reset by smith_lang_reset.
+static bool smith_lang_replay_after_open;
+
 // One token of the generic, written with the instance's types for T.
 static void smith_lang_replay_plain(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
                                     SmithLangGenToken *token) {
     if (token->special != SmithLangGen_Plain) return;
     // The `_` of a `[_]` in the body is not written (runtime/lang_unused.c): the body was recorded as written.
-    static bool after_open;
-    bool inferred = after_open && smith_lang_gt_is(token, SmithTokenKind_Identifier, "_");
-    after_open = smith_lang_gt_punct(token, "[");
+    bool inferred = smith_lang_replay_after_open && smith_lang_gt_is(token, SmithTokenKind_Identifier, "_");
+    smith_lang_replay_after_open = smith_lang_gt_punct(token, "[");
     if (inferred) return;
     if (smith_lang_gt_punct(token, "{")) replay->braces += 1;
     if (smith_lang_gt_punct(token, "}") && replay->braces > 0) replay->braces -= 1;

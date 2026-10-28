@@ -29,3 +29,17 @@ bool smith_core_extract(const uint8_t *archive, size_t size, const char *url, co
 // to `folder`: `<path> d`, `<path> l -> <target>` and `<path> f <mode, octal> <size> <CRC-32 of the bytes, hex>
 // <mtime>`. False when it does not fit or `folder` cannot be read.
 bool smith_core_tree(const char *folder, char *out, size_t out_size);
+
+// The lowering of a `.smith` file without a compiler (runtime/lang*.c, as `smith cc --smith-lower` and `smith cc
+// --smith-header` run it, issue #646), in process: the C text it prints (smith_core_lower) or the header it writes
+// (smith_core_header) in `out`, and its errors, one `file:line:column: error: message` a line, in `errors`; both are
+// NUL-terminated. `file` is the path the errors name and the imports are found from, relative to `folder` (nullptr:
+// the current folder); `text` is the source, or nullptr to read `file`. The result is false when the lowering reports
+// an error (as the command's status 1), a buffer is too small or the file cannot be read. The header pass does not
+// ask the compiler which import declared a C name (the command does, with a process): a module with several C imports
+// keeps them all, so such a module's header is compared through the command. A module that imports more modules than
+// smith_raw_modules_max ends the process, as the command does.
+bool smith_core_lower(const char *folder, const char *file, const char *text, char *out, size_t out_size, char *errors,
+                      size_t errors_size);
+bool smith_core_header(const char *folder, const char *file, const char *text, char *out, size_t out_size, char *errors,
+                       size_t errors_size);
