@@ -70,7 +70,9 @@ Written in C, not `.smith`: it works on the executor's own types (`SmithExec`, `
   project root itself ([debugger](debugger.md)). The `.d` and `.fx` are stored with the
   folder a token and restored with this one. A compile that printed anything (a warning), read a file written after it
   began, or names `__TIME__`, `__DATE__` or `__TIMESTAMP__` is not stored; nor are compiles with a flag that reads or
-  writes more than the depfile names (`@file`, `-fprofile-*`, `--coverage`, `-save-temps`, plugins, ...).
+  writes more than the depfile names (`@file`, `-fprofile-*`, `--coverage`, `-save-temps`, plugins, ...), nor a
+  precompiled header, read or written (`-include-pch`, `-x *-header`, a `.pch` or `.gch`): it records each input's time,
+  so one restored after a checkout gave its header a new time is rejected by every compile that includes it (#728).
 - **Restoring** clones the files (FICLONE on Linux, `clonefile` on macOS, else a copy), writes the depfile as a compile
   would, and the job ends as one does: the depfile log and command log are written, `-v` shows `(cached)` after the
   step, `-d explain` says it was restored. A hit takes no core of the host's pool. Stores and restores are a temporary
