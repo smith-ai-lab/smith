@@ -309,6 +309,11 @@ static void smith_make_make_knob(SmithMakeVar *var, const char *fallback) {
     smith_make_var_set(var, text, text, true);
 }
 
+// The names of the empty variables already reported (smith_make_reset forgets them).
+constexpr size_t smith_make_reported_max = 256;
+static const char *smith_make_reported[smith_make_reported_max];
+static size_t smith_make_reported_count;
+
 // A variable the Makefile never assigns: an environment variable is a hole for it; any other is a knob (`make X=1`),
 // unless its name was made by an expansion ($(BINARY_$(1))), which is how a Makefile asks whether a setting exists.
 static void smith_make_undefined(SmithMakeMachine *m, const char *name, size_t length, bool computed) {
@@ -319,13 +324,11 @@ static void smith_make_undefined(SmithMakeMachine *m, const char *name, size_t l
     }
     if (computed && !smith_make_is_env_name(name, length)) return;
     if (smith_make.generated_include) { // reported once for each name
-        static const char *reported[256];
-        static size_t reported_count;
         bool seen = false;
-        for (size_t i = 0; i < reported_count && !seen; i++)
-            seen = strlen(reported[i]) == length && memcmp(reported[i], name, length) == 0;
-        if (!seen && reported_count < 256) {
-            reported[reported_count++] = smith_make_dup(name, length);
+        for (size_t i = 0; i < smith_make_reported_count && !seen; i++)
+            seen = strlen(smith_make_reported[i]) == length && memcmp(smith_make_reported[i], name, length) == 0;
+        if (!seen && smith_make_reported_count < smith_make_reported_max) {
+            smith_make_reported[smith_make_reported_count++] = smith_make_dup(name, length);
             smith_make_report(
                 "%.*s is empty here: a Makefile that this one generates may define it, and it is not read", (int)length,
                 name);
