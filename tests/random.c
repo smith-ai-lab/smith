@@ -182,7 +182,7 @@ static void test_normal_cdf_symmetry_reach(void) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// The pinned values: bits of smith_key_bits for seeds 0, 1 and UINT64_MAX, smith_key_split, and every distribution
+// The pinned values: bits of smith_key_bits for seeds 0, 1 and UINT64_MAX, smith_key_split_n, and every distribution
 // for one key (floats as their bits). Run `pins` to print them.
 
 constexpr size_t test_pin_capacity = 128;

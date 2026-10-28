@@ -51,7 +51,7 @@ system's) that refuses some allocations, so a test reaches every allocation-fail
 failure replays from its seed.
 
 - **The decision is a draw from the key.** The key is used once, at creation (`key_bits`); after that the allocator holds
-  a `u64` chain: each allocation or reallocation splits it with `random::split` into the decision and the next link. The
+  a `u64` chain: each allocation or reallocation splits it with `random::split(key, 2)` into the decision and the next link. The
   decision for call n therefore depends on the key and n alone (it draws even when `one_in` is 0), and the same key with
   the same sequence of calls refuses the same allocations. There is no `key_derive`.
 - **The schedule is `one_in`:** a field, 8 at creation (one allocation in eight), 1 for every one, 0 for none; `calls` and

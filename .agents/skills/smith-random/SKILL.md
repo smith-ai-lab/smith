@@ -10,11 +10,9 @@ import smith::random;
 
 f64 demo(u64 seed, f64 out[:]) {
     random::Key key = random::key_make(seed);           // a seed is any u64
-    random::Key parts[2];
-    random::split(key, parts);                          // key is used here; parts are new, independent keys
+    random::Key parts[2] = random::split(key, 2);                          // key is used here; parts are new, independent keys
     f64 total = random::uniform_double_sample(parts[0], (random::UniformDouble){.low = 0, .high = 1});
-    random::Key per_item[4];
-    random::split(parts[1], per_item);
+    random::Key per_item[4] = random::split(parts[1], 4);
     for (usize i = 0; i < 4; i++) total += random::key_unit_double(per_item[i]);   // the plain loop: one key per turn
     return total + (f64)countof(out);
 }
@@ -27,14 +25,13 @@ f64 a = random::normal_double_sample(parts[0], n);
 f64 b = random::normal_double_sample(parts[0], n);   // error: smith-linear: 'parts[0]' is used again; it was already used at line N
 ```
 
-`random::split(key, keys)` uses `key` and fills an array or a slice with `countof(keys)` new keys (C: `smith_key_split_n(key, keys, count)`, also `random::split_n(key, keys, count)` for a pointer and a count); a count's keys are the first of a larger count's. The header is `.smith/include/smith/random.h`; read it first.
+`random::split(key, n)` uses `key` and returns an array of `n` new keys (`n` is a number; `random::split_many(key, count)` returns a slice for a run-time count, allocated through the current allocator; C: `smith_key_split_n(key, keys, count)` fills a pointer and a count); a count's keys are the first of a larger count's. The header is `.smith/include/smith/random.h`; read it first.
 
 A loop that needs a key per turn without an array reassigns it:
 
 ```smith fragment
 for (usize i = 0; i < count; i++) {
-    random::Key next[2];
-    random::split(key, next);
+    random::Key next[2] = random::split(key, 2);
     key = next[0];
     out[i] = random::uniform_double_sample(next[1], u);
 }

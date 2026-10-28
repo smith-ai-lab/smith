@@ -11,6 +11,7 @@ module rolls;
 
 import smith::arena;
 import smith::io;
+import smith::mem;
 import smith::random;
 
 constexpr i64 sides = 6;
@@ -23,8 +24,10 @@ export typedef struct {
 // count rolls of a die, each from its own key split from `key`.
 export Rolls make(arena::Arena *arena, random::Key key, usize count) {
     Rolls rolls = {.faces = arena::push_slice(arena, u32, count).data, .count = count};
-    random::Key keys[:] = arena::push_slice(arena, random::Key, count);
-    random::split(key, keys);
+    arena::ArenaAllocator allocator = arena::allocator(arena);          // split_many allocates through the current allocator
+    mem::Allocator *before = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(before);
+    random::Key keys[:] = random::split_many(key, count);
     for (usize i = 0; i < countof(keys); i++) {
         rolls.faces[i] = (u32)random::uniform_int64_sample(keys[i], (random::UniformInt64){.low = 1, .high = sides});
     }

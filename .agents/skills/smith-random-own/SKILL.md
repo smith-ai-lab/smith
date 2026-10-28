@@ -15,8 +15,7 @@ f64 exponential_sample(random::Key key, f64 rate) {
 }
 
 f64 mixture_sample(random::Key key, f64 rate, f64 mean, f64 deviation, f64 weight) {
-    random::Key parts[3];
-    random::split(key, parts);
+    random::Key parts[3] = random::split(key, 3);
     if (random::bernoulli_sample(parts[0], (random::Bernoulli){.probability = weight}))
         return exponential_sample(parts[1], rate);
     return random::normal_double_sample(parts[2], (random::NormalDouble){.mean = mean, .deviation = deviation});

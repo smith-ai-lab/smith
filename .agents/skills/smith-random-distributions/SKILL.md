@@ -12,8 +12,7 @@ import smith::arena;
 import smith::random;
 
 void distributions(random::Key key, arena::Arena *a) {
-    random::Key k[8];
-    random::split(key, k);                                  // each draw below has its own key
+    random::Key k[8] = random::split(key, 8);                                  // each draw below has its own key
     f32 x = random::uniform_float_sample(k[0], (random::UniformFloat){.low = 0, .high = 1});        // [low, high)
     f64 y = random::uniform_double_sample(k[1], (random::UniformDouble){.low = -1, .high = 1});     // [low, high)
     i64 die = random::uniform_int64_sample(k[2], (random::UniformInt64){.low = 1, .high = 6});      // [low, high], unbiased
@@ -38,15 +37,14 @@ void distributions(random::Key key, arena::Arena *a) {
 
 ## Fill an array: a loop
 
-There is no `fill`. Filling is one loop that works for any distribution: each turn takes a key from the reassignment pattern, or you split into an array and use the plain loop (`smith-lang-linear`):
+There is no `fill`. Filling is one loop that works for any distribution: each turn takes a key from the reassignment pattern, or you split into an array (`random::split`, or `random::split_many` for a count known at run time) and use the plain loop (`smith-lang-linear`):
 
 ```smith
 import smith::random;
 
 void fill(random::Key key, f32 out[:]) {
     for (usize i = 0; i < countof(out); i++) {
-        random::Key next[2];
-        random::split(key, next);
+        random::Key next[2] = random::split(key, 2);
         key = next[0];                      // the key moves on; next[1] is for this item
         out[i] = random::normal_float_sample(next[1], (random::NormalFloat){.mean = 0, .deviation = 1});
     }

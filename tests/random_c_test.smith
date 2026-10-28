@@ -17,7 +17,7 @@ constexpr char expected_digest[_] = "df39a217d8c29f80";
 constexpr char warn[_] = "-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wmissing-prototypes "
                          "-Wstrict-prototypes -Wvla -Werror";
 constexpr char sources[_] = "-I lowered \"$SMITH_REPO/tests/random.c\" \"$SMITH_REPO/lib/smith/arena.smith\" "
-                            "\"$SMITH_REPO/lib/smith/contract.smith\" \"$SMITH_REPO/lib/trace.c\"";
+                            "\"$SMITH_REPO/lib/smith/contract.smith\" \"$SMITH_REPO/lib/smith/mem.smith\" \"$SMITH_REPO/lib/trace.c\"";
 
 static scratch::Project lowered_project(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);

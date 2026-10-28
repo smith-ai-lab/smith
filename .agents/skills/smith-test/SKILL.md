@@ -20,6 +20,7 @@ module math_test;
 
 import smith::arena;
 import smith::io;
+import smith::mem;
 import smith::random;
 import smith::test;
 
@@ -30,13 +31,12 @@ export void test_addition() {
 
 export void test_sorted_stays_sorted(random::Key key) { // a property test: runs on 100 keys
     arena::Arena a = test::memory(1 << 16); // this test's memory, given back before each key
-    random::Key parts[2];
-    random::split(key, parts); // a key is used once: split it for each use
+    random::Key parts[2] = random::split(key, 2); // a key is used once: split it for each use
     usize count = (usize)random::uniform_int64_sample(parts[0], (random::UniformInt64){.low = 0, .high = 100});
     test::note("count %zu", count); // printed under a failure
     usize items[:] = arena::push_slice(&a, usize, count);
-    random::Key item_keys[:] = arena::push_slice(&a, random::Key, count); // one key per item
-    random::split(parts[1], item_keys);
+    random::Key item_keys[:] = random::split_many(parts[1], count); // one key per item
+    defer mem::free(item_keys.data); // from the test's allocator, which reports a leak
     for (usize i = 0; i < countof(item_keys); i++) {
         items[i] = (usize)random::uniform_int64_sample(item_keys[i], (random::UniformInt64){.low = 0, .high = 9});
     }

@@ -303,9 +303,6 @@ Key derive(const Key *key, u64 i) {
         keys[i] = derive(parent, i);
 }
 
-// A run of keys of a count known only at run time (the header names a slice result by a type, as files does).
-export typedef typeof(Key[:]) Keys;
-
 // Uses key and returns n new keys, independent of each other and of key: the way one key becomes many, each then used
 // once. The keys of a count are the first keys of a larger count, so adding a part never changes the others. An array
 // whose size is a number:
@@ -320,14 +317,15 @@ export Key[n] split(Key key, constexpr usize n) {
     return keys;
 }
 
+// A run of keys of a count known only at run time (the header names a slice result by a type, as files does).
+export typedef typeof(Key[:]) Keys;
+
 // split for a count known only at run time: the slice is allocated through the current allocator (mem::free of its
 // data), and a plain loop over it, or moving it to a call, uses each key.
 //   random::Key keys[:] = random::split_many(key, count);
 [[smith::c_name("smith_key_split_many")]] export [[nodiscard]] Keys split_many(Key key, usize n) {
     Key keys[:] = mem::alloc_slice(Key, n);
-    const Key *parent = &key;
-    for (usize i = 0; i < n; i++)
-        keys[i] = derive(parent, i);
+    split_n(key, keys.data, n); // fills through the pointer: a write the check does not track
     return keys;
 }
 

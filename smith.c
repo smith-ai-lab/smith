@@ -1442,7 +1442,7 @@ static SmithBuildFile smith_build_file(void) {
 // The libraries the build program links, .smith modules that the smith doing the build compiles whatever compiler
 // compiles build.c itself (an external SMITH_CLANG knows no .smith): the runtime's package.c and the executor use them
 // through their headers. random declares -ffp-contract=off.
-static const char *const smith_build_program_libraries[] = {"arena", "contract", "inflate", "io", "random"};
+static const char *const smith_build_program_libraries[] = {"arena", "contract", "inflate", "io", "mem", "random"};
 
 // The manifest that compiles build.c into .smith/program with the clang `smith` would pick. When that is smith itself
 // (in_process) the program is `<smith> cc`, since smith's top level is verbs.
@@ -1497,6 +1497,13 @@ static size_t smith_build_program_manifest(char *out, size_t capacity, const cha
         SMITH_ASSERT(more > 0 && (size_t)more < sizeof objects - objects_length);
         objects_length += (size_t)more;
     }
+    // mem (which random imports) calls the handlers runtime: here an object of the program, as on Linux
+    int handlers = snprintf(out + written, capacity - (size_t)written,
+                            "build .smith/build-program/handlers.o: cc .smith/lib/handlers.c\n");
+    SMITH_ASSERT(handlers > 0 && (size_t)handlers < capacity - (size_t)written);
+    written += handlers;
+    int last = snprintf(objects + objects_length, sizeof objects - objects_length, " .smith/build-program/handlers.o");
+    SMITH_ASSERT(last > 0 && (size_t)last < sizeof objects - objects_length);
     int linked = snprintf(out + written, capacity - (size_t)written, "build .smith/program: link %s\n", objects);
     SMITH_ASSERT(linked > 0 && (size_t)linked < capacity - (size_t)written);
     return (size_t)written + (size_t)linked;

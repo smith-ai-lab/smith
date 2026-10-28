@@ -5,7 +5,7 @@ description: "Moving code from many key_derive calls to random::split: a key is 
 
 # From many derives to split
 
-`key_derive(key, i)` is gone: it read a key without using it. A key is **used once**; passing it by value, taking `&key` or calling `split` on it is the use, in `.smith` and in C. `split(key, keys)` (C: `smith_key_split_n(key, keys, count)`) uses the key and gives `countof(keys)` keys, and `keys[i]` is what `key_derive(key, i)` gave, so a count's keys are the first of a larger count's. A pinned number that came from a derive by index is unchanged; the others are regenerated, and a commit says so.
+`key_derive(key, i)` is gone: it read a key without using it. A key is **used once**; passing it by value, taking `&key` or calling `split` on it is the use, in `.smith` and in C. `split(key, n)` (C: `smith_key_split_n(key, keys, count)`) uses the key and returns `n` keys, and `keys[i]` is what `key_derive(key, i)` gave, so a count's keys are the first of a larger count's. A pinned number that came from a derive by index is unchanged; the others are regenerated, and a commit says so.
 
 ## A named lane
 
@@ -17,8 +17,7 @@ import smith::random;
 typedef enum : usize { Draw_A, Draw_B, Draw_count } Draw;
 
 f64 pair(random::Key key) {
-    random::Key lanes[Draw_count];
-    random::split(key, lanes);
+    random::Key lanes[Draw_count] = random::split(key, Draw_count);
     return random::key_unit_double(lanes[Draw_A]) + random::key_unit_double(lanes[Draw_B]);
 }
 ```
@@ -31,8 +30,7 @@ One key per item: an array sized by the count (a constant bound, or an arena sli
 import smith::random;
 
 f64 total(random::Key key) {
-    random::Key items[8];
-    random::split(key, items);
+    random::Key items[8] = random::split(key, 8);
     f64 sum = 0;
     for (usize i = 0; i < countof(items); i++) sum += random::key_unit_double(items[i]);
     return sum;
@@ -44,8 +42,7 @@ f64 total(random::Key key) {
 `derive(brain->key, brain->draws++)` becomes: hold the key and replace it by one half of its split, drawing from the other.
 
 ```smith fragment
-random::Key two[2];
-random::split(brain->key, two);
+random::Key two[2] = random::split(brain->key, 2);
 brain->key = two[0];             // the next draw splits this one
 return two[1];                   // this draw's key
 ```

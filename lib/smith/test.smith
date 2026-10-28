@@ -1969,6 +1969,7 @@ void coverage_end(const Test *test, bool passed, f64 cpu) {
             root = next[0];
             run_key(test, options, random::key_bits(next[1]));
         }
+        _ = root; // the last root is not drawn from
     }
     c::smith_trace_stop = 0;
 }
