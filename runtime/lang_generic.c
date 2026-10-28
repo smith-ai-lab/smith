@@ -702,6 +702,27 @@ static bool smith_lang_element_auto_at(SmithLang *lang, const SmithHost *host, s
     return stars > 0 ? smith_lang_punct(after, ",") || smith_lang_punct(after, ")") : smith_lang_punct(after, "[");
 }
 
+// Whether the tokens read ahead at `index` are `m::Name` and `m` is an import with the concept `Name`, then a
+// parameter's name (or `...` and one): the concept of another module named in a parameter list (issue #193).
+static bool smith_lang_qualified_concept_at(SmithLang *lang, const SmithHost *host, size_t index) {
+    const SmithToken *module = smith_lang_peek(lang, host, index, false);
+    const SmithToken *name = smith_lang_peek(lang, host, index + 2, false);
+    if (module->kind != SmithTokenKind_Identifier ||
+        !smith_lang_punct(smith_lang_peek(lang, host, index + 1, false), "::") ||
+        name->kind != SmithTokenKind_Identifier || name->text[0] < 'A' || name->text[0] > 'Z') {
+        return false;
+    }
+    const SmithLangBinding *binding = smith_lang_binding_find(lang, module->text, module->length);
+    if (binding == nullptr || binding->is_c || binding->missing) return false;
+    smith_lang_generics_load(lang, host, smith_lang_str(binding->module));
+    unsigned id = smith_lang_user_concept_find(name->text, name->length);
+    if (id == 0 || !smith_lang_equals(smith_lang_str(binding->module), binding->module.length,
+                                      smith_lang_user_concepts[id - 1].module)) {
+        return false;
+    }
+    return smith_lang_type_parameter_at(lang, host, index + 2) || smith_lang_pack_parameter_at(lang, host, index + 2);
+}
+
 // Whether the token at `index`, in a parameter list at depth 1, makes the head generic: a concept or `auto` for a
 // parameter or its element, `constexpr auto f`, `auto... rest`, or `constexpr usize i`.
 static bool smith_lang_parameter_generic_at(SmithLang *lang, const SmithHost *host, const SmithToken *before,
@@ -709,6 +730,9 @@ static bool smith_lang_parameter_generic_at(SmithLang *lang, const SmithHost *ho
     const SmithToken *token = smith_lang_peek(lang, host, index, false);
     bool starts_parameter = smith_lang_punct(before, "(") || smith_lang_punct(before, ",");
     bool after_constexpr = smith_lang_ident(before, "constexpr");
+    if (starts_parameter && smith_lang_qualified_concept_at(lang, host, index)) {
+        return true; // `ordered::Ordered x`, `ordered::Ordered... rest`: the concept of an import
+    }
     if (smith_lang_concept_word(token) && !smith_lang_ident(before, "constexpr")) {
         // A standard concept is a function the compiler has under its name; a word that is a type or a variable of
         // the program's is not the concept.
@@ -4084,6 +4108,26 @@ static bool smith_lang_concept_check(SmithLang *lang, const SmithHost *host, Smi
     return false;
 }
 
+// An argument of the rest pack `Num... rest`: its type must be of the pack's concept, else the error is at the
+// argument.
+static bool smith_lang_pack_concept_check(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                          const SmithLangGeneric *generic, SmithLangSpan span, uint32_t location,
+                                          const uint32_t *first, const uint32_t *count) {
+    SmithLangParam params[smith_lang_call_params_max];
+    size_t total = smith_lang_generic_params(generic, params, smith_lang_call_params_max);
+    if (total == SIZE_MAX || total == 0 || params[total - 1].kind != SmithLangSlot_Pack) return true;
+    unsigned concept_id = smith_lang_concept_of(&smith_lang_gt.tokens[params[total - 1].start]);
+    if (concept_id == 0) return true;
+    char spelling[512];
+    smith_lang_it_spelling(*first, *count, spelling, sizeof spelling);
+    if (smith_lang_concept_holds(lang, host, concept_id, spelling, location)) return true;
+    char written[256];
+    smith_lang_spell_written(lang, spelling, written, sizeof written);
+    uint32_t place = smith_lang_infer_place(host, replay, span, location);
+    smith_lang_error(lang, host, place, "`%s(%s)` is false", smith_lang_concept_name(concept_id), written);
+    return false;
+}
+
 // A parameter written with `auto` as its element (`const auto xs[:]`, `auto *p`, `auto xs[4]`): the argument's type
 // must have the shape of the declarator, else the error is at the argument.
 static bool smith_lang_shape_check(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
@@ -4314,6 +4358,9 @@ static bool smith_lang_call_types(SmithLang *lang, const SmithHost *host, SmithL
             smith_lang_error(lang, host, location, "the type argument of `%s` is missing or too long",
                              smith_lang_str(generic->member));
             good = false;
+        } else if (k >= slots) { // an argument of the rest pack: `Num... rest` judges each
+            good = smith_lang_pack_concept_check(lang, host, replay, generic, span, location, &types->first[k],
+                                                 &types->count[k]);
         }
     }
     SmithLangParam params[smith_lang_call_params_max];

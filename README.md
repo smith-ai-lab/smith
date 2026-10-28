@@ -430,7 +430,7 @@ export typeof(*p) first(const auto *p) { // `auto *p` and `auto xs[4]` work the 
 }
 ```
 
-A concept stands where `auto` does there too (`const arithmetic xs[:]`, `integer *p`): the element must be of it, and a call that gets it wrong is an error at the argument ([smith-lang-concepts](.agents/skills/smith-lang-concepts/SKILL.md)).
+A concept stands where `auto` does there too (`const Num xs[:]`, `Int *p`): the element must be of it, and a call that gets it wrong is an error at the argument ([smith-lang-concepts](.agents/skills/smith-lang-concepts/SKILL.md)).
 
 A concept you write is a function over a type, and `Any` accepts every type:
 

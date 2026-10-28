@@ -1,0 +1,19 @@
+module main;
+
+import <stdio.h>;
+
+// A concept the program writes for a local and for the element of a range `for` (issue #193).
+Bool Narrow(constexpr Type T) {
+    return Int(T) && sizeof(T) <= 2;
+}
+
+i32 main(void) {
+    Narrow small = (i16)7;
+    i16 xs[:] = (i16[3]){1, 2, 3};
+    i32 sum = small;
+    for (Narrow x : xs) {
+        sum += x;
+    }
+    c::printf("%d\n", sum);
+    return 0;
+}
