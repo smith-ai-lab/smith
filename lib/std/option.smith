@@ -12,7 +12,7 @@
 //       }
 //       return .none;
 //   }
-module std::Option;
+module std::option;
 
 // The type of a value that may be absent: `.none`, or a value, which converts to `{.some = value}`.
 export Type Option(Type T) {

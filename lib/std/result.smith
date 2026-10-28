@@ -9,7 +9,7 @@
 //       if (b == 0) return {.error = 1};
 //       return a / b;
 //   }
-module std::Result;
+module std::result;
 
 // The type of a value or an error: a value, which converts to `{.ok = value}`, or `{.error = reason}`.
 export Type Result(Type T, Type E) {

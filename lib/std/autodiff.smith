@@ -38,6 +38,7 @@ import std::mem;
 // The type of one argument's leaf: what a pointer points to, the type itself for anything else (a number `map` passes
 // through). A type function (it runs in the compiler), used as the result type of `map_at`. Written before the markers:
 // a type function after an `extern` declaration is not read.
+// NOLINTNEXTLINE(readability-identifier-naming): a type function is capitalized, as every type is
 static Type LeafOf(Type t) {
     if (Pointer(t)) return typeof(*(t) nullptr);
     return t;
@@ -45,6 +46,7 @@ static Type LeafOf(Type t) {
 
 // What `map_down` returns: `down`, the pointer to the field's first element, for a pointer argument, else the type
 // itself.
+// NOLINTNEXTLINE(readability-identifier-naming): a type function is capitalized, as every type is
 static Type DownOf(Type t, Type down) {
     if (Pointer(t)) return down;
     return t;

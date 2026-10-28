@@ -414,6 +414,7 @@ Bool grow(Arena *arena, Usize size, Usize align) {
 // `T[:]` written `count` times in front of T (the element), the type of a slice of that many run-time dimensions:
 // `SliceOf(F32, 2)` is `F32[:][:]` and `SliceOf(F32[2], 1)` is `F32[:][2]`. An ordinary function over types, run by
 // the compiler wherever a type is computed; `t[:]` is the slice of the type value t.
+// NOLINTNEXTLINE(readability-identifier-naming): a type function is capitalized, as every type is
 export Type SliceOf(Type element, Usize count) {
     Type t = element;
     for (Usize i = 0; i < count; i++)

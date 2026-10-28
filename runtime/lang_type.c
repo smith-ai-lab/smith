@@ -1154,12 +1154,17 @@ typedef struct {
 } SmithLangTyQuestion;
 
 static const SmithLangTyQuestion smith_lang_ty_questions[] = {
-    {"Int", 16, 0, 0},      {"Float", 17, 0, 0}, {"Pointer", 19, 0, 0}, {"Enum", 21, 0, 0},
-    {"Struct", 22, 0, 0},   {"Array", 23, 0, 0}, {"Slice", 12, 0, 0}, // the handle's slice depth (bits 12 to 15), as 0
-                                                                      // or 1
-    {"Num", 16, 3, 0},                                                // integer or floating: bits 16 and 17
-    {"Signed", 16, 5, 5},                                             // integer and signed: bits 16 and 18
-    {"Unsigned", 16, 5, 1},                                           // integer and not signed
+    {"Int", 16, 0, 0},
+    {"Float", 17, 0, 0},
+    {"Pointer", 19, 0, 0},
+    {"Enum", 21, 0, 0},
+    {"Struct", 22, 0, 0},
+    {"Array", 23, 0, 0},
+    {"Slice", 12, 0, 0},    // the handle's slice depth (bits 12 to 15), as 0
+                            // or 1
+    {"Num", 16, 3, 0},      // integer or floating: bits 16 and 17
+    {"Signed", 16, 5, 5},   // integer and signed: bits 16 and 18
+    {"Unsigned", 16, 5, 1}, // integer and not signed
 };
 
 // `sizeof(t)` and its kin, where `t` holds a type: an expression over the handle, written in the C given to the
