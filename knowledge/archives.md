@@ -8,8 +8,8 @@ tags: [archives, untar]
 
 **smith reads its archives itself, in its own C** (`runtime/gzip.c`, `xz.c`, `untar.c`): DEFLATE is the library `smith::inflate` (`lib/smith/inflate.smith`, skill smith-inflate; also learner's), gzip's members loop is `gzip.c`, then LZMA2 and tar, no
 vendored library and no zip, which no package uses. Extraction refuses absolute names, `..`, a path through a
-symlink, and a symlink that points outside the package; it keeps file modes and times. Tests: `tests/untar_*_test.smith`
-(hostile and damaged archives, and the readers under ASan and UBSan). See [the build file](build-file.md).
+symlink, and a symlink that points outside the package; it keeps file modes and times. Tests: `tests/untar_readers_test.smith`
+(the readers as functions in process, #646), `tests/untar_*_test.smith` for the fetch around them and the sanitizers. See [the build file](build-file.md).
 
 `smith_package` reads `.tar`, `.tar.gz` (or `.tgz`) and `.tar.xz`, told apart by their first bytes, never by the name.
 These are the formats today's packages use: CMake's `.tar.gz`, Python's standalone build as `.tar.gz`, and LLVM's source
@@ -55,11 +55,15 @@ zip is refused by name (`zip archives are not supported`), as are bzip2 and zstd
 - **Not done:** `._name` AppleDouble companions that macOS tar writes (they begin with the AppleDouble magic number) are
   dropped, as bsdtar turns them into attributes and smith keeps none. Extended attributes, ACLs and file flags are not
   kept. There is no limit on how much an archive may write, as with `tar`: the SHA-256 in build.c is what vouches for it.
-- **Tests:** `tests/untar_*_test.smith`. Archives made with the system tar, gzip and xz in every format, check and block layout
-  above, each extracted and compared with its source (every path, byte, mode and link); hostile archives made with
-  `tar -P -s` (traversal, absolute names, escaping and absolute symlinks, a file written through a symlink, a FIFO and
-  a device) and damaged ones (truncated, wrong gzip CRC-32 and size, a changed byte under each xz check, damaged xz
-  headers and index, a damaged tar header), each refused with its reason and leaving the cache empty;
+- **Tests:** `tests/untar_readers_test.smith` calls the readers in process (`smith_core_extract` and `smith_core_tree`,
+  include/smith_core.h; no process starts, #646): every format, check and block layout above, each extracted and
+  compared with the listing of its source tree (every path, byte, mode, time and link; the archives are the files of
+  `tests/fixtures/untar` made with GNU tar, gzip and xz, and tars, gzips and xzs of stored data written by the test);
+  hostile archives written by the test (traversal, absolute names, escaping and absolute symlinks, a file written
+  through a symlink, a FIFO and a device, AppleDouble entries) and damaged ones (truncated, wrong gzip CRC-32 and size,
+  a changed byte under each xz check, damaged xz headers and index, a damaged tar header), each refused with its reason.
+  `tests/untar_formats_test.smith` and `tests/untar_refuse_test.smith` keep the wiring of `smith fetch` with the system's
+  tar (a tar.gz extracts, a refusal names the archive and leaves the cache empty, a single .gz). The sanitizer tests:
   `tests/untar.c` under AddressSanitizer and UBSan, with known answers (including fixed-Huffman gzip), every shorter
   prefix of an archive refused, and thousands of randomly damaged archives that must not crash, hang, write outside
   the folder or leave a symlink that points out (for a plain tar the damage rewrites names, targets and types and then

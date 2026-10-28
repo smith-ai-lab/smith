@@ -587,6 +587,25 @@ static void smith_package_file_name(const char *url, char *name, size_t size) {
     name[count] = '\0';
 }
 
+// The error of an extraction, said with the URL: "cannot extract <url>: <reason>".
+static bool smith_package_extract_failed(const char *url, SmithPackageFault *error) {
+    char reason[smith_package_error_size];
+    snprintf(reason, sizeof reason, "%s", error->text);
+    return smith_package_fail(error, "cannot extract %s: %s", url, reason);
+}
+
+// What the extraction folder holds as a package: the folder to move into place (see smith_package_contents), unless
+// the package is one top-level folder and a symlink in it leaves that folder.
+static bool smith_package_settle(const char *extract, const SmithExtracted *extracted, char *contents,
+                                 SmithPackageFault *error) {
+    bool single = false;
+    if (!smith_package_contents(extract, contents, &single, error)) return false;
+    if (single && extracted->climbing[0] != '\0')
+        return smith_package_fail(error, "the symlink \"%.200s\" points outside the package folder",
+                                  extracted->climbing);
+    return true;
+}
+
 // Verifies the downloaded archive, extracts it and moves it to its folder. The temporaries are the caller's to remove.
 static bool smith_package_install(const char *url, const char *wanted, const SmithPackageTemps *temps, char *folder,
                                   char hash[smith_package_hash_size], SmithPackageFault *error) {
@@ -607,17 +626,10 @@ static bool smith_package_install(const char *url, const char *wanted, const Smi
     SmithExtracted extracted;
     char name[256];
     smith_package_file_name(url, name, sizeof name);
-    if (!smith_package_extract(temps->download, name, temps->extract, &extracted, error)) {
-        char reason[smith_package_error_size];
-        snprintf(reason, sizeof reason, "%s", error->text);
-        return smith_package_fail(error, "cannot extract %s: %s", url, reason);
-    }
     char contents[PATH_MAX];
-    bool single = false;
-    if (!smith_package_contents(temps->extract, contents, &single, error)) return false;
-    if (single && extracted.climbing[0] != '\0') {
-        return smith_package_fail(error, "cannot extract %s: the symlink \"%.200s\" points outside the package folder",
-                                  url, extracted.climbing);
+    if (!smith_package_extract(temps->download, name, temps->extract, &extracted, error) ||
+        !smith_package_settle(temps->extract, &extracted, contents, error)) {
+        return smith_package_extract_failed(url, error);
     }
     if (rename(contents, folder) != 0 && !smith_package_is_folder(folder)) { // another process may have won
         return smith_package_fail(error, "cannot move the package into %s: %s", folder, strerror(errno));
@@ -666,3 +678,91 @@ static bool smith_package_ensure(SmithIo *io, const char *url, const char *wante
     }
     return ok;
 }
+
+#ifdef SMITH_CORE
+// include/smith_core.h: the archive readers in process, for the units runner.
+bool smith_core_extract(const uint8_t *archive, size_t size, const char *url, const char *folder, char *contents,
+                        size_t contents_size, char *error, size_t error_size) {
+    SmithPackageFault fault = {};
+    SmithExtracted extracted = {};
+    char name[256];
+    char found[PATH_MAX];
+    smith_package_file_name(url, name, sizeof name);
+    bool ok = smith_package_extract_bytes(archive, size, name, folder, &extracted, &fault) &&
+              smith_package_settle(folder, &extracted, found, &fault);
+    if (!ok) smith_package_extract_failed(url, &fault);
+    snprintf(contents, contents_size, "%s", ok ? found : "");
+    snprintf(error, error_size, "%s", ok ? "" : fault.text);
+    return ok;
+}
+
+// The lines of a listing, collected by the walk of nftw: a pool of text and the pointers into it, sorted at the end.
+static struct {
+    size_t base; // the length of the folder's path and its slash
+    size_t used;
+    size_t count;
+    bool full;
+    char pool[1U << 18];
+    const char *lines[2048];
+} smith_core_walk;
+
+static unsigned smith_core_crc_of_file(const char *path) {
+    FILE *file = fopen(path, "rb");
+    unsigned crc = 0;
+    uint8_t buffer[8192];
+    for (size_t chunk = 0; file != nullptr && chunk < (1U << 20); chunk++) {
+        size_t got = fread(buffer, 1, sizeof buffer, file);
+        if (got == 0) break;
+        crc = smith_inflate_crc32(crc, buffer, got);
+    }
+    if (file != nullptr) fclose(file);
+    return crc;
+}
+
+static int smith_core_walk_visit(const char *path, const struct stat *info, int kind, struct FTW *where) {
+    if (where->level == 0) return 0;
+    char *line = smith_core_walk.pool + smith_core_walk.used;
+    size_t room = sizeof smith_core_walk.pool - smith_core_walk.used;
+    const char *relative = path + smith_core_walk.base;
+    int written = 0;
+    if (kind == FTW_SL) {
+        char target[PATH_MAX];
+        ssize_t length = readlink(path, target, sizeof target - 1);
+        target[length > 0 ? length : 0] = '\0';
+        written = snprintf(line, room, "%s l -> %s", relative, target);
+    } else if (kind == FTW_D || kind == FTW_DP) {
+        written = snprintf(line, room, "%s d", relative);
+    } else {
+        written = snprintf(line, room, "%s f %04o %lld %08x %lld", relative, (unsigned)(info->st_mode & 0777U),
+                           (long long)info->st_size, smith_core_crc_of_file(path),
+                           (long long)smith_platform_mtime(info).tv_sec);
+    }
+    if (written < 0 || (size_t)written >= room || smith_core_walk.count == 2048) {
+        smith_core_walk.full = true;
+        return 1;
+    }
+    smith_core_walk.lines[smith_core_walk.count++] = line;
+    smith_core_walk.used += (size_t)written + 1;
+    return 0;
+}
+
+static int smith_core_compare_lines(const void *a, const void *b) {
+    return strcmp(*(const char *const *)a, *(const char *const *)b);
+}
+
+bool smith_core_tree(const char *folder, char *out, size_t out_size) {
+    memset(&smith_core_walk, 0, sizeof smith_core_walk);
+    smith_core_walk.base = strlen(folder) + 1;
+    bool ok = nftw(folder, smith_core_walk_visit, 16, FTW_PHYS) == 0 && !smith_core_walk.full;
+    qsort((void *)smith_core_walk.lines, smith_core_walk.count, sizeof smith_core_walk.lines[0],
+          smith_core_compare_lines);
+    size_t at = 0;
+    for (size_t i = 0; ok && i < smith_core_walk.count; i++) {
+        int written = snprintf(out + at, out_size - at, "%s\n", smith_core_walk.lines[i]);
+        ok = written > 0 && (size_t)written < out_size - at;
+        at += ok ? (size_t)written : 0;
+    }
+    if (out_size > 0) out[ok ? at : 0] = '\0';
+    return ok;
+}
+#endif

@@ -799,8 +799,24 @@ static bool smith_archive_decode(SmithUntar *untar, const char *name, const uint
     return smith_package_fail(error, "not a tar, tar.gz, tar.xz or gzip archive");
 }
 
-// Extracts the archive file into the existing folder. `extracted` says what the caller must check afterwards. `name`
-// is the file a gzip of one file (not a tar) becomes.
+// Extracts an archive that is in memory into the existing folder. `extracted` says what the caller must check
+// afterwards. `name` is the file a gzip of one file (not a tar) becomes.
+static bool smith_package_extract_bytes(const uint8_t *data, size_t size, const char *name, const char *folder,
+                                        SmithExtracted *extracted, SmithPackageFault *error) {
+    if (size == 0) return smith_package_fail(error, "the archive is empty");
+    static SmithUntar untar;
+    memset(&untar, 0, sizeof untar);
+    untar.error = error;
+    untar.file = -1;
+    untar.root = open(folder, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    bool ok = untar.root >= 0 || smith_package_fail(error, "cannot open %s: %s", folder, strerror(errno));
+    ok = ok && smith_archive_decode(&untar, name, data, size, error);
+    snprintf(extracted->climbing, sizeof extracted->climbing, "%s", untar.climbing);
+    smith_untar_close(&untar);
+    return ok;
+}
+
+// Extracts the archive file into the existing folder (see smith_package_extract_bytes).
 static bool smith_package_extract(const char *archive, const char *name, const char *folder, SmithExtracted *extracted,
                                   SmithPackageFault *error) {
     int fd = open(archive, O_RDONLY | O_CLOEXEC);
@@ -816,15 +832,7 @@ static bool smith_package_extract(const char *archive, const char *name, const c
     void *map = mmap(nullptr, (size_t)info.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
     close(fd);
     if (map == MAP_FAILED) return smith_package_fail(error, "cannot map %s: %s", archive, strerror(errno));
-    static SmithUntar untar;
-    memset(&untar, 0, sizeof untar);
-    untar.error = error;
-    untar.file = -1;
-    untar.root = open(folder, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-    bool ok = untar.root >= 0 || smith_package_fail(error, "cannot open %s: %s", folder, strerror(errno));
-    ok = ok && smith_archive_decode(&untar, name, map, (size_t)info.st_size, error);
-    snprintf(extracted->climbing, sizeof extracted->climbing, "%s", untar.climbing);
-    smith_untar_close(&untar);
+    bool ok = smith_package_extract_bytes(map, (size_t)info.st_size, name, folder, extracted, error);
     munmap(map, (size_t)info.st_size);
     return ok;
 }
