@@ -7,7 +7,7 @@ i32 main() {
     pairs::Pair p = {1, 2};
     pairs::Pair both[2] = pairs::twin(p);
     i32 three[3] = pairs::count_from(10);
-    const i32 more[3] = pairs::counted(20);
+    i32 more[3] = pairs::counted(20);
     i32 raw[4] = {5, 6, 7, 8};
     i32 rest[:] = pairs::tail(raw);
     c::printf("%d %d %d %d\n", both[0].left, both[1].left, both[1].right, three[2]);

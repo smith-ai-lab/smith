@@ -1257,6 +1257,7 @@ static bool smith_lang_slice_process(SmithLang *lang, const SmithHost *host, con
     if (lang->enums_seen && smith_lang_enum_token(lang, host, token)) return true;
     if (smith_lang_slice_str(lang, host, token)) return true;
     if (at_start && smith_lang_slice_begin(lang, host, token)) return true;
+    if (smith_lang_punct(token, "=") && smith_lang_aret_init_equals(lang, host, token)) return true;
     smith_lang_slice_equals(lang, host, token);
     if (smith_lang_slice_init_compound(lang, host, token)) return true;
     if (token->kind == SmithTokenKind_Identifier && smith_lang_ident(token, "typeof") &&

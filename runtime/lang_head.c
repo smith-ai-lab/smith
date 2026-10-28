@@ -175,7 +175,7 @@ static void smith_lang_resolve(SmithLang *lang, const SmithHost *host, const Smi
     }
     if (!declared) {
         // `T[n] f(...)`: the type before the bracket of a generic's array result
-        bool array_result = smith_lang_punct(next, "[") && next->location == lang->array_result_open;
+        bool array_result = lang->array_result_open != 0 && smith_lang_punct(next, "[") && next->location == lang->array_result_open;
         is_type = is_type || smith_lang_type_use_follows(next) || array_result;
     }
     if (!declared && !is_type && lang->paren_depth == 0 && lang->bracket_depth == 0 && smith_lang_punct(next, "(")) {

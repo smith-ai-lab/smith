@@ -5404,8 +5404,8 @@ static bool smith_lang_replay_rewritten(SmithLang *lang, const SmithHost *host, 
                                         SmithLangFrame *frame) {
     return smith_lang_fields_replay(lang, host, replay, frame) || smith_lang_slice_replay(lang, host, replay, frame) ||
            smith_lang_try_replay(lang, host, replay, frame) || smith_lang_enum_replay(lang, host, replay, frame) ||
-           smith_lang_aret_replay(lang, host, replay, frame) ||
-           smith_lang_replay_shape(lang, host, replay, frame) || smith_lang_list_gone(lang, host, replay, frame);
+           smith_lang_aret_replay(lang, host, replay, frame) || smith_lang_replay_shape(lang, host, replay, frame) ||
+           smith_lang_list_gone(lang, host, replay, frame);
 }
 
 // The argument list at the frame's position (`rest...`, `rest[i]`, `countof(rest)`). True when it took tokens.
