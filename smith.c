@@ -1129,6 +1129,9 @@ static constexpr unsigned char smith_categorical_source[] = {
 static constexpr unsigned char smith_slice_source[] = {
 #embed "lib/smith/slice.smith"
 };
+static constexpr unsigned char smith_list_source[] = {
+#embed "lib/smith/list.smith"
+};
 
 static constexpr unsigned char smith_handlers_header[] = {
 #embed "include/smith/handlers.h"
@@ -1203,6 +1206,7 @@ static const SmithLibrary smith_libraries[] = {
     SMITH_LIBRARY(inflate, true),
     SMITH_LIBRARY(io, true),
     SMITH_LIBRARY(json, false),
+    SMITH_LIBRARY(list, true),
     SMITH_LIBRARY(math, true),
     SMITH_LIBRARY(mem, true),
     SMITH_LIBRARY(process, true),

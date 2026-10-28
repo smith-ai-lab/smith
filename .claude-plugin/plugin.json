@@ -20,6 +20,7 @@
     "./.agents/skills/smith-ascii/",
     "./.agents/skills/smith-categorical/",
     "./.agents/skills/smith-slice/",
+    "./.agents/skills/smith-list/",
     "./.agents/skills/smith/",
     "./.agents/skills/smith-adopt/",
     "./.agents/skills/smith-adopt-build/",

@@ -3581,7 +3581,12 @@ static bool smith_lang_arg_type(SmithLang *lang, const SmithHost *host, SmithLan
     static const char slice_tag[] = "struct smith_array_";
     bool typedef_slice = strncmp(out->canonical, slice_tag, sizeof slice_tag - 1) == 0 &&
                          strncmp(out->written, slice_tag, sizeof slice_tag - 1) != 0;
-    if (smith_lang_internal_type(out->written) || typedef_slice) {
+    // The same for the struct of a type function (`typedef List(i32) Ints`): the instance, which is written where the
+    // typedef is not in scope, names the struct.
+    bool typedef_struct = (strncmp(out->canonical, "struct smith_struct_", 20) == 0 ||
+                           strncmp(out->canonical, "struct smith_enum_", 18) == 0) &&
+                          strncmp(out->written, "struct smith_", 13) != 0;
+    if (smith_lang_internal_type(out->written) || typedef_slice || typedef_struct) {
         memcpy(out->written, out->canonical, sizeof out->written);
     }
     return true;

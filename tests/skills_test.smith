@@ -571,6 +571,10 @@ export void test_skill_smith_result(io::Io *io) {
     skill_case(io, "smith-result");
 }
 
+export void test_skill_smith_list(io::Io *io) {
+    skill_case(io, "smith-list");
+}
+
 export void test_skill_smith_slice(io::Io *io) {
     skill_case(io, "smith-slice");
 }
