@@ -14,7 +14,6 @@ module smith::mem;
 import smith::arena;
 import smith::contract;
 import smith::math;
-import smith::random;
 import target;
 import <dlfcn.h>;                    // dladdr (macOS): which library a block was allocated in
 import <sanitizer/asan_interface.h>; // the poisoning calls of mem::checked
@@ -183,7 +182,7 @@ usize bucket_of(const void *block) {
 }
 
 // Memory from a parent (null: the system's). The system's is reached with the handler of the thread out of the way.
-void *from_parent(Allocator *parent, usize size, usize align) {
+export void *from_parent(Allocator *parent, usize size, usize align) {
     contract::trusted();
     if (parent != nullptr) return parent->alloc(parent, size, align);
     Allocator *before = set_allocator(nullptr);
@@ -192,7 +191,7 @@ void *from_parent(Allocator *parent, usize size, usize align) {
     return block;
 }
 
-void to_parent(Allocator *parent, void *block) {
+export void to_parent(Allocator *parent, void *block) {
     contract::trusted();
     if (parent != nullptr) {
         parent->free(parent, block);
@@ -519,98 +518,9 @@ CheckedSite site_of(const CheckedRecord *record) {
     self->live_bytes = 0;
 }
 
-// ---- mem::failing: an allocator that refuses by chance --------------------------------------------------------------
-//
-// An allocator that wraps another and refuses some allocations, each by a decision drawn from a random::Key, so a test
-// reaches every allocation-failure path of the code under test and a failure replays from its seed. The decision for
-// allocation n comes from the chain of keys the first one starts (random::split: one half is the decision, the other
-// the next link), so the same key and the same sequence of calls refuse the same allocations. A refusal is a null from
-// the allocator: mem::try_alloc answers `.none`, and mem::alloc stops with a checked failure naming "mem::failing" and
-// the size (#324 will make it fail the task). Free passes through, and the test runner's leak check is the parent's, so
-// the allocations that were not refused are still checked. The runner gives a property test one
-// (knowledge/handlers.md):
-//   void test_parse_survives_refusal(random::Key key, mem::Failing *failing) { ... }
-
-constexpr u32 failing_one_in = 8; // the default rate: one allocation in eight
-
-// The allocator. `base` comes first so &failing.base is what set_allocator takes; the value must not move while set.
-[[smith::c_name("SmithFailing")]] export typedef struct Failing {
-    Allocator base;
-    Allocator *parent; // null: the system's
-    u64 state;         // the key the next decision is drawn from
-    u32 one_in;        // refuses one allocation in one_in: 1 every one, 0 none; failing() starts at 8
-    usize calls;       // allocations and reallocations asked
-    usize refused;     // of them refused
-} Failing;
-
-// Whether the next allocation is refused. It always draws, so the decision for call n depends on the key and n alone,
-// whatever one_in was before.
-bool refuses(Failing *self) {
-    contract::trusted(); // the key is split once a call: a chain, which a proof of the callers need not follow
-    self->calls += 1;
-    random::Key pair[2];
-    random::split(random::key_make(self->state), pair);
-    self->state = random::key_bits(pair[0]);
-    u64 bits = random::key_bits(pair[1]);
-    if (self->one_in == 0 || bits % self->one_in != 0) return false;
-    self->refused += 1;
-    return true;
-}
-
-void *failing_alloc(Allocator *self, usize size, usize align) {
-    contract::trusted();
-    Failing *failing_self = (Failing *)self;
-    if (refuses(failing_self)) return nullptr;
-    return from_parent(failing_self->parent, size, align);
-}
-
-void *failing_realloc(Allocator *self, void *block, usize size, usize align) {
-    contract::trusted();
-    Failing *failing_self = (Failing *)self;
-    if (block == nullptr) return failing_alloc(self, size, align);
-    if (refuses(failing_self)) return nullptr;
-    Allocator *parent = failing_self->parent;
-    if (parent != nullptr) return parent->realloc(parent, block, size, align);
-    Allocator *before = set_allocator(nullptr);
-    void *fresh = c::realloc(block, size); // NOLINT(smith-effects): the edge, as try_alloc_raw
-    set_allocator(before);
-    return fresh;
-}
-
-void failing_free(Allocator *self, void *block) {
-    to_parent(((Failing *)self)->parent, block);
-}
-
-// A null parent is the system's, whose blocks the handlers free with libc anyway.
-bool failing_owns(Allocator *self, const void *block) {
-    contract::trusted();
-    Allocator *parent = ((Failing *)self)->parent;
-    return parent != nullptr && parent->owns(parent, block);
-}
-
-usize failing_size(Allocator *self, const void *block) {
-    contract::trusted();
-    Allocator *parent = ((Failing *)self)->parent;
-    return parent != nullptr && parent->size != nullptr ? parent->size(parent, block) : 0;
-}
-
-// An allocator over parent (null: the system's) that refuses one allocation in eight, by the decisions of key. Change
-// `one_in` for another rate. Set it with set_allocator(&x.base); the value must not move while set.
-[[smith::c_name("smith_mem_failing")]] export [[nodiscard]] Failing failing(Allocator *parent, random::Key key) {
-    return (Failing){.base = {.alloc = failing_alloc,
-                              .realloc = failing_realloc,
-                              .free = failing_free,
-                              .owns = failing_owns,
-                              .size = failing_size},
-                     .parent = parent,
-                     .state = random::key_bits(key),
-                     .one_in = failing_one_in};
-}
-
 // What a refusal's report calls an allocator: the ones of this module by name, the arenas' and any other by their kind.
 const char *allocator_name(const Allocator *allocator) {
     if (allocator == nullptr) return "the system's allocator";
-    if (allocator->alloc == failing_alloc) return "mem::failing";
     if (allocator->alloc == checked_alloc) return "mem::checked";
     return "the allocator";
 }

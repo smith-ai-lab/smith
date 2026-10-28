@@ -53,6 +53,7 @@
     "./.agents/skills/smith-docs/",
     "./.agents/skills/smith-docs-check/",
     "./.agents/skills/smith-effects/",
+    "./.agents/skills/smith-failing/",
     "./.agents/skills/smith-files/",
     "./.agents/skills/smith-entropy/",
     "./.agents/skills/smith-env/",

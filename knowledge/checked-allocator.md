@@ -46,7 +46,7 @@ any allocator, `mem::set_allocator(&checked.base)`, so `malloc`, `mem::alloc` an
 
 ## The failing allocator (step D2b)
 
-`mem::failing(parent, key)` (`lib/smith/mem.smith`, C: `smith_mem_failing`) is an allocator over a parent (null: the
+`failing::make(parent, key)` (`lib/smith/failing.smith`, C: `smith_failing_make`; until issue #500 it was `mem::failing` in `mem`, which then imported `random`, which imports `arena`: a cycle that kept `arena` from building on `mem`) is an allocator over a parent (null: the
 system's) that refuses some allocations, so a test reaches every allocation-failure path of the code under test and a
 failure replays from its seed.
 
@@ -57,14 +57,14 @@ failure replays from its seed.
 - **The schedule is `one_in`:** a field, 8 at creation (one allocation in eight), 1 for every one, 0 for none; `calls` and
   `refused` count. Free passes to the parent; `owns` and `size` ask it (a null parent owns nothing, so libc frees).
 - **A refusal is a null from `alloc`:** `mem::try_alloc` and `try_alloc_raw` answer `.none` / null; `mem::alloc` stops
-  with a checked failure naming the allocator ("mem::failing") and the size. Until tasks (#324) that aborts the process
+  with a checked failure naming the allocator and the size. Until tasks (#324) that aborts the process
   (the test runner ends the test); #324 makes it fail the task and unwind through `defer`.
-- **The runner gives a test one:** `void test_x(random::Key key, mem::Failing *failing)` (`SmithKey key, struct
+- **The runner gives a test one:** `void test_x(random::Key key, failing::Failing *failing)` (`SmithKey key, struct
   SmithFailing *failing` in C) runs on `--seeds` keys like a property test. The key is split in two: the test gets the
   first half, the failing allocator the second, over the checked allocator (so what was not refused is still leak
   checked), installed as the thread's allocator for the call of the test alone. `--seed` replays it. `tests_list.h`
-  declares `struct SmithFailing;` and does not include `<smith/mem.h>`, because a plain include before a `.smith` file
-  that imports `smith::mem` hides the module's instance section.
+  declares `struct SmithFailing;` and does not include `<smith/failing.h>`, because a plain include before a `.smith` file
+  that imports `smith::failing` hides the module's instance section.
 - **`.checked_allocator`** is a `build::Setting` (`Default`, `On`, `Off`; zero is the default) on `build::AppTests` and
   `build::Tests`: `Off` passes `--unchecked` to the runner, so the tests run without `mem::checked` (and the
   `Failing` of a failing test then has the system's allocator as its parent). Tests are built in the debug profile,

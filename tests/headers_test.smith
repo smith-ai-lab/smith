@@ -177,6 +177,10 @@ export void test_the_mem_header_compiles_alone(io::Io *io) {
     generated(io, "mem");
 }
 
+export void test_the_failing_header_compiles_alone(io::Io *io) {
+    generated(io, "failing");
+}
+
 export void test_the_option_header_compiles_alone(io::Io *io) {
     generated(io, "option");
 }
@@ -393,4 +397,55 @@ export void test_an_error_in_a_generic_body_points_at_its_line(io::Io *io) {
     const char *text = scratch::capture(&p, "smith cc -fsyntax-only -I include u.smith 2>&1");
     scratch::expect_contains("the error is at line 9", text, "g/gen.smith:9:12: error:");
     scratch::expect_contains("the request is at line 2", text, "u.smith:2:30: note: in instance g::gen::twice(i32)");
+}
+
+// 5. `--smith-headers` writes several headers in one process (issue #639).
+
+static const char *const batch_one = "module g::one;\n\nexport i32 one(void) { return 1; }\n";
+static const char *const batch_two = "module g::two;\n\nexport i32 two(void) { return 2; }\n";
+
+// The headers of a batch are the bytes `--smith-header` writes for each, and a second run writes none of them again.
+export void test_a_batch_of_headers_is_the_bytes_of_each_header(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Run made = scratch::sh(&p, "mkdir -p g one two");
+    scratch::expect_status("the folders are made", 0, &made);
+    scratch::write(&p, "g/one.smith", batch_one);
+    scratch::write(&p, "g/two.smith", batch_two);
+    scratch::Run alone = scratch::sh(
+        &p, "smith cc --smith-header g/one.smith -o one/one.h -std=gnu23 && smith cc --smith-header g/two.smith -o "
+            "one/two.h -std=gnu23");
+    scratch::expect_status("each header is written alone", 0, &alone);
+    scratch::Run batch =
+        scratch::sh(&p, "smith cc --smith-headers -std=gnu23 -- g/one.smith two/one.h g/two.smith two/two.h");
+    scratch::expect_status("the batch is written", 0, &batch);
+    scratch::Run first = scratch::sh(&p, "cmp one/one.h two/one.h");
+    scratch::expect_status("the first header is the same", 0, &first);
+    scratch::Run second = scratch::sh(&p, "cmp one/two.h two/two.h");
+    scratch::expect_status("the second header is the same", 0, &second);
+    scratch::Run again = scratch::sh(
+        &p, "cp -p two/one.h keep.h && smith cc --smith-headers -std=gnu23 -- g/one.smith two/one.h g/two.smith "
+            "two/two.h && test ! two/one.h -nt keep.h");
+    scratch::expect_status("a batch whose bytes are the same writes nothing", 0, &again);
+}
+
+// A header that fails is reported, the others of the batch are still written, and the status is not 0.
+export void test_a_batch_with_a_bad_module_fails_and_writes_the_rest(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Run made = scratch::sh(&p, "mkdir -p g out");
+    scratch::expect_status("the folders are made", 0, &made);
+    scratch::write(&p, "g/bad.smith", "i32 not_a_module(void) { return 0; }\n");
+    scratch::write(&p, "g/two.smith", batch_two);
+    scratch::Run run = scratch::sh(&p, "smith cc --smith-headers -- g/bad.smith out/bad.h g/two.smith out/two.h");
+    scratch::expect_failure("the batch fails", &run);
+    scratch::expect_contains("and says why", run.err, "not a module");
+    scratch::Run written = scratch::sh(&p, "test -f out/two.h");
+    scratch::expect_status("the good header is written", 0, &written);
+}
+
+// An odd list is a usage error.
+export void test_a_batch_with_an_unpaired_file_is_a_usage_error(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Run run = scratch::sh(&p, "smith cc --smith-headers -- a.smith");
+    scratch::expect_failure("an odd list fails", &run);
+    scratch::expect_contains("and shows the usage", run.err, "usage: smith cc --smith-headers");
 }

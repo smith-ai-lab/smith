@@ -275,6 +275,14 @@ lldb::SBThread stopped_thread() {
     return process.GetThreadAtIndex(0);
 }
 
+// Resumes the program that lldb attached to, past the exec that starts it: on Linux the program stops itself, lldb
+// attaches, and the exec that follows is a stop of its own (macOS starts the program suspended already executed).
+void resume_first() {
+    process.Continue();
+    if (process.GetState() != lldb::eStateStopped) return;
+    if (stopped_thread().GetStopReason() == lldb::eStopReasonExec) process.Continue();
+}
+
 void describe(SmithCrashStop *stop) {
     stop->state = SmithCrash_Exited;
     stop->status = 0;
@@ -326,7 +334,7 @@ extern "C" bool smith_crash_start(const char *self, const char *const *args, con
         std::snprintf(problem, capacity, "%s", error.GetCString() != nullptr ? error.GetCString() : "launch failed");
         return false;
     }
-    process.Continue();
+    resume_first();
     describe(stop);
     return true;
 }
