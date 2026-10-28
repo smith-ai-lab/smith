@@ -6,36 +6,8 @@ module crash_reports_test;
 
 import smith::test;
 import target;
-if constexpr (target::os == target::macos) {
-    import <mach/mach.h>;
-}
-
-// How many exception types in the mask still have a handler port.
-static usize handlers(u32 mask) {
-    if constexpr (target::os == target::macos) {
-        u32 masks[14] = {};
-        u32 ports[14] = {};
-        i32 behaviors[14] = {};
-        i32 flavors[14] = {};
-        u32 count = 14;
-        c::kern_return_t status =
-            c::task_get_exception_ports(c::mach_task_self_, mask, masks, &count, ports, behaviors, flavors);
-        if (status != 0) return 1000;
-        usize found = 0;
-        for (u32 i = 0; i < count; i++) {
-            if (ports[i] != 0) found++;
-        }
-        return found;
-    } else {
-        return 0;
-    }
-}
+import <smith/trace.h>;
 
 export void test_crash_exception_ports_are_none_in_a_worker() {
-    if constexpr (target::os == target::macos) {
-        // NOLINTBEGIN(smith-preprocessor): the masks are macros
-        constexpr u32 crashes = c::EXC_MASK_CRASH | c::EXC_MASK_CORPSE_NOTIFY;
-        // NOLINTEND(smith-preprocessor)
-        test::check_equal(handlers(crashes), (usize)0);
-    }
+    test::check_equal(c::smith_crash_handlers(), 0u);
 }

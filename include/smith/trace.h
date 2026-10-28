@@ -98,3 +98,39 @@ typedef enum : unsigned char {
 // What smith_failure does instead of writing and aborting; smith_tests installs it in the test runner. It must not
 // return. frames and count are the caller's stack, as smith_trace_capture gives it.
 extern void (*smith_failure_hook)(SmithFailureKind kind, const uintptr_t *frames, size_t count);
+
+// No macOS crash report for a deliberate crash (issue #622). ReportCrash spends about half a core per crashed process
+// under load, and the test runner crashes processes on purpose. Setting the crash exception ports of the task to none
+// leaves the kernel to deliver the plain signal, which the runner reads as ever; children inherit the ports. Linux has
+// no such cost: both functions do nothing there. smith_crash_handlers counts the crash exception types that still have
+// a handler (the test of the above).
+#ifdef __APPLE__
+#include <mach/mach.h>
+
+static inline void smith_silence_crash_reports(void) {
+    task_set_exception_ports(mach_task_self(), EXC_MASK_CRASH | EXC_MASK_CORPSE_NOTIFY, MACH_PORT_NULL,
+                             EXCEPTION_DEFAULT, THREAD_STATE_NONE);
+}
+
+// How many of the crash exception types still have a handler port (1000 when the kernel would not say).
+static inline unsigned smith_crash_handlers(void) {
+    exception_mask_t masks[EXC_TYPES_COUNT] = {};
+    mach_port_t ports[EXC_TYPES_COUNT] = {};
+    exception_behavior_t behaviors[EXC_TYPES_COUNT] = {};
+    thread_state_flavor_t flavors[EXC_TYPES_COUNT] = {};
+    mach_msg_type_number_t count = EXC_TYPES_COUNT;
+    if (task_get_exception_ports(mach_task_self(), EXC_MASK_CRASH | EXC_MASK_CORPSE_NOTIFY, masks, &count, ports,
+                                 behaviors, flavors) != KERN_SUCCESS)
+        return 1000;
+    unsigned found = 0;
+    for (mach_msg_type_number_t i = 0; i < count; i++) {
+        if (ports[i] != MACH_PORT_NULL) found++;
+    }
+    return found;
+}
+#else
+static inline void smith_silence_crash_reports(void) {}
+static inline unsigned smith_crash_handlers(void) {
+    return 0;
+}
+#endif
