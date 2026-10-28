@@ -328,6 +328,9 @@ static bool build_shim_uses_pch(const char *name) {
 // depfile), and the shims that use it depend on it.
 // `-fpch-instantiate-templates` puts the templates' instantiations in the header too: the part of the saving that
 // matters, since the headers' parse alone is a third of the compile.
+// `-fvalidate-ast-input-files-content` (clang's own flag: the driver drops it; here and where it is used) stores each
+// input's hash, so a shim/pch.h whose time changed and whose text did not (a checkout that rewrote it) still matches
+// the header.
 static const char *build_shim_pch(SmithBuild *b, const BuildConfig *config, const char *folder) {
     static SmithObject pch; // the build keeps the pointer
     pch = (SmithObject){
@@ -335,7 +338,8 @@ static const char *build_shim_pch(SmithBuild *b, const BuildConfig *config, cons
         .source = "shim/pch.h",
         .output = smith_fmt(b, "%s/shim.pch", folder),
         .flags = smith_cat(b, build_shim_flags(b, config),
-                           (const char *[]){"-fpch-instantiate-templates", "-x", "c++-header", nullptr},
+                           (const char *[]){"-fpch-instantiate-templates", "-Xclang",
+                                            "-fvalidate-ast-input-files-content", "-x", "c++-header", nullptr},
                            // hook's coverage flags (build_shim) are in the header's too, so the two agree.
                            smith_when(b, config->coverage,
                                       (const char *[]){"-fprofile-instr-generate", "-fcoverage-mapping", nullptr}),
@@ -353,14 +357,16 @@ static void build_shim(SmithBuild *b, const BuildConfig *config, const char *fol
         .compiler = config->cxx,
         .source = source,
         .output = smith_fmt(b, "%s/%s_shim.o", folder, name),
-        .flags = smith_cat(b, build_shim_flags(b, config),
-                           smith_when(b, uses_pch, (const char *[]){"-include-pch", pch, nullptr}),
-                           // The token hook counts the lines it runs too (COVERAGE=1): the records then select the
-                           // tests that ran a function of it, and a change to shim/hook.cpp no longer selects every
-                           // test (#638).
-                           smith_when(b, config->coverage && strcmp(name, "hook") == 0,
-                                      (const char *[]){"-fprofile-instr-generate", "-fcoverage-mapping", nullptr}),
-                           nullptr),
+        .flags = smith_cat(
+            b, build_shim_flags(b, config),
+            smith_when(b, uses_pch,
+                       (const char *[]){"-include-pch", pch, "-Xclang", "-fvalidate-ast-input-files-content", nullptr}),
+            // The token hook counts the lines it runs too (COVERAGE=1): the records then select the
+            // tests that ran a function of it, and a change to shim/hook.cpp no longer selects every
+            // test (#638).
+            smith_when(b, config->coverage && strcmp(name, "hook") == 0,
+                       (const char *[]){"-fprofile-instr-generate", "-fcoverage-mapping", nullptr}),
+            nullptr),
         .implicit_inputs = smith_when(b, uses_pch, (const char *[]){pch, nullptr}),
     };
     smith_object(b, shim);
