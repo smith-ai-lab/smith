@@ -10,6 +10,7 @@ import smith::format;
 import smith::io;
 import smith::test;
 import scratch;
+import target;
 
 // The same bits everywhere: the digest of a large batch of draws, which is part of the API, in every configuration.
 constexpr char expected_digest[_] = "df39a217d8c29f80";
@@ -27,10 +28,19 @@ static scratch::Project lowered_project(io::Io *io) {
     return p;
 }
 
+// glibc keeps libm apart (the checks call erfc); macOS's is in libSystem, which links anyway.
+static const char *math_library() {
+    if constexpr (target::os == target::macos) {
+        return "";
+    } else {
+        return " -lm";
+    }
+}
+
 // Builds tests/random.c with the flags into `name`.
 static scratch::Run compile(const scratch::Project *p, const char *warnings, const char *flags, const char *name) {
     return scratch::sh(p, format::push(&p->io->arena, "smith cc ", warnings, " -I \"$SMITH_REPO/.smith/include\" ",
-                                       flags, " ", sources, " -o ", name)
+                                       flags, " ", sources, math_library(), " -o ", name)
                               .data);
 }
 
@@ -130,7 +140,12 @@ export void test_random_c_refusal_a_normal_with_deviation_0_aborts(io::Io *io) {
     scratch::expect_status("refusal: a normal with deviation 0 aborts", 134, &run);
     scratch::expect_contains("refusal: ... a failed requires, as a contract fails", run.err,
                              "smith-trace begin requires failed");
-    scratch::expect_contains("refusal: ... in the function that asked", run.err, "smith_normal_double_sample");
+    // macOS names the frames (dladdr); elsewhere the frames are addresses alone and a symbolizer names them.
+    if constexpr (target::os == target::macos) {
+        scratch::expect_contains("refusal: ... in the function that asked", run.err, "smith_normal_double_sample");
+    } else {
+        scratch::expect_contains("refusal: ... with the frames that asked", run.err, "smith-trace frame 0x");
+    }
 }
 
 static scratch::Project built_project(io::Io *io) {
@@ -153,8 +168,10 @@ export void test_random_c_project_gets_random_and_the_arena_with_smith_library(i
 
 export void test_random_c_project_unchanged_library_is_not_rewritten(io::Io *io) {
     scratch::Project p = built_project(io);
-    const char *stamp =
-        "stat -f %m .smith/lib/smith/random.smith 2>/dev/null || stat -c %Y .smith/lib/smith/random.smith";
+    const char *stamp = "stat -c %Y .smith/lib/smith/random.smith"; // GNU stat's -f is the file system's status
+    if constexpr (target::os == target::macos) {
+        stamp = "stat -f %m .smith/lib/smith/random.smith 2>/dev/null || stat -c %Y .smith/lib/smith/random.smith";
+    }
     const char *before = scratch::capture(&p, stamp);
     scratch::sleep(&p, 1100);
     scratch::Run again = scratch::build(&p, "");
