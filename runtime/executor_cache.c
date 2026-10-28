@@ -551,6 +551,13 @@ static bool smith_stepcache_refused(const char *word) {
     return false;
 }
 
+// A compile that writes a precompiled header (`-x c-header`, `-xc++-header`, an output `.pch` or `.gch`): the header
+// records the time and the path of each file it read, so one served to a folder whose files have other times or another
+// root is rejected by every compile that includes it ("has been modified since the precompiled header was built").
+static bool smith_stepcache_writes_header(const char *word) {
+    return smith_ends_with(word, "-header") || smith_ends_with(word, ".pch") || smith_ends_with(word, ".gch");
+}
+
 // The value of the flag at word i: "-I" "dir" or "-Idir". nullptr when it is not that flag.
 static const char *smith_stepcache_flag_value(const SmithStepScope *scope, size_t i, const char *flag) {
     const char *word = scope->words[i];
@@ -606,7 +613,7 @@ static bool smith_stepcache_eligible(SmithExec *exec, SmithEdge *edge) {
             md = md || strcmp(word, "-MD") == 0;
             depfile = depfile || (strcmp(word, "-MF") == 0 && i + 1 < smith_stepcache_scope.count &&
                                   strcmp(smith_stepcache_scope.words[i + 1], edge->depfile) == 0);
-            parsed = !smith_stepcache_refused(word);
+            parsed = !smith_stepcache_refused(word) && !smith_stepcache_writes_header(word);
         }
         edge->step_cache = parsed && md && depfile ? 1 : 2;
     }
