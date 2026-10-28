@@ -2383,8 +2383,7 @@ static void build_preflight_count(SmithBuild *b, const char *built, PreflightRes
         return;
     }
     result->ran = build_preflight_number(
-        b, "ran",
-        "find .smith/records -name '*.rec' -newer .smith/preflight-test.mark 2>/dev/null | wc -l | tr -d ' '");
+        b, "ran", "wc -c < .smith/preflight-test.progress 2>/dev/null | tr -d ' '"); // a byte for each reported test
     const char *system = build_preflight_capture(b, "uname", smith_list(b, "uname", "-s", nullptr));
     const char *machine = build_preflight_capture(b, "machine", smith_list(b, "uname", "-m", nullptr));
     result->total = build_preflight_number(
