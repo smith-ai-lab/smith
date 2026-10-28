@@ -1,6 +1,6 @@
 ---
 name: smith-random-split
-description: "Moving code from many key_derive calls to random::split: a key is affine (used once, &key is a use, in C too), and the three shapes of a derive: a named lane, an item index and a counter on a key in a struct. Load on 'key_derive', 'smith_key_derive' or 'smith-affine: key is used again'."
+description: "Moving code from many key_derive calls to random::split: a key is linear (used once, &key is a use, in C too), and the three shapes of a derive: a named lane, an item index and a counter on a key in a struct. Load on 'key_derive', 'smith_key_derive' or 'smith-linear: key is used again'."
 ---
 
 # From many derives to split
@@ -25,7 +25,7 @@ f64 pair(random::Key key) {
 
 ## An item index
 
-One key per item: an array sized by the count (a constant bound, or an arena slice), used in the plain loop `for (usize i = 0; i < countof(keys); i++)` with `keys[i]` once in the body. The loop bound must be `countof(keys)`; another bound, an `i32` counter or an index computed from `i` is reported (`smith-lang-affine`). An item that also needs lanes splits its own key.
+One key per item: an array sized by the count (a constant bound, or an arena slice), used in the plain loop `for (usize i = 0; i < countof(keys); i++)` with `keys[i]` once in the body. The loop bound must be `countof(keys)`; another bound, an `i32` counter or an index computed from `i` is reported (`smith-lang-linear`). An item that also needs lanes splits its own key.
 
 ```smith
 import smith::random;
@@ -52,4 +52,4 @@ return two[1];                   // this draw's key
 
 To use one key in two places that must agree (a reference and the code under test), make it twice from a seed: `u64 seed = random::key_bits(parts[0]);`, then `random::key_make(seed)` each time. A key that a function draws from several times and a caller reads again needs a split in the caller (`random::Key parts[2];`), one part per use.
 
-Also in this family: [smith-random](../smith-random/SKILL.md), [smith-lang-affine](../smith-lang-affine/SKILL.md).
+Also in this family: [smith-random](../smith-random/SKILL.md), [smith-lang-linear](../smith-lang-linear/SKILL.md).

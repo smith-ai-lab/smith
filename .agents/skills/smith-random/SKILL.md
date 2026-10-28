@@ -20,11 +20,11 @@ f64 demo(u64 seed, f64 out[:]) {
 }
 ```
 
-A key is immutable and every draw is a pure function of a key, as in JAX: the same key gives the same numbers on every platform, in any thread. There is no generator that advances. **A key is used once**: `random::Key` is `[[smith::affine]]` (`smith-lang-affine`), so drawing twice from one is a compile error at the second use, naming the first:
+A key is immutable and every draw is a pure function of a key, as in JAX: the same key gives the same numbers on every platform, in any thread. There is no generator that advances. **A key is used once**: `random::Key` is `[[std::linear]]` (`smith-lang-linear`), so drawing twice from one is a compile error at the second use, naming the first:
 
 ```smith fragment
 f64 a = random::normal_double_sample(parts[0], n);
-f64 b = random::normal_double_sample(parts[0], n);   // error: smith-affine: 'parts[0]' is used again; it was already used at line N
+f64 b = random::normal_double_sample(parts[0], n);   // error: smith-linear: 'parts[0]' is used again; it was already used at line N
 ```
 
 `random::split(key, keys)` uses `key` and fills an array or a slice with `countof(keys)` new keys (C: `smith_key_split_n(key, keys, count)`, also `random::split_n(key, keys, count)` for a pointer and a count); a count's keys are the first of a larger count's. The header is `.smith/include/smith/random.h`; read it first.

@@ -551,6 +551,35 @@ export void test_clamp_always_lands_inside(random::Key key) { // a property test
 
 An `(io::Io *io)` test gets a real io in a scratch folder of its own. [smith-test](.agents/skills/smith-test/SKILL.md).
 
+### Linear types: used exactly once
+
+Mark a type `[[std::linear]]` and every value of it is used exactly once on every path: a second use is a compile error, and so is a way out (a `return`, a `try`, a `break`, the end of the block) that forgets it. A handle you forget to close is found when you compile, not when the file descriptors run out. `defer` uses the value on every way out after it, and `_ = handle;` says on purpose that a value is dropped.
+
+```smith
+module handles;
+
+export [[std::linear]] typedef struct {
+    i32 id;
+} Handle;
+
+export Handle open(i32 id) {
+    return {.id = id};
+}
+
+export void close(Handle handle) {
+    _ = handle;
+}
+
+export i32 work(i32 id, bool fail) {
+    Handle handle = open(id);
+    defer close(handle); // every way out below closes it; without this line each `return` is an error
+    if (fail) return -1;
+    return 0;
+}
+```
+
+[smith-lang-linear](.agents/skills/smith-lang-linear/SKILL.md).
+
 ### Randomness is pure; the system's entropy is one effect
 
 A `random::Key` is a value: the same key gives the same numbers on every build, so `smith::random` touches nothing. A key from the system comes from `smith::entropy`, the one place that asks for randomness, and its signature shows it.

@@ -8,7 +8,7 @@ What smith is and the contracts its code keeps. Read only the concepts your task
 
 ## Architecture
 
-- [Affine types, a plugin linked into smith](affine-types.md): [[smith::affine]] on a type makes each value used at most once, checked by one analysis in a clang plugin linked into smith that runs on every compile and in clangd with no flag.
+- [Linear types, a plugin linked into smith](linear-types.md): [[std::linear]] on a type makes each value used exactly once on every path, checked by one analysis in a clang plugin linked into smith that runs on every compile and in clangd with no flag.
 - [Effect inference, a plugin linked into smith](effect-inference.md): Effects are inferred for every function a compile reads, from its body and its callees, and [[smith::pure]] and one attribute for each effect are ceilings checked by one more clang plugin linked into smith.
 - [Enzyme is linked into smith's lld, and smith::autodiff is its interface](autodiff.md): An autodiff program links with full LTO and no passes, runs AddressSanitizer after Enzyme in debug and has no UBSan.
 - [smith build and build.c](build-file.md): smith build runs a project's build.c, which writes a ninja manifest that smith's own executor runs, with everything explicit and no macros.

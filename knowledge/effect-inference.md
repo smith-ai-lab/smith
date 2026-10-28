@@ -8,7 +8,7 @@ tags: [language, plugin, effects]
 
 What a function does to the world, as a set of effects (`alloc`, `files`, `net`, `console`, `clock`, `process`, `env`,
 `entropy`, `globals`, `c`, `fails`: one bit each, `shim/effects_table.h`), computed by `shim/effects_infer.cpp`, a second plugin of the
-kind [affine-types](affine-types.md) is (an AddAfterMainAction that reads the translation unit when it is complete, and
+kind [linear-types](linear-types.md) is (an AddAfterMainAction that reads the translation unit when it is complete, and
 a ParsedAttrInfo for the attributes; `smith_effects_disable()` turns it off in clang-tidy, which cannot report a
 diagnostic it has no id for). Skill `smith-lang-effects`.
 

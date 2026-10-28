@@ -1,46 +1,51 @@
 ---
-name: smith-lang-affine
-description: "[[smith::affine]] on a type: a value of it is used at most once, and a second use is a compile error naming the first (a key that must not be drawn from twice, a handle that must not be closed twice). Load when a type is marked [[smith::affine]], or on 'smith-affine:', 'is used again; it was already used at line', 'is used in a loop, so it would be used once per iteration' or 'an element of an array of affine values is used through a constant index'."
+name: smith-lang-linear
+description: "[[std::linear]] on a type: a value of it is used exactly once on every path (a key that must not be drawn from twice or dropped, a handle that must be closed), a second use and a missing use are compile errors, `_ = x;` discards, `defer` uses it on every way out. Load when a type is marked [[std::linear]], or on 'smith-linear:', 'is used again; it was already used at line', 'is never used on this path', 'is assigned a new value while the old one was never used', 'is borrowed' or 'an element of an array of linear values is used through a constant index'."
 ---
 
-# Affine types
+# Linear types
 
-Draw twice from one random key and you get the same numbers twice. Mark the type and the compiler refuses a second use.
+Draw twice from one random key and you get the same numbers twice; forget a key and a stream is thrown away. Mark the type and the compiler checks both: every value is used **exactly once**, on every path.
 
 ```smith
 module keys;
 
-export [[smith::affine]] typedef struct { u64 bits; } Key;
+import std::random;
 
-export u64 draw(Key key) { return key.bits; }
-
-export void split(Key key, Key out[:]) { (void)key; (void)out; }    // uses key once, fills out
-
-export u64 total(Key key, Key parts[:]) {
-    split(key, parts);                                              // key is used here: not again
-    u64 sum = 0;
-    for (usize i = 0; i < countof(parts); i++) sum += draw(parts[i]);   // the plain loop: one element per turn
-    return sum;
+export u64 pair(random::Key key) {
+    struct { random::Key, random::Key } parts = random::split(key);   // uses key; parts[0] and parts[1] are two new keys
+    random::UniformDouble unit = {.low = 0, .high = 1};
+    f64 a = random::uniform_double_sample(parts[0], unit);
+    _ = parts[1];                                                      // the second is dropped, and the code says so
+    return (u64)a;
 }
 ```
 
-The mark is a valid C23 attribute (in C: `[[smith::affine]] typedef struct { ... } Key;`; `[[clang::annotate("smith::affine")]]` is the same mark, which a compiler without smith's plugin accepts without a warning). smith checks it on every compile and in the editor, with no flag.
+The mark is a valid C23 attribute (in C: `[[std::linear]] typedef struct { ... } Key;`; `[[clang::annotate("std::linear")]]` is the same mark, which a compiler without smith's plugin accepts without a warning). smith checks it on every compile and in the editor, with no flag.
 
 ## The rules
 
-- **Any read is a use**: passing, assigning, returning, `&key`, a member read (`h.key`). There is no borrowing and no new notation.
-- **At most once**: a value never used is fine. A second use on any path is an error at the second use, naming the first. A use in one branch counts after the branches join.
-- **Assigning a fresh value makes it usable again**: `key = next[0];`. Passing a whole array or slice to a call (`split(key, parts)`) makes its elements fresh.
-- **Each element of an array or slice is its own value**: `keys[0]` and `keys[1]` once each. The index is a constant or the counter of a plain loop.
-- **A loop** that uses a value from outside it is an error (once per iteration), except the plain loop above: counter from 0, `i < countof(parts)`, `i++`, `i` not changed in the body, `parts[i]` used once.
+- **A use** is a read: passing by value, assigning, returning, `&key`, a member read (`h.key`), `_ = key;`, and a `defer` that uses it. `_ = key;` is the explicit discard.
+- **Exactly once**: a second use on any path is an error at the second use, naming the first; a way out where the value is not yet used on that path is an error naming it and the fix. The ways out are a `return`, a `try` that returns early, a `break`, a `continue`, a `goto` and the end of the block the value is declared in; a parameter is checked at the function's exits.
+- **`defer`** uses the value at the `defer` and covers every way out after it: `defer file::close(f);` right after opening is the shape. A way out before the `defer` is still an error.
+- **A branch** that uses it on one path only leaves it unused on the other, and using it after the join is a second use.
+- **Assigning a fresh value makes it usable again** (`key = next[0];`); assigning over a value never used is an error (use it, or `_ = key;` first). A variable declared with no value holds nothing to use.
+- **A loop** that uses a value from outside it is an error (once per iteration), except the plain loop below.
+
+## Tuples, arrays and slices
+
+- **A tuple's count is in its type**, so each linear field is its own value (`parts[0]`, `parts[1]`), used exactly once; passing the whole tuple to a call uses every field.
+- **A constant-size array** of linear values: each constant index is its own value; all of them are used.
+- **A slice** (`random::Key keys[:] = random::split_many(key, n)`) has no count the check reads: it is used by moving it into a call (which owes a use of each element of a non-const slice parameter) or by the plain loop `for (usize i = 0; i < countof(keys); i++)` with `keys[i]` used once on every path of the body (a `break` that skips elements is an error). Any other index, or an index by constant on a slice, is an error.
+- **A `const` slice parameter** (`const Key xs[:]`) borrows: the callee reads members (`xs[0].bits`) but cannot use an element up (an error naming the fix), and the caller still owes the uses.
 
 ```smith fragment
-u64 a = draw(parts[0]);
-u64 b = draw(parts[0]);   // error: smith-affine: 'parts[0]' is used again; it was already used at line N
+random::Key keys[:] = random::split_many(key, 3);
+u64 total = 0;
+for (usize i = 0; i < countof(keys); i++)
+    total += draw(keys[i]);          // each key once; a slice is covered only by a loop like this or by a move
 ```
 
 ## Errors
 
-Each message is at the second use, with a note at the first. The loop and index errors show the plain loop and the reassignment (`key = next[0];`) as the way out.
-
-Not checked: unions, `_Atomic`, a cast that hides the type. A struct holding an affine member is not affine itself (reading the member is a use). Template functions and functions with another error are skipped.
+Each message names the value and the way out (`the `return` at line N returns`, `the block ends at line N`). Not checked: unions, `_Atomic`, a cast that hides the type. A struct holding a linear member is not linear itself (reading the member is a use); a tuple is. Template functions and functions with another error are skipped.

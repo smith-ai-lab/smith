@@ -139,8 +139,8 @@ name; the `tag` enum and its constants keep `<module>_<Name>_tag...`). The same 
 `<name>_tag_`) and a synthetic children provider whose only child is that variant's payload, so the other members of the
 union (garbage, and once a summary parse error) and the raw tag are hidden: `(main::Shape) a = circle { circle = (r = 2) }`,
 `b = empty {}`. The canonical type is matched (the typedef name says nothing), in C++ with no Python and no LLVM change. The
-affine plugin reads the struct's constants as `<name>_tag_<variant>` with `smith_enum_` taken off the tag
-(`variantOf`, shim/affine.cpp). Tests: `tests/dap_test.smith`.
+linear plugin reads the struct's constants as `<name>_tag_<variant>` with `smith_enum_` taken off the tag
+(`variantOf`, shim/linear.cpp). Tests: `tests/dap_test.smith`.
 
 ## Reading a failed check
 

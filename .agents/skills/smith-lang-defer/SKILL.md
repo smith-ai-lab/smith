@@ -33,7 +33,7 @@ i32 main() {
 - **Exactly the TS's meaning, no extension.** A deferred statement runs when its block exits, last deferred first: at the end of the block, `return`, `break`, `continue` and a `goto` out of it. What the TS forbids stays an error (jumping into a defer's scope, `return` or `goto` out of the deferred statement itself).
 - **A keyword only in a module.** Without a `module` line `defer` is an ordinary identifier (`int defer = 1;` builds, as in C). In a module it names nothing: ``error: `defer` is a keyword in a module``. `x.defer` is a member and stays one.
 - **A plain `.c` file** gets `_Defer` only when its own flags ask for `-fdefer-ts`; smith never changes a C default.
-- `smith fmt` keeps `defer stmt;` and writes a `defer { ... }` block like any block. An affine value used in a deferred statement counts as used (`smith-lang-affine`).
+- `smith fmt` keeps `defer stmt;` and writes a `defer { ... }` block like any block. A linear value used in a deferred statement counts as used from the `defer` on, for every way out (`smith-lang-linear`).
 
 A cleanup that should run only when the function fails is `errdefer` (`smith-lang-try`).
 

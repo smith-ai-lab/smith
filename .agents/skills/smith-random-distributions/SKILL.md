@@ -38,7 +38,7 @@ void distributions(random::Key key, arena::Arena *a) {
 
 ## Fill an array: a loop
 
-There is no `fill`. Filling is one loop that works for any distribution: each turn takes a key from the reassignment pattern, or you split into an array and use the plain loop (`smith-lang-affine`):
+There is no `fill`. Filling is one loop that works for any distribution: each turn takes a key from the reassignment pattern, or you split into an array and use the plain loop (`smith-lang-linear`):
 
 ```smith
 import smith::random;

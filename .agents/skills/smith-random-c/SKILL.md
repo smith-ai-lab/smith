@@ -10,7 +10,7 @@ A C program includes the generated header `.smith/include/smith/random.h`, and t
 ```c
 #include <smith/random.h>
 
-SmithKey key = smith_key_make(seed);              // a seed is any uint64_t; a key is used once ([[smith::affine]])
+SmithKey key = smith_key_make(seed);              // a seed is any uint64_t; a key is used once ([[std::linear]])
 SmithKey k[8];
 smith_key_split_n(key, k, 8);                     // key is used here; each draw below has its own key
 uint64_t bits = smith_key_bits(k[0]);

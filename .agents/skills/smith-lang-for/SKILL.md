@@ -31,7 +31,7 @@ export void scale(i32 xs[:], i32 factor) {
 - **Only slices and fixed arrays**: `T xs[:]`, a cut `xs[a:b]`, `T xs[N]` and an array parameter `T xs[N]`, of one dimension. Anything else is an error that names the C loop. There is no iterator, no `0..n`, no `_`, no third variable and no structured binding.
 - **The declared type chooses**: `T x` copies each element (C's conversions apply); `T *p` points at the element, so writing through it changes the slice; with a slice of pointers `Node *n` copies each pointer and `Node **pn` points at each slot; `auto x` and a concept (`arithmetic x`, `smith-lang-concepts`) take the element's type; `const` is as in a declaration. `auto *p` is not C: write `T *p`, in a generic `typeof(xs[0]) *p`.
 - **The index is a `usize`** (any other type is an error that says so), counted from 0 within what is looped: over `xs[2:5]` it runs 0, 1, 2.
-- **The body is a block**: `for (T x : xs) { ... }`. `break`, `continue`, `try`, `defer` (it runs at the end of each turn) and affine elements (`for (random::Key k : keys)`: each is used once) work as in C's loop.
+- **The body is a block**: `for (T x : xs) { ... }`. `break`, `continue`, `try`, `defer` (it runs at the end of each turn) and linear elements (`for (random::Key k : keys)`: each is used once) work as in C's loop.
 - **Lowering**: a slice is evaluated once, before the loop, and read through its pointer with no bounds check (the index is in range by construction). A fixed array and the body of a generic are `for (usize i = 0; i < countof(xs); i++)` with `T x = xs[i];`, so there `xs` is written as a name or a member (it is evaluated each turn).
 
 ## Over a compile-time list
