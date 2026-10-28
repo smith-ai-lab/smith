@@ -41,6 +41,13 @@ run by hand (no task regenerates headers and no check compares them). smith's ow
 - **smith's own tree:** build.c's header steps (`build_header_steps`, and smith_object's for the modules it compiles) run
   the smith that builds smith (`CC`, the previous release: the lag rule), so smith.c's compile, which has `-I
   .smith/include`, includes headers the previous release wrote; C never reads the `// smith-generic:` lines.
+- **Many headers at once (#639):** `smith cc --smith-headers [compile flags] -- a.smith a.h b.smith b.h` writes the pairs one
+  after the other in one process, each in a forked child (the lowering keeps its tables in statics), and exits 1 if any
+  failed. A smith process costs about 10 ms to start (a 240 MB image with 400,000 fixups) and a header about 2, so
+  smith's own build writes the headers of all the tests (`tests/*.smith`, `lib/*_test.smith`) in one restat step,
+  `headers of the tests`: a build that relinks smith runs it again, finds every header's bytes the same and leaves their
+  compiles alone, in 0.3 s of CPU where 116 steps took 1.9 s. The step's inputs are the tests' sources and the smith that
+  writes them; a header is never skipped on a guess about what the new smith would write.
 - **A Linux machine with no smith:** `scripts/seed_linux.c` builds `scripts/header_tool.c`, the same writer
   (`runtime/lang*.c`) as a program of its own with the host cc, and runs it on `lib/smith/*.smith`. It asks no compiler
   which import declared a name, so a module with several C imports keeps them all; `tests/header_tool_test.smith` builds it
