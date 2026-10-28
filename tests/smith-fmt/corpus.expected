@@ -740,7 +740,7 @@ module main;
 
 import <stdio.h>;
 
-// The effects of a function pointer go after the parameter list of the function type (iss
+// The effects of a function pointer go after the parameter list of the function type (issue #396): in a typedef, a
 // field, a parameter and a local, `[[smith::pure]]` for none.
 typedef void (*Logger)(const char *text) [[smith::effects(console)]];
 
