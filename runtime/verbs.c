@@ -226,7 +226,9 @@ typedef struct {
     size_t job;
 } SmithVerbsSlot;
 
+// With `ended`, each job's wait status and log go to it before the log is printed.
 static size_t smith_verbs_parallel(size_t count, size_t jobs, char *const *(*argv_of)(size_t job, void *context),
+                                   void (*ended)(size_t job, int wait_status, FILE *log, void *context),
                                    void *context) {
     SMITH_ASSERT(jobs >= 1 && jobs <= smith_verbs_jobs_max);
     SmithVerbsSlot slots[smith_verbs_jobs_max] = {};
@@ -251,6 +253,7 @@ static size_t smith_verbs_parallel(size_t count, size_t jobs, char *const *(*arg
         for (size_t at = 0; at < jobs; at++) { // bounded by the slots
             if (slots[at].pid != done) continue;
             if (smith_verbs_status(wait_status) != 0) failed++;
+            if (ended != nullptr) ended(slots[at].job, wait_status, slots[at].log, context);
             smith_verbs_replay(slots[at].log);
             fclose(slots[at].log);
             slots[at] = (SmithVerbsSlot){};
@@ -439,12 +442,27 @@ static int smith_fmt_project(const char *self, bool check) {
 
 // ---- lint
 
-static char *smith_lint_argv[8];
+static char *smith_lint_argv[16];
+
+// The files to lint, the flags of the compile of each (nullptr: none, so no cache key) and, of the ones the cache did
+// not answer, their numbers: job n lints files[order[n]].
+typedef struct {
+    const char *const *files;
+    const char *const *flags;
+    size_t *order;
+} SmithLintRun;
 
 static char *const *smith_lint_job(size_t job, void *context) {
-    const char *const *files = (const char *const *)context;
-    smith_lint_argv[5] = (char *)files[job];
+    const SmithLintRun *run = (const SmithLintRun *)context;
+    size_t at = 5 + smith_lc_extra(run->order[job], smith_lint_argv + 5);
+    smith_lint_argv[at++] = (char *)run->files[run->order[job]];
+    smith_lint_argv[at] = nullptr;
     return smith_lint_argv;
+}
+
+static void smith_lint_done(size_t job, int wait_status, FILE *log, void *context) {
+    const SmithLintRun *run = (const SmithLintRun *)context;
+    smith_lc_store(run->order[job], wait_status, log);
 }
 
 static size_t smith_verbs_jobs(void) {
@@ -499,6 +517,36 @@ static size_t smith_lint_unbuilt(const char **files, size_t count, size_t *sourc
     return count;
 }
 
+// Lints the files: those the cache has a result for replay it, the others run clang-tidy side by side with the flags of
+// their compile (.smith/compile_commands.json) and are stored when it completes. The last line says how many were
+// linted and how many of those ran. Returns the exit status.
+static int smith_lint_run(SmithLintRun *run, size_t count, const char *self) {
+    uint64_t began = smith_account_now_ms();
+    bool cache = smith_lc_open();
+    size_t misses = 0;
+    size_t failed = 0;
+    for (size_t i = 0; i < count; i++) { // bounded by the files
+        int status = 0;
+        if (cache) smith_lc_plan(i, run->files[i], run->flags[i]);
+        if (cache && smith_lc_replay(i, &status)) {
+            if (status != 0) failed++;
+        } else {
+            run->order[misses++] = i;
+        }
+    }
+    smith_lint_argv[0] = (char *)self;
+    smith_lint_argv[1] = (char *)"lint";
+    smith_lint_argv[2] = (char *)"--quiet";
+    smith_lint_argv[3] = (char *)"-p";
+    smith_lint_argv[4] = (char *)".smith";
+    failed += smith_verbs_parallel(misses, smith_verbs_jobs(), smith_lint_job, smith_lint_done, run);
+    if (failed > 0) fprintf(stderr, "smith lint: clang-tidy failed on %zu of %zu files\n", failed, count);
+    uint64_t took = smith_account_now_ms() - began;
+    fprintf(stderr, "smith lint: linted %zu files (%zu run, %zu cached, %.1f s)\n", count, misses, count - misses,
+            (double)took / 1000.0);
+    return failed > 0 ? 1 : 0;
+}
+
 // `smith lint` with no arguments: builds what the project's compiles read (the generated headers), then runs clang-tidy
 // on each of its own C-family sources, side by side, with the flags of the compile (.smith/compile_commands.json). A
 // `.smith` source is linted as written (shim/tidy.cpp) by a smith whose clang has the token hook, the way `smith lint
@@ -515,6 +563,8 @@ static int smith_lint_project(int count, char **args, const char *self) {
     if (status != 0) return status;
     const SmithInfo *info = smith_info_read("smith lint");
     static const char *files[smith_verbs_files_max + 1];
+    static const char *flags[smith_verbs_files_max + 1]; // of each file's compile; the unbuilt ones have none
+    static size_t order[smith_verbs_files_max + 1];
     size_t files_count = 0;
     size_t skipped = 0;
     size_t smith_sources = 0;
@@ -527,6 +577,7 @@ static int smith_lint_project(int count, char **args, const char *self) {
 #endif
         }
         if (files_count >= smith_verbs_files_max) smith_die(smith_exit_usage, "too many files to lint", nullptr);
+        flags[files_count] = info->compile_flags[i];
         files[files_count++] = info->compiles[i];
     }
 #ifdef SMITH_HOOK
@@ -540,16 +591,8 @@ static int smith_lint_project(int count, char **args, const char *self) {
         fprintf(stderr, "smith lint: linted 0 files\n");
         return smith_sources > skipped ? 1 : 0; // .smith sources and nothing linted: the gate is empty
     }
-    smith_lint_argv[0] = (char *)self;
-    smith_lint_argv[1] = (char *)"lint";
-    smith_lint_argv[2] = (char *)"--quiet";
-    smith_lint_argv[3] = (char *)"-p";
-    smith_lint_argv[4] = (char *)".smith";
-    smith_lint_argv[6] = nullptr;
-    size_t failed = smith_verbs_parallel(files_count, smith_verbs_jobs(), smith_lint_job, (void *)files);
-    if (failed > 0) fprintf(stderr, "smith lint: clang-tidy failed on %zu of %zu files\n", failed, files_count);
-    fprintf(stderr, "smith lint: linted %zu files\n", files_count);
-    return failed > 0 ? 1 : 0;
+    SmithLintRun run = {.files = files, .flags = flags, .order = order};
+    return smith_lint_run(&run, files_count, self);
 }
 
 // ---- prove

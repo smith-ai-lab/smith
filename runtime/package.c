@@ -238,10 +238,11 @@ static bool smith_package_download(SmithIo *io, const char *url, const char *des
 typedef enum {
     SmithCache_Modules,
     SmithCache_Packages,
+    SmithCache_Lint,
 } SmithCacheKind;
 
 static const char *smith_cache_name(SmithCacheKind kind) {
-    return kind == SmithCache_Modules ? "modules" : "packages";
+    return kind == SmithCache_Modules ? "modules" : kind == SmithCache_Packages ? "packages" : "lint";
 }
 
 // $XDG_CACHE_HOME/smith, or ~/.cache/smith: the folder of every smith cache.
@@ -309,6 +310,7 @@ typedef struct {
 
 static SmithCacheAges smith_cache_ages;
 static uint64_t smith_cache_walk_bytes;
+static uint64_t smith_cache_walk_regular; // the regular files under the path
 static time_t smith_cache_walk_newest;
 
 static int smith_cache_walk_visit(const char *path, const struct stat *info, int type, struct FTW *where) {
@@ -316,6 +318,7 @@ static int smith_cache_walk_visit(const char *path, const struct stat *info, int
     (void)type;
     (void)where;
     smith_cache_walk_bytes += (uint64_t)info->st_blocks * 512U;
+    if (S_ISREG(info->st_mode)) smith_cache_walk_regular += 1;
     if (info->st_mtime > smith_cache_walk_newest) smith_cache_walk_newest = info->st_mtime;
     return 0;
 }
@@ -323,6 +326,7 @@ static int smith_cache_walk_visit(const char *path, const struct stat *info, int
 // The disk space of everything under path (itself included) and the newest modification time in it.
 static void smith_cache_measure(const char *path, uint64_t *bytes, time_t *newest) {
     smith_cache_walk_bytes = 0;
+    smith_cache_walk_regular = 0;
     smith_cache_walk_newest = 0;
     nftw(path, smith_cache_walk_visit, smith_cache_walk_files, FTW_PHYS);
     *bytes = smith_cache_walk_bytes;
