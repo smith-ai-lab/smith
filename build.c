@@ -22,6 +22,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 // Everything the targets share.
@@ -2230,6 +2231,18 @@ static const char *build_preflight_capture(SmithBuild *b, const char *name, cons
     return lines != nullptr && lines[0] != nullptr ? lines[0] : "";
 }
 
+// Seconds on a monotonic clock, and a duration as the status shows it: 41s, 3m.
+static double build_preflight_now(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (double)now.tv_sec + (double)now.tv_nsec / 1e9;
+}
+
+static const char *build_preflight_duration(SmithBuild *b, double seconds) {
+    if (seconds >= 120) return smith_fmt(b, "%.0fm", seconds / 60);
+    return smith_fmt(b, "%.0fs", seconds);
+}
+
 static int build_preflight(SmithRun *run) {
     SmithBuild *b = run->b;
     if (build_make_folder(b, ".smith") != 0) return 1;
@@ -2248,8 +2261,12 @@ static int build_preflight(SmithRun *run) {
     const char *machine = build_preflight_capture(b, "machine", smith_list(b, "uname", "-m", nullptr));
     const char *built = smith_fmt(b, "build/%s-%s/smith", system, machine);
     const char *failed = "";
+    const char *times = ""; // "build 41s, fmt 3s, ..." for the summary and the description
     bool test_capped = false;
-    if (build_preflight_step(b, "build", smith_list(b, self, "build", nullptr)) != 0) {
+    double started = build_preflight_now();
+    int built_status = build_preflight_step(b, "build", smith_list(b, self, "build", nullptr));
+    times = smith_fmt(b, "build %s", build_preflight_duration(b, build_preflight_now() - started));
+    if (built_status != 0) {
         failed = "build";
     } else {
         const char *const names[] = {"fmt", "docs", "lint", "test"};
@@ -2258,6 +2275,7 @@ static int build_preflight(SmithRun *run) {
             smith_list(b, built, "lint", nullptr),
             smith_list(b, built, "test", "--changed", "--cheapest-first", "--fail-fast", nullptr)};
         for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
+            double step_started = build_preflight_now();
             if (strcmp(names[i], "test") == 0) { // capped: a timeout is a pass
                 int status = build_preflight_capped(b, commands[i], ".smith/preflight-test.log", &test_capped);
                 if (status != 0) build_print_tail(".smith/preflight-test.log", 12);
@@ -2266,6 +2284,9 @@ static int build_preflight(SmithRun *run) {
             } else if (build_preflight_step(b, names[i], commands[i]) != 0) {
                 failed = smith_fmt(b, "%s %s", failed, names[i]);
             }
+            times = smith_fmt(b, "%s, %s %s%s", times, strcmp(names[i], "test") == 0 ? "tests" : names[i],
+                              build_preflight_duration(b, build_preflight_now() - step_started),
+                              strcmp(names[i], "test") == 0 && test_capped ? " capped" : "");
         }
     }
     const char *tests = build_preflight_capture(
@@ -2273,12 +2294,13 @@ static int build_preflight(SmithRun *run) {
         smith_list(b, "sh", "-c", "grep -Eo '[0-9]+ passed' .smith/preflight-test.log 2>/dev/null | tail -1; true",
                    nullptr));
     bool ok = failed[0] == '\0';
-    const char *description = ok ? smith_fmt(b, "fmt, docs, lint and the changed tests ok (%s%s)",
+    // Under GitHub's 140 characters: the times, then the count.
+    const char *description = ok ? smith_fmt(b, "ok: %s (%s)", times,
                                              tests[0] != '\0' ? tests
-                                             : test_capped    ? "no summary before the cap"
-                                                              : "no tests selected",
-                                             test_capped ? ", capped at 10 min" : "")
-                                 : smith_fmt(b, "failed:%s (smith build preflight)", failed);
+                                             : test_capped    ? "no count before the cap"
+                                                              : "no tests selected")
+                                 : smith_fmt(b, "failed:%s (%s)", failed, times);
+    fprintf(stderr, "preflight: %s, %s in all\n", times, build_preflight_duration(b, build_preflight_now() - started));
     int posted = build_spawn(&(BuildSpawn){
         .argv = smith_list(b, "gh", "api", smith_fmt(b, "repos/{owner}/{repo}/statuses/%s", sha), "-f",
                            smith_fmt(b, "state=%s", ok ? "success" : "failure"), "-f", "context=smith/preflight", "-f",
