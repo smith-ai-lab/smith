@@ -94,6 +94,7 @@
     "./.agents/skills/smith-lang-generics/",
     "./.agents/skills/smith-lang-generics-auto/",
     "./.agents/skills/smith-lang-generics-more/",
+    "./.agents/skills/smith-lang-generics-pattern/",
     "./.agents/skills/smith-lang-if-constexpr/",
     "./.agents/skills/smith-lang-concepts/",
     "./.agents/skills/smith-lang-rest/",
