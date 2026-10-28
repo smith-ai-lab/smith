@@ -3,7 +3,7 @@
 // record). Nothing allocates: a result is a cut of an input, an index, or is written into a slice the caller passes.
 //
 //   str s = "key=value";
-//   option(Usize) at = slice::find(s, '=');
+//   Option(Usize) at = slice::find(s, '=');
 //   if (at == .some) key = s[0:at.some];
 module std::slice;
 
@@ -130,6 +130,46 @@ export Usize search(const Num sorted[:], typeof(sorted[0]) v) {
     }
     contract::ensures(low <= countof(sorted));
     return low;
+}
+
+// Moves the element at root down the heap xs[0:end] until both its children sort after it.
+void sift_down(auto xs[:], Usize root, Usize end, constexpr auto less) {
+    contract::requires(end <= countof(xs) && root < end);
+    Usize parent = root;
+    while (2 * parent + 1 < end) {
+        contract::invariant(parent < end);
+        Usize child = 2 * parent + 1;
+        if (child + 1 < end && less(xs[child], xs[child + 1])) child += 1;
+        if (!less(xs[parent], xs[child])) return;
+        typeof_unqual(xs[0]) held = xs[parent];
+        xs[parent] = xs[child];
+        xs[child] = held;
+        parent = child;
+    }
+}
+
+// Whether no element of xs sorts before the one in front of it, by less.
+Bool ordered_by(const auto xs[:], constexpr auto less) {
+    for (Usize i = 1; i < countof(xs); i++) {
+        if (less(xs[i], xs[i - 1])) return false;
+    }
+    return true;
+}
+
+// Puts the elements in the order less gives, in place: less(a, b) is true when a sorts strictly before b. A heapsort,
+// so the worst case is count * log2(count) comparisons, nothing allocates and nothing recurses. Not stable.
+export void sort_by(auto xs[:], constexpr auto less) {
+    Usize length = countof(xs);
+    for (Usize i = length / 2; i > 0; i--) {
+        sift_down(xs, i - 1, length, less);
+    }
+    for (Usize end = length; end > 1; end--) {
+        typeof_unqual(xs[0]) held = xs[0];
+        xs[0] = xs[end - 1];
+        xs[end - 1] = held;
+        sift_down(xs, 0, end - 1, less);
+    }
+    contract::ensures(ordered_by(xs, less));
 }
 
 // Whether a sorts strictly before b in ascending order: the `less` that sort gives sort_by.
