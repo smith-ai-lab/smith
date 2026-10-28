@@ -1,3 +1,0 @@
-status 1
-affine_elements.c:17:33: error: smith-affine: 'keys[0]' is used again; it was already used at line 15
-affine_elements.c:15:33: note: 'keys[0]' was first used here

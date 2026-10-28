@@ -1,15 +1,16 @@
-// [[smith::affine]]: a value of a type marked with it is used at most once (issue #189, skill smith-lang-affine).
+// [[std::linear]]: a value of a type marked with it is used exactly once on every path (issues #189, #438, skill
+// smith-lang-linear).
 // The same plugin narrows payload enums (issue #198, below: "Narrowing of a payload enum").
 //
 // Linked into smith and run on every compile, with no flag, by two entries of clang's static registries:
-//   - a ParsedAttrInfo makes `[[smith::affine]]` a known attribute (the compiler, clang-tidy and clangd all read the
-//     registry), kept in the AST as AnnotateAttr("smith::affine"), on a typedef or a tag;
+//   - a ParsedAttrInfo makes `[[std::linear]]` a known attribute (the compiler, clang-tidy and clangd all read the
+//     registry), kept in the AST as AnnotateAttr("std::linear"), on a typedef or a tag;
 //   - a PluginASTAction of type AddAfterMainAction, which clang adds to every frontend action (the compiler's,
 //   clangd's)
 //     without a command-line flag, runs the analysis. clang-tidy cannot report a diagnostic it has no id for, so
-//     smith_affine_disable() (shim/tidy.cpp) turns it off there: every compile fails on a second use already.
+//     smith_linear_disable() (shim/tidy.cpp) turns it off there: every compile fails on a second use already.
 //
-// The analysis is one forward dataflow over clang's CFG per function that has a variable of an affine type (found by a
+// The analysis is one forward dataflow over clang's CFG per function that has a variable of a linear type (found by a
 // walk of the body first; no other function pays for a CFG). The state is the set of places already used, each with
 // the place of its first use. A place is a variable, a member path (`o.key`), and a constant index or the counter of a
 // plain loop (`keys[0]`, `keys[i]`) for an array. A slice (`Key keys[:]`) is lowered by .smith to a statement
@@ -50,11 +51,11 @@ namespace {
 
 bool annotated(const Decl *decl) {
     for (const auto *attr : decl->specific_attrs<AnnotateAttr>())
-        if (attr->getAnnotation() == "smith::affine" || attr->getAnnotation() == "std::affine") return true;
+        if (attr->getAnnotation() == "std::linear") return true;
     return false;
 }
 
-bool affineType(QualType type) {
+bool linearType(QualType type) {
     for (int depth = 0; depth < 16 && !type.isNull(); depth++) {
         if (const auto *typedef_type = type->getAs<TypedefType>()) {
             if (annotated(typedef_type->getDecl())) return true;
@@ -79,14 +80,14 @@ QualType elementOf(QualType type) {
     return QualType();
 }
 
-bool holdsAffine(QualType type) {
-    if (affineType(type)) return true;
+bool holdsLinear(QualType type) {
+    if (linearType(type)) return true;
     QualType element = elementOf(type);
-    if (!element.isNull()) return affineType(element);
+    if (!element.isNull()) return linearType(element);
     const RecordDecl *record = type->getAsRecordDecl();
     if (record == nullptr || !record->isCompleteDefinition()) return false;
     for (const FieldDecl *field : record->fields())
-        if (affineType(field->getType())) return true; // a struct with an affine member: reading the member is a use
+        if (linearType(field->getType())) return true; // a struct with a linear member: reading the member is a use
     return false;
 }
 
@@ -96,8 +97,11 @@ bool holdsAffine(QualType type) {
 using Step = std::pair<const void *, long long>;
 using Key = std::pair<const VarDecl *, std::vector<Step>>;
 constexpr long long counterIndex = -1;
+constexpr long long allElements = -3;   // every element at once: the array or slice was moved to a callee or returned
+constexpr long long loopElements = -4;  // every element, used by the plain loop whose counter is the step's first
+constexpr long long emptyElements = -5; // an array or slice declared with no value: no element to use
 
-enum class Action { Use, Assign, AssignAll, Reset, BadIndex };
+enum class Action { Use, Assign, Move, Reset, BadIndex, Borrowed };
 
 struct Site {
     Action action;
@@ -141,18 +145,83 @@ bool changes(const Stmt *stmt, const VarDecl *variable) {
     return false;
 }
 
+// What a local variable or parameter must have used by the time it goes out of scope: a value of a linear type (once),
+// every element of an array of them (a constant count) or of a slice (a loop or a move uses them all), or every linear
+// field of a tuple (`struct { Key, Key }`, whose count is in its type). Elements of a
+// `const` array or slice are borrowed: the owner of the array still owes their uses.
+struct Owed {
+    enum Kind { Nothing, Whole, Array, Slice, Tuple } kind = Nothing;
+    long long count = 0;
+};
+
+// The fields of a tuple (`struct smith_tuple_...`) that are linear, else none.
+std::vector<const FieldDecl *> tupleFields(QualType type) {
+    std::vector<const FieldDecl *> fields;
+    const RecordDecl *record = type->getAsRecordDecl();
+    if (record == nullptr || !record->isCompleteDefinition() || !record->getName().starts_with("smith_tuple_"))
+        return fields;
+    for (const FieldDecl *field : record->fields())
+        if (linearType(field->getType())) fields.push_back(field);
+    return fields;
+}
+
+Owed owes(const VarDecl *variable) {
+    Owed owed;
+    if (!variable->isLocalVarDeclOrParm() || variable->isStaticLocal()) return owed;
+    if (variable->getName().starts_with("smith_")) return owed; // a temporary of the lowering (a slice's copy)
+    QualType type = variable->getType();
+    if (linearType(type)) {
+        owed.kind = Owed::Whole;
+        return owed;
+    }
+    if (!tupleFields(type).empty()) {
+        owed.kind = Owed::Tuple;
+        return owed;
+    }
+    QualType element = elementOf(type);
+    if (element.isNull() || !linearType(element) || element.isConstQualified()) return owed;
+    if (const auto *array = dyn_cast_or_null<ConstantArrayType>(type->getAsArrayTypeUnsafe())) {
+        owed.kind = Owed::Array;
+        owed.count = static_cast<long long>(array->getSize().getZExtValue());
+    } else {
+        owed.kind = Owed::Slice;
+    }
+    return owed;
+}
+
+// Is the type an array or slice whose elements are `const`?
+bool borrowing(QualType type) {
+    QualType element = elementOf(type);
+    return !element.isNull() && element.isConstQualified();
+}
+
+bool ownsLinear(const VarDecl *variable) {
+    return owes(variable).kind != Owed::Nothing;
+}
+
+// The elements of an array or slice that the callee or the function may read but not use up.
+bool borrowsElements(const VarDecl *variable) {
+    QualType element = elementOf(variable->getType());
+    return variable->isLocalVarDeclOrParm() && !element.isNull() && linearType(element) && element.isConstQualified();
+}
+
 class Classifier {
   public:
     Classifier(ASTContext &context) : context(context) {}
 
     std::map<const Stmt *, Site> sites;
-    bool poisoned = false; // the body has an error: clang's own warnings skip it too
+    std::map<const VarDecl *, SourceLocation> scopeEnds; // the `}` that ends the block a linear variable is declared in
+    std::map<const VarDecl *, const VarDecl *> counters; // the counter of a plain loop -> the array it goes over
+    std::map<const ForStmt *, const VarDecl *> loopCounter; // a plain loop -> its counter
+    bool poisoned = false;                                  // the body has an error: clang's own warnings skip it too
     bool interesting = false;
 
     void walk(const Stmt *stmt) {
         if (stmt == nullptr) return;
+        if (const auto *block = dyn_cast<CompoundStmt>(stmt)) declared(block);
         if (const auto *expr = dyn_cast<Expr>(stmt)) {
             if (expr->containsErrors()) poisoned = true;
+            if (readsBorrowed(expr)) return;
             if (site(expr)) return;
         }
         if (const auto *binary = dyn_cast<BinaryOperator>(stmt)) {
@@ -162,8 +231,23 @@ class Classifier {
             if (unary->isIncrementDecrementOp()) reset(unary, unary->getSubExpr());
         }
         if (const auto *call = dyn_cast<CallExpr>(stmt)) {
-            for (const Expr *argument : call->arguments())
-                wholeArray(argument);
+            const FunctionDecl *callee = call->getDirectCallee();
+            unsigned at = 0;
+            for (const Expr *argument : call->arguments()) {
+                bool borrowed =
+                    callee != nullptr && at < callee->getNumParams() && borrowing(callee->getParamDecl(at)->getType());
+                wholeArray(argument, borrowed);
+                at++;
+            }
+        }
+        if (const auto *declaration = dyn_cast<DeclStmt>(stmt)) { // `Key b[:] = a;` moves a into b
+            for (const Decl *decl : declaration->decls())
+                if (const auto *variable = dyn_cast<VarDecl>(decl);
+                    variable != nullptr && variable->getInit() != nullptr)
+                    wholeArray(variable->getInit(), borrowing(variable->getType()));
+        }
+        if (const auto *ret = dyn_cast<ReturnStmt>(stmt)) {
+            if (ret->getRetValue() != nullptr) wholeArray(ret->getRetValue(), false);
         }
         if (const auto *loop = dyn_cast<ForStmt>(stmt)) {
             loops.push_back(loop);
@@ -180,11 +264,31 @@ class Classifier {
     ASTContext &context;
     std::vector<const ForStmt *> loops;
 
+    // A block that declares a variable of a linear type: the variable must be used before the block ends.
+    void declared(const CompoundStmt *block) {
+        for (const Stmt *child : block->body())
+            if (const auto *declaration = dyn_cast<DeclStmt>(child))
+                for (const Decl *decl : declaration->decls())
+                    if (const auto *variable = dyn_cast<VarDecl>(decl); variable != nullptr && ownsLinear(variable)) {
+                        scopeEnds[variable] = block->getRBracLoc();
+                        interesting = true;
+                    }
+    }
+
     bool assignment(const BinaryOperator *binary) {
         if (!binary->isAssignmentOp()) return false;
         Site found;
+        if (binary->getOpcode() == BO_Assign && variableOwingElements(binary->getLHS()) != nullptr) {
+            found.action = Action::Assign; // a new array or slice over one whose elements were never used
+            found.key.first = variableOwingElements(binary->getLHS());
+            found.text = found.key.first->getName().str();
+            found.loc = binary->getExprLoc();
+            sites[binary] = found;
+            walk(binary->getRHS());
+            return true;
+        }
         if (binary->getOpcode() == BO_Assign && place(binary->getLHS(), found) && found.action == Action::Use &&
-            affineType(binary->getLHS()->getType())) {
+            linearType(binary->getLHS()->getType())) {
             found.action = Action::Assign;
             found.loc = binary->getExprLoc();
             sites[binary] = found;
@@ -199,7 +303,7 @@ class Classifier {
         return false;
     }
 
-    // `v.a.b = ...` or `v.a[0] = ...` where v holds affine values: a write to a part of a variable, which is no use.
+    // `v.a.b = ...` or `v.a[0] = ...` where v holds linear values: a write to a part of a variable, which is no use.
     bool writesPart(const Expr *target) {
         bool part = false;
         for (target = target->IgnoreParens();; target = target->IgnoreParens()) {
@@ -214,7 +318,7 @@ class Classifier {
             part = true;
         }
         const VarDecl *variable = variableOf(target);
-        return part && variable != nullptr && variable->isLocalVarDeclOrParm() && holdsAffine(variable->getType());
+        return part && variable != nullptr && variable->isLocalVarDeclOrParm() && holdsLinear(variable->getType());
     }
 
     // `i = ...`, `i++`: the places indexed by the counter `i` are other elements from here.
@@ -227,22 +331,48 @@ class Classifier {
         sites[node] = found;
     }
 
-    // An array or slice of affine values passed to a call (`split(key, keys)`) is filled by it: its elements are fresh.
-    void wholeArray(const Expr *argument) {
+    static const VarDecl *variableOwingElements(const Expr *expr) {
+        const VarDecl *variable = variableOf(expr);
+        if (variable == nullptr) return nullptr;
+        Owed owed = owes(variable);
+        return owed.kind == Owed::Array || owed.kind == Owed::Slice || owed.kind == Owed::Tuple ? variable : nullptr;
+    }
+
+    // An array or slice of linear values passed to a call (`total(key, keys)`) or returned moves every element into the
+    // callee, which owes their uses; a `const` parameter only borrows them.
+    void wholeArray(const Expr *argument, bool borrowed) {
         const VarDecl *variable = variableOf(argument);
-        if (variable == nullptr || elementOf(variable->getType()).isNull() || !holdsAffine(variable->getType())) return;
+        if (variable == nullptr || !holdsLinear(variable->getType()) || borrowed || borrowsElements(variable)) return;
+        if (elementOf(variable->getType()).isNull() && owes(variable).kind != Owed::Tuple) return;
         Site found;
-        found.action = Action::AssignAll;
+        found.action = Action::Move;
         found.key.first = variable;
+        found.text = variable->getName().str();
+        found.loc = argument->getBeginLoc();
+        interesting = true;
         sites[argument->IgnoreParens()] = found;
     }
 
-    // Is this expression a use of a place of an affine type? Then it is a site, and nothing below it is looked at.
+    // The root variable of a place that is a borrowed array or slice (`const Key xs[:]`), else null.
+    bool borrowedPlace(const Expr *expr) {
+        Site found;
+        return place(expr, found) && found.key.first != nullptr && borrowsElements(found.key.first);
+    }
+
+    // `xs[i].bits` of a borrowed slice reads the element without using it up; using the element itself is the error.
+    bool readsBorrowed(const Expr *expr) {
+        const auto *member = dyn_cast<MemberExpr>(expr);
+        return member != nullptr && !member->isArrow() && borrowedPlace(member->getBase());
+    }
+
+    // Is this expression a use of a place of a linear type? Then it is a site, and nothing below it is looked at.
     bool site(const Expr *expr) {
-        if (!affineType(expr->getType())) return false;
+        if (!linearType(expr->getType())) return false;
         Site found;
         if (!place(expr, found)) return false;
         found.loc = expr->getBeginLoc();
+        if (found.key.first != nullptr && borrowsElements(found.key.first) && found.action == Action::Use)
+            found.action = Action::Borrowed;
         interesting = true;
         sites[expr->IgnoreParens()] = found;
         return true;
@@ -252,7 +382,7 @@ class Classifier {
         expr = expr->IgnoreParens();
         if (const auto *ref = dyn_cast<DeclRefExpr>(expr)) {
             const auto *variable = dyn_cast<VarDecl>(ref->getDecl());
-            if (variable == nullptr || !variable->isLocalVarDeclOrParm() || !holdsAffine(variable->getType()))
+            if (variable == nullptr || !variable->isLocalVarDeclOrParm() || !holdsLinear(variable->getType()))
                 return false;
             out.action = Action::Use;
             out.key.first = variable;
@@ -262,7 +392,9 @@ class Classifier {
         if (const auto *member = dyn_cast<MemberExpr>(expr)) {
             if (member->isArrow() || !place(member->getBase(), out)) return false;
             out.key.second.push_back({member->getMemberDecl(), 0});
-            out.text += "." + member->getMemberDecl()->getName().str();
+            llvm::StringRef field = member->getMemberDecl()->getName();
+            bool tuple = cast<FieldDecl>(member->getMemberDecl())->getParent()->getName().starts_with("smith_tuple_");
+            out.text += tuple ? "[" + field.drop_front().str() + "]" : "." + field.str();
             return true;
         }
         if (const auto *subscript = dyn_cast<ArraySubscriptExpr>(expr)) {
@@ -319,7 +451,12 @@ class Classifier {
             const auto *declaration = dyn_cast_or_null<DeclStmt>(loop->getInit());
             if (declaration == nullptr || !declaration->isSingleDecl() || declaration->getSingleDecl() != counter)
                 continue;
-            return plainShape(loop, counter, array);
+            bool plain = plainShape(loop, counter, array);
+            if (plain) {
+                counters[counter] = array;
+                loopCounter[loop] = counter;
+            }
+            return plain;
         }
         return false;
     }
@@ -363,15 +500,36 @@ class Classifier {
 
 // ---- The dataflow --------------------------------------------------------------------------------------------------
 
-using State = std::map<Key, SourceLocation>;
+// What has been done with each place on the paths that reach a point: `maybe` holds the places used on some path (with
+// the place of the first use: a second use is an error), `must` those used on every path (a place of a linear variable
+// that is not in it when the variable goes out of scope was never used on some path).
+struct State {
+    std::map<Key, SourceLocation> maybe;
+    std::set<Key> must;
+};
+
+// How a path leaves a variable's block, for the message.
+enum class Exit { Return, Break, Continue, Goto, End, Overwrite };
+
+struct Parameters {
+    std::vector<const ParmVarDecl *> linear;
+    SourceLocation end; // the `}` of the function
+};
 
 class Flow {
   public:
-    Flow(const CFG &cfg, const std::map<const Stmt *, Site> &sites) : cfg(cfg), sites(sites) {}
+    Flow(const CFG &cfg, const Classifier &classifier, const Parameters &parameters)
+        : cfg(cfg), sites(classifier.sites), ends(classifier.scopeEnds), counters(classifier.counters),
+          loopCounter(classifier.loopCounter), parameters(parameters) {}
 
+    enum class Kind { Again, Unused, Overwritten, BadIndex, Borrowed };
     struct Finding {
-        const Site *site;
+        Kind kind;
+        const Site *site; // Again, BadIndex
         SourceLocation first;
+        std::string text; // Unused, Overwritten: the variable
+        SourceLocation at;
+        Exit exit = Exit::End;
     };
     std::vector<Finding> findings;
 
@@ -387,10 +545,12 @@ class Flow {
             work.pop_front();
             State out = in[block->getBlockID()];
             transfer(*block, out, false);
+            size_t index = 0;
             for (const CFGBlock::AdjacentBlock &next : block->succs()) {
                 const CFGBlock *target = next.getReachableBlock();
-                if (target == nullptr) continue;
-                if (join(target->getBlockID(), out)) work.push_back(target);
+                State along = out;
+                enter(*block, index++, along);
+                if (target != nullptr && join(target->getBlockID(), along)) work.push_back(target);
             }
         }
         for (const CFGBlock *block : cfg) { // what each block finds, once the states are settled
@@ -403,79 +563,299 @@ class Flow {
   private:
     const CFG &cfg;
     const std::map<const Stmt *, Site> &sites;
+    const std::map<const VarDecl *, SourceLocation> &ends;
+    const std::map<const VarDecl *, const VarDecl *> &counters;
+    const std::map<const ForStmt *, const VarDecl *> &loopCounter;
+    const Parameters &parameters;
     std::vector<State> in;
     std::vector<bool> reached;
-    std::set<const Stmt *> reported;
+    std::set<std::pair<const void *, unsigned>> reported;
 
+    // The first arrival copies; the others unite what was used on some path and keep what was used on every path.
     bool join(unsigned id, const State &out) {
-        bool changed = !reached[id];
-        reached[id] = true;
-        for (const auto &entry : out)
-            if (in[id].insert(entry).second) changed = true;
+        if (!reached[id]) {
+            reached[id] = true;
+            in[id] = out;
+            return true;
+        }
+        bool changed = false;
+        for (const auto &entry : out.maybe)
+            if (in[id].maybe.insert(entry).second) changed = true;
+        for (auto at = in[id].must.begin(); at != in[id].must.end();) {
+            if (out.must.count(*at) == 0) {
+                at = in[id].must.erase(at);
+                changed = true;
+            } else {
+                ++at;
+            }
+        }
         return changed;
     }
 
     static void erase(State &state, const VarDecl *root, const std::vector<Step> &prefix) {
-        for (auto at = state.begin(); at != state.end();) {
-            if (at->first.first == root && isPrefix(prefix, at->first.second))
-                at = state.erase(at);
-            else
-                ++at;
+        for (auto at = state.maybe.begin(); at != state.maybe.end();) {
+            at = at->first.first == root && isPrefix(prefix, at->first.second) ? state.maybe.erase(at) : std::next(at);
         }
+        for (auto at = state.must.begin(); at != state.must.end();) {
+            at = at->first == root && isPrefix(prefix, at->second) ? state.must.erase(at) : std::next(at);
+        }
+    }
+
+    static bool indexedBy(const Key &key, const VarDecl *counter) {
+        if (key.first == counter) return true;
+        for (const Step &step : key.second)
+            if (step.first == counter && step.second == counterIndex) return true;
+        return false;
     }
 
     static void forget(State &state, const VarDecl *counter) {
-        for (auto at = state.begin(); at != state.end();) {
-            bool indexed = false;
-            for (const Step &step : at->first.second)
-                if (step.first == counter && step.second == counterIndex) indexed = true;
-            if (indexed || at->first.first == counter)
-                at = state.erase(at);
-            else
-                ++at;
+        for (auto at = state.maybe.begin(); at != state.maybe.end();)
+            at = indexedBy(at->first, counter) ? state.maybe.erase(at) : std::next(at);
+        for (auto at = state.must.begin(); at != state.must.end();)
+            at = indexedBy(*at, counter) ? state.must.erase(at) : std::next(at);
+    }
+
+    static Key wholeKey(const VarDecl *variable) {
+        Key whole;
+        whole.first = variable;
+        return whole;
+    }
+
+    static Key elementsKey(const VarDecl *variable, const VarDecl *counter, long long kind) {
+        Key key;
+        key.first = variable;
+        key.second.push_back({counter, kind});
+        return key;
+    }
+
+    static Key fieldKey(const VarDecl *variable, const FieldDecl *field) {
+        Key key;
+        key.first = variable;
+        key.second.push_back({field, 0});
+        return key;
+    }
+
+    static void mark(State &state, const Key &key, SourceLocation at) {
+        state.maybe.insert({key, at});
+        state.must.insert(key);
+    }
+
+    // Some step of the key says every element is used (or there is none to use).
+    static bool everyElement(const State &state, const VarDecl *variable) {
+        for (const Key &key : state.must)
+            if (key.first == variable && key.second.size() == 1 &&
+                (key.second[0].second == allElements || key.second[0].second == emptyElements ||
+                 key.second[0].second == loopElements))
+                return true;
+        return false;
+    }
+
+    // A slice has no count the check can read, so a plain loop or a move covers it, and so do uses by constant index:
+    // one is taken to be the whole slice (`Key next[:] = split(key, 2)`, then `next[0]` and `next[1]`).
+    static bool sliceCovered(const State &state, const VarDecl *variable) {
+        if (everyElement(state, variable)) return true;
+        for (const Key &key : state.must)
+            if (key.first == variable && key.second.size() == 1 && key.second[0].first == nullptr &&
+                key.second[0].second >= 0)
+                return true;
+        return false;
+    }
+
+    // A variable declared with no value holds nothing to use; the counter of a plain loop over an array starts as if
+    // the loop used every element, which is true when it has none: the first turn takes it back (see `enter`).
+    void declare(State &state, const VarDecl *variable) {
+        forget(state, variable);
+        Owed owed = owes(variable);
+        if (owed.kind == Owed::Tuple && !variable->hasInit())
+            for (const FieldDecl *field : tupleFields(variable->getType()))
+                mark(state, fieldKey(variable, field), variable->getLocation());
+        else if (owed.kind != Owed::Nothing && !variable->hasInit())
+            mark(state, owed.kind == Owed::Whole ? wholeKey(variable) : elementsKey(variable, nullptr, emptyElements),
+                 variable->getLocation());
+        auto array = counters.find(variable);
+        if (array != counters.end())
+            mark(state, elementsKey(array->second, variable, loopElements), variable->getLocation());
+    }
+
+    // The name of the first element of the variable that was not used on every path, else empty.
+    static std::string unusedIn(const State &state, const VarDecl *variable) {
+        Owed owed = owes(variable);
+        std::string name = variable->getName().str();
+        switch (owed.kind) {
+        case Owed::Nothing:
+            return "";
+        case Owed::Whole:
+            return state.must.count(wholeKey(variable)) != 0 ? "" : name;
+        case Owed::Tuple:
+            for (const FieldDecl *field : tupleFields(variable->getType()))
+                if (state.must.count(fieldKey(variable, field)) == 0)
+                    return name + "[" + field->getName().drop_front().str() + "]"; // the field `_1` is [1]
+            return "";
+        case Owed::Slice:
+            return sliceCovered(state, variable) ? "" : name;
+        case Owed::Array:
+            if (everyElement(state, variable)) return "";
+            for (long long i = 0; i < owed.count; i++)
+                if (state.must.count(elementsKey(variable, nullptr, i)) == 0)
+                    return name + "[" + std::to_string(i) + "]";
+            return "";
         }
+        return "";
+    }
+
+    void missing(const VarDecl *variable, const State &state, Exit exit, SourceLocation at, bool report) {
+        if (!report) return;
+        std::string name = unusedIn(state, variable);
+        if (name.empty() || !reported.insert({variable, at.getRawEncoding()}).second) return;
+        findings.push_back({Kind::Unused, nullptr, SourceLocation(), name, at, exit});
+    }
+
+    // The edges of a plain loop's condition: a turn of the loop takes back the claim that nothing is left to use, and
+    // its `i++` (below, `Reset`) gives it only if the body used the element on every path.
+    void enter(const CFGBlock &block, size_t index, State &state) const {
+        const auto *loop = dyn_cast_or_null<ForStmt>(block.getTerminatorStmt());
+        if (loop == nullptr || index != 0) return;
+        auto counter = loopCounter.find(loop);
+        if (counter == loopCounter.end()) return;
+        auto array = counters.find(counter->second);
+        if (array == counters.end()) return;
+        Key claim = elementsKey(array->second, counter->second, loopElements);
+        state.maybe.erase(claim);
+        state.must.erase(claim);
+    }
+
+    // How the block of `scopeEnd` is left: by a `return` already seen in the block, a `break`, `continue` or `goto`
+    // that ends it, or by reaching its `}`.
+    static Exit leaves(const CFGBlock &block, const Stmt *returned, const Stmt *&at) {
+        at = returned;
+        if (returned != nullptr) return Exit::Return;
+        const Stmt *terminator = block.getTerminatorStmt();
+        at = terminator;
+        if (isa_and_nonnull<BreakStmt>(terminator)) return Exit::Break;
+        if (isa_and_nonnull<ContinueStmt>(terminator)) return Exit::Continue;
+        if (isa_and_nonnull<GotoStmt>(terminator)) return Exit::Goto;
+        return Exit::End;
+    }
+
+    void checkParameters(const State &state, Exit exit, SourceLocation at, bool report) {
+        for (const ParmVarDecl *parameter : parameters.linear)
+            missing(parameter, state, exit, at, report);
     }
 
     void transfer(const CFGBlock &block, State &state, bool report) {
+        const Stmt *returned = nullptr;
         for (const CFGElement &element : block) {
+            if (std::optional<CFGScopeEnd> scope = element.getAs<CFGScopeEnd>()) {
+                const VarDecl *variable = scope->getVarDecl();
+                if (!ownsLinear(variable)) continue;
+                const Stmt *exit = nullptr;
+                Exit how = leaves(block, returned, exit);
+                auto end = ends.find(variable);
+                SourceLocation at = how == Exit::End && end != ends.end() ? end->second
+                                    : exit != nullptr                     ? exit->getBeginLoc()
+                                                                          : variable->getLocation();
+                missing(variable, state, how, at, report);
+                continue;
+            }
             std::optional<CFGStmt> statement = element.getAs<CFGStmt>();
             if (!statement) continue;
             const Stmt *stmt = statement->getStmt();
             if (const auto *declaration = dyn_cast<DeclStmt>(stmt)) {
                 for (const Decl *decl : declaration->decls())
-                    if (const auto *variable = dyn_cast<VarDecl>(decl)) forget(state, variable);
+                    if (const auto *variable = dyn_cast<VarDecl>(decl)) declare(state, variable);
                 continue;
+            }
+            if (isa<ReturnStmt>(stmt)) {
+                returned = stmt;
+                checkParameters(state, Exit::Return, stmt->getBeginLoc(), report);
             }
             auto found = sites.find(stmt);
             if (found != sites.end()) apply(found->second, stmt, state, report);
+        }
+        bool leavesFunction = block.succ_size() == 1 && block.succ_begin()->getReachableBlock() == &cfg.getExit();
+        if (returned == nullptr && leavesFunction && !block.hasNoReturnElement())
+            checkParameters(state, Exit::End, parameters.end, report);
+    }
+
+    // The first use that an element use or a move of the whole conflicts with, else null location.
+    static SourceLocation conflict(const State &state, const Key &key, bool whole) {
+        auto used = state.maybe.find(key);
+        if (used != state.maybe.end()) return used->second;
+        const VarDecl *own = !key.second.empty() && key.second[0].second == counterIndex
+                                 ? static_cast<const VarDecl *>(key.second[0].first)
+                                 : nullptr;
+        for (const auto &entry : state.maybe) {
+            if (entry.first.first != key.first || entry.first.second.empty()) continue;
+            const Step &step = entry.first.second[0];
+            if (whole && step.second != emptyElements) return entry.second;
+            if (step.second == allElements && entry.first.second.size() == 1) return entry.second;
+            if (step.second == loopElements && step.first != own) return entry.second;
+        }
+        return SourceLocation();
+    }
+
+    // A tuple passed to a call or returned: every linear field is used by it.
+    void moveTuple(const Site &site, const Stmt *stmt, State &state, bool report) {
+        for (const FieldDecl *field : tupleFields(site.key.first->getType())) {
+            Key key = fieldKey(site.key.first, field);
+            auto used = state.maybe.find(key);
+            if (used == state.maybe.end()) {
+                mark(state, key, site.loc);
+            } else if (report && reported.insert({stmt, 0}).second) {
+                findings.push_back({Kind::Again, &site, used->second, "", SourceLocation()});
+            }
         }
     }
 
     void apply(const Site &site, const Stmt *stmt, State &state, bool report) {
         switch (site.action) {
         case Action::Use: {
-            auto used = state.find(site.key);
-            if (used == state.end()) {
-                state.insert({site.key, site.loc});
-            } else if (report && reported.insert(stmt).second) {
-                findings.push_back({&site, used->second});
+            SourceLocation first = conflict(state, site.key, false);
+            if (first.isInvalid()) {
+                mark(state, site.key, site.loc);
+            } else if (report && reported.insert({stmt, 0}).second) {
+                findings.push_back({Kind::Again, &site, first, "", SourceLocation()});
+            }
+            break;
+        }
+        case Action::Move: {
+            if (owes(site.key.first).kind == Owed::Tuple) {
+                moveTuple(site, stmt, state, report);
+                break;
+            }
+            SourceLocation first = conflict(state, elementsKey(site.key.first, nullptr, allElements), true);
+            if (first.isInvalid()) {
+                mark(state, elementsKey(site.key.first, nullptr, allElements), site.loc);
+            } else if (report && reported.insert({stmt, 0}).second) {
+                findings.push_back({Kind::Again, &site, first, "", SourceLocation()});
             }
             break;
         }
         case Action::BadIndex:
-            if (report && reported.insert(stmt).second) findings.push_back({&site, SourceLocation()});
+            if (report && reported.insert({stmt, 0}).second)
+                findings.push_back({Kind::BadIndex, &site, SourceLocation(), "", SourceLocation()});
+            break;
+        case Action::Borrowed:
+            if (report && reported.insert({stmt, 0}).second)
+                findings.push_back({Kind::Borrowed, &site, SourceLocation(), "", SourceLocation()});
             break;
         case Action::Assign:
+            // A value assigned over a variable that was never used is lost.
+            if (report && site.key.second.empty() && ownsLinear(site.key.first) && reported.insert({stmt, 1}).second) {
+                std::string old = unusedIn(state, site.key.first);
+                if (!old.empty())
+                    findings.push_back({Kind::Overwritten, &site, SourceLocation(), old, site.loc, Exit::Overwrite});
+            }
             erase(state, site.key.first, site.key.second);
             break;
-        case Action::AssignAll:
-            for (auto at = state.begin(); at != state.end();)
-                if (at->first.first == site.key.first && !at->first.second.empty())
-                    at = state.erase(at);
-                else
-                    ++at;
-            break;
-        case Action::Reset:
+        case Action::Reset: // `i++`: the element the counter named is done, and the counter names the next
+            for (const auto &entry : std::map<Key, SourceLocation>(state.maybe)) {
+                const Key &key = entry.first;
+                bool indexed = key.second.size() == 1 && key.second[0].first == site.variable &&
+                               key.second[0].second == counterIndex;
+                if (indexed && state.must.count(key) != 0)
+                    mark(state, elementsKey(key.first, site.variable, loopElements), entry.second);
+            }
             forget(state, site.variable);
             break;
         }
@@ -489,7 +869,7 @@ class Flow {
 // payload. Reading the member `x.circle` (or `x->circle`) is an error unless on every path the tag was established: by
 // `x.tag == ..._tag_circle` (an if, `&&`, `||`, `!`, a conditional, a loop's condition) or by a `case` of a switch on
 // `x.tag`. The state is the set of places known to hold a variant, joined by intersection; it is a forward dataflow
-// over the same CFG as the affine one. An assignment to the place (or a part of it, or to a pointer it is read
+// over the same CFG as the linear one. An assignment to the place (or a part of it, or to a pointer it is read
 // through), the address of it, and a call that is given a pointer into it end what is known about it.
 
 constexpr long long derefStep = -2;
@@ -823,13 +1203,23 @@ class Reporter {
   public:
     Reporter(ASTContext &context) : context(context), engine(context.getDiagnostics()) {
         again = engine.getCustomDiagID(DiagnosticsEngine::Error,
-                                       "smith-affine: '%0' is used again; it was already used at line %1");
+                                       "smith-linear: '%0' is used again; it was already used at line %1");
         first = engine.getCustomDiagID(DiagnosticsEngine::Note, "'%0' was first used here");
         loop = engine.getCustomDiagID(DiagnosticsEngine::Error,
-                                      "smith-affine: '%0' is used in a loop, so it would be used once per iteration");
+                                      "smith-linear: '%0' is used in a loop, so it would be used once per iteration");
         index = engine.getCustomDiagID(DiagnosticsEngine::Error,
-                                       "smith-affine: '%0': an element of an array of affine values is used through a "
+                                       "smith-linear: '%0': an element of an array of linear values is used through a "
                                        "constant index or the counter of a plain loop");
+        unused = engine.getCustomDiagID(DiagnosticsEngine::Error,
+                                        "smith-linear: '%0' is never used on this path (%1); close it with `defer`, "
+                                        "move it, or write `_ = %0;`");
+        overwritten = engine.getCustomDiagID(
+            DiagnosticsEngine::Error,
+            "smith-linear: '%0' is assigned a new value while the old one was never used; use it, or write `_ = %0;` "
+            "first");
+        borrowed = engine.getCustomDiagID(
+            DiagnosticsEngine::Error, "smith-linear: '%0' is borrowed: a `const` array or slice lets its callee read "
+                                      "an element but not use it up; drop the `const` to take the elements");
         advice = engine.getCustomDiagID(DiagnosticsEngine::Note, "%0");
         narrow = engine.getCustomDiagID(
             DiagnosticsEngine::Error,
@@ -850,12 +1240,24 @@ class Reporter {
     }
 
     void report(const Flow::Finding &finding) {
-        const Site &site = *finding.site;
-        if (site.action == Action::BadIndex) {
-            engine.Report(site.loc, index) << site.text;
-            engine.Report(site.loc, advice) << hint;
+        switch (finding.kind) {
+        case Flow::Kind::BadIndex:
+            engine.Report(finding.site->loc, index) << finding.site->text;
+            engine.Report(finding.site->loc, advice) << hint;
             return;
+        case Flow::Kind::Borrowed:
+            engine.Report(finding.site->loc, borrowed) << finding.site->text;
+            return;
+        case Flow::Kind::Unused:
+            engine.Report(finding.at, unused) << finding.text << how(finding);
+            return;
+        case Flow::Kind::Overwritten:
+            engine.Report(finding.at, overwritten) << finding.text;
+            return;
+        case Flow::Kind::Again:
+            break;
         }
+        const Site &site = *finding.site;
         if (finding.first == site.loc) {
             engine.Report(site.loc, loop) << site.text;
             engine.Report(site.loc, advice) << hint;
@@ -869,7 +1271,32 @@ class Reporter {
   private:
     ASTContext &context;
     DiagnosticsEngine &engine;
-    unsigned again, first, loop, index, advice, narrow;
+    unsigned again, first, loop, index, unused, overwritten, borrowed, advice, narrow;
+
+    // "the `return` at line 7": the way out that has no use of the value.
+    std::string how(const Flow::Finding &finding) const {
+        std::string line = std::to_string(context.getSourceManager().getSpellingLineNumber(finding.at));
+        switch (finding.exit) {
+        case Exit::Return:
+            return "the `" + keyword(finding.at, "return") + "` at line " + line + " returns";
+        case Exit::Break:
+            return "the `break` at line " + line + " leaves the loop";
+        case Exit::Continue:
+            return "the `continue` at line " + line + " starts the next turn";
+        case Exit::Goto:
+            return "the `goto` at line " + line + " jumps away";
+        default:
+            return "the block ends at line " + line;
+        }
+    }
+
+    // `try` is lowered to a `return`; the source at its place says which one the author wrote.
+    std::string keyword(SourceLocation at, const char *fallback) const {
+        const SourceManager &sm = context.getSourceManager();
+        llvm::StringRef text =
+            sm.getBufferData(sm.getFileID(sm.getSpellingLoc(at))).substr(sm.getFileOffset(sm.getSpellingLoc(at)));
+        return text.starts_with("try") ? "try" : fallback;
+    }
 };
 
 // ---- `void *` does not convert to `T *` in a module (issue #398)
@@ -1004,15 +1431,23 @@ class Consumer : public ASTConsumer {
         classifier.walk(body);
         NarrowClassifier narrowing;
         narrowing.walk(body);
-        bool affine = classifier.interesting && !classifier.poisoned;
+        Parameters parameters;
+        parameters.end = body->getEndLoc();
+        for (const ParmVarDecl *parameter : function->parameters())
+            if (ownsLinear(parameter)) {
+                parameters.linear.push_back(parameter);
+                classifier.interesting = true;
+            }
+        bool linear = classifier.interesting && !classifier.poisoned;
         bool narrow = narrowing.interesting && !narrowing.poisoned;
-        if (!affine && !narrow) return;
+        if (!linear && !narrow) return;
         CFG::BuildOptions options;
         options.setAllAlwaysAdd();
+        options.AddScopes = true;
         std::unique_ptr<CFG> cfg = CFG::buildCFG(function, const_cast<Stmt *>(body), &context, options);
         if (!cfg) return;
-        if (affine) {
-            Flow flow(*cfg, classifier.sites);
+        if (linear) {
+            Flow flow(*cfg, classifier, parameters);
             flow.run();
             for (const Flow::Finding &finding : flow.findings)
                 reporter.report(finding);
@@ -1029,13 +1464,10 @@ class Consumer : public ASTConsumer {
 // ---- The registrations
 // -----------------------------------------------------------------------------------------------
 
-struct AffineAttr final : ParsedAttrInfo {
-    AffineAttr() {
-        static constexpr Spelling spellings[] = {{ParsedAttr::AS_C23, "smith::affine"},
-                                                 {ParsedAttr::AS_CXX11, "smith::affine"},
-                                                 {ParsedAttr::AS_C23, "std::affine"},
-                                                 {ParsedAttr::AS_CXX11, "std::affine"},
-                                                 {ParsedAttr::AS_GNU, "smith_affine"}};
+struct LinearAttr final : ParsedAttrInfo {
+    LinearAttr() {
+        static constexpr Spelling spellings[] = {{ParsedAttr::AS_C23, "std::linear"},
+                                                 {ParsedAttr::AS_CXX11, "std::linear"}};
         Spellings = spellings;
     }
     bool diagAppertainsToDecl(Sema &S, const ParsedAttr &Attr, const Decl *D) const override {
@@ -1045,12 +1477,12 @@ struct AffineAttr final : ParsedAttrInfo {
         return false;
     }
     AttrHandling handleDeclAttribute(Sema &S, Decl *D, const ParsedAttr &Attr) const override {
-        D->addAttr(AnnotateAttr::Create(S.Context, "smith::affine", nullptr, 0, Attr.getRange()));
+        D->addAttr(AnnotateAttr::Create(S.Context, "std::linear", nullptr, 0, Attr.getRange()));
         return AttributeApplied;
     }
 };
 
-struct AffinePlugin final : PluginASTAction {
+struct LinearPlugin final : PluginASTAction {
     std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &instance, StringRef) override {
         if (!pluginEnabled) return std::make_unique<ASTConsumer>(); // never null: the multiplexer calls it
         return std::make_unique<Consumer>(instance);
@@ -1063,13 +1495,13 @@ struct AffinePlugin final : PluginASTAction {
     }
 };
 
-const ParsedAttrInfoRegistry::Add<AffineAttr> attribute("smith-affine-attr", "[[smith::affine]]");
-const FrontendPluginRegistry::Add<AffinePlugin> plugin("smith-affine", "a value of an affine type is used once");
+const ParsedAttrInfoRegistry::Add<LinearAttr> attribute("smith-linear-attr", "[[std::linear]]");
+const FrontendPluginRegistry::Add<LinearPlugin> plugin("smith-linear", "a value of a linear type is used exactly once");
 
 } // namespace
 
 // clang-tidy's consumer of diagnostics cannot name a custom id (it crashes in getCheckName): smith lint turns the
 // analysis off, and smith's compile of the same file reports it.
-extern "C" void smith_affine_disable() {
+extern "C" void smith_linear_disable() {
     pluginEnabled = false;
 }

@@ -470,11 +470,11 @@ static void build_shims(SmithBuild *b, const BuildConfig *config, const char *fo
     build_pack_data(b, config, folder, pack, &shims->objects[0]);
     const char *const sources[] = {"clang",  "lld",           "format",      "tidy",     "clangd",       "symbolize",
                                    "hook",   "lsp",           "lldb",        "lldb_dap", "lldb_explain", "lldb_slices",
-                                   "affine", "effects_infer", "lldb_server", "coverage"};
+                                   "linear", "effects_infer", "lldb_server", "coverage"};
     size_t count = 0;
     for (size_t i = 0; i < sizeof sources / sizeof sources[0]; i++) {
         bool is_hook = strcmp(sources[i], "hook") == 0 || strcmp(sources[i], "lsp") == 0 ||
-                       strcmp(sources[i], "affine") == 0 || strcmp(sources[i], "effects_infer") == 0;
+                       strcmp(sources[i], "linear") == 0 || strcmp(sources[i], "effects_infer") == 0;
         bool is_lldb = strncmp(sources[i], "lldb", 4) == 0;
         bool is_server = strcmp(sources[i], "lldb_server") == 0;
         if ((is_hook && !config->hook) || (is_lldb && !config->lldb) || (is_server && !config->platform->lldb_server))

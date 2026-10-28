@@ -1,7 +1,0 @@
-status 1
-affine_random_misuse.smith:8:43: error: smith-affine: 'key' is used again; it was already used at line 6
-affine_random_misuse.smith:6:23: note: 'key' was first used here
-affine_random_misuse.smith:15:47: error: smith-affine: 'key' is used in a loop, so it would be used once per iteration
-affine_random_misuse.smith:15:47: note: write the plain loop `for (usize i = 0; i < countof(keys); i++)` and use `keys[i]` once in its body, or reassign the value in the loop (`key = next[0];`)
-affine_random_misuse.smith:22:47: error: smith-affine: 'per_item[...]': an element of an array of affine values is used through a constant index or the counter of a plain loop
-affine_random_misuse.smith:22:47: note: write the plain loop `for (usize i = 0; i < countof(keys); i++)` and use `keys[i]` once in its body, or reassign the value in the loop (`key = next[0];`)

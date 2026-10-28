@@ -18,7 +18,7 @@
 // naming the chain
 // (`bad -> log_it (log.c:12) -> printf`); the declared set, not the inferred one, is what a caller sees.
 //
-// Linked into smith and run on every compile with no flag, like [[smith::affine]] (shim/affine.cpp): a ParsedAttrInfo
+// Linked into smith and run on every compile with no flag, like [[std::linear]] (shim/linear.cpp): a ParsedAttrInfo
 // makes the attributes known (kept as AnnotateAttr, "smith::effects:alloc,net"), and a PluginASTAction of type
 // AddAfterMainAction reads the translation unit when it is complete. clang-tidy cannot report a diagnostic it has no
 // id for, so smith_effects_disable() (shim/tidy.cpp) turns it off there. Only the functions the main file defines are
