@@ -6,7 +6,7 @@ constexpr Type Element = F64;
 constexpr Type kinds[3] = {U16, I64, Text};
 
 typedef struct {
-    constexpr Type Of;
+    constexpr Type of;
     I32 count;
 } Column;
 constexpr Column column = {.of = U8, .count = 3};

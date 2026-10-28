@@ -1,2 +1,1 @@
-src/main.smith:5:8: `count` is a tag here and a variable, function or enum constant above; in a module a tag is also a type name, so the two cannot share a name
-src/main.smith:5:8: a struct tag in a module starts with a capital letter, as every type does: write `Count`, not `count`
+src/main.smith:5:8: `Count` is a tag here and a variable, function or enum constant above; in a module a tag is also a type name, so the two cannot share a name
