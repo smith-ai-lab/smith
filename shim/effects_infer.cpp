@@ -290,9 +290,20 @@ struct PointerUse {
     uint32_t statedSet = 0; // the set it states (none for `smith::effects:`)
 };
 
+// A function (or a pointer whose type states a bound) put where a function pointer type states a bound (#396): an
+// initializer, an assignment, an argument, a return value, a field of an initializer list.
+struct Assignment {
+    SourceLocation loc;
+    const FunctionDecl *target = nullptr; // a named function, whose effects must be within the bound
+    bool fromPointer = false;             // else a pointer that states `from`
+    uint32_t from = 0;
+    uint32_t bound = 0;
+};
+
 struct Node {
     const FunctionDecl *function = nullptr;
     std::vector<PointerUse> pointers;
+    std::vector<Assignment> assignments;
     std::vector<Edge> edges;
     uint32_t inferred = 0;
     uint32_t declared = 0;
@@ -335,6 +346,12 @@ class Collector {
         : node(node), context(context), sm(context.getSourceManager()), symbols(std::move(symbols)),
           names(std::move(names)), asserts(asserts) {}
 
+    // A global's initializer: the value of the variable's type, then the expression's own parts.
+    void initial(const VarDecl *var) {
+        noteAssignment(var->getType(), var->getInit(), var->getLocation());
+        walk(var->getInit());
+    }
+
     void walk(const Stmt *body) {
         std::vector<const Stmt *> work{body};
         while (!work.empty()) {
@@ -374,8 +391,10 @@ class Collector {
         } else if (const auto *declarations = dyn_cast<DeclStmt>(statement)) {
             for (const Decl *decl : declarations->decls()) {
                 if (const auto *assertion = dyn_cast<StaticAssertDecl>(decl)) asserts.push_back(assertion);
-                if (const auto *var = dyn_cast<VarDecl>(decl))
+                if (const auto *var = dyn_cast<VarDecl>(decl)) {
                     node.grows = node.grows || var->getType()->isVariablyModifiedType();
+                    if (var->hasInit()) noteAssignment(var->getType(), var->getInit(), var->getLocation());
+                }
             }
         } else if (const auto *cast = dyn_cast<ImplicitCastExpr>(statement)) {
             if (cast->getCastKind() == CK_FunctionToPointerDecay && callees.count(cast) == 0) {
@@ -395,20 +414,112 @@ class Collector {
             leaf(statement->getBeginLoc(), C, "an Objective-C message");
         } else if (const auto *assembly = dyn_cast<AsmStmt>(statement)) {
             onAsm(assembly);
+        } else if (const auto *list = dyn_cast<InitListExpr>(statement)) {
+            noteList(list);
+        } else if (const auto *returned = dyn_cast<ReturnStmt>(statement)) {
+            if (returned->getRetValue() != nullptr && node.function != nullptr)
+                noteAssignment(node.function->getReturnType(), returned->getRetValue(), returned->getReturnLoc());
         } else if (const auto *op = dyn_cast<BinaryOperator>(statement)) {
-            if (op->isAssignmentOp()) global(op->getLHS(), op->getOperatorLoc());
+            if (op->isAssignmentOp()) {
+                global(op->getLHS(), op->getOperatorLoc());
+                if (op->getOpcode() == BO_Assign)
+                    noteAssignment(op->getLHS()->getType(), op->getRHS(), op->getOperatorLoc());
+            }
         } else if (const auto *unary = dyn_cast<UnaryOperator>(statement)) {
             if (unary->isIncrementDecrementOp()) global(unary->getSubExpr(), unary->getOperatorLoc());
         }
     }
 
+    // The function the value names (`f`, `&f`, through the conversions), if it is one.
+    static const FunctionDecl *namedFunction(const Expr *value) {
+        for (int depth = 0; depth < 16 && value != nullptr; depth++) {
+            value = value->IgnoreParens();
+            if (const auto *cast = dyn_cast<ImplicitCastExpr>(value)) {
+                value = cast->getSubExpr();
+            } else if (const auto *unary = dyn_cast<UnaryOperator>(value)) {
+                if (unary->getOpcode() != UO_AddrOf) return nullptr;
+                value = unary->getSubExpr();
+            } else if (const auto *ref = dyn_cast<DeclRefExpr>(value)) {
+                return dyn_cast<FunctionDecl>(ref->getDecl());
+            } else {
+                return nullptr;
+            }
+        }
+        return nullptr;
+    }
+
+    // `value` is put where a function pointer of type `destination` is: when that type states a bound, a named
+    // function must have effects within it, and so must the bound of a pointer that states one (#396).
+    void noteAssignment(QualType destination, const Expr *value, SourceLocation loc) {
+        uint32_t bound = 0;
+        if (value == nullptr || destination.isNull() || !destination->isPointerType() ||
+            !statedByType(destination, bound)) {
+            return;
+        }
+        Assignment assignment;
+        assignment.loc = loc;
+        assignment.bound = bound;
+        assignment.target = namedFunction(value);
+        if (assignment.target == nullptr) {
+            const Expr *plain = value->IgnoreParenImpCasts();
+            if (!plain->getType()->isPointerType() ||
+                plain->isNullPointerConstant(context, Expr::NPC_ValueDependentIsNull) != Expr::NPCK_NotNull) {
+                return;
+            }
+            // A pointer whose type states nothing is `c`: it fits a bound only if the bound has `c`.
+            if (!statedByType(plain->getType(), assignment.from)) assignment.from = C;
+            assignment.fromPointer = true;
+        }
+        node.assignments.push_back(assignment);
+    }
+
+    // A struct's initializer list: each field takes the value at its place, an array's elements the element type.
+    void noteList(const InitListExpr *list) {
+        const InitListExpr *form = list->isSemanticForm() ? list : list->getSemanticForm();
+        if (form == nullptr) form = list;
+        QualType type = form->getType();
+        if (const RecordDecl *record = type->getAsRecordDecl()) {
+            if (record->isUnion()) {
+                if (const FieldDecl *field = form->getInitializedFieldInUnion())
+                    if (form->getNumInits() > 0)
+                        noteAssignment(field->getType(), form->getInit(0), form->getBeginLoc());
+                return;
+            }
+            unsigned at = 0;
+            for (const FieldDecl *field : record->fields()) {
+                if (at >= form->getNumInits()) break;
+                noteAssignment(field->getType(), form->getInit(at), form->getInit(at)->getBeginLoc());
+                at += 1;
+            }
+        } else if (const auto *array = context.getAsArrayType(type)) {
+            for (unsigned at = 0; at < form->getNumInits(); at++)
+                noteAssignment(array->getElementType(), form->getInit(at), form->getInit(at)->getBeginLoc());
+        }
+    }
+
+    void noteArguments(const CallExpr *call) {
+        QualType type = call->getCallee()->getType();
+        if (const auto *pointer = type->getAs<PointerType>()) type = pointer->getPointeeType();
+        const auto *prototype = type->getAs<FunctionProtoType>();
+        if (prototype == nullptr) return;
+        for (unsigned at = 0; at < call->getNumArgs() && at < prototype->getNumParams(); at++)
+            noteAssignment(prototype->getParamType(at), call->getArg(at), call->getArg(at)->getBeginLoc());
+    }
+
     void onCall(const CallExpr *call) {
         const FunctionDecl *callee = call->getDirectCallee();
+        noteArguments(call);
         if (callee == nullptr) {
             PointerUse use{call->getBeginLoc(), nullptr};
             use.stated = statedByType(call->getCallee()->getType(), use.statedSet);
             node.pointers.push_back(use);
-            leaf(call->getBeginLoc(), C, "a call through a function pointer");
+            // A pointer whose type states its effects is relied on: the call has them; any other is `c`.
+            if (use.stated) {
+                leaf(call->getBeginLoc(), use.statedSet,
+                     "a call through a function pointer limited to " + describe(use.statedSet));
+            } else {
+                leaf(call->getBeginLoc(), C, "a call through a function pointer");
+            }
             return;
         }
         if (plain_name(callee) == "smith_trusted") node.trusted = true;
@@ -591,6 +702,13 @@ class Analysis {
         bad =
             engine.getCustomDiagID(DiagnosticsEngine::Error, "smith-effect: `%0` is %1, but it has the effects %2: %3");
         note = engine.getCustomDiagID(DiagnosticsEngine::Note, "%0");
+        trailing = engine.getCustomDiagID(
+            DiagnosticsEngine::Error,
+            "smith-effect: `%0` states its effects after its parameter list, which is a function pointer type's place; "
+            "write [[smith::effects(...)]] or [[smith::pure]] before the declaration");
+        pointerBad = engine.getCustomDiagID(DiagnosticsEngine::Error,
+                                            "smith-effect: `%0` is put where a function pointer limited to %1 is "
+                                            "expected, but it has the effects %2: %3");
         assertion = engine.getCustomDiagID(
             DiagnosticsEngine::Error,
             "smith-effect: static assertion failed: %0: `%1` has the effects %2 beyond the allowed ones: %3");
@@ -610,6 +728,7 @@ class Analysis {
             Node &node = nodes[function];
             if (node.annotated && inMain(node.function)) check(node);
         }
+        checkPointers();
         if (isModule()) checkRecursion();
         checkAssertions();
         attachHover();
@@ -620,7 +739,7 @@ class Analysis {
   private:
     ASTContext &context;
     DiagnosticsEngine &engine;
-    unsigned bad, note, recursion, assertion, misuse;
+    unsigned bad, note, recursion, assertion, misuse, pointerBad, trailing;
     ASTNameGenerator generator;
     bool syntaxOnly;       // a parse that only reads the file (the editor's, not the preamble's)
     std::string output;    // the object file being written: the summary goes beside it, `<object>.fx`
@@ -713,6 +832,9 @@ class Analysis {
         for (const Decl *decl : scope->decls()) {
             if (decl->isImplicit()) continue;
             if (const auto *function = dyn_cast<FunctionDecl>(decl)) {
+                uint32_t stated = 0;
+                if (inMain(function) && statedByType(function->getType(), stated))
+                    engine.Report(function->getLocation(), trailing) << function->getNameAsString();
                 if (!function->doesThisDeclarationHaveABody() || function->isInvalidDecl() ||
                     function->isDependentContext() || function->isTemplated()) {
                     notePromise(function);
@@ -731,12 +853,12 @@ class Analysis {
             } else if (const auto *assertion = dyn_cast<StaticAssertDecl>(decl)) {
                 asserts.push_back(assertion);
             } else if (const auto *var = dyn_cast<VarDecl>(decl)) {
-                if (pointerReport() && var->hasInit() && var->hasGlobalStorage() && !var->isInvalidDecl()) {
+                if (var->hasInit() && var->hasGlobalStorage() && !var->isInvalidDecl()) {
                     Node &holder = initializers.emplace_back();
                     Collector(
                         holder, context, [this](const FunctionDecl *f) { return symbolOf(f); },
                         [this](const FunctionDecl *f) { return shownName(f); }, asserts)
-                        .walk(var->getInit());
+                        .initial(var);
                     holder.symbol = var->getNameAsString();
                 }
             } else if (const auto *linkage = dyn_cast<LinkageSpecDecl>(decl)) {
@@ -791,6 +913,39 @@ class Analysis {
         if (file == nullptr) return;
         fwrite(text.data(), 1, text.size(), file);
         fclose(file);
+    }
+
+    // The pointer rule (#396): what is put where a function pointer type states a bound has effects within the bound.
+    void checkPointers() {
+        const SourceManager &sm = context.getSourceManager();
+        std::set<unsigned> reported; // an initializer list is met in its syntactic and its semantic form
+        auto each = [&](const Node &node) {
+            for (const Assignment &use : node.assignments) {
+                if (!sm.isWrittenInMainFile(sm.getExpansionLoc(use.loc)) ||
+                    !reported.insert(use.loc.getRawEncoding()).second)
+                    continue;
+                uint32_t has = use.fromPointer ? use.from : pointedEffects(use.target);
+                uint32_t extra = has & ~use.bound;
+                if (extra == 0) continue;
+                std::string name = use.fromPointer ? "a function pointer" : use.target->getNameAsString();
+                std::string text = name;
+                if (!use.fromPointer) {
+                    auto found =
+                        nodes.find(use.target->getDefinition() != nullptr ? use.target->getDefinition() : use.target);
+                    for (const Name &effect : names) {
+                        if ((extra & effect.bit) == 0 || found == nodes.end()) continue;
+                        text = chain(found->second, effect.bit);
+                        break;
+                    }
+                }
+                engine.Report(use.loc, pointerBad)
+                    << name << (use.bound == 0 ? std::string("pure") : describe(use.bound)) << describe(extra) << text;
+            }
+        };
+        for (const FunctionDecl *function : order)
+            each(nodes[function]);
+        for (const Node &node : initializers)
+            each(node);
     }
 
     uint32_t visible(const FunctionDecl *function) {

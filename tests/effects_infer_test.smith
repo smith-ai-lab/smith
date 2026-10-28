@@ -435,6 +435,11 @@ export void test_effects_ceiling_c(io::Io *io) {
     effects_case(io, "effects_ceiling.c");
 }
 
+// A function pointer type states a bound: checked where a function is put in it, relied on where it is called (#396).
+export void test_effects_pointer_rule_c(io::Io *io) {
+    effects_case(io, "effects_pointer_rule.c");
+}
+
 export void test_effects_chain_c(io::Io *io) {
     effects_case(io, "effects_chain.c");
 }

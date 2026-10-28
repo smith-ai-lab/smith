@@ -1,0 +1,12 @@
+status 1
+effects_pointer_rule.c:95:13: error: smith-effect: `after` states its effects after its parameter list, which is a function pointer type's place; write [[smith::effects(...)]] or [[smith::pure]] before the declaration
+effects_pointer_rule.c:83:5: error: smith-effect: `console_call` is [[smith::pure]], but it has the effects console: console_call -> a call through a function pointer limited to console (effects_pointer_rule.c:83)
+effects_pointer_rule.c:88:5: error: smith-effect: `unbounded` is limited to console, but it has the effects c: unbounded -> a call through a function pointer (effects_pointer_rule.c:88)
+effects_pointer_rule.c:45:10: error: smith-effect: `noisy` is put where a function pointer limited to pure is expected, but it has the effects console: noisy -> printf (effects_pointer_rule.c:18)
+effects_pointer_rule.c:50:13: error: smith-effect: `helper` is put where a function pointer limited to pure is expected, but it has the effects console: helper -> noisy (effects_pointer_rule.c:23) -> printf (effects_pointer_rule.c:18)
+effects_pointer_rule.c:54:45: error: smith-effect: `noisy` is put where a function pointer limited to pure is expected, but it has the effects console: noisy -> printf (effects_pointer_rule.c:18)
+effects_pointer_rule.c:59:18: error: smith-effect: `helper` is put where a function pointer limited to pure is expected, but it has the effects console: helper -> noisy (effects_pointer_rule.c:23) -> printf (effects_pointer_rule.c:18)
+effects_pointer_rule.c:63:5: error: smith-effect: `noisy` is put where a function pointer limited to pure is expected, but it has the effects console: noisy -> printf (effects_pointer_rule.c:18)
+effects_pointer_rule.c:69:11: error: smith-effect: `a function pointer` is put where a function pointer limited to pure is expected, but it has the effects console: a function pointer
+effects_pointer_rule.c:101:12: error: smith-effect: `a function pointer` is put where a function pointer limited to console is expected, but it has the effects c: a function pointer
+effects_pointer_rule.c:92:6: error: smith-effect: `noisy` is put where a function pointer limited to pure is expected, but it has the effects console: noisy -> printf (effects_pointer_rule.c:18)
