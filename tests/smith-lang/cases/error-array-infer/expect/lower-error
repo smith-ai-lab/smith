@@ -1,0 +1,1 @@
+src/main.smith:6:13: only the outermost dimension may be `[_]`: write `T m[_][3] = {...}`

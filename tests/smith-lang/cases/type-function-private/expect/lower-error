@@ -1,0 +1,4 @@
+src/main.smith:7:107: in `if constexpr`: `shapes::wide` is not a constant or a type; a call or a field of a `constexpr` value needs smith's compiler to evaluate it, and the raw lowering has none
+src/main.smith:7:59: cannot tell the type of `1.0`, the argument of `keep`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:7:90: cannot tell the type of `(u8)1`, the argument of `keep`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:8:23: in `if constexpr`: `shapes::wide` is not a constant or a type; a call or a field of a `constexpr` value needs smith's compiler to evaluate it, and the raw lowering has none

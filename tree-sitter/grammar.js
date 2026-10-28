@@ -81,7 +81,7 @@ module.exports = grammar(C, {
 
     // return {a, b}; in a function that returns a tuple
     return_statement: ($, original) =>
-      choice(original, seq('return', $.initializer_list, ';'), seq('return', $.enum_specifier, ';'),
+      choice(original, seq('return', $.initializer_list, ';'), seq('return', $.enum_specifier, ';'), seq('return', $.struct_specifier, ';'),
         seq('return', $.try_expression, ';')),
 
     // return {.ok = try f()}; (a variant's payload)

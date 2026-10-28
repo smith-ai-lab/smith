@@ -4,14 +4,14 @@ import <stdio.h>;
 
 // Patterns with several holes, a hole that takes a concept, a nested pattern and an argument that is no hole.
 
-Type Pair(Type A, Type B) {
+type Pair(type A, type B) {
     return struct {
         A first;
         B second;
     };
 }
 
-Type Box(Type T) {
+type Box(type T) {
     return struct {
         T value;
     };

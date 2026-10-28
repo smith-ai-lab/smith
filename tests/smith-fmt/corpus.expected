@@ -2783,7 +2783,7 @@ export i32 over_pack(auto p, auto... rest) {
 ==> error-generic-pattern-concept/src/main.smith <==
 module main;
 
-Type Box(Type T) {
+type Box(type T) {
     return struct {
         T value;
     };
@@ -2801,14 +2801,14 @@ i32 main(void) {
 ==> error-generic-pattern/src/main.smith <==
 module main;
 
-Type List(Type T) {
+type List(type T) {
     return struct {
         T *items;
         usize count;
     };
 }
 
-Type Box(Type T) {
+type Box(type T) {
     return struct {
         T value;
     };
@@ -7479,14 +7479,14 @@ import <stdio.h>;
 
 // Patterns with several holes, a hole that takes a concept, a nested pattern and an argument that is no hole.
 
-Type Pair(Type A, Type B) {
+type Pair(type A, type B) {
     return struct {
         A first;
         B second;
     };
 }
 
-Type Box(Type T) {
+type Box(type T) {
     return struct {
         T value;
     };
@@ -7532,7 +7532,7 @@ module lists;
 // A module whose type function and generic functions take it as a pattern: an importer's `lists::List(i32)` and the
 // `List(usize)` this module's exported function returns are both instances `push` binds `T` from.
 
-export Type List(Type T) {
+export type List(type T) {
     return struct {
         T *items;
         usize count;
@@ -7585,7 +7585,7 @@ import <stdio.h>;
 // A parameter written as a pattern: `List(constexpr Type T) *xs` takes any instance of `List`, and `T` is bound from
 // the argument's type, so `item` is an `I32` for a `List(I32)` and an `F64` for a `List(F64)`.
 
-Type List(Type T) {
+type List(type T) {
     return struct {
         T *items;
         usize count;
@@ -11292,7 +11292,7 @@ module pairs;
 
 // An exported type function that returns a struct: the header carries its shape, and an importer's `pairs::Pair(usize)`
 // is the same struct as this module's.
-export Type Pair(Type T) {
+export type Pair(type T) {
     return struct {
         T first;
         T second;
@@ -11312,7 +11312,7 @@ import <stdio.h>;
 // A type function that returns a struct: `Pair(usize)` is one struct for every use, defined at the first declaration
 // that names it, and its fields may be of the argument's type.
 
-Type Pair(Type T) {
+type Pair(type T) {
     return struct {
         T first;
         T second;

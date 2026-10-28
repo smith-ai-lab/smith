@@ -2,7 +2,7 @@ module pairs;
 
 // An exported type function that returns a struct: the header carries its shape, and an importer's `pairs::Pair(usize)`
 // is the same struct as this module's.
-export Type Pair(Type T) {
+export type Pair(type T) {
     return struct {
         T first;
         T second;

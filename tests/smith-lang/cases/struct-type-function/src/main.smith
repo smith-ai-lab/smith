@@ -5,7 +5,7 @@ import <stdio.h>;
 // A type function that returns a struct: `Pair(usize)` is one struct for every use, defined at the first declaration
 // that names it, and its fields may be of the argument's type.
 
-Type Pair(Type T) {
+type Pair(type T) {
     return struct {
         T first;
         T second;

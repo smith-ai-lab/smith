@@ -1,0 +1,7 @@
+src/main.smith:11:48: cannot tell the type of `d`, the argument of `width`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:11:68: cannot tell the type of `s`, the argument of `width`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:11:88: cannot tell the type of `&d`, the argument of `width`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:12:41: cannot tell the type of `4`, the argument of `pick`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:12:63: cannot tell the type of `d`, the argument of `pick`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:13:44: cannot tell the type of `d`, the argument of `count`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:14:39: cannot tell the type of `ys`, the argument of `size`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable

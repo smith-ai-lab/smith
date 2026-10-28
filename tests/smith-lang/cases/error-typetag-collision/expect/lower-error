@@ -1,0 +1,1 @@
+src/main.smith:7:5: `stat` is a variable, function or enum constant here and a tag above; in a module a tag is also a type name, so the two cannot share a name

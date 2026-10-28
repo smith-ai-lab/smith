@@ -1,0 +1,7 @@
+src/main.smith:15:45: cannot tell the type of `f`, the argument of `bytes`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:15:62: cannot tell the type of `b`, the argument of `bytes`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:15:79: cannot tell the type of `flag`, the argument of `bytes`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:16:44: cannot tell the type of `&pair`, the argument of `code`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:16:64: cannot tell the type of `pair`, the argument of `code`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:16:83: cannot tell the type of `f`, the argument of `code`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:16:99: cannot tell the type of `b`, the argument of `code`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable

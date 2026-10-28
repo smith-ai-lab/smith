@@ -3,7 +3,7 @@ module lists;
 // A module whose type function and generic functions take it as a pattern: an importer's `lists::List(i32)` and the
 // `List(usize)` this module's exported function returns are both instances `push` binds `T` from.
 
-export Type List(Type T) {
+export type List(type T) {
     return struct {
         T *items;
         usize count;

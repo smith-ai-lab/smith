@@ -1,0 +1,1 @@
+[ [ clang :: unavailable ( "sizes::small_of is a function over `type`: it exists only at compile time" ) ] ] void sizes_small_of ( void ) ; [ [ clang :: unavailable ( "sizes::convert is a generic function: call it from a .smith module" ) ] ] void sizes_convert ( void ) ;

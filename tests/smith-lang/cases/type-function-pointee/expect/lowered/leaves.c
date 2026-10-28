@@ -1,0 +1,1 @@
+[ [ clang :: unavailable ( "leaves::leaf_of is a function over `type`: it exists only at compile time" ) ] ] void leaves_leaf_of ( void ) ; [ [ clang :: unavailable ( "leaves::first is a generic function: call it from a .smith module" ) ] ] void leaves_first ( void ) ;

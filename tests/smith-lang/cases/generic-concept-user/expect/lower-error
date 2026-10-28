@@ -1,0 +1,4 @@
+src/main.smith:10:42: cannot tell the type of `a`, the argument of `twice`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:10:59: cannot tell the type of `b`, the argument of `twice`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:10:78: cannot tell the type of `c`, the argument of `smaller`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable
+src/main.smith:11:37: cannot tell the type of `b`, the argument of `bytes`: the raw lowering has no compiler to type it (it cannot call a function with `auto` parameters); give it a type with a cast or a variable

@@ -1,0 +1,1 @@
+[ [ clang :: unavailable ( "conv::init is a generic function: call it from a .smith module" ) ] ] void conv_init ( void ) ; [ [ clang :: unavailable ( "conv::assign is a generic function: call it from a .smith module" ) ] ] void conv_assign ( void ) ;

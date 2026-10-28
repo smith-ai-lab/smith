@@ -5,7 +5,7 @@ import <stdio.h>;
 // A parameter written as a pattern: `List(constexpr Type T) *xs` takes any instance of `List`, and `T` is bound from
 // the argument's type, so `item` is an `I32` for a `List(I32)` and an `F64` for a `List(F64)`.
 
-Type List(Type T) {
+type List(type T) {
     return struct {
         T *items;
         usize count;

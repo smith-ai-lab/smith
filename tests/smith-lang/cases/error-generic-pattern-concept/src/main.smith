@@ -1,6 +1,6 @@
 module main;
 
-Type Box(Type T) {
+type Box(type T) {
     return struct {
         T value;
     };
