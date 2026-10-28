@@ -487,9 +487,14 @@ struct SmithLang {
     bool call_failed;                                        // a call nested too deep: the outermost is dropped
     bool recording;                                          // a generic's body is being read into smith_lang_gt
     uint32_t recording_generic;                              // its index
-    bool recording_skip;      // its head had an error: the body is read to its end and dropped
-    uint32_t skip_mark;       // where in smith_lang_gt the dropped body begins
-    bool generic_next;        // the declaration about to begin is generic
+    bool recording_skip;              // its head had an error: the body is read to its end and dropped
+    uint32_t skip_mark;               // where in smith_lang_gt the dropped body begins
+    bool generic_next;                // the declaration about to begin is generic
+    uint32_t array_result_open;       // the `[` of a generic's result `T[n]` (lang_array.c): a type is before it
+    bool aret_armed;                  // `T xs[N] =` is being declared in a function (lang_array.c)
+    char aret_name[64];               // ... its name
+    unsigned long long aret_elements; // ... and its size
+    bool aret_const;                  // ... and its type has `const`
     bool generic_plain;       // ... a plain one: a function over `type` that is exported (issue #107)
     bool type_import;         // an import has functions over `type`: their records are defined after the last import
     bool generic_result_call; // ... and its result type is a call
@@ -1022,6 +1027,9 @@ static const char *smith_lang_str(SmithLangText text) {
 
 // Run-time arrays: `T xs[:]`, `xs[i]`, `xs[a:b]`.
 #include "lang_slice.c"
+
+// Fixed-size arrays as results: `T[3] f()`, `T[n] f(constexpr usize n)`, `T[:] f()`.
+#include "lang_array.c"
 
 // Range `for`: `for (T x : xs) { ... }`.
 #include "lang_rfor.c"

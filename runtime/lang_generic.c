@@ -2182,6 +2182,13 @@ static void smith_lang_gen_put_shaped(SmithLang *lang, const SmithHost *host, co
 static void smith_lang_gen_put_result(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
                                       const SmithLangInstance *instance, uint32_t location, uint32_t instance_id);
 
+// runtime/lang_array.c, which comes after this file: a generic whose result is `T[n]`
+static bool smith_lang_aret_generic(const SmithLangGeneric *generic);
+static void smith_lang_aret_put_result(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
+                                       const SmithLangInstance *instance, uint32_t location, uint32_t id);
+static void smith_lang_aret_define(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
+                                   const SmithLangInstance *instance, uint32_t location, uint32_t id);
+
 // `R name(P)` for an instance: the head with the type arguments for T, the instance's name, and the parameters that are
 // no `type`. `attributes` keeps the head's own leading attributes (a definition has them, a declaration cannot).
 static void smith_lang_gen_signature(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
@@ -2193,6 +2200,8 @@ static void smith_lang_gen_signature(SmithLang *lang, const SmithHost *host, con
         smith_lang_gen_put_subst(lang, host, generic, instance, &tokens[at], location, instance_id, false);
     if (smith_lang_result_call(generic)) {
         smith_lang_gen_put_result(lang, host, generic, instance, location, instance_id);
+    } else if (smith_lang_aret_generic(generic)) {
+        smith_lang_aret_put_result(lang, host, generic, instance, location, instance_id);
     } else {
         smith_lang_gen_put_run(lang, host, generic, instance, generic->first + result,
                                generic->first + generic->name_index, location, instance_id);
@@ -2317,6 +2326,7 @@ static void smith_lang_gen_call_start(SmithLang *lang, const SmithHost *host, co
                                            {SmithTokenKind_Punctuator, "{"}};
     smith_lang_gen_puts(lang, host, start, sizeof start / sizeof start[0], location, instance_id);
     smith_lang_instance_define_slices(lang, host, instance, location, instance_id);
+    smith_lang_aret_define(lang, host, generic, instance, location, instance_id);
     smith_lang_gen_declaration(lang, host, generic, instance, location, instance_id);
     if (real == UINT32_MAX) {
         smith_lang_gen_put(lang, host, SmithTokenKind_Identifier, smith_lang_str(instance->cname), location,
@@ -2439,6 +2449,8 @@ static bool smith_lang_enum_replay(SmithLang *lang, const SmithHost *host, Smith
                                    SmithLangFrame *frame);
 static bool smith_lang_try_replay(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
                                   SmithLangFrame *frame);
+static bool smith_lang_aret_replay(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                   SmithLangFrame *frame);
 static const char *smith_lang_tuple_keep(const char *text, size_t length);
 
 // Writes the words of a frame, then the frame is done.
@@ -3434,6 +3446,24 @@ static int smith_lang_generic_named(SmithLang *lang, const SmithHost *host, Smit
     return smith_lang_generic_of(lang, host, smith_lang_gt_str(token), token->length);
 }
 
+// The generic function that `span`, a `constexpr auto` parameter of the generic being replayed, was given (`less` in
+// `sift_down(xs, i, n, less)` inside `sort_by`, whose instance was given `module::ascending`), or -1.
+static int smith_lang_forwarded_generic(SmithLang *lang, const SmithHost *host, const SmithLangReplay *replay,
+                                        SmithLangSpan span) {
+    if (replay->instance == nullptr || replay->generic == nullptr || span.end != span.start + 1) return -1;
+    const SmithLangGenToken *token = &smith_lang_gt.tokens[span.start];
+    if (token->kind != SmithTokenKind_Identifier || token->special != SmithLangGen_Plain || token->param == 0)
+        return -1;
+    const SmithLangGeneric *own = &smith_lang_generics[replay->instance->generic];
+    unsigned slot = (unsigned)token->param - 1;
+    if (slot >= own->type_count || own->type_kind[slot] != SmithLangSlot_Function ||
+        replay->instance->arg_count[slot] != 1) {
+        return -1;
+    }
+    const SmithLangGenToken *arg = &smith_lang_it.tokens[replay->instance->arg_first[slot]];
+    return smith_lang_generic_of(lang, host, smith_lang_pool_text(&smith_lang_it, arg), arg->length);
+}
+
 // The function passed to `constexpr auto f` at `span`, staged in smith_lang_it as its name. It must be a function
 // designator (a name the compiler says is a function, not a pointer to one): False after the error.
 static bool smith_lang_infer_function(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
@@ -3445,7 +3475,10 @@ static bool smith_lang_infer_function(SmithLang *lang, const SmithHost *host, Sm
     uint32_t place = smith_lang_infer_place(host, replay, span, location);
     SmithLangArgType type = {};
     const char *why = nullptr;
-    if (smith_lang_generic_named(lang, host, span) >= 0) { // a generic function: its calls make the instances
+    // a generic function, or a `constexpr auto` parameter of the instance that holds one (forwarded): its calls make
+    // the instances
+    if (smith_lang_generic_named(lang, host, span) >= 0 ||
+        smith_lang_forwarded_generic(lang, host, replay, span) >= 0) {
         return smith_lang_stage_type(span, replay->instance, location, first, count) && *count == 1;
     }
     if (!smith_lang_arg_type(lang, host, replay, span, location, &type, &why, true)) {
@@ -5247,7 +5280,8 @@ static bool smith_lang_replay_rewritten(SmithLang *lang, const SmithHost *host, 
                                         SmithLangFrame *frame) {
     return smith_lang_fields_replay(lang, host, replay, frame) || smith_lang_slice_replay(lang, host, replay, frame) ||
            smith_lang_try_replay(lang, host, replay, frame) || smith_lang_enum_replay(lang, host, replay, frame) ||
-           smith_lang_replay_shape(lang, host, replay, frame) || smith_lang_list_gone(lang, host, replay, frame);
+           smith_lang_aret_replay(lang, host, replay, frame) || smith_lang_replay_shape(lang, host, replay, frame) ||
+           smith_lang_list_gone(lang, host, replay, frame);
 }
 
 // The argument list at the frame's position (`rest...`, `rest[i]`, `countof(rest)`). True when it took tokens.
@@ -5294,6 +5328,15 @@ static void smith_lang_replay_plain(SmithLang *lang, const SmithHost *host, Smit
                          "parameter",
                          (int)token->length, smith_lang_gt_str(token));
         smith_lang_generic_poison(lang, host, place);
+        return;
+    }
+    uint32_t here = (uint32_t)(token - smith_lang_gt.tokens);
+    if (replay->typing && smith_lang_forwarded_generic(lang, host, replay, (SmithLangSpan){here, here + 1}) >= 0) {
+        // `less` in the arguments of a call that is typed first, given a generic: the generic's name, which the
+        // call's own `constexpr auto` parameter takes (smith_lang_infer_function), not an address.
+        const SmithLangGenToken *arg = &smith_lang_it.tokens[replay->instance->arg_first[token->param - 1]];
+        smith_lang_gen_put(lang, host, SmithTokenKind_Identifier, smith_lang_pool_text(&smith_lang_it, arg), place,
+                           replay->instance_id);
         return;
     }
     smith_lang_gen_put_subst(lang, host, replay->generic, replay->instance, token, replay->location,
@@ -5356,6 +5399,7 @@ static void smith_lang_instance_emit(SmithLang *lang, const SmithHost *host, siz
     smith_lang_gen_note_break(lang);
     smith_lang_fields_declare(lang, host, generic, instance, id, location);
     smith_lang_instance_define_slices(lang, host, instance, location, id);
+    smith_lang_aret_define(lang, host, generic, instance, location, id);
     smith_lang_instance_define_enums(lang, host, generic, instance, location, id);
     smith_lang_gen_declaration(lang, host, generic, instance, location, id);
     static const SmithLangPiece weak[] = {{SmithTokenKind_Punctuator, "["},    {SmithTokenKind_Punctuator, "["},

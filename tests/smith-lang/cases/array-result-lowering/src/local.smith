@@ -1,0 +1,17 @@
+module local;
+
+// Not exported: the struct is defined where the function is, and a second function with the same result names it.
+
+i32[2] two(i32 x) {
+    return {x, x + 1};
+}
+
+i32[2] again(i32 x) {
+    i32 keep[2] = two(x);
+    return keep;
+}
+
+i32 first(i32 x) {
+    i32 pair[2] = again(x);
+    return pair[0];
+}

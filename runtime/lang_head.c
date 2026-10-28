@@ -173,7 +173,12 @@ static void smith_lang_resolve(SmithLang *lang, const SmithHost *host, const Smi
         smith_lang_replace_held(lang, held, &lowered);
         is_type = lowered.is_type;
     }
-    if (!declared) is_type = is_type || smith_lang_type_use_follows(next);
+    if (!declared) {
+        // `T[n] f(...)`: the type before the bracket of a generic's array result
+        bool array_result =
+            lang->array_result_open != 0 && smith_lang_punct(next, "[") && next->location == lang->array_result_open;
+        is_type = is_type || smith_lang_type_use_follows(next) || array_result;
+    }
     if (!declared && !is_type && lang->paren_depth == 0 && lang->bracket_depth == 0 && smith_lang_punct(next, "(")) {
         // `uint64_t (*hook)(int)`: a name before the `(*` of a function pointer's declarator is the result type
         is_type = smith_lang_punct(smith_lang_peek(lang, host, 0, false), "*");

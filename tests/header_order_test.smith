@@ -1,0 +1,96 @@
+// The order in which smith writes the headers of its .smith modules (smith.c, smith_write_lang_headers, through
+// `smith_core_header_waves` of include/smith_core.h, smith.c compiled as a library by tests/units/build.c). A module's
+// header pass reads the headers of the modules it imports, so a header written before theirs names their types by the
+// fallback (`smith_arena_Arena` for `SmithArena`) and, kept by the stamp, breaks every compile that includes it. The
+// race is a matter of timing, so this checks the order itself, in process: no process starts.
+module header_order_test;
+
+import smith::format;
+import smith::io;
+import smith::test;
+import <smith_core.h>;
+
+constexpr usize modules_max = 8;
+
+// The wave of each module named, in the order given; `texts[i]` is the source of `names[i]`.
+static usize waves_of(const char *names[:], const char *texts[:], usize waves[:]) {
+    return c::smith_core_header_waves(names.data, texts.data, countof(names), waves.data);
+}
+
+export void test_a_module_waits_for_the_modules_it_imports() {
+    const char *names[4] = {"io", "arena", "random", "contract"};
+    const char *texts[4] = {
+        "module smith::io;\nimport smith::arena;\nimport smith::contract;\nimport smith::random;\nimport <errno.h>;\n",
+        "module smith::arena;\nimport smith::contract;\n",
+        "module smith::random;\nimport smith::contract;\n",
+        "module smith::contract;\n",
+    };
+    usize waves[4] = {};
+    usize count = waves_of(names, texts, waves);
+    test::check_equal(count, 3);
+    test::check_equal(waves[3], 0); // contract imports nothing
+    test::check_equal(waves[1], 1);
+    test::check_equal(waves[2], 1); // arena and random are written at the same time
+    test::check_equal(waves[0], 2); // io after both
+}
+
+export void test_modules_that_import_nothing_are_all_in_the_first_wave() {
+    const char *names[3] = {"ascii", "math", "effects"};
+    const char *texts[3] = {"module smith::ascii;\n", "module smith::math;\n", "module smith::effects;\n"};
+    usize waves[3] = {7, 7, 7};
+    test::check_equal(waves_of(names, texts, waves), 1);
+    test::check_equal(waves[0], 0);
+    test::check_equal(waves[1], 0);
+    test::check_equal(waves[2], 0);
+}
+
+export void test_an_import_that_is_no_module_of_the_set_is_ignored() {
+    const char *names[2] = {"format", "text"};
+    const char *texts[2] = {"module smith::format;\nimport smith::arena;\nimport <string.h>;\nimport smith::text;\n",
+                            "module smith::text;\n// import smith::format;\n"};
+    usize waves[2] = {};
+    test::check_equal(waves_of(names, texts, waves), 2);
+    test::check_equal(waves[1], 0); // a comment imports nothing
+    test::check_equal(waves[0], 1); // arena is not among the modules
+}
+
+export void test_an_import_cycle_does_not_hang() {
+    const char *names[3] = {"a", "b", "c"};
+    const char *texts[3] = {"import smith::b;\n", "import smith::a;\n", "import smith::a;\nimport smith::c;\n"};
+    usize waves[3] = {};
+    test::check_equal(waves_of(names, texts, waves), 1);
+    test::check_equal(waves[0], 0);
+    test::check_equal(waves[1], 0);
+    test::check_equal(waves[2], 0); // all in the last wave, because none can wait
+}
+
+export void test_an_import_with_leading_blanks_and_no_final_newline_counts() {
+    const char *names[2] = {"a", "b"};
+    const char *texts[2] = {"module smith::a;\nif constexpr (x) {\n\timport smith::b;", "module smith::b;"};
+    usize waves[2] = {};
+    test::check_equal(waves_of(names, texts, waves), 2);
+    test::check_equal(waves[0], 1);
+    test::check_equal(waves[1], 0);
+}
+
+static const char *read_module(io::Io *io, const char *name) {
+    const char *repo = io::args_env(&io->args, "SMITH_REPO");
+    test::check(repo != nullptr);
+    const char *path = format::push(&io->arena, repo, "/lib/smith/", name, ".smith").data;
+    io::Read file = io::files_read(&io->files, &io->arena, path);
+    test::check_equal(file.error.code, 0);
+    return (const char *)file.data.data;
+}
+
+// The sources smith embeds: io imports arena, contract, math and random, the modules whose names its header got wrong.
+export void test_io_is_written_after_arena_and_random(io::Io *io) {
+    const char *names[modules_max] = {"io", "arena", "contract", "math", "random"};
+    const char *texts[modules_max] = {};
+    for (usize i = 0; i < 5; i++)
+        texts[i] = read_module(io, names[i]);
+    usize waves[modules_max] = {};
+    usize count = c::smith_core_header_waves(names, texts, 5, waves);
+    test::check(count >= 2);
+    for (usize i = 1; i < 5; i++)
+        test::check(waves[i] < waves[0]);
+}

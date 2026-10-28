@@ -899,6 +899,30 @@ export void test_error_slice_pointer_argument(io::Io *io) {
     corpus_case(io, "error-slice-pointer-argument");
 }
 
+export void test_array_result(io::Io *io) {
+    corpus_case(io, "array-result");
+}
+
+export void test_array_result_lowering(io::Io *io) {
+    corpus_case(io, "array-result-lowering");
+}
+
+export void test_array_result_generic(io::Io *io) {
+    corpus_case(io, "array-result-generic");
+}
+
+export void test_error_array_result_count(io::Io *io) {
+    corpus_case(io, "error-array-result-count");
+}
+
+export void test_error_array_result_return(io::Io *io) {
+    corpus_case(io, "error-array-result-return");
+}
+
+export void test_error_array_result_size(io::Io *io) {
+    corpus_case(io, "error-array-result-size");
+}
+
 export void test_error_slice_pointer_bounds(io::Io *io) {
     corpus_case(io, "error-slice-pointer-bounds");
 }
@@ -1189,6 +1213,10 @@ export void test_generic_function(io::Io *io) {
 
 export void test_generic_function_error(io::Io *io) {
     corpus_case(io, "generic-function-error");
+}
+
+export void test_generic_function_forward(io::Io *io) {
+    corpus_case(io, "generic-function-forward");
 }
 
 export void test_generic_function_generic(io::Io *io) {

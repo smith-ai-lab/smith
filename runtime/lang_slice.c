@@ -137,6 +137,90 @@ static bool smith_lang_text_has_str(const char *text, size_t length) {
     return false;
 }
 
+// Whether the code has a fixed-size array result or an array initialized from a call (runtime/lang_array.c): a name
+// between a `]` and a `(`, `T[3] f(`; or a declaration `T xs[3] = value` whose value is no list and no string. Comments
+// and strings do not count. (The hook's hasArrayResult is the same scan.)
+static bool smith_lang_text_ident_char(char c) {
+    return isalnum((unsigned char)c) != 0 || c == '_';
+}
+
+static size_t smith_lang_text_blanks(const char *text, size_t length, size_t at) {
+    while (at < length && isspace((unsigned char)text[at]) != 0)
+        at += 1;
+    return at;
+}
+
+// The `]` that closes the `[` at `open`, or `length`.
+static size_t smith_lang_text_close(const char *text, size_t length, size_t open) {
+    int depth = 0;
+    for (size_t at = open; at < length; at++) {
+        size_t next = smith_lang_text_skip(text, length, at);
+        if (next != at) {
+            at = next - 1;
+            continue;
+        }
+        depth += text[at] == '[' ? 1 : 0;
+        depth -= text[at] == ']' ? 1 : 0;
+        if (depth == 0) return at;
+        if (text[at] == ';' || text[at] == '{') break;
+    }
+    return length;
+}
+
+// Whether the two words before `open` are a type and a name, `Key keys`, and the type is no keyword of a statement.
+static bool smith_lang_text_declares(const char *text, size_t open) {
+    size_t end = open;
+    while (end > 0 && isspace((unsigned char)text[end - 1]) != 0)
+        end -= 1;
+    size_t start = end;
+    while (start > 0 && smith_lang_text_ident_char(text[start - 1])) // the name
+        start -= 1;
+    size_t gap = start;
+    while (gap > 0 && isspace((unsigned char)text[gap - 1]) != 0)
+        gap -= 1;
+    if (start == end || gap == start || gap == 0 || !smith_lang_text_ident_char(text[gap - 1])) return false;
+    size_t type = gap;
+    while (type > 0 && smith_lang_text_ident_char(text[type - 1])) // the word before it
+        type -= 1;
+    static const char *const statements[] = {"else", "return", "case", "goto", "do", "sizeof", "typeof", "defer"};
+    for (size_t i = 0; i < sizeof statements / sizeof statements[0]; i++) { // 8 words
+        if (strlen(statements[i]) == gap - type && memcmp(text + type, statements[i], gap - type) == 0) return false;
+    }
+    return true;
+}
+
+static bool smith_lang_text_has_array_result(const char *text, size_t length) {
+    for (size_t at = 0; at < length; at++) { // each `[` of the code
+        size_t after = smith_lang_text_skip(text, length, at);
+        if (after != at) {
+            at = after - 1;
+            continue;
+        }
+        if (text[at] != '[' || (at > 0 && text[at - 1] == '[')) continue;
+        size_t close = smith_lang_text_close(text, length, at);
+        if (close >= length) continue;
+        size_t next = smith_lang_text_blanks(text, length, close + 1);
+        if (next < length && (isalpha((unsigned char)text[next]) != 0 || text[next] == '_')) { // `] name (`
+            size_t end = next;
+            while (end < length && smith_lang_text_ident_char(text[end]))
+                end += 1;
+            end = smith_lang_text_blanks(text, length, end);
+            if (end < length && text[end] == '(' && at > 0 && smith_lang_text_ident_char(text[at - 1])) return true;
+        }
+        if (next + 1 < length && text[next] == '=' && text[next + 1] != '=' && smith_lang_text_declares(text, at)) {
+            size_t value = smith_lang_text_blanks(text, length, next + 1);
+            size_t letters = value;
+            while (letters < length && letters < value + 2 &&
+                   (text[letters] == 'L' || text[letters] == 'u' || text[letters] == 'U' || text[letters] == '8')) {
+                letters += 1;
+            }
+            bool text_literal = letters < length && (text[letters] == '"' || text[letters] == '\'');
+            if (value < length && text[value] != '{' && !text_literal) return true;
+        }
+    }
+    return false;
+}
+
 bool smith_lang_slices_on(const SmithLang *lang) {
     return lang->slices_seen;
 }
@@ -370,12 +454,12 @@ static bool smith_lang_slice_defined(const SmithLang *lang, const char *tag) {
     return false;
 }
 
-// The definition as a C header spells it, for a bare tag: the header of an export that names the struct holds it.
-static const char *smith_lang_slice_header_text(SmithLang *lang, const char *tag, const SmithToken *elem, size_t count,
-                                                size_t sizes, bool restrict_data) {
-    char text[smith_lang_tuple_name_max];
-    size_t used = (size_t)snprintf(text, sizeof text, "%s {", tag);
-    for (size_t at = 0; at < count && used + smith_lang_name_max + 8 < sizeof text; at++) { // the element's tokens
+// The start of a definition as a C header spells it, `tag { T`: the tag and the element's tokens, which become what a
+// header says (`uint64_t` for `u64`, a module's type with its prefix).
+static size_t smith_lang_slice_header_start(SmithLang *lang, char *text, size_t capacity, const char *tag,
+                                            const SmithToken *elem, size_t count) {
+    size_t used = (size_t)snprintf(text, capacity, "%s {", tag);
+    for (size_t at = 0; at < count && used + smith_lang_name_max + 8 < capacity; at++) { // the element's tokens
         const SmithToken *token = &elem[at];
         char word[smith_lang_name_max];
         size_t taken = 1;
@@ -390,9 +474,17 @@ static const char *smith_lang_slice_header_text(SmithLang *lang, const char *tag
             snprintf(word, sizeof word, "%.*s", (int)(token->length < sizeof word ? token->length : sizeof word - 1),
                      token->text);
         }
-        used += (size_t)snprintf(text + used, sizeof text - used, " %s", word);
+        used += (size_t)snprintf(text + used, capacity - used, " %s", word);
         at += taken - 1;
     }
+    return used;
+}
+
+// The definition as a C header spells it, for a bare tag: the header of an export that names the struct holds it.
+static const char *smith_lang_slice_header_text(SmithLang *lang, const char *tag, const SmithToken *elem, size_t count,
+                                                size_t sizes, bool restrict_data) {
+    char text[smith_lang_tuple_name_max];
+    size_t used = smith_lang_slice_header_start(lang, text, sizeof text, tag, elem, count);
     snprintf(text + used, sizeof text - used, " * %sdata; size_t count [ %zu ]; }", restrict_data ? "__restrict " : "",
              sizes);
     return smith_lang_tuple_keep(text, strlen(text));
@@ -749,9 +841,17 @@ static bool smith_lang_slice_pointer_begin(SmithLang *lang, const SmithHost *hos
     return true;
 }
 
-// At the first token of a declaration: `T xs[:]` or `T (*xs)[:]`.
+static bool smith_lang_aret_result_begin(SmithLang *lang, const SmithHost *host, const SmithToken *first);
+static bool smith_lang_aret_init_equals(SmithLang *lang, const SmithHost *host, const SmithToken *equals);
+static void smith_lang_aret_init_arm(SmithLang *lang, const SmithHost *host, const SmithToken *first);
+static bool smith_lang_aret_return(SmithLang *lang, const SmithHost *host);
+
+// At the first token of a declaration: `T xs[:]`, `T (*xs)[:]`, or the head of a function whose result is written
+// `T[:]` or `T[3]` (runtime/lang_array.c).
 static bool smith_lang_slice_begin(SmithLang *lang, const SmithHost *host, const SmithToken *first) {
-    return smith_lang_slice_begin_array(lang, host, first) || smith_lang_slice_pointer_begin(lang, host, first);
+    smith_lang_aret_init_arm(lang, host, first);
+    return smith_lang_aret_result_begin(lang, host, first) || smith_lang_slice_begin_array(lang, host, first) ||
+           smith_lang_slice_pointer_begin(lang, host, first);
 }
 
 // `typeof(T[:])`: a slice's struct as a type, the result of a function or the type of a local.
@@ -910,6 +1010,9 @@ static bool smith_lang_slice_type(const SmithHost *host, const char *text, Smith
         tag += 7;
         char name[smith_lang_tuple_name_max];
         snprintf(name, sizeof name, "%.*s", (int)strcspn(tag, " "), tag);
+        size_t all = 0;
+        size_t runtime = 0;
+        if (smith_lang_slice_tag_dims_count(name, &all, &runtime) && runtime == 0) return true; // an array result's
         out->kind = SmithLangSlice_Slice;
         smith_lang_slice_type_tag(out, name);
         return true;
@@ -2551,6 +2654,7 @@ static bool smith_lang_slice_chain(SmithLang *lang, const SmithHost *host, const
 // `return array;` in a function that returns a slice.
 static void smith_lang_slice_return(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     if (lang->enums_seen && smith_lang_enum_return(lang, host)) return;
+    if (smith_lang_aret_return(lang, host)) return;
     char type[256];
     if (host->return_type == nullptr || !host->return_type(host->context, type, sizeof type) ||
         strncmp(type, "struct smith_array_", 19) != 0 || strchr(type + 7, ' ') != nullptr ||
