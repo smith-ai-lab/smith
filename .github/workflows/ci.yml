@@ -105,7 +105,7 @@ jobs:
       - uses: ./.github/actions/setup-smith
         with:
           tests: "true"
-      - name: Save the step cache (temporary: measures a warm run of this branch)
+      - name: Save the step cache (temporary, measures a warm run of this branch)
         if: github.head_ref == 'ci-fast'
         uses: actions/cache/save@v4
         with:
