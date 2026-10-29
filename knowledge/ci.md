@@ -6,6 +6,8 @@ tags: [ci, process]
 ---
 # CI runs the full check on the owner's Mac
 
+The move to GitHub's hosted runners, once the repository is public, is [ci-hosted](ci-hosted.md); this is the Mac's CI until then.
+
 `.github/workflows/check.yml` runs on every push to `main` and to `train` (never on a pull request), on the owner's self-hosted runner (`self-hosted, macOS, ARM64`), which runs as the owner's user: it shares `~/.cache/smith/llvm` and the installed smith. The service reads no shell profile, so the job puts `~/.local/bin` on `PATH` itself.
 
 **The job.** It builds smith from the checked-out commit with the installed smith (`smith build`), then runs `build/Darwin-arm64/smith check` in its own clone, with no shared lock: the agents' local checks hold `/private/tmp/smith-full-check.lock`, and CI queuing behind them timed out idle. The full output is streamed to the job log and to the `check-log` artifact (with `.smith/log` and a process list taken at the end, so a timeout names the stuck process); the last lines are the job summary, and `SMITH_ACCOUNT=all` puts the per-task table (wall, cpu, processes) in `smith-log/test.log` of the artifact. A new push to `train` cancels its older run; runs on `main` never cancel each other. When the check fails, the job ends with "what failed": every `FAILED:` task and `FAIL` case from the output and `.smith/log` (also at the top of the job summary), so a long log cut short still names the cause.

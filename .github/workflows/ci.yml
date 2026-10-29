@@ -1,0 +1,181 @@
+name: ci
+
+# The full check on GitHub's hosted runners (#798, knowledge/ci-hosted.md): every pull request, every merge queue entry
+# and every push to main runs `smith check` split across parallel jobs, and the one job `ci` gathers them, so branch
+# protection and the merge queue name a single required check. check.yml (the owner's Mac, the merge train) keeps
+# running until the switch.
+#
+# billed, so nothing here runs until it is public.
+on:
+  pull_request:
+  merge_group:
+  push:
+    branches: [main]
+
+# A new push to a pull request replaces its older run; the merge queue's runs and main's never cancel each other.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    # what the change touches decides what runs: a document no build reads runs nothing, the README, AGENTS.md,
+    # knowledge/ and the skills run `smith docs` and their tests, everything else runs the full check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      scope: ${{ steps.scope.outputs.scope }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scope
+        id: scope
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          # none: only documents no build reads. docs: also the documents the docs check and their tests read. full:
+          # anything else; a push to main, or a diff that cannot be read, is always full.
+          documents='^(LICENSE[^/]*|CONTRIBUTING[.]md|[^/]+[.](png|jpe?g|gif|svg|webp))$'
+          gated='^(README[.]md|AGENTS[.]md|knowledge/.*|[.]agents/.*)$'
+          scope=full
+          if [ -n "$BASE" ] && changed=$(git diff --name-only "$BASE" HEAD); then
+            built=$(printf '%s\n' "$changed" | grep . | grep -vE "$documents" || true)
+            code=$(printf '%s\n' "$built" | grep . | grep -vE "$gated" || true)
+            if [ -z "$built" ]; then scope=none; elif [ -z "$code" ]; then scope=docs; fi
+          fi
+          echo "scope=$scope" >>"$GITHUB_OUTPUT"
+          echo "scope: $scope" >>"$GITHUB_STEP_SUMMARY"
+
+  mechanical:
+    # fmt, docs, lint and the proofs of the project (the stages of `smith check` that are not tests)
+    needs: changes
+    runs-on: macos-26
+    timeout-minutes: 40
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SMITH_OUTPUT: full
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-smith
+      - name: Mechanical checks
+        shell: bash
+        run: |
+          # every stage runs, and each failure ends in a line `FAIL <stage>`, so one run names all of them
+          failed=0
+          for stage in "fmt --dry-run --Werror" docs lint prove; do
+            name=${stage%% *}
+            if ! "$SMITH" $stage >"$RUNNER_TEMP/$name.log" 2>&1; then
+              tail -n 60 "$RUNNER_TEMP/$name.log"
+              echo "FAIL $name"
+              echo "::error::smith $name failed"
+              failed=1
+            else
+              echo "ok $name"
+            fi
+          done
+          exit $failed
+
+  test:
+    # the tests, split by test file across machines (`smith test --shard i/n`, balanced by the CPU seconds of
+    # .github/shard-costs.tsv; a file's tests stay together). The goal is a wall time near 10 minutes, then 5: raise n.
+    needs: changes
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-26, shard: 1, count: 5 }
+          - { os: macos-26, shard: 2, count: 5 }
+          - { os: macos-26, shard: 3, count: 5 }
+          - { os: macos-26, shard: 4, count: 5 }
+          - { os: macos-26, shard: 5, count: 5 }
+          # Linux joins once a Linux release exists (#799): without one, stage0 builds smith from source for hours
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SMITH_OUTPUT: full
+      # a cpu<TAB>seconds<TAB>name line for each test in .smith/log/test.log: what .github/shard-costs.tsv is made from
+      SMITH_TEST_STATS: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-smith
+      - name: Tools some tests need
+        if: runner.os == 'macOS'
+        # the editor tests do nothing without nvim; some tests bound a command with coreutils' `timeout`
+        run: HOMEBREW_NO_AUTO_UPDATE=1 brew install neovim coreutils
+      - name: Tests, part ${{ matrix.shard }} of ${{ matrix.count }}
+        shell: bash
+        run: |
+          start=$(date +%s)
+          rc=0
+          "$SMITH" test --shard "${{ matrix.shard }}/${{ matrix.count }}" --costs "$PWD/.github/shard-costs.tsv" 2>&1 |
+            tee "$RUNNER_TEMP/test.log" || rc=${PIPESTATUS[0]}
+          took=$(( $(date +%s) - start ))
+          {
+            echo "### tests ${{ matrix.os }} ${{ matrix.shard }}/${{ matrix.count }}: $took s"
+            grep -E '^[0-9]+ passed' "$RUNNER_TEMP/test.log" || true
+          } >>"$GITHUB_STEP_SUMMARY"
+          # a failure names its test: the line `FAIL <name>` of the runner, as an annotation and in the summary
+          if [ "$rc" -ne 0 ]; then
+            { echo '```'; grep -hE '^FAIL |^FAILED:' "$RUNNER_TEMP/test.log" .smith/log/*.log 2>/dev/null | sort -u | head -n 60; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
+            grep -hE '^FAIL |^FAILED:' "$RUNNER_TEMP/test.log" .smith/log/*.log 2>/dev/null | sort -u | head -n 20 |
+              while IFS= read -r line; do echo "::error::$line"; done
+          fi
+          exit $rc
+      - name: Upload the logs
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-log-${{ matrix.os }}-${{ matrix.shard }}-of-${{ matrix.count }}
+          path: .smith/log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  docs:
+    # a change to the README, AGENTS.md, knowledge/ or the skills: the docs check and the tests that read them
+    needs: changes
+    runs-on: macos-26
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SMITH_OUTPUT: full
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-smith
+      - name: Docs and the tests that read them
+        shell: bash
+        run: |
+          "$SMITH" docs
+          "$SMITH" test --test readme_test,skills_test
+
+  ci:
+    # the one required check: green when every job that had to run is green; skipped jobs (a change of documents only)
+    # do not count against it
+    needs: [changes, mechanical, test, docs]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verdict
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+          SCOPE: ${{ needs.changes.outputs.scope }}
+        run: |
+          echo "scope: $SCOPE; jobs: $RESULTS" | tee -a "$GITHUB_STEP_SUMMARY"
+          case " $RESULTS " in
+          *" failure "* | *" cancelled "*)
+            echo "::error::a CI job failed or was cancelled"
+            exit 1
+            ;;
+          esac
