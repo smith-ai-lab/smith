@@ -202,4 +202,4 @@ jobs:
           fetch-depth: 0
       - uses: ./.github/actions/setup-smith
       - name: Release
-        run: "$SMITH" build release
+        run: '"$SMITH" build release'
