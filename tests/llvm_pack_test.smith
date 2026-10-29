@@ -73,7 +73,7 @@ export void test_llvm_pack_makes_checked_parts_of_what_smith_links(io::Io *io) {
                          "llvm/n1/install/include/x/b.h\nllvm/n1/install/lib/clang/23/include/a.h\n"
                          "llvm/n1/install/lib/libA.a\nllvm/n1/install/lib/libB.a\nllvm/n1/install/lib/smith-clang.id\n"
                          "llvm/n1/prove/lib/libz3.a",
-                         capture(io, &p, "cd ../x && find enzyme llvm \\( -type f -o -type l \\) | sort"));
+                         capture(io, &p, "cd ../x && find enzyme llvm \\( -type f -o -type l \\) | LC_ALL=C sort"));
 }
 
 // publish and fetch: the release holds the parts and the checksums, a second publish creates nothing, a fetch into an
