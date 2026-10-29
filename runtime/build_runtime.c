@@ -1402,7 +1402,7 @@ static const char *smith_modules_folder(const char *folder) {
     return copy;
 }
 
-// The module map of one folder: `module <name> { header "<absolute path>" export * }` for each header under it, and
+// The module map of one folder: `module <name> { header "<path>" export * }` for each header under it, and
 // the headers marked textual together in one module that makes them known without importing them.
 static const char *smith_modules_map(SmithBuild *b, const char *folder, const char *const *textual) {
     const char *const *headers = smith_glob(b, smith_list(b, smith_text("%s/**/*.h", folder), nullptr));
@@ -1415,12 +1415,12 @@ static const char *smith_modules_map(SmithBuild *b, const char *folder, const ch
     for (size_t i = 0; i < count; i++) {
         if (strpbrk(headers[i], "\"\\\n") != nullptr) smith_fail("smith_modules: odd characters in %s", headers[i]);
         if (smith_modules_is_textual(headers[i], textual)) {
-            plain[plain_count++] = smith_text("  textual header \"%s/%s\"\n", b->root, headers[i]);
+            plain[plain_count++] = smith_text("  textual header \"../../%s\"\n", headers[i]);
             continue;
         }
         const char *name = smith_modules_name(headers[i]);
         smith_modules_claim(name, headers[i]);
-        lines[used++] = smith_text("module %s { header \"%s/%s\" export * }\n", name, b->root, headers[i]);
+        lines[used++] = smith_text("module %s { header \"../../%s\" export * }\n", name, headers[i]);
     }
     plain[plain_count] = nullptr;
     if (plain_count > 0) {
@@ -2057,32 +2057,33 @@ static const char *const *smith_header_pass_flags(SmithBuild *b, const SmithObje
 
 // The effect summary of an object (issue #207, skill smith-lang-effects), where the compile that makes the object
 // writes it and `smith cc` reads it at the link: in a project (a `.smith` folder in the working folder) it is
-// `.smith/effects/<the object's absolute path, `%` for `/`>.fx`, out of the build folders, otherwise `<object>.fx`
-// beside the object. False when the path does not fit. The same rule is in smith.c (`smith_effects_summary_path`, which
-// the plugin and the link use): a compile and the build must agree on the place, and tests/effects_infer_test.smith
-// checks that they do.
+// `.smith/effects/<the object's path from the project folder, `%` for `/`>.fx`, out of the build folders, otherwise
+// `<object>.fx` beside the object. False when the path does not fit. The same rule is in smith.c
+// (`smith_effects_summary_path`, which the plugin and the link use): a compile and the build must agree on the place,
+// and tests/effects_infer_test.smith checks that they do.
 static bool smith_effects_path(const char *object, char *out, size_t capacity) {
-    char absolute[PATH_MAX];
+    char relative[PATH_MAX];
     while (strncmp(object, "./", 2) == 0)
         object += 2;
     int written = 0;
     if (object[0] == '/') {
-        written = snprintf(absolute, sizeof absolute, "%s", object);
-    } else {
         char folder[PATH_MAX];
-        if (getcwd(folder, sizeof folder) == nullptr) return false;
-        written = snprintf(absolute, sizeof absolute, "%s/%s", folder, object);
+        size_t length = getcwd(folder, sizeof folder) == nullptr ? 0 : strlen(folder);
+        bool inside = length > 0 && strncmp(object, folder, length) == 0 && object[length] == '/';
+        written = snprintf(relative, sizeof relative, "%s", inside ? object + length + 1 : object);
+    } else {
+        written = snprintf(relative, sizeof relative, "%s", object);
     }
-    if (written <= 0 || (size_t)written >= sizeof absolute) return false;
+    if (written <= 0 || (size_t)written >= sizeof relative) return false;
     struct stat info = {};
     if (stat(".smith", &info) != 0 || !S_ISDIR(info.st_mode)) {
         written = snprintf(out, capacity, "%s.fx", object);
         return written > 0 && (size_t)written < capacity;
     }
-    for (char *c = absolute; *c != '\0'; c++) {
+    for (char *c = relative; *c != '\0'; c++) {
         if (*c == '/') *c = '%';
     }
-    written = snprintf(out, capacity, ".smith/effects/%s.fx", absolute);
+    written = snprintf(out, capacity, ".smith/effects/%s.fx", relative);
     return written > 0 && (size_t)written < capacity;
 }
 

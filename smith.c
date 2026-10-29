@@ -741,32 +741,33 @@ static int smith_argdumper(int argc, char **argv) {
 int smith_effects_check(int count, char **files, const char *stack); // shim/effects_infer.cpp
 
 // The effect summary of an object: where the compile that makes the object writes it (the plugin) and where the link
-// reads it. In a project (a `.smith` folder in the working folder) it is `.smith/effects/<the object's absolute path,
-// `%` for `/`>.fx`, out of the build folders, otherwise `<object>.fx` beside the object. runtime/build_runtime.c has
-// the same rule (`smith_effects_path`) for the outputs a build declares; tests/effects_infer_test.smith checks that
-// they agree.
+// reads it. In a project (a `.smith` folder in the working folder) it is `.smith/effects/<the object's path from the
+// project folder, `%` for `/`>.fx`, out of the build folders, otherwise `<object>.fx` beside the object.
+// runtime/build_runtime.c has the same rule (`smith_effects_path`) for the outputs a build declares;
+// tests/effects_infer_test.smith checks that they agree.
 bool smith_effects_summary_path(const char *object, char *out, size_t capacity) {
-    char absolute[PATH_MAX];
+    char relative[PATH_MAX];
     while (strncmp(object, "./", 2) == 0)
         object += 2;
     int written = 0;
     if (object[0] == '/') {
-        written = snprintf(absolute, sizeof absolute, "%s", object);
-    } else {
         char folder[PATH_MAX];
-        if (getcwd(folder, sizeof folder) == nullptr) return false;
-        written = snprintf(absolute, sizeof absolute, "%s/%s", folder, object);
+        size_t length = getcwd(folder, sizeof folder) == nullptr ? 0 : strlen(folder);
+        bool inside = length > 0 && strncmp(object, folder, length) == 0 && object[length] == '/';
+        written = snprintf(relative, sizeof relative, "%s", inside ? object + length + 1 : object);
+    } else {
+        written = snprintf(relative, sizeof relative, "%s", object);
     }
-    if (written <= 0 || (size_t)written >= sizeof absolute) return false;
+    if (written <= 0 || (size_t)written >= sizeof relative) return false;
     struct stat info = {};
     if (stat(".smith", &info) != 0 || !S_ISDIR(info.st_mode)) {
         written = snprintf(out, capacity, "%s.fx", object);
         return written > 0 && (size_t)written < capacity;
     }
-    for (char *c = absolute; *c != '\0'; c++) {
+    for (char *c = relative; *c != '\0'; c++) {
         if (*c == '/') *c = '%';
     }
-    written = snprintf(out, capacity, ".smith/effects/%s.fx", absolute);
+    written = snprintf(out, capacity, ".smith/effects/%s.fx", relative);
     return written > 0 && (size_t)written < capacity;
 }
 

@@ -39,6 +39,8 @@ thirds of the lines are dead:
 - `.smith/.smith_deps`: `# smith deps 1`, then per output `<mtime ns> <count> <path>` and `<count>` lines, one path
   each: what the depfile named. This is `.ninja_deps`'s job. The depfile itself is removed once read.
 
+**Everything kept is keyed relative to the project root,** so a project copied with its times (`cp -Rp`) after a build is up to date where it lands, and its first `smith build` runs no step (#638). The logs name outputs and dependencies as the manifest does, relative; the effects summary of an object is `.smith/effects/<its path from the project folder, `%` for `/`>.fx` (an object outside the project keeps its absolute path); the module maps name a header as `../../<path>` from the map's folder (`.smith/modules/`), so a map is the same text in the copy and is not rewritten (a rewrite would make every object older than its input). What does name the root (`compile_commands.json`, which editors need absolute, the objects' debug info) is not an input of any step. `tests/build_step_cache_test.smith` copies a built project and builds it.
+
 A line cut short by a crash is not read, and a file of another version is as good as none. **An upgrade from a tree that
 ninja built is correct:** the executor never reads `.ninja_log` or `.ninja_deps`, so every output has no log line and the
 first build runs every command. After that nothing differs. The other way works too: with `SMITH_NINJA` set, ninja

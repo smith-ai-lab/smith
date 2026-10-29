@@ -131,3 +131,33 @@ export void test_build_step_cache_a_precompiled_header_is_compiled_again(io::Io 
     scratch::Run used = scratch::sh(&a, "smith-cc -include-pch build/other.pch -fsyntax-only other.c 2>&1");
     scratch::expect_status("pch: a compile that includes it accepts it", 0, &used);
 }
+
+// 8. A built project copied with its times (`cp -Rp`) to another path is up to date there: what the build keeps (the
+// effects summaries' names, the module maps, the logs) is relative to the project, so nothing runs (#638).
+static const char *moved(const scratch::Project *p, const char *command) {
+    return scratch::capture(p, format::push(&p->io->arena, "mkdir ../moved && cp -Rp . ../moved/a && cd ../moved/a && ",
+                                            command, " 2>&1; true")
+                                   .data);
+}
+
+export void test_build_step_cache_a_copied_project_builds_nothing(io::Io *io) {
+    scratch::Project a = made(io, "a");
+    scratch::Run first = scratch::sh(&a, "env SMITH_STEP_CACHE=0 smith build -d explain 2>&1");
+    scratch::expect_status("copy: the project builds", 0, &first);
+    const char *copy = moved(&a, "env SMITH_STEP_CACHE=0 smith build -d explain");
+    scratch::expect_text("copy: nothing is dirty", "smith: no work to do.", copy);
+    scratch::expect_lacks("copy: no compile runs", copy, "compile");
+    scratch::expect_text("copy: and no summary is named by a folder", "0",
+                         scratch::capture(&a, "ls ../moved/a/.smith/effects | grep -c '^%'; true"));
+}
+
+// 9. In the copy a changed source rebuilds its object and what links it, and nothing else.
+export void test_build_step_cache_a_copied_project_rebuilds_only_what_changed(io::Io *io) {
+    scratch::Project a = made(io, "a");
+    (void)scratch::sh(&a, "env SMITH_STEP_CACHE=0 smith build");
+    const char *copy = moved(&a, "echo '/* changed */' >> util.c && env SMITH_STEP_CACHE=0 smith build");
+    scratch::expect_contains("changed: util.c compiles", copy, "compile util.c");
+    scratch::expect_contains("changed: and the program links", copy, "link build/debug/a");
+    scratch::expect_lacks("changed: main.c does not", copy, "main.c");
+    scratch::expect_lacks("changed: and other.c does not", copy, "other.c");
+}

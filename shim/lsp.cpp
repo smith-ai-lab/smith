@@ -715,7 +715,7 @@ class Editor {
                 if (auto text = argument.getAsString()) job.arguments.push_back(text->str());
             }
             smith_effects_editor_object(job.source.c_str(), job.object.c_str());
-            std::string summary = root + "/" + summaryOf(job.object);
+            std::string summary = root + "/" + summaryOf(job.object, root);
             struct stat summaryInfo = {}, sourceInfo = {};
             bool fresh = stat(summary.c_str(), &summaryInfo) == 0 && stat(job.source.c_str(), &sourceInfo) == 0 &&
                          summaryInfo.st_mtime >= sourceInfo.st_mtime;
@@ -729,8 +729,10 @@ class Editor {
         written(""); // every open file is judged again with all the summaries
     }
 
-    // `.smith/effects/<the object's absolute path, % for />.fx`, the plugin's place (smith_effects_summary_path).
-    static std::string summaryOf(std::string object) {
+    // `.smith/effects/<the object's path from the project folder, % for />.fx`, the plugin's place
+    // (smith_effects_summary_path).
+    static std::string summaryOf(std::string object, const std::string &root) {
+        if (object.compare(0, root.size() + 1, root + "/") == 0) object.erase(0, root.size() + 1);
         for (char &c : object) {
             if (c == '/') c = '%';
         }

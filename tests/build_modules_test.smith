@@ -7,11 +7,6 @@ import smith::io;
 import smith::test;
 import scratch;
 
-// The folder of the project with its links resolved, which is how the maps name a header.
-static const char *real_dir(const scratch::Project *p) {
-    return scratch::capture(p, "pwd -P");
-}
-
 export void test_build_modules_a_header_is_a_module_with_its_flags_maps_and_dependencies(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", "clang_modules");
     scratch::own_cache(&p);
@@ -36,9 +31,10 @@ export void test_build_modules_a_header_is_a_module_with_its_flags_maps_and_depe
     scratch::expect_text("modules: a map per folder and one for smith's headers",
                          ".smith/modules/inc.modulemap .smith/modules/smith.modulemap",
                          scratch::sh(&p, "echo .smith/modules/*.modulemap").out);
-    (void)format::to(text, sizeof text, "module inc_b { header \"", real_dir(&p), "/inc/b.h\" export * }");
+    // a path from the map's folder to the header, so a copy of the project has the same maps
     scratch::expect_contains("modules: a header is a module of its own",
-                             scratch::read(&p, ".smith/modules/inc.modulemap"), text);
+                             scratch::read(&p, ".smith/modules/inc.modulemap"),
+                             "module inc_b { header \"../../inc/b.h\" export * }");
     scratch::expect_contains("modules: smith's headers are modules",
                              scratch::read(&p, ".smith/modules/smith.modulemap"), "module smith_arena {");
     const char *deps = scratch::sh(&p, "smith build -t deps build/y.o").out;
