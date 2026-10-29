@@ -37,9 +37,14 @@ inline bool smith_platform_lld_link(llvm::ArrayRef<const char *> arguments) {
 // The -mlinker-version= the driver is given when its ld is lld (shim/clang.cpp says why), or nullptr.
 constexpr const char *smith_platform_linker_version = "-mlinker-version=1115.7.3";
 
-// Adds a change of folder to the actions of a posix_spawn.
+// Adds a change of folder to the actions of a posix_spawn. smith runs on macOS 15 and newer (#802): the name without
+// _np is macOS 26's, so it is called only there, and the _np one (deprecated on 26, there on 15) is the fallback.
 inline int smith_platform_spawn_chdir(posix_spawn_file_actions_t *actions, const char *folder) {
-    return posix_spawn_file_actions_addchdir(actions, folder);
+    if (__builtin_available(macOS 26.0, *)) return posix_spawn_file_actions_addchdir(actions, folder);
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    return posix_spawn_file_actions_addchdir_np(actions, folder);
+#pragma clang diagnostic pop
 }
 
 // Starts `path` on `args` with `environment`, stopped before its first instruction (a debugger attaches, then sends
