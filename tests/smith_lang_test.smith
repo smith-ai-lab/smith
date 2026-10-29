@@ -1288,6 +1288,10 @@ export void test_generic_private_generic(io::Io *io) {
     corpus_case(io, "generic-private-generic");
 }
 
+export void test_generic_private_included_first(io::Io *io) {
+    corpus_case(io, "generic-private-included-first");
+}
+
 export void test_generic_private_names(io::Io *io) {
     corpus_case(io, "generic-private-names");
 }
@@ -1382,6 +1386,10 @@ export void test_header_conditional_define(io::Io *io) {
 
 export void test_header_docs(io::Io *io) {
     corpus_case(io, "header-docs");
+}
+
+export void test_header_nolint_pair(io::Io *io) {
+    corpus_case(io, "header-nolint-pair");
 }
 
 export void test_header_in_memory(io::Io *io) {
