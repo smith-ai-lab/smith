@@ -1,11 +1,11 @@
 // `smith build bench` (issue #639): measures each budget line of the speed table on this machine and prints it. Every
 // step runs one command and reports its wall seconds and the CPU seconds (user plus system) of the command and every
-// process it waited for, from wait4's rusage. The table is also written as tab-separated lines for the train to record
+// process it waited for, from wait4's rusage. The table is also written as tab-separated lines for CI to record
 // and compare: step, wall s, CPU s, budget s (or -), verdict (ok, over, tbd, -), load average at the start.
 //
-// Usage: bench SMITH TSV [full] [preflight]
+// Usage: bench SMITH TSV [full] [prepush]
 // SMITH is the smith under test (an absolute or repository-relative path); TSV is the file written. `full` also runs
-// `smith test` (slow; the line is CPU seconds), `preflight` also runs `smith build preflight`.
+// `smith test` (slow; the line is CPU seconds), `prepush` also runs `smith build pre-push`.
 // The commands run with SMITH_SLOTS=0 and SMITH_CORES=4: a wait for a slot is the queue's, not the step's.
 // Plain C23, libc only, no allocation of its own beyond the static tables.
 #include <errno.h>
@@ -209,14 +209,14 @@ static void bench_module(void) {
     rows[row_count - 1].tbd = true;
 }
 
-static void bench_long(bool full, bool preflight) {
+static void bench_long(bool full, bool prepush) {
     if (full) {
         char *const argv[] = {(char *)smith_path, "test", nullptr};
         step("full test suite (CPU s)", 600.0, true, argv, nullptr);
     }
-    if (preflight) {
-        char *const argv[] = {(char *)smith_path, "build", "preflight", nullptr};
-        step("preflight end to end", 300.0, false, argv, nullptr);
+    if (prepush) {
+        char *const argv[] = {(char *)smith_path, "build", "pre-push", nullptr};
+        step("pre-push end to end", 300.0, false, argv, nullptr);
     }
 }
 
@@ -260,16 +260,16 @@ static int report(const char *tsv) {
 
 int main(int argc, char **argv) {
     if (argc < 3) {
-        fputs("usage: bench SMITH TSV [full] [preflight]\n", stderr);
+        fputs("usage: bench SMITH TSV [full] [prepush]\n", stderr);
         return 2;
     }
     static char absolute[PATH_MAX];
     smith_path = realpath(argv[1], absolute) != nullptr ? absolute : argv[1];
     bool full = false;
-    bool preflight = false;
+    bool prepush = false;
     for (int i = 3; i < argc; i++) {
         full = full || strcmp(argv[i], "full") == 0;
-        preflight = preflight || strcmp(argv[i], "preflight") == 0;
+        prepush = prepush || strcmp(argv[i], "prepush") == 0;
     }
     // The steps measure the work, not the queue: no wait for a slot (a CI job holding them would add minutes of wall),
     // and the share of one slot, four cores, which is what the budgets are stated for.
@@ -280,6 +280,6 @@ int main(int argc, char **argv) {
     bench_worktree();
     bench_fmt_lint();
     bench_module();
-    bench_long(full, preflight);
+    bench_long(full, prepush);
     return report(argv[2]);
 }
