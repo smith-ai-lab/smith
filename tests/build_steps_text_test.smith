@@ -92,43 +92,27 @@ export void test_build_steps_smith_write_makes_the_file_and_leaves_an_equal_one_
     scratch::expect_text("write: -t clean leaves it", "absent", present(&p, "copy.txt"));
 }
 
-static void refuses_the_write_path(io::Io *io, const char *path) {
-    scratch::Project p = scratch::project(io, "p", "steps_write_paths");
+static void refuses_the_write_path(const scratch::Project *p, const char *path) {
     char arguments[128];
     __builtin_snprintf(arguments, sizeof arguments, "-Dpath=%s", path);
-    scratch::Run run = scratch::build(&p, arguments);
+    scratch::Run run = scratch::build(p, arguments);
     char name[128];
     __builtin_snprintf(name, sizeof name, "write: '%s' is refused", path);
     scratch::expect_status(name, 2, &run);
     scratch::expect_contains(name, run.err, "smith: build.c: smith_write");
 }
 
-export void test_build_steps_smith_write_refuses_an_absolute_path(io::Io *io) {
-    refuses_the_write_path(io, "/abs.txt");
-}
-
-export void test_build_steps_smith_write_refuses_a_path_going_up(io::Io *io) {
-    refuses_the_write_path(io, "../up.txt");
-}
-
-export void test_build_steps_smith_write_refuses_dotdot_in_the_middle(io::Io *io) {
-    refuses_the_write_path(io, "a/../b.txt");
-}
-
-export void test_build_steps_smith_write_refuses_dot_smith(io::Io *io) {
-    refuses_the_write_path(io, ".smith/x.txt");
-}
-
-export void test_build_steps_smith_write_refuses_dot_smith_after_dot_slash(io::Io *io) {
-    refuses_the_write_path(io, "./.smith/x.txt");
-}
-
-export void test_build_steps_smith_write_refuses_a_folder(io::Io *io) {
-    refuses_the_write_path(io, "dir/");
-}
-
-export void test_build_steps_smith_write_accepts_dot_slash_folder_file(io::Io *io) {
+// Seven builds of one project: each used to be a test of its own with a project of its own, and each of those spent
+// about 2 CPU-s building the build program. A refused path stops build.c before it writes anything, so the builds
+// do not see one another; the one that is accepted comes last. The assertions are the same.
+export void test_build_steps_smith_write_refuses_bad_paths_and_accepts_dot_slash_folder_file(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", "steps_write_paths");
+    refuses_the_write_path(&p, "/abs.txt");
+    refuses_the_write_path(&p, "../up.txt");
+    refuses_the_write_path(&p, "a/../b.txt");
+    refuses_the_write_path(&p, ".smith/x.txt");
+    refuses_the_write_path(&p, "./.smith/x.txt");
+    refuses_the_write_path(&p, "dir/");
     scratch::Run run = scratch::build(&p, "-Dpath=./fine/ok.txt");
     scratch::expect_status("write: ./folder/file is accepted", 0, &run);
     scratch::expect_text("write: ./folder/file is accepted", "x", scratch::capture(&p, "cat fine/ok.txt"));
@@ -150,9 +134,8 @@ export void test_build_steps_capture_of_a_failing_program_is_still_an_error(io::
     scratch::expect_status("capture: a failing program is still an error", 2, &run);
 }
 
-static void refuses_the_task_name(io::Io *io, const char *argument, const char *name) {
-    scratch::Project p = scratch::project(io, "p", "steps_names");
-    scratch::Run run = scratch::build(&p, argument);
+static void refuses_the_task_name(const scratch::Project *p, const char *argument, const char *name) {
+    scratch::Run run = scratch::build(p, argument);
     char text[128];
     __builtin_snprintf(text, sizeof text, "names: '%s' is refused", name);
     scratch::expect_status(text, 2, &run);
@@ -161,45 +144,24 @@ static void refuses_the_task_name(io::Io *io, const char *argument, const char *
     scratch::expect_contains(text, run.err, needle);
 }
 
-export void test_build_steps_a_task_or_alias_name_may_hold_slashes(io::Io *io) {
+// Nine builds of one project: each used to be a test of its own with a project of its own, and each of those spent
+// about 2 CPU-s building the build program. The builds that succeed come first, on the project as the fixture left it;
+// a refused name stops build.c before any task runs. The assertions are the same.
+export void test_build_steps_task_and_alias_names_may_hold_slashes_and_bad_ones_are_refused(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", "steps_names");
     (void)scratch::build(&p, "check/src/a.c");
     scratch::Run group = scratch::build(&p, "group/all");
     scratch::expect_status("names: a task named after a file runs, and so does an alias with a '/'", 0, &group);
     scratch::expect_count("names: a task named after a file runs, and so does an alias with a '/'", 2,
                           scratch::lines(&p, "log"));
-}
-
-export void test_build_steps_a_name_with_a_leading_slash_is_refused(io::Io *io) {
-    refuses_the_task_name(io, "-Dname=/x", "/x");
-}
-
-export void test_build_steps_a_name_with_a_leading_dash_is_refused(io::Io *io) {
-    refuses_the_task_name(io, "-Dname=-x", "-x");
-}
-
-export void test_build_steps_a_name_with_a_trailing_slash_is_refused(io::Io *io) {
-    refuses_the_task_name(io, "-Dname=x/", "x/");
-}
-
-export void test_build_steps_a_name_with_dotdot_is_refused(io::Io *io) {
-    refuses_the_task_name(io, "-Dname=a/../b", "a/../b");
-}
-
-export void test_build_steps_a_name_with_a_double_slash_is_refused(io::Io *io) {
-    refuses_the_task_name(io, "-Dname=a//b", "a//b");
-}
-
-export void test_build_steps_a_name_with_a_leading_dot_slash_is_refused(io::Io *io) {
-    refuses_the_task_name(io, "-Dname=./a", "./a");
-}
-
-export void test_build_steps_a_name_with_a_space_is_refused(io::Io *io) {
-    refuses_the_task_name(io, "-Dname='a b'", "a b");
-}
-
-export void test_build_steps_a_name_with_a_colon_is_refused(io::Io *io) {
-    refuses_the_task_name(io, "-Dname=a:b", "a:b");
+    refuses_the_task_name(&p, "-Dname=/x", "/x");
+    refuses_the_task_name(&p, "-Dname=-x", "-x");
+    refuses_the_task_name(&p, "-Dname=x/", "x/");
+    refuses_the_task_name(&p, "-Dname=a/../b", "a/../b");
+    refuses_the_task_name(&p, "-Dname=a//b", "a//b");
+    refuses_the_task_name(&p, "-Dname=./a", "./a");
+    refuses_the_task_name(&p, "-Dname='a b'", "a b");
+    refuses_the_task_name(&p, "-Dname=a:b", "a:b");
 }
 
 export void test_build_steps_a_defer_callback_reads_the_options_build_read(io::Io *io) {
