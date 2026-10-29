@@ -5,9 +5,16 @@ case "$1 $2" in
 "release view") [ -d "$GH_DIR/$3" ] ;;
 "release create")
     tag=$3
+    [ -d "$GH_DIR/$tag" ] && exit 1 # as gh: the tag exists already
     mkdir -p "$GH_DIR/$tag"
     shift 3
     while [ $# -gt 0 ]; do case $1 in --*) shift 2 ;; *) cp "$1" "$GH_DIR/$tag/"; shift ;; esac; done
+    ;;
+"release upload")
+    tag=$3
+    [ -d "$GH_DIR/$tag" ] || exit 1
+    shift 3
+    while [ $# -gt 0 ]; do case $1 in --*) shift ;; *) cp "$1" "$GH_DIR/$tag/"; shift ;; esac; done
     ;;
 "release list") for d in "$GH_DIR"/*; do [ -d "$d" ] && printf '{"tagName":"%s","createdAt":"2026-10-01T00:00:00Z"}\n' "${d##*/}"; done ;;
 "release download")
