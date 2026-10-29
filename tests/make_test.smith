@@ -76,8 +76,10 @@ static void same_output(const scratch::Project *p, const char *name, const char 
                         const char *number) {
     char command[1024];
     char label[512];
-    __builtin_snprintf(command, sizeof command, "rm -rf build .smith %s; make %s >make.log 2>&1; echo $?", program,
-                       arguments);
+    // build/ and the program are removed, so that both builds make them; .smith is kept: it holds only the build
+    // program and the plan of the build.c that was dumped (and linted) before, which this dump writes again byte for
+    // byte, and building the build program again cost, for every case, about 2 CPU-s.
+    __builtin_snprintf(command, sizeof command, "rm -rf build %s; make %s >make.log 2>&1; echo $?", program, arguments);
     __builtin_snprintf(label, sizeof label, "%s: make builds it", name);
     scratch::expect_text(label, "0", run(p, command).out);
     __builtin_snprintf(command, sizeof command, "./%s >make.out 2>&1; rm -rf build %s", program, program);
