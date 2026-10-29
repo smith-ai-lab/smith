@@ -131,3 +131,21 @@ export void test_build_step_cache_a_precompiled_header_is_compiled_again(io::Io 
     scratch::Run used = scratch::sh(&a, "smith-cc -include-pch build/other.pch -fsyntax-only other.c 2>&1");
     scratch::expect_status("pch: a compile that includes it accepts it", 0, &used);
 }
+
+// 8. The build program (.smith/program, which a fresh project compiles from build.c and the embedded runtime) is
+// served too: its compiles are -MD and its debug info names no folder, so a second folder with the same build file
+// stores no result of its own. (SMITH_VERBOSE would show the compiles, but a compile that prints is never stored.)
+constexpr char results[_] = "find \"$XDG_CACHE_HOME/smith/steps/r\" -mindepth 2 -maxdepth 2 | wc -l | tr -d ' '";
+
+export void test_build_step_cache_serves_the_build_program_to_a_second_folder(io::Io *io) {
+    scratch::Project a = made(io, "a");
+    scratch::Project b = made(io, "b");
+    (void)scratch::sh(&a, built(&a, ""));
+    const char *first = scratch::capture(&a, results);
+    scratch::expect_text("program: the first folder stores the program's compiles and the project's", "yes",
+                         scratch::capture(&a, format::push(&io->arena, "[ ", first, " -ge 10 ] && echo yes").data));
+    (void)scratch::sh(&b, built(&b, ""));
+    scratch::expect_text("program: the second folder stores nothing of its own", first, scratch::capture(&b, results));
+    scratch::Run same = scratch::sh(&b, "cmp .smith/build-program/runtime.o ../a/.smith/build-program/runtime.o");
+    scratch::expect_status("program: and its objects are the first's", 0, &same);
+}
