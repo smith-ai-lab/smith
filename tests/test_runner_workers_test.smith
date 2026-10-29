@@ -425,13 +425,16 @@ export void test_runner_workers_stats_lists_the_cpu_time_of_each_test(io::Io *io
     }
 }
 
-export void test_runner_workers_costs_start_the_unknown_then_the_cheapest_first(io::Io *io) {
+export void test_runner_workers_costs_start_the_unknown_then_the_heaviest_first(io::Io *io) {
     scratch::Project p = workers_project(io);
     scratch::Run made =
         scratch::sh(&p, "printf 'cpu\\t0.500\\tcrash_1_before\\ncpu\\t0.100\\tcrash_3_after\\n' > costs.tsv");
     scratch::expect_status("costs: the file", 0, &made);
     scratch::Run run = runner::tests(&p, "", "--test crash_ --list --costs costs.tsv");
-    runner::expect_has(io, "", "costs: unknown first, then by cost", &run,
+    runner::expect_has(io, "", "costs: unknown first, then the heaviest (the longest test last is a tail, #754)", &run,
+                       "crash_2_dies\ncrash_4_after\ncrash_1_before\ncrash_3_after\n");
+    scratch::Run cheapest = runner::tests(&p, "", "--test crash_ --list --costs costs.tsv --cheapest");
+    runner::expect_has(io, "", "costs: --cheapest starts the cheapest first", &cheapest,
                        "crash_2_dies\ncrash_4_after\ncrash_3_after\ncrash_1_before\n");
 }
 
@@ -453,4 +456,22 @@ export void test_runner_workers_the_cores_of_ended_tests_go_back_to_the_pool(io:
         &p, "mkdir -p marks pool; env -u SMITH_SLOTS SMITH_SLOT_HELD=$$ SMITH_SLOTS_DIR=$PWD/pool SMITH_CORES=3 "
             "build/tests --jobs 3 --wall-timeout 100 2>&1");
     runner::expect_has(io, "", "pool: all five tests pass", &run, "5 passed, 0 failed");
+}
+
+// A test that waits without using CPU time fails after --idle-timeout seconds and says what it waited for; one that
+// computes does not (#754). Wall time on purpose: a test of the idle limit, 2 s here (180 by default).
+export void test_runner_workers_a_test_that_waits_without_cpu_time_fails_and_names_what_it_waited_for(io::Io *io) {
+    scratch::Project p = runner::built_project(io, "runner_base", "runner_idle", "-DSAN=0");
+    for (usize mode = 0; mode < 2; mode++) {
+        const char *iso = runner::flag(mode);
+        scratch::Run run = runner::tests(&p, iso, "--idle-timeout 2 --jobs 3");
+        runner::expect_has(io, iso, "idle: a test waiting for a child fails", &run,
+                           "FAIL idle_1_waits_for_a_child: used no CPU time for 2 s");
+        runner::expect_has(io, iso, "idle: ... naming the process it waited for", &run, "waiting for: sleep 31");
+        runner::expect_has(io, iso, "idle: a test that sleeps itself fails", &run,
+                           "FAIL idle_2_sleeps_itself: used no CPU time for 2 s");
+        runner::expect_has(io, iso, "idle: ... saying there was no process of its own", &run,
+                           "waiting for: the test itself");
+        runner::expect_has(io, iso, "idle: a test that computes passes", &run, "1 passed, 2 failed");
+    }
 }
