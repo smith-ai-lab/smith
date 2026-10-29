@@ -43,7 +43,7 @@ static random::Key take(random::Key *stream) {
     return next[1];
 }
 
-static const u8 *load(io::Io *io, const char *name, const char *extension, usize *size) {
+[[std::returns_borrowed(1)]] static const u8 *load(io::Io *io, const char *name, const char *extension, usize *size) {
     char path[128];
     (void)format::to(path, sizeof path, "tests/fixtures/inflate/", name, ".", extension);
     io::Read file = io::files_read(&io->files, &io->arena, path);

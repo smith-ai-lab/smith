@@ -108,7 +108,7 @@ static const char *recorded(io::Io *io, const char *result) {
             .data;
 }
 
-static const char *changed_with(io::Io *io, const char *result, const char *edit) {
+[[std::returns_borrowed(1)]] static const char *changed_with(io::Io *io, const char *result, const char *edit) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     scratch::Run run = scratch::sh(&p, format::push(&io->arena, repository, recorded(io, result), edit,
                                                     "; smith test --changed --base HEAD --dry-run 2>&1")

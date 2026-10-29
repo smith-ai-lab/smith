@@ -72,7 +72,7 @@ static bool make_built(io::Io *io, scratch::Project *root, scratch::Project *p, 
 }
 
 // The lines the client printed for the commands: `smith lsp` from the folder, with its root, and stderr too.
-static const char *session(io::Io *io, const scratch::Project *p, const char *commands) {
+[[std::returns_borrowed(2)]] static const char *session(io::Io *io, const scratch::Project *p, const char *commands) {
     const char *command = format::push(&io->arena, "\"", test::scratch(io),
                                        "/lsp_client\" \"$(command -v smith)\" \"$(pwd -P)\" ", commands, " 2>&1")
                               .data;
@@ -536,7 +536,7 @@ export void test_lsp_plain_c_in_the_same_project(io::Io *io) {
 // each fact. The folder q: two modules, an alias, a generic, a C file that calls a module by its C name.
 
 // What `smith lsp ARGUMENTS` prints on its standard output, in the folder.
-static const char *query(const scratch::Project *p, const char *arguments, io::Io *io) {
+[[std::returns_borrowed(1)]] static const char *query(const scratch::Project *p, const char *arguments, io::Io *io) {
     return scratch::sh(p, format::push(&io->arena, "smith lsp ", arguments, " 2>/dev/null").data).out;
 }
 

@@ -203,6 +203,7 @@ export void to_parent(Allocator *parent, void *block) {
 }
 
 void *parent_alloc(Checked *self, usize size, usize align) {
+    contract::trusted(); // the allocator is the edge: its memory is the caller's context, which no attribute can say
     return from_parent(self->parent, size, align);
 }
 

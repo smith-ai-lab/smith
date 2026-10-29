@@ -931,7 +931,8 @@ i32 fake_list(c::SmithFileHandler *self, const char *folder, usize index, c::Smi
     return 0;
 }
 
-void *fake_map(c::SmithFileHandler *self, const char *path, usize *size) {
+// lag rule: the annotation [[std::returns_borrowed(1)]] makes, until a release carries the attribute
+[[clang::annotate("std::owns:borrowed:1")]] void *fake_map(c::SmithFileHandler *self, const char *path, usize *size) {
     Fake *fake = (Fake *)self;
     usize found = fake_find(fake, path);
     if (found == fake_files_max || fake->files[found].folder) {

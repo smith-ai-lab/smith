@@ -120,7 +120,7 @@ static const char *object_of(io::Io *io, const char *file) {
 }
 
 // The files a command lists, one a line.
-static const char *listed(const Case *kase, const char *command) {
+[[std::returns_borrowed(1)]] static const char *listed(const Case *kase, const char *command) {
     return scratch::sh(kase->project, command).out;
 }
 

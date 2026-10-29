@@ -77,7 +77,7 @@ static c::SmithHttpResult get(Client *client, const char *url) {
     return c::smith_http_get(client->io, url, client->path);
 }
 
-static const char *body_of(Client *client) {
+[[std::returns_borrowed(1)]] static const char *body_of(Client *client) {
     io::Read read = io::files_read(&client->io->files, &client->io->arena, client->path);
     test::check_equal(read.error.code, 0);
     return (const char *)read.data.data;

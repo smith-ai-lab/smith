@@ -20,7 +20,7 @@ static scratch::Project reports_project(io::Io *io) {
 }
 
 // What smith test prints for one test of the project (its two streams in one).
-static const char *sym(const scratch::Project *p, const char *iso, const char *name) {
+[[std::returns_borrowed(1)]] static const char *sym(const scratch::Project *p, const char *iso, const char *name) {
     scratch::Run run = runner::smith_test(p, iso, format::push(&p->io->arena, "-DSAN=0 --test ", name).data);
     return run.out;
 }

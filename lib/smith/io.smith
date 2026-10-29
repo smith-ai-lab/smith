@@ -810,7 +810,7 @@ i32 write_all(i32 descriptor, const void *data, usize size) {
 
 // ---------------------------------------------------------------- the fake
 
-Fake *fake_of(Loop *loop) {
+[[clang::annotate("std::owns:borrowed:1")]] Fake *fake_of(Loop *loop) {
     return loop->fake;
 }
 
@@ -2848,7 +2848,7 @@ if constexpr (target::os == target::macos) {
         return (u64)(usize)connection | 1;
     }
 
-    Op *net_slot(Connection *connection, OpKind kind) {
+    [[clang::annotate("std::owns:borrowed:1")]] Op *net_slot(Connection *connection, OpKind kind) {
         usize slot = (usize)(kind - NetConnect);
         check(slot < sizeof connection->internal.waiting / sizeof connection->internal.waiting[0]);
         return __c11_atomic_load(&connection->internal.waiting[slot], seq_cst);
@@ -2895,7 +2895,7 @@ if constexpr (target::os == target::macos) {
     // --- errors
 
     // What a certificate check says (X509_V_ERR_*), for the ones a program meets; the rest use OpenSSL's own words.
-    const char *net_verify_reason(const NetApi *api, i64 code) {
+    [[clang::annotate("std::owns:internal")]] const char *net_verify_reason(const NetApi *api, i64 code) {
         switch (code) {
         case 10:
             return "the certificate has expired";
@@ -2989,7 +2989,7 @@ if constexpr (target::os == target::macos) {
 
     // The TLS object for the connection: SNI and the name the certificate must carry (an address, for a host given as
     // one).
-    void *net_session(Loop *loop, Op *op, Connection *connection) {
+    [[clang::annotate("std::owns:borrowed:3")]] void *net_session(Loop *loop, Op *op, Connection *connection) {
         const NetApi *api = &loop->net_api;
         const char *host = connection->internal.name;
         void *session = api->session_new(loop->net_context);
@@ -3434,7 +3434,7 @@ test_add_server(Io *io, NetServer server) {
 
 // The bytes the client sent on the n-th connection (from 0) to host:port, NUL-terminated, up to 8 KiB; nullptr if there
 // was no such connection.
-[[smith::c_name("smith_io_test_request")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] const char *
+[[smith::c_name("smith_io_test_request")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] [[clang::annotate("std::owns:borrowed:1")]] const char *
 test_request(const Io *io, const char *host, u16 port, usize n) {
     if (io->loop->servers == nullptr) return nullptr;
     const FakeServer *server = net_server_find(io->loop->servers, host, port, n, false);
@@ -3577,14 +3577,14 @@ capture_stop(Capture *capture, i32 signal) {
 // --- arguments ---
 
 // The argument i (0 is the program), or nullptr past the end.
-[[smith::c_name("smith_args_get")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] const char *
+[[smith::c_name("smith_args_get")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] [[clang::annotate("std::owns:borrowed:1")]] const char *
 args_get(const Args *args, usize i) {
     return i < args->count ? args->values[i] : nullptr;
 }
 
 // The value of an environment variable, or nullptr if it is not set. An empty value is "". The real io reads the
 // process's environment each time, so a setenv after io::make shows.
-[[smith::c_name("smith_args_env")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] const char *
+[[smith::c_name("smith_args_env")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] [[clang::annotate("std::owns:borrowed:1")]] const char *
 args_env(const Args *args, const char *name) {
     contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
     contract::requires(name[0] != 0);
@@ -3772,7 +3772,7 @@ test_add_child(Io *io, ChildScript script) {
 
 // The bytes written to the n-th scripted child's stdin (n counts the scripts added, from 0), NUL-terminated; nullptr if
 // there is no such child.
-[[smith::c_name("smith_io_test_child_input")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] const char *
+[[smith::c_name("smith_io_test_child_input")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] [[clang::annotate("std::owns:borrowed:1")]] const char *
 test_child_input(const Io *io, usize n) {
     const Fake *fake = fake_of(io->loop);
     if (n >= fake->child_count) return nullptr;
@@ -3780,12 +3780,12 @@ test_child_input(const Io *io, usize n) {
 }
 
 // What the program printed to stdout and stderr so far, NUL-terminated.
-[[smith::c_name("smith_io_test_output")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] const char *
+[[smith::c_name("smith_io_test_output")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] [[clang::annotate("std::owns:borrowed:1")]] const char *
 test_output(const Io *io) {
     return fake_of(io->loop)->output;
 }
 
-[[smith::c_name("smith_io_test_errors")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] const char *
+[[smith::c_name("smith_io_test_errors")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] [[clang::annotate("std::owns:borrowed:1")]] const char *
 test_errors(const Io *io) {
     return fake_of(io->loop)->errors;
 }

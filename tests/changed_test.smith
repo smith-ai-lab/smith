@@ -30,7 +30,7 @@ constexpr char repository[_] =
     "printf 'text\\n' > docs/guide.txt && printf 'int x;\\n' > runtime/docs.c && "
     "git add -A && git -c user.name=t -c user.email=t@t commit -q -m base; ";
 
-static const char *changed(io::Io *io, const char *edit) {
+[[std::returns_borrowed(1)]] static const char *changed(io::Io *io, const char *edit) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     scratch::Run run = scratch::sh(
         &p, format::push(&io->arena, repository, edit, "; smith test --changed --base HEAD --dry-run 2>&1").data);

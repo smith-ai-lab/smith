@@ -788,6 +788,7 @@ if constexpr (target::os == target::macos) {
     // The TLS object for the socket: SNI and the name the certificate must carry (an address, for a host given as
     // one). Null when it cannot be made.
     void *tls_session(const Api *api, i32 descriptor, const char *host) {
+        contract::trusted(); // the session is the library's, freed through a function pointer no attribute can name
         void *session = api->session_new(api->context);
         if (session == nullptr) return nullptr;
         if (api->session_set_fd(session, descriptor) != 1) {
@@ -1390,7 +1391,7 @@ i32 fake_close(c::SmithNetHandler *self, i32 id) {
 }
 
 // What the program wrote to the connection of the id (a connection's `id`, still open or closed), as bytes.
-[[smith::c_name("smith_network_fake_sent")]] export [[nodiscard]] Bytes fake_sent(const Fake *fake, i32 id) {
+[[smith::c_name("smith_network_fake_sent")]] export [[nodiscard]] [[clang::annotate("std::owns:borrowed:1")]] Bytes fake_sent(const Fake *fake, i32 id) {
     contract::requires(id >= 1 && (usize)id <= fake_connections_max);
     return fake->connections[(usize)id - 1].sent.data[0:fake->connections[(usize)id - 1].sent.size];
 }

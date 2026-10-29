@@ -28,7 +28,7 @@ static void expect_exists(const char *name, const scratch::Project *p, const cha
 }
 
 // The commands smith would run for the conventions' three profiles and the tests of the project `name`.
-static const char *commands_of(const scratch::Project *p, const char *name) {
+[[std::returns_borrowed(1)]] static const char *commands_of(const scratch::Project *p, const char *name) {
     char command[512];
     (void)format::to(command, sizeof command, "smith build -t commands build/debug/", name, " build/release/", name,
                      " build/fast/", name, " build/tests");

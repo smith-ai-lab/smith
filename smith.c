@@ -738,7 +738,7 @@ static int smith_argdumper(int argc, char **argv) {
 }
 
 #ifdef SMITH_HOOK
-int smith_effects_check(int count, char **files, const char *stack); // shim/effects_infer.cpp
+int smith_effects_check(int count, char **files, const char *stack, const char *owns); // shim/effects_infer.cpp
 
 // The effect summary of an object: where the compile that makes the object writes it (the plugin) and where the link
 // reads it. In a project (a `.smith` folder in the working folder) it is `.smith/effects/<the object's absolute path,
@@ -823,8 +823,10 @@ static int smith_check_effects(int count, char **args) {
     }
     char stack[PATH_MAX]; // the worst-case stack of the program's functions, beside it: `<program>.stack`
     int written = snprintf(stack, sizeof stack, "%s.stack", program);
-    int status =
-        smith_effects_check((int)found, file_list, written > 0 && (size_t)written < sizeof stack ? stack : nullptr);
+    char owns[PATH_MAX]; // the idioms only the link could settle: `<program>.owns`
+    int owned = snprintf(owns, sizeof owns, "%s.owns", program);
+    int status = smith_effects_check((int)found, file_list, written > 0 && (size_t)written < sizeof stack ? stack : nullptr,
+                                     owned > 0 && (size_t)owned < sizeof owns ? owns : nullptr);
     for (size_t i = 0; i < found; i++) { // the summary of a temporary object goes with it
         if (smith_in_temp_folder(objects[i])) unlink(file_list[i]);
     }
@@ -3348,7 +3350,7 @@ static int smith_compile_main(int argc, char **argv, int at, bool plus, const ch
     if (first < argc && strcmp(argv[first], "--smith-tree-sitter") == 0) return smith_tree_sitter_main(self);
 #ifdef SMITH_HOOK
     if (first < argc && strcmp(argv[first], "--smith-effects") == 0)
-        return smith_effects_check(argc - first - 1, argv + first + 1, nullptr);
+        return smith_effects_check(argc - first - 1, argv + first + 1, nullptr, nullptr);
 #endif
     bool which = first < argc && strcmp(argv[first], "--smith-which") == 0;
     if (which) first++;

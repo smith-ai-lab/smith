@@ -73,7 +73,7 @@ export void test_an_import_with_leading_blanks_and_no_final_newline_counts() {
     test::check_equal(waves[1], 0);
 }
 
-static const char *read_module(io::Io *io, const char *name) {
+[[std::returns_borrowed(1)]] static const char *read_module(io::Io *io, const char *name) {
     const char *repo = io::args_env(&io->args, "SMITH_REPO");
     test::check(repo != nullptr);
     const char *path = format::push(&io->arena, repo, "/lib/smith/", name, ".smith").data;

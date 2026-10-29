@@ -15,6 +15,7 @@
 module untar_readers_test;
 
 import smith::arena;
+import smith::contract;
 import smith::format;
 import smith::inflate;
 import smith::io;
@@ -55,7 +56,7 @@ static const char *join(io::Io *io, const char *a, const char *b) {
     return format::push(&io->arena, a, b).data;
 }
 
-static Bytes fixture(io::Io *io, const char *name) {
+[[std::returns_borrowed(1)]] static Bytes fixture(io::Io *io, const char *name) {
     const char *path =
         format::push(&io->arena, io::args_env(&io->args, "SMITH_REPO"), "/tests/fixtures/untar/", name).data;
     io::Read file = io::files_read(&io->files, &io->arena, path);
@@ -95,6 +96,7 @@ static Bytes text_bytes(const char *text) {
 }
 
 static Bytes bytes_of(const Buffer *b) {
+    contract::trusted(); // the bytes are in the arena the buffer was made in, the caller's context, which no attribute says
     return b->data[0:b->used];
 }
 
@@ -104,7 +106,7 @@ static Bytes part(Bytes from, usize start, usize end) {
 }
 
 // A copy with the byte at `at` (from the end when negative) changed, so that only a check can notice.
-static Bytes flip(io::Io *io, Bytes bytes, isize at) {
+[[std::returns_borrowed(1)]] static Bytes flip(io::Io *io, Bytes bytes, isize at) {
     usize size = countof(bytes);
     usize where = at < 0 ? size - (usize)(-at) : (usize)at;
     test::check_less(where, size);
@@ -114,7 +116,7 @@ static Bytes flip(io::Io *io, Bytes bytes, isize at) {
     return bytes_of(&b);
 }
 
-static Bytes concat(io::Io *io, Bytes a, Bytes b) {
+[[std::returns_borrowed(1)]] static Bytes concat(io::Io *io, Bytes a, Bytes b) {
     Buffer joined = buffer(io);
     put_bytes(&joined, a);
     put_bytes(&joined, b);
@@ -198,7 +200,7 @@ static void tar_add(Buffer *tar, Entry entry) {
     put_zeros(tar, (512 - entry.size % 512) % 512);
 }
 
-static Bytes tar_of(io::Io *io, const Entry *entries, usize count) {
+[[std::returns_borrowed(1)]] static Bytes tar_of(io::Io *io, const Entry *entries, usize count) {
     Buffer tar = buffer(io);
     for (usize i = 0; i < count; i++)
         tar_add(&tar, entries[i]);
@@ -213,7 +215,7 @@ static void put_le32(Buffer *b, u32 value) {
     put(b, four, 4);
 }
 
-static Bytes gzip_stored(io::Io *io, Bytes data) {
+[[std::returns_borrowed(1)]] static Bytes gzip_stored(io::Io *io, Bytes data) {
     Buffer gz = buffer(io);
     const u8 header[10] = {0x1F, 0x8B, 8, 0, 0, 0, 0, 0, 0, 3};
     put(&gz, header, 10);
@@ -249,7 +251,7 @@ static void put_vli(Buffer *b, u64 value) {
     }
 }
 
-static Bytes xz_stored(io::Io *io, Bytes data, u8 check) {
+[[std::returns_borrowed(1)]] static Bytes xz_stored(io::Io *io, Bytes data, u8 check) {
     usize size = countof(data);
     Buffer xz = buffer(io);
     const u8 flags[2] = {0, check};

@@ -186,7 +186,7 @@ export void write_header_of(const Project *p, const char *source, const char *na
 }
 
 // The file's text, or "" when it is absent.
-export const char *read(const Project *p, const char *name) {
+export [[std::returns_borrowed(1)]] const char *read(const Project *p, const char *name) {
     io::Read file = io::files_read(&p->io->files, &p->io->arena, path_in(p, name));
     return file.error.code == 0 ? text_of((const char *)file.data.data) : "";
 }

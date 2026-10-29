@@ -6,6 +6,7 @@
 module smith::files_test;
 
 import smith::arena;
+import smith::contract;
 import smith::files;
 import smith::io;
 import smith::mem;
@@ -51,6 +52,7 @@ files::Info value_info(files::InfoResult r) {
 }
 
 files::Bytes value_bytes(files::BytesResult r) {
+    contract::trusted(); // the slice is the result's payload, a struct by value that no attribute can describe
     switch (r) {
     case .ok:
         return r.ok;
@@ -60,6 +62,7 @@ files::Bytes value_bytes(files::BytesResult r) {
 }
 
 files::Entries value_entries(files::EntriesResult r) {
+    contract::trusted(); // as value_bytes
     switch (r) {
     case .ok:
         return r.ok;

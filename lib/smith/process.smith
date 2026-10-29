@@ -833,7 +833,7 @@ usize fake_cores(c::SmithProcessHandler *self) {
 }
 
 // What the program wrote to the stdin of the n-th scripted child (counting from 0), as bytes.
-[[smith::c_name("smith_process_fake_input")]] export [[nodiscard]] Bytes fake_input(const Fake *fake, usize n) {
+[[smith::c_name("smith_process_fake_input")]] export [[nodiscard]] [[clang::annotate("std::owns:borrowed:1")]] Bytes fake_input(const Fake *fake, usize n) {
     contract::requires(n < fake->count);
     return fake->children[n].input[0:fake->children[n].input_size];
 }

@@ -152,7 +152,7 @@ static void write_modules(const scratch::Project *p) {
 }
 
 // The effect errors of a build.
-static const char *rebuilt(const scratch::Project *p) {
+[[std::returns_borrowed(1)]] static const char *rebuilt(const scratch::Project *p) {
     return scratch::sh(p, "smith build 2>&1 | grep -E 'smith-effect' | sed 's/^main.smith:4:[0-9]*: //'").out;
 }
 
@@ -247,7 +247,7 @@ static i64 frame(const scratch::Project *p, const char *reference, const char *n
 }
 
 // A column of a function's row in <program>.stack: 2 is its worst case, 3 the deepest call.
-static const char *row(const scratch::Project *p, const char *program, const char *name, const char *column) {
+[[std::returns_borrowed(1)]] static const char *row(const scratch::Project *p, const char *program, const char *name, const char *column) {
     const char *command =
         format::push(&p->io->arena, "awk -F'\\t' -v n=", name, " '$1 == n { print $", column, " }' ", program, ".stack")
             .data;

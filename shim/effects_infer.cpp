@@ -612,6 +612,659 @@ const VarDecl *writtenGlobal(const Expr *expr) {
     return nullptr;
 }
 
+// ---- Ownership, inferred (issue #725) ------------------------------------------------------------------------------
+//
+// The idiom of a returned pointer or slice read from the body, the way the effects of a function are: each function
+// that returns a pointer has the *paths* its `return` statements take, each a known idiom (the result of a libc function
+// the table names, of a function with an attribute, a parameter, a global), a call of a function whose idiom is
+// found by the solver (here, or at the link from the other files' summaries), or an origin smith cannot read. One
+// solver turns the paths into the function's idiom and its errors, in the compile (the file's functions) and at the link
+// (every file's), so the two cannot disagree. A resolved idiom is an `O` line, a function that waits on another
+// file's is a set of `R` lines, and the link settles them.
+//
+// An idiom is the text of #720: `owned:<f>[:<n>...]`, `borrowed:<n>`, `internal`, and `context`, the caller's context
+// (allocated through the current allocator: smith's mem::alloc*, arena::push*, or a function that returns only those).
+// `context` has no attribute; it is written to the summary (an `O` line) because a caller in another file cannot tell
+// "the default" from "not read" without it.
+
+constexpr const char *contextIdiom = "context";
+
+struct OwnPath {
+    enum Kind { Known, Call, Unknown } kind = Unknown;
+    std::string idiom;                // Known
+    std::string callee, calleeName;   // Call: the symbol, and how it is shown
+    std::vector<std::string> args;    // Call: for each argument an idiom, `?` (origin unknown), `0` (null), `-` (no pointer)
+    std::string reason;               // Unknown
+    std::string place;                // `file:line:column` of the return
+};
+
+struct OwnRecord {
+    std::string symbol, name, place;
+    std::string declared;             // the idiom an attribute states, or ""
+    bool module = false;              // a function of a module: unknown and mixed paths are errors
+    bool trusted = false;             // calls smith_trusted(): not examined
+    std::vector<OwnPath> paths;
+};
+
+struct OwnProblem {
+    std::string symbol, place, message;
+    bool needsModule; // only an error in a module (an attribute that disagrees is an error anywhere)
+};
+
+struct OwnResult {
+    enum State { Undecided, Neutral, Known, Pending, Failed } state = Undecided;
+    std::string idiom;
+};
+
+inline std::string ownSpell(const std::string &idiom) {
+    llvm::StringRef text = idiom;
+    if (text.consume_front("owned:")) return "[[std::returns_owned(" + text.split(':').first.str() + ")]]";
+    if (text.consume_front("borrowed:")) return "[[std::returns_borrowed(" + text.str() + ")]]";
+    if (text == "internal") return "[[std::returns_internal]]";
+    return "the caller's context (no attribute)";
+}
+
+// Lifetimes, shortest first: borrowed from a parameter, then the function's internal memory, then the caller's context.
+// A path of a longer lifetime also satisfies a shorter claim (static text returned where a parameter's pointer may be),
+// so `borrowed:1` on one path and `internal` on another is `borrowed:1`; owned is not a lifetime and stands alone.
+inline int ownRank(const std::string &idiom) {
+    if (llvm::StringRef(idiom).starts_with("owned:")) return -1;
+    if (llvm::StringRef(idiom).starts_with("borrowed:")) return 0;
+    return idiom == "internal" ? 1 : 2;
+}
+
+// Whether a path with `path` satisfies a claim `claimed` (the attribute).
+inline bool ownCovers(const std::string &path, const std::string &claimed) {
+    if (path == claimed) return true;
+    int have = ownRank(path), want = ownRank(claimed);
+    return have > 0 && want >= 0 && have > want;
+}
+
+// The idioms left once the longer-lived give way to the shortest, or the same list when owned or two borrowed remain.
+inline std::vector<std::pair<std::string, std::string>>
+ownShortest(const std::vector<std::pair<std::string, std::string>> &list) {
+    int lowest = 3;
+    for (const auto &entry : list)
+        lowest = std::min(lowest, ownRank(entry.first));
+    std::vector<std::pair<std::string, std::string>> kept;
+    for (const auto &entry : list) {
+        if (lowest < 0 && ownRank(entry.first) >= 0) return list; // owned with a lifetime: a conflict
+        if (ownRank(entry.first) == lowest || lowest < 0) kept.push_back(entry);
+    }
+    return kept;
+}
+
+inline std::string ownDescribe(const std::string &idiom) {
+    llvm::StringRef text = idiom;
+    if (text.consume_front("owned:")) return "owned, freed by `" + text.split(':').first.str() + "`";
+    if (text.consume_front("borrowed:")) return "borrowed from parameter " + text.str();
+    if (text == "internal") return "internal";
+    return "from the caller's context";
+}
+
+inline std::string ownShort(const std::string &place) { // `file:line:column` without the folders
+    size_t slash = place.rfind('/');
+    return slash == std::string::npos ? place : place.substr(slash + 1);
+}
+
+class OwnSolver {
+  public:
+    explicit OwnSolver(bool final) : final(final) {}
+    std::map<std::string, OwnRecord> records;
+    std::map<std::string, std::string> known; // symbol -> idiom, from an attribute or a summary's `O` line
+    std::map<std::string, OwnResult> results;
+    std::vector<OwnProblem> problems;
+
+    // The results of all records: each is decided once the functions it calls are, and what stays (a cycle) fails.
+    void solve() {
+        for (bool progress = true; progress;) {
+            progress = false;
+            for (auto &entry : records) {
+                if (results[entry.first].state != OwnResult::Undecided) continue;
+                if (decide(entry.second)) progress = true;
+            }
+        }
+        for (auto &entry : records) {
+            if (results[entry.first].state != OwnResult::Undecided) continue;
+            results[entry.first].state = OwnResult::Failed;
+            problems.push_back({entry.first, entry.second.place,
+                                "smith-ownership: `" + entry.second.name +
+                                    "` returns the result of a function that returns its own result (recursion); write "
+                                    "[[std::returns_owned(f)]], [[std::returns_borrowed(n)]] or "
+                                    "[[std::returns_internal]] on it",
+                                true});
+        }
+    }
+
+  private:
+    bool final;
+
+    struct Seen {
+        OwnPath::Kind kind;
+        std::string idiom, reason, place;
+        bool pending = false;
+    };
+
+    // What a path is, or false while the function it calls is undecided.
+    bool seen(const OwnPath &path, Seen &out) {
+        out = {path.kind, path.idiom, path.reason, path.place};
+        if (path.kind != OwnPath::Call) return true;
+        std::string idiom;
+        auto record = records.find(path.callee);
+        if (record != records.end()) {
+            const OwnResult &result = results[path.callee];
+            if (result.state == OwnResult::Undecided) return false;
+            if (result.state == OwnResult::Neutral) {
+                out.kind = OwnPath::Call; // a callee that returns only null: nothing to learn
+                out.idiom.clear();
+                out.reason = "neutral";
+                return true;
+            }
+            if (result.state == OwnResult::Pending) {
+                out.pending = true;
+                return true;
+            }
+            if (result.state == OwnResult::Failed) {
+                out = {OwnPath::Unknown, "", "`" + path.calleeName + "` has no idiom (see its error, or write an attribute on it)", path.place};
+                return true;
+            }
+            idiom = result.idiom;
+        } else if (known.count(path.callee) != 0) {
+            idiom = known[path.callee];
+        } else if (!final) {
+            out.pending = true;
+            return true;
+        } else {
+            out = {OwnPath::Unknown, "",
+                   "`" + path.calleeName + "` has no body or attribute in any file of the program", path.place};
+            return true;
+        }
+        llvm::StringRef text = idiom;
+        if (text.consume_front("borrowed:")) {
+            unsigned long index = 0;
+            text.getAsInteger(10, index);
+            std::string code = index >= 1 && index <= path.args.size() ? path.args[index - 1] : "?";
+            if (code == "0") {
+                out.reason = "neutral";
+                out.idiom.clear();
+                return true;
+            }
+            if (code == "?" || code == "-") {
+                out = {OwnPath::Unknown, "",
+                       "the argument `" + path.calleeName + "` returns a pointer into has an origin smith cannot read",
+                       path.place};
+                return true;
+            }
+            idiom = code;
+        }
+        out = {OwnPath::Known, idiom, "", path.place};
+        return true;
+    }
+
+    bool decide(const OwnRecord &record) {
+        std::vector<Seen> list;
+        for (const OwnPath &path : record.paths) {
+            Seen one;
+            if (!seen(path, one)) return false;
+            if (one.kind == OwnPath::Call && !one.pending && one.reason == "neutral") continue;
+            list.push_back(one);
+        }
+        OwnResult &result = results[record.symbol];
+        std::vector<std::pair<std::string, std::string>> distinct; // idiom, first place
+        const Seen *unknown = nullptr;
+        bool pending = false;
+        for (const Seen &one : list) {
+            pending = pending || one.pending;
+            if (one.kind == OwnPath::Unknown && unknown == nullptr) unknown = &one;
+            if (one.kind != OwnPath::Known) continue;
+            bool found = false;
+            for (const auto &[idiom, place] : distinct)
+                found = found || idiom == one.idiom;
+            if (!found) distinct.push_back({one.idiom, one.place});
+        }
+        auto fail = [&](const std::string &place, const std::string &message, bool module) {
+            result.state = OwnResult::Failed;
+            if (!record.trusted) problems.push_back({record.symbol, place, "smith-ownership: " + message, module});
+        };
+        if (!record.declared.empty()) { // an attribute wins only when the paths we can read agree with it
+            for (const auto &[idiom, place] : distinct) {
+                if (ownCovers(idiom, record.declared)) continue;
+                fail(place,
+                     "`" + record.name + "` says " + ownSpell(record.declared) + " but returns a pointer that is " +
+                         ownDescribe(idiom) + " (" + ownShort(place) +
+                         "); change the attribute or the body so they agree",
+                     false);
+                return true;
+            }
+            result.state = pending ? OwnResult::Pending : OwnResult::Known;
+            result.idiom = record.declared;
+            return true;
+        }
+        std::vector<std::pair<std::string, std::string>> shortest = ownShortest(distinct);
+        if (shortest.size() == 1 && distinct.size() > 1) distinct = shortest; // internal and context give way (lifetimes)
+        if (distinct.size() > 1) {
+            std::string text = "`" + record.name + "` returns different things on different paths: ";
+            std::string attributes;
+            for (size_t i = 0; i < distinct.size(); i++) {
+                text += (i == 0 ? "" : i + 1 == distinct.size() ? " and " : ", ") + ownDescribe(distinct[i].first) +
+                        " (" + ownShort(distinct[i].second) + ")";
+                if (distinct[i].first != "context")
+                    attributes += (attributes.empty() ? "" : " or ") + ownSpell(distinct[i].first);
+            }
+            text += "; a function has one idiom, so make every path return the same kind";
+            if (!attributes.empty()) text += " and write the attribute that names it: " + attributes;
+            fail(distinct[1].second, text, true);
+            return true;
+        }
+        if (unknown != nullptr) {
+            fail(unknown->place,
+                 "`" + record.name + "` returns a pointer whose origin smith cannot read (" + unknown->reason +
+                     "); write [[std::returns_owned(f)]], [[std::returns_borrowed(n)]] or [[std::returns_internal]] "
+                     "on it",
+                 true);
+            return true;
+        }
+        if (pending) {
+            result.state = OwnResult::Pending;
+        } else if (distinct.size() == 1) {
+            result.state = OwnResult::Known;
+            result.idiom = distinct[0].first;
+        } else {
+            result.state = OwnResult::Neutral;
+        }
+        return true;
+    }
+};
+
+// Names of smith's own allocators: a call of one is the caller's context, and a function with one of these names is the
+// allocator itself (its body is the edge to malloc and is not read).
+inline bool ownContextAllocator(llvm::StringRef name) {
+    name = name.ltrim('_');
+    return name.starts_with("smith_mem_alloc") || name.starts_with("smith_mem_try_alloc") ||
+           name.starts_with("smith_arena_push") || name.starts_with("smith_arena_try_push");
+}
+
+inline bool ownPointerLike(QualType type) {
+    return (type->isPointerType() && !type->getPointeeType()->isFunctionType()) || isSliceType(type) ||
+           type->isArrayType();
+}
+
+// Reads the return paths of one function body: a work list of expressions, no recursion.
+class OwnerReader {
+  public:
+    using Symbols = std::function<std::string(const FunctionDecl *)>;
+    OwnerReader(ASTContext &context, Symbols symbols, Symbols names)
+        : context(context), sm(context.getSourceManager()), symbols(std::move(symbols)), names(std::move(names)) {}
+
+    void read(const FunctionDecl *function, OwnRecord &record, const std::function<std::string(SourceLocation)> &place) {
+        fn = function;
+        scan(function->getBody());
+        for (const auto &[expr, loc] : returns) {
+            size_t root = newRoot();
+            work.push_back({expr, root, loc});
+            run();
+        }
+        for (size_t i = 0; i < store.size(); i++) { // the codes of the arguments are the results of their roots
+            if (store[i].kind != OwnPath::Call) continue;
+            for (size_t a = 0; a < argRoots[i].size(); a++) {
+                long root = argRoots[i][a];
+                store[i].args[a] = root < 0 ? "-" : code(static_cast<size_t>(root));
+            }
+        }
+        std::vector<size_t> indexes; // in the order of the source, so a message names the first return first
+        for (size_t root : returnRoots)
+            indexes.insert(indexes.end(), rootPaths[root].begin(), rootPaths[root].end());
+        std::stable_sort(indexes.begin(), indexes.end(), [&](size_t left, size_t right) {
+            return placeAt[left].getRawEncoding() < placeAt[right].getRawEncoding();
+        });
+        for (size_t index : indexes) {
+            OwnPath path = store[index];
+            path.place = place(placeAt[index]);
+            record.paths.push_back(path);
+        }
+    }
+
+  private:
+    ASTContext &context;
+    const SourceManager &sm;
+    Symbols symbols, names;
+    const FunctionDecl *fn = nullptr;
+
+    struct Work {
+        const Expr *expr;
+        size_t root;
+        SourceLocation at;
+    };
+    std::vector<std::pair<const Expr *, SourceLocation>> returns;
+    std::map<const VarDecl *, std::vector<const Expr *>> sources;
+    std::set<const VarDecl *> addressTaken;
+    std::vector<OwnPath> store;
+    std::vector<SourceLocation> placeAt;
+    std::vector<std::vector<long>> argRoots; // by path: the root of each argument's paths, -1 for a non-pointer
+    std::vector<std::vector<size_t>> rootPaths;
+    std::vector<size_t> returnRoots;
+    std::vector<Work> work;
+    std::map<const CallExpr *, size_t> callPaths;
+    std::set<std::pair<const void *, size_t>> visited;
+
+    size_t newRoot() {
+        rootPaths.emplace_back();
+        returnRoots.push_back(rootPaths.size() - 1); // the arguments' roots are told apart below
+        return rootPaths.size() - 1;
+    }
+
+    size_t argRoot() {
+        rootPaths.emplace_back();
+        return rootPaths.size() - 1;
+    }
+
+    void scan(const Stmt *body) {
+        std::vector<const Stmt *> list{body};
+        while (!list.empty()) {
+            const Stmt *statement = list.back();
+            list.pop_back();
+            if (statement == nullptr) continue;
+            if (const auto *ret = dyn_cast<ReturnStmt>(statement)) {
+                if (ret->getRetValue() != nullptr) returns.push_back({ret->getRetValue(), ret->getReturnLoc()});
+            } else if (const auto *declarations = dyn_cast<DeclStmt>(statement)) {
+                for (const Decl *decl : declarations->decls())
+                    if (const auto *var = dyn_cast<VarDecl>(decl))
+                        if (var->hasInit()) sources[var].push_back(var->getInit());
+            } else if (const auto *op = dyn_cast<BinaryOperator>(statement)) {
+                if (op->getOpcode() == BO_Assign) {
+                    if (const VarDecl *var = assigned(op->getLHS())) sources[var].push_back(op->getRHS());
+                }
+            } else if (const auto *unary = dyn_cast<UnaryOperator>(statement)) {
+                if (unary->getOpcode() == UO_AddrOf) {
+                    if (const VarDecl *var = rootVar(unary->getSubExpr())) addressTaken.insert(var);
+                }
+            }
+            for (const Stmt *child : statement->children())
+                list.push_back(child);
+        }
+    }
+
+    // The variable an assignment writes: `p = ...` or the data pointer of a slice, `r.data = ...`.
+    static const VarDecl *assigned(const Expr *lhs) {
+        lhs = lhs->IgnoreParenImpCasts();
+        if (const auto *ref = dyn_cast<DeclRefExpr>(lhs)) return dyn_cast<VarDecl>(ref->getDecl());
+        if (const auto *member = dyn_cast<MemberExpr>(lhs))
+            if (!member->isArrow() && member->getMemberDecl()->getName() == "data")
+                if (const auto *ref = dyn_cast<DeclRefExpr>(member->getBase()->IgnoreParenImpCasts()))
+                    return dyn_cast<VarDecl>(ref->getDecl());
+        return nullptr;
+    }
+
+    // The variable an lvalue is part of (`x`, `x.a`, `x.a[1]`), for the address taken of it.
+    static const VarDecl *rootVar(const Expr *expr) {
+        for (int depth = 0; depth < 32 && expr != nullptr; depth++) {
+            expr = expr->IgnoreParenImpCasts();
+            if (const auto *ref = dyn_cast<DeclRefExpr>(expr)) return dyn_cast<VarDecl>(ref->getDecl());
+            if (const auto *member = dyn_cast<MemberExpr>(expr)) {
+                if (member->isArrow()) return nullptr;
+                expr = member->getBase();
+            } else if (const auto *index = dyn_cast<ArraySubscriptExpr>(expr)) {
+                expr = index->getBase();
+            } else {
+                return nullptr;
+            }
+        }
+        return nullptr;
+    }
+
+    void add(size_t root, OwnPath path, SourceLocation at) {
+        store.push_back(std::move(path));
+        placeAt.push_back(at);
+        argRoots.emplace_back();
+        rootPaths[root].push_back(store.size() - 1);
+    }
+
+    void known(size_t root, const std::string &idiom, SourceLocation at) {
+        OwnPath path;
+        path.kind = OwnPath::Known;
+        path.idiom = idiom;
+        add(root, path, at);
+    }
+
+    void unknown(size_t root, const std::string &reason, SourceLocation at) {
+        OwnPath path;
+        path.kind = OwnPath::Unknown;
+        path.reason = reason;
+        add(root, path, at);
+    }
+
+    // The idiom of an argument's paths as a code for the call that uses it.
+    std::string code(size_t root) {
+        std::string result = "0";
+        for (size_t index : rootPaths[root]) {
+            const OwnPath &path = store[index];
+            if (path.kind != OwnPath::Known) return "?";
+            if (result != "0" && result != path.idiom) return "?";
+            result = path.idiom;
+        }
+        return result;
+    }
+
+    void run() {
+        while (!work.empty()) {
+            Work item = work.back();
+            work.pop_back();
+            step(item);
+        }
+    }
+
+    void push(const Expr *expr, const Work &from) {
+        if (expr != nullptr && visited.insert({expr, from.root}).second) work.push_back({expr, from.root, from.at});
+    }
+
+    // Strips what changes the type and not the pointer.
+    static const Expr *plain(const Expr *expr) {
+        for (int depth = 0; depth < 64; depth++) {
+            expr = expr->IgnoreParens();
+            if (const auto *cast = dyn_cast<CastExpr>(expr)) {
+                if (cast->getCastKind() == CK_IntegralToPointer || cast->getCastKind() == CK_PointerToIntegral) return expr;
+                expr = cast->getSubExpr();
+            } else if (const auto *unary = dyn_cast<UnaryOperator>(expr)) {
+                if (unary->getOpcode() != UO_Extension) return expr;
+                expr = unary->getSubExpr();
+            } else if (const auto *wrapped = dyn_cast<FullExpr>(expr)) {
+                expr = wrapped->getSubExpr();
+            } else if (const auto *temporary = dyn_cast<MaterializeTemporaryExpr>(expr)) {
+                expr = temporary->getSubExpr();
+            } else {
+                return expr;
+            }
+        }
+        return expr;
+    }
+
+    static std::string idiomOf(const FunctionDecl *callee) {
+        return ownershipOf(callee);
+    }
+
+    void step(const Work &item) {
+        const Expr *expr = plain(item.expr);
+        size_t root = item.root;
+        SourceLocation at = item.at;
+        if (item.expr->isNullPointerConstant(context, Expr::NPC_ValueDependentIsNull) != Expr::NPCK_NotNull)
+            return; // null is every idiom
+        if (isa<ImplicitValueInitExpr>(expr)) return;
+        if (isa<StringLiteral>(expr)) return known(root, "internal", at);
+        if (const auto *ref = dyn_cast<DeclRefExpr>(expr)) return onVariable(ref, item);
+        if (const auto *call = dyn_cast<CallExpr>(expr)) return onCall(call, item);
+        if (const auto *unary = dyn_cast<UnaryOperator>(expr)) {
+            if (unary->getOpcode() == UO_AddrOf) return onAddress(unary->getSubExpr(), item);
+            if (unary->isIncrementDecrementOp()) return push(unary->getSubExpr(), item);
+            return unknown(root, "a pointer loaded through a pointer", at);
+        }
+        if (const auto *op = dyn_cast<BinaryOperator>(expr)) {
+            switch (op->getOpcode()) {
+            case BO_Add:
+            case BO_Sub:
+                return push(ownPointerLike(op->getLHS()->getType()) ? op->getLHS() : op->getRHS(), item);
+            case BO_AddAssign:
+            case BO_SubAssign:
+                return push(op->getLHS(), item);
+            case BO_Assign:
+            case BO_Comma:
+                return push(op->getRHS(), item);
+            default:
+                return unknown(root, "an expression smith does not follow", at);
+            }
+        }
+        if (const auto *choice = dyn_cast<ConditionalOperator>(expr)) {
+            push(choice->getTrueExpr(), item);
+            return push(choice->getFalseExpr(), item);
+        }
+        if (const auto *choice = dyn_cast<BinaryConditionalOperator>(expr)) {
+            push(choice->getCommon(), item);
+            return push(choice->getFalseExpr(), item);
+        }
+        if (const auto *statements = dyn_cast<StmtExpr>(expr)) {
+            const CompoundStmt *body = statements->getSubStmt();
+            if (!body->body_empty())
+                if (const auto *last = dyn_cast<Expr>(body->body_back())) return push(last, item);
+            return unknown(root, "a statement expression with no value", at);
+        }
+        if (const auto *literal = dyn_cast<CompoundLiteralExpr>(expr)) return push(literal->getInitializer(), item);
+        if (const auto *list = dyn_cast<InitListExpr>(expr)) { // a slice is {data, count}: the data is the origin
+            if (list->getNumInits() == 0) return;
+            return push(list->getInit(0), item);
+        }
+        if (const auto *member = dyn_cast<MemberExpr>(expr)) {
+            if (!member->isArrow() && member->getMemberDecl()->getName() == "data" &&
+                isSliceType(member->getBase()->getType()))
+                return push(member->getBase(), item);
+            return unknown(root, "a pointer read from a field", at);
+        }
+        unknown(root, "an expression smith does not follow", at);
+    }
+
+    // A parameter, a local variable or a global named as a pointer (or a slice, or an array that decays).
+    void onVariable(const DeclRefExpr *ref, const Work &item) {
+        const auto *var = dyn_cast<VarDecl>(ref->getDecl());
+        if (var == nullptr) return unknown(item.root, "a name that is not a variable", item.at);
+        if (const auto *param = dyn_cast<ParmVarDecl>(var)) {
+            if (!ownPointerLike(param->getType()))
+                return unknown(item.root, "a parameter that is not a pointer or a slice", item.at);
+            known(item.root, "borrowed:" + std::to_string(param->getFunctionScopeIndex() + 1), item.at);
+        } else if (var->hasGlobalStorage()) {
+            return known(item.root, "internal", item.at);
+        } else if (var->getType()->isArrayType()) {
+            return unknown(item.root, "a pointer into a local array", item.at);
+        } else if (addressTaken.count(var) != 0) {
+            return unknown(item.root, "a pointer variable whose address is taken", item.at);
+        } else if (sources.count(var) == 0) {
+            return unknown(item.root, "a pointer variable that is never assigned", item.at);
+        }
+        if (!visited.insert({var, item.root}).second) return;
+        for (const Expr *source : sources[var])
+            push(source, item);
+    }
+
+    // `&x`, `&p->field`, `&p[i]`, `&*p`: where the object is.
+    void onAddress(const Expr *target, const Work &item) {
+        for (int depth = 0; depth < 32; depth++) {
+            target = target->IgnoreParenImpCasts();
+            if (const auto *member = dyn_cast<MemberExpr>(target)) {
+                if (member->isArrow()) return push(member->getBase(), item);
+                target = member->getBase();
+            } else if (const auto *index = dyn_cast<ArraySubscriptExpr>(target)) {
+                const Expr *base = index->getBase()->IgnoreParenImpCasts();
+                const Decl *named = refVar(base);
+                if (!base->getType()->isArrayType() || (named != nullptr && isa<ParmVarDecl>(named)))
+                    return push(base, item);
+                target = base;
+            } else if (const auto *deref = dyn_cast<UnaryOperator>(target)) {
+                if (deref->getOpcode() != UO_Deref) break;
+                return push(deref->getSubExpr(), item);
+            } else if (const auto *ref = dyn_cast<DeclRefExpr>(target)) {
+                const auto *var = dyn_cast<VarDecl>(ref->getDecl());
+                if (var != nullptr && var->hasGlobalStorage()) return known(item.root, "internal", item.at);
+                return unknown(item.root, "the address of a local variable", item.at);
+            } else if (isa<StringLiteral>(target)) {
+                return known(item.root, "internal", item.at);
+            } else {
+                break;
+            }
+        }
+        unknown(item.root, "an address smith does not follow", item.at);
+    }
+
+    static const Decl *refVar(const Expr *expr) {
+        const auto *ref = dyn_cast<DeclRefExpr>(expr->IgnoreParenImpCasts());
+        return ref == nullptr ? nullptr : ref->getDecl();
+    }
+
+    // What a call of a function with an idiom means for the result: owned and internal are what they say, and borrowed
+    // is whatever its argument is.
+    void applyIdiom(const std::string &idiom, const CallExpr *call, const Work &item) {
+        llvm::StringRef text = idiom;
+        if (text.consume_front("borrowed:")) {
+            unsigned long index = 0;
+            text.getAsInteger(10, index);
+            if (index < 1 || index > call->getNumArgs())
+                return unknown(item.root, "a call with fewer arguments than the idiom names", item.at);
+            return push(call->getArg(static_cast<unsigned>(index - 1)), item);
+        }
+        known(item.root, idiom, item.at);
+    }
+
+    void onCall(const CallExpr *call, const Work &item) {
+        const FunctionDecl *callee = call->getDirectCallee();
+        if (callee == nullptr) return unknown(item.root, "a call through a function pointer", item.at);
+        std::string name = callee->getNameAsString();
+        if (ownContextAllocator(name)) return known(item.root, contextIdiom, item.at);
+        std::string declared = idiomOf(callee);
+        if (!declared.empty()) return applyIdiom(declared, call, item);
+        unsigned extra = 0;
+        std::string base = unfortified(name, extra).str();
+        if (llvm::StringRef(base).starts_with("__builtin_assume_aligned") && call->getNumArgs() >= 1)
+            return push(call->getArg(0), item);
+        if (llvm::StringRef(base).consume_front("__builtin_")) base = base.substr(10);
+        if (sm.isInSystemHeader(callee->getLocation()) || callee->getBuiltinID() != 0) {
+            llvm::StringRef kind;
+            int arg = 0;
+            llvm::StringRef nullForm;
+            if (smith_effects::null_idiom(base, arg, nullForm) && static_cast<unsigned>(arg) <= call->getNumArgs() &&
+                call->getArg(arg - 1)->isNullPointerConstant(context, Expr::NPC_ValueDependentIsNull) !=
+                    Expr::NPCK_NotNull)
+                return applyIdiom(nullForm.str(), call, item);
+            if (smith_effects::idiom(base, kind)) return applyIdiom(kind.str(), call, item);
+            return unknown(item.root, "`" + base + "` is a libc function the table gives no idiom", item.at);
+        }
+        if (!ownPointerLike(callee->getReturnType()))
+            return unknown(item.root, "`" + name + "` does not return a pointer or a slice", item.at);
+        auto again = callPaths.find(call); // a call met from a second variable or root: its arguments are read once
+        if (again != callPaths.end()) {
+            OwnPath copy = store[again->second];
+            std::vector<long> roots = argRoots[again->second];
+            add(item.root, copy, item.at);
+            argRoots.back() = roots;
+            return;
+        }
+        OwnPath path;
+        path.kind = OwnPath::Call;
+        const FunctionDecl *definition = callee->getDefinition();
+        path.callee = symbols(definition != nullptr ? definition : callee);
+        path.calleeName = names(definition != nullptr ? definition : callee);
+        path.args.assign(call->getNumArgs(), "-");
+        std::vector<long> roots;
+        for (unsigned i = 0; i < call->getNumArgs(); i++) {
+            if (!ownPointerLike(call->getArg(i)->getType())) {
+                roots.push_back(-1);
+                continue;
+            }
+            size_t root = argRoot();
+            roots.push_back(static_cast<long>(root));
+            work.push_back({call->getArg(i), root, item.at});
+        }
+        add(item.root, path, item.at);
+        argRoots.back() = roots;
+        callPaths[call] = store.size() - 1;
+    }
+};
+
 // Walks a body with no recursion (a work list) and records the effects it finds.
 class Collector {
   public:
@@ -943,6 +1596,7 @@ class Analysis {
             checkRecursion();
             checkOwnership();
         }
+        inferOwnership();
         if (const char *mode = getenv("SMITH_EFFECTS_IDIOMS")) reportIdioms(mode);
         checkAssertions();
         attachHover();
@@ -1088,6 +1742,81 @@ class Analysis {
         std::string symbol = function != nullptr ? symbolOf(function) : cast<NamedDecl>(decl)->getNameAsString();
         if (!owned.insert(symbol).second) return;
         ownerships.push_back({function != nullptr ? 'O' : 'T', symbol, idiom, decl->getLocation()});
+    }
+
+    // The R lines of the summary: the paths of a function whose idiom waits on another file (#725).
+    std::string pendingText;
+
+    // The idiom of every function that returns a pointer or a slice (#725), read from its body by OwnerReader and
+    // settled by OwnSolver; what only another file can say is left for the link. An explicit attribute wins when the
+    // paths agree with it; a body that contradicts it, two idioms on different paths and an origin smith cannot read
+    // are errors (the last two in a module; a `.c` file is only inferred for).
+    void inferOwnership() {
+        bool module = isModule();
+        const SourceManager &sm = context.getSourceManager();
+        OwnSolver solver(false);
+        std::vector<const FunctionDecl *> subjects;
+        std::map<std::string, const FunctionDecl *> bySymbol;
+        for (const FunctionDecl *function : order) {
+            QualType type = function->getReturnType();
+            if (!ownPointerLike(type) || type->isArrayType() || sm.isInSystemHeader(function->getLocation())) continue;
+            const Node &node = nodes[function];
+            OwnRecord record;
+            record.symbol = node.symbol;
+            record.name = shownName(function);
+            record.place = place(function->getLocation());
+            record.declared = ownershipOf(function);
+            record.module = module;
+            record.trusted = node.trusted;
+            if (ownContextAllocator(function->getNameAsString())) {
+                OwnPath path;
+                path.kind = OwnPath::Known;
+                path.idiom = contextIdiom;
+                path.place = record.place;
+                record.paths.push_back(path);
+            } else {
+                OwnerReader(
+                    context, [this](const FunctionDecl *f) { return symbolOf(f); },
+                    [this](const FunctionDecl *f) { return shownName(f); })
+                    .read(function, record, [this](SourceLocation loc) { return place(loc); });
+            }
+            solver.records[record.symbol] = record;
+            bySymbol[record.symbol] = function;
+            subjects.push_back(function);
+        }
+        solver.solve();
+        unsigned diagnostic = engine.getCustomDiagID(DiagnosticsEngine::Error, "%0");
+        for (const OwnProblem &problem : solver.problems) {
+            const FunctionDecl *function = bySymbol[problem.symbol];
+            if (function == nullptr || function->hasAttr<WeakAttr>() || !inMain(function)) continue;
+            if (problem.needsModule && !module) continue;
+            if (!nodes[function].unowned.empty() || !nodes[function].unkeyed.empty()) continue; // already said
+            SourceLocation loc = locate(problem.place);
+            engine.Report(loc.isValid() ? loc : function->getLocation(), diagnostic) << problem.message;
+        }
+        for (const FunctionDecl *function : subjects) {
+            const OwnRecord &record = solver.records[nodes[function].symbol];
+            const OwnResult &result = solver.results[record.symbol];
+            if (result.state == OwnResult::Known && record.declared.empty() && owned.insert(record.symbol).second)
+                ownerships.push_back({'O', record.symbol, result.idiom, function->getLocation()});
+            if (result.state != OwnResult::Pending && result.state != OwnResult::Failed) continue;
+            for (const OwnPath &path : record.paths) {
+                std::string flags = std::string(record.module ? "m" : "") + (record.trusted ? "t" : "");
+                pendingText += "R\t" + record.symbol + "\t" + (path.place.empty() ? record.place : path.place) + "\t" +
+                               record.name + "\t" + (flags.empty() ? "-" : flags) + "\t";
+                if (path.kind == OwnPath::Known) {
+                    pendingText += "known\t" + path.idiom + "\n";
+                } else if (path.kind == OwnPath::Unknown) {
+                    pendingText += "unknown\t" + path.reason + "\n";
+                } else {
+                    std::string args;
+                    for (const std::string &code : path.args)
+                        args += (args.empty() ? "" : "|") + code;
+                    pendingText += "call\t" + path.callee + "\t" + (args.empty() ? "-" : args) + "\t" +
+                                   path.calleeName + "\n";
+                }
+            }
+        }
     }
 
     void collect(const DeclContext *scope) {
@@ -1601,6 +2330,7 @@ class Analysis {
         for (const Ownership &o : ownerships) { // what a returned pointer means (#720): O a function, T a typedef
             text += std::string(1, o.kind) + "\t" + o.symbol + "\t" + o.idiom + "\t" + place(o.loc) + "\n";
         }
+        text += pendingText; // what only the link can settle of the inferred ownership (#725)
         text += frames(); // the sizes of the frames, when the compile wrote them
         for (const Deferred &w : deferred) {
             text += "W\t" + w.target + "\t" + std::to_string(w.mask) + "\t" + place(w.loc) + "\t" + w.message + "\t" +
@@ -1829,6 +2559,7 @@ class Program {
 
     // A summary given as text, known by `path` (the editor's own, not yet on disk).
     void readText(const std::string &path, llvm::StringRef text) {
+        readOwnership(path, text);
         llvm::SmallVector<llvm::StringRef, 8> lines;
         text.split(lines, '\n', -1, false);
         for (llvm::StringRef line : lines) {
@@ -1892,6 +2623,91 @@ class Program {
         }
     }
 
+    // The `O` and `R` lines (#725): the idioms files state or infer, and the paths of the functions that waited on another
+    // file. An `R` line counts only for the file whose `F` line defines the function (the first stands).
+    void readOwnership(const std::string &path, llvm::StringRef text) {
+        llvm::SmallVector<llvm::StringRef, 8> lines;
+        text.split(lines, '\n', -1, false);
+        std::set<std::string> defined;
+        for (llvm::StringRef line : lines) {
+            llvm::SmallVector<llvm::StringRef, 8> field;
+            line.split(field, '\t');
+            if (field.size() >= 3 && field[0] == "O") {
+                ownership.known.emplace(field[1].str(), field[2].str());
+            } else if (field.size() >= 3 && field[0] == "F") {
+                if (owners.count(field[1].str()) == 0 || owners[field[1].str()] == path) defined.insert(field[1].str());
+            } else if (field.size() >= 7 && field[0] == "R" && defined.count(field[1].str()) != 0) {
+                OwnRecord &record = ownership.records[field[1].str()];
+                record.symbol = field[1].str();
+                record.name = field[3].str();
+                record.module = field[4].contains('m');
+                record.trusted = field[4].contains('t');
+                OwnPath one;
+                one.place = field[2].str();
+                if (record.place.empty()) record.place = one.place;
+                if (field[5] == "known") {
+                    one.kind = OwnPath::Known;
+                    one.idiom = field[6].str();
+                } else if (field[5] == "unknown") {
+                    one.reason = field[6].str();
+                } else if (field.size() >= 9) {
+                    one.kind = OwnPath::Call;
+                    one.callee = field[6].str();
+                    llvm::SmallVector<llvm::StringRef, 8> codes;
+                    field[7].split(codes, '|');
+                    for (llvm::StringRef code : codes)
+                        one.args.push_back(code.str());
+                    one.calleeName = field[8].str();
+                } else {
+                    continue;
+                }
+                record.paths.push_back(one);
+            }
+        }
+    }
+
+    // Settles the ownership of the whole program, and returns the errors printed.
+    int checkOwnership() {
+        for (auto &entry : ownership.records) {
+            auto stated = ownership.known.find(entry.first);
+            if (stated != ownership.known.end()) entry.second.declared = stated->second;
+        }
+        ownership.solve();
+        int errors = 0;
+        for (const OwnProblem &problem : ownership.problems) {
+            if (problem.needsModule && !ownership.records[problem.symbol].module) continue;
+            llvm::errs() << problem.place << ": error: " << problem.message << "\n";
+            errors++;
+        }
+        return errors;
+    }
+
+    // The idioms the link settled (`<program>.owns`): a function and its idiom for each one that waited on another
+    // file, so a program's inferred ownership can be read where it is complete.
+    void writeOwnership(const std::string &path) {
+        std::string text = "# smith ownership 1: the idiom of the functions whose summary waited on another file\n";
+        text += "# columns: function, idiom, place\n";
+        bool any = false;
+        for (const auto &entry : ownership.records) {
+            const OwnResult &result = ownership.results[entry.first];
+            if (result.state != OwnResult::Known) continue;
+            text += entry.second.name + "\t" + result.idiom + "\t" + entry.second.place + "\n";
+            any = true;
+        }
+        if (!any) return;
+        std::string temporary = path + ".part" + std::to_string(getpid());
+        std::error_code error;
+        {
+            llvm::raw_fd_ostream file(temporary, error);
+            if (error) return;
+            file << text;
+        }
+        if (llvm::sys::fs::rename(temporary, path)) {
+            std::error_code ignored = llvm::sys::fs::remove(temporary);
+            (void)ignored;
+        }
+    }
+
     // What the link and the editor report: a function whose ceiling is passed only through another file.
     struct Violation {
         std::string symbol, name, place, kind, extra, chain, message;
@@ -1948,7 +2764,7 @@ class Program {
 
     // Returns the number of errors, printed as the compiler prints its own.
     int check() {
-        int errors = 0;
+        int errors = checkOwnership();
         for (const Violation &violation : violations()) {
             if (violation.kind == "assertion") {
                 llvm::errs() << violation.place
@@ -2069,6 +2885,7 @@ class Program {
         std::string path;
     };
     bool lenient = false;
+    OwnSolver ownership{true};
     std::map<std::string, Function> functions;
     std::map<std::string, std::string> owners;
     std::vector<Assertion> assertions;
@@ -2191,7 +3008,7 @@ std::vector<EditorViolation> editorCheck(const std::string &label, const std::st
 
 } // namespace
 
-extern "C" int smith_effects_check(int count, char **files, const char *stack) {
+extern "C" int smith_effects_check(int count, char **files, const char *stack, const char *owns) {
     Program program;
     bool any = false;
     for (int i = 0; i < count; i++)
@@ -2201,6 +3018,7 @@ extern "C" int smith_effects_check(int count, char **files, const char *stack) {
     if (stack != nullptr) {
         program.writeStack(stack);
     }
+    if (owns != nullptr) program.writeOwnership(owns);
     return 0;
 }
 

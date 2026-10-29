@@ -19,7 +19,7 @@ constexpr char prelude[_] =
     "ww() { until grep -q \"$2\" \"$1\" 2>/dev/null; do sleep 0.05; done; }; "
     "hold='touch held; while [ ! -e free ]; do sleep 0.05; done'; ";
 
-static const char *slots_case(io::Io *io, const char *script) {
+[[std::returns_borrowed(1)]] static const char *slots_case(io::Io *io, const char *script) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     scratch::Run run = scratch::sh(&p, format::push(&io->arena, prelude, script).data);
     scratch::expect_status("the case ends", 0, &run);

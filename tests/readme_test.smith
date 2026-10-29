@@ -157,7 +157,7 @@ typedef struct {
 
 // The file a block is written to: file=PATH, else Makefile, c-N.c, or the path its module line implies (example-N.smith
 // without one).
-static const char *path_of(io::Io *io, const scratch::Project *p, const Block *block) {
+[[std::returns_borrowed(1)]] static const char *path_of(io::Io *io, const scratch::Project *p, const Block *block) {
     if (block->path != nullptr) return block->path;
     if (c::strcmp(block->kind, "make") == 0) return "Makefile";
     if (c::strcmp(block->kind, "c") == 0) return format::push(&io->arena, "c-", block->number, ".c").data;

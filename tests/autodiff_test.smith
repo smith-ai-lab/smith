@@ -186,7 +186,7 @@ export void test_autodiff_structs_gradients_sgd_and_adam_equal_their_references(
 constexpr char symbolizer[_] = "ln -sf \"$(command -v smith)\" llvm-symbolizer; export "
                                "ASAN_SYMBOLIZER_PATH=\"$PWD/llvm-symbolizer\"; ";
 
-static const char *oob_run(io::Io *io, const scratch::Project *p, const char *command) {
+[[std::returns_borrowed(2)]] static const char *oob_run(io::Io *io, const scratch::Project *p, const char *command) {
     return scratch::sh(p, format::push(&io->arena, symbolizer, command).data).err;
 }
 
@@ -250,7 +250,7 @@ export void test_autodiff_oob_gradient_past_the_array_address_sanitizer_stops_it
 
 // Builds tests/autodiff/wrong/main.smith with CALL replaced; returns the output of the build, which must fail at its
 // line.
-static const char *wrong_call(io::Io *io, const char *call) {
+[[std::returns_borrowed(1)]] static const char *wrong_call(io::Io *io, const char *call) {
     scratch::Project p = file_as(io, "wrong", "wrong/main.smith", "template.smith");
     const char *line = scratch::capture(&p, "grep -n '^    CALL' template.smith | cut -d: -f1");
     scratch::Run made = scratch::sh(&p, format::push(&io->arena, "esc=$(printf '%s' '", call,
