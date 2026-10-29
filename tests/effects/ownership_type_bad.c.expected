@@ -1,0 +1,7 @@
+status 1
+ownership_type_bad.c:3:15: error: smith-ownership: `std::returns_internal` is for a function that returns a pointer or a slice, and this one returns `int`
+ownership_type_bad.c:4:17: error: smith-ownership: `returns_owned(nonexistent)`: `nonexistent` is not a declared function
+ownership_type_bad.c:5:17: error: smith-ownership: `returns_borrowed(3)`: there is no parameter 3 (the function has 2)
+ownership_type_bad.c:6:17: error: smith-ownership: `returns_borrowed(2)`: parameter 2 is `int`, not a pointer or a slice
+ownership_type_bad.c:7:17: error: smith-ownership: `returns_owned(abs)`: `abs` must take one pointer
+ownership_type_bad.c:9:17: error: smith-ownership: a function pointer type has at most one ownership idiom (returns_owned, returns_borrowed or returns_internal)

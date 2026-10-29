@@ -35,8 +35,10 @@
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendOptions.h"
 #include "clang/Frontend/FrontendPluginRegistry.h"
+#include "clang/Sema/Lookup.h"
 #include "clang/Sema/ParsedAttr.h"
 #include "clang/Sema/Sema.h"
+#include "llvm/ADT/APSInt.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/FileSystem.h"
@@ -57,6 +59,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <string>
 #include <unistd.h>
@@ -266,6 +269,243 @@ struct PureAttr final : ParsedAttrInfo {
         return AttributeApplied;
     }
 };
+
+// ---- The ownership idioms (#720)
+// -------------------------------------------------------------------------------------
+
+// What a returned pointer means, written on a function or on a function pointer's typedef (or field, variable): kept as
+// an AnnotateAttr "std::owns:owned:free", "std::owns:borrowed:1" or "std::owns:internal", recorded in the summary
+// (`O` and `T` lines), and checked for nothing yet. The same meaning on a function pointer *type* is
+// `[[clang::annotate_type("std::owns:internal")]]` after the parameter list, which clang keeps as it keeps effects.
+constexpr const char *ownsPrefix = "std::owns:";
+
+// The function type of a declaration that may carry an ownership attribute: the function itself, or the function a
+// pointer (through typedefs) points to.
+const FunctionType *ownerFunctionType(const Decl *decl) {
+    QualType type;
+    if (const auto *function = dyn_cast<FunctionDecl>(decl)) {
+        type = function->getType();
+    } else if (const auto *typedefDecl = dyn_cast<TypedefNameDecl>(decl)) {
+        type = typedefDecl->getUnderlyingType();
+    } else if (const auto *value = dyn_cast<ValueDecl>(decl)) {
+        type = value->getType();
+    } else {
+        return nullptr;
+    }
+    if (const auto *pointer = type->getAs<PointerType>()) type = pointer->getPointeeType();
+    return type->getAs<FunctionType>();
+}
+
+bool isSliceType(QualType type) {
+    const auto *record = type->getAs<RecordType>();
+    return record != nullptr && record->getDecl()->getName().starts_with("smith_array");
+}
+
+bool isPointerOrSlice(QualType type) {
+    return type->isPointerType() || isSliceType(type);
+}
+
+struct OwnershipAttr : ParsedAttrInfo {
+    const char *scoped;
+    const char *plain;
+    explicit OwnershipAttr(const char *scoped, const char *plain, unsigned optArgs) : scoped(scoped), plain(plain) {
+        OptArgs = optArgs;
+        AcceptsExprPack = 0;
+        allowIdentifiers(*this, 0);
+        spellings[0] = {ParsedAttr::AS_C23, scoped};
+        spellings[1] = {ParsedAttr::AS_CXX11, scoped};
+        spellings[2] = {ParsedAttr::AS_GNU, plain};
+        Spellings = spellings;
+    }
+    bool diagAppertainsToDecl(Sema &S, const ParsedAttr &Attr, const Decl *D) const override {
+        if (isa<FunctionDecl>(D) || ownerFunctionType(D) != nullptr) return true;
+        S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type)
+            << Attr << Attr.isRegularKeywordAttribute() << ExpectedFunction;
+        return false;
+    }
+    // The text after `std::owns:` for this attribute, or empty after an error was reported.
+    virtual std::string describe(Sema &S, const ParsedAttr &Attr, const FunctionType *type) const = 0;
+
+    AttrHandling handleDeclAttribute(Sema &S, Decl *D, const ParsedAttr &Attr) const override {
+        auto fail = [&](const std::string &message) {
+            unsigned id = S.getDiagnostics().getCustomDiagID(DiagnosticsEngine::Error, "smith-ownership: %0");
+            S.Diag(Attr.getLoc(), id) << message;
+            return AttributeNotApplied;
+        };
+        const FunctionType *type = ownerFunctionType(D);
+        if (type == nullptr) return fail("an ownership attribute is for a function or a function pointer");
+        if (!isPointerOrSlice(type->getReturnType()))
+            return fail(std::string("`") + scoped + "` is for a function that returns a pointer or a slice, and this " +
+                        "one returns `" + type->getReturnType().getAsString() + "`");
+        for (const auto *other : D->specific_attrs<AnnotateAttr>())
+            if (other->getAnnotation().starts_with(ownsPrefix))
+                return fail("a declaration has at most one ownership attribute (returns_owned, returns_borrowed or "
+                            "returns_internal)");
+        std::string text = describe(S, Attr, type);
+        if (text.empty()) return AttributeNotApplied;
+        D->addAttr(AnnotateAttr::Create(S.Context, std::string(ownsPrefix) + text, nullptr, 0, Attr.getRange()));
+        return AttributeApplied;
+    }
+    ParsedAttrInfo::Spelling spellings[3];
+    std::string error(Sema &S, const ParsedAttr &Attr, const std::string &message) const {
+        unsigned id = S.getDiagnostics().getCustomDiagID(DiagnosticsEngine::Error, "smith-ownership: %0");
+        S.Diag(Attr.getLoc(), id) << message;
+        return "";
+    }
+};
+
+// `[[std::returns_owned(free)]]`: the caller owns the memory and frees it with `free`, a declared function that
+// takes one pointer.
+struct ReturnsOwnedAttr final : OwnershipAttr {
+    ReturnsOwnedAttr() : OwnershipAttr("std::returns_owned", "smith_returns_owned", 1) {}
+    std::string describe(Sema &S, const ParsedAttr &Attr, const FunctionType *) const override {
+        if (Attr.getNumArgs() != 1)
+            return error(S, Attr, "`returns_owned` takes the function that frees: `returns_owned(free)`");
+        std::string written;
+        if (Attr.isArgIdent(0)) {
+            written = Attr.getArgAsIdent(0)->getIdentifierInfo()->getName().str();
+        } else if (const auto *literal = dyn_cast_or_null<StringLiteral>(Attr.getArgAsExpr(0))) {
+            written = literal->getString().str();
+        } else {
+            return error(S, Attr, "`returns_owned` takes the name of the function that frees");
+        }
+        IdentifierInfo *name = &S.Context.Idents.get(written);
+        LookupResult found(S, DeclarationName(name), Attr.getLoc(), Sema::LookupOrdinaryName);
+        S.LookupName(found, S.TUScope);
+        const FunctionDecl *release = found.empty() ? nullptr : dyn_cast<FunctionDecl>(found.getRepresentativeDecl());
+        if (release == nullptr)
+            return error(S, Attr, "`returns_owned(" + written + ")`: `" + written + "` is not a declared function");
+        if (release->getNumParams() != 1 || !release->getParamDecl(0)->getType()->isPointerType())
+            return error(S, Attr, "`returns_owned(" + written + ")`: `" + written + "` must take one pointer");
+        return "owned:" + written;
+    }
+};
+
+// `[[std::returns_borrowed(n)]]`: the result points into argument n (1-based), a pointer or a slice.
+struct ReturnsBorrowedAttr final : OwnershipAttr {
+    ReturnsBorrowedAttr() : OwnershipAttr("std::returns_borrowed", "smith_returns_borrowed", 1) {}
+    std::string describe(Sema &S, const ParsedAttr &Attr, const FunctionType *type) const override {
+        std::optional<llvm::APSInt> number;
+        if (Attr.getNumArgs() == 1 && Attr.isArgExpr(0) && Attr.getArgAsExpr(0) != nullptr)
+            number = Attr.getArgAsExpr(0)->getIntegerConstantExpr(S.Context);
+        if (!number) return error(S, Attr, "`returns_borrowed` takes the number of a parameter: `returns_borrowed(1)`");
+        llvm::APSInt value = *number;
+        const auto *proto = type->getAs<FunctionProtoType>();
+        unsigned count = proto == nullptr ? 0 : proto->getNumParams();
+        if (value < 1 || value > count)
+            return error(S, Attr,
+                         "`returns_borrowed(" + std::to_string(value.getExtValue()) + ")`: there is no parameter " +
+                             std::to_string(value.getExtValue()) + " (the function has " + std::to_string(count) + ")");
+        QualType parameter = proto->getParamType(static_cast<unsigned>(value.getExtValue()) - 1);
+        if (!isPointerOrSlice(parameter))
+            return error(S, Attr,
+                         "`returns_borrowed(" + std::to_string(value.getExtValue()) + ")`: parameter " +
+                             std::to_string(value.getExtValue()) + " is `" + parameter.getAsString() +
+                             "`, not a pointer or a slice");
+        return "borrowed:" + std::to_string(value.getExtValue());
+    }
+};
+
+// `[[std::returns_internal]]`: the function's own memory, never freed by the caller.
+struct ReturnsInternalAttr final : OwnershipAttr {
+    ReturnsInternalAttr() : OwnershipAttr("std::returns_internal", "smith_returns_internal", 0) {}
+    std::string describe(Sema &, const ParsedAttr &, const FunctionType *) const override {
+        return "internal";
+    }
+};
+
+// The same rules for the idiom written on a function pointer type (`[[clang::annotate_type("std::owns:...")]]`),
+// which no attribute handler sees: the text of the error, or empty when the idiom is fine.
+std::string typeIdiomError(ASTContext &context, const FunctionType *type, llvm::StringRef idiom) {
+    auto [kind, argument] = idiom.split(':');
+    if (kind != "owned" && kind != "borrowed" && kind != "internal")
+        return "an ownership idiom is returns_owned, returns_borrowed or returns_internal, not `" + idiom.str() + "`";
+    std::string scoped = "std::returns_" + kind.str();
+    if (!isPointerOrSlice(type->getReturnType()))
+        return "`" + scoped + "` is for a function that returns a pointer or a slice, and this one returns `" +
+               type->getReturnType().getAsString() + "`";
+    if (kind == "internal") return "";
+    if (kind == "owned") {
+        const FunctionDecl *release = nullptr;
+        for (const NamedDecl *found : context.getTranslationUnitDecl()->lookup(&context.Idents.get(argument)))
+            if (const auto *function = dyn_cast<FunctionDecl>(found)) release = function;
+        if (release == nullptr)
+            return "`returns_owned(" + argument.str() + ")`: `" + argument.str() + "` is not a declared function";
+        if (release->getNumParams() != 1 || !release->getParamDecl(0)->getType()->isPointerType())
+            return "`returns_owned(" + argument.str() + ")`: `" + argument.str() + "` must take one pointer";
+        return "";
+    }
+    unsigned index = 0;
+    if (argument.getAsInteger(10, index))
+        return "`returns_borrowed` takes the number of a parameter: `returns_borrowed(1)`";
+    const auto *proto = type->getAs<FunctionProtoType>();
+    unsigned count = proto == nullptr ? 0 : proto->getNumParams();
+    if (index < 1 || index > count)
+        return "`returns_borrowed(" + std::to_string(index) + ")`: there is no parameter " + std::to_string(index) +
+               " (the function has " + std::to_string(count) + ")";
+    QualType parameter = proto->getParamType(index - 1);
+    if (!isPointerOrSlice(parameter))
+        return "`returns_borrowed(" + std::to_string(index) + ")`: parameter " + std::to_string(index) + " is `" +
+               parameter.getAsString() + "`, not a pointer or a slice";
+    return "";
+}
+
+// The ownership a declaration states, "owned:free", "borrowed:1" or "internal" (empty when none): from its own
+// attribute, or from the annotation clang keeps on a function pointer type.
+bool hasOwnershipAttr(const Decl *decl) {
+    for (const auto *attr : decl->specific_attrs<AnnotateAttr>())
+        if (attr->getAnnotation().starts_with(ownsPrefix)) return true;
+    return false;
+}
+
+// How many ownership annotations a typedef's function pointer type carries (more than one is an error).
+unsigned typeIdiomCount(const TypedefNameDecl *named) {
+    QualType type = named->getUnderlyingType();
+    if (const auto *pointer = type->getAs<PointerType>()) type = pointer->getPointeeType();
+    unsigned count = 0;
+    for (;;) {
+        const Type *node = type.getTypePtr();
+        if (const auto *attributed = dyn_cast<AttributedType>(node)) {
+            if (const auto *note = dyn_cast_or_null<AnnotateTypeAttr>(attributed->getAttr()))
+                if (note->getAnnotation().starts_with(ownsPrefix)) count++;
+            type = attributed->getModifiedType();
+        } else if (const auto *paren = dyn_cast<ParenType>(node)) {
+            type = paren->getInnerType();
+        } else if (const auto *alias = dyn_cast<TypedefType>(node)) {
+            type = alias->desugar();
+        } else {
+            break;
+        }
+    }
+    return count;
+}
+
+std::string ownershipOf(const Decl *decl) {
+    for (const Decl *redecl : decl->redecls())
+        for (const auto *attr : redecl->specific_attrs<AnnotateAttr>())
+            if (attr->getAnnotation().starts_with(ownsPrefix))
+                return attr->getAnnotation().substr(strlen(ownsPrefix)).str();
+    if (const auto *named = dyn_cast<TypedefNameDecl>(decl)) {
+        QualType type = named->getUnderlyingType();
+        if (const auto *pointer = type->getAs<PointerType>()) type = pointer->getPointeeType();
+        for (;;) {
+            const Type *node = type.getTypePtr();
+            if (const auto *attributed = dyn_cast<AttributedType>(node)) {
+                if (const auto *note = dyn_cast_or_null<AnnotateTypeAttr>(attributed->getAttr()))
+                    if (note->getAnnotation().starts_with(ownsPrefix))
+                        return note->getAnnotation().substr(strlen(ownsPrefix)).str();
+                type = attributed->getModifiedType();
+            } else if (const auto *paren = dyn_cast<ParenType>(node)) {
+                type = paren->getInnerType();
+            } else if (const auto *alias = dyn_cast<TypedefType>(node)) {
+                type = alias->desugar();
+            } else {
+                break;
+            }
+        }
+    }
+    return "";
+}
 
 // ---- What a body does ----------------------------------------------------------------------------------------------
 
@@ -709,9 +949,58 @@ class Analysis {
         promises.push_back({'e', symbolOf(function), shownName(function), function->getLocation()});
     }
 
+    // An ownership idiom (#720) a function or a typedef states: one `O` or `T` line of the summary, once a symbol.
+    struct Ownership {
+        char kind; // O a function, T a typedef of a function pointer
+        std::string symbol, idiom;
+        SourceLocation loc;
+    };
+    std::vector<Ownership> ownerships;
+    std::set<std::string> owned;
+
+    void noteOwnership(const Decl *decl) {
+        const auto *function = dyn_cast<FunctionDecl>(decl);
+        const auto *named = dyn_cast<TypedefNameDecl>(decl);
+        if (function == nullptr && named == nullptr) return;
+        const SourceManager &sm = context.getSourceManager();
+        if (sm.isInSystemHeader(decl->getLocation())) return;
+        std::string idiom = ownershipOf(decl);
+        if (idiom.empty()) return;
+        if (function != nullptr && function == function->getFirstDecl()) {
+            for (const Decl *redecl : function->redecls())
+                for (const auto *attr : redecl->specific_attrs<AnnotateAttr>())
+                    if (attr->getAnnotation().starts_with(ownsPrefix) &&
+                        attr->getAnnotation().substr(strlen(ownsPrefix)) != idiom) {
+                        unsigned id = engine.getCustomDiagID(DiagnosticsEngine::Error, "smith-ownership: %0");
+                        engine.Report(redecl->getLocation(), id)
+                            << "`" + function->getNameAsString() + "` says `" + idiom + "` and `" +
+                                   attr->getAnnotation().substr(strlen(ownsPrefix)).str() +
+                                   "` in two declarations; a function has one ownership idiom";
+                        return;
+                    }
+        }
+        if (named != nullptr && !sm.isInSystemHeader(decl->getLocation()) && !hasOwnershipAttr(decl)) {
+            const FunctionType *type = ownerFunctionType(decl);
+            std::string message = type == nullptr ? "an ownership annotation is for a function pointer"
+                                                  : typeIdiomError(context, type, idiom);
+            if (message.empty() && typeIdiomCount(named) > 1)
+                message = "a function pointer type has at most one ownership idiom (returns_owned, returns_borrowed "
+                          "or returns_internal)";
+            if (!message.empty()) {
+                unsigned id = engine.getCustomDiagID(DiagnosticsEngine::Error, "smith-ownership: %0");
+                engine.Report(decl->getLocation(), id) << message;
+                return;
+            }
+        }
+        std::string symbol = function != nullptr ? symbolOf(function) : cast<NamedDecl>(decl)->getNameAsString();
+        if (!owned.insert(symbol).second) return;
+        ownerships.push_back({function != nullptr ? 'O' : 'T', symbol, idiom, decl->getLocation()});
+    }
+
     void collect(const DeclContext *scope) {
         for (const Decl *decl : scope->decls()) {
             if (decl->isImplicit()) continue;
+            noteOwnership(decl);
             if (const auto *function = dyn_cast<FunctionDecl>(decl)) {
                 if (!function->doesThisDeclarationHaveABody() || function->isInvalidDecl() ||
                     function->isDependentContext() || function->isTemplated()) {
@@ -1182,6 +1471,9 @@ class Analysis {
             text += "P\t" + std::string(1, promise.kind) + "\t" + promise.symbol + "\t" + place(promise.loc) + "\t" +
                     promise.name + "\n";
         }
+        for (const Ownership &o : ownerships) { // what a returned pointer means (#720): O a function, T a typedef
+            text += std::string(1, o.kind) + "\t" + o.symbol + "\t" + o.idiom + "\t" + place(o.loc) + "\n";
+        }
         text += frames(); // the sizes of the frames, when the compile wrote them
         for (const Deferred &w : deferred) {
             text += "W\t" + w.target + "\t" + std::to_string(w.mask) + "\t" + place(w.loc) + "\t" + w.message + "\t" +
@@ -1319,6 +1611,11 @@ const ParsedAttrInfoRegistry::Add<EffectAttr<8>> globals_attribute("smith-global
 const ParsedAttrInfoRegistry::Add<EffectAttr<9>> c_attribute("smith-c-attr", "[[smith::c]]");
 const ParsedAttrInfoRegistry::Add<EffectAttr<10>> fails_attribute("smith-fails-attr", "[[smith::fails]]");
 const ParsedAttrInfoRegistry::Add<PureAttr> pure_attribute("smith-pure-attr", "[[smith::pure]]");
+const ParsedAttrInfoRegistry::Add<ReturnsOwnedAttr> owned_attribute("smith-owned-attr", "[[std::returns_owned]]");
+const ParsedAttrInfoRegistry::Add<ReturnsBorrowedAttr> borrowed_attribute("smith-borrowed-attr",
+                                                                          "[[std::returns_borrowed]]");
+const ParsedAttrInfoRegistry::Add<ReturnsInternalAttr> internal_attribute("smith-internal-attr",
+                                                                          "[[std::returns_internal]]");
 const FrontendPluginRegistry::Add<EffectsPlugin> plugin("smith-effect-inference", "what a function does to the world");
 
 } // namespace

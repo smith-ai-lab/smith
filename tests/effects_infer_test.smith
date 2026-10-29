@@ -611,3 +611,44 @@ export void test_fails_a_proved_index_adds_no_fails_in_debug(io::Io *io) {
                              "smith_failure_proved");
     scratch::expect_lacks("and no other failure call", object.out, "U _smith_failure\n");
 }
+
+// The ownership idioms (#720): `returns_owned(f)`, `returns_borrowed(n)` and `returns_internal` on a function or a
+// function pointer's typedef are accepted, each bad use is an error naming the rule, in C and in a module.
+export void test_ownership_good_c(io::Io *io) {
+    effects_case(io, "ownership_good.c");
+}
+
+export void test_ownership_bad_function_c(io::Io *io) {
+    effects_case(io, "ownership_bad_function.c");
+}
+
+export void test_ownership_good_module(io::Io *io) {
+    effects_case(io, "ownership_module_good.smith");
+}
+
+export void test_ownership_bad_module(io::Io *io) {
+    effects_case(io, "ownership_module_bad.smith");
+}
+
+// The idiom joins the function's entry in the summary (`O` a function, `T` a typedef) and the link reads the file.
+export void test_ownership_is_recorded_in_the_summary(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::write(&p, "a.c",
+                   "#include <stdlib.h>\n[[std::returns_owned(free)]] char *dup1(const char *s);\n"
+                   "[[std::returns_borrowed(1)]] char *find1(const char *s, int c);\n"
+                   "[[std::returns_internal]] char *note1(int n);\n"
+                   "[[std::returns_internal]] typedef char *(*Describe)(int);\n"
+                   "typedef char *(*Name)(int) [[clang::annotate_type(\"std::owns:internal\")]];\n"
+                   "int main(void) { return 0; }\n");
+    scratch::Run run = scratch::sh(&p, "smith cc -c a.c -o a.o && grep -E '^[OT]' a.o.fx | cut -f1-3 && "
+                                       "smith cc a.o -o program && echo linked");
+    scratch::expect_text("the ownership lines of the summary",
+                         "O\t_dup1\towned:free\nO\t_find1\tborrowed:1\nO\t_note1\tinternal\nT\tDescribe\tinternal\n"
+                         "T\tName\tinternal\nlinked\n",
+                         run.out);
+}
+
+// The same rules for the idiom written on a function pointer type with `annotate_type`.
+export void test_ownership_type_bad_c(io::Io *io) {
+    effects_case(io, "ownership_type_bad.c");
+}

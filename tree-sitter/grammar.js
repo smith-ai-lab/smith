@@ -42,7 +42,8 @@ module.exports = grammar(C, {
     [$.type_qualifier, $.auto_declaration],
     [$.storage_class_specifier, $.element_parameter],
     [$.type_qualifier, $.element_parameter],
-    [$._declaration_modifiers, $.attributed_statement, $.export_declaration],
+    [$.type_definition, $._declaration_modifiers, $.attributed_statement, $.export_declaration],
+    [$.type_definition, $._declaration_modifiers],
     [$.pointer_field_declarator, $.tuple_field],
     [$.type_specifier, $.payload_variant],
     [$.field_designator, $.variant_expression],
@@ -210,6 +211,16 @@ module.exports = grammar(C, {
     ),
 
     primitive_type: ($, original) => choice(original, ...sized),
+
+    // C23 attributes before a typedef: [[std::returns_internal]] typedef char *(*Describe)(int);
+    type_definition: $ => seq(
+      choice(optional('__extension__'), repeat1($.attribute_declaration)),
+      'typedef',
+      $._type_definition_type,
+      $._type_definition_declarators,
+      repeat($.attribute_specifier),
+      ';',
+    ),
 
     // T max(constexpr type T, T a, T b)
     // and, for argument lists, auto... rest
