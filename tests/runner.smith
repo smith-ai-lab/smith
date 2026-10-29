@@ -52,20 +52,48 @@ constexpr char shared_script[_] =
 
 // The end of the script for a test that only runs `build/tests`: it links the runner of the shared build.
 constexpr char link_script[_] = "mkdir -p build && ln -sf \"$c/proj/build/tests\" \"$c/proj/build/tests.stack\" "
-                                "\"$c\"/proj/build/libsmith_handlers.dylib* build/";
+                                "\"$c\"/proj/build/libsmith_handlers.dylib* build/ && echo \"$c/proj/\" >.shared-from";
 
 // The end of the script for a test that runs `smith test` or `smith build` in the project: it copies the whole built
 // project (times kept), so `smith build` there is a no-op that writes the copy's paths and not the 14 steps of a
 // build (3 s of CPU) that the runner is made of; the way tests/lsp_test.smith copies its built folders.
-constexpr char copy_script[_] = "cp -Rp \"$c/proj/.\" .";
+constexpr char copy_script[_] = "cp -Rp \"$c/proj/.\" . && echo \"$c/proj/\" >.shared-from";
+
+// The runner was built in the shared folder, where the debug information names its files (the symbolizer shows a path
+// under the current folder relative to it, and this project is not that folder): `.shared-from` holds that folder, and
+// this filter drops it from the paths of a report, which then read as they do in a project that built its own runner.
+// A project that built its own has no such file, and the filter changes nothing. The tests of the symbolizer's own
+// paths (tests/test_runner_reports_test.smith) build their runners in the project.
+constexpr char unshare[_] = "sed -e \"s#$(cat .shared-from 2>/dev/null || echo @none@)##g\"";
+
+// The filter for a command a test writes itself.
+export const char *unshare_pipe() {
+    return unshare;
+}
+
+// The runner of project `p` built (or taken from the one an earlier test built), then `tail`: the project's files are
+// the key, so a test that edits the project before it calls this builds its own.
+static void share(const scratch::Project *p, const char *arguments, const char *tail) {
+    scratch::Run run =
+        scratch::sh(p, format::push(&p->io->arena, "ARGS='", arguments, "'; ", shared_script, tail, " 2>&1").data);
+    scratch::expect_status("runner: the runner builds", 0, &run);
+}
+
+// The runner of `p` linked into it: for a test that only runs `build/tests`.
+export void link_built(const scratch::Project *p, const char *arguments) {
+    share(p, arguments, link_script);
+}
+
+// The built project copied over `p`: for a test that runs `smith test` or `smith build` in it.
+export void copy_built(const scratch::Project *p, const char *arguments) {
+    share(p, arguments, copy_script);
+}
 
 // A project whose runner is built (or taken from the one an earlier test built): `project` and `build` in one, for a
 // test that only runs `build/tests`; a test that builds again, or expects a failed build, uses those two.
 export scratch::Project built_project(io::Io *io, const char *base, const char *files, const char *arguments) {
     scratch::Project p = project(io, base, files);
-    scratch::Run run =
-        scratch::sh(&p, format::push(&io->arena, "ARGS='", arguments, "'; ", shared_script, link_script, " 2>&1").data);
-    scratch::expect_status("runner: the runner builds", 0, &run);
+    link_built(&p, arguments);
     return p;
 }
 
@@ -73,9 +101,7 @@ export scratch::Project built_project(io::Io *io, const char *base, const char *
 // build `smith test` starts with has nothing to do.
 export scratch::Project built_copy(io::Io *io, const char *base, const char *files, const char *arguments) {
     scratch::Project p = project(io, base, files);
-    scratch::Run run =
-        scratch::sh(&p, format::push(&io->arena, "ARGS='", arguments, "'; ", shared_script, copy_script, " 2>&1").data);
-    scratch::expect_status("runner: the runner builds", 0, &run);
+    copy_built(&p, arguments);
     return p;
 }
 
@@ -111,8 +137,10 @@ export scratch::Run build(const scratch::Project *p, const char *arguments) {
 
 // `smith test` of the project, as a task.
 export scratch::Run smith_test(const scratch::Project *p, const char *iso, const char *arguments) {
-    return scratch::sh(
-        p, format::push(&p->io->arena, "env SMITH_OUTPUT=full smith test ", iso, " ", arguments, " 2>&1").data);
+    return scratch::sh(p, format::push(&p->io->arena, "env SMITH_OUTPUT=full smith test ", iso, " ", arguments,
+                                       " >.smith-test.out 2>&1; s=$?; ", unshare,
+                                       " .smith-test.out; rm -f .smith-test.out; exit $s")
+                              .data);
 }
 
 // The runner of the project, its two streams in one.
@@ -129,25 +157,27 @@ export scratch::Run plain(const scratch::Project *p, const char *iso, const char
 // The runner's trace turned into the report by smith symbolize, with the timings left out; the text is the same under
 // the project's lines, spaces squeezed (the columns of the call chain follow the longest path).
 export const char *report(const scratch::Project *p, const char *iso, const char *arguments) {
-    const char *command =
-        format::push(&p->io->arena, "build/tests ", iso, " --trace ", arguments, " 2>&1 | smith symbolize 2>&1 | ",
-                     plain_filter, " | sed -e '/smith_test_execute/d' -e '/smith_test_run_key/d' | tr -s ' '")
-            .data;
-    return scratch::capture(p, command);
-}
-
-// The report of a trace saved in a file of the project, in the form `report` gives.
-export const char *report_of(const scratch::Project *p, const char *file) {
-    const char *command = format::push(&p->io->arena, "smith symbolize 2>&1 <", file, " | ", plain_filter,
+    const char *command = format::push(&p->io->arena, "build/tests ", iso, " --trace ", arguments,
+                                       " 2>&1 | smith symbolize 2>&1 | ", unshare, " | ", plain_filter,
                                        " | sed -e '/smith_test_execute/d' -e '/smith_test_run_key/d' | tr -s ' '")
                               .data;
     return scratch::capture(p, command);
 }
 
+// The report of a trace saved in a file of the project, in the form `report` gives.
+export const char *report_of(const scratch::Project *p, const char *file) {
+    const char *command =
+        format::push(&p->io->arena, "smith symbolize 2>&1 <", file, " | ", unshare, " | ", plain_filter,
+                     " | sed -e '/smith_test_execute/d' -e '/smith_test_run_key/d' | tr -s ' '")
+            .data;
+    return scratch::capture(p, command);
+}
+
 // The runner's trace through smith symbolize, whole.
 export const char *symbolized(const scratch::Project *p, const char *iso, const char *arguments) {
-    const char *command =
-        format::push(&p->io->arena, "build/tests ", iso, " ", arguments, " --trace 2>&1 | smith symbolize 2>&1").data;
+    const char *command = format::push(&p->io->arena, "build/tests ", iso, " ", arguments,
+                                       " --trace 2>&1 | smith symbolize 2>&1 | ", unshare)
+                              .data;
     return scratch::capture(p, command);
 }
 
