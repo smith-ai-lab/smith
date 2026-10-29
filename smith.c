@@ -1462,29 +1462,29 @@ static size_t smith_build_program_manifest(char *out, size_t capacity, const cha
     // standard) by smith itself, never by an external clang.
     size_t source_length = strlen(build_source);
     bool is_smith = source_length > 6 && strcmp(build_source + source_length - 6, ".smith") == 0;
-    int written = snprintf(out, capacity,
-                           "# Written by smith build. It compiles the build file into .smith/program.\n"
-                           "ninja_required_version = 1.10\n"
-                           "builddir = .smith/build-program\n"
-                           "rule cc\n"
-                           "  command = %s -std=gnu23 -g -fdebug-compilation-dir=. -O0 -Wall -Wextra -I .smith/include "
-                           "-MD -MF $out.d -c $in -o $out\n"
-                           "  depfile = $out.d\n"
-                           "  deps = gcc\n"
-                           "  description = smith: compile $in\n"
-                           "rule cc_smith\n"
-                           "  command = env -u SMITH_CLANG %s cc -g -fdebug-compilation-dir=. -O0 -Wall -Wextra $flags "
-                           "-I .smith/include -MD -MF $out.d "
-                           "-c $in -o $out\n"
-                           "  depfile = $out.d\n"
-                           "  deps = gcc\n"
-                           "  description = smith: compile $in\n"
-                           "rule link\n"
-                           "  command = %s $in -o $out\n"
-                           "  description = smith: link $out\n"
-                           "build .smith/build-program/build.o: %s %s\n"
-                           "build .smith/build-program/runtime.o: cc .smith/runtime.c\n",
-                           quoted, own_word, quoted, is_smith ? "cc_smith" : "cc", build_source);
+    int written =
+        snprintf(out, capacity,
+                 "# Written by smith build. It compiles the build file into .smith/program.\n"
+                 "ninja_required_version = 1.10\n"
+                 "builddir = .smith/build-program\n"
+                 "rule cc\n"
+                 "  command = %s -std=gnu23 -g -O0 -Wall -Wextra -I .smith/include -MD -MF $out.d "
+                 "-fdebug-compilation-dir=. -c $in -o $out\n"
+                 "  depfile = $out.d\n"
+                 "  deps = gcc\n"
+                 "  description = smith: compile $in\n"
+                 "rule cc_smith\n"
+                 "  command = env -u SMITH_CLANG %s cc -g -O0 -Wall -Wextra $flags -I .smith/include -MD -MF $out.d "
+                 "-fdebug-compilation-dir=. -c $in -o $out\n"
+                 "  depfile = $out.d\n"
+                 "  deps = gcc\n"
+                 "  description = smith: compile $in\n"
+                 "rule link\n"
+                 "  command = %s $in -o $out\n"
+                 "  description = smith: link $out\n"
+                 "build .smith/build-program/build.o: %s %s\n"
+                 "build .smith/build-program/runtime.o: cc .smith/runtime.c\n",
+                 quoted, own_word, quoted, is_smith ? "cc_smith" : "cc", build_source);
     SMITH_ASSERT(written > 0 && (size_t)written < capacity);
     char objects[1024] = ".smith/build-program/build.o .smith/build-program/runtime.o";
     size_t objects_length = strlen(objects);
