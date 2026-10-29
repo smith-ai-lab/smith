@@ -10,10 +10,7 @@ import runner;
 import scratch;
 
 static scratch::Project shrink_project(io::Io *io, const char *files, const char *arguments) {
-    scratch::Project p = runner::project(io, "runner_base", files);
-    scratch::Run run = runner::build(&p, arguments);
-    scratch::expect_status("shrink: the runner builds", 0, &run);
-    return p;
+    return runner::built_project(io, "runner_base", files, arguments);
 }
 
 // The first number a sed expression finds in the runner's output.
@@ -24,7 +21,7 @@ static const char *number_in(const scratch::Project *p, const char *iso, const c
 }
 
 static void case_a_uniform_failure_shrinks_to_the_boundary(io::Io *io, usize mode) {
-    scratch::Project p = shrink_project(io, "runner_shrink", "");
+    scratch::Project p = runner::built_copy(io, "runner_base", "runner_shrink", "");
     usize line = runner::line_of(&p, "tests/test_shrink.smith", "test::check_less(x, 500);");
     const char *iso = runner::flag(mode);
     // One run: its seed and its shrunk runs are read from the text it saved, which is also what is reported.
