@@ -51,12 +51,13 @@ typedef struct {
 
 // What smith's own link differs in, macOS and Linux (issue #305, knowledge/platform-layer.md): the one table of it.
 struct BuildPlatform {
-    const char *whole_start;           // before an archive linked whole: libsmithtools.a, whose tweaks nothing names
-    const char *whole_end;             // and after it ("" when the start names the archive itself)
-    const char *group_start;           // around the static archives of LLVM, clang, lld and lldb, which name each other
-    const char *lld;                   // lld's library for the platform's object format
-    const char *const *link_flags;     // smith's link: drop what nothing reaches, export only main
-    const char *const *lldb_libraries; // what lldb's host layer uses
+    const char *whole_start;       // before an archive linked whole: libsmithtools.a, whose tweaks nothing names
+    const char *whole_end;         // and after it ("" when the start names the archive itself)
+    const char *group_start;       // around the static archives of LLVM, clang, lld and lldb, which name each other
+    const char *lld;               // lld's library for the platform's object format
+    const char *const *link_flags; // smith's link: drop what nothing reaches, export only main
+    const char *const *deployment; // every compile of smith itself: the oldest OS it runs on (macOS 26), else nothing
+    const char *const *lldb_libraries;   // what lldb's host layer uses
     const char *const *system_libraries; // last: the C++ library and the platform's own
     const char *const *pack_libraries;   // scripts/pack.c's (libcompression on macOS)
     const char *pack_runtime;            // the files of the LLVM install, besides clang's headers, that are packed
@@ -68,7 +69,11 @@ static const BuildPlatform build_platform_macos = {
     .whole_end = "",
     .group_start = "",
     .lld = "liblldMachO.a",
-    .link_flags = (const char *const[]){"-Wl,-dead_strip", "-Wl,-exported_symbol,_main", nullptr},
+    .link_flags =
+        (const char *const[]){"-mmacosx-version-min=26.0", "-Wl,-dead_strip", "-Wl,-exported_symbol,_main", nullptr},
+    // smith runs on macOS 26 and newer, built on any newer one (#802): a system function newer than 26 is called only
+    // where it exists, and one called bare is an error here, whatever WERROR says.
+    .deployment = (const char *const[]){"-mmacosx-version-min=26.0", "-Werror=unguarded-availability-new", nullptr},
     .lldb_libraries = (const char *const[]){"-ledit", "-framework", "Foundation", "-framework", "CoreFoundation",
                                             "-framework", "CoreServices", "-framework", "Security", nullptr},
     .system_libraries = (const char *const[]){"-lc++", "-lm", "-lcompression", nullptr},
@@ -84,6 +89,7 @@ static const BuildPlatform build_platform_linux = {
     .group_start = "-Wl,--start-group",
     .lld = "liblldELF.a",
     .link_flags = (const char *const[]){"-Wl,--gc-sections", "-Wl,--build-id=md5", nullptr},
+    .deployment = (const char *const[]){nullptr},
     .lldb_libraries = (const char *const[]){nullptr},
     .system_libraries = (const char *const[]){"-Wl,--end-group", "-Wl,-Bstatic", "-lstdc++", "-Wl,-Bdynamic", "-lm",
                                               "-lpthread", "-ldl", "-lrt", nullptr},
@@ -324,14 +330,14 @@ static const char *const *build_enzyme_libraries(SmithBuild *b, const BuildConfi
 // The flags of the shims that read clang's AST and of their precompiled header, which must be the same ones. The LLVM
 // headers are system headers, so the build's warnings stay smith's own.
 static const char *const *build_shim_flags(SmithBuild *b, const BuildConfig *config) {
-    return smith_cat(b,
-                     (const char *[]){"-std=c++17", "-O1", "-g", "-Wall", "-Wextra", "-fno-exceptions", "-fno-rtti",
-                                      "-D__STDC_CONSTANT_MACROS", "-D__STDC_FORMAT_MACROS", "-D__STDC_LIMIT_MACROS",
-                                      "-isystem", smith_fmt(b, "%s/include", config->llvm), "-isystem", "shim/lldb",
-                                      nullptr},
-                     smith_when(b, config->werror[0] != '\0', (const char *[]){config->werror, nullptr}),
-                     smith_when(b, config->hook, (const char *[]){"-DSMITH_HOOK", nullptr}),
-                     smith_when(b, config->enzyme[0] != '\0', (const char *[]){"-DSMITH_ENZYME", nullptr}), nullptr);
+    return smith_cat(
+        b,
+        (const char *[]){"-std=c++17", "-O1", "-g", "-Wall", "-Wextra", "-fno-exceptions", "-fno-rtti",
+                         "-D__STDC_CONSTANT_MACROS", "-D__STDC_FORMAT_MACROS", "-D__STDC_LIMIT_MACROS", "-isystem",
+                         smith_fmt(b, "%s/include", config->llvm), "-isystem", "shim/lldb", nullptr},
+        smith_when(b, config->werror[0] != '\0', (const char *[]){config->werror, nullptr}),
+        config->platform->deployment, smith_when(b, config->hook, (const char *[]){"-DSMITH_HOOK", nullptr}),
+        smith_when(b, config->enzyme[0] != '\0', (const char *[]){"-DSMITH_ENZYME", nullptr}), nullptr);
 }
 
 // The shims whose compile is mostly clang's and LLVM's headers (knowledge/precompiled-shim-headers.md): they are
@@ -423,7 +429,8 @@ static void build_prover(SmithBuild *b, const BuildConfig *config, const char *f
                   smith_list(b, smith_fmt(b, "%s/include", config->llvm), "-isystem",
                              smith_fmt(b, "%s/include/alive2", config->prove), "-isystem",
                              smith_fmt(b, "%s/include", config->prove), nullptr),
-                  smith_when(b, config->werror[0] != '\0', (const char *[]){config->werror, nullptr}), nullptr);
+                  smith_when(b, config->werror[0] != '\0', (const char *[]){config->werror, nullptr}),
+                  config->platform->deployment, nullptr);
     const char *const names[] = {"prove", "prove_ir", "prove_alive", "prove_bitwuzla"};
     for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
         prover->objects[i] = (SmithObject){
@@ -1856,11 +1863,57 @@ static int build_llvm_prune(SmithRun *run) {
     return build_exec(prune);
 }
 
-// The pinned LLVM (`smith build llvm`): the sources, CMake and Python by hash, built once into the package cache by
-// scripts/llvm.sh, and then the prover's libraries beside it (Ninja, Z3, Alive2, Bitwuzla and its dependencies). A .run
-// step, so the packages are fetched only when this target runs, not on every smith build.
+// scripts/llvm_pack.c (issue #797): the LLVM pack of a configuration is a GitHub Release `llvm-<name>-<os>-<arch>`,
+// what smith links and embeds, so that a machine with no LLVM downloads it instead of building it. Compiles the program
+// (plain C23, into the cache beside the LLVM folders) and runs it with `arguments` after the cache's smith folder and
+// the configuration's name; its exit status.
+static int build_llvm_pack_run(SmithRun *run, const char *verb, const char *const *arguments) {
+    SmithBuild *b = run->b;
+    const char *folder = build_llvm_folder(b);
+    const char *home = smith_env(b, "XDG_CACHE_HOME", smith_fmt(b, "%s/.cache", smith_env(b, "HOME", "")));
+    const char *cache = smith_fmt(b, "%s/smith", home);
+    const char *tool = smith_fmt(b, "%s/llvm/llvm_pack", cache);
+    const char *name = strrchr(folder, '/') + 1;
+    int status = build_make_folder(b, smith_fmt(b, "%s/llvm", cache));
+    if (status != 0) return status;
+    const char *const compile[] = {
+        smith_env(b, "CC", "smith-cc"), "-std=c23", "-O1", "scripts/llvm_pack.c", "-o", tool, nullptr};
+    status = build_exec(compile);
+    if (status != 0) return status;
+    return build_exec(smith_cat(b, (const char *[]){tool, verb, cache, name, nullptr}, arguments, nullptr));
+}
+
+// The fetch path of `smith build llvm` (-Dfetch): `auto` takes the pack when its release exists and builds otherwise,
+// `0` always builds, `1` takes the pack or fails. Returns the step's status when the pack was taken (its folders are
+// where a build puts them, so nothing else is needed), or -1 when LLVM is to be built.
+static int build_llvm_fetch(SmithRun *run) {
+    const char *mode = run->args[0];
+    if (strcmp(mode, "0") == 0) return -1;
+    SmithBuild *b = run->b;
+    const char *stamp = smith_fmt(b, "%s.fetch", run->outputs[0]);
+    int status = build_llvm_pack_run(run, "fetch", smith_list(b, stamp, nullptr));
+    if (status == 0) return build_exec(smith_list(b, "cp", stamp, run->outputs[0], nullptr));
+    if (status != 3 || strcmp(mode, "1") == 0) return status != 0 ? status : 1;
+    fputs("smith: no LLVM pack to fetch: building LLVM from source (-Dfetch=0 never looks)\n", stderr);
+    return -1;
+}
+
+// `smith build llvm-pack [-Dout=DIR]` writes the pack of the LLVM that is built into DIR (to measure it); `smith build
+// llvm-publish` packs it and publishes the release (CI's llvm workflow), and does nothing when the release exists.
+static int build_llvm_pack_task(SmithRun *run) {
+    SmithBuild *b = run->b;
+    if (strcmp(run->args[0], "publish") == 0) return build_llvm_pack_run(run, "publish", smith_list(b, nullptr));
+    return build_llvm_pack_run(run, "pack", smith_list(b, run->args[1], nullptr));
+}
+
+// The pinned LLVM (`smith build llvm`): the pack of a release when there is one (build_llvm_fetch), else the sources,
+// CMake and Python by hash, built once into the package cache by scripts/llvm.sh, and then the prover's libraries
+// beside it (Ninja, Z3, Alive2, Bitwuzla and its dependencies). A .run step, so the packages are fetched only when this
+// target runs, not on every smith build.
 static int build_llvm_run(SmithRun *run) {
     SmithBuild *b = run->b;
+    int fetched = build_llvm_fetch(run);
+    if (fetched >= 0) return fetched;
     const char *ninja_source = build_package_path(
         b, &(SmithPackage){.url = "https://github.com/ninja-build/ninja/archive/refs/tags/v1.13.2.tar.gz",
                            .hash = "sha256:974d6b2f4eeefa25625d34da3cb36bdcebe7fbce40f4c16ac0835fd1c0cbae17"});
@@ -1898,7 +1951,12 @@ static int build_llvm_run(SmithRun *run) {
 static void build_llvm(SmithBuild *b) {
     SmithStep llvm = {
         .run = build_llvm_run,
-        .description = "building LLVM 23.1.3 and the prover's libraries (static, from source)",
+        .args = smith_list(b,
+                           smith_option_value(b, "fetch", "auto",
+                                              "llvm: auto takes the release's pack when there is one, 0 builds, 1 "
+                                              "fetches or fails"),
+                           nullptr),
+        .description = "fetching or building LLVM 23.1.3 and the prover's libraries (static, from source)",
         .inputs = smith_cat(
             b,
             (const char *[]){"scripts/llvm.sh", "scripts/defer_init.c", "patches/enzyme/quiet-caching-call.patch",
@@ -1906,13 +1964,25 @@ static void build_llvm(SmithBuild *b) {
                              "patches/clang-format-smith.patch", "patches/smith-editor-defaults.patch",
                              "patches/smith-format-source-extension.patch", "patches/smith-command-hook.patch",
                              "patches/compiler-rt-xnu-fast-mmap.patch", "patches/smith-lang-format-filescope-if.patch",
-                             nullptr},
-            smith_when(b, build_is_linux(b), (const char *[]){"scripts/llvm_linux.c", "scripts/sha256.h", nullptr}),
-            nullptr),
+                             "scripts/llvm_pack.c", "scripts/sha256.h", nullptr},
+            smith_when(b, build_is_linux(b), (const char *[]){"scripts/llvm_linux.c", nullptr}), nullptr),
         .outputs = (const char *[]){"build/llvm.stamp", nullptr},
     };
     smith_step(b, &llvm);
     smith_alias(b, "llvm", llvm.outputs);
+    SmithStep pack = {
+        .run = build_llvm_pack_task,
+        .args = smith_list(b, "pack", smith_option_value(b, "out", "build/llvm-pack", "llvm-pack: where the pack goes"),
+                           nullptr),
+        .description = "packing the LLVM that is built (what smith links) for a release",
+    };
+    smith_task(b, "llvm-pack", &pack);
+    SmithStep publish = {
+        .run = build_llvm_pack_task,
+        .args = smith_list(b, "publish", "", nullptr),
+        .description = "publishing the LLVM pack as the release llvm-<name>-<os>-<arch>",
+    };
+    smith_task(b, "llvm-publish", &publish);
     SmithStep enzyme = {
         .run = build_enzyme_only,
         .description = "building Enzyme (static, against the LLVM install)",
@@ -2020,7 +2090,8 @@ static void build_tree_sitter_data(SmithBuild *b, const BuildConfig *config, con
         .compiler = config->cc,
         .source = "tree-sitter/src/parser.c",
         .output = smith_fmt(b, "%s/tree-sitter-parser.o", folder),
-        .flags = smith_list(b, "-std=gnu11", "-O1", "-w", "-fPIC", "-I", "tree-sitter/src", nullptr),
+        .flags = smith_cat(b, smith_list(b, "-std=gnu11", "-O1", "-w", "-fPIC", "-I", "tree-sitter/src", nullptr),
+                           config->platform->deployment, nullptr),
         .implicit_inputs = generate.outputs,
     };
     smith_object(b, &parser);
@@ -2028,7 +2099,8 @@ static void build_tree_sitter_data(SmithBuild *b, const BuildConfig *config, con
     // need.
     const char *library = smith_fmt(b, "%s/smith-tree-sitter.%s", folder, build_is_linux(b) ? "so" : "dylib");
     SmithStep link = {
-        .command = smith_list(b, config->cc, "-shared", parser.output, "-o", library, nullptr),
+        .command = smith_cat(b, smith_list(b, config->cc, "-shared", nullptr), config->platform->deployment,
+                             smith_list(b, parser.output, "-o", library, nullptr), nullptr),
         .inputs = parser.step.outputs,
         .implicit_inputs = smith_list(b, build_compiler_file(b, config), nullptr),
         .outputs = smith_list(b, library, nullptr),
@@ -2541,7 +2613,7 @@ void build(SmithBuild *b) {
     config.lldb = access(smith_fmt(b, "%s/lib/libsmithlldb.a", config.llvm), R_OK) == 0;
     config.cflags = smith_cat(
         b, (const char *[]){smith_fmt(b, "-std=%s", std), "-O1", "-g", "-Wall", "-Wextra", "-Wpedantic", nullptr},
-        smith_when(b, werror[0] != '\0', (const char *[]){werror, nullptr}), nullptr);
+        smith_when(b, werror[0] != '\0', (const char *[]){werror, nullptr}), config.platform->deployment, nullptr);
 
     config.headers = build_header_steps(b, &config);
     config.protocol = build_protocol_steps(b, &config, folder);
