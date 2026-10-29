@@ -648,6 +648,10 @@ export void test_unused_run(io::Io *io) {
     corpus_case(io, "unused-run");
 }
 
+export void test_error_constexpr_unread_private(io::Io *io) {
+    corpus_case(io, "error-constexpr-unread-private");
+}
+
 export void test_error_unused_read_name(io::Io *io) {
     corpus_case(io, "error-unused-read-name");
 }
@@ -990,6 +994,10 @@ export void test_export_inline(io::Io *io) {
 
 export void test_export_inline_attributes(io::Io *io) {
     corpus_case(io, "export-inline-attributes");
+}
+
+export void test_exported_constexpr_unread(io::Io *io) {
+    corpus_case(io, "exported-constexpr-unread");
 }
 
 export void test_exported_variable_declared(io::Io *io) {
