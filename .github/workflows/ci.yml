@@ -1,11 +1,8 @@
 name: ci
 
-# The full check on GitHub's hosted runners (#798, knowledge/ci-hosted.md): every pull request, every merge queue entry
-# and every push to main runs `smith check` split across parallel jobs, and the one job `ci` gathers them, so branch
-# protection and the merge queue name a single required check. check.yml (the owner's Mac, the merge train) keeps
-# running until the switch.
-#
-# billed, so nothing here runs until it is public.
+# The full check on GitHub's hosted runners (#798, knowledge/ci-hosted.md): every pull request and every merge queue
+# entry runs `smith check` split across parallel jobs, and the one job `ci` gathers them, so the ruleset and the merge
+# queue name a single required check. A push to main (a commit the queue checked) only publishes the release.
 on:
   pull_request:
   merge_group:
@@ -42,6 +39,8 @@ jobs:
           documents='^(LICENSE[^/]*|CONTRIBUTING[.]md|[^/]+[.](png|jpe?g|gif|svg|webp))$'
           gated='^(README[.]md|AGENTS[.]md|knowledge/.*|[.]agents/.*)$'
           scope=full
+          # a push to main is a commit the merge queue already checked: it only publishes the release
+          if [ "$GITHUB_EVENT_NAME" = push ]; then scope=release; BASE=; fi
           if [ -n "$BASE" ] && changed=$(git diff --name-only "$BASE" HEAD); then
             built=$(printf '%s\n' "$changed" | grep . | grep -vE "$documents" || true)
             code=$(printf '%s\n' "$built" | grep . | grep -vE "$gated" || true)
@@ -53,6 +52,7 @@ jobs:
   mechanical:
     # fmt, docs, lint and the proofs of the project (the stages of `smith check` that are not tests)
     needs: changes
+    if: needs.changes.outputs.scope != 'release'
     runs-on: macos-26
     timeout-minutes: 40
     env:
@@ -85,6 +85,7 @@ jobs:
     # the tests, split by test file across machines (`smith test --shard i/n`, balanced by the CPU seconds of
     # .github/shard-costs.tsv; a file's tests stay together). The goal is a wall time near 10 minutes, then 5: raise n.
     needs: changes
+    if: needs.changes.outputs.scope != 'release'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
@@ -143,6 +144,7 @@ jobs:
   docs:
     # a change to the README, AGENTS.md, knowledge/ or the skills: the docs check and the tests that read them
     needs: changes
+    if: needs.changes.outputs.scope != 'release'
     runs-on: macos-26
     timeout-minutes: 30
     env:
@@ -179,3 +181,52 @@ jobs:
             exit 1
             ;;
           esac
+
+  release:
+    # a push to main (the merge queue's checked commit) publishes the stage0 release stage0-<commit>
+    # (knowledge/release.md), which the next jobs' setup builds from
+    needs: changes
+    if: needs.changes.outputs.scope == 'release'
+    runs-on: macos-26
+    timeout-minutes: 40
+    permissions:
+      contents: write
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-smith
+      - name: Release
+        run: '"$SMITH" build release'
+
+  install:
+    # the owner's Mac (its one self-hosted runner, ~/actions-runner) installs the release just published, so the
+    # installed smith is always main's: a download and a checksum, no build (owner, 2026-10-29)
+    needs: release
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 10
+    concurrency:
+      group: install
+      cancel-in-progress: true
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the release
+        run: |
+          export PATH="/opt/homebrew/bin:$PATH"
+          tmp=$(mktemp -d)
+          sh scripts/release.sh fetch "stage0-$GITHUB_SHA" "$tmp"
+          mkdir -p "$HOME/.local/bin"
+          for f in "$tmp"/bin/*; do
+            # copy beside, then rename over: a smith running now keeps its old file
+            cp -P "$f" "$HOME/.local/bin/.$(basename "$f").new"
+            mv -f "$HOME/.local/bin/.$(basename "$f").new" "$HOME/.local/bin/$(basename "$f")"
+          done
+          rm -rf "$tmp"
+          "$HOME/.local/bin/smith" version
