@@ -17,17 +17,28 @@ constexpr char git_environment[_] =
     "GIT_COMMITTER_NAME=Tester GIT_COMMITTER_EMAIL=tester@example.com SMITH_OUTPUT=full; mkdir -p \"$HOME\"; ";
 
 // `generate <name> [flags]` puts a copy of the project `smith new` makes in the folder, as `smith new` leaves it
-// (built, committed): it is made once for each smith under test, in the tests' cache, so the tests that only need a
-// project to work on do not each make one. The tests of `smith new` itself run it.
+// (built, committed), with what that `smith new` printed and its exit status beside it (`new-<name>.out`, `.err` and
+// `.status`). It is made once for each smith under test, in the tests' cache, by the first test that asks (the others
+// wait for it, so a project is never made twice at once), so the tests that only need a project to work on do not each
+// make one, and the tests of `smith new` itself read what its one run did. `generate_args <name> <arguments>` runs
+// `smith new` with exactly those arguments (the forms of the command line).
 constexpr char generate_function[_] =
-    "generate() { name=$1; shift; key=$(stat -c %Y-%s \"$SMITH_SELF\" 2>/dev/null || stat -f %m-%z \"$SMITH_SELF\"); "
-    "t=$SMITH_TEST_CACHE/new-$key/$name; "
-    "if [ ! -d \"$t\" ]; then find \"$SMITH_TEST_CACHE\" -maxdepth 1 -name 'new-*' -mtime +1 -exec rm -rf {} + "
-    "2>/dev/null; "
-    "tmp=$SMITH_TEST_CACHE/new-$key.$$; mkdir -p \"$tmp\" && (cd \"$tmp\" && smith new \"$@\" \"$name\" >/dev/null "
-    "2>&1) && "
-    "mkdir -p \"$SMITH_TEST_CACHE/new-$key\" && { [ -d \"$t\" ] || mv \"$tmp/$name\" \"$t\"; }; rm -rf \"$tmp\"; fi; "
-    "{ cp -Rpc \"$t\" \"./$name\" 2>/dev/null || cp -Rp \"$t\" \"./$name\"; }; }; ";
+    "new_dir() { key=$(stat -c %Y-%s \"$SMITH_SELF\" 2>/dev/null || stat -f %m-%z \"$SMITH_SELF\"); "
+    "d=$SMITH_TEST_CACHE/new-$key; mkdir -p \"$d\"; }; "
+    "generate_args() { name=$1; shift; new_dir; t=$d/$name; "
+    "if [ ! -d \"$t\" ]; then "
+    "find \"$SMITH_TEST_CACHE\" -maxdepth 1 -name 'new-*' -mtime +1 -exec rm -rf {} + 2>/dev/null; "
+    "find \"$d\" -maxdepth 1 -name '*.lock' -mmin +10 -exec rmdir {} + 2>/dev/null; "
+    "if mkdir \"$t.lock\" 2>/dev/null; then "
+    "tmp=$d/tmp.$name.$$; mkdir -p \"$tmp/w\"; "
+    "(cd \"$tmp/w\" && smith new \"$@\" >\"$tmp/out\" 2>\"$tmp/err\"; echo $? >\"$tmp/status\"); "
+    "if [ -d \"$tmp/w/$name\" ]; then for e in out err status; do mv \"$tmp/$e\" \"$t.$e\"; done; mv \"$tmp/w/$name\" "
+    "\"$t\"; fi; "
+    "rm -rf \"$tmp\"; rmdir \"$t.lock\"; "
+    "else while [ ! -d \"$t\" ] && [ -d \"$t.lock\" ]; do sleep 0.2; done; fi; "
+    "fi; "
+    "cp -Rp \"$t\" \"./$name\"; for e in out err status; do cp \"$t.$e\" \"./new-$name.$e\"; done; }; "
+    "generate() { name=$1; shift; generate_args \"$name\" \"$@\" \"$name\"; }; ";
 
 static scratch::Run run(const scratch::Project *p, const char *command) {
     char text[8192];
@@ -37,7 +48,7 @@ static scratch::Run run(const scratch::Project *p, const char *command) {
 
 // The output of a command in the folder `in`, as $(...) gives it.
 static void generated(const scratch::Project *p, const char *command) {
-    char text[2048];
+    char text[6144];
     __builtin_snprintf(text, sizeof text, "%s%s", generate_function, command);
     scratch::Run made = run(p, text);
     test::check_equal(made.status, 0);
@@ -65,6 +76,17 @@ static const char *exists_in(const scratch::Project *p, const char *path) {
     return scratch::capture(p, text);
 }
 
+// What the one run of `smith new <name>` that `generate` recorded printed and exited with, as a Run.
+static scratch::Run recorded(const scratch::Project *p, const char *name) {
+    char path[256];
+    __builtin_snprintf(path, sizeof path, "new-%s.status", name);
+    const char *status = scratch::read(p, path);
+    __builtin_snprintf(path, sizeof path, "new-%s.out", name);
+    const char *out = scratch::read(p, path);
+    __builtin_snprintf(path, sizeof path, "new-%s.err", name);
+    return (scratch::Run){.status = scratch::same(status, "0") ? 0 : 1, .out = out, .err = scratch::read(p, path)};
+}
+
 static scratch::Project fresh(io::Io *io) {
     return scratch::project(io, "p", nullptr);
 }
@@ -89,7 +111,8 @@ constexpr char c_files[_] =
 // 1. smith new hello: a .smith project, the default.
 export void test_new_hello_a_smith_project_is_written_and_committed(io::Io *io) {
     scratch::Project p = fresh(io);
-    scratch::Run created = run(&p, "smith new hello");
+    generated(&p, "generate hello"); // the one run of `smith new hello` of this smith, and the project it left
+    scratch::Run created = recorded(&p, "hello");
     scratch::expect_status("new hello: exits 0", 0, &created);
     const char *files[_] = {"main.smith",         "primes.smith",          "primes_test.smith",
                             ".gitignore",         ".claude/settings.json", "AGENTS.md",
@@ -161,8 +184,8 @@ export void test_new_hello_a_smith_project_is_written_and_committed(io::Io *io) 
 // 2. A second run creates nothing.
 export void test_new_a_second_run_creates_nothing(io::Io *io) {
     scratch::Project p = fresh(io);
-    (void)run(&p,
-              "smith new hello"); // not a copy: the bytes of a project a second run leaves alone are the ones it made
+    generated(&p, "generate hello");
+    (void)run_in(&p, "hello", "smith build"); // a copy of a generated project: its build writes the copy's paths again
     const char *sum =
         "cd hello && find . -path ./.git -prune -o \\( -type f -o -type l \\) -print | sort | while read -r f; do "
         "if [ -L \"$f\" ]; then echo \"$f -> $(readlink \"$f\")\"; else echo \"$f $(cksum <\"$f\")\"; fi; done";
@@ -325,6 +348,45 @@ static void profiles_of_a_new_project(const scratch::Project *p, const char *dir
                              capture(p, dir, "smith build -t commands build/fast/main.o"), "-DNDEBUG");
 }
 
+// 1b. assert(false) stops debug, release and fast (#326): in the project of a profiles test, after its checks, main's
+// assert is made false and the three profiles are built again. 1c. smith's libraries build under the conventions' flags
+// (gnu2y, every warning an error) in all three profiles and run, found from the #include alone: the same project again,
+// with main.c of tests/build_fixtures/new_libs, which includes them.
+static void assert_false_stops(const scratch::Project *p, const char *dir, const char *extension, const char *macro) {
+    char command[1024];
+    char label[256];
+    __builtin_snprintf(command, sizeof command,
+                       "sed \"s/%s(sum <= 28);/%s(false);/\" main.%s >abort.new && mv abort.new main.%s", macro, macro,
+                       extension, extension);
+    (void)run_in(p, dir, command);
+    scratch::Run built = run_in(p, dir, "smith build && smith build release fast");
+    __builtin_snprintf(label, sizeof label, "assert(false) in %s: the three build", extension);
+    scratch::expect_status(label, 0, &built);
+    const char *modes[_] = {"debug", "release", "fast"};
+    const char *meanings[_] = {"debug stops", "release stops", "fast stops"};
+    for (usize i = 0; i < _Countof(modes); i++) {
+        __builtin_snprintf(command, sizeof command, "build/%s/%s >/dev/null 2>&1; echo $?", modes[i], dir);
+        __builtin_snprintf(label, sizeof label, "assert(false) in %s: %s", extension, meanings[i]);
+        scratch::expect_text(label, "134", capture(p, dir, command));
+    }
+}
+
+static void the_libraries_build(const scratch::Project *p, const char *dir) {
+    char target[256];
+    __builtin_snprintf(target, sizeof target, "%s/main.c", dir);
+    scratch::copy_tree(p, "tests/build_fixtures/new_libs/main.c", target);
+    scratch::Run built = run_in(p, dir, "smith build && smith build release fast");
+    scratch::expect_status("libraries: the three build under the conventions' flags", 0, &built);
+    const char *modes[_] = {"debug", "release", "fast"};
+    for (usize i = 0; i < _Countof(modes); i++) {
+        char command[256];
+        char label[256];
+        __builtin_snprintf(command, sizeof command, "build/%s/%s", modes[i], dir);
+        __builtin_snprintf(label, sizeof label, "libraries: the %s program runs", modes[i]);
+        scratch::expect_text(label, "libraries ok", capture(p, dir, command));
+    }
+}
+
 export void test_new_hello_the_verbs_on_a_new_smith_project(io::Io *io) {
     scratch::Project p = fresh(io);
     generated(&p, "generate hello");
@@ -338,7 +400,7 @@ export void test_new_hello_runs_an_exported_slice_function_in_debug(io::Io *io) 
     generated(&p, "generate hello");
     scratch::expect_contains("new hello: primes.smith exports a function over a slice",
                              scratch::read(&p, "hello/primes.smith"), "export i32 total(i32 xs[:])");
-    scratch::Run ran = run_in(&p, "hello", "rm -rf build && smith run");
+    scratch::Run ran = run_in(&p, "hello", "rm -f build/debug/primes.o build/debug/hello && smith run");
     scratch::expect_status("new hello: smith run builds the slice function in debug", 0, &ran);
     scratch::expect_contains("new hello: ... under -fsanitize=undefined",
                              capture(&p, "hello", "smith build -t commands build/debug/primes.o"),
@@ -349,12 +411,14 @@ export void test_new_hello_the_profiles_of_a_new_smith_project(io::Io *io) {
     scratch::Project p = fresh(io);
     generated(&p, "generate hello");
     profiles_of_a_new_project(&p, "hello", "new hello", true);
+    assert_false_stops(&p, "hello", "smith", "contract::assert");
 }
 
 // 1a. smith new --language c hellc: a C project, the same by convention.
 export void test_new_language_c_a_c_project_is_written_and_committed(io::Io *io) {
     scratch::Project p = fresh(io);
-    scratch::Run created = run(&p, "smith new --language c hellc");
+    generated(&p, "generate hellc --language c"); // the one run of `smith new --language c hellc` of this smith
+    scratch::Run created = recorded(&p, "hellc");
     scratch::expect_status("new --language c: exits 0", 0, &created);
     const char *files[_] = {"main.c",
                             "primes.c",
@@ -401,6 +465,8 @@ export void test_new_language_c_the_profiles_of_a_new_c_project(io::Io *io) {
     scratch::Project p = fresh(io);
     generated(&p, "generate hellc --language c");
     profiles_of_a_new_project(&p, "hellc", "new --language c", false);
+    assert_false_stops(&p, "hellc", "c", "smith_assert");
+    the_libraries_build(&p, "hellc");
 }
 
 export void test_new_the_language_flag(io::Io *io) {
@@ -409,8 +475,11 @@ export void test_new_the_language_flag(io::Io *io) {
     scratch::Run eq = run_in(&p, "langs", "smith new --language=c eq");
     scratch::expect_status("new --language=c: exits 0", 0, &eq);
     expect_exists(&p, "new --language=c: writes the C program", "langs/eq/main.c", "yes");
-    (void)run_in(&p, "langs", "smith new --language smith explicit");
-    expect_exists(&p, "new --language smith: writes the .smith program", "langs/explicit/main.smith", "yes");
+    // the project with the name of the docs test (_ and .), made once for both tests
+    generated(&p, "generate_args My_Proj.x --language smith My_Proj.x");
+    scratch::Run explicit = recorded(&p, "My_Proj.x");
+    scratch::expect_status("new --language smith: exits 0", 0, &explicit);
+    expect_exists(&p, "new --language smith: writes the .smith program", "My_Proj.x/main.smith", "yes");
     (void)run_in(&p, "langs", "smith new explicit_first --language c");
     expect_exists(&p, "new <name> --language c: the flag may follow the name", "langs/explicit_first/main.c", "yes");
     scratch::Run bad = run_in(&p, "langs", "smith new --language rust bad");
@@ -425,59 +494,6 @@ export void test_new_the_language_flag(io::Io *io) {
     scratch::Run help = run_in(&p, "langs", "smith new --help");
     scratch::expect_status("new --help: exits 0", 0, &help);
     scratch::expect_contains("new --help: shows the flag", help.out, "--language smith|c");
-}
-
-// 1b. assert(false) stops debug, release and fast (#326), in a scratch copy of each generated project.
-static void assert_false_stops(io::Io *io, const char *dir, const char *language_flag, const char *extension,
-                               const char *macro) {
-    scratch::Project p = fresh(io);
-    char command[1024];
-    char label[256];
-    __builtin_snprintf(command, sizeof command, "generate %s %s", dir, language_flag);
-    generated(&p, command);
-    __builtin_snprintf(command, sizeof command,
-                       "sed \"s/%s(sum <= 28);/%s(false);/\" %s/main.%s >abort.new && mv abort.new %s/main.%s", macro,
-                       macro, dir, extension, dir, extension);
-    (void)run(&p, command);
-    scratch::Run built = run_in(&p, dir, "smith build && smith build release fast");
-    __builtin_snprintf(label, sizeof label, "assert(false) in %s: the three build", extension);
-    scratch::expect_status(label, 0, &built);
-    const char *modes[_] = {"debug", "release", "fast"};
-    const char *statuses[_] = {"134", "134", "134"};
-    const char *meanings[_] = {"debug stops", "release stops", "fast stops"};
-    for (usize i = 0; i < _Countof(modes); i++) {
-        __builtin_snprintf(command, sizeof command, "build/%s/%s >/dev/null 2>&1; echo $?", modes[i], dir);
-        __builtin_snprintf(label, sizeof label, "assert(false) in %s: %s", extension, meanings[i]);
-        scratch::expect_text(label, statuses[i], capture(&p, dir, command));
-    }
-}
-
-export void test_new_assert_false_stops_every_build_in_smith(io::Io *io) {
-    assert_false_stops(io, "hello", "", "smith", "contract::assert");
-}
-
-export void test_new_assert_false_stops_every_build_in_c(io::Io *io) {
-    assert_false_stops(io, "hellc", "--language c", "c", "smith_assert");
-}
-
-// 1c. smith's libraries build under the conventions' flags (gnu2y, every warning an error) in all three profiles and
-// run, found from the #include alone.
-export void test_new_the_libraries_build_under_the_conventions_flags(io::Io *io) {
-    scratch::Project p = fresh(io);
-    generated(
-        &p,
-        "generate hellc --language c && mkdir libs && cp -R hellc/primes.c hellc/primes.h hellc/primes_test.c libs/");
-    scratch::copy_tree(&p, "tests/build_fixtures/new_libs/main.c", "libs/main.c");
-    scratch::Run built = run_in(&p, "libs", "smith build && smith build release fast");
-    scratch::expect_status("libraries: the three build under the conventions' flags", 0, &built);
-    const char *modes[_] = {"debug", "release", "fast"};
-    for (usize i = 0; i < _Countof(modes); i++) {
-        char command[256];
-        char label[256];
-        __builtin_snprintf(command, sizeof command, "build/%s/libs", modes[i]);
-        __builtin_snprintf(label, sizeof label, "libraries: the %s program runs", modes[i]);
-        scratch::expect_text(label, "libraries ok", capture(&p, "libs", command));
-    }
 }
 
 // 1d. The verbs read what the build compiles, in a git copy of the generated C project: prove proves the contracts of
@@ -708,25 +724,24 @@ export void test_new_another_build_system_gets_no_program(io::Io *io) {
     expect_exists(&p, "CMakeLists.txt: no main.smith", "has_cmake/main.smith", "no");
 }
 
-// 11. An existing .gitignore is kept; the lines it lacks are reported. 11b. The same for .claude/settings.json.
+// 11. An existing .gitignore is kept; the lines it lacks are reported. 11b. The same for .claude/settings.json. One
+// project holds both (each report is its own line of the one run's output), and a second run, after the settings
+// name the plugin, reports no missing entry (the second run builds nothing: the first one built the project).
 export void test_new_an_existing_gitignore_and_settings_are_kept(io::Io *io) {
     scratch::Project p = fresh(io);
-    (void)run(&p, "mkdir has_ignore && printf '/build/  \\nnode_modules/\\n' >has_ignore/.gitignore");
-    scratch::Run created = run(&p, "smith new has_ignore");
+    (void)run(&p, "mkdir -p has_both/.claude && printf '/build/  \\nnode_modules/\\n' >has_both/.gitignore && "
+                  "printf '{\"permissions\": {}}\\n' >has_both/.claude/settings.json");
+    scratch::Run created = run(&p, "smith new has_both");
     scratch::expect_text("gitignore: kept untouched", "/build/  \nnode_modules/",
-                         scratch::read(&p, "has_ignore/.gitignore"));
+                         scratch::read(&p, "has_both/.gitignore"));
     scratch::expect_contains("gitignore: reports /.cache/", created.out, "lacks /.cache/");
     scratch::expect_lacks("gitignore: does not report /build/ (trailing spaces ignored)", created.out, "lacks /build/");
-    (void)run(&p,
-              "mkdir -p has_settings/.claude && printf '{\"permissions\": {}}\\n' >has_settings/.claude/settings.json");
-    scratch::Run settings = run(&p, "smith new has_settings");
     scratch::expect_text("settings: kept untouched", "{\"permissions\": {}}",
-                         scratch::read(&p, "has_settings/.claude/settings.json"));
-    scratch::expect_contains("settings: reports the missing entry", settings.out, "lacks \"smith@smith\"");
-    scratch::expect_contains("settings: says what to add", settings.out, "\"smith@smith\": true under enabledPlugins");
-    (void)run(&p, "mkdir -p has_settings2/.claude && printf '{\"enabledPlugins\": {\"smith@smith\": false}}\\n' "
-                  ">has_settings2/.claude/settings.json");
-    scratch::Run second = run(&p, "smith new has_settings2");
+                         scratch::read(&p, "has_both/.claude/settings.json"));
+    scratch::expect_contains("settings: reports the missing entry", created.out, "lacks \"smith@smith\"");
+    scratch::expect_contains("settings: says what to add", created.out, "\"smith@smith\": true under enabledPlugins");
+    (void)run(&p, "printf '{\"enabledPlugins\": {\"smith@smith\": false}}\\n' >has_both/.claude/settings.json");
+    scratch::Run second = run(&p, "smith new has_both");
     scratch::expect_lacks("settings with the entry: no report", second.out, "lacks \"smith@smith\"");
 }
 
@@ -832,7 +847,8 @@ export void test_new_breaking_each_docs_rule_fails_smith_docs(io::Io *io) {
     broken(&p, "a .claude/skills that is a folder", ".claude/skills: is not a symlink",
            "rm .claude/skills && mkdir .claude/skills");
     // A name with more than letters: the skill's name is kebab-case and everything passes.
-    scratch::Run named_run = run(&p, "smith new My_Proj.x");
+    generated(&p, "generate_args My_Proj.x --language smith My_Proj.x");
+    scratch::Run named_run = recorded(&p, "My_Proj.x");
     scratch::expect_status("docs: a name with _ and . exits 0", 0, &named_run);
     expect_exists(&p, "docs: ... its skill is my-proj-x-docs", "My_Proj.x/.agents/skills/my-proj-x-docs/SKILL.md",
                   "yes");
