@@ -14,7 +14,7 @@ changed, never the full check.
 ([ci-hosted](ci-hosted.md)); the one required check is `ci`. Nothing runs on the owner's Mac.
 
 **The merge queue merges.** When `ci` is green the pull request goes into GitHub's merge queue
-(`gh pr merge N --squash --auto`). The queue makes a group of up to 5 entries on top of main, runs `ci` on the group
+(`gh pr merge N --auto`). The queue makes a group of up to 5 entries on top of main, runs `ci` on the group
 (`merge_group`) and, when it passes, squashes each pull request into one commit on main; a red group is split and the
 pull request at fault leaves the queue with its run linked. The ruleset on `main` requires a pull request, the check
 `ci` and the queue, a linear history, and blocks force pushes: nobody pushes to main.
