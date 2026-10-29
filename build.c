@@ -2413,8 +2413,17 @@ static bool build_pre_push_formattable(const char *path) {
     return false;
 }
 
+// git runs a hook with GIT_DIR (and in a worktree GIT_WORK_TREE and GIT_INDEX_FILE) set, which would send every git of
+// the checks, and of the tests that make scratch repositories, to the pushed repository: the checks run without them.
+static void build_pre_push_clean_environment(void) {
+    const char *const names[] = {"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX", "GIT_COMMON_DIR"};
+    for (size_t i = 0; i < sizeof names / sizeof names[0]; i++)
+        unsetenv(names[i]);
+}
+
 static int build_pre_push(SmithRun *run) {
     SmithBuild *b = run->b;
+    build_pre_push_clean_environment();
     if (build_make_folder(b, ".smith") != 0) return 1;
     const char *base = smith_capture_or(b, (const char *[]){"git", "merge-base", "origin/main", "HEAD", nullptr}, "");
     const char *const *changed = nullptr;
@@ -2486,6 +2495,9 @@ static int build_pre_push_test(SmithRun *run) {
         failed = build_gate_fail("pre-push: the documents-only scope is wrong\n");
     if (!build_pre_push_formattable("a/b.smith") || build_pre_push_formattable("README.md"))
         failed = build_gate_fail("pre-push: the files fmt reads are wrong\n");
+    setenv("GIT_DIR", "/nonexistent", 1);
+    build_pre_push_clean_environment();
+    if (getenv("GIT_DIR") != nullptr) failed = build_gate_fail("pre-push: GIT_DIR must not reach the checks\n");
     const BuildPrePushStep steps[] = {{"one", (const char *[]){"true", nullptr}},
                                       {"two", (const char *[]){"false", nullptr}},
                                       {"three", (const char *[]){"true", nullptr}}};
