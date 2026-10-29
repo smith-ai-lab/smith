@@ -10,7 +10,7 @@ tags: [ci, release, build]
 
 **What is published.** A GitHub Release tagged `stage0-<full commit hash>` holding `smith-<os>-<arch>.tar.xz` (`bin/smith` and the links `smith-cc` and `smith-c++`, nothing else: the embedded files are inside the binary) and `smith-<os>-<arch>.tar.xz.sha256` (`shasum -a 256` format). The full smith is about 235 MB and the tarball about 67 MB (xz, 43 s CPU), far under the 300 MB limit set for this design.
 
-**Where it runs.** Only in CI: the `release` job of `.github/workflows/check.yml`, on a push to `main`, `needs: install` (so after a green check and install), with `GH_TOKEN` the workflow's `GITHUB_TOKEN` and `permissions: contents: write` on that job alone. It is a job of its own so a failure of the release cannot fail the check or the install. It rebuilds with `smith build` (a cache hit after install) and runs `build/Darwin-arm64/smith build release`.
+**Where it runs.** Only in CI: the `release` job of `.github/workflows/ci.yml`, on a push to `main` (a commit the merge queue already checked), on a hosted `macos-26` runner, with `GH_TOKEN` the workflow's `GITHUB_TOKEN` and `permissions: contents: write` on that job alone. It builds smith from the previous release (the setup of every hosted job) and runs `smith build release`.
 
 **The guard.** `scripts/release.sh` (the task's one command) refuses by hand unless `HEAD` is on `main` and equals `origin/main`; in CI it accepts only `GITHUB_REF=refs/heads/main` with `GITHUB_SHA` equal to `HEAD`. It also refuses a binary whose `smith version` does not name `HEAD`. A tag that already exists is not created again, so a re-run is harmless.
 
