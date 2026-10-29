@@ -71,3 +71,68 @@ jobs:
             ~/.cache/smith/llvm
             ~/.cache/smith/enzyme
           key: probe-${{ github.sha }}
+  artifact:
+    needs: build
+    runs-on: macos-26
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Take the tree
+        run: |
+          start=$(date +%s)
+          git ls-files -z | xargs -0 touch -t 202001010000
+          echo "touch: $(( $(date +%s) - start )) s"
+      - uses: actions/download-artifact@v4
+        with:
+          name: tree
+          path: ${{ runner.temp }}
+      - name: Unpack and try
+        run: |
+          start=$(date +%s)
+          zstd -dq -T0 "$RUNNER_TEMP/tree.tar.zst" -o "$RUNNER_TEMP/tree.tar"
+          tar -xf "$RUNNER_TEMP/tree.tar"
+          echo "unpack: $(( $(date +%s) - start )) s"
+          export PATH="$PWD/build/Darwin-arm64:$PATH"
+          start=$(date +%s)
+          smith build 2>&1 | tail -5
+          echo "smith build: $(( $(date +%s) - start )) s"
+          start=$(date +%s)
+          smith test --shard 1/5 --list 2>&1 | tail -3
+          echo "test --list: $(( $(date +%s) - start )) s"
+  cached:
+    needs: build
+    runs-on: macos-26
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Restore the cache
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/smith/steps
+            ~/.cache/smith/llvm
+            ~/.cache/smith/enzyme
+          key: probe-${{ github.sha }}
+      - name: Fetch, build, list
+        run: |
+          start=$(date +%s)
+          mkdir -p .smith
+          cc -std=c23 -x c scripts/stage0.c -o .smith/stage0-tool
+          .smith/stage0-tool llvm 2>&1 | tail -3
+          echo "fetch: $(( $(date +%s) - start )) s"
+          start=$(date +%s)
+          .smith/stage0-tool 2>&1 | tail -3
+          echo "build: $(( $(date +%s) - start )) s"
+          start=$(date +%s)
+          smith=$(ls "$PWD"/build/*/smith | head -n 1)
+          "$smith" test --shard 1/5 --list 2>&1 | tail -3
+          echo "test --list: $(( $(date +%s) - start )) s"
