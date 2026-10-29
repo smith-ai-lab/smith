@@ -1464,6 +1464,8 @@ typedef struct {
     bool explain_now; // set in the copy of the options of the run that explains the final failure of a property test
     bool shuffle_given; // run the tests in an order drawn from shuffle_seed
     u64 shuffle_seed;
+    usize shard_index; // --shard i/n: this run is part i (1 to n) of n; shard_count 0 runs every test
+    usize shard_count;
     // What the runner touches the world with, from the Runner it was handed: its io's console and clock, the Runner
     // itself (for the real io of a test that takes one), and where scratch folders go.
     Runner *runner;
@@ -3090,9 +3092,28 @@ void parse_filter(Options *options, const char *value) {
     options->filter = value;
 }
 
+constexpr u64 shards_max = 1000;
+
+// Parses --shard's value `i/n`: part i of n, 1 <= i <= n <= shards_max.
+bool parse_shard(Options *options, const char *value) {
+    const char *slash = c::strchr(value, '/');
+    char index_text[24];
+    u64 index = 0;
+    u64 count = 0;
+    if (slash == nullptr || (usize)(slash - value) >= sizeof index_text) return false;
+    __builtin_memcpy(index_text, value, (usize)(slash - value));
+    index_text[slash - value] = '\0';
+    if (!parse(index_text, &index) || !parse(slash + 1, &count)) return false;
+    if (index < 1 || index > count || count > shards_max) return false;
+    options->shard_index = (usize)index;
+    options->shard_count = (usize)count;
+    return true;
+}
+
 // Parses --name value into the options; false for a bad value.
 bool parse_value(Options *options, const char *flag, const char *value) {
     u64 number = 0;
+    if (c::strcmp(flag, "--shard") == 0) return parse_shard(options, value);
     if (c::strcmp(flag, "--test") == 0) {
         parse_filter(options, value);
         return true;
@@ -3221,14 +3242,14 @@ void shuffle(usize *order_of, usize count, u64 seed) {
     }
 }
 
-// --costs: the chosen tests ordered by the CPU seconds the file gives them, cheapest first, the ones it does not know
-// before all (they may be new). A stable insertion sort: tests of equal cost keep the table's order.
-void order_by_cost(Plan *plan, const char *path) {
-    c::FILE *file = c::fopen(path, "r");
-    if (file == nullptr) return;
+// The CPU seconds the --costs file gives each chosen test (lines `cpu<TAB>seconds<TAB>name`), -1 for one it does not
+// know.
+f64 *read_costs(const Plan *plan, const char *path) {
     f64 *cost = (f64 *)map_bytes((plan->count + 1) * sizeof(f64), map_private);
     for (usize i = 0; i < plan->count; i++)
         cost[i] = -1;
+    c::FILE *file = path != nullptr ? c::fopen(path, "r") : nullptr;
+    if (file == nullptr) return cost;
     char line[512];
     for (usize guard = 0; guard < ((usize)1 << 24) && c::fgets(line, sizeof line, file) != nullptr; guard++) {
         char *seconds_text = c::strchr(line, '\t');
@@ -3241,6 +3262,13 @@ void order_by_cost(Plan *plan, const char *path) {
         }
     }
     c::fclose(file);
+    return cost;
+}
+
+// --costs: the chosen tests ordered by the CPU seconds the file gives them, cheapest first, the ones it does not know
+// before all (they may be new). A stable insertion sort: tests of equal cost keep the table's order.
+void order_by_cost(Plan *plan, const char *path) {
+    f64 *cost = read_costs(plan, path);
     for (usize i = 1; i < plan->count; i++) {
         usize moved = plan->order[i];
         usize at = i;
@@ -3248,6 +3276,72 @@ void order_by_cost(Plan *plan, const char *path) {
             plan->order[at] = plan->order[at - 1];
         plan->order[at] = moved;
     }
+}
+
+constexpr f64 shard_cost_unknown = 0.4; // CPU seconds --shard assumes for a test the --costs file does not name
+
+// Where a test's file ends in its name: `geometry::box_test::area` is the file `geometry::box_test`. A name with no
+// `::` is a file of its own (0).
+usize file_length(const char *name) {
+    usize length = 0;
+    for (usize at = 0; name[at] != '\0'; at++) {
+        if (name[at] == ':' && name[at + 1] == ':') length = at;
+    }
+    return length;
+}
+
+// The first chosen test of the same file as test `i`: every test of a file shares one number, so a file's tests stay in
+// one shard (they share the fixtures the file builds once).
+usize file_leader(const Plan *plan, usize i) {
+    usize length = file_length(plan->tests[i]->name);
+    if (length == 0) return i;
+    for (usize other = 0; other < i; other++) {
+        const char *name = plan->tests[other]->name;
+        if (file_length(name) == length && c::strncmp(name, plan->tests[i]->name, length) == 0) return other;
+    }
+    return i;
+}
+
+// The shard of each file leader: the files, heaviest first, each to the shard with the least so far (the weight of a
+// file is its tests' --costs seconds), so every shard run of the same options gets the same split.
+void assign_shards(const Plan *plan, const Options *options, const usize *leader, const f64 *weight, usize *owner) {
+    f64 *load = (f64 *)map_bytes((options->shard_count + 1) * sizeof(f64), map_private);
+    u8 *done = (u8 *)map_bytes(plan->count + 1, map_private);
+    for (usize round = 0; round < plan->count; round++) {
+        usize heaviest = plan->count;
+        for (usize i = 0; i < plan->count; i++) {
+            if (leader[i] != i || done[i] != 0) continue;
+            if (heaviest == plan->count || weight[i] > weight[heaviest]) heaviest = i;
+        }
+        if (heaviest == plan->count) return;
+        usize lightest = 0;
+        for (usize shard = 1; shard < options->shard_count; shard++) {
+            if (load[shard] < load[lightest]) lightest = shard;
+        }
+        owner[heaviest] = lightest;
+        load[lightest] += weight[heaviest];
+        done[heaviest] = 1;
+    }
+}
+
+// --shard i/n: keeps the chosen tests of part i. Files are the unit; the split is balanced by --costs.
+void shard_plan(Plan *plan, const Options *options) {
+    f64 *cost = read_costs(plan, options->costs);
+    usize *leader = (usize *)map_bytes((plan->count + 1) * sizeof(usize), map_private);
+    f64 *weight = (f64 *)map_bytes((plan->count + 1) * sizeof(f64), map_private);
+    usize *owner = (usize *)map_bytes((plan->count + 1) * sizeof(usize), map_private);
+    for (usize i = 0; i < plan->count; i++) {
+        leader[i] = file_leader(plan, i);
+        weight[leader[i]] += cost[i] >= 0 ? cost[i] : shard_cost_unknown;
+    }
+    assign_shards(plan, options, leader, weight, owner);
+    usize kept = 0;
+    for (usize i = 0; i < plan->count; i++) {
+        if (owner[leader[i]] != options->shard_index - 1) continue;
+        plan->tests[kept] = plan->tests[i];
+        kept += 1;
+    }
+    plan->count = kept;
 }
 
 // The tests the options choose, in order, with a run for each.
@@ -3265,6 +3359,7 @@ Plan *make_plan(const Options *options) {
         plan->tests[plan->count] = test;
         plan->count += 1;
     }
+    if (options->shard_count > 0) shard_plan(plan, options);
     plan->runs = (Run *)map_bytes((plan->count) * sizeof(Run), map_private);
     plan->order = (usize *)map_bytes((plan->count + 1) * sizeof(usize), map_private);
     for (usize i = 0; i < plan->count; i++)
@@ -3346,7 +3441,7 @@ static void say_usage(const Options *options, const Runner *runner) {
     complain(options,
              "usage: %s [--test <substring>] [--seed <n>] [--seeds <1 to %ju>] [--jobs <1 to %zu>] "
              "[--timeout <cpu seconds>] [--wall-timeout <seconds>] [--shrink 0|1] [--shrink-seconds <seconds>] "
-             "[--shuffle <seed>] [--isolate] "
+             "[--shuffle <seed>] [--shard <i>/<n>] [--isolate] "
              "[--in-process] [--full] [--update] [--list] [--fail-fast] [--costs <file>] [--verbose] [--stats] "
              "[--trace] [--color] "
              "[--explain <smith>] [--explain-max <n>] [--no-explain] [--unchecked]\n",
@@ -3411,6 +3506,8 @@ static usize report_run(const Plan *plan, const Options *options, f64 start) {
         say(&options, "no test matches \"%s\"\n", options.filter);
         return 1;
     }
+    if (options.shard_count > 0)
+        say(&options, "shard %zu of %zu: %zu tests\n", options.shard_index, options.shard_count, plan->count);
     if (options.in_process)
         run_in_process(plan);
     else

@@ -1,0 +1,4 @@
+module shard::delta_test;
+
+export void test_delta_1() {
+}

@@ -1,0 +1,10 @@
+module shard::alpha_test;
+
+export void test_alpha_1() {
+}
+
+export void test_alpha_2() {
+}
+
+export void test_alpha_3() {
+}
