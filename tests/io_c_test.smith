@@ -18,13 +18,32 @@ constexpr char sources[_] = "tests/io.c lib/smith/io.smith "
                             "lib/smith/arena.smith lib/smith/random.smith "
                             "lib/smith/contract.smith lib/trace.c";
 
-// Compiles tests/io.c into `name` in the project: "asan" (-O0, sanitized) or "fast" (-O2).
+// tests/io.c compiled to `name` ("asan": -O0, sanitized, or "fast": -O2), once for each smith under test and set of
+// sources, in $SMITH_TEST_CACHE/ioc-<key>; the first test to need one compiles it from the repository (the paths the
+// program prints are the ones a project of the sources would give) while the others wait on a lock folder, and each
+// test runs its own copy in a project of its own. 17 tests that each compiled the same two programs cost 1.5 s of CPU
+// each (#638).
+constexpr char program_script[_] =
+    "if [ \"$(uname -s)\" = Darwin ]; then sf='-f %N_%m_%z'; else sf='-c %n_%Y_%s'; fi; "
+    "key=$( { echo \"$FLAGS\"; stat $sf \"$SMITH_SELF\"; cat \"$SMITH_REPO\"/tests/io.c \"$SMITH_REPO\"/lib/trace.c "
+    "\"$SMITH_REPO\"/lib/smith/*.smith; } | shasum -a 256 | cut -c1-20 ); c=$SMITH_TEST_CACHE/ioc-$key; "
+    "if [ ! -e \"$c/$NAME\" ]; then "
+    "if mkdir \"$c.lock-$NAME\" 2>/dev/null; then "
+    "mkdir -p \"$c\" && (cd \"$SMITH_REPO\" && \"$SMITH_SELF\" cc -std=gnu23 $WARN -I \"$SMITH_REPO/.smith/include\" "
+    "$FLAGS $SOURCES -o \"$c/$NAME.tmp\" 2>&1) && mv \"$c/$NAME.tmp\" \"$c/$NAME\"; r=$?; rmdir \"$c.lock-$NAME\"; "
+    "[ $r = 0 ] || exit 1; "
+    "else n=0; until [ -e \"$c/$NAME\" ]; do "
+    "[ -d \"$c.lock-$NAME\" ] || { echo \"the program was not built\"; exit 1; }; "
+    "n=$((n + 1)); [ $n -lt 3000 ] || { echo \"timed out waiting for the program\"; exit 1; }; "
+    "perl -e 'select(undef, undef, undef, 0.2)'; done; fi; fi; cp \"$c/$NAME\" \"$NAME\"";
+
+// Copies the program `name` ("asan" or "fast") into the project, compiling it first when no test has.
 static void compile(const scratch::Project *p, const char *name) {
     const char *extra = c::strcmp(name, "asan") == 0 ? "-O0 -g -fsanitize=address,undefined" : "-O2";
-    scratch::Run built =
-        scratch::sh(p, format::push(&p->io->arena, "smith cc -std=gnu23 ", warn, " -I \"$SMITH_REPO/.smith/include\" ",
-                                    extra, " ", sources, " -o ", name)
-                           .data);
+    scratch::Run built = scratch::sh(p, format::push(&p->io->arena, "NAME=", name, "; FLAGS='", extra, "'; WARN='",
+                                                     warn, "'; SOURCES='", sources, "'; ", program_script)
+                                            .data);
+    if (built.status != 0) test::note("%s", built.out);
     scratch::expect_status(format::push(&p->io->arena, "the ", name, " program builds").data, 0, &built);
 }
 
@@ -36,8 +55,9 @@ static scratch::Project sources_project(io::Io *io) {
     return p;
 }
 
+// A project that has the program and no sources: the program is the shared one.
 static scratch::Project io_program(io::Io *io, const char *name) {
-    scratch::Project p = sources_project(io);
+    scratch::Project p = scratch::project(io, "p", nullptr);
     compile(&p, name);
     return p;
 }
