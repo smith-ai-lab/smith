@@ -2414,11 +2414,18 @@ static bool build_pre_push_formattable(const char *path) {
 }
 
 // git runs a hook with GIT_DIR (and in a worktree GIT_WORK_TREE and GIT_INDEX_FILE) set, which would send every git of
-// the checks, and of the tests that make scratch repositories, to the pushed repository: the checks run without them.
+// the checks, and of the tests that make scratch repositories, to the pushed repository. And Apple's git, a shim of
+// xcrun, adds CPATH, LIBRARY_PATH (/usr/local/lib, which a Mac may not have: the linker then warns and the tests that
+// compare its output fail), SDKROOT and MANPATH to a hook's environment. The checks run without them, so they run as
+// they do from a terminal; the second group goes only when GIT_EXEC_PATH says that this is a hook.
 static void build_pre_push_clean_environment(void) {
-    const char *const names[] = {"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX", "GIT_COMMON_DIR"};
-    for (size_t i = 0; i < sizeof names / sizeof names[0]; i++)
-        unsetenv(names[i]);
+    const char *const git[] = {"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX", "GIT_COMMON_DIR"};
+    const char *const xcrun[] = {"CPATH", "LIBRARY_PATH", "SDKROOT", "MANPATH"};
+    bool hook = getenv("GIT_EXEC_PATH") != nullptr;
+    for (size_t i = 0; i < sizeof git / sizeof git[0]; i++)
+        unsetenv(git[i]);
+    for (size_t i = 0; hook && i < sizeof xcrun / sizeof xcrun[0]; i++)
+        unsetenv(xcrun[i]);
 }
 
 static int build_pre_push(SmithRun *run) {
@@ -2496,8 +2503,15 @@ static int build_pre_push_test(SmithRun *run) {
     if (!build_pre_push_formattable("a/b.smith") || build_pre_push_formattable("README.md"))
         failed = build_gate_fail("pre-push: the files fmt reads are wrong\n");
     setenv("GIT_DIR", "/nonexistent", 1);
+    setenv("LIBRARY_PATH", "/nonexistent", 1);
     build_pre_push_clean_environment();
     if (getenv("GIT_DIR") != nullptr) failed = build_gate_fail("pre-push: GIT_DIR must not reach the checks\n");
+    if (getenv("LIBRARY_PATH") == nullptr)
+        failed = build_gate_fail("pre-push: LIBRARY_PATH is cleared only in a hook\n");
+    setenv("GIT_EXEC_PATH", "/nonexistent", 1);
+    build_pre_push_clean_environment();
+    if (getenv("LIBRARY_PATH") != nullptr)
+        failed = build_gate_fail("pre-push: a hook's LIBRARY_PATH must be cleared\n");
     const BuildPrePushStep steps[] = {{"one", (const char *[]){"true", nullptr}},
                                       {"two", (const char *[]){"false", nullptr}},
                                       {"three", (const char *[]){"true", nullptr}}};
