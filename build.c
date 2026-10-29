@@ -40,8 +40,9 @@ typedef struct {
     const char *cxx;     // compiles the shims
     const char *const *headers;  // the headers no smith_object makes (build_header_steps), which smith.c includes
     const char *const *protocol; // the generated protocol code (build_protocol_steps), which smith.c includes
-    bool coverage; // COVERAGE=1: smith.c and the linked libraries count the lines they run (the train's check, #456)
-    bool lldb;     // the install has lldb (scripts/llvm.sh, the lldb step): smith has `smith dbg` and `smith dap`
+    bool coverage;     // COVERAGE=1: smith.c and the linked libraries count the lines they run (the check that records,
+                       // #456)
+    bool lldb;         // the install has lldb (scripts/llvm.sh, the lldb step): smith has `smith dbg` and `smith dap`
     const char *prove; // the folder with Z3 and Alive2 beside the LLVM install (build_prove_libs_make), else ""
     bool linkable;     // the install has what smith links (else the default target stops and says `smith build llvm`)
     bool hook;         // the install has the token hook (patches/clang-token-hook.patch): smith compiles .smith files
@@ -967,7 +968,7 @@ static const char *build_units(SmithBuild *b, const BuildConfig *config, const c
     const char *self = smith_fmt(b, "$repo/%s", binary);
     const char *environment =
         smith_fmt(b, "PATH=\"$repo/%s:$PATH\" SMITH_SELF=\"%s\" SMITH_REPO=\"$repo\"", folder, self);
-    // The train's run (COVERAGE=1, #456): the runner gives every test a folder of profiles, merges them as the test
+    // A run with COVERAGE=1 (#456): the runner gives every test a folder of profiles, merges them as the test
     // ends, and the records are joined into .smith/coverage/coverage.tsv when the run is over, red or green.
     const char *measure =
         smith_fmt(b, "%s SMITH_COVERAGE_DIR=\"$repo/.smith/coverage\" SMITH_COVERAGE_BINARY=\"%s\"", environment, self);
@@ -2247,28 +2248,28 @@ static int build_docs_gate_test(SmithRun *run) {
     return failed;
 }
 
-// `smith build ci-times [-Dn=10] [-Devent=push]` (issue #360): where CI's time goes. The last n green runs of the check
-// workflow (a push to main, or -Devent=pull_request) are downloaded with `gh` into .smith/ci-times/<run id> (kept, so a
-// run is fetched once): the job's steps in seconds (steps.tsv) and the `check-log` artifact. scripts/ci_times.c,
-// compiled here, prints the report. A run that skipped its check (its tree was checked already) has no log and is
-// counted.
+// `smith build ci-times [-Dn=10] [-Devent=pull_request]` (issue #360): where CI's time goes. The last n green runs of
+// ci.yml (a pull request, a merge queue entry with -Devent=merge_group, or a push to main) are downloaded with `gh`
+// into .smith/ci-times/<run id> (kept, so a run is fetched once): every job's steps in seconds (steps.tsv) and the
+// `test-log-*` artifacts, one for each part of the test matrix. scripts/ci_times.c, compiled here, prints the report.
+// A run that had no tests (its scope was documents only) has no logs and is counted.
 static int build_ci_times_fetch(SmithBuild *b, const char *id, const char *folder) {
     const char *steps = smith_fmt(b, "%s/steps.tsv", folder);
     if (access(steps, R_OK) == 0) return 0;
     if (build_make_folder(b, folder) != 0) return 1;
-    const char *jq =
-        "(.jobs[] | select(.name == \"check\")) | ((.started_at | fromdate) - (.created_at | fromdate) | "
-        "\"queued\\t\\(.)\"), (\"job\\t\\((.completed_at | fromdate) - (.started_at | fromdate))\"), (.steps[] | "
-        "select(.started_at != null and .completed_at != null) | \"\\(.name)\\t\\((.completed_at | fromdate) - "
-        "(.started_at | fromdate))\")";
-    int status = build_spawn(
-        &(BuildSpawn){.argv = smith_list(b, "gh", "api", smith_fmt(b, "repos/{owner}/{repo}/actions/runs/%s/jobs", id),
-                                         "--jq", jq, nullptr),
-                      .log = steps,
-                      .stdout_only = true,
-                      .tail = 5});
-    // A run whose artifact expired or was never made (a skipped check) has no log: that is counted, not an error.
-    (void)build_spawn(&(BuildSpawn){.argv = smith_list(b, "gh", "run", "download", id, "-n", "check-log", "-D",
+    const char *jq = ".jobs[] | select(.started_at != null and .completed_at != null) | .name as $n | "
+                     "(\"\\($n) / queued\\t\\((.started_at | fromdate) - (.created_at | fromdate))\"), "
+                     "(\"\\($n) / job\\t\\((.completed_at | fromdate) - (.started_at | fromdate))\"), "
+                     "(.steps[] | select(.started_at != null and .completed_at != null) | "
+                     "\"\\($n) / \\(.name)\\t\\((.completed_at | fromdate) - (.started_at | fromdate))\")";
+    int status = build_spawn(&(BuildSpawn){
+        .argv = smith_list(b, "gh", "api", "--paginate", smith_fmt(b, "repos/{owner}/{repo}/actions/runs/%s/jobs", id),
+                           "--jq", jq, nullptr),
+        .log = steps,
+        .stdout_only = true,
+        .tail = 5});
+    // A run with no test job, or whose artifacts expired, has no logs: that is counted, not an error.
+    (void)build_spawn(&(BuildSpawn){.argv = smith_list(b, "gh", "run", "download", id, "-p", "test-log-*", "-D",
                                                        smith_fmt(b, "%s/", folder), nullptr),
                                     .log = smith_fmt(b, "%s/download.log", folder)});
     return status;
@@ -2281,8 +2282,8 @@ static int build_ci_times(SmithRun *run) {
     const char *list = smith_fmt(b, "%s/runs.txt", root);
     if (build_make_folder(b, root) != 0) return 1;
     const char *const *query =
-        smith_list(b, "gh", "run", "list", "--workflow", "check.yml", "--event", event, "--status", "success",
-                   "--limit", run->args[0], "--json", "databaseId", "--jq", ".[].databaseId", nullptr);
+        smith_list(b, "gh", "run", "list", "--workflow", "ci.yml", "--event", event, "--status", "success", "--limit",
+                   run->args[0], "--json", "databaseId", "--jq", ".[].databaseId", nullptr);
     if (strcmp(event, "push") == 0) query = smith_cat(b, query, smith_list(b, "--branch", "main", nullptr), nullptr);
     int status = build_spawn(&(BuildSpawn){.argv = query, .log = list, .stdout_only = true, .tail = 5});
     const char *const *ids = build_lines(b, list);
@@ -2296,9 +2297,9 @@ static int build_ci_times(SmithRun *run) {
     return build_exec(smith_cat(b, smith_list(b, tool, root, nullptr), ids, nullptr));
 }
 
-// `smith build bench [-Dfull=1] [-Dpreflight=1] [-Dsmith=<path>]` (issue #639): measures each budget line of the speed
+// `smith build bench [-Dfull=1] [-Dprepush=1] [-Dsmith=<path>]` (issue #639): measures each budget line of the speed
 // table (no-op build, one-file build, fresh worktree, fmt, lint, a .smith module's compile, optionally the full test
-// suite's CPU and preflight) with the smith this build made, prints the table and writes it to .smith/bench.tsv.
+// suite's CPU and pre-push) with the smith this build made, prints the table and writes it to .smith/bench.tsv.
 // scripts/bench.c, compiled here, does the measuring.
 static int build_bench(SmithRun *run) {
     SmithBuild *b = run->b;
@@ -2311,199 +2312,199 @@ static int build_bench(SmithRun *run) {
     if (status != 0) return status;
     const char *const *argv = smith_list(b, tool, run->args[0], ".smith/bench.tsv", nullptr);
     if (run->args[1][0] != '\0') argv = smith_cat(b, argv, smith_list(b, "full", nullptr), nullptr);
-    if (run->args[2][0] != '\0') argv = smith_cat(b, argv, smith_list(b, "preflight", nullptr), nullptr);
+    if (run->args[2][0] != '\0') argv = smith_cat(b, argv, smith_list(b, "prepush", nullptr), nullptr);
     return build_exec(argv);
 }
 
 // `smith build coverage-fetch` (issue #456), run by `smith test --changed` when it finds no records and this build file
-// defines the task: brings the records of the last green run of the train (the artifact `smith-records`) into
-// .smith/records, keeping any record already there. Records are keyed by content, so one from CI is valid wherever its
-// hashes match. Nothing found is not an error: the build graph decides.
+// defines the task. CI's ci.yml uploads no coverage records (the check that did is gone, #798), so there is nothing to
+// fetch: the task finds none, quietly, and `smith test --changed` falls back to the build graph.
 static int build_coverage_fetch(SmithRun *run) {
-    SmithBuild *b = run->b;
-    const char *found = ".smith/coverage-fetch.txt";
-    if (build_make_folder(b, ".smith") != 0) return 1;
-    int status = build_spawn(&(BuildSpawn){
-        .argv = smith_list(b, "gh", "run", "list", "--workflow", "check.yml", "--branch", "main", "--status", "success",
-                           "--limit", "1", "--json", "databaseId", "--jq", ".[].databaseId", nullptr),
-        .log = found,
-        .stdout_only = true,
-        .tail = 5});
-    const char *const *ids = status == 0 ? build_lines(b, found) : nullptr;
-    if (ids == nullptr || ids[0] == nullptr) return 0; // no run: the graph decides
-    const char *download = ".smith/records-download";
-    if (build_make_folder(b, ".smith/records") != 0 || build_make_folder(b, download) != 0) return 1;
-    status = build_spawn(&(BuildSpawn){
-        .argv = smith_list(b, "gh", "run", "download", ids[0], "-n", "smith-records", "-D", download, nullptr),
-        .log = ".smith/coverage-fetch.log"});
-    if (status == 0)
-        (void)build_spawn(&(BuildSpawn){
-            .argv = smith_list(b, "sh", "-c", "cp -n .smith/records-download/*.rec .smith/records/ 2>/dev/null; true",
-                               nullptr)});
+    (void)run;
     return 0;
 }
 
-// `smith build preflight` (issue #578): the whole local check of the commit checked out, with a verdict the train
-// reads. It needs a clean tree, builds with the running smith, then runs fmt, docs, `lint --changed` (the files the
-// diff against origin/main reaches and the files that include them; the train lints the whole project, and a clean file
-// is a cache hit there) and `test --changed --cheapest-first --fail-fast` (the tests the diff against origin/main can
-// reach, capped at 10 minutes: a timeout is a pass) with the smith it built, and posts the commit status
-// `smith/preflight` on the head's SHA: success with the counts, or failure naming the steps. A push makes a new head
-// with no status, so the train takes only what was checked as it is. smith never runs gh itself: this task does, like
-// coverage-fetch. Logs are .smith/preflight-<step>.log.
-static int build_preflight_step(SmithBuild *b, const char *name, const char *const *argv) {
-    // Each step runs in a session of its own, so a signal to the terminal's or the tool's process group (a hangup after
-    // a timeout: status 129) does not reach the checks.
-    const char *const *wrapped =
-        smith_cat(b, smith_list(b, "perl", "-MPOSIX", "-e", "POSIX::setsid(); exec @ARGV or die \"exec: $!\"", nullptr),
-                  argv, nullptr);
-    int status =
-        build_spawn(&(BuildSpawn){.argv = wrapped, .log = smith_fmt(b, ".smith/preflight-%s.log", name), .tail = 12});
-    fprintf(stderr, "preflight: %s %s\n", name, status == 0 ? "ok" : "FAILED");
-    return status;
-}
+// ---- The pre-push hook (#798): the local checks run on every push without anyone remembering them. build.c's ordinary
+// build writes `.git/hooks/pre-push` (in the common git dir, so every worktree of the clone has it) with two lines, and
+// the hook only runs `smith build pre-push`, the task below. No shell file is committed.
+static const char *const build_pre_push_hook = "#!/bin/sh\n"
+                                               "exec smith build pre-push\n";
 
-// The test step of preflight is capped like CI's "Changed tests first" (#627): the cheapest tests first by the records,
-// stopping at the first failure, in a process group of its own so that the watchdog ends every process the tests
-// started when the cap (10 minutes, SMITH_PREFLIGHT_CAP seconds) is reached. A run that reached the cap counts as a
-// pass: only a failed test is red, and the train's full check stays the gate. Returns the exit status of the run, 0
-// when it was capped.
-constexpr unsigned build_preflight_cap_seconds = 600;
-
-static int build_preflight_capped(SmithBuild *b, const char *const *argv, const char *log, bool *capped) {
-    const char *given = getenv("SMITH_PREFLIGHT_CAP");
-    long wanted = given != nullptr ? strtol(given, nullptr, 10) : 0;
-    unsigned cap = wanted > 0 ? (unsigned)wanted : build_preflight_cap_seconds;
-    *capped = false;
-    fflush(stdout);
-    fflush(stderr);
-    posix_spawn_file_actions_t actions;
-    posix_spawn_file_actions_init(&actions);
-    posix_spawn_file_actions_addopen(&actions, 1, log, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    posix_spawn_file_actions_adddup2(&actions, 1, 2);
-    posix_spawnattr_t attributes;
-    posix_spawnattr_init(&attributes);
-    posix_spawnattr_setpgroup(&attributes, 0); // a group of its own: the leader is the child
-    posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETPGROUP);
-    pid_t pid = 0;
-    int error = posix_spawnp(&pid, argv[0], &actions, &attributes, (char *const *)argv, environ);
-    posix_spawn_file_actions_destroy(&actions);
-    posix_spawnattr_destroy(&attributes);
-    if (error != 0) {
-        fprintf(stderr, "smith: cannot run %s: %s\n", argv[0], strerror(error));
-        return 127;
+// Writes the hook into `hooks_folder` when the file is missing or differs; 1 when it wrote, 0 when it was right, -1
+// when it could not.
+static int build_pre_push_install(const char *hooks_folder) {
+    char path[PATH_MAX];
+    snprintf(path, sizeof path, "%s/pre-push", hooks_folder);
+    char current[256] = "";
+    FILE *file = fopen(path, "rb");
+    if (file != nullptr) {
+        size_t used = fread(current, 1, sizeof current - 1, file);
+        current[used] = '\0';
+        fclose(file);
     }
-    int status = 0;
-    for (unsigned waited = 0; waited <= cap; waited++) { // once a second, up to the cap
-        pid_t done = waitpid(pid, &status, WNOHANG);
-        if (done == pid) break;
-        if (waited >= cap) {
-            *capped = true;
-            kill(-pid, SIGTERM);
-            for (unsigned grace = 0; grace < 5 && waitpid(pid, &status, WNOHANG) != pid; grace++)
-                sleep(1);
-            kill(-pid, SIGKILL);
-            (void)waitpid(pid, &status, WNOHANG);
-            break;
-        }
-        sleep(1);
+    if (strcmp(current, build_pre_push_hook) == 0) return 0;
+    (void)mkdir(hooks_folder, 0755);
+    if (build_write_text(path, build_pre_push_hook, 0755) != 0) return -1;
+    return chmod(path, 0755) == 0 ? 1 : -1;
+}
+
+// Called by build(): outside a git checkout there is nothing to do.
+static void build_pre_push_hook_write(SmithBuild *b) {
+    const char *common = smith_capture_or(b, (const char *[]){"git", "rev-parse", "--git-common-dir", nullptr}, "");
+    if (common[0] == '\0') return;
+    if (build_pre_push_install(smith_fmt(b, "%s/hooks", common)) == 1)
+        fputs("smith: wrote .git/hooks/pre-push: every push now runs `smith build pre-push`\n", stderr);
+}
+
+// The pre-push checks of the commit checked out, against the merge-base with origin/main, with the smith the tree
+// builds: build, fmt (`--dry-run --Werror` on the changed files), docs, `lint --changed` and `test --changed`. Every
+// step runs, each with its log in .smith/pre-push-<step>.log; a failure prints the end of the log and the path to read,
+// and stops the push. No commit status and no gh.
+typedef struct {
+    const char *name;
+    const char *const *argv;
+} BuildPrePushStep;
+
+// Runs the steps in `folder`'s logs; returns how many failed, and names them on one line.
+static int build_pre_push_steps(SmithBuild *b, const BuildPrePushStep *steps, size_t count, const char *folder) {
+    int failed = 0;
+    const char *names = "";
+    for (size_t i = 0; i < count; i++) {
+        const char *log = smith_fmt(b, "%s/pre-push-%s.log", folder, steps[i].name);
+        int status = build_spawn(&(BuildSpawn){.argv = steps[i].argv, .log = log, .tail = 12});
+        fprintf(stderr, "pre-push: %s %s\n", steps[i].name, status == 0 ? "ok" : "FAILED");
+        if (status == 0) continue;
+        fprintf(stderr, "pre-push: %s failed (status %d); read %s\n", steps[i].name, status, log);
+        names = smith_fmt(b, "%s %s", names, steps[i].name);
+        failed++;
     }
-    (void)b;
-    if (*capped) return 0;
-    return WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
+    if (failed != 0) fprintf(stderr, "pre-push: the push is stopped; failed:%s\n", names);
+    return failed;
 }
 
-static const char *build_preflight_capture(SmithBuild *b, const char *name, const char *const *argv) {
-    const char *log = smith_fmt(b, ".smith/preflight-%s.out", name);
-    int status = build_spawn(&(BuildSpawn){.argv = argv, .log = log, .stdout_only = true});
-    const char *const *lines = status == 0 ? build_lines(b, log) : nullptr;
-    return lines != nullptr && lines[0] != nullptr ? lines[0] : "";
+// Whether `path` is a document no build reads: the `none` scope of ci.yml's `changes` job (LICENSE*, CONTRIBUTING.md
+// and the images in the root).
+static bool build_pre_push_document(const char *path) {
+    if (strncmp(path, "LICENSE", 7) == 0 && strchr(path, '/') == nullptr) return true;
+    if (strcmp(path, "CONTRIBUTING.md") == 0) return true;
+    if (strchr(path, '/') != nullptr) return false;
+    const char *dot = strrchr(path, '.');
+    if (dot == nullptr || dot == path) return false;
+    const char *const images[] = {"png", "jpg", "jpeg", "gif", "svg", "webp"};
+    for (size_t i = 0; i < sizeof images / sizeof images[0]; i++)
+        if (strcmp(dot + 1, images[i]) == 0) return true;
+    return false;
 }
 
-// Seconds on a monotonic clock, and a duration as the status shows it: 41s, 3m.
-static double build_preflight_now(void) {
-    struct timespec now;
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    return (double)now.tv_sec + (double)now.tv_nsec / 1e9;
+// True when every changed file is such a document (and when nothing changed): the tests are skipped.
+static bool build_pre_push_documents_only(const char *const *files) {
+    for (size_t i = 0; files != nullptr && files[i] != nullptr; i++)
+        if (files[i][0] != '\0' && !build_pre_push_document(files[i])) return false;
+    return true;
 }
 
-static const char *build_preflight_duration(SmithBuild *b, double seconds) {
-    if (seconds >= 120) return smith_fmt(b, "%.0fm", seconds / 60);
-    return smith_fmt(b, "%.0fs", seconds);
+// Whether `smith fmt` formats the file: its extension is one clang-format reads (smith-check).
+static bool build_pre_push_formattable(const char *path) {
+    const char *dot = strrchr(path, '.');
+    if (dot == nullptr) return false;
+    const char *const extensions[] = {"c", "h", "m", "mm", "cpp", "cc", "cxx", "hpp", "hh", "smith", "metal"};
+    for (size_t i = 0; i < sizeof extensions / sizeof extensions[0]; i++)
+        if (strcmp(dot + 1, extensions[i]) == 0) return true;
+    return false;
 }
 
-static int build_preflight(SmithRun *run) {
+static int build_pre_push(SmithRun *run) {
     SmithBuild *b = run->b;
     if (build_make_folder(b, ".smith") != 0) return 1;
-    const char *sha = build_preflight_capture(b, "sha", smith_list(b, "git", "rev-parse", "HEAD", nullptr));
-    if (sha[0] == '\0') {
-        fputs("preflight: not in a git checkout with a commit\n", stderr);
-        return 2;
+    const char *base = smith_capture_or(b, (const char *[]){"git", "merge-base", "origin/main", "HEAD", nullptr}, "");
+    const char *const *changed = nullptr;
+    if (base[0] != '\0') {
+        const char *const diff[] = {"git", "diff", "--name-only", "--diff-filter=d", base, "HEAD", nullptr};
+        const char *list = ".smith/pre-push-changed.txt";
+        changed = build_spawn(&(BuildSpawn){.argv = diff, .log = list, .stdout_only = true}) == 0 ? build_lines(b, list)
+                                                                                                  : nullptr;
     }
-    if (build_preflight_capture(b, "dirty", smith_list(b, "git", "status", "--porcelain", nullptr))[0] != '\0') {
-        fputs("preflight: the tree has uncommitted changes; commit them first (the status is for a commit)\n", stderr);
-        return 2;
+    if (changed == nullptr) fputs("pre-push: no merge-base with origin/main; every step looks at all files\n", stderr);
+    if (smith_capture_or(b, (const char *[]){"git", "status", "--porcelain", nullptr}, "")[0] != '\0')
+        fputs("pre-push: the tree has uncommitted changes; the checks read the working tree, not the commit\n", stderr);
+    const char *self = getenv("SMITH_SELF") != nullptr ? getenv("SMITH_SELF") : "smith";
+    int status = build_spawn(
+        &(BuildSpawn){.argv = smith_list(b, self, "build", nullptr), .log = ".smith/pre-push-build.log", .tail = 12});
+    fprintf(stderr, "pre-push: build %s\n", status == 0 ? "ok" : "FAILED");
+    if (status != 0) {
+        fputs("pre-push: build failed; read .smith/pre-push-build.log\npre-push: the push is stopped; failed: build\n",
+              stderr);
+        return 1;
     }
-    const char *self = getenv("SMITH_SELF");
-    if (self == nullptr) self = "smith";
-    const char *system = build_preflight_capture(b, "uname", smith_list(b, "uname", "-s", nullptr));
-    const char *machine = build_preflight_capture(b, "machine", smith_list(b, "uname", "-m", nullptr));
-    const char *built = smith_fmt(b, "build/%s-%s/smith", system, machine);
-    const char *failed = "";
-    const char *times = ""; // "build 41s, fmt 3s, ..." for the summary and the description
-    bool test_capped = false;
-    double started = build_preflight_now();
-    int built_status = build_preflight_step(b, "build", smith_list(b, self, "build", nullptr));
-    times = smith_fmt(b, "build %s", build_preflight_duration(b, build_preflight_now() - started));
-    if (built_status != 0) {
-        failed = "build";
-    } else {
-        const char *const names[] = {"fmt", "docs", "lint", "test"};
-        const char *const *commands[] = {
-            smith_list(b, built, "fmt", nullptr), smith_list(b, built, "docs", nullptr),
-            smith_list(b, built, "lint", "--changed", nullptr),
-            smith_list(b, built, "test", "--changed", "--cheapest-first", "--fail-fast", nullptr)};
-        for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
-            double step_started = build_preflight_now();
-            if (strcmp(names[i], "test") == 0) { // capped: a timeout is a pass
-                int status = build_preflight_capped(b, commands[i], ".smith/preflight-test.log", &test_capped);
-                if (status != 0) build_print_tail(".smith/preflight-test.log", 12);
-                fprintf(stderr, "preflight: test %s\n", status != 0 ? "FAILED" : test_capped ? "capped" : "ok");
-                if (status != 0) failed = smith_fmt(b, "%s test", failed);
-            } else if (build_preflight_step(b, names[i], commands[i]) != 0) {
-                failed = smith_fmt(b, "%s %s", failed, names[i]);
-            }
-            times = smith_fmt(b, "%s, %s %s%s", times, strcmp(names[i], "test") == 0 ? "tests" : names[i],
-                              build_preflight_duration(b, build_preflight_now() - step_started),
-                              strcmp(names[i], "test") == 0 && test_capped ? " capped" : "");
-        }
+    const char *built = smith_fmt(b, "build/%s-%s/smith", b->os, b->arch);
+    const char *const *fmt = smith_list(b, built, "fmt", "--dry-run", "--Werror", nullptr);
+    size_t fmt_files = 0;
+    for (size_t i = 0; changed != nullptr && changed[i] != nullptr; i++) {
+        if (!build_pre_push_formattable(changed[i])) continue;
+        fmt = smith_cat(b, fmt, smith_list(b, changed[i], nullptr), nullptr);
+        fmt_files++;
     }
-    const char *tests = build_preflight_capture(
-        b, "count",
-        smith_list(b, "sh", "-c", "grep -Eo '[0-9]+ passed' .smith/preflight-test.log 2>/dev/null | tail -1; true",
-                   nullptr));
-    bool ok = failed[0] == '\0';
-    // Under GitHub's 140 characters: the times, then the count.
-    const char *description = ok ? smith_fmt(b, "ok: %s (%s)", times,
-                                             tests[0] != '\0' ? tests
-                                             : test_capped    ? "no count before the cap"
-                                                              : "no tests selected")
-                                 : smith_fmt(b, "failed:%s (%s)", failed, times);
-    fprintf(stderr, "preflight: %s, %s in all\n", times, build_preflight_duration(b, build_preflight_now() - started));
-    int posted = build_spawn(&(BuildSpawn){
-        .argv = smith_list(b, "gh", "api", smith_fmt(b, "repos/{owner}/{repo}/statuses/%s", sha), "-f",
-                           smith_fmt(b, "state=%s", ok ? "success" : "failure"), "-f", "context=smith/preflight", "-f",
-                           smith_fmt(b, "description=%.140s", description), nullptr),
-        .log = ".smith/preflight-status.log",
-        .tail = 5});
-    fprintf(stderr, "preflight: %s on %.12s: %s%s\n", ok ? "success" : "failure", sha, description,
-            posted == 0 ? "" : " (the status could not be posted: gh api failed)");
-    return ok && posted == 0 ? 0 : 1;
+    BuildPrePushStep steps[4];
+    size_t count = 0;
+    if (changed == nullptr || fmt_files != 0) steps[count++] = (BuildPrePushStep){"fmt", fmt};
+    steps[count++] = (BuildPrePushStep){"docs", smith_list(b, built, "docs", nullptr)};
+    steps[count++] = (BuildPrePushStep){"lint", smith_list(b, built, "lint", "--changed", nullptr)};
+    if (changed != nullptr && build_pre_push_documents_only(changed))
+        fputs("pre-push: only documents no build reads changed; the tests are skipped\n", stderr);
+    else
+        steps[count++] = (BuildPrePushStep){"test", smith_list(b, built, "test", "--changed", "--fail-fast", nullptr)};
+    return build_pre_push_steps(b, steps, count, ".smith") == 0 ? 0 : 1;
+}
+
+// The test of the pre-push task on a scratch folder: the hook is written when missing, rewritten when it differs, left
+// alone when right, and is the two lines; the documents-only scope; the steps run all and a failed one is named with
+// its log.
+static int build_pre_push_test(SmithRun *run) {
+    SmithBuild *b = run->b;
+    char dir[PATH_MAX];
+    snprintf(dir, sizeof dir, "%s/smith-pre-push-%d.noindex", getenv("TMPDIR") != nullptr ? getenv("TMPDIR") : "/tmp",
+             (int)getpid());
+    if (mkdir(dir, 0700) != 0) return 1;
+    const char *hooks = smith_fmt(b, "%s/hooks", dir);
+    const char *hook = smith_fmt(b, "%s/pre-push", hooks);
+    int failed = 0;
+    if (build_pre_push_install(hooks) != 1) failed = build_gate_fail("pre-push: a missing hook must be written\n");
+    if (build_pre_push_install(hooks) != 0) failed = build_gate_fail("pre-push: a right hook must be left alone\n");
+    (void)build_write_text(hook, "#!/bin/sh\necho old\n", 0644);
+    if (build_pre_push_install(hooks) != 1) failed = build_gate_fail("pre-push: a hook that differs is rewritten\n");
+    const char *const *lines = build_lines(b, hook);
+    if (lines == nullptr || lines[0] == nullptr || strcmp(lines[0], "#!/bin/sh") != 0 || lines[1] == nullptr ||
+        strcmp(lines[1], "exec smith build pre-push") != 0 || lines[2] != nullptr)
+        failed = build_gate_fail("pre-push: the hook is the two lines #!/bin/sh and exec smith build pre-push\n");
+    struct stat info;
+    if (stat(hook, &info) != 0 || (info.st_mode & 0100) == 0) failed = build_gate_fail("pre-push: not executable\n");
+    const char *const none[] = {"LICENSE", "LICENSE.md", "CONTRIBUTING.md", "logo.png", "a.svg", nullptr};
+    const char *const some[] = {"LICENSE", "docs/logo.png", nullptr};
+    const char *const code[] = {"CONTRIBUTING.md", "build.c", nullptr};
+    if (!build_pre_push_documents_only(none) || build_pre_push_documents_only(some) ||
+        build_pre_push_documents_only(code) || !build_pre_push_documents_only(nullptr))
+        failed = build_gate_fail("pre-push: the documents-only scope is wrong\n");
+    if (!build_pre_push_formattable("a/b.smith") || build_pre_push_formattable("README.md"))
+        failed = build_gate_fail("pre-push: the files fmt reads are wrong\n");
+    const BuildPrePushStep steps[] = {{"one", (const char *[]){"true", nullptr}},
+                                      {"two", (const char *[]){"false", nullptr}},
+                                      {"three", (const char *[]){"true", nullptr}}};
+    fputs("(the next pre-push failure is the one under test)\n", stderr);
+    if (build_pre_push_steps(b, steps, 3, dir) != 1 || access(smith_fmt(b, "%s/pre-push-three.log", dir), R_OK) != 0)
+        failed = build_gate_fail("pre-push: a failed step is counted and the steps after it still run\n");
+    build_spawn(&(BuildSpawn){.argv = (const char *[]){"/bin/rm", "-rf", dir, nullptr}});
+    return failed;
 }
 
 static void build_developer_tasks(SmithBuild *b, const char *binary) {
-    SmithStep preflight = {.run = build_preflight};
-    smith_task(b, "preflight", &preflight);
+    SmithStep pre_push = {.run = build_pre_push, .description = "running the checks of a push (the git pre-push hook)"};
+    smith_task(b, "pre-push", &pre_push);
+    SmithStep pre_push_test = {
+        .run = build_pre_push_test,
+        .description = "testing the pre-push hook and steps on a scratch folder",
+        .test = true,
+    };
+    smith_task(b, "test-pre-push", &pre_push_test);
     SmithStep friction = {
         .run = build_friction,
         .args =
@@ -2514,8 +2515,10 @@ static void build_developer_tasks(SmithBuild *b, const char *binary) {
     smith_task(b, "coverage-fetch", &coverage_fetch);
     SmithStep ci_times = {
         .run = build_ci_times,
-        .args = smith_list(b, smith_option_value(b, "n", "10", "ci-times: how many of the last green runs"),
-                           smith_option_value(b, "event", "push", "ci-times: push (main) or pull_request"), nullptr),
+        .args = smith_list(
+            b, smith_option_value(b, "n", "10", "ci-times: how many of the last green runs"),
+            smith_option_value(b, "event", "pull_request", "ci-times: pull_request, merge_group or push (main)"),
+            nullptr),
         .description = "reporting where CI's time goes",
     };
     smith_task(b, "ci-times", &ci_times);
@@ -2523,7 +2526,7 @@ static void build_developer_tasks(SmithBuild *b, const char *binary) {
         .run = build_bench,
         .args = smith_list(b, smith_option_value(b, "smith", binary, "bench: the smith to measure"),
                            smith_option_value(b, "full", "", "bench: 1 also runs the full test suite"),
-                           smith_option_value(b, "preflight", "", "bench: 1 also runs preflight"), nullptr),
+                           smith_option_value(b, "prepush", "", "bench: 1 also runs the pre-push checks"), nullptr),
         .description = "measuring the speed budgets of #639",
     };
     smith_task(b, "bench", &bench);
@@ -2609,7 +2612,7 @@ void build(SmithBuild *b) {
     config.hook = build_has_hook(b, config.llvm);
     config.enzyme = build_enzyme_install(b);
     config.coverage =
-        build_variable(b, "COVERAGE", "", "COVERAGE=1: count the lines smith runs (the train's check)")[0] != '\0';
+        build_variable(b, "COVERAGE", "", "COVERAGE=1: count the lines smith runs (the check that records)")[0] != '\0';
     config.lldb = access(smith_fmt(b, "%s/lib/libsmithlldb.a", config.llvm), R_OK) == 0;
     config.cflags = smith_cat(
         b, (const char *[]){smith_fmt(b, "-std=%s", std), "-O1", "-g", "-Wall", "-Wextra", "-Wpedantic", nullptr},
@@ -2629,6 +2632,7 @@ void build(SmithBuild *b) {
     build_release(b, config.binary);
     build_llvm(b);
     build_developer_tasks(b, config.binary);
+    build_pre_push_hook_write(b);
     SmithStep clean = {.command = (const char *[]){"rm", "-rf", "build", nullptr}};
     smith_task(b, "clean", &clean);
     // clangd reads this: the exact command of each compile, and build.c's own.
