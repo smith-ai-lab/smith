@@ -1,0 +1,73 @@
+name: probe
+on:
+  push:
+    branches: [ci-fast]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 40
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Restore the cache
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/smith/steps
+            ~/.cache/smith/llvm
+            ~/.cache/smith/enzyme
+          key: probe-${{ github.sha }}
+          restore-keys: probe-
+      - name: Sizes after restore
+        run: |
+          echo "cache hit: ${{ steps.cache.outputs.cache-hit }} key: ${{ steps.cache.outputs.cache-matched-key }}"
+          du -sh ~/.cache/smith/* 2>/dev/null || true
+      - name: Fetch
+        run: |
+          start=$(date +%s)
+          mkdir -p .smith
+          cc -std=c23 -x c scripts/stage0.c -o .smith/stage0-tool
+          .smith/stage0-tool llvm
+          echo "fetch: $(( $(date +%s) - start )) s"
+          du -sh .smith/stage0 ~/.cache/smith/* 2>/dev/null || true
+      - name: Build
+        run: |
+          start=$(date +%s)
+          .smith/stage0-tool
+          echo "build: $(( $(date +%s) - start )) s"
+          ls build/*/ | head -30
+          du -sh build .smith ~/.cache/smith/* 2>/dev/null || true
+          du -sh .smith/* | sort -h | tail
+      - name: Build the tests too
+        run: |
+          start=$(date +%s)
+          smith=$(ls "$PWD"/build/*/smith | head -n 1)
+          "$smith" test --list 2>&1 | tail -3 || true
+          echo "test --list: $(( $(date +%s) - start )) s"
+      - name: Pack the tree
+        run: |
+          start=$(date +%s)
+          tar --exclude .smith/stage0 -cf "$RUNNER_TEMP/tree.tar" build .smith
+          zstd -q -T0 "$RUNNER_TEMP/tree.tar" -o "$RUNNER_TEMP/tree.tar.zst"
+          ls -l "$RUNNER_TEMP"/tree.tar*
+          echo "pack: $(( $(date +%s) - start )) s"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tree
+          path: ${{ runner.temp }}/tree.tar.zst
+          compression-level: 0
+          retention-days: 1
+      - name: Save the cache
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/smith/steps
+            ~/.cache/smith/llvm
+            ~/.cache/smith/enzyme
+          key: probe-${{ github.sha }}
