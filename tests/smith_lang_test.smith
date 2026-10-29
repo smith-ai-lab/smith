@@ -1379,6 +1379,10 @@ export void test_header_docs(io::Io *io) {
     corpus_case(io, "header-docs");
 }
 
+export void test_header_nolint_pair(io::Io *io) {
+    corpus_case(io, "header-nolint-pair");
+}
+
 export void test_header_in_memory(io::Io *io) {
     corpus_case(io, "header-in-memory");
 }
