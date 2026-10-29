@@ -2502,6 +2502,7 @@ static int build_pre_push_test(SmithRun *run) {
         failed = build_gate_fail("pre-push: the documents-only scope is wrong\n");
     if (!build_pre_push_formattable("a/b.smith") || build_pre_push_formattable("README.md"))
         failed = build_gate_fail("pre-push: the files fmt reads are wrong\n");
+    unsetenv("GIT_EXEC_PATH"); // the test may itself run in a hook
     setenv("GIT_DIR", "/nonexistent", 1);
     setenv("LIBRARY_PATH", "/nonexistent", 1);
     build_pre_push_clean_environment();
