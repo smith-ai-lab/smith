@@ -23,16 +23,16 @@ uint32_t value;
 #endif
 
 #if defined(WIDE) && WIDE > 1
-uint32_t cfg_mode_width() __asm__("_cfg::mode::width");
+uint32_t cfg_mode_width([[maybe_unused]] int32_t n) __asm__("_cfg::mode::width");
 #elif defined(WIDE)
 
-uint32_t cfg_mode_width() __asm__("_cfg::mode::width");
+uint32_t cfg_mode_width([[maybe_unused]] int32_t n) __asm__("_cfg::mode::width");
 #else
 
-uint32_t cfg_mode_width() __asm__("_cfg::mode::width");
+uint32_t cfg_mode_width([[maybe_unused]] int32_t n) __asm__("_cfg::mode::width");
 #endif
 
-uint32_t cfg_mode_always() __asm__("_cfg::mode::always");
+uint32_t cfg_mode_always([[maybe_unused]] int32_t n) __asm__("_cfg::mode::always");
 
 #ifdef OUTER
 #ifdef INNER
@@ -40,7 +40,7 @@ uint32_t cfg_mode_nested() __asm__("_cfg::mode::nested");
 #endif
 #endif
 
-uint32_t cfg_mode_plain() __asm__("_cfg::mode::plain");
+uint32_t cfg_mode_plain([[maybe_unused]] int32_t n) __asm__("_cfg::mode::plain");
 #ifdef __cplusplus
 }
 #endif

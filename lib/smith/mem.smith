@@ -72,6 +72,17 @@ const char *allocator_name(const Allocator *allocator);
     return memory;
 }
 
+// Memory for size bytes at align from the allocator in force, NOT zeroed, never null (a refusal is a checked failure).
+// The opt-out of zero-is-initialization (issue #415) for a block the caller writes whole before it reads any of it: a
+// large buffer whose zeroing was measured to cost more than 2% of a frame or a step. Say the measurement in a comment
+// at the call; without one, alloc is the call.
+[[smith::c_name("smith_mem_alloc_uninit")]] export [[nodiscard]] void *alloc_uninit_raw(usize size, usize align) {
+    contract::trusted(); // the allocator is the edge, and the block is the caller's to write
+    void *memory = try_alloc_raw(size, align);
+    if (memory == nullptr) refuse(size, align);
+    return memory;
+}
+
 // count items of size bytes, zeroed; a count that overflows is a refusal of the largest size.
 [[smith::c_name("smith_mem_alloc_array")]] export [[nodiscard]] void *alloc_array_raw(usize size, usize count,
                                                                                       usize align) {
@@ -90,6 +101,11 @@ const char *allocator_name(const Allocator *allocator);
 // alignof to smith_mem_alloc.
 [[smith::c_name("smith_mem_alloc_type")]] export [[nodiscard]] T *alloc(constexpr type T) {
     return (T *)alloc_raw(sizeof(T), alignof(T));
+}
+
+// A T that is NOT zeroed, the size and the alignment of the type: `alloc` with the opt-out of alloc_uninit_raw.
+[[smith::c_name("smith_mem_alloc_uninit_type")]] export [[nodiscard]] T *alloc_uninit(constexpr type T) {
+    return (T *)alloc_uninit_raw(sizeof(T), alignof(T));
 }
 
 // A zeroed T, or `.none` when the allocator refuses: `if (auto p = mem::try_alloc(Big); p == .some) ...`. The form for

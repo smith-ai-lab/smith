@@ -97,14 +97,15 @@ static const BuildPlatform build_platform_linux = {
 // Transitional (the lag rule, skill smith-dev-build): this file is compiled by the smith that builds it, whose
 // <smith/build.h> still has the old shapes (`smith_package` returns the path, `smith_lines` the lines), and later by a
 // smith whose header has the results (`smith_build_PackageResult`, `smith_build_Lines`). The two helpers below read
-// either through the value's bytes: a plain pointer is the old shape; a result is its tag (0 is `ok`) then, at the
-// size of a pointer, the payload (`.ok`, or `.error` whose message is the second word of a PackageError). Replace them
-// with the typed code once a release of main has the results, and delete this block.
-static const void *build_unwrap(SmithBuild *b, const void *value, size_t size, const char *what, const char *name) {
+// either through the value's bytes: a plain pointer is the old shape; a result is its tag (compared with `ok`'s) then,
+// at the size of a pointer, the payload (`.ok`, or `.error` whose message is the second word of a PackageError).
+// Replace them with the typed code once a release of main has the results, and delete this block.
+static const void *build_unwrap(SmithBuild *b, const void *value, size_t size, int ok_tag, const char *what,
+                                const char *name) {
     (void)b;
     const char *bytes = value;
     if (size == sizeof(void *)) return *(const void *const *)bytes;
-    if (*(const int *)bytes != 0) {
+    if (*(const int *)bytes != ok_tag) { // `ok` is tag 1 since #415 (`error` is the zero value), 0 before
         const char *message =
             size > 2 * sizeof(void *) ? *(const char *const *)(bytes + 2 * sizeof(void *)) : "missing";
         fprintf(stderr, "smith: %s %s: %s\n", what, name, message);
@@ -117,13 +118,15 @@ static const void *build_unwrap(SmithBuild *b, const void *value, size_t size, c
 // a fetch that fails is a failure of the build, not something to recover from.
 static const char *build_package_path(SmithBuild *b, const SmithPackage *package) {
     __auto_type found = smith_package(b, package);
-    return build_unwrap(b, &found, sizeof found, "package", package->url);
+    return build_unwrap(b, &found, sizeof found, smith_enum_result_const_char_ptr__SmithPackageError_tag_ok, "package",
+                        package->url);
 }
 
 // The lines of a file, or the build fails: smith's own build reads only files it has just made.
 static const char *const *build_lines(SmithBuild *b, const char *path) {
     __auto_type read = smith_lines(b, path);
-    return (const char *const *)build_unwrap(b, &read, sizeof read, "cannot read", path);
+    return (const char *const *)build_unwrap(
+        b, &read, sizeof read, smith_enum_result_const_char_ptr_const_ptr__SmithLinesError_tag_ok, "cannot read", path);
 }
 
 static bool build_is_linux(SmithBuild *b) {

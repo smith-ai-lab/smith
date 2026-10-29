@@ -35,6 +35,23 @@ export void test_arena_pushes_are_zeroed() {
     }
 }
 
+// push_uninit is the opt-out: it hands out the memory as it was, aligned, and the next push is zeroed again.
+export void test_arena_push_uninit_keeps_what_was_there_and_push_zeroes_again() {
+    static Memory memory;
+    mem::fill(memory.bytes[0:sizeof memory.bytes], 0xAA);
+    arena::Arena a = arena::fixed(memory.bytes, sizeof memory.bytes);
+    u8 *raw = (u8 *)arena::push_uninit_raw(&a, 16, 8);
+    test::check_equal((usize)raw & 7, 0);
+    test::check_equal(raw[0], 0xAA);
+    Record *record = arena::push_uninit(&a, Record);
+    record->count = 3;
+    test::check_equal(record->count, 3);
+    u8 *zeroed = (u8 *)arena::push_raw(&a, 16, 1);
+    for (usize i = 0; i < 16; i++) {
+        test::check_equal(zeroed[i], 0);
+    }
+}
+
 export void test_arena_pushes_are_aligned() {
     static Memory memory;
     arena::Arena a = arena::fixed(memory.bytes, sizeof memory.bytes);

@@ -1,0 +1,114 @@
+// In a module, `T t;` and `T t = {};` both make a zero value: every byte zero, padding and a union's whole size
+// included (issue #415, knowledge/zero-value.md). A .c file is unchanged.
+module zero_init_test;
+
+import smith::io;
+import smith::test;
+import scratch;
+
+static const char *both_spellings =
+    "module main;\n"
+    "\n"
+    "struct Padded {\n"
+    "    char c;\n"
+    "    I64 n;\n"
+    "    char d;\n"
+    "};\n"
+    "\n"
+    "union Wide {\n"
+    "    char c;\n"
+    "    I64 n;\n"
+    "    char text[24];\n"
+    "};\n"
+    "\n"
+    "[[clang::noinline]] static I32 dirty(void) {\n"
+    "    volatile char noise[512];\n"
+    "    for (I32 i = 0; i < 512; i++) {\n"
+    "        noise[i] = (char)0x5a;\n"
+    "    }\n"
+    "    return noise[7];\n"
+    "}\n"
+    "\n"
+    "static I32 nonzero_bytes(const U8 bytes[:]) {\n"
+    "    I32 count = 0;\n"
+    "    for (Usize i = 0; i < countof(bytes); i++) {\n"
+    "        count += bytes[i] != 0;\n"
+    "    }\n"
+    "    return count;\n"
+    "}\n"
+    "\n"
+    "static I32 declared(void) {\n"
+    "    struct Padded p;\n"
+    "    union Wide w;\n"
+    "    return nonzero_bytes(((const U8 *)&p)[0:sizeof p]) + nonzero_bytes(((const U8 *)&w)[0:sizeof w]);\n"
+    "}\n"
+    "\n"
+    "static I32 braced(void) {\n"
+    "    struct Padded p = {};\n"
+    "    union Wide w = {};\n"
+    "    return nonzero_bytes(((const U8 *)&p)[0:sizeof p]) + nonzero_bytes(((const U8 *)&w)[0:sizeof w]);\n"
+    "}\n"
+    "\n"
+    "I32 main() {\n"
+    "    dirty();\n"
+    "    I32 a = declared();\n"
+    "    dirty();\n"
+    "    I32 b = braced();\n"
+    "    return a + b;\n"
+    "}\n";
+
+export void test_zero_init_declared_and_braced_are_all_zero_bytes(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::write(&p, "main.smith", both_spellings);
+    scratch::Run built = scratch::build(&p, "");
+    scratch::expect_status("the module builds", 0, &built);
+    scratch::Run ran = scratch::sh(&p, "build/debug/p");
+    scratch::expect_status("T t; and T t = {}; leave no nonzero byte, in padding or a union", 0, &ran);
+}
+
+static const char *reads_unwritten = "module main;\n"
+                                     "\n"
+                                     "I32 main() {\n"
+                                     "    Option(I32) last;\n"
+                                     "    Result(I32, I32) outcome;\n"
+                                     "    bool has_last = last == .some;\n"
+                                     "    bool succeeded = outcome == .ok;\n"
+                                     "    return has_last + succeeded;\n"
+                                     "}\n";
+
+// `T t;` is a zero value for the static analyzer too (issue #415): reading an Option never written is no "garbage
+// value" in smith lint, with smith's default checks.
+export void test_zero_init_lint_sees_a_zero_value(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::write(&p, "main.smith", reads_unwritten);
+    scratch::Run tidy = scratch::sh(&p, "cp \"$SMITH_REPO/templates/defaults/clang-tidy\" .clang-tidy");
+    scratch::expect_status("the default checks are in", 0, &tidy);
+    scratch::Run lint = scratch::sh(&p, "smith lint --quiet main.smith -- -I. -I.smith/include 2>&1");
+    scratch::expect_status("T t; read before a write passes smith lint", 0, &lint);
+}
+
+static const char *constructors = "module main;\n"
+                                  "\n"
+                                  "export struct Board {\n"
+                                  "    I32 cells[9];\n"
+                                  "};\n"
+                                  "\n"
+                                  "export Board initial() {\n"
+                                  "    return (Board){.cells = {1, 2, 3}};\n"
+                                  "}\n"
+                                  "\n"
+                                  "I32 main() {\n"
+                                  "    return initial().cells[0];\n"
+                                  "}\n";
+
+// A function with no parameters and no effects is a constant (issue #415): the compile says so, and a function that
+// calls something (the clock, entropy, the allocator) is not one.
+export void test_zero_init_a_pure_function_with_no_parameters_is_a_constant(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::write(&p, "main.smith", constructors);
+    scratch::Run run = scratch::build(&p, "");
+    scratch::expect_failure("an exported function with no parameters and no effects is an error", &run);
+    static char text[16384];
+    __builtin_snprintf(text, sizeof text, "%s%s", run.out, run.err);
+    scratch::expect_contains("the message says it is a constant", text, "write `constexpr");
+}

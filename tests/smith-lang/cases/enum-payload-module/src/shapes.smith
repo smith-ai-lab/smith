@@ -34,7 +34,7 @@ export f32 area(Shape s) {
     return -1;
 }
 
-export Shape unit() {
+export Shape unit([[maybe_unused]] i32 n) {
     return {.circle = {.radius = 1}};
 }
 

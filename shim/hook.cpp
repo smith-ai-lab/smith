@@ -637,6 +637,53 @@ class TypoGuard {
     TypoGuard &operator=(const TypoGuard &) = delete;
 };
 
+// In a module a local `T t;` is `T t = {};` (issue #415, knowledge/zero-value.md): every byte zero. The compile's
+// -ftrivial-auto-var-init=zero makes the code so; this gives the declaration the initializer, when the translation
+// unit is complete and before any consumer runs, so that the static analyzer (smith lint) and clangd see a defined
+// value and do not report a read of a "garbage value". A local with `[[clang::uninitialized]]` (`= undefined`), a
+// parameter, a static or extern, a variable-length array and an incomplete type are left as written.
+class ZeroLocals {
+  public:
+    ZeroLocals(ASTContext &context, SourceManager &manager, std::function<bool(SourceLocation)> generated)
+        : context(context), manager(manager), generated(std::move(generated)) {}
+
+    void run() {
+        for (Decl *decl : context.getTranslationUnitDecl()->decls()) {
+            auto *function = dyn_cast<FunctionDecl>(decl);
+            if (function == nullptr || !function->doesThisDeclarationHaveABody()) continue;
+            if (!manager.isWrittenInMainFile(manager.getSpellingLoc(function->getLocation()))) continue;
+            std::vector<const Stmt *> pending{function->getBody()}; // a worklist, not a recursion
+            while (!pending.empty()) {
+                const Stmt *statement = pending.back();
+                pending.pop_back();
+                if (statement == nullptr) continue;
+                if (auto *declared = dyn_cast<DeclStmt>(statement)) {
+                    for (Decl *each : declared->decls())
+                        if (auto *variable = dyn_cast<VarDecl>(each)) zero(variable);
+                }
+                for (const Stmt *child : statement->children())
+                    pending.push_back(child);
+            }
+        }
+    }
+
+  private:
+    void zero(VarDecl *variable) {
+        if (variable->hasInit() || isa<ParmVarDecl>(variable) || !variable->hasLocalStorage() ||
+            variable->hasAttr<UninitializedAttr>() || variable->isInvalidDecl() || generated(variable->getLocation())) {
+            return;
+        }
+        QualType type = variable->getType();
+        if (type->isIncompleteType() || type->isVariablyModifiedType() || type->isDependentType()) return;
+        variable->setInit(new (context) ImplicitValueInitExpr(type));
+        variable->setInitStyle(VarDecl::CInit);
+    }
+
+    ASTContext &context;
+    SourceManager &manager;
+    std::function<bool(SourceLocation)> generated;
+};
+
 class SmithHook;
 
 class ArrayEnd final : public ExternalSemaSource {
@@ -3772,6 +3819,7 @@ class SmithHook final : public TokenHook, public NameSource {
         if (!moduleFile || sema == nullptr || checked) return;
         checked = true;
         ArrayParameters(sema->Context, SM, [this](SourceLocation at) { return generatedAt(at); }).run();
+        ZeroLocals(sema->Context, SM, [this](SourceLocation at) { return generatedAt(at); }).run();
     }
 
   private:

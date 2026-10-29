@@ -39,8 +39,8 @@ constexpr i32 x = fib(10);                      // 55: run inside the compiler
 constexpr struct Table table = squares(6);      // a lookup table, baked into the binary
 static_assert(x == 55);                         // a failed check is a compile error
 
-export i32 demo() {
-    return x + table.v[5] + table.n;            // 55 + 25 + 6
+export i32 demo(usize row) {
+    return x + table.v[row] + table.n;          // demo(5) is 55 + 25 + 6
 }
 ```
 

@@ -4,6 +4,6 @@ import grid;
 int main() {
     struct grid::Board board = {};
     board.cells[15] = 1;
-    printf("%zu %zu %zu\n", grid::board_size(), grid::other_sizes(), sizeof board.cells);
+    printf("%zu %zu %zu\n", grid::board_size(0), grid::other_sizes(), sizeof board.cells);
     return 0;
 }

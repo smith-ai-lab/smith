@@ -655,6 +655,40 @@ cast from 'const char *' to 'char *' drops const qualifier
 
 [smith-build-warnings](.agents/skills/smith-build-warnings/SKILL.md), [module-diagnostics](knowledge/module-diagnostics.md).
 
+## Zero is initialization
+
+In a module every variable starts at zero: `Tally t;` and `Tally t = {};` mean the same thing, every byte zero, padding included, so reading a variable nobody wrote is a defined value, not undefined behaviour, and the optimizer drops the store wherever the variable is written first. Smith's types are designed so zero is a useful empty value: `Option(T)` is `.none` and `Result(T, E)` is `.error`, so a result nobody set never looks like success. A type's default is its zero value, not a constructor function. A `.c` file keeps C's rules.
+
+```smith project=zero run
+module main;
+
+import std::console;
+
+struct Tally {
+    char kind;
+    I64 total;
+};
+
+I32 main() {
+    // every byte zero, padding too; `Tally fresh = {};` is the same
+    Tally fresh;
+    // zero is .none
+    Option(I32) last;
+    // zero is .error
+    Result(I32, I32) outcome;
+    bool has_last = last == .some;
+    bool succeeded = outcome == .ok;
+    console::print("total ", fresh.total, ", has last ", has_last, ", succeeded ", succeeded, "\n");
+    return 0;
+}
+```
+
+```output project=zero
+total 0, has last false, succeeded false
+```
+
+[smith-idiom](.agents/skills/smith-idiom/SKILL.md), [zero-value](knowledge/zero-value.md).
+
 ## Port your C project, step by step
 
 Every step is optional and leaves the project building. The project here is a Makefile, `main.c`, `greet.c` and `greet.h`.

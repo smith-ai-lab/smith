@@ -21,8 +21,8 @@
 #endif
 static constexpr __INT32_TYPE__ kind_wide = 8;
 static constexpr bool kind_both = kind_wide == 8 && SMITH_TARGET_FLOAT_RADIX == 2;
-__INT32_TYPE__ kind_arch_name() __asm__("_kind::arch_name");
-__INT32_TYPE__ kind_arch_name() {
+__INT32_TYPE__ kind_arch_name([[maybe_unused]] __INT32_TYPE__ n) __asm__("_kind::arch_name");
+__INT32_TYPE__ kind_arch_name([[maybe_unused]] __INT32_TYPE__ n) {
 #if SMITH_TARGET_ARCH == 1
  {
 return 1;

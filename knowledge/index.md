@@ -86,4 +86,5 @@ What smith is and the contracts its code keeps. Read only the concepts your task
 - [Names as written in the editor, lint and diagnostics](smith-names-as-written.md): smith lsp and smith lint lower .smith files too, and report names, notes and fix-its as the source wrote them, never guessed from underscores.
 - [smith new writes the program and what agents need](smith-new.md): smith new writes a program, its tests and the agent documents, with no configuration, and builds and commits once.
 - [How smith build builds .smith sources](smith-sources-in-build.md): A header step per module comes first and every .smith compile waits for all of them.
+- [Zero is initialization](zero-value.md): In a module T t; and T t = {}; both make a zero value, every byte zero, and option and result have a zero that is .none and .error.
 - [The test beds and the bugs checkers found](test-beds.md): checkers, learner and game are the projects smith is tried on, and checkers' tests found four bugs fixed at their source.

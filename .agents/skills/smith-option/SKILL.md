@@ -28,6 +28,7 @@ export usize or_else(Index at, usize otherwise) {
 ```
 
 - **A value converts to `.some`** wherever an `option` is expected (an initializer, an assignment, `return`, an argument), with C's conversions for that context (`option(i64) x = 5;`); `{.some = v}` still works. Absence stays explicit: `.none`. It is an error, naming the explicit form, to convert to an `option` of an `option` (`option(option(i32))` given an `i32`) or `nullptr` to an `option` of a pointer (write `.none`). An `option` never becomes a value (use `try`, `switch` or `x == .some`), and `x == 5` is an error. In a generic's body write `{.some = v}`.
+- **Its zero is `.none`**: `none` is the first variant, so `option(usize) x;` and `option(usize) x = {};` are both absent (`smith-idiom`, zero is initialization).
 - A generic may write `option(T)` or `option(typeof(x))` in its head and body (each instance gets the struct of its own type).
 - The argument may be a call of a function that returns `type`: `option(slice_of(T, 1)) view(constexpr type T, T *xs, usize n)` is an option over a slice. A caller names it through a typedef of the slice, `typedef T Row[:]; typedef option(Row) MaybeRow;`. A braceless `if (n == 0) return .none;` before `return {.some = v};` compiles clean.
 - `option(usize)` may be named first anywhere a type is written, inside a function body too: its struct is defined there, in the block, and C23 makes it the same type as the file-scope one (as the very first mention, `= .none` is not read yet: write `{.some = v}` or mention it in an earlier statement).

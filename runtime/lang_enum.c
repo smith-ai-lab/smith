@@ -406,6 +406,33 @@ static bool smith_lang_enum_designator(SmithLang *lang, const SmithHost *host) {
            smith_lang_previous(lang, host, 3, &open) && (smith_lang_punct(&open, "{") || smith_lang_punct(&open, ","));
 }
 
+// `option(usize) x = {.some = v};` as the type's first mention in a block: the struct is defined ahead in the same
+// declaration, so the compiler has not read it and cannot be asked. The tag's constant follows from the struct's name
+// (`smith_enum_option_usize_tag_some`), as the definition writes it. Without this the initializer was left alone, and
+// worked only while the first variant was the one written (tag 0): `none` is first since #415, so `.some` was `.none`.
+static bool smith_lang_enum_unread(SmithLang *lang, const SmithHost *host, bool declares, const SmithToken *right,
+                                   size_t count, bool dotted) {
+    SmithToken tag = {};
+    SmithToken keyword = {};
+    if (!declares || !dotted || !smith_lang_tuple_previous(lang, host, 2, &tag) ||
+        tag.kind != SmithTokenKind_Identifier || tag.length < 12 || memcmp(tag.text, "smith_enum_", 11) != 0 ||
+        !smith_lang_tuple_previous(lang, host, 3, &keyword) || !smith_lang_ident(&keyword, "struct")) {
+        return false;
+    }
+    bool bare = smith_lang_enum_is_bare(right, count);
+    if (!bare && !smith_lang_enum_is_braced(right, count)) return false;
+    const SmithToken *variant = bare ? &right[1] : &right[2];
+    char pattern[smith_lang_enum_name_max * 2 + 80];
+    snprintf(pattern, sizeof pattern, "{ . tag = %.*s_tag_%.*s%s @0 }", (int)tag.length, tag.text, (int)variant->length,
+             variant->text, bare ? "" : " ,");
+    SmithLangSliceSpan spans[1] = {{right, 0}};
+    if (!bare) spans[0] = (SmithLangSliceSpan){right + 1, count - 2};
+    static SmithLangSliceCur piece;
+    piece = (SmithLangSliceCur){};
+    piece.count = smith_lang_slice_pattern(piece.tokens, 0, smith_lang_slice_cur_max, pattern, spans, &right[0]);
+    return smith_lang_tuple_replace(lang, count, piece.tokens, piece.count);
+}
+
 // `T x = .v;`, `T x = {.v = ...};` (a declaration: the initializer is C's) and `x = .v;`, `x = {.v = ...};` (an
 // assignment: a compound literal). Called at the `=`. True when the right side was written again.
 static bool smith_lang_enum_equals(SmithLang *lang, const SmithHost *host) {
@@ -427,7 +454,7 @@ static bool smith_lang_enum_equals(SmithLang *lang, const SmithHost *host) {
                           : smith_lang_tuple_base(lang, host, text, sizeof text) &&
                                 host->expr_type(host->context, text, (uint32_t)strlen(text), &found) &&
                                 smith_lang_enum_type(host, found.canonical, &type);
-    if (!typed) return false;
+    if (!typed) return smith_lang_enum_unread(lang, host, declares && !pointer, right, count, dotted);
     const SmithToken *after = smith_lang_peek(lang, host, count, false);
     if (!dotted && !smith_lang_punct(after, ";") && !(declares && smith_lang_punct(after, ","))) return false;
     static SmithLangSliceCur converted;
@@ -1399,7 +1426,7 @@ static bool smith_lang_eshape_tag(SmithLang *lang, const SmithHost *host, const 
 
 // The constant of a variant of the result of a call of a generic whose result is built from its arguments
 // (`option(typeof(xs[0]))`): the instance's struct has no name until the call is written, but a shape's variants are
-// numbered in the order the shape writes them, so the variant is its number (`option`: `some` 0, `none` 1).
+// numbered in the order the shape writes them, so the variant is its number (`option`: `none` 0, `some` 1).
 static bool smith_lang_enum_derived_constant(const SmithLangGeneric *generic, const SmithToken *variant, char *out,
                                              size_t capacity) {
     const SmithLangGenToken *head = &smith_lang_gt.tokens[generic->first + smith_lang_generic_skip_attributes(generic)];
@@ -2077,8 +2104,8 @@ static void smith_lang_eshape_import(const char *text, uint32_t length, const ch
 // `smith::option` and `smith::result` (lib/smith/option.smith, result.smith) export. Those headers are not in git, so
 // the two lines the lowering needs of them are written here; `tests/headers_test.smith` checks that each module's
 // generated header has exactly its line.
-static constexpr char smith_option_header[] = "// smith-eshape: option(T) { T some ; none ; }\n";
-static constexpr char smith_result_header[] = "// smith-eshape: result(T,E) { T ok ; E error ; }\n";
+static constexpr char smith_option_header[] = "// smith-eshape: option(T) { none ; T some ; }\n";
+static constexpr char smith_result_header[] = "// smith-eshape: result(T,E) { E error ; T ok ; }\n";
 
 static void smith_lang_eshape_builtins(SmithLang *lang) {
     if (smith_lang_eshape_builtins_done || !lang->is_module) return;

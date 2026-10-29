@@ -5,7 +5,7 @@ import <stdio.h>;
 int main() {
     text::Text text = text::make("shadow");
     int c = 2;
-    [[gnu::unused]] int unused_one = gnu::answer();
+    [[gnu::unused]] int unused_one = gnu::answer(0);
     int gnu = unused_one;
     c::printf("%zu %d %d\n", text::length(text), c, gnu);
     return 0;

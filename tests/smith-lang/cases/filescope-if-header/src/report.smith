@@ -11,10 +11,10 @@ if constexpr (target::os == target::macos) {
     import <sys/stat.h>;
 }
 
-export c::FILE *output(void) {
+export c::FILE *output([[maybe_unused]] i32 n) {
     return nullptr;
 }
 
 export void say(void) {
-    c::printf("report %d\n", output() == nullptr ? 1 : 0);
+    c::printf("report %d\n", output(0) == nullptr ? 1 : 0);
 }

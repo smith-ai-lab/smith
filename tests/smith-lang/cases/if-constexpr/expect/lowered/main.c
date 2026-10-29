@@ -52,7 +52,7 @@ printf("neither\n");
 }
 #endif
 
-printf("%d %d %d\n", kind_arch_name(), kind_opaque(5), kind_nested(20));
+printf("%d %d %d\n", kind_arch_name(0), kind_opaque(5), kind_nested(20));
 printf("%d %d %d\n",__extension__({extern __INT32_TYPE__ kind_describe__f32(float value)__asm__("_kind::describe(float)");kind_describe__f32(1.5f);}),__extension__({extern __INT32_TYPE__ kind_describe__u64(__UINT64_TYPE__ value)__asm__("_kind::describe(__UINT64_TYPE__)");kind_describe__u64(9);}),__extension__({extern __INT32_TYPE__ kind_describe__u8(__UINT8_TYPE__ value)__asm__("_kind::describe(__UINT8_TYPE__)");kind_describe__u8(1);}));
 return answer == 7 ? 0 : 1;
 }

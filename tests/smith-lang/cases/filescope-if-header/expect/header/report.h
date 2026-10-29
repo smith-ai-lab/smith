@@ -24,7 +24,7 @@ extern "C" {
 #if SMITH_TARGET_OS == 1
 #endif
 
-FILE *report_output(void) __asm__("_report::output");
+FILE *report_output([[maybe_unused]] int32_t n) __asm__("_report::output");
 
 void report_say(void) __asm__("_report::say");
 #ifdef __cplusplus

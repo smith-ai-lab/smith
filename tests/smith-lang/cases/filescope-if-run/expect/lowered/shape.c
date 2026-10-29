@@ -20,46 +20,46 @@ static constexpr bool shape_wide = true;
 #if (1)
 
 static constexpr __INT32_TYPE__ shape_columns = 80;
-__INT32_TYPE__ shape_width(void) __asm__("_shape::width");
-__INT32_TYPE__ shape_width(void) {
+__INT32_TYPE__ shape_width([[maybe_unused]] __INT32_TYPE__ n) __asm__("_shape::width");
+__INT32_TYPE__ shape_width([[maybe_unused]] __INT32_TYPE__ n) {
 return shape_columns;
 }
 #else
 
-__INT32_TYPE__ shape_width(void) __asm__("_shape::width");
-__INT32_TYPE__ shape_width(void) {
+__INT32_TYPE__ shape_width([[maybe_unused]] __INT32_TYPE__ n) __asm__("_shape::width");
+__INT32_TYPE__ shape_width([[maybe_unused]] __INT32_TYPE__ n) {
 return undeclared_function();
 }
 #endif
 #if SMITH_TARGET_OS == 1 || SMITH_TARGET_OS == 2
 
-__INT32_TYPE__ shape_platform(void) __asm__("_shape::platform");
-__INT32_TYPE__ shape_platform(void) {
+__INT32_TYPE__ shape_platform([[maybe_unused]] __INT32_TYPE__ n) __asm__("_shape::platform");
+__INT32_TYPE__ shape_platform([[maybe_unused]] __INT32_TYPE__ n) {
 return 1;
 }
 #elif SMITH_TARGET_ARCH == 1
 
-__INT32_TYPE__ shape_platform(void) __asm__("_shape::platform");
-__INT32_TYPE__ shape_platform(void) {
+__INT32_TYPE__ shape_platform([[maybe_unused]] __INT32_TYPE__ n) __asm__("_shape::platform");
+__INT32_TYPE__ shape_platform([[maybe_unused]] __INT32_TYPE__ n) {
 return 2;
 }
 #else
 
-__INT32_TYPE__ shape_platform(void) __asm__("_shape::platform");
-__INT32_TYPE__ shape_platform(void) {
+__INT32_TYPE__ shape_platform([[maybe_unused]] __INT32_TYPE__ n) __asm__("_shape::platform");
+__INT32_TYPE__ shape_platform([[maybe_unused]] __INT32_TYPE__ n) {
 return undeclared_function();
 }
 #endif
 #if SMITH_TARGET_OS == 1
 
-__INT32_TYPE__ shape_sides(void);
-__INT32_TYPE__ shape_sides(void) {
+__INT32_TYPE__ shape_sides([[maybe_unused]] __INT32_TYPE__ n);
+__INT32_TYPE__ shape_sides([[maybe_unused]] __INT32_TYPE__ n) {
 return 4;
 }
 #else
 
-__INT32_TYPE__ shape_sides(void);
-__INT32_TYPE__ shape_sides(void) {
+__INT32_TYPE__ shape_sides([[maybe_unused]] __INT32_TYPE__ n);
+__INT32_TYPE__ shape_sides([[maybe_unused]] __INT32_TYPE__ n) {
 return 4;
 }
 #endif
@@ -70,9 +70,9 @@ __INT32_TYPE__ sum = 0;
 #if (1)
  {
 __INT32_TYPE__ extra = 1;
-sum = shape_width() + extra;
+sum = shape_width(0) + extra;
 }
 #endif
 
-return sum + shape_platform();
+return sum + shape_platform(0);
 }

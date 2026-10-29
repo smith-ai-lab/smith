@@ -33,3 +33,4 @@ export void show(Quotient q) {
 - A `switch` names every variant (no `default:`); `q.ok` is read only where `q == .ok` holds.
 - `result(T, E)` may be named first anywhere a type is written, inside a function body too (its struct is defined in the block, the same type as the file-scope one); a generic may write `result(T, E)` in its head and body.
 - For a value that may simply be absent use `smith-option`. To return a failure to the caller in one word, `try` (`smith-lang-try`).
+- **Its zero is `.error`** holding a zeroed `E`: `error` is the first variant, so `result(T, E) r;` is a failure and a forgotten result never looks like success.

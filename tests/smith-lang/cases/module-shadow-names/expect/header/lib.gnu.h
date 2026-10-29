@@ -11,7 +11,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-int lib_gnu_answer() __asm__("_lib::gnu::answer");
+int lib_gnu_answer([[maybe_unused]] int32_t n) __asm__("_lib::gnu::answer");
 #ifdef __cplusplus
 }
 #endif

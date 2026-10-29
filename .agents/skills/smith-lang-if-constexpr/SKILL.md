@@ -42,12 +42,12 @@ import target;
 
 if constexpr (target::os == target::macos) {
     import <libproc.h>; // a macOS header: on Linux this branch is never read
-    export i32 ticks_per_second() {
-        return 1000;
+    export i32 ticks(i32 seconds) {
+        return seconds * 1000;
     }
 } else {
-    export i32 ticks_per_second() {
-        return 100;
+    export i32 ticks(i32 seconds) {
+        return seconds * 100;
     }
 }
 ```

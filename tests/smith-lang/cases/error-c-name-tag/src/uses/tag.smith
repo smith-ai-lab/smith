@@ -1,12 +1,12 @@
 module uses::tag;
 import <sys/stat.h>;
 
-export int size_bad() {
+export int size_bad([[maybe_unused]] i32 n) {
     struct stat info;
     return (int)sizeof info;
 }
 
-export int size_ok() {
+export int size_ok([[maybe_unused]] i32 n) {
     struct c::stat info;
     return (int)sizeof info;
 }

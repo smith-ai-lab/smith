@@ -9,7 +9,7 @@ import smith::io;
 export i32 sum(usize count) {
     contract::requires(count <= 5);
     constexpr i32 first[_] = {2, 3, 5, 7, 11};
-    i32 total = 0;
+    i32 total; // every variable starts at zero in a module: `i32 total = 0;` and `i32 total = {};` mean the same
     for (usize i = 0; i < count; i++) {
         total += first[i];
     }
@@ -20,7 +20,7 @@ export i32 sum(usize count) {
 // A run-time array is a slice, `i32 xs[:]`: a pointer and a count; `countof(xs)` is its length, `xs[i]` is checked,
 // and `for (i32 x : xs)` visits each element with no bounds to get wrong.
 export i32 total(i32 xs[:]) {
-    i32 sum = 0;
+    i32 sum;
     for (i32 x : xs) {
         sum += x;
     }

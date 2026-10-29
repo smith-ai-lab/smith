@@ -311,10 +311,9 @@ static scratch::Project explain_project(io::Io *io) {
 
 // The report smith test prints, with the values read from the stopped test.
 static const char *explained(const scratch::Project *p, const char *iso, const char *arguments) {
-    const char *command =
-        format::push(&p->io->arena, "build/tests ", iso, " --trace --explain \"$SMITH_SELF\" ", arguments,
-                     " 2>&1 | smith symbolize 2>&1 | ", runner::plain_pipe(), " | tr -s ' '")
-            .data;
+    const char *command = format::push(&p->io->arena, "build/tests ", iso, " --trace --explain \"$SMITH_SELF\" ",
+                                       arguments, " 2>&1 | smith symbolize 2>&1 | ", runner::plain_pipe, " | tr -s ' '")
+                              .data;
     return scratch::capture(p, command);
 }
 
@@ -370,8 +369,7 @@ export void test_runner_workers_explain_reads_a_contract_c_code_and_keeps_check_
         scratch::expect_contains(runner::label(io, iso, "explain: check_equal keeps its own two values"), equal,
                                  "count = 3, 4 (u64)");
         scratch::expect_lacks(runner::label(io, iso, "explain: ... and reads nothing"), equal, "@");
-        const char *filter =
-            format::push(&io->arena, " 2>&1 | ", runner::plain_pipe(), " | grep -v 'smith-trace'").data;
+        const char *filter = format::push(&io->arena, " 2>&1 | ", runner::plain_pipe, " | grep -v 'smith-trace'").data;
         const char *plain_crash =
             scratch::capture(&p, format::push(&io->arena, "build/tests ", iso, " --test ex_crash", filter).data);
         const char *read_crash = scratch::capture(
