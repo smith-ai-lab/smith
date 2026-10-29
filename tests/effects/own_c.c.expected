@@ -1,0 +1,4 @@
+status 0
+copy	owned:free
+find	borrowed:1
+home	internal

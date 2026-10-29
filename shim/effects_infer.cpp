@@ -1744,6 +1744,38 @@ class Analysis {
         ownerships.push_back({function != nullptr ? 'O' : 'T', symbol, idiom, decl->getLocation()});
     }
 
+    // The report-only mode of the idioms (the build file's `ownership` task): `SMITH_EFFECTS_OWNERSHIP=<file>` appends one
+    // line for each function of the main file that returns a pointer or a slice: `inferred` or `declared`, `pending`
+    // (it waits on another file), `rejected` (an error, with its message) or `unread` (no idiom and no error: a trusted
+    // function or a C file), then the idiom, the function and its place. Nothing is reported to the compiler.
+    void reportOwnership(const std::vector<const FunctionDecl *> &subjects, OwnSolver &solver,
+                         const std::map<std::string, std::string> &rejected) {
+        std::string text;
+        for (const FunctionDecl *function : subjects) {
+            if (function->hasAttr<WeakAttr>() || !inMain(function)) continue;
+            const OwnRecord &record = solver.records[nodes[function].symbol];
+            const OwnResult &result = solver.results[record.symbol];
+            std::string state, idiom = "-", message;
+            if (result.state == OwnResult::Known) {
+                state = record.declared.empty() ? "inferred" : "declared";
+                idiom = llvm::StringRef(result.idiom).split(':').first.str();
+            } else if (result.state == OwnResult::Pending) {
+                state = "pending";
+            } else if (result.state == OwnResult::Failed) {
+                auto found = rejected.find(record.symbol);
+                state = found != rejected.end() ? "rejected" : "unread";
+                if (found != rejected.end()) message = found->second;
+            } else {
+                continue;
+            }
+            text += state + "\t" + idiom + "\t" + record.name + "\t" + record.place + "\t" + message + "\n";
+        }
+        FILE *file = fopen(getenv("SMITH_EFFECTS_OWNERSHIP"), "a");
+        if (file == nullptr) return;
+        fwrite(text.data(), 1, text.size(), file);
+        fclose(file);
+    }
+
     // The R lines of the summary: the paths of a function whose idiom waits on another file (#725).
     std::string pendingText;
 
@@ -1786,18 +1818,28 @@ class Analysis {
         }
         solver.solve();
         unsigned diagnostic = engine.getCustomDiagID(DiagnosticsEngine::Error, "%0");
+        std::vector<std::pair<SourceLocation, std::string>> reports;
+        std::map<std::string, std::string> rejected; // symbol -> the message, for the report of SMITH_EFFECTS_OWNERSHIP
         for (const OwnProblem &problem : solver.problems) {
             const FunctionDecl *function = bySymbol[problem.symbol];
             if (function == nullptr || function->hasAttr<WeakAttr>() || !inMain(function)) continue;
             if (problem.needsModule && !module) continue;
             if (!nodes[function].unowned.empty() || !nodes[function].unkeyed.empty()) continue; // already said
             SourceLocation loc = locate(problem.place);
-            engine.Report(loc.isValid() ? loc : function->getLocation(), diagnostic) << problem.message;
+            reports.emplace_back(loc.isValid() ? loc : function->getLocation(), problem.message);
+            rejected.emplace(problem.symbol, problem.message);
         }
+        std::stable_sort(reports.begin(), reports.end(), [](const auto &left, const auto &right) {
+            return left.first.getRawEncoding() < right.first.getRawEncoding();
+        });
+        for (const auto &[loc, message] : reports) // in the order of the source
+            engine.Report(loc, diagnostic) << message;
+        if (getenv("SMITH_EFFECTS_OWNERSHIP") != nullptr) reportOwnership(subjects, solver, rejected);
         for (const FunctionDecl *function : subjects) {
             const OwnRecord &record = solver.records[nodes[function].symbol];
             const OwnResult &result = solver.results[record.symbol];
-            if (result.state == OwnResult::Known && record.declared.empty() && owned.insert(record.symbol).second)
+            if (result.state == OwnResult::Known && record.declared.empty() && !function->hasAttr<WeakAttr>() &&
+                owned.insert(record.symbol).second)
                 ownerships.push_back({'O', record.symbol, result.idiom, function->getLocation()});
             if (result.state != OwnResult::Pending && result.state != OwnResult::Failed) continue;
             for (const OwnPath &path : record.paths) {

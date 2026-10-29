@@ -49,11 +49,29 @@ export void test_effects_pointers_report(io::Io *io) {
     test::golden(io, slice_of("tests/effects_pointers/pointers.c.expected"), slice_of(run.out));
 }
 
+// The ownership idiom a compile infers (#725): the status, each error, and the `O` lines of the summary (function and
+// idiom) that the file's own functions got.
+static void ownership_case(io::Io *io, const char *file) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    const char *command =
+        format::push(&io->arena,
+                     "cd \"$SMITH_REPO/tests/effects\" && rm -f \"$TMPDIR/own.o.fx\" && { smith cc -std=gnu2y -I "
+                     "\"$SMITH_REPO/.smith/include\" -c ",
+                     file,
+                     " -o \"$TMPDIR/own.o\" >\"$TMPDIR/out\" 2>&1; echo \"status $?\"; grep -E "
+                     "'^[^ ]+:[0-9]+:[0-9]+: (error|note|warning):' \"$TMPDIR/out\"; grep -E '^O' \"$TMPDIR/own.o.fx\" "
+                     "2>/dev/null | cut -f2,3; }")
+            .data;
+    scratch::Run run = scratch::sh(&p, command);
+    test::golden(io, slice_of(format::push(&io->arena, "tests/effects/", file, ".expected").data), slice_of(run.out));
+}
+
 export void test_every_file_has_a_test(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     scratch::Run run =
         scratch::sh(&p, "cd \"$SMITH_REPO/tests/effects\" && for f in *.c *.smith; do "
-                        "grep -q \"effects_case(io, \\\"$f\\\")\" ../effects_infer_test.smith || echo \"$f\"; done");
+                        "grep -Eq \"(effects|ownership)_case\\(io, \\\"$f\\\"\\)\" ../effects_infer_test.smith || echo \"$f\"; "
+                        "done");
     scratch::expect_text("files of tests/effects with no test", "", run.out);
 }
 
@@ -718,4 +736,73 @@ export void test_ownership_is_recorded_in_the_summary(io::Io *io) {
 // The same rules for the idiom written on a function pointer type with `annotate_type`.
 export void test_ownership_type_bad_c(io::Io *io) {
     effects_case(io, "ownership_type_bad.c");
+}
+
+// The ownership idioms, inferred from the body (#725). A rule has a passing case and an error a failing one in
+// tests/effects: the goldens hold the status, the errors and the idiom of each function.
+export void test_ownership_infer_context(io::Io *io) {
+    ownership_case(io, "own_context.smith");
+}
+
+export void test_ownership_infer_borrowed(io::Io *io) {
+    ownership_case(io, "own_borrowed.smith");
+}
+
+export void test_ownership_infer_owned(io::Io *io) {
+    ownership_case(io, "own_owned.smith");
+}
+
+export void test_ownership_infer_internal(io::Io *io) {
+    ownership_case(io, "own_internal.smith");
+}
+
+export void test_ownership_infer_attribute_agrees(io::Io *io) {
+    ownership_case(io, "own_attribute.smith");
+}
+
+export void test_ownership_infer_struct_by_value_has_none(io::Io *io) {
+    ownership_case(io, "own_struct.smith");
+}
+
+export void test_ownership_infer_in_c(io::Io *io) {
+    ownership_case(io, "own_c.c");
+}
+
+export void test_ownership_infer_mixed_paths(io::Io *io) {
+    ownership_case(io, "own_err_mixed.smith");
+}
+
+export void test_ownership_infer_two_free_functions(io::Io *io) {
+    ownership_case(io, "own_err_two_free.smith");
+}
+
+export void test_ownership_infer_attribute_disagrees(io::Io *io) {
+    ownership_case(io, "own_err_attribute.smith");
+}
+
+export void test_ownership_infer_unknown_origin(io::Io *io) {
+    ownership_case(io, "own_err_unknown.smith");
+}
+
+// Across files: the second calls the first's wrapper, which its compile cannot read. The link settles it from the two
+// summaries, and `<program>.owns` says what it settled; an attribute that the other file's body contradicts is an error
+// of the link.
+export void test_ownership_infer_across_files(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::write(&p, "a.c",
+                   "#include <stdlib.h>\n#include <string.h>\nchar *wrap(const char *t) { return strdup(t); }\n");
+    scratch::write(&p, "b.c",
+                   "char *wrap(const char *t);\nchar *twice(const char *t) { return wrap(t); }\n"
+                   "char *thrice(const char *t) { return twice(t); }\nint main(void) { return 0; }\n");
+    scratch::write(&p, "c.c",
+                   "char *wrap(const char *t);\n[[std::returns_borrowed(1)]] char *bad(const char *t);\n"
+                   "[[std::returns_borrowed(1)]] char *bad(const char *t) { return wrap(t); }\n");
+    scratch::Run run = scratch::sh(&p, "smith cc -c a.c -o a.o && smith cc -c b.c -o b.o && smith cc -c c.c -o c.o && "
+                                       "smith cc a.o b.o -o program && echo linked && grep -v '^#' program.owns | cut "
+                                       "-f1,2; smith cc a.o b.o c.o -o refused 2>&1 | grep error:");
+    scratch::expect_text("a function that calls another file's wrapper is owned once the link has both",
+                         "linked\nthrice\towned:free\ntwice\towned:free\nc.c:3:57: error: smith-ownership: `bad` says "
+                         "[[std::returns_borrowed(1)]] but returns a pointer that is owned, freed by `free` "
+                         "(c.c:3:57); change the attribute or the body so they agree\n",
+                         run.out);
 }

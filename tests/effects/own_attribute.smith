@@ -1,0 +1,22 @@
+module own_attribute;
+
+import <stdlib.h>;
+import <string.h>;
+
+export struct Holder {
+    char *name;
+};
+
+// An attribute the body agrees with is kept; one on a pointer smith cannot read stands (a pointer loaded from a field
+// has no origin to read); and a longer-lived path is covered by a borrowed claim.
+export [[std::returns_owned(free)]] char *copy(const char *text) {
+    return c::strdup(text);
+}
+
+export [[std::returns_borrowed(1)]] char *name_of(Holder *holder) {
+    return holder->name;
+}
+
+export [[std::returns_borrowed(1)]] const char *or_literal(const char *text) {
+    return text != nullptr ? text : "none";
+}

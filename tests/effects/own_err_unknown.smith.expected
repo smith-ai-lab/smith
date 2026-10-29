@@ -1,0 +1,3 @@
+status 1
+own_err_unknown.smith:12:5: error: smith-ownership: `own_err_unknown::walk` returns a pointer whose origin smith cannot read (a call through a function pointer); write [[std::returns_owned(f)]], [[std::returns_borrowed(n)]] or [[std::returns_internal]] on it
+own_err_unknown.smith:16:5: error: smith-ownership: `own_err_unknown::name_of` returns a pointer whose origin smith cannot read (a pointer read from a field); write [[std::returns_owned(f)]], [[std::returns_borrowed(n)]] or [[std::returns_internal]] on it

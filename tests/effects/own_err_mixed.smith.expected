@@ -1,0 +1,2 @@
+status 1
+own_err_mixed.smith:9:5: error: smith-ownership: `own_err_mixed::maybe_copy` returns different things on different paths: owned, freed by `free` (own_err_mixed.smith:8:15) and borrowed from parameter 1 (own_err_mixed.smith:9:5); a function has one idiom, so make every path return the same kind and write the attribute that names it: [[std::returns_owned(free)]] or [[std::returns_borrowed(1)]]

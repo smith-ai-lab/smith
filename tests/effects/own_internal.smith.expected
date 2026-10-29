@@ -1,0 +1,6 @@
+status 0
+_own_internal::home	internal
+_own_internal::buffer	internal
+_own_internal::name	internal
+_own_internal::greeting	internal
+_own_internal::home_or_none	internal

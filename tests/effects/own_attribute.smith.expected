@@ -1,0 +1,4 @@
+status 0
+_own_attribute::copy	owned:free
+_own_attribute::name_of	borrowed:1
+_own_attribute::or_literal	borrowed:1

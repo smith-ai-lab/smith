@@ -1,0 +1,20 @@
+module own_owned;
+
+import <stdlib.h>;
+import <string.h>;
+import <unistd.h>;
+
+// A fresh allocation from a libc function the table names (or a function already owned) is `owned:<free function>`,
+// with no attribute written; getcwd allocates when its buffer is null.
+export char *copy(const char *text) {
+    return c::strdup(text);
+}
+
+export char *copy_twice(const char *text) {
+    char *once = copy(text);
+    return once;
+}
+
+export char *working_folder() {
+    return c::getcwd(nullptr, 0);
+}

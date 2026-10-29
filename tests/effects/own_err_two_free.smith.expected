@@ -1,0 +1,2 @@
+status 1
+own_err_two_free.smith:10:5: error: smith-ownership: `own_err_two_free::either` returns different things on different paths: owned, freed by `fclose` (own_err_two_free.smith:9:15) and owned, freed by `free` (own_err_two_free.smith:10:5); a function has one idiom, so make every path return the same kind and write the attribute that names it: [[std::returns_owned(fclose)]] or [[std::returns_owned(free)]]

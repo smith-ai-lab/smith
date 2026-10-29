@@ -1,0 +1,20 @@
+module own_context;
+
+import smith::arena;
+import smith::mem;
+
+// Memory from the current allocator is the caller's context (idiom 4), and so is what a function returns of it.
+export typeof(u8[:]) to_upper(typeof(const u8[:]) text) {
+    typeof(u8[:]) upper = mem::alloc_slice(u8, countof(text));
+    for (usize i = 0; i < countof(text); i++)
+        upper[i] = text[i] >= 'a' && text[i] <= 'z' ? text[i] - 32 : text[i];
+    return upper;
+}
+
+export i32 *counter(arena::Arena *arena) {
+    return arena::push(arena, i32);
+}
+
+export i32 *again(arena::Arena *arena) {
+    return counter(arena);
+}

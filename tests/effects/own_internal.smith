@@ -1,0 +1,29 @@
+module own_internal;
+
+import <stdlib.h>;
+import <string.h>;
+
+static char scratch_buffer[64];
+static const char *last_name = "none";
+
+// Internal memory is never freed by the caller: a static, a global, a string literal, libc's own.
+export const char *home() {
+    return c::getenv("HOME");
+}
+
+export char *buffer() {
+    return scratch_buffer;
+}
+
+export const char *name() {
+    return last_name;
+}
+
+export const char *greeting() {
+    return "hello";
+}
+
+export const char *home_or_none() {
+    const char *home = c::getenv("HOME");
+    return home != nullptr ? home : "none";
+}

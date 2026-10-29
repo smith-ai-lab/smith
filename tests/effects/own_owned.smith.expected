@@ -1,0 +1,4 @@
+status 0
+_own_owned::copy	owned:free
+_own_owned::copy_twice	owned:free
+_own_owned::working_folder	owned:free

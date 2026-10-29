@@ -1,0 +1,13 @@
+module own_err_attribute;
+
+import <stdlib.h>;
+import <string.h>;
+
+// An attribute the body contradicts is an error that names both.
+export [[std::returns_borrowed(1)]] char *copy(const char *text) {
+    return c::strdup(text);
+}
+
+export [[std::returns_internal]] const char *same(const char *text) {
+    return text;
+}

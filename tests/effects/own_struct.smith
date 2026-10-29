@@ -1,0 +1,13 @@
+module own_struct;
+
+import <string.h>;
+
+export struct Span {
+    char *start;
+    usize count;
+};
+
+// A struct returned by value is out of scope today: it gets no idiom and no error.
+export Span span_of(char *text) {
+    return (Span){.start = text, .count = c::strlen(text)};
+}

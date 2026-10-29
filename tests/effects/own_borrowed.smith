@@ -1,0 +1,42 @@
+module own_borrowed;
+
+export struct Pair {
+    i32 first;
+    i32 second;
+};
+
+// A pointer derived from parameter n is `borrowed:n`: the parameter, the address of a field or an element, a pointer
+// moved along, a sub-slice, and what a borrowing function returns for it.
+export typeof(const u8[:]) trim(typeof(const u8[:]) text) {
+    usize start = 0;
+    while (start < countof(text) && text[start] == ' ')
+        start += 1;
+    return text[start:countof(text)];
+}
+
+export i32 *second(Pair *pair) {
+    return &pair->second;
+}
+
+export i32 *element(i32 *values, usize index) {
+    return &values[index];
+}
+
+export char *skip_spaces(char *text) {
+    char *cursor = text;
+    while (*cursor == ' ')
+        cursor++;
+    return cursor;
+}
+
+export char *after(char *text, usize count) {
+    return text + count;
+}
+
+export char *chosen(char *a, char *b, bool first) {
+    return first ? a : a + 1;
+}
+
+export char *through(usize count, char *text) {
+    return after(text, count);
+}

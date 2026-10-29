@@ -1,0 +1,11 @@
+module own_err_two_free;
+
+import <stdio.h>;
+import <stdlib.h>;
+import <string.h>;
+
+// Two owned paths freed by different functions: the caller cannot tell which to call.
+export void *either(const char *name, bool file) {
+    if (file) return c::fopen(name, "r");
+    return c::strdup(name);
+}

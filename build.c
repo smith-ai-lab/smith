@@ -1939,6 +1939,39 @@ static int build_friction(SmithRun *run) {
                                  nullptr));
 }
 
+// `smith build ownership [-Dproject=<folder>]` (#725): compiles the .smith files of a project with the ownership
+// inference and prints how many functions got each idiom and which were rejected, with their messages. For smith's
+// own tree (or any project with a lib/smith folder) it reads the libraries of lib/smith, tests left out; for another
+// project, every .smith file outside .smith/. The plugin appends one line for each function that returns a pointer or a
+// slice to the file SMITH_EFFECTS_OWNERSHIP names (shim/effects_infer.cpp), and the script counts them. Functions that
+// wait on another file's summary are `pending`: a compile of one file cannot settle them, the link does.
+static int build_ownership(SmithRun *run) {
+    const char *script =
+        "project=$(cd \"$1\" && pwd) || exit 2; smith=$2; out=$(mktemp); trap 'rm -f \"$out\"' EXIT\n"
+        "if [ -d \"$project/lib/smith\" ]; then folder=$project/lib/smith; else folder=$project; fi\n"
+        "files=0; for f in $(find \"$folder\" -name '*.smith' -not -path '*/.smith/*' -not -name '*_test.smith' | sort); do\n"
+        "  files=$((files + 1))\n"
+        "  (cd \"$project\" && SMITH_EFFECTS_OWNERSHIP=$out \"$smith\" cc -std=gnu2y -I .smith/include -I include "
+        "-Wno-everything -fsyntax-only \"$f\" >/dev/null 2>&1) || true\n"
+        "done\n"
+        "[ -f \"$out\" ] || : > \"$out\"\n"
+        "awk -F '\\t' -v project=\"$project\" -v files=$files '{ total++; state[$1]++; count[$1 \" \" $2]++;\n"
+        "  if ($1 == \"rejected\") { rejected++; line[rejected] = $4 \": \" $3 \": \" $5 }\n"
+        "  if ($1 == \"unread\") { unread++; quiet[unread] = $4 \": \" $3 } }\n"
+        "END { printf \"ownership of %s: %d files, %d functions that return a pointer or a slice\\n\", project, files, "
+        "total;\n"
+        "  printf \"%-10s %9s %9s\\n\", \"idiom\", \"inferred\", \"declared\";\n"
+        "  n = split(\"context borrowed internal owned\", names, \" \");\n"
+        "  for (i = 1; i <= n; i++) printf \"%-10s %9d %9d\\n\", names[i], count[\"inferred \" names[i]], "
+        "count[\"declared \" names[i]];\n"
+        "  printf \"pending (wait on another file, the link settles them): %d\\n\", state[\"pending\"];\n"
+        "  printf \"unread (trusted or in a C file, no idiom, no error): %d\\n\", state[\"unread\"];\n"
+        "  for (i = 1; i <= unread; i++) printf \"  %s\\n\", quiet[i];\n"
+        "  printf \"rejected: %d\\n\", rejected;\n"
+        "  for (i = 1; i <= rejected; i++) printf \"  %s\\n\", line[i] }' \"$out\"\n";
+    return build_exec(smith_list(run->b, "sh", "-c", script, "ownership", run->args[0], run->args[1], nullptr));
+}
+
 // The tree-sitter parser for .smith files (#466): a build output, never committed. A step generates parser.c,
 // grammar.json, node-types.json and the runtime's headers into tree-sitter/src/ (gitignored) from
 // tree-sitter/grammar.js and tree-sitter-c's, with the tree-sitter CLI; parser.c is compiled and linked into a shared
@@ -2438,6 +2471,13 @@ static void build_developer_tasks(SmithBuild *b, const char *binary) {
             smith_list(b, smith_option_value(b, "since", "", "friction: the first merge date, YYYY-MM-DD"), nullptr),
     };
     smith_task(b, "friction", &friction);
+    SmithStep ownership = {
+        .run = build_ownership,
+        .args = smith_list(b, smith_option_value(b, "project", ".", "ownership: the project to read (a folder)"),
+                           smith_option_value(b, "smith", binary, "ownership: the smith that compiles it"), nullptr),
+        .description = "counting the inferred ownership idioms (#725)",
+    };
+    smith_task(b, "ownership", &ownership);
     SmithStep coverage_fetch = {.run = build_coverage_fetch};
     smith_task(b, "coverage-fetch", &coverage_fetch);
     SmithStep ci_times = {

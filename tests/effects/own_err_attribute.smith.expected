@@ -1,0 +1,5 @@
+status 1
+own_err_attribute.smith:8:5: error: smith-ownership: `own_err_attribute::copy` says [[std::returns_borrowed(1)]] but returns a pointer that is owned, freed by `free` (own_err_attribute.smith:8:5); change the attribute or the body so they agree
+own_err_attribute.smith:12:5: error: smith-ownership: `own_err_attribute::same` says [[std::returns_internal]] but returns a pointer that is borrowed from parameter 1 (own_err_attribute.smith:12:5); change the attribute or the body so they agree
+_own_err_attribute::copy	borrowed:1
+_own_err_attribute::same	internal

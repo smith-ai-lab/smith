@@ -1,0 +1,10 @@
+module own_err_mixed;
+
+import <stdlib.h>;
+import <string.h>;
+
+// Owned on one path and borrowed on another has no one idiom.
+export char *maybe_copy(char *text, bool copy) {
+    if (copy) return c::strdup(text);
+    return text;
+}

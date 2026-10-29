@@ -1,0 +1,17 @@
+module own_err_unknown;
+
+export struct Holder {
+    char *name;
+};
+
+// An origin smith cannot read is an error that asks for the attribute, never a guess.
+export char *walk(char *(*next)(char *), char *text) {
+    char *cursor = text;
+    for (usize i = 0; i < 3; i++)
+        cursor = next(cursor);
+    return cursor;
+}
+
+export char *name_of(Holder *holder) {
+    return holder->name;
+}

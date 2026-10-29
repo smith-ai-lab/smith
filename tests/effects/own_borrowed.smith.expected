@@ -1,0 +1,8 @@
+status 0
+_own_borrowed::trim	borrowed:1
+_own_borrowed::second	borrowed:1
+_own_borrowed::element	borrowed:1
+_own_borrowed::skip_spaces	borrowed:1
+_own_borrowed::after	borrowed:1
+_own_borrowed::chosen	borrowed:1
+_own_borrowed::through	borrowed:2
