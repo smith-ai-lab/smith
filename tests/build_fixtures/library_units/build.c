@@ -8,7 +8,7 @@
 void build(SmithBuild *b) {
     const char *mode = smith_option_value(b, "MODE", "asan", "asan, fast or ndebug");
     const char *libs = smith_option_value(b, "LIBS", "arena", "the libraries, comma separated");
-    const char *test = smith_option_value(b, "TEST", "test.smith", "the test file");
+    const char *test = smith_option_value(b, "TEST", "test.smith", "the test files, comma separated");
     bool sanitize = strcmp(mode, "asan") == 0;
     const char *const *flags = smith_cat(
         b, smith_list(b, "-std=gnu2y", "-g", "-Wall", "-Wextra", "-Wpedantic", "-Wshadow", "-Wconversion", "-Werror", "-I", ".smith/include", nullptr),
@@ -26,8 +26,12 @@ void build(SmithBuild *b) {
         pointers[count] = &objects[count];
         count++;
     }
+    const char *sources[9] = {};
+    size_t tested = 0;
+    rest = (char *)smith_fmt(b, "%s", test);
+    for (char *name = strsep(&rest, ","); name != nullptr && tested < 8; name = strsep(&rest, ",")) sources[tested++] = name;
     SmithTests tests = {
-        .sources = smith_list(b, test, nullptr),
+        .sources = sources,
         .objects = pointers,
         .flags = flags,
         .link_flags = smith_when(b, sanitize, smith_list(b, "-fsanitize=address,undefined", nullptr)),
