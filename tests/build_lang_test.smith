@@ -5,6 +5,7 @@
 // token hook.
 module build_lang_test;
 
+import smith::format;
 import smith::io;
 import smith::test;
 import scratch;
@@ -21,9 +22,7 @@ static scratch::Project lang_project(io::Io *io, const char *source) {
     scratch::Project p = scratch::project(io, "p", "lang_project");
     (void)scratch::sh(
         &p, "mkdir bin && { cp -c \"$SMITH_SELF\" bin/smith-cc 2>/dev/null || cp \"$SMITH_SELF\" bin/smith-cc; }");
-    char command[512];
-    __builtin_snprintf(command, sizeof command, "cp -R \"$SMITH_REPO/tests/smith-lang/cases/%s/src\" src", source);
-    (void)scratch::sh(&p, command);
+    scratch::copy_tree(&p, format::push(&io->arena, "tests/smith-lang/cases/", source, "/src").data, "src");
     return p;
 }
 
@@ -86,8 +85,8 @@ export void test_build_lang_a_project_of_three_modules_and_a_c_file(io::Io *io) 
 // An import cycle is found from the headers, before any compile starts, and named.
 export void test_build_lang_an_import_cycle_fails_the_build(io::Io *io) {
     scratch::Project p = lang_project(io, "module-three");
-    (void)scratch::sh(&p, "rm -rf src && mkdir -p src && cp -R "
-                          "\"$SMITH_REPO/tests/smith-lang/cases/error-import-cycle/src/cycle\" src/cycle");
+    (void)scratch::sh(&p, "rm -rf src");
+    scratch::copy_tree(&p, "tests/smith-lang/cases/error-import-cycle/src/cycle", "src/cycle");
     scratch::Run run = scratch::build(&p, "");
     scratch::expect_failure("modules: an import cycle fails the build", &run);
     char both[8192];
@@ -109,8 +108,8 @@ export void test_build_lang_a_module_that_does_not_match_its_path_fails_the_buil
 // A plain .smith file (no module line) compiles with the same flags and needs no header.
 export void test_build_lang_a_plain_smith_file_builds_with_no_header(io::Io *io) {
     scratch::Project p = lang_project(io, "module-three");
-    (void)scratch::sh(&p, "rm -rf src && mkdir -p src && cp "
-                          "\"$SMITH_REPO/tests/smith-lang/cases/sized-types/src/main.smith\" src/main.smith");
+    (void)scratch::sh(&p, "rm -rf src");
+    scratch::copy_tree(&p, "tests/smith-lang/cases/sized-types/src/main.smith", "src/main.smith");
     scratch::Run run = scratch::build(&p, "");
     char status[32];
     __builtin_snprintf(status, sizeof status, "%d %s", run.status,

@@ -18,8 +18,7 @@ static typeof(const char[:]) slice_of(const char *text) {
 // A scratch folder holding a copy of the fixtures (the links in them stay links).
 static scratch::Project fixtures(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run run = scratch::sh(&p, "cp -R \"$SMITH_REPO/tests/docs/fixtures/.\" .");
-    scratch::expect_status("the fixtures are copied", 0, &run);
+    scratch::copy_tree(&p, "tests/docs/fixtures", "");
     return p;
 }
 
@@ -43,11 +42,9 @@ static void fixture_case(io::Io *io, const char *name) {
 }
 
 export void test_every_fixture_has_a_test(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run run = scratch::sh(&p, "cd \"$SMITH_REPO/tests/docs/fixtures\" && for f in *; do "
-                                       "grep -q \"fixture_case(io, \\\"$f\\\")\" ../../docs_test.smith || echo \"$f\"; "
-                                       "done");
-    scratch::expect_text("folders of tests/docs/fixtures with no test", "", run.out);
+    scratch::expect_text("folders of tests/docs/fixtures with no test", "",
+                         scratch::untested_names(io, "tests/docs/fixtures", "tests/docs_test.smith",
+                                                 "fixture_case(io, ", nullptr, nullptr));
 }
 
 // --- 2. the depfile names every file read or found, once, escaped as a compiler's -MF writes it ---------------------

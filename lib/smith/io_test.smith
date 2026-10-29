@@ -39,6 +39,7 @@ constexpr i32 econnrefused = c::ECONNREFUSED;
 constexpr i32 econnreset = c::ECONNRESET;
 constexpr i32 edeadlk = c::EDEADLK;
 constexpr i32 eexist = c::EEXIST;
+constexpr i32 eisdir = c::EISDIR;
 constexpr i32 einval = c::EINVAL;
 constexpr i32 emsgsize = c::EMSGSIZE;
 constexpr i32 enoent = c::ENOENT;
@@ -326,6 +327,21 @@ export void test_io_fake_tree_appends_lists_maps_and_removes() {
     test::check(is(list.entries[1].name, "tree-fake"));
     test::check(io::files_info(&fake.files, "tree-fake").folder);
     test::check(io::files_info(&fake.files, ".").folder);
+}
+
+// A copy keeps the bytes and the permission bits of a file, and refuses a folder (a symbolic link stays a link: the
+// docs fixtures of tests/docs_test.smith have some).
+export void test_io_real_copy_keeps_the_bytes(io::Io *io) {
+    const char *root = test::scratch(io);
+    char from[512];
+    char to[512];
+    __builtin_snprintf(from, sizeof from, "%s/source.sh", root);
+    __builtin_snprintf(to, sizeof to, "%s/copy.sh", root);
+    test::check_equal(io::files_write(&io->files, from, test_io_bytes("echo hi\n", 8), io::Replace).code, 0);
+    test::check_equal(io::files_copy(&io->files, from, to).code, 0);
+    io::Read copy = io::files_read(&io->files, &io->arena, to);
+    test::check_equal(countof(copy.data), 8);
+    test::check_equal(io::files_copy(&io->files, root, to).code, eisdir);
 }
 
 // Appending many times: the fake grows the file by doubling, not by copying it each time.

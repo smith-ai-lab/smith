@@ -829,6 +829,25 @@ static bool smith_changed_read_by_a_test(const char *path) {
     return false;
 }
 
+// Whether the records say what every test of the file opened (#739): then a changed data file is an input of the tests
+// that opened it, which are stale by their records, and of no other, whatever the source names.
+static bool smith_changed_opens_recorded(void) {
+    char module[256] = "";
+    size_t tests = 0;
+    if (!smith_changed_covered) return false;
+    (void)smith_changed_module_of(smith_changed_text, module, sizeof module);
+    char *at = smith_changed_text;
+    for (size_t guard = 0; (at = strstr(at, "void test_")) != nullptr && guard < smith_changed_text_max; guard++) {
+        at += 10;
+        char full[300];
+        snprintf(full, sizeof full, "%s%.*s", module, (int)strcspn(at, "("), at);
+        const SmithRecResult *record = smith_changed_record_of(full);
+        if (record == nullptr || !record->opened) return false;
+        tests++;
+    }
+    return tests > 0;
+}
+
 // One test file: selected when the graph reaches it from a changed file, or when it runs smith and a source of smith
 // changed (an edge from the test to everything compiled into smith).
 static void smith_changed_judge(size_t test) {
@@ -849,10 +868,12 @@ static void smith_changed_judge(size_t test) {
         smith_changed_choose(test, "it names %s, which build.c changed", smith_changed_local_names[n]);
         return;
     }
-    for (size_t p = 0; p < smith_changed_path_count; p++) { // a test that names a data file reads it
+    bool opens = smith_changed_opens_recorded();
+    for (size_t p = 0; !opens && p < smith_changed_path_count; p++) { // a test that names a data file reads it
         if (!smith_changed_is_data(smith_changed_paths[p]) ||
             !smith_changed_names_path(smith_changed_text, smith_changed_paths[p]))
             continue;
+
         smith_changed_choose(test, "it names %s, and it changed", smith_changed_paths[p]);
         return;
     }

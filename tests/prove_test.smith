@@ -15,14 +15,16 @@ import smith::test;
 import scratch;
 
 static scratch::Project fresh(io::Io *io) {
-    return scratch::project(io, "p", nullptr);
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::copy_tree(&p, "tests/prove", "cases");
+    return p;
 }
 
 // `smith prove args -- -I include`, the output of both streams together; $c is tests/prove.
 static scratch::Run prove(const scratch::Project *p, const char *args) {
-    return scratch::sh(p, format::push(&p->io->arena, "c=\"$SMITH_REPO/tests/prove\"; smith prove ", args,
-                                       " -- -I \"$SMITH_REPO/.smith/include\" 2>&1")
-                              .data);
+    return scratch::sh(
+        p,
+        format::push(&p->io->arena, "c=cases; smith prove ", args, " -- -I \"$SMITH_REPO/.smith/include\" 2>&1").data);
 }
 
 static scratch::Run proved(const scratch::Project *p, const char *name, const char *args) {
@@ -90,7 +92,7 @@ export void test_prove_ensures_the_counterexamples_values_are_consistent(io::Io 
     scratch::expect_text(
         "ensures: the counterexample's values are consistent (a + b = sum)", "ok",
         scratch::capture(&p,
-                         "c=\"$SMITH_REPO/tests/prove\"; smith prove --function=add_wrong \"$c/overflow.c\" -- -I "
+                         "c=cases; smith prove --function=add_wrong \"$c/overflow.c\" -- -I "
                          "\"$SMITH_REPO/.smith/include\" 2>&1 | sed -n 's/.*a = \\([0-9]*\\) b = \\([0-9]*\\) sum = "
                          "\\([0-9]*\\)$/\\1 \\2 \\3/p' | awk 'NF == 3 { print ($1 + $2 == $3) ? \"ok\" : \"bad\" }'"));
 }
@@ -228,7 +230,7 @@ export void test_prove_budget_a_proof_out_of_time_fails_saying_what_it_used_and_
 // A leftover is never killed here: once its parent is gone it is launchd's, and its pid can already be another
 // process's (another test's compile). A proof also ends by its own deadline (its alarm), so it cannot run on for ever.
 constexpr char orphan_script[_] =
-    "smith prove --budget=30 \"$SMITH_REPO/tests/prove/division.c\" -- -I \"$SMITH_REPO/.smith/include\" >/dev/null "
+    "smith prove --budget=30 cases/division.c -- -I \"$SMITH_REPO/.smith/include\" >/dev/null "
     "2>&1 & "
     "parent=$!; children=; "
     "for _ in $(seq 1 300); do children=$(pgrep -P \"$parent\"); [ -n \"$children\" ] && break; sleep 0.1; done; "

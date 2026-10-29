@@ -30,7 +30,9 @@ static bool make(io::Io *io, scratch::Project *root) {
     scratch::Project src = folder(root, "src");
     scratch::Run built = scratch::sh(&src, "smith cc -g -O0 prog.c -o prog");
     scratch::expect_status("dap: prog.c builds", 0, &built);
-    scratch::Run client = scratch::sh(root, "smith cc -std=gnu23 \"$SMITH_REPO/tests/dap_client.c\" -o dap_client");
+    scratch::copy_tree(root, "tests/dap_client.c", "tests/dap_client.c");
+    scratch::copy_tree(root, "tests/cpu_wait.h", "tests/cpu_wait.h");
+    scratch::Run client = scratch::sh(root, "smith cc -std=gnu23 tests/dap_client.c -o dap_client");
     scratch::expect_status("dap: tests/dap_client.c builds", 0, &client);
     const char *probe = scratch::sh(&src, "smith dbg -b -o 'b prog.c:10' -o run -o 'frame variable sum' prog 2>&1").out;
     return !scratch::contains(probe, "Developer Tools") && !scratch::contains(probe, "not allowed") &&

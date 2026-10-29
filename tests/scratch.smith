@@ -66,8 +66,7 @@ constexpr char setup_script[_] =
     "mkdir -p \"$0/tested\" \"$1\" && for n in smith smith-cc smith-c++; do ln -sf "
     "\"$SMITH_SELF\" \"$0/tested/$n\"; done; "
     "if [ \"$(uname -s)\" != Darwin ]; then printf '#!/bin/sh\\nunset SMITH_CLANG\\nexec smith-cc \"$@\"\\n' "
-    ">\"$0/tested/cc\" && chmod +x \"$0/tested/cc\"; fi; "
-    "if [ -n \"$2\" ]; then cp -R \"${SMITH_REPO:-.}/tests/build_fixtures/$2/.\" \"$1\"; fi";
+    ">\"$0/tested/cc\" && chmod +x \"$0/tested/cc\"; fi";
 
 // Runs `sh -c command` in a folder and waits. The commands see the smith under test first on PATH, a cache of their own
 // (never the real one) and the repository as $SMITH_REPO (where the runner was started). Nothing is set in this
@@ -91,6 +90,145 @@ static const char *join(io::Io *io, const char *folder, const char *name) {
     return format::push(&io->arena, folder, "/", name).data;
 }
 
+constexpr usize copy_folders_max = 4096;
+static const char *copy_from[copy_folders_max];
+static const char *copy_to[copy_folders_max];
+
+static void copy_file(const Project *p, const char *from, const char *to) {
+    io::Error copied = io::files_copy(&p->io->files, from, to);
+    if (copied.code != 0) {
+        test::note("%s could not be copied", from);
+    }
+    test::check_equal(copied.code, 0);
+}
+
+// Copies a file or a folder of the repository (`source`, relative to $SMITH_REPO) into the project as `name`: a file
+// becomes the file `name`, a folder's contents go into the folder `name` ("" is the project itself), like `cp -R
+// source/. name`; a symbolic link in a folder stays a link. The copy is made through io, so every file it opens and
+// every folder it lists is in the record of the test (SMITH_READS_LOG, issue #739): a corpus case changed in the
+// repository selects the test that copied it. A test that hands a repository file to a process copies it first and
+// gives the process the copy; no command reads the repository in place.
+export void copy_tree(const Project *p, const char *source, const char *name) {
+    const char *repo = io::args_env(&p->io->args, "SMITH_REPO");
+    const char *from = format::push(&p->io->arena, repo != nullptr ? repo : ".", "/", source).data;
+    const char *to = name[0] == '\0' ? p->dir : path_in(p, name);
+    io::FileInfo info = io::files_info(&p->io->files, from);
+    if (info.error.code != 0) {
+        test::note("%s is not in the repository", source);
+    }
+    test::check_equal(info.error.code, 0);
+    if (!info.folder) {
+        const char *slash = c::strrchr(to, '/');
+        char *parent = arena::push_slice(&p->io->arena, char, (usize)(slash - to) + 1).data;
+        mem::copy(parent[0:(usize)(slash - to)], to[0:(usize)(slash - to)]);
+        parent[slash - to] = '\0';
+        test::check_equal(io::files_make_folder(&p->io->files, parent).code, 0);
+        copy_file(p, from, to);
+        return;
+    }
+    usize tail = 1;
+    copy_from[0] = from;
+    copy_to[0] = to;
+    for (usize head = 0; head < tail; head++) { // the folders still to copy; at most copy_folders_max
+        test::check_equal(io::files_make_folder(&p->io->files, copy_to[head]).code, 0);
+        io::FileList list = io::files_list(&p->io->files, &p->io->arena, copy_from[head]);
+        test::check_equal(list.error.code, 0);
+        for (usize i = 0; i < list.count; i++) {
+            const char *entry_from = join(p->io, copy_from[head], list.entries[i].name);
+            const char *entry_to = join(p->io, copy_to[head], list.entries[i].name);
+            if (!list.entries[i].folder || list.entries[i].link) { // a link stays a link
+                copy_file(p, entry_from, entry_to);
+                continue;
+            }
+            test::check(tail < copy_folders_max);
+            copy_from[tail] = entry_from;
+            copy_to[tail] = entry_to;
+            tail++;
+        }
+    }
+}
+
+// The text of a file of the repository (`path`, relative to $SMITH_REPO), read through io; the test fails when it is
+// not there.
+export const char *repo_text(io::Io *io, const char *path) {
+    const char *repo = io::args_env(&io->args, "SMITH_REPO");
+    io::Read file =
+        io::files_read(&io->files, &io->arena, format::push(&io->arena, repo != nullptr ? repo : ".", "/", path).data);
+    if (file.error.code != 0) {
+        test::note("%s is not in the repository", path);
+    }
+    test::check_equal(file.error.code, 0);
+    return text_of((const char *)file.data.data);
+}
+
+// The names in a folder of the repository (`path`, relative to $SMITH_REPO), listed through io, one a line.
+export const char *repo_names(io::Io *io, const char *path) {
+    const char *repo = io::args_env(&io->args, "SMITH_REPO");
+    io::FileList list =
+        io::files_list(&io->files, &io->arena, format::push(&io->arena, repo != nullptr ? repo : ".", "/", path).data);
+    test::check_equal(list.error.code, 0);
+    const char *names = "";
+    for (usize i = 0; i < list.count; i++)
+        names = format::push(&io->arena, names, list.entries[i].name, "\n").data;
+    return names;
+}
+
+// The characters from `from` up to `to` of a text, as a text of their own.
+static const char *piece(io::Io *io, const char *text, usize from, usize to) {
+    char *copy = arena::push_slice(&io->arena, char, to - from + 1).data;
+    mem::copy(copy[0:to - from], text[from:to]);
+    copy[to - from] = '\0';
+    return copy;
+}
+
+// Whether `path` (relative to $SMITH_REPO) is there: the folder that holds it is listed through io, so that the record
+// of the test names the listing, and a file added or removed there selects the test.
+export bool repo_has(io::Io *io, const char *path) {
+    const char *repo = io::args_env(&io->args, "SMITH_REPO");
+    const char *base = repo != nullptr ? repo : ".";
+    usize length = c::strlen(path);
+    while (length > 1 && path[length - 1] == '/')
+        length--;
+    usize slash = length;
+    while (slash > 0 && path[slash - 1] != '/')
+        slash--;
+    const char *name = piece(io, path, slash, length);
+    const char *parent = slash == 0 ? base : format::push(&io->arena, base, "/", piece(io, path, 0, slash - 1)).data;
+    io::FileList list = io::files_list(&io->files, &io->arena, parent);
+    for (usize i = 0; list.error.code == 0 && i < list.count; i++)
+        if (c::strcmp(list.entries[i].name, name) == 0) return true;
+    return false;
+}
+
+static bool ends_with(const char *text, const char *suffix) {
+    usize length = c::strlen(text);
+    usize tail = c::strlen(suffix);
+    return length >= tail && c::strcmp(text + length - tail, suffix) == 0;
+}
+
+// The names in a folder of the repository that the source of a test file never calls as `<call>"<name>")`: the ones
+// that end in `suffix_a` or `suffix_b` (every name when both are nullptr). A table of cases whose test file must name
+// each of them uses it; the repository is read through io, so a case added to the folder selects the test.
+export const char *untested_names(io::Io *io, const char *folder, const char *test_source, const char *call,
+                                  const char *suffix_a, const char *suffix_b) {
+    const char *source = repo_text(io, test_source);
+    const char *repo = io::args_env(&io->args, "SMITH_REPO");
+    io::FileList list = io::files_list(&io->files, &io->arena,
+                                       format::push(&io->arena, repo != nullptr ? repo : ".", "/", folder).data);
+    test::check_equal(list.error.code, 0);
+    const char *missing = "";
+    for (usize i = 0; i < list.count; i++) {
+        const char *name = list.entries[i].name;
+        bool wanted = (suffix_a == nullptr && suffix_b == nullptr) ||
+                      (suffix_a != nullptr && ends_with(name, suffix_a)) ||
+                      (suffix_b != nullptr && ends_with(name, suffix_b));
+        if (wanted && c::strstr(source, format::push(&io->arena, call, "\"", name, "\")").data) == nullptr) {
+            missing = format::push(&io->arena, missing, name, "\n").data;
+        }
+    }
+    return missing;
+}
+
 // A project: a folder `name` in the test's scratch folder, with the files of tests/build_fixtures/<fixture> in it
 // (none when `fixture` is nullptr). Links named smith, smith-cc and smith-c++ to the smith under test, which is the one
 // running the tests ($SMITH_SELF), are in a folder that is first on PATH for its commands. The fixtures' `cc` is a C23
@@ -98,12 +236,15 @@ static const char *join(io::Io *io, const char *folder, const char *name) {
 export Project project(io::Io *io, const char *name, const char *fixture) {
     const char *scratch = test::scratch(io);
     Project p = {.io = io, .dir = join(io, scratch, name), .tested = join(io, scratch, "tested"), .cache = ""};
-    const char *argv[_] = {"sh", "-c", setup_script, scratch, p.dir, fixture != nullptr ? fixture : "", nullptr};
+    const char *argv[_] = {"sh", "-c", setup_script, scratch, p.dir, nullptr};
     io::ProcessResult made = io::processes_run(&io->processes, &io->arena, argv);
     if (made.exit_status != 0) {
         test::note("the project could not be made: %s", text_of(made.errors));
     }
     test::check_equal(made.exit_status, 0);
+    if (fixture != nullptr) {
+        copy_tree(&p, format::push(&io->arena, "tests/build_fixtures/", fixture).data, "");
+    }
     return p;
 }
 
@@ -147,10 +288,18 @@ static void write_in_new_folder(const Project *p, const char *name, const char *
     write(p, name, text);
 }
 
+// The in-process lowering reads its source in C, outside io: the file is opened through io first, so that the record of
+// the test names it (the modules it imports are not named).
+static void open_source(const Project *p, const char *folder, const char *source) {
+    io::Read file = io::files_read(&p->io->files, &p->io->arena, format::push(&p->io->arena, folder, "/", source).data);
+    test::check_equal(file.error.code, 0);
+}
+
 // The raw lowering of `$SMITH_REPO/<source>` (what `smith cc --smith-lower` prints) written to `name` in the project,
 // made in process (issue #646) where the test only needs the text. A lowering that reports an error fails the test.
 export void write_lowered(const Project *p, const char *source, const char *name) {
     const char *repo = io::args_env(&p->io->args, "SMITH_REPO");
+    open_source(p, repo, source);
     bool done = c::smith_core_lower(repo, source, nullptr, lowered_text, lowered_capacity, lowered_errors,
                                     lowered_errors_capacity);
     if (!done) {
@@ -163,6 +312,7 @@ export void write_lowered(const Project *p, const char *source, const char *name
 static char header_buffer[1U << 21];
 
 static void header_to(const Project *p, const char *folder, const char *source, const char *name) {
+    open_source(p, folder, source);
     bool done = c::smith_core_header(folder, source, nullptr, header_buffer, sizeof header_buffer, lowered_errors,
                                      lowered_errors_capacity);
     if (!done) {

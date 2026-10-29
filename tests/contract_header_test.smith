@@ -11,10 +11,12 @@ import smith::test;
 import scratch;
 
 constexpr char flags[_] = "f='-std=gnu23 -Wall -Wextra -Wpedantic -Wconversion -Werror -I '$SMITH_REPO/.smith/include; "
-                          "lib=$SMITH_REPO/lib; ";
+                          "lib=lib; ";
 
 static scratch::Project programs(io::Io *io) {
-    return scratch::project(io, "p", "contract_programs");
+    scratch::Project p = scratch::project(io, "p", "contract_programs");
+    scratch::copy_tree(&p, "lib", "lib");
+    return p;
 }
 
 // A command after `flags`, which must succeed.
@@ -168,8 +170,7 @@ export void test_contract_library_compiles_as_gnu2y(io::Io *io) {
 
 static scratch::Project test_project(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", "contract_project");
-    scratch::Run copied = scratch::sh(&p, "mkdir smith && cp \"$SMITH_REPO/lib/smith/contract_test.smith\" smith/");
-    scratch::expect_status("contract: the library's tests are copied", 0, &copied);
+    scratch::copy_tree(&p, "lib/smith/contract_test.smith", "smith/contract_test.smith");
     return p;
 }
 

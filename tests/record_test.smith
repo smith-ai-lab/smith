@@ -108,3 +108,28 @@ export void test_a_plain_test_leaves_no_record(io::Io *io) {
     scratch::expect_contains("both ran", run.out, "2 passed");
     scratch::expect_lacks("no record", run.out, ".rec");
 }
+
+// A test that opens a file is stale when the file changes, and one that does not is not (#739): what a test opened is
+// in its record (`read`, `readdir`), by what the process opened through io and not by a list or a scan of the commands
+// it runs. A folder a test copies (scratch::copy_tree lists it and reads each file) names every file in it, and a file
+// added to it changes its listing.
+export void test_a_changed_file_selects_the_tests_that_opened_it(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "reads_project");
+    const char *list = "smith test --changed --list HEAD 2>/dev/null | paste -sd, -";
+    const char *each = "; git checkout -q .; git clean -fdq data; ";
+    scratch::Run run =
+        scratch::sh(&p, format::push(&io->arena, repository, "smith test --changed --base HEAD >/dev/null 2>&1; ",
+                                     "echo ---; cat .smith/records/reads_test__copies_a_folder.rec; echo ---; ",
+                                     "echo more >> data/a.txt; echo \"file: $(", list, ")\"", each,
+                                     "echo more >> data/b/y.txt; echo \"inside: $(", list, ")\"", each,
+                                     "echo new > data/b/w.txt; echo \"added: $(", list, ")\"", each,
+                                     "echo more >> data/c/z.txt; echo \"unread: $(", list, ")\"")
+                            .data);
+    scratch::expect_status("the run", 0, &run);
+    scratch::expect_contains("the files of the folder", run.out, "read\tdata/b/y.txt\t");
+    scratch::expect_contains("and its listing", run.out, "readdir\tdata/b/\t");
+    scratch::expect_contains("a file io read", run.out, "file: reads_test::reads_a_file\n");
+    scratch::expect_contains("a file in a folder the test copied", run.out, "inside: reads_test::copies_a_folder\n");
+    scratch::expect_contains("a file added to that folder", run.out, "added: reads_test::copies_a_folder\n");
+    scratch::expect_contains("a file no test opened", run.out, "unread: \n");
+}

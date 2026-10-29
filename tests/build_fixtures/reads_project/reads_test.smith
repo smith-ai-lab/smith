@@ -1,0 +1,28 @@
+module reads_test;
+
+import smith::format;
+import smith::io;
+import smith::test;
+
+// Reads one file through io: the record names it.
+export void test_reads_a_file(io::Io *io) {
+    io::Read read = io::files_read(&io->files, &io->arena, "data/a.txt");
+    test::check_equal(read.error.code, 0);
+}
+
+// Lists a folder and reads each file in it, as scratch::copy_tree does with a folder it copies.
+export void test_copies_a_folder(io::Io *io) {
+    io::FileList list = io::files_list(&io->files, &io->arena, "data/b");
+    test::check_equal(list.error.code, 0);
+    for (usize i = 0; i < list.count; i++) {
+        const char *path = format::push(&io->arena, "data/b/", list.entries[i].name).data;
+        io::Read file = io::files_read(&io->files, &io->arena, path);
+        test::check_equal(file.error.code, 0);
+    }
+}
+
+// Opens nothing of the project.
+export void test_reads_nothing(io::Io *io) {
+    (void)io;
+    test::check(true);
+}

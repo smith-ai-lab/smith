@@ -24,9 +24,10 @@
 //   ask              types to ask the parser about at the end of each file (SMITH_LANG_ASK), and expect/ask its answers
 //   cmd              the case is one command instead: `smith cc` with these arguments (@OUT@ is the case's scratch
 //   folder,
-//                    @REPO@ smith's own), run in src/ as a user would, with no flag of the harness's, so that smith's
-//                    own defaults (the C2y standard, finding a module's source) are what is tested; the program, if the
-//                    command made @OUT@/program, is run, and expect/stderr, if there, is the whole of the diagnostics
+//                    @REPO@ a copy of the files of smith's own that it names, in `mirror/`), run in src/ as a user
+//                    would, with no flag of the harness's, so that smith's own defaults (the C2y standard, finding a
+//                    module's source) are what is tested; the program, if the command made @OUT@/program, is run, and
+//                    expect/stderr, if there, is the whole of the diagnostics
 //   nostd            the case's compiles are given no -std (smith's default for a .smith file applies)
 // Everything runs in the case's own folder (a copy in the test's scratch folder), so paths in messages are relative to
 // it. The expectations are golden files: `smith test --update` writes what each case produced (read the diff).
@@ -227,8 +228,13 @@ static void build_others(const Case *kase, Built *built) {
 static Built build_command(const Case *kase) {
     const scratch::Project *p = kase->project;
     Built built = {.status = 0, .objects = ""};
-    scratch::Run run = scratch::sh(p, "arguments=$(sed \"s|@OUT@|$PWD/out|g; s|@REPO@|$SMITH_REPO|g\" cmd); "
-                                      "(cd src && smith cc -fno-color-diagnostics $arguments) 2>>out/stderr");
+    // smith's generated headers are a build output, not a file of the tree: they stay where the build wrote them
+    scratch::Run run = scratch::sh(
+        p,
+        format::push(&kase->io->arena, "arguments=$(sed \"s|@OUT@|$PWD/out|g; s|@REPO@/.smith/|$SMITH_REPO/.smith/|g; ",
+                     "s|@REPO@/tests/smith-lang/cases/", kase->name, "/|$PWD/|g; s|@REPO@|$PWD/mirror|g\" cmd); ",
+                     "(cd src && smith cc -fno-color-diagnostics $arguments) 2>>out/stderr")
+            .data);
     if (run.status != 0) built.status = 1;
     (void)scratch::sh(p, ": >out/stdout");
     if (built.status == 0 && scratch::exists(p, "out/program")) {
@@ -328,14 +334,19 @@ static void corpus_case(io::Io *io, const char *name) {
     // The folder is cases/<name>, as in the corpus, so that a case names a sibling as ../../<other>/src/main.smith.
     scratch::Project p = scratch::project(io, join_name(io, name), nullptr);
     Case kase = {.io = io, .name = name, .project = &p};
-    scratch::Run copied = scratch::sh(
-        &p,
-        join(&kase, "cp -R \"$SMITH_REPO/tests/smith-lang/cases/", name,
-             "/.\" . && mkdir -p out/include "
-             "out/header out/generics out/obj && : >out/stderr && "
-             "{ [ -e ../target-facts ] || ln -s \"$SMITH_REPO/tests/smith-lang/cases/target-facts\" ../target-facts; }",
-             ""));
-    scratch::expect_status("the case is copied", 0, &copied);
+    scratch::copy_tree(&p, join(&kase, "tests/smith-lang/cases/", name, "", ""), "");
+    // A case that names the files of another (../../target-facts/src/main.smith) finds them beside its own folder.
+    if (c::strncmp(name, "target-facts-", 13) == 0) {
+        scratch::copy_tree(&p, "tests/smith-lang/cases/target-facts", "../target-facts");
+    }
+    scratch::Run made = scratch::sh(&p, "mkdir -p out/include out/header out/generics out/obj && : >out/stderr");
+    scratch::expect_status("the case is prepared", 0, &made);
+    if (scratch::exists(&p, "cmd")) { // the files of smith's own that a command may name, as @REPO@
+        scratch::copy_tree(&p, "lib/smith/contract.smith", "mirror/lib/smith/contract.smith");
+        scratch::copy_tree(&p, "lib/smith/text.smith", "mirror/lib/smith/text.smith");
+        scratch::copy_tree(&p, "lib/trace.c", "mirror/lib/trace.c");
+        scratch::copy_tree(&p, "include", "mirror/include");
+    }
     bool update = test::updating();
     Built built;
     if (scratch::exists(&p, "cmd")) {
@@ -350,13 +361,11 @@ static void corpus_case(io::Io *io, const char *name) {
     check_asked_and_symbols(&kase, &built);
 }
 
-// A case added to tests/smith-lang/cases needs a test here.
+// A case added to tests/smith-lang/cases needs a test here: the folder is listed and this file read through io.
 export void test_every_case_has_a_test(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run run =
-        scratch::sh(&p, "cd \"$SMITH_REPO/tests/smith-lang/cases\" && for f in *; do "
-                        "grep -q \"corpus_case(io, \\\"$f\\\")\" ../../smith_lang_test.smith || echo \"$f\"; done");
-    scratch::expect_text("cases of tests/smith-lang/cases with no test", "", run.out);
+    scratch::expect_text("cases of tests/smith-lang/cases with no test", "",
+                         scratch::untested_names(io, "tests/smith-lang/cases", "tests/smith_lang_test.smith",
+                                                 "corpus_case(io, ", nullptr, nullptr));
 }
 
 export void test_array_param(io::Io *io) {

@@ -1912,6 +1912,13 @@ void coverage_begin(const Test *test) {
     c::mkdir(path, 493); // 0755: an octal literal is an error under gnu23
     __builtin_snprintf(path, sizeof path, "%s/raw/%s/%%p.profraw", dir, clean);
     c::setenv("LLVM_PROFILE_FILE", path, 1);
+    // What the test reads (io's files, a scratch project's repository paths): one path a line, for its record (#739).
+    __builtin_snprintf(path, sizeof path, "%s/reads", dir);
+    c::mkdir(path, 493); // 0755: an octal literal is an error under gnu23
+    __builtin_snprintf(path, sizeof path, "%s/reads/%s.txt", dir, clean);
+    c::unlink(path);
+    c::setenv("SMITH_READS_LOG", path, 1);
+    __builtin_snprintf(path, sizeof path, "%s/raw/%s/%%p.profraw", dir, clean);
     if (profile.restart != nullptr && profile.set_path != nullptr) {
         profile.restart();
         profile.set_path(path);
@@ -1926,6 +1933,7 @@ void coverage_end(const Test *test, bool passed, f64 cpu) {
     if (dir == nullptr || dir[0] == '\0' || self == nullptr) return;
     if (profile.dump != nullptr) profile.dump(); // this process's own counters
     c::unsetenv("LLVM_PROFILE_FILE");
+    c::unsetenv("SMITH_READS_LOG");
     c::fflush(nullptr);
     c::pid_t merger = c::fork();
     if (merger == 0) {

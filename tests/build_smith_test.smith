@@ -233,8 +233,10 @@ export void test_build_smith_lint_reads_a_build_smith_as_written(io::Io *io) {
     scratch::Project p = scratch::project(io, "shapes", "smith_shapes");
     // smith's own checks, but not smith-effects: this program prints with printf, and the lint here is about
     // build.smith.
-    (void)scratch::sh(&p, "cp \"$SMITH_REPO/.clang-format\" . && sed 's/^  smith-effects,$/  -smith-effects,/' "
-                          "\"$SMITH_REPO/.clang-tidy\" >.clang-tidy");
+    scratch::copy_tree(&p, ".clang-format", ".clang-format");
+    scratch::copy_tree(&p, ".clang-tidy", "repo-clang-tidy");
+    (void)scratch::sh(
+        &p, "sed 's/^  smith-effects,$/  -smith-effects,/' repo-clang-tidy >.clang-tidy && rm repo-clang-tidy");
     scratch::Run clean = scratch::sh(&p, "smith lint");
     if (clean.status != 0) {
         test::note("lint said: %s%s", clean.out, clean.err);

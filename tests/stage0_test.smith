@@ -17,10 +17,10 @@ constexpr const char *setup =
     "set -e; mkdir bin gh; "
     "if [ \"$(uname -s)\" = Darwin ]; then c='clang -std=c23'; else c='cc -std=gnu2x'; fi; "
     "$c -x c gh.c -o bin/gh; $c -x c smith.c -o fake-smith; "
-    "$c -x c \"$SMITH_REPO/scripts/stage0.c\" -o stage0-tool; "
+    "$c -x c stage0.c -o stage0-tool; "
     "git init -q --bare origin.git; git init -q -b main repo; cd repo; "
     "git config user.email t@t; git config user.name t; git remote add origin ../origin.git; "
-    "mkdir scripts; cp \"$SMITH_REPO/scripts/release.sh\" scripts/; git add scripts; git commit -qm zero; "
+    "mkdir scripts; mv ../release.sh scripts/; git add scripts; git commit -qm zero; "
     "echo 1 > f; git add f; git commit -qm one; echo 2 > f; git commit -qam two; second=$(git rev-parse HEAD); "
     "git checkout -q -b side; echo side > g; git add g; git commit -qm side; side=$(git rev-parse HEAD); "
     "git checkout -q main; echo 3 > f; git commit -qam three; echo 4 > f; git commit -qam four; "
@@ -30,6 +30,9 @@ constexpr const char *setup =
 
 static scratch::Project repository(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", "stage0");
+    scratch::copy_tree(&p, "scripts/stage0.c", "stage0.c");
+    scratch::copy_tree(&p, "scripts/sha256.h", "sha256.h");
+    scratch::copy_tree(&p, "scripts/release.sh", "release.sh");
     scratch::Run made = scratch::sh(&p, setup);
     scratch::expect_status("stage0: the scratch repository is made", 0, &made);
     return p;

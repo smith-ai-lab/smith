@@ -31,11 +31,12 @@ constexpr char prelude[_] =
 // them.
 static scratch::Project prepared(io::Io *io, bool full) {
     scratch::Project p = scratch::project(io, "p", "lint_smith");
-    scratch::Run run =
-        scratch::sh(&p, full ? "cp \"$SMITH_REPO/templates/defaults/clang-tidy\" .clang-tidy"
-                             : "grep -v '^  smith-module,$' \"$SMITH_REPO/templates/defaults/clang-tidy\" "
-                               ">.clang-tidy");
-    scratch::expect_status("the project is prepared", 0, &run);
+    scratch::copy_tree(&p, "templates/defaults/clang-tidy", full ? ".clang-tidy" : "template-clang-tidy");
+    if (!full) {
+        scratch::Run run = scratch::sh(&p, "grep -v '^  smith-module,$' template-clang-tidy >.clang-tidy && "
+                                           "rm template-clang-tidy");
+        scratch::expect_status("the project is prepared", 0, &run);
+    }
     return p;
 }
 
@@ -190,8 +191,7 @@ export void test_lint_plain_c_on_both_sides_of_a_smith_file_keeps_its_names(io::
 
 export void test_lint_with_no_arguments_lints_the_smith_sources_a_build_compiles(io::Io *io) {
     scratch::Project p = scratch::project(io, "q", "lint_verb");
-    scratch::Run copied = scratch::sh(&p, "cp \"$SMITH_REPO/templates/defaults/clang-tidy\" .clang-tidy");
-    scratch::expect_status("copied", 0, &copied);
+    scratch::copy_tree(&p, "templates/defaults/clang-tidy", ".clang-tidy");
     scratch::Run run = scratch::sh(&p, "smith lint >verb.out 2>verb.err");
     scratch::expect_status("smith lint with no arguments fails on a finding in a .smith file the build compiles", 1,
                            &run);
@@ -207,8 +207,9 @@ export void test_lint_with_no_arguments_lints_the_smith_sources_a_build_compiles
 // `.clang-format-ignore` names is not, and the line says how many files were linted (main.smith, build.c, unbuilt).
 export void test_lint_with_no_arguments_lints_the_smith_sources_the_build_does_not_compile(io::Io *io) {
     scratch::Project p = scratch::project(io, "r", "lint_verb");
+    scratch::copy_tree(&p, "templates/defaults/clang-tidy", ".clang-tidy");
     scratch::Run prepared_run = scratch::sh(
-        &p, "cp \"$SMITH_REPO/templates/defaults/clang-tidy\" .clang-tidy; git init -q . && "
+        &p, "git init -q . && "
             "printf 'int Bad_Unbuilt = 0;\\n' >unbuilt.smith; printf 'int Bad_Ignored = 0;\\n' >ignored.smith; "
             "printf 'ignored.smith\\n' >.clang-format-ignore; sed -i.bak 's/BadLocal/good_local/' main.smith; "
             "rm main.smith.bak; git add -A");

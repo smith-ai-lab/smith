@@ -10,14 +10,12 @@ import smith::format;
 import smith::io;
 import smith::test;
 import scratch;
+import <string.h>;
 
-// A project holding a copy of tests/autodiff/<from> (a command's arguments), in a git repository of its own.
-static scratch::Project copy_of(io::Io *io, const char *name, const char *from) {
+// A project in a git repository of its own.
+static scratch::Project git_project(io::Io *io, const char *name) {
     scratch::Project p = scratch::project(io, name, nullptr);
-    scratch::Run made = scratch::sh(&p, format::push(&io->arena, "cp -R ", from,
-                                                     " . && git init -q . && git config user.email t@t && git config "
-                                                     "user.name t")
-                                            .data);
+    scratch::Run made = scratch::sh(&p, "git init -q . && git config user.email t@t && git config user.name t");
     scratch::expect_status("autodiff: the project is made", 0, &made);
     return p;
 }
@@ -25,14 +23,17 @@ static scratch::Project copy_of(io::Io *io, const char *name, const char *from) 
 // A project whose only file is tests/autodiff/<from>, named `to`, in a git repository of its own.
 static scratch::Project file_as(io::Io *io, const char *name, const char *from, const char *to) {
     scratch::Project p = scratch::project(io, name, nullptr);
-    scratch::Run made = scratch::sh(
-        &p, format::push(&io->arena, "cp \"$SMITH_REPO/tests/autodiff/", from, "\" ", to, " && git init -q .").data);
+    scratch::copy_tree(&p, format::push(&io->arena, "tests/autodiff/", from).data, to);
+    scratch::Run made = scratch::sh(&p, "git init -q .");
     scratch::expect_status("autodiff: the project is made", 0, &made);
     return p;
 }
 
+// A project holding the files of tests/autodiff/<folder>, in a git repository of its own.
 static scratch::Project from_dir(io::Io *io, const char *name, const char *folder) {
-    return copy_of(io, name, format::push(&io->arena, "\"$SMITH_REPO/tests/autodiff/", folder, "/.\"").data);
+    scratch::Project p = git_project(io, name);
+    scratch::copy_tree(&p, format::push(&io->arena, "tests/autodiff/", folder).data, "");
+    return p;
 }
 
 static void builds(const scratch::Project *p, const char *name, const char *arguments) {
@@ -125,8 +126,11 @@ export void test_autodiff_a_program_that_does_not_differentiate_keeps_its_comman
 // ---- 3. learner's scan reference: Enzyme's gradient equals the hand-written backward to 1e-12. ----
 
 // Builds release and debug and runs each: the program exits 1 when the gradient differs.
-static void reference_equals_backward(io::Io *io, const char *name, const char *program, const char *setup) {
-    scratch::Project p = copy_of(io, program, setup);
+static void reference_equals_backward(io::Io *io, const char *name, const char *program, const char *main_source) {
+    scratch::Project p = git_project(io, program);
+    scratch::copy_tree(&p, "tests/autodiff/scan/base", "base");
+    scratch::copy_tree(&p, format::push(&io->arena, "tests/autodiff/", main_source).data,
+                       c::strstr(main_source, ".smith") != nullptr ? "main.smith" : "main.c");
     builds(&p, format::push(&io->arena, "autodiff: ", name, ": release builds").data, "release");
     builds(&p, format::push(&io->arena, "autodiff: ", name, ": debug builds").data, "");
     const char *profiles[2] = {"release", "debug"};
@@ -144,24 +148,20 @@ static void reference_equals_backward(io::Io *io, const char *name, const char *
 }
 
 export void test_autodiff_scan_enzyme_equals_the_hand_written_backward(io::Io *io) {
-    reference_equals_backward(io, "scan", "scan",
-                              "\"$SMITH_REPO/tests/autodiff/scan/base\" \"$SMITH_REPO/tests/autodiff/scan/main.c\"");
+    reference_equals_backward(io, "scan", "scan", "scan/main.c");
 }
 
 export void test_autodiff_scan_gradient_in_smith_equals_the_hand_written_backward(io::Io *io) {
-    reference_equals_backward(io, "scan gradient", "scangrad",
-                              "\"$SMITH_REPO/tests/autodiff/scan/base\" "
-                              "\"$SMITH_REPO/tests/autodiff/scan-gradient/main.smith\"");
+    reference_equals_backward(io, "scan gradient", "scangrad", "scan-gradient/main.smith");
 }
 
 export void test_autodiff_scan_struct_of_slices_equals_the_hand_written_backward(io::Io *io) {
-    reference_equals_backward(io, "scan struct", "scanstruct",
-                              "\"$SMITH_REPO/tests/autodiff/scan/base\" "
-                              "\"$SMITH_REPO/tests/autodiff/scan-struct/main.smith\"");
+    reference_equals_backward(io, "scan struct", "scanstruct", "scan-struct/main.smith");
 }
 
 export void test_autodiff_structs_gradients_sgd_and_adam_equal_their_references(io::Io *io) {
-    scratch::Project p = copy_of(io, "structs", "\"$SMITH_REPO/tests/autodiff/structs/main.smith\"");
+    scratch::Project p = git_project(io, "structs");
+    scratch::copy_tree(&p, "tests/autodiff/structs/main.smith", "main.smith");
     builds(&p, "autodiff: structs: release builds", "release");
     builds(&p, "autodiff: structs: debug builds", "");
     const char *profiles[2] = {"release", "debug"};

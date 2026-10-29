@@ -13,7 +13,9 @@ import scratch;
 import prove_cases;
 
 static scratch::Project fresh(io::Io *io) {
-    return scratch::project(io, "p", "prove_cases");
+    scratch::Project p = scratch::project(io, "p", "prove_cases");
+    scratch::copy_tree(&p, "tests/prove", "cases");
+    return p;
 }
 
 // `smith prove args -- -I include`, both streams together.
@@ -96,8 +98,9 @@ export void test_prove_after_call_add_row_is_proved(io::Io *io) {
 
 export void test_prove_after_call_a_store_through_sret_after_a_trusted_call_is_proved(io::Io *io) {
     scratch::Project p = fresh(io);
+    scratch::copy_tree(&p, "lib", "lib");
     proved(&p, "after_call: a store through sret after a trusted call with a writable pointer is proved (#74)",
-           "--function=replay_make --library=\"$SMITH_REPO/lib/smith/arena.smith\" \"$c/arena_sret.c\"");
+           "--function=replay_make --library=lib/smith/arena.smith \"$c/arena_sret.c\"");
 }
 
 // 7c2c. A pointer returned under an smith_ensures is valid or null, proved at the return and assumed by callers (#74).

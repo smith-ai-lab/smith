@@ -1,7 +1,7 @@
 # Sourced by the archive tests (tests/untar_*_test.smith): $PWD is the project, where the archives are made.
 # The xz archives are made by tests/xz.py, which writes the container and lets Python's lzma module compress the blocks
 # (macOS has no xz, and Homebrew's is not relied on).
-here=$SMITH_REPO
+here=$PWD # the project holds copies of the repository files the archive tests use (scratch::copy_tree)
 xz() { "${PYTHON:-/usr/bin/python3}" -I "$here/tests/xz.py" "$@"; }
 export COPYFILE_DISABLE=1 # macOS tar would add AppleDouble ._ entries for extended attributes
 work=$PWD
@@ -100,7 +100,7 @@ flip() { # file, offset, output
 # tests/untar.c under AddressSanitizer and UndefinedBehaviorSanitizer, as ./untar.
 build_untar() {
     smith cc -std=gnu23 -g -O1 -fsanitize=address,undefined -fno-sanitize-recover=undefined -Wall -Wextra -Werror \
-        -Wno-unused-function -I "$here/.smith/include" "$here/tests/untar.c" "$here/lib/smith/arena.smith" \
+        -Wno-unused-function -I "$SMITH_REPO/.smith/include" "$here/tests/untar.c" "$here/lib/smith/arena.smith" \
         "$here/lib/smith/contract.smith" "$here/lib/smith/inflate.smith" "$here/lib/smith/io.smith" \
         "$here/lib/smith/random.smith" -o "$PWD/untar"
 }
@@ -114,12 +114,13 @@ build_untar() {
 shared_untar() {
     base=${SMITH_TEST_CACHE:-$HOME/.cache/smith-tests}/untar
     mkdir -p "$base"
-    # the size and time of the files it is made of, and of the smith that compiles it (cheaper than their bytes)
+    # the bytes of the files it is made of (the project's copies of them: their times are new in every test), and the
+    # size and time of the smith that compiles it
     if [ "$(uname -s)" = Darwin ]; then statfmt='-f %N_%m_%z'; else statfmt='-c %n_%Y_%s'; fi
-    key=$(stat $statfmt "${SMITH_SELF:-$(command -v smith)}" "$here/tests/untar.c" "$here"/runtime/*.c "$here"/runtime/*.h \
-        "$here/lib/smith/arena.smith" "$here/lib/smith/contract.smith" "$here/lib/smith/inflate.smith" \
-        "$here/lib/smith/io.smith" "$here/lib/smith/random.smith" "$here/tests/build_fixtures/untar/prelude" 2>/dev/null |
-        shasum -a 256 | cut -c1-16)
+    key=$({ stat $statfmt "${SMITH_SELF:-$(command -v smith)}" 2>/dev/null
+        cat "$here/tests/untar.c" "$here"/runtime/*.c "$here"/runtime/*.h "$here/lib/smith/arena.smith" \
+            "$here/lib/smith/contract.smith" "$here/lib/smith/inflate.smith" "$here/lib/smith/io.smith" \
+            "$here/lib/smith/random.smith" "$here/prelude"; } | shasum -a 256 | cut -c1-16)
     dir=$base/$key
     if [ ! -e "$dir/done" ]; then
         find "$base" -maxdepth 1 -name "lock-$key" -mmin +20 -exec rmdir {} + 2>/dev/null

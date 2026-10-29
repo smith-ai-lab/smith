@@ -24,7 +24,14 @@ import smith::mem;
 // the files every harness links.
 constexpr char cc_flags[_] = "-std=gnu23 -g -O0 -fsanitize=address,undefined -fno-sanitize-recover=all "
                              "-ftrivial-auto-var-init=pattern -I \"$SMITH_REPO/.smith/include\" -I lowered -w";
-constexpr char cc_common[_] = "\"$SMITH_REPO/lib/trace.c\" \"$SMITH_REPO/lib/smith/contract.smith\"";
+constexpr char cc_common[_] = "lib/trace.c lib/smith/contract.smith";
+
+// The files every harness links, in the project.
+static void copy_common(const scratch::Project *p) {
+    scratch::copy_tree(p, "tests/prove", "tests/prove"); // the harnesses include the programs beside them
+    scratch::copy_tree(p, "lib", "lib");                 // the harnesses link its libraries and include its sources
+    scratch::copy_tree(p, "runtime", "runtime");
+}
 
 // Two harnesses reach the modules' static functions by including their raw lowering (`smith cc --smith-lower`), made
 // in process (issue #646).
@@ -91,14 +98,11 @@ static const char *link_sources(const scratch::Project *p, const char *name, con
         const char *kept = c::strncmp(source, "tests/prove/", 12) == 0 ? source + 12 : source;
         usize length = c::strlen(source);
         if (length > 6 && c::strcmp(source + length - 6, ".smith") == 0) {
-            scratch::Run copied =
-                scratch::sh(p, format::push(&io->arena, "mkdir -p \"$(dirname ", name, "/", kept,
-                                            ")\" && cp \"$SMITH_REPO/", source, "\" ", name, "/", kept)
-                                   .data);
-            scratch::expect_status("prove_sound: a linked module is copied", 0, &copied);
+            scratch::copy_tree(p, source, format::push(&io->arena, name, "/", kept).data);
             sources = format::push(&io->arena, sources, " ", name, "/", kept).data;
         } else {
-            sources = format::push(&io->arena, sources, " \"$SMITH_REPO/", source, "\"").data;
+            scratch::copy_tree(p, source, source);
+            sources = format::push(&io->arena, sources, " ", source).data;
         }
     }
     return sources;
@@ -109,15 +113,18 @@ static const char *link_sources(const scratch::Project *p, const char *name, con
 static void sound(io::Io *io, const char *name) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     lower_modules(&p);
+    copy_common(&p);
     const char *source = format::push(&io->arena, "tests/prove/sound/", name, ".c").data;
-    const char *text = scratch::capture(&p, format::push(&io->arena, "cat \"$SMITH_REPO/", source, "\"").data);
+    scratch::copy_tree(&p, source, source);
+    const char *text = scratch::read(&p, source);
     const char *proves = directive(io, text, "// proves:");
     const char *files = directive(io, text, "// prove-files:");
     const char *links = directive(io, text, "// link:");
     const char *prove_files = c::strlen(files) > 0 ? files : source;
     const char *arguments = "";
     for (usize i = 0; word(io, prove_files, i) != nullptr; i++) {
-        arguments = format::push(&io->arena, arguments, " \"$SMITH_REPO/", word(io, prove_files, i), "\"").data;
+        scratch::copy_tree(&p, word(io, prove_files, i), word(io, prove_files, i));
+        arguments = format::push(&io->arena, arguments, " ", word(io, prove_files, i)).data;
     }
     scratch::Run proved = scratch::sh(&p, format::push(&io->arena, "smith prove -v", arguments,
                                                        " -- -I \"$SMITH_REPO/.smith/include\" -I lowered 2>&1")
@@ -130,10 +137,9 @@ static void sound(io::Io *io, const char *name) {
         test::check_condition(scratch::contains(proved.out, format::push(&io->arena, "ok    ", fn, "  (").data));
     }
     const char *sources = link_sources(&p, name, links);
-    scratch::Run built =
-        scratch::sh(&p, format::push(&io->arena, "mkdir -p ", name, " && smith cc ", cc_flags, " \"$SMITH_REPO/",
-                                     source, "\"", sources, " ", cc_common, " -o ", name, "/run 2>&1")
-                            .data);
+    scratch::Run built = scratch::sh(&p, format::push(&io->arena, "mkdir -p ", name, " && smith cc ", cc_flags, " ",
+                                                      source, sources, " ", cc_common, " -o ", name, "/run 2>&1")
+                                             .data);
     scratch::expect_status("prove_sound: the harness builds", 0, &built);
     const char *seeds = test::full() ? "1 2 3 4 5 6 7 8" : "1";
     const char *count = test::full() ? "50000" : "2000";
@@ -151,14 +157,14 @@ static void sound(io::Io *io, const char *name) {
 // that function's name must die with the text on its line.
 static void unsound(io::Io *io, const char *name) {
     scratch::Project p = scratch::project(io, "p", nullptr);
+    copy_common(&p);
     const char *source = format::push(&io->arena, "tests/prove/unsound/", name, ".c").data;
-    const char *text = scratch::capture(&p, format::push(&io->arena, "cat \"$SMITH_REPO/", source, "\"").data);
-    scratch::Run proved = scratch::sh(&p, format::push(&io->arena, "smith prove -v \"$SMITH_REPO/", source,
-                                                       "\" -- -I \"$SMITH_REPO/.smith/include\" 2>&1")
-                                              .data);
-    scratch::Run built = scratch::sh(&p, format::push(&io->arena, "smith cc ", cc_flags, " \"$SMITH_REPO/", source,
-                                                      "\" ", cc_common, " -o claims 2>&1")
-                                             .data);
+    scratch::copy_tree(&p, source, source);
+    const char *text = scratch::read(&p, source);
+    scratch::Run proved = scratch::sh(
+        &p, format::push(&io->arena, "smith prove -v ", source, " -- -I \"$SMITH_REPO/.smith/include\" 2>&1").data);
+    scratch::Run built = scratch::sh(
+        &p, format::push(&io->arena, "smith cc ", cc_flags, " ", source, " ", cc_common, " -o claims 2>&1").data);
     scratch::expect_status("prove_sound: the corpus builds", 0, &built);
     for (const char *line = text; *line != '\0';) {
         usize length = 0;

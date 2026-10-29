@@ -481,6 +481,8 @@ static int smith_cov_merge(const char *name, bool pass) {
     }
     if (!smith_rec_write(dir, name, clean, pass))
         fprintf(stderr, "smith test --coverage merge: no record file for %s\n", name);
+    snprintf(raw, sizeof raw, "%s/reads/%s.txt", dir, clean); // what the test read, now in its record
+    (void)unlink(raw);
     return smith_cov_merge_record(dir, name, clean);
 }
 

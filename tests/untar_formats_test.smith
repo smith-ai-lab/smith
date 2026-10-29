@@ -14,7 +14,12 @@ import <string.h>;
 import smith::mem;
 
 static scratch::Project untar_project(io::Io *io) {
-    return scratch::project(io, "p", "untar");
+    scratch::Project p = scratch::project(io, "p", "untar");
+    scratch::copy_tree(&p, "tests/untar.c", "tests/untar.c");
+    scratch::copy_tree(&p, "tests/xz.py", "tests/xz.py");
+    scratch::copy_tree(&p, "lib", "lib");
+    scratch::copy_tree(&p, "runtime", "runtime");
+    return p;
 }
 
 static scratch::Run run(const scratch::Project *p, const char *body) {

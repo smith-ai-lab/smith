@@ -152,7 +152,9 @@ export void test_conventions_c_smith_prove_function_naming_nothing_fails(io::Io 
 
 export void test_conventions_c_smith_lint_reads_the_builds_compiles(io::Io *io) {
     scratch::Project p = scratch::project(io, "calc", "conv_calc");
-    scratch::Run run = scratch::sh(&p, "cp \"$SMITH_REPO/.clang-tidy\" \"$SMITH_REPO/.clang-format\" . && smith lint");
+    scratch::copy_tree(&p, ".clang-tidy", ".clang-tidy");
+    scratch::copy_tree(&p, ".clang-format", ".clang-format");
+    scratch::Run run = scratch::sh(&p, "smith lint");
     scratch::expect_status("c: smith lint reads the build's compiles", 0, &run);
 }
 

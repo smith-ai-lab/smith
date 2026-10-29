@@ -6,6 +6,7 @@
 //   smith-record 2
 //   test <name>
 //   result <pass|fail>
+//   opened 1                                            the record lists what the test opened (read, readdir lines)
 //   fn <file> <name> <lines> <hash> <first line hash>    a function the test executed, found again by its first line
 //   outside <file> <hash>                               the file's code outside its functions (globals, macros, types,
 //   the
@@ -13,6 +14,7 @@
 //                                                       .c or .h file one of them includes, chains included
 //   input <path> <hash>                                  any other file the executed files include, and build.c
 //   read <path> <hash>                                   a file of the project the test or its children read
+//   readdir <path>/ <hash>                              a folder of the project they listed: the names in it
 // A test is stale when its last result failed, a function it executed is not found as it was, an outside hash or an
 // input or a read file differs (or is gone). A hash is 64-bit FNV-1a; the guard is against edits, not forgery.
 constexpr size_t smith_rec_source_max = 1U << 23;
@@ -287,22 +289,61 @@ static void smith_rec_write_includes(FILE *out, const char *file) {
     }
 }
 
-// The files the test read through io, one path a line in $SMITH_COVERAGE_DIR/reads/<clean>.txt: those of the project.
+// The listing of a folder as a hash: the names in it, in any order. False when it cannot be listed.
+static bool smith_rec_dir_hash(const char *relative, uint64_t *hash) {
+    char path[PATH_MAX];
+    smith_rec_absolute(relative, path, sizeof path);
+    DIR *folder = opendir(path);
+    if (folder == nullptr) return false;
+    uint64_t sum = 0;
+    uint64_t count = 0;
+    for (struct dirent *item = readdir(folder); item != nullptr; item = readdir(folder)) { // each entry
+        if (strcmp(item->d_name, ".") == 0 || strcmp(item->d_name, "..") == 0) continue;
+        sum ^= smith_rec_fnv(item->d_name, strlen(item->d_name), smith_rec_seed);
+        count++;
+    }
+    closedir(folder);
+    *hash = smith_rec_mix(sum, count);
+    return true;
+}
+
+static bool smith_rec_inert_path(const char *relative) {
+    return strncmp(relative, ".smith/", 7) == 0 || strncmp(relative, "build/", 6) == 0 ||
+           strncmp(relative, ".git/", 5) == 0;
+}
+
+// A folder the test listed: the names in it (a file added or removed changes the hash). What is in it is in the record
+// only if the test opened it.
+static void smith_rec_write_folder(FILE *out, const char *relative) {
+    uint64_t hash = 0;
+    if (!smith_rec_once(relative) || !smith_rec_dir_hash(relative, &hash)) return;
+    fprintf(out, "readdir\t%s\t%016llx\n", relative, (unsigned long long)hash);
+}
+
+// The files the test read, one path a line in $SMITH_COVERAGE_DIR/reads/<clean>.txt (written by io's files and by the
+// scratch projects through SMITH_READS_LOG, issue #739): those of the project. A line ending in `/` is a folder that
+// was listed.
 static void smith_rec_write_reads(FILE *out, const char *dir, const char *clean) {
     char path[PATH_MAX];
     snprintf(path, sizeof path, "%s/reads/%s.txt", dir, clean);
-    static char list[1U << 20];
+    static char list[1U << 22];
     FILE *file = fopen(path, "r");
     if (file == nullptr) return;
     size_t size = fread(list, 1, sizeof list - 1, file);
     fclose(file);
     list[size] = '\0';
-    size_t root = strlen(smith_cov_root);
+    char root_text[PATH_MAX];
+    const char *root_given = realpath(smith_cov_root, root_text) != nullptr ? root_text : smith_cov_root;
+    size_t root = strlen(root_given);
     for (char *line = strtok(list, "\n"); line != nullptr; line = strtok(nullptr, "\n")) { // each path
-        if (strncmp(line, smith_cov_root, root) != 0 || line[root] != '/') continue;
-        const char *relative = line + root + 1;
-        if (strncmp(relative, ".smith/", 7) == 0 || strncmp(relative, "build/", 6) == 0) continue;
-        smith_rec_write_input(out, "read", relative);
+        if (strncmp(line, root_given, root) != 0 || line[root] != '/') continue;
+        char *relative = line + root + 1;
+        size_t length = strlen(relative);
+        if (relative[0] == '\0' || smith_rec_inert_path(relative)) continue;
+        if (relative[length - 1] == '/')
+            smith_rec_write_folder(out, relative);
+        else
+            smith_rec_write_input(out, "read", relative);
     }
 }
 
@@ -338,7 +379,7 @@ static bool smith_rec_write(const char *dir, const char *name, const char *clean
     snprintf(path, sizeof path, "%s/%s.rec", folder, clean);
     FILE *out = smith_cov_open(path, temporary, sizeof temporary);
     if (out == nullptr) return false;
-    fprintf(out, "smith-record 2\ntest\t%s\nresult\t%s\ncpu\t%.3f\n", name, pass ? "pass" : "fail",
+    fprintf(out, "smith-record 2\ntest\t%s\nresult\t%s\ncpu\t%.3f\nopened\t1\n", name, pass ? "pass" : "fail",
             smith_cov_cpu_seconds);
     smith_rec_seen_count = 0;
     smith_rec_queue_count = 0;
@@ -368,7 +409,8 @@ typedef struct {
     const char *why;
     size_t named_first; // its files in smith_rec_named: what its program was built from
     size_t named_count;
-    double cpu; // seconds the test took when it was recorded, 0 when unknown
+    double cpu;  // seconds the test took when it was recorded, 0 when unknown
+    bool opened; // the record lists what the test opened (#739): a file it never opened is no input of it
 } SmithRecResult;
 
 static const char *smith_rec_named[smith_rec_named_max];
@@ -399,12 +441,22 @@ static void smith_rec_mention(const char *path) {
     }
 }
 
-// Whether some record names the path (an executed file, an input or a read).
-static bool smith_rec_mentioned(const char *path) {
+static bool smith_rec_mentioned_exactly(const char *path) {
     size_t slot = (size_t)smith_rec_fnv(path, strlen(path), smith_rec_seed) % smith_rec_mention_slots;
     for (size_t probe = 0; probe < smith_rec_mention_slots && smith_rec_mentions[slot] != nullptr;
          probe++, slot = (slot + 1) % smith_rec_mention_slots) {
         if (strcmp(smith_rec_mentions[slot], path) == 0) return true;
+    }
+    return false;
+}
+
+// Whether some record names the path (an executed file, an input or a read), or the folder it is in (a listing).
+static bool smith_rec_mentioned(const char *path) {
+    if (smith_rec_mentioned_exactly(path)) return true;
+    for (const char *slash = strchr(path, '/'); slash != nullptr; slash = strchr(slash + 1, '/')) { // each folder above
+        char folder[PATH_MAX];
+        snprintf(folder, sizeof folder, "%.*s/", (int)(slash - path), path);
+        if (smith_rec_mentioned_exactly(folder)) return true;
     }
     return false;
 }
@@ -450,6 +502,11 @@ static const char *smith_rec_stale_line(char *const *field, size_t count) {
         if (!smith_rec_outside_now(field[1], &now)) return "a file it executed is gone";
         return now == strtoull(field[2], nullptr, 16) ? nullptr : "code outside functions changed";
     }
+    if (count >= 3 && strcmp(field[0], "readdir") == 0) {
+        smith_rec_mention(field[1]);
+        bool same = smith_rec_dir_hash(field[1], &hash) && hash == strtoull(field[2], nullptr, 16);
+        return same ? nullptr : smith_cov_copy(field[1]);
+    }
     if (count >= 3 && (strcmp(field[0], "input") == 0 || strcmp(field[0], "read") == 0)) {
         smith_rec_mention(field[1]);
         if (smith_rec_ignored_input != nullptr && strcmp(field[1], smith_rec_ignored_input) == 0) return nullptr;
@@ -474,6 +531,10 @@ static void smith_rec_record_line(char *line, SmithRecResult *result) {
     }
     if (count >= 2 && strcmp(field[0], "cpu") == 0) {
         result->cpu = strtod(field[1], nullptr);
+        return;
+    }
+    if (count >= 2 && strcmp(field[0], "opened") == 0) {
+        result->opened = true;
         return;
     }
     if (count >= 2 && field[0][0] != 'r') smith_rec_name(result, field[1]);

@@ -13,17 +13,17 @@ import smith::io;
 import smith::test;
 import scratch;
 
-// The scratch project: smith's libraries the protocol code needs (build.c), the protocol code, and the runner.
-constexpr char setup[_] =
-    "mkdir -p tests protocol && cp \"$SMITH_REPO\"/runtime/protocol/*.c \"$SMITH_REPO\"/runtime/protocol/*.h protocol/ "
-    "&& cp \"$SMITH_REPO\"/.smith/protocol/*.c \"$SMITH_REPO\"/.smith/protocol/*.h protocol/ "
-    "&& cp \"$SMITH_REPO\"/tests/protocol/*.c \"$SMITH_REPO\"/tests/protocol/*.h protocol/ && rm "
-    "protocol/test_protocol_*.c "
-    "&& cp \"$SMITH_REPO\"/.smith/protocol/test_protocol_*.c tests/";
+// The scratch project: smith's libraries the protocol code needs (build.c), the protocol code, and the runner. The
+// generated files (.smith/protocol) are copied beside it, and its tests go to tests/.
+constexpr char setup[_] = "mkdir -p tests && cp generated/*.c generated/*.h protocol/ && rm protocol/test_protocol_*.c "
+                          "&& cp generated/test_protocol_*.c tests/ && rm -rf generated";
 
 // The generated code and its tests build in a mode and every test of them passes.
 static void check_mode(io::Io *io, const char *mode) {
     scratch::Project p = scratch::project(io, "protocol", "protocol");
+    scratch::copy_tree(&p, "runtime/protocol", "protocol");
+    scratch::copy_tree(&p, "tests/protocol", "protocol");
+    scratch::copy_tree(&p, ".smith/protocol", "generated");
     scratch::Run copied = scratch::sh(&p, setup);
     scratch::expect_status("protocol: the project is made", 0, &copied);
     scratch::Run built = scratch::build(&p, format::push(&io->arena, "-DMODE=", mode).data);

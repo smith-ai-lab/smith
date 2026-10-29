@@ -64,8 +64,7 @@ export void test_mem_checked_a_use_after_free_and_an_overflow_are_sanitizer_repo
 
 static scratch::Project arena_project(io::Io *io) {
     scratch::Project p = scratch::project(io, "arena_reset", nullptr);
-    scratch::Run copied = scratch::sh(&p, "cp \"$SMITH_REPO/tests/mem_checked/main.c\" main.c");
-    scratch::expect_status("checked: the arena program is written", 0, &copied);
+    scratch::copy_tree(&p, "tests/mem_checked/main.c", "main.c");
     scratch::Run built = scratch::sh(&p, "smith build >build.log 2>&1");
     scratch::expect_status("checked: the arena program builds", 0, &built);
     return p;

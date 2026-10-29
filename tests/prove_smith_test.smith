@@ -13,7 +13,9 @@ import scratch;
 import prove_cases;
 
 static scratch::Project fresh(io::Io *io) {
-    return scratch::project(io, "p", "prove_cases");
+    scratch::Project p = scratch::project(io, "p", "prove_cases");
+    scratch::copy_tree(&p, "tests/prove", "cases");
+    return p;
 }
 
 // `smith prove args -- -I include`, both streams together.

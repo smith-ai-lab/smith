@@ -269,6 +269,7 @@ if constexpr (target::os == target::macos) {
     const char *name; // the name alone, not the path
     bool folder;
     usize size; // bytes of a file; 0 for a folder
+    bool link;  // a symbolic link (a link to a folder has folder set too)
 } FileEntry;
 
 [[smith::c_name("SmithFileList")]] export typedef struct {
@@ -451,6 +452,7 @@ if constexpr (target::os != target::macos) {
     constexpr i32 einprogress = c::EINPROGRESS;
 }
 constexpr i32 eisdir = c::EISDIR;
+constexpr i32 at_symlink_nofollow = c::AT_SYMLINK_NOFOLLOW;
 constexpr i32 emsgsize = c::EMSGSIZE;
 constexpr i32 enametoolong = c::ENAMETOOLONG;
 constexpr i32 enoent = c::ENOENT;
@@ -528,6 +530,7 @@ constexpr u32 mode_kind_mask = 0xF000;
 constexpr u32 mode_fifo = 0x1000;
 constexpr u32 mode_character = 0x2000;
 constexpr u32 mode_folder = 0x4000;
+constexpr u32 mode_link = 0xA000;
 constexpr u32 mode_socket = 0xC000;
 constexpr u32 status_signal_mask = 0x7F; // the low seven bits of a wait status are the signal, 0 for an exit
 
@@ -1086,9 +1089,32 @@ void fake_child_write(Op *op) {
 
 // ---------------------------------------------------------------- real file operations
 
+// `smith test --changed` (issue #739, knowledge/coverage-selection.md): with SMITH_READS_LOG set, a file this process
+// opens to read and a folder it lists are appended to that file, one absolute path a line (a folder's ends in `/`: its
+// listing, not what is in it), so the record of the test that ran names the data it read. Children inherit the
+// variable. Nothing happens without it.
+void reads_log(const char *path) {
+    const char *log = c::getenv("SMITH_READS_LOG");
+    if (log == nullptr || log[0] == '\0') return;
+    char resolved[path_max];
+    if (c::realpath(path, resolved) == nullptr) return; // a path that is not there has nothing to hash
+    usize length = c::strlen(resolved);
+    if (length + 3 >= path_max) return;
+    struct c::stat status = {};
+    bool folder = c::stat(resolved, &status) == 0 && mode_is(status.st_mode, mode_folder);
+    if (folder) resolved[length++] = '/';
+    resolved[length++] = '\n';
+    i32 descriptor = c::open(log, open_append, file_mode);
+    if (descriptor < 0) return;
+    isize written = c::write(descriptor, resolved, length);
+    (void)written; // a line lost makes the record a path short; the next change to it is judged by the graph
+    c::close(descriptor);
+}
+
 Error real_read_file(arena::Arena *arena, const char *path, Read *result) {
     i32 descriptor = c::open(path, open_read);
     if (descriptor < 0) return error_make(errno_now(), "open", path);
+    reads_log(path);
     struct c::stat info = {};
     Grow grow = {.arena = arena};
     if (c::fstat(descriptor, &info) == 0 && info.st_size > 0) grow_reserve(&grow, (usize)info.st_size);
@@ -1187,6 +1213,43 @@ FileEntry *real_entries_grow(arena::Arena *arena, FileEntry *entries, usize coun
     return bigger;
 }
 
+constexpr usize copy_rounds_max = (usize)1 << 24; // chunks of one file
+
+Error real_copy(const char *from, const char *to) {
+    struct c::stat status = {};
+    if (c::lstat(from, &status) != 0) return error_make(errno_now(), "stat", from);
+    if (mode_is(status.st_mode, mode_link)) {
+        char target[path_max];
+        isize length = c::readlink(from, target, sizeof target - 1);
+        if (length < 0) return error_make(errno_now(), "readlink", from);
+        target[length] = '\0';
+        return c::symlink(target, to) == 0 ? (Error){} : error_make(errno_now(), "symlink", to);
+    }
+    if (mode_is(status.st_mode, mode_folder)) return error_make(eisdir, "copy", from);
+    i32 source = c::open(from, open_read);
+    if (source < 0) return error_make(errno_now(), "open", from);
+    reads_log(from);
+    i32 permissions = (i32)(status.st_mode & 0x1FF);
+    i32 target = c::open(to, open_replace, permissions);
+    if (target < 0) {
+        i32 code = errno_now();
+        c::close(source);
+        return error_make(code, "open", to);
+    }
+    i32 code = 0;
+    char bytes[chunk * 16];
+    for (usize round = 0; round < copy_rounds_max && code == 0; round++) {
+        isize got = c::read(source, bytes, sizeof bytes);
+        if (got < 0) code = errno_now();
+        if (got <= 0) break;
+        code = write_all(target, bytes, (usize)got);
+    }
+    if (code == 0 && c::fchmod(target, (c::mode_t)permissions) != 0) code = errno_now();
+    c::close(source);
+    if (c::close(target) != 0 && code == 0) code = errno_now();
+    return error_make(code, "copy", to);
+}
+
 FileList real_list(arena::Arena *arena, const char *folder) {
     FileList list = {};
     c::DIR *directory = c::opendir(folder);
@@ -1194,6 +1257,7 @@ FileList real_list(arena::Arena *arena, const char *folder) {
         list.error = error_make(errno_now(), "open", folder);
         return list;
     }
+    reads_log(folder);
     FileEntry *entries = nullptr;
     usize capacity = 0;
     for (usize i = 0; i < entries_max; i++) { // each round reads an entry or ends
@@ -1204,6 +1268,9 @@ FileList real_list(arena::Arena *arena, const char *folder) {
         struct c::stat status = {};
         bool known = c::fstatat(c::dirfd(directory), item->d_name, &status, 0) == 0;
         bool is_folder = known && mode_is(status.st_mode, mode_folder);
+        struct c::stat own = {};
+        bool is_link = c::fstatat(c::dirfd(directory), item->d_name, &own, at_symlink_nofollow) == 0 &&
+                       mode_is(own.st_mode, mode_link);
         usize length = c::strlen(item->d_name);
         char *name = (char *)arena::push_array_raw(arena, sizeof(char), length + 1, alignof(char));
         __builtin_memcpy(name, item->d_name, length);
@@ -1211,6 +1278,7 @@ FileList real_list(arena::Arena *arena, const char *folder) {
             .name = name,
             .folder = is_folder,
             .size = known && !is_folder ? (usize)status.st_size : 0,
+            .link = is_link,
         };
     }
     c::closedir(directory);
@@ -1226,6 +1294,7 @@ Mapped real_map(const char *path) {
         mapped.error = error_make(errno_now(), "open", path);
         return mapped;
     }
+    reads_log(path);
     struct c::stat info = {};
     if (c::fstat(descriptor, &info) != 0) {
         mapped.error = error_make(errno_now(), "stat", path);
@@ -1979,6 +2048,14 @@ files_make_folder(Files *files, const char *path) {
 files_info(Files *files, const char *path) {
     if (files->loop->fake != nullptr) return fake_info(files->loop->fake, path);
     return real_info(path);
+}
+
+// Copies a file to another path as it is: its bytes and its permission bits, or a symbolic link as a link (a folder is
+// EISDIR). The real files only: the fake io has no such file system (ENOSYS).
+[[smith::c_name("smith_files_copy")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] Error
+files_copy(Files *files, const char *from, const char *to) {
+    if (files->loop->fake != nullptr) return error_make(enosys, "copy", from);
+    return real_copy(from, to);
 }
 
 // What is in a folder.

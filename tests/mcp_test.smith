@@ -23,17 +23,19 @@ static scratch::Project folder(const scratch::Project *root, const char *name) {
 // --- the server on the fake io ---------------------------------------------------------------------------------------
 
 constexpr char fake_sources[_] =
-    "\"$SMITH_REPO/tests/mcp_fake.c\" \"$SMITH_REPO/lib/smith/text.smith\" \"$SMITH_REPO/lib/smith/arena.smith\" "
-    "\"$SMITH_REPO/lib/smith/contract.smith\" \"$SMITH_REPO/lib/smith/io.smith\" "
-    "\"$SMITH_REPO/lib/smith/random.smith\"";
+    "tests/mcp_fake.c lib/smith/text.smith lib/smith/arena.smith lib/smith/contract.smith lib/smith/io.smith "
+    "lib/smith/random.smith";
 
 static void check_fake(io::Io *io, const char *mode, const char *flags) {
     scratch::Project p = scratch::project(io, "fake", nullptr);
+    scratch::copy_tree(&p, "lib", "lib");
+    scratch::copy_tree(&p, "tests/mcp_fake.c", "tests/mcp_fake.c");
+    scratch::copy_tree(&p, "runtime", "runtime");
     scratch::Run built = scratch::sh(
         &p, format::push(&io->arena, "smith cc -std=gnu23 -g -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror ",
                          flags,
                          " -I \"$SMITH_REPO/.smith/include\" -I \"$SMITH_REPO/.smith/protocol\" -I "
-                         "\"$SMITH_REPO/runtime/protocol\" ",
+                         "runtime/protocol ",
                          fake_sources, " -o mcp_fake 2>build.log")
                 .data);
     if (built.status != 0) {

@@ -170,9 +170,7 @@ static void check_module(io::Io *io, const scratch::Project *p, const char *name
 
 static void skill_case(io::Io *io, const char *name) {
     scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run copied = scratch::sh(
-        &p, format::push(&io->arena, "cp \"$SMITH_REPO/.agents/skills/", name, "/SKILL.md\" SKILL.md").data);
-    scratch::expect_status("the skill is copied", 0, &copied);
+    scratch::copy_tree(&p, format::push(&io->arena, ".agents/skills/", name, "/SKILL.md").data, "SKILL.md");
     Placed placed = {};
     walk_blocks(io, &p, name, &placed);
     if (placed.count == 0) return;
@@ -187,14 +185,54 @@ static void skill_case(io::Io *io, const char *name) {
     }
 }
 
+// Whether the text has a fence line "```c" or "```smith" (spaces before it, anything after a space), but not one that
+// ends in "smith fragment".
+static bool has_code_block(const char *text) {
+    const char *line = text;
+    for (usize guard = 0; guard < 100000 && *line != '\0'; guard++) { // each round is a line
+        const char *end = c::strchr(line, '\n');
+        usize length = end != nullptr ? (usize)(end - line) : c::strlen(line);
+        usize at = 0;
+        while (at < length && line[at] == ' ')
+            at++;
+        if (length - at >= 3 && c::strncmp(line + at, "```", 3) == 0) {
+            const char *info = line + at + 3;
+            usize info_length = length - at - 3;
+            usize word = 0;
+            while (word < info_length && info[word] != ' ')
+                word++;
+            bool code = (word == 1 && info[0] == 'c') || (word == 5 && c::strncmp(info, "smith", 5) == 0);
+            bool fragment = info_length >= 14 && c::strncmp(info + info_length - 14, "smith fragment", 14) == 0;
+            if (code && !fragment) return true;
+        }
+        if (end == nullptr) break;
+        line = end + 1;
+    }
+    return false;
+}
+
 // A skill with a `c` or `smith` block needs a test below.
 export void test_every_skill_with_a_block_has_a_test(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run run = scratch::sh(
-        &p, "cd \"$SMITH_REPO/.agents/skills\" && for d in *; do "
-            "if grep -E '^ *```(c|smith)( .*)?$' \"$d/SKILL.md\" | grep -v 'smith fragment$' | grep -q .; then "
-            "grep -q \"skill_case(io, \\\"$d\\\")\" ../../tests/skills_test.smith || echo \"$d\"; fi; done");
-    scratch::expect_text("skills with a block and no test in tests/skills_test.smith", "", run.out);
+    const char *repo = io::args_env(&io->args, "SMITH_REPO");
+    repo = repo != nullptr ? repo : ".";
+    io::Read tests =
+        io::files_read(&io->files, &io->arena, format::push(&io->arena, repo, "/tests/skills_test.smith").data);
+    test::check_equal(tests.error.code, 0);
+    io::FileList skills =
+        io::files_list(&io->files, &io->arena, format::push(&io->arena, repo, "/.agents/skills").data);
+    test::check_equal(skills.error.code, 0);
+    const char *missing = "";
+    for (usize i = 0; i < skills.count; i++) {
+        const char *name = skills.entries[i].name;
+        io::Read skill = io::files_read(&io->files, &io->arena,
+                                        format::push(&io->arena, repo, "/.agents/skills/", name, "/SKILL.md").data);
+        if (skill.error.code != 0 || !has_code_block((const char *)skill.data.data)) continue;
+        const char *wanted = format::push(&io->arena, "skill_case(io, \"", name, "\")").data;
+        if (c::strstr((const char *)tests.data.data, wanted) == nullptr) {
+            missing = format::push(&io->arena, missing, name, "\n").data;
+        }
+    }
+    scratch::expect_text("skills with a block and no test in tests/skills_test.smith", "", missing);
 }
 
 // --- the skills, one test each -------------------------------------------------------------------------------------

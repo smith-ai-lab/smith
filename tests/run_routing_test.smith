@@ -33,13 +33,14 @@ typedef struct {
 
 constexpr char stubs_script[_] =
     "mkdir -p bin driver && for n in $STUBS; do ${CC:-cc} -std=gnu23 -DNAME=\"\\\"$n\\\"\" "
-    "\"$SMITH_REPO/tests/stub.c\" "
+    "tests/stub.c "
     "-o bin/$n || exit 1; done; ln -s \"$SMITH_SELF\" smith-cc && ln -s \"$SMITH_SELF\" smith-c++ && "
     "ln -s \"$SMITH_SELF\" 'smith++' && ln -s \"$SMITH_SELF\" bin/selfclang && ln -s \"$SMITH_SELF\" driver/clang && "
     "ln -s \"$SMITH_SELF\" driver/clang++";
 
 static Rig make_rig(io::Io *io, bool link, const char *stubs) {
     scratch::Project p = scratch::project(io, "r", nullptr);
+    scratch::copy_tree(&p, "tests/stub.c", "tests/stub.c");
     scratch::Run made = scratch::sh(&p, format::push(&io->arena, "STUBS='", stubs, "'; ", stubs_script).data);
     scratch::expect_status("the stub compilers are built", 0, &made);
     Rig r = {.p = p, .dir = p.dir, .form = link ? "link" : "verb"};

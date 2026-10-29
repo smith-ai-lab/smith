@@ -172,17 +172,18 @@ export void test_runner_project_the_analyzer_takes_a_test_check_as_an_assumption
 // standards, and under the extra warnings game and learner add, since every project compiles them with its own flags.
 static void check_library_compiles(io::Io *io, const char *source) {
     scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::copy_tree(&p, "lib", "lib");
+    scratch::copy_tree(&p, "runtime/build_runtime.c", "runtime/build_runtime.c");
     const char *standards[2] = {"gnu2y", "gnu23"};
     for (usize i = 0; i < 2; i++) {
         const char *command =
-            format::push(
-                &io->arena,
-                "flags=$(awk '/smith_profile_warnings\\[\\] =/ {on = 1} on {print} /nullptr};/ {on = 0}' "
-                "\"$SMITH_REPO/runtime/build_runtime.c\" | grep -o '\"-[^\"]*\"' | tr -d '\"' | grep -v '^-std='); "
-                "flags=\"$flags -Wdouble-promotion -Wundef -Wpointer-arith -Wcast-qual -Wformat=2 "
-                "-Wmissing-variable-declarations -Wcomma -Wunreachable-code\"; "
-                "smith cc -std=",
-                standards[i], " $flags -I \"$SMITH_REPO/.smith/include\" -c \"$SMITH_REPO/", source, "\" -o out.o 2>&1")
+            format::push(&io->arena,
+                         "flags=$(awk '/smith_profile_warnings\\[\\] =/ {on = 1} on {print} /nullptr};/ {on = 0}' "
+                         "runtime/build_runtime.c | grep -o '\"-[^\"]*\"' | tr -d '\"' | grep -v '^-std='); "
+                         "flags=\"$flags -Wdouble-promotion -Wundef -Wpointer-arith -Wcast-qual -Wformat=2 "
+                         "-Wmissing-variable-declarations -Wcomma -Wunreachable-code\"; "
+                         "smith cc -std=",
+                         standards[i], " $flags -I \"$SMITH_REPO/.smith/include\" -c ", source, " -o out.o 2>&1")
                 .data;
         scratch::Run run = scratch::sh(&p, command);
         if (run.status != 0) test::note("%s under %s:\n%s", source, standards[i], run.out);

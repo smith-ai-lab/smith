@@ -162,9 +162,9 @@ export void test_folding_in_c17_compiles_the_same_as_smith(io::Io *io) {
 // A program that prints: the same output as .c and as .smith, and the one in its .out file.
 static void behave(io::Io *io, const char *name) {
     scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run copied = scratch::sh(&p, format::push(&io->arena, "cp \"$SMITH_REPO/tests/smith-lang-c/", name,
-                                                       ".c\" ", name, ".c && cp ", name, ".c ", name, ".smith")
-                                              .data);
+    scratch::copy_tree(&p, format::push(&io->arena, "tests/smith-lang-c/", name, ".c").data,
+                       format::push(&io->arena, name, ".c").data);
+    scratch::Run copied = scratch::sh(&p, format::push(&io->arena, "cp ", name, ".c ", name, ".smith").data);
     scratch::expect_status("the program is copied", 0, &copied);
     const char *kinds[2] = {"c", "smith"};
     for (usize i = 0; i < 2; i++) {

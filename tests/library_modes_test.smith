@@ -28,11 +28,8 @@ static const Library inflate = {"lib/smith/inflate_test.smith", "smith/inflate_t
 
 static scratch::Project units_project(io::Io *io, const Library *library) {
     scratch::Project p = scratch::project(io, "p", "library_units");
-    scratch::Run copied = scratch::sh(
-        &p, format::push(&io->arena, "mkdir -p smith tests && cp \"$SMITH_REPO/", library->source, "\" ", library->path,
-                         library->fixtures ? " && cp -R \"$SMITH_REPO/tests/fixtures\" tests/fixtures" : "")
-                .data);
-    scratch::expect_status("the test file is copied into the project", 0, &copied);
+    scratch::copy_tree(&p, library->source, library->path);
+    if (library->fixtures) scratch::copy_tree(&p, "tests/fixtures", "tests/fixtures");
     return p;
 }
 
@@ -55,8 +52,8 @@ static scratch::Project passes_in_mode(io::Io *io, const Library *library, const
     scratch::Project p = units_project(io, library);
     scratch::Run built = build_mode(&p, library, mode);
     scratch::expect_status(format::push(&io->arena, mode, ": the tests build").data, 0, &built);
-    const char *count = scratch::capture(
-        &p, format::push(&io->arena, "grep -c '^export void test_' \"$SMITH_REPO/", library->source, "\"").data);
+    const char *count =
+        scratch::capture(&p, format::push(&io->arena, "grep -c '^export void test_' ", library->path).data);
     const char *all = format::push(&io->arena, count, " passed, 0 failed").data;
     scratch::expect_text(format::push(&io->arena, mode, ": all ", count, " tests pass").data, all,
                          summary(&p, "env SMITH_JSON_SUITE= ./build/tests"));
@@ -177,22 +174,23 @@ export void test_library_modes_text_c_and_smith_share_one_header(io::Io *io) {
 // compiler's own calls for a big struct).
 static void compiles_as(io::Io *io, const char *source, const char *standard) {
     scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::copy_tree(&p, "lib", "lib");
     scratch::Run built = scratch::sh(
         &p, format::push(&io->arena, "smith cc -std=", standard,
-                         " -Wall -Wextra -Wpedantic -Wconversion -Werror -O2 -I \"$SMITH_REPO/.smith/include\" -c "
-                         "\"$SMITH_REPO/",
-                         source, "\" -o library.o")
+                         " -Wall -Wextra -Wpedantic -Wconversion -Werror -O2 -I \"$SMITH_REPO/.smith/include\" -c ",
+                         source, " -o library.o")
                 .data);
     scratch::expect_status(format::push(&io->arena, "library: compiles as ", standard).data, 0, &built);
 }
 
 static void names_no_libc_function(io::Io *io, const char *source, const char *allowed) {
     scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::copy_tree(&p, "lib", "lib");
     scratch::Run built =
         scratch::sh(&p, format::push(&io->arena,
                                      "smith cc -std=gnu23 -O2 -DNDEBUG -ffreestanding -fno-stack-protector -I "
-                                     "\"$SMITH_REPO/.smith/include\" -c \"$SMITH_REPO/",
-                                     source, "\" -o library.o")
+                                     "\"$SMITH_REPO/.smith/include\" -c ",
+                                     source, " -o library.o")
                             .data);
     scratch::expect_status("the library compiles freestanding", 0, &built);
     scratch::expect_text("library: names no libc function", "",
@@ -229,11 +227,12 @@ export void test_library_modes_text_names_no_libc_function(io::Io *io) {
 // lib/http.c compiled under the warnings of a new project (its behavior is lib/http_test.smith), from tests/http.sh.
 static void http_compiles(io::Io *io, const char *standard, const char *extra, const char *name) {
     scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::copy_tree(&p, "lib", "lib");
     scratch::Run built = scratch::sh(
         &p, format::push(&io->arena, "smith cc -std=", standard,
                          " -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wmissing-prototypes "
                          "-Wstrict-prototypes -Wvla -Werror ",
-                         extra, " -I \"$SMITH_REPO/.smith/include\" -c \"$SMITH_REPO/lib/http.c\" -o http.o")
+                         extra, " -I \"$SMITH_REPO/.smith/include\" -c lib/http.c -o http.o")
                 .data);
     scratch::expect_status(name, 0, &built);
 }

@@ -10,10 +10,13 @@
 // available (no network).
 module tree_sitter_test;
 
+import smith::arena;
 import smith::format;
 import smith::io;
 import smith::test;
 import scratch;
+import smith::mem;
+import <string.h>;
 
 // The tree-sitter runtime, pinned by the hash of its archive (v0.27.1, which reads parsers of ABI 15, the one
 // parser is generated with).
@@ -24,6 +27,9 @@ constexpr char runtime_hash[_] = "sha256:982cd3d4d9eb7be18c243240a622423fd2e4ecb
 // `smith cc --smith-tree-sitter`). False when the runtime is not available.
 static bool make_driver(io::Io *io, scratch::Project *p) {
     *p = scratch::project(io, "ts", nullptr);
+    scratch::copy_tree(p, "tests/tree_sitter.c", "tests/tree_sitter.c");
+    scratch::copy_tree(p, "tree-sitter/test/corpus", "tree-sitter/test/corpus");
+    scratch::copy_tree(p, "tests/tree_sitter_cases", "tests/tree_sitter_cases");
     scratch::Run fetched = scratch::sh(p, format::push(&io->arena, "smith fetch ", runtime_url, " 2>&1").data);
     if (!scratch::contains(fetched.out, runtime_hash)) {
         return false;
@@ -37,7 +43,7 @@ static bool make_driver(io::Io *io, scratch::Project *p) {
             "/lib")
             .data;
     const char *driver = format::push(&io->arena, "smith cc -std=gnu23 -O1 -g -Wall -Wextra -Wpedantic -Werror -I ",
-                                      runtime, "/include -c \"$SMITH_REPO/tests/tree_sitter.c\" -o driver.o")
+                                      runtime, "/include -c tests/tree_sitter.c -o driver.o")
                              .data;
     const char *library =
         format::push(&io->arena, "smith cc -std=gnu11 -O2 -w -D_POSIX_C_SOURCE=200112L -D_DEFAULT_SOURCE -I ", runtime,
@@ -64,27 +70,25 @@ static void expect_only_ok(const char *name, const scratch::Project *p, const ch
 
 // The corpus: one test per construct, and the count of the tests in the files, so that none is skipped.
 static void check_corpus(const scratch::Project *p) {
-    scratch::expect_text(
-        "corpus: every test parses to its tree",
-        scratch::capture(p,
-                         "echo \"$(cat \"$SMITH_REPO\"/tree-sitter/test/corpus/*.txt | grep -c '^=\\{3,\\}$') / 2\" | "
-                         "awk -F' / ' '{ print $1 / 2 \" corpus tests, 0 failed\" }'"),
-        scratch::capture(p, "./driver --corpus \"$SMITH_REPO\"/tree-sitter/test/corpus/*.txt | tail -1"));
+    scratch::expect_text("corpus: every test parses to its tree",
+                         scratch::capture(p,
+                                          "echo \"$(cat tree-sitter/test/corpus/*.txt | grep -c '^=\\{3,\\}$') / 2\" | "
+                                          "awk -F' / ' '{ print $1 / 2 \" corpus tests, 0 failed\" }'"),
+                         scratch::capture(p, "./driver --corpus tree-sitter/test/corpus/*.txt | tail -1"));
 }
 
 // The samples of tests/tree_sitter_cases: each parses without an ERROR or MISSING node, but error-*.smith.
 static void check_samples(const scratch::Project *p) {
-    expect_only_ok(
-        "samples: the .smith files parse with no ERROR or MISSING node", p,
-        "./driver $(ls \"$SMITH_REPO\"/tests/tree_sitter_cases/*.smith | grep -v '/error-') | grep -v '^ok'");
+    expect_only_ok("samples: the .smith files parse with no ERROR or MISSING node", p,
+                   "./driver $(ls tests/tree_sitter_cases/*.smith | grep -v '/error-') | grep -v '^ok'");
     scratch::expect_text("samples: the files are found", "yes",
-                         scratch::capture(p, "[ $(ls \"$SMITH_REPO\"/tests/tree_sitter_cases/*.smith | grep -vc "
+                         scratch::capture(p, "[ $(ls tests/tree_sitter_cases/*.smith | grep -vc "
                                              "'/error-') -gt 0 ] && echo yes"));
 }
 
 static void check_wrong_on_purpose(const scratch::Project *p) {
     expect_only_ok("samples: text that is wrong on purpose has an ERROR or MISSING node", p,
-                   "./driver --expect-error \"$SMITH_REPO\"/tests/tree_sitter_cases/error-*.smith | grep -v '^ok'");
+                   "./driver --expect-error tests/tree_sitter_cases/error-*.smith | grep -v '^ok'");
 }
 
 // The language corpus. Its error cases are wrong in what the modules mean, not in their text, so they parse (`module
@@ -93,7 +97,7 @@ static void check_wrong_on_purpose(const scratch::Project *p) {
 // has neither C23's `auto` as a type nor C2y's `_Countof`: the three cases that use them are left out until the grammar
 // learns them.
 constexpr char lang_files[_] =
-    "lang=${SMITH_LANG_CASES:-$SMITH_REPO/tests/smith-lang/cases}; "
+    "lang=${SMITH_LANG_CASES:-tests/smith-lang/cases}; "
     "bad='/error-import-eof/src/main\\.smith$|/error-tuple-field/src/main\\.smith$|/error-try-expression/src/"
     "main\\.smith$|"
     "/error-keyword-module/src/shapes\\.smith$|/generic-call-unclosed/src/main\\.smith$|"
@@ -105,6 +109,7 @@ constexpr char lang_files[_] =
     "grep -v -E \"$bad|$gap\" lang.txt >lang-good.txt; ";
 
 static void check_language_corpus(const scratch::Project *p) {
+    scratch::copy_tree(p, "tests/smith-lang/cases", "tests/smith-lang/cases");
     scratch::Run listed = scratch::sh(p, lang_files);
     scratch::expect_status("smith-lang: the files are listed", 0, &listed);
     expect_only_ok("smith-lang: the .smith files of the language corpus parse with no ERROR or MISSING node", p,
@@ -128,24 +133,46 @@ export void test_tree_sitter_the_grammar_parses_its_corpus_and_samples(io::Io *i
 // smith's own C: plain C stays C (the expected outputs of the language corpus are generated and not always C), with
 // the C23 and clang spellings smith uses.
 constexpr char own_c_files[_] =
-    "w=$PWD; cd \"$SMITH_REPO\" && find . \\( -path ./build -o -path ./shim -o -path ./tree-sitter -o -path ./.git -o "
+    "w=$PWD; cd own && find . \\( -path ./build -o -path ./shim -o -path ./tree-sitter -o -path ./.git -o "
     "-path ./.smith -o -path ./.cache -o -path ./.claude -o -path ./tests/build_fixtures -o -path "
     "'./tests/smith-lang/cases/*/expect' \\) -prune -o \\( -name '*.c' -o -name '*.h' \\) -print | sort | "
     "while read -r file; do head -n 2 \"$file\" | grep -q '^// Generated by smith' || echo \"$file\"; done "
     ">\"$w/c-files.txt\"; cd \"$w\"";
+
+// What the listing prunes (the generated, the vendored and the other worktrees) is not copied either.
+static bool left_out(const char *name) {
+    const char *skipped[_] = {"build", "shim", "tree-sitter", ".git", ".smith", ".cache", ".claude"};
+    for (usize i = 0; i < _Countof(skipped); i++)
+        if (c::strcmp(name, skipped[i]) == 0) return true;
+    return false;
+}
+
+// The top level of the repository, copied through io into own/ (the listing below runs there).
+static void copy_own_files(io::Io *io, const scratch::Project *p) {
+    const char *names = scratch::repo_names(io, ".");
+    for (const char *line = names; *line != '\0';) { // each name: a line
+        usize length = c::strcspn(line, "\n");
+        char *name = arena::push_slice(&io->arena, char, length + 1).data;
+        mem::copy(name[0:length], line[0:length]);
+        name[length] = '\0';
+        if (!left_out(name)) scratch::copy_tree(p, name, format::push(&io->arena, "own/", name).data);
+        line += length + 1;
+    }
+}
 
 export void test_tree_sitter_smiths_own_c_parses_without_error_nodes(io::Io *io) {
     scratch::Project p;
     if (!make_driver(io, &p)) {
         return;
     }
+    copy_own_files(io, &p);
     scratch::Run listed = scratch::sh(&p, own_c_files);
     scratch::expect_status("smith's own C: the files are listed", 0, &listed);
     scratch::expect_text("smith's own C: there are files", "yes",
                          scratch::capture(&p, "[ $(wc -l <c-files.txt) -gt 0 ] && echo yes"));
     // The paths are relative to the repository, where the driver is run.
     expect_only_ok("smith's own C: the .c and .h files parse with no ERROR or MISSING node", &p,
-                   "(cd \"$SMITH_REPO\" && xargs \"$OLDPWD/driver\" <\"$OLDPWD/c-files.txt\") | grep -v '^ok'");
+                   "(cd own && xargs \"$OLDPWD/driver\" <\"$OLDPWD/c-files.txt\") | grep -v '^ok'");
 }
 
 // The query the Neovim plugin asks (`smith cc --smith-tree-sitter`): the path of a library that exists, is the same on

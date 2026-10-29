@@ -23,8 +23,9 @@ static typeof(const char[:]) slice_of(const char *text) {
 // The text of `smith fmt` for this input read as a file of this name, in the style of this repository's folder.
 static const char *formatted(const scratch::Project *p, const char *name, const char *input) {
     scratch::write(p, "input.txt", input);
+    scratch::copy_tree(p, ".clang-format", ".clang-format");
     const char *command =
-        format::push(&p->io->arena, "smith fmt --assume-filename=\"$SMITH_REPO/", name, "\" < input.txt 2>&1").data;
+        format::push(&p->io->arena, "smith fmt --assume-filename=\"$PWD/", name, "\" < input.txt 2>&1").data;
     return scratch::sh(p, command).out;
 }
 
@@ -36,12 +37,14 @@ static const char *formatted(const scratch::Project *p, const char *name, const 
 // case.
 export void test_the_corpus_formats_to_its_expected_file(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::copy_tree(&p, ".clang-format", ".clang-format");
+    scratch::copy_tree(&p, "tests/smith-lang/cases", "repo/tests/smith-lang/cases");
     scratch::Run run = scratch::sh(
-        &p, "w=\"$PWD\"; mkdir \"$w/m\"; cd \"$SMITH_REPO\" && "
+        &p, "w=\"$PWD\"; mkdir \"$w/m\"; cd repo && "
             "find tests/smith-lang/cases -name '*.smith' -path '*/src/*' | LC_ALL=C sort > \"$w/list\" && "
             "pax -rw -s ',/\\([^/]*\\)\\.smith$,__\\1/case.smith,' \"$w/m\" < \"$w/list\" && cd \"$w\" && "
             "sed 's,/\\([^/]*\\)\\.smith$,__\\1/case.smith,; s,^,m/,' list > mirrored && "
-            "xargs smith fmt -i --style=\"file:$SMITH_REPO/.clang-format\" < mirrored 2>&1 && "
+            "xargs smith fmt -i --style=\"file:$w/.clang-format\" < mirrored 2>&1 && "
             "sed 's,^tests/smith-lang/cases/,,' list | "
             "awk 'NR==FNR { name[NR] = $0; next } FNR == 1 { k += 1; print \"==> \" name[k] \" <==\" } { print }' "
             "- $(cat mirrored)");
@@ -54,9 +57,10 @@ export void test_the_corpus_formats_to_its_expected_file(io::Io *io) {
 
 export void test_tuple_types_and_slice_declarators_stay_as_written(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run run =
-        scratch::sh(&p, "cd \"$SMITH_REPO\" && smith fmt --style=\"file:$SMITH_REPO/.clang-format\" "
-                        "--assume-filename=\"$TMPDIR/case.smith\" < tests/smith-fmt/tuples-slices.smith 2>&1");
+    scratch::copy_tree(&p, ".clang-format", ".clang-format");
+    scratch::copy_tree(&p, "tests/smith-fmt/tuples-slices.smith", "tuples-slices.smith");
+    scratch::Run run = scratch::sh(&p, "smith fmt --style=\"file:.clang-format\" "
+                                       "--assume-filename=\"$TMPDIR/case.smith\" < tuples-slices.smith 2>&1");
     test::golden(io, "tests/smith-fmt/tuples-slices.smith", slice_of(run.out));
 }
 
@@ -206,8 +210,9 @@ export void test_a_smith_files_own_header_sorts_first_as_in_a_c_file(io::Io *io)
 // operand's spacing (issue #215, patches/smith-lang-format-enum.patch, LLVM r8): the file is already as fmt writes it.
 export void test_a_payload_enum_and_the_dot_rule_are_kept_as_written(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run run = scratch::sh(&p, "cd \"$SMITH_REPO\" && smith fmt --assume-filename=\"$SMITH_REPO/x.smith\" "
-                                       "< tests/smith-fmt/payload_enum.smith 2>&1");
+    scratch::copy_tree(&p, ".clang-format", ".clang-format");
+    scratch::copy_tree(&p, "tests/smith-fmt/payload_enum.smith", "payload_enum.smith");
+    scratch::Run run = scratch::sh(&p, "smith fmt --assume-filename=\"$PWD/x.smith\" < payload_enum.smith 2>&1");
     test::golden(io, "tests/smith-fmt/payload_enum.smith", slice_of(run.out));
 }
 
@@ -217,9 +222,8 @@ export void test_a_payload_enum_and_the_dot_rule_are_kept_as_written(io::Io *io)
 // In a git project `smith fmt` formats every .smith file git sees (no build.c lists them).
 export void test_smith_fmt_with_no_arguments_formats_the_projects_smith_files(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run made =
-        scratch::sh(&p, "mkdir -p src/a && cp \"$SMITH_REPO/templates/defaults/clang-format\" .clang-format "
-                        "&& git init -q");
+    scratch::copy_tree(&p, "templates/defaults/clang-format", ".clang-format");
+    scratch::Run made = scratch::sh(&p, "mkdir -p src/a && git init -q");
     scratch::expect_status("a project", 0, &made);
     scratch::write(&p, "src/a/b.smith",
                    "module   a::b ;\nimport <sys/wait.h> ;\nexport u32 f(x::T*p){\nimport value=1;\nreturn c::EOF;}\n");

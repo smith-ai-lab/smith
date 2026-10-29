@@ -12,8 +12,8 @@ import scratch;
 import <string.h>;
 
 constexpr char flags[_] = "-std=gnu23 -Wall -Wextra -Wpedantic -Werror -I \"$SMITH_REPO/.smith/include\"";
-constexpr char sources[_] = "\"$SMITH_REPO/tests/arena.c\" \"$SMITH_REPO/lib/smith/arena.smith\" "
-                            "\"$SMITH_REPO/lib/smith/contract.smith\" \"$SMITH_REPO/lib/trace.c\"";
+constexpr char sources[_] = "tests/arena.c lib/smith/arena.smith "
+                            "lib/smith/contract.smith lib/trace.c";
 
 // Compiles tests/arena.c into `name` in the project: "plain", "asan" (sanitized) or "fast" (NDEBUG, -O2).
 static void compile(const scratch::Project *p, const char *name) {
@@ -25,8 +25,16 @@ static void compile(const scratch::Project *p, const char *name) {
     scratch::expect_status(format::push(&p->io->arena, "the ", name, " program builds").data, 0, &built);
 }
 
-static scratch::Project arena_project(io::Io *io, const char *program) {
+// A project holding the files the commands compile: the libraries and the program of the test, copied through io.
+static scratch::Project sources_project(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::copy_tree(&p, "lib", "lib");
+    scratch::copy_tree(&p, "tests/arena.c", "tests/arena.c");
+    return p;
+}
+
+static scratch::Project arena_project(io::Io *io, const char *program) {
+    scratch::Project p = sources_project(io);
     compile(&p, program);
     return p;
 }
@@ -97,11 +105,11 @@ export void test_arena_c_carved_arena_catches_what_any_arena_catches(io::Io *io)
 }
 
 static void compiles_as(io::Io *io, const char *standard) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Project p = sources_project(io);
     scratch::Run built = scratch::sh(
         &p, format::push(&io->arena, "smith cc -std=", standard,
                          " -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror -I \"$SMITH_REPO/.smith/include\" "
-                         "-iquote \"$SMITH_REPO/.smith/include/smith\" -c \"$SMITH_REPO/lib/smith/arena.smith\" -o a.o")
+                         "-iquote \"$SMITH_REPO/.smith/include/smith\" -c lib/smith/arena.smith -o a.o")
                 .data);
     scratch::expect_status(
         format::push(&io->arena, "library: compiles as -std=", standard, " with the new project's warnings").data, 0,

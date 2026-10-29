@@ -13,7 +13,9 @@ import scratch;
 import prove_cases;
 
 static scratch::Project fresh(io::Io *io) {
-    return scratch::project(io, "p", "prove_cases");
+    scratch::Project p = scratch::project(io, "p", "prove_cases");
+    scratch::copy_tree(&p, "tests/prove", "cases");
+    return p;
 }
 
 // `smith prove args -- -I include`, both streams together.
@@ -238,8 +240,9 @@ export void test_prove_gate_a_contract_is_flattened_and_a_failing_assert_is_stil
 // them: the contracts stay points, and the function is still a unit. Only what a unit reaches is flattened.
 export void test_prove_contract_library_in_the_program_the_contracts_are_still_proved(io::Io *io) {
     scratch::Project p = fresh(io);
+    scratch::copy_tree(&p, "lib", "lib");
     scratch::Run run = proved(&p, "contract.c in the program: the contracts are still proved",
-                              "\"$c/clamp.c\" \"$SMITH_REPO/lib/smith/contract.smith\"");
+                              "\"$c/clamp.c\" lib/smith/contract.smith");
     has("contract.c in the program: ... as before", &run, "proved, 0 failed");
 }
 
@@ -497,6 +500,7 @@ export void test_prove_coverage_smith_check_with_nothing_to_prove_says_0_of_n(io
 // rebuild of smith with the same prover keeps the proofs.
 export void test_prove_cache_key_has_no_build_time_in_it(io::Io *io) {
     scratch::Project p = fresh(io);
+    scratch::copy_tree(&p, "shim/prove.cpp", "prove.cpp");
     scratch::expect_text("cache key: no build time in it", "0",
-                         scratch::capture(&p, "grep -c '__DATE__\\|__TIME__' \"$SMITH_REPO/shim/prove.cpp\""));
+                         scratch::capture(&p, "grep -c '__DATE__\\|__TIME__' prove.cpp"));
 }

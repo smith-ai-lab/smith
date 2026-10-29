@@ -27,9 +27,9 @@ static const char *join(const scratch::Project *p, const char *a, const char *b,
 // What a compile of the file prints, as tests/effects/<file>.expected holds it.
 static void effects_case(io::Io *io, const char *file) {
     scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::copy_tree(&p, "tests/effects", "tests/effects");
     const char *command =
-        format::push(&io->arena,
-                     "cd \"$SMITH_REPO/tests/effects\" && { smith cc -std=gnu2y -I \"$SMITH_REPO/.smith/include\" -c ",
+        format::push(&io->arena, "cd tests/effects && { smith cc -std=gnu2y -I \"$SMITH_REPO/.smith/include\" -c ",
                      file,
                      " -o /dev/null >\"$TMPDIR/out\" 2>&1; echo \"status $?\"; grep -E '^[^ ]+:[0-9]+:[0-9]+: "
                      "(error|note|warning):' "
@@ -42,28 +42,26 @@ static void effects_case(io::Io *io, const char *file) {
 // The report-only pointer rule: the lines SMITH_EFFECTS_POINTERS gets, a call with the effects its type states.
 export void test_effects_pointers_report(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::copy_tree(&p, "tests/effects_pointers", "tests/effects_pointers");
     scratch::Run run = scratch::sh(
-        &p, "cd \"$SMITH_REPO/tests/effects_pointers\" && SMITH_EFFECTS_POINTERS=\"$TMPDIR/report\" smith cc "
+        &p, "cd tests/effects_pointers && SMITH_EFFECTS_POINTERS=\"$TMPDIR/report\" smith cc "
             "-std=gnu2y -I \"$SMITH_REPO/.smith/include\" -c pointers.c -o /dev/null >\"$TMPDIR/out\" 2>&1; "
             "echo \"status $?\"; cat \"$TMPDIR/report\"");
     test::golden(io, slice_of("tests/effects_pointers/pointers.c.expected"), slice_of(run.out));
 }
 
 export void test_every_file_has_a_test(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run run =
-        scratch::sh(&p, "cd \"$SMITH_REPO/tests/effects\" && for f in *.c *.smith; do "
-                        "grep -q \"effects_case(io, \\\"$f\\\")\" ../effects_infer_test.smith || echo \"$f\"; done");
-    scratch::expect_text("files of tests/effects with no test", "", run.out);
+    scratch::expect_text("files of tests/effects with no test", "",
+                         scratch::untested_names(io, "tests/effects", "tests/effects_infer_test.smith",
+                                                 "effects_case(io, ", ".c", ".smith"));
 }
 
 // The editor: clangd shows the same error, for C and for a module.
 static void effects_editor(io::Io *io, const char *file) {
     scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run run =
-        scratch::sh(&p, format::push(&io->arena, "timeout -s KILL 120 smith lsp --check=\"$SMITH_REPO/tests/effects/",
-                                     file, "\" 2>&1")
-                            .data);
+    scratch::copy_tree(&p, "tests/effects", "tests/effects");
+    scratch::Run run = scratch::sh(
+        &p, format::push(&io->arena, "timeout -s KILL 120 smith lsp --check=tests/effects/", file, " 2>&1").data);
     scratch::expect_contains(file, run.out, "smith-effect: `bad` is [[smith::pure]]");
 }
 
@@ -387,8 +385,7 @@ export void test_the_editor_shows_the_same_verdict_as_the_link_for_modules(io::I
 // The fix-it of an effects error: applied (clang's -fixit), the file compiles.
 export void test_the_fix_it_of_an_effects_error_replaces_the_attribute_and_the_files_compile(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run copied = scratch::sh(&p, "cp \"$SMITH_REPO/tests/effects/effects_ceiling.c\" c.c");
-    scratch::expect_status("the ceiling file is copied", 0, &copied);
+    scratch::copy_tree(&p, "tests/effects/effects_ceiling.c", "c.c");
     scratch::write(
         &p, "p.c",
         "[[smith::pure]] int twice(int x) { return x * 2; }\n"

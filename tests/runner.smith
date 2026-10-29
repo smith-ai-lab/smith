@@ -23,9 +23,7 @@ export const char *plain_pipe() {
 // A project: the build.c of `base` (runner_base, or runner_c for C only) with the files of the fixture `files` over it.
 export scratch::Project project(io::Io *io, const char *base, const char *files) {
     scratch::Project p = scratch::project(io, "p", base);
-    const char *copy = format::push(&io->arena, "cp -R \"$SMITH_REPO/tests/build_fixtures/", files, "/.\" .").data;
-    scratch::Run copied = scratch::sh(&p, copy);
-    scratch::expect_status("runner: the files of the fixture are copied", 0, &copied);
+    scratch::copy_tree(&p, format::push(&io->arena, "tests/build_fixtures/", files).data, "");
     return p;
 }
 
@@ -66,9 +64,7 @@ export scratch::Project built_project(io::Io *io, const char *base, const char *
 
 // More files over a project: the files of another fixture.
 export void add(const scratch::Project *p, const char *files) {
-    const char *copy = format::push(&p->io->arena, "cp -R \"$SMITH_REPO/tests/build_fixtures/", files, "/.\" .").data;
-    scratch::Run copied = scratch::sh(p, copy);
-    scratch::expect_status("runner: the files of the fixture are added", 0, &copied);
+    scratch::copy_tree(p, format::push(&p->io->arena, "tests/build_fixtures/", files).data, "");
 }
 
 // A character repeated.

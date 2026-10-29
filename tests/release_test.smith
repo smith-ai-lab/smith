@@ -15,22 +15,23 @@ import scratch;
 // script does not look at what the program is, only at its name and its commit (#116, #639).
 constexpr char prelude[_] =
     "export PATH=\"$PWD/../bin:$PATH\" RELEASE_XZ_LEVEL=1 GH_LOG=\"$PWD/../gh.log\" GH_DIR=\"$PWD/../gh\" "
-    "GITHUB_ACTIONS=; script=\"$SMITH_REPO/scripts/release.sh\"; head=$(git rev-parse HEAD); "
+    "GITHUB_ACTIONS=; script=\"$PWD/../release.sh\"; head=$(git rev-parse HEAD); "
     "name=smith-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m).tar.xz; ";
 
 // A scratch repository with one commit and a bare origin that has no branch yet, the stub gh in ../bin, and a fake
 // smith that says which commit it was built from.
 static scratch::Project repository(io::Io *io) {
     scratch::Project p = scratch::project(io, "repo", nullptr);
+    scratch::copy_tree(&p, "tests/build_fixtures/release/gh", "../bin/gh");
+    scratch::copy_tree(&p, "scripts/release.sh", "../release.sh");
     scratch::Run made = scratch::sh(
-        &p,
-        "mkdir ../bin ../gh && cp \"$SMITH_REPO/tests/build_fixtures/release/gh\" ../bin/gh && chmod +x ../bin/gh && "
-        ": >../gh.log && git init -q --bare ../origin.git && git init -q -b main . && "
-        "git config user.email t@t && git config user.name t && echo 1 >f && git add f && git commit -qm one && "
-        "git remote add origin ../origin.git && "
-        "printf '#!/bin/sh\\necho \"smith 0.0 commit %s\"\\n' \"$(git rev-parse HEAD)\" >../fake-smith && "
-        "chmod +x ../fake-smith && "
-        "printf '#!/bin/sh\\necho \"smith 0.0 commit other\"\\n' >../other-smith && chmod +x ../other-smith");
+        &p, "mkdir ../gh && chmod +x ../bin/gh && "
+            ": >../gh.log && git init -q --bare ../origin.git && git init -q -b main . && "
+            "git config user.email t@t && git config user.name t && echo 1 >f && git add f && git commit -qm one && "
+            "git remote add origin ../origin.git && "
+            "printf '#!/bin/sh\\necho \"smith 0.0 commit %s\"\\n' \"$(git rev-parse HEAD)\" >../fake-smith && "
+            "chmod +x ../fake-smith && "
+            "printf '#!/bin/sh\\necho \"smith 0.0 commit other\"\\n' >../other-smith && chmod +x ../other-smith");
     scratch::expect_status("release: the repository is made", 0, &made);
     return p;
 }

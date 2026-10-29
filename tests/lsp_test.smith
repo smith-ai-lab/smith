@@ -39,7 +39,9 @@ static bool make(io::Io *io, scratch::Project *root, bool tidy_off) {
     if (tidy_off) {
         scratch::write(root, ".clang-tidy", "Checks: \"-*\"\n");
     }
-    scratch::Run built = scratch::sh(root, "smith cc -std=gnu23 \"$SMITH_REPO/tests/lsp_client.c\" -o ../lsp_client");
+    scratch::copy_tree(root, "tests/lsp_client.c", "tests/lsp_client.c");
+    scratch::copy_tree(root, "tests/cpu_wait.h", "tests/cpu_wait.h");
+    scratch::Run built = scratch::sh(root, "smith cc -std=gnu23 tests/lsp_client.c -o ../lsp_client");
     scratch::expect_status("lsp: tests/lsp_client.c builds", 0, &built);
     return true;
 }

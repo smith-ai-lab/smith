@@ -31,9 +31,9 @@ static const char *second_line(const scratch::Project *p, const char *command) {
 
 export void test_defaults_fmt_smiths_default_has_an_indent_of_4(io::Io *io) {
     scratch::Project p = bare(io);
-    scratch::expect_text(
-        "fmt: smith's default has an indent of 4", "4",
-        scratch::capture(&p, "sed -n 's/^IndentWidth: *//p' \"$SMITH_REPO/templates/defaults/clang-format\""));
+    scratch::copy_tree(&p, "templates/defaults/clang-format", "template-clang-format");
+    scratch::expect_text("fmt: smith's default has an indent of 4", "4",
+                         scratch::capture(&p, "sed -n 's/^IndentWidth: *//p' template-clang-format"));
 }
 
 export void test_defaults_fmt_no_style_file_formats_in_smiths_style(io::Io *io) {
@@ -57,10 +57,10 @@ export void test_defaults_fmt_standard_input_with_assume_filename(io::Io *io) {
 
 export void test_defaults_fmt_dump_config_prints_smiths_style(io::Io *io) {
     scratch::Project p = bare(io);
-    scratch::expect_text(
-        "fmt: --dump-config prints smith's style",
-        scratch::capture(&p, "sed -n 's/^IndentWidth: *//p' \"$SMITH_REPO/templates/defaults/clang-format\""),
-        scratch::capture(&p, "smith fmt --dump-config | sed -n 's/^IndentWidth: *//p'"));
+    scratch::copy_tree(&p, "templates/defaults/clang-format", "template-clang-format");
+    scratch::expect_text("fmt: --dump-config prints smith's style",
+                         scratch::capture(&p, "sed -n 's/^IndentWidth: *//p' template-clang-format"),
+                         scratch::capture(&p, "smith fmt --dump-config | sed -n 's/^IndentWidth: *//p'"));
 }
 
 export void test_defaults_fmt_the_dumped_config_round_trips_as_the_projects_own(io::Io *io) {
@@ -214,10 +214,10 @@ export void test_defaults_lint_a_finding_in_a_folder_below_fails_too(io::Io *io)
 
 export void test_defaults_lint_dump_config_prints_smiths_config(io::Io *io) {
     scratch::Project p = tidy(io);
-    scratch::expect_text(
-        "lint: --dump-config prints smith's config",
-        scratch::capture(&p, "sed -n 's/^HeaderFilterRegex: //p' \"$SMITH_REPO/templates/defaults/clang-tidy\""),
-        scratch::capture(&p, "smith lint --dump-config | sed -n 's/^HeaderFilterRegex: //p'"));
+    scratch::copy_tree(&p, "templates/defaults/clang-tidy", "template-clang-tidy");
+    scratch::expect_text("lint: --dump-config prints smith's config",
+                         scratch::capture(&p, "sed -n 's/^HeaderFilterRegex: //p' template-clang-tidy"),
+                         scratch::capture(&p, "smith lint --dump-config | sed -n 's/^HeaderFilterRegex: //p'"));
 }
 
 export void test_defaults_lint_an_explicit_config_wins_over_smiths(io::Io *io) {

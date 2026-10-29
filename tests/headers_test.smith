@@ -81,8 +81,9 @@ static void standalone(const scratch::Project *p, const char *name, const char *
 // headers cost about 10 s of CPU a test in the sanitized runner, far more than the command's processes (issue #646).
 static void generated(io::Io *io, const char *name) {
     scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::copy_tree(&p, "lib/smith", "lib/smith");
     scratch::Run made = scratch::sh(
-        &p, "mkdir generated && for f in \"$SMITH_REPO\"/lib/smith/*.smith; do case \"$f\" in *_test.smith) ;; "
+        &p, "mkdir generated && for f in lib/smith/*.smith; do case \"$f\" in *_test.smith) ;; "
             "*) \"$SMITH_SELF\" cc --smith-header \"$f\" -o \"generated/$(basename \"$f\" .smith).h\" || exit 1;; "
             "esac; done");
     scratch::expect_status("the headers are written", 0, &made);
@@ -94,9 +95,11 @@ static void generated(io::Io *io, const char *name) {
 
 export void test_every_library_module_has_a_header_test(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run run = scratch::sh(
-        &p, "cd \"$SMITH_REPO/lib/smith\" && for f in $(ls *.smith | grep -v '_test.smith'); do "
-            "grep -q \"generated(io, \\\"${f%.smith}\\\")\" ../../tests/headers_test.smith || echo \"$f\"; done");
+    scratch::write(&p, "names", scratch::repo_names(io, "lib/smith"));
+    scratch::copy_tree(&p, "tests/headers_test.smith", "headers_test.smith");
+    scratch::Run run =
+        scratch::sh(&p, "for f in $(grep '[.]smith$' names | grep -v '_test.smith'); do "
+                        "grep -q \"generated(io, \\\"${f%.smith}\\\")\" headers_test.smith || echo \"$f\"; done");
     scratch::expect_text("library modules with no header test", "", run.out);
 }
 

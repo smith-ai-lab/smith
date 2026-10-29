@@ -105,8 +105,7 @@ static const char *info_after_fence(io::Io *io, const char *at, usize spaces, co
 
 // Walks the README (copied to README.md in the project): its blocks, with the text of each.
 static void read_blocks(io::Io *io, const scratch::Project *p, Blocks *blocks) {
-    scratch::Run copied = scratch::sh(p, "cp \"$SMITH_REPO/README.md\" README.md");
-    scratch::expect_status("the README is copied", 0, &copied);
+    scratch::copy_tree(p, "README.md", "README.md");
     const char *at = scratch::read(p, "README.md");
     char *body = arena::push_slice(&io->arena, char, c::strlen(at) + 1).data;
     usize indent = 0;
@@ -317,10 +316,12 @@ static void project_case(io::Io *io, const char *name) {
 // A project added to the README needs a test.
 export void test_every_project_has_a_test(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run run = scratch::sh(
-        &p, "cd \"$SMITH_REPO\" && for name in $(grep -o '^ *```[a-z]* .*project=[A-Za-z0-9_-]*' README.md | "
-            "grep -o 'project=[A-Za-z0-9_-]*' | sed 's/project=//' | sort -u); do "
-            "grep -q \"project_case(io, \\\"$name\\\")\" tests/readme_test.smith || echo \"$name\"; done");
+    scratch::copy_tree(&p, "README.md", "README.md");
+    scratch::copy_tree(&p, "tests/readme_test.smith", "tests/readme_test.smith");
+    scratch::Run run =
+        scratch::sh(&p, "for name in $(grep -o '^ *```[a-z]* .*project=[A-Za-z0-9_-]*' README.md | "
+                        "grep -o 'project=[A-Za-z0-9_-]*' | sed 's/project=//' | sort -u); do "
+                        "grep -q \"project_case(io, \\\"$name\\\")\" tests/readme_test.smith || echo \"$name\"; done");
     scratch::expect_text("projects of the README with no test in tests/readme_test.smith", "", run.out);
 }
 
@@ -415,14 +416,23 @@ export void test_readme_smith_blocks_are_not_c_renamed(io::Io *io) {
 // Every relative link of the README names a file that exists.
 export void test_readme_every_relative_link_names_a_file_that_exists(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run run = scratch::sh(
-        &p,
-        "cd \"$SMITH_REPO\" && for target in $(grep -o '](\\([^)#]*\\)' README.md | sed 's/^](//' | "
-        "grep -v '^[a-z]*:' | sort -u); do [ -e \"$target\" ] || echo \"README.md links to $target: no such file\"; "
-        "done");
-    scratch::expect_text("links of the README to files that are not there", "", run.out);
+    scratch::copy_tree(&p, "README.md", "README.md");
+    const char *targets = scratch::capture(&p, "grep -o '](\\([^)#]*\\)' README.md | sed 's/^](//' | "
+                                               "grep -v '^[a-z]*:' | sort -u");
+    const char *missing = "";
+    for (const char *line = targets; *line != '\0';) { // each link: a line
+        usize length = c::strcspn(line, "\n");
+        char *target = arena::push_slice(&io->arena, char, length + 1).data;
+        mem::copy(target[0:length], line[0:length]);
+        target[length] = '\0';
+        if (length > 0 && !scratch::repo_has(io, target)) {
+            missing = format::push(&io->arena, missing, "README.md links to ", target, ": no such file\n").data;
+        }
+        line += line[length] == '\n' ? length + 1 : length;
+    }
+    scratch::expect_text("links of the README to files that are not there", "", missing);
     scratch::expect_text("the README has links", "yes",
-                         scratch::capture(&p, "[ $(grep -c '](' \"$SMITH_REPO/README.md\") -gt 0 ] && echo yes"));
+                         scratch::capture(&p, "[ $(grep -c '](' README.md) -gt 0 ] && echo yes"));
 }
 
 // --- the projects, one test each -----------------------------------------------------------------------------------

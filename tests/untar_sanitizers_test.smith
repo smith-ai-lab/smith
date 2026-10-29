@@ -12,7 +12,12 @@ import smith::test;
 import scratch;
 
 static scratch::Project untar_project(io::Io *io) {
-    return scratch::project(io, "p", "untar");
+    scratch::Project p = scratch::project(io, "p", "untar");
+    scratch::copy_tree(&p, "tests/untar.c", "tests/untar.c");
+    scratch::copy_tree(&p, "tests/xz.py", "tests/xz.py");
+    scratch::copy_tree(&p, "lib", "lib");
+    scratch::copy_tree(&p, "runtime", "runtime");
+    return p;
 }
 
 static scratch::Run run(const scratch::Project *p, const char *body) {
@@ -204,8 +209,10 @@ export void test_untar_sanitizers_damaged_stored_blocks_do_no_harm(io::Io *io) {
 // 6. No process runs tar: nothing in smith names it, and with tar forbidden to run the same extractions work.
 export void test_untar_no_tar_nothing_in_smith_names_it(io::Io *io) {
     scratch::Project p = untar_project(io);
+    scratch::copy_tree(&p, "smith.c", "sources/smith.c");
+    scratch::copy_tree(&p, "runtime", "sources/runtime");
     scratch::expect_text("no tar: nothing in smith names it", "0",
-                         scratch::capture(&p, "cat \"$SMITH_REPO/smith.c\" \"$SMITH_REPO\"/runtime/*.c | "
+                         scratch::capture(&p, "cat sources/smith.c sources/runtime/*.c | "
                                               "grep -c 'bin/tar\\|\"tar\"'"));
 }
 

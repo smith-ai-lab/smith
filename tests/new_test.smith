@@ -112,14 +112,13 @@ export void test_new_hello_a_smith_project_is_written_and_committed(io::Io *io) 
         "new hello: no placeholder is left", "",
         scratch::capture(
             &p, "grep -rF -e '@NAME@' -e '@KEBAB@' hello --exclude-dir=.git --exclude-dir=build --exclude-dir=.smith"));
-    scratch::expect_text(
-        "new hello: the .smith template has no C or header file beside it, which an import would read", "",
-        scratch::capture(&p, "ls \"$SMITH_REPO\"/templates/new/*.c \"$SMITH_REPO\"/templates/new/*.h 2>/dev/null"));
-    scratch::expect_text("new hello: .gitignore is the template",
-                         scratch::capture(&p, "cat \"$SMITH_REPO/templates/new/gitignore\""),
+    scratch::write(&p, "template-names", scratch::repo_names(io, "templates/new"));
+    scratch::expect_text("new hello: the .smith template has no C or header file beside it, which an import would read",
+                         "", scratch::capture(&p, "grep -E '[.][ch]$' template-names"));
+    scratch::expect_text("new hello: .gitignore is the template", scratch::repo_text(io, "templates/new/gitignore"),
                          scratch::read(&p, "hello/.gitignore"));
     scratch::expect_text("new hello: .claude/settings.json is the template",
-                         scratch::capture(&p, "cat \"$SMITH_REPO/templates/new/claude-settings.json\""),
+                         scratch::repo_text(io, "templates/new/claude-settings.json"),
                          scratch::read(&p, "hello/.claude/settings.json"));
     scratch::expect_text("new hello: .claude/settings.json is exactly the plugin settings",
                          "{\n  \"enabledPlugins\": {\n    \"smith@smith\": true\n  },\n  \"extraKnownMarketplaces\": "
@@ -467,8 +466,8 @@ export void test_new_the_libraries_build_under_the_conventions_flags(io::Io *io)
     scratch::Project p = fresh(io);
     generated(
         &p,
-        "generate hellc --language c && mkdir libs && cp -R hellc/primes.c hellc/primes.h hellc/primes_test.c libs/ && "
-        "cp \"$SMITH_REPO/tests/build_fixtures/new_libs/main.c\" libs/main.c");
+        "generate hellc --language c && mkdir libs && cp -R hellc/primes.c hellc/primes.h hellc/primes_test.c libs/");
+    scratch::copy_tree(&p, "tests/build_fixtures/new_libs/main.c", "libs/main.c");
     scratch::Run built = run_in(&p, "libs", "smith build && smith build release fast");
     scratch::expect_status("libraries: the three build under the conventions' flags", 0, &built);
     const char *modes[_] = {"debug", "release", "fast"};
@@ -490,13 +489,14 @@ static scratch::Project verbs_project(io::Io *io) {
                   "--exclude .smith .) | "
                   "(cd verbs && tar xf -)");
     (void)run_in(&p, "verbs", "git init -q -b main && git add -A && git commit -q -m first");
+    scratch::copy_tree(&p, "tests/prove/clamp.c", "verbs/repo-clamp.c");
     (void)run_in(
         &p, "verbs",
         "printf '#pragma once\\n#include <stdint.h>\\n\\nint32_t clamp(int32_t x, int32_t low, int32_t high);\\n"
         "int32_t draw_health(int32_t health, int32_t max_health);\\nint32_t pinned(int32_t x);\\n' >clamp.h; "
-        "{ printf '#include \"clamp.h\"\\n'; cat \"$SMITH_REPO/tests/prove/clamp.c\"; } >clamp.c; "
+        "{ printf '#include \"clamp.h\"\\n'; cat repo-clamp.c; } >clamp.c; "
         "sed 's|#include \"primes.h\"|#include \"clamp.h\"\\n#include \"primes.h\"|' main.c >main.c.new && mv "
-        "main.c.new main.c");
+        "main.c.new main.c; rm repo-clamp.c");
     return p;
 }
 
@@ -860,25 +860,27 @@ constexpr char tidy_functions[_] =
 
 export void test_new_the_templates_rules_stay_smiths(io::Io *io) {
     scratch::Project p = fresh(io);
+    scratch::copy_tree(&p, ".clang-tidy", "smith-clang-tidy");
+    scratch::copy_tree(&p, "templates/defaults/clang-tidy", "template-clang-tidy");
+    scratch::copy_tree(&p, ".clang-format", "smith-clang-format");
+    scratch::copy_tree(&p, "templates/defaults/clang-format", "template-clang-format");
     char command[4096];
-    __builtin_snprintf(command, sizeof command,
-                       "%s missing_rules \"$SMITH_REPO/.clang-tidy\" \"$SMITH_REPO/templates/defaults/clang-tidy\"",
+    __builtin_snprintf(command, sizeof command, "%s missing_rules smith-clang-tidy template-clang-tidy",
                        tidy_functions);
     scratch::expect_text("rules: the template keeps every rule of smith's .clang-tidy", "",
                          scratch::capture(&p, command));
     __builtin_snprintf(command, sizeof command,
                        "%s grep -v 'readability-function-size.LineThreshold' "
-                       "\"$SMITH_REPO/templates/defaults/clang-tidy\" >tidy-without; "
-                       "missing_rules \"$SMITH_REPO/.clang-tidy\" tidy-without",
+                       "template-clang-tidy >tidy-without; missing_rules smith-clang-tidy tidy-without",
                        tidy_functions);
     scratch::expect_contains("rules: a missing option is caught", scratch::capture(&p, command),
                              "readability-function-size.LineThreshold");
     __builtin_snprintf(command, sizeof command,
-                       "%s grep -v 'misc-no-recursion' \"$SMITH_REPO/templates/defaults/clang-tidy\" >tidy-without; "
-                       "missing_rules \"$SMITH_REPO/.clang-tidy\" tidy-without",
+                       "%s grep -v 'misc-no-recursion' template-clang-tidy >tidy-without; "
+                       "missing_rules smith-clang-tidy tidy-without",
                        tidy_functions);
     scratch::expect_contains("rules: a missing check is caught", scratch::capture(&p, command), "misc-no-recursion");
     scratch::expect_text("rules: the template's .clang-format has smith's rules, comments aside",
-                         scratch::capture(&p, "grep -v '^#' \"$SMITH_REPO/.clang-format\""),
-                         scratch::capture(&p, "grep -v '^#' \"$SMITH_REPO/templates/defaults/clang-format\""));
+                         scratch::capture(&p, "grep -v '^#' smith-clang-format"),
+                         scratch::capture(&p, "grep -v '^#' template-clang-format"));
 }

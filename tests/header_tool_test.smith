@@ -11,17 +11,22 @@ import scratch;
 
 export void test_the_standalone_writer_builds_with_the_host_compiler(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run run = scratch::sh(
-        &p, "cc -std=gnu23 -Wall -Wextra -Werror -x c \"$SMITH_REPO/scripts/header_tool.c\" -o header_tool -lm");
+    scratch::copy_tree(&p, "scripts/header_tool.c", "scripts/header_tool.c");
+    scratch::copy_tree(&p, "runtime", "runtime");
+    scratch::Run run =
+        scratch::sh(&p, "cc -std=gnu23 -Wall -Wextra -Werror -x c scripts/header_tool.c -o header_tool -lm");
     scratch::expect_status("scripts/header_tool.c compiles with the host cc, with no warning", 0, &run);
 }
 
 export void test_the_standalone_writer_writes_the_bytes_smith_writes(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run built = scratch::sh(&p, "cc -std=gnu23 -x c \"$SMITH_REPO/scripts/header_tool.c\" -o header_tool -lm");
+    scratch::copy_tree(&p, "scripts/header_tool.c", "scripts/header_tool.c");
+    scratch::copy_tree(&p, "runtime", "runtime");
+    scratch::copy_tree(&p, "lib/smith", "lib/smith");
+    scratch::Run built = scratch::sh(&p, "cc -std=gnu23 -x c scripts/header_tool.c -o header_tool -lm");
     scratch::expect_status("the writer is built", 0, &built);
     scratch::Run run = scratch::sh(
-        &p, "mkdir tool smith && status=0 && for f in \"$SMITH_REPO\"/lib/smith/*.smith; do "
+        &p, "mkdir tool smith && status=0 && for f in lib/smith/*.smith; do "
             "n=$(basename \"$f\" .smith); "
             "./header_tool \"$f\" -o \"tool/$n.h\" || { echo \"header_tool failed on $n\"; status=1; }; "
             "\"$SMITH_SELF\" cc --smith-header \"$f\" -o \"smith/$n.h\" || { echo \"smith failed on $n\"; status=1; }; "

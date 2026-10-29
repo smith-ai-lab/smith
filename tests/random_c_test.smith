@@ -16,11 +16,19 @@ import target;
 constexpr char expected_digest[_] = "df39a217d8c29f80";
 constexpr char warn[_] = "-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wmissing-prototypes "
                          "-Wstrict-prototypes -Wvla -Werror";
-constexpr char sources[_] = "-I lowered \"$SMITH_REPO/tests/random.c\" \"$SMITH_REPO/lib/smith/arena.smith\" "
-                            "\"$SMITH_REPO/lib/smith/contract.smith\" \"$SMITH_REPO/lib/trace.c\"";
+constexpr char sources[_] = "-I lowered tests/random.c lib/smith/arena.smith "
+                            "lib/smith/contract.smith lib/trace.c";
+
+// A project holding the files the commands compile: the libraries and the program of the test, copied through io.
+static scratch::Project sources_project(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::copy_tree(&p, "lib", "lib");
+    scratch::copy_tree(&p, "tests/random.c", "tests/random.c");
+    return p;
+}
 
 static scratch::Project lowered_project(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Project p = sources_project(io);
     // the lowering is made in process: the text is all this needs (the compiles below stay end to end)
     scratch::write_lowered(&p, "lib/smith/random.smith", "lowered/random_lowered.c");
     return p;
@@ -60,10 +68,10 @@ export void test_random_c_checks_pass_at_o2(io::Io *io) {
 }
 
 static void compiles_as(io::Io *io, const char *standard) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Project p = sources_project(io);
     scratch::Run built = scratch::sh(&p, format::push(&io->arena, "smith cc -std=", standard, " ", warn,
                                                       " -I \"$SMITH_REPO/.smith/include\" -c "
-                                                      "\"$SMITH_REPO/lib/smith/random.smith\" -o r.o")
+                                                      "lib/smith/random.smith -o r.o")
                                              .data);
     scratch::expect_status(
         format::push(&io->arena, "library: compiles as -std=", standard, " with the new project's warnings").data, 0,
@@ -116,17 +124,17 @@ export void test_random_c_digest_o3_march_native_fp_contract_fast(io::Io *io) {
 }
 
 export void test_random_c_refusal_ffast_math_fails_to_compile(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Project p = sources_project(io);
     scratch::Run built = scratch::sh(&p, "smith cc -std=gnu23 -I \"$SMITH_REPO/.smith/include\" -ffast-math -c "
-                                         "\"$SMITH_REPO/lib/smith/random.smith\" -o r.o");
+                                         "lib/smith/random.smith -o r.o");
     scratch::expect_failure("refusal: -ffast-math fails to compile", &built);
     scratch::expect_contains("refusal: ... with the reason", built.err, "-ffast-math changes floating-point results");
 }
 
 export void test_random_c_refusal_ofast_fails_to_compile(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::Project p = sources_project(io);
     scratch::Run built = scratch::sh(&p, "smith cc -std=gnu23 -I \"$SMITH_REPO/.smith/include\" -Ofast -c "
-                                         "\"$SMITH_REPO/lib/smith/random.smith\" -o r.o");
+                                         "lib/smith/random.smith -o r.o");
     scratch::expect_failure("refusal: -Ofast fails to compile", &built);
 }
 
