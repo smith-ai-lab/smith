@@ -12,7 +12,15 @@ import target;
 import runner;
 import scratch;
 
+// The runner of the reports, built once for the tests that read a failure's lines (the shared build; runner.smith says
+// how the paths of its report read).
 static scratch::Project reports_project(io::Io *io) {
+    return runner::built_copy(io, "runner_base", "runner_reports", "-DSAN=0");
+}
+
+// The same project with a runner built in it, for a test of the paths the symbolizer itself makes (a path under the
+// project is shown relative to it), of a source newer than the program, or of a program the test moves or relinks.
+static scratch::Project own_project(io::Io *io) {
     scratch::Project p = runner::project(io, "runner_base", "runner_reports");
     scratch::Run run = runner::build(&p, "-DSAN=0");
     scratch::expect_status("reports: the runner builds", 0, &run);
@@ -31,9 +39,7 @@ static const char *at_line(io::Io *io, const char *prefix, usize line) {
 
 // Section 5. SIGSEGV without the sanitizers is named.
 export void test_runner_reports_a_sigsegv_without_the_sanitizers_is_named(io::Io *io) {
-    scratch::Project p = runner::project(io, "runner_base", "runner_segv");
-    scratch::Run built = runner::build(&p, "-DSAN=0");
-    scratch::expect_status("crash: the runner builds without sanitizers", 0, &built);
+    scratch::Project p = runner::built_project(io, "runner_base", "runner_segv", "-DSAN=0");
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run run = runner::tests(&p, iso, "");
@@ -178,7 +184,7 @@ export void test_runner_reports_a_check_inside_an_objective_c_method_names_the_m
 
 // The Apple linker, in place of lld: the same debug map.
 export void test_runner_reports_a_program_linked_by_apples_ld_has_lines_too(io::Io *io) {
-    scratch::Project p = reports_project(io);
+    scratch::Project p = own_project(io);
     if (!runner::can_symbolize(&p)) return;
     usize line = runner::line_of(&p, "tests/test_reports.smith", "test::check(moves > 0);");
     (void)scratch::sh(&p, "rm -f build/tests");
@@ -194,36 +200,43 @@ export void test_runner_reports_a_program_linked_by_apples_ld_has_lines_too(io::
     }
 }
 
+// What smith symbolize prints for its arguments, the shared build's folder left out of the paths (see runner.smith).
+static const char *symbolized(const scratch::Project *p, const char *arguments) {
+    return scratch::sh(
+               p, format::push(&p->io->arena, "smith symbolize ", arguments, " 2>&1 | ", runner::unshare_pipe()).data)
+        .out;
+}
+
 // A trace saved from a run is symbolized later, given the program.
-static void check_saved_trace(io::Io *io, const char *iso) {
+static void check_saved_trace(io::Io *io, const scratch::Project *p, const char *iso, const char *wanted) {
+    (void)scratch::sh(
+        p, format::push(&io->arena, "build/tests ", iso, " --test check_fails --trace >trace.txt 2>&1").data);
+    scratch::expect_contains(runner::label(io, iso, "symbolize: a saved trace becomes a report"),
+                             symbolized(p, "trace.txt"), wanted);
+    scratch::expect_contains(runner::label(io, iso, "symbolize: ... from standard input too"),
+                             scratch::sh(p, "smith symbolize <trace.txt 2>&1").out, "called from");
+    (void)scratch::sh(p, "cp build/tests moved_tests && mv build/tests build/tests_gone");
+    scratch::expect_contains(runner::label(io, iso, "symbolize: a program that is gone is said so"),
+                             symbolized(p, "trace.txt"), "note: cannot read");
+    scratch::expect_contains(runner::label(io, iso, "symbolize: --binary names it, and its UUID is checked"),
+                             symbolized(p, "--binary moved_tests trace.txt"), wanted);
+    (void)scratch::sh(p, "mv build/tests_gone build/tests && rm -f moved_tests");
+}
+
+// Both runners (workers, a process per test) in one project: the program the first mode moves is put back for the
+// second.
+export void test_runner_reports_symbolize_reads_a_saved_trace_given_the_program(io::Io *io) {
     scratch::Project p = reports_project(io);
     if (!runner::can_symbolize(&p)) return;
     usize line = runner::line_of(&p, "tests/test_reports.smith", "test::check(moves > 0);");
     const char *wanted = at_line(io, "  check failed at tests/test_reports.smith:", line);
-    (void)scratch::sh(
-        &p, format::push(&io->arena, "build/tests ", iso, " --test check_fails --trace >trace.txt 2>&1").data);
-    scratch::expect_contains(runner::label(io, iso, "symbolize: a saved trace becomes a report"),
-                             scratch::sh(&p, "smith symbolize trace.txt 2>&1").out, wanted);
-    scratch::expect_contains(runner::label(io, iso, "symbolize: ... from standard input too"),
-                             scratch::sh(&p, "smith symbolize <trace.txt 2>&1").out, "called from");
-    (void)scratch::sh(&p, "cp build/tests moved_tests && mv build/tests build/tests_gone");
-    scratch::expect_contains(runner::label(io, iso, "symbolize: a program that is gone is said so"),
-                             scratch::sh(&p, "smith symbolize trace.txt 2>&1").out, "note: cannot read");
-    scratch::expect_contains(runner::label(io, iso, "symbolize: --binary names it, and its UUID is checked"),
-                             scratch::sh(&p, "smith symbolize --binary moved_tests trace.txt 2>&1").out, wanted);
-}
-
-export void test_runner_reports_symbolize_reads_a_saved_trace_given_the_program(io::Io *io) {
-    check_saved_trace(io, "");
-}
-
-export void test_runner_reports_symbolize_reads_a_saved_trace_of_a_process_per_test_runner(io::Io *io) {
-    check_saved_trace(io, "--isolate");
+    for (usize mode = 0; mode < 2; mode++)
+        check_saved_trace(io, &p, runner::flag(mode), wanted);
 }
 
 // A source file newer than the program may have changed since; a trace of another program names no line.
 static void check_changed_sources(io::Io *io, const char *iso) {
-    scratch::Project p = reports_project(io);
+    scratch::Project p = own_project(io);
     if (!runner::can_symbolize(&p)) return;
     usize line = runner::line_of(&p, "tests/test_reports.smith", "test::check(moves > 0);");
     (void)scratch::sh(
@@ -289,7 +302,7 @@ export void test_runner_reports_smith_as_llvm_symbolizer_answers_the_sanitizers_
 // A failed contract is a failure like a failed check: smith_failure gives it the same report, and a test that called
 // smith_test_expect_abort still passes on it, as it does on an assert.
 export void test_runner_reports_a_failed_contract_has_the_report_of_a_failed_check(io::Io *io) {
-    scratch::Project p = runner::project(io, "runner_base", "runner_contracts");
+    scratch::Project p = runner::built_copy(io, "runner_base", "runner_contracts", "-DSAN=0");
     if (!runner::can_symbolize(&p)) return;
     usize line = runner::line_of(&p, "tests/test_contracts.c", "smith_requires(value % 2 == 0);");
     usize caller = runner::line_of(&p, "tests/test_contracts.c", "(void)halve(odd);");
@@ -312,7 +325,7 @@ export void test_runner_reports_a_failed_contract_has_the_report_of_a_failed_che
 // A sanitizer's report is symbolized by smith, through the llvm-symbolizer protocol, and AddressSanitizer's own stack
 // is what the failure shows.
 export void test_runner_reports_a_sanitizer_report_is_symbolized_by_smith(io::Io *io) {
-    scratch::Project p = runner::project(io, "runner_base", "runner_sanitized");
+    scratch::Project p = runner::built_copy(io, "runner_base", "runner_sanitized", "");
     if (!runner::can_symbolize(&p)) return;
     usize read_line = runner::line_of(&p, "tests/test_overflow.c", "return values[count];");
     usize signed_line = runner::line_of(&p, "tests/test_overflow.c", "volatile int more = big + 1;");
