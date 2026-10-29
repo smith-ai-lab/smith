@@ -5,8 +5,7 @@ name: llvm
 # hosted job downloads it (`smith build llvm`) instead of building LLVM for hours. When the release of a configuration
 # exists, a run does nothing.
 #
-# The repository was private when this was written, where hosted minutes are billed, so every job runs only once it is
-# public. Run it by hand (workflow_dispatch) the first time it is: nothing publishes the packs before that.
+# Run it by hand (workflow_dispatch) the first time: nothing publishes the packs before that.
 on:
   workflow_dispatch:
   push:
@@ -24,8 +23,7 @@ permissions:
 
 jobs:
   macos:
-    if: github.event.repository.private == false
-    runs-on: macos-15
+    runs-on: macos-26
     # the hosted job limit is 6 hours; a build that would not fit is split into chained jobs that hand the build folder on
     timeout-minutes: 350
     concurrency:
@@ -33,6 +31,8 @@ jobs:
       cancel-in-progress: false
     env:
       GH_TOKEN: ${{ github.token }}
+      # smith's floor (knowledge/deployment-target.md): LLVM's objects are built for it, not for the runner's macOS
+      MACOSX_DEPLOYMENT_TARGET: "26.0"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -80,7 +80,6 @@ jobs:
           .smith/stage0-tool llvm-publish
 
   linux:
-    if: github.event.repository.private == false
     runs-on: ubuntu-latest
     timeout-minutes: 350
     concurrency:
