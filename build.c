@@ -51,12 +51,13 @@ typedef struct {
 
 // What smith's own link differs in, macOS and Linux (issue #305, knowledge/platform-layer.md): the one table of it.
 struct BuildPlatform {
-    const char *whole_start;           // before an archive linked whole: libsmithtools.a, whose tweaks nothing names
-    const char *whole_end;             // and after it ("" when the start names the archive itself)
-    const char *group_start;           // around the static archives of LLVM, clang, lld and lldb, which name each other
-    const char *lld;                   // lld's library for the platform's object format
-    const char *const *link_flags;     // smith's link: drop what nothing reaches, export only main
-    const char *const *lldb_libraries; // what lldb's host layer uses
+    const char *whole_start;       // before an archive linked whole: libsmithtools.a, whose tweaks nothing names
+    const char *whole_end;         // and after it ("" when the start names the archive itself)
+    const char *group_start;       // around the static archives of LLVM, clang, lld and lldb, which name each other
+    const char *lld;               // lld's library for the platform's object format
+    const char *const *link_flags; // smith's link: drop what nothing reaches, export only main
+    const char *const *deployment; // every compile of smith itself: the oldest OS it runs on (macOS 26), else nothing
+    const char *const *lldb_libraries;   // what lldb's host layer uses
     const char *const *system_libraries; // last: the C++ library and the platform's own
     const char *const *pack_libraries;   // scripts/pack.c's (libcompression on macOS)
     const char *pack_runtime;            // the files of the LLVM install, besides clang's headers, that are packed
@@ -68,7 +69,11 @@ static const BuildPlatform build_platform_macos = {
     .whole_end = "",
     .group_start = "",
     .lld = "liblldMachO.a",
-    .link_flags = (const char *const[]){"-Wl,-dead_strip", "-Wl,-exported_symbol,_main", nullptr},
+    .link_flags =
+        (const char *const[]){"-mmacosx-version-min=26.0", "-Wl,-dead_strip", "-Wl,-exported_symbol,_main", nullptr},
+    // smith runs on macOS 26 and newer, built on any newer one (#802): a system function newer than 26 is called only
+    // where it exists, and one called bare is an error here, whatever WERROR says.
+    .deployment = (const char *const[]){"-mmacosx-version-min=26.0", "-Werror=unguarded-availability-new", nullptr},
     .lldb_libraries = (const char *const[]){"-ledit", "-framework", "Foundation", "-framework", "CoreFoundation",
                                             "-framework", "CoreServices", "-framework", "Security", nullptr},
     .system_libraries = (const char *const[]){"-lc++", "-lm", "-lcompression", nullptr},
@@ -84,6 +89,7 @@ static const BuildPlatform build_platform_linux = {
     .group_start = "-Wl,--start-group",
     .lld = "liblldELF.a",
     .link_flags = (const char *const[]){"-Wl,--gc-sections", "-Wl,--build-id=md5", nullptr},
+    .deployment = (const char *const[]){nullptr},
     .lldb_libraries = (const char *const[]){nullptr},
     .system_libraries = (const char *const[]){"-Wl,--end-group", "-Wl,-Bstatic", "-lstdc++", "-Wl,-Bdynamic", "-lm",
                                               "-lpthread", "-ldl", "-lrt", nullptr},
@@ -324,14 +330,14 @@ static const char *const *build_enzyme_libraries(SmithBuild *b, const BuildConfi
 // The flags of the shims that read clang's AST and of their precompiled header, which must be the same ones. The LLVM
 // headers are system headers, so the build's warnings stay smith's own.
 static const char *const *build_shim_flags(SmithBuild *b, const BuildConfig *config) {
-    return smith_cat(b,
-                     (const char *[]){"-std=c++17", "-O1", "-g", "-Wall", "-Wextra", "-fno-exceptions", "-fno-rtti",
-                                      "-D__STDC_CONSTANT_MACROS", "-D__STDC_FORMAT_MACROS", "-D__STDC_LIMIT_MACROS",
-                                      "-isystem", smith_fmt(b, "%s/include", config->llvm), "-isystem", "shim/lldb",
-                                      nullptr},
-                     smith_when(b, config->werror[0] != '\0', (const char *[]){config->werror, nullptr}),
-                     smith_when(b, config->hook, (const char *[]){"-DSMITH_HOOK", nullptr}),
-                     smith_when(b, config->enzyme[0] != '\0', (const char *[]){"-DSMITH_ENZYME", nullptr}), nullptr);
+    return smith_cat(
+        b,
+        (const char *[]){"-std=c++17", "-O1", "-g", "-Wall", "-Wextra", "-fno-exceptions", "-fno-rtti",
+                         "-D__STDC_CONSTANT_MACROS", "-D__STDC_FORMAT_MACROS", "-D__STDC_LIMIT_MACROS", "-isystem",
+                         smith_fmt(b, "%s/include", config->llvm), "-isystem", "shim/lldb", nullptr},
+        smith_when(b, config->werror[0] != '\0', (const char *[]){config->werror, nullptr}),
+        config->platform->deployment, smith_when(b, config->hook, (const char *[]){"-DSMITH_HOOK", nullptr}),
+        smith_when(b, config->enzyme[0] != '\0', (const char *[]){"-DSMITH_ENZYME", nullptr}), nullptr);
 }
 
 // The shims whose compile is mostly clang's and LLVM's headers (knowledge/precompiled-shim-headers.md): they are
@@ -423,7 +429,8 @@ static void build_prover(SmithBuild *b, const BuildConfig *config, const char *f
                   smith_list(b, smith_fmt(b, "%s/include", config->llvm), "-isystem",
                              smith_fmt(b, "%s/include/alive2", config->prove), "-isystem",
                              smith_fmt(b, "%s/include", config->prove), nullptr),
-                  smith_when(b, config->werror[0] != '\0', (const char *[]){config->werror, nullptr}), nullptr);
+                  smith_when(b, config->werror[0] != '\0', (const char *[]){config->werror, nullptr}),
+                  config->platform->deployment, nullptr);
     const char *const names[] = {"prove", "prove_ir", "prove_alive", "prove_bitwuzla"};
     for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
         prover->objects[i] = (SmithObject){
@@ -2083,7 +2090,8 @@ static void build_tree_sitter_data(SmithBuild *b, const BuildConfig *config, con
         .compiler = config->cc,
         .source = "tree-sitter/src/parser.c",
         .output = smith_fmt(b, "%s/tree-sitter-parser.o", folder),
-        .flags = smith_list(b, "-std=gnu11", "-O1", "-w", "-fPIC", "-I", "tree-sitter/src", nullptr),
+        .flags = smith_cat(b, smith_list(b, "-std=gnu11", "-O1", "-w", "-fPIC", "-I", "tree-sitter/src", nullptr),
+                           config->platform->deployment, nullptr),
         .implicit_inputs = generate.outputs,
     };
     smith_object(b, &parser);
@@ -2091,7 +2099,8 @@ static void build_tree_sitter_data(SmithBuild *b, const BuildConfig *config, con
     // need.
     const char *library = smith_fmt(b, "%s/smith-tree-sitter.%s", folder, build_is_linux(b) ? "so" : "dylib");
     SmithStep link = {
-        .command = smith_list(b, config->cc, "-shared", parser.output, "-o", library, nullptr),
+        .command = smith_cat(b, smith_list(b, config->cc, "-shared", nullptr), config->platform->deployment,
+                             smith_list(b, parser.output, "-o", library, nullptr), nullptr),
         .inputs = parser.step.outputs,
         .implicit_inputs = smith_list(b, build_compiler_file(b, config), nullptr),
         .outputs = smith_list(b, library, nullptr),
@@ -2604,7 +2613,7 @@ void build(SmithBuild *b) {
     config.lldb = access(smith_fmt(b, "%s/lib/libsmithlldb.a", config.llvm), R_OK) == 0;
     config.cflags = smith_cat(
         b, (const char *[]){smith_fmt(b, "-std=%s", std), "-O1", "-g", "-Wall", "-Wextra", "-Wpedantic", nullptr},
-        smith_when(b, werror[0] != '\0', (const char *[]){werror, nullptr}), nullptr);
+        smith_when(b, werror[0] != '\0', (const char *[]){werror, nullptr}), config.platform->deployment, nullptr);
 
     config.headers = build_header_steps(b, &config);
     config.protocol = build_protocol_steps(b, &config, folder);
