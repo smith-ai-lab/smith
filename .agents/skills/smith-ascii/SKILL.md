@@ -5,7 +5,7 @@ description: "Using smith::ascii (import smith::ascii; ascii::space, digit, alph
 
 # Tests of one character: smith's ascii
 
-This skill ships in the smith plugin, from `.agents/skills/smith-ascii/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there.
+This skill ships in the smith plugin, from `.agents/skills/smith-ascii/SKILL.md` in https://github.com/smith-ai-lab/smith. Change it there.
 
 `smith::ascii` (`lib/smith/ascii.smith`) holds three functions of a `char`, each answering the same on every machine because none reads the locale: `ascii::space(c)` (a space, tab, newline or carriage return), `ascii::digit(c)` (`0` to `9`) and `ascii::alpha(c)` (`a` to `z`, `A` to `Z`). They replace `isspace`, `isdigit` and `isalpha`, which are macros in some libcs, take an `int` and depend on the locale.
 

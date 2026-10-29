@@ -5,7 +5,7 @@ description: "Debugging a C, Objective-C or C++ program with smith: smith dbg (l
 
 # Debug with smith
 
-This skill ships in the smith plugin, from `.agents/skills/smith-debug/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there.
+This skill ships in the smith plugin, from `.agents/skills/smith-debug/SKILL.md` in https://github.com/smith-ai-lab/smith. Change it there.
 
 `smith dbg` is lldb's own command line and `smith dap` is `lldb-dap`'s own main, both from the LLVM linked into smith (23.1.3), with the arguments unchanged. A stage0 smith runs an external one instead (`$SMITH_LLDB`, `$SMITH_LLDB_DAP`). Build the program with `-g -O0` (`smith new` projects have a debug build). Details: [knowledge/debugger.md](../../../knowledge/debugger.md).
 

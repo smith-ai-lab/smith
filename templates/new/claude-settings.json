@@ -6,7 +6,7 @@
     "smith": {
       "source": {
         "source": "github",
-        "repo": "adam-r-kowalski/smith"
+        "repo": "smith-ai-lab/smith"
       }
     }
   }

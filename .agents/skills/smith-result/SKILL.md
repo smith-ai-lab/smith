@@ -5,7 +5,7 @@ description: "Using smith::result (no import: result(T, E)): a value or the reas
 
 # A value or an error: smith's result
 
-This skill ships in the smith plugin, from `.agents/skills/smith-result/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there.
+This skill ships in the smith plugin, from `.agents/skills/smith-result/SKILL.md` in https://github.com/smith-ai-lab/smith. Change it there.
 
 `result` is in scope in every module with no import; `smith::result` (`lib/smith/result.smith`, readable source, its header what the compiler reads) defines the one type function, `result(type T, type E)`: an enum with a payload (`smith-lang-enums`), `ok` carrying the `T` and `error` carrying the `E`, which is the caller's own type (a code, an enum, a struct): there is no default error type. `result(f64, i32)` written anywhere is one type. A module cannot declare its own `result` (an error names the built-in).
 

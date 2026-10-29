@@ -5,7 +5,7 @@ description: "Metal shaders with smith: compiling .metal files to .air and a .me
 
 # Metal shaders
 
-This skill ships in the smith plugin, from `.agents/skills/smith-metal/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there.
+This skill ships in the smith plugin, from `.agents/skills/smith-metal/SKILL.md` in https://github.com/smith-ai-lab/smith. Change it there.
 
 smith does not compile Metal itself: a command whose inputs are all `.metal` is handed to Apple's compiler (`xcrun -sdk macosx metal`, or `$SMITH_METAL`), with the arguments unchanged. `smith cc --smith-which -c k.metal` prints `metal /usr/bin/xcrun -sdk macosx metal`. `.metal` mixed with other inputs in one command is refused (`.metal and other inputs need different compilers`): compile shaders in their own command with their own flags. It needs the Xcode command line tools (`cannot find xcrun` otherwise). A response file (`@file`) is opaque, so a `.metal` input inside one goes to clang.
 

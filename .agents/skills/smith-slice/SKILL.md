@@ -5,7 +5,7 @@ description: "Using smith::slice (import smith::slice; slice::equal, compare, st
 
 # Functions over a slice: smith's slice
 
-This skill ships in the smith plugin, from `.agents/skills/smith-slice/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there.
+This skill ships in the smith plugin, from `.agents/skills/smith-slice/SKILL.md` in https://github.com/smith-ai-lab/smith. Change it there.
 
 Text is a `const char xs[:]`, bytes a `u8 xs[:]`, numbers an `i32 xs[:]`: one library does what C's `strcmp`, `memchr` and `memset` did for each (`smith-lang-arrays`). `smith::slice` (`lib/smith/slice.smith`, a module, no C spelling) is generic over the element, so each function is written `const auto xs[:]` (`smith-lang-generics`). Nothing allocates: a result is an index, a bool, or the caller's own slice written in place.
 

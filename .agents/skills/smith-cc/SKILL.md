@@ -5,7 +5,7 @@ description: "Compiling with smith: smith cc, smith c++, the smith-cc and smith-
 
 # Compile with smith
 
-This skill ships in the smith plugin, from `.agents/skills/smith-cc/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there.
+This skill ships in the smith plugin, from `.agents/skills/smith-cc/SKILL.md` in https://github.com/smith-ai-lab/smith. Change it there.
 
 `smith cc <clang arguments>` is a drop-in for clang: flags pass through unchanged (none added, removed or reordered), and the exit status, signals, output and files are clang's. `smith c++` is the same for C++ and is what links C++. Clang is linked into smith, so it compiles in its own process. `smith foo.c -o foo` is an error that says to use `smith cc foo.c -o foo`.
 
