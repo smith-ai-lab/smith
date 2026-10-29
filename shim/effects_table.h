@@ -480,6 +480,10 @@ inline constexpr Ownership ownership_functions[] = {
     {"opendir", "owned:closedir"},
     {"fdopendir", "owned:closedir"},
     {"dlopen", "owned:dlclose"},
+    // libdispatch (macOS): an object the caller releases
+    {"dispatch_queue_create", "owned:dispatch_release"},
+    {"dispatch_data_create", "owned:dispatch_release"},
+    {"dispatch_semaphore_create", "owned:dispatch_release"},
     {"mmap", "owned:munmap:2"},
     {"tempnam", "owned:free"},
     // borrowed: it points into an argument
