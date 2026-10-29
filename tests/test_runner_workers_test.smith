@@ -15,6 +15,11 @@ static scratch::Project workers_project(io::Io *io) {
     return runner::built_project(io, "runner_base", "runner_workers", "");
 }
 
+// The same, for a test that runs `smith test` in it (a copy of the built project, so that build has nothing to do).
+static scratch::Project workers_copy(io::Io *io) {
+    return runner::built_copy(io, "runner_base", "runner_workers", "");
+}
+
 // The forks a run is expected to make: the value of the workers, and of --isolate.
 static usize by_mode(usize mode, usize workers, usize isolated) {
     return mode == 0 ? workers : isolated;
@@ -204,7 +209,7 @@ export void test_runner_workers_with_a_process_per_test_an_order_dependent_pair_
 }
 
 export void test_runner_workers_shuffle_runs_the_tests_in_another_order_from_a_seed(io::Io *io) {
-    scratch::Project p = workers_project(io);
+    scratch::Project p = workers_copy(io);
     scratch::Run table = runner::tests(&p, "", "--test order_ --jobs 1 --verbose");
     scratch::expect_contains("shuffle: in table order the order-dependent pair passes", table.out,
                              "2 passed, 0 failed");
@@ -309,6 +314,10 @@ static scratch::Project explain_project(io::Io *io) {
     return runner::built_project(io, "runner_base", "runner_explain", "");
 }
 
+static scratch::Project explain_copy(io::Io *io) {
+    return runner::built_copy(io, "runner_base", "runner_explain", "");
+}
+
 // The report smith test prints, with the values read from the stopped test.
 static const char *explained(const scratch::Project *p, const char *iso, const char *arguments) {
     const char *command =
@@ -402,7 +411,7 @@ export void test_runner_workers_explain_reads_at_most_explain_max_and_no_explain
 }
 
 export void test_runner_workers_smith_test_reads_the_values_without_being_asked(io::Io *io) {
-    scratch::Project p = explain_project(io);
+    scratch::Project p = explain_copy(io);
     if (!explain_available(&p)) return;
     if (!values_shown(explained(&p, "", "--test ex_member"))) return;
     for (usize mode = 0; mode < 2; mode++) {
