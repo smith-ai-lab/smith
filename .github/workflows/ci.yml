@@ -203,3 +203,30 @@ jobs:
       - uses: ./.github/actions/setup-smith
       - name: Release
         run: '"$SMITH" build release'
+
+  install:
+    # the owner's Mac (its one self-hosted runner, ~/actions-runner) installs the release just published, so the
+    # installed smith is always main's: a download and a checksum, no build (owner, 2026-10-29)
+    needs: release
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 10
+    concurrency:
+      group: install
+      cancel-in-progress: true
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the release
+        run: |
+          export PATH="/opt/homebrew/bin:$PATH"
+          tmp=$(mktemp -d)
+          sh scripts/release.sh fetch "stage0-$GITHUB_SHA" "$tmp"
+          mkdir -p "$HOME/.local/bin"
+          for f in "$tmp"/bin/*; do
+            # copy beside, then rename over: a smith running now keeps its old file
+            cp -P "$f" "$HOME/.local/bin/.$(basename "$f").new"
+            mv -f "$HOME/.local/bin/.$(basename "$f").new" "$HOME/.local/bin/$(basename "$f")"
+          done
+          rm -rf "$tmp"
+          "$HOME/.local/bin/smith" version

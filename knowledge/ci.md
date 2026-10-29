@@ -20,8 +20,9 @@ pull request at fault leaves the queue with its run linked. The ruleset on `main
 `ci` and the queue, a linear history, and blocks force pushes: nobody pushes to main.
 
 **After a merge** the push to main does not test again (the queue checked that commit); `ci.yml`'s `release` job
-publishes the stage0 release `stage0-<commit>` ([release](release.md)). The installed smith on a machine is that
-release (`sh scripts/release.sh fetch stage0-<commit> ~/.local`); nobody runs `smith build install`.
+publishes the stage0 release `stage0-<commit>` ([release](release.md)). Then `install`, on the owner's Mac (its one
+self-hosted runner, used for nothing else), downloads that release, checks it and puts it in `~/.local/bin`, so the
+installed smith is always main's; nobody runs `smith build install`.
 
 **A red pull request** is its author's: read the failing job (`gh run view --log-failed`), fix it on the branch, push.
 A conflict with main is fixed by merging main into the branch, never by a rebase or a force-push.
