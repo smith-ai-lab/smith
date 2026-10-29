@@ -1856,11 +1856,57 @@ static int build_llvm_prune(SmithRun *run) {
     return build_exec(prune);
 }
 
-// The pinned LLVM (`smith build llvm`): the sources, CMake and Python by hash, built once into the package cache by
-// scripts/llvm.sh, and then the prover's libraries beside it (Ninja, Z3, Alive2, Bitwuzla and its dependencies). A .run
-// step, so the packages are fetched only when this target runs, not on every smith build.
+// scripts/llvm_pack.c (issue #797): the LLVM pack of a configuration is a GitHub Release `llvm-<name>-<os>-<arch>`,
+// what smith links and embeds, so that a machine with no LLVM downloads it instead of building it. Compiles the program
+// (plain C23, into the cache beside the LLVM folders) and runs it with `arguments` after the cache's smith folder and
+// the configuration's name; its exit status.
+static int build_llvm_pack_run(SmithRun *run, const char *verb, const char *const *arguments) {
+    SmithBuild *b = run->b;
+    const char *folder = build_llvm_folder(b);
+    const char *home = smith_env(b, "XDG_CACHE_HOME", smith_fmt(b, "%s/.cache", smith_env(b, "HOME", "")));
+    const char *cache = smith_fmt(b, "%s/smith", home);
+    const char *tool = smith_fmt(b, "%s/llvm/llvm_pack", cache);
+    const char *name = strrchr(folder, '/') + 1;
+    int status = build_make_folder(b, smith_fmt(b, "%s/llvm", cache));
+    if (status != 0) return status;
+    const char *const compile[] = {
+        smith_env(b, "CC", "smith-cc"), "-std=c23", "-O1", "scripts/llvm_pack.c", "-o", tool, nullptr};
+    status = build_exec(compile);
+    if (status != 0) return status;
+    return build_exec(smith_cat(b, (const char *[]){tool, verb, cache, name, nullptr}, arguments, nullptr));
+}
+
+// The fetch path of `smith build llvm` (-Dfetch): `auto` takes the pack when its release exists and builds otherwise,
+// `0` always builds, `1` takes the pack or fails. Returns the step's status when the pack was taken (its folders are
+// where a build puts them, so nothing else is needed), or -1 when LLVM is to be built.
+static int build_llvm_fetch(SmithRun *run) {
+    const char *mode = run->args[0];
+    if (strcmp(mode, "0") == 0) return -1;
+    SmithBuild *b = run->b;
+    const char *stamp = smith_fmt(b, "%s.fetch", run->outputs[0]);
+    int status = build_llvm_pack_run(run, "fetch", smith_list(b, stamp, nullptr));
+    if (status == 0) return build_exec(smith_list(b, "cp", stamp, run->outputs[0], nullptr));
+    if (status != 3 || strcmp(mode, "1") == 0) return status != 0 ? status : 1;
+    fputs("smith: no LLVM pack to fetch: building LLVM from source (-Dfetch=0 never looks)\n", stderr);
+    return -1;
+}
+
+// `smith build llvm-pack [-Dout=DIR]` writes the pack of the LLVM that is built into DIR (to measure it); `smith build
+// llvm-publish` packs it and publishes the release (CI's llvm workflow), and does nothing when the release exists.
+static int build_llvm_pack_task(SmithRun *run) {
+    SmithBuild *b = run->b;
+    if (strcmp(run->args[0], "publish") == 0) return build_llvm_pack_run(run, "publish", smith_list(b, nullptr));
+    return build_llvm_pack_run(run, "pack", smith_list(b, run->args[1], nullptr));
+}
+
+// The pinned LLVM (`smith build llvm`): the pack of a release when there is one (build_llvm_fetch), else the sources,
+// CMake and Python by hash, built once into the package cache by scripts/llvm.sh, and then the prover's libraries
+// beside it (Ninja, Z3, Alive2, Bitwuzla and its dependencies). A .run step, so the packages are fetched only when this
+// target runs, not on every smith build.
 static int build_llvm_run(SmithRun *run) {
     SmithBuild *b = run->b;
+    int fetched = build_llvm_fetch(run);
+    if (fetched >= 0) return fetched;
     const char *ninja_source = build_package_path(
         b, &(SmithPackage){.url = "https://github.com/ninja-build/ninja/archive/refs/tags/v1.13.2.tar.gz",
                            .hash = "sha256:974d6b2f4eeefa25625d34da3cb36bdcebe7fbce40f4c16ac0835fd1c0cbae17"});
@@ -1898,7 +1944,12 @@ static int build_llvm_run(SmithRun *run) {
 static void build_llvm(SmithBuild *b) {
     SmithStep llvm = {
         .run = build_llvm_run,
-        .description = "building LLVM 23.1.3 and the prover's libraries (static, from source)",
+        .args = smith_list(b,
+                           smith_option_value(b, "fetch", "auto",
+                                              "llvm: auto takes the release's pack when there is one, 0 builds, 1 "
+                                              "fetches or fails"),
+                           nullptr),
+        .description = "fetching or building LLVM 23.1.3 and the prover's libraries (static, from source)",
         .inputs = smith_cat(
             b,
             (const char *[]){"scripts/llvm.sh", "scripts/defer_init.c", "patches/enzyme/quiet-caching-call.patch",
@@ -1906,13 +1957,25 @@ static void build_llvm(SmithBuild *b) {
                              "patches/clang-format-smith.patch", "patches/smith-editor-defaults.patch",
                              "patches/smith-format-source-extension.patch", "patches/smith-command-hook.patch",
                              "patches/compiler-rt-xnu-fast-mmap.patch", "patches/smith-lang-format-filescope-if.patch",
-                             nullptr},
-            smith_when(b, build_is_linux(b), (const char *[]){"scripts/llvm_linux.c", "scripts/sha256.h", nullptr}),
-            nullptr),
+                             "scripts/llvm_pack.c", "scripts/sha256.h", nullptr},
+            smith_when(b, build_is_linux(b), (const char *[]){"scripts/llvm_linux.c", nullptr}), nullptr),
         .outputs = (const char *[]){"build/llvm.stamp", nullptr},
     };
     smith_step(b, &llvm);
     smith_alias(b, "llvm", llvm.outputs);
+    SmithStep pack = {
+        .run = build_llvm_pack_task,
+        .args = smith_list(b, "pack", smith_option_value(b, "out", "build/llvm-pack", "llvm-pack: where the pack goes"),
+                           nullptr),
+        .description = "packing the LLVM that is built (what smith links) for a release",
+    };
+    smith_task(b, "llvm-pack", &pack);
+    SmithStep publish = {
+        .run = build_llvm_pack_task,
+        .args = smith_list(b, "publish", "", nullptr),
+        .description = "publishing the LLVM pack as the release llvm-<name>-<os>-<arch>",
+    };
+    smith_task(b, "llvm-publish", &publish);
     SmithStep enzyme = {
         .run = build_enzyme_only,
         .description = "building Enzyme (static, against the LLVM install)",

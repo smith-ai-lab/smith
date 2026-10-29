@@ -1,0 +1,137 @@
+// scripts/llvm_pack.c (issue #797, knowledge/llvm-build.md) with no network and no real LLVM: the pack of a made-up
+// LLVM folder (what it holds and what it leaves out), publish and fetch against the stub gh of
+// tests/build_fixtures/release (which keeps its "releases" in a folder), the parts and their checksums, and what a
+// fetch does when it must not take the pack. The real ~/.cache/smith is never read.
+module llvm_pack_test;
+
+import smith::format;
+import smith::io;
+import smith::test;
+import scratch;
+
+// Every command: the stub gh first on PATH, its releases in ../gh and its log in ../gh.log, parts of 20,000 bytes so
+// that the 30,000-byte archives (random bytes, which xz cannot shrink) make several, and the tool of this scratch
+// folder. `tag` is the release the tool names for the configuration `n1`.
+constexpr char prelude[_] =
+    "export PATH=\"$PWD/../bin:$PATH\" GH_LOG=\"$PWD/../gh.log\" GH_DIR=\"$PWD/../gh\" LLVM_PACK_PART_BYTES=20000; "
+    "tool=\"$PWD/../llvm_pack\"; tag=$(\"$tool\" tag n1); ";
+
+// A made-up LLVM `n1` in the cache `c1`, with what the pack takes (archives, the identity, the resource directory,
+// headers, the compiler, the prover's libraries, Enzyme's) and what it must leave out (the build folder, the other
+// programs, the folder of Enzyme's own build), the stub gh, and the tool compiled by the smith under test.
+static scratch::Project repository(io::Io *io) {
+    scratch::Project p = scratch::project(io, "pack", nullptr);
+    scratch::copy_tree(&p, "tests/build_fixtures/release/gh", "../bin/gh");
+    scratch::copy_tree(&p, "scripts/llvm_pack.c", "llvm_pack.c");
+    scratch::copy_tree(&p, "scripts/sha256.h", "sha256.h");
+    scratch::Run made = scratch::sh(
+        &p, "mkdir ../gh && chmod +x ../bin/gh && : >../gh.log && "
+            "n=c1/llvm/n1; mkdir -p $n/install/lib/clang/23/include $n/install/include/x $n/install/bin "
+            "$n/install/libexec $n/prove/lib $n/prove/share $n/build c1/enzyme/0.0.303-n1/lib "
+            "c1/enzyme/build-0.0.303-n1 && "
+            "head -c 30000 /dev/urandom >$n/install/lib/libA.a && head -c 30000 /dev/urandom >$n/install/lib/libB.a && "
+            "echo 'llvm-23.1.3 abc' >$n/install/lib/smith-clang.id && echo h >$n/install/lib/clang/23/include/a.h && "
+            "echo h >$n/install/include/x/b.h && head -c 100 /dev/urandom >$n/install/bin/clang-23 && "
+            "ln -s clang-23 $n/install/bin/clang && ln -s clang $n/install/bin/clang++ && "
+            "head -c 100 /dev/urandom >$n/install/bin/lldb && echo big >$n/build/skip && echo big "
+            ">$n/install/libexec/skip && "
+            "echo z >$n/prove/lib/libz3.a && echo z >$n/prove/share/skip && "
+            "echo e >c1/enzyme/0.0.303-n1/lib/libEnzymeStatic-23.a && echo z >c1/enzyme/build-0.0.303-n1/skip && "
+            "smith cc -std=c23 -Wall -Wextra -Werror llvm_pack.c -o ../llvm_pack && echo made");
+    scratch::expect_text("llvm_pack: the tree and the tool are made", "made", made.out);
+    return p;
+}
+
+static const char *capture(io::Io *io, const scratch::Project *p, const char *commands) {
+    return scratch::capture(p, format::push(&io->arena, prelude, commands).data);
+}
+
+static scratch::Run run(io::Io *io, const scratch::Project *p, const char *commands) {
+    return scratch::sh(p, format::push(&io->arena, prelude, commands).data);
+}
+
+// pack: parts under the limit, one checksum each, and exactly the files smith links and builds from
+export void test_llvm_pack_makes_checked_parts_of_what_smith_links(io::Io *io) {
+    scratch::Project p = repository(io);
+    scratch::Run packed = run(io, &p, "\"$tool\" pack \"$PWD/c1\" n1 ../out >/dev/null");
+    scratch::expect_status("llvm_pack: pack", 0, &packed);
+    scratch::expect_text("llvm_pack: the tag names the configuration and the machine",
+                         capture(io, &p, "echo llvm-n1-$(uname -s | tr A-Z a-z)-$(uname -m)"),
+                         capture(io, &p, "echo $tag"));
+    scratch::expect_text("llvm_pack: several parts and their checksums", "4 yes",
+                         capture(io, &p,
+                                 "cd ../out && echo \"$(ls $tag.tar.xz.* | wc -l | tr -d ' ') "
+                                 "$(shasum -a 256 -c $tag.sha256 >/dev/null && echo yes)\""));
+    scratch::expect_text("llvm_pack: no part is over the limit", "0",
+                         capture(io, &p, "find ../out -name '*.tar.xz.*' -size +20000c | wc -l | tr -d ' '"));
+    scratch::Run joined =
+        run(io, &p, "cat ../out/$tag.tar.xz.* >../all.tar.xz && mkdir ../x && tar -C ../x -xJf ../all.tar.xz");
+    scratch::expect_status("llvm_pack: the parts joined are one archive", 0, &joined);
+    scratch::expect_text("llvm_pack: what is in it",
+                         "enzyme/0.0.303-n1/lib/libEnzymeStatic-23.a\nllvm/n1/install/bin/clang\n"
+                         "llvm/n1/install/bin/clang++\nllvm/n1/install/bin/clang-23\n"
+                         "llvm/n1/install/include/x/b.h\nllvm/n1/install/lib/clang/23/include/a.h\n"
+                         "llvm/n1/install/lib/libA.a\nllvm/n1/install/lib/libB.a\nllvm/n1/install/lib/smith-clang.id\n"
+                         "llvm/n1/prove/lib/libz3.a",
+                         capture(io, &p, "cd ../x && find enzyme llvm \\( -type f -o -type l \\) | sort"));
+}
+
+// publish and fetch: the release holds the parts and the checksums, a second publish creates nothing, a fetch into an
+// empty cache gives the same folders and the stamp a build writes, and a second fetch has nothing to do
+export void test_llvm_pack_publish_then_fetch_gives_the_same_install(io::Io *io) {
+    scratch::Project p = repository(io);
+    scratch::Run published = run(io, &p, "\"$tool\" publish \"$PWD/c1\" n1 >/dev/null");
+    scratch::expect_status("llvm_pack: publish", 0, &published);
+    scratch::expect_text("llvm_pack: publish-assets", "5", capture(io, &p, "ls ../gh/$tag | wc -l | tr -d ' '"));
+    scratch::expect_text("llvm_pack: publish-notes-the-identity", "yes",
+                         capture(io, &p, "grep -q 'llvm-23.1.3 abc' \"$GH_LOG\" && echo yes"));
+    (void)run(io, &p, "\"$tool\" publish \"$PWD/c1\" n1 >/dev/null");
+    scratch::expect_text("llvm_pack: publish-twice", "1", capture(io, &p, "grep -c 'release create' \"$GH_LOG\""));
+    scratch::expect_text("llvm_pack: publish-leaves-no-folder", "n1",
+                         capture(io, &p, "ls -A c1/llvm | tr '\\n' ' ' | sed 's/ $//'"));
+    scratch::expect_text("llvm_pack: the release exists", "0", capture(io, &p, "\"$tool\" exists n1; echo $?"));
+    scratch::expect_text("llvm_pack: another configuration has none", "1",
+                         capture(io, &p, "\"$tool\" exists n2; echo $?"));
+    scratch::Run fetched = run(io, &p, "mkdir c2 && \"$tool\" fetch \"$PWD/c2\" n1 \"$PWD/stamp\" >/dev/null");
+    scratch::expect_status("llvm_pack: fetch", 0, &fetched);
+    scratch::expect_text("llvm_pack: fetch-stamp", capture(io, &p, "echo \"$PWD/c2/llvm/n1/install\""),
+                         capture(io, &p, "cat stamp"));
+    scratch::expect_text(
+        "llvm_pack: fetch-same-files", "8",
+        capture(io, &p,
+                "cd c2 && for f in $(find llvm enzyme -type f); do cmp -s $f ../c1/$f || echo differs $f; "
+                "done; find llvm enzyme -type f | wc -l | tr -d ' '"));
+    scratch::expect_text("llvm_pack: fetch-keeps-the-links", "clang-23 clang",
+                         capture(io, &p, "cd c2/llvm/n1/install/bin && echo $(readlink clang) $(readlink clang++)"));
+    scratch::expect_text("llvm_pack: fetch-leaves-nothing-else", "llvm",
+                         capture(io, &p, "ls -A c2 | grep -v enzyme; ls -A c2/llvm | grep -v n1"));
+    scratch::Run again = run(io, &p,
+                             "grep -c 'release download' \"$GH_LOG\" >../before; "
+                             "\"$tool\" fetch \"$PWD/c2\" n1 \"$PWD/stamp\" >/dev/null");
+    scratch::expect_status("llvm_pack: a second fetch has nothing to do", 0, &again);
+    scratch::expect_text("llvm_pack: a second fetch downloads nothing", capture(io, &p, "cat ../before"),
+                         capture(io, &p, "grep -c 'release download' \"$GH_LOG\""));
+}
+
+// fetch that must not take the pack: a part that does not match its checksum is an error and leaves nothing that looks
+// built; no release and a folder with a build in it are the exit status 3 that tells `smith build llvm` to build
+export void test_llvm_pack_fetch_refuses_a_bad_part_and_says_when_to_build(io::Io *io) {
+    scratch::Project p = repository(io);
+    (void)run(io, &p, "\"$tool\" publish \"$PWD/c1\" n1 >/dev/null");
+    scratch::expect_text(
+        "llvm_pack: no release is 3", "3",
+        capture(io, &p, "mkdir c3 && \"$tool\" fetch \"$PWD/c3\" n2 \"$PWD/stamp\" 2>/dev/null; echo $?"));
+    scratch::expect_text("llvm_pack: a build in the folder is 3", "3",
+                         capture(io, &p,
+                                 "mkdir -p c4/llvm/n1/build && \"$tool\" fetch \"$PWD/c4\" n1 \"$PWD/stamp\" "
+                                 "2>/dev/null; echo $?"));
+    scratch::expect_text("llvm_pack: the build is left alone", "build", capture(io, &p, "ls c4/llvm/n1"));
+    scratch::Run corrupted = run(io, &p, "printf x >>\"../gh/$tag/$tag.tar.xz.001\"");
+    scratch::expect_status("llvm_pack: corrupt a part", 0, &corrupted);
+    scratch::expect_contains(
+        "llvm_pack: a bad part says which",
+        capture(io, &p, "mkdir c5 && \"$tool\" fetch \"$PWD/c5\" n1 \"$PWD/stamp\" 2>&1; echo \"rc=$?\""),
+        "does not match: llvm-n1-");
+    scratch::expect_text("llvm_pack: a bad part leaves no LLVM folder and no stage", "",
+                         capture(io, &p, "ls -A c5/llvm"));
+}
