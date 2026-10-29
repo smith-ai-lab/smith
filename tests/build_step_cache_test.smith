@@ -69,6 +69,24 @@ export void test_build_step_cache_a_hit_equals_a_rebuild(io::Io *io) {
     scratch::expect_status("rebuild: a hit equals a rebuild", 0, &same);
 }
 
+// 3b. A file the cache holds keeps the time of the build that stored it when the platform clones it (macOS's
+// clonefile does): a hit is new all the same, or the next build takes it for older than the sources, makes it again
+// and everything after it, for ever (a project with a deferred step never settled). The cache's files are made old
+// here, as a clone would leave them.
+export void test_build_step_cache_a_hit_is_newer_than_the_sources_even_from_an_old_entry(io::Io *io) {
+    scratch::Project a = made(io, "a");
+    scratch::Project b = made(io, "b");
+    (void)scratch::sh(&a, built(&a, ""));
+    (void)scratch::sh(&b, "find \"$XDG_CACHE_HOME/smith/steps/r\" -type f -exec touch -t 200101010000 {} +");
+    scratch::Run served = scratch::sh(&b, built(&b, ""));
+    scratch::expect_contains("old entry: the second folder is served", served.out, "(cached)");
+    scratch::Run newer =
+        scratch::sh(&b, "for f in main other util; do [ build/release/$f.o -nt $f.c ] || exit 1; done");
+    scratch::expect_status("old entry: its objects are newer than the sources", 0, &newer);
+    scratch::Run again = scratch::sh(&b, built(&b, ""));
+    scratch::expect_contains("old entry: and the next build has no work", again.out, "no work to do");
+}
+
 // 4. The folder is a token in what is kept: the second folder's depfile log names its own files.
 export void test_build_step_cache_the_second_folders_log_names_its_own_paths(io::Io *io) {
     scratch::Project a = made(io, "a");

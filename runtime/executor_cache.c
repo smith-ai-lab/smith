@@ -601,8 +601,9 @@ static void smith_stepcache_folders(void) {
 static bool smith_stepcache_eligible(SmithExec *exec, SmithEdge *edge) {
     if (smith_stepcache.state == SmithStepCache_Off || exec->options.dry_run) return false;
     if (smith_stepcache.program_only &&
-        strncmp(exec->graph.nodes[smith_plan_output(exec, edge, 0)].path, smith_stepcache_program_folder,
-                strlen(smith_stepcache_program_folder)) != 0)
+        (edge->output_count == 0 ||
+         strncmp(exec->graph.nodes[smith_plan_output(exec, edge, 0)].path, smith_stepcache_program_folder,
+                 strlen(smith_stepcache_program_folder)) != 0))
         return false;
     if (edge->step_cache == 0) {
         bool shape = edge->has_deps && edge->depfile != nullptr && !edge->phony && edge->pool == 0 &&
@@ -921,7 +922,10 @@ static bool smith_stepcache_put(const char *source, const char *destination, boo
     unlink(temporary);
     bool ok = false;
     if (!text) {
-        ok = smith_stepcache_copy(source, temporary);
+        // A clone keeps the time of the file it is made from (macOS's clonefile does), which is the time of the build
+        // that stored it: older than the sources of this one, so the next build would take the output for out of date
+        // and make everything after it again, for ever. A hit is what a rebuild makes, so its output is new.
+        ok = smith_stepcache_copy(source, temporary) && utimensat(AT_FDCWD, temporary, nullptr, 0) == 0;
     } else {
         size_t size = 0;
         SmithStepText out = {.data = smith_stepcache_text_out, .capacity = sizeof smith_stepcache_text_out};

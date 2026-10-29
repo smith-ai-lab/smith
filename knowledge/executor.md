@@ -70,7 +70,7 @@ Written in C, not `.smith`: it works on the executor's own types (`SmithExec`, `
   writes more than the depfile names (`@file`, `-fprofile-*`, `--coverage`, `-save-temps`, plugins, ...), nor a
   precompiled header, read or written (`-include-pch`, `-x *-header`, a `.pch` or `.gch`): it records each input's time,
   so one restored after a checkout gave its header a new time is rejected by every compile that includes it (#728).
-- **Restoring** clones the files (FICLONE on Linux, `clonefile` on macOS, else a copy), writes the depfile as a compile
+- **Restoring** clones the files (FICLONE on Linux, `clonefile` on macOS, else a copy), and gives an output the time of now (a clone keeps the time of the build that stored it, older than this build's sources, and the next build would make it again, for ever), writes the depfile as a compile
   would, and the job ends as one does: the depfile log and command log are written, `-v` shows `(cached)` after the
   step, `-d explain` says it was restored. A hit takes no core of the host's pool. Stores and restores are a temporary
   file and a rename, so builds in other worktrees can share the folder.
