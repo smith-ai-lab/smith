@@ -28,21 +28,40 @@ constexpr char probe_script[_] =
     "smith lsp --version >/dev/null 2>&1 && printf 'int main(void) { return 0; }\\n' >probe.smith && "
     "! smith cc --smith-lower probe.smith 2>&1 | grep -q 'token hook'";
 
-// The fixture, the client built, and (checks off, as the original's) smith's default clang-tidy replaced by one that
+// The probe and the client, once for each smith under test and each text of the client (the way `built_script` below
+// keeps the built folders): the first test runs the probe and builds tests/lsp_client.c in the tests' cache
+// ($SMITH_TEST_CACHE/lsp-<smith's size and time>/tools-<checksum of the client>), the others wait for it and copy the
+// program (every test ran three probes and a compile, 0.1 s of CPU each). Exit 0: the client is at
+// ../lsp_client; 3: this smith has no editor support; 4 or more: the client did not build.
+constexpr char tools_head[_] =
+    "key=$(stat -c %Y-%s \"$SMITH_SELF\" 2>/dev/null || stat -f %m-%z \"$SMITH_SELF\"); "
+    "sum=$(cat tests/lsp_client.c tests/cpu_wait.h | cksum | cut -d ' ' -f 1); "
+    "base=$SMITH_TEST_CACHE/lsp-$key; c=$base/tools-$sum; lock=$base.lock-tools-$sum; "
+    "if [ ! -d \"$c\" ] && mkdir \"$lock\" 2>/dev/null; then "
+    "tmp=$base.t$$; mkdir -p \"$tmp\" && cp tests/lsp_client.c tests/cpu_wait.h \"$tmp\" && (cd \"$tmp\" && "
+    "if ";
+constexpr char tools_tail[_] =
+    "; then smith cc -std=gnu23 lsp_client.c -o lsp_client && touch ok; else touch none; fi) ; "
+    "if [ -e \"$tmp/ok\" ] || [ -e \"$tmp/none\" ]; then mkdir -p \"$base\" && mv \"$tmp\" \"$c\"; fi; "
+    "rm -rf \"$tmp\"; rmdir \"$lock\"; "
+    "else i=0; while [ ! -d \"$c\" ] && [ -d \"$lock\" ] && [ $i -lt 3000 ]; do sleep 0.2; i=$((i + 1)); done; fi; "
+    "[ ! -e \"$c/none\" ] || exit 3; [ -e \"$c/ok\" ] || exit 4; cp -p \"$c/lsp_client\" ../lsp_client";
+
+// The fixture, the client, and (checks off, as the original's) smith's default clang-tidy replaced by one that
 // reports nothing, since these tests are about the lowering's and the compiler's diagnostics. False when the smith
 // under test has no editor support.
 static bool make(io::Io *io, scratch::Project *root, bool tidy_off) {
     *root = scratch::project(io, "lsp", "lsp");
-    if (scratch::sh(root, probe_script).status != 0) {
+    scratch::copy_tree(root, "tests/lsp_client.c", "tests/lsp_client.c");
+    scratch::copy_tree(root, "tests/cpu_wait.h", "tests/cpu_wait.h");
+    scratch::Run tools = scratch::sh(root, format::push(&io->arena, tools_head, probe_script, tools_tail).data);
+    if (tools.status == 3) {
         return false;
     }
+    scratch::expect_status("lsp: tests/lsp_client.c builds", 0, &tools);
     if (tidy_off) {
         scratch::write(root, ".clang-tidy", "Checks: \"-*\"\n");
     }
-    scratch::copy_tree(root, "tests/lsp_client.c", "tests/lsp_client.c");
-    scratch::copy_tree(root, "tests/cpu_wait.h", "tests/cpu_wait.h");
-    scratch::Run built = scratch::sh(root, "smith cc -std=gnu23 tests/lsp_client.c -o ../lsp_client");
-    scratch::expect_status("lsp: tests/lsp_client.c builds", 0, &built);
     return true;
 }
 
