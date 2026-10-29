@@ -10,6 +10,17 @@ tags: [ci, process]
 (`gh pr create`, `Closes #N`). Locally it runs `smith fmt`, `smith lint`, `smith docs` and the tests for what it
 changed, never the full check.
 
+**The pre-push hook runs those checks on every push.** `smith build` (any build of this tree) writes
+`.git/hooks/pre-push`, in the common git dir so every worktree of the clone has it, with two lines: `#!/bin/sh` and
+`exec smith build pre-push`; a fresh clone has it after its first `smith build`. The task builds the tree and, against
+the merge-base with `origin/main`, runs `fmt --dry-run --Werror` on the changed files, `docs`, `lint --changed` and
+`test --changed` with the smith it built (a push that changes only documents no build reads, the `none` scope of
+[ci-hosted](ci-hosted.md), skips the tests). Every step runs; a failure stops the push and names the step and its log,
+`.smith/pre-push-<step>.log`. It posts no status and uses no `gh`; CI is still the gate. git opens its connection
+before the hook runs, so a hook of several minutes (a change to `build.c` selects every test) can lose an idle ssh
+connection (`Connection ... closed by remote host`, status 141): push again with
+`GIT_SSH_COMMAND="ssh -o ServerAliveInterval=20"`.
+
 **CI is GitHub's.** `.github/workflows/ci.yml` runs the full check on the pull request on hosted runners
 ([ci-hosted](ci-hosted.md)); the one required check is `ci`. Nothing runs on the owner's Mac.
 
