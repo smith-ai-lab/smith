@@ -52,7 +52,7 @@ export void test_runner_aborts_a_sanitizer_report_is_a_failure_not_an_expected_s
 }
 
 export void test_runner_aborts_an_exit_a_return_and_a_failed_check_are_not_aborts(io::Io *io) {
-    scratch::Project p = built(io, "runner_base", "runner_aborts", "");
+    scratch::Project p = runner::built_here(io, "runner_base", "runner_aborts", "");
     usize call = runner::line_of(&p, "tests/test_aborts.smith", "c::printf(\"child output\\n\");") - 1;
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);

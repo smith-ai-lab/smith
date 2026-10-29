@@ -62,7 +62,7 @@ export void test_runner_checks_the_runner_alone_prints_a_raw_trace_with_a_and_b(
 }
 
 export void test_runner_checks_a_failed_ordering_check_names_the_line_and_its_values(io::Io *io) {
-    scratch::Project p = checks_project(io);
+    scratch::Project p = runner::built_here(io, "runner_base", "runner_checks", "");
     if (!runner::can_symbolize(&p)) return;
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
@@ -78,7 +78,7 @@ export void test_runner_checks_a_failed_ordering_check_names_the_line_and_its_va
 }
 
 export void test_runner_checks_each_type_prints_the_way_its_kind_does(io::Io *io) {
-    scratch::Project p = checks_project(io);
+    scratch::Project p = runner::built_here(io, "runner_base", "runner_checks", "");
     if (!runner::can_symbolize(&p)) return;
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
@@ -99,7 +99,7 @@ export void test_runner_checks_each_type_prints_the_way_its_kind_does(io::Io *io
 }
 
 export void test_runner_checks_check_near_shows_the_values_the_tolerance_and_the_distance(io::Io *io) {
-    scratch::Project p = checks_project(io);
+    scratch::Project p = runner::built_here(io, "runner_base", "runner_checks", "");
     if (!runner::can_symbolize(&p)) return;
     usize line = runner::line_of(&p, "tests/test_checks.smith", "test::check_near(low, high, tolerance);");
     for (usize mode = 0; mode < 2; mode++) {
@@ -118,7 +118,7 @@ export void test_runner_checks_check_near_shows_the_values_the_tolerance_and_the
 }
 
 export void test_runner_checks_the_c_checks_print_the_same_block_named_by_their_text(io::Io *io) {
-    scratch::Project p = checks_project(io);
+    scratch::Project p = runner::built_here(io, "runner_base", "runner_checks", "");
     if (!runner::can_symbolize(&p)) return;
     usize near_line = runner::line_of(&p, "tests/test_checks_c.c", "smith_check_near_f64(1.0, 1.5, 0.1);");
     for (usize mode = 0; mode < 2; mode++) {
@@ -184,7 +184,7 @@ export void test_runner_checks_the_api_tests_are_found_and_the_passing_ones_pass
 }
 
 export void test_runner_checks_the_ordering_checks_fail_with_the_values_and_their_types(io::Io *io) {
-    scratch::Project p = api_project(io);
+    scratch::Project p = runner::built_here(io, "runner_base", "runner_api", "");
     if (!runner::can_symbolize(&p)) return;
     const char *file = "tests/test_api.smith";
     for (usize mode = 0; mode < 2; mode++) {
@@ -203,7 +203,7 @@ export void test_runner_checks_the_ordering_checks_fail_with_the_values_and_thei
 }
 
 export void test_runner_checks_a_nan_is_unordered_so_every_comparison_but_not_equal_fails(io::Io *io) {
-    scratch::Project p = api_project(io);
+    scratch::Project p = runner::built_here(io, "runner_base", "runner_api", "");
     if (!runner::can_symbolize(&p)) return;
     const char *file = "tests/test_api.smith";
     for (usize mode = 0; mode < 2; mode++) {
@@ -227,7 +227,7 @@ export void test_runner_checks_a_nan_is_unordered_so_every_comparison_but_not_eq
 }
 
 export void test_runner_checks_same_bits_tells_zero_from_minus_zero_and_shows_hex(io::Io *io) {
-    scratch::Project p = api_project(io);
+    scratch::Project p = runner::built_here(io, "runner_base", "runner_api", "");
     if (!runner::can_symbolize(&p)) return;
     const char *file = "tests/test_api.smith";
     for (usize mode = 0; mode < 2; mode++) {
@@ -242,7 +242,7 @@ export void test_runner_checks_same_bits_tells_zero_from_minus_zero_and_shows_he
 }
 
 export void test_runner_checks_check_near_for_f32_and_infinity_and_pointers_report_their_values(io::Io *io) {
-    scratch::Project p = api_project(io);
+    scratch::Project p = runner::built_here(io, "runner_base", "runner_api", "");
     if (!runner::can_symbolize(&p)) return;
     const char *file = "tests/test_api.smith";
     for (usize mode = 0; mode < 2; mode++) {

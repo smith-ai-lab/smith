@@ -89,7 +89,7 @@ export void test_runner_project_a_test_sees_full_only_with_the_full_option(io::I
 }
 
 export void test_runner_project_check_same_bits_compares_the_bits_and_shows_them_in_hex(io::Io *io) {
-    scratch::Project p = extras_project(io);
+    scratch::Project p = runner::built_here(io, "runner_base", "runner_extras", "");
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run equal = runner::tests(&p, iso, "--test bits_equal");
@@ -257,7 +257,7 @@ export void test_runner_project_the_same_test_in_two_files_fails_the_build(io::I
 }
 
 export void test_runner_project_a_failing_smith_test_names_the_smith_line_and_the_function_as_written(io::Io *io) {
-    scratch::Project p = lang_project(io);
+    scratch::Project p = runner::built_here(io, "runner_base", "runner_lang", "");
     if (!runner::can_symbolize(&p)) return;
     usize area = runner::line_of(&p, "tests/geometry/box_test.smith", "test::check_equal_u64(area, expected);");
     usize library = runner::line_of(&p, "tests/geometry/box_test.smith", "helpers::require(box::area(2, 3) == 7);");
