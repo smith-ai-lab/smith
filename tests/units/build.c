@@ -50,9 +50,9 @@ void build(SmithBuild *b) {
     smith_object(b, &core);
     SmithTests tests = {
         .objects = (const SmithObject *[]){&http, &core, nullptr},
-        .sources =
-            smith_glob(b, smith_list(b, "lib/smith/*_test.smith", "lib/*_test.smith", "tests/*_test.smith",
-                                     "tests/scratch.smith", "tests/runner.smith", "tests/prove_cases.smith", nullptr)),
+        .sources = smith_glob(b, smith_list(b, "lib/smith/*_test.smith", "lib/*_test.smith", "tests/*_test.smith",
+                                            "tests/scratch.smith", "tests/runner.smith", "tests/prove_cases.smith",
+                                            "tests/corpus.smith", nullptr)),
         .flags = flags,
         .link_flags = smith_list(b, "-fsanitize=address,undefined", nullptr),
     };

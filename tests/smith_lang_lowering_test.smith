@@ -17,6 +17,7 @@ import smith::format;
 import smith::io;
 import smith::mem;
 import smith::test;
+import corpus;
 import <smith_core.h>;
 import <string.h>;
 
@@ -39,10 +40,6 @@ static const char *copy_text(io::Io *io, const char *text) {
     char *copy = arena::push_slice(&io->arena, char, length + 1).data;
     mem::copy(copy[0:length], text[0:length]);
     return copy;
-}
-
-static typeof(const char[:]) slice_of(const char *text) {
-    return text[0:c::strlen(text)];
 }
 
 static bool ends_with(const char *text, const char *tail) {
@@ -273,7 +270,7 @@ typedef enum { Pass_Files, Pass_Record, Pass_Compare } Pass;
 // A case lowered: the C of each file, the header of each module and the errors. `Pass_Files` compares them with the
 // case's folder; `Pass_Record` keeps the C of each file in `slots`, and `Pass_Compare` lowers again and checks it is
 // the same.
-static void check_case(io::Io *io, const char *kase, Pass pass, const char **slots) {
+static void check_case(io::Io *io, const char *kase, Pass pass, const char **slots, const char **differing) {
     const char *folder = join3(io, "tests/smith-lang/cases/", kase, "");
     const char *files[files_max];
     usize count = sources_of(io, kase, files, files_max);
@@ -292,29 +289,30 @@ static void check_case(io::Io *io, const char *kase, Pass pass, const char **slo
         if (pass == Pass_Compare && i < slots_per_case) test::check_equal(c::strcmp(slots[i], lowered_text), 0);
         if (pass != Pass_Files) continue;
         const char *golden = join3(io, folder, "/expect/lowered/", format::push(&io->arena, module, ".c").data);
-        if (exists(io, golden) || (test::updating() && fresh))
-            test::golden(io, slice_of(golden), slice_of(lowered_text));
+        if (exists(io, golden) || (test::updating() && fresh)) corpus::golden(io, differing, golden, lowered_text);
         // the header of the module, as `smith cc --smith-header` writes it
         if (header_by_command(kase)) continue;
         bool made =
             c::smith_core_header(folder, file, nullptr, header_text, header_capacity, report_text, report_capacity);
         const char *header_golden = join3(io, folder, "/expect/header/", format::push(&io->arena, module, ".h").data);
         if (made && (exists(io, header_golden) || (test::updating() && fresh)))
-            test::golden(io, slice_of(header_golden), slice_of(header_text));
+            corpus::golden(io, differing, header_golden, header_text);
     }
     const char *error_golden = join3(io, folder, "/expect/lower-error", "");
     const char *joined = sorted_unique(io, errors, error_count);
     if (pass == Pass_Files && (exists(io, error_golden) || (test::updating() && fresh && joined[0] != '\0')))
-        test::golden(io, slice_of(error_golden), slice_of(joined));
+        corpus::golden(io, differing, error_golden, joined);
 }
 
 static void check_shard(io::Io *io, usize shard) {
     const char *cases[cases_max];
     usize count = names_of(io, "tests/smith-lang/cases", true, cases, cases_max);
     test::check(count > 100);
+    const char *differing = "";
     for (usize i = shard; i < count; i += shards) {
-        if (lowers(io, cases[i])) check_case(io, cases[i], Pass_Files, nullptr);
+        if (lowers(io, cases[i])) check_case(io, cases[i], Pass_Files, nullptr, &differing);
     }
+    corpus::finish(differing);
 }
 
 export void test_corpus_lowering_shard_0(io::Io *io) {
@@ -343,12 +341,12 @@ export void test_lowering_twice_is_the_same(io::Io *io) {
     usize lowered = 0;
     for (usize i = 0; i < count; i++) {
         if (!lowers(io, cases[i])) continue;
-        check_case(io, cases[i], Pass_Record, seen_lowered + i * slots_per_case);
+        check_case(io, cases[i], Pass_Record, seen_lowered + i * slots_per_case, nullptr);
         lowered += 1;
     }
     for (usize i = count; i > 0; i--) {
         if (lowers(io, cases[i - 1]))
-            check_case(io, cases[i - 1], Pass_Compare, seen_lowered + (i - 1) * slots_per_case);
+            check_case(io, cases[i - 1], Pass_Compare, seen_lowered + (i - 1) * slots_per_case, nullptr);
     }
     test::check(lowered > 200);
 }
