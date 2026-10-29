@@ -80,9 +80,10 @@ export void test_build_step_cache_a_hit_is_newer_than_the_sources_even_from_an_o
     (void)scratch::sh(&b, "find \"$XDG_CACHE_HOME/smith/steps/r\" -type f -exec touch -t 200101010000 {} +");
     scratch::Run served = scratch::sh(&b, built(&b, ""));
     scratch::expect_contains("old entry: the second folder is served", served.out, "(cached)");
+    // Not older, rather than newer: macOS's sh compares whole seconds, and the sources and the hit share one.
     scratch::Run newer =
-        scratch::sh(&b, "for f in main other util; do [ build/release/$f.o -nt $f.c ] || exit 1; done");
-    scratch::expect_status("old entry: its objects are newer than the sources", 0, &newer);
+        scratch::sh(&b, "for f in main other util; do [ $f.c -nt build/release/$f.o ] && exit 1; done; exit 0");
+    scratch::expect_status("old entry: its objects are not older than the sources", 0, &newer);
     scratch::Run again = scratch::sh(&b, built(&b, ""));
     scratch::expect_contains("old entry: and the next build has no work", again.out, "no work to do");
 }
