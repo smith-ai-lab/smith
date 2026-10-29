@@ -166,7 +166,9 @@ constexpr i32 sig_abrt = c::SIGABRT;                              // NOLINT(smit
 constexpr i32 sig_alrm = c::SIGALRM;                              // NOLINT(smith-preprocessor)
 constexpr i32 sig_bus = c::SIGBUS;                                // NOLINT(smith-preprocessor)
 constexpr i32 sig_fpe = c::SIGFPE;                                // NOLINT(smith-preprocessor)
+constexpr i32 sig_hup = c::SIGHUP;                                // NOLINT(smith-preprocessor)
 constexpr i32 sig_ill = c::SIGILL;                                // NOLINT(smith-preprocessor)
+constexpr i32 sig_int = c::SIGINT;                                // NOLINT(smith-preprocessor)
 constexpr i32 sig_kill = c::SIGKILL;                              // NOLINT(smith-preprocessor)
 constexpr i32 wait_no_hang = c::WNOHANG;                          // NOLINT(smith-preprocessor)
 constexpr i32 sig_term = c::SIGTERM;                              // NOLINT(smith-preprocessor)
@@ -1996,6 +1998,9 @@ void coverage_end(const Test *test, bool passed, f64 cpu) {
 // In a forked process, before its first test: all output goes down the pipe.
 void setup(Shared *block, i32 output) {
     shared = block;
+    c::signal(sig_hup, (void (*)(i32))0); // SIG_DFL: the runner's handler ends the workers, it is not theirs to run
+    c::signal(sig_int, (void (*)(i32))0);
+    c::signal(sig_term, (void (*)(i32))0);
     catch_signals();
     c::smith_failure_hook = on_failure;
     hooking_tap.word = tap_word;
@@ -2147,6 +2152,31 @@ typedef struct {
 Process processes[jobs_max + 1];
 constexpr usize shrink_slot = jobs_max;
 
+// Every worker, and every --isolate child, leads a process group of its own (setpgid, in the child and in the runner,
+// so neither waits for the other): the processes a test starts are in it and nowhere else. The runner shares its group
+// with `smith build` that runs it and with whatever that runs, so a signal sent to a group, by a kill or by the kernel
+// (SIGHUP to an orphaned group with a stopped process in it), must never name the runner's: it ended `smith build` with
+// "interrupted by user" and status 129 (#754).
+void own_group(c::pid_t pid) {
+    c::setpgid(pid, pid);
+}
+
+// Ends a test's worker and the processes it started, and only those: its group, else (the group was not made) itself.
+// Only for a process the runner has not waited for, whose pid is no one else's yet.
+void kill_group(c::pid_t pid) {
+    if (pid <= 0) return; // a pid of 0 is this process's group, and -1 every process there is
+    if (c::kill(-pid, sig_kill) != 0) c::kill(pid, sig_kill);
+}
+
+// A signal to the runner (a Ctrl-C at the terminal reaches its group, not the workers') ends the tests with it.
+void on_runner_signal(i32 signal_number) {
+    for (usize slot = 0; slot <= jobs_max; slot++) {
+        if (processes[slot].pid > 0 && !processes[slot].reaped) kill_group(processes[slot].pid);
+    }
+    c::signal(signal_number, (void (*)(i32))0); // SIG_DFL, then the signal again: the runner ends as it would have
+    c::raise(signal_number);
+}
+
 void close_process(Process *process) {
     if (process->control >= 0) c::close(process->control);
     if (process->output >= 0) c::close(process->output);
@@ -2157,7 +2187,7 @@ void close_process(Process *process) {
 // Ends a worker that is idle, or is of no use: its process is killed and reaped.
 void discard(Process *process) {
     if (process->pid == 0) return;
-    c::kill(process->pid, sig_kill);
+    kill_group(process->pid);
     close_process(process);
     i32 status = 0;
     c::waitpid(process->pid, &status, 0);
@@ -2195,12 +2225,14 @@ void spawn(const Options *options, usize slot) {
     c::pid_t forked = c::fork();
     if (forked < 0) die("fork");
     if (forked == 0) {
+        own_group(0);
         c::close(output[0]);
         c::close(control[0]);
         close_others(slot);
         worker_main(options, &shared_slots[slot], control[1], output[1]);
     }
     hooking = false;
+    own_group(forked);
     c::close(output[1]);
     c::close(control[1]);
     if (c::fcntl(output[0], set_flags, non_blocking) != 0) die("fcntl");
@@ -2217,11 +2249,13 @@ void start_isolated(const Test *test, const Options *options, usize slot, const 
     c::pid_t forked = c::fork();
     if (forked < 0) die("fork");
     if (forked == 0) {
+        own_group(0);
         c::close(ends[0]);
         close_others(slot);
         child(test, options, &shared_slots[slot], ends[1], command);
     }
     hooking = false;
+    own_group(forked);
     c::close(ends[1]);
     // Nonblocking, as a worker's pipe is: a read after the child was killed must not wait for a process it left behind
     // (a `sleep`) that still holds the pipe's other end, which stopped the whole runner for that process's life (#754).
@@ -2278,7 +2312,7 @@ ReadResult read_output(Process *process, Run *run) {
     output->text[output->kept] = '\0';
     output->total += (usize)got;
     if (output->total < output_limit) return Read_Data;
-    if (process->pid > 0) c::kill(process->pid, sig_kill); // a pid of 0 would be this process's group; waited for after
+    if (process->pid > 0) kill_group(process->pid); // waited for after
     return Read_Closed;
 }
 
@@ -3089,7 +3123,7 @@ void idle_sweep(Plan *plan) {
     idle_swept_at = now;
     list_processes(options);
     for (usize job = 0; job < options->jobs; job++) {
-        if (plan->running[job] == idle || processes[job].pid <= 0) continue;
+        if (plan->running[job] == idle || processes[job].pid <= 0 || processes[job].reaped) continue;
         Run *run = &plan->runs[plan->running[job]];
         Idle *state = &idle_states[job];
         if (state->looked_at < run->start) *state = (Idle){.progress_at = run->start, .looked_at = run->start};
@@ -3101,7 +3135,7 @@ void idle_sweep(Plan *plan) {
         if (now - state->progress_at < (f64)options->idle_timeout) continue;
         run->idle = true;
         __builtin_snprintf(run->waited, idle_text_capacity, "%s", waited);
-        c::kill(processes[job].pid, sig_kill);
+        kill_group(processes[job].pid); // the test's own processes, never the runner's
     }
 }
 
@@ -3714,6 +3748,11 @@ static void prepare_run(Options *options) {
     golden_begin(options);
     raise_files(options->jobs);
     c::signal(sig_pipe, (void (*)(i32))1); // a worker that died while idle is a failed write, not the end of the runner
+    if (!options->in_process) {
+        c::signal(sig_hup, on_runner_signal);
+        c::signal(sig_int, on_runner_signal);
+        c::signal(sig_term, on_runner_signal);
+    }
     forks = (u64 *)map_bytes((1) * sizeof(u64), map_shared);
     explained = (u64 *)map_bytes((explain_stats) * sizeof(u64), map_shared);
     explain_path = options->explain;

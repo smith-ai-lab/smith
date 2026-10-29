@@ -475,3 +475,32 @@ export void test_runner_workers_a_test_that_waits_without_cpu_time_fails_and_nam
         runner::expect_has(io, iso, "idle: a test that computes passes", &run, "1 passed, 2 failed");
     }
 }
+
+// A signal to a test's process group, and the runner's own end of an idle test, reach only the test's own processes:
+// the runner and the shell that started it (which share a group here, as the runner and `smith build` do) get none, and
+// the runner reports the failures and ends as it should. Before, the runner shared its group with its workers, and a
+// group signal from a test ended it and `smith build` with "interrupted by user" and status 129 (#754). Wall time on
+// purpose: the idle limit, 2 s.
+export void test_runner_workers_a_signal_to_a_tests_group_never_reaches_the_runner_or_its_parent(io::Io *io) {
+    scratch::Project p = runner::built_project(io, "runner_base", "runner_group", "-DSAN=0");
+    for (usize mode = 0; mode < 2; mode++) {
+        const char *iso = runner::flag(mode);
+        scratch::Run run = scratch::sh(
+            &p, format::push(&io->arena,
+                             "rm -f parent.sig runner.status; sh -c 'trap \"echo HUP >>parent.sig\" HUP; "
+                             "trap \"echo INT >>parent.sig\" INT; trap \"echo TERM >>parent.sig\" TERM; "
+                             "build/tests ",
+                             iso,
+                             " --idle-timeout 2 --jobs 3 2>&1; echo $? >runner.status'; "
+                             "echo \"runner status $(cat runner.status)\"; echo \"parent signals: $(cat parent.sig "
+                             "2>/dev/null)\"")
+                    .data);
+        runner::expect_has(io, iso, "group: the test that hung up its group is reported", &run,
+                           "FAIL group_1_hangs_up_its_group: killed by");
+        runner::expect_has(io, iso, "group: the idle test is ended", &run,
+                           "FAIL group_2_waits_for_a_child: used no CPU time for 2 s");
+        runner::expect_has(io, iso, "group: ... and the third test runs", &run, "1 passed, 2 failed");
+        runner::expect_has(io, iso, "group: the runner ended by itself, reporting failures", &run, "runner status 1");
+        runner::expect_has(io, iso, "group: its parent was sent no signal", &run, "parent signals: \n");
+    }
+}
