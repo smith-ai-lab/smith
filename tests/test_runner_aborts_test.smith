@@ -10,10 +10,7 @@ import runner;
 import scratch;
 
 static scratch::Project built(io::Io *io, const char *base, const char *files, const char *arguments) {
-    scratch::Project p = runner::project(io, base, files);
-    scratch::Run run = runner::build(&p, arguments);
-    scratch::expect_status("the runner builds", 0, &run);
-    return p;
+    return runner::built_project(io, base, files, arguments);
 }
 
 export void test_runner_aborts_an_expected_abort_passes_and_hides_the_childs_output(io::Io *io) {
@@ -135,8 +132,7 @@ static scratch::Project profile_project(io::Io *io, const char *flags) {
         format::push(&io->arena, "sed -i.bak 's/\"-Wconversion\",/\"-Wconversion\", ", flags, ",/' build.c").data;
     scratch::Run edited = scratch::sh(&p, edit);
     scratch::expect_status("profiles: the flags are set", 0, &edited);
-    scratch::Run run = runner::build(&p, "-DSAN=0");
-    scratch::expect_status("profiles: the runner builds", 0, &run);
+    runner::link_built(&p, "-DSAN=0");
     return p;
 }
 
@@ -307,8 +303,7 @@ static scratch::Project properties_project(io::Io *io) {
     scratch::Project p = runner::project(io, "runner_base", "runner_properties");
     runner::add(&p, "runner_checks");
     runner::add(&p, "runner_isolation");
-    scratch::Run run = runner::build(&p, "");
-    scratch::expect_status("properties: the runner builds", 0, &run);
+    runner::copy_built(&p, "");
     return p;
 }
 
