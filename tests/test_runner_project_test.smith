@@ -28,9 +28,7 @@ export void test_runner_project_a_test_the_scan_missed_fails_to_compile(io::Io *
 }
 
 export void test_runner_project_a_file_without_tests_adds_nothing_and_a_project_with_none_builds(io::Io *io) {
-    scratch::Project p = runner::project(io, "runner_base", "runner_find_helpers");
-    scratch::Run built = runner::build(&p, "");
-    scratch::expect_status("no tests: a file without tests is fine", 0, &built);
+    scratch::Project p = runner::built_copy(io, "runner_base", "runner_find_helpers", "");
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::expect_text(runner::label(io, iso, "no tests: ... and adds nothing"), "same",
@@ -50,9 +48,7 @@ export void test_runner_project_a_file_without_tests_adds_nothing_and_a_project_
 // Section 8. smith_tests links the arena and random itself when .objects leaves them out, and builds with no .objects
 // at all.
 export void test_runner_project_a_library_left_out_of_objects_is_linked_by_smith_tests(io::Io *io) {
-    scratch::Project p = runner::project(io, "runner_base", "runner_missing");
-    scratch::Run built = runner::build(&p, "");
-    scratch::expect_status("objects: a library left out of .objects is linked by smith_tests", 0, &built);
+    scratch::Project p = runner::built_project(io, "runner_base", "runner_missing", "");
     for (usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
         scratch::Run run = runner::tests(&p, iso, "");
@@ -74,10 +70,7 @@ export void test_runner_project_no_objects_at_all_builds_and_the_test_runs(io::I
 
 // Section 8b. Full size, check_same_bits and .inputs.
 static scratch::Project extras_project(io::Io *io) {
-    scratch::Project p = runner::project(io, "runner_base", "runner_extras");
-    scratch::Run run = runner::build(&p, "");
-    scratch::expect_status("extras: the runner builds", 0, &run);
-    return p;
+    return runner::built_copy(io, "runner_base", "runner_extras", "");
 }
 
 export void test_runner_project_a_test_sees_full_only_with_the_full_option(io::Io *io) {
@@ -141,8 +134,7 @@ export void test_runner_project_inputs_are_built_before_the_tests_and_rerun_them
 export void test_runner_project_clangd_reads_a_test_file_without_errors(io::Io *io) {
     scratch::Project p = runner::project(io, "runner_base", "runner_checks");
     if (scratch::sh(&p, "smith lsp --version").status != 0) return;
-    scratch::Run built = runner::build(&p, "");
-    scratch::expect_status("clangd: the project builds", 0, &built);
+    runner::copy_built(&p, "");
     // The sample is not what smith-effects tests; its checks are off.
     scratch::write(&p, ".clang-tidy", "Checks: \"-*\"\n");
     scratch::expect_text(
@@ -153,10 +145,9 @@ export void test_runner_project_clangd_reads_a_test_file_without_errors(io::Io *
 // The analyzer: test::check(p != nullptr) is an assumption to it, as contract::assert is (target::static_analyzer), so
 // the null dereference after it is not reported; the same function without the check is.
 export void test_runner_project_the_analyzer_takes_a_test_check_as_an_assumption(io::Io *io) {
-    scratch::Project p = runner::project(io, "runner_base", "runner_checks");
+    // analyzer.smith is not built (the runner's sources are tests/test_*): the lint needs the project's headers.
+    scratch::Project p = runner::built_copy(io, "runner_base", "runner_checks", "");
     runner::add(&p, "runner_analyzer");
-    scratch::Run built = runner::build(&p, "");
-    scratch::expect_status("analyzer: the project builds", 0, &built);
     // The sample is not what smith-effects tests; its checks are off.
     scratch::write(&p, ".clang-tidy", "Checks: \"-*\"\n");
     scratch::Run lint =
@@ -215,10 +206,7 @@ export void test_runner_project_the_trace_library_compiles_clean_under_the_conve
 // report names the .smith line and the function as written. A library in the module `smith::test` is machinery, like
 // the C one.
 static scratch::Project lang_project(io::Io *io) {
-    scratch::Project p = runner::project(io, "runner_base", "runner_lang");
-    scratch::Run run = runner::build(&p, "");
-    scratch::expect_status("smith tests: the runner builds", 0, &run);
-    return p;
+    return runner::built_copy(io, "runner_base", "runner_lang", "");
 }
 
 export void test_runner_project_smith_tests_are_found_and_selected_by_the_name_as_written(io::Io *io) {
@@ -307,10 +295,8 @@ export void test_runner_project_a_failing_smith_test_names_the_smith_line_and_th
 // with its path printed, when it fails. The tests write what they saw into $SMITH_TEST_PROBE/<name>, which the checks
 // read.
 static scratch::Project io_project(io::Io *io) {
-    scratch::Project p = runner::project(io, "runner_base", "runner_io");
+    scratch::Project p = runner::built_copy(io, "runner_base", "runner_io", "");
     (void)scratch::sh(&p, "mkdir probe");
-    scratch::Run run = runner::build(&p, "");
-    scratch::expect_status("io tests: the runner builds", 0, &run);
     return p;
 }
 
