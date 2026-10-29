@@ -747,7 +747,8 @@ class SmithHook final : public TokenHook, public NameSource {
             scan.contains("type ") || scan.contains("auto ") || scan.contains("auto...") || namesConcept(scan);
         host.maybe_if_constexpr = hasIfConstexpr(scan);
         host.maybe_local_tag = hasNestedTag(scan);
-        host.maybe_slice = hasSlice(scan) || hasStr(scan);
+        host.maybe_undefined = hasUndefined(scan);
+        host.maybe_slice = hasSlice(scan) || hasStr(scan) || host.maybe_undefined;
         host.maybe_brackets = hasEmptyBrackets(scan);
         host.maybe_shape = hasShapeCall(scan);
         host.maybe_tuple =
@@ -2900,6 +2901,22 @@ class SmithHook final : public TokenHook, public NameSource {
             if (text[at] == '\\') at += 1;
         }
         return at < text.size() ? at + 1 : text.size();
+    }
+
+    // Whether the code of the text has the word `undefined`: `T x = undefined;` is read where the `=` is offered, which
+    // is slice mode (runtime/lang_slice.c).
+    static bool hasUndefined(StringRef text) {
+        for (size_t at = 0; at + 9 <= text.size(); at++) {
+            size_t after = skipLiteral(text, at);
+            if (after != at) {
+                at = after - 1;
+                continue;
+            }
+            bool before = at > 0 && isAsciiIdentifierContinue(text[at - 1]);
+            bool follows = at + 9 < text.size() && isAsciiIdentifierContinue(text[at + 9]);
+            if (!before && !follows && text.substr(at, 9) == "undefined") return true;
+        }
+        return false;
     }
 
     // Whether the code of the text has the word `str`, the type `const char[:]` of a module (runtime/lang_slice.c).

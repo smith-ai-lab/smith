@@ -1,0 +1,22 @@
+module main;
+
+// `undefined` is only a local's whole initializer (issue #743): every other use is an error.
+i32 global = undefined;
+
+struct Pair {
+    i32 undefined;
+    i32 other;
+};
+
+static i32 value(void) {
+    return undefined;
+}
+
+i32 main() {
+    i32 x = undefined;
+    x = undefined;
+    i32 y = 1 + undefined;
+    i32 z = undefined, w = 2;
+    static i32 s = undefined;
+    return x + y + z + w + s + value();
+}

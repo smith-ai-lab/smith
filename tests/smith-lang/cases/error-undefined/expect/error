@@ -1,0 +1,13 @@
+src/main.smith:12:12: `undefined` is only a local's whole initializer: T x = undefined; (it is a reserved name in a module)
+src/main.smith:12:12: use of undeclared identifier 'undefined'
+src/main.smith:17:9: `undefined` is only a local's whole initializer: T x = undefined; (it is a reserved name in a module)
+src/main.smith:17:9: use of undeclared identifier 'undefined'
+src/main.smith:18:17: `undefined` is only a local's whole initializer: T x = undefined; (it is a reserved name in a module)
+src/main.smith:18:17: use of undeclared identifier 'undefined'
+src/main.smith:19:13: `undefined` is only a local's whole initializer: T x = undefined; (it is a reserved name in a module)
+src/main.smith:19:13: use of undeclared identifier 'undefined'
+src/main.smith:20:20: `undefined` is only a local's whole initializer: T x = undefined; (it is a reserved name in a module)
+src/main.smith:20:20: use of undeclared identifier 'undefined'
+src/main.smith:4:14: `undefined` is only a local's whole initializer: T x = undefined; (it is a reserved name in a module)
+src/main.smith:4:14: use of undeclared identifier 'undefined'
+src/main.smith:7:9: `undefined` is only a local's whole initializer: T x = undefined; (it is a reserved name in a module)

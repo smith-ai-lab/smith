@@ -700,8 +700,10 @@ static SmithLang *smith_lang_run_interface(const char *file, const char *text, s
         .declarations_only = true, // an importer reads the names, not the bodies: a call there needs no instance
         .maybe_generic = true,
         .maybe_if_constexpr = true,
+        .maybe_undefined = smith_lang_text_has_undefined(smith_lang_source, raw.length),
         .maybe_slice = smith_lang_text_has_slice(smith_lang_source, raw.length) ||
-                       smith_lang_text_has_str(smith_lang_source, raw.length),
+                       smith_lang_text_has_str(smith_lang_source, raw.length) ||
+                       smith_lang_text_has_undefined(smith_lang_source, raw.length),
     };
     SmithRawNames names = {};
     raw.names = &names;
@@ -1134,8 +1136,10 @@ static int smith_lang_run_raw(const SmithRawRun *run) {
         .declarations_only = run->header,
         .maybe_generic = true,
         .maybe_if_constexpr = true,
+        .maybe_undefined = smith_lang_text_has_undefined(smith_lang_source, raw.length),
         .maybe_slice = smith_lang_text_has_slice(smith_lang_source, raw.length) ||
-                       smith_lang_text_has_str(smith_lang_source, raw.length),
+                       smith_lang_text_has_str(smith_lang_source, raw.length) ||
+                       smith_lang_text_has_undefined(smith_lang_source, raw.length),
     };
     SmithRawNames names = {};
     raw.names = &names;

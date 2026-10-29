@@ -3489,6 +3489,29 @@ i32 stat(i32 fd) {
 i32 main() {
     return stat(0);
 }
+==> error-undefined/src/main.smith <==
+module main;
+
+// `undefined` is only a local's whole initializer (issue #743): every other use is an error.
+i32 global = undefined;
+
+struct Pair {
+    i32 undefined;
+    i32 other;
+};
+
+static i32 value(void) {
+    return undefined;
+}
+
+i32 main() {
+    i32 x = undefined;
+    x = undefined;
+    i32 y = 1 + undefined;
+    i32 z = undefined, w = 2;
+    static i32 s = undefined;
+    return x + y + z + w + s + value();
+}
 ==> error-unused-discard-braces/src/main.smith <==
 module main;
 
@@ -11972,6 +11995,45 @@ i32 main() {
     Local l = {.inner = 8};
     c::printf("%d %d %d %d %d %d %d %d %d %d\n", sum(&first), n.whole, (int)c, s == .circle, e == .empty,
               holder.later->count, legacy.a, bare.b, (int)q.x, l.inner);
+    return 0;
+}
+==> undefined-local/src/main.smith <==
+module main;
+
+import <stdio.h>;
+
+// `T x = undefined;` opts a local out of zero initialization (issue #743): the compiler leaves it alone (clang's
+// `uninitialized` attribute) and a debug build fills it with 0xAA bytes. The measurement that justified it goes in a
+// comment, here: none, this is a test.
+static i32 fill(i32 n) {
+    i32 xs[8] = undefined;
+    for (i32 i = 0; i < 8; i++)
+        xs[i] = n + i;
+    return xs[7];
+}
+
+i32 main() {
+    i32 total = undefined;
+    total = fill(3);
+    i32 *p = nullptr;
+    i32 second = undefined;
+    p = &second;
+    *p = 4;
+    for (i32 k = undefined; (k = 5) < 0;)
+        total += k;
+    c::printf("%d %d\n", total, second);
+    return 0;
+}
+==> undefined-plain/src/main.smith <==
+// No `module` line: this is C, and `undefined` is an ordinary name (issue #743).
+#include <stdio.h>
+
+static int undefined = 7;
+
+int main(void) {
+    int copy = undefined;
+    undefined = copy + 1;
+    printf("%d\n", undefined);
     return 0;
 }
 ==> unused-run/src/main.smith <==

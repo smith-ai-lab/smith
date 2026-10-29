@@ -358,9 +358,9 @@ export void test_resource_a_missing_linker_and_an_undefined_symbol_fail(io::Io *
     scratch::Run none = run(io, &p, "SMITH_LINKER=/nonexistent/ld \"$smith\" cc hello.c -o linked_none");
     scratch::expect_status("resource: a SMITH_LINKER that is not there is an error", 1, &none);
     scratch::expect_contains("resource: and says what it is", none.err, "SMITH_LINKER");
-    scratch::Run undefined = run(io, &p, "\"$smith\" cc undefined.c -o undefined");
-    scratch::expect_status("resource: an undefined symbol fails", 1, &undefined);
-    scratch::expect_contains("resource: with lld's message", undefined.err, "undefined symbol: missing");
+    scratch::Run missing_symbol = run(io, &p, "\"$smith\" cc undefined.c -o undefined");
+    scratch::expect_status("resource: an undefined symbol fails", 1, &missing_symbol);
+    scratch::expect_contains("resource: with lld's message", missing_symbol.err, "undefined symbol: missing");
     scratch::expect_text("resource: and leaves no output", "no", text(io, &p, "yn undefined"));
 }
 

@@ -1838,3 +1838,15 @@ export void test_generic_some_operand_derived(io::Io *io) {
 export void test_postfix_after_compound_literal(io::Io *io) {
     corpus_case(io, "postfix-after-compound-literal");
 }
+
+export void test_undefined_local(io::Io *io) {
+    corpus_case(io, "undefined-local");
+}
+
+export void test_error_undefined(io::Io *io) {
+    corpus_case(io, "error-undefined");
+}
+
+export void test_undefined_plain(io::Io *io) {
+    corpus_case(io, "undefined-plain");
+}

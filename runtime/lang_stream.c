@@ -1254,7 +1254,10 @@ static bool smith_lang_slice_process(SmithLang *lang, const SmithHost *host, con
         lang->slice.typeof_tag[0] = 0;
     }
     bool at_start = lang->slice.after_boundary;
+    bool after_paren = lang->slice.after_paren;
     lang->slice.after_boundary = smith_lang_slice_boundary(token);
+    lang->slice.after_paren = smith_lang_punct(token, "(");
+    if (smith_lang_undefined_token(lang, host, token, at_start, after_paren)) return true;
     if (lang->enums_seen && smith_lang_enum_token(lang, host, token)) return true;
     if (smith_lang_slice_str(lang, host, token)) return true;
     if (at_start && smith_lang_slice_begin(lang, host, token)) return true;

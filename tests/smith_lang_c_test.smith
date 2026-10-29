@@ -197,6 +197,10 @@ export void test_the_languages_words_as_names_print_the_same_as_c(io::Io *io) {
     behave(io, "names");
 }
 
+export void test_undefined_is_an_ordinary_name_without_a_module_line(io::Io *io) {
+    behave(io, "undefined");
+}
+
 export void test_ordinary_constructs_print_the_same_as_c(io::Io *io) {
     behave(io, "ordinary");
 }

@@ -1,0 +1,26 @@
+module main;
+
+import <stdio.h>;
+
+// `T x = undefined;` opts a local out of zero initialization (issue #743): the compiler leaves it alone (clang's
+// `uninitialized` attribute) and a debug build fills it with 0xAA bytes. The measurement that justified it goes in a
+// comment, here: none, this is a test.
+static i32 fill(i32 n) {
+    i32 xs[8] = undefined;
+    for (i32 i = 0; i < 8; i++)
+        xs[i] = n + i;
+    return xs[7];
+}
+
+i32 main() {
+    i32 total = undefined;
+    total = fill(3);
+    i32 *p = nullptr;
+    i32 second = undefined;
+    p = &second;
+    *p = 4;
+    for (i32 k = undefined; (k = 5) < 0;)
+        total += k;
+    c::printf("%d %d\n", total, second);
+    return 0;
+}

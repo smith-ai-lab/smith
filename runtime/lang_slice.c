@@ -3336,3 +3336,159 @@ static bool smith_lang_slice_replay(SmithLang *lang, const SmithHost *host, Smit
     }
     return smith_lang_slice_replay_subscript(lang, host, replay, place, frame, false);
 }
+
+// ---- `T x = undefined;` (issue #743, knowledge/zero-value.md)
+// -----------------------------------------------------------------------------------------------
+//
+// A module's local starts at zero; `T x = undefined;` opts one out. The `=` is seen only in slice mode, so a file with
+// the word `undefined` is offered every token (the hook's hasUndefined, smith_lang_text_has_undefined). At the first
+// token of a statement the lowering looks ahead for `T x = undefined ;` and marks the `=`; at the `=` the two tokens
+// `= undefined` become clang's `uninitialized` attribute (which `-ftrivial-auto-var-init` and the hook's ZeroLocals
+// both respect). A build with the address sanitizer (the debug profile) also fills the local with 0xAA bytes, so a read
+// before a write shows. Any other `undefined` of a module is an error.
+
+// Whether the code of the text has the word `undefined`, outside comments and strings.
+static bool smith_lang_text_has_undefined(const char *text, size_t length) {
+    for (size_t at = 0; at + 9 <= length; at++) { // each place a word could begin
+        size_t after = smith_lang_text_skip(text, length, at);
+        if (after != at) {
+            at = after - 1;
+            continue;
+        }
+        bool before = at > 0 && (isalnum((unsigned char)text[at - 1]) != 0 || text[at - 1] == '_');
+        bool follows = at + 9 < length && (isalnum((unsigned char)text[at + 9]) != 0 || text[at + 9] == '_');
+        if (!before && !follows && memcmp(text + at, "undefined", 9) == 0) return true;
+    }
+    return false;
+}
+
+// The words that begin a declaration that is no automatic local.
+static bool smith_lang_undefined_storage(const SmithToken *token) {
+    static const char *const words[] = {"static", "extern", "typedef", "constexpr", "thread_local", "register"};
+    for (size_t i = 0; i < sizeof words / sizeof words[0]; i++) { // 6 words
+        if (smith_lang_ident(token, words[i])) return true;
+    }
+    return false;
+}
+
+// What the statement's tokens before a `=` say of a declaration: the type's words, stars and `::`, a name, and
+// dimensions. `last` and `before` are the last two tokens outside the brackets. False when it is anything else.
+typedef struct {
+    size_t equals; // the index of the `=`
+    const SmithToken *last;
+    const SmithToken *before;
+} SmithLangUndefinedHead;
+
+static bool smith_lang_undefined_head(SmithLang *lang, const SmithHost *host, const SmithToken *first,
+                                      SmithLangUndefinedHead *head) {
+    int depth = 0;
+    size_t count = 1;
+    head->last = first;
+    head->before = nullptr;
+    for (size_t at = 1; at < smith_lang_slice_scan_max; at++) { // a declaration's head is a few tokens
+        const SmithToken *token = smith_lang_slice_at(lang, host, first, at);
+        if (token->kind == SmithTokenKind_Eof || token->foreign) return false;
+        if (depth > 0 || smith_lang_punct(token, "[")) {
+            depth += smith_lang_punct(token, "[") ? 1 : 0;
+            depth -= smith_lang_punct(token, "]") ? 1 : 0;
+            continue; // a dimension: any tokens
+        }
+        if (smith_lang_punct(token, "=")) {
+            head->equals = at;
+            return count >= 2;
+        }
+        if (token->kind != SmithTokenKind_Identifier && !smith_lang_punct(token, "*") &&
+            !smith_lang_punct(token, "::")) {
+            return false;
+        }
+        head->before = head->last;
+        head->last = token;
+        count += 1;
+    }
+    return false;
+}
+
+// At the first token of a statement: whether it is `T x = undefined;`, a local's declaration whose whole initializer is
+// the name. Marks the `=` for smith_lang_undefined_equals.
+static void smith_lang_undefined_begin(SmithLang *lang, const SmithHost *host, const SmithToken *first,
+                                       bool after_paren) {
+    lang->slice.undefined_at = 0;
+    if (!lang->is_module || !lang->in_function || lang->recording || first->foreign || first->synthetic ||
+        first->kind != SmithTokenKind_Identifier || smith_lang_slice_statement_word(first) ||
+        smith_lang_undefined_storage(first)) {
+        return;
+    }
+    SmithLangUndefinedHead head = {};
+    if (!smith_lang_undefined_head(lang, host, first, &head)) return;
+    bool named = head.last->kind == SmithTokenKind_Identifier && head.before != nullptr &&
+                 (head.before->kind == SmithTokenKind_Identifier || smith_lang_punct(head.before, "*"));
+    const SmithToken *value = smith_lang_slice_at(lang, host, first, head.equals + 1);
+    const SmithToken *end = smith_lang_slice_at(lang, host, first, head.equals + 2);
+    if (!named || !smith_lang_ident(value, "undefined") || !smith_lang_punct(end, ";") || value->foreign ||
+        head.last->length >= sizeof lang->slice.undefined_name) {
+        return;
+    }
+    lang->slice.undefined_at = smith_lang_slice_at(lang, host, first, head.equals)->location;
+    snprintf(lang->slice.undefined_name, sizeof lang->slice.undefined_name, "%.*s", (int)head.last->length,
+             head.last->text);
+    int64_t sanitized = 0;
+    lang->slice.undefined_fill = !after_paren && host->target_fact != nullptr &&
+                                 host->target_fact(host->context, SmithTarget_AddressSanitizer, &sanitized) &&
+                                 sanitized != 0;
+}
+
+// The `=` of a marked declaration: it and `undefined` become the attribute, then (in debug) the fill statement, whose
+// `;` is the declaration's own.
+static bool smith_lang_undefined_equals(SmithLang *lang, const SmithToken *token) {
+    lang->slice.undefined_at = 0;
+    static const char *const words[] = {"__attribute__",
+                                        "(",
+                                        "(",
+                                        "uninitialized",
+                                        ")",
+                                        ")",
+                                        ";",
+                                        "__builtin_memset_inline",
+                                        "(",
+                                        "&",
+                                        "",
+                                        ",",
+                                        "0xAA",
+                                        ",",
+                                        "sizeof",
+                                        "",
+                                        ")"};
+    size_t count = lang->slice.undefined_fill ? sizeof words / sizeof words[0] : 6;
+    SmithToken made[sizeof words / sizeof words[0]];
+    for (size_t i = 0; i < count; i++) {
+        bool name = i == 10 || i == 15;
+        const char *text = name ? lang->slice.undefined_name : words[i];
+        SmithTokenKind kind = i == 12                                                    ? SmithTokenKind_Number
+                              : (isalpha((unsigned char)text[0]) != 0 || text[0] == '_') ? SmithTokenKind_Identifier
+                                                                                         : SmithTokenKind_Punctuator;
+        made[i] = smith_lang_tuple_made(kind, text, strlen(text), token, i == 0 || i == 7 || i == 14);
+    }
+    made[0].line_start = token->line_start;
+    return smith_lang_tuple_replace(lang, 1, made, count);
+}
+
+// Any other `undefined` of a module.
+static void smith_lang_undefined_stray(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+    smith_lang_error(lang, host, token->location,
+                     "`undefined` is only a local's whole initializer: T x = undefined; (it is a reserved name in a "
+                     "module)");
+}
+
+// A token of a file with slices: true when it was part of `T x = undefined;` and the queue was rewritten.
+static bool smith_lang_undefined_token(SmithLang *lang, const SmithHost *host, const SmithToken *token, bool at_start,
+                                       bool after_paren) {
+    if (!host->maybe_undefined || token->foreign || token->synthetic || lang->recording || !lang->is_module)
+        return false;
+    if (at_start) smith_lang_undefined_begin(lang, host, token, after_paren);
+    if (lang->slice.undefined_at != 0 && token->location == lang->slice.undefined_at && smith_lang_punct(token, "=")) {
+        return smith_lang_undefined_equals(lang, token);
+    }
+    if (token->kind == SmithTokenKind_Identifier && smith_lang_ident(token, "undefined"))
+        smith_lang_undefined_stray(lang, host, token);
+    return false;
+}

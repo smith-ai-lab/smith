@@ -1,0 +1,11 @@
+// No `module` line: this is C, and `undefined` is an ordinary name (issue #743).
+#include <stdio.h>
+
+static int undefined = 7;
+
+int main(void) {
+    int copy = undefined;
+    undefined = copy + 1;
+    printf("%d\n", undefined);
+    return 0;
+}

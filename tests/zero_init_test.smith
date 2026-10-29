@@ -112,3 +112,26 @@ export void test_zero_init_a_pure_function_with_no_parameters_is_a_constant(io::
     __builtin_snprintf(text, sizeof text, "%s%s", run.out, run.err);
     scratch::expect_contains("the message says it is a constant", text, "write `constexpr");
 }
+
+static const char *opted_out = "module main;\n"
+                               "\n"
+                               "I32 main() {\n"
+                               "    I32 zeroed;\n"
+                               "    I32 x = undefined;\n"
+                               "    return (x & 0xFF) == 0xAA && zeroed == 0 ? 0 : 1;\n"
+                               "}\n";
+
+// `T x = undefined;` is the opt-out (issue #743): the AST has no initializer for it, so neither ZeroLocals nor the
+// compile flag zeroes it (release and debug alike), and a debug build fills it with 0xAA bytes, which the program
+// reads.
+export void test_zero_init_undefined_is_left_alone_and_debug_fills_it(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    scratch::write(&p, "main.smith", opted_out);
+    const char *ast = scratch::capture(&p, "smith cc -std=gnu23 -fsyntax-only -Xclang -ast-dump main.smith 2>&1");
+    scratch::expect_contains("the opted-out local carries the attribute", ast, "UninitializedAttr");
+    scratch::expect_contains("the other local is given its zero", ast, "ImplicitValueInitExpr");
+    scratch::Run built = scratch::build(&p, "");
+    scratch::expect_status("the module builds", 0, &built);
+    scratch::Run ran = scratch::sh(&p, "build/debug/p");
+    scratch::expect_status("debug fills the undefined local with 0xAA and zeroes the other", 0, &ran);
+}

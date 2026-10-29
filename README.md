@@ -657,7 +657,7 @@ cast from 'const char *' to 'char *' drops const qualifier
 
 ## Zero is initialization
 
-In a module every variable starts at zero: `Tally t;` and `Tally t = {};` mean the same thing, every byte zero, padding included, so reading a variable nobody wrote is a defined value, not undefined behaviour, and the optimizer drops the store wherever the variable is written first. Smith's types are designed so zero is a useful empty value: `Option(T)` is `.none` and `Result(T, E)` is `.error`, so a result nobody set never looks like success. A type's default is its zero value, not a constructor function. A `.c` file keeps C's rules.
+In a module every variable starts at zero: `Tally t;` and `Tally t = {};` mean the same thing, every byte zero, padding included, so reading a variable nobody wrote is a defined value, not undefined behaviour, and the optimizer drops the store wherever the variable is written first. Smith's types are designed so zero is a useful empty value: `Option(T)` is `.none` and `Result(T, E)` is `.error`, so a result nobody set never looks like success. A type's default is its zero value, not a constructor function. A `.c` file keeps C's rules. A hot spot opts one local out with `T x = undefined;`: the compiler leaves it alone (a debug build fills it with 0xAA bytes so a read before a write shows), and the comment at the use names the measurement that justified it. `undefined` means that only as a local's whole initializer; anywhere else in a module it is an error.
 
 ```smith project=zero run
 module main;
@@ -678,13 +678,18 @@ I32 main() {
     Result(I32, I32) outcome;
     bool has_last = last == .some;
     bool succeeded = outcome == .ok;
-    console::print("total ", fresh.total, ", has last ", has_last, ", succeeded ", succeeded, "\n");
+    // measured: zeroing this 4 KiB scratch cost 3% of the frame in the profile; it is written whole before any read
+    I32 scratch[1024] = undefined;
+    for (I32 i = 0; i < 1024; i++) {
+        scratch[i] = i;
+    }
+    console::print("total ", fresh.total, ", has last ", has_last, ", succeeded ", succeeded, ", scratch ", scratch[1023], "\n");
     return 0;
 }
 ```
 
 ```output project=zero
-total 0, has last false, succeeded false
+total 0, has last false, succeeded false, scratch 1023
 ```
 
 [smith-idiom](.agents/skills/smith-idiom/SKILL.md), [zero-value](knowledge/zero-value.md).

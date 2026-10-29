@@ -311,6 +311,8 @@ typedef struct {
     bool maybe_field;
     bool maybe_shape;    // the text calls `option(` or `result(` (the built-in type functions, runtime/lang_enum.c)
     bool maybe_brackets; // the text has `[]` or `[_]` (runtime/lang_unused.c): every token is offered, no slice mode
+    bool
+        maybe_undefined; // the text has the word `undefined` (`T x = undefined;`, runtime/lang_slice.c): slice mode too
     bool maybe_slice; // the text has a run-time array (`T xs[:]`, `xs[a:b]`): every token is offered, none by the hook
                       // alone
     // Watch every name the imported C headers declared (so that a bare use of one in a module is found).
