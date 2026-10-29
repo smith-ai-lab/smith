@@ -14,6 +14,7 @@ import smith::test;
 import <string.h>;
 import scratch;
 import smith::mem;
+import corpus;
 
 static typeof(const char[:]) slice_of(const char *text) {
     return text[0:c::strlen(text)];
@@ -44,7 +45,9 @@ export void test_the_corpus_formats_to_its_expected_file(io::Io *io) {
             "sed 's,^tests/smith-lang/cases/,,' list | "
             "awk 'NR==FNR { name[NR] = $0; next } FNR == 1 { k += 1; print \"==> \" name[k] \" <==\" } { print }' "
             "- $(cat mirrored)");
-    test::golden(io, "tests/smith-fmt/corpus.expected", slice_of(run.out));
+    const char *differing = "";
+    corpus::golden_sections(io, &differing, "tests/smith-fmt/corpus.expected", run.out);
+    corpus::finish(differing);
 }
 
 // --- tuple types and slice declarators stay as written (#96, #82) ----------------------------------------------------
