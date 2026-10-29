@@ -51,10 +51,14 @@ static const char *text_of(const char *data) {
 // A command with no shell feature in it is run in place of the shell that starts it. The smith a test starts takes no
 // cores of the host's pool (SMITH_SLOTS=0): the test's own worker already holds one, and a test of the executor's
 // concurrency must not wait for a core a busy host does not have; tests/slots_test.smith sets its own pool. The step
-// cache is off (SMITH_STEP_CACHE=0): a test of what the executor rebuilds must run the compile it counts; tests/
-// build_step_cache_test.smith turns it on, with a cache of its own.
+// cache serves only the compiles of the build program (SMITH_STEP_CACHE=program), from the cache of the commands
+// above: a fresh project would otherwise compile build.c's runtime and libraries again for every test, about 0.6 CPU-s
+// of the 2 it costs, and those objects hold no folder. A test of what the executor rebuilds runs the compile it counts,
+// because the project's own compiles are never served; tests/build_step_cache_test.smith turns the whole cache on, with
+// a cache of its own.
 constexpr char run_script[_] =
-    "unset SMITH_ACCOUNT_FILE; export SMITH_SLOTS=0 SMITH_STEP_CACHE=0; here=$PWD; repo=${SMITH_REPO:-$PWD}; cd \"$0\" "
+    "unset SMITH_ACCOUNT_FILE; export SMITH_SLOTS=0 SMITH_STEP_CACHE=program; here=$PWD; repo=${SMITH_REPO:-$PWD}; cd "
+    "\"$0\" "
     "|| exit 97; "
     "cache=$3; [ -n \"$cache\" ] || cache=${SMITH_TEST_CACHE:-$HOME/.cache/smith-tests}/xdg; "
     "data=${SMITH_TEST_CACHE:-$HOME/.cache/smith-tests}/data; mkdir -p \"$cache\" \"$data\"; "
