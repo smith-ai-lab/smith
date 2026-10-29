@@ -169,6 +169,24 @@ export void test_build_lang_an_edit_to_what_a_body_imports_rebuilds_the_importer
     scratch::expect_contains("body files: and it is the static_assert that says so", both, "static assertion failed");
 }
 
+// A module's header names the types of the modules it imports, so its header step waits for their headers and runs
+// again when one changes (#781: it ran only for an edit to its own source, so a rebuild after main moved left a header
+// naming `smith_random_Key`): game::replay holds a lib::text type, which only lib::text's edit renames in C.
+export void test_build_lang_a_header_is_written_again_when_a_module_it_imports_renames_a_type(io::Io *io) {
+    scratch::Project p = lang_project(io, "module-three");
+    (void)scratch::build(&p, "");
+    scratch::expect_contains("headers: the importer's header names the type as lib::text first wrote it",
+                             scratch::read(&p, ".smith/include/game/replay.h"), "lib_text_Text name;");
+    scratch::sleep(&p, 1000);
+    (void)scratch::sh(&p,
+                      "sed -i.bak 's/^export typedef/[[smith::c_name(\"Words\")]] export typedef/' src/lib/text.smith");
+    (void)scratch::build(&p, "");
+    scratch::expect_contains("headers: lib::text's header has the new name",
+                             scratch::read(&p, ".smith/include/lib/text.h"), "} Words;");
+    scratch::expect_contains("headers: and the importer's header is written again with it",
+                             scratch::read(&p, ".smith/include/game/replay.h"), "Words name;");
+}
+
 // A folder of headers (SMITH_HEADERS_FROM) stamped by this smith is copied, not generated: the marked copy of arena.h
 // shows which. Unset, the project generates its own, as before.
 constexpr char headers_marked[_] = "rm -rf marked && cp -R \"$SMITH_HEADERS_FROM\" marked && "
