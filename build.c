@@ -1863,10 +1863,11 @@ static int build_llvm_prune(SmithRun *run) {
 static int build_llvm_pack_run(SmithRun *run, const char *verb, const char *const *arguments) {
     SmithBuild *b = run->b;
     const char *folder = build_llvm_folder(b);
-    const char *cache = smith_fmt(b, "%s/../..", folder);
-    const char *tool = smith_fmt(b, "%s/../llvm_pack", folder);
+    const char *home = smith_env(b, "XDG_CACHE_HOME", smith_fmt(b, "%s/.cache", smith_env(b, "HOME", "")));
+    const char *cache = smith_fmt(b, "%s/smith", home);
+    const char *tool = smith_fmt(b, "%s/llvm/llvm_pack", cache);
     const char *name = strrchr(folder, '/') + 1;
-    int status = build_make_folder(b, smith_fmt(b, "%s/..", folder));
+    int status = build_make_folder(b, smith_fmt(b, "%s/llvm", cache));
     if (status != 0) return status;
     const char *const compile[] = {
         smith_env(b, "CC", "smith-cc"), "-std=c23", "-O1", "scripts/llvm_pack.c", "-o", tool, nullptr};

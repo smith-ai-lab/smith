@@ -96,10 +96,13 @@ export void test_llvm_pack_publish_then_fetch_gives_the_same_install(io::Io *io)
     scratch::expect_status("llvm_pack: fetch", 0, &fetched);
     scratch::expect_text("llvm_pack: fetch-stamp", capture(io, &p, "echo \"$PWD/c2/llvm/n1/install\""),
                          capture(io, &p, "cat stamp"));
-    scratch::expect_text("llvm_pack: fetch-same-install", "same",
-                         capture(io, &p, "diff -r c1/llvm/n1/install c2/llvm/n1/install >/dev/null && echo same"));
-    scratch::expect_text("llvm_pack: fetch-same-enzyme", "same",
-                         capture(io, &p, "diff -r c1/enzyme/0.0.303-n1 c2/enzyme/0.0.303-n1 >/dev/null && echo same"));
+    scratch::expect_text(
+        "llvm_pack: fetch-same-files", "8",
+        capture(io, &p,
+                "cd c2 && for f in $(find llvm enzyme -type f); do cmp -s $f ../c1/$f || echo differs $f; "
+                "done; find llvm enzyme -type f | wc -l | tr -d ' '"));
+    scratch::expect_text("llvm_pack: fetch-keeps-the-links", "clang-23 clang",
+                         capture(io, &p, "cd c2/llvm/n1/install/bin && echo $(readlink clang) $(readlink clang++)"));
     scratch::expect_text("llvm_pack: fetch-leaves-nothing-else", "llvm",
                          capture(io, &p, "ls -A c2 | grep -v enzyme; ls -A c2/llvm | grep -v n1"));
     scratch::Run again = run(io, &p,
