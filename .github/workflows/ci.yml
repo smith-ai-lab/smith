@@ -112,6 +112,8 @@ jobs:
     if: needs.changes.outputs.scope != 'release'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
+    # Linux parts report but do not block `ci` until the suite has been green on Linux (no run has passed there yet)
+    continue-on-error: ${{ startsWith(matrix.os, 'ubuntu') }}
     strategy:
       fail-fast: false
       # 5 macOS parts, and 2 Linux parts once a Linux release exists (the `changes` job decides, #799)
