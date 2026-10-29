@@ -1,4 +1,4 @@
-<img src=".github/logo.svg" alt="smith" width="96">
+<img src=".github/logo.jpeg" alt="smith" width="96">
 
 # smith
 
