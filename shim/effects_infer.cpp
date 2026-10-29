@@ -313,14 +313,27 @@ bool returnsObjectPointer(const FunctionDecl *function) {
 
 // Whether a printf-family call (by name) may keep libc state: its format is not a literal, or has a float conversion
 // (`%f %e %g %a`, any case), whose digits come from a cache of allocator blocks (issue #724). `name` is the callee.
-bool formatKeepsState(llvm::StringRef name, const CallExpr *call) {
+// A fortified call (macOS's `__builtin___snprintf_chk`, glibc's `__printf_chk`) is the function it checks: the name
+// without the check's spelling, and in `extra` how many arguments the check adds before the format (the flag, and the
+// object's size for the forms that write a buffer).
+llvm::StringRef unfortified(llvm::StringRef name, unsigned &extra) {
+    extra = 0;
+    llvm::StringRef base = name;
+    if (!base.consume_front("__builtin___") && !base.consume_front("__")) return name;
+    if (!base.consume_back("_chk") || base.empty()) return name;
+    bool buffer = base == "sprintf" || base == "snprintf" || base == "vsprintf" || base == "vsnprintf";
+    extra = buffer ? 2 : 1;
+    return base;
+}
+
+bool formatKeepsState(llvm::StringRef name, const CallExpr *call, unsigned extra) {
     static const std::pair<const char *, unsigned> formats[] = {
         {"printf", 0},  {"vprintf", 0},  {"fprintf", 1},   {"vfprintf", 1}, {"sprintf", 1},  {"vsprintf", 1},
         {"dprintf", 1}, {"asprintf", 1}, {"vasprintf", 1}, {"snprintf", 2}, {"vsnprintf", 2}};
     for (const auto &[function, at] : formats) {
         if (name != function) continue;
-        if (call->getNumArgs() <= at) return true;
-        const auto *text = dyn_cast<StringLiteral>(call->getArg(at)->IgnoreParenImpCasts());
+        if (call->getNumArgs() <= at + extra) return true;
+        const auto *text = dyn_cast<StringLiteral>(call->getArg(at + extra)->IgnoreParenImpCasts());
         if (text == nullptr) return true;
         llvm::StringRef format = text->getString();
         for (size_t i = format.find('%'); i != llvm::StringRef::npos; i = format.find('%', i + 1)) {
@@ -457,12 +470,13 @@ class Collector {
             node.edges.push_back(edge);
             return;
         }
-        std::string name = callee->getNameAsString();
+        unsigned extra = 0;
+        std::string name = unfortified(callee->getNameAsString(), extra).str();
         uint32_t set = 0;
         bool builtin = llvm::StringRef(name).starts_with("__builtin_") || callee->getBuiltinID() != 0;
         bool declared = declaredSet(callee, set);
         if (declared || lookup(name, set)) {
-            if (!declared && formatKeepsState(name, call)) set |= Globals;
+            if (!declared && formatKeepsState(name, call, extra)) set |= Globals;
             if ((name == "mmap" || name == "mprotect") && call->getNumArgs() >= 3) {
                 // The protection is the third argument of both.
                 Expr::EvalResult result;

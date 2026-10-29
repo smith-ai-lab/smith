@@ -21,3 +21,8 @@
 [[smith::effects(console)]] void shown(double x) {
     printf("%e\n", x);
 }
+
+// macOS's <stdio.h> writes snprintf as its fortified builtin: the same function, with the format two arguments later.
+[[smith::pure]] int fortified(char *buffer, double x) {
+    return __builtin___snprintf_chk(buffer, 32, 0, __builtin_object_size(buffer, 0), "%.1f", x);
+}
