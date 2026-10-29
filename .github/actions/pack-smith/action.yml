@@ -1,0 +1,29 @@
+name: pack-smith
+description: >
+  Hands the build of this job to the jobs after it (#798): every file the build made (git's ignored files: build/,
+  .smith/, the generated headers and parser) except the downloaded stage0 release, as one zstd tar uploaded as the
+  artifact `tree-<name>`. The jobs that use it run use-smith.
+
+inputs:
+  name:
+    description: the artifact's name after `tree-`
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Pack the build
+      shell: bash
+      run: |
+        start=$(date +%s)
+        git ls-files -z --others --ignored --exclude-standard --directory |
+          grep -zv '^[.]smith/stage0/' |
+          tar --null -T - -cf "$RUNNER_TEMP/tree.tar"
+        zstd -q -T0 -3 "$RUNNER_TEMP/tree.tar" -o "$RUNNER_TEMP/tree.tar.zst"
+        echo "pack: $(( $(date +%s) - start )) s, $(du -h "$RUNNER_TEMP/tree.tar.zst" | cut -f1)" >>"$GITHUB_STEP_SUMMARY"
+    - uses: actions/upload-artifact@v4
+      with:
+        name: tree-${{ inputs.name }}
+        path: ${{ runner.temp }}/tree.tar.zst
+        compression-level: 0
+        retention-days: 1
