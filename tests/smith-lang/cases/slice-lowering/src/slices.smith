@@ -22,7 +22,7 @@ export typeof(i32[:]) middle(i32 xs[:]) {
     return xs[1:countof(xs) - 1];
 }
 
-export typeof(char[:]) label(Layer *layer) {
+export [[std::returns_borrowed(1)]] typeof(char[:]) label(Layer *layer) {
     return layer->name;
 }
 

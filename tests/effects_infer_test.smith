@@ -68,10 +68,10 @@ static void ownership_case(io::Io *io, const char *file) {
 
 export void test_every_file_has_a_test(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
-    scratch::Run run =
-        scratch::sh(&p, "cd \"$SMITH_REPO/tests/effects\" && for f in *.c *.smith; do "
-                        "grep -Eq \"(effects|ownership)_case\\(io, \\\"$f\\\"\\)\" ../effects_infer_test.smith || echo \"$f\"; "
-                        "done");
+    scratch::Run run = scratch::sh(
+        &p, "cd \"$SMITH_REPO/tests/effects\" && for f in *.c *.smith; do "
+            "grep -Eq \"(effects|ownership)_case\\(io, \\\"$f\\\"\\)\" ../effects_infer_test.smith || echo \"$f\"; "
+            "done");
     scratch::expect_text("files of tests/effects with no test", "", run.out);
 }
 
@@ -265,7 +265,8 @@ static i64 frame(const scratch::Project *p, const char *reference, const char *n
 }
 
 // A column of a function's row in <program>.stack: 2 is its worst case, 3 the deepest call.
-[[std::returns_borrowed(1)]] static const char *row(const scratch::Project *p, const char *program, const char *name, const char *column) {
+[[std::returns_borrowed(1)]] static const char *row(const scratch::Project *p, const char *program, const char *name,
+                                                    const char *column) {
     const char *command =
         format::push(&p->io->arena, "awk -F'\\t' -v n=", name, " '$1 == n { print $", column, " }' ", program, ".stack")
             .data;

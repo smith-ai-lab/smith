@@ -1949,7 +1949,8 @@ static int build_ownership(SmithRun *run) {
     const char *script =
         "project=$(cd \"$1\" && pwd) || exit 2; smith=$2; out=$(mktemp); trap 'rm -f \"$out\"' EXIT\n"
         "if [ -d \"$project/lib/smith\" ]; then folder=$project/lib/smith; else folder=$project; fi\n"
-        "files=0; for f in $(find \"$folder\" -name '*.smith' -not -path '*/.smith/*' -not -name '*_test.smith' | sort); do\n"
+        "files=0; for f in $(find \"$folder\" -name '*.smith' -not -path '*/.smith/*' -not -name '*_test.smith' | "
+        "sort); do\n"
         "  files=$((files + 1))\n"
         "  (cd \"$project\" && SMITH_EFFECTS_OWNERSHIP=$out \"$smith\" cc -std=gnu2y -I .smith/include -I include "
         "-Wno-everything -fsyntax-only \"$f\" >/dev/null 2>&1) || true\n"

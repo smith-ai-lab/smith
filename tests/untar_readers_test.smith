@@ -96,7 +96,8 @@ static Bytes text_bytes(const char *text) {
 }
 
 static Bytes bytes_of(const Buffer *b) {
-    contract::trusted(); // the bytes are in the arena the buffer was made in, the caller's context, which no attribute says
+    contract::trusted(); // the bytes are in the arena the buffer was made in, the caller's context, which no attribute
+                         // says
     return b->data[0:b->used];
 }
 

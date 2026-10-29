@@ -825,8 +825,9 @@ static int smith_check_effects(int count, char **args) {
     int written = snprintf(stack, sizeof stack, "%s.stack", program);
     char owns[PATH_MAX]; // the idioms only the link could settle: `<program>.owns`
     int owned = snprintf(owns, sizeof owns, "%s.owns", program);
-    int status = smith_effects_check((int)found, file_list, written > 0 && (size_t)written < sizeof stack ? stack : nullptr,
-                                     owned > 0 && (size_t)owned < sizeof owns ? owns : nullptr);
+    int status =
+        smith_effects_check((int)found, file_list, written > 0 && (size_t)written < sizeof stack ? stack : nullptr,
+                            owned > 0 && (size_t)owned < sizeof owns ? owns : nullptr);
     for (size_t i = 0; i < found; i++) { // the summary of a temporary object goes with it
         if (smith_in_temp_folder(objects[i])) unlink(file_list[i]);
     }

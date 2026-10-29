@@ -3434,8 +3434,9 @@ test_add_server(Io *io, NetServer server) {
 
 // The bytes the client sent on the n-th connection (from 0) to host:port, NUL-terminated, up to 8 KiB; nullptr if there
 // was no such connection.
-[[smith::c_name("smith_io_test_request")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] [[clang::annotate("std::owns:borrowed:1")]] const char *
-test_request(const Io *io, const char *host, u16 port, usize n) {
+[[smith::c_name("smith_io_test_request")]] export
+    [[clang::annotate("smith::edge")]] [[nodiscard]] [[clang::annotate("std::owns:borrowed:1")]] const char *
+    test_request(const Io *io, const char *host, u16 port, usize n) {
     if (io->loop->servers == nullptr) return nullptr;
     const FakeServer *server = net_server_find(io->loop->servers, host, port, n, false);
     return server != nullptr && server->used ? server->request : nullptr;
@@ -3577,15 +3578,17 @@ capture_stop(Capture *capture, i32 signal) {
 // --- arguments ---
 
 // The argument i (0 is the program), or nullptr past the end.
-[[smith::c_name("smith_args_get")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] [[clang::annotate("std::owns:borrowed:1")]] const char *
-args_get(const Args *args, usize i) {
+[[smith::c_name("smith_args_get")]] export
+    [[clang::annotate("smith::edge")]] [[nodiscard]] [[clang::annotate("std::owns:borrowed:1")]] const char *
+    args_get(const Args *args, usize i) {
     return i < args->count ? args->values[i] : nullptr;
 }
 
 // The value of an environment variable, or nullptr if it is not set. An empty value is "". The real io reads the
 // process's environment each time, so a setenv after io::make shows.
-[[smith::c_name("smith_args_env")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] [[clang::annotate("std::owns:borrowed:1")]] const char *
-args_env(const Args *args, const char *name) {
+[[smith::c_name("smith_args_env")]] export
+    [[clang::annotate("smith::edge")]] [[nodiscard]] [[clang::annotate("std::owns:borrowed:1")]] const char *
+    args_env(const Args *args, const char *name) {
     contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires
     contract::requires(name[0] != 0);
     usize length = c::strlen(name);
@@ -3772,21 +3775,24 @@ test_add_child(Io *io, ChildScript script) {
 
 // The bytes written to the n-th scripted child's stdin (n counts the scripts added, from 0), NUL-terminated; nullptr if
 // there is no such child.
-[[smith::c_name("smith_io_test_child_input")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] [[clang::annotate("std::owns:borrowed:1")]] const char *
-test_child_input(const Io *io, usize n) {
+[[smith::c_name("smith_io_test_child_input")]] export
+    [[clang::annotate("smith::edge")]] [[nodiscard]] [[clang::annotate("std::owns:borrowed:1")]] const char *
+    test_child_input(const Io *io, usize n) {
     const Fake *fake = fake_of(io->loop);
     if (n >= fake->child_count) return nullptr;
     return (const char *)fake->children[n].input;
 }
 
 // What the program printed to stdout and stderr so far, NUL-terminated.
-[[smith::c_name("smith_io_test_output")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] [[clang::annotate("std::owns:borrowed:1")]] const char *
-test_output(const Io *io) {
+[[smith::c_name("smith_io_test_output")]] export
+    [[clang::annotate("smith::edge")]] [[nodiscard]] [[clang::annotate("std::owns:borrowed:1")]] const char *
+    test_output(const Io *io) {
     return fake_of(io->loop)->output;
 }
 
-[[smith::c_name("smith_io_test_errors")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] [[clang::annotate("std::owns:borrowed:1")]] const char *
-test_errors(const Io *io) {
+[[smith::c_name("smith_io_test_errors")]] export
+    [[clang::annotate("smith::edge")]] [[nodiscard]] [[clang::annotate("std::owns:borrowed:1")]] const char *
+    test_errors(const Io *io) {
     return fake_of(io->loop)->errors;
 }
 // NOLINTEND(smith-mem)

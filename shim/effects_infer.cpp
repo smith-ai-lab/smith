@@ -615,11 +615,11 @@ const VarDecl *writtenGlobal(const Expr *expr) {
 // ---- Ownership, inferred (issue #725) ------------------------------------------------------------------------------
 //
 // The idiom of a returned pointer or slice read from the body, the way the effects of a function are: each function
-// that returns a pointer has the *paths* its `return` statements take, each a known idiom (the result of a libc function
-// the table names, of a function with an attribute, a parameter, a global), a call of a function whose idiom is
-// found by the solver (here, or at the link from the other files' summaries), or an origin smith cannot read. One
-// solver turns the paths into the function's idiom and its errors, in the compile (the file's functions) and at the link
-// (every file's), so the two cannot disagree. A resolved idiom is an `O` line, a function that waits on another
+// that returns a pointer has the *paths* its `return` statements take, each a known idiom (the result of a libc
+// function the table names, of a function with an attribute, a parameter, a global), a call of a function whose idiom
+// is found by the solver (here, or at the link from the other files' summaries), or an origin smith cannot read. One
+// solver turns the paths into the function's idiom and its errors, in the compile (the file's functions) and at the
+// link (every file's), so the two cannot disagree. A resolved idiom is an `O` line, a function that waits on another
 // file's is a set of `R` lines, and the link settles them.
 //
 // An idiom is the text of #720: `owned:<f>[:<n>...]`, `borrowed:<n>`, `internal`, and `context`, the caller's context
@@ -631,18 +631,19 @@ constexpr const char *contextIdiom = "context";
 
 struct OwnPath {
     enum Kind { Known, Call, Unknown } kind = Unknown;
-    std::string idiom;                // Known
-    std::string callee, calleeName;   // Call: the symbol, and how it is shown
-    std::vector<std::string> args;    // Call: for each argument an idiom, `?` (origin unknown), `0` (null), `-` (no pointer)
-    std::string reason;               // Unknown
-    std::string place;                // `file:line:column` of the return
+    std::string idiom;              // Known
+    std::string callee, calleeName; // Call: the symbol, and how it is shown
+    std::vector<std::string>
+        args;           // Call: for each argument an idiom, `?` (origin unknown), `0` (null), `-` (no pointer)
+    std::string reason; // Unknown
+    std::string place;  // `file:line:column` of the return
 };
 
 struct OwnRecord {
     std::string symbol, name, place;
-    std::string declared;             // the idiom an attribute states, or ""
-    bool module = false;              // a function of a module: unknown and mixed paths are errors
-    bool trusted = false;             // calls smith_trusted(): not examined
+    std::string declared; // the idiom an attribute states, or ""
+    bool module = false;  // a function of a module: unknown and mixed paths are errors
+    bool trusted = false; // calls smith_trusted(), or is an instance of a generic: no error is reported for it
     std::vector<OwnPath> paths;
 };
 
@@ -765,7 +766,9 @@ class OwnSolver {
                 return true;
             }
             if (result.state == OwnResult::Failed) {
-                out = {OwnPath::Unknown, "", "`" + path.calleeName + "` has no idiom (see its error, or write an attribute on it)", path.place};
+                out = {OwnPath::Unknown, "",
+                       "`" + path.calleeName + "` has no idiom (see its error, or write an attribute on it)",
+                       path.place};
                 return true;
             }
             idiom = result.idiom;
@@ -841,13 +844,16 @@ class OwnSolver {
             return true;
         }
         std::vector<std::pair<std::string, std::string>> shortest = ownShortest(distinct);
-        if (shortest.size() == 1 && distinct.size() > 1) distinct = shortest; // internal and context give way (lifetimes)
+        if (shortest.size() == 1 && distinct.size() > 1)
+            distinct = shortest; // internal and context give way (lifetimes)
         if (distinct.size() > 1) {
             std::string text = "`" + record.name + "` returns different things on different paths: ";
             std::string attributes;
             for (size_t i = 0; i < distinct.size(); i++) {
-                text += (i == 0 ? "" : i + 1 == distinct.size() ? " and " : ", ") + ownDescribe(distinct[i].first) +
-                        " (" + ownShort(distinct[i].second) + ")";
+                text += (i == 0                     ? ""
+                         : i + 1 == distinct.size() ? " and "
+                                                    : ", ") +
+                        ownDescribe(distinct[i].first) + " (" + ownShort(distinct[i].second) + ")";
                 if (distinct[i].first != "context")
                     attributes += (attributes.empty() ? "" : " or ") + ownSpell(distinct[i].first);
             }
@@ -896,7 +902,8 @@ class OwnerReader {
     OwnerReader(ASTContext &context, Symbols symbols, Symbols names)
         : context(context), sm(context.getSourceManager()), symbols(std::move(symbols)), names(std::move(names)) {}
 
-    void read(const FunctionDecl *function, OwnRecord &record, const std::function<std::string(SourceLocation)> &place) {
+    void read(const FunctionDecl *function, OwnRecord &record,
+              const std::function<std::string(SourceLocation)> &place) {
         fn = function;
         scan(function->getBody());
         for (const auto &[expr, loc] : returns) {
@@ -1004,7 +1011,8 @@ class OwnerReader {
                 if (member->isArrow()) return nullptr;
                 expr = member->getBase();
             } else if (const auto *index = dyn_cast<ArraySubscriptExpr>(expr)) {
-                expr = index->getBase();
+                expr = index->getBase()->IgnoreParenImpCasts();
+                if (!expr->getType()->isArrayType()) return nullptr; // an element of what a pointer points to
             } else {
                 return nullptr;
             }
@@ -1062,7 +1070,8 @@ class OwnerReader {
         for (int depth = 0; depth < 64; depth++) {
             expr = expr->IgnoreParens();
             if (const auto *cast = dyn_cast<CastExpr>(expr)) {
-                if (cast->getCastKind() == CK_IntegralToPointer || cast->getCastKind() == CK_PointerToIntegral) return expr;
+                if (cast->getCastKind() == CK_IntegralToPointer || cast->getCastKind() == CK_PointerToIntegral)
+                    return expr;
                 expr = cast->getSubExpr();
             } else if (const auto *unary = dyn_cast<UnaryOperator>(expr)) {
                 if (unary->getOpcode() != UO_Extension) return expr;
@@ -1135,6 +1144,8 @@ class OwnerReader {
             if (!member->isArrow() && member->getMemberDecl()->getName() == "data" &&
                 isSliceType(member->getBase()->getType()))
                 return push(member->getBase(), item);
+            if (const VarDecl *var = rootVar(member)) // a field of a global or a constant: static memory
+                if (var->hasGlobalStorage() || var->isConstexpr()) return known(root, "internal", at);
             return unknown(root, "a pointer read from a field", at);
         }
         unknown(root, "an expression smith does not follow", at);
@@ -1744,10 +1755,10 @@ class Analysis {
         ownerships.push_back({function != nullptr ? 'O' : 'T', symbol, idiom, decl->getLocation()});
     }
 
-    // The report-only mode of the idioms (the build file's `ownership` task): `SMITH_EFFECTS_OWNERSHIP=<file>` appends one
-    // line for each function of the main file that returns a pointer or a slice: `inferred` or `declared`, `pending`
-    // (it waits on another file), `rejected` (an error, with its message) or `unread` (no idiom and no error: a trusted
-    // function or a C file), then the idiom, the function and its place. Nothing is reported to the compiler.
+    // The report-only mode of the idioms (the build file's `ownership` task): `SMITH_EFFECTS_OWNERSHIP=<file>` appends
+    // one line for each function of the main file that returns a pointer or a slice: `inferred` or `declared`,
+    // `pending` (it waits on another file), `rejected` (an error, with its message) or `unread` (no idiom and no error:
+    // a trusted function or a C file), then the idiom, the function and its place. Nothing is reported to the compiler.
     void reportOwnership(const std::vector<const FunctionDecl *> &subjects, OwnSolver &solver,
                          const std::map<std::string, std::string> &rejected) {
         std::string text;
@@ -1799,7 +1810,9 @@ class Analysis {
             record.place = place(function->getLocation());
             record.declared = ownershipOf(function);
             record.module = module;
-            record.trusted = node.trusted;
+            // An attribute cannot be written on a generic function (the lowering reads `export [[...]] T *f(constexpr
+            // type T)` as no generic), so an instance is inferred where it can be read and never an error.
+            record.trusted = node.trusted || record.symbol.find('(') != std::string::npos;
             if (ownContextAllocator(function->getNameAsString())) {
                 OwnPath path;
                 path.kind = OwnPath::Known;
@@ -1854,8 +1867,8 @@ class Analysis {
                     std::string args;
                     for (const std::string &code : path.args)
                         args += (args.empty() ? "" : "|") + code;
-                    pendingText += "call\t" + path.callee + "\t" + (args.empty() ? "-" : args) + "\t" +
-                                   path.calleeName + "\n";
+                    pendingText +=
+                        "call\t" + path.callee + "\t" + (args.empty() ? "-" : args) + "\t" + path.calleeName + "\n";
                 }
             }
         }
@@ -2373,7 +2386,7 @@ class Analysis {
             text += std::string(1, o.kind) + "\t" + o.symbol + "\t" + o.idiom + "\t" + place(o.loc) + "\n";
         }
         text += pendingText; // what only the link can settle of the inferred ownership (#725)
-        text += frames(); // the sizes of the frames, when the compile wrote them
+        text += frames();    // the sizes of the frames, when the compile wrote them
         for (const Deferred &w : deferred) {
             text += "W\t" + w.target + "\t" + std::to_string(w.mask) + "\t" + place(w.loc) + "\t" + w.message + "\t" +
                     w.name + "\n";
@@ -2665,8 +2678,8 @@ class Program {
         }
     }
 
-    // The `O` and `R` lines (#725): the idioms files state or infer, and the paths of the functions that waited on another
-    // file. An `R` line counts only for the file whose `F` line defines the function (the first stands).
+    // The `O` and `R` lines (#725): the idioms files state or infer, and the paths of the functions that waited on
+    // another file. An `R` line counts only for the file whose `F` line defines the function (the first stands).
     void readOwnership(const std::string &path, llvm::StringRef text) {
         llvm::SmallVector<llvm::StringRef, 8> lines;
         text.split(lines, '\n', -1, false);

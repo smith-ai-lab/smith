@@ -86,6 +86,7 @@
     "./.agents/skills/smith-lang-defer/",
     "./.agents/skills/smith-lang-unused/",
     "./.agents/skills/smith-lang-effects/",
+    "./.agents/skills/smith-lang-ownership/",
     "./.agents/skills/smith-lang-try/",
     "./.agents/skills/smith-lang-enums/",
     "./.agents/skills/smith-lang-exports/",

@@ -302,7 +302,8 @@ export void test_json_accepts_the_grammar() {
 // ---------------------------------------------------------------------------------------------------------------
 // Strings
 
-[[std::returns_borrowed(1)]] static typeof(const char[:]) test_json_only_string(arena::Arena *arena, const char *document) {
+[[std::returns_borrowed(1)]] static typeof(const char[:]) test_json_only_string(arena::Arena *arena,
+                                                                                const char *document) {
     const c::SmithJsonValue *root = nullptr;
     c::SmithJsonError error = {};
     test::check(c::smith_json_parse(arena, test_json_text(document), test_json_wide, &root, &error));
@@ -362,7 +363,8 @@ export void test_json_reader_decodes_into_the_arena() {
 // ---------------------------------------------------------------------------------------------------------------
 // Numbers
 
-[[std::returns_borrowed(1)]] static const c::SmithJsonValue *test_json_parse_ok(arena::Arena *arena, const char *document) {
+[[std::returns_borrowed(1)]] static const c::SmithJsonValue *test_json_parse_ok(arena::Arena *arena,
+                                                                                const char *document) {
     const c::SmithJsonValue *root = nullptr;
     c::SmithJsonError error = {};
     test::note("document %s", document);

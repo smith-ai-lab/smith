@@ -38,7 +38,7 @@ export u32 total(const u32 xs[:]) {            // a slice: a pointer and its cou
 | compile time, type values | `constexpr i32 x = fib(10);`, `constexpr type t = i32;` | `smith-lang-constexpr`, `smith-lang-type-values` |
 | tuples, used once | `struct { i32, f32 }`, `[[smith::affine]]` | `smith-lang-tuples`, `smith-lang-affine` |
 | enums with payloads | `typedef enum { Circle circle; empty; } Shape;`, `s == .circle` | `smith-lang-enums` |
-| cleanup on every exit, a failure passed up, what a function may touch, unused on purpose | `defer c::close(fd);`, `try f()`, `[[smith::pure]]`, `_ = f();` | `smith-lang-defer`, `smith-lang-try`, `smith-lang-effects`, `smith-lang-unused` |
+| cleanup on every exit, a failure passed up, what a function may touch, unused on purpose | `defer c::close(fd);`, `try f()`, `[[smith::pure]]`, `_ = f();` | `smith-lang-defer`, `smith-lang-try`, `smith-lang-effects`, `smith-lang-ownership`, `smith-lang-unused` |
 | the target, the io | `import target;`, `i32 main(io::Io *io)` | `smith-lang-target`, `smith-io` |
 
 Formatting, linting, building, the editor: `smith-lang-tools`. Good style: `smith-idiom`.

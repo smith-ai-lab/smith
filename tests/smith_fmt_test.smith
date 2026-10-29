@@ -21,7 +21,8 @@ static typeof(const char[:]) slice_of(const char *text) {
 }
 
 // The text of `smith fmt` for this input read as a file of this name, in the style of this repository's folder.
-[[std::returns_borrowed(1)]] static const char *formatted(const scratch::Project *p, const char *name, const char *input) {
+[[std::returns_borrowed(1)]] static const char *formatted(const scratch::Project *p, const char *name,
+                                                          const char *input) {
     scratch::write(p, "input.txt", input);
     const char *command =
         format::push(&p->io->arena, "smith fmt --assume-filename=\"$SMITH_REPO/", name, "\" < input.txt 2>&1").data;
