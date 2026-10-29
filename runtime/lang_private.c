@@ -181,7 +181,8 @@ static bool smith_lang_priv_any(const SmithLang *lang) {
 
 // The guard macro of the module's header: SMITH_HEADER_<module>, with `::` as `_`, and the one of its instance
 // section after `suffix`.
-static size_t smith_lang_priv_guard(const SmithLang *lang, char *out, size_t capacity, size_t used, const char *suffix) {
+static size_t smith_lang_priv_guard(const SmithLang *lang, char *out, size_t capacity, size_t used,
+                                    const char *suffix) {
     used = smith_lang_append(out, capacity, used, "SMITH_HEADER_");
     for (const char *name = smith_lang_module_name(lang); *name != 0; name++) {
         if (*name == ':') {
@@ -224,7 +225,8 @@ static size_t smith_lang_priv_section(SmithLang *lang, char *out, size_t capacit
     used = smith_lang_priv_guard(lang, out, capacity, used, "_INSTANCES");
     used = smith_lang_append(out, capacity, used, "\n#define ");
     used = smith_lang_priv_guard(lang, out, capacity, used, "_INSTANCES");
-    used = smith_lang_append(out, capacity, used, "\n%s", c_linkage ? "#ifdef __cplusplus\nextern \"C\" {\n#endif\n" : "");
+    used =
+        smith_lang_append(out, capacity, used, "\n%s", c_linkage ? "#ifdef __cplusplus\nextern \"C\" {\n#endif\n" : "");
     for (size_t i = 0; i < lang->priv_ranges_count; i++) { // in the order declared
         const SmithLangPrivRange *range = &lang->priv_ranges[i];
         if (!range->needed || smith_lang_priv_repeated(lang, i)) continue;

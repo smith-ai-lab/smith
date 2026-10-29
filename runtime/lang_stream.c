@@ -920,8 +920,8 @@ static void smith_lang_assemble_header(SmithLang *lang, const char *main_file) {
 }
 
 // The interface an importer reads when it finds the module by its source (runtime/lang_lex.c): the declarations on
-// the lines the module has them (the first line is `#pragma once`, or `#ifndef` of the guard), with no other line. The includes it needs and the
-// comment lines are the host's to use, apart from it.
+// the lines the module has them (the first line is `#pragma once`, or `#ifndef` of the guard), with no other line. The
+// includes it needs and the comment lines are the host's to use, apart from it.
 static void smith_lang_assemble_aligned(SmithLang *lang) {
     // An exported inline function whose `if constexpr` asks the target needs the facts defined above its #if lines.
     // They take the blank lines before the first declaration (the comments and the imports of the module's top), so the
