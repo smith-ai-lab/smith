@@ -1541,6 +1541,10 @@ export void test_header_conditional_define() {
     corpus_case("header-conditional-define");
 }
 
+export void test_header_nolint_pair() {
+    corpus_case("header-nolint-pair");
+}
+
 export void test_header_docs() {
     corpus_case("header-docs");
 }

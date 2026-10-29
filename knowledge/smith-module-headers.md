@@ -73,7 +73,9 @@ What the header keeps of the source (written by the plain lexer, `runtime/lang_t
 - **Doc comments.** The comments directly above an `export` (or above the `[[smith::c_name]]` before it; no blank line
   between) are copied above its declaration, as written. Comments inside an exported declaration (a struct's fields) and a
   comment after its last token on the same line (`export u32 limit = 4; // bytes`) are kept. A comment separated by a
-  blank line from the export, and the comments of private code, are not.
+  blank line from the export, and the comments of private code, are not. A `// NOLINTBEGIN` the header keeps keeps its
+  `// NOLINTEND` too, on the line after the last declaration of the region it has (a pair is never split: clang-tidy
+  reports a begin with no end); an end whose begin is not in the header is dropped.
 - **Conditional directives.** An `#if`, `#ifdef`, `#ifndef`, `#elif`, `#else` and `#endif` around exports are copied into
   the header verbatim, with the branches before an export in it, and nothing is preprocessed at header time: the includer's
   `-D` flags choose, as for any C header. A chain with no export in it is left out. `#if 0 … #else` writes the live text
