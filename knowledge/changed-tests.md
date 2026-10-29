@@ -20,7 +20,7 @@ Every red pull request was a fault in a test the author did not know to run. `sm
 
 **No size turns a selection into `*`.** The filter and each file's names grow in memory mapped from the OS (`SmithChangedBuffer`). Only when the names are longer than one runner argument (12000 bytes: a verb's arguments travel to build.c as -DSMITH_ARGS in 16384 bytes, and a longer one used to stop the run with "the arguments are too long") does a run say so and run every test; `--list` prints them all. `--list` and `--dry-run` print without `-v`, with a summary line on stderr, and a file the records select shows how many of its tests.
 
-**Cheapest first (#506).** `--cheapest-first` writes `.smith/costs.tsv` from the `cpu` line of each record and passes it as the runner's `--costs`: the selected tests start unknown first, then by cpu seconds, so a wide selection under `--fail-fast` and a time limit still meets the cheap breakage first.
+**Cheapest first (#506).** `--cheapest-first` writes `.smith/costs.tsv` from the `cpu` line of each record and passes it as the runner's `--costs` with `--cheapest` (the runner's own order for `--costs` is the heaviest first): the selected tests start unknown first, then by cpu seconds, so a wide selection under `--fail-fast` and a time limit still meets the cheap breakage first.
 
 **Markdown is placed.** A changed `.md` file (a skill, a concept, the README) is not unknown: it selects the test files whose source names `.md` (skills, readme and docs tests, goldens of Markdown), "it reads Markdown", and no more (#506).
 
