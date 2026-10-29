@@ -8,12 +8,6 @@ description: >
 runs:
   using: composite
   steps:
-    # some tests bound a command with coreutils' `timeout`, which macOS lacks (the owner's Mac has it from Homebrew)
-    - name: timeout
-      if: runner.os == 'macOS'
-      shell: bash
-      run: command -v timeout >/dev/null || HOMEBREW_NO_AUTO_UPDATE=1 brew install coreutils
-
     - name: Fetch the previous smith and the LLVM pack
       shell: bash
       run: |

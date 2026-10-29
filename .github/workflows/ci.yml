@@ -96,8 +96,7 @@ jobs:
           - { os: macos-26, shard: 3, count: 5 }
           - { os: macos-26, shard: 4, count: 5 }
           - { os: macos-26, shard: 5, count: 5 }
-          - { os: ubuntu-latest, shard: 1, count: 2 }
-          - { os: ubuntu-latest, shard: 2, count: 2 }
+          # Linux joins once a Linux release exists (#799): without one, stage0 builds smith from source for hours
     env:
       GH_TOKEN: ${{ github.token }}
       SMITH_OUTPUT: full
@@ -110,8 +109,8 @@ jobs:
       - uses: ./.github/actions/setup-smith
       - name: Tools some tests need
         if: runner.os == 'macOS'
-        # the editor tests do nothing without nvim
-        run: brew list neovim >/dev/null 2>&1 || brew install neovim
+        # the editor tests do nothing without nvim; some tests bound a command with coreutils' `timeout`
+        run: HOMEBREW_NO_AUTO_UPDATE=1 brew install neovim coreutils
       - name: Tests, part ${{ matrix.shard }} of ${{ matrix.count }}
         shell: bash
         run: |
