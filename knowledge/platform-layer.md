@@ -36,7 +36,7 @@ includes:
 | `smith_platform_self_path`: the running executable | `_NSGetExecutablePath` | `/proc/self/exe` |
 | `smith_platform_lld_link`: `ld` in smith's process (`shim/lld.cpp`) | `lld::macho::link`, as `ld64.lld` | `lld::elf::link`, as `ld.lld` |
 | `smith_platform_linker_version`: what the driver is told of its ld (`shim/clang.cpp`) | `-mlinker-version=1115.7.3` | nothing (the flag is Darwin's) |
-| `smith_platform_spawn_chdir` (`shim/lsp.cpp`) | `posix_spawn_file_actions_addchdir` (macOS 26; the `_np` form before, see [deployment-target](deployment-target.md)) | `posix_spawn_file_actions_addchdir_np` |
+| `smith_platform_spawn_chdir` (`shim/lsp.cpp`) | `posix_spawn_file_actions_addchdir` (macOS 26, smith's floor: [deployment-target](deployment-target.md)) | `posix_spawn_file_actions_addchdir_np` |
 | `smith_platform_spawn_suspended`: a program a debugger attaches to (`shim/lldb_explain.cpp`) | `POSIX_SPAWN_START_SUSPENDED` | a child that stops itself with SIGSTOP before it runs the program |
 
 On Linux `smith.c` also defines `_GNU_SOURCE` before its first include, because glibc hides `nftw`'s `FTW_PHYS` and

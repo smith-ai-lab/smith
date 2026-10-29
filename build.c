@@ -56,7 +56,7 @@ struct BuildPlatform {
     const char *group_start;       // around the static archives of LLVM, clang, lld and lldb, which name each other
     const char *lld;               // lld's library for the platform's object format
     const char *const *link_flags; // smith's link: drop what nothing reaches, export only main
-    const char *const *deployment; // every compile of smith itself: the oldest OS it runs on (macOS 15), else nothing
+    const char *const *deployment; // every compile of smith itself: the oldest OS it runs on (macOS 26), else nothing
     const char *const *lldb_libraries;   // what lldb's host layer uses
     const char *const *system_libraries; // last: the C++ library and the platform's own
     const char *const *pack_libraries;   // scripts/pack.c's (libcompression on macOS)
@@ -70,10 +70,10 @@ static const BuildPlatform build_platform_macos = {
     .group_start = "",
     .lld = "liblldMachO.a",
     .link_flags =
-        (const char *const[]){"-mmacosx-version-min=15.0", "-Wl,-dead_strip", "-Wl,-exported_symbol,_main", nullptr},
-    // smith runs on macOS 15 and newer, built on any newer one (#802): a system function newer than 15 is called only
+        (const char *const[]){"-mmacosx-version-min=26.0", "-Wl,-dead_strip", "-Wl,-exported_symbol,_main", nullptr},
+    // smith runs on macOS 26 and newer, built on any newer one (#802): a system function newer than 26 is called only
     // where it exists, and one called bare is an error here, whatever WERROR says.
-    .deployment = (const char *const[]){"-mmacosx-version-min=15.0", "-Werror=unguarded-availability-new", nullptr},
+    .deployment = (const char *const[]){"-mmacosx-version-min=26.0", "-Werror=unguarded-availability-new", nullptr},
     .lldb_libraries = (const char *const[]){"-ledit", "-framework", "Foundation", "-framework", "CoreFoundation",
                                             "-framework", "CoreServices", "-framework", "Security", nullptr},
     .system_libraries = (const char *const[]){"-lc++", "-lm", "-lcompression", nullptr},
