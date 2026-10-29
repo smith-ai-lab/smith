@@ -104,6 +104,11 @@ jobs:
             echo "build=true" >>"$GITHUB_OUTPUT"
           fi
 
+      # scripts/llvm_linux.c links LLVM with lld (-DLLVM_USE_LINKER=lld), which the hosted image does not have
+      - name: lld
+        if: steps.pack.outputs.build == 'true'
+        run: sudo apt-get update -q && sudo apt-get install -y -q lld
+
       - name: Machine
         if: steps.pack.outputs.build == 'true'
         run: |
