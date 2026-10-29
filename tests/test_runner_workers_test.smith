@@ -442,3 +442,15 @@ export void test_runner_workers_fail_fast_starts_no_test_after_the_first_failure
     runner::expect_has(io, "", "fail-fast: the rest is not started", &run, "1 passed, 1 failed");
     runner::expect_has(io, "", "fail-fast: and counted", &run, "2 not run (--fail-fast)");
 }
+
+// The cores a test held go back to the pool when it ends (#754). The runner forks its workers after it took the cores
+// of the jobs running, and a worker that kept a copy of a core's descriptor held it for as long as it lived, so after
+// its first jobs ended the pool looked empty and the runner ran one test at a time. Three tests end at once; the next
+// two wait for each other's mark, so they pass only if both start, which needs a core for the second.
+export void test_runner_workers_the_cores_of_ended_tests_go_back_to_the_pool(io::Io *io) {
+    scratch::Project p = runner::built_project(io, "runner_base", "runner_tokens", "-DSAN=0");
+    scratch::Run run = scratch::sh(
+        &p, "mkdir -p marks pool; env -u SMITH_SLOTS SMITH_SLOT_HELD=$$ SMITH_SLOTS_DIR=$PWD/pool SMITH_CORES=3 "
+            "build/tests --jobs 3 --wall-timeout 100 2>&1");
+    runner::expect_has(io, "", "pool: all five tests pass", &run, "5 passed, 0 failed");
+}

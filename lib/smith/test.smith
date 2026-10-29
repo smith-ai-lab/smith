@@ -2154,10 +2154,22 @@ void discard(Process *process) {
     process->pid = 0;
 }
 
-// In a new process: the other jobs' descriptors are not its to hold, or the runner closing them would not end them.
+// The core token (an open, locked file: runtime/slots.c) of each busy job, -1 for a job on the base token or with none.
+// A forked process shares the lock of every descriptor it inherits, so a worker that kept a copy would hold the core
+// for as long as it lives, whatever its job did with it: the runner ran one test at a time after its first sixteen
+// (#754). Every new process closes them (close_others).
+constexpr i32 no_token = -1; // taking one failed: no token is free
+i32 job_tokens[jobs_max];
+
+// In a new process: the other jobs' descriptors are not its to hold, or the runner closing them would not end them,
+// and no core token is its to hold.
 void close_others(usize slot) {
     for (usize other = 0; other <= jobs_max; other++) {
         if (other != slot && processes[other].pid != 0) close_process(&processes[other]);
+    }
+    for (usize job = 0; job < jobs_max; job++) {
+        if (job_tokens[job] >= 0) c::close(job_tokens[job]);
+        job_tokens[job] = no_token;
     }
 }
 
@@ -2196,6 +2208,7 @@ void start_isolated(const Test *test, const Options *options, usize slot, const 
     if (forked < 0) die("fork");
     if (forked == 0) {
         c::close(ends[0]);
+        close_others(slot);
         child(test, options, &shared_slots[slot], ends[1], command);
     }
     hooking = false;
@@ -2757,7 +2770,6 @@ void shrink_failure(const Test *test, const Options *options, Run *run) {
 // worker rides on the token of the job that runs it, and every further worker takes one token of the host's pool and
 // gives it back when its test ends, so a run grows as tokens free up and a waiting CI run is served first. Started by
 // hand, with no pool, a worker needs none.
-constexpr i32 no_token = -1; // taking one failed: no token is free
 constexpr i32 no_pool = -2;  // there is no pool: the worker needs none
 constexpr i32 tokens_max = 64;
 constexpr usize path_max = 1024;
@@ -2876,7 +2888,6 @@ typedef struct {
     usize *order;       // the chosen tests in the order they start: the table's, or shuffled
     usize count;
     usize running[jobs_max]; // the chosen test each job is running, or idle
-    i32 tokens[jobs_max];    // the extra token of each busy job (a descriptor), no_token for the one on the base
     struct c::pollfd polls[2 * jobs_max];
 } Plan;
 
@@ -2908,8 +2919,8 @@ void pump(Plan *plan) {
             continue;
         }
         plan->running[job] = idle;
-        if (plan->tokens[job] >= 0) c::close(plan->tokens[job]); // its core goes back to the pool
-        plan->tokens[job] = no_token;
+        if (job_tokens[job] >= 0) c::close(job_tokens[job]); // its core goes back to the pool
+        job_tokens[job] = no_token;
     }
 }
 
@@ -2928,7 +2939,7 @@ bool launch(Plan *plan, usize *next) {
         if (plan->running[job] != idle) continue;
         i32 token = busy_count(plan) > 0 ? take_token() : no_pool;
         if (token == no_token) return false;
-        plan->tokens[job] = token >= 0 ? token : no_token;
+        job_tokens[job] = token >= 0 ? token : no_token;
         usize chosen = plan->order[*next];
         dispatch(plan->options, job, plan->tests[chosen], &plan->runs[chosen]);
         plan->running[job] = chosen;
@@ -2961,7 +2972,7 @@ bool failed_so_far(const Plan *plan, usize next) {
 void run_all(Plan *plan) {
     for (usize job = 0; job < jobs_max; job++) {
         plan->running[job] = idle;
-        plan->tokens[job] = no_token;
+        job_tokens[job] = no_token;
     }
     usize next = 0;
     usize printed = 0;
