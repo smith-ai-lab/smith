@@ -2223,6 +2223,9 @@ void start_isolated(const Test *test, const Options *options, usize slot, const 
     }
     hooking = false;
     c::close(ends[1]);
+    // Nonblocking, as a worker's pipe is: a read after the child was killed must not wait for a process it left behind
+    // (a `sleep`) that still holds the pipe's other end, which stopped the whole runner for that process's life (#754).
+    if (c::fcntl(ends[0], set_flags, non_blocking) != 0) die("fcntl");
     processes[slot] = (Process){.pid = forked, .control = -1, .output = ends[0]};
 }
 
