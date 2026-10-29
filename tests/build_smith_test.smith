@@ -37,7 +37,10 @@ static const char *commands_of(const scratch::Project *p, const char *name) {
 
 // 1. A build.smith of the high-level calls builds, runs and tests.
 
-export void test_build_smith_a_build_smith_of_the_high_level_calls_builds_and_runs(io::Io *io) {
+// Builds and runs, tests, the other profiles and proves: four tests of one project, each of which used to make a
+// project of its own and spend about 2 CPU-s building the build program. The assertions are the same; smith prove is
+// last, as the one that a host without a prover fails.
+export void test_build_smith_a_build_smith_of_the_high_level_calls_builds_runs_tests_and_proves(io::Io *io) {
     scratch::Project p = scratch::project(io, "shapes", "smith_shapes");
     scratch::Run built = scratch::build(&p, "");
     scratch::expect_status("build.smith: builds", 0, &built);
@@ -51,24 +54,16 @@ export void test_build_smith_a_build_smith_of_the_high_level_calls_builds_and_ru
     scratch::expect_text("build.smith: a second build has nothing to do", "smith: no work to do.", second.out);
     scratch::Run run = scratch::sh(&p, "smith run");
     scratch::expect_text("build.smith: smith run runs the program", "12", last_line(run.out));
-}
-
-export void test_build_smith_a_build_smith_of_the_high_level_calls_tests_and_proves(io::Io *io) {
-    scratch::Project p = scratch::project(io, "shapes", "smith_shapes");
     scratch::Run tested = scratch::sh(&p, "smith test");
     scratch::expect_status("build.smith: smith test passes", 0, &tested);
     scratch::expect_contains("build.smith: ... its test", format::push(&io->arena, tested.out, tested.err).data,
                              "1 passed, 0 failed");
+    scratch::Run profiles = scratch::build(&p, "release fast");
+    scratch::expect_status("build.smith: the other profiles build", 0, &profiles);
+    scratch::expect_text("build.smith: ... and run", "12", scratch::capture(&p, "build/release/shapes"));
     scratch::Run proved = scratch::sh(&p, "smith prove");
     scratch::expect_status("build.smith: smith prove runs", 0, &proved);
     scratch::expect_contains("build.smith: ... and says there is nothing to prove", proved.out, "nothing to prove");
-}
-
-export void test_build_smith_the_other_profiles_build_and_run(io::Io *io) {
-    scratch::Project p = scratch::project(io, "shapes", "smith_shapes");
-    scratch::Run built = scratch::build(&p, "release fast");
-    scratch::expect_status("build.smith: the other profiles build", 0, &built);
-    scratch::expect_text("build.smith: ... and run", "12", scratch::capture(&p, "build/release/shapes"));
 }
 
 // 2. A build.smith with a low-level step beside the high-level calls, and one with only low-level calls.
@@ -134,16 +129,13 @@ static scratch::Project dumped_smith_project(io::Io *io, const char **convention
     return p;
 }
 
-export void test_build_smith_dump_config_gives_the_commands_of_no_build_file(io::Io *io) {
+// The commands, building and running and testing, and the explicit message: three tests of one project, each of which
+// used to make a project of its own and spend about 2 CPU-s building the build program. The assertions are the same.
+export void test_build_smith_dump_config_gives_the_commands_of_no_build_file_and_builds_runs_and_tests(io::Io *io) {
     const char *conventional = nullptr;
     scratch::Project p = dumped_smith_project(io, &conventional);
     scratch::expect_text("dump: the build.smith gives the commands of no build file", conventional,
                          commands_of(&p, "dump"));
-}
-
-export void test_build_smith_dump_config_builds_runs_and_tests(io::Io *io) {
-    const char *conventional = nullptr;
-    scratch::Project p = dumped_smith_project(io, &conventional);
     scratch::Run built = scratch::build(&p, "");
     if (built.status != 0) {
         test::note("stdout: %s\nstderr: %s", built.out, built.err);
@@ -154,11 +146,6 @@ export void test_build_smith_dump_config_builds_runs_and_tests(io::Io *io) {
     scratch::Run tested = scratch::sh(&p, "smith test");
     scratch::expect_contains("dump: ... and tests", format::push(&io->arena, tested.out, tested.err).data,
                              "1 passed, 0 failed");
-}
-
-export void test_build_smith_dump_config_of_a_project_with_a_build_smith_says_it_is_explicit(io::Io *io) {
-    const char *conventional = nullptr;
-    scratch::Project p = dumped_smith_project(io, &conventional);
     scratch::Run again = scratch::sh(&p, "smith build --dump-config");
     scratch::expect_status("dump: a project with a build.smith: status 0", 0, &again);
     scratch::expect_text("dump: ... prints nothing to stdout", "", again.out);
@@ -189,7 +176,9 @@ static scratch::Project dumped_c_project(io::Io *io, const char **conventional) 
     return p;
 }
 
-export void test_build_smith_dump_config_of_a_c_project_gives_the_commands_of_no_build_file(io::Io *io) {
+// The commands and the tests, and the explicit message: two tests of one project, each of which used to make a project
+// of its own and spend about 2 CPU-s building the build program. The assertions are the same.
+export void test_build_smith_dump_config_of_a_c_project_gives_the_commands_tests_and_says_it_is_explicit(io::Io *io) {
     const char *conventional = nullptr;
     scratch::Project p = dumped_c_project(io, &conventional);
     scratch::expect_text("dump: the build.c gives the commands of no build file", conventional,
@@ -197,11 +186,6 @@ export void test_build_smith_dump_config_of_a_c_project_gives_the_commands_of_no
     scratch::Run tested = scratch::sh(&p, "smith test");
     scratch::expect_contains("dump: ... and tests", format::push(&io->arena, tested.out, tested.err).data,
                              "1 passed, 0 failed");
-}
-
-export void test_build_smith_dump_config_of_a_project_with_a_build_c_says_it_is_explicit(io::Io *io) {
-    const char *conventional = nullptr;
-    scratch::Project p = dumped_c_project(io, &conventional);
     scratch::Run again = scratch::sh(&p, "smith build --dump-config");
     scratch::expect_status("dump: a project with a build.c: status 0", 0, &again);
     scratch::expect_text("dump: ... prints nothing to stdout", "", again.out);
