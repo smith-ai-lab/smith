@@ -14,63 +14,43 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Restore the cache
-        id: cache
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            ~/.cache/smith/steps
-            ~/.cache/smith/llvm
-            ~/.cache/smith/enzyme
-          key: probe-${{ github.sha }}
-          restore-keys: probe-
-      - name: Sizes after restore
-        run: |
-          echo "cache hit: ${{ steps.cache.outputs.cache-hit }} key: ${{ steps.cache.outputs.cache-matched-key }}"
-          du -sh ~/.cache/smith/* 2>/dev/null || true
-      - name: Fetch
-        run: |
-          start=$(date +%s)
-          mkdir -p .smith
-          cc -std=c23 -x c scripts/stage0.c -o .smith/stage0-tool
-          .smith/stage0-tool llvm
-          echo "fetch: $(( $(date +%s) - start )) s"
-          du -sh .smith/stage0 ~/.cache/smith/* 2>/dev/null || true
       - name: Build
         run: |
+          mkdir -p .smith
+          cc -std=c23 -x c scripts/stage0.c -o .smith/stage0-tool
+          .smith/stage0-tool llvm 2>&1 | tail -1
           start=$(date +%s)
-          .smith/stage0-tool
-          echo "build: $(( $(date +%s) - start )) s"
-          ls build/*/ | head -30
-          du -sh build .smith ~/.cache/smith/* 2>/dev/null || true
-          du -sh .smith/* | sort -h | tail
-      - name: Build the tests too
-        run: |
-          start=$(date +%s)
+          .smith/stage0-tool 2>&1 | tail -1
+          echo "stage0 build: $(( $(date +%s) - start )) s"
           smith=$(ls "$PWD"/build/*/smith | head -n 1)
-          "$smith" test --list 2>&1 | tail -3 || true
-          echo "test --list: $(( $(date +%s) - start )) s"
-      - name: Pack the tree
-        run: |
+          for i in 1 2 3; do
+            start=$(date +%s)
+            "$smith" build 2>&1 | tail -2
+            echo "smith build $i: $(( $(date +%s) - start )) s"
+          done
+          for i in 1 2; do
+            start=$(date +%s)
+            "$smith" test --list 2>&1 | tail -1
+            echo "test --list $i: $(( $(date +%s) - start )) s"
+          done
           start=$(date +%s)
-          tar --exclude .smith/stage0 -cf "$RUNNER_TEMP/tree.tar" build .smith
+          "$smith" test --shard 1/5 --list 2>&1 | tail -1
+          echo "shard list: $(( $(date +%s) - start )) s"
+          git ls-files -z --others --ignored --exclude-standard --directory | tr '\0' '\n' > "$RUNNER_TEMP/ignored.txt"
+          wc -l "$RUNNER_TEMP/ignored.txt"; cat "$RUNNER_TEMP/ignored.txt" | head -20
+          echo "${{ github.sha }}" > .smith/built-from
+          start=$(date +%s)
+          grep -v '^.smith/stage0/' "$RUNNER_TEMP/ignored.txt" | tr '\n' '\0' | tar --null -T - -cf "$RUNNER_TEMP/tree.tar" .smith/built-from
           zstd -q -T0 "$RUNNER_TEMP/tree.tar" -o "$RUNNER_TEMP/tree.tar.zst"
           ls -l "$RUNNER_TEMP"/tree.tar*
           echo "pack: $(( $(date +%s) - start )) s"
+          cp -p "$RUNNER_TEMP/tree.tar.zst" /tmp/ || true
       - uses: actions/upload-artifact@v4
         with:
           name: tree
           path: ${{ runner.temp }}/tree.tar.zst
           compression-level: 0
           retention-days: 1
-      - name: Save the cache
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/.cache/smith/steps
-            ~/.cache/smith/llvm
-            ~/.cache/smith/enzyme
-          key: probe-${{ github.sha }}
   artifact:
     needs: build
     runs-on: macos-26
@@ -81,11 +61,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Take the tree
-        run: |
-          start=$(date +%s)
-          git ls-files -z | xargs -0 touch -t 202001010000
-          echo "touch: $(( $(date +%s) - start )) s"
       - uses: actions/download-artifact@v4
         with:
           name: tree
@@ -93,46 +68,19 @@ jobs:
       - name: Unpack and try
         run: |
           start=$(date +%s)
+          git ls-files -z | xargs -0 touch -t 202001010000
           zstd -dq -T0 "$RUNNER_TEMP/tree.tar.zst" -o "$RUNNER_TEMP/tree.tar"
           tar -xf "$RUNNER_TEMP/tree.tar"
-          echo "unpack: $(( $(date +%s) - start )) s"
-          export PATH="$PWD/build/Darwin-arm64:$PATH"
-          start=$(date +%s)
-          smith build 2>&1 | tail -5
-          echo "smith build: $(( $(date +%s) - start )) s"
-          start=$(date +%s)
-          smith test --shard 1/5 --list 2>&1 | tail -3
-          echo "test --list: $(( $(date +%s) - start )) s"
-  cached:
-    needs: build
-    runs-on: macos-26
-    timeout-minutes: 20
-    env:
-      GH_TOKEN: ${{ github.token }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Restore the cache
-        id: cache
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            ~/.cache/smith/steps
-            ~/.cache/smith/llvm
-            ~/.cache/smith/enzyme
-          key: probe-${{ github.sha }}
-      - name: Fetch, build, list
-        run: |
-          start=$(date +%s)
-          mkdir -p .smith
-          cc -std=c23 -x c scripts/stage0.c -o .smith/stage0-tool
-          .smith/stage0-tool llvm 2>&1 | tail -3
-          echo "fetch: $(( $(date +%s) - start )) s"
-          start=$(date +%s)
-          .smith/stage0-tool 2>&1 | tail -3
-          echo "build: $(( $(date +%s) - start )) s"
-          start=$(date +%s)
+          echo "touch and unpack: $(( $(date +%s) - start )) s"
           smith=$(ls "$PWD"/build/*/smith | head -n 1)
-          "$smith" test --shard 1/5 --list 2>&1 | tail -3
-          echo "test --list: $(( $(date +%s) - start )) s"
+          start=$(date +%s)
+          "$smith" build llvm 2>&1 | tail -1
+          echo "llvm pack: $(( $(date +%s) - start )) s"
+          for i in 1 2; do
+            start=$(date +%s)
+            "$smith" build 2>&1 | tail -2
+            echo "smith build $i: $(( $(date +%s) - start )) s"
+          done
+          start=$(date +%s)
+          "$smith" test --shard 1/5 --list 2>&1 | tail -2
+          echo "shard list: $(( $(date +%s) - start )) s"
