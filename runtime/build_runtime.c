@@ -2200,19 +2200,65 @@ static void smith_lang_header_step(SmithBuild *b, const SmithObject *object, con
     };
 }
 
+// Whether the header step `to` can be reached from `from` along the import edges adj[i * n + j] (step i imports step
+// j).
+static bool smith_lang_reaches(const bool *adj, size_t n, size_t from, size_t to) {
+    bool *seen = smith_alloc(n);
+    size_t *stack = smith_alloc(n * sizeof *stack);
+    size_t top = 0;
+    stack[top++] = from;
+    seen[from] = true;
+    while (top > 0) { // each step is pushed once
+        size_t at = stack[--top];
+        if (at == to) return true;
+        for (size_t next = 0; next < n; next++) {
+            if (!adj[at * n + next] || seen[next]) continue;
+            seen[next] = true;
+            stack[top++] = next;
+        }
+    }
+    return false;
+}
+
+// The import edges among the header steps: adj[i * n + j] when the module of step i imports the module of step j.
+static bool *smith_lang_import_edges(SmithBuild *b, size_t n) {
+    bool *adj = smith_alloc(n * n);
+    for (size_t i = 0; i < n; i++) {
+        const char *const *imports = smith_lang_imports_of(b, smith_lang_header_sources[i]);
+        for (size_t k = 0; imports[k] != nullptr; k++) { // bounded by the imports
+            const char *header = smith_text(".smith/include/%s.h", smith_lang_slashed(imports[k]));
+            for (size_t j = 0; j < n; j++) // bounded by the steps
+                adj[i * n + j] =
+                    adj[i * n + j] || (j != i && strcmp(smith_lang_header_steps[j].outputs[0], header) == 0);
+        }
+    }
+    return adj;
+}
+
 // Declares the header steps: each one's implicit inputs gain the header of every module it imports that this build
-// makes, or that is on disk (smith's own libraries', which smith writes before build.c runs).
+// makes, or that is on disk (smith's own libraries', which smith writes before build.c runs). An edge that closes an
+// import cycle is left out: the graph would reject the cycle by file names, and the check of the imports
+// (smith_lang_check) names the modules.
 static void smith_lang_declare_header_steps(SmithBuild *b) {
-    for (size_t i = 0; i < smith_lang_header_step_count; i++) {
+    size_t n = smith_lang_header_step_count;
+    bool *adj = smith_lang_import_edges(b, n);
+    for (size_t i = 0; i < n; i++) {
         SmithStep step = smith_lang_header_steps[i];
         const char *const *imports = smith_lang_imports_of(b, smith_lang_header_sources[i]);
         for (size_t k = 0; imports[k] != nullptr; k++) { // bounded by the imports
             const char *header = smith_text(".smith/include/%s.h", smith_lang_slashed(imports[k]));
             if (strcmp(header, step.outputs[0]) == 0) continue;
-            bool made = access(header, R_OK) == 0;
+            bool ours = false;
+            bool cycle = false;
+            for (size_t j = 0; j < n && !cycle; j++) { // bounded by the steps
+                if (strcmp(smith_lang_header_steps[j].outputs[0], header) != 0) continue;
+                ours = true;
+                cycle = smith_lang_reaches(adj, n, j, i);
+            }
+            bool made = ours || access(header, R_OK) == 0;
             for (size_t m = 0; m < smith_lang_module_count && !made; m++) // bounded by the modules
                 made = strcmp(smith_lang_module_headers[m], header) == 0;
-            if (made) step.implicit_inputs = smith_cat(b, step.implicit_inputs, smith_one(header), nullptr);
+            if (made && !cycle) step.implicit_inputs = smith_cat(b, step.implicit_inputs, smith_one(header), nullptr);
         }
         smith_step(b, &step);
     }
