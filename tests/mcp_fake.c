@@ -16,8 +16,11 @@
 #include "../lib/json.c"
 #include "../lib/trace.c"
 #include "../runtime/protocol/protocol.c"
+// The generated protocol code, most of this file's compile, can be linked in instead (tests/mcp_test.smith).
+#ifndef MCP_FAKE_PROTOCOL_LINKED
 #include "dap.c"
 #include "mcp.c"
+#endif
 
 // The server's own checks stay on in every build, as smith's do (assert would go with NDEBUG).
 #define SMITH_ASSERT(condition) \
@@ -32,7 +35,9 @@
 
 #include <sys/mman.h>
 
-constexpr size_t test_memory = (size_t)1 << 30;
+// The fake io's arena for a case: the fake zeroes a quarter of it for its files, so a case costs this much CPU in page
+// faults (1 GiB cost 1.3 s of system time a run); a case uses under 64 MiB.
+constexpr size_t test_memory = (size_t)1 << 27;
 constexpr size_t test_buffer = (size_t)1 << 20;
 
 static int test_total;

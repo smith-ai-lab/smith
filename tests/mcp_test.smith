@@ -26,14 +26,47 @@ constexpr char fake_sources[_] =
     "tests/mcp_fake.c lib/smith/text.smith lib/smith/arena.smith lib/smith/contract.smith lib/smith/io.smith "
     "lib/smith/random.smith";
 
-static void check_fake(io::Io *io, const char *mode, const char *flags) {
+// The generated protocol code (.smith/protocol/dap.c and mcp.c, 6 s of CPU at -O2, more than half of the file's
+// compile) does not depend on NDEBUG (it holds no assertion), so the two optimized builds link the same two objects.
+// They are compiled once for each smith under test and each version of the files, in the tests' cache
+// ($SMITH_TEST_CACHE/mcp-proto-<key>, locked the way `build_project` below is): the first test to need them compiles
+// them, the other waits. The sanitized build compiles all of it in its own translation unit, as the file is without
+// -DMCP_FAKE_PROTOCOL_LINKED.
+constexpr char proto_flags[_] = "-std=gnu23 -O2 -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror";
+
+constexpr char proto_script[_] =
+    "inc=\"-I $SMITH_REPO/.smith/include -I $SMITH_REPO/.smith/protocol -I runtime/protocol\"; "
+    "if [ \"$(uname -s)\" = Darwin ]; then sf='-f %m-%z'; else sf='-c %Y-%s'; fi; "
+    "key=$( { echo \"$flags $inc\" | cksum; stat $sf \"$SMITH_SELF\" \"$SMITH_REPO\"/.smith/protocol/dap.[ch] "
+    "\"$SMITH_REPO\"/.smith/protocol/mcp.[ch] \"$SMITH_REPO\"/runtime/protocol/protocol.h; } | tr '\\n ' --); "
+    "base=$SMITH_TEST_CACHE/mcp-proto-$key; "
+    "if [ ! -e \"$base/done\" ] && mkdir \"$base.lock\" 2>/dev/null; then "
+    "find \"$SMITH_TEST_CACHE\" -maxdepth 1 -name 'mcp-proto-*' -mtime +1 -exec rm -rf {} + 2>/dev/null; "
+    "tmp=$base.$$; mkdir -p \"$tmp\" && smith cc $flags $inc -c \"$SMITH_REPO/.smith/protocol/dap.c\" -o "
+    "\"$tmp/dap.o\" "
+    "&& smith cc $flags $inc -c \"$SMITH_REPO/.smith/protocol/mcp.c\" -o \"$tmp/mcp.o\" && mkdir -p \"$base\" && "
+    "mv \"$tmp/dap.o\" \"$tmp/mcp.o\" \"$base/\" && : >\"$base/done\"; rm -rf \"$tmp\"; rmdir \"$base.lock\"; "
+    "else i=0; while [ ! -e \"$base/done\" ] && [ -d \"$base.lock\" ] && [ $i -lt 3000 ]; do sleep 0.2; "
+    "i=$((i + 1)); done; fi; "
+    "[ -e \"$base/done\" ] && cp \"$base/dap.o\" \"$base/mcp.o\" .";
+
+static void check_fake(io::Io *io, const char *mode, const char *flags, bool linked) {
     scratch::Project p = scratch::project(io, "fake", nullptr);
     scratch::copy_tree(&p, "lib", "lib");
     scratch::copy_tree(&p, "tests/mcp_fake.c", "tests/mcp_fake.c");
     scratch::copy_tree(&p, "runtime", "runtime");
+    if (linked) {
+        scratch::Run objects =
+            scratch::sh(&p, format::push(&io->arena, "flags='", proto_flags, "'; ", proto_script, " 2>&1").data);
+        if (objects.status != 0) {
+            test::note("%s", objects.out);
+        }
+        scratch::expect_status(format::push(&io->arena, "fake io, ", mode, ": the protocol objects build").data, 0,
+                               &objects);
+    }
     scratch::Run built = scratch::sh(
-        &p, format::push(&io->arena, "smith cc -std=gnu23 -g -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror ",
-                         flags,
+        &p, format::push(&io->arena, "smith cc -std=gnu23 -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror ",
+                         flags, linked ? " -DMCP_FAKE_PROTOCOL_LINKED dap.o mcp.o" : "",
                          " -I \"$SMITH_REPO/.smith/include\" -I \"$SMITH_REPO/.smith/protocol\" -I "
                          "runtime/protocol ",
                          fake_sources, " -o mcp_fake 2>build.log")
@@ -49,15 +82,15 @@ static void check_fake(io::Io *io, const char *mode, const char *flags) {
 }
 
 export void test_mcp_fake_io_under_the_sanitizers(io::Io *io) {
-    check_fake(io, "asan", "-O0 -fsanitize=address,undefined -fno-sanitize-recover=all");
+    check_fake(io, "asan", "-g -O0 -fsanitize=address,undefined -fno-sanitize-recover=all", false);
 }
 
 export void test_mcp_fake_io_optimized(io::Io *io) {
-    check_fake(io, "fast", "-O2");
+    check_fake(io, "fast", "-O2", true);
 }
 
 export void test_mcp_fake_io_optimized_without_assertions(io::Io *io) {
-    check_fake(io, "ndebug", "-O2 -DNDEBUG");
+    check_fake(io, "ndebug", "-O2 -DNDEBUG", true);
 }
 
 // --- the stage0 -----------------------------------------------------------------------------------------------------
@@ -267,7 +300,20 @@ export void test_mcp_a_smith_program_session_has_names_as_written(io::Io *io) {
 // --- a test of a project, launched by its name
 // ------------------------------------------------------------------------
 
-constexpr char build_project[_] = "env CC=smith-cc CXX=smith-c++ smith build >build.log 2>&1";
+// The scratch project, built. Both tests that launch it need the same build (3 s of CPU each), so it is built once for
+// each smith under test in the tests' cache ($SMITH_TEST_CACHE/mcp-<smith's size and time>/project, the way
+// tests/lsp_test.smith's `built_script` does) and copied; `smith build` in the copy is then a no-op that writes the
+// copy's paths again. The first test to need it takes a lock (a folder) and builds, the other waits for the result.
+constexpr char build_project[_] =
+    "key=$(stat -c %Y-%s \"$SMITH_SELF\" 2>/dev/null || stat -f %m-%z \"$SMITH_SELF\"); "
+    "base=$SMITH_TEST_CACHE/mcp-$key; c=$base/project; lock=$base.lock-project; "
+    "if [ ! -d \"$c\" ] && mkdir \"$lock\" 2>/dev/null; then "
+    "find \"$SMITH_TEST_CACHE\" -maxdepth 1 -name 'mcp-*' -mtime +1 -exec rm -rf {} + 2>/dev/null; "
+    "tmp=$base.$$; mkdir -p \"$tmp\" && cp -Rp . \"$tmp/project\" && (cd \"$tmp/project\" && "
+    "env CC=smith-cc CXX=smith-c++ smith build >\"$tmp/build.log\" 2>&1 || { cat \"$tmp/build.log\" >&2; false; }) && "
+    "mkdir -p \"$base\" && mv \"$tmp/project\" \"$c\"; rm -rf \"$tmp\"; rmdir \"$lock\"; "
+    "else i=0; while [ ! -d \"$c\" ] && [ -d \"$lock\" ] && [ $i -lt 3000 ]; do sleep 0.2; i=$((i + 1)); done; fi; "
+    "[ -d \"$c\" ] && cp -Rp \"$c/.\" . && env CC=smith-cc CXX=smith-c++ smith build >build.log 2>&1";
 
 static const char *project_calls(io::Io *io) {
     const char *calls = "";
@@ -288,7 +334,7 @@ export void test_mcp_a_test_of_a_project_launched_by_its_name(io::Io *io) {
     scratch::Project p = folder(&root, "project");
     scratch::Run built = scratch::sh(&p, build_project);
     if (built.status != 0) {
-        test::note("%s", scratch::read(&p, "build.log"));
+        test::note("%s%s", built.err, scratch::read(&p, "build.log"));
     }
     scratch::expect_status("the scratch project builds", 0, &built);
     serve(io, &p, project_calls(io), "6");
