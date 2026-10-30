@@ -586,6 +586,38 @@ static void autotools(const char *name, const char *source, const char *const *f
     run_in(folder, (const char *[]){"make", "install", nullptr});
 }
 
+// Meson makes its static libraries as thin archives (members named by path, not held), which stop being archives once
+// they are copied: this one is rewritten in place holding its members.
+static void flatten(const char *archive) {
+    char magic[8] = {};
+    FILE *check = fopen(archive, "rb");
+    if (check == nullptr || fread(magic, 1, sizeof magic, check) != sizeof magic) die("cannot read", archive);
+    fclose(check);
+    if (memcmp(magic, "!<thin>\n", sizeof magic) != 0) return;
+    char folder[path_max];
+    snprintf(folder, sizeof folder, "%s", archive);
+    *strrchr(folder, '/') = '\0';
+    const char *list = path("%s.list", archive, "");
+    int output = open(list, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (output < 0 || !run_to((const char *[]){tool("llvm-ar"), "t", archive, nullptr}, output))
+        die("cannot list", archive);
+    close(output);
+    static char names[arguments_max][path_max];
+    const char *argv[arguments_max] = {tool("llvm-ar"), "rcs", "flat.a"};
+    size_t count = 3;
+    FILE *members = fopen(list, "r");
+    if (members == nullptr) die("cannot read", list);
+    while (count + 1 < arguments_max && fgets(names[count], sizeof names[count], members) != nullptr) {
+        names[count][strcspn(names[count], "\n")] = '\0';
+        argv[count] = names[count];
+        count++;
+    }
+    fclose(members);
+    argv[count] = nullptr;
+    run_in(folder, argv);
+    if (rename(path("%s/flat.a", folder, ""), archive) != 0) die("cannot move", archive);
+}
+
 // Bitwuzla (the solver `smith prove` asks first; Z3 only finds the model of a counterexample) and what it needs: GMP
 // and MPFR with their own configure; CaDiCaL and symfpu, which Meson would fetch, placed where its wraps' downloads
 // would go with the wraps' overlays; Bitwuzla's Meson told where the static GMP and MPFR are instead of asking
@@ -661,8 +693,10 @@ static void make_bitwuzla(const char *python, const char *ninja) {
         argv[count++] = libraries[i];
     argv[count] = nullptr;
     run(argv);
-    for (size_t i = 0; i < sizeof libraries / sizeof libraries[0]; i++)
+    for (size_t i = 0; i < sizeof libraries / sizeof libraries[0]; i++) {
+        flatten(path("%s/%s", build, libraries[i]));
         run((const char *[]){"cp", path("%s/%s", build, libraries[i]), path("%s/lib/", prove_folder, ""), nullptr});
+    }
     const char *headers = path("%s/include/bitwuzla", prove_folder, "");
     make_folder(headers);
     run((const char *[]){"cp", "-R", path("%s/include/bitwuzla/.", source, ""), path("%s/", headers, ""), nullptr});
