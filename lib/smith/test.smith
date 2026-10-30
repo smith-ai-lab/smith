@@ -166,8 +166,11 @@ constexpr i32 sig_abrt = c::SIGABRT;                              // NOLINT(smit
 constexpr i32 sig_alrm = c::SIGALRM;                              // NOLINT(smith-preprocessor)
 constexpr i32 sig_bus = c::SIGBUS;                                // NOLINT(smith-preprocessor)
 constexpr i32 sig_fpe = c::SIGFPE;                                // NOLINT(smith-preprocessor)
+constexpr i32 sig_hup = c::SIGHUP;                                // NOLINT(smith-preprocessor)
 constexpr i32 sig_ill = c::SIGILL;                                // NOLINT(smith-preprocessor)
+constexpr i32 sig_int = c::SIGINT;                                // NOLINT(smith-preprocessor)
 constexpr i32 sig_kill = c::SIGKILL;                              // NOLINT(smith-preprocessor)
+constexpr i32 wait_no_hang = c::WNOHANG;                          // NOLINT(smith-preprocessor)
 constexpr i32 sig_term = c::SIGTERM;                              // NOLINT(smith-preprocessor)
 constexpr i32 sig_pipe = c::SIGPIPE;                              // NOLINT(smith-preprocessor)
 constexpr i32 sig_prof = c::SIGPROF;                              // NOLINT(smith-preprocessor)
@@ -1447,8 +1450,11 @@ typedef struct {
     bool update; // --update: test::golden writes its file
     bool list;
     const char
-        *costs; // --costs <file>: lines `cpu<TAB>seconds<TAB>name`; the cheapest tests start first, unknown ones before
-    bool fail_fast; // --fail-fast: no test starts after one has failed; the ones running finish
+        *costs;    // --costs <file>: lines `cpu<TAB>seconds<TAB>name`; the heaviest tests start first (unknown first)
+    bool cheapest; // --cheapest: with --costs, the cheapest tests start first instead (a selection under --fail-fast)
+    u32 idle_timeout; // wall seconds a test may use no CPU time (it and its processes), then it fails; 0 for none
+    bool idle_given;  // --idle-timeout was passed
+    bool fail_fast;   // --fail-fast: no test starts after one has failed; the ones running finish
     bool verbose;
     bool color;
     bool isolate;       // a process for each test, as before the workers
@@ -1464,6 +1470,8 @@ typedef struct {
     bool explain_now; // set in the copy of the options of the run that explains the final failure of a property test
     bool shuffle_given; // run the tests in an order drawn from shuffle_seed
     u64 shuffle_seed;
+    usize shard_index; // --shard i/n: this run is part i (1 to n) of n; shard_count 0 runs every test
+    usize shard_count;
     // What the runner touches the world with, from the Runner it was handed: its io's console and clock, the Runner
     // itself (for the real io of a test that takes one), and where scratch folders go.
     Runner *runner;
@@ -1476,6 +1484,8 @@ typedef struct {
 
 constexpr u32 lost_retries = 3;   // fresh workers a test gets when its worker is stopped before the test began
 constexpr u32 wall_default = 600; // the wall-clock backstop of a test, in seconds: a hang, not a limit
+constexpr u32 idle_default = 180; // wall seconds a test may use no CPU time before it fails (--idle-timeout)
+constexpr usize idle_text_capacity = 160;
 constexpr u64 seeds_default = 100;
 constexpr u64 seeds_max = 1'000'000'000;
 constexpr u64 seed_root = 0x5eed;            // the key the properties' seeds are drawn from
@@ -1519,11 +1529,13 @@ typedef struct {
     usize frame_count;
     bool frames_exact;
     Output output;
-    bool lost;           // its worker was stopped by a timer before it began the test: not the test's doing
-    u32 lost_count;      // the times that happened, each answered with a fresh worker
-    u32 shrink_runs;     // the runs shrinking took, 0 when it did not run
-    bool shrink_changed; // it found a smaller failure
-    bool shrink_leaked;  // the smaller failure did not reproduce in a fresh worker: attempts leaked state
+    bool lost; // its worker was stopped by a timer before it began the test: not the test's doing
+    bool idle; // the runner ended it: neither it nor its processes used CPU time for --idle-timeout seconds
+    char waited[idle_text_capacity]; // what it was waiting for then: the command of its deepest process
+    u32 lost_count;                  // the times that happened, each answered with a fresh worker
+    u32 shrink_runs;                 // the runs shrinking took, 0 when it did not run
+    bool shrink_changed;             // it found a smaller failure
+    bool shrink_leaked;              // the smaller failure did not reproduce in a fresh worker: attempts leaked state
 } Run;
 
 // What the runner sends a worker: the test to run, and the one key to run a property test on, if any.
@@ -1986,6 +1998,9 @@ void coverage_end(const Test *test, bool passed, f64 cpu) {
 // In a forked process, before its first test: all output goes down the pipe.
 void setup(Shared *block, i32 output) {
     shared = block;
+    c::signal(sig_hup, (void (*)(i32))0); // SIG_DFL: the runner's handler ends the workers, it is not theirs to run
+    c::signal(sig_int, (void (*)(i32))0);
+    c::signal(sig_term, (void (*)(i32))0);
     catch_signals();
     c::smith_failure_hook = on_failure;
     hooking_tap.word = tap_word;
@@ -2130,10 +2145,37 @@ typedef struct {
     i32 control;  // the runner's end of the socket the commands and replies go over; -1 with --isolate
     i32 output;   // the read end of the process's output
     bool output_eof;
+    bool reaped; // the runner saw the process end (waitpid) before its socket closed: `status` is its status
+    i32 status;
 } Process;
 
 Process processes[jobs_max + 1];
 constexpr usize shrink_slot = jobs_max;
+
+// Every worker, and every --isolate child, leads a process group of its own (setpgid, in the child and in the runner,
+// so neither waits for the other): the processes a test starts are in it and nowhere else. The runner shares its group
+// with `smith build` that runs it and with whatever that runs, so a signal sent to a group, by a kill or by the kernel
+// (SIGHUP to an orphaned group with a stopped process in it), must never name the runner's: it ended `smith build` with
+// "interrupted by user" and status 129 (#754).
+void own_group(c::pid_t pid) {
+    c::setpgid(pid, pid);
+}
+
+// Ends a test's worker and the processes it started, and only those: its group, else (the group was not made) itself.
+// Only for a process the runner has not waited for, whose pid is no one else's yet.
+void kill_group(c::pid_t pid) {
+    if (pid <= 0) return; // a pid of 0 is this process's group, and -1 every process there is
+    if (c::kill(-pid, sig_kill) != 0) c::kill(pid, sig_kill);
+}
+
+// A signal to the runner (a Ctrl-C at the terminal reaches its group, not the workers') ends the tests with it.
+void on_runner_signal(i32 signal_number) {
+    for (usize slot = 0; slot <= jobs_max; slot++) {
+        if (processes[slot].pid > 0 && !processes[slot].reaped) kill_group(processes[slot].pid);
+    }
+    c::signal(signal_number, (void (*)(i32))0); // SIG_DFL, then the signal again: the runner ends as it would have
+    c::raise(signal_number);
+}
 
 void close_process(Process *process) {
     if (process->control >= 0) c::close(process->control);
@@ -2145,17 +2187,29 @@ void close_process(Process *process) {
 // Ends a worker that is idle, or is of no use: its process is killed and reaped.
 void discard(Process *process) {
     if (process->pid == 0) return;
-    c::kill(process->pid, sig_kill);
+    kill_group(process->pid);
     close_process(process);
     i32 status = 0;
     c::waitpid(process->pid, &status, 0);
     process->pid = 0;
 }
 
-// In a new process: the other jobs' descriptors are not its to hold, or the runner closing them would not end them.
+// The core token (an open, locked file: runtime/slots.c) of each busy job, -1 for a job on the base token or with none.
+// A forked process shares the lock of every descriptor it inherits, so a worker that kept a copy would hold the core
+// for as long as it lives, whatever its job did with it: the runner ran one test at a time after its first sixteen
+// (#754). Every new process closes them (close_others).
+constexpr i32 no_token = -1; // taking one failed: no token is free
+i32 job_tokens[jobs_max];
+
+// In a new process: the other jobs' descriptors are not its to hold, or the runner closing them would not end them,
+// and no core token is its to hold.
 void close_others(usize slot) {
     for (usize other = 0; other <= jobs_max; other++) {
         if (other != slot && processes[other].pid != 0) close_process(&processes[other]);
+    }
+    for (usize job = 0; job < jobs_max; job++) {
+        if (job_tokens[job] >= 0) c::close(job_tokens[job]);
+        job_tokens[job] = no_token;
     }
 }
 
@@ -2171,12 +2225,14 @@ void spawn(const Options *options, usize slot) {
     c::pid_t forked = c::fork();
     if (forked < 0) die("fork");
     if (forked == 0) {
+        own_group(0);
         c::close(output[0]);
         c::close(control[0]);
         close_others(slot);
         worker_main(options, &shared_slots[slot], control[1], output[1]);
     }
     hooking = false;
+    own_group(forked);
     c::close(output[1]);
     c::close(control[1]);
     if (c::fcntl(output[0], set_flags, non_blocking) != 0) die("fcntl");
@@ -2193,11 +2249,17 @@ void start_isolated(const Test *test, const Options *options, usize slot, const 
     c::pid_t forked = c::fork();
     if (forked < 0) die("fork");
     if (forked == 0) {
+        own_group(0);
         c::close(ends[0]);
+        close_others(slot);
         child(test, options, &shared_slots[slot], ends[1], command);
     }
     hooking = false;
+    own_group(forked);
     c::close(ends[1]);
+    // Nonblocking, as a worker's pipe is: a read after the child was killed must not wait for a process it left behind
+    // (a `sleep`) that still holds the pipe's other end, which stopped the whole runner for that process's life (#754).
+    if (c::fcntl(ends[0], set_flags, non_blocking) != 0) die("fcntl");
     processes[slot] = (Process){.pid = forked, .control = -1, .output = ends[0]};
 }
 
@@ -2250,7 +2312,7 @@ ReadResult read_output(Process *process, Run *run) {
     output->text[output->kept] = '\0';
     output->total += (usize)got;
     if (output->total < output_limit) return Read_Data;
-    if (process->pid > 0) c::kill(process->pid, sig_kill); // a pid of 0 would be this process's group; waited for after
+    if (process->pid > 0) kill_group(process->pid); // waited for after
     return Read_Closed;
 }
 
@@ -2349,9 +2411,13 @@ void finish(const Options *options, usize slot, Run *run, const Reply *reply) {
     i32 status = 0;
     if (reply == nullptr) {
         close_process(process);
-        if (c::waitpid(process->pid, &status, 0) != process->pid) die("waitpid");
+        if (process->reaped)
+            status = process->status;
+        else if (c::waitpid(process->pid, &status, 0) != process->pid)
+            die("waitpid");
         process->pid = 0;
         run->outcome = judge(status, run->output.total >= output_limit);
+        if (run->idle) run->outcome = (Outcome){.end = End_Timeout, .number = sig_alrm}; // the runner killed it
     } else {
         run->outcome = (Outcome){.end = reply->end};
     }
@@ -2372,6 +2438,10 @@ void finish(const Options *options, usize slot, Run *run, const Reply *reply) {
 // What a poll said about a busy slot. True once its test has finished.
 bool service(const Options *options, usize slot, Run *run, i16 output_events, i16 control_events) {
     Process *process = &processes[slot];
+    if (run->idle || process->reaped) { // the process is dead: a process it left behind may still hold its sockets
+        finish(options, slot, run, nullptr);
+        return true;
+    }
     if (process->control < 0) { // --isolate: the test is over when its output ends
         if (read_output(process, run) != Read_Closed) return false;
         finish(options, slot, run, nullptr);
@@ -2443,6 +2513,11 @@ void print_reason(const Options *options, const Run *run) {
                 ": the test did not run: its worker was stopped by %s %u times before the test began, which is a "
                 "left-over timer's doing, not the test's",
                 run->outcome.number == sig_prof ? "SIGPROF" : "SIGALRM", run->lost_count + 1);
+        else if (run->idle)
+            say(options,
+                ": used no CPU time for %u s (%.1f s of wall time), neither it nor its processes; it was waiting for: "
+                "%s",
+                options->idle_timeout, run->seconds, run->waited);
         else if (run->outcome.number == sig_prof)
             say(options, ": over its CPU time limit of %u s (%.1f s of wall time passed; threads add CPU time)",
                 options->timeout, run->seconds);
@@ -2755,8 +2830,7 @@ void shrink_failure(const Test *test, const Options *options, Run *run) {
 // worker rides on the token of the job that runs it, and every further worker takes one token of the host's pool and
 // gives it back when its test ends, so a run grows as tokens free up and a waiting CI run is served first. Started by
 // hand, with no pool, a worker needs none.
-constexpr i32 no_token = -1; // taking one failed: no token is free
-constexpr i32 no_pool = -2;  // there is no pool: the worker needs none
+constexpr i32 no_pool = -2; // there is no pool: the worker needs none
 constexpr i32 tokens_max = 64;
 constexpr usize path_max = 1024;
 
@@ -2874,9 +2948,209 @@ typedef struct {
     usize *order;       // the chosen tests in the order they start: the table's, or shuffled
     usize count;
     usize running[jobs_max]; // the chosen test each job is running, or idle
-    i32 tokens[jobs_max];    // the extra token of each busy job (a descriptor), no_token for the one on the base
     struct c::pollfd polls[2 * jobs_max];
 } Plan;
+
+// ---------------------------------------------------------------------------------------------------------------
+// A test that waits without CPU time (#754). The CPU limit never fires on a test that sleeps or waits on a pipe and the
+// wall-clock backstop takes 600 s, so a test that waited for something that would not come cost 20 minutes. Every few
+// seconds, once a test has run a while, the runner lists the processes (`ps`), adds up the CPU time of the test's
+// worker and every process below it, and when that grew by less than 1% of the wall time for --idle-timeout seconds
+// (180 by default, 0 for never) it kills the worker and says what the test was waiting for: the command of the deepest
+// process it had. A process that ended between two looks adds nothing, so only a test that is busy at least now and
+// then (any process of it alive and computing at a look) is never idle.
+
+constexpr usize ps_rows_max = 8192;
+constexpr usize idle_seen_max = 128; // processes of one test the runner remembers between two looks
+
+typedef struct {
+    c::pid_t pid;
+    c::pid_t parent;
+    f64 cpu; // seconds
+    u32 depth;
+    bool below; // in the tree of the worker being looked at
+    char command[idle_text_capacity];
+} PsRow;
+
+typedef struct {
+    f64 progress_at; // the time of the last look at which the tree had used CPU time
+    f64 looked_at;
+    usize count;
+    c::pid_t pid[idle_seen_max];
+    f64 cpu[idle_seen_max];
+} Idle;
+
+PsRow ps_rows[ps_rows_max];
+usize ps_count;
+Idle idle_states[jobs_max];
+f64 idle_swept_at;
+
+// `[[dd-]hh:]mm:ss[.ff]` (ps's TIME) in seconds.
+f64 parse_ps_time(const char *text) {
+    f64 days = 0;
+    const char *dash = c::strchr(text, '-');
+    if (dash != nullptr) {
+        days = (f64)c::strtol(text, nullptr, 10);
+        text = dash + 1;
+    }
+    f64 total = 0;
+    const char *at = text;
+    for (usize part = 0; part < 4; part++) {
+        char *end = nullptr;
+        total = total * 60 + c::strtod(at, &end);
+        if (*end != ':') break;
+        at = end + 1;
+    }
+    return days * 86400 + total;
+}
+
+// The processes of the machine into ps_rows: pid, parent, CPU seconds and command.
+void list_processes(const Options *options) {
+    io::Io *io = options->runner->io;
+    ps_count = 0;
+    const char *const argv[_] = {"ps", "-axo", "pid=,ppid=,time=,command=", nullptr};
+    arena::Scope scope = arena::scope_begin(&io->arena);
+    io::ProcessResult result = io::processes_run(&io->processes, &io->arena, argv);
+    const char *line = result.error.code == 0 ? result.output : "";
+    while (*line != '\0' && ps_count < ps_rows_max) {
+        const char *end = c::strchr(line, '\n');
+        usize length = end != nullptr ? (usize)(end - line) : c::strlen(line);
+        char text[512];
+        usize kept = length < sizeof text - 1 ? length : sizeof text - 1;
+        __builtin_memcpy(text, line, kept);
+        text[kept] = '\0';
+        line += length + (end != nullptr ? 1 : 0);
+        char *rest = nullptr;
+        i64 pid = c::strtol(text, &rest, 10);
+        i64 parent = c::strtol(rest, &rest, 10);
+        while (*rest == ' ')
+            rest++;
+        char *word_end = c::strchr(rest, ' ');
+        if (pid <= 0 || word_end == nullptr) continue;
+        *word_end = '\0';
+        PsRow *row = &ps_rows[ps_count++];
+        *row = (PsRow){.pid = (c::pid_t)pid, .parent = (c::pid_t)parent, .cpu = parse_ps_time(rest)};
+        __builtin_snprintf(row->command, sizeof row->command, "%s", word_end + 1);
+    }
+    arena::scope_end(scope);
+}
+
+// Marks the rows below `root` (the worker, which is one) with their depth; returns how many there are.
+usize mark_tree(c::pid_t root) {
+    usize found = 0;
+    for (usize i = 0; i < ps_count; i++) {
+        ps_rows[i].below = ps_rows[i].pid == root;
+        ps_rows[i].depth = 0;
+        found += ps_rows[i].below ? 1 : 0;
+    }
+    for (usize pass = 0; pass < 64; pass++) { // a pass finds one more level
+        usize before = found;
+        for (usize i = 0; i < ps_count; i++) {
+            if (ps_rows[i].below) continue;
+            for (usize up = 0; up < ps_count; up++) {
+                if (!ps_rows[up].below || ps_rows[up].pid != ps_rows[i].parent) continue;
+                ps_rows[i].below = true;
+                ps_rows[i].depth = ps_rows[up].depth + 1;
+                found += 1;
+                break;
+            }
+        }
+        if (found == before) break;
+    }
+    return found;
+}
+
+// The CPU seconds the tree has used since the last look: for each process, the growth of its time (all of it for one
+// the last look did not see). Also remembers the processes for the next look. Fills `waited` with the command of the
+// deepest one.
+f64 tree_progress(Idle *state, char *waited) {
+    f64 grown = 0;
+    usize deepest = ps_count;
+    usize kept = 0;
+    c::pid_t pid[idle_seen_max];
+    f64 cpu[idle_seen_max];
+    for (usize i = 0; i < ps_count; i++) {
+        if (!ps_rows[i].below) continue;
+        f64 before = 0;
+        bool seen = false;
+        for (usize old = 0; old < state->count; old++) {
+            if (state->pid[old] == ps_rows[i].pid) {
+                before = state->cpu[old];
+                seen = true;
+            }
+        }
+        f64 growth = ps_rows[i].cpu - (seen ? before : 0);
+        grown += growth > 0 ? growth : 0;
+        if (kept < idle_seen_max) {
+            pid[kept] = ps_rows[i].pid;
+            cpu[kept] = ps_rows[i].cpu;
+            kept += 1;
+        } else {
+            grown += 1; // more processes than are remembered: a big test, never idle
+        }
+        if (deepest == ps_count || ps_rows[i].depth > ps_rows[deepest].depth) deepest = i;
+    }
+    state->count = kept;
+    for (usize i = 0; i < kept; i++) {
+        state->pid[i] = pid[i];
+        state->cpu[i] = cpu[i];
+    }
+    if (deepest == ps_count) return grown;
+    if (ps_rows[deepest].depth == 0)
+        __builtin_snprintf(waited, idle_text_capacity,
+                           "the test itself (no process of its own: a lock, a socket, a sleep)");
+    else
+        __builtin_snprintf(waited, idle_text_capacity, "%s (pid %d)", ps_rows[deepest].command, ps_rows[deepest].pid);
+    return grown;
+}
+
+// Whether some test has run long enough to be looked at, and it is time to look.
+bool idle_due(const Plan *plan, f64 now) {
+    u32 limit = plan->options->idle_timeout;
+    if (limit == 0 || now - idle_swept_at < (limit >= 30 ? 5.0 : 1.0)) return false;
+    f64 first = limit / 2 < 20 ? (f64)limit / 2 : 20.0;
+    for (usize job = 0; job < plan->options->jobs; job++) {
+        if (plan->running[job] != idle && now - plan->runs[plan->running[job]].start >= first) return true;
+    }
+    return false;
+}
+
+// Looks at every busy job and kills the worker of a test that has used no CPU time for the limit.
+void idle_sweep(Plan *plan) {
+    const Options *options = plan->options;
+    f64 now = seconds(options);
+    if (!idle_due(plan, now)) return;
+    idle_swept_at = now;
+    list_processes(options);
+    for (usize job = 0; job < options->jobs; job++) {
+        if (plan->running[job] == idle || processes[job].pid <= 0 || processes[job].reaped) continue;
+        Run *run = &plan->runs[plan->running[job]];
+        Idle *state = &idle_states[job];
+        if (state->looked_at < run->start) *state = (Idle){.progress_at = run->start, .looked_at = run->start};
+        mark_tree(processes[job].pid);
+        char waited[idle_text_capacity] = "";
+        f64 grown = tree_progress(state, waited);
+        if (grown > 0.01 * (now - state->looked_at)) state->progress_at = now;
+        state->looked_at = now;
+        if (now - state->progress_at < (f64)options->idle_timeout) continue;
+        run->idle = true;
+        __builtin_snprintf(run->waited, idle_text_capacity, "%s", waited);
+        kill_group(processes[job].pid); // the test's own processes, never the runner's
+    }
+}
+
+// Whether the worker (or the isolated child) of a busy job has ended with nothing to say: the kernel knows at once,
+// but its socket and pipe stay open for as long as any process it started and left behind holds them, which for a test
+// that started a long sleep and was killed for a hang was the sleep's whole length (#754). A reply is written before
+// the worker can end, so a job with nothing to read that has ended died without one.
+bool process_ended(Process *process) {
+    if (process->pid <= 0 || process->reaped) return process->reaped;
+    i32 status = 0;
+    if (c::waitpid(process->pid, &status, wait_no_hang) != process->pid) return false;
+    process->reaped = true;
+    process->status = status;
+    return true;
+}
 
 // Waits until some job has output or has ended, and reads it; a job whose test has ended is finished and freed.
 void pump(Plan *plan) {
@@ -2893,10 +3167,12 @@ void pump(Plan *plan) {
         if (*errno_place() == interrupted) return;
         die("poll");
     }
+    idle_sweep(plan);
     for (usize job = 0; job < jobs; job++) {
         i16 output_events = plan->polls[2 * job].revents;
         i16 control_events = plan->polls[2 * job + 1].revents;
-        if (plan->running[job] == idle || (output_events == 0 && control_events == 0)) continue;
+        if (plan->running[job] == idle) continue;
+        if (output_events == 0 && control_events == 0 && !process_ended(&processes[job])) continue;
         usize chosen = plan->running[job];
         if (!service(plan->options, job, &plan->runs[chosen], output_events, control_events)) continue;
         Run *run = &plan->runs[chosen];
@@ -2906,8 +3182,8 @@ void pump(Plan *plan) {
             continue;
         }
         plan->running[job] = idle;
-        if (plan->tokens[job] >= 0) c::close(plan->tokens[job]); // its core goes back to the pool
-        plan->tokens[job] = no_token;
+        if (job_tokens[job] >= 0) c::close(job_tokens[job]); // its core goes back to the pool
+        job_tokens[job] = no_token;
     }
 }
 
@@ -2926,7 +3202,7 @@ bool launch(Plan *plan, usize *next) {
         if (plan->running[job] != idle) continue;
         i32 token = busy_count(plan) > 0 ? take_token() : no_pool;
         if (token == no_token) return false;
-        plan->tokens[job] = token >= 0 ? token : no_token;
+        job_tokens[job] = token >= 0 ? token : no_token;
         usize chosen = plan->order[*next];
         dispatch(plan->options, job, plan->tests[chosen], &plan->runs[chosen]);
         plan->running[job] = chosen;
@@ -2959,7 +3235,7 @@ bool failed_so_far(const Plan *plan, usize next) {
 void run_all(Plan *plan) {
     for (usize job = 0; job < jobs_max; job++) {
         plan->running[job] = idle;
-        plan->tokens[job] = no_token;
+        job_tokens[job] = no_token;
     }
     usize next = 0;
     usize printed = 0;
@@ -3090,9 +3366,28 @@ void parse_filter(Options *options, const char *value) {
     options->filter = value;
 }
 
+constexpr u64 shards_max = 1000;
+
+// Parses --shard's value `i/n`: part i of n, 1 <= i <= n <= shards_max.
+bool parse_shard(Options *options, const char *value) {
+    const char *slash = c::strchr(value, '/');
+    char index_text[24];
+    u64 index = 0;
+    u64 count = 0;
+    if (slash == nullptr || (usize)(slash - value) >= sizeof index_text) return false;
+    __builtin_memcpy(index_text, value, (usize)(slash - value));
+    index_text[slash - value] = '\0';
+    if (!parse(index_text, &index) || !parse(slash + 1, &count)) return false;
+    if (index < 1 || index > count || count > shards_max) return false;
+    options->shard_index = (usize)index;
+    options->shard_count = (usize)count;
+    return true;
+}
+
 // Parses --name value into the options; false for a bad value.
 bool parse_value(Options *options, const char *flag, const char *value) {
     u64 number = 0;
+    if (c::strcmp(flag, "--shard") == 0) return parse_shard(options, value);
     if (c::strcmp(flag, "--test") == 0) {
         parse_filter(options, value);
         return true;
@@ -3133,6 +3428,11 @@ bool parse_value(Options *options, const char *flag, const char *value) {
         options->wall_given = true;
         return number > 0 && number <= 86400;
     }
+    if (c::strcmp(flag, "--idle-timeout") == 0) {
+        options->idle_timeout = (u32)number;
+        options->idle_given = true;
+        return number <= 86400;
+    }
     if (c::strcmp(flag, "--shrink") == 0) {
         options->shrink = number == 1;
         return number <= 1;
@@ -3166,6 +3466,8 @@ bool parse_options(i32 argc, char **argv, Options *options) {
             options->isolate = true;
         } else if (c::strcmp(flag, "--in-process") == 0) {
             options->in_process = true;
+        } else if (c::strcmp(flag, "--cheapest") == 0) {
+            options->cheapest = true;
         } else if (c::strcmp(flag, "--stats") == 0) {
             options->stats = true;
         } else if (c::strcmp(flag, "--trace") == 0) {
@@ -3221,14 +3523,14 @@ void shuffle(usize *order_of, usize count, u64 seed) {
     }
 }
 
-// --costs: the chosen tests ordered by the CPU seconds the file gives them, cheapest first, the ones it does not know
-// before all (they may be new). A stable insertion sort: tests of equal cost keep the table's order.
-void order_by_cost(Plan *plan, const char *path) {
-    c::FILE *file = c::fopen(path, "r");
-    if (file == nullptr) return;
+// The CPU seconds the --costs file gives each chosen test (lines `cpu<TAB>seconds<TAB>name`), -1 for one it does not
+// know.
+f64 *read_costs(const Plan *plan, const char *path) {
     f64 *cost = (f64 *)map_bytes((plan->count + 1) * sizeof(f64), map_private);
     for (usize i = 0; i < plan->count; i++)
         cost[i] = -1;
+    c::FILE *file = path != nullptr ? c::fopen(path, "r") : nullptr;
+    if (file == nullptr) return cost;
     char line[512];
     for (usize guard = 0; guard < ((usize)1 << 24) && c::fgets(line, sizeof line, file) != nullptr; guard++) {
         char *seconds_text = c::strchr(line, '\t');
@@ -3241,13 +3543,91 @@ void order_by_cost(Plan *plan, const char *path) {
         }
     }
     c::fclose(file);
+    return cost;
+}
+
+// --costs: the chosen tests ordered by the CPU seconds the file gives them, the heaviest first (the longest test
+// started last is a tail that no worker can share, #754), or the cheapest first with --cheapest; the ones it does not
+// know come before all (they may be new). A stable insertion sort: tests of equal cost keep the table's order.
+void order_by_cost(Plan *plan, const char *path, bool cheapest) {
+    f64 *cost = read_costs(plan, path);
     for (usize i = 1; i < plan->count; i++) {
         usize moved = plan->order[i];
         usize at = i;
-        for (; at > 0 && cost[plan->order[at - 1]] > cost[moved]; at--)
+        for (; at > 0; at--) {
+            f64 before = cost[plan->order[at - 1]];
+            bool later = cheapest ? before > cost[moved] : before >= 0 && (cost[moved] < 0 || before < cost[moved]);
+            if (!later) break;
             plan->order[at] = plan->order[at - 1];
+        }
         plan->order[at] = moved;
     }
+}
+
+constexpr f64 shard_cost_unknown = 0.4; // CPU seconds --shard assumes for a test the --costs file does not name
+
+// Where a test's file ends in its name: `geometry::box_test::area` is the file `geometry::box_test`. A name with no
+// `::` is a file of its own (0).
+usize file_length(const char *name) {
+    usize length = 0;
+    for (usize at = 0; name[at] != '\0'; at++) {
+        if (name[at] == ':' && name[at + 1] == ':') length = at;
+    }
+    return length;
+}
+
+// The first chosen test of the same file as test `i`: every test of a file shares one number, so a file's tests stay in
+// one shard (they share the fixtures the file builds once).
+usize file_leader(const Plan *plan, usize i) {
+    usize length = file_length(plan->tests[i]->name);
+    if (length == 0) return i;
+    for (usize other = 0; other < i; other++) {
+        const char *name = plan->tests[other]->name;
+        if (file_length(name) == length && c::strncmp(name, plan->tests[i]->name, length) == 0) return other;
+    }
+    return i;
+}
+
+// The shard of each file leader: the files, heaviest first, each to the shard with the least so far (the weight of a
+// file is its tests' --costs seconds), so every shard run of the same options gets the same split.
+void assign_shards(const Plan *plan, const Options *options, const usize *leader, const f64 *weight, usize *owner) {
+    f64 *load = (f64 *)map_bytes((options->shard_count + 1) * sizeof(f64), map_private);
+    u8 *done = (u8 *)map_bytes(plan->count + 1, map_private);
+    for (usize round = 0; round < plan->count; round++) {
+        usize heaviest = plan->count;
+        for (usize i = 0; i < plan->count; i++) {
+            if (leader[i] != i || done[i] != 0) continue;
+            if (heaviest == plan->count || weight[i] > weight[heaviest]) heaviest = i;
+        }
+        if (heaviest == plan->count) return;
+        usize lightest = 0;
+        for (usize shard = 1; shard < options->shard_count; shard++) {
+            if (load[shard] < load[lightest]) lightest = shard;
+        }
+        owner[heaviest] = lightest;
+        load[lightest] += weight[heaviest];
+        done[heaviest] = 1;
+    }
+}
+
+// --shard i/n: keeps the chosen tests of part i. Files are the unit; the split is balanced by --costs.
+void shard_plan(Plan *plan, const Options *options) {
+    f64 *cost = read_costs(plan, options->costs);
+    usize *leader = (usize *)map_bytes((plan->count + 1) * sizeof(usize), map_private);
+    f64 *weight = (f64 *)map_bytes((plan->count + 1) * sizeof(f64), map_private);
+    usize *owner = (usize *)map_bytes((plan->count + 1) * sizeof(usize), map_private);
+    for (usize i = 0; i < plan->count; i++) {
+        leader[i] = file_leader(plan, i);
+        weight[leader[i]] += cost[i] >= 0 ? cost[i] : shard_cost_unknown;
+    }
+    assign_shards(plan, options, leader, weight, owner);
+    usize kept = 0;
+    for (usize i = 0; i < plan->count; i++) {
+        if (owner[leader[i]] != options->shard_index - 1) continue;
+        plan->tests[kept] = plan->tests[i];
+        kept += 1;
+    }
+    plan->count = kept;
 }
 
 // The tests the options choose, in order, with a run for each.
@@ -3265,12 +3645,13 @@ Plan *make_plan(const Options *options) {
         plan->tests[plan->count] = test;
         plan->count += 1;
     }
+    if (options->shard_count > 0) shard_plan(plan, options);
     plan->runs = (Run *)map_bytes((plan->count) * sizeof(Run), map_private);
     plan->order = (usize *)map_bytes((plan->count + 1) * sizeof(usize), map_private);
     for (usize i = 0; i < plan->count; i++)
         plan->order[i] = i;
     if (options->shuffle_given) shuffle(plan->order, plan->count, options->shuffle_seed);
-    if (options->costs != nullptr) order_by_cost(plan, options->costs);
+    if (options->costs != nullptr) order_by_cost(plan, options->costs, options->cheapest);
     shared_slots = (Shared *)map_bytes((jobs_max + 1) * sizeof(Shared), map_shared);
     const char *kill_workers = c::getenv("SMITH_TEST_KILL_WORKERS");
     if (kill_workers != nullptr) {
@@ -3346,8 +3727,9 @@ static void say_usage(const Options *options, const Runner *runner) {
     complain(options,
              "usage: %s [--test <substring>] [--seed <n>] [--seeds <1 to %ju>] [--jobs <1 to %zu>] "
              "[--timeout <cpu seconds>] [--wall-timeout <seconds>] [--shrink 0|1] [--shrink-seconds <seconds>] "
-             "[--shuffle <seed>] [--isolate] "
-             "[--in-process] [--full] [--update] [--list] [--fail-fast] [--costs <file>] [--verbose] [--stats] "
+             "[--shuffle <seed>] [--shard <i>/<n>] [--isolate] "
+             "[--in-process] [--full] [--update] [--list] [--fail-fast] [--costs <file>] [--cheapest] [--idle-timeout "
+             "<seconds>] [--verbose] [--stats] "
              "[--trace] [--color] "
              "[--explain <smith>] [--explain-max <n>] [--no-explain] [--unchecked]\n",
              runner->argv[0], (c::uintmax_t)seeds_max, jobs_max);
@@ -3361,10 +3743,16 @@ static void prepare_run(Options *options) {
     }
     if (!options->wall_given)
         options->wall_timeout = options->timeout == 0 ? 0 : wall_default; // a blocked test spends no CPU time
+    if (!options->idle_given) options->idle_timeout = options->timeout == 0 ? 0 : idle_default;
     full_run = options->full;
     golden_begin(options);
     raise_files(options->jobs);
     c::signal(sig_pipe, (void (*)(i32))1); // a worker that died while idle is a failed write, not the end of the runner
+    if (!options->in_process) {
+        c::signal(sig_hup, on_runner_signal);
+        c::signal(sig_int, on_runner_signal);
+        c::signal(sig_term, on_runner_signal);
+    }
     forks = (u64 *)map_bytes((1) * sizeof(u64), map_shared);
     explained = (u64 *)map_bytes((explain_stats) * sizeof(u64), map_shared);
     explain_path = options->explain;
@@ -3411,6 +3799,8 @@ static usize report_run(const Plan *plan, const Options *options, f64 start) {
         say(&options, "no test matches \"%s\"\n", options.filter);
         return 1;
     }
+    if (options.shard_count > 0)
+        say(&options, "shard %zu of %zu: %zu tests\n", options.shard_index, options.shard_count, plan->count);
     if (options.in_process)
         run_in_process(plan);
     else

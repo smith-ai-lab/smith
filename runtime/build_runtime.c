@@ -3060,21 +3060,27 @@ static const char *smith_tests_match(const char *line, bool module, const char *
         if (key_size == 0) return nullptr;
         rest += key_size;
     }
-    if (strcmp(rest, ") {") != 0) return nullptr;
-    return name;
+    if (strncmp(rest, ") {", 3) != 0) return nullptr;
+    rest += 3;
+    if (rest[0] == ' ' && rest[1] == '/' && rest[2] == '/') return name; // a trailing comment: `) { // (void): pure`
+    return rest[0] == '\0' ? name : nullptr;
 }
 
 // The spelling of smith::random's key type a `.smith` file's import line gives, "random::Key" or "<alias>::Key", or
 // nullptr when the line is no such import.
 static const char *smith_tests_type_of_import(const char *line, const char *module, const char *type) {
-    const char *prefix = smith_text("import smith::%s", module);
-    if (strncmp(line, prefix, strlen(prefix)) != 0) return nullptr;
-    const char *rest = line + strlen(prefix);
-    if (strcmp(rest, ";") == 0) return smith_text("%s::%s", module, type);
-    if (strncmp(rest, " as ", 4) != 0) return nullptr;
-    size_t size = strspn(rest + 4, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_");
-    if (size == 0 || strcmp(rest + 4 + size, ";") != 0) return nullptr;
-    return smith_text("%.*s::%s", (int)size, rest + 4, type);
+    // `smith::` and `std::` name the same library; landing 2 of #366 deletes the `smith::` entry.
+    for (const char *const *root = (const char *const[]){"smith", "std", nullptr}; *root != nullptr; root++) {
+        const char *prefix = smith_text("import %s::%s", *root, module);
+        if (strncmp(line, prefix, strlen(prefix)) != 0) continue;
+        const char *rest = line + strlen(prefix);
+        if (strcmp(rest, ";") == 0) return smith_text("%s::%s", module, type);
+        if (strncmp(rest, " as ", 4) != 0) return nullptr;
+        size_t size = strspn(rest + 4, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_");
+        if (size == 0 || strcmp(rest + 4 + size, ";") != 0) return nullptr;
+        return smith_text("%.*s::%s", (int)size, rest + 4, type);
+    }
+    return nullptr;
 }
 
 static const char *smith_tests_key_type(const char *line) {
@@ -3132,12 +3138,25 @@ static bool smith_tests_is_smith(const char *path) {
     return length > strlen(".smith") && strcmp(path + length - strlen(".smith"), ".smith") == 0;
 }
 
+// Whether the file is named like a test (`*_test.smith`, `*_test.c`): the other inputs (tests/scratch.smith, a
+// shared case list) are helpers the tests link and need not define one.
+static bool smith_tests_named_test(const char *path) {
+    size_t length = strlen(path);
+    for (const char *const *suffix = (const char *const[]){"_test.smith", "_test.c", nullptr}; *suffix != nullptr;
+         suffix++) {
+        size_t size = strlen(*suffix);
+        if (length > size && strcmp(path + length - size, *suffix) == 0) return true;
+    }
+    return false;
+}
+
 // Every test in the files, in file order and line order. A name defined twice is an error that names both files.
 static bool smith_tests_find(SmithRun *run, SmithTestFound *found, size_t *count) {
     *count = 0;
     for (size_t i = 0; run->inputs[i] != nullptr; i++) { // bounded by smith_copy_list
         const char *const *lines = smith_lines_required(run->b, run->inputs[i]);
         bool in_smith = smith_tests_is_smith(run->inputs[i]);
+        size_t before = *count;
         const char *module = nullptr;
         const char *key_type = nullptr;
         const char *io_type = nullptr;
@@ -3169,6 +3188,14 @@ static bool smith_tests_find(SmithRun *run, SmithTestFound *found, size_t *count
                 .file = run->inputs[i],
                 .kind = kind,
             };
+        }
+        if (*count == before &&
+            smith_tests_named_test(run->inputs[i])) { // a test file that runs nothing is a mistake, never a silent skip
+            fprintf(stderr,
+                    "smith: smith_tests: %s defines no test; a test is `export void test_<name>(void)` in a module "
+                    "(`void test_<name>(void)` in C)\n",
+                    run->inputs[i]);
+            return false;
         }
     }
     return true;
