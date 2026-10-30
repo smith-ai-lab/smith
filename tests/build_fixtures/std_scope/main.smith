@@ -9,7 +9,7 @@ import std::arena;
     return x * 2;
 }
 
-[[std::effects(alloc, c, fails)]] i32 grow(arena::Arena *a) {
+[[std::effects(alloc, unknown, fails)]] i32 grow(arena::Arena *a) {
     i32 *p = arena::push(a, i32);
     *p = 3;
     return *p;

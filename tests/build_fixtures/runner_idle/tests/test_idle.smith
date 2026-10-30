@@ -1,0 +1,22 @@
+import <stdlib.h>;
+import <time.h>;
+import <unistd.h>;
+import smith::test;
+
+// Waits that spend no CPU time (#754), and a test that does spend it.
+void test_idle_1_waits_for_a_child(void) {
+    c::system("sleep 31"); // the shell's sleep is the deepest process the runner sees
+    test::check_condition(false);
+}
+
+void test_idle_2_sleeps_itself(void) {
+    c::sleep(31);
+    test::check_condition(false);
+}
+
+void test_idle_3_computes_for_longer_than_the_limit(void) {
+    c::clock_t start = c::clock();
+    volatile u64 sink = 0;
+    while (c::clock() - start < 3 * 1000000)
+        sink = sink + 1;
+}

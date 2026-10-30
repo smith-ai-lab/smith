@@ -291,6 +291,22 @@ export void test_conventions_test_a_project_with_no_tests_says_so(io::Io *io) {
     scratch::expect_contains("test: ... in smith test's words", run.err, "the build declares no tests");
 }
 
+// #812: a project with no build.c once wrote a trailing comma, so the editor's strict parse refused the file. A real
+// JSON parser (python3, on every machine that runs these tests) reads it and finds an entry for main.c.
+export void test_conventions_compile_commands_of_a_project_with_no_build_file_is_json(io::Io *io) {
+    scratch::Project p = scratch::project(io, "plain_json", "conv_plain");
+    scratch::Run run = scratch::build(&p, "");
+    scratch::expect_status("json: smith build", 0, &run);
+    scratch::Run parsed =
+        scratch::sh(&p, "python3 -I -c 'import json,sys; d = json.load(open(\".smith/compile_commands.json\")); "
+                        "sys.exit(0 if any(e[\"file\"].endswith(\"main.c\") for e in d) else 3)' 2>&1");
+    scratch::expect_status("json: .smith/compile_commands.json parses and lists main.c", 0, &parsed);
+    if (parsed.status != 0) {
+        test::note("json: the file is:\n%s\nparser said: %s", scratch::read(&p, ".smith/compile_commands.json"),
+                   parsed.out);
+    }
+}
+
 // --- 6. several programs, the defaults every program shares, folders' flags, includes found through -I
 // -----------------
 

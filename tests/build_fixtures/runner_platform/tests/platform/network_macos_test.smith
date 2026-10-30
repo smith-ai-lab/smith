@@ -1,0 +1,7 @@
+module platform::network_macos_test;
+
+export void test_network_1() {
+}
+
+export void test_network_2() {
+}
