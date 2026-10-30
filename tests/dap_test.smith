@@ -49,7 +49,7 @@ static scratch::Run dbg(const scratch::Project *p, io::Io *io, const char *argum
 }
 
 // smith dbg, in batch mode: a breakpoint by line, run, a variable, a struct field, a backtrace.
-export void test_dap_dbg_a_c_program(io::Io *io) {
+export void test_macos_dap_dbg_a_c_program(io::Io *io) {
     scratch::Project root;
     if (!make(io, &root)) {
         return;
@@ -68,7 +68,7 @@ export void test_dap_dbg_a_c_program(io::Io *io) {
 }
 
 // A payload enum (issue #198) shows its active variant and only that variant's payload, not every member of the union.
-export void test_dap_dbg_a_payload_enum(io::Io *io) {
+export void test_macos_dap_dbg_a_payload_enum(io::Io *io) {
     scratch::Project root;
     if (!make(io, &root) || !has_hook(&root)) {
         return;
@@ -86,7 +86,7 @@ export void test_dap_dbg_a_payload_enum(io::Io *io) {
 
 // smith dap: a client writes DAP messages, and the adapter's replies are read back. A silent adapter (no output, no
 // CPU) is reported as a missing permission after the idle limit, not waited out.
-export void test_dap_a_silent_adapter_is_a_missing_permission(io::Io *io) {
+export void test_macos_dap_a_silent_adapter_is_a_missing_permission(io::Io *io) {
     scratch::Project root;
     if (!make(io, &root)) {
         return;
@@ -99,7 +99,7 @@ export void test_dap_a_silent_adapter_is_a_missing_permission(io::Io *io) {
                              "the debugger is waiting for permission (Developer Tools)");
 }
 
-export void test_dap_a_session_on_a_c_program(io::Io *io) {
+export void test_macos_dap_a_session_on_a_c_program(io::Io *io) {
     scratch::Project root;
     if (!make(io, &root)) {
         return;
@@ -137,7 +137,7 @@ static bool make_lang(io::Io *io, scratch::Project *p) {
     return built.status == 0;
 }
 
-export void test_dap_dbg_stops_in_a_modules_function_named_as_written(io::Io *io) {
+export void test_macos_dap_dbg_stops_in_a_modules_function_named_as_written(io::Io *io) {
     scratch::Project p;
     if (!make_lang(io, &p)) {
         return;
@@ -159,7 +159,7 @@ export void test_dap_dbg_stops_in_a_modules_function_named_as_written(io::Io *io
     scratch::expect_contains("dbg's finish returns the value", out, "Return value: (f32) $0 = 6");
 }
 
-export void test_dap_dbg_the_other_compile_unit_agrees_on_the_type(io::Io *io) {
+export void test_macos_dap_dbg_the_other_compile_unit_agrees_on_the_type(io::Io *io) {
     scratch::Project p;
     if (!make_lang(io, &p)) {
         return;
@@ -170,7 +170,7 @@ export void test_dap_dbg_the_other_compile_unit_agrees_on_the_type(io::Io *io) {
     scratch::expect_lacks("the C spelling does not show in dbg", out, "geometry_box");
 }
 
-export void test_dap_a_smith_session_has_names_as_written(io::Io *io) {
+export void test_macos_dap_a_smith_session_has_names_as_written(io::Io *io) {
     scratch::Project p;
     if (!make_lang(io, &p)) {
         return;
@@ -184,7 +184,7 @@ export void test_dap_a_smith_session_has_names_as_written(io::Io *io) {
 
 // A generic's instance (issue #15): the frame is `pick::larger<i32>` with the types it was asked for, and it is in the
 // generic's own source, at the line written there, not in the compiler's copy of the tokens.
-export void test_dap_dbg_a_generics_instance(io::Io *io) {
+export void test_macos_dap_dbg_a_generics_instance(io::Io *io) {
     scratch::Project root;
     if (!make(io, &root) || !has_hook(&root)) {
         return;
@@ -208,7 +208,7 @@ export void test_dap_dbg_a_generics_instance(io::Io *io) {
 
 // The argument list and `for constexpr`: the loop is written out turn by turn, and each argument is the variable
 // `rest_<index>`; the steps are at the lines of the generic's own source.
-export void test_dap_dbg_an_argument_list_and_for_constexpr(io::Io *io) {
+export void test_macos_dap_dbg_an_argument_list_and_for_constexpr(io::Io *io) {
     scratch::Project root;
     if (!make(io, &root) || !has_hook(&root)) {
         return;
@@ -227,7 +227,7 @@ export void test_dap_dbg_an_argument_list_and_for_constexpr(io::Io *io) {
 // by the variables request of dap, not as a pointer and a count array. The formatters are lldb's own C++ ones.
 constexpr char build_slice[_] = "smith cc -g -O0 -c main.smith -o main.o && smith cc -g main.o -o slice";
 
-export void test_dap_dbg_a_slice(io::Io *io) {
+export void test_macos_dap_dbg_a_slice(io::Io *io) {
     scratch::Project root;
     if (!make(io, &root) || !has_hook(&root)) {
         return;
@@ -244,7 +244,7 @@ export void test_dap_dbg_a_slice(io::Io *io) {
     scratch::expect_contains("dbg indexes a slice", out, "(i32) xs[2] = 6");
 }
 
-export void test_dap_a_slice_session(io::Io *io) {
+export void test_macos_dap_a_slice_session(io::Io *io) {
     scratch::Project root;
     if (!make(io, &root) || !has_hook(&root)) {
         return;
@@ -262,7 +262,7 @@ export void test_dap_a_slice_session(io::Io *io) {
 // Many dimensions and the qualifier tags (issue #106): rows are children of children with the fixed sizes and every
 // count, and the tags of `restrict` and `const` slices (written by hand here: their lowering is the compiler's) show
 // their elements and the type as the language writes it.
-export void test_dap_dbg_many_dimensions_and_qualifier_tags(io::Io *io) {
+export void test_macos_dap_dbg_many_dimensions_and_qualifier_tags(io::Io *io) {
     scratch::Project root;
     if (!make(io, &root) || !has_hook(&root)) {
         return;
@@ -304,10 +304,10 @@ static void check_io_main(io::Io *io, const char *file) {
                              names, "DW_AT_name\t(\"main\")");
 }
 
-export void test_dap_the_io_main_without_a_module_line_is_main(io::Io *io) {
+export void test_macos_dap_the_io_main_without_a_module_line_is_main(io::Io *io) {
     check_io_main(io, "plain/a.smith");
 }
 
-export void test_dap_the_io_main_with_a_module_line_is_main(io::Io *io) {
+export void test_macos_dap_the_io_main_with_a_module_line_is_main(io::Io *io) {
     check_io_main(io, "main.smith");
 }

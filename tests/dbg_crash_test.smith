@@ -53,7 +53,7 @@ static scratch::Run crash_app(const scratch::Project *p, io::Io *io, const char 
 }
 
 // 1. A C program that writes past an array: ASan's report as the program printed it, then the frames with their values.
-export void test_dbg_crash_asan_report_then_frames(io::Io *io) {
+export void test_macos_dbg_crash_asan_report_then_frames(io::Io *io) {
     scratch::Project p;
     if (!make(io, &p)) {
         return;
@@ -74,7 +74,7 @@ export void test_dbg_crash_asan_report_then_frames(io::Io *io) {
 }
 
 // 2. A signal: the stop reason, the status 128 + 11, and the standard output and error as they are.
-export void test_dbg_crash_signal(io::Io *io) {
+export void test_macos_dbg_crash_signal(io::Io *io) {
     scratch::Project p;
     if (!make(io, &p)) {
         return;
@@ -96,7 +96,7 @@ export void test_dbg_crash_signal(io::Io *io) {
 }
 
 // 3. abort and --frames.
-export void test_dbg_crash_abort_and_frames(io::Io *io) {
+export void test_macos_dbg_crash_abort_and_frames(io::Io *io) {
     scratch::Project p;
     if (!make(io, &p)) {
         return;
@@ -110,7 +110,7 @@ export void test_dbg_crash_abort_and_frames(io::Io *io) {
 }
 
 // 4. A program that exits: its output as it was, exited N, and its status.
-export void test_dbg_crash_a_program_that_exits(io::Io *io) {
+export void test_macos_dbg_crash_a_program_that_exits(io::Io *io) {
     scratch::Project p;
     if (!make(io, &p)) {
         return;
@@ -122,7 +122,7 @@ export void test_dbg_crash_a_program_that_exits(io::Io *io) {
 }
 
 // 5. --at: the locals at the line for the first N hits, then the program is ended.
-export void test_dbg_at_the_locals_at_a_line(io::Io *io) {
+export void test_macos_dbg_at_the_locals_at_a_line(io::Io *io) {
     scratch::Project p;
     if (!make(io, &p)) {
         return;
@@ -152,7 +152,7 @@ static bool make_smith_app(io::Io *io, scratch::Project *p) {
     return made.status == 0;
 }
 
-export void test_dbg_crash_a_slice_out_of_range_in_smith(io::Io *io) {
+export void test_macos_dbg_crash_a_slice_out_of_range_in_smith(io::Io *io) {
     scratch::Project p;
     if (!make_smith_app(io, &p)) {
         return;
@@ -166,7 +166,7 @@ export void test_dbg_crash_a_slice_out_of_range_in_smith(io::Io *io) {
     scratch::expect_contains("smith slice: the caller", err, "smith dbg: main.smith:20: main");
 }
 
-export void test_dbg_crash_a_failed_contract_in_smith(io::Io *io) {
+export void test_macos_dbg_crash_a_failed_contract_in_smith(io::Io *io) {
     scratch::Project p;
     if (!make_smith_app(io, &p)) {
         return;
@@ -178,7 +178,7 @@ export void test_dbg_crash_a_failed_contract_in_smith(io::Io *io) {
     scratch::expect_contains("contract: the caller's frame", err, "smith dbg: main.smith:19: main");
 }
 
-export void test_dbg_crash_a_smith_program_that_exits(io::Io *io) {
+export void test_macos_dbg_crash_a_smith_program_that_exits(io::Io *io) {
     scratch::Project p;
     if (!make_smith_app(io, &p)) {
         return;
@@ -188,7 +188,7 @@ export void test_dbg_crash_a_smith_program_that_exits(io::Io *io) {
 }
 
 // 7. A program that cannot be debugged is run plainly after one line.
-export void test_dbg_crash_a_program_that_cannot_be_debugged(io::Io *io) {
+export void test_macos_dbg_crash_a_program_that_cannot_be_debugged(io::Io *io) {
     scratch::Project p;
     if (!make(io, &p)) {
         return;
