@@ -345,10 +345,24 @@ static int64_t smith_run_wall_ns(void) {
     return (int64_t)now.tv_sec * (int64_t)smith_exec_nanoseconds + (int64_t)now.tv_nsec;
 }
 
+// The newest modification time among the inputs of an edge that are not order-only; 0 for an edge with none.
+static int64_t smith_run_newest_input(const SmithExec *exec, const SmithEdge *edge) {
+    int64_t newest = 0;
+    uint32_t total = smith_plan_input_count(edge);
+    for (uint32_t k = 0; k < total; k++) {
+        if (smith_plan_is_order_only(edge, k)) continue;
+        int64_t mtime = exec->graph.nodes[smith_plan_input(exec, edge, k)].mtime;
+        if (mtime > newest) newest = mtime;
+    }
+    return newest;
+}
+
 // After a restat step: an output that has the time it had before did not change, and cleans what depended on it only.
 // Returns the time to record for the step, as ninja does: when the command started, so that an input modified after
 // that makes the output out of date; a restat or generator step that changed an output records that output's time if it
-// is later.
+// is later; one that left every output alone records the time of its newest input, not its own start: a file system
+// stamps a file from a coarse clock (Linux: a tick, up to 10 ms behind the one the start was read from), so an input
+// written after the step ended can carry a time before its start, and would then look as old as the output.
 static int64_t smith_run_restat(SmithExec *exec, SmithEdge *edge, int64_t started, uint32_t *stack) {
     if (!edge->restat && !edge->generator) return started;
     SmithGraph *graph = &exec->graph;
@@ -365,7 +379,9 @@ static int64_t smith_run_restat(SmithExec *exec, SmithEdge *edge, int64_t starte
             cleaned = true;
         }
     }
-    return cleaned ? started : newest;
+    if (!cleaned) return newest;
+    int64_t inputs = smith_run_newest_input(exec, edge);
+    return inputs > 0 ? inputs : started;
 }
 
 // An interrupted command may have left half an output: it is removed when it changed, or when the command has a

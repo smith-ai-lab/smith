@@ -37,7 +37,7 @@ inline bool smith_platform_lld_link(llvm::ArrayRef<const char *> arguments) {
 // The -mlinker-version= the driver is given when its ld is lld (shim/clang.cpp says why), or nullptr.
 constexpr const char *smith_platform_linker_version = "-mlinker-version=1115.7.3";
 
-// Adds a change of folder to the actions of a posix_spawn.
+// Adds a change of folder to the actions of a posix_spawn (macOS 26, smith's floor: #802).
 inline int smith_platform_spawn_chdir(posix_spawn_file_actions_t *actions, const char *folder) {
     return posix_spawn_file_actions_addchdir(actions, folder);
 }

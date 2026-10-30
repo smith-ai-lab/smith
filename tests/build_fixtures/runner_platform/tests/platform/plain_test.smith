@@ -1,0 +1,10 @@
+module platform::plain_test;
+
+export void test_plain_1() {
+}
+
+export void test_macos_plain_kqueue() {
+}
+
+export void test_plain_macosx_is_not_the_word() {
+}

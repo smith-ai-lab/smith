@@ -300,7 +300,10 @@ export void test_autodiff_wrong_map_a_pointer_field_is_refused_at_the_call(io::I
 
 export void test_autodiff_a_smith_with_an_external_clang_refuses_an_autodiff_program(io::Io *io) {
     scratch::Project p = from_dir(io, "toy", "toy");
-    scratch::Run built = scratch::sh(&p, "env SMITH_CLANG=/usr/bin/clang smith build");
+    // an external clang that reads C23 (the system's on a hosted Linux runner is older), here smith's own as a wrapper
+    scratch::write(&p, "external-clang", "#!/bin/sh\nunset SMITH_CLANG\nexec smith cc \"$@\"\n");
+    scratch::Run built =
+        scratch::sh(&p, "chmod +x external-clang && env SMITH_CLANG=\"$PWD/external-clang\" smith build");
     scratch::expect_status("autodiff: refusal: a smith with an external clang fails", 2, &built);
     scratch::expect_contains("autodiff: refusal: ... saying it needs Enzyme", built.err,
                              "smith::autodiff needs a smith with Enzyme linked in");

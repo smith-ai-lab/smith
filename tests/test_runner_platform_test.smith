@@ -1,0 +1,47 @@
+// `--macos-only` and `--skip-macos` of the test runner (#754): CI runs the tests that need macOS on a Mac and all the
+// others on Linux. A test is macOS-only when its shown name has the word `macos` (a `test_macos_...` function or a
+// `..._macos_test` module). The fixture tests/build_fixtures/runner_platform has 5 tests, 3 of them macOS-only; the
+// runner only lists here (--list), and runs once.
+module test_runner_platform_test;
+
+import smith::io;
+import smith::test;
+import runner;
+import scratch;
+
+static scratch::Project platform_project(io::Io *io) {
+    return runner::built_project(io, "runner_base", "runner_platform", "");
+}
+
+export void test_runner_platform_the_only_flag_lists_the_marked_tests(io::Io *io) {
+    scratch::Project p = platform_project(io);
+    scratch::expect_text("platform: --macos-only lists 3", "3",
+                         scratch::capture(&p, "build/tests --list --macos-only | awk 'END { print NR }'"));
+    scratch::expect_text("platform: ... the function named macos", "1",
+                         scratch::capture(&p, "build/tests --list --macos-only | grep -c plain_kqueue"));
+    scratch::expect_text("platform: ... and the module named macos", "2",
+                         scratch::capture(&p, "build/tests --list --macos-only | grep -c network_macos_test"));
+}
+
+export void test_runner_platform_the_skip_flag_lists_the_others(io::Io *io) {
+    scratch::Project p = platform_project(io);
+    scratch::expect_text("platform: --skip-macos lists the other 2", "2",
+                         scratch::capture(&p, "build/tests --list --skip-macos | awk 'END { print NR }'"));
+    scratch::expect_text("platform: ... macosx is not the word", "1",
+                         scratch::capture(&p, "build/tests --list --skip-macos | grep -c macosx"));
+}
+
+export void test_runner_platform_the_two_halves_are_every_test_once(io::Io *io) {
+    scratch::Project p = platform_project(io);
+    scratch::expect_text("platform: the halves are the whole list", "",
+                         scratch::capture(&p, "{ build/tests --list; build/tests --list --macos-only; build/tests "
+                                              "--list --skip-macos; } | sort | uniq -c | awk '$1 != 2'"));
+}
+
+export void test_runner_platform_a_run_runs_only_its_half(io::Io *io) {
+    scratch::Project p = platform_project(io);
+    scratch::Run run = runner::tests(&p, "", "--macos-only");
+    scratch::expect_contains("platform: --macos-only runs its 3", run.out, "3 passed, 0 failed");
+    scratch::Run other = runner::tests(&p, "", "--skip-macos");
+    scratch::expect_contains("platform: --skip-macos runs its 2", other.out, "2 passed, 0 failed");
+}
