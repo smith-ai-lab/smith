@@ -4,7 +4,7 @@ name: prover-linux-dev
 on:
   workflow_dispatch:
   push:
-    branches: [worktree-agent-adc594bd97d4c5bb0]
+    branches: [prover-linux-820]
     paths: [".github/workflows/prover-linux-dev.yml", "scripts/llvm_linux.c", "shim/**", "build.c", "runtime/**", "tests/**", "lib/**", "smith.c"]
 
 permissions:
