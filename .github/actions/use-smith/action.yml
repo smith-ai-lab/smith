@@ -1,7 +1,7 @@
 name: use-smith
 description: >
   Takes the build another job of this run made (pack-smith) instead of building smith again (#798): the LLVM pack
-  from the cache (else `smith build llvm` downloads it), then the build of this run from the cache, unpacked over the
+  from the cache (else `smith build llvm` downloads it), then the build of this run (an artifact), unpacked over the
   checkout.
   Sets SMITH to the built smith's path. The files git tracks are made older than the unpacked outputs, so the build
   graph finds everything up to date; the caller has checked out the whole history and set GH_TOKEN.
@@ -31,12 +31,11 @@ runs:
           ~/.cache/smith/enzyme
         key: ${{ steps.llvm.outputs.key }}
 
-    - name: Restore the build
-      uses: actions/cache/restore@v4
+    - name: Download the build
+      uses: actions/download-artifact@v4
       with:
-        path: ${{ runner.temp }}/tree.tar
-        key: smith-tree-${{ inputs.name }}-${{ github.run_id }}-${{ github.run_attempt }}
-        fail-on-cache-miss: true
+        name: smith-tree-${{ inputs.name }}
+        path: ${{ runner.temp }}
 
     - name: Unpack the build
       shell: bash
