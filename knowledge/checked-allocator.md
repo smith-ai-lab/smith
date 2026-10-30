@@ -40,6 +40,7 @@ any allocator, `mem::set_allocator(&checked.base)`, so `malloc`, `mem::alloc` an
   frame is in a system library and in a function that does not hand its block to the caller (`strdup`, `asprintf`,
   `fopen`, `getline`... do), the block is the library's and is not reported. A frame of the program's own ends the
   walk: the block is the caller's. Not run on Linux yet.
+- **A test with no io is checked the same** (issue #815): `test_x()` and `test_x(random::Key key)` run between `checked_begin` and `checked_finish` like one that takes an io, and the swap is `malloc` itself (the [handlers](handlers.md) runtime, which sits ahead of AddressSanitizer's allocator, so a `malloc` in a `.c` file the test calls is checked too and a block it leaks fails with the C line). `tests/mem_checked_test.smith` shows it on `tests/build_fixtures/runner_checked`: a leak through `mem::alloc`, a leak through `malloc` in `test_checked_c.c`, a freed C `malloc`, and a `printf` that passes. A scratch project with no io (`scratch::make`) is not built yet: its results are malloc'd and held to the end of the test, which the check would report, so it needs either a region or `clean` freeing what the scratch module allocated (open on #815).
 - **Costs and limits:** a block costs a record (about 300 bytes) and a stack walk; freed blocks are kept until the test
   ends, so a test that allocates and frees in a long loop holds all of them. A block a program hands to the C library to
   keep (`setenv`) is reported as a leak: that is what `--unchecked` is for.
