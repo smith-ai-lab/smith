@@ -4,16 +4,15 @@
 // KiB window, and a gzip header with every optional field, each with the bytes it must decode to; stored blocks written
 // here round-trip through every format and through decode and stream; truncated, damaged and random input fails with a
 // status and never reads or writes outside its buffers (the buffers are exact-size arena pushes, which the sanitizer
-// poisons around). The vectors are read from tests/fixtures/inflate through the io of the tests that take one.
+// poisons around). The vectors are read from tests/fixtures/inflate with smith::files into the test's own memory.
 module smith::inflate_test;
 
 import smith::arena;
+import smith::files;
 import smith::format;
 import smith::inflate;
-import smith::io;
 import smith::random;
 import smith::test;
-import <stdint.h>;
 import smith::mem;
 
 constexpr usize arena_size = (usize)8 << 20; // 8 MiB
@@ -34,7 +33,6 @@ const Vector vectors[_] = {
 constexpr usize repeat_period = 30000;
 constexpr usize repeat_size = repeat_period * 10;
 
-// A fixture's bytes, in the arena of the test's io.
 // The next key of a stream: `stream` moves on (the reassignment pattern) and the key returned is for one use.
 static random::Key take(random::Key *stream) {
     random::Key next[2];
@@ -43,13 +41,26 @@ static random::Key take(random::Key *stream) {
     return next[1];
 }
 
-static const u8 *load(io::Io *io, const char *name, const char *extension, usize *size) {
+// A fixture's bytes, in the arena: read_file allocates through the current allocator, which is the arena's while it
+// reads, so the bytes are given back with the arena and the test frees nothing.
+static const u8 *load(arena::Arena *arena, const char *name, const char *extension, usize *size) {
     char path[128];
-    (void)format::to(path, sizeof path, "tests/fixtures/inflate/", name, ".", extension);
-    io::Read file = io::files_read(&io->files, &io->arena, path);
-    test::check_equal(file.error.code, 0);
-    *size = countof(file.data);
-    return file.data.data;
+    format::Written written = format::to(path, sizeof path, "tests/fixtures/inflate/", name, ".", extension);
+    test::check_condition(written.fits);
+    arena::ArenaAllocator allocator = arena::allocator(arena);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    files::BytesResult file = files::read_file(path[0:written.length]);
+    switch (file) {
+    case .ok:
+        *size = countof(file.ok);
+        return file.ok.data;
+    case .error:
+        test::note("cannot read %s", path);
+        test::check_condition(false); // ends the test
+        *size = 0;
+        return nullptr;
+    }
 }
 
 static bool same(const u8 *a, const u8 *b, usize size) {
@@ -225,20 +236,22 @@ export void test_prop_inflate_checksums_equal_their_references_and_continue(rand
 // ---------------------------------------------------------------------------------------------------------------
 // Known vectors
 
-export void test_inflate_decodes_vectors_of_every_block_type(io::Io *io) {
+export void test_inflate_decodes_vectors_of_every_block_type() {
+    arena::Arena memory = test::memory(arena_size);
+    arena::Arena *arena = &memory;
     for (usize v = 0; v < _Countof(vectors); v++) {
         const Vector *vector = &vectors[v];
         test::note("vector %s", vector->name);
         usize expected_size = 0;
         usize gzip_size = 0;
         usize zlib_size = 0;
-        const u8 *expected = load(io, vector->name, "bin", &expected_size);
-        const u8 *gzip = load(io, vector->name, "gz", &gzip_size);
-        const u8 *zlib = load(io, vector->name, "zlib", &zlib_size);
+        const u8 *expected = load(arena, vector->name, "bin", &expected_size);
+        const u8 *gzip = load(arena, vector->name, "gz", &gzip_size);
+        const u8 *zlib = load(arena, vector->name, "zlib", &zlib_size);
         test::check_equal((u32)(gzip[10] >> 1U) & 3U, vector->block_type);
 
-        arena::Scope scope = arena::scope_begin(&io->arena);
-        u8 *output = arena::push_slice(&io->arena, u8, expected_size).data;
+        arena::Scope scope = arena::scope_begin(arena);
+        u8 *output = arena::push_slice(arena, u8, expected_size).data;
         usize used = 0;
         usize produced = 0;
         expect(inflate::decode(inflate::Gzip, gzip, gzip_size, output, expected_size, &used, &produced), inflate::Ok);
@@ -260,14 +273,16 @@ export void test_inflate_decodes_vectors_of_every_block_type(io::Io *io) {
     }
 }
 
-export void test_inflate_decodes_matches_that_reach_across_the_window(io::Io *io) {
+export void test_inflate_decodes_matches_that_reach_across_the_window() {
+    arena::Arena memory = test::memory(arena_size);
+    arena::Arena *arena = &memory;
     usize gzip_size = 0;
     usize zlib_size = 0;
     usize raw_size = 0;
-    const u8 *gzip = load(io, "repeat", "gz", &gzip_size);
-    const u8 *zlib = load(io, "repeat", "zlib", &zlib_size);
-    const u8 *raw = load(io, "repeat", "raw", &raw_size);
-    u8 *output = arena::push_slice(&io->arena, u8, repeat_size).data;
+    const u8 *gzip = load(arena, "repeat", "gz", &gzip_size);
+    const u8 *zlib = load(arena, "repeat", "zlib", &zlib_size);
+    const u8 *raw = load(arena, "repeat", "raw", &raw_size);
+    u8 *output = arena::push_slice(arena, u8, repeat_size).data;
     usize used = 0;
     usize produced = 0;
     expect(inflate::decode(inflate::Gzip, gzip, gzip_size, output, repeat_size, &used, &produced), inflate::Ok);
@@ -280,9 +295,11 @@ export void test_inflate_decodes_matches_that_reach_across_the_window(io::Io *io
     test::check(is_repeat(output, produced));
 }
 
-export void test_inflate_decodes_an_empty_stream(io::Io *io) {
+export void test_inflate_decodes_an_empty_stream() {
+    arena::Arena memory = test::memory(arena_size);
+    arena::Arena *arena = &memory;
     usize size = 0;
-    const u8 *gzip = load(io, "empty", "gz", &size);
+    const u8 *gzip = load(arena, "empty", "gz", &size);
     u8 output[1] = {7};
     usize used = 0;
     usize produced = 99;
@@ -332,10 +349,11 @@ export void test_inflate_a_null_window_stops() {
     (void)inflate::stream(inflate::Raw, input, sizeof input, nullptr, inflate_test_sink, nullptr, &used, &produced);
 }
 
-export void test_inflate_reads_every_gzip_header_field(io::Io *io) {
+export void test_inflate_reads_every_gzip_header_field() {
+    arena::Arena memory = test::memory(arena_size);
+    arena::Arena *arena = &memory;
     usize size = 0;
-    const u8 *fields = load(io, "fields", "gz", &size);
-    arena::Arena *arena = &io->arena;
+    const u8 *fields = load(arena, "fields", "gz", &size);
     u8 output[32];
     usize used = 0;
     usize produced = 0;
@@ -363,13 +381,15 @@ export void test_inflate_reads_every_gzip_header_field(io::Io *io) {
     }
 }
 
-export void test_inflate_checks_a_zlib_header_and_trailer(io::Io *io) {
+export void test_inflate_checks_a_zlib_header_and_trailer() {
+    arena::Arena memory = test::memory(arena_size);
+    arena::Arena *arena = &memory;
     usize size = 0;
-    const u8 *zlib = load(io, "dynamic", "zlib", &size);
+    const u8 *zlib = load(arena, "dynamic", "zlib", &size);
     usize expected_size = 0;
-    (void)load(io, "dynamic", "bin", &expected_size);
-    u8 *file = exact_copy(&io->arena, zlib, size);
-    u8 *output = arena::push_slice(&io->arena, u8, expected_size).data;
+    (void)load(arena, "dynamic", "bin", &expected_size);
+    u8 *file = exact_copy(arena, zlib, size);
+    u8 *output = arena::push_slice(arena, u8, expected_size).data;
     usize used = 0;
     usize produced = 0;
     file[1] |= 0x20; // a preset dictionary, which is refused (and the header check bits no longer fit)
@@ -387,12 +407,13 @@ export void test_inflate_checks_a_zlib_header_and_trailer(io::Io *io) {
     expect(inflate::decode(inflate::Zlib, file, size, output, expected_size, &used, &produced), inflate::Ok);
 }
 
-export void test_inflate_refuses_output_that_is_too_small_or_checksums_that_disagree(io::Io *io) {
-    arena::Arena *arena = &io->arena;
+export void test_inflate_refuses_output_that_is_too_small_or_checksums_that_disagree() {
+    arena::Arena memory = test::memory(arena_size);
+    arena::Arena *arena = &memory;
     usize expected_size = 0;
     usize gzip_size = 0;
-    (void)load(io, "dynamic", "bin", &expected_size);
-    const u8 *gzip = load(io, "dynamic", "gz", &gzip_size);
+    (void)load(arena, "dynamic", "bin", &expected_size);
+    const u8 *gzip = load(arena, "dynamic", "gz", &gzip_size);
     u8 *small = arena::push_slice(arena, u8, expected_size - 1).data;
     usize used = 0;
     usize produced = 0;
@@ -446,17 +467,19 @@ export void test_inflate_refuses_a_distance_before_the_start() {
            inflate::Corrupt);
 }
 
-export void test_inflate_stops_at_the_end_of_one_stream_and_says_where_it_ended(io::Io *io) {
+export void test_inflate_stops_at_the_end_of_one_stream_and_says_where_it_ended() {
+    arena::Arena memory = test::memory(arena_size);
+    arena::Arena *arena = &memory;
     usize first_size = 0;
     usize second_size = 0;
     usize expected_size = 0;
-    const u8 *first = load(io, "fixed", "gz", &first_size);
-    const u8 *second = load(io, "dynamic", "gz", &second_size);
-    const u8 *expected = load(io, "dynamic", "bin", &expected_size);
-    u8 *both = arena::push_slice(&io->arena, u8, first_size + second_size).data;
+    const u8 *first = load(arena, "fixed", "gz", &first_size);
+    const u8 *second = load(arena, "dynamic", "gz", &second_size);
+    const u8 *expected = load(arena, "dynamic", "bin", &expected_size);
+    u8 *both = arena::push_slice(arena, u8, first_size + second_size).data;
     mem::copy(both[0:first_size], first[0:first_size]);
     mem::copy(both[first_size:first_size + second_size], second[0:second_size]);
-    u8 *output = arena::push_slice(&io->arena, u8, expected_size).data;
+    u8 *output = arena::push_slice(arena, u8, expected_size).data;
     usize used = 0;
     usize produced = 0;
     // A gzip file may be several members (as `cat a.gz b.gz` makes): the caller reads the next where `used` says.
@@ -473,17 +496,19 @@ export void test_inflate_stops_at_the_end_of_one_stream_and_says_where_it_ended(
 // ---------------------------------------------------------------------------------------------------------------
 // Streaming to a sink
 
-export void test_inflate_stream_gives_the_bytes_that_decode_gives(io::Io *io) {
+export void test_inflate_stream_gives_the_bytes_that_decode_gives() {
+    arena::Arena memory = test::memory(arena_size);
+    arena::Arena *arena = &memory;
     for (usize v = 0; v < _Countof(vectors); v++) {
         const Vector *vector = &vectors[v];
         test::note("vector %s", vector->name);
         usize expected_size = 0;
         usize gzip_size = 0;
-        const u8 *expected = load(io, vector->name, "bin", &expected_size);
-        const u8 *gzip = load(io, vector->name, "gz", &gzip_size);
-        arena::Scope scope = arena::scope_begin(&io->arena);
-        u8 *window = arena::push_slice(&io->arena, u8, inflate::window).data;
-        Collect sink = make_sink(&io->arena, expected_size);
+        const u8 *expected = load(arena, vector->name, "bin", &expected_size);
+        const u8 *gzip = load(arena, vector->name, "gz", &gzip_size);
+        arena::Scope scope = arena::scope_begin(arena);
+        u8 *window = arena::push_slice(arena, u8, inflate::window).data;
+        Collect sink = make_sink(arena, expected_size);
         usize used = 0;
         u64 produced = 0;
         expect(inflate::stream(inflate::Gzip, gzip, gzip_size, window, collect, &sink, &used, &produced), inflate::Ok);
@@ -496,13 +521,15 @@ export void test_inflate_stream_gives_the_bytes_that_decode_gives(io::Io *io) {
     }
 }
 
-export void test_inflate_stream_passes_the_window_over_a_long_output(io::Io *io) {
+export void test_inflate_stream_passes_the_window_over_a_long_output() {
+    arena::Arena memory = test::memory(arena_size);
+    arena::Arena *arena = &memory;
     usize gzip_size = 0;
     usize raw_size = 0;
-    const u8 *gzip = load(io, "repeat", "gz", &gzip_size);
-    const u8 *raw = load(io, "repeat", "raw", &raw_size);
-    u8 *window = arena::push_slice(&io->arena, u8, inflate::window).data;
-    Collect sink = make_sink(&io->arena, repeat_size);
+    const u8 *gzip = load(arena, "repeat", "gz", &gzip_size);
+    const u8 *raw = load(arena, "repeat", "raw", &raw_size);
+    u8 *window = arena::push_slice(arena, u8, inflate::window).data;
+    Collect sink = make_sink(arena, repeat_size);
     usize used = 0;
     u64 produced = 0;
     expect(inflate::stream(inflate::Gzip, gzip, gzip_size, window, collect, &sink, &used, &produced), inflate::Ok);
@@ -511,17 +538,19 @@ export void test_inflate_stream_passes_the_window_over_a_long_output(io::Io *io)
     test::check_greater_equal(sink.calls, repeat_size / inflate::window); // in pieces, not all at the end
     test::check_less_equal(sink.largest, inflate::window);
 
-    sink = make_sink(&io->arena, repeat_size);
+    sink = make_sink(arena, repeat_size);
     expect(inflate::stream(inflate::Raw, raw, raw_size, window, collect, &sink, &used, &produced), inflate::Ok);
     test::check_equal(used, raw_size);
     test::check(is_repeat(sink.data, sink.size));
 }
 
-export void test_inflate_stream_stops_when_the_sink_refuses(io::Io *io) {
+export void test_inflate_stream_stops_when_the_sink_refuses() {
+    arena::Arena memory = test::memory(arena_size);
+    arena::Arena *arena = &memory;
     usize gzip_size = 0;
-    const u8 *gzip = load(io, "repeat", "gz", &gzip_size);
-    u8 *window = arena::push_slice(&io->arena, u8, inflate::window).data;
-    Collect sink = make_sink(&io->arena, repeat_size);
+    const u8 *gzip = load(arena, "repeat", "gz", &gzip_size);
+    u8 *window = arena::push_slice(arena, u8, inflate::window).data;
+    Collect sink = make_sink(arena, repeat_size);
     sink.stop_after = 2;
     usize used = 0;
     u64 produced = 0;
@@ -531,14 +560,16 @@ export void test_inflate_stream_stops_when_the_sink_refuses(io::Io *io) {
 }
 
 // The checksum is of the bytes the sink was given, so a damaged trailer is found after every byte was delivered.
-export void test_inflate_stream_finds_a_wrong_trailer_after_the_bytes(io::Io *io) {
+export void test_inflate_stream_finds_a_wrong_trailer_after_the_bytes() {
+    arena::Arena memory = test::memory(arena_size);
+    arena::Arena *arena = &memory;
     usize expected_size = 0;
     usize gzip_size = 0;
-    const u8 *expected = load(io, "mixed", "bin", &expected_size);
-    const u8 *gzip = load(io, "mixed", "gz", &gzip_size);
-    u8 *file = exact_copy(&io->arena, gzip, gzip_size);
-    u8 *window = arena::push_slice(&io->arena, u8, inflate::window).data;
-    Collect sink = make_sink(&io->arena, expected_size);
+    const u8 *expected = load(arena, "mixed", "bin", &expected_size);
+    const u8 *gzip = load(arena, "mixed", "gz", &gzip_size);
+    u8 *file = exact_copy(arena, gzip, gzip_size);
+    u8 *window = arena::push_slice(arena, u8, inflate::window).data;
+    Collect sink = make_sink(arena, expected_size);
     usize used = 0;
     u64 produced = 0;
     file[gzip_size - 7] ^= 1;
@@ -548,10 +579,10 @@ export void test_inflate_stream_finds_a_wrong_trailer_after_the_bytes(io::Io *io
     test::check(same(sink.data, expected, expected_size));
     file[gzip_size - 7] ^= 1;
     file[gzip_size - 2] ^= 1;
-    sink = make_sink(&io->arena, expected_size);
+    sink = make_sink(arena, expected_size);
     expect(inflate::stream(inflate::Gzip, file, gzip_size, window, collect, &sink, &used, &produced),
            inflate::BadLength);
-    sink = make_sink(&io->arena, expected_size);
+    sink = make_sink(arena, expected_size);
     expect(inflate::stream(inflate::Gzip, file, gzip_size - 1, window, collect, &sink, &used, &produced),
            inflate::Truncated);
 }
@@ -646,25 +677,27 @@ export void test_prop_inflate_round_trips_stored_blocks(random::Key key) {
     }
 }
 
-constexpr usize trials = 300; // keys of the two tests below, drawn from the io's key (`seed` of the io replays them)
+constexpr usize trials = 3; // per key of the two property tests below: the runner's 100 keys make 300 trials
 
 // A stream cut anywhere before its end is refused, for every kind of block and every format, by decode and by stream,
 // and nothing is read past the cut.
-export void test_inflate_refuses_truncated_input(io::Io *io) {
-    arena::Arena *arena = &io->arena;
+export void test_inflate_refuses_truncated_input(random::Key key) {
+    arena::Arena memory = test::memory(arena_size);
+    arena::Arena *arena = &memory;
     u8 *window = arena::push_slice(arena, u8, inflate::window).data;
+    random::Key *trial_keys = &key;
     for (usize trial = 0; trial < trials; trial++) {
-        random::Key key = take(&io->key);
-        random::Key *key_stream = &key;
-        test::note("seed %ju, trial %zu", (c::uintmax_t)io->seed, trial);
+        random::Key trial_key = take(trial_keys);
+        random::Key *key_stream = &trial_key;
+        test::note("trial %zu", trial);
         arena::Scope scope = arena::scope_begin(arena);
         const Vector *vector = &vectors[between(take(key_stream), 0, _Countof(vectors) - 1)];
         usize expected_size = 0;
         usize gzip_size = 0;
         usize zlib_size = 0;
-        (void)load(io, vector->name, "bin", &expected_size);
-        const u8 *gzip = load(io, vector->name, "gz", &gzip_size);
-        const u8 *zlib = load(io, vector->name, "zlib", &zlib_size);
+        (void)load(arena, vector->name, "bin", &expected_size);
+        const u8 *gzip = load(arena, vector->name, "gz", &gzip_size);
+        const u8 *zlib = load(arena, vector->name, "zlib", &zlib_size);
         u8 *output = arena::push_slice(arena, u8, expected_size == 0 ? 1 : expected_size).data;
         usize used = 0;
         usize produced = 0;
@@ -700,19 +733,21 @@ export void test_inflate_refuses_truncated_input(io::Io *io) {
 
 // Flipped bits and random bytes decode to a status or to bytes within the buffer, whichever, and never anything else;
 // when the decode succeeds it made the bytes of the vector.
-export void test_inflate_survives_corrupt_input(io::Io *io) {
-    arena::Arena *arena = &io->arena;
+export void test_inflate_survives_corrupt_input(random::Key key) {
+    arena::Arena memory = test::memory(arena_size);
+    arena::Arena *arena = &memory;
     u8 *window = arena::push_slice(arena, u8, inflate::window).data;
+    random::Key *trial_keys = &key;
     for (usize trial = 0; trial < trials; trial++) {
-        random::Key key = take(&io->key);
-        random::Key *key_stream = &key;
-        test::note("seed %ju, trial %zu", (c::uintmax_t)io->seed, trial);
+        random::Key trial_key = take(trial_keys);
+        random::Key *key_stream = &trial_key;
+        test::note("trial %zu", trial);
         arena::Scope scope = arena::scope_begin(arena);
         const Vector *vector = &vectors[between(take(key_stream), 0, _Countof(vectors) - 1)];
         usize expected_size = 0;
         usize gzip_size = 0;
-        (void)load(io, vector->name, "bin", &expected_size);
-        const u8 *gzip = load(io, vector->name, "gz", &gzip_size);
+        (void)load(arena, vector->name, "bin", &expected_size);
+        const u8 *gzip = load(arena, vector->name, "gz", &gzip_size);
         u8 *file = exact_copy(arena, gzip, gzip_size);
         bool whole = random::bernoulli_sample(take(key_stream), (random::Bernoulli){.probability = 0.5});
         usize capacity = whole ? expected_size : (usize)between(take(key_stream), 0, (i64)expected_size);
