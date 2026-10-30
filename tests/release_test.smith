@@ -126,12 +126,42 @@ export void test_release_publish_creates_one_release_and_keeps_other_tags(io::Io
                          capture(io, &p, "ls \"../gh/stage0-$head\""));
     scratch::expect_text("release: publish-creates", "1", capture(io, &p, "grep -c 'release create' \"$GH_LOG\""));
     (void)run(io, &p, "sh \"$script\" publish ../fake-smith >/dev/null 2>&1");
-    scratch::expect_text("release: publish-twice", "1", capture(io, &p, "grep -c 'release create' \"$GH_LOG\""));
+    scratch::expect_text("release: publish-twice-creates-nothing", "1",
+                         capture(io, &p, "grep -c 'release create' \"$GH_LOG\""));
+    scratch::expect_text("release: publish-twice-replaces", "2",
+                         capture(io, &p, "grep -c 'release upload.*--clobber' \"$GH_LOG\""));
+    scratch::expect_text("release: publish-makes-a-draft", "1",
+                         capture(io, &p, "grep -c 'release create.*--draft' \"$GH_LOG\""));
+    scratch::expect_text("release: publish-leaves-it-a-draft", "0",
+                         capture(io, &p, "grep -c 'release edit' \"$GH_LOG\" || true"));
+    (void)run(io, &p, "sh \"$script\" finish stage0-$head >/dev/null 2>&1");
+    scratch::expect_text("release: finish-publishes-the-draft", "1",
+                         capture(io, &p, "grep -c -- \"stage0-$head --draft=false\" ../published"));
     scratch::expect_text("release: publish-keeps-others", "yes",
                          capture(io, &p, "[ -d ../gh/other-tag ] && [ -d ../gh/stage0-old ] && echo yes"));
     scratch::expect_text("release: refuse-wrong-binary",
                          capture(io, &p, "echo \"release: $PWD/../other-smith was not built from $head\""),
                          capture(io, &p, "sh \"$script\" publish \"$PWD/../other-smith\" 2>&1 | tail -1"));
+}
+
+// publish on a second platform: the release of the first platform exists, the second job adds its tarball and checksum
+// and leaves the first's files
+export void test_release_publish_adds_a_platform_to_an_existing_release(io::Io *io) {
+    scratch::Project p = repository(io);
+    scratch::Run pushed =
+        scratch::sh(&p, "git push -q origin main && head=$(git rev-parse HEAD) && mkdir ../gh/stage0-$head && "
+                        "echo a >../gh/stage0-$head/smith-other-arch.tar.xz && echo b "
+                        ">../gh/stage0-$head/smith-other-arch.tar.xz.sha256");
+    scratch::expect_status("release: pushed, with a release of another platform", 0, &pushed);
+    scratch::Run published = run(io, &p, "sh \"$script\" publish ../fake-smith >/dev/null 2>&1");
+    scratch::expect_status("release: publish-adds", 0, &published);
+    scratch::expect_text("release: publish-adds-assets",
+                         capture(io, &p,
+                                 "{ echo $name; echo $name.sha256; echo smith-other-arch.tar.xz; "
+                                 "echo smith-other-arch.tar.xz.sha256; } | sort"),
+                         capture(io, &p, "ls \"../gh/stage0-$head\" | sort"));
+    scratch::expect_text("release: publish-adds-creates-nothing", "0",
+                         capture(io, &p, "grep -c 'release create' \"$GH_LOG\" || true"));
 }
 
 // CI: only the commit of a push to main

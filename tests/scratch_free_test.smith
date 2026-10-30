@@ -1,0 +1,25 @@
+// scratch:: with no io (issue #815, #240): a test with no io parameter makes a project, writes and reads a file and
+// runs a command. Memory scratch returns to the test is the test's to free (the runner's leak check, mem::checked,
+// fails a test that does not: tests/mem_checked_test.smith shows that on a fixture); what make holds for itself is
+// freed by clean. This test frees everything and passes.
+module scratch_free_test;
+
+import smith::test;
+import scratch;
+
+export void test_scratch_free_a_project_with_no_io_runs_commands_and_keeps_files() {
+    scratch::Project p = scratch::make("proj", nullptr);
+    defer scratch::clean(&p);
+    scratch::write(&p, "note.txt", "hello\n");
+    test::check_condition(scratch::exists(&p, "note.txt"));
+    test::check_condition(!scratch::exists(&p, "absent.txt"));
+    const char *text = scratch::read(&p, "note.txt");
+    defer scratch::release(text);
+    scratch::expect_text("the file reads back", "hello\n", text);
+    scratch::Run run = scratch::sh(&p, "cat note.txt && pwd");
+    defer scratch::release(run.out);
+    defer scratch::release(run.err);
+    scratch::expect_status("the command runs in the project", 0, &run);
+    scratch::expect_contains("... and sees the file", run.out, "hello");
+    scratch::expect_contains("... in the project's folder", run.out, "proj");
+}

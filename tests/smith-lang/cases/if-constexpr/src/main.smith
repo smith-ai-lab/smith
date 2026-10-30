@@ -7,14 +7,14 @@ constexpr bool fast = target::assertions == false;
 int main() {
     i32 answer = 0;
     // In a file with no module line the branches flow the same.
-    if constexpr (target::os == target::macos) {
-        answer = 7;
-    } else {
+    if constexpr (target::os == 0) {
         undeclared_function();
+    } else {
+        answer = 7;
     }
     if constexpr (fast) {
         c::printf("assertions are off\n");
-    } else if constexpr (target::arch == target::aarch64) {
+    } else if constexpr (target::arch == target::aarch64 || target::arch == target::x86_64) {
         c::printf("answer is seven\n");
     } else {
         c::printf("neither\n");

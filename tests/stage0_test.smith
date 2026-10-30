@@ -107,10 +107,26 @@ export void test_stage0_a_newer_release_wins(io::Io *io) {
     scratch::expect_text("stage0: the newer release is downloaded", expected, line(run.out, 1));
 }
 
+// A newer release that has no tarball for this platform (the other platform's job published first, or only) is
+// passed over for the newest one that has it (#799).
+export void test_stage0_a_release_without_this_platform_is_skipped(io::Io *io) {
+    scratch::Project p = repository(io);
+    scratch::Run made = scratch::sh(&p, "cd repo && third=$(git rev-parse HEAD~1) && mkdir ../gh/stage0-$third && "
+                                        "echo x > ../gh/stage0-$third/smith-plan9-mips.tar.xz && "
+                                        "git tag stage0-$third $third && git push -q origin --tags");
+    scratch::expect_status("stage0: a release of another platform is made", 0, &made);
+    scratch::Run run = tool(&p, "", "");
+    scratch::expect_status("stage0: it passes", 0, &run);
+    char expected[160];
+    __builtin_snprintf(expected, sizeof expected, "stage0: downloading stage0-%s", second(&p));
+    scratch::expect_text("stage0: the older release with this platform's tarball", expected, line(run.out, 1));
+}
+
 // A checksum that does not match stops it.
 export void test_stage0_a_wrong_checksum_stops(io::Io *io) {
     scratch::Project p = repository(io);
-    (void)scratch::sh(&p, "echo corrupt >> gh/stage0-$(cat second)/smith-darwin-arm64.tar.xz");
+    (void)scratch::sh(&p, "echo corrupt >> gh/stage0-$(cat second)/smith-$(uname -s | tr '[:upper:]' '[:lower:]')-"
+                          "$(uname -m).tar.xz");
     scratch::Run run = tool(&p, "", "");
     scratch::expect_failure("stage0: a corrupt release stops", &run);
     scratch::expect_contains("stage0: and says the checksum", run.err, "the checksum of stage0-");

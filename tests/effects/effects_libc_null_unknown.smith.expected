@@ -1,0 +1,2 @@
+status 1
+effects_libc_null_unknown.smith:7:15: error: smith-ownership: 'getcwd' allocates when its argument 1 is null and returns it otherwise; pass an array as the buffer, or NULL to allocate

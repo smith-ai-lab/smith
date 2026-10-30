@@ -7,12 +7,14 @@
 //     a compiler barrier);
 //   - a system call (`svc` on ARM, `syscall` on x86-64): the call number is a constant when the block, a register
 //     variable (`register long x8 asm("x8") = 64;`) or an operand ("a"(SYS_write)) puts one in the register the system
-//     calls read it from; the number names a libc function, whose effects the table gives; an unknown number is `c`;
-//   - a call or a jump to a named symbol: that symbol's effects; through a register or memory: `c`;
+//     calls read it from; the number names a libc function, whose effects the table gives; an unknown number is
+//     `unknown`;
+//   - a call or a jump to a named symbol: that symbol's effects; through a register or memory: `unknown`;
 //   - memory made executable (a call of mmap or mprotect with a constant protection that has PROT_EXEC) is `code`.
 //
-// A block the assembler cannot read (an unsupported target, an unknown instruction) stays `c`, as before. Only the
-// targets the LLVM smith links has an assembler for are read (the host's), so a cross-compile to another is `c`.
+// A block the assembler cannot read (an unsupported target, an unknown instruction) stays `unknown`, as before. Only
+// the targets the LLVM smith links has an assembler for are read (the host's), so a cross-compile to another is
+// `unknown`.
 #pragma once
 
 #include "clang/AST/ASTContext.h"
@@ -470,7 +472,7 @@ inline void follow(const MCInst &inst, StringRef name, const MCInstrDesc &desc, 
 
 } // namespace detail
 
-// Reads one `asm` statement. `parsed` is false when the block cannot be read, and the caller keeps it `c`.
+// Reads one `asm` statement. `parsed` is false when the block cannot be read, and the caller keeps it `unknown`.
 inline AsmReading readAsm(const clang::AsmStmt *statement, clang::ASTContext &context) {
     using namespace llvm;
     AsmReading reading;
