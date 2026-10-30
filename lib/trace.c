@@ -5,6 +5,7 @@
 // NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming): glibc's name; it hides dl_iterate_phdr
 #define _GNU_SOURCE
 #endif
+#include <smith/handlers.h>
 #include <smith/trace.h>
 
 #include <signal.h>
@@ -463,7 +464,19 @@ const char *smith_failure_heading(SmithFailureKind kind) {
     return "failed";
 }
 
+#ifndef __APPLE__
+// The handlers runtime is an object linked into each program on Linux, but not into every program that links this file
+// (the protocol generator): a weak reference is null there. On macOS it is a dylib and the refusal does not arise.
+[[gnu::weak]] extern SmithAllocator *smith_handlers_set_allocator(SmithAllocator *allocator);
+#endif
+
 void smith_failure_detail(SmithFailureKind kind, const char *details) {
+#ifndef __APPLE__
+    // The report below makes libc allocate (ASan's abort path calls pthread_getattr_np, which mallocs): an allocator
+    // that just refused would refuse again and the checked failure would die in the sanitizer. The system's goes back
+    // here, in the failure itself, so no allocating function carries the write as an effect (#832).
+    if (smith_handlers_set_allocator != nullptr) smith_handlers_set_allocator(nullptr);
+#endif
     uintptr_t frames[smith_trace_frames_max];
     size_t count = smith_trace_capture(frames, smith_trace_frames_max);
     if (smith_failure_hook != nullptr) smith_failure_hook(kind, frames, count);
