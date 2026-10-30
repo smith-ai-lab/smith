@@ -485,7 +485,7 @@ static const char *jobs_flag(void) {
 // Z3, installed into prove/, and its static initializers (about ten thousand, which the dynamic loader would run in
 // every smith process) moved out of .init_array into __smith_prove, which shim/prove.cpp runs when `smith prove` does.
 static void make_z3(const char *cmake, const char *python, const char *ninja) {
-    if (exists(path("%s/lib/libz3.a", prove_folder, ""))) return;
+    if (exists(path("%s/.z3", prove_folder, ""))) return;
     const char *source = package("z3", "https://github.com/Z3Prover/z3/archive/refs/tags/z3-5.3.1.tar.gz",
                                  "c007089dd8d92298d2a7d14105b14e8dddfbb540062ce471c3111e0741edd8da");
     const char *build = path("%s/z3-build", work_folder, "");
@@ -522,12 +522,13 @@ static void make_z3(const char *cmake, const char *python, const char *ninja) {
     const char *deferred = path("%s/lib/libz3.deferred.a", prove_folder, "");
     defer(library, deferred, "prove");
     if (rename(deferred, library) != 0) die("cannot move", deferred);
+    run((const char *[]){"touch", path("%s/.z3", prove_folder, ""), nullptr});
 }
 
 // Alive2's libraries that hold LLVM IR's semantics (not its translation-validation plugin or its programs), against the
 // LLVM install and the Z3 just made, with the headers its own headers include, by the paths they use.
 static void make_alive2(const char *cmake, const char *ninja) {
-    if (exists(path("%s/lib/libalive2_ir.a", prove_folder, ""))) return;
+    if (exists(path("%s/.alive2", prove_folder, ""))) return;
     const char *source = package(
         "alive2", "https://github.com/AliveToolkit/alive2/archive/01a5ec45c8152995755f7331827407a9de19f262.tar.gz",
         "ea6d0ad5869a4c863ca537c65fe22e2f1198a5a1b2fc51d3a96b8020cf78cc13");
@@ -566,6 +567,7 @@ static void make_alive2(const char *cmake, const char *ninja) {
         globfree(&found);
     }
     run((const char *[]){"cp", path("%s/version_gen.h", build, ""), path("%s/", headers, ""), nullptr});
+    run((const char *[]){"touch", path("%s/.alive2", prove_folder, ""), nullptr});
 }
 
 // `./configure && make && make install` in a copy of a package, into prove/.
@@ -589,7 +591,7 @@ static void autotools(const char *name, const char *source, const char *const *f
 // would go with the wraps' overlays; Bitwuzla's Meson told where the static GMP and MPFR are instead of asking
 // pkg-config.
 static void make_bitwuzla(const char *python, const char *ninja) {
-    if (exists(path("%s/lib/libbitwuzla.a", prove_folder, ""))) return;
+    if (exists(path("%s/.bitwuzla", prove_folder, ""))) return;
     const char *bitwuzla = package("bitwuzla", "https://github.com/bitwuzla/bitwuzla/archive/refs/tags/0.9.1.tar.gz",
                                    "42707f38900a20bb18108e426ba667560d1fd2ccce0d4f75aa60439b546488b4");
     const char *meson =
@@ -665,6 +667,7 @@ static void make_bitwuzla(const char *python, const char *ninja) {
     make_folder(headers);
     run((const char *[]){"cp", "-R", path("%s/include/bitwuzla/.", source, ""), path("%s/", headers, ""), nullptr});
     run((const char *[]){"chmod", "-R", "u+w", headers, nullptr});
+    run((const char *[]){"touch", path("%s/.bitwuzla", prove_folder, ""), nullptr});
 }
 
 static void make_prover(const char *cmake, const char *python, const char *ninja) {
