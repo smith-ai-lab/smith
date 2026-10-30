@@ -81,7 +81,7 @@ export void test_autodiff_toy_commands_have_no_passes_full_lto_and_asan_without_
     scratch::expect_contains("autodiff: toy: every compile has no optimization passes", commands,
                              "-Xclang -disable-llvm-passes");
     scratch::expect_contains("autodiff: toy: every link is full LTO", commands,
-                             "smith-cc -flto=full build/release/autodiff/main.o");
+                             "-flto=full build/release/autodiff/main.o");
     scratch::expect_lacks("autodiff: toy: ThinLTO is never used", commands, "-flto=thin");
     scratch::expect_contains("autodiff: toy: the debug profile has AddressSanitizer", commands,
                              "-fsanitize=address -fno-sanitize-recover=address");

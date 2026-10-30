@@ -4006,10 +4006,13 @@ static const char *const *smith_app_link_flags(SmithBuild *b, const char *profil
                   smith_or_empty(b, smith_app_state.defaults.link_flags), smith_or_empty(b, more), nullptr);
     if (!smith_app_autodiff) return sanitized ? smith_record_flags(b, flags, true) : flags;
     bool keep = sanitized && output != nullptr;
-    return smith_cat(
-        b, smith_autodiff_flags(b, flags, false),
-        smith_when(b, keep, smith_list(b, smith_text("-Wl,-object_path_lto,%s/%s.lto.o", b->root, output), nullptr)),
-        nullptr);
+#ifdef __APPLE__
+    const char *option = keep ? smith_text("-Wl,-object_path_lto,%s/%s.lto.o", b->root, output) : nullptr; // ld64's
+#else
+    const char *option = keep ? smith_text("-Wl,--lto-obj-path=%s/%s.lto.o", b->root, output) : nullptr; // lld's ELF
+#endif
+    return smith_cat(b, smith_autodiff_flags(b, flags, false), smith_when(b, keep, smith_list(b, option, nullptr)),
+                     nullptr);
 }
 
 // The public conventions (a low-level step that starts from them) are never an autodiff program's.
