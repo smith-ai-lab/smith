@@ -79,8 +79,6 @@ runs:
 
     - name: Build the tests
       if: inputs.tests == 'true'
-      # the Linux tests do not all build yet (the Linux parts report and do not block): the parts say what fails
-      continue-on-error: ${{ runner.os == 'Linux' }}
       shell: bash
       env:
         SMITH_CACHE_MAX: 1G
