@@ -1308,6 +1308,10 @@ export void test_generic_sized_result_sizeof(io::Io *io) {
     corpus_case(io, "generic-sized-result-sizeof");
 }
 
+export void test_generic_call_statement_after_braceless_if(io::Io *io) {
+    corpus_case(io, "generic-call-statement-after-braceless-if");
+}
+
 export void test_generic_slice(io::Io *io) {
     corpus_case(io, "generic-slice");
 }

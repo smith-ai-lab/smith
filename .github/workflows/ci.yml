@@ -245,6 +245,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Install lld
+        # the seed (scripts/seed_linux.c) links smith with `-fuse-ld=lld`, which the hosted image does not have
+        run: sudo apt-get install -y -q lld
       - uses: ./.github/actions/setup-smith
       - name: Release
         run: '"$SMITH" build release'
