@@ -1444,6 +1444,9 @@ static SmithBuildFile smith_build_file(void) {
 // through their headers. random declares -ffp-contract=off.
 static const char *const smith_build_program_libraries[] = {"arena", "contract", "inflate", "io", "random"};
 
+// The compiles are `-MD` and name the debug info's folder `.`, so the step cache serves them to every project whose
+// build file and libraries are the same (executor.md, "The step cache"): -MMD is refused by it, and a `-g` object
+// that holds the project's folder is shared only by builds in that folder.
 // The manifest that compiles build.c into .smith/program with the clang `smith` would pick. When that is smith itself
 // (in_process) the program is `<smith> cc`, since smith's top level is verbs.
 static size_t smith_build_program_manifest(char *out, size_t capacity, const char *self, const char *clang,
@@ -1465,13 +1468,14 @@ static size_t smith_build_program_manifest(char *out, size_t capacity, const cha
                  "ninja_required_version = 1.10\n"
                  "builddir = .smith/build-program\n"
                  "rule cc\n"
-                 "  command = %s -std=gnu23 -g -O0 -Wall -Wextra -I .smith/include -MMD -MF $out.d -c $in -o $out\n"
+                 "  command = %s -std=gnu23 -g -O0 -Wall -Wextra -I .smith/include -MD -MF $out.d "
+                 "-fdebug-compilation-dir=. -c $in -o $out\n"
                  "  depfile = $out.d\n"
                  "  deps = gcc\n"
                  "  description = smith: compile $in\n"
                  "rule cc_smith\n"
-                 "  command = env -u SMITH_CLANG %s cc -g -O0 -Wall -Wextra $flags -I .smith/include -MMD -MF $out.d "
-                 "-c $in -o $out\n"
+                 "  command = env -u SMITH_CLANG %s cc -g -O0 -Wall -Wextra $flags -I .smith/include -MD -MF $out.d "
+                 "-fdebug-compilation-dir=. -c $in -o $out\n"
                  "  depfile = $out.d\n"
                  "  deps = gcc\n"
                  "  description = smith: compile $in\n"

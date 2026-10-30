@@ -80,7 +80,8 @@ export void test_build_high_level_objects_programs_and_the_compile_database(io::
     __builtin_snprintf(command, sizeof command, "echo %s", arguments);
     const char *entry_flags = scratch::capture(&p, command);
     const char *program_flags = scratch::capture(
-        &p, "sed -n 's/.*command = [^ ]* \\(cc \\)\\{0,1\\}\\(-std=gnu23.*-I \\.smith\\/include\\) -MMD.*/\\2/p' "
-            ".smith/build-program/build.ninja | head -n 1");
+        &p,
+        "sed -n 's/.*command = [^ ]* \\(cc \\)\\{0,1\\}\\(-std=gnu23.*-I \\.smith\\/include\\) -MM\\{0,1\\}D.*/\\2/p' "
+        ".smith/build-program/build.ninja | head -n 1");
     scratch::expect_text("build.c entry: its flags are the build program's", program_flags, entry_flags);
 }

@@ -74,6 +74,11 @@ Written in C, not `.smith`: it works on the executor's own types (`SmithExec`, `
   would, and the job ends as one does: the depfile log and command log are written, `-v` shows `(cached)` after the
   step, `-d explain` says it was restored. A hit takes no core of the host's pool. Stores and restores are a temporary
   file and a rename, so builds in other worktrees can share the folder.
+- **The build program is served too.** `smith build` compiles `build.c`, the embedded runtime and the libraries it links
+  into `.smith/program` through the executor, and those compiles are cacheable: `-MD` (not `-MMD`, which the cache
+  refuses) and `-fdebug-compilation-dir=.`, so the `-g` objects hold no folder and a fresh project with the same build
+  file is served all of them (about 0.6 CPU-s of Linux compile; the link always runs). The tests' runs have the cache
+  off (`tests/scratch.smith`), so they pay it.
 - `SMITH_STEP_CACHE=0` turns it off. An entry unused for 31 days is removed, and the results are kept within `SMITH_CACHE_MAX` (#618), checked at most once an hour (`smith cache`
   shows the folder; `smith cache clean steps` empties it). Like the depfile model it cannot see a header that appears
   earlier on the include path, or (with `-fmodules`) a system header that only a module reads. Module header steps and
