@@ -150,11 +150,11 @@ static void metal_route(io::Io *io, bool link) {
     scratch::expect_text(nm(&r, "a .smith input and a .metal input are refused"), mixed_refusal, smith_metal.err);
 }
 
-export void test_run_verb_metal_route(io::Io *io) {
+export void test_macos_run_verb_metal_route(io::Io *io) {
     metal_route(io, false);
 }
 
-export void test_run_link_metal_route(io::Io *io) {
+export void test_macos_run_link_metal_route(io::Io *io) {
     metal_route(io, true);
 }
 
@@ -348,11 +348,11 @@ static void sdk_environment(io::Io *io, bool link) {
                          sysroot.out);
 }
 
-export void test_run_verb_sdk_environment(io::Io *io) {
+export void test_macos_run_verb_sdk_environment(io::Io *io) {
     sdk_environment(io, false);
 }
 
-export void test_run_link_sdk_environment(io::Io *io) {
+export void test_macos_run_link_sdk_environment(io::Io *io) {
     sdk_environment(io, true);
 }
 
