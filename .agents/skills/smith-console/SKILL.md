@@ -5,7 +5,7 @@ description: "Using smith::console (import smith::console; console::print, print
 
 # The console: smith::console
 
-This skill ships in the smith plugin, from `.agents/skills/smith-console/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there. It uses `smith-format` (the pieces), `smith-result` and `smith-mem`.
+This skill ships in the smith plugin, from `.agents/skills/smith-console/SKILL.md` in https://github.com/smith-ai-lab/smith. Change it there. It uses `smith-format` (the pieces), `smith-result` and `smith-mem`.
 
 `import smith::console;` and call it: no `io::Io` value is passed down from `main`. What a function does to the console is its inferred `console` effect (`smith-lang-effects`), and a test stands in for the console with a handler.
 

@@ -1,6 +1,6 @@
 # smith
 
-A C toolchain and a modern standard library for C, written in C. Each fact has one home: rules and decisions here, one line each; what smith is in [knowledge/](knowledge/index.md) (read only the concepts your task needs); how to do a task in `.agents/skills/` (smith-dev for changing smith, the plugin's skills for using it); planned work in [GitHub issues](https://github.com/adam-r-kowalski/smith/issues) and nowhere else.
+A C toolchain and a modern standard library for C, written in C. Each fact has one home: rules and decisions here, one line each; what smith is in [knowledge/](knowledge/index.md) (read only the concepts your task needs); how to do a task in `.agents/skills/` (smith-dev for changing smith, the plugin's skills for using it); planned work in [GitHub issues](https://github.com/smith-ai-lab/smith/issues) and nowhere else.
 
 ## Decisions (change one only with the owner)
 

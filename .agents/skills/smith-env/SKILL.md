@@ -5,7 +5,7 @@ description: "Using smith::env (import smith::env; env::get, set_handler): readi
 
 # The environment: smith::env
 
-This skill ships in the smith plugin, from `.agents/skills/smith-env/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there. It uses `smith-option`.
+This skill ships in the smith plugin, from `.agents/skills/smith-env/SKILL.md` in https://github.com/smith-ai-lab/smith. Change it there. It uses `smith-option`.
 
 `env::get(name)` reads a variable of the process. It returns `env::Value`, an `option` of the value's characters: `.none` when the variable is not set, `.some` of the text otherwise (an empty value is `.some` of an empty slice).
 

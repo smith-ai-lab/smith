@@ -2758,7 +2758,7 @@ static int smith_new_main(int count, char **args, const char *self) {
     if (had_gitignore) smith_new_gitignore_missing();
     if (had_settings) smith_new_settings_missing();
     printf("\nAgents get smith's skills from the smith plugin. If it is not installed:\n"
-           "  /plugin marketplace add adam-r-kowalski/smith\n  /plugin install smith@smith\n");
+           "  /plugin marketplace add smith-ai-lab/smith\n  /plugin install smith@smith\n");
     if (other != nullptr) {
         printf("\nThis project builds with a %s, so smith new wrote no program and did not build. To build it with\n"
                "smith, write a build.c that does what the %s does, following the smith-build skill, and remove the\n"

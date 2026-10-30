@@ -5,7 +5,7 @@ description: "Using smith::entropy (import smith::entropy; entropy::seed, set_ha
 
 # Entropy from the system: smith::entropy
 
-This skill ships in the smith plugin, from `.agents/skills/smith-entropy/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there. It uses `smith-random`.
+This skill ships in the smith plugin, from `.agents/skills/smith-entropy/SKILL.md` in https://github.com/smith-ai-lab/smith. Change it there. It uses `smith-random`.
 
 `smith::random` is pure: a `random::Key` is a value made from a seed (`random::key_make(seed)`). The system's randomness is this module's one job, so a key that is not replayable comes from here.
 

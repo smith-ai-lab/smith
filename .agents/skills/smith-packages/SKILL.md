@@ -5,7 +5,7 @@ description: "Dependencies and caches in smith: smith fetch <url>, smith_package
 
 # Packages and caches
 
-This skill ships in the smith plugin, from `.agents/skills/smith-packages/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there. The call's other options are in `smith-build`; design in `docs/build-c.md` ("Packages").
+This skill ships in the smith plugin, from `.agents/skills/smith-packages/SKILL.md` in https://github.com/smith-ai-lab/smith. Change it there. The call's other options are in `smith-build`; design in `docs/build-c.md` ("Packages").
 
 A package is an archive named by a URL and the SHA-256 of its bytes. There is no registry, no version solving and no lock file: the hash is the lock. A project that uses one needs a build file (the conventions have no packages: `smith-build-levels`).
 

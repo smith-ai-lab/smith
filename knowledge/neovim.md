@@ -14,7 +14,7 @@ Neovim support for `.smith` files and for smith's C comes from this repository, 
 needs Neovim 0.12 and `smith` on the `PATH`.
 
 ```lua
-vim.pack.add({ "git@github.com:adam-r-kowalski/smith" })   -- HTTPS once the repository is public
+vim.pack.add({ "git@github.com:smith-ai-lab/smith" })   -- HTTPS once the repository is public
 vim.lsp.enable("smith")                                    -- optional: smith lsp for C, C++ and Objective-C
 ```
 
@@ -86,7 +86,7 @@ changes a debug configuration of yours.
   `require("neotest").setup({ adapters = { require("neotest-smith") } })`. The adapter is in `editors/neovim`, which
   `plugin/smith.lua` puts on the runtimepath; during `init.lua` `vim.pack.add` runs no `plugin/` file (its `load` is false
   there), so a neotest setup in `init.lua` needs the plugin loaded first:
-  `vim.pack.add({ "git@github.com:adam-r-kowalski/smith" }, { load = true })`, before the setup.
+  `vim.pack.add({ "git@github.com:smith-ai-lab/smith" }, { load = true })`, before the setup.
   - **Test files and tests.** A test file is a `.c` or `.smith` file in a smith project (a folder with a build file or a `main`, as above) named `test_*` or `*_test`; the rule is the name only, which is cheap, the way `smith_tests` globs
     `tests/test_*.c`. The tests in it are the `test_` function definitions, found with tree-sitter (the `c` parser, or
     smith's for `.smith`), and each is named as `--test` takes it: `test_x`, or `a::b::test_x` when the file has

@@ -5,7 +5,7 @@ description: "Using smith::option (no import: option(T)): a value that may be ab
 
 # A value that may be absent: smith's option
 
-This skill ships in the smith plugin, from `.agents/skills/smith-option/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there.
+This skill ships in the smith plugin, from `.agents/skills/smith-option/SKILL.md` in https://github.com/smith-ai-lab/smith. Change it there.
 
 `option` is in scope in every module with no import; `smith::option` (`lib/smith/option.smith`, readable source, its header what the compiler reads) defines the one type function, `option(type T)`: an enum with a payload (`smith-lang-enums`), `some` carrying a `T` and `none` carrying nothing. `option(usize)` written anywhere, in any module, is one type. A module cannot declare its own `option` (an error names the built-in).
 

@@ -5,7 +5,7 @@ description: "smith mcp: the debugger as MCP tools for an agent (launch, breakpo
 
 # smith mcp: debug a program as an agent
 
-This skill ships in the smith plugin, from `.agents/skills/smith-mcp/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there. The terminal debugger is `smith dbg` and editors use `smith dap` (`smith-debug`, which also has the macOS permissions every debugger needs); the server's design is [mcp-server](../../../knowledge/mcp-server.md).
+This skill ships in the smith plugin, from `.agents/skills/smith-mcp/SKILL.md` in https://github.com/smith-ai-lab/smith. Change it there. The terminal debugger is `smith dbg` and editors use `smith dap` (`smith-debug`, which also has the macOS permissions every debugger needs); the server's design is [mcp-server](../../../knowledge/mcp-server.md).
 
 `smith mcp` is a Model Context Protocol server on stdio that drives lldb through `smith dap` children. The smith plugin declares it (`mcpServers`), so with the plugin enabled you already have the tools. Without the plugin: `claude mcp add smith -- smith mcp`. It needs the full smith (a stage0 says `mcp needs the full smith`). If no tools are available, fall back to `smith dbg -b -o ... ` (batch lldb, `smith-debug`).
 
