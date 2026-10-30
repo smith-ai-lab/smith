@@ -574,7 +574,7 @@ static void make_alive2(const char *cmake, const char *ninja) {
 static void autotools(const char *name, const char *source, const char *const *flags) {
     const char *folder = path("%s/%s-build", work_folder, name);
     run((const char *[]){"rm", "-rf", folder, nullptr});
-    run((const char *[]){"cp", "-R", source, folder, nullptr});
+    run((const char *[]){"cp", "-Rp", source, folder, nullptr});
     run((const char *[]){"chmod", "-R", "u+w", folder, nullptr});
     const char *argv[arguments_max] = {"./configure", path("--prefix=%s", prove_folder, "")};
     size_t count = 2;
