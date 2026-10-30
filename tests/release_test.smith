@@ -194,8 +194,9 @@ export void test_release_fetch_checks_the_checksum_and_runs(io::Io *io) {
     scratch::expect_text("release: fetch-corrupt", "release: the checksum of stage0-real does not match",
                          capture(io, &p, "sh \"$script\" fetch stage0-real ../dl2 2>&1 | tail -1"));
     scratch::expect_text("release: fetch-no-gh", "0", capture(io, &p, "grep -c '^gh ' \"$GH_LOG\" || true"));
-    scratch::expect_text(
-        "release: fetch-url-in-the-error",
-        "release: cannot download https://github.com/smith-ai-lab/smith/releases/download/stage0-nope/$name",
-        capture(io, &p, "sh \"$script\" fetch stage0-nope ../dl3 2>&1 | tail -1"));
+    scratch::expect_text("release: fetch-url-in-the-error",
+                         capture(io, &p,
+                                 "echo \"release: cannot download "
+                                 "https://github.com/smith-ai-lab/smith/releases/download/stage0-nope/$name\""),
+                         capture(io, &p, "sh \"$script\" fetch stage0-nope ../dl3 2>&1 | tail -1"));
 }
