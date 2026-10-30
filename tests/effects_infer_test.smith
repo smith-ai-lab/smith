@@ -704,10 +704,12 @@ export void test_ownership_is_recorded_in_the_summary(io::Io *io) {
                    "[[std::returns_internal]] typedef char *(*Describe)(int);\n"
                    "typedef char *(*Name)(int) [[clang::annotate_type(\"std::owns:internal\")]];\n"
                    "int main(void) { return 0; }\n");
-    scratch::Run run = scratch::sh(&p, "smith cc -c a.c -o a.o && grep -E '^[OT]' a.o.fx | cut -f1-3 && "
-                                       "smith cc a.o -o program && echo linked");
+    // the linkage name has Mach-O's leading underscore, ELF's has none
+    scratch::Run run = scratch::sh(&p, "smith cc -c a.c -o a.o && grep -E '^[OT]' a.o.fx | cut -f1-3 | "
+                                       "awk -F'\\t' 'BEGIN { OFS = \"\\t\" } $1 == \"O\" { sub(/^_/, \"\", $2) } "
+                                       "{ print }' && smith cc a.o -o program && echo linked");
     scratch::expect_text("the ownership lines of the summary",
-                         "O\t_dup1\towned:free\nO\t_find1\tborrowed:1\nO\t_note1\tinternal\nT\tDescribe\tinternal\n"
+                         "O\tdup1\towned:free\nO\tfind1\tborrowed:1\nO\tnote1\tinternal\nT\tDescribe\tinternal\n"
                          "T\tName\tinternal\nlinked\n",
                          run.out);
 }
