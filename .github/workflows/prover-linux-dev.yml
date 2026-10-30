@@ -90,6 +90,15 @@ jobs:
           cp "$RUNNER_TEMP/test.log" .smith/log/ci-test.log 2>/dev/null
           if [ "$rc" -eq 0 ] && ! grep -qE 'build stopped|^FAIL ' "$RUNNER_TEMP/test.log"; then exit 0; fi
           exit 1
+      - name: The programs that aborted
+        if: always()
+        run: |
+          for name in scan scanstruct structs scangrad; do
+            for program in $(find /tmp/smith-test-*.noindex -type f -path "*build/debug/$name" 2>/dev/null | head -n 1); do
+              echo "=== $program"
+              (cd "$(dirname "$program")/../.." && "$program" >/tmp/out.txt 2>/tmp/err.txt; echo "status $?"; tail -n 5 /tmp/out.txt; echo "--- stderr"; head -n 60 /tmp/err.txt | cut -c1-300)
+            done
+          done
       - name: Upload the logs
         if: always()
         continue-on-error: true
