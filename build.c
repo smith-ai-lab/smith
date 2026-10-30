@@ -2297,9 +2297,9 @@ static int build_ci_times(SmithRun *run) {
     return build_exec(smith_cat(b, smith_list(b, tool, root, nullptr), ids, nullptr));
 }
 
-// `smith build bench [-Dfull=1] [-Dprepush=1] [-Dsmith=<path>]` (issue #639): measures each budget line of the speed
+// `smith build bench [-Dfull=1] [-Dsmith=<path>]` (issue #639): measures each budget line of the speed
 // table (no-op build, one-file build, fresh worktree, fmt, lint, a .smith module's compile, optionally the full test
-// suite's CPU and pre-push) with the smith this build made, prints the table and writes it to .smith/bench.tsv.
+// suite's CPU) with the smith this build made, prints the table and writes it to .smith/bench.tsv.
 // scripts/bench.c, compiled here, does the measuring.
 static int build_bench(SmithRun *run) {
     SmithBuild *b = run->b;
@@ -2312,7 +2312,6 @@ static int build_bench(SmithRun *run) {
     if (status != 0) return status;
     const char *const *argv = smith_list(b, tool, run->args[0], ".smith/bench.tsv", nullptr);
     if (run->args[1][0] != '\0') argv = smith_cat(b, argv, smith_list(b, "full", nullptr), nullptr);
-    if (run->args[2][0] != '\0') argv = smith_cat(b, argv, smith_list(b, "prepush", nullptr), nullptr);
     return build_exec(argv);
 }
 
@@ -2324,214 +2323,7 @@ static int build_coverage_fetch(SmithRun *run) {
     return 0;
 }
 
-// ---- The pre-push hook (#798): the local checks run on every push without anyone remembering them. build.c's ordinary
-// build writes `.git/hooks/pre-push` (in the common git dir, so every worktree of the clone has it) with two lines, and
-// the hook only runs `smith build pre-push`, the task below. No shell file is committed.
-static const char *const build_pre_push_hook = "#!/bin/sh\n"
-                                               "exec smith build pre-push\n";
-
-// Writes the hook into `hooks_folder` when the file is missing or differs; 1 when it wrote, 0 when it was right, -1
-// when it could not.
-static int build_pre_push_install(const char *hooks_folder) {
-    char path[PATH_MAX];
-    snprintf(path, sizeof path, "%s/pre-push", hooks_folder);
-    char current[256] = "";
-    FILE *file = fopen(path, "rb");
-    if (file != nullptr) {
-        size_t used = fread(current, 1, sizeof current - 1, file);
-        current[used] = '\0';
-        fclose(file);
-    }
-    if (strcmp(current, build_pre_push_hook) == 0) return 0;
-    (void)mkdir(hooks_folder, 0755);
-    if (build_write_text(path, build_pre_push_hook, 0755) != 0) return -1;
-    return chmod(path, 0755) == 0 ? 1 : -1;
-}
-
-// Called by build(): outside a git checkout there is nothing to do.
-static void build_pre_push_hook_write(SmithBuild *b) {
-    const char *common = smith_capture_or(b, (const char *[]){"git", "rev-parse", "--git-common-dir", nullptr}, "");
-    if (common[0] == '\0') return;
-    if (build_pre_push_install(smith_fmt(b, "%s/hooks", common)) == 1)
-        fputs("smith: wrote .git/hooks/pre-push: every push now runs `smith build pre-push`\n", stderr);
-}
-
-// The pre-push checks of the commit checked out, against the merge-base with origin/main, with the smith the tree
-// builds: build, fmt (`--dry-run --Werror` on the changed files), docs, `lint --changed` and `test --changed`. Every
-// step runs, each with its log in .smith/pre-push-<step>.log; a failure prints the end of the log and the path to read,
-// and stops the push. No commit status and no gh.
-typedef struct {
-    const char *name;
-    const char *const *argv;
-} BuildPrePushStep;
-
-// Runs the steps in `folder`'s logs; returns how many failed, and names them on one line.
-static int build_pre_push_steps(SmithBuild *b, const BuildPrePushStep *steps, size_t count, const char *folder) {
-    int failed = 0;
-    const char *names = "";
-    for (size_t i = 0; i < count; i++) {
-        const char *log = smith_fmt(b, "%s/pre-push-%s.log", folder, steps[i].name);
-        int status = build_spawn(&(BuildSpawn){.argv = steps[i].argv, .log = log, .tail = 12});
-        fprintf(stderr, "pre-push: %s %s\n", steps[i].name, status == 0 ? "ok" : "FAILED");
-        if (status == 0) continue;
-        fprintf(stderr, "pre-push: %s failed (status %d); read %s\n", steps[i].name, status, log);
-        names = smith_fmt(b, "%s %s", names, steps[i].name);
-        failed++;
-    }
-    if (failed != 0) fprintf(stderr, "pre-push: the push is stopped; failed:%s\n", names);
-    return failed;
-}
-
-// Whether `path` is a document no build reads: the `none` scope of ci.yml's `changes` job (LICENSE*, CONTRIBUTING.md
-// and the images in the root).
-static bool build_pre_push_document(const char *path) {
-    if (strncmp(path, "LICENSE", 7) == 0 && strchr(path, '/') == nullptr) return true;
-    if (strcmp(path, "CONTRIBUTING.md") == 0) return true;
-    if (strchr(path, '/') != nullptr) return false;
-    const char *dot = strrchr(path, '.');
-    if (dot == nullptr || dot == path) return false;
-    const char *const images[] = {"png", "jpg", "jpeg", "gif", "svg", "webp"};
-    for (size_t i = 0; i < sizeof images / sizeof images[0]; i++)
-        if (strcmp(dot + 1, images[i]) == 0) return true;
-    return false;
-}
-
-// True when every changed file is such a document (and when nothing changed): the tests are skipped.
-static bool build_pre_push_documents_only(const char *const *files) {
-    for (size_t i = 0; files != nullptr && files[i] != nullptr; i++)
-        if (files[i][0] != '\0' && !build_pre_push_document(files[i])) return false;
-    return true;
-}
-
-// Whether `smith fmt` formats the file: its extension is one clang-format reads (smith-check).
-static bool build_pre_push_formattable(const char *path) {
-    const char *dot = strrchr(path, '.');
-    if (dot == nullptr) return false;
-    const char *const extensions[] = {"c", "h", "m", "mm", "cpp", "cc", "cxx", "hpp", "hh", "smith", "metal"};
-    for (size_t i = 0; i < sizeof extensions / sizeof extensions[0]; i++)
-        if (strcmp(dot + 1, extensions[i]) == 0) return true;
-    return false;
-}
-
-// git runs a hook with GIT_DIR (and in a worktree GIT_WORK_TREE and GIT_INDEX_FILE) set, which would send every git of
-// the checks, and of the tests that make scratch repositories, to the pushed repository. And Apple's git, a shim of
-// xcrun, adds CPATH, LIBRARY_PATH (/usr/local/lib, which a Mac may not have: the linker then warns and the tests that
-// compare its output fail), SDKROOT and MANPATH to a hook's environment. The checks run without them, so they run as
-// they do from a terminal; the second group goes only when GIT_EXEC_PATH says that this is a hook.
-static void build_pre_push_clean_environment(void) {
-    const char *const git[] = {"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX", "GIT_COMMON_DIR"};
-    const char *const xcrun[] = {"CPATH", "LIBRARY_PATH", "SDKROOT", "MANPATH"};
-    bool hook = getenv("GIT_EXEC_PATH") != nullptr;
-    for (size_t i = 0; i < sizeof git / sizeof git[0]; i++)
-        unsetenv(git[i]);
-    for (size_t i = 0; hook && i < sizeof xcrun / sizeof xcrun[0]; i++)
-        unsetenv(xcrun[i]);
-}
-
-static int build_pre_push(SmithRun *run) {
-    SmithBuild *b = run->b;
-    build_pre_push_clean_environment();
-    if (build_make_folder(b, ".smith") != 0) return 1;
-    const char *base = smith_capture_or(b, (const char *[]){"git", "merge-base", "origin/main", "HEAD", nullptr}, "");
-    const char *const *changed = nullptr;
-    if (base[0] != '\0') {
-        const char *const diff[] = {"git", "diff", "--name-only", "--diff-filter=d", base, "HEAD", nullptr};
-        const char *list = ".smith/pre-push-changed.txt";
-        changed = build_spawn(&(BuildSpawn){.argv = diff, .log = list, .stdout_only = true}) == 0 ? build_lines(b, list)
-                                                                                                  : nullptr;
-    }
-    if (changed == nullptr) fputs("pre-push: no merge-base with origin/main; every step looks at all files\n", stderr);
-    if (smith_capture_or(b, (const char *[]){"git", "status", "--porcelain", nullptr}, "")[0] != '\0')
-        fputs("pre-push: the tree has uncommitted changes; the checks read the working tree, not the commit\n", stderr);
-    const char *self = getenv("SMITH_SELF") != nullptr ? getenv("SMITH_SELF") : "smith";
-    int status = build_spawn(
-        &(BuildSpawn){.argv = smith_list(b, self, "build", nullptr), .log = ".smith/pre-push-build.log", .tail = 12});
-    fprintf(stderr, "pre-push: build %s\n", status == 0 ? "ok" : "FAILED");
-    if (status != 0) {
-        fputs("pre-push: build failed; read .smith/pre-push-build.log\npre-push: the push is stopped; failed: build\n",
-              stderr);
-        return 1;
-    }
-    const char *built = smith_fmt(b, "build/%s-%s/smith", b->os, b->arch);
-    const char *const *fmt = smith_list(b, built, "fmt", "--dry-run", "--Werror", nullptr);
-    size_t fmt_files = 0;
-    for (size_t i = 0; changed != nullptr && changed[i] != nullptr; i++) {
-        if (!build_pre_push_formattable(changed[i])) continue;
-        fmt = smith_cat(b, fmt, smith_list(b, changed[i], nullptr), nullptr);
-        fmt_files++;
-    }
-    BuildPrePushStep steps[4];
-    size_t count = 0;
-    if (changed == nullptr || fmt_files != 0) steps[count++] = (BuildPrePushStep){"fmt", fmt};
-    steps[count++] = (BuildPrePushStep){"docs", smith_list(b, built, "docs", nullptr)};
-    steps[count++] = (BuildPrePushStep){"lint", smith_list(b, built, "lint", "--changed", nullptr)};
-    if (changed != nullptr && build_pre_push_documents_only(changed))
-        fputs("pre-push: only documents no build reads changed; the tests are skipped\n", stderr);
-    else
-        steps[count++] = (BuildPrePushStep){"test", smith_list(b, built, "test", "--changed", "--fail-fast", nullptr)};
-    return build_pre_push_steps(b, steps, count, ".smith") == 0 ? 0 : 1;
-}
-
-// The test of the pre-push task on a scratch folder: the hook is written when missing, rewritten when it differs, left
-// alone when right, and is the two lines; the documents-only scope; the steps run all and a failed one is named with
-// its log.
-static int build_pre_push_test(SmithRun *run) {
-    SmithBuild *b = run->b;
-    char dir[PATH_MAX];
-    snprintf(dir, sizeof dir, "%s/smith-pre-push-%d.noindex", getenv("TMPDIR") != nullptr ? getenv("TMPDIR") : "/tmp",
-             (int)getpid());
-    if (mkdir(dir, 0700) != 0) return 1;
-    const char *hooks = smith_fmt(b, "%s/hooks", dir);
-    const char *hook = smith_fmt(b, "%s/pre-push", hooks);
-    int failed = 0;
-    if (build_pre_push_install(hooks) != 1) failed = build_gate_fail("pre-push: a missing hook must be written\n");
-    if (build_pre_push_install(hooks) != 0) failed = build_gate_fail("pre-push: a right hook must be left alone\n");
-    (void)build_write_text(hook, "#!/bin/sh\necho old\n", 0644);
-    if (build_pre_push_install(hooks) != 1) failed = build_gate_fail("pre-push: a hook that differs is rewritten\n");
-    const char *const *lines = build_lines(b, hook);
-    if (lines == nullptr || lines[0] == nullptr || strcmp(lines[0], "#!/bin/sh") != 0 || lines[1] == nullptr ||
-        strcmp(lines[1], "exec smith build pre-push") != 0 || lines[2] != nullptr)
-        failed = build_gate_fail("pre-push: the hook is the two lines #!/bin/sh and exec smith build pre-push\n");
-    struct stat info;
-    if (stat(hook, &info) != 0 || (info.st_mode & 0100) == 0) failed = build_gate_fail("pre-push: not executable\n");
-    const char *const none[] = {"LICENSE", "LICENSE.md", "CONTRIBUTING.md", "logo.png", "a.svg", nullptr};
-    const char *const some[] = {"LICENSE", "docs/logo.png", nullptr};
-    const char *const code[] = {"CONTRIBUTING.md", "build.c", nullptr};
-    if (!build_pre_push_documents_only(none) || build_pre_push_documents_only(some) ||
-        build_pre_push_documents_only(code) || !build_pre_push_documents_only(nullptr))
-        failed = build_gate_fail("pre-push: the documents-only scope is wrong\n");
-    if (!build_pre_push_formattable("a/b.smith") || build_pre_push_formattable("README.md"))
-        failed = build_gate_fail("pre-push: the files fmt reads are wrong\n");
-    unsetenv("GIT_EXEC_PATH"); // the test may itself run in a hook
-    setenv("GIT_DIR", "/nonexistent", 1);
-    setenv("LIBRARY_PATH", "/nonexistent", 1);
-    build_pre_push_clean_environment();
-    if (getenv("GIT_DIR") != nullptr) failed = build_gate_fail("pre-push: GIT_DIR must not reach the checks\n");
-    if (getenv("LIBRARY_PATH") == nullptr)
-        failed = build_gate_fail("pre-push: LIBRARY_PATH is cleared only in a hook\n");
-    setenv("GIT_EXEC_PATH", "/nonexistent", 1);
-    build_pre_push_clean_environment();
-    if (getenv("LIBRARY_PATH") != nullptr)
-        failed = build_gate_fail("pre-push: a hook's LIBRARY_PATH must be cleared\n");
-    const BuildPrePushStep steps[] = {{"one", (const char *[]){"true", nullptr}},
-                                      {"two", (const char *[]){"false", nullptr}},
-                                      {"three", (const char *[]){"true", nullptr}}};
-    fputs("(the next pre-push failure is the one under test)\n", stderr);
-    if (build_pre_push_steps(b, steps, 3, dir) != 1 || access(smith_fmt(b, "%s/pre-push-three.log", dir), R_OK) != 0)
-        failed = build_gate_fail("pre-push: a failed step is counted and the steps after it still run\n");
-    build_spawn(&(BuildSpawn){.argv = (const char *[]){"/bin/rm", "-rf", dir, nullptr}});
-    return failed;
-}
-
 static void build_developer_tasks(SmithBuild *b, const char *binary) {
-    SmithStep pre_push = {.run = build_pre_push, .description = "running the checks of a push (the git pre-push hook)"};
-    smith_task(b, "pre-push", &pre_push);
-    SmithStep pre_push_test = {
-        .run = build_pre_push_test,
-        .description = "testing the pre-push hook and steps on a scratch folder",
-        .test = true,
-    };
-    smith_task(b, "test-pre-push", &pre_push_test);
     SmithStep friction = {
         .run = build_friction,
         .args =
@@ -2552,8 +2344,7 @@ static void build_developer_tasks(SmithBuild *b, const char *binary) {
     SmithStep bench = {
         .run = build_bench,
         .args = smith_list(b, smith_option_value(b, "smith", binary, "bench: the smith to measure"),
-                           smith_option_value(b, "full", "", "bench: 1 also runs the full test suite"),
-                           smith_option_value(b, "prepush", "", "bench: 1 also runs the pre-push checks"), nullptr),
+                           smith_option_value(b, "full", "", "bench: 1 also runs the full test suite"), nullptr),
         .description = "measuring the speed budgets of #639",
     };
     smith_task(b, "bench", &bench);
@@ -2659,7 +2450,6 @@ void build(SmithBuild *b) {
     build_release(b, config.binary);
     build_llvm(b);
     build_developer_tasks(b, config.binary);
-    build_pre_push_hook_write(b);
     SmithStep clean = {.command = (const char *[]){"rm", "-rf", "build", nullptr}};
     smith_task(b, "clean", &clean);
     // clangd reads this: the exact command of each compile, and build.c's own.

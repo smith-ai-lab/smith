@@ -1,13 +1,55 @@
 name: setup-smith
 description: >
   Builds smith on a hosted runner (#798): the previous release (scripts/stage0.c fetches the stage0 release of the
-  newest ancestor commit), the LLVM pack of this configuration (`smith build llvm` downloads it from its release
-  instead of building it, #797), then smith itself. Sets SMITH to the built smith's path. The caller has checked out
-  the whole history (fetch-depth: 0) and set GH_TOKEN, which `gh release download` reads.
+  newest ancestor commit), the LLVM pack of this configuration (restored from the cache, else `smith build llvm`
+  downloads it from its release instead of building it, #797), then smith itself, and with `tests: true` the tests
+  too (the runner and every test program, so that a job that only runs tests has nothing to compile). Compiles come
+  from the step cache (`~/.cache/smith/steps`, restored from the newest entry main saved). Sets SMITH to the built
+  smith's path. The caller has checked out the whole history (fetch-depth: 0) and set GH_TOKEN, which
+  `gh release download` reads.
+
+inputs:
+  tests:
+    description: build the tests too ("true" or "false")
+    default: "false"
+
+outputs:
+  llvm-key:
+    description: the cache key of the LLVM pack
+    value: ${{ steps.llvm.outputs.key }}
 
 runs:
   using: composite
   steps:
+    - name: Cache keys
+      id: llvm
+      shell: bash
+      run: |
+        # the pack of an LLVM configuration never changes: one key for as long as the name does
+        name=$(sed -n 's/.*"SMITH_LLVM_NAME", "\([^"]*\)".*/\1/p' build.c | head -1)
+        echo "key=smith-llvm-$RUNNER_OS-$RUNNER_ARCH-$name" >>"$GITHUB_OUTPUT"
+
+    - name: Restore the LLVM pack
+      # restores everywhere and saves when the key was missing (the first run of a configuration; main's copy is the
+      # one every pull request restores)
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/smith/llvm
+          ~/.cache/smith/enzyme
+        key: ${{ steps.llvm.outputs.key }}
+
+    - name: Restore the step cache
+      id: steps
+      uses: actions/cache/restore@v4
+      with:
+        path: |
+          ~/.cache/smith/steps
+          ~/.cache/smith/packages
+          ~/.cache/smith/tools
+        key: smith-steps-${{ runner.os }}-${{ github.sha }}
+        restore-keys: smith-steps-${{ runner.os }}-
+
     - name: Fetch the previous smith and the LLVM pack
       shell: bash
       run: |
@@ -17,16 +59,33 @@ runs:
         # the POSIX names it uses, so strict ISO compiles too)
         cc -std=c23 -x c scripts/stage0.c -o .smith/stage0-tool 2>/dev/null ||
           cc -std=c2x -x c scripts/stage0.c -o .smith/stage0-tool
-        # downloads the release into .smith/stage0, then runs its `smith build llvm`, which fetches the pack of the
-        # identity this tree wants (a hosted runner has no LLVM, and building it takes hours)
+        # downloads the release into .smith/stage0, then runs its `smith build llvm`, which takes the pack of the
+        # identity this tree wants from the cache above or downloads it (a hosted runner has no LLVM, and building it
+        # takes hours)
         .smith/stage0-tool llvm
-        echo "fetch: $(( $(date +%s) - start )) s" >>"$GITHUB_STEP_SUMMARY"
+        echo "fetch: $(( $(date +%s) - start )) s (step cache: ${{ steps.steps.outputs.cache-matched-key || 'none' }})" | tee -a "$GITHUB_STEP_SUMMARY"
 
     - name: Build smith
       shell: bash
+      env:
+        # the cache is saved whole, so it is kept small: the least recently used results go past this
+        SMITH_CACHE_MAX: 1G
       run: |
         start=$(date +%s)
         .smith/stage0-tool
         smith=$(ls "$PWD"/build/*/smith | head -n 1)
         echo "SMITH=$smith" >>"$GITHUB_ENV"
-        echo "build: $(( $(date +%s) - start )) s ($smith)" >>"$GITHUB_STEP_SUMMARY"
+        echo "build: $(( $(date +%s) - start )) s ($smith)" | tee -a "$GITHUB_STEP_SUMMARY"
+
+    - name: Build the tests
+      if: inputs.tests == 'true'
+      # the Linux tests do not all build yet (the Linux parts report and do not block): the parts say what fails
+      continue-on-error: ${{ runner.os == 'Linux' }}
+      shell: bash
+      env:
+        SMITH_CACHE_MAX: 1G
+      run: |
+        start=$(date +%s)
+        # `--list` builds the runner and every test program and runs none of them
+        "$SMITH" test --list >/dev/null
+        echo "tests built: $(( $(date +%s) - start )) s" | tee -a "$GITHUB_STEP_SUMMARY"

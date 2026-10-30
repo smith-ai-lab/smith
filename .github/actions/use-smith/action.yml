@@ -1,0 +1,62 @@
+name: use-smith
+description: >
+  Takes the build another job of this run made (pack-smith) instead of building smith again (#798): the LLVM pack
+  from the cache (else `smith build llvm` downloads it), then the build of this run from the cache, unpacked over the
+  checkout.
+  Sets SMITH to the built smith's path. The files git tracks are made older than the unpacked outputs, so the build
+  graph finds everything up to date; the caller has checked out the whole history and set GH_TOKEN.
+
+inputs:
+  name:
+    description: the build's name in the cache key (the runner's OS name)
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Cache key
+      id: llvm
+      shell: bash
+      run: |
+        name=$(sed -n 's/.*"SMITH_LLVM_NAME", "\([^"]*\)".*/\1/p' build.c | head -1)
+        echo "name=$name" >>"$GITHUB_OUTPUT"
+        echo "key=smith-llvm-$RUNNER_OS-$RUNNER_ARCH-$name" >>"$GITHUB_OUTPUT"
+
+    - name: Restore the LLVM pack
+      id: cache
+      uses: actions/cache/restore@v4
+      with:
+        path: |
+          ~/.cache/smith/llvm
+          ~/.cache/smith/enzyme
+        key: ${{ steps.llvm.outputs.key }}
+
+    - name: Restore the build
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ runner.temp }}/tree.tar
+        key: smith-tree-${{ inputs.name }}-${{ github.run_id }}-${{ github.run_attempt }}
+        fail-on-cache-miss: true
+
+    - name: Unpack the build
+      shell: bash
+      run: |
+        start=$(date +%s)
+        # a make-style graph rebuilds an output older than its input: the checkout's files are newer than the
+        # outputs of the job that built them, so they are made old, and the outputs keep their times
+        git ls-files -z | xargs -0 touch -t 202001010000
+        tar -xf "$RUNNER_TEMP/tree.tar"
+        rm -f "$RUNNER_TEMP/tree.tar"
+        smith=$(ls "$PWD"/build/*/smith | head -n 1)
+        echo "SMITH=$smith" >>"$GITHUB_ENV"
+        echo "unpack: $(( $(date +%s) - start )) s (LLVM cache hit: ${{ steps.cache.outputs.cache-hit || 'false' }})" | tee -a "$GITHUB_STEP_SUMMARY"
+
+    - name: Download the LLVM pack
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        # no cache entry yet: download the pack, and make it older than the build, which was made against its twin
+        start=$(date +%s)
+        "$SMITH" build llvm
+        find "$HOME/.cache/smith/llvm" "$HOME/.cache/smith/enzyme" -exec touch -t 202001010000 {} + 2>/dev/null || true
+        echo "llvm pack download: $(( $(date +%s) - start )) s" | tee -a "$GITHUB_STEP_SUMMARY"

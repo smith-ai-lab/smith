@@ -3,9 +3,9 @@
 // process it waited for, from wait4's rusage. The table is also written as tab-separated lines for CI to record
 // and compare: step, wall s, CPU s, budget s (or -), verdict (ok, over, tbd, -), load average at the start.
 //
-// Usage: bench SMITH TSV [full] [prepush]
+// Usage: bench SMITH TSV [full]
 // SMITH is the smith under test (an absolute or repository-relative path); TSV is the file written. `full` also runs
-// `smith test` (slow; the line is CPU seconds), `prepush` also runs `smith build pre-push`.
+// `smith test` (slow; the line is CPU seconds).
 // The commands run with SMITH_SLOTS=0 and SMITH_CORES=4: a wait for a slot is the queue's, not the step's.
 // Plain C23, libc only, no allocation of its own beyond the static tables.
 #include <errno.h>
@@ -209,14 +209,10 @@ static void bench_module(void) {
     rows[row_count - 1].tbd = true;
 }
 
-static void bench_long(bool full, bool prepush) {
+static void bench_long(bool full) {
     if (full) {
         char *const argv[] = {(char *)smith_path, "test", nullptr};
         step("full test suite (CPU s)", 600.0, true, argv, nullptr);
-    }
-    if (prepush) {
-        char *const argv[] = {(char *)smith_path, "build", "pre-push", nullptr};
-        step("pre-push end to end", 300.0, false, argv, nullptr);
     }
 }
 
@@ -260,16 +256,14 @@ static int report(const char *tsv) {
 
 int main(int argc, char **argv) {
     if (argc < 3) {
-        fputs("usage: bench SMITH TSV [full] [prepush]\n", stderr);
+        fputs("usage: bench SMITH TSV [full]\n", stderr);
         return 2;
     }
     static char absolute[PATH_MAX];
     smith_path = realpath(argv[1], absolute) != nullptr ? absolute : argv[1];
     bool full = false;
-    bool prepush = false;
     for (int i = 3; i < argc; i++) {
         full = full || strcmp(argv[i], "full") == 0;
-        prepush = prepush || strcmp(argv[i], "prepush") == 0;
     }
     // The steps measure the work, not the queue: no wait for a slot (a CI job holding them would add minutes of wall),
     // and the share of one slot, four cores, which is what the budgets are stated for.
@@ -280,6 +274,6 @@ int main(int argc, char **argv) {
     bench_worktree();
     bench_fmt_lint();
     bench_module();
-    bench_long(full, prepush);
+    bench_long(full);
     return report(argv[2]);
 }
