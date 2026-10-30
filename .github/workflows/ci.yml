@@ -1,9 +1,9 @@
 name: ci
 
-# The full check on GitHub's hosted runners (#798, knowledge/ci-hosted.md): every pull request and every merge queue
-# entry builds smith once (`build`), then runs `smith check` split across parallel jobs that use that build, and the
-# one job `ci` gathers them, so the ruleset and the merge queue name a single required check. The first job that fails
-# cancels the run. A push to main (a commit the queue checked) only publishes the release and saves the cache.
+# The full check (#798, knowledge/ci-hosted.md): Linux carries the tests (6 hosted shards, each building smith itself,
+# no artifact travels) and the owner's Mac runs what only macOS can (`build`, `mechanical`, the `--macos-only` tests);
+# the one job `ci` gathers them, so the ruleset and the merge queue name a single required check. The first job that
+# fails cancels the run. A push to main (a commit the queue checked) also publishes the release and saves the cache.
 on:
   pull_request:
   merge_group:
@@ -33,7 +33,7 @@ jobs:
       mode: ${{ steps.scope.outputs.mode }}
       base: ${{ steps.scope.outputs.base }}
       matrix: ${{ steps.linux.outputs.matrix }}
-      oses: ${{ steps.linux.outputs.oses }}
+      linux: ${{ steps.linux.outputs.linux }}
       # where the macOS jobs run (knowledge/ci-hosted.md): the owner's Mac, except a pull request from a fork, which
       # never reaches it. To fall back to hosted runners, change the Mac's value below to '"macos-26"'.
       mac: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && '"macos-26"' || '["self-hosted","macOS","ARM64"]' }}
@@ -78,66 +78,37 @@ jobs:
 
       - name: Test matrix
         id: linux
-        # The macOS parts always run. The Linux parts join as soon as an ancestor's release has the Linux tarball (the
-        # first one comes from the first push to main after the `release-linux` job, #799): without one, setup would
-        # build smith from source for hours on every pull request. This is the release scripts/stage0.c would use.
+        # Linux carries the tests: 6 shards of `--skip-macos`, each building smith itself (no artifact egress). The
+        # Mac runs the few tests only macOS can run (`--macos-only`, one part). A pull request tests what its change
+        # reaches, in one part on each. A push to main runs only the Linux shards (the Mac's work is the release).
         run: |
-          asset=smith-linux-x86_64.tar.xz
-          # macOS runs the whole suite until the Linux parts have passed in a real run; then these four become one
-          # `--macos-only` part and the Linux parts (which run `--skip-macos`) become required.
           if [ "${{ steps.scope.outputs.mode }}" = changed ]; then
-            # a pull request: one macOS part with the tests the change reaches, no Linux build at all
-            echo "matrix={\"include\":[{\"os\":\"macos-26\",\"shard\":1,\"count\":1,\"flags\":\"--changed --base ${{ steps.scope.outputs.base }}\"}]}" >>"$GITHUB_OUTPUT"
-            echo 'oses=["macos-26"]' >>"$GITHUB_OUTPUT"
-            echo "linux: a pull request tests only what its change reaches, on macOS" >>"$GITHUB_STEP_SUMMARY"
+            flags="--changed --base ${{ steps.scope.outputs.base }}"
+            echo "linux={\"include\":[{\"shard\":1,\"count\":1,\"flags\":\"--skip-macos $flags\"}]}" >>"$GITHUB_OUTPUT"
+            echo "matrix={\"include\":[{\"os\":\"macos-26\",\"shard\":1,\"count\":1,\"flags\":\"--macos-only $flags\"}]}" >>"$GITHUB_OUTPUT"
+            echo "tests: a pull request tests only what its change reaches: one Linux part, one macOS part" >>"$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          # The Linux parts (`--skip-macos`, advisory) fail until the prover runs on Linux (#820), and each one
-          # downloads the build (storage egress): they run only on a push to main, not on a pull request or the queue.
-          # When #820 lands, move them back to every full run.
-          if [ "$GITHUB_EVENT_NAME" != push ]; then
-            echo 'matrix={"include":[{"os":"macos-26","shard":1,"count":4,"flags":""},{"os":"macos-26","shard":2,"count":4,"flags":""},{"os":"macos-26","shard":3,"count":4,"flags":""},{"os":"macos-26","shard":4,"count":4,"flags":""}]}' >>"$GITHUB_OUTPUT"
-            echo 'oses=["macos-26"]' >>"$GITHUB_OUTPUT"
-            echo "linux: the Linux parts run only on a push to main (#820)" >>"$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          matrix=
-          oses=
-          git tag --list 'stage0-*' >"$RUNNER_TEMP/tags"
-          found=
-          for tag in $(git rev-list HEAD | sed 's/^/stage0-/' | grep -Fx -f "$RUNNER_TEMP/tags" | head -n 30); do
-            if gh release view "$tag" --json assets --jq '.assets[].name' 2>/dev/null | grep -Fqx "$asset"; then found=$tag; break; fi
+          linux=
+          for i in 1 2 3 4 5 6; do
+            linux="$linux"${linux:+,}'{"shard":'$i',"count":6,"flags":"--skip-macos"}'
           done
-          if [ -n "$found" ]; then
-            for i in 1 2 3 4 5 6; do
-              matrix="$matrix"${matrix:+,}'{"os":"ubuntu-latest","shard":'$i',"count":6,"flags":"--skip-macos"}'
-            done
-            oses='"ubuntu-latest"'
-            echo "linux: $found has $asset: the Linux parts run" >>"$GITHUB_STEP_SUMMARY"
-          else
-            echo "linux: no ancestor release has $asset yet: no Linux parts" >>"$GITHUB_STEP_SUMMARY"
-          fi
-          echo "matrix={\"include\":[$matrix]}" >>"$GITHUB_OUTPUT"
-          echo "oses=[$oses]" >>"$GITHUB_OUTPUT"
+          echo "linux={\"include\":[$linux]}" >>"$GITHUB_OUTPUT"
+          echo 'matrix={"include":[{"os":"macos-26","shard":1,"count":1,"flags":"--macos-only"}]}' >>"$GITHUB_OUTPUT"
+          echo "tests: 6 Linux parts, one macOS part (--macos-only)" >>"$GITHUB_STEP_SUMMARY"
 
   build:
     # smith built once for the run (#798): the stage0 release and the LLVM pack come from the cache (or the release),
     # compiles from the step cache main saved, then the tests are built too. Every job after this one unpacks the
     # result instead of compiling smith again.
     needs: changes
-    # a push to main builds only for the Linux parts (oses is then ["ubuntu-latest"], or empty)
-    if: needs.changes.outputs.scope == 'full' || needs.changes.outputs.scope == 'docs' || (needs.changes.outputs.scope == 'release' && needs.changes.outputs.oses != '[]')
-    runs-on: ${{ startsWith(matrix.os, 'ubuntu') && 'ubuntu-latest' || fromJSON(needs.changes.outputs.mac) }}
+    # macOS only: the Linux shards build smith themselves. A push to main builds nothing here (the release does).
+    if: needs.changes.outputs.scope == 'full' || needs.changes.outputs.scope == 'docs'
+    runs-on: ${{ fromJSON(needs.changes.outputs.mac) }}
     timeout-minutes: 40
-    # the Linux part reports but does not block `ci` until the suite has been green on Linux
-    continue-on-error: ${{ startsWith(matrix.os, 'ubuntu') }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: ${{ fromJSON(needs.changes.outputs.oses) }}
     env:
       GH_TOKEN: ${{ github.token }}
-      SMITH_CORES: ${{ startsWith(matrix.os, 'ubuntu') && '4' || needs.changes.outputs.cores }}
+      SMITH_CORES: ${{ needs.changes.outputs.cores }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -147,9 +118,9 @@ jobs:
           tests: "true"
       - uses: ./.github/actions/pack-smith
         with:
-          name: ${{ matrix.os }}
+          name: macos-26
       - name: Fail fast
-        if: failure() && runner.os == 'macOS'
+        if: failure()
         run: gh run cancel ${{ github.run_id }}
 
   mechanical:
@@ -191,24 +162,18 @@ jobs:
         run: gh run cancel ${{ github.run_id }}
 
   test:
-    # the tests, split by test file across machines (`smith test --shard i/n`, balanced by the CPU seconds of
-    # .github/shard-costs.tsv; a file's tests stay together). The count is what gives the shortest run with the
-    # hosted limit of 5 macOS jobs at once (knowledge/ci-hosted.md).
+    # the macOS-only tests (`smith test --macos-only`, 3 of them, one part), on the Mac with the build of this run
     needs: [changes, build]
-    if: needs.changes.outputs.scope == 'full' || (needs.changes.outputs.scope == 'release' && needs.changes.outputs.oses != '[]')
-    runs-on: ${{ startsWith(matrix.os, 'ubuntu') && 'ubuntu-latest' || fromJSON(needs.changes.outputs.mac) }}
+    if: needs.changes.outputs.scope == 'full'
+    runs-on: ${{ fromJSON(needs.changes.outputs.mac) }}
     timeout-minutes: 45
-    # Linux parts report but do not block `ci` until the suite has been green on Linux (no run has passed there yet)
-    continue-on-error: ${{ startsWith(matrix.os, 'ubuntu') }}
     strategy:
       fail-fast: false
-      # macOS parts, and 2 Linux parts once a Linux release exists (the `changes` job decides, #799)
       matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
     env:
       GH_TOKEN: ${{ github.token }}
-      SMITH_CORES: ${{ startsWith(matrix.os, 'ubuntu') && '4' || needs.changes.outputs.cores }}
+      SMITH_CORES: ${{ needs.changes.outputs.cores }}
       SMITH_OUTPUT: full
-      # a cpu<TAB>seconds<TAB>name line for each test in .smith/log/test.log: what .github/shard-costs.tsv is made from
       SMITH_TEST_STATS: "1"
     steps:
       - name: Tools some tests need
@@ -269,9 +234,65 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
       - name: Fail fast
-        if: failure() && runner.os == 'macOS'
+        if: failure()
         run: gh run cancel ${{ github.run_id }}
 
+  test-linux:
+    # Linux carries the tests (required): 6 hosted shards of `--skip-macos`, each builds smith itself (a hosted
+    # runner is free, and no ~1 GB artifact travels: storage egress), so none waits for `build`
+    needs: changes
+    if: needs.changes.outputs.scope == 'full' || needs.changes.outputs.scope == 'release'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.changes.outputs.linux) }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SMITH_CORES: "4"
+      SMITH_OUTPUT: full
+      SMITH_TEST_STATS: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-smith
+        with:
+          tests: "true"
+      - name: Tests, part ${{ matrix.shard }} of ${{ matrix.count }}
+        shell: bash
+        run: |
+          start=$(date +%s)
+          rc=0
+          shard=
+          if [ "${{ matrix.count }}" -gt 1 ]; then shard="--shard ${{ matrix.shard }}/${{ matrix.count }}"; fi
+          # shellcheck disable=SC2086
+          "$SMITH" test $shard ${{ matrix.flags }} --costs "$PWD/.github/shard-costs.tsv" 2>&1 |
+            tee "$RUNNER_TEMP/test.log" || rc=${PIPESTATUS[0]}
+          took=$(( $(date +%s) - start ))
+          {
+            echo "### tests linux ${{ matrix.shard }}/${{ matrix.count }}: $took s"
+            grep -E '^[0-9]+ passed' "$RUNNER_TEMP/test.log" || true
+          } >>"$GITHUB_STEP_SUMMARY"
+          if [ "$rc" -ne 0 ]; then
+            { echo '```'; grep -hE '^FAIL |^FAILED:' "$RUNNER_TEMP/test.log" .smith/log/*.log 2>/dev/null | sort -u | head -n 60; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
+            grep -hE '^FAIL |^FAILED:' "$RUNNER_TEMP/test.log" .smith/log/*.log 2>/dev/null | sort -u | head -n 20 |
+              while IFS= read -r line; do echo "::error::$line"; done
+          fi
+          exit $rc
+      - name: Upload the logs
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-log-linux-${{ matrix.shard }}-of-${{ matrix.count }}
+          path: .smith/log
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Fail fast
+        if: failure()
+        run: gh run cancel ${{ github.run_id }}
   docs:
     # a change of the README, AGENTS.md, knowledge/ or the skills only: the docs check and the tests that read them
     # (a change that also touches code runs the full check, whose parts include both)
@@ -302,7 +323,7 @@ jobs:
   ci:
     # the one required check: green when every job that had to run is green; skipped jobs (a change of documents only)
     # do not count against it. It runs when a job failed too (the failing job cancels the run): red at once.
-    needs: [changes, build, mechanical, test, docs]
+    needs: [changes, build, mechanical, test, test-linux, docs]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
