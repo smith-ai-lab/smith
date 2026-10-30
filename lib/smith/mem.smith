@@ -56,10 +56,13 @@ import <unistd.h>; // write: the reports of mem::checked
 
 const char *allocator_name(const Allocator *allocator);
 
-// A refusal stops here, in every build, naming the allocator and the size.
+// A refusal stops here, in every build, naming the allocator and the size. The thread gets the system's allocator
+// back first, so what the report and the abort allocate (glibc's pthread_getattr_np in ASan's abort path, #832)
+// does not meet the refusing one.
 [[noreturn]] void refuse(usize size, usize align) {
-    c::smith_failure_format(c::SmithFailure_Capacity, "%s refused %zu bytes (align %zu)",
-                            allocator_name(c::smith_handlers_allocator()), size, align);
+    const char *name = allocator_name(c::smith_handlers_allocator());
+    set_allocator(nullptr);
+    c::smith_failure_format(c::SmithFailure_Capacity, "%s refused %zu bytes (align %zu)", name, size, align);
 }
 
 // Zeroed memory for size bytes at align (a power of two) from the allocator in force. Never null: the allocator
