@@ -111,7 +111,7 @@ export void test_mcp_the_stage0_says_smith_mcp_needs_the_full_smith(io::Io *io) 
 // --- the connection, with the real binary
 // -----------------------------------------------------------------------------
 
-export void test_mcp_the_connection_discover_initialize_and_tools(io::Io *io) {
+export void test_macos_mcp_the_connection_discover_initialize_and_tools(io::Io *io) {
     scratch::Project root = scratch::project(io, "mcp", "mcp");
     if (scratch::sh(&root, clang_inside).status != 0) {
         return;
@@ -184,7 +184,7 @@ static const char *answer(const scratch::Project *p, const char *id) {
 // --- a C program
 // ------------------------------------------------------------------------------------------------------
 
-export void test_mcp_a_c_program_session(io::Io *io) {
+export void test_macos_mcp_a_c_program_session(io::Io *io) {
     scratch::Project root;
     if (!make(io, &root)) {
         return;
@@ -236,7 +236,7 @@ export void test_mcp_a_c_program_session(io::Io *io) {
 }
 
 // A client that goes away while the program is stopped takes the program with it.
-export void test_mcp_a_client_that_goes_away_takes_the_program_with_it(io::Io *io) {
+export void test_macos_mcp_a_client_that_goes_away_takes_the_program_with_it(io::Io *io) {
     scratch::Project root;
     if (!make(io, &root)) {
         return;
@@ -261,7 +261,7 @@ export void test_mcp_a_client_that_goes_away_takes_the_program_with_it(io::Io *i
 // --- a .smith program (names as written)
 // ---------------------------------------------------------------------------------
 
-export void test_mcp_a_smith_program_session_has_names_as_written(io::Io *io) {
+export void test_macos_mcp_a_smith_program_session_has_names_as_written(io::Io *io) {
     scratch::Project root;
     if (!make(io, &root) ||
         scratch::sh(&root, "smith cc --smith-which -x c 2>/dev/null | grep -q 'token-hook yes'").status != 0) {
@@ -326,7 +326,7 @@ static const char *project_calls(io::Io *io) {
     return call(io, calls, "6", "launch", "{\"test\":\"twice_doubles\",\"runner\":\"build/nonesuch\"}");
 }
 
-export void test_mcp_a_test_of_a_project_launched_by_its_name(io::Io *io) {
+export void test_macos_mcp_a_test_of_a_project_launched_by_its_name(io::Io *io) {
     scratch::Project root;
     if (!make(io, &root)) {
         return;
@@ -358,7 +358,7 @@ export void test_mcp_a_test_of_a_project_launched_by_its_name(io::Io *io) {
 }
 
 // The runner is the one build.info names, wherever it is: moved, with the line changed, no guess finds it.
-export void test_mcp_the_runner_build_info_names_is_launched(io::Io *io) {
+export void test_macos_mcp_the_runner_build_info_names_is_launched(io::Io *io) {
     scratch::Project root;
     if (!make(io, &root)) {
         return;

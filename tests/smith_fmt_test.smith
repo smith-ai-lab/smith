@@ -42,8 +42,9 @@ export void test_the_corpus_formats_to_its_expected_file(io::Io *io) {
     scratch::Run run = scratch::sh(
         &p, "w=\"$PWD\"; mkdir \"$w/m\"; cd repo && "
             "find tests/smith-lang/cases -name '*.smith' -path '*/src/*' | LC_ALL=C sort > \"$w/list\" && "
-            "pax -rw -s ',/\\([^/]*\\)\\.smith$,__\\1/case.smith,' \"$w/m\" < \"$w/list\" && cd \"$w\" && "
-            "sed 's,/\\([^/]*\\)\\.smith$,__\\1/case.smith,; s,^,m/,' list > mirrored && "
+            "cd \"$w\" && sed 's,/\\([^/]*\\)\\.smith$,__\\1/case.smith,; s,^,m/,' list > mirrored && "
+            "xargs -n1 dirname < mirrored | LC_ALL=C sort -u | xargs mkdir -p && "
+            "sed 's,^,repo/,' list | paste - mirrored | xargs -n2 cp && "
             "xargs smith fmt -i --style=\"file:$w/.clang-format\" < mirrored 2>&1 && "
             "sed 's,^tests/smith-lang/cases/,,' list | "
             "awk 'NR==FNR { name[NR] = $0; next } FNR == 1 { k += 1; print \"==> \" name[k] \" <==\" } { print }' "
@@ -95,7 +96,8 @@ static usize same_as_c(io::Io *io, const char *root) {
                 "-not -path '*/tree-sitter/src/*' -not -path '*/expect/*' $(awk '!/^#/ && NF { gsub(/\\*\\*/, \"*\"); "
                 "print \"-not -path \" root \"/\" $0 }' root=\"$R\" \"$R/.clang-format-ignore\" 2>/dev/null) "
                 "| LC_ALL=C sort | sed \"s,^$R/,,\" > list; "
-                "(cd \"$R\" && pax -rw \"$w/c\" < \"$w/list\" && pax -rw -s ',\\.c$,.smith,' \"$w/s\" < \"$w/list\"); "
+                "for d in c s; do (cd \"$R\" && tar cf - -T \"$w/list\") | (cd $d && tar xf -); done; "
+                "(cd s && grep '\\.c$' ../list | while IFS= read -r f; do mv \"$f\" \"${f%.c}.smith\"; done); "
                 "(cd c && grep '\\.c$' ../list | xargs smith fmt -i 2>&1); "
                 "(cd s && sed 's,\\.c$,.smith,' ../list | grep '\\.smith$' | xargs smith fmt -i 2>&1)")
                 .data);

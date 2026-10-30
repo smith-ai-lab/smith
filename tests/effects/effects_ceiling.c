@@ -12,7 +12,7 @@
     return malloc(size);
 }
 
-[[smith::effects(alloc, files)]] void *both(unsigned size) {
+[[smith::effects(alloc, files, globals)]] void *both(unsigned size) {
     FILE *file = fopen("data", "r");
     (void)file;
     return malloc(size);

@@ -1,0 +1,8 @@
+module build;
+
+import smith::build;
+
+export void build(build::Build *b) {
+    build::app(b, &(build::App){.entry = "main.smith"});
+    build::app_tests(b, &(build::AppTests){.folder = "tests"});
+}

@@ -1,0 +1,430 @@
+name: ci
+
+# The full check on GitHub's hosted runners (#798, knowledge/ci-hosted.md): every pull request and every merge queue
+# entry builds smith once (`build`), then runs `smith check` split across parallel jobs that use that build, and the
+# one job `ci` gathers them, so the ruleset and the merge queue name a single required check. The first job that fails
+# cancels the run. A push to main (a commit the queue checked) only publishes the release and saves the cache.
+on:
+  pull_request:
+  merge_group:
+  push:
+    branches: [main]
+
+# A new push to a pull request replaces its older run; the merge queue's runs and main's never cancel each other.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+  actions: write # `gh run cancel`: the first failing job ends the run
+
+env:
+  GH_REPO: ${{ github.repository }}
+
+jobs:
+  changes:
+    # what the change touches decides what runs: a document no build reads runs nothing, the README, AGENTS.md,
+    # knowledge/ and the skills run `smith docs` and their tests, everything else runs the full check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      scope: ${{ steps.scope.outputs.scope }}
+      mode: ${{ steps.scope.outputs.mode }}
+      base: ${{ steps.scope.outputs.base }}
+      matrix: ${{ steps.linux.outputs.matrix }}
+      oses: ${{ steps.linux.outputs.oses }}
+      # where the macOS jobs run (knowledge/ci-hosted.md): the owner's Mac, except a pull request from a fork, which
+      # never reaches it. To fall back to hosted runners, change the Mac's value below to '"macos-26"'.
+      mac: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && '"macos-26"' || '["self-hosted","macOS","ARM64"]' }}
+      # SMITH_CORES of a macOS job: the Mac's 16 cores shared by its 3 runners; a hosted runner has 3
+      cores: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && '3' || '5' }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scope
+        id: scope
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          # none: only documents no build reads. docs: also the documents the docs check and their tests read. full:
+          # anything else; a push to main, or a diff that cannot be read, is always full.
+          # Other workflows (llvm.yml) change nothing this one runs; ci.yml itself and the actions it uses do.
+          documents='^(LICENSE[^/]*|CONTRIBUTING[.]md|[^/]+[.](png|jpe?g|gif|svg|webp))$'
+          workflows='^[.]github/workflows/'
+          gated='^(README[.]md|AGENTS[.]md|knowledge/.*|[.]agents/.*)$'
+          scope=full
+          mode=full
+          # a push to main is a commit the merge queue already checked: it only publishes the release
+          if [ "$GITHUB_EVENT_NAME" = push ]; then scope=release; BASE=; fi
+          if [ -n "$BASE" ] && changed=$(git diff --name-only "$BASE" HEAD); then
+            own=$(printf '%s\n' "$changed" | grep -E '^([.]github/workflows/ci[.]yml|[.]github/actions/.*)$' || true)
+            built=$(printf '%s\n' "$changed" | grep . | grep -vE "$documents" | grep -vE "$workflows" || true)
+            built=$(printf '%s\n%s\n' "$built" "$own" | grep . || true)
+            code=$(printf '%s\n' "$built" | grep . | grep -vE "$gated" || true)
+            if [ -z "$built" ]; then scope=none; elif [ -z "$code" ]; then scope=docs; fi
+            # a pull request tests what its change can reach (`smith test --changed`); the merge queue runs
+            # everything, and so does a pull request that changes this workflow or its actions (how they are tested)
+            if [ "$GITHUB_EVENT_NAME" = pull_request ] && [ -z "$own" ]; then mode=changed; fi
+          fi
+          echo "mode=$mode" >>"$GITHUB_OUTPUT"
+          echo "base=$PR_BASE" >>"$GITHUB_OUTPUT"
+          echo "scope=$scope" >>"$GITHUB_OUTPUT"
+          echo "scope: $scope, tests: $mode" >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Test matrix
+        id: linux
+        # The macOS parts always run. The Linux parts join as soon as an ancestor's release has the Linux tarball (the
+        # first one comes from the first push to main after the `release-linux` job, #799): without one, setup would
+        # build smith from source for hours on every pull request. This is the release scripts/stage0.c would use.
+        run: |
+          asset=smith-linux-x86_64.tar.xz
+          # macOS runs the whole suite until the Linux parts have passed in a real run; then these four become one
+          # `--macos-only` part and the Linux parts (which run `--skip-macos`) become required.
+          if [ "${{ steps.scope.outputs.mode }}" = changed ]; then
+            # a pull request: one macOS part with the tests the change reaches, no Linux build at all
+            echo "matrix={\"include\":[{\"os\":\"macos-26\",\"shard\":1,\"count\":1,\"flags\":\"--changed --base ${{ steps.scope.outputs.base }}\"}]}" >>"$GITHUB_OUTPUT"
+            echo 'oses=["macos-26"]' >>"$GITHUB_OUTPUT"
+            echo "linux: a pull request tests only what its change reaches, on macOS" >>"$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          matrix='{"os":"macos-26","shard":1,"count":4,"flags":""},{"os":"macos-26","shard":2,"count":4,"flags":""},{"os":"macos-26","shard":3,"count":4,"flags":""},{"os":"macos-26","shard":4,"count":4,"flags":""}'
+          oses='"macos-26"'
+          git tag --list 'stage0-*' >"$RUNNER_TEMP/tags"
+          found=
+          for tag in $(git rev-list HEAD | sed 's/^/stage0-/' | grep -Fx -f "$RUNNER_TEMP/tags" | head -n 30); do
+            if gh release view "$tag" --json assets --jq '.assets[].name' 2>/dev/null | grep -Fqx "$asset"; then found=$tag; break; fi
+          done
+          if [ -n "$found" ]; then
+            for i in 1 2 3 4 5 6; do
+              matrix="$matrix"',{"os":"ubuntu-latest","shard":'$i',"count":6,"flags":"--skip-macos"}'
+            done
+            oses="$oses"',"ubuntu-latest"'
+            echo "linux: $found has $asset: the Linux parts run" >>"$GITHUB_STEP_SUMMARY"
+          else
+            echo "linux: no ancestor release has $asset yet: no Linux parts" >>"$GITHUB_STEP_SUMMARY"
+          fi
+          echo "matrix={\"include\":[$matrix]}" >>"$GITHUB_OUTPUT"
+          echo "oses=[$oses]" >>"$GITHUB_OUTPUT"
+
+  build:
+    # smith built once for the run (#798): the stage0 release and the LLVM pack come from the cache (or the release),
+    # compiles from the step cache main saved, then the tests are built too. Every job after this one unpacks the
+    # result instead of compiling smith again.
+    needs: changes
+    if: needs.changes.outputs.scope == 'full' || needs.changes.outputs.scope == 'docs'
+    runs-on: ${{ startsWith(matrix.os, 'ubuntu') && 'ubuntu-latest' || fromJSON(needs.changes.outputs.mac) }}
+    timeout-minutes: 40
+    # the Linux part reports but does not block `ci` until the suite has been green on Linux
+    continue-on-error: ${{ startsWith(matrix.os, 'ubuntu') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(needs.changes.outputs.oses) }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SMITH_CORES: ${{ startsWith(matrix.os, 'ubuntu') && '4' || needs.changes.outputs.cores }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-smith
+        with:
+          tests: "true"
+      - uses: ./.github/actions/pack-smith
+        with:
+          name: ${{ matrix.os }}
+      - name: Fail fast
+        if: failure() && runner.os == 'macOS'
+        run: gh run cancel ${{ github.run_id }}
+
+  mechanical:
+    # fmt, docs, lint and the proofs of the project (the stages of `smith check` that are not tests)
+    needs: [changes, build]
+    if: needs.changes.outputs.scope == 'full'
+    runs-on: ${{ fromJSON(needs.changes.outputs.mac) }}
+    timeout-minutes: 40
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SMITH_CORES: ${{ needs.changes.outputs.cores }}
+      SMITH_OUTPUT: full
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/use-smith
+        with:
+          name: macos-26
+      - name: Mechanical checks
+        shell: bash
+        run: |
+          # every stage runs, and each failure ends in a line `FAIL <stage>`, so one run names all of them
+          failed=0
+          for stage in "fmt --dry-run --Werror" docs lint prove; do
+            name=${stage%% *}
+            if ! "$SMITH" $stage >"$RUNNER_TEMP/$name.log" 2>&1; then
+              tail -n 60 "$RUNNER_TEMP/$name.log"
+              echo "FAIL $name"
+              echo "::error::smith $name failed"
+              failed=1
+            else
+              echo "ok $name"
+            fi
+          done
+          exit $failed
+      - name: Fail fast
+        if: failure()
+        run: gh run cancel ${{ github.run_id }}
+
+  test:
+    # the tests, split by test file across machines (`smith test --shard i/n`, balanced by the CPU seconds of
+    # .github/shard-costs.tsv; a file's tests stay together). The count is what gives the shortest run with the
+    # hosted limit of 5 macOS jobs at once (knowledge/ci-hosted.md).
+    needs: [changes, build]
+    if: needs.changes.outputs.scope == 'full'
+    runs-on: ${{ startsWith(matrix.os, 'ubuntu') && 'ubuntu-latest' || fromJSON(needs.changes.outputs.mac) }}
+    timeout-minutes: 45
+    # Linux parts report but do not block `ci` until the suite has been green on Linux (no run has passed there yet)
+    continue-on-error: ${{ startsWith(matrix.os, 'ubuntu') }}
+    strategy:
+      fail-fast: false
+      # macOS parts, and 2 Linux parts once a Linux release exists (the `changes` job decides, #799)
+      matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SMITH_CORES: ${{ startsWith(matrix.os, 'ubuntu') && '4' || needs.changes.outputs.cores }}
+      SMITH_OUTPUT: full
+      # a cpu<TAB>seconds<TAB>name line for each test in .smith/log/test.log: what .github/shard-costs.tsv is made from
+      SMITH_TEST_STATS: "1"
+    steps:
+      - name: Tools some tests need
+        if: runner.os == 'macOS'
+        # the editor tests do nothing without nvim; some tests bound a command with coreutils' `timeout`. It runs
+        # while the build downloads: the next step waits for it
+        shell: bash
+        run: |
+          # the owner's Mac already has them: three runners share it, so install only what is missing
+          if command -v nvim >/dev/null && command -v gtimeout >/dev/null; then nohup true >"$RUNNER_TEMP/brew.log" 2>&1 &
+          else HOMEBREW_NO_AUTO_UPDATE=1 nohup brew install neovim coreutils >"$RUNNER_TEMP/brew.log" 2>&1 &
+          fi
+          echo $! >"$RUNNER_TEMP/brew.pid"
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/use-smith
+        with:
+          name: ${{ matrix.os }}
+      - name: Tools some tests need (wait)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          while kill -0 "$(cat "$RUNNER_TEMP/brew.pid")" 2>/dev/null; do sleep 1; done
+          tail -n 3 "$RUNNER_TEMP/brew.log"
+          nvim --version | head -n 1
+      - name: Tests, part ${{ matrix.shard }} of ${{ matrix.count }}
+        shell: bash
+        run: |
+          start=$(date +%s)
+          rc=0
+          shard=
+          if [ "${{ matrix.count }}" -gt 1 ]; then shard="--shard ${{ matrix.shard }}/${{ matrix.count }}"; fi
+          # shellcheck disable=SC2086
+          "$SMITH" test $shard ${{ matrix.flags }} --costs "$PWD/.github/shard-costs.tsv" 2>&1 |
+            tee "$RUNNER_TEMP/test.log" || rc=${PIPESTATUS[0]}
+          took=$(( $(date +%s) - start ))
+          {
+            echo "### tests ${{ matrix.os }} ${{ matrix.shard }}/${{ matrix.count }}: $took s"
+            grep -E '^[0-9]+ passed' "$RUNNER_TEMP/test.log" || true
+          } >>"$GITHUB_STEP_SUMMARY"
+          # a failure names its test: the line `FAIL <name>` of the runner, as an annotation and in the summary
+          if [ "$rc" -ne 0 ]; then
+            { echo '```'; grep -hE '^FAIL |^FAILED:' "$RUNNER_TEMP/test.log" .smith/log/*.log 2>/dev/null | sort -u | head -n 60; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
+            grep -hE '^FAIL |^FAILED:' "$RUNNER_TEMP/test.log" .smith/log/*.log 2>/dev/null | sort -u | head -n 20 |
+              while IFS= read -r line; do echo "::error::$line"; done
+          fi
+          exit $rc
+      - name: Upload the logs
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-log-${{ matrix.os }}-${{ matrix.shard }}-of-${{ matrix.count }}
+          path: .smith/log
+          # .smith is a hidden folder, which upload-artifact v4 leaves out unless asked (no log was uploaded since)
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Fail fast
+        if: failure() && runner.os == 'macOS'
+        run: gh run cancel ${{ github.run_id }}
+
+  docs:
+    # a change of the README, AGENTS.md, knowledge/ or the skills only: the docs check and the tests that read them
+    # (a change that also touches code runs the full check, whose parts include both)
+    needs: [changes, build]
+    if: needs.changes.outputs.scope == 'docs'
+    runs-on: ${{ fromJSON(needs.changes.outputs.mac) }}
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SMITH_CORES: ${{ needs.changes.outputs.cores }}
+      SMITH_OUTPUT: full
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/use-smith
+        with:
+          name: macos-26
+      - name: Docs and the tests that read them
+        shell: bash
+        run: |
+          "$SMITH" docs
+          "$SMITH" test --test readme_test,skills_test
+      - name: Fail fast
+        if: failure()
+        run: gh run cancel ${{ github.run_id }}
+
+  ci:
+    # the one required check: green when every job that had to run is green; skipped jobs (a change of documents only)
+    # do not count against it. It runs when a job failed too (the failing job cancels the run): red at once.
+    needs: [changes, build, mechanical, test, docs]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verdict
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+          SCOPE: ${{ needs.changes.outputs.scope }}
+        run: |
+          echo "scope: $SCOPE; jobs: $RESULTS" | tee -a "$GITHUB_STEP_SUMMARY"
+          case " $RESULTS " in
+          *" failure "* | *" cancelled "*)
+            echo "::error::a CI job failed or was cancelled"
+            exit 1
+            ;;
+          esac
+
+  warm:
+    # a push to main (a commit the queue checked) builds smith and the tests once more only to save the step cache,
+    # which every pull request and queue entry after it restores (a cache saved on a branch is seen by that branch and
+    # the ones made from it, and main's by all: so only main saves, which keeps the entries few)
+    needs: changes
+    if: needs.changes.outputs.scope == 'release'
+    runs-on: macos-26
+    timeout-minutes: 40
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-smith
+        with:
+          tests: "true"
+      - name: Save the step cache
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/smith/steps
+            ~/.cache/smith/packages
+            ~/.cache/smith/tools
+          key: smith-steps-${{ runner.os }}-${{ github.sha }}
+
+  release:
+    # a push to main (the merge queue's checked commit) publishes the stage0 release stage0-<commit>
+    # (knowledge/release.md), which the next jobs' setup builds from; the macOS tarball goes into its draft, and the
+    # `publish` job publishes the draft (releases are immutable once published)
+    needs: changes
+    if: needs.changes.outputs.scope == 'release'
+    runs-on: macos-26
+    timeout-minutes: 40
+    permissions:
+      contents: write
+    concurrency:
+      group: release-macos
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-smith
+      - name: Release
+        run: '"$SMITH" build release'
+
+  release-linux:
+    # the same draft release gets the Linux tarball (`release.sh publish` adds it to the draft the other job made). Until
+    # a Linux release exists, setup builds smith from source (scripts/seed_linux.c, about two hours): expected once,
+    # for the first push to main after this job exists; the hosted limit is 6 hours. `publish` publishes without this
+    # job's tarball when it fails, so `install` never waits for Linux.
+    needs: changes
+    if: needs.changes.outputs.scope == 'release'
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    permissions:
+      contents: write
+    concurrency:
+      group: release-linux
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install lld
+        # the seed (scripts/seed_linux.c) links smith with `-fuse-ld=lld`, which the hosted image does not have
+        run: sudo apt-get install -y -q lld
+      - uses: ./.github/actions/setup-smith
+      - name: Release
+        run: '"$SMITH" build release'
+
+  publish:
+    # publishes the draft the two release jobs added to: a published release is immutable, so it waits for both, and
+    # a failed Linux job still lets the macOS release out
+    needs: [release, release-linux]
+    if: always() && needs.release.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish the release
+        run: sh scripts/release.sh finish "stage0-$GITHUB_SHA"
+
+  install:
+    # the owner's Mac (its one self-hosted runner, ~/actions-runner) installs the release just published, so the
+    # installed smith is always main's: a download and a checksum, no build (owner, 2026-10-29)
+    needs: publish
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 10
+    concurrency:
+      group: install
+      cancel-in-progress: true
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the release
+        run: |
+          export PATH="/opt/homebrew/bin:$PATH"
+          tmp=$(mktemp -d)
+          sh scripts/release.sh fetch "stage0-$GITHUB_SHA" "$tmp"
+          mkdir -p "$HOME/.local/bin"
+          for f in "$tmp"/bin/*; do
+            # copy beside, then rename over: a smith running now keeps its old file
+            cp -P "$f" "$HOME/.local/bin/.$(basename "$f").new"
+            mv -f "$HOME/.local/bin/.$(basename "$f").new" "$HOME/.local/bin/$(basename "$f")"
+          done
+          rm -rf "$tmp"
+          "$HOME/.local/bin/smith" version
