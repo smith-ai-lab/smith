@@ -678,12 +678,21 @@ class Editor {
             if (auto path = params.getString("rootPath")) root = path->str();
         }
         if (root.empty()) return;
+        // Pending from this message on, not from when the thread gets to run: clangd parses the first document
+        // as soon as it is opened, and a parse that comes before the flag is set judges a function whose summary
+        // is not written yet as having no source (`c`), which is the flake of #813 on a loaded machine.
+        smith_effects_editor_pending(1);
         std::thread([this, root] { background(root); }).detach();
     }
 
     // The compile commands of the project: each source's object goes to the plugin, and the sources whose summary is
     // missing or older are compiled, one at a time, for the summary only.
     void background(const std::string &root) {
+        backgroundPass(root);
+        smith_effects_editor_pending(0);
+    }
+
+    void backgroundPass(const std::string &root) {
         std::string path = root + "/.smith/compile_commands.json";
         auto buffer = llvm::MemoryBuffer::getFile(path);
         if (!buffer) return;
@@ -722,11 +731,10 @@ class Editor {
             if (!fresh && stat(job.source.c_str(), &sourceInfo) == 0) stale.push_back(std::move(job));
         }
         if (stale.empty()) return;
-        smith_effects_editor_pending(1);
         for (const Job &job : stale)
             summarize(job.directory, job.object, job.arguments);
-        smith_effects_editor_pending(0);
-        written(""); // every open file is judged again with all the summaries
+        smith_effects_editor_pending(0); // before the files are parsed again, which judge with all the summaries
+        written("");                     // every open file is judged again with all the summaries
     }
 
     // `.smith/effects/<the object's absolute path, % for />.fx`, the plugin's place (smith_effects_summary_path).
