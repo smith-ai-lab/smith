@@ -1,0 +1,24 @@
+module test_checked_process;
+
+import smith::mem;
+import smith::process;
+import smith::test;
+
+// What a process returns to a test belongs to the test (issue #815): freed, the test passes; kept, it fails naming the
+// allocation.
+
+export void test_checked_10_process_output_freed(void) {
+    const char *const argv[_] = {"echo", "hi", nullptr};
+    process::OutputResult done = process::run(argv[0:2]);
+    if (done != .ok) return;
+    process::Output output = done.ok;
+    defer mem::free(output.output.data);
+    defer mem::free(output.errors.data);
+    test::check_equal(output.exit.status, 0);
+}
+
+export void test_checked_11_process_output_kept(void) {
+    const char *const argv[_] = {"echo", "hi", nullptr};
+    process::OutputResult done = process::run(argv[0:2]);
+    test::check_condition(done == .ok);
+}

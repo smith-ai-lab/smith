@@ -151,9 +151,10 @@ export void test_categorical_zero_word_gives_column_0() {
 }
 
 // categorical::make allocates only through the current allocator (and fails, checked, when it refuses; the refusal
-// reads the allocator's handler, which is `c` in mem's own body): no arena of its own, no files, no net, no globals.
+// reads the allocator's handler, which is `unknown` in mem's own body): no arena of its own, no files, no net, no
+// globals.
 void make_stays_within(constexpr auto f) {
-    static_assert(effects::within(f, effects::alloc | effects::fails | effects::c),
+    static_assert(effects::within(f, effects::alloc | effects::fails | effects::unknown),
                   "categorical::make: the current allocator and a checked failure only");
 }
 

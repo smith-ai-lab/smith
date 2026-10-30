@@ -24,7 +24,7 @@ static bool made(scratch::Project *p) {
     return true;
 }
 
-export void test_dbg_launch_run_passes_arguments_as_they_are(io::Io *io) {
+export void test_macos_dbg_launch_run_passes_arguments_as_they_are(io::Io *io) {
     scratch::Project p = scratch::project(io, "dbg_run", nullptr);
     if (!made(&p)) return;
     scratch::Run run = scratch::sh(&p, "smith dbg -b -o 'settings set plugin.process.gdb-remote.packet-timeout 600' "
@@ -34,7 +34,7 @@ export void test_dbg_launch_run_passes_arguments_as_they_are(io::Io *io) {
     scratch::expect_lacks("run: nothing is expanded", run.out, "<one.txt>");
 }
 
-export void test_dbg_launch_process_launch_with_x_true_expands(io::Io *io) {
+export void test_macos_dbg_launch_process_launch_with_x_true_expands(io::Io *io) {
     scratch::Project p = scratch::project(io, "dbg_expand", nullptr);
     if (!made(&p)) return;
     scratch::Run run = scratch::sh(&p, "smith dbg -b -o 'settings set plugin.process.gdb-remote.packet-timeout 600' "

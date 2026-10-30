@@ -159,7 +159,7 @@ export void test_runner_reports_an_assert_a_segfault_and_an_inlined_check_name_t
 }
 
 // Objective-C frames and methods.
-export void test_runner_reports_a_check_inside_an_objective_c_method_names_the_method(io::Io *io) {
+export void test_macos_runner_reports_a_check_inside_an_objective_c_method_names_the_method(io::Io *io) {
     if constexpr (target::os != target::macos) {
         return; // Objective-C here needs Apple's Foundation
     }
@@ -177,7 +177,7 @@ export void test_runner_reports_a_check_inside_an_objective_c_method_names_the_m
 }
 
 // The Apple linker, in place of lld: the same debug map.
-export void test_runner_reports_a_program_linked_by_apples_ld_has_lines_too(io::Io *io) {
+export void test_macos_runner_reports_a_program_linked_by_apples_ld_has_lines_too(io::Io *io) {
     scratch::Project p = reports_project(io);
     if (!runner::can_symbolize(&p)) return;
     usize line = runner::line_of(&p, "tests/test_reports.smith", "test::check(moves > 0);");

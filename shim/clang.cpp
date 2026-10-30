@@ -79,6 +79,9 @@ extern "C" int smith_clang_main(const char *program, int argc, char **argv, bool
             std::strcmp(argument, "-emit-llvm") == 0) { // bitcode has no frames yet
             stack = false;
         }
+        size_t length = std::strlen(argument);
+        // an assembly file has no frames, and the ELF driver warns that -fstack-usage went unused
+        if (length > 2 && std::strcmp(argument + length - 2, ".s") == 0) stack = false;
         arguments.push_back(argv[i]);
     }
 #ifdef SMITH_HOOK

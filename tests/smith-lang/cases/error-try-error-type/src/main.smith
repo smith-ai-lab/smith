@@ -5,7 +5,7 @@ static result(i32, i32) step(i32 n) {
     return {.ok = n};
 }
 
-static result(i32, i64) other_error(void) {
+static result(i32, i16) other_error(void) {
     i32 a = try step(1);
     return {.ok = a};
 }

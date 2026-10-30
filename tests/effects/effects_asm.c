@@ -1,6 +1,6 @@
 // Inline assembly is read by LLVM's assembler (issue #396): a block with no system call and no call or jump out of it
 // has no effect; a system call has the effects of the libc function its number names; an unknown number, a call
-// through a register are `c`. AArch64 (macOS and Linux), where the number is in
+// through a register are `unknown`. AArch64 (macOS and Linux), where the number is in
 // x16 (macOS) or x8 (Linux); the same lines on both.
 #if defined(__aarch64__)
 #if defined(__APPLE__)
@@ -81,7 +81,7 @@ typedef int Vector __attribute__((vector_size(16)));
     asm volatile("bl " SYMBOL(puts) : "+r"(a0) : : "x30", "memory");
 }
 
-// A call through a register is `c`.
+// A call through a register is `unknown`.
 [[smith::pure]] void calls_register(void (*function)(void)) {
     asm volatile("blr %0" : : "r"(function) : "x30", "memory");
 }
