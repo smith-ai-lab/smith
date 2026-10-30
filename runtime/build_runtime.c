@@ -2522,6 +2522,8 @@ static const char *const *smith_handlers_link(SmithBuild *b, const SmithProgram 
 // program's compiler. AddressSanitizer exits with status 1 after a report where macOS's aborts (abort_on_error is
 // Darwin's default), so the test runner, a failure's report and the debugger, which read a report as a stop by
 // SIGABRT, would see an exit: an __asan_default_options in an object of each sanitized program gives Linux the same.
+// It also turns LeakSanitizer off, which Linux's AddressSanitizer runs at exit and macOS's does not: a program that
+// leaves its memory to the operating system (the autodiff references) would end with a leak report.
 // It is strong: the runtime ahead of the program on the link line has a weak one, and the first weak definition wins.
 constexpr size_t smith_handlers_folders_max = 64;
 static const char *smith_handlers_made[smith_handlers_folders_max];
@@ -2545,7 +2547,7 @@ static void smith_handlers_object(SmithBuild *b, const SmithProgram *program, co
 
 static void smith_asan_abort_options(SmithBuild *b, const SmithProgram *program, const char *object) {
     const char *script = "printf '%s\\n' 'const char *__asan_default_options(void);' "
-                         "'const char *__asan_default_options(void) { return \"abort_on_error=1\"; }' "
+                         "'const char *__asan_default_options(void) { return \"abort_on_error=1:detect_leaks=0\"; }' "
                          "| \"$0\" -x c - -c -o \"$1\"";
     SmithStep step = {
         .command = smith_list(b, "sh", "-c", script, smith_copy_string(program->linker), object, nullptr),
