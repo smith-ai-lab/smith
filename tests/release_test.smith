@@ -1,7 +1,7 @@
 // scripts/release.sh (issue #111) with no network, from tests/release.sh: the package of the smith under test
 // (checksum, name, contents), the pruning rule on fake tags, the guard in scratch git repositories, and publish and
-// fetch against a stub gh (tests/build_fixtures/release/gh) that keeps its "releases" in a folder. Never touches a real
-// repository.
+// fetch against a stub gh (tests/build_fixtures/release/gh, and curl beside it for the fetch, which is plain HTTPS)
+// that keeps its "releases" in a folder. Never touches a real repository.
 module release_test;
 
 import smith::format;
@@ -23,9 +23,10 @@ constexpr char prelude[_] =
 static scratch::Project repository(io::Io *io) {
     scratch::Project p = scratch::project(io, "repo", nullptr);
     scratch::copy_tree(&p, "tests/build_fixtures/release/gh", "../bin/gh");
+    scratch::copy_tree(&p, "tests/build_fixtures/release/curl", "../bin/curl");
     scratch::copy_tree(&p, "scripts/release.sh", "../release.sh");
     scratch::Run made = scratch::sh(
-        &p, "mkdir ../gh && chmod +x ../bin/gh && "
+        &p, "mkdir ../gh && chmod +x ../bin/gh ../bin/curl && "
             ": >../gh.log && git init -q --bare ../origin.git && git init -q -b main . && "
             "git config user.email t@t && git config user.name t && echo 1 >f && git add f && git commit -qm one && "
             "git remote add origin ../origin.git && "
@@ -192,4 +193,9 @@ export void test_release_fetch_checks_the_checksum_and_runs(io::Io *io) {
     scratch::expect_status("release: corrupt the package", 0, &corrupted);
     scratch::expect_text("release: fetch-corrupt", "release: the checksum of stage0-real does not match",
                          capture(io, &p, "sh \"$script\" fetch stage0-real ../dl2 2>&1 | tail -1"));
+    scratch::expect_text("release: fetch-no-gh", "0", capture(io, &p, "grep -c '^gh ' \"$GH_LOG\" || true"));
+    scratch::expect_text(
+        "release: fetch-url-in-the-error",
+        "release: cannot download https://github.com/smith-ai-lab/smith/releases/download/stage0-nope/$name",
+        capture(io, &p, "sh \"$script\" fetch stage0-nope ../dl3 2>&1 | tail -1"));
 }

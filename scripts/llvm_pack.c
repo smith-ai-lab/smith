@@ -1,15 +1,16 @@
 // The LLVM pack (issue #797, knowledge/llvm-build.md): the part of an LLVM build that smith links and embeds, published
 // as a GitHub Release `llvm-<name>-<os>-<arch>` (for example `llvm-23.1.3-r11-darwin-arm64`), so that a machine with
 // no LLVM (a hosted CI runner, a fresh clone) downloads it in minutes instead of building it for hours. Plain C23 and
-// libc only (as scripts/llvm_prune.c and scripts/llvm_linux.c are: Linux has no smith before this runs); it runs tar
-// and gh.
+// libc only (as scripts/llvm_prune.c and scripts/llvm_linux.c are: Linux has no smith before this runs); it runs tar,
+// curl (a fetch is plain HTTPS from the public release URL: no gh, no login, no GraphQL, #829) and gh (publish).
 //
 //   llvm_pack tag NAME               print the release's tag
-//   llvm_pack exists NAME            exit 0 when the release exists (gh release view), else 1
+//   llvm_pack exists NAME            exit 0 when the release exists (its URL answers), else 1
 //   llvm_pack pack CACHE NAME OUT    write the pack into OUT: <tag>.tar.xz.000, .001, ... and <tag>.sha256
 //   llvm_pack publish CACHE NAME     pack, then `gh release create`; nothing when the release exists
 //   llvm_pack fetch CACHE NAME STAMP download, check and unpack into CACHE; write STAMP; exit 3 when there is no
-//                                    pack to take (no release, no gh, or a build already in that folder)
+//                                    pack to take (the release is not published (HTTP 404), or a build already
+//                                    in that folder); any other failure is an error naming the URL
 // CACHE is the package cache's smith folder (~/.cache/smith) and NAME the configuration (23.1.3-r11), the folder
 // CACHE/llvm/NAME that `smith build llvm` makes. The pack holds only what smith links and what a build of smith reads:
 //   llvm/NAME/install/lib/*.a, smith-clang.id, libLTO.dylib, clang/ (the resource directory), cmake/
@@ -131,8 +132,49 @@ static void check_element(const char *name) {
     if (name[0] == '\0' || name[0] == '.' || strchr(name, '/') != nullptr) die("not a plain name:", name);
 }
 
+// The public URL of a file of a release.
+static void asset_url(char *url, const char *tag, const char *name) {
+    int written = snprintf(url, path_max, "https://github.com/smith-ai-lab/smith/releases/download/%s/%s", tag, name);
+    if (written < 0 || (size_t)written >= path_max) die("a URL is too long:", name);
+}
+
+static void download(const char *url, const char *path) {
+    if (run((const char *const[]){"curl", "-fsSL", "--retry", "3", "-o", path, url, nullptr}, false) != 0)
+        die("cannot download", url);
+}
+
+// The HTTP status of one byte of the URL (a signed storage URL refuses a HEAD request), read from a file curl writes.
+static int http_status(const char *url, const char *scratch_file) {
+    char format[path_max + 32];
+    snprintf(format, sizeof format, "%%output{%s}%%{http_code}", scratch_file);
+    run((const char *const[]){"curl", "-sSL", "--retry", "3", "-r", "0-0", "-o", "/dev/null", "-w", format, url,
+                              nullptr},
+        false);
+    FILE *file = fopen(scratch_file, "r");
+    char text[16] = "";
+    if (file != nullptr && fgets(text, sizeof text, file) == nullptr) text[0] = '\0';
+    if (file != nullptr) fclose(file);
+    int status = (int)strtol(text, nullptr, 10);
+    remove(scratch_file);
+    return status;
+}
+
+// Whether the release is published: its checksum file answers 200 or 206. 404 is "no"; a network that does not answer
+// or any other status is an error naming the URL, since nothing says there is no pack.
 static bool release_exists(const char *tag) {
-    return run((const char *const[]){"gh", "release", "view", tag, nullptr}, true) == 0;
+    char url[path_max];
+    char status_file[path_max];
+    char name[path_max];
+    snprintf(name, sizeof name, "%s.sha256", tag);
+    asset_url(url, tag, name);
+    const char *temporary = getenv("TMPDIR") != nullptr ? getenv("TMPDIR") : "/tmp";
+    snprintf(status_file, sizeof status_file, "%s/llvm_pack-status-%d", temporary, (int)getpid());
+    int status = http_status(url, status_file);
+    if (status == 200 || status == 206) return true;
+    if (status == 404) return false;
+    char message[64];
+    snprintf(message, sizeof message, "cannot fetch the pack (HTTP status %d):", status);
+    die(message, url);
 }
 
 static void make_folder(const char *path) {
@@ -359,8 +401,9 @@ static void download_parts(const char *tag, const char *stage, const Manifest *m
         char path[path_max];
         char hex[65];
         join(path, "%s/%s", stage, manifest->name[i]);
-        run_or_die((const char *const[]){"gh", "release", "download", tag, "--pattern", manifest->name[i], "--dir",
-                                         stage, "--clobber", nullptr});
+        char url[path_max];
+        asset_url(url, tag, manifest->name[i]);
+        download(url, path);
         if (!sha256_file(path, hex) || strcmp(hex, manifest->hex[i]) != 0)
             die("the checksum of a part does not match:", manifest->name[i]);
         append(output, path);
@@ -420,7 +463,9 @@ static int fetch(const char *cache, const char *name, const char *stamp) {
     char tag[path_max];
     tag_of(name, tag);
     if (!release_exists(tag)) {
-        fprintf(stderr, "llvm_pack: no release %s (or no gh that can see it)\n", tag);
+        char url[path_max];
+        asset_url(url, tag, tag);
+        fprintf(stderr, "llvm_pack: no release %s published (HTTP 404 for %s.sha256 under %s)\n", tag, tag, url);
         return exit_unavailable;
     }
     char stage[path_max];
@@ -436,9 +481,10 @@ static int fetch(const char *cache, const char *name, const char *stamp) {
     join(archive, "%s/pack.tar.xz", stage, "");
     join(unpacked, "%s/unpacked", stage, "");
     char pattern[path_max];
+    char url[path_max];
     join(pattern, "%s.sha256", tag, "");
-    run_or_die((const char *const[]){"gh", "release", "download", tag, "--pattern", pattern, "--dir", stage,
-                                     "--clobber", nullptr});
+    asset_url(url, tag, pattern);
+    download(url, manifest_path);
     static Manifest manifest;
     read_manifest(manifest_path, &manifest);
     download_parts(tag, stage, &manifest, archive);
