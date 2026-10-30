@@ -63,7 +63,7 @@ runs:
         # identity this tree wants from the cache above or downloads it (a hosted runner has no LLVM, and building it
         # takes hours)
         .smith/stage0-tool llvm
-        echo "fetch: $(( $(date +%s) - start )) s (step cache: ${{ steps.steps.outputs.cache-matched-key || 'none' }})" >>"$GITHUB_STEP_SUMMARY"
+        echo "fetch: $(( $(date +%s) - start )) s (step cache: ${{ steps.steps.outputs.cache-matched-key || 'none' }})" | tee -a "$GITHUB_STEP_SUMMARY"
 
     - name: Build smith
       shell: bash
@@ -75,7 +75,7 @@ runs:
         .smith/stage0-tool
         smith=$(ls "$PWD"/build/*/smith | head -n 1)
         echo "SMITH=$smith" >>"$GITHUB_ENV"
-        echo "build: $(( $(date +%s) - start )) s ($smith)" >>"$GITHUB_STEP_SUMMARY"
+        echo "build: $(( $(date +%s) - start )) s ($smith)" | tee -a "$GITHUB_STEP_SUMMARY"
 
     - name: Build the tests
       if: inputs.tests == 'true'
@@ -86,4 +86,4 @@ runs:
         start=$(date +%s)
         # `--list` builds the runner and every test program and runs none of them
         "$SMITH" test --list >/dev/null
-        echo "tests built: $(( $(date +%s) - start )) s" >>"$GITHUB_STEP_SUMMARY"
+        echo "tests built: $(( $(date +%s) - start )) s" | tee -a "$GITHUB_STEP_SUMMARY"

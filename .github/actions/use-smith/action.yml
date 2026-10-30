@@ -47,7 +47,7 @@ runs:
         rm -f "$RUNNER_TEMP/tree.tar" "$RUNNER_TEMP/tree.tar.zst"
         smith=$(ls "$PWD"/build/*/smith | head -n 1)
         echo "SMITH=$smith" >>"$GITHUB_ENV"
-        echo "unpack: $(( $(date +%s) - start )) s (LLVM cache hit: ${{ steps.cache.outputs.cache-hit || 'false' }})" >>"$GITHUB_STEP_SUMMARY"
+        echo "unpack: $(( $(date +%s) - start )) s (LLVM cache hit: ${{ steps.cache.outputs.cache-hit || 'false' }})" | tee -a "$GITHUB_STEP_SUMMARY"
 
     - name: Download the LLVM pack
       if: steps.cache.outputs.cache-hit != 'true'
@@ -57,4 +57,4 @@ runs:
         start=$(date +%s)
         "$SMITH" build llvm
         find "$HOME/.cache/smith/llvm" "$HOME/.cache/smith/enzyme" -exec touch -t 202001010000 {} + 2>/dev/null || true
-        echo "llvm pack download: $(( $(date +%s) - start )) s" >>"$GITHUB_STEP_SUMMARY"
+        echo "llvm pack download: $(( $(date +%s) - start )) s" | tee -a "$GITHUB_STEP_SUMMARY"
