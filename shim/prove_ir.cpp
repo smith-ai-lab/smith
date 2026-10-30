@@ -18,6 +18,7 @@
 
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 
 #include "llvm/ADT/DenseMap.h"
