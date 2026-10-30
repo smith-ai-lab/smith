@@ -30,6 +30,8 @@ jobs:
     timeout-minutes: 5
     outputs:
       scope: ${{ steps.scope.outputs.scope }}
+      mode: ${{ steps.scope.outputs.mode }}
+      base: ${{ steps.scope.outputs.base }}
       matrix: ${{ steps.linux.outputs.matrix }}
       oses: ${{ steps.linux.outputs.oses }}
     env:
@@ -42,21 +44,32 @@ jobs:
         id: scope
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
         run: |
           # none: only documents no build reads. docs: also the documents the docs check and their tests read. full:
           # anything else; a push to main, or a diff that cannot be read, is always full.
+          # Other workflows (llvm.yml) change nothing this one runs; ci.yml itself and the actions it uses do.
           documents='^(LICENSE[^/]*|CONTRIBUTING[.]md|[^/]+[.](png|jpe?g|gif|svg|webp))$'
+          workflows='^[.]github/workflows/'
           gated='^(README[.]md|AGENTS[.]md|knowledge/.*|[.]agents/.*)$'
           scope=full
+          mode=full
           # a push to main is a commit the merge queue already checked: it only publishes the release
           if [ "$GITHUB_EVENT_NAME" = push ]; then scope=release; BASE=; fi
           if [ -n "$BASE" ] && changed=$(git diff --name-only "$BASE" HEAD); then
-            built=$(printf '%s\n' "$changed" | grep . | grep -vE "$documents" || true)
+            own=$(printf '%s\n' "$changed" | grep -E '^([.]github/workflows/ci[.]yml|[.]github/actions/.*)$' || true)
+            built=$(printf '%s\n' "$changed" | grep . | grep -vE "$documents" | grep -vE "$workflows" || true)
+            built=$(printf '%s\n%s\n' "$built" "$own" | grep . || true)
             code=$(printf '%s\n' "$built" | grep . | grep -vE "$gated" || true)
             if [ -z "$built" ]; then scope=none; elif [ -z "$code" ]; then scope=docs; fi
+            # a pull request tests what its change can reach (`smith test --changed`); the merge queue runs
+            # everything, and so does a pull request that changes this workflow or its actions (how they are tested)
+            if [ "$GITHUB_EVENT_NAME" = pull_request ] && [ -z "$own" ]; then mode=changed; fi
           fi
+          echo "mode=$mode" >>"$GITHUB_OUTPUT"
+          echo "base=$PR_BASE" >>"$GITHUB_OUTPUT"
           echo "scope=$scope" >>"$GITHUB_OUTPUT"
-          echo "scope: $scope" >>"$GITHUB_STEP_SUMMARY"
+          echo "scope: $scope, tests: $mode" >>"$GITHUB_STEP_SUMMARY"
 
       - name: Test matrix
         id: linux
@@ -65,7 +78,16 @@ jobs:
         # build smith from source for hours on every pull request. This is the release scripts/stage0.c would use.
         run: |
           asset=smith-linux-x86_64.tar.xz
-          matrix='{"os":"macos-26","shard":1,"count":4},{"os":"macos-26","shard":2,"count":4},{"os":"macos-26","shard":3,"count":4},{"os":"macos-26","shard":4,"count":4}'
+          # macOS runs the whole suite until the Linux parts have passed in a real run; then these four become one
+          # `--macos-only` part and the Linux parts (which run `--skip-macos`) become required.
+          if [ "${{ steps.scope.outputs.mode }}" = changed ]; then
+            # a pull request: one macOS part with the tests the change reaches, no Linux build at all
+            echo "matrix={\"include\":[{\"os\":\"macos-26\",\"shard\":1,\"count\":1,\"flags\":\"--changed --base ${{ steps.scope.outputs.base }}\"}]}" >>"$GITHUB_OUTPUT"
+            echo 'oses=["macos-26"]' >>"$GITHUB_OUTPUT"
+            echo "linux: a pull request tests only what its change reaches, on macOS" >>"$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          matrix='{"os":"macos-26","shard":1,"count":4,"flags":""},{"os":"macos-26","shard":2,"count":4,"flags":""},{"os":"macos-26","shard":3,"count":4,"flags":""},{"os":"macos-26","shard":4,"count":4,"flags":""}'
           oses='"macos-26"'
           git tag --list 'stage0-*' >"$RUNNER_TEMP/tags"
           found=
@@ -73,7 +95,9 @@ jobs:
             if gh release view "$tag" --json assets --jq '.assets[].name' 2>/dev/null | grep -Fqx "$asset"; then found=$tag; break; fi
           done
           if [ -n "$found" ]; then
-            matrix="$matrix"',{"os":"ubuntu-latest","shard":1,"count":2},{"os":"ubuntu-latest","shard":2,"count":2}'
+            for i in 1 2 3 4 5 6; do
+              matrix="$matrix"',{"os":"ubuntu-latest","shard":'$i',"count":6,"flags":"--skip-macos"}'
+            done
             oses="$oses"',"ubuntu-latest"'
             echo "linux: $found has $asset: the Linux parts run" >>"$GITHUB_STEP_SUMMARY"
           else
@@ -195,7 +219,10 @@ jobs:
         run: |
           start=$(date +%s)
           rc=0
-          "$SMITH" test --shard "${{ matrix.shard }}/${{ matrix.count }}" --costs "$PWD/.github/shard-costs.tsv" 2>&1 |
+          shard=
+          if [ "${{ matrix.count }}" -gt 1 ]; then shard="--shard ${{ matrix.shard }}/${{ matrix.count }}"; fi
+          # shellcheck disable=SC2086
+          "$SMITH" test $shard ${{ matrix.flags }} --costs "$PWD/.github/shard-costs.tsv" 2>&1 |
             tee "$RUNNER_TEMP/test.log" || rc=${PIPESTATUS[0]}
           took=$(( $(date +%s) - start ))
           {
