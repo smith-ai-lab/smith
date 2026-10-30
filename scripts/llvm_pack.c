@@ -1,5 +1,5 @@
 // The LLVM pack (issue #797, knowledge/llvm-build.md): the part of an LLVM build that smith links and embeds, published
-// as a GitHub Release `llvm-<name>-<os>-<arch>` (for example `llvm-23.1.3-r11-darwin-arm64`), so that a machine with
+// as a GitHub Release `llvm-<name>-<os>-<arch>` (for example `llvm-23.1.3-r12-darwin-arm64`), so that a machine with
 // no LLVM (a hosted CI runner, a fresh clone) downloads it in minutes instead of building it for hours. Plain C23 and
 // libc only (as scripts/llvm_prune.c and scripts/llvm_linux.c are: Linux has no smith before this runs); it runs tar
 // and gh.
@@ -10,7 +10,7 @@
 //   llvm_pack publish CACHE NAME     pack, then `gh release create`; nothing when the release exists
 //   llvm_pack fetch CACHE NAME STAMP download, check and unpack into CACHE; write STAMP; exit 3 when there is no
 //                                    pack to take (no release, no gh, or a build already in that folder)
-// CACHE is the package cache's smith folder (~/.cache/smith) and NAME the configuration (23.1.3-r11), the folder
+// CACHE is the package cache's smith folder (~/.cache/smith) and NAME the configuration (23.1.3-r12), the folder
 // CACHE/llvm/NAME that `smith build llvm` makes. The pack holds only what smith links and what a build of smith reads:
 //   llvm/NAME/install/lib/*.a, smith-clang.id, libLTO.dylib, clang/ (the resource directory), cmake/
 //   llvm/NAME/install/include/ and bin/clang (bin/clang-23, the links bin/clang and bin/clang++)

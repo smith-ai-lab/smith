@@ -52,12 +52,14 @@ typedef struct {
 
 // What smith's own link differs in, macOS and Linux (issue #305, knowledge/platform-layer.md): the one table of it.
 struct BuildPlatform {
-    const char *whole_start;       // before an archive linked whole: libsmithtools.a, whose tweaks nothing names
-    const char *whole_end;         // and after it ("" when the start names the archive itself)
-    const char *group_start;       // around the static archives of LLVM, clang, lld and lldb, which name each other
-    const char *lld;               // lld's library for the platform's object format
-    const char *const *link_flags; // smith's link: drop what nothing reaches, export only main
-    const char *const *deployment; // every compile of smith itself: the oldest OS it runs on (macOS 26), else nothing
+    const char *whole_start;        // before an archive linked whole: libsmithtools.a, whose tweaks nothing names
+    const char *whole_end;          // and after it ("" when the start names the archive itself)
+    const char *group_start;        // around the static archives of LLVM, clang, lld and lldb, which name each other
+    const char *lld;                // lld's library for the platform's object format
+    const char *const *link_flags;  // smith's link: drop what nothing reaches, export only main
+    const char *enzyme_export;      // exports Enzyme's llvmGetPassPluginInfo, which shim/lld.cpp's plugin option finds
+    const char *const *prove_group; // around the prover's archives, which name each other ({start, end}; none on macOS)
+    const char *const *deployment;  // every compile of smith itself: the oldest OS it runs on (macOS 26), else nothing
     const char *const *lldb_libraries;   // what lldb's host layer uses
     const char *const *system_libraries; // last: the C++ library and the platform's own
     const char *const *pack_libraries;   // scripts/pack.c's (libcompression on macOS)
@@ -72,6 +74,8 @@ static const BuildPlatform build_platform_macos = {
     .lld = "liblldMachO.a",
     .link_flags =
         (const char *const[]){"-mmacosx-version-min=26.0", "-Wl,-dead_strip", "-Wl,-exported_symbol,_main", nullptr},
+    .enzyme_export = "-Wl,-exported_symbol,_llvmGetPassPluginInfo",
+    .prove_group = (const char *const[]){nullptr},
     // smith runs on macOS 26 and newer, built on any newer one (#802): a system function newer than 26 is called only
     // where it exists, and one called bare is an error here, whatever WERROR says.
     .deployment = (const char *const[]){"-mmacosx-version-min=26.0", "-Werror=unguarded-availability-new", nullptr},
@@ -90,6 +94,8 @@ static const BuildPlatform build_platform_linux = {
     .group_start = "-Wl,--start-group",
     .lld = "liblldELF.a",
     .link_flags = (const char *const[]){"-Wl,--gc-sections", "-Wl,--build-id=md5", nullptr},
+    .enzyme_export = "-Wl,--export-dynamic-symbol=llvmGetPassPluginInfo",
+    .prove_group = (const char *const[]){"-Wl,--start-group", "-Wl,--end-group", nullptr},
     .deployment = (const char *const[]){nullptr},
     .lldb_libraries = (const char *const[]){nullptr},
     .system_libraries = (const char *const[]){"-Wl,--end-group", "-Wl,-Bstatic", "-lstdc++", "-Wl,-Bdynamic", "-lm",
@@ -702,6 +708,15 @@ static const char *const *build_llvm_required(SmithBuild *b, const BuildConfig *
     return stop.outputs;
 }
 
+// The prover's archives, in a group on Linux: ELF's linker reads each archive once, in order, and Bitwuzla's name each
+// other.
+static const char *const *build_prove_group(SmithBuild *b, const BuildConfig *config, const BuildProver *prover) {
+    if (prover->libraries == nullptr) return smith_list(b, nullptr);
+    const char *const *group = config->platform->prove_group;
+    if (group[0] == nullptr) return prover->libraries;
+    return smith_cat(b, smith_list(b, group[0], nullptr), prover->libraries, smith_list(b, group[1], nullptr), nullptr);
+}
+
 static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const char *folder) {
     const char *pack = build_resource_pack(b, config, folder);
     const char *const *flags = smith_cat(
@@ -746,15 +761,14 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
     SmithProgram program = {
         .linker = config->cc,
         .output = smith_fmt(b, "%s/smith", folder),
-        .flags =
-            smith_cat(b, config->platform->link_flags,
-                      smith_when(b, config->enzyme[0] != '\0',
-                                 (const char *[]){"-Wl,-exported_symbol,_llvmGetPassPluginInfo", nullptr}),
-                      smith_when(b, config->coverage, (const char *[]){"-fprofile-instr-generate", nullptr}), nullptr),
+        .flags = smith_cat(
+            b, config->platform->link_flags,
+            smith_when(b, config->enzyme[0] != '\0', (const char *[]){config->platform->enzyme_export, nullptr}),
+            smith_when(b, config->coverage, (const char *[]){"-fprofile-instr-generate", nullptr}), nullptr),
         .objects = objects,
-        .libraries = smith_cat(b, shims.prove.libraries != nullptr ? shims.prove.libraries : smith_list(b, nullptr),
-                               build_enzyme_libraries(b, config), build_clang_libraries(b, config),
-                               build_lldb_libraries(b, config), config->platform->system_libraries, nullptr),
+        .libraries = smith_cat(b, build_prove_group(b, config, &shims.prove), build_enzyme_libraries(b, config),
+                               build_clang_libraries(b, config), build_lldb_libraries(b, config),
+                               config->platform->system_libraries, nullptr),
     };
     smith_program(b, &program);
     smith_default(b, build_links(b, &program.step, folder));
@@ -1113,18 +1127,19 @@ static void build_release(SmithBuild *b, const char *binary) {
 }
 
 // The folder of the LLVM configuration under the package cache: one build of 23.1.3 with RTTI and exceptions on (Alive2
-// needs them), the token hook (#11), and the prover's libraries beside it. r11 is the eleventh configuration
-// (patches/*.patch); scripts/llvm.sh has the same name (SMITH_LLVM_NAME overrides both).
+// needs them), the token hook (#11), and the prover's libraries beside it. r12 is the twelfth configuration
+// (patches/*.patch; r12 has no new patch: it is the pack of Linux that gains the prover and Enzyme, #820);
+// scripts/llvm.sh has the same name (SMITH_LLVM_NAME overrides both).
 static const char *build_llvm_folder(SmithBuild *b) {
     const char *cache = smith_env(b, "XDG_CACHE_HOME", smith_fmt(b, "%s/.cache", smith_env(b, "HOME", "")));
-    return smith_fmt(b, "%s/smith/llvm/%s", cache, smith_env(b, "SMITH_LLVM_NAME", "23.1.3-r11"));
+    return smith_fmt(b, "%s/smith/llvm/%s", cache, smith_env(b, "SMITH_LLVM_NAME", "23.1.3-r12"));
 }
 
 // Enzyme beside the LLVM configurations, keyed by its version and the configuration it was built against, so that
 // building it leaves the LLVM install alone (build_enzyme_make).
 static const char *build_enzyme_folder(SmithBuild *b) {
     const char *cache = smith_env(b, "XDG_CACHE_HOME", smith_fmt(b, "%s/.cache", smith_env(b, "HOME", "")));
-    return smith_fmt(b, "%s/smith/enzyme/0.0.303-%s", cache, smith_env(b, "SMITH_LLVM_NAME", "23.1.3-r11"));
+    return smith_fmt(b, "%s/smith/enzyme/0.0.303-%s", cache, smith_env(b, "SMITH_LLVM_NAME", "23.1.3-r12"));
 }
 
 static const char *build_cmake_package(SmithBuild *b) {
