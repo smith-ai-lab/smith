@@ -1451,6 +1451,7 @@ typedef struct {
     bool list;
     const char
         *costs;    // --costs <file>: lines `cpu<TAB>seconds<TAB>name`; the heaviest tests start first (unknown first)
+    u8 macos;      // --macos-only (1): only the macOS-only tests; --skip-macos (2): all the others; 0: every test
     bool cheapest; // --cheapest: with --costs, the cheapest tests start first instead (a selection under --fail-fast)
     u32 idle_timeout; // wall seconds a test may use no CPU time (it and its processes), then it fails; 0 for none
     bool idle_given;  // --idle-timeout was passed
@@ -3466,6 +3467,10 @@ bool parse_options(i32 argc, char **argv, Options *options) {
             options->isolate = true;
         } else if (c::strcmp(flag, "--in-process") == 0) {
             options->in_process = true;
+        } else if (c::strcmp(flag, "--macos-only") == 0) {
+            options->macos = 1;
+        } else if (c::strcmp(flag, "--skip-macos") == 0) {
+            options->macos = 2;
         } else if (c::strcmp(flag, "--cheapest") == 0) {
             options->cheapest = true;
         } else if (c::strcmp(flag, "--stats") == 0) {
@@ -3505,7 +3510,19 @@ bool selects_any(const char *name, const char *list) {
     return false;
 }
 
+// A test is macOS-only when its shown name has the word `macos` in it: `macos_` after `test_` in the function
+// (`test_macos_kqueue`), or a module `..._macos_test`. A word ends at `_`, `:` or the end of the name.
+bool macos_only(const char *name) {
+    for (const char *at = c::strstr(name, "macos"); at != nullptr; at = c::strstr(at + 1, "macos")) {
+        bool starts = at == name || at[-1] == '_' || at[-1] == ':';
+        bool ends = at[5] == '\0' || at[5] == '_' || at[5] == ':';
+        if (starts && ends) return true;
+    }
+    return false;
+}
+
 bool selects(const Options *options, const char *name) {
+    if (options->macos != 0 && macos_only(name) != (options->macos == 1)) return false;
     if (options->filter == nullptr) return true;
     if (options->exact) return c::strcmp(name, options->filter) == 0;
     if (c::strchr(options->filter, ',') != nullptr) return selects_any(name, options->filter);
@@ -3727,7 +3744,7 @@ static void say_usage(const Options *options, const Runner *runner) {
     complain(options,
              "usage: %s [--test <substring>] [--seed <n>] [--seeds <1 to %ju>] [--jobs <1 to %zu>] "
              "[--timeout <cpu seconds>] [--wall-timeout <seconds>] [--shrink 0|1] [--shrink-seconds <seconds>] "
-             "[--shuffle <seed>] [--shard <i>/<n>] [--isolate] "
+             "[--shuffle <seed>] [--shard <i>/<n>] [--macos-only|--skip-macos] [--isolate] "
              "[--in-process] [--full] [--update] [--list] [--fail-fast] [--costs <file>] [--cheapest] [--idle-timeout "
              "<seconds>] [--verbose] [--stats] "
              "[--trace] [--color] "
