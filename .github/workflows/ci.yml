@@ -105,15 +105,6 @@ jobs:
       - uses: ./.github/actions/setup-smith
         with:
           tests: "true"
-      - name: Save the step cache (temporary, measures a warm run of this branch)
-        if: github.head_ref == 'ci-fast'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/.cache/smith/steps
-            ~/.cache/smith/packages
-            ~/.cache/smith/tools
-          key: smith-steps-${{ runner.os }}-${{ github.sha }}
       - uses: ./.github/actions/pack-smith
         with:
           name: ${{ matrix.os }}
