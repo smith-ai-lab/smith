@@ -274,18 +274,14 @@ static void compile_smith(Args *objects) {
                                       "-isystem",
                                       "shim/lldb",
                                       "-isystem"};
-    // The shims are compiled by the system's C++ compiler, the one that built the pack's libraries (GCC on the hosted
-    // image): GCC and clang mangle `std::enable_if<std::is_integral_v<bool>, ...>` differently, so clang-built shims
-    // would not find clang-tidy's `OptionsView::get<bool>` in libclangTidy.a. Everything else is clang's.
-    const char *cxx_compiler = getenv("CXX") != nullptr && *getenv("CXX") != '\0' ? getenv("CXX") : "c++";
     Args shim_flags = {};
     add_all(&shim_flags, cxx, sizeof cxx / sizeof cxx[0]);
     static char include[path_max];
     join(include, "%s/include", llvm, "");
     add(&shim_flags, include);
     for (size_t i = 0; i < sizeof shims / sizeof shims[0]; i++) {
-        add(objects,
-            compile(cxx_compiler, path("shim/%s.cpp", shims[i], ""), "a", path("%s_shim", shims[i], ""), &shim_flags));
+        add(objects, compile(path("%s/bin/clang++", llvm, ""), path("shim/%s.cpp", shims[i], ""), "a",
+                             path("%s_shim", shims[i], ""), &shim_flags));
     }
 }
 
