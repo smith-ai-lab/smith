@@ -1015,13 +1015,15 @@ static const char *smith_compiler_file(const char *compiler) {
     return smith_text(".smith/compiler/%016" PRIx64, smith_hash_bytes(compiler, strlen(compiler)));
 }
 
-// The real path of an executable named by a path, or found on PATH; nullptr when there is none.
-static const char *smith_resolve_executable(const char *name) {
+// The path of an executable named by a path, or found on PATH; nullptr when there is none. With `resolve` the real
+// path (a symlink followed), else the path as found: smith-cc is a link to smith, and only the name it is run by says
+// that it is a compiler.
+static const char *smith_find_executable(const char *name, bool resolve) {
     char found[PATH_MAX];
     char real[PATH_MAX];
     if (strchr(name, '/') != nullptr) {
         if (realpath(name, real) == nullptr) return nullptr;
-        return smith_copy_string(real);
+        return smith_copy_string(resolve ? real : name);
     }
     const char *path = getenv("PATH");
     if (path == nullptr) return nullptr;
@@ -1031,7 +1033,7 @@ static const char *smith_resolve_executable(const char *name) {
         int written = snprintf(found, sizeof found, "%.*s/%s", (int)length, length > 0 ? start : ".", name);
         if (written > 0 && (size_t)written < sizeof found && access(found, X_OK) == 0 &&
             realpath(found, real) != nullptr)
-            return smith_copy_string(real);
+            return smith_copy_string(resolve ? real : found);
         if (end == nullptr) break;
         start = end + 1;
     }
@@ -1056,13 +1058,14 @@ static const char *smith_file_identity(const char *path) {
 // with clang linked in, "clang in-process <clang>" and "identity <the version of that LLVM and a hash of what is
 // linked>", so a smith rebuilt against the same LLVM is the same compiler; with an external clang ($SMITH_CLANG, or a
 // stage0's), "clang <path>", so it is that clang's file. Anything else that is named smith is taken for a compiler like
-// another.
-static const char *smith_compiler_identity(const char *real) {
+// another. `invoked` is the path as found (smith-cc, a link to smith): the program decides what it is by the name it is
+// run by, so `real` (the link followed: smith) would not answer.
+static const char *smith_compiler_identity(const char *real, const char *invoked) {
     const char *base = strrchr(real, '/');
     base = base != nullptr ? base + 1 : real;
     const char *own = smith_file_identity(real);
     if (strncmp(base, "smith", 5) != 0) return own;
-    const char *text = smith_capture_with((const char *[]){real, "--smith-which", "-c", "a.c", nullptr}, "", true);
+    const char *text = smith_capture_with((const char *[]){invoked, "--smith-which", "-c", "a.c", nullptr}, "", true);
     if (strncmp(text, "clang in-process ", 17) == 0) {
         const char *identity = strstr(text, "\nidentity ");
         return identity != nullptr ? smith_text("in-process %s", identity + 10) : own;
@@ -1075,9 +1078,10 @@ static const char *smith_compiler_identity(const char *real) {
 static void smith_write_compiler_files(void) {
     for (size_t i = 0; i < smith_compiler_count; i++) {
         const char *compiler = smith_compilers[i];
-        const char *real = smith_resolve_executable(compiler);
-        const char *text =
-            smith_text("%s\n%s\n", compiler, real != nullptr ? smith_compiler_identity(real) : "missing");
+        const char *real = smith_find_executable(compiler, true);
+        const char *text = smith_text(
+            "%s\n%s\n", compiler,
+            real != nullptr ? smith_compiler_identity(real, smith_find_executable(compiler, false)) : "missing");
         smith_write_if_different(smith_compiler_file(compiler), text, strlen(text));
     }
 }
@@ -2636,6 +2640,9 @@ void smith_program(SmithBuild *b, SmithProgram *program) {
     // image in a failure's trace, and the exported symbols are the names of its raw frames (lib/trace.c).
     const char *const *identity = smith_when(b, strcmp(b->os, "Linux") == 0,
                                              smith_list(b, "-Wl,--build-id=md5", "-Wl,--export-dynamic", nullptr));
+    // glibc keeps libm apart from libc (macOS's is in libSystem): a program that calls sqrtf or sin links -lm there,
+    // and one that does not loses nothing by it.
+    const char *const *math = smith_when(b, strcmp(b->os, "Linux") == 0, smith_list(b, "-lm", nullptr));
     // The effect summaries of the objects (an output of each compile that writes one): the link checks them (skill
     // smith-lang-effects), so a summary that changed reruns it even when its object did not (an attribute moved).
     const char **summaries = smith_new_list(count);
@@ -2649,7 +2656,7 @@ void smith_program(SmithBuild *b, SmithProgram *program) {
     const char *const *handlers = smith_program_handlers(b, &copy, &handlers_files);
     copy.step = (SmithStep){
         .command = smith_cat(b, smith_one(copy.linker), identity, copy.flags, (const char *const *)outputs,
-                             copy.libraries, handlers, tail, nullptr),
+                             copy.libraries, math, handlers, tail, nullptr),
         .inputs = (const char *const *)outputs,
         .implicit_inputs = smith_cat(b, smith_library_files(copy.libraries),
                                      smith_one(smith_compiler_file(copy.linker)), summaries, handlers_files, nullptr),
@@ -2758,22 +2765,28 @@ static bool smith_listed_before(size_t row) {
 // first_once: each source once, by its first compile (what clang-tidy reads); else each output, as the editor's file.
 static void smith_put_compile_commands(FILE *out, const SmithBuild *b, bool first_once) {
     fputs("[\n", out);
+    bool any = false; // the entries are separated, not each followed by a comma: the file is JSON when there are none
     for (size_t i = 0; i < smith_object_row_count; i++) {
         const SmithObject *object = &smith_object_rows[i].object;
         if (!smith_object_rows[i].listed || (first_once && smith_listed_before(i))) continue;
+        if (any) fputs(",\n", out);
+        any = true;
         smith_json_entry(out, b->root, object->source, object->output,
                          smith_cat((SmithBuild *)b, object->step.command,
                                    smith_module_advisories((SmithBuild *)b, object->source), nullptr));
-        fputs(",\n", out);
     }
     for (size_t i = 0; i < smith_command_row_count; i++) {
+        if (any) fputs(",\n", out);
+        any = true;
         smith_json_entry(out, b->root, smith_command_rows[i].source, nullptr,
                          smith_cat((SmithBuild *)b, smith_command_rows[i].arguments,
                                    smith_module_advisories((SmithBuild *)b, smith_command_rows[i].source), nullptr));
-        fputs(",\n", out);
     }
     const char *build_file = smith_build_file_name();
-    if (build_file != nullptr) smith_json_entry(out, b->root, build_file, nullptr, smith_build_file_words(build_file));
+    if (build_file != nullptr) {
+        if (any) fputs(",\n", out);
+        smith_json_entry(out, b->root, build_file, nullptr, smith_build_file_words(build_file));
+    }
     fputs("\n]\n", out);
 }
 

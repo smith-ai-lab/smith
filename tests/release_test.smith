@@ -128,8 +128,15 @@ export void test_release_publish_creates_one_release_and_keeps_other_tags(io::Io
     (void)run(io, &p, "sh \"$script\" publish ../fake-smith >/dev/null 2>&1");
     scratch::expect_text("release: publish-twice-creates-nothing", "1",
                          capture(io, &p, "grep -c 'release create' \"$GH_LOG\""));
-    scratch::expect_text("release: publish-twice-replaces", "1",
+    scratch::expect_text("release: publish-twice-replaces", "2",
                          capture(io, &p, "grep -c 'release upload.*--clobber' \"$GH_LOG\""));
+    scratch::expect_text("release: publish-makes-a-draft", "1",
+                         capture(io, &p, "grep -c 'release create.*--draft' \"$GH_LOG\""));
+    scratch::expect_text("release: publish-leaves-it-a-draft", "0",
+                         capture(io, &p, "grep -c 'release edit' \"$GH_LOG\" || true"));
+    (void)run(io, &p, "sh \"$script\" finish stage0-$head >/dev/null 2>&1");
+    scratch::expect_text("release: finish-publishes-the-draft", "1",
+                         capture(io, &p, "grep -c -- \"stage0-$head --draft=false\" ../published"));
     scratch::expect_text("release: publish-keeps-others", "yes",
                          capture(io, &p, "[ -d ../gh/other-tag ] && [ -d ../gh/stage0-old ] && echo yes"));
     scratch::expect_text("release: refuse-wrong-binary",
