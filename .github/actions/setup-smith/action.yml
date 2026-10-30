@@ -75,6 +75,9 @@ runs:
         .smith/stage0-tool
         smith=$(ls "$PWD"/build/*/smith | head -n 1)
         echo "SMITH=$smith" >>"$GITHUB_ENV"
+        # the build's compiler is `smith-cc` found on PATH, and the graph rewrites a file naming that compiler when it
+        # is not the same one (or is missing), which makes everything dirty: the later steps and jobs find it here
+        dirname "$smith" >>"$GITHUB_PATH"
         echo "build: $(( $(date +%s) - start )) s ($smith)" | tee -a "$GITHUB_STEP_SUMMARY"
 
     - name: Build the tests

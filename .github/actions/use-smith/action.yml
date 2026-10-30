@@ -47,6 +47,9 @@ runs:
         rm -f "$RUNNER_TEMP/tree.tar" "$RUNNER_TEMP/tree.tar.zst"
         smith=$(ls "$PWD"/build/*/smith | head -n 1)
         echo "SMITH=$smith" >>"$GITHUB_ENV"
+        # the build graph names its compiler `smith-cc` (found on PATH, as in the job that built); another or none
+        # would rewrite its file in .smith/compiler/ and make everything dirty
+        dirname "$smith" >>"$GITHUB_PATH"
         echo "unpack: $(( $(date +%s) - start )) s (LLVM cache hit: ${{ steps.cache.outputs.cache-hit || 'false' }})" | tee -a "$GITHUB_STEP_SUMMARY"
 
     - name: Download the LLVM pack
