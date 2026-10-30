@@ -466,9 +466,51 @@ static char *const *smith_lint_job(size_t job, void *context) {
     return smith_lint_argv;
 }
 
+// The files whose clang-tidy failed, for the last lines: the file, how its process ended (a wait status, or the exit
+// status of a result the cache kept) and whether it was cached. Only the first smith_lint_failed_max are kept.
+constexpr size_t smith_lint_failed_max = 64;
+
+typedef struct {
+    const char *file;
+    int wait_status;
+    bool cached;
+} SmithLintFailure;
+
+static SmithLintFailure smith_lint_failures[smith_lint_failed_max];
+static size_t smith_lint_failure_count;
+
+// How a clang-tidy ended, in words: `exited with status 1`, `was killed by signal 9 (Killed)`.
+static void smith_lint_ending(char *out, size_t capacity, int wait_status, bool cached) {
+    if (cached)
+        snprintf(out, capacity, "exited with status %d (the result an earlier run kept)", wait_status);
+    else if (WIFEXITED(wait_status))
+        snprintf(out, capacity, "exited with status %d", WEXITSTATUS(wait_status));
+    else if (WIFSIGNALED(wait_status))
+        snprintf(out, capacity, "was killed by signal %d (%s)", WTERMSIG(wait_status),
+                 strsignal(WTERMSIG(wait_status)));
+    else
+        snprintf(out, capacity, "ended with wait status %d", wait_status);
+}
+
+static void smith_lint_failed(const char *file, int wait_status, bool cached) {
+    if (smith_lint_failure_count < smith_lint_failed_max)
+        smith_lint_failures[smith_lint_failure_count++] = (SmithLintFailure){file, wait_status, cached};
+}
+
+// A job ends: its result is stored, and when it failed its log, which is printed whole next, ends with the file and how
+// clang-tidy ended, so that a crash or a kill that printed nothing still says which file and why.
 static void smith_lint_done(size_t job, int wait_status, FILE *log, void *context) {
     const SmithLintRun *run = (const SmithLintRun *)context;
     smith_lc_store(run->order[job], wait_status, log);
+    if (smith_verbs_status(wait_status) == 0) return;
+    const char *file = run->files[run->order[job]];
+    smith_lint_failed(file, wait_status, false);
+    char ending[160];
+    smith_lint_ending(ending, sizeof ending, wait_status, false);
+    fseek(log, 0, SEEK_END);
+    bool silent = ftell(log) <= 0;
+    fprintf(log, "smith lint: %s: clang-tidy %s%s\n", file, ending, silent ? " and printed nothing" : "");
+    fflush(log);
 }
 
 static size_t smith_verbs_jobs(void) {
@@ -535,7 +577,10 @@ static int smith_lint_run(SmithLintRun *run, size_t count, const char *self) {
         int status = 0;
         if (cache) smith_lc_plan(i, run->files[i], run->flags[i]);
         if (cache && smith_lc_replay(i, &status)) {
-            if (status != 0) failed++;
+            if (status != 0) {
+                failed++;
+                smith_lint_failed(run->files[i], status, true);
+            }
         } else {
             run->order[misses++] = i;
         }
@@ -546,7 +591,16 @@ static int smith_lint_run(SmithLintRun *run, size_t count, const char *self) {
     smith_lint_argv[3] = (char *)"-p";
     smith_lint_argv[4] = (char *)".smith";
     failed += smith_verbs_parallel(misses, smith_verbs_jobs(), smith_lint_job, smith_lint_done, run);
-    if (failed > 0) fprintf(stderr, "smith lint: clang-tidy failed on %zu of %zu files\n", failed, count);
+    if (failed > 0) {
+        fprintf(stderr, "smith lint: clang-tidy failed on %zu of %zu files\n", failed, count);
+        for (size_t i = 0; i < smith_lint_failure_count; i++) { // bounded by smith_lint_failed_max
+            char ending[160];
+            smith_lint_ending(ending, sizeof ending, smith_lint_failures[i].wait_status, smith_lint_failures[i].cached);
+            fprintf(stderr, "smith lint:   %s: %s\n", smith_lint_failures[i].file, ending);
+        }
+        if (failed > smith_lint_failure_count)
+            fprintf(stderr, "smith lint:   and %zu more\n", failed - smith_lint_failure_count);
+    }
     uint64_t took = smith_account_now_ms() - began;
     fprintf(stderr, "smith lint: linted %zu files (%zu run, %zu cached, %.1f s)\n", count, misses, count - misses,
             (double)took / 1000.0);
