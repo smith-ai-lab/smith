@@ -25,6 +25,7 @@ after that calls the functions by name. In `.smith` code the platform is `target
 | `smith_platform_monotonic_ns`: the monotonic clock (`runtime/explain.c`'s wait for a resumed test) | `clock_gettime_nsec_np` | `clock_gettime` |
 | `smith_platform_process_stopped`: whether a test that `smith --smith-explain` read is still stopped | `proc_pidinfo` | the state letter in `/proc/<pid>/stat` |
 | the images of a failure's trace (`lib/trace.c`, `shim/symbolize.cpp`; not in `platform_*.c`: the file splits by `#ifdef __APPLE__`) | dyld's images, named by `LC_UUID`; the debug map of the binary | `dl_iterate_phdr`, named by the build-id (`smith_program` links every program with `--build-id=md5`); the DWARF is in the executable, read by LLVM's symbolizer |
+| the math library of a program (`smith_program` in `runtime/build_runtime.c`) | in libSystem: nothing is added to the link | in its own `libm`: `-lm` ends the link of every program, so `c::sqrtf` and `c::sin` link |
 | `smith_platform_decompress`: a file of clang's resource pack | LZFSE (libcompression; `scripts/pack.c` compresses) | nothing: the pack is stored uncompressed (`scripts/pack.c` keeps every file as it is) |
 
 The C++ shims have the same split in `shim/platform_macos.h` and `shim/platform_linux.h`, which `shim/platform.h`
@@ -36,7 +37,7 @@ includes:
 | `smith_platform_self_path`: the running executable | `_NSGetExecutablePath` | `/proc/self/exe` |
 | `smith_platform_lld_link`: `ld` in smith's process (`shim/lld.cpp`) | `lld::macho::link`, as `ld64.lld` | `lld::elf::link`, as `ld.lld` |
 | `smith_platform_linker_version`: what the driver is told of its ld (`shim/clang.cpp`) | `-mlinker-version=1115.7.3` | nothing (the flag is Darwin's) |
-| `smith_platform_spawn_chdir` (`shim/lsp.cpp`) | `posix_spawn_file_actions_addchdir` | `posix_spawn_file_actions_addchdir_np` |
+| `smith_platform_spawn_chdir` (`shim/lsp.cpp`) | `posix_spawn_file_actions_addchdir` (macOS 26, smith's floor: [deployment-target](deployment-target.md)) | `posix_spawn_file_actions_addchdir_np` |
 | `smith_platform_spawn_suspended`: a program a debugger attaches to (`shim/lldb_explain.cpp`) | `POSIX_SPAWN_START_SUSPENDED` | a child that stops itself with SIGSTOP before it runs the program |
 
 On Linux `smith.c` also defines `_GNU_SOURCE` before its first include, because glibc hides `nftw`'s `FTW_PHYS` and

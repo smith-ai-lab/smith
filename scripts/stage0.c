@@ -9,9 +9,16 @@
 //   3. runs .smith/stage0/bin/smith build, with that bin/ first on PATH so that its smith-cc is the CC of the build.
 // It needs git, gh, tar, the network, and `~/.cache/smith/llvm` (`smith build llvm`, about 9 minutes once). With a
 // smith installed, `smith build` does all of this already. SMITH_STAGE0_RELEASE=<tag> names the release to use.
-// On Linux, when no release can be had (none has a Linux build yet, or the download fails), it builds smith from
-// source instead: scripts/seed_linux.c, the seed of the Linux release chain (issue #305), which needs about two
-// hours the first time. SMITH_STAGE0_SEED=1 asks for the seed directly, and SMITH_STAGE0_SEED=0 never builds it.
+// A release is one per commit holding a tarball per platform (macOS and Linux jobs add theirs, #799), so the newest
+// ancestor "with a release" is the newest one that has the asset of this platform: `gh release view` lists them.
+// On Linux, when no release can be had (no ancestor has a Linux build yet, or the download fails), it builds smith
+// from source instead: scripts/seed_linux.c, the seed of the Linux release chain (issue #305), which takes the
+// published LLVM pack (minutes), or builds LLVM when there is none (about two hours). SMITH_STAGE0_SEED=1 asks for the
+// seed directly, and SMITH_STAGE0_SEED=0 never builds it. It compiles as strict ISO C (gcc's -std=c2x), so the POSIX
+// names it uses are asked for here.
+#ifndef __APPLE__
+#define _POSIX_C_SOURCE 200809L
+#endif
 #include <fcntl.h>
 #include <limits.h>
 #include <spawn.h>
@@ -90,9 +97,20 @@ static bool has_line(const char *text, const char *line) {
     return false;
 }
 
-// The newest ancestor of HEAD with a release: the tags name commits, so the first commit of `git rev-list HEAD` that a
-// tag names is the one. A shallow clone has no history to walk, so it is made whole first.
-static const char *find_release(char *tag, size_t capacity) {
+// Whether the release has the tarball and its checksum for this platform: the names of its assets, one per line.
+static bool has_asset(const char *tag, const char *name) {
+    char sums[256];
+    snprintf(sums, sizeof sums, "%s.sha256", name);
+    const char *assets =
+        run((const char *[]){"gh", "release", "view", tag, "--json", "assets", "--jq", ".assets[].name", nullptr}, true,
+            true);
+    return assets != nullptr && has_line(assets, name) && has_line(assets, sums);
+}
+
+// The newest ancestor of HEAD with a release that has `name`: the tags name commits, so the first commit of
+// `git rev-list HEAD` that a tag names, and whose release has the asset, is the one. A shallow clone has no history to
+// walk, so it is made whole first.
+static const char *find_release(char *tag, size_t capacity, const char *name) {
     const char *named = getenv("SMITH_STAGE0_RELEASE");
     if (named != nullptr && *named != '\0') {
         snprintf(tag, capacity, "%s", named);
@@ -110,22 +128,23 @@ static const char *find_release(char *tag, size_t capacity) {
     static char tags[output_max + 1];
     const char *listed = run((const char *[]){"git", "tag", "--list", "stage0-*", nullptr}, true, true);
     snprintf(tags, sizeof tags, "%s", listed != nullptr ? listed : "");
-    const char *history = run((const char *[]){"git", "rev-list", "HEAD", nullptr}, true, true);
-    if (history == nullptr) die("cannot read the history of HEAD", nullptr);
+    static char history[output_max + 1]; // a copy: has_asset reads into `output` too
+    const char *listed_history = run((const char *[]){"git", "rev-list", "HEAD", nullptr}, true, true);
+    if (listed_history == nullptr) die("cannot read the history of HEAD", nullptr);
+    snprintf(history, sizeof history, "%s", listed_history);
     for (const char *at = history; *at != '\0';) { // each pass moves past one commit
         const char *end = strchr(at, '\n');
         size_t size = end != nullptr ? (size_t)(end - at) : strlen(at);
         char candidate[128];
         snprintf(candidate, sizeof candidate, "stage0-%.*s", (int)size, at);
-        if (has_line(tags, candidate)) {
+        if (has_line(tags, candidate) && has_asset(candidate, name)) {
             snprintf(tag, capacity, "%s", candidate);
             return tag;
         }
         if (end == nullptr) break;
         at = end + 1;
     }
-    die("no ancestor of HEAD has a release (stage0-<commit>): is the clone behind main? git pull, or ask for a release",
-        nullptr);
+    die("no ancestor of HEAD has a release (stage0-<commit>) with the tarball for this platform:", name);
 }
 
 static bool read_file(const char *path, char *into, size_t capacity) {
@@ -204,7 +223,7 @@ int main(int argc, char **argv) {
         *c = (char)((*c >= 'A' && *c <= 'Z') ? *c + ('a' - 'A') : *c);
 
     char tag[128];
-    find_release(tag, sizeof tag);
+    find_release(tag, sizeof tag, name);
     const char *folder = ".smith/stage0";
     char recorded[128] = "";
     char tag_file[path_max];

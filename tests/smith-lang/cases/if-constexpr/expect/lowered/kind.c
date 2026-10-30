@@ -29,11 +29,11 @@ return 1;
 }
 #elif SMITH_TARGET_ARCH == 2
  {
-undeclared_function();
+return 1;
 }
 #else
  {
-return 3;
+undeclared_function();
 }
 #endif
 
@@ -43,6 +43,10 @@ __INT32_TYPE__ kind_opaque(__INT32_TYPE__ value) {
 #if SMITH_TARGET_ARCH == 1
  {
 __asm__("" : "+w"(value));
+}
+#elif SMITH_TARGET_ARCH == 2
+ {
+__asm__("" : "+r"(value));
 }
 #else
  {
@@ -62,9 +66,13 @@ __INT32_TYPE__ result = 0;
  {
 result = 10;
 }
-#else
+#elif SMITH_TARGET_OS == 0
  {
 undeclared_function();
+}
+#else
+ {
+result = 10;
 }
 #endif
 #if ((8) == 8 && SMITH_TARGET_FLOAT_RADIX == 2)

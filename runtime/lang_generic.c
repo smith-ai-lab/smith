@@ -2310,8 +2310,11 @@ static void smith_lang_instance_define_slices(SmithLang *lang, const SmithHost *
 // UINT32_MAX.
 static void smith_lang_gen_call_start(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
                                       const SmithLangInstance *instance, uint32_t location, uint32_t real,
-                                      uint32_t instance_id) {
+                                      uint32_t instance_id, bool begins_line) {
     smith_lang_gen_note_break(lang);
+    // A statement that is a call begins its line as the call did (-Wmisleading-indentation reads the lines: `if (x)
+    // continue;` and a call on the next line). The raw lowering is text, and lines in it would change its bytes.
+    if (begins_line && host->type_query != nullptr) lang->carry_line_start = true;
     static const SmithLangPiece start[] = {{SmithTokenKind_Identifier, "__extension__"},
                                            {SmithTokenKind_Punctuator, "("},
                                            {SmithTokenKind_Punctuator, "{"}};
@@ -2406,6 +2409,7 @@ typedef struct {
     uint32_t instance_id;
     const SmithLangGeneric *generic; // whose tokens these are
     uint32_t location;               // of the call that asked for the instance
+    bool start_line;                 // and the call as written begins its line
     bool typing; // the tokens are written to be typed by the compiler: a parameter of the instance stands for a value
     // The call being finished holds a call: its arguments as the instance writes them, for the compiler to type.
     SmithLangSpan spans[smith_lang_call_params_max]; // the arguments as the generic's tokens have them
@@ -4329,7 +4333,8 @@ static bool smith_lang_call_finish(SmithLang *lang, const SmithHost *host, Smith
         smith_lang_instance_request(lang, host, generic_index, types.first, types.count, types.entries, mark, location);
     if (index < 0) return false;
     if (replay->typing) (void)smith_lang_junk_add(replay, pool_before, smith_lang_gt.count); // the lists written out
-    smith_lang_gen_call_start(lang, host, generic, &smith_lang_instances[index], location, real, replay->instance_id);
+    smith_lang_gen_call_start(lang, host, generic, &smith_lang_instances[index], location, real, replay->instance_id,
+                              real != UINT32_MAX && replay->start_line);
     if (real != UINT32_MAX && lang->call_site_count < smith_lang_call_sites_max) {
         lang->call_sites[lang->call_site_count++] =
             (SmithLangCallSite){.location = real, .generic = generic_index, .instance = (uint32_t)index};
@@ -5512,8 +5517,9 @@ static void smith_lang_gt_slide(uint32_t to_count, uint32_t to_text, uint32_t fr
 
 // A call to a generic, outside any generic: read whole, then written as the call of its instance.
 static bool smith_lang_generic_direct_call(SmithLang *lang, const SmithHost *host, uint32_t generic_index,
-                                           uint32_t location, uint32_t member_location) {
+                                           uint32_t location, uint32_t member_location, bool start_line) {
     if (!smith_lang_generic_push_frame(lang, host, false, generic_index, location, member_location)) return false;
+    lang->calls[lang->call_top - 1].start_line = start_line;
     lang->cap_frames += 1;
     if (lang->cap_frames == 1) smith_lang_written_used = 0; // the outermost call: its nested calls are kept anew
     lang->namespace_done = true;
@@ -5554,7 +5560,11 @@ static void smith_lang_generic_finish_call(SmithLang *lang, const SmithHost *hos
     uint32_t top_count = smith_lang_gt.count;
     uint32_t top_text = smith_lang_gt.text_used;
     SmithLangReplay *replay = &smith_lang_replay;
-    *replay = (SmithLangReplay){.instance = nullptr, .instance_id = 0, .generic = nullptr, .location = frame->location};
+    *replay = (SmithLangReplay){.instance = nullptr,
+                                .instance_id = 0,
+                                .generic = nullptr,
+                                .location = frame->location,
+                                .start_line = frame->start_line};
     bool written = !lang->call_failed && smith_lang_call_finish(lang, host, replay, frame->generic_index, frame->count,
                                                                 top_count, frame->location, frame->member_location);
     if (!written) { // nothing of the call is kept; the outermost one leaves the poison where it stood
@@ -5669,7 +5679,7 @@ static bool smith_lang_generic_as_argument(SmithLang *lang, const SmithHost *hos
 // false when it is not one and the name is to be written as any other.
 static bool smith_lang_generic_call_core(SmithLang *lang, const SmithHost *host, const char *module,
                                          size_t module_length, const char *member, size_t member_length,
-                                         uint32_t location, int generic_index) {
+                                         uint32_t location, bool start_line, int generic_index) {
     if (generic_index >= 0 && smith_lang_generics[generic_index].plain) generic_index = -1; // an ordinary call
     if (generic_index < 0 && !lang->recording) return false;
     const SmithToken *open = smith_lang_peek(lang, host, 0, false);
@@ -5700,25 +5710,25 @@ static bool smith_lang_generic_call_core(SmithLang *lang, const SmithHost *host,
     }
     if (lang->recording)
         return smith_lang_generic_record_call(lang, host, module, module_length, member, member_length, location);
-    return smith_lang_generic_direct_call(lang, host, (uint32_t)generic_index, location, location);
+    return smith_lang_generic_direct_call(lang, host, (uint32_t)generic_index, location, location, start_line);
 }
 
 // `x::name(` where x is an import: a generic of that module, or in a generic's body any call.
 static bool smith_lang_generic_call(SmithLang *lang, const SmithHost *host, const SmithToken *name,
                                     const SmithLangBinding *binding, const SmithToken *member) {
-    (void)name;
     if (binding->is_c || binding->missing || (lang->generics_count == 0 && !lang->recording)) return false;
     const char *module = smith_lang_str(binding->module);
     int found = smith_lang_generic_find(lang, module, binding->module.length, member->text, member->length);
     return smith_lang_generic_call_core(lang, host, module, binding->module.length, member->text, member->length,
-                                        member->location, found);
+                                        member->location, name->line_start, found);
 }
 
 // A call to a generic of the module itself, by its name.
 static bool smith_lang_generic_call_here(SmithLang *lang, const SmithHost *host, const SmithToken *name,
                                          const SmithLangName *known) {
-    bool handled = smith_lang_generic_call_core(lang, host, lang->module, strlen(lang->module), name->text,
-                                                name->length, name->location, (int)known->generic - 1);
+    bool handled =
+        smith_lang_generic_call_core(lang, host, lang->module, strlen(lang->module), name->text, name->length,
+                                     name->location, name->line_start, (int)known->generic - 1);
     if (handled) lang->namespace_done = false; // the caller returns on the result, not on this flag
     return handled;
 }

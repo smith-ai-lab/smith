@@ -1,0 +1,19 @@
+// The floor of smith's own binary (#802, knowledge/deployment-target.md): built for macOS 26 and newer whatever macOS
+// built it, so the release runs on the Macs people have and on the hosted runners. Reads the load commands of the
+// smith under test, `$SMITH_SELF`.
+module deployment_test;
+
+import smith::io;
+import smith::test;
+import scratch;
+import target;
+
+export void test_deployment_smith_runs_on_macos_26(io::Io *io) {
+    (void)io; // not read on Linux, where there is no minos to read
+    if constexpr (target::os == target::macos) {
+        scratch::Project p = scratch::project(io, "deployment", nullptr);
+        scratch::expect_text("minos: the oldest macOS smith runs on", "26.0",
+                             scratch::capture(&p, "otool -l \"$SMITH_SELF\" | grep -A4 LC_BUILD_VERSION | "
+                                                  "sed -n 's/^ *minos //p'"));
+    }
+}

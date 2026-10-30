@@ -9,6 +9,7 @@ import smith::arena;
 import smith::format;
 import smith::io;
 import smith::mem;
+import smith::process;
 import smith::test;
 import <smith_core.h>;
 import <string.h>;
@@ -20,7 +21,8 @@ static typeof(const u8[:]) test_io_bytes(const void *data, usize size) {
 }
 
 export typedef struct {
-    io::Io *io;
+    io::Io *io;         // nullptr in a project made by scratch::make: a test with no io (issue #815)
+    const char *root;   // scratch::make only: the folder it made, which scratch::clean removes
     const char *dir;    // where commands run
     const char *tested; // a folder with smith, smith-cc and smith-c++ for PATH
     const char *cache;  // XDG_CACHE_HOME of the commands
@@ -37,6 +39,67 @@ constexpr u64 nanoseconds = 1'000'000'000;
 // The text of a process's pipe, which io leaves unterminated when empty.
 static const char *text_of(const char *data) {
     return data != nullptr ? data : "";
+}
+
+// ---------------------------------------------------------------- no io (issue #815, #240)
+// Returned memory is the caller's to free: what scratch::make holds for itself (the project's paths) is freed by
+// scratch::clean, and the text a Run, scratch::read or scratch::capture returns to a test is malloc'd and belongs to
+// the test, which frees it (`defer scratch::release(run.out);`). A test that does not fails with `memory leaked`, at
+// the line that allocated it.
+
+// Gives back a text that scratch returned (a Run's out and err, `read`, `capture` of a project with no io).
+export void release(const char *text) {
+    mem::free((void *)(usize)text);
+}
+
+// The bytes as a terminated text of its own.
+static const char *bytes_text(process::Bytes bytes) {
+    char *copy = mem::alloc_slice(char, countof(bytes) + 1).data;
+    for (usize i = 0; i < countof(bytes); i++) {
+        copy[i] = (char)bytes[i];
+    }
+    copy[countof(bytes)] = '\0';
+    return copy;
+}
+
+// A text of its own: the pieces one after another.
+static const char *join_free(const char *a, const char *b, const char *c) {
+    usize length = format::length(a, b, c);
+    char *text = mem::alloc_slice(char, length + 1).data;
+    (void)format::to(text, length + 1, a, b, c);
+    return text;
+}
+
+// The run of a command with no io: the process module's output is copied into texts of the caller's and what the
+// process module allocated is given back.
+static Run run_free(const char *const argv[:]) {
+    process::OutputResult done = process::run(argv);
+    if (done == .ok) {
+        process::Output output = done.ok;
+        Run run = {
+            .status = output.exit.signal != 0 ? 128 + output.exit.signal : output.exit.status,
+            .out = bytes_text(output.output),
+            .err = bytes_text(output.errors),
+        };
+        if (output.output.data != nullptr) mem::free(output.output.data);
+        if (output.errors.data != nullptr) mem::free(output.errors.data);
+        return run;
+    }
+    test::note("the command could not start");
+    test::check_equal(0, 1);
+    return (Run){};
+}
+
+// Runs `sh -c script arg0 arg1` with no io and returns what it printed, to free; the status must be 0.
+static const char *script_free(const char *script, const char *arg0, const char *arg1) {
+    const char *const argv[_] = {"sh", "-c", script, arg0, arg1, nullptr};
+    Run run = run_free(argv[0:5]);
+    if (run.status != 0) {
+        test::note("%s failed: %s", script, run.err);
+    }
+    test::check_equal(run.status, 0);
+    release(run.err);
+    return run.out;
 }
 
 // The cache of the commands ($3) is the project's own when it has one; else it is shared by every test of the run and
@@ -73,6 +136,10 @@ constexpr char setup_script[_] =
 // (never the real one) and the repository as $SMITH_REPO (where the runner was started). Nothing is set in this
 // process: the environment is made by the shell that runs the command.
 static Run run_in(const Project *p, const char *command) {
+    if (p->io == nullptr) {
+        const char *const free_argv[_] = {"sh", "-c", run_script, p->dir, command, p->tested, p->cache, nullptr};
+        return run_free(free_argv[0:7]);
+    }
     const char *argv[_] = {"sh", "-c", run_script, p->dir, command, p->tested, p->cache, nullptr};
     io::ProcessResult result = io::processes_run(&p->io->processes, &p->io->arena, argv);
     test::check_equal(result.error.code, 0);
@@ -84,6 +151,7 @@ static Run run_in(const Project *p, const char *command) {
 }
 
 static const char *path_in(const Project *p, const char *name) {
+    if (p->io == nullptr) return join_free(p->dir, "/", name); // the caller frees
     return format::push(&p->io->arena, p->dir, "/", name).data;
 }
 
@@ -249,8 +317,52 @@ export Project project(io::Io *io, const char *name, const char *fixture) {
     return p;
 }
 
+// The same project for a test with no io (issue #815): a folder from `mktemp -d` under $TMPDIR, the files of the
+// fixture in it, and the commands run through the process module. The project's paths are malloc'd; `scratch::clean`
+// frees them and removes the folder (`defer scratch::clean(&p);` after the make). A test that fails keeps the folder.
+export Project make(const char *name, const char *fixture) {
+    const char *made =
+        script_free("d=${TMPDIR:-/tmp}; [ -d \"$d\" ] || d=/tmp; mktemp -d \"$d/smith-scratch-XXXXXX\"", "", "");
+    usize length = c::strlen(made);
+    while (length > 0 && made[length - 1] == '\n') {
+        length--;
+    }
+    char *folder = mem::alloc_slice(char, length + 1).data;
+    mem::copy(folder[0:length], made[0:length]);
+    folder[length] = '\0';
+    release(made);
+    Project p = {.io = nullptr,
+                 .root = folder,
+                 .dir = join_free(folder, "/", name),
+                 .tested = join_free(folder, "/", "tested"),
+                 .cache = ""};
+    const char *const argv[_] = {"sh", "-c", setup_script, folder, p.dir, nullptr};
+    Run set_up = run_free(argv[0:5]);
+    test::check_equal(set_up.status, 0);
+    release(set_up.out);
+    release(set_up.err);
+    if (fixture != nullptr) {
+        release(script_free("cp -R \"${SMITH_REPO:-.}/tests/build_fixtures/$1/.\" \"$0\"", p.dir, fixture));
+    }
+    return p;
+}
+
+// Removes the folder of a project made by `make` and frees the memory the project holds for itself.
+export void clean(Project *p) {
+    release(script_free("rm -rf \"$0\"", p->root, ""));
+    release(p->root);
+    release(p->dir);
+    release(p->tested);
+    if (p->cache[0] != '\0') release(p->cache);
+    *p = (Project){};
+}
+
 // The project gets a cache of its own, empty, for a test of the cache or of what a cold one does.
 export void own_cache(Project *p) {
+    if (p->io == nullptr) {
+        p->cache = join_free(p->root, "/", "xdg-cache"); // clean frees it
+        return;
+    }
     p->cache = join(p->io, test::scratch(p->io), "xdg-cache");
 }
 
@@ -261,10 +373,22 @@ export Run sh(const Project *p, const char *command) {
 
 // `smith build` with the arguments in a string.
 export Run build(const Project *p, const char *arguments) {
+    if (p->io == nullptr) {
+        const char *command = join_free("smith build ", arguments, "");
+        Run run = run_in(p, command);
+        release(command);
+        return run;
+    }
     return run_in(p, format::push(&p->io->arena, "smith build ", arguments).data);
 }
 
 export void write(const Project *p, const char *name, const char *text) {
+    if (p->io == nullptr) {
+        const char *path = path_in(p, name);
+        release(script_free("printf %s \"$1\" > \"$0\"", path, text));
+        release(path);
+        return;
+    }
     io::Error written =
         io::files_write(&p->io->files, path_in(p, name), test_io_bytes(text, c::strlen(text)), io::Replace);
     test::check_equal(written.code, 0);
@@ -338,11 +462,28 @@ export void write_header_of(const Project *p, const char *source, const char *na
 
 // The file's text, or "" when it is absent.
 export const char *read(const Project *p, const char *name) {
+    if (p->io == nullptr) { // always a text of its own, "" when the file is absent; the caller frees it
+        const char *path = path_in(p, name);
+        const char *const argv[_] = {"sh", "-c", "cat \"$0\" 2>/dev/null; exit 0", path, nullptr};
+        Run run = run_free(argv[0:4]);
+        release(run.err);
+        release(path);
+        return run.out;
+    }
     io::Read file = io::files_read(&p->io->files, &p->io->arena, path_in(p, name));
     return file.error.code == 0 ? text_of((const char *)file.data.data) : "";
 }
 
 export bool exists(const Project *p, const char *name) {
+    if (p->io == nullptr) {
+        const char *path = path_in(p, name);
+        const char *const argv[_] = {"sh", "-c", "test -e \"$0\"", path, nullptr};
+        Run run = run_free(argv[0:4]);
+        release(run.out);
+        release(run.err);
+        release(path);
+        return run.status == 0;
+    }
     return io::files_info(&p->io->files, path_in(p, name)).error.code == 0;
 }
 
