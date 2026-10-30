@@ -1015,13 +1015,15 @@ static const char *smith_compiler_file(const char *compiler) {
     return smith_text(".smith/compiler/%016" PRIx64, smith_hash_bytes(compiler, strlen(compiler)));
 }
 
-// The real path of an executable named by a path, or found on PATH; nullptr when there is none.
-static const char *smith_resolve_executable(const char *name) {
+// The path of an executable named by a path, or found on PATH; nullptr when there is none. With `resolve` the real
+// path (a symlink followed), else the path as found: smith-cc is a link to smith, and only the name it is run by says
+// that it is a compiler.
+static const char *smith_find_executable(const char *name, bool resolve) {
     char found[PATH_MAX];
     char real[PATH_MAX];
     if (strchr(name, '/') != nullptr) {
         if (realpath(name, real) == nullptr) return nullptr;
-        return smith_copy_string(real);
+        return smith_copy_string(resolve ? real : name);
     }
     const char *path = getenv("PATH");
     if (path == nullptr) return nullptr;
@@ -1031,7 +1033,7 @@ static const char *smith_resolve_executable(const char *name) {
         int written = snprintf(found, sizeof found, "%.*s/%s", (int)length, length > 0 ? start : ".", name);
         if (written > 0 && (size_t)written < sizeof found && access(found, X_OK) == 0 &&
             realpath(found, real) != nullptr)
-            return smith_copy_string(real);
+            return smith_copy_string(resolve ? real : found);
         if (end == nullptr) break;
         start = end + 1;
     }
@@ -1056,13 +1058,14 @@ static const char *smith_file_identity(const char *path) {
 // with clang linked in, "clang in-process <clang>" and "identity <the version of that LLVM and a hash of what is
 // linked>", so a smith rebuilt against the same LLVM is the same compiler; with an external clang ($SMITH_CLANG, or a
 // stage0's), "clang <path>", so it is that clang's file. Anything else that is named smith is taken for a compiler like
-// another.
-static const char *smith_compiler_identity(const char *real) {
+// another. `invoked` is the path as found (smith-cc, a link to smith): the program decides what it is by the name it is
+// run by, so `real` (the link followed: smith) would not answer.
+static const char *smith_compiler_identity(const char *real, const char *invoked) {
     const char *base = strrchr(real, '/');
     base = base != nullptr ? base + 1 : real;
     const char *own = smith_file_identity(real);
     if (strncmp(base, "smith", 5) != 0) return own;
-    const char *text = smith_capture_with((const char *[]){real, "--smith-which", "-c", "a.c", nullptr}, "", true);
+    const char *text = smith_capture_with((const char *[]){invoked, "--smith-which", "-c", "a.c", nullptr}, "", true);
     if (strncmp(text, "clang in-process ", 17) == 0) {
         const char *identity = strstr(text, "\nidentity ");
         return identity != nullptr ? smith_text("in-process %s", identity + 10) : own;
@@ -1075,9 +1078,10 @@ static const char *smith_compiler_identity(const char *real) {
 static void smith_write_compiler_files(void) {
     for (size_t i = 0; i < smith_compiler_count; i++) {
         const char *compiler = smith_compilers[i];
-        const char *real = smith_resolve_executable(compiler);
-        const char *text =
-            smith_text("%s\n%s\n", compiler, real != nullptr ? smith_compiler_identity(real) : "missing");
+        const char *real = smith_find_executable(compiler, true);
+        const char *text = smith_text(
+            "%s\n%s\n", compiler,
+            real != nullptr ? smith_compiler_identity(real, smith_find_executable(compiler, false)) : "missing");
         smith_write_if_different(smith_compiler_file(compiler), text, strlen(text));
     }
 }
@@ -1986,8 +1990,11 @@ static int smith_lang_check(SmithRun *run) {
     return 0;
 }
 
+static void smith_lang_declare_header_steps(SmithBuild *b);
+
 // Declares the check once every smith_object is in: the compiles of .smith sources wait for it.
 static void smith_lang_finish(SmithBuild *b) {
+    smith_lang_declare_header_steps(b);
     if (!smith_lang_sources_used) return;
     const char **headers = smith_new_list(smith_lang_module_count);
     for (size_t i = 0; i < smith_lang_module_count; i++)
@@ -2130,9 +2137,62 @@ static const char *const *smith_effects_outputs(SmithBuild *b, const char *compi
     return summary == nullptr ? smith_list(b, nullptr) : smith_one(summary);
 }
 
+// The module names a source imports (`import a::b;` and `import a::b as c;` are "a::b"; `import <h>;` is no module),
+// at most 63 of them.
+static const char *const *smith_lang_imports_of(SmithBuild *b, const char *source) {
+    char *text = nullptr;
+    size_t length = smith_read_file(source, &text);
+    const char **names = smith_new_list(64);
+    size_t count = 0;
+    size_t at = 0;
+    for (size_t guard = 0; guard < length && count < 63; guard++) { // each pass reads one line
+        size_t end = at;
+        while (end < length && text[end] != '\n')
+            end++;
+        size_t start = at;
+        while (start < end && (text[start] == ' ' || text[start] == '\t'))
+            start++;
+        if (end - start > 7 && memcmp(text + start, "import ", 7) == 0 && smith_lang_word_byte(text[start + 7])) {
+            char name[smith_lang_name_max];
+            size_t used = 0;
+            size_t cursor = start + 7;
+            bool good = smith_lang_take_word(text, end, &cursor, name, &used);
+            while (good && cursor + 2 < end && text[cursor] == ':' &&
+                   text[cursor + 1] == ':') { // one `::` and word each
+                name[used++] = ':';
+                name[used++] = ':';
+                cursor += 2;
+                good = smith_lang_take_word(text, end, &cursor, name, &used);
+            }
+            while (cursor < end && text[cursor] != ';' && text[cursor] != '<' && text[cursor] != '"')
+                cursor++; // `as alias;`
+            if (good && cursor < end && text[cursor] == ';') {
+                name[used] = '\0';
+                names[count++] = smith_copy_string(name);
+            }
+        }
+        if (end >= length) break;
+        at = end + 1;
+    }
+    names[count] = nullptr;
+    (void)b;
+    return names;
+}
+
+// The header steps of the modules, held until every smith_object is in: a header pass reads the headers of the modules
+// its module imports (the type names a signature uses), so a header step waits for them and is run again when one of
+// them changes; which of the imports are modules of this build is known only then (#781: a step with the module's
+// source and the smith alone left `io.h` naming `smith_random_Key` after `random.h` moved, or when the two were
+// written in the other order).
+static SmithStep smith_lang_header_steps[smith_lang_modules_max];
+static const char *smith_lang_header_sources[smith_lang_modules_max];
+static size_t smith_lang_header_step_count;
+
 // The header step of a module, and the flags and ordering its compile gets.
 static void smith_lang_header_step(SmithBuild *b, const SmithObject *object, const char *header) {
-    SmithStep step = {
+    if (smith_lang_header_step_count >= smith_lang_modules_max) smith_too_many("modules", smith_lang_modules_max);
+    smith_lang_header_sources[smith_lang_header_step_count] = object->source;
+    smith_lang_header_steps[smith_lang_header_step_count++] = (SmithStep){
         .command =
             smith_cat(b, smith_list(b, object->compiler, "--smith-header", object->source, "-o", header, nullptr),
                       smith_header_pass_flags(b, object), nullptr),
@@ -2142,7 +2202,71 @@ static void smith_lang_header_step(SmithBuild *b, const SmithObject *object, con
         .description = smith_text("header %s", object->source),
         .restat = true, // the header is written only when its bytes change
     };
-    smith_step(b, &step);
+}
+
+// Whether the header step `to` can be reached from `from` along the import edges adj[i * n + j] (step i imports step
+// j).
+static bool smith_lang_reaches(const bool *adj, size_t n, size_t from, size_t to) {
+    bool *seen = smith_alloc(n);
+    size_t *stack = smith_alloc(n * sizeof *stack);
+    size_t top = 0;
+    stack[top++] = from;
+    seen[from] = true;
+    while (top > 0) { // each step is pushed once
+        size_t at = stack[--top];
+        if (at == to) return true;
+        for (size_t next = 0; next < n; next++) {
+            if (!adj[at * n + next] || seen[next]) continue;
+            seen[next] = true;
+            stack[top++] = next;
+        }
+    }
+    return false;
+}
+
+// The import edges among the header steps: adj[i * n + j] when the module of step i imports the module of step j.
+static bool *smith_lang_import_edges(SmithBuild *b, size_t n) {
+    bool *adj = smith_alloc(n * n);
+    for (size_t i = 0; i < n; i++) {
+        const char *const *imports = smith_lang_imports_of(b, smith_lang_header_sources[i]);
+        for (size_t k = 0; imports[k] != nullptr; k++) { // bounded by the imports
+            const char *header = smith_text(".smith/include/%s.h", smith_lang_slashed(imports[k]));
+            for (size_t j = 0; j < n; j++) // bounded by the steps
+                adj[i * n + j] =
+                    adj[i * n + j] || (j != i && strcmp(smith_lang_header_steps[j].outputs[0], header) == 0);
+        }
+    }
+    return adj;
+}
+
+// Declares the header steps: each one's implicit inputs gain the header of every module it imports that this build
+// makes, or that is on disk (smith's own libraries', which smith writes before build.c runs). An edge that closes an
+// import cycle is left out: the graph would reject the cycle by file names, and the check of the imports
+// (smith_lang_check) names the modules.
+static void smith_lang_declare_header_steps(SmithBuild *b) {
+    size_t n = smith_lang_header_step_count;
+    bool *adj = smith_lang_import_edges(b, n);
+    for (size_t i = 0; i < n; i++) {
+        SmithStep step = smith_lang_header_steps[i];
+        const char *const *imports = smith_lang_imports_of(b, smith_lang_header_sources[i]);
+        for (size_t k = 0; imports[k] != nullptr; k++) { // bounded by the imports
+            const char *header = smith_text(".smith/include/%s.h", smith_lang_slashed(imports[k]));
+            if (strcmp(header, step.outputs[0]) == 0) continue;
+            bool ours = false;
+            bool cycle = false;
+            for (size_t j = 0; j < n && !cycle; j++) { // bounded by the steps
+                if (strcmp(smith_lang_header_steps[j].outputs[0], header) != 0) continue;
+                ours = true;
+                cycle = smith_lang_reaches(adj, n, j, i);
+            }
+            bool made = ours || access(header, R_OK) == 0;
+            for (size_t m = 0; m < smith_lang_module_count && !made; m++) // bounded by the modules
+                made = strcmp(smith_lang_module_headers[m], header) == 0;
+            if (made && !cycle) step.implicit_inputs = smith_cat(b, step.implicit_inputs, smith_one(header), nullptr);
+        }
+        smith_step(b, &step);
+    }
+    smith_lang_header_step_count = 0;
 }
 
 // What `smith prove` proved of a `.smith` source reaches a release compile through the graph (issue #221): the proof
@@ -2516,6 +2640,9 @@ void smith_program(SmithBuild *b, SmithProgram *program) {
     // image in a failure's trace, and the exported symbols are the names of its raw frames (lib/trace.c).
     const char *const *identity = smith_when(b, strcmp(b->os, "Linux") == 0,
                                              smith_list(b, "-Wl,--build-id=md5", "-Wl,--export-dynamic", nullptr));
+    // glibc keeps libm apart from libc (macOS's is in libSystem): a program that calls sqrtf or sin links -lm there,
+    // and one that does not loses nothing by it.
+    const char *const *math = smith_when(b, strcmp(b->os, "Linux") == 0, smith_list(b, "-lm", nullptr));
     // The effect summaries of the objects (an output of each compile that writes one): the link checks them (skill
     // smith-lang-effects), so a summary that changed reruns it even when its object did not (an attribute moved).
     const char **summaries = smith_new_list(count);
@@ -2529,7 +2656,7 @@ void smith_program(SmithBuild *b, SmithProgram *program) {
     const char *const *handlers = smith_program_handlers(b, &copy, &handlers_files);
     copy.step = (SmithStep){
         .command = smith_cat(b, smith_one(copy.linker), identity, copy.flags, (const char *const *)outputs,
-                             copy.libraries, handlers, tail, nullptr),
+                             copy.libraries, math, handlers, tail, nullptr),
         .inputs = (const char *const *)outputs,
         .implicit_inputs = smith_cat(b, smith_library_files(copy.libraries),
                                      smith_one(smith_compiler_file(copy.linker)), summaries, handlers_files, nullptr),
@@ -2638,22 +2765,28 @@ static bool smith_listed_before(size_t row) {
 // first_once: each source once, by its first compile (what clang-tidy reads); else each output, as the editor's file.
 static void smith_put_compile_commands(FILE *out, const SmithBuild *b, bool first_once) {
     fputs("[\n", out);
+    bool any = false; // the entries are separated, not each followed by a comma: the file is JSON when there are none
     for (size_t i = 0; i < smith_object_row_count; i++) {
         const SmithObject *object = &smith_object_rows[i].object;
         if (!smith_object_rows[i].listed || (first_once && smith_listed_before(i))) continue;
+        if (any) fputs(",\n", out);
+        any = true;
         smith_json_entry(out, b->root, object->source, object->output,
                          smith_cat((SmithBuild *)b, object->step.command,
                                    smith_module_advisories((SmithBuild *)b, object->source), nullptr));
-        fputs(",\n", out);
     }
     for (size_t i = 0; i < smith_command_row_count; i++) {
+        if (any) fputs(",\n", out);
+        any = true;
         smith_json_entry(out, b->root, smith_command_rows[i].source, nullptr,
                          smith_cat((SmithBuild *)b, smith_command_rows[i].arguments,
                                    smith_module_advisories((SmithBuild *)b, smith_command_rows[i].source), nullptr));
-        fputs(",\n", out);
     }
     const char *build_file = smith_build_file_name();
-    if (build_file != nullptr) smith_json_entry(out, b->root, build_file, nullptr, smith_build_file_words(build_file));
+    if (build_file != nullptr) {
+        if (any) fputs(",\n", out);
+        smith_json_entry(out, b->root, build_file, nullptr, smith_build_file_words(build_file));
+    }
     fputs("\n]\n", out);
 }
 
@@ -2940,21 +3073,27 @@ static const char *smith_tests_match(const char *line, bool module, const char *
         if (key_size == 0) return nullptr;
         rest += key_size;
     }
-    if (strcmp(rest, ") {") != 0) return nullptr;
-    return name;
+    if (strncmp(rest, ") {", 3) != 0) return nullptr;
+    rest += 3;
+    if (rest[0] == ' ' && rest[1] == '/' && rest[2] == '/') return name; // a trailing comment: `) { // (void): pure`
+    return rest[0] == '\0' ? name : nullptr;
 }
 
 // The spelling of smith::random's key type a `.smith` file's import line gives, "random::Key" or "<alias>::Key", or
 // nullptr when the line is no such import.
 static const char *smith_tests_type_of_import(const char *line, const char *module, const char *type) {
-    const char *prefix = smith_text("import smith::%s", module);
-    if (strncmp(line, prefix, strlen(prefix)) != 0) return nullptr;
-    const char *rest = line + strlen(prefix);
-    if (strcmp(rest, ";") == 0) return smith_text("%s::%s", module, type);
-    if (strncmp(rest, " as ", 4) != 0) return nullptr;
-    size_t size = strspn(rest + 4, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_");
-    if (size == 0 || strcmp(rest + 4 + size, ";") != 0) return nullptr;
-    return smith_text("%.*s::%s", (int)size, rest + 4, type);
+    // `smith::` and `std::` name the same library; landing 2 of #366 deletes the `smith::` entry.
+    for (const char *const *root = (const char *const[]){"smith", "std", nullptr}; *root != nullptr; root++) {
+        const char *prefix = smith_text("import %s::%s", *root, module);
+        if (strncmp(line, prefix, strlen(prefix)) != 0) continue;
+        const char *rest = line + strlen(prefix);
+        if (strcmp(rest, ";") == 0) return smith_text("%s::%s", module, type);
+        if (strncmp(rest, " as ", 4) != 0) return nullptr;
+        size_t size = strspn(rest + 4, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_");
+        if (size == 0 || strcmp(rest + 4 + size, ";") != 0) return nullptr;
+        return smith_text("%.*s::%s", (int)size, rest + 4, type);
+    }
+    return nullptr;
 }
 
 static const char *smith_tests_key_type(const char *line) {
@@ -3012,12 +3151,25 @@ static bool smith_tests_is_smith(const char *path) {
     return length > strlen(".smith") && strcmp(path + length - strlen(".smith"), ".smith") == 0;
 }
 
+// Whether the file is named like a test (`*_test.smith`, `*_test.c`): the other inputs (tests/scratch.smith, a
+// shared case list) are helpers the tests link and need not define one.
+static bool smith_tests_named_test(const char *path) {
+    size_t length = strlen(path);
+    for (const char *const *suffix = (const char *const[]){"_test.smith", "_test.c", nullptr}; *suffix != nullptr;
+         suffix++) {
+        size_t size = strlen(*suffix);
+        if (length > size && strcmp(path + length - size, *suffix) == 0) return true;
+    }
+    return false;
+}
+
 // Every test in the files, in file order and line order. A name defined twice is an error that names both files.
 static bool smith_tests_find(SmithRun *run, SmithTestFound *found, size_t *count) {
     *count = 0;
     for (size_t i = 0; run->inputs[i] != nullptr; i++) { // bounded by smith_copy_list
         const char *const *lines = smith_lines_required(run->b, run->inputs[i]);
         bool in_smith = smith_tests_is_smith(run->inputs[i]);
+        size_t before = *count;
         const char *module = nullptr;
         const char *key_type = nullptr;
         const char *io_type = nullptr;
@@ -3049,6 +3201,14 @@ static bool smith_tests_find(SmithRun *run, SmithTestFound *found, size_t *count
                 .file = run->inputs[i],
                 .kind = kind,
             };
+        }
+        if (*count == before &&
+            smith_tests_named_test(run->inputs[i])) { // a test file that runs nothing is a mistake, never a silent skip
+            fprintf(stderr,
+                    "smith: smith_tests: %s defines no test; a test is `export void test_<name>(void)` in a module "
+                    "(`void test_<name>(void)` in C)\n",
+                    run->inputs[i]);
+            return false;
         }
     }
     return true;

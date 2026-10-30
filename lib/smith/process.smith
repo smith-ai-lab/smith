@@ -535,7 +535,7 @@ void child_open(const Child *child) {
 
 // ---------------------------------------------------------------- run: start, capture both streams, wait
 
-// A growing block of the current allocator; the old blocks stay in the region.
+// A growing block of the current allocator; the block it outgrew is freed (the caller frees the last one).
 typedef struct {
     u8 data[:];
     usize size;
@@ -547,6 +547,7 @@ void grow_room(Grow *grow) {
     usize capacity = countof(grow->data) == 0 ? chunk * 2 : countof(grow->data) * 2;
     u8 bigger[:] = mem::alloc_slice(u8, capacity);
     mem::copy(bigger[0:grow->size], grow->data[0:grow->size]);
+    if (grow->data.data != nullptr) mem::free(grow->data.data);
     grow->data = bigger;
 }
 

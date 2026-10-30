@@ -365,7 +365,7 @@ export void test_resource_a_missing_linker_and_an_undefined_symbol_fail(io::Io *
 }
 
 // What ld links today, lld links: frameworks, a dynamic library, -dead_strip, an Objective-C selector stub, a dSYM.
-export void test_resource_lld_links_frameworks_arc_and_dead_strip(io::Io *io) {
+export void test_macos_resource_lld_links_frameworks_arc_and_dead_strip(io::Io *io) {
     // Frameworks, ARC (Objective-C), -dead_strip and a dSYM are Mach-O and Apple's: Linux has no such feature to check.
     if constexpr (target::os != target::macos) {
         return;

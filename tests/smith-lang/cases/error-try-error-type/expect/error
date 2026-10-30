@@ -1,1 +1,1 @@
-src/main.smith:9:13: static assertion failed due to requirement '__builtin_types_compatible_p(int, long long)': `try` returns the error as it is: the function's error type must be the call's; to change it, write it out
+src/main.smith:9:13: static assertion failed due to requirement '__builtin_types_compatible_p(int, short)': `try` returns the error as it is: the function's error type must be the call's; to change it, write it out

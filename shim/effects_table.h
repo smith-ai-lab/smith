@@ -1,10 +1,11 @@
 // The effects of the C library: what each function of libc and libSystem does to the world (issue #207, skill
-// smith-lang-effects). A function a program declares with no body and no attribute is `c` (every effect); a system
-// header's function is looked up here by name, and one the table does not know is `c` too.
+// smith-lang-effects). A function a program declares with no body and no attribute is `unknown` (every effect); a
+// system header's function is looked up here by name, and one the table does not know is `unknown` too.
 //
 // Effects are one bit each, one per kind of handler: alloc, files, net, console, clock, process, env, entropy,
-// globals (writing a global or a function-local static), c (unchecked C), fails (a failure point). A function in the
-// "pure" list has none. Failing is an effect, `fails` (issue #325): a call that stops the task (`abort`,
+// globals (writing a global or a function-local static), unknown (code smith cannot see into), fails (a failure point).
+// A function in the "pure" list has none. Failing is an effect, `fails` (issue #325): a call that stops the task
+// (`abort`,
 // `__builtin_trap`, smith's `smith_failure` family, so a checked index, a slice bound and a contract) is a failure
 // point, and so is every caller.
 #pragma once
@@ -28,7 +29,7 @@ enum Effect : uint32_t {
     Env = 1u << 6,
     Entropy = 1u << 7,
     Globals = 1u << 8,
-    C = 1u << 9,
+    Unknown = 1u << 9,
     Fails = 1u << 10,
     Code = 1u << 11,
     Everything = (1u << 12) - 1,
@@ -39,10 +40,9 @@ struct Name {
     uint32_t bit;
 };
 
-inline constexpr Name names[] = {
-    {"alloc", Alloc},     {"files", Files}, {"net", Net},         {"console", Console}, {"clock", Clock},
-    {"process", Process}, {"env", Env},     {"entropy", Entropy}, {"globals", Globals}, {"c", C},
-    {"fails", Fails},     {"code", Code}};
+inline constexpr Name names[] = {{"alloc", Alloc},     {"files", Files},     {"net", Net},     {"console", Console},
+                                 {"clock", Clock},     {"process", Process}, {"env", Env},     {"entropy", Entropy},
+                                 {"globals", Globals}, {"unknown", Unknown}, {"fails", Fails}, {"code", Code}};
 
 // The names of the bits of a set, in the order of `names`, joined by ", ": "alloc, files". "none" for the empty set.
 inline std::string describe(uint32_t set) {
@@ -236,37 +236,37 @@ inline constexpr Entry effect_functions[] = {
     {"munmap", Alloc},
     {"mprotect", Alloc},
     // console
-    {"printf", Console},
-    {"vprintf", Console},
-    {"puts", Console},
-    {"putchar", Console},
-    {"putc", Console | Files},
-    {"fputs", Console | Files},
-    {"fputc", Console | Files},
-    {"fprintf", Console | Files},
-    {"vfprintf", Console | Files},
-    {"fwrite", Console | Files},
-    {"fflush", Console | Files},
-    {"getchar", Console},
-    {"gets", Console},
-    {"scanf", Console},
-    {"fgets", Console | Files},
-    {"fgetc", Console | Files},
-    {"getc", Console | Files},
-    {"fread", Console | Files},
-    {"perror", Console},
+    {"printf", Console | Globals},
+    {"vprintf", Console | Globals},
+    {"puts", Console | Globals},
+    {"putchar", Console | Globals},
+    {"putc", Console | Files | Globals},
+    {"fputs", Console | Files | Globals},
+    {"fputc", Console | Files | Globals},
+    {"fprintf", Console | Files | Globals},
+    {"vfprintf", Console | Files | Globals},
+    {"fwrite", Console | Files | Globals},
+    {"fflush", Console | Files | Globals},
+    {"getchar", Console | Globals},
+    {"gets", Console | Globals},
+    {"scanf", Console | Globals},
+    {"fgets", Console | Files | Globals},
+    {"fgetc", Console | Files | Globals},
+    {"getc", Console | Files | Globals},
+    {"fread", Console | Files | Globals},
+    {"perror", Console | Globals},
     {"isatty", Console},
     // files
-    {"fopen", Files},
-    {"freopen", Files},
-    {"fclose", Files},
-    {"fseek", Files},
-    {"ftell", Files},
-    {"rewind", Files},
+    {"fopen", Files | Globals},
+    {"freopen", Files | Globals},
+    {"fclose", Files | Globals},
+    {"fseek", Files | Globals},
+    {"ftell", Files | Globals},
+    {"rewind", Files | Globals},
     {"fileno", Files},
     {"remove", Files},
     {"rename", Files},
-    {"tmpfile", Files},
+    {"tmpfile", Files | Globals},
     {"open", Files},
     {"openat", Files},
     {"creat", Files},
@@ -288,11 +288,11 @@ inline constexpr Entry effect_functions[] = {
     {"access", Files},
     {"chmod", Files},
     {"chdir", Files},
-    {"getcwd", Files},
+    {"getcwd", Files | Alloc}, // allocates when its buffer is null
     {"opendir", Files},
     {"readdir", Files},
     {"closedir", Files},
-    {"realpath", Files},
+    {"realpath", Files | Alloc}, // allocates when its buffer is null
     {"dup", Files | Net},
     {"dup2", Files | Net},
     {"pipe", Files},
@@ -319,7 +319,6 @@ inline constexpr Entry effect_functions[] = {
     {"setsockopt", Net},
     {"getaddrinfo", Net},
     {"freeaddrinfo", Net},
-    {"gethostbyname", Net},
     {"poll", Files | Net},
     {"select", Files | Net},
     {"kqueue", Files | Net},
@@ -333,11 +332,11 @@ inline constexpr Entry effect_functions[] = {
     {"nanosleep", Clock},
     {"usleep", Clock},
     {"sleep", Clock},
-    {"localtime", Clock},
+    {"localtime", Clock | Globals},
     {"localtime_r", Clock},
-    {"gmtime", Clock},
-    {"mktime", Clock},
-    {"strftime", Clock},
+    {"gmtime", Clock | Globals},
+    {"mktime", Clock | Globals},
+    {"strftime", Clock | Globals},
     {"difftime", None},
     // process
     {"fork", Process},
@@ -348,8 +347,8 @@ inline constexpr Entry effect_functions[] = {
     {"execl", Process},
     {"execlp", Process},
     {"system", Process},
-    {"popen", Process | Files},
-    {"pclose", Process},
+    {"popen", Process | Files | Globals},
+    {"pclose", Process | Globals},
     {"posix_spawn", Process},
     {"posix_spawnp", Process},
     {"waitpid", Process},
@@ -373,13 +372,17 @@ inline constexpr Entry effect_functions[] = {
     {"longjmp", Process},
     {"sched_yield", Process},
     // env
-    {"getenv", Env},
+    {"getenv", Env | Globals},
     {"setenv", Env | Globals},
     {"unsetenv", Env | Globals},
     {"putenv", Env | Globals},
     {"gethostname", Env},
     {"getuid", Env},
-    {"getlogin", Env},
+    {"getlogin", Env | Globals},
+    {"cuserid", Env | Globals},
+    {"ctermid", Globals},
+    {"tmpnam", Globals},
+    {"tempnam", Alloc | Globals},
     {"uname", Env},
     {"sysconf", Env},
     {"getpagesize", Env},
@@ -412,7 +415,161 @@ inline constexpr Entry effect_functions[] = {
     {"smith_check_failed", Fails},
     {"smith_test_failed", Fails},
     {"__error", Globals},
+    // state kept across calls (issue #724): libc's own memory, which an allocator swapped for an arena would leave
+    // dangling
+    {"strtok", Globals},
+    {"strerror", Globals},
+    {"strsignal", Globals},
+    {"asctime", Clock | Globals},
+    {"ctime", Clock | Globals},
+    {"localeconv", Env | Globals},
+    {"basename", Globals},
+    {"dirname", Globals},
+    {"gai_strerror", Globals},
+    {"ttyname", Globals},
+    {"getpwnam", Files | Globals},
+    {"getpwuid", Files | Globals},
+    {"dlopen", Files | Globals},
+    {"dlclose", Files | Globals},
+    {"dlerror", Globals},
+    {"fdopen", Files | Globals},
+    {"fdopendir", Files},
+    {"setvbuf", Files | Globals},
+    {"setbuf", Files | Globals},
+    {"ungetc", Files | Globals},
+    {"getline", Files | Globals | Alloc},
+    {"getdelim", Files | Globals | Alloc},
+    {"fscanf", Console | Files | Globals},
+    {"gethostbyname", Net | Globals},
+    {"__errno_location", Globals},
+    // glibc's <ctype.h> macros (isalpha, tolower, ...) read the current locale's tables through these
+    {"__ctype_b_loc", Globals},
+    {"__ctype_tolower_loc", Globals},
+    {"__ctype_toupper_loc", Globals},
 };
+
+// What a pointer a function of the C library returns means (issue #724, #720): who frees it, or how long it lives. The
+// idiom is written as #720's attributes are recorded in a summary: `owned:<f>` (the caller frees it with `f`),
+// `borrowed:<n>` (it points into argument `n`, 1-based) or `internal` (the function's own memory, never freed by the
+// caller). A function that returns a pointer and is not here is an error in a module. Where the idiom depends on the
+// arguments (`realloc`, `fgets`) it is the documented common case. `owned:<f>:<n>[,<n>...]` calls `f` with the pointer
+// and then the listed arguments of the allocating call (`mmap`: `owned:munmap:2`, the length). A function that
+// allocates (or returns static memory) when one argument is a null pointer constant (`getcwd(nullptr, 0)`) has a second
+// idiom for it: `null_arg` (1-based) and `null_idiom`; a call picks the form by its argument.
+struct Ownership {
+    const char *name;
+    const char *idiom;
+    int null_arg = 0;
+    const char *null_idiom = nullptr;
+};
+
+inline constexpr Ownership ownership_functions[] = {
+    // owned: the caller frees it
+    {"malloc", "owned:free"},
+    {"calloc", "owned:free"},
+    {"realloc", "owned:free"},
+    {"reallocf", "owned:free"},
+    {"aligned_alloc", "owned:free"},
+    {"valloc", "owned:free"},
+    {"strdup", "owned:free"},
+    {"strndup", "owned:free"},
+    {"fopen", "owned:fclose"},
+    {"fdopen", "owned:fclose"},
+    {"tmpfile", "owned:fclose"},
+    {"popen", "owned:pclose"},
+    {"opendir", "owned:closedir"},
+    {"fdopendir", "owned:closedir"},
+    {"dlopen", "owned:dlclose"},
+    // libdispatch (macOS): an object the caller releases
+    {"dispatch_queue_create", "owned:dispatch_release"},
+    {"dispatch_data_create", "owned:dispatch_release"},
+    {"dispatch_semaphore_create", "owned:dispatch_release"},
+    {"mmap", "owned:munmap:2"},
+    {"tempnam", "owned:free"},
+    // borrowed: it points into an argument
+    {"strchr", "borrowed:1"},
+    {"strrchr", "borrowed:1"},
+    {"strstr", "borrowed:1"},
+    {"strpbrk", "borrowed:1"},
+    {"memchr", "borrowed:1"},
+    {"strtok_r", "borrowed:1"},
+    {"memcpy", "borrowed:1"},
+    {"memmove", "borrowed:1"},
+    {"memset", "borrowed:1"},
+    {"memccpy", "borrowed:1"},
+    {"strcpy", "borrowed:1"},
+    {"strncpy", "borrowed:1"},
+    {"strcat", "borrowed:1"},
+    {"strncat", "borrowed:1"},
+    {"stpcpy", "borrowed:1"},
+    {"fgets", "borrowed:1"},
+    {"gets", "borrowed:1"}, // removed from C11, still declared by macOS
+    {"getcwd", "borrowed:1", 1, "owned:free"},
+    {"readdir", "borrowed:1"},
+    {"bsearch", "borrowed:2"},
+    {"realpath", "borrowed:2", 2, "owned:free"},
+    {"tmpnam", "borrowed:1", 1, "internal"},
+    {"ctermid", "borrowed:1", 1, "internal"},
+    {"cuserid", "borrowed:1", 1, "internal"},
+    {"ctime_r", "borrowed:2"},
+    {"asctime_r", "borrowed:2"},
+    {"localtime_r", "borrowed:2"},
+    {"gmtime_r", "borrowed:2"},
+    {"freopen", "borrowed:3"},
+    {"dlsym", "borrowed:1"},
+    // internal: the function's own memory
+    {"strerror", "internal"},
+    {"strerror_r", "internal"},
+    {"strsignal", "internal"},
+    {"getenv", "internal"},
+    {"setlocale", "internal"},
+    {"localeconv", "internal"},
+    {"localtime", "internal"},
+    {"gmtime", "internal"},
+    {"asctime", "internal"},
+    {"ctime", "internal"},
+    {"getpwnam", "internal"},
+    {"getpwuid", "internal"},
+    {"getlogin", "internal"},
+    {"gethostbyname", "internal"},
+    {"basename", "internal"},
+    {"dirname", "internal"},
+    {"strtok", "internal"},
+    {"gai_strerror", "internal"},
+    {"dlerror", "internal"},
+    {"ttyname", "internal"},
+    {"__error", "internal"},
+    {"__errno_location", "internal"},
+    {"__ctype_b_loc", "internal"},
+    {"__ctype_tolower_loc", "internal"},
+    {"__ctype_toupper_loc", "internal"},
+};
+
+// The idiom of the pointer a function of the C library returns, by name; false when the table gives it none.
+inline bool idiom(llvm::StringRef name, llvm::StringRef &out) {
+    static const llvm::StringMap<llvm::StringRef> table = [] {
+        llvm::StringMap<llvm::StringRef> map;
+        for (const Ownership &entry : ownership_functions)
+            map[entry.name] = entry.idiom;
+        return map;
+    }();
+    auto found = table.find(name);
+    if (found == table.end()) return false;
+    out = found->second;
+    return true;
+}
+
+// The second idiom of a function whose result depends on a null argument: which argument (1-based) and the idiom when
+// it is a null pointer constant; false when the function has one form.
+inline bool null_idiom(llvm::StringRef name, int &arg, llvm::StringRef &out) {
+    for (const Ownership &entry : ownership_functions)
+        if (entry.null_idiom != nullptr && name == entry.name) {
+            arg = entry.null_arg;
+            out = entry.null_idiom;
+            return true;
+        }
+    return false;
+}
 
 // The effects of a function of the C library by name; false when the table does not know it.
 inline bool lookup(llvm::StringRef name, uint32_t &set) {

@@ -830,7 +830,7 @@ export void test_lsp_cinterop_builds_and_runs(io::Io *io) {
     }
     scratch::Project p = folder(&root, "cinterop");
     scratch::expect_text("cinterop: it builds and runs", "9.0 1 3 eof=-1 99",
-                         scratch::capture(&p, "smith cc main.smith -o demo 2>&1 && ./demo"));
+                         scratch::capture(&p, "smith cc main.smith -o demo -lm 2>&1 && ./demo"));
 }
 
 export void test_lsp_cinterop_hover(io::Io *io) {
@@ -1051,9 +1051,10 @@ export void test_lsp_effects_across_files_show_the_chain_and_clear_on_save(io::I
     scratch::Run made = scratch::sh(&p, effects_database);
     scratch::expect_status("effects: the database and the summary of b.c", 0, &made);
     const char *log = session(io, &p, "open a.c b.c -- replace b.c '    printf(\"%d\\n\", x);\n' '' -- save b.c");
-    expect_line(io, "effects: a.c shows the error through b.c, with the chain", log,
-                "diag a.c:2:41: Smith-effect: `bad` is [[smith::pure]], but it has the effects console: bad -> noisy "
-                "(a.c:2) -> printf (b.c:4)");
+    expect_line(
+        io, "effects: a.c shows the error through b.c, with the chain", log,
+        "diag a.c:2:41: Smith-effect: `bad` is [[smith::pure]], but it has the effects console, globals: bad -> noisy "
+        "(a.c:2) -> printf (b.c:4)");
     scratch::expect_count("effects: after b.c is saved without the print, a.c has no diagnostics again", 1,
                           count_prefix(io, log, "diag a.c"));
 }
@@ -1069,14 +1070,18 @@ export void test_lsp_effects_hover_on_a_call_into_another_file(io::Io *io) {
     scratch::Run made = scratch::sh(&p, effects_database);
     scratch::expect_status("effects: the database and the summary of b.c", 0, &made);
     const char *log = session(io, &p, "open a.c -- hover a.c 2 41");
-    expect_line(
-        io, "effects: hover on a call into b.c shows the callee's effects, with b.c closed", log,
-        "hover a.c:2:41: function noisy |  | → int |  | Parameters: |  | - int x |  | effects: console |  | int "
-        "noisy(int x)");
+    expect_line(io, "effects: hover on a call into b.c shows the callee's effects, with b.c closed", log,
+                "hover a.c:2:41: function noisy |  | → int |  | Parameters: |  | - int x |  | effects: console, "
+                "globals |  | int "
+                "noisy(int x)");
 }
 
 // A proved index is no failure point in the editor either (issue #325): the hover of a function whose index `smith
 // prove` proved does not say `effects: fails`, and the same function before the proof does.
+static const char *state_dump = "echo '--- ls -l .smith/effects'; ls -l .smith/effects 2>&1; "
+                                "for f in .smith/effects/*.fx; do echo \"--- $f\"; cat \"$f\"; done 2>&1; "
+                                "echo '--- .smith/compile_commands.json'; cat .smith/compile_commands.json 2>&1";
+
 export void test_lsp_hover_has_no_fails_for_a_proved_index(io::Io *io) {
     scratch::Project root;
     if (!make(io, &root, true)) {
@@ -1103,13 +1108,26 @@ export void test_lsp_hover_has_no_fails_for_a_proved_index(io::Io *io) {
     scratch::write(&p, "main.smith", "module main;\nimport pick;\ni32 main() { return pick::at(1) - 2; }\n");
     scratch::Run built = scratch::build(&p, "");
     scratch::expect_status("the project builds", 0, &built);
+    scratch::sh(&p, "rm -rf .smith/effects"); // #813: the editor starts with no summary, as on a loaded runner
     const char *before = session(io, &p, "open pick.smith -- hover pick.smith 4 12");
+    if (!scratch::contains(before, "effects: fails") || scratch::contains(before, "effects: unknown, fails")) { // #813
+        scratch::Run state = scratch::sh(&p, state_dump);
+        test::note("the hover before the proof is not `effects: fails`.\nhover: %s\nstate of the project:\n%s", before,
+                   state.out);
+    }
     scratch::expect_contains("before the proof the hover says fails", before, "effects: fails");
+    scratch::expect_lacks("before the proof the hover does not say unknown (a summary not yet written)", before,
+                          "effects: unknown, fails");
     scratch::Run proved = scratch::sh(&p, "smith prove 2>&1");
     scratch::expect_status("the index is proved", 0, &proved);
     scratch::Run rebuilt = scratch::build(&p, ""); // the editor reads the summaries a build writes
     scratch::expect_status("the project builds again", 0, &rebuilt);
     const char *after = session(io, &p, "open pick.smith -- hover pick.smith 4 12");
     scratch::expect_contains("the hover is of the function", after, "function at");
+    if (scratch::contains(after, "effects: fails")) { // #813: flaky in CI; say what the editor could have read
+        scratch::Run state = scratch::sh(&p, state_dump);
+        test::note("the hover still says fails after the proof.\nhover: %s\nstate of the project:\n%s", after,
+                   state.out);
+    }
     scratch::expect_lacks("after the proof it does not", after, "effects: fails");
 }
