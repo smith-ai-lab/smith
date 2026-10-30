@@ -93,6 +93,7 @@ jobs:
       - name: The programs that aborted
         if: always()
         run: |
+          set +e
           for name in scan scanstruct structs scangrad; do
             for program in $(find /tmp/smith-test-*.noindex -type f -path "*build/debug/$name" 2>/dev/null | head -n 1); do
               echo "=== $program"
