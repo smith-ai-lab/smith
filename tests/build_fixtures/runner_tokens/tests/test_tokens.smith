@@ -1,0 +1,37 @@
+import <stdio.h>;
+import <unistd.h>;
+import smith::test;
+
+// Three tests that end at once and then two that must run together: the last two are only started together if the
+// cores the first three held went back to the pool (#754).
+static void mark_and_wait(const char *mine, const char *theirs) {
+    c::FILE *file = c::fopen(mine, "w");
+    test::check_condition(file != nullptr);
+    c::fclose(file);
+    bool seen = false;
+    for (u32 round = 0; round < 6000 && !seen; round++) { // the bound is a hang backstop, 60 s
+        seen = c::access(theirs, 0) == 0;
+        if (!seen) c::usleep(10000);
+    }
+    test::check_condition(seen);
+}
+
+void test_t1_quick(void) {
+    test::check_condition(true);
+}
+
+void test_t2_quick(void) {
+    test::check_condition(true);
+}
+
+void test_t3_quick(void) {
+    test::check_condition(true);
+}
+
+void test_t4_meets_t5(void) {
+    mark_and_wait("marks/t4", "marks/t5");
+}
+
+void test_t5_meets_t4(void) {
+    mark_and_wait("marks/t5", "marks/t4");
+}

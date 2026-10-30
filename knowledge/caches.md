@@ -24,7 +24,7 @@ from either is simply fetched or built again:
 - `modules/<LC_UUID of the smith>/`: clang's module cache for `smith_modules` (below), one folder for each smith binary
   (issue #575): clang keys a module by its flags and paths, not by the compiler and resource folder that built it, so two
   smiths on one cache (CI's, a lane's, the installed one) would read each other's modules. The folders are pruned sooner than the
-  31 days, on use (the train installs after every green merge, 20 or more smiths a day, so a month of folders would be
+  31 days, on use (CI installs after every push to main, 20 or more smiths a day, so a month of folders would be
   gigabytes): each build that opens the cache stamps its folder (`.used`, touched when an hour old) and holds it with a
   shared lock on `.in-use` for the build's life, its compiles included; of the other folders the **3** most recently
   used stay (a lane's smith, CI's and the installed one swap in turn), and any other idle for **a day** goes, unless a

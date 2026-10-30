@@ -4,6 +4,8 @@
 
 One binary: compiler, build, tests, proofs, formatter, linter, debugger and editor support, from one LLVM.
 
+**Status: 0.1.0, before alpha.** Anything may change or break until 1.0.0. Use it if you like, and expect it to break. Outside contributions are not accepted yet ([CONTRIBUTING.md](CONTRIBUTING.md)). License: Apache-2.0 with LLVM Exceptions ([LICENSE](LICENSE)).
+
 ```smith project=first run prove test
 // stats.smith
 module stats;

@@ -1,0 +1,7 @@
+module shard::beta_test;
+
+export void test_beta_1() {
+}
+
+export void test_beta_2() {
+}

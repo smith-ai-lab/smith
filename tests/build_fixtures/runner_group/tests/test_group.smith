@@ -1,0 +1,24 @@
+import <signal.h>;
+import <stdlib.h>;
+import <time.h>;
+import <unistd.h>;
+import smith::test;
+
+constexpr i32 hang_up = c::SIGHUP; // NOLINT(smith-preprocessor)
+
+// A test that signals its whole process group (#754): only its own processes are in it, never the runner's.
+void test_group_1_hangs_up_its_group(void) {
+    c::kill(0, hang_up);
+    c::sleep(30); // a worker that was not ended is in the way of the check
+    test::check_condition(false);
+}
+
+// A test the runner ends for waiting without CPU time, and its leftover process with it.
+void test_group_2_waits_for_a_child(void) {
+    c::system("sleep 37");
+    test::check_condition(false);
+}
+
+void test_group_3_passes(void) {
+    test::check_condition(true);
+}

@@ -29,20 +29,20 @@
 constexpr bool fast = SMITH_TARGET_ASSERTIONS == false;
 int main() {
 __INT32_TYPE__ answer = 0;
-#if SMITH_TARGET_OS == 1
+#if SMITH_TARGET_OS == 0
  {
-answer = 7;
+undeclared_function();
 }
 #else
  {
-undeclared_function();
+answer = 7;
 }
 #endif
 #if (SMITH_TARGET_ASSERTIONS == 0)
  {
 printf("assertions are off\n");
 }
-#elif SMITH_TARGET_ARCH == 1
+#elif SMITH_TARGET_ARCH == 1 || SMITH_TARGET_ARCH == 2
  {
 printf("answer is seven\n");
 }

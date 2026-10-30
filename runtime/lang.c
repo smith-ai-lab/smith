@@ -141,7 +141,8 @@ typedef struct {
     uint32_t generic_index;
     uint32_t location;
     uint32_t member_location;
-    uint32_t count; // smith_lang_gt.count and text_used when it began
+    bool start_line; // the call as written is the first token on its line
+    uint32_t count;  // smith_lang_gt.count and text_used when it began
     uint32_t text;
     int depth;
     uint64_t braces; // per open bracket (bit 0 is the first): a `{`, else a `(` or `[`

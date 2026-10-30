@@ -77,12 +77,19 @@ export void test_cache_modules_worktrees_with_different_headers_do_not_collide(i
 // the first with its LC_UUID changed and the signature made again.
 export void test_cache_modules_two_smiths_sharing_a_cache_use_a_folder_each(io::Io *io) {
     scratch::Project p = modules_project(io);
+    // The identity is the LC_UUID on macOS (dwarfdump, then the signature made again) and the ELF build-id on Linux
+    // (readelf); the 16 bytes are replaced in the copy.
     scratch::Run second = scratch::sh(
         &p, "S=$(command -v smith) && mkdir -p ../other && cp -c \"$S\" ../other/smith 2>/dev/null || cp \"$S\" "
-            "../other/smith; id=$(dwarfdump --uuid ../other/smith | sed -n '1s/UUID: \\([0-9A-F-]*\\).*/\\1/p' | tr -d "
+            "../other/smith; if command -v dwarfdump >/dev/null; then "
+            "id=$(dwarfdump --uuid ../other/smith | sed -n '1s/UUID: \\([0-9A-F-]*\\).*/\\1/p' | tr -d "
             "- | tr A-F a-f); [ -n \"$id\" ] && head -c 16384 ../other/smith | xxd -p | tr -d '\\n' | sed "
             "\"s/$id/0123456789abcdef0123456789abcdef/\" | xxd -r -p | dd of=../other/smith conv=notrunc bs=1 "
-            "2>/dev/null && codesign -f -s - ../other/smith 2>/dev/null; ln -sf smith ../other/smith-cc; echo done");
+            "2>/dev/null && codesign -f -s - ../other/smith 2>/dev/null; else "
+            "id=$(readelf -n ../other/smith | sed -n 's/.*Build ID: *//p' | head -n 1); [ -n \"$id\" ] && "
+            "perl -0777 -i -pe 'BEGIN { $o = pack(\"H*\", shift); $n = pack(\"H*\", "
+            "\"0123456789abcdef0123456789abcdef\") } "
+            "s/\\Q$o\\E/$n/' \"$id\" ../other/smith; fi; ln -sf smith ../other/smith-cc; echo done");
     scratch::expect_text("two smiths: the copy is made", "done\n", second.out);
     scratch::Run first_build = scratch::build(&p, "");
     scratch::expect_status("two smiths: the first smith builds", 0, &first_build);

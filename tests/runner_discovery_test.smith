@@ -1,0 +1,25 @@
+// The test runner's discovery (#366): a test file written with std:: is found and run, and a *_test.smith file in which
+// no test is found is an error naming the file, so a test is never skipped silently.
+module runner_discovery_test;
+
+import std::format;
+import std::io;
+import std::test;
+import scratch;
+
+export void test_runner_discovery_a_test_file_written_with_std_runs(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "std_tests");
+    scratch::Run tested = scratch::sh(&p, "smith test");
+    scratch::expect_status("std tests: smith test passes", 0, &tested);
+    scratch::expect_contains("std tests: both tests ran", format::push(&io->arena, tested.out, tested.err).data,
+                             "2 passed, 0 failed");
+}
+
+export void test_runner_discovery_a_test_file_with_no_test_is_an_error(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "std_tests_empty");
+    scratch::Run tested = scratch::sh(&p, "smith test");
+    scratch::expect_failure("empty test file: smith test fails", &tested);
+    scratch::expect_contains("empty test file: ... naming the file",
+                             format::push(&io->arena, tested.out, tested.err).data,
+                             "forgotten_test.smith defines no test");
+}

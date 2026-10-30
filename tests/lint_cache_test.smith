@@ -80,6 +80,29 @@ export void test_lint_replays_a_finding_and_the_failing_status_from_the_cache(io
         scratch::capture(&p, "SMITH_OUTPUT=full smith lint 2>&1 | grep -c \"parameter 'unused' is unused\""));
 }
 
+// A failure always says which file and how clang-tidy ended (a kill or a crash prints nothing of its own): the last
+// lines name each file, the log of the file ends with the same, and a result the cache kept is named too.
+export void test_lint_names_each_file_that_failed_and_how_clang_tidy_ended(io::Io *io) {
+    scratch::Project p = prepared(io);
+    scratch::Run written =
+        scratch::sh(&p, "printf 'int third(int value, int unused) {\\n    return value;\\n}\\n' > c.c");
+    scratch::expect_status("c.c has an unused parameter", 0, &written);
+    scratch::Run first = lint(&p);
+    scratch::expect_contains("the summary counts the files", first.out,
+                             "smith lint: clang-tidy failed on 1 of 4 files");
+    scratch::expect_contains("... and names the one, with how clang-tidy ended", first.out,
+                             "smith lint:   c.c: exited with status 1\n");
+    scratch::expect_contains("... its output ends with the same", first.out,
+                             "smith lint: c.c: clang-tidy exited with status 1\n");
+    scratch::expect_lacks("... and no other file is named", first.out, "smith lint:   a.c:");
+    scratch::Run second = lint(&p);
+    scratch::expect_contains("a result the cache kept is named too", second.out,
+                             "smith lint:   c.c: exited with status 1 (the result an earlier run kept)\n");
+    scratch::Run quiet = scratch::sh(&p, "smith lint 2>&1");
+    scratch::expect_contains("the quiet lint shows the file as well", quiet.out,
+                             "smith lint:   c.c: exited with status 1");
+}
+
 export void test_lint_cache_off_runs_every_file_each_time(io::Io *io) {
     scratch::Project p = prepared(io);
     scratch::Run first = scratch::sh(&p, "SMITH_LINT_CACHE=0 SMITH_OUTPUT=full smith lint 2>&1");

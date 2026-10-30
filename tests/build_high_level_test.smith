@@ -6,6 +6,7 @@ module build_high_level_test;
 import smith::io;
 import smith::test;
 import scratch;
+import target;
 
 // The mtime of a file in seconds, as perl reads it.
 static const char *mtime(const scratch::Project *p, const char *file) {
@@ -23,10 +24,15 @@ export void test_build_high_level_objects_programs_and_the_compile_database(io::
     scratch::expect_contains(
         "high level: -v shows the compile", built.out,
         "cc -std=gnu23 '-DGREETING=\"hi\"' -MD -MF build/main.d -c 'src dir/main.c' -o build/main.o");
-    scratch::expect_contains(
-        "high level: -v shows the link", built.out,
-        "cc build/main.o build/util.o -lm -framework Foundation libextra.a -Lbuild -lsmith_handlers "
-        "-Wl,-rpath,@executable_path -o build/app");
+    if constexpr (target::os == target::macos) {
+        scratch::expect_contains(
+            "high level: -v shows the link", built.out,
+            "cc build/main.o build/util.o -lm -framework Foundation libextra.a -Lbuild -lsmith_handlers "
+            "-Wl,-rpath,@executable_path -o build/app");
+    } else { // the handlers are linked as an object and the symbols exported; the libraries keep their order
+        scratch::expect_contains("high level: -v shows the link", built.out,
+                                 "build/main.o build/util.o -lm libextra.a -lm build/smith_handlers.o -o build/app");
+    }
     (void)scratch::sh(&p, "sed \"s|@DIR@|$(pwd -P)|\" expected.json.in >expected.json");
     scratch::expect_text("compile_commands.json: the whole file", scratch::read(&p, "expected.json"),
                          scratch::read(&p, "compile_commands.json"));
@@ -53,9 +59,11 @@ export void test_build_high_level_objects_programs_and_the_compile_database(io::
     scratch::expect_contains("high level: a changed library file relinks", library.out, "-o build/app");
     (void)scratch::build(&p, "");
     scratch::sleep(&p, 1000);
-    (void)scratch::sh(&p, "touch Foundation");
-    scratch::Run framework = scratch::build(&p, "");
-    scratch::expect_contains("high level: -framework X's name is not a file", framework.out, "no work to do");
+    if constexpr (target::os == target::macos) { // -framework is macOS's
+        (void)scratch::sh(&p, "touch Foundation");
+        scratch::Run framework = scratch::build(&p, "");
+        scratch::expect_contains("high level: -framework X's name is not a file", framework.out, "no work to do");
+    }
     (void)scratch::sh(&p,
                       "sed -i.bak 's/\"-std=gnu23\", \"-DGREETING/\"-std=gnu23\", \"-Wall\", \"-DGREETING/' build.c");
     (void)scratch::build(&p, "");
