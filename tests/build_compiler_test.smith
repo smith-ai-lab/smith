@@ -112,3 +112,22 @@ export void test_build_a_smith_with_another_llvm_rebuilds_the_object(io::Io *io)
     scratch::Run settled = scratch::build(&p, "");
     scratch::expect_contains("identity: and then settles", settled.out, "no work to do");
 }
+
+// smith-cc is a link to smith, and a program knows it is a compiler by the name it is run by: the identity is asked of
+// the link as found on PATH, not of the file it points to, or every rebuilt smith would be a new compiler.
+export void test_build_a_smith_that_is_a_link_to_a_program_is_asked_by_the_links_name(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", "compiler_identity");
+    scratch::write(
+        &p, "fake/smith",
+        "#!/bin/sh\n"
+        "case $0 in *smith-cc) ;; *) echo not a command >&2; exit 1 ;; esac\n"
+        "case $1 in --smith-which) printf 'clang in-process /llvm/bin/clang\\nidentity %s\\n' \"$(cat \"$0.id\")\" ;;"
+        " *) echo \"$0\" >>runs ;; esac\n"
+        "while [ $# -gt 0 ]; do if [ \"$1\" = -o ]; then : >\"$2\"; fi; shift; done\n");
+    (void)scratch::sh(&p, "chmod +x fake/smith && rm fake/smith-cc && ln -s smith fake/smith-cc");
+    (void)scratch::build(&p, "");
+    scratch::expect_count("link: the first build compiles", 1, scratch::lines(&p, "runs"));
+    (void)scratch::sh(&p, "cp -p fake/smith fake/smith.new && touch fake/smith.new && mv fake/smith.new fake/smith");
+    scratch::Run same = scratch::build(&p, "");
+    scratch::expect_contains("link: a smith rebuilt with the same LLVM rebuilds nothing", same.out, "no work to do");
+}

@@ -193,10 +193,12 @@ static void names_no_libc_function(io::Io *io, const char *source, const char *a
                                      source, " -o library.o")
                             .data);
     scratch::expect_status("the library compiles freestanding", 0, &built);
-    scratch::expect_text("library: names no libc function", "",
-                         scratch::capture(&p, format::push(&io->arena, "nm -u library.o | tr -d ' ' | grep -v -x ",
-                                                           allowed, " | sort | tr '\\n' ' '")
-                                                  .data));
+    scratch::expect_text(
+        "library: names no libc function", "",
+        scratch::capture(&p,
+                         format::push(&io->arena, "nm -u library.o | awk '{print $NF}' | sed 's/^_//' | grep -v -x ",
+                                      allowed, " | sort | tr '\\n' ' '")
+                             .data));
 }
 
 export void test_library_modes_json_compiles_as_c23(io::Io *io) {
@@ -209,7 +211,7 @@ export void test_library_modes_json_compiles_as_c2y(io::Io *io) {
 
 // smith's own libraries are not libc, and the compiler's calls for a big struct are not the program's.
 export void test_library_modes_json_names_no_libc_function(io::Io *io) {
-    names_no_libc_function(io, "lib/json.c", "-e _memcpy -e _memset -e _bzero -e _memmove -e '_smith_.*'");
+    names_no_libc_function(io, "lib/json.c", "-e memcpy -e memset -e bzero -e memmove -e 'smith_.*'");
 }
 
 export void test_library_modes_text_compiles_as_c23(io::Io *io) {
@@ -221,7 +223,7 @@ export void test_library_modes_text_compiles_as_c2y(io::Io *io) {
 }
 
 export void test_library_modes_text_names_no_libc_function(io::Io *io) {
-    names_no_libc_function(io, "lib/smith/text.smith", "-e _memcpy -e _memset -e _bzero -e _memmove -e '_smith_.*'");
+    names_no_libc_function(io, "lib/smith/text.smith", "-e memcpy -e memset -e bzero -e memmove -e 'smith_.*'");
 }
 
 // lib/http.c compiled under the warnings of a new project (its behavior is lib/http_test.smith), from tests/http.sh.

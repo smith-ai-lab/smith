@@ -1,5 +1,5 @@
 // The report-only mode of the pointer rule (#396): SMITH_EFFECTS_POINTERS lists each call through a pointer with the
-// effects its function type states (`-` when it states none, so it is `c`) and each function made into a pointer.
+// effects its function type states (`-` when it states none, so it is `unknown`) and each function made into a pointer.
 #include <stdio.h>
 
 typedef void (*Logger)(const char *) [[clang::annotate_type("smith::effects:console")]];

@@ -34,6 +34,7 @@
 #include "names.h"
 
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <string_view>
@@ -287,13 +288,23 @@ inline bool is_marked(const RecordDecl *record) {
     return false;
 }
 
+// A boolean option read as text: OptionsView::get<bool> and store<bool> are instantiated in libclangTidy.a, and GCC
+// (which builds the Linux pack) and clang mangle their `enable_if<is_integral_v<bool>>` signature differently, so a
+// clang-built shim cannot link to them there. The text forms are the ones get<bool> reads.
+static bool read_bool(std::optional<llvm::StringRef> value, bool fallback) {
+    if (!value) return fallback;
+    if (value->equals_insensitive("true") || *value == "1") return true;
+    if (value->equals_insensitive("false") || *value == "0") return false;
+    return fallback;
+}
+
 class Effects final : public ClangTidyCheck {
   public:
     Effects(llvm::StringRef Name, ClangTidyContext *Context)
-        : ClangTidyCheck(Name, Context), c_files(Options.get("CFiles", true)) {}
+        : ClangTidyCheck(Name, Context), c_files(read_bool(Options.get("CFiles"), true)) {}
 
     void storeOptions(ClangTidyOptions::OptionMap &Opts) override {
-        Options.store(Opts, "CFiles", c_files);
+        Options.store(Opts, "CFiles", c_files ? llvm::StringRef("true") : llvm::StringRef("false"));
     }
 
     void registerMatchers(ast_matchers::MatchFinder *Finder) override {

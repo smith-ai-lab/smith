@@ -5,10 +5,13 @@
 // system's C compiler builds it (clang 19 or later, GCC 13 or later):
 //   mkdir -p .smith && cc -std=gnu2x -x c scripts/seed_linux.c -o .smith/seed-tool && .smith/seed-tool [arguments
 //   of smith build]
-// It needs a C and C++ compiler, cmake, ninja, python3, curl, tar, xz, patch and git, the network, and about 2 hours
+// It needs a C and C++ compiler, lld (the link of smith: `-fuse-ld=lld`), tar, xz, gh and the network; with a published
+// LLVM pack that is minutes. With no pack it also needs cmake, ninja, python3, curl, patch and git, and about 2 hours
 // and 15 GB the first time (LLVM). The stages, each in .smith/seed/:
-//   1. LLVM 23.1.3, pinned by SHA-256, built by scripts/llvm_linux.c into the package cache (as `smith build
-//      llvm` does), unless that install is there already;
+//   1. LLVM 23.1.3 in the package cache (as `smith build llvm` has it): the published pack of this configuration
+//      (`llvm-23.1.3-r11-linux-x86_64`, fetched and checked by scripts/llvm_pack.c, which needs `gh`) unless that
+//      install is there already; only when no pack exists, built from the source pinned by SHA-256 by
+//      scripts/llvm_linux.c;
 //   2. the libraries' headers, which are build outputs and not in git: scripts/header_tool.c, the writer of
 //      `smith cc --smith-header` as a program of its own, built with this compiler and run on lib/smith/*.smith;
 //   3. stage A: smith.c without `smith mcp` (no -DSMITH_MCP: the protocol code does not exist yet), its shims and that
@@ -56,24 +59,19 @@ static char identity[text_max]; // its smith-clang.id, one line
     exit(1);
 }
 
-// Runs a program (found on PATH) and waits; true when it exits 0. `in` is a file for its standard input, or nullptr.
-static bool run_from(const char *const *argv, const char *in) {
-    posix_spawn_file_actions_t actions;
-    posix_spawn_file_actions_init(&actions);
-    if (in != nullptr) posix_spawn_file_actions_addopen(&actions, 0, in, 0, 0);
+// Runs a program (found on PATH) and waits; its exit status, or -1 when it did not start or did not exit.
+static int run_status(const char *const *argv) {
     pid_t child = 0;
-    int started = posix_spawnp(&child, argv[0], &actions, nullptr, (char *const *)argv, environ);
-    posix_spawn_file_actions_destroy(&actions);
-    if (started != 0) return false;
+    if (posix_spawnp(&child, argv[0], nullptr, nullptr, (char *const *)argv, environ) != 0) return -1;
     int status = 0;
     while (waitpid(child, &status, 0) < 0) { // only a signal interrupts the wait
-        if (errno != EINTR) return false;
+        if (errno != EINTR) return -1;
     }
-    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 }
 
 static void run(const char *const *argv) {
-    if (!run_from(argv, nullptr)) die("failed:", argv[0]);
+    if (run_status(argv) != 0) die("failed:", argv[0]);
 }
 
 static void join(char *out, const char *format, const char *a, const char *b) {
@@ -148,36 +146,61 @@ static void write_headers(const char *cc) {
     }
 }
 
-// Stage 1: the LLVM install, built by scripts/llvm_linux.c from the pinned source unless it is there.
+// Takes the LLVM pack of this configuration into the cache: true when it did, false when no pack exists (build
+// instead).
+static bool fetch_pack(const char *cc, const char *smith_cache, const char *name) {
+    if (getenv("SMITH_SEED_FETCH") != nullptr && strcmp(getenv("SMITH_SEED_FETCH"), "0") == 0) return false;
+    run((const char *[]){cc, "-std=gnu2x", "-O1", "-x", "c", "scripts/llvm_pack.c", "-o", ".smith/seed/llvm_pack",
+                         nullptr});
+    printf("seed: fetching the LLVM pack %s\n", name);
+    fflush(stdout);
+    int status = run_status(
+        (const char *[]){".smith/seed/llvm_pack", "fetch", smith_cache, name, ".smith/seed/llvm.fetch", nullptr});
+    if (status == 0) return true;
+    if (status != 3) die("the LLVM pack failed to fetch (exit status not 3, so the pack exists):", name);
+    printf("seed: no LLVM pack for %s: building LLVM from source\n", name);
+    fflush(stdout);
+    return false;
+}
+
+// Builds the LLVM install from the pinned source (about 2 hours): scripts/llvm_linux.c.
+static void build_llvm_source(const char *cc) {
+    const char *tarball = ".smith/seed/llvm-project-23.1.3.src.tar.xz";
+    char digest[65] = "";
+    if (!sha256_file(tarball, digest) || strcmp(digest, llvm_sha256) != 0) {
+        printf("seed: downloading %s\n", llvm_url);
+        fflush(stdout);
+        run((const char *[]){"curl", "-fsSL", "-o", tarball, llvm_url, nullptr});
+        if (!sha256_file(tarball, digest) || strcmp(digest, llvm_sha256) != 0) die("wrong SHA-256:", tarball);
+    }
+    run((const char *[]){"rm", "-rf", ".smith/seed/llvm-src", nullptr});
+    run((const char *[]){"mkdir", "-p", ".smith/seed/llvm-src", nullptr});
+    run((const char *[]){"tar", "-xJf", tarball, "-C", ".smith/seed/llvm-src", "--strip-components=1", nullptr});
+    run((const char *[]){cc, "-std=gnu2x", "-O1", "-x", "c", "scripts/llvm_linux.c", "-o", ".smith/seed/llvm_linux",
+                         nullptr});
+    run((const char *[]){".smith/seed/llvm_linux", ".smith/seed/llvm-src", "", "", ".smith/seed/llvm.stamp", "",
+                         nullptr});
+}
+
+// Stage 1: the LLVM install: the published pack (scripts/llvm_pack.c fetch: downloaded with gh, each part checked
+// against the SHA-256 of the release's manifest) unless it is there; else built by scripts/llvm_linux.c from the
+// pinned source. `fetch` exits 3 when there is no pack to take (no release, no gh, or a build in that folder): only
+// that sends the seed to the long build; any other failure of a pack that exists stops it.
 static void build_llvm(const char *cc) {
     const char *cache = getenv("XDG_CACHE_HOME");
     const char *home = getenv("HOME");
     const char *name = getenv("SMITH_LLVM_NAME");
+    char smith_cache[path_max]; // the package cache's smith folder
     if (name == nullptr || *name == '\0') name = "23.1.3-r11";
     if (cache != nullptr && *cache == '/') {
-        join(llvm, "%s/smith/llvm/%s/install", cache, name);
+        join(smith_cache, "%s/smith", cache, "");
     } else if (home != nullptr && *home == '/') {
-        join(llvm, "%s/.cache/smith/llvm/%s/install", home, name);
+        join(smith_cache, "%s/.cache/smith", home, "");
     } else {
         die("no cache folder: set XDG_CACHE_HOME or HOME", nullptr);
     }
-    if (!exists(path("%s/lib/smith-clang.id", llvm, ""))) {
-        const char *tarball = ".smith/seed/llvm-project-23.1.3.src.tar.xz";
-        char digest[65] = "";
-        if (!sha256_file(tarball, digest) || strcmp(digest, llvm_sha256) != 0) {
-            printf("seed: downloading %s\n", llvm_url);
-            fflush(stdout);
-            run((const char *[]){"curl", "-fsSL", "-o", tarball, llvm_url, nullptr});
-            if (!sha256_file(tarball, digest) || strcmp(digest, llvm_sha256) != 0) die("wrong SHA-256:", tarball);
-        }
-        run((const char *[]){"rm", "-rf", ".smith/seed/llvm-src", nullptr});
-        run((const char *[]){"mkdir", "-p", ".smith/seed/llvm-src", nullptr});
-        run((const char *[]){"tar", "-xJf", tarball, "-C", ".smith/seed/llvm-src", "--strip-components=1", nullptr});
-        run((const char *[]){cc, "-std=gnu2x", "-O1", "-x", "c", "scripts/llvm_linux.c", "-o", ".smith/seed/llvm_linux",
-                             nullptr});
-        run((const char *[]){".smith/seed/llvm_linux", ".smith/seed/llvm-src", "", "", ".smith/seed/llvm.stamp", "",
-                             nullptr});
-    }
+    join(llvm, "%s/llvm/%s/install", smith_cache, name);
+    if (!exists(path("%s/lib/smith-clang.id", llvm, "")) && !fetch_pack(cc, smith_cache, name)) build_llvm_source(cc);
     if (!read_text(path("%s/lib/smith-clang.id", llvm, ""), identity, sizeof identity)) die("no identity in", llvm);
     identity[strcspn(identity, "\n")] = '\0';
 }

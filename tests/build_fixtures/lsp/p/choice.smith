@@ -2,7 +2,7 @@ module choice;
 import target;
 
 export i32 pick(i32 x) {
-    if constexpr (target::arch == target::aarch64) {
+    if constexpr (target::f32_mantissa_bits == 24) {
         return x + 1;
     } else {
         return missing_name(x);
