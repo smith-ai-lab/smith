@@ -1,7 +1,8 @@
 #!/bin/sh
 # The stage0 release of smith (issue #111, knowledge/release.md): a GitHub Release `stage0-<full commit>` per merge to
-# main, holding smith-<os>-<arch>.tar.xz (bin/smith and the links smith-cc and smith-c++) and its .sha256.
-#   release.sh publish <smith>        guard, package, create the release, prune (CI, `smith build release`)
+# main, holding a smith-<os>-<arch>.tar.xz (bin/smith and the links smith-cc and smith-c++) and its .sha256 for each
+# platform: each platform's job adds its own to the release.
+#   release.sh publish <smith>        guard, package, create the release or add to it, prune (CI, `smith build release`)
 #   release.sh package <smith> <dir>  write the tarball and its checksum into <dir>
 #   release.sh fetch <tag> <dir>      gh release download, check the checksum, extract into <dir>
 #   release.sh prune                  read "tag date" lines on stdin, print the tags to delete
@@ -64,20 +65,25 @@ publish() {
     head=$(git rev-parse HEAD)
     tag=stage0-$head
     case $("$1" version) in *"commit $head") ;; *) die "$1 was not built from $head" ;; esac
-    if gh release view "$tag" >/dev/null 2>&1; then
-        echo "release: $tag exists"
-    else
-        out=$(mktemp -d)
-        package "$1" "$out"
+    out=$(mktemp -d)
+    package "$1" "$out"
+    # One release holds every platform's tarball: the first job to finish creates it, the others add theirs (and a
+    # job that loses the race to create it adds its own too). --clobber makes a re-run replace its own files.
+    if ! gh release view "$tag" >/dev/null 2>&1 &&
         gh release create "$tag" "$out/$name" "$out/$name.sha256" --target "$head" --title "$tag" \
-            --notes "The smith of commit $head, for building the next commits (knowledge/release.md)."
-        rm -rf "$out"
+            --notes "The smith of commit $head, for building the next commits (knowledge/release.md)."; then
+        echo "release: created $tag with $name"
+    else
+        gh release upload "$tag" "$out/$name" "$out/$name.sha256" --clobber || die "cannot add $name to $tag"
+        echo "release: added $name to $tag"
     fi
+    rm -rf "$out"
     # a failed prune leaves old releases, never a failed release
     delete=$(gh release list --limit 1000 --json tagName,createdAt \
         --jq '.[]|select(.tagName|startswith("stage0-"))|.tagName+" "+.createdAt' | prune) || delete=
-    for old in $delete; do
-        gh release delete "$old" --cleanup-tag --yes || echo "release: could not delete $old" >&2
+    for old in $delete; do # another platform's job prunes the same tags: one already deleted is no failure
+        gh release delete "$old" --cleanup-tag --yes ||
+            ! gh release view "$old" >/dev/null 2>&1 || echo "release: could not delete $old" >&2
     done
 }
 

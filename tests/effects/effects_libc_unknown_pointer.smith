@@ -1,0 +1,8 @@
+module effects_libc_unknown_pointer;
+
+import <unistd.h>;
+
+// getusershell returns a pointer and the table gives it no idiom: in a module that is an error naming it.
+export const char *shell() {
+    return c::getusershell();
+}

@@ -1,0 +1,32 @@
+name: setup-smith
+description: >
+  Builds smith on a hosted runner (#798): the previous release (scripts/stage0.c fetches the stage0 release of the
+  newest ancestor commit), the LLVM pack of this configuration (`smith build llvm` downloads it from its release
+  instead of building it, #797), then smith itself. Sets SMITH to the built smith's path. The caller has checked out
+  the whole history (fetch-depth: 0) and set GH_TOKEN, which `gh release download` reads.
+
+runs:
+  using: composite
+  steps:
+    - name: Fetch the previous smith and the LLVM pack
+      shell: bash
+      run: |
+        start=$(date +%s)
+        mkdir -p .smith
+        # Apple's clang and clang 19 read -std=c23; an older compiler (gcc 13) spells it c2x (and the file asks for
+        # the POSIX names it uses, so strict ISO compiles too)
+        cc -std=c23 -x c scripts/stage0.c -o .smith/stage0-tool 2>/dev/null ||
+          cc -std=c2x -x c scripts/stage0.c -o .smith/stage0-tool
+        # downloads the release into .smith/stage0, then runs its `smith build llvm`, which fetches the pack of the
+        # identity this tree wants (a hosted runner has no LLVM, and building it takes hours)
+        .smith/stage0-tool llvm
+        echo "fetch: $(( $(date +%s) - start )) s" >>"$GITHUB_STEP_SUMMARY"
+
+    - name: Build smith
+      shell: bash
+      run: |
+        start=$(date +%s)
+        .smith/stage0-tool
+        smith=$(ls "$PWD"/build/*/smith | head -n 1)
+        echo "SMITH=$smith" >>"$GITHUB_ENV"
+        echo "build: $(( $(date +%s) - start )) s ($smith)" >>"$GITHUB_STEP_SUMMARY"

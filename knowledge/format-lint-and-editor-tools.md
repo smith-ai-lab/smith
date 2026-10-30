@@ -38,9 +38,9 @@ imports one of them, transitively, by the same graph as the tests'. A file the g
 paths select every file: a `.clang-tidy` anywhere, `build.c`, `build.smith`, a `Makefile` (they move what clang-tidy
 says or the flags of a compile), and `shim/` and `patches/` (smith's own checks). The line `smith lint --changed: N
 changed files since <sha>: M of K files to lint` says what was chosen, and no file affected is a success that says so
-and `linted 0 files`. Plain `smith lint` still lints everything, as the merge train does. A path outside the project
-folder is not seen (`git diff --relative`), and a file a source `#embed`s is not an edge of the graph. `smith build
-preflight` runs `lint --changed`. Tests: `tests/lint_changed_test.smith`.
+and `linted 0 files`. Plain `smith lint` still lints everything, as CI does. A path outside the project
+folder is not seen (`git diff --relative`), and a file a source `#embed`s is not an edge of the graph. The pre-push
+hook (`smith build pre-push`) runs `lint --changed`. Tests: `tests/lint_changed_test.smith`.
 
 **`smith lint` builds what the files it lints wait for, not the program.** Plain `smith lint` builds `smith_needs`: the
 generated files every compile reads (and, in smith's own build.c, the smith-cc link and the header of each of ~120 test

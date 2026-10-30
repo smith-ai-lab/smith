@@ -1101,9 +1101,10 @@ static int smith_test_take_changed(SmithVerbArgs *split, const char *self) {
         result = SmithChanged_Full;
     }
     static char costs[PATH_MAX + 16];
-    if (cheapest && smith_changed_write_costs(costs, sizeof costs) && split->own_count + 2 <= smith_build_args_max) {
+    if (cheapest && smith_changed_write_costs(costs, sizeof costs) && split->own_count + 3 <= smith_build_args_max) {
         split->own[split->own_count++] = (char *)"--costs";
         split->own[split->own_count++] = costs;
+        split->own[split->own_count++] = (char *)"--cheapest";
     }
     if (result == SmithChanged_None) {
         fputs("smith test --changed: no test is affected\n", stderr);

@@ -4,6 +4,6 @@ call	pointers.c:23	run	-	c	-
 call	pointers.c:22	run	-	c	pure
 call	pointers.c:21	run	-	c	console
 make	pointers.c:29	use	twice	nothing	-
-make	pointers.c:29	use	say	console	-
+make	pointers.c:29	use	say	console, globals	-
 make	pointers.c:28	use	twice	nothing	-
 make	pointers.c:28	use	twice	nothing	-

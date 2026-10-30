@@ -1,0 +1,4 @@
+module shard::gamma_test;
+
+export void test_gamma_1() {
+}
