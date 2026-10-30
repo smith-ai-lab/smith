@@ -34,6 +34,11 @@ jobs:
       base: ${{ steps.scope.outputs.base }}
       matrix: ${{ steps.linux.outputs.matrix }}
       oses: ${{ steps.linux.outputs.oses }}
+      # where the macOS jobs run (knowledge/ci-hosted.md): the owner's Mac, except a pull request from a fork, which
+      # never reaches it. To fall back to hosted runners, change the Mac's value below to '"macos-26"'.
+      mac: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && '"macos-26"' || '["self-hosted","macOS","ARM64"]' }}
+      # SMITH_CORES of a macOS job: the Mac's 16 cores shared by its 3 runners; a hosted runner has 3
+      cores: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && '3' || '5' }}
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -112,7 +117,7 @@ jobs:
     # result instead of compiling smith again.
     needs: changes
     if: needs.changes.outputs.scope == 'full' || needs.changes.outputs.scope == 'docs'
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ startsWith(matrix.os, 'ubuntu') && 'ubuntu-latest' || fromJSON(needs.changes.outputs.mac) }}
     timeout-minutes: 40
     # the Linux part reports but does not block `ci` until the suite has been green on Linux
     continue-on-error: ${{ startsWith(matrix.os, 'ubuntu') }}
@@ -122,6 +127,7 @@ jobs:
         os: ${{ fromJSON(needs.changes.outputs.oses) }}
     env:
       GH_TOKEN: ${{ github.token }}
+      SMITH_CORES: ${{ startsWith(matrix.os, 'ubuntu') && '4' || needs.changes.outputs.cores }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -140,10 +146,11 @@ jobs:
     # fmt, docs, lint and the proofs of the project (the stages of `smith check` that are not tests)
     needs: [changes, build]
     if: needs.changes.outputs.scope == 'full'
-    runs-on: macos-26
+    runs-on: ${{ fromJSON(needs.changes.outputs.mac) }}
     timeout-minutes: 40
     env:
       GH_TOKEN: ${{ github.token }}
+      SMITH_CORES: ${{ needs.changes.outputs.cores }}
       SMITH_OUTPUT: full
     steps:
       - uses: actions/checkout@v4
@@ -179,7 +186,7 @@ jobs:
     # hosted limit of 5 macOS jobs at once (knowledge/ci-hosted.md).
     needs: [changes, build]
     if: needs.changes.outputs.scope == 'full'
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ startsWith(matrix.os, 'ubuntu') && 'ubuntu-latest' || fromJSON(needs.changes.outputs.mac) }}
     timeout-minutes: 45
     # Linux parts report but do not block `ci` until the suite has been green on Linux (no run has passed there yet)
     continue-on-error: ${{ startsWith(matrix.os, 'ubuntu') }}
@@ -189,6 +196,7 @@ jobs:
       matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
     env:
       GH_TOKEN: ${{ github.token }}
+      SMITH_CORES: ${{ startsWith(matrix.os, 'ubuntu') && '4' || needs.changes.outputs.cores }}
       SMITH_OUTPUT: full
       # a cpu<TAB>seconds<TAB>name line for each test in .smith/log/test.log: what .github/shard-costs.tsv is made from
       SMITH_TEST_STATS: "1"
@@ -199,7 +207,10 @@ jobs:
         # while the build downloads: the next step waits for it
         shell: bash
         run: |
-          HOMEBREW_NO_AUTO_UPDATE=1 nohup brew install neovim coreutils >"$RUNNER_TEMP/brew.log" 2>&1 &
+          # the owner's Mac already has them: three runners share it, so install only what is missing
+          if command -v nvim >/dev/null && command -v gtimeout >/dev/null; then nohup true >"$RUNNER_TEMP/brew.log" 2>&1 &
+          else HOMEBREW_NO_AUTO_UPDATE=1 nohup brew install neovim coreutils >"$RUNNER_TEMP/brew.log" 2>&1 &
+          fi
           echo $! >"$RUNNER_TEMP/brew.pid"
       - uses: actions/checkout@v4
         with:
@@ -256,10 +267,11 @@ jobs:
     # (a change that also touches code runs the full check, whose parts include both)
     needs: [changes, build]
     if: needs.changes.outputs.scope == 'docs'
-    runs-on: macos-26
+    runs-on: ${{ fromJSON(needs.changes.outputs.mac) }}
     timeout-minutes: 30
     env:
       GH_TOKEN: ${{ github.token }}
+      SMITH_CORES: ${{ needs.changes.outputs.cores }}
       SMITH_OUTPUT: full
     steps:
       - uses: actions/checkout@v4
