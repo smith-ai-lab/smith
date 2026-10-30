@@ -2761,22 +2761,28 @@ static bool smith_listed_before(size_t row) {
 // first_once: each source once, by its first compile (what clang-tidy reads); else each output, as the editor's file.
 static void smith_put_compile_commands(FILE *out, const SmithBuild *b, bool first_once) {
     fputs("[\n", out);
+    bool any = false; // the entries are separated, not each followed by a comma: the file is JSON when there are none
     for (size_t i = 0; i < smith_object_row_count; i++) {
         const SmithObject *object = &smith_object_rows[i].object;
         if (!smith_object_rows[i].listed || (first_once && smith_listed_before(i))) continue;
+        if (any) fputs(",\n", out);
+        any = true;
         smith_json_entry(out, b->root, object->source, object->output,
                          smith_cat((SmithBuild *)b, object->step.command,
                                    smith_module_advisories((SmithBuild *)b, object->source), nullptr));
-        fputs(",\n", out);
     }
     for (size_t i = 0; i < smith_command_row_count; i++) {
+        if (any) fputs(",\n", out);
+        any = true;
         smith_json_entry(out, b->root, smith_command_rows[i].source, nullptr,
                          smith_cat((SmithBuild *)b, smith_command_rows[i].arguments,
                                    smith_module_advisories((SmithBuild *)b, smith_command_rows[i].source), nullptr));
-        fputs(",\n", out);
     }
     const char *build_file = smith_build_file_name();
-    if (build_file != nullptr) smith_json_entry(out, b->root, build_file, nullptr, smith_build_file_words(build_file));
+    if (build_file != nullptr) {
+        if (any) fputs(",\n", out);
+        smith_json_entry(out, b->root, build_file, nullptr, smith_build_file_words(build_file));
+    }
     fputs("\n]\n", out);
 }
 
