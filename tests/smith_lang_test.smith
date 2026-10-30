@@ -126,6 +126,72 @@ static const char *listed(const Case *kase, const char *command) {
     return scratch::sh(kase->project, command).out;
 }
 
+// The text of a file of the case without the newlines at its end, as $(cat file) gives it ("" when it is absent).
+static const char *text_of(const Case *kase, const char *name) {
+    const char *text = scratch::read(kase->project, name);
+    usize length = c::strlen(text);
+    while (length > 0 && text[length - 1] == '\n')
+        length--;
+    char *copy = arena::push_slice(&kase->io->arena, char, length + 1).data;
+    mem::copy(copy[0:length], text[0:length]);
+    copy[length] = '\0';
+    return copy;
+}
+
+constexpr usize found_max = 512;
+constexpr usize found_folders_max = 128;
+
+static bool ends_with(const char *text, const char *suffix) {
+    usize length = c::strlen(text);
+    usize tail = suffix != nullptr ? c::strlen(suffix) : 0;
+    return suffix != nullptr && length >= tail && c::strcmp(text + length - tail, suffix) == 0;
+}
+
+// The files below a folder of the case (`from`, "src" or "expect/generics") whose names end in `suffix_a` or `suffix_b`
+// (every file when both are nullptr), as paths relative to it, in the order of LC_ALL=C sort, one a line. It does what
+// `cd src && find . -name '*.smith' | LC_ALL=C sort` did, through io, in place of a process for each.
+static const char *found(const Case *kase, const char *from, const char *suffix_a, const char *suffix_b,
+                         bool files_only_here) {
+    io::Io *io = kase->io;
+    const char *names[found_max];
+    usize count = 0;
+    const char *folders[found_folders_max]; // relative to `from`; "" is `from` itself
+    usize tail = 1;
+    folders[0] = "";
+    for (usize head = 0; head < tail; head++) {
+        const char *where = folders[head][0] == '\0'
+                                ? join(kase, kase->project->dir, "/", from, "")
+                                : join(kase, kase->project->dir, "/", from, join(kase, "/", folders[head], "", ""));
+        io::FileList list = io::files_list(&io->files, &io->arena, where);
+        if (list.error.code != 0) continue;
+        for (usize i = 0; i < list.count; i++) {
+            const char *relative = folders[head][0] == '\0' ? list.entries[i].name
+                                                            : join(kase, folders[head], "/", list.entries[i].name, "");
+            if (list.entries[i].folder && !list.entries[i].link && !files_only_here) {
+                test::check_less(tail, found_folders_max);
+                folders[tail++] = relative;
+                continue;
+            }
+            bool wanted = (suffix_a == nullptr && suffix_b == nullptr) || ends_with(list.entries[i].name, suffix_a) ||
+                          ends_with(list.entries[i].name, suffix_b);
+            if (!wanted || (list.entries[i].folder && !list.entries[i].link)) {
+                continue;
+            }
+            test::check_less(count, found_max);
+            usize at = count++;
+            while (at > 0 && c::strcmp(names[at - 1], relative) > 0) { // insertion, bytewise
+                names[at] = names[at - 1];
+                at--;
+            }
+            names[at] = relative;
+        }
+    }
+    const char *lines = "";
+    for (usize i = 0; i < count; i++)
+        lines = join(kase, lines, names[i], "\n", "");
+    return lines;
+}
+
 // The header of a module, made in process into out/include, with the errors it reports added to out/stderr.
 static void write_header(const Case *kase, const char *file, const char *stem) {
     io::Io *io = kase->io;
@@ -157,9 +223,9 @@ static Built build_sources(const Case *kase) {
     const scratch::Project *p = kase->project;
     const char *flags = format::push(&io->arena, scratch::exists(p, "nostd") ? "" : "-std=gnu23",
                                      " -g0 -fno-color-diagnostics -Wno-unused-function -I out/include ",
-                                     scratch::exists(p, "flags") ? scratch::capture(p, "cat flags") : "")
+                                     scratch::exists(p, "flags") ? text_of(kase, "flags") : "")
                             .data;
-    const char *sources = listed(kase, "cd src && find . -name '*.smith' | sed 's|^\\./||' | LC_ALL=C sort");
+    const char *sources = found(kase, "src", ".smith", nullptr, false);
     Built built = {.status = 0, .objects = ""};
     for (const char *at = sources, *file = next_line(io, &at); file != nullptr; file = next_line(io, &at)) {
         // the headers first, as the build will: no compile waits on another
@@ -175,7 +241,7 @@ static Built build_sources(const Case *kase) {
             write_header(kase, file, stem);
         }
     }
-    const char *ask = scratch::exists(p, "ask") ? scratch::capture(p, "cat ask") : "";
+    const char *ask = scratch::exists(p, "ask") ? text_of(kase, "ask") : "";
     for (const char *at = sources, *file = next_line(io, &at); file != nullptr; file = next_line(io, &at)) {
         const char *module = module_of(io, file);
         const char *compile =
@@ -194,10 +260,9 @@ static void build_others(const Case *kase, Built *built) {
     const scratch::Project *p = kase->project;
     const char *flags = format::push(&io->arena, scratch::exists(p, "nostd") ? "" : "-std=gnu23",
                                      " -g0 -fno-color-diagnostics -Wno-unused-function -I out/include ",
-                                     scratch::exists(p, "flags") ? scratch::capture(p, "cat flags") : "")
+                                     scratch::exists(p, "flags") ? text_of(kase, "flags") : "")
                             .data;
-    const char *others =
-        listed(kase, "cd src && find . -name '*.c' -o -name '*.cpp' | sed 's|^\\./||' | LC_ALL=C sort");
+    const char *others = found(kase, "src", ".c", ".cpp", false);
     const char *linker = "cc"; // the verb that links: C++ needs smith c++
     for (const char *at = others, *file = next_line(io, &at); file != nullptr; file = next_line(io, &at)) {
         const char *object = format::push(&io->arena, "out/obj/", object_of(io, file), ".o").data;
@@ -211,7 +276,7 @@ static void build_others(const Case *kase, Built *built) {
         if (cpp) linker = "c++";
         built->objects = format::push(&io->arena, built->objects, " ", object).data;
     }
-    (void)scratch::sh(p, ": >out/stdout");
+    scratch::write(p, "out/stdout", "");
     bool has_main =
         scratch::exists(p, "src/main.smith") || scratch::exists(p, "src/main.c") || scratch::exists(p, "src/main.cpp");
     if (built->status != 0 || !has_main) return;
@@ -237,7 +302,7 @@ static Built build_command(const Case *kase) {
                      "(cd src && smith cc -fno-color-diagnostics $arguments) 2>>out/stderr")
             .data);
     if (run.status != 0) built.status = 1;
-    (void)scratch::sh(p, ": >out/stdout");
+    scratch::write(p, "out/stdout", "");
     if (built.status == 0 && scratch::exists(p, "out/program")) {
         (void)scratch::sh(p, "out/program >out/stdout 2>>out/stderr || echo \"(exit $?)\" >>out/stdout");
     }
@@ -258,10 +323,56 @@ static void golden_at(const Case *kase, const char *relative, const char *actual
     test::golden(kase->io, slice_of(join(kase, "tests/smith-lang/cases/", kase->name, "/", shown)), slice_of(actual));
 }
 
-// The errors: file:line:column: message, and nothing else (no warnings, notes, source lines or counts).
+static usize digits_at(const char *line, usize at) {
+    while (line[at] >= '0' && line[at] <= '9')
+        at++;
+    return at;
+}
+
+// The length of `file:line:column` at the start of a line that goes on with ": error: ", or 0.
+static usize error_position(const char *line) {
+    usize at = 0;
+    while (line[at] != '\0' && line[at] != ' ' && line[at] != ':')
+        at++;
+    if (line[at] != ':') return 0;
+    at = digits_at(line, at + 1);
+    if (line[at] != ':') return 0;
+    at = digits_at(line, at + 1);
+    return c::strncmp(line + at, ": error: ", 9) == 0 ? at : 0;
+}
+
+constexpr usize errors_max = 512;
+
+// The errors: file:line:column: message, and nothing else (no warnings, notes, source lines or counts), sorted bytewise
+// without duplicates: what `sed -n 's/^\([^ :]*:[0-9]*:[0-9]*\): error: \(.*\)$/\1: \2/p' | LC_ALL=C sort -u` made of
+// the file, read here in place of a process.
 static const char *errors_of(const Case *kase, const char *file) {
-    return listed(kase, join(kase, "sed -n 's/^\\([^ :]*:[0-9]*:[0-9]*\\): error: \\(.*\\)$/\\1: \\2/p' ", file,
-                             " 2>/dev/null | LC_ALL=C sort -u", ""));
+    io::Io *io = kase->io;
+    const char *text = scratch::read(kase->project, file);
+    const char *lines[errors_max];
+    usize count = 0;
+    for (const char *at = text, *line = next_line(io, &at); line != nullptr; line = next_line(io, &at)) {
+        usize position = error_position(line);
+        if (position == 0) {
+            continue;
+        }
+        const char *error = format::push(&io->arena, line[0:position], ": ", line + position + 9).data;
+        usize place = 0;
+        while (place < count && c::strcmp(lines[place], error) < 0)
+            place++;
+        if (place < count && c::strcmp(lines[place], error) == 0) {
+            continue;
+        }
+        test::check_less(count, errors_max);
+        for (usize k = count; k > place; k--)
+            lines[k] = lines[k - 1];
+        lines[place] = error;
+        count++;
+    }
+    const char *sorted = "";
+    for (usize k = 0; k < count; k++)
+        sorted = join(kase, sorted, lines[k], "\n", "");
+    return sorted;
 }
 
 // A case with no expect folder is new: an update writes what it made.
@@ -297,6 +408,16 @@ static void check_outputs(const Case *kase, bool update) {
     }
 }
 
+// The files the case holds in expect/<folder>, as `<folder>/<name>` one a line.
+static const char *held(const Case *kase, const char *folder) {
+    io::Io *io = kase->io;
+    const char *names = found(kase, join(kase, "expect/", folder, "", ""), nullptr, nullptr, true);
+    const char *lines = "";
+    for (const char *at = names, *name = next_line(io, &at); name != nullptr; name = next_line(io, &at))
+        lines = join(kase, lines, folder, "/", join(kase, name, "\n", "", ""));
+    return lines;
+}
+
 // The generated headers of the cases in `header_by_command` and what the compile wrote for generics, as the case holds
 // them. A run to update takes the files a successful build made as the expectation.
 static void check_files(const Case *kase, const Built *built, bool update) {
@@ -309,10 +430,8 @@ static void check_files(const Case *kase, const Built *built, bool update) {
                     : "";
     } else { // the files the case holds, which an update rewrites (the lowering and most headers are checked in
              // process)
-        files = listed(
-            kase, header_by_command(kase->name)
-                      ? "for f in expect/header/* expect/generics/*; do [ -f \"$f\" ] && echo \"${f#expect/}\"; done"
-                      : "for f in expect/generics/*; do [ -f \"$f\" ] && echo \"${f#expect/}\"; done");
+        const char *generics = held(kase, "generics");
+        files = header_by_command(kase->name) ? join(kase, held(kase, "header"), generics, "", "") : generics;
     }
     for (const char *at = files, *file = next_line(io, &at); file != nullptr; file = next_line(io, &at)) {
         golden_at(kase, join(kase, "expect/", file, "", ""),
@@ -353,8 +472,11 @@ static void corpus_case(io::Io *io, const char *name) {
     if (c::strncmp(name, "target-facts-", 13) == 0) {
         scratch::copy_tree(&p, "tests/smith-lang/cases/target-facts", "../target-facts");
     }
-    scratch::Run made = scratch::sh(&p, "mkdir -p out/include out/header out/generics out/obj && : >out/stderr");
-    scratch::expect_status("the case is prepared", 0, &made);
+    // The folders of the output and its empty error file, through io: a process for them cost as much as a compile.
+    const char *folders[5] = {"out", "out/include", "out/header", "out/generics", "out/obj"};
+    for (usize i = 0; i < countof(folders); i++)
+        test::check_equal(io::files_make_folder(&io->files, join(&kase, p.dir, "/", folders[i], "")).code, 0);
+    scratch::write(&p, "out/stderr", "");
     if (scratch::exists(&p, "cmd")) { // the files of smith's own that a command may name, as @REPO@
         scratch::copy_tree(&p, "lib/smith/contract.smith", "mirror/lib/smith/contract.smith");
         scratch::copy_tree(&p, "lib/smith/text.smith", "mirror/lib/smith/text.smith");
