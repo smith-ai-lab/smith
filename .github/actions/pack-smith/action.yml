@@ -3,8 +3,9 @@ description: >
   Hands the build of this job to the jobs after it (#798): every file the build made (git's ignored files: build/,
   .smith/, the generated headers and parser) except the downloaded stage0 release, as one tar uploaded as an
   artifact of this run. The cache was faster (4 s against 27 s) but every job's restore counts against the account's
-  cache egress limit, which a day of runs used up ("Egress is over the account limit", 2026-10-30), so the build
-  travels as an artifact. The jobs that use it run use-smith.
+  cache egress limit, which a day of runs used up ("Egress is over the account limit", 2026-10-30), so on a hosted
+  runner the build travels as an artifact; on the owner's Mac (self-hosted) it is a tar in
+  $HOME/smith-ci/<run>-<attempt>/ on its disk. The jobs that use it run use-smith.
 
 inputs:
   name:
@@ -18,11 +19,22 @@ runs:
       shell: bash
       run: |
         start=$(date +%s)
+        tar=$RUNNER_TEMP/tree.tar
+        if [ "$RUNNER_ENVIRONMENT" = self-hosted ]; then
+          # the owner's Mac: the jobs of the run share its disk, so the tar goes to a folder of the run and no artifact
+          # is uploaded (storage egress). Folders over a day old go; ~/.cache/smith and ~/.local/bin are not touched.
+          mkdir -p "$HOME/smith-ci"
+          find "$HOME/smith-ci" -mindepth 1 -maxdepth 1 -mtime +0 -exec rm -rf {} +
+          dir=$HOME/smith-ci/${{ github.run_id }}-${{ github.run_attempt }}
+          mkdir -p "$dir"
+          tar=$dir/${{ inputs.name }}.tar
+        fi
         git ls-files -z --others --ignored --exclude-standard --directory |
           grep -zv '^[.]smith/stage0/' |
-          tar --null -T - -cf "$RUNNER_TEMP/tree.tar"
-        echo "pack: $(( $(date +%s) - start )) s, $(du -h "$RUNNER_TEMP/tree.tar" | cut -f1) " | tee -a "$GITHUB_STEP_SUMMARY"
+          tar --null -T - -cf "$tar"
+        echo "pack: $(( $(date +%s) - start )) s, $(du -h "$tar" | cut -f1) ($RUNNER_ENVIRONMENT)" | tee -a "$GITHUB_STEP_SUMMARY"
     - name: Upload the build
+      if: runner.environment != 'self-hosted'
       uses: actions/upload-artifact@v4
       with:
         name: smith-tree-${{ inputs.name }}

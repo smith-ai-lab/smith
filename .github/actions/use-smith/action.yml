@@ -1,7 +1,7 @@
 name: use-smith
 description: >
   Takes the build another job of this run made (pack-smith) instead of building smith again (#798): the LLVM pack
-  from the cache (else `smith build llvm` downloads it), then the build of this run (an artifact), unpacked over the
+  from the cache (else `smith build llvm` downloads it), then the build of this run (an artifact, or on the owner's Mac a tar on its disk), unpacked over the
   checkout.
   Sets SMITH to the built smith's path. The files git tracks are made older than the unpacked outputs, so the build
   graph finds everything up to date; the caller has checked out the whole history and set GH_TOKEN.
@@ -32,6 +32,7 @@ runs:
         key: ${{ steps.llvm.outputs.key }}
 
     - name: Download the build
+      if: runner.environment != 'self-hosted'
       uses: actions/download-artifact@v4
       with:
         name: smith-tree-${{ inputs.name }}
@@ -44,8 +45,13 @@ runs:
         # a make-style graph rebuilds an output older than its input: the checkout's files are newer than the
         # outputs of the job that built them, so they are made old, and the outputs keep their times
         git ls-files -z | xargs -0 touch -t 202001010000
-        tar -xf "$RUNNER_TEMP/tree.tar"
-        rm -f "$RUNNER_TEMP/tree.tar"
+        if [ "$RUNNER_ENVIRONMENT" = self-hosted ]; then
+          # the owner's Mac: the build job left the tar on this disk (pack-smith); the other jobs of the run read it too
+          tar -xf "$HOME/smith-ci/${{ github.run_id }}-${{ github.run_attempt }}/${{ inputs.name }}.tar"
+        else
+          tar -xf "$RUNNER_TEMP/tree.tar"
+          rm -f "$RUNNER_TEMP/tree.tar"
+        fi
         smith=$(ls "$PWD"/build/*/smith | head -n 1)
         echo "SMITH=$smith" >>"$GITHUB_ENV"
         echo "unpack: $(( $(date +%s) - start )) s (LLVM cache hit: ${{ steps.cache.outputs.cache-hit || 'false' }})" | tee -a "$GITHUB_STEP_SUMMARY"
