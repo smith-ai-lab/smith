@@ -472,7 +472,7 @@ export void test_lint_the_idiom_checks_are_on_in_smiths_defaults_and_a_clean_mod
 
 // Objective-C: a class with ivars, properties and methods has names that are not simple identifiers (selectors); the
 // naming check skips them (it once asserted "Name is not a simple identifier", issue #115): no crash, no finding.
-export void test_lint_objective_c_ivars_properties_and_methods_do_not_crash_lint(io::Io *io) {
+export void test_lint_macos_objective_c_ivars_properties_and_methods_do_not_crash_lint(io::Io *io) {
     scratch::Project p = prepared(io, true);
     scratch::expect_text("Objective-C ivars, properties and methods: lint does not crash and reports nothing", "0 0",
                          scratch::capture(&p, "smith lint objc.m >objc.out 2>&1; s=$?; "

@@ -92,7 +92,7 @@ export void test_effects_a_capability_in_static_storage_is_reported(io::Io *io) 
 
 // --- Objective-C: a message to a system framework's class or object ---
 
-export void test_effects_an_objective_c_message_to_a_framework_class_is_reported(io::Io *io) {
+export void test_effects_macos_an_objective_c_message_to_a_framework_class_is_reported(io::Io *io) {
     golden(io, "objc", "objc.m", "-fobjc-arc");
 }
 
