@@ -5,7 +5,6 @@ module smith::format_test;
 
 import smith::arena;
 import smith::format;
-import smith::io;
 import smith::math;
 import smith::random;
 import smith::test;
@@ -558,8 +557,9 @@ export void test_format_report_rows_match_libc() {
 }
 
 // A piece with no rule is a compile-time error that names its position (the instance note lists the types in order).
-export void test_format_no_rule_error_names_the_piece(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "lang_project");
+export void test_format_no_rule_error_names_the_piece() {
+    scratch::Project p = scratch::make("p", "lang_project");
+    defer scratch::clean(&p);
     scratch::write(&p, "bad.smith",
                    "import smith::format;\n"
                    "typedef void *Point;\n"
@@ -571,6 +571,8 @@ export void test_format_no_rule_error_names_the_piece(io::Io *io) {
                    "}\n");
     scratch::Run run =
         scratch::sh(&p, "\"$SMITH_SELF\" cc -I \"$SMITH_REPO/.smith/include\" -fsyntax-only bad.smith 2>&1");
+    defer scratch::release(run.out);
+    defer scratch::release(run.err);
     scratch::expect_contains("format: a piece with no rule is an error", run.out, "static assertion failed");
     scratch::expect_contains("format: and it names the third piece", run.out,
                              "format: no rule for the type of piece 3; the note lists the types in order");

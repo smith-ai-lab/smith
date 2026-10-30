@@ -7,9 +7,9 @@ module smith::files_test;
 
 import smith::arena;
 import smith::files;
-import smith::io;
 import smith::mem;
 import smith::test;
+import scratch;
 
 typedef struct {
     arena::Arena memory;
@@ -350,15 +350,16 @@ export void test_files_the_handler_is_restored() {
     test::check_condition(files::current_handler() == outside);
 }
 
-export void test_files_the_real_file_system_in_a_scratch_folder(io::Io *io) {
+export void test_files_the_real_file_system_in_a_scratch_folder() {
+    scratch::Project p = scratch::make("files", nullptr); // before the arena: clean frees what make holds
+    defer scratch::clean(&p);
     arena::Arena a = test::memory(1 << 16);
     arena::ArenaAllocator allocator = arena::allocator(&a);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    const char *scratch = test::scratch(io);
-    test::check_condition(scratch != nullptr);
+    test::check_condition(p.dir != nullptr);
     char folder[1024];
-    __builtin_snprintf(folder, sizeof folder, "%s/a/b", scratch);
+    __builtin_snprintf(folder, sizeof folder, "%s/a/b", p.dir);
     char path[1100];
     __builtin_snprintf(path, sizeof path, "%s/file.txt", folder);
 
