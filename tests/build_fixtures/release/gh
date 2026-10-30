@@ -8,7 +8,7 @@ case "$1 $2" in
     [ -d "$GH_DIR/$tag" ] && exit 1 # as gh: the tag exists already
     mkdir -p "$GH_DIR/$tag"
     shift 3
-    while [ $# -gt 0 ]; do case $1 in --*) shift 2 ;; *) cp "$1" "$GH_DIR/$tag/"; shift ;; esac; done
+    while [ $# -gt 0 ]; do case $1 in --draft) shift ;; --*) shift 2 ;; *) cp "$1" "$GH_DIR/$tag/"; shift ;; esac; done
     ;;
 "release upload")
     tag=$3
@@ -23,5 +23,7 @@ case "$1 $2" in
     while [ $# -gt 0 ]; do case $1 in --dir) dir=$2; shift 2 ;; --pattern) pat="$pat $2"; shift 2 ;; *) shift ;; esac; done
     for p in $pat; do cp "$GH_DIR/$tag/$p" "$dir/"; done
     ;;
+"release edit") echo "$3 $4" >>"$GH_DIR/../published" ;;
+"api") ;;
 "release delete") rm -rf "$GH_DIR/$3" ;;
 esac

@@ -204,7 +204,8 @@ jobs:
 
   release:
     # a push to main (the merge queue's checked commit) publishes the stage0 release stage0-<commit>
-    # (knowledge/release.md), which the next jobs' setup builds from; the macOS tarball
+    # (knowledge/release.md), which the next jobs' setup builds from; the macOS tarball goes into its draft, and the
+    # `publish` job publishes the draft (releases are immutable once published)
     needs: changes
     if: needs.changes.outputs.scope == 'release'
     runs-on: macos-26
@@ -225,10 +226,10 @@ jobs:
         run: '"$SMITH" build release'
 
   release-linux:
-    # the same release gets the Linux tarball (`release.sh publish` adds it to the release the other job made). Until
+    # the same draft release gets the Linux tarball (`release.sh publish` adds it to the draft the other job made). Until
     # a Linux release exists, setup builds smith from source (scripts/seed_linux.c, about two hours): expected once,
-    # for the first push to main after this job exists; the hosted limit is 6 hours. Nothing waits for this job:
-    # `install` needs only the macOS one.
+    # for the first push to main after this job exists; the hosted limit is 6 hours. `publish` publishes without this
+    # job's tarball when it fails, so `install` never waits for Linux.
     needs: changes
     if: needs.changes.outputs.scope == 'release'
     runs-on: ubuntu-latest
@@ -248,10 +249,26 @@ jobs:
       - name: Release
         run: '"$SMITH" build release'
 
+  publish:
+    # publishes the draft the two release jobs added to: a published release is immutable, so it waits for both, and
+    # a failed Linux job still lets the macOS release out
+    needs: [release, release-linux]
+    if: always() && needs.release.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish the release
+        run: sh scripts/release.sh finish "stage0-$GITHUB_SHA"
+
   install:
     # the owner's Mac (its one self-hosted runner, ~/actions-runner) installs the release just published, so the
     # installed smith is always main's: a download and a checksum, no build (owner, 2026-10-29)
-    needs: release
+    needs: publish
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 10
     concurrency:
