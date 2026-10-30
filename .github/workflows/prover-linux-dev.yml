@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
   push:
     branches: [worktree-agent-adc594bd97d4c5bb0]
-    paths: [".github/workflows/prover-linux-dev.yml", "scripts/llvm_linux.c", "shim/**", "build.c"]
+    paths: [".github/workflows/prover-linux-dev.yml", "scripts/llvm_linux.c", "shim/**", "build.c", "runtime/**", "tests/**", "lib/**", "smith.c"]
 
 permissions:
   contents: read
