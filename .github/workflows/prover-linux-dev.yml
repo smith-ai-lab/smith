@@ -1,0 +1,59 @@
+name: prover-linux-dev
+# TEMPORARY (issue #820): tries the Linux prover and Enzyme steps on the published r11 pack, then builds smith with them
+# and runs the prove and autodiff tests. Deleted before the pull request merges.
+on:
+  workflow_dispatch:
+  push:
+    branches: [worktree-agent-adc594bd97d4c5bb0]
+    paths: [".github/workflows/prover-linux-dev.yml", "scripts/llvm_linux.c", "shim/**", "build.c"]
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SMITH_OUTPUT: full
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Tools
+        run: sudo apt-get update -q && sudo apt-get install -y -q m4 lld
+      - name: Fetch the previous smith and the r11 pack
+        run: |
+          mkdir -p .smith
+          cc -std=c23 -x c scripts/stage0.c -o .smith/stage0-tool 2>/dev/null || cc -std=c2x -x c scripts/stage0.c -o .smith/stage0-tool
+          .smith/stage0-tool llvm
+      - name: Z3, Alive2, Bitwuzla
+        run: |
+          cc -std=gnu2x -O1 -x c scripts/llvm_linux.c -o "$RUNNER_TEMP/llvm_linux"
+          LLVM_LINUX_ONLY=prover "$RUNNER_TEMP/llvm_linux" "" "" "" "$RUNNER_TEMP/x.stamp" ""
+          ls -la ~/.cache/smith/llvm/*/prove/lib
+      - name: Enzyme
+        run: |
+          LLVM_LINUX_ONLY=enzyme "$RUNNER_TEMP/llvm_linux" "" "" "" "$RUNNER_TEMP/x.stamp" ""
+          ls -la ~/.cache/smith/enzyme/*/lib
+      - name: Build smith
+        run: |
+          .smith/stage0-tool
+          smith=$(ls "$PWD"/build/*/smith | head -n 1)
+          echo "SMITH=$smith" >>"$GITHUB_ENV"
+      - name: Prove and autodiff tests
+        run: |
+          rc=0
+          "$SMITH" test --test prove_checks_test,prove_memory_test,prove_misc_test,prove_smith_test,prove_sound_test,prove_test,autodiff_test 2>&1 | tee "$RUNNER_TEMP/test.log" || rc=${PIPESTATUS[0]}
+          grep -E '^[0-9]+ passed|^FAIL ' "$RUNNER_TEMP/test.log" | sort | uniq -c | sort -rn | head -60
+          exit $rc
+      - name: Upload the logs
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs
+          path: .smith/log
+          if-no-files-found: ignore
+          retention-days: 3
