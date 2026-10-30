@@ -4893,6 +4893,40 @@ export i32 b(auto p, auto... rest) {
 export i32 c(auto p, auto... rest) {
     return inner(sq(p), same(sq(rest[0]), 1));
 }
+==> generic-call-statement-after-braceless-if/src/count.smith <==
+module count;
+
+import <stdio.h>;
+
+// A generic whose call is a statement of its own: `count::show(i, n);` after `if (...) continue;` must not read as the
+// if's second statement (-Wmisleading-indentation), as `show(i, n);` of a plain function does not.
+export void show(auto a, typeof(a) b) {
+    c::printf("%d of %d\n", (i32)a, (i32)b);
+}
+
+export i32 doubled(i32 n) {
+    i32 total = 0;
+    for (i32 i = 0; i < n; i++) {
+        if (i == 1) continue;
+        show(i, n);
+        total += i;
+    }
+    return total;
+}
+==> generic-call-statement-after-braceless-if/src/main.smith <==
+module main;
+
+import count;
+import <stdio.h>;
+
+int main() {
+    for (i32 i = 0; i < 3; i++) {
+        if (i == 1) continue;
+        count::show(i, 3);
+    }
+    c::printf("%d\n", count::doubled(3));
+    return 0;
+}
 ==> generic-call-too-deep/src/main.smith <==
 import num;
 
