@@ -40,6 +40,7 @@ import smith::test;
 import <string.h>;
 import scratch;
 import smith::mem;
+import target;
 import <smith_core.h>;
 
 typedef struct {
@@ -244,9 +245,17 @@ static Built build_command(const Case *kase) {
 }
 
 // The golden file of the case.
+// A file the platform changes has a variant for Linux, `expect-linux/<same path>`: the program reads the machine
+// (`__x86_64__` against `__aarch64__`), and `u64` is `unsigned long` there where macOS has `unsigned long long`.
 static void golden_at(const Case *kase, const char *relative, const char *actual) {
-    test::golden(kase->io, slice_of(join(kase, "tests/smith-lang/cases/", kase->name, "/", relative)),
-                 slice_of(actual));
+    const char *shown = relative;
+    if constexpr (target::os != target::macos) { // not `target::linux`: clang defines `linux` as 1 there (#382)
+        if (c::strncmp(relative, "expect/", 7) == 0) {
+            const char *variant = join(kase, "expect-linux/", relative + 7, "", "");
+            if (scratch::exists(kase->project, variant)) shown = variant;
+        }
+    }
+    test::golden(kase->io, slice_of(join(kase, "tests/smith-lang/cases/", kase->name, "/", shown)), slice_of(actual));
 }
 
 // The errors: file:line:column: message, and nothing else (no warnings, notes, source lines or counts).
@@ -320,6 +329,11 @@ static void check_asked_and_symbols(const Case *kase, const Built *built) {
         const char *command =
             format::push(&kase->io->arena, "for object in", built->objects,
                          "; do nm -g \"$object\" 2>/dev/null; done | grep -v ' U ' | awk '{print $2, $3}' | "
+                         // the goldens are Mach-O's: C names have a leading underscore, a weak definition is T and
+                         // zero-filled data is S
+                         "if [ \"$(uname -s)\" = Darwin ]; then cat; else "
+                         "awk '{ t = $1; n = $2; if (t == \"W\") t = \"T\"; if (t == \"B\") t = \"S\"; "
+                         "if (n !~ /::|\\(/) n = \"_\" n; print t, n }'; fi | "
                          "LC_ALL=C sort")
                 .data;
         golden_at(kase, "expect/symbols", listed(kase, command));

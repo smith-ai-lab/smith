@@ -1,9 +1,10 @@
 name: pack-smith
 description: >
   Hands the build of this job to the jobs after it (#798): every file the build made (git's ignored files: build/,
-  .smith/, the generated headers and parser) except the downloaded stage0 release, as one tar saved in the cache
-  under a key of this run (restoring a cache took 4 s for 194 MB, downloading an artifact 27 s for 378 MB: the
-  cache is the faster way to hand a file to the jobs of a run). The jobs that use it run use-smith.
+  .smith/, the generated headers and parser) except the downloaded stage0 release, as one tar uploaded as an
+  artifact of this run. The cache was faster (4 s against 27 s) but every job's restore counts against the account's
+  cache egress limit, which a day of runs used up ("Egress is over the account limit", 2026-10-30), so the build
+  travels as an artifact. The jobs that use it run use-smith.
 
 inputs:
   name:
@@ -20,9 +21,12 @@ runs:
         git ls-files -z --others --ignored --exclude-standard --directory |
           grep -zv '^[.]smith/stage0/' |
           tar --null -T - -cf "$RUNNER_TEMP/tree.tar"
-        echo "pack: $(( $(date +%s) - start )) s, $(du -h "$RUNNER_TEMP/tree.tar" | cut -f1) (the cache compresses it)" | tee -a "$GITHUB_STEP_SUMMARY"
-    - name: Save the build
-      uses: actions/cache/save@v4
+        echo "pack: $(( $(date +%s) - start )) s, $(du -h "$RUNNER_TEMP/tree.tar" | cut -f1) " | tee -a "$GITHUB_STEP_SUMMARY"
+    - name: Upload the build
+      uses: actions/upload-artifact@v4
       with:
+        name: smith-tree-${{ inputs.name }}
         path: ${{ runner.temp }}/tree.tar
-        key: smith-tree-${{ inputs.name }}-${{ github.run_id }}-${{ github.run_attempt }}
+        compression-level: 0
+        retention-days: 1
+        overwrite: true

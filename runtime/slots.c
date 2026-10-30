@@ -156,6 +156,37 @@ static bool smith_slots_ci_held(const char *folder) {
     return smith_slots_marked(folder, "ci-held");
 }
 
+#ifndef __APPLE__
+// Linux: /proc/<pid>/stat, "pid (comm) state ppid ... starttime ...". The name in parentheses may hold anything, so the
+// fields are read after the last `)`: the state is field 3, the parent 4 and the start time (clock ticks since
+// boot) 22. Where /proc cannot be read, only whether the process exists is known.
+static bool smith_slots_proc_stat(pid_t pid, long *start, long *parent) {
+    char path[64];
+    snprintf(path, sizeof path, "/proc/%ld/stat", (long)pid);
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    char text[1024] = {};
+    ssize_t count = fd >= 0 ? read(fd, text, sizeof text - 1) : -1;
+    if (fd >= 0) close(fd);
+    if (count <= 0) return kill(pid, 0) == 0 || errno == EPERM;
+    const char *at = strrchr(text, ')');
+    if (at == nullptr) return true;
+    char *end = nullptr;
+    long fields[20] = {};
+    at += 1;
+    while (*at == ' ')
+        at += 1;
+    at += 1; // the state letter
+    for (int field = 1; field < 20; field++) {
+        fields[field] = strtol(at, &end, 10);
+        if (end == at) return true; // cut short: what was read stands
+        at = end;
+    }
+    *parent = fields[1];
+    *start = fields[19];
+    return true;
+}
+#endif
+
 // What the system says about a process: whether it exists, when it started and its parent. `start` and `parent` are 0
 // where the system cannot say (then the checks that need them pass).
 static bool smith_slots_proc(pid_t pid, long *start, long *parent) {
@@ -170,7 +201,7 @@ static bool smith_slots_proc(pid_t pid, long *start, long *parent) {
     *parent = (long)info.kp_eproc.e_ppid;
     return true;
 #else
-    return kill(pid, 0) == 0 || errno == EPERM;
+    return smith_slots_proc_stat(pid, start, parent);
 #endif
 }
 

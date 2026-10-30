@@ -16,6 +16,8 @@ import <fcntl.h>;
 if constexpr (target::os == target::macos) {
     import <libproc.h>;
     import <mach/mach_time.h>;
+} else {
+    import <sys/prctl.h>;
 }
 import <poll.h>;
 import <setjmp.h>;
@@ -710,6 +712,12 @@ i32 explain_start(c::pid_t *child) {
     char pid_text[24];
     __builtin_snprintf(pid_text, sizeof pid_text, "%d", c::getpid());
     c::fflush(nullptr);
+    if constexpr (target::os != target::macos) {
+        // Linux's Yama (ptrace_scope 1) lets a process attach only to its descendants, and the debugger reads its
+        // parent: this process says any process may (PR_SET_PTRACER, PR_SET_PTRACER_ANY)
+        constexpr i32 set_ptracer = 0x59616d61;
+        c::prctl(set_ptracer, ~(u64)0);
+    }
     *child = c::fork();
     if (*child == 0) {
         c::dup2(ends[1], stdout_fd);
