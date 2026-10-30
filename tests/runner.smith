@@ -48,16 +48,33 @@ constexpr char shared_script[_] =
     "else n=0; until [ -e \"$c/done\" ]; do "
     "[ -d \"$c.lock\" ] || { echo \"the shared build of the runner failed\"; exit 1; }; "
     "n=$((n + 1)); [ $n -lt 3000 ] || { echo \"timed out waiting for the shared build\"; exit 1; }; "
-    "perl -e 'select(undef, undef, undef, 0.2)'; done; fi; fi; "
-    "mkdir -p build && ln -sf \"$c/proj/build/tests\" \"$c/proj/build/tests.stack\" "
-    "\"$c\"/proj/build/libsmith_handlers.dylib* build/";
+    "perl -e 'select(undef, undef, undef, 0.2)'; done; fi; fi; ";
+
+// The end of the script for a test that only runs `build/tests`: it links the runner of the shared build.
+constexpr char link_script[_] = "mkdir -p build && ln -sf \"$c/proj/build/tests\" \"$c/proj/build/tests.stack\" "
+                                "\"$c\"/proj/build/libsmith_handlers.dylib* build/";
+
+// The end of the script for a test that runs `smith test` or `smith build` in the project: it copies the whole built
+// project (times kept), so `smith build` there is a no-op that writes the copy's paths and not the 14 steps of a
+// build (3 s of CPU) that the runner is made of; the way tests/lsp_test.smith copies its built folders.
+constexpr char copy_script[_] = "cp -Rp \"$c/proj/.\" .";
 
 // A project whose runner is built (or taken from the one an earlier test built): `project` and `build` in one, for a
 // test that only runs `build/tests`; a test that builds again, or expects a failed build, uses those two.
 export scratch::Project built_project(io::Io *io, const char *base, const char *files, const char *arguments) {
     scratch::Project p = project(io, base, files);
     scratch::Run run =
-        scratch::sh(&p, format::push(&io->arena, "ARGS='", arguments, "'; ", shared_script, " 2>&1").data);
+        scratch::sh(&p, format::push(&io->arena, "ARGS='", arguments, "'; ", shared_script, link_script, " 2>&1").data);
+    scratch::expect_status("runner: the runner builds", 0, &run);
+    return p;
+}
+
+// `built_project`, for a test that runs `smith test` in the project: the project is a copy of the built one, so the
+// build `smith test` starts with has nothing to do.
+export scratch::Project built_copy(io::Io *io, const char *base, const char *files, const char *arguments) {
+    scratch::Project p = project(io, base, files);
+    scratch::Run run =
+        scratch::sh(&p, format::push(&io->arena, "ARGS='", arguments, "'; ", shared_script, copy_script, " 2>&1").data);
     scratch::expect_status("runner: the runner builds", 0, &run);
     return p;
 }
