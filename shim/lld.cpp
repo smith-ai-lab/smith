@@ -80,7 +80,7 @@ extern "C" int smith_lld_main(int argc, char **argv) {
 #ifdef SMITH_ENZYME
     char self[PATH_MAX];
     std::string plugin;
-    if (smith_platform_self_path(self, sizeof self)) {
+    if (smith_platform_plugin_path(self, sizeof self)) {
         plugin = std::string("--load-pass-plugin=") + self;
         arguments.push_back(plugin.c_str());
     }

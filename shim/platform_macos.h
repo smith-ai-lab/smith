@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <libproc.h>
 #include <mach-o/dyld.h>
 #include <mach-o/getsect.h>
 #include <mach-o/ldsyms.h>
@@ -51,4 +52,19 @@ inline int smith_platform_spawn_suspended(pid_t *pid, const char *path, char *co
     int spawned = posix_spawn(pid, path, nullptr, &attributes, args, environment);
     posix_spawnattr_destroy(&attributes);
     return spawned;
+}
+
+// The physical footprint of a running process in bytes, false when it cannot be read (`smith prove` stops a proof that
+// grows past its limit, shim/prove.cpp).
+inline bool smith_platform_process_footprint(pid_t pid, double *bytes) {
+    rusage_info_v4 usage{};
+    if (proc_pid_rusage(pid, RUSAGE_INFO_V4, reinterpret_cast<rusage_info_t *>(&usage)) != 0) return false;
+    *bytes = static_cast<double>(usage.ri_phys_footprint);
+    return true;
+}
+
+// What `--load-pass-plugin=` names to load smith's own Enzyme entry (shim/lld.cpp): smith's file, which dlopen answers
+// with its own handle.
+inline bool smith_platform_plugin_path(char *out, size_t size) {
+    return smith_platform_self_path(out, size);
 }
