@@ -3,7 +3,7 @@ effects_asm.c:44:5: error: smith-effect: `raw_write` is [[smith::pure]], but it 
 effects_asm.c:44:5: note: this call is the first of the effects beyond the declared ones
 effects_asm.c:53:5: error: smith-effect: `raw_write_immediate` is [[smith::pure]], but it has the effects files, net: raw_write_immediate -> the system call `write` in inline assembly (effects_asm.c:53)
 effects_asm.c:53:5: note: this call is the first of the effects beyond the declared ones
-effects_asm.c:74:5: error: smith-effect: `raw_unknown` is [[smith::pure]], but it has the effects c: raw_unknown -> a system call with a number the table does not know (effects_asm.c:74)
+effects_asm.c:74:5: error: smith-effect: `raw_unknown` is [[smith::pure]], but it has the effects unknown: raw_unknown -> a system call with a number the table does not know (effects_asm.c:74)
 effects_asm.c:81:5: error: smith-effect: `calls_puts` is [[smith::pure]], but it has the effects console, globals: calls_puts -> puts (effects_asm.c:81)
 effects_asm.c:81:5: note: this call is the first of the effects beyond the declared ones
-effects_asm.c:86:5: error: smith-effect: `calls_register` is [[smith::pure]], but it has the effects c: calls_register -> a call through a register in inline assembly (effects_asm.c:86)
+effects_asm.c:86:5: error: smith-effect: `calls_register` is [[smith::pure]], but it has the effects unknown: calls_register -> a call through a register in inline assembly (effects_asm.c:86)
