@@ -216,6 +216,8 @@ jobs:
         with:
           name: test-log-${{ matrix.os }}-${{ matrix.shard }}-of-${{ matrix.count }}
           path: .smith/log
+          # .smith is a hidden folder, which upload-artifact v4 leaves out unless asked (no log was uploaded since)
+          include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 7
       - name: Fail fast
