@@ -54,6 +54,19 @@ export void test_writes_a_file(io::Io *io) { // a real io, in a scratch folder t
 - `test::memory(capacity)` is the test's memory (an `arena::Arena`), given back before each test and each key. `test::note(format, ...)` prints under a failure; each note replaces the last. `test::full()` is true when the run was given `--full`.
 
 - Every test runs under `mem::checked` ([smith-failing](../smith-failing/SKILL.md)): a test that returns with an allocated block not freed fails with `memory leaked` at the line that allocated it, and a double free or a use after free is reported where it happens. The check covers a plain `test_x()` as it does a test with an io, and a `malloc` in a C library the test calls goes through it too (the leak names the C line); the C library's own blocks (stdio buffers, locale) are not leaks, so a test may call `printf`. `--unchecked` turns it off (build.c: `.checked_allocator = build::Off` on `build::AppTests`).
+- A test needs no `io` to run a process or use a scratch project (issue #815): memory a call returns to the test is the test's to free, and the leak check above fails the test that keeps it. Free it with `defer`:
+
+```smith fragment
+export void test_runs_a_command() {
+    scratch::Project p = scratch::make("proj", nullptr); // io-free; tests/scratch.smith
+    defer scratch::clean(&p);                            // the folder and what make holds
+    scratch::Run run = scratch::sh(&p, "echo hi");
+    defer scratch::release(run.out);                     // a Run's text belongs to the test
+    defer scratch::release(run.err);
+    test::check_equal(run.status, 0);
+}
+```
+
 - `test::golden(io, path, actual)` compares a text with a file in the project (`smith test --update` writes it): [smith-test-checks](../smith-test-checks/SKILL.md).
 
 Also in this family: [smith-test-modules](../smith-test-modules/SKILL.md), [smith-test-checks](../smith-test-checks/SKILL.md), [smith-test-workers](../smith-test-workers/SKILL.md), [smith-test-c](../smith-test-c/SKILL.md), [smith-build-tests](../smith-build-tests/SKILL.md).
