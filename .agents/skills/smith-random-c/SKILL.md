@@ -40,6 +40,6 @@ SmithObject arena = {.compiler = "smith-cc", .source = smith_library(b, "arena")
 smith_object(b, &arena);
 ```
 
-`flags` includes `-I .smith/include`, and the program's `.objects` list both. Add `-lm` to the link on platforms where `sqrt` is not inlined (macOS does not need it). See the smith-build and smith-arena skills.
+`flags` includes `-I .smith/include`, and the program's `.objects` list both. `smith_program` adds `-lm` to the link on Linux, where glibc keeps libm apart (macOS does not need it); a link of your own (a command, `smith cc`) adds it where `sqrt` is not inlined. See the smith-build and smith-arena skills.
 
 Also in this family: [smith-random](../smith-random/SKILL.md), [smith-categorical](../smith-categorical/SKILL.md), [smith-random-distributions](../smith-random-distributions/SKILL.md), [smith-random-own](../smith-random-own/SKILL.md).

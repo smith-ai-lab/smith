@@ -2636,6 +2636,9 @@ void smith_program(SmithBuild *b, SmithProgram *program) {
     // image in a failure's trace, and the exported symbols are the names of its raw frames (lib/trace.c).
     const char *const *identity = smith_when(b, strcmp(b->os, "Linux") == 0,
                                              smith_list(b, "-Wl,--build-id=md5", "-Wl,--export-dynamic", nullptr));
+    // glibc keeps libm apart from libc (macOS's is in libSystem): a program that calls sqrtf or sin links -lm there,
+    // and one that does not loses nothing by it.
+    const char *const *math = smith_when(b, strcmp(b->os, "Linux") == 0, smith_list(b, "-lm", nullptr));
     // The effect summaries of the objects (an output of each compile that writes one): the link checks them (skill
     // smith-lang-effects), so a summary that changed reruns it even when its object did not (an attribute moved).
     const char **summaries = smith_new_list(count);
@@ -2649,7 +2652,7 @@ void smith_program(SmithBuild *b, SmithProgram *program) {
     const char *const *handlers = smith_program_handlers(b, &copy, &handlers_files);
     copy.step = (SmithStep){
         .command = smith_cat(b, smith_one(copy.linker), identity, copy.flags, (const char *const *)outputs,
-                             copy.libraries, handlers, tail, nullptr),
+                             copy.libraries, math, handlers, tail, nullptr),
         .inputs = (const char *const *)outputs,
         .implicit_inputs = smith_cat(b, smith_library_files(copy.libraries),
                                      smith_one(smith_compiler_file(copy.linker)), summaries, handlers_files, nullptr),

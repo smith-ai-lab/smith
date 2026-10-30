@@ -830,7 +830,7 @@ export void test_lsp_cinterop_builds_and_runs(io::Io *io) {
     }
     scratch::Project p = folder(&root, "cinterop");
     scratch::expect_text("cinterop: it builds and runs", "9.0 1 3 eof=-1 99",
-                         scratch::capture(&p, "smith cc main.smith -o demo 2>&1 && ./demo"));
+                         scratch::capture(&p, "smith cc main.smith -o demo -lm 2>&1 && ./demo"));
 }
 
 export void test_lsp_cinterop_hover(io::Io *io) {
