@@ -17,3 +17,4 @@ export void test_deployment_smith_runs_on_macos_26(io::Io *io) {
                                                   "sed -n 's/^ *minos //p'"));
     }
 }
+// (measure: changed-only path)
