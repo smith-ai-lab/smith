@@ -1,6 +1,6 @@
 name: prover-linux-dev
-# TEMPORARY (issue #820): tries the Linux prover and Enzyme steps on the published r11 pack, then builds smith with them
-# and runs the prove and autodiff tests. Deleted before the pull request merges.
+# TEMPORARY (issue #820): once the llvm workflow has published the r12 pack, builds smith on Linux against it and runs
+# the prove and autodiff tests. Does nothing before. Deleted before the pull request merges.
 on:
   workflow_dispatch:
   push:
@@ -13,7 +13,7 @@ permissions:
 jobs:
   linux:
     runs-on: ubuntu-latest
-    timeout-minutes: 300
+    timeout-minutes: 120
     env:
       GH_TOKEN: ${{ github.token }}
       SMITH_OUTPUT: full
@@ -21,91 +21,33 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Tools
-        run: sudo apt-get update -q && sudo apt-get install -y -q m4 lld
-      - name: Fetch the previous smith and the r11 pack
+      - name: Is the pack there
+        id: pack
+        run: |
+          name=$(sed -n 's/.*"SMITH_LLVM_NAME", "\([^"]*\)".*/\1/p' build.c | head -1)
+          if gh release view "llvm-$name-linux-x86_64" >/dev/null 2>&1; then echo "there=true" >>"$GITHUB_OUTPUT"; else echo "::notice::no pack llvm-$name-linux-x86_64 yet"; echo "there=false" >>"$GITHUB_OUTPUT"; fi
+      - name: Fetch the previous smith and the pack
+        if: steps.pack.outputs.there == 'true'
         run: |
           mkdir -p .smith
           cc -std=c23 -x c scripts/stage0.c -o .smith/stage0-tool 2>/dev/null || cc -std=c2x -x c scripts/stage0.c -o .smith/stage0-tool
-          .smith/stage0-tool llvm
-      - name: llvm-objcopy (the pack has none; the full install of llvm.yml does)
-        run: |
-          sudo apt-get install -y -q llvm
-          tool=$(command -v llvm-objcopy || ls /usr/lib/llvm-*/bin/llvm-objcopy | head -n 1)
-          ln -sf "$tool" ~/.cache/smith/llvm/23.1.3-r11/install/bin/llvm-objcopy
-          ln -sf "$(dirname "$tool")/llvm-ar" ~/.cache/smith/llvm/23.1.3-r11/install/bin/llvm-ar
-          # the pack has no programs, but LLVM's cmake exports name them and cmake checks they exist
-          cd ~/.cache/smith/llvm/23.1.3-r11/install
-          grep -ho '_IMPORT_PREFIX}/\(bin\|lib\)/[A-Za-z0-9_.+-]*' lib/cmake/*/*.cmake | sed 's|.*_IMPORT_PREFIX}/||' | sort -u | while read -r name; do
-            [ -e "$name" ] || { : >"$name"; chmod +x "$name"; }
-          done
-      - name: Restore the builds
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            ~/.cache/smith/llvm/23.1.3-r11/prove
-            ~/.cache/smith/llvm/23.1.3-r11/prove-work
-            ~/.cache/smith/llvm/23.1.3-r11/packages
-            ~/.cache/smith/llvm/23.1.3-r11/enzyme-work
-            ~/.cache/smith/enzyme
-          key: prover-dev-none
-          restore-keys: prover-dev-
-      - name: Z3, Alive2, Bitwuzla
-        run: |
-          rm -f ~/.cache/smith/llvm/23.1.3-r11/prove/.bitwuzla
-          cc -std=gnu2x -O1 -x c scripts/llvm_linux.c -o "$RUNNER_TEMP/llvm_linux"
-          LLVM_LINUX_ONLY=prover "$RUNNER_TEMP/llvm_linux" "" "" "" "$RUNNER_TEMP/x.stamp" ""
-          ls -la ~/.cache/smith/llvm/*/prove/lib
-      - name: Enzyme
-        run: |
-          LLVM_LINUX_ONLY=enzyme "$RUNNER_TEMP/llvm_linux" "" "" "" "$RUNNER_TEMP/x.stamp" ""
-          ls -la ~/.cache/smith/enzyme/*/lib
-      - name: Save the builds
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/.cache/smith/llvm/23.1.3-r11/prove
-            ~/.cache/smith/llvm/23.1.3-r11/prove-work
-            ~/.cache/smith/llvm/23.1.3-r11/packages
-            ~/.cache/smith/llvm/23.1.3-r11/enzyme-work
-            ~/.cache/smith/enzyme
-          key: prover-dev-${{ github.run_id }}
+          .smith/stage0-tool llvm -Dfetch=1
+          ls -la ~/.cache/smith/llvm/*/prove/lib ~/.cache/smith/enzyme/*/lib
       - name: Build smith
+        if: steps.pack.outputs.there == 'true'
         run: |
           .smith/stage0-tool
           smith=$(ls "$PWD"/build/*/smith | head -n 1)
           echo "SMITH=$smith" >>"$GITHUB_ENV"
       - name: Prove and autodiff tests
+        if: steps.pack.outputs.there == 'true'
         run: |
           set +e
           "$SMITH" test --test prove_checks_test,prove_memory_test,prove_misc_test,prove_smith_test,prove_sound_test,prove_test,autodiff_test >"$RUNNER_TEMP/test.log" 2>&1
           rc=$?
           echo "smith test exit status: $rc"
-          grep -E '^[0-9]+ passed|passed|^FAIL |^FAILED:|build stopped' "$RUNNER_TEMP/test.log" | cut -c1-300 | sort | uniq -c | sort -rn | head -80
-          echo "=== the build of the autodiff programs"
-          grep -A12 -m1 'FAILED: \[code=1\] build/debug/toy' "$RUNNER_TEMP/test.log" | cut -c1-1500
+          grep -E 'passed,|^FAIL |^FAILED:|build stopped' "$RUNNER_TEMP/test.log" | cut -c1-300 | sort | uniq -c | sort -rn | head -80
           echo "=== the failures"
-          grep -A16 '^FAIL ' "$RUNNER_TEMP/test.log" | cut -c1-400 | head -700
-          cp "$RUNNER_TEMP/test.log" .smith/log/ci-test.log 2>/dev/null
+          grep -A16 '^FAIL ' "$RUNNER_TEMP/test.log" | cut -c1-400 | head -300
           if [ "$rc" -eq 0 ] && ! grep -qE 'build stopped|^FAIL ' "$RUNNER_TEMP/test.log"; then exit 0; fi
           exit 1
-      - name: The programs that aborted
-        if: always()
-        run: |
-          set +e
-          for name in scan scanstruct structs scangrad; do
-            for program in $(find /tmp/smith-test-*.noindex -type f -path "*build/debug/$name" 2>/dev/null | head -n 1); do
-              echo "=== $program"
-              (cd "$(dirname "$program")/../.." && "$program" >/tmp/out.txt 2>/tmp/err.txt; echo "status $?"; tail -n 5 /tmp/out.txt; echo "--- stderr"; head -n 60 /tmp/err.txt | cut -c1-300)
-            done
-          done
-      - name: Upload the logs
-        if: always()
-        continue-on-error: true
-        uses: actions/upload-artifact@v4
-        with:
-          name: logs
-          path: .smith/log
-          if-no-files-found: ignore
-          retention-days: 3
