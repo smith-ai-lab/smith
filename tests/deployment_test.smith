@@ -8,7 +8,7 @@ import smith::test;
 import scratch;
 import target;
 
-export void test_deployment_smith_runs_on_macos_26(io::Io *io) {
+export void test_deployment_smith_runs_on_macos_26([[maybe_unused]] io::Io *io) {
     if constexpr (target::os == target::macos) {
         scratch::Project p = scratch::project(io, "deployment", nullptr);
         scratch::expect_text("minos: the oldest macOS smith runs on", "26.0",
