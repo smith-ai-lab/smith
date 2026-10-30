@@ -523,6 +523,7 @@ static void make_z3(const char *cmake, const char *python, const char *ninja) {
     defer(library, deferred, "prove");
     if (rename(deferred, library) != 0) die("cannot move", deferred);
     run((const char *[]){"touch", path("%s/.z3", prove_folder, ""), nullptr});
+    run((const char *[]){"rm", "-rf", build, nullptr}); // the build is 3 GB of objects and the pack holds none
 }
 
 // Alive2's libraries that hold LLVM IR's semantics (not its translation-validation plugin or its programs), against the
@@ -568,6 +569,7 @@ static void make_alive2(const char *cmake, const char *ninja) {
     }
     run((const char *[]){"cp", path("%s/version_gen.h", build, ""), path("%s/", headers, ""), nullptr});
     run((const char *[]){"touch", path("%s/.alive2", prove_folder, ""), nullptr});
+    run((const char *[]){"rm", "-rf", build, nullptr});
 }
 
 // `./configure && make && make install` in a copy of a package, into prove/.
@@ -702,6 +704,8 @@ static void make_bitwuzla(const char *python, const char *ninja) {
     run((const char *[]){"cp", "-R", path("%s/include/bitwuzla/.", source, ""), path("%s/", headers, ""), nullptr});
     run((const char *[]){"chmod", "-R", "u+w", headers, nullptr});
     run((const char *[]){"touch", path("%s/.bitwuzla", prove_folder, ""), nullptr});
+    run((const char *[]){"rm", "-rf", source, build, path("%s/gmp-build", work_folder, ""),
+                         path("%s/mpfr-build", work_folder, ""), nullptr});
 }
 
 static void make_prover(const char *cmake, const char *python, const char *ninja) {
@@ -760,13 +764,14 @@ static void make_enzyme(const char *cmake, const char *ninja) {
     char id[path_max];
     snprintf(id, sizeof id, "enzyme-0.0.303 llvm-%s\n", llvm_name);
     write_file(path("%s/lib/smith-enzyme.id", out, ""), id, 0644);
+    run((const char *[]){"rm", "-rf", work, nullptr});
 }
 
 static void find_cache(void) {
     const char *xdg = getenv("XDG_CACHE_HOME");
     const char *home = getenv("HOME");
     const char *name = getenv("SMITH_LLVM_NAME");
-    if (name == nullptr || *name == '\0') name = "23.1.3-r11";
+    if (name == nullptr || *name == '\0') name = "23.1.3-r12";
     snprintf(llvm_name, sizeof llvm_name, "%s", name);
     if (xdg != nullptr && *xdg == '/') {
         snprintf(cache, sizeof cache, "%s/smith/llvm/%s", xdg, name);
