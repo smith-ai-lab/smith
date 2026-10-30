@@ -577,7 +577,14 @@ static void test_real_map_big(SmithIo *io) {
     unsigned char *bytes = mapped.data;
     assert(bytes[(size_t)4096 * 7] == 7 && bytes[size - 4096] == (unsigned char)((size - 4096) / 4096));
     size_t after = test_resident() - before;
-    assert(mapping < ((size_t)1 << 20) && after < ((size_t)2 << 20)); // pages are read when touched, not before
+    // pages are read when touched, not before. Linux maps the page cache's large folios around a fault (2 MiB for each
+    // of the two pages touched), macOS the page; either way a small part of the 64 MiB
+#ifdef __APPLE__
+    constexpr size_t touched_limit = (size_t)2 << 20;
+#else
+    constexpr size_t touched_limit = (size_t)8 << 20;
+#endif
+    assert(mapping < ((size_t)1 << 20) && after < touched_limit);
 }
 
 static void test_real_environment_and_cores(void) {

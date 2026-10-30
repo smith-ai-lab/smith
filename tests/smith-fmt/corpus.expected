@@ -3223,7 +3223,7 @@ static result(i32, i32) step(i32 n) {
     return {.ok = n};
 }
 
-static result(i32, i64) other_error(void) {
+static result(i32, i16) other_error(void) {
     i32 a = try step(1);
     return {.ok = a};
 }
@@ -8506,9 +8506,9 @@ export i32 arch_name() {
     if constexpr (target::arch == target::aarch64) {
         return 1;
     } else if constexpr (target::arch == target::x86_64) {
-        undeclared_function();
+        return 1;
     } else {
-        return 3;
+        undeclared_function();
     }
 }
 
@@ -8516,6 +8516,8 @@ export i32 arch_name() {
 export i32 opaque(i32 value) {
     if constexpr (target::arch == target::aarch64) {
         __asm__("" : "+w"(value));
+    } else if constexpr (target::arch == target::x86_64) {
+        __asm__("" : "+r"(value));
     } else {
         __asm__("" : "+nonsense"(value));
     }
@@ -8529,8 +8531,10 @@ export i32 nested(i32 x) {
     if constexpr (wide == 8) {
         if constexpr (target::os == target::macos) {
             result = 10;
-        } else {
+        } else if constexpr (target::os == 0) { // the unknown system: never the one this runs on
             undeclared_function();
+        } else {
+            result = 10;
         }
         if constexpr (both) {
             result += 1;
@@ -8571,14 +8575,14 @@ constexpr bool fast = target::assertions == false;
 int main() {
     i32 answer = 0;
     // In a file with no module line the branches flow the same.
-    if constexpr (target::os == target::macos) {
-        answer = 7;
-    } else {
+    if constexpr (target::os == 0) {
         undeclared_function();
+    } else {
+        answer = 7;
     }
     if constexpr (fast) {
         c::printf("assertions are off\n");
-    } else if constexpr (target::arch == target::aarch64) {
+    } else if constexpr (target::arch == target::aarch64 || target::arch == target::x86_64) {
         c::printf("answer is seven\n");
     } else {
         c::printf("neither\n");
@@ -11212,7 +11216,7 @@ i32 main() {
     struct { int, float } c = b;
     struct { signed, f32 } d = c;
     struct { i64, u64, usize } e = {1, 2, 3};
-    struct { long long, unsigned long long, c::size_t } f = e;
+    struct { c::int64_t, c::uint64_t, c::size_t } f = e;
     struct { const char *, i8 } g = {"x", 1};
     struct { const char *, c::int8_t } h = g;
     struct { Meters, f32 } m = {1.0, 2.0f};
