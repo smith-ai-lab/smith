@@ -44,7 +44,7 @@ static void passes(const scratch::Project *p, const char *name, const char *prog
     scratch::expect_status(name, 0, &run);
 }
 
-export void test_handlers_the_program_passes_from_itself_a_linked_library_and_a_dlopened_one(io::Io *io) {
+export void test_macos_handlers_the_program_passes_from_itself_a_linked_library_and_a_dlopened_one(io::Io *io) {
     bool ok = false;
     scratch::Project p = runtime(io, "p", &ok);
     if (!ok) {
@@ -56,7 +56,7 @@ export void test_handlers_the_program_passes_from_itself_a_linked_library_and_a_
     passes(&p, "handlers: the program passes, from itself, a linked library and a dlopened one", "./t_handlers");
 }
 
-export void test_handlers_an_arena_set_as_the_allocator_serves_the_c_allocator_functions(io::Io *io) {
+export void test_macos_handlers_an_arena_set_as_the_allocator_serves_the_c_allocator_functions(io::Io *io) {
     bool ok = false;
     scratch::Project p = runtime(io, "p", &ok);
     if (!ok) {
@@ -86,11 +86,11 @@ static void io_handlers(io::Io *io, const char *optimize) {
                          scratch::capture(&p, "./t_io 2>&1 | grep -c '^ok  '"));
 }
 
-export void test_handlers_the_io_test_at_o0(io::Io *io) {
+export void test_macos_handlers_the_io_test_at_o0(io::Io *io) {
     io_handlers(io, "-O0");
 }
 
-export void test_handlers_the_io_test_at_o2(io::Io *io) {
+export void test_macos_handlers_the_io_test_at_o2(io::Io *io) {
     io_handlers(io, "-O2");
 }
 
@@ -112,11 +112,11 @@ static void env_clock_handlers(io::Io *io, const char *optimize) {
                          scratch::capture(&p, "./t_envclock 2>&1 | grep -c '^ok  '"));
 }
 
-export void test_handlers_the_env_and_clock_test_at_o0(io::Io *io) {
+export void test_macos_handlers_the_env_and_clock_test_at_o0(io::Io *io) {
     env_clock_handlers(io, "-O0");
 }
 
-export void test_handlers_the_env_and_clock_test_at_o2(io::Io *io) {
+export void test_macos_handlers_the_env_and_clock_test_at_o2(io::Io *io) {
     env_clock_handlers(io, "-O2");
 }
 
@@ -149,11 +149,11 @@ static void project_links_runtime(io::Io *io, const char *profile, const char *t
     }
 }
 
-export void test_handlers_a_project_links_the_runtime_in_debug(io::Io *io) {
+export void test_macos_handlers_a_project_links_the_runtime_in_debug(io::Io *io) {
     project_links_runtime(io, "debug", "build");
 }
 
-export void test_handlers_a_project_links_the_runtime_in_release(io::Io *io) {
+export void test_macos_handlers_a_project_links_the_runtime_in_release(io::Io *io) {
     project_links_runtime(io, "release", "build release");
 }
 
@@ -176,11 +176,11 @@ static void console_handler(io::Io *io, const char *profile, const char *target)
     }
 }
 
-export void test_handlers_a_console_handler_catches_printf_puts_and_fputs_in_debug(io::Io *io) {
+export void test_macos_handlers_a_console_handler_catches_printf_puts_and_fputs_in_debug(io::Io *io) {
     console_handler(io, "debug", "build");
 }
 
-export void test_handlers_a_console_handler_catches_printf_puts_and_fputs_in_release(io::Io *io) {
+export void test_macos_handlers_a_console_handler_catches_printf_puts_and_fputs_in_release(io::Io *io) {
     console_handler(io, "release", "build release");
 }
 
@@ -197,7 +197,7 @@ static scratch::Project asan_project(io::Io *io, bool *ok) {
     return p;
 }
 
-export void test_handlers_asan_reports_a_write_past_a_malloced_block(io::Io *io) {
+export void test_macos_handlers_asan_reports_a_write_past_a_malloced_block(io::Io *io) {
     bool ok = false;
     scratch::Project p = asan_project(io, &ok);
     if (ok) {
@@ -207,7 +207,7 @@ export void test_handlers_asan_reports_a_write_past_a_malloced_block(io::Io *io)
     }
 }
 
-export void test_handlers_asan_reports_a_read_after_free(io::Io *io) {
+export void test_macos_handlers_asan_reports_a_read_after_free(io::Io *io) {
     bool ok = false;
     scratch::Project p = asan_project(io, &ok);
     if (ok) {
@@ -216,7 +216,7 @@ export void test_handlers_asan_reports_a_read_after_free(io::Io *io) {
     }
 }
 
-export void test_handlers_asan_reports_puts_of_an_unterminated_string(io::Io *io) {
+export void test_macos_handlers_asan_reports_puts_of_an_unterminated_string(io::Io *io) {
     bool ok = false;
     scratch::Project p = asan_project(io, &ok);
     if (ok) {

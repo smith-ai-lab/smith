@@ -1,4 +1,5 @@
 #include <smith/build.h>
+#include <string.h>
 
 void build(SmithBuild *b) {
     SmithObject main_object = {
@@ -14,7 +15,9 @@ void build(SmithBuild *b) {
         .linker = "cc",
         .output = "build/app",
         .objects = (const SmithObject *[]){&main_object, &util, nullptr},
-        .libraries = (const char *[]){"-lm", "-framework", "Foundation", "libextra.a", nullptr},
+        .libraries = strcmp(b->os, "Darwin") == 0
+                         ? (const char *[]){"-lm", "-framework", "Foundation", "libextra.a", nullptr}
+                         : (const char *[]){"-lm", "libextra.a", nullptr}, // -framework is macOS's
     };
     smith_program(b, &app);
     smith_compile_commands(b, "compile_commands.json");

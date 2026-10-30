@@ -11,10 +11,10 @@
 // A function that has a body gets the set of the effects of its calls, followed through the functions of the file
 // (and of the headers it includes) to the calls the file cannot see into: a function of libc or libSystem has the set
 // the table gives it (shim/effects_table.h), a declaration with an attribute and no body has that set (a promise smith
-// trusts), and any other function without a body is `c`, every effect. A call through a function pointer is `c`, as is
-// an Objective-C message; inline assembly is read by the assembler (effects_asm.h); writing a global or a
-// function-local static is `globals`. A call that stops the task (a checked index, a contract, `abort`, a trap) is a
-// failure point: `fails` (issue #325). An annotation is a ceiling: an inferred effect beyond it is a compile error
+// trusts), and any other function without a body is `unknown`, every effect. A call through a function pointer is
+// `unknown`, as is an Objective-C message; inline assembly is read by the assembler (effects_asm.h); writing a global
+// or a function-local static is `globals`. A call that stops the task (a checked index, a contract, `abort`, a trap) is
+// a failure point: `fails` (issue #325). An annotation is a ceiling: an inferred effect beyond it is a compile error
 // naming the chain
 // (`bad -> log_it (log.c:12) -> printf`); the declared set, not the inferred one, is what a caller sees.
 //
@@ -23,7 +23,7 @@
 // AddAfterMainAction reads the translation unit when it is complete. clang-tidy cannot report a diagnostic it has no
 // id for, so smith_effects_disable() (shim/tidy.cpp) turns it off there. Only the functions the main file defines are
 // judged. Across files (a module's header, a C file's summary) is a later step: today a function with no body and no
-// attribute is `c`.
+// attribute is `unknown`.
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/Attr.h"
@@ -62,6 +62,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <tuple>
 #include <unistd.h>
 #include <vector>
 
@@ -210,7 +211,7 @@ struct EffectsAttr final : ParsedAttrInfo {
             if (!known) {
                 unsigned id = S.getDiagnostics().getCustomDiagID(
                     DiagnosticsEngine::Error, "smith-effect: an effect is one of alloc, files, net, console, clock, "
-                                              "process, env, entropy, globals, c, fails, code");
+                                              "process, env, entropy, globals, unknown, fails, code");
                 S.Diag(Attr.getLoc(), id);
                 return AttributeNotApplied;
             }
@@ -540,7 +541,53 @@ struct Node {
     bool grows = false;   // a variable-length array or alloca: the frame is not one size
     bool trusted = false; // the body calls smith_trusted(): a promise the prover and this check do not examine
     std::string symbol;
+    std::vector<std::pair<SourceLocation, std::string>> unowned; // calls of a pointer-returning libc function, no idiom
+    std::vector<std::tuple<SourceLocation, std::string, int>> unkeyed; // calls whose null-keyed argument is neither
 };
+
+// Whether a function returns an object pointer (a function pointer is not memory anyone owns).
+bool returnsObjectPointer(const FunctionDecl *function) {
+    QualType type = function->getReturnType();
+    return type->isPointerType() && !type->getPointeeType()->isFunctionType();
+}
+
+// Whether a printf-family call (by name) may keep libc state: its format is not a literal, or has a float conversion
+// (`%f %e %g %a`, any case), whose digits come from a cache of allocator blocks (issue #724). `name` is the callee.
+// A fortified call (macOS's `__builtin___snprintf_chk`, glibc's `__printf_chk`) is the function it checks: the name
+// without the check's spelling, and in `extra` how many arguments the check adds before the format (the flag, and the
+// object's size for the forms that write a buffer).
+llvm::StringRef unfortified(llvm::StringRef name, unsigned &extra) {
+    extra = 0;
+    llvm::StringRef base = name;
+    if (!base.consume_front("__builtin___") && !base.consume_front("__")) return name;
+    if (!base.consume_back("_chk") || base.empty()) return name;
+    bool buffer = base == "sprintf" || base == "snprintf" || base == "vsprintf" || base == "vsnprintf";
+    extra = buffer ? 2 : 1;
+    return base;
+}
+
+bool formatKeepsState(llvm::StringRef name, const CallExpr *call, unsigned extra) {
+    static const std::pair<const char *, unsigned> formats[] = {
+        {"printf", 0},  {"vprintf", 0},  {"fprintf", 1},   {"vfprintf", 1}, {"sprintf", 1},  {"vsprintf", 1},
+        {"dprintf", 1}, {"asprintf", 1}, {"vasprintf", 1}, {"snprintf", 2}, {"vsnprintf", 2}};
+    for (const auto &[function, at] : formats) {
+        if (name != function) continue;
+        if (call->getNumArgs() <= at + extra) return true;
+        const auto *text = dyn_cast<StringLiteral>(call->getArg(at + extra)->IgnoreParenImpCasts());
+        if (text == nullptr) return true;
+        llvm::StringRef format = text->getString();
+        for (size_t i = format.find('%'); i != llvm::StringRef::npos; i = format.find('%', i + 1)) {
+            size_t end = format.find_first_not_of("0123456789-+ #'$*.hlLqjzt", i + 1);
+            if (end == llvm::StringRef::npos) return false;
+            if (format[end] == '%')
+                i = end;
+            else if (llvm::StringRef("fFeEgGaA").contains(format[end]))
+                return true;
+        }
+        return false;
+    }
+    return false;
+}
 
 // The root variable of an lvalue (`g`, `g.a[1]`, `p->x` has none: a write through a pointer is the caller's).
 const VarDecl *writtenGlobal(const Expr *expr) {
@@ -632,7 +679,7 @@ class Collector {
             }
             onCall(call);
         } else if (isa<ObjCMessageExpr>(statement)) {
-            leaf(statement->getBeginLoc(), C, "an Objective-C message");
+            leaf(statement->getBeginLoc(), Unknown, "an Objective-C message");
         } else if (const auto *assembly = dyn_cast<AsmStmt>(statement)) {
             onAsm(assembly);
         } else if (const auto *op = dyn_cast<BinaryOperator>(statement)) {
@@ -648,10 +695,11 @@ class Collector {
             PointerUse use{call->getBeginLoc(), nullptr};
             use.stated = statedByType(call->getCallee()->getType(), use.statedSet);
             node.pointers.push_back(use);
-            leaf(call->getBeginLoc(), C, "a call through a function pointer");
+            leaf(call->getBeginLoc(), Unknown, "a call through a function pointer");
             return;
         }
         if (plain_name(callee) == "smith_trusted") node.trusted = true;
+        noteOwnership(call, callee);
         if (const FunctionDecl *definition = callee->getDefinition()) {
             Edge edge;
             edge.callee = definition;
@@ -662,10 +710,13 @@ class Collector {
             node.edges.push_back(edge);
             return;
         }
-        std::string name = callee->getNameAsString();
+        unsigned extra = 0;
+        std::string name = unfortified(callee->getNameAsString(), extra).str();
         uint32_t set = 0;
         bool builtin = llvm::StringRef(name).starts_with("__builtin_") || callee->getBuiltinID() != 0;
-        if (declaredSet(callee, set) || lookup(name, set)) {
+        bool declared = declaredSet(callee, set);
+        if (declared || lookup(name, set)) {
+            if (!declared && formatKeepsState(name, call, extra)) set |= Globals;
             if ((name == "mmap" || name == "mprotect") && call->getNumArgs() >= 3) {
                 // The protection is the third argument of both.
                 Expr::EvalResult result;
@@ -685,17 +736,50 @@ class Collector {
             edge.symbol = symbols(callee);
             node.edges.push_back(edge);
         } else {
-            leaf(call->getBeginLoc(), builtin ? None : C, name); // a builtin the table does not name has no effect
+            leaf(call->getBeginLoc(), builtin ? None : Unknown,
+                 name); // a builtin the table does not name has no effect
         }
     }
 
+    // A call of a function of a system header that returns a pointer: the table must give its idiom (issue #724).
+    void noteOwnership(const CallExpr *call, const FunctionDecl *callee) {
+        std::string name = callee->getNameAsString();
+        llvm::StringRef kind;
+        if (!sm.isInSystemHeader(callee->getLocation()) || !returnsObjectPointer(callee) ||
+            llvm::StringRef(name).starts_with("__builtin_"))
+            return;
+        bool known = smith_effects::idiom(name, kind);
+        if (!sm.isWrittenInMainFile(sm.getExpansionLoc(call->getBeginLoc()))) return;
+        if (!known) {
+            node.unowned.emplace_back(call->getBeginLoc(), name);
+            return;
+        }
+        int arg = 0;
+        llvm::StringRef nullForm;
+        if (smith_effects::null_idiom(name, arg, nullForm) && static_cast<unsigned>(arg) <= call->getNumArgs() &&
+            !isNullOrBuffer(call->getArg(arg - 1)))
+            node.unkeyed.emplace_back(call->getBeginLoc(), name, arg);
+    }
+
+    // Whether an argument is a null pointer constant (the null form of the idiom) or evidently a buffer: an array that
+    // decays, the address of an object or a string literal (the buffer form). Anything else is neither.
+    bool isNullOrBuffer(const Expr *arg) {
+        if (arg->isNullPointerConstant(context, Expr::NPC_ValueDependentIsNull) != Expr::NPCK_NotNull) return true;
+        const Expr *bare = arg->IgnoreParenCasts();
+        if (bare->getType()->isArrayType() || isa<StringLiteral>(bare)) return true;
+        if (const auto *cast = dyn_cast<ImplicitCastExpr>(arg->IgnoreParens()))
+            if (cast->getCastKind() == CK_ArrayToPointerDecay) return true;
+        const auto *unary = dyn_cast<UnaryOperator>(bare);
+        return unary != nullptr && unary->getOpcode() == UO_AddrOf;
+    }
+
     // An `asm` statement: the assembler reads it (shim/effects_asm.h), and each thing it does is a call: a system call
-    // by its number, a call or jump to a symbol, an indirect call. A block it cannot read is `c`.
+    // by its number, a call or jump to a symbol, an indirect call. A block it cannot read is `unknown`.
     void onAsm(const AsmStmt *assembly) {
         SourceLocation loc = assembly->getAsmLoc();
         AsmReading reading = readAsm(assembly, context);
         if (!reading.parsed) {
-            leaf(loc, C, "inline assembly");
+            leaf(loc, Unknown, "inline assembly");
             return;
         }
         llvm::Triple triple = context.getTargetInfo().getTriple();
@@ -703,7 +787,7 @@ class Collector {
             std::string name = call.number ? syscallName(triple, *call.number) : "";
             uint32_t set = 0;
             if (name.empty() || !lookup(name, set)) {
-                leaf(loc, C, "a system call with a number the table does not know");
+                leaf(loc, Unknown, "a system call with a number the table does not know");
                 continue;
             }
             if (executable(name, call.protection)) set |= Code;
@@ -711,7 +795,7 @@ class Collector {
         }
         for (const std::string &called : reading.calls)
             onSymbol(loc, called);
-        if (reading.indirect) leaf(loc, C, "a call through a register in inline assembly");
+        if (reading.indirect) leaf(loc, Unknown, "a call through a register in inline assembly");
     }
 
     // A call from assembly to the symbol `name`: a function of this file, the table's, or an unknown one.
@@ -736,7 +820,7 @@ class Collector {
             }
         }
         uint32_t set = 0;
-        leaf(loc, lookup(name, set) ? set : C, name);
+        leaf(loc, lookup(name, set) ? set : Unknown, name);
     }
 
     // Whether a call of mmap or mprotect asks for memory that can run: a constant protection with PROT_EXEC (4).
@@ -840,6 +924,12 @@ class Analysis {
         recursion = engine.getCustomDiagID(
             DiagnosticsEngine::Error, "smith-effect: recursion in a module: %0 (write a loop; a call that ends the "
                                       "function can be `[[clang::musttail]] return f(...);`)");
+        ownership = engine.getCustomDiagID(
+            DiagnosticsEngine::Error, "smith-ownership: '%0' returns a pointer and the C library table gives it no "
+                                      "idiom; add it to shim/effects_table.h");
+        nullkeyed = engine.getCustomDiagID(
+            DiagnosticsEngine::Error, "smith-ownership: '%0' allocates when its argument %1 is null and returns it "
+                                      "otherwise; pass an array as the buffer, or NULL to allocate");
     }
 
     void run() {
@@ -850,7 +940,11 @@ class Analysis {
             Node &node = nodes[function];
             if (node.annotated && inMain(node.function)) check(node);
         }
-        if (isModule()) checkRecursion();
+        if (isModule()) {
+            checkRecursion();
+            checkOwnership();
+        }
+        if (const char *mode = getenv("SMITH_EFFECTS_IDIOMS")) reportIdioms(mode);
         checkAssertions();
         attachHover();
         writeSummary();
@@ -860,7 +954,7 @@ class Analysis {
   private:
     ASTContext &context;
     DiagnosticsEngine &engine;
-    unsigned bad, note, recursion, assertion, misuse;
+    unsigned bad, note, recursion, assertion, misuse, ownership, nullkeyed;
     ASTNameGenerator generator;
     bool syntaxOnly;       // a parse that only reads the file (the editor's, not the preamble's)
     std::string output;    // the object file being written: the summary goes beside it, `<object>.fx`
@@ -1038,8 +1132,9 @@ class Analysis {
     std::deque<Node> initializers; // the initializers of globals, walked only to report function pointers
 
     // The report-only mode of the pointer rule (issue #396): `SMITH_EFFECTS_POINTERS=<file>` appends one line for each
-    // place a function pointer is called (the effect today is `c`) or made from a named function, with the effects that
-    // function has, i.e. the set the pointer's type would have to state. Nothing is reported to the compiler.
+    // place a function pointer is called (the effect today is `unknown`) or made from a named function, with the
+    // effects that function has, i.e. the set the pointer's type would have to state. Nothing is reported to the
+    // compiler.
     static bool pointerReport() {
         return getenv("SMITH_EFFECTS_POINTERS") != nullptr;
     }
@@ -1048,7 +1143,7 @@ class Analysis {
         if (const FunctionDecl *definition = target->getDefinition()) return visible(definition);
         uint32_t set = 0;
         if (declaredSet(target, set) || lookup(target->getNameAsString(), set)) return set;
-        return C;
+        return Unknown;
     }
 
     void reportPointers() {
@@ -1062,8 +1157,9 @@ class Analysis {
                 text += std::string(use.target == nullptr ? "call" : "make") + "\t" + presumed.getFilename() + ":" +
                         std::to_string(presumed.getLine()) + "\t" + where + "\t";
                 text += use.target == nullptr ? "-" : use.target->getNameAsString();
-                text += "\t" + (use.target == nullptr ? std::string("c") : describe(pointedEffects(use.target)));
-                // The last column: the effects the pointer's type states, `-` for a type that states none (it is `c`).
+                text += "\t" + (use.target == nullptr ? std::string("unknown") : describe(pointedEffects(use.target)));
+                // The last column: the effects the pointer's type states, `-` for a type that states none (it is
+                // `unknown`).
                 text += "\t" +
                         (use.stated ? (use.statedSet == 0 ? std::string("pure") : describe(use.statedSet))
                                     : std::string("-")) +
@@ -1084,7 +1180,7 @@ class Analysis {
 
     uint32_t visible(const FunctionDecl *function) {
         auto found = nodes.find(function);
-        if (found == nodes.end()) return C; // a body the file could not read (a template, an error)
+        if (found == nodes.end()) return Unknown; // a body the file could not read (a template, an error)
         return found->second.annotated ? found->second.declared : found->second.inferred;
     }
 
@@ -1114,6 +1210,40 @@ class Analysis {
         return nullptr;
     }
 
+    // A call in a module of a pointer-returning libc function the table gives no idiom is an error naming it.
+    void checkOwnership() {
+        for (const FunctionDecl *function : order)
+            for (const auto &[loc, name] : nodes[function].unowned)
+                engine.Report(loc, ownership) << name;
+        for (const FunctionDecl *function : order)
+            for (const auto &[loc, name, arg] : nodes[function].unkeyed)
+                engine.Report(loc, nullkeyed) << name << arg;
+    }
+
+    // `SMITH_EFFECTS_IDIOMS=missing|list`: for each function of the effects table that a system header declares and
+    // that returns a pointer, a line `smith-ownership-missing: <name>` when the table gives it no idiom (`missing`, the
+    // test of the table walks it), or `smith-ownership: <name> <idiom>` when it does (`list`).
+    void reportIdioms(llvm::StringRef mode) {
+        std::set<std::string> lines;
+        for (const Decl *decl : context.getTranslationUnitDecl()->decls()) {
+            const auto *function = dyn_cast<FunctionDecl>(decl);
+            if (function == nullptr || !context.getSourceManager().isInSystemHeader(function->getLocation())) continue;
+            std::string name = function->getNameAsString();
+            uint32_t set = 0;
+            llvm::StringRef kind;
+            if (!returnsObjectPointer(function) || !lookup(name, set)) continue;
+            bool known = smith_effects::idiom(name, kind);
+            if (mode == "missing" && !known) lines.insert("smith-ownership-missing: " + name);
+            if (mode == "list" && known) lines.insert("smith-ownership: " + name + " " + kind.str());
+            int arg = 0;
+            llvm::StringRef nullForm;
+            if (mode == "list" && smith_effects::null_idiom(name, arg, nullForm))
+                lines.insert("smith-ownership: " + name + " null:" + std::to_string(arg) + " " + nullForm.str());
+        }
+        for (const std::string &line : lines)
+            llvm::errs() << line << "\n";
+    }
+
     // Whether the main file is a module: a `module a::b;` line begins a line of it.
     bool isModule() {
         const SourceManager &sm = context.getSourceManager();
@@ -1125,8 +1255,8 @@ class Analysis {
 
     // No recursion in a module: a call that sits on a cycle of the functions the file defines is an error naming the
     // cycle, unless every call of the cycle is a `[[clang::musttail]]` return (a jump, which is a loop). Calls through
-    // a pointer and into code with no body are not followed (they are `c`). Imports are acyclic, so a cycle is always
-    // inside one module, and one file says it.
+    // a pointer and into code with no body are not followed (they are `unknown`). Imports are acyclic, so a cycle is
+    // always inside one module, and one file says it.
     void checkRecursion() {
         std::vector<const Node *> list;
         std::map<const FunctionDecl *, size_t> index;
@@ -1312,7 +1442,7 @@ class Analysis {
                 deferred.push_back({symbolOf(target), shownName(target), clean, allowed, loc});
                 return;
             } else {
-                set = builtin ? None : C;
+                set = builtin ? None : Unknown;
                 chainText = shownName(target) + " (no source)";
             }
         }
@@ -1608,7 +1738,7 @@ const ParsedAttrInfoRegistry::Add<EffectAttr<5>> process_attribute("smith-proces
 const ParsedAttrInfoRegistry::Add<EffectAttr<6>> env_attribute("smith-env-attr", "[[smith::env]]");
 const ParsedAttrInfoRegistry::Add<EffectAttr<7>> entropy_attribute("smith-entropy-attr", "[[smith::entropy]]");
 const ParsedAttrInfoRegistry::Add<EffectAttr<8>> globals_attribute("smith-globals-attr", "[[smith::globals]]");
-const ParsedAttrInfoRegistry::Add<EffectAttr<9>> c_attribute("smith-c-attr", "[[smith::c]]");
+const ParsedAttrInfoRegistry::Add<EffectAttr<9>> unknown_attribute("smith-unknown-attr", "[[smith::unknown]]");
 const ParsedAttrInfoRegistry::Add<EffectAttr<10>> fails_attribute("smith-fails-attr", "[[smith::fails]]");
 const ParsedAttrInfoRegistry::Add<PureAttr> pure_attribute("smith-pure-attr", "[[smith::pure]]");
 const ParsedAttrInfoRegistry::Add<ReturnsOwnedAttr> owned_attribute("smith-owned-attr", "[[std::returns_owned]]");
@@ -1663,8 +1793,8 @@ extern "C" void smith_effects_disable() {
 // `smith cc --smith-effects a.o.fx b.o.fx ...`, which smith-cc runs when it links objects that have a summary: the
 // summaries are merged (a function is known by its linkage name), each function's set is solved again with the calls
 // that cross files, and a function with a ceiling whose set reaches past it only now, through another file, is an
-// error naming the whole chain. A function no summary defines has no source: `c`. What the files each found alone was
-// already said when they were compiled.
+// error naming the whole chain. A function no summary defines has no source: `unknown`. What the files each found alone
+// was already said when they were compiled.
 
 namespace {
 
@@ -1985,7 +2115,7 @@ class Program {
 
     uint32_t visible(const std::string &symbol) {
         auto found = functions.find(symbol);
-        if (found == functions.end()) return lenient ? 0 : C; // no summary defines it: no source
+        if (found == functions.end()) return lenient ? 0 : Unknown; // no summary defines it: no source
         return found->second.declared >= 0 ? static_cast<uint32_t>(found->second.declared) : found->second.inferred;
     }
 
