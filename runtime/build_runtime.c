@@ -1990,8 +1990,11 @@ static int smith_lang_check(SmithRun *run) {
     return 0;
 }
 
+static void smith_lang_declare_header_steps(SmithBuild *b);
+
 // Declares the check once every smith_object is in: the compiles of .smith sources wait for it.
 static void smith_lang_finish(SmithBuild *b) {
+    smith_lang_declare_header_steps(b);
     if (!smith_lang_sources_used) return;
     const char **headers = smith_new_list(smith_lang_module_count);
     for (size_t i = 0; i < smith_lang_module_count; i++)
@@ -2134,9 +2137,62 @@ static const char *const *smith_effects_outputs(SmithBuild *b, const char *compi
     return summary == nullptr ? smith_list(b, nullptr) : smith_one(summary);
 }
 
+// The module names a source imports (`import a::b;` and `import a::b as c;` are "a::b"; `import <h>;` is no module),
+// at most 63 of them.
+static const char *const *smith_lang_imports_of(SmithBuild *b, const char *source) {
+    char *text = nullptr;
+    size_t length = smith_read_file(source, &text);
+    const char **names = smith_new_list(64);
+    size_t count = 0;
+    size_t at = 0;
+    for (size_t guard = 0; guard < length && count < 63; guard++) { // each pass reads one line
+        size_t end = at;
+        while (end < length && text[end] != '\n')
+            end++;
+        size_t start = at;
+        while (start < end && (text[start] == ' ' || text[start] == '\t'))
+            start++;
+        if (end - start > 7 && memcmp(text + start, "import ", 7) == 0 && smith_lang_word_byte(text[start + 7])) {
+            char name[smith_lang_name_max];
+            size_t used = 0;
+            size_t cursor = start + 7;
+            bool good = smith_lang_take_word(text, end, &cursor, name, &used);
+            while (good && cursor + 2 < end && text[cursor] == ':' &&
+                   text[cursor + 1] == ':') { // one `::` and word each
+                name[used++] = ':';
+                name[used++] = ':';
+                cursor += 2;
+                good = smith_lang_take_word(text, end, &cursor, name, &used);
+            }
+            while (cursor < end && text[cursor] != ';' && text[cursor] != '<' && text[cursor] != '"')
+                cursor++; // `as alias;`
+            if (good && cursor < end && text[cursor] == ';') {
+                name[used] = '\0';
+                names[count++] = smith_copy_string(name);
+            }
+        }
+        if (end >= length) break;
+        at = end + 1;
+    }
+    names[count] = nullptr;
+    (void)b;
+    return names;
+}
+
+// The header steps of the modules, held until every smith_object is in: a header pass reads the headers of the modules
+// its module imports (the type names a signature uses), so a header step waits for them and is run again when one of
+// them changes; which of the imports are modules of this build is known only then (#781: a step with the module's
+// source and the smith alone left `io.h` naming `smith_random_Key` after `random.h` moved, or when the two were
+// written in the other order).
+static SmithStep smith_lang_header_steps[smith_lang_modules_max];
+static const char *smith_lang_header_sources[smith_lang_modules_max];
+static size_t smith_lang_header_step_count;
+
 // The header step of a module, and the flags and ordering its compile gets.
 static void smith_lang_header_step(SmithBuild *b, const SmithObject *object, const char *header) {
-    SmithStep step = {
+    if (smith_lang_header_step_count >= smith_lang_modules_max) smith_too_many("modules", smith_lang_modules_max);
+    smith_lang_header_sources[smith_lang_header_step_count] = object->source;
+    smith_lang_header_steps[smith_lang_header_step_count++] = (SmithStep){
         .command =
             smith_cat(b, smith_list(b, object->compiler, "--smith-header", object->source, "-o", header, nullptr),
                       smith_header_pass_flags(b, object), nullptr),
@@ -2146,7 +2202,71 @@ static void smith_lang_header_step(SmithBuild *b, const SmithObject *object, con
         .description = smith_text("header %s", object->source),
         .restat = true, // the header is written only when its bytes change
     };
-    smith_step(b, &step);
+}
+
+// Whether the header step `to` can be reached from `from` along the import edges adj[i * n + j] (step i imports step
+// j).
+static bool smith_lang_reaches(const bool *adj, size_t n, size_t from, size_t to) {
+    bool *seen = smith_alloc(n);
+    size_t *stack = smith_alloc(n * sizeof *stack);
+    size_t top = 0;
+    stack[top++] = from;
+    seen[from] = true;
+    while (top > 0) { // each step is pushed once
+        size_t at = stack[--top];
+        if (at == to) return true;
+        for (size_t next = 0; next < n; next++) {
+            if (!adj[at * n + next] || seen[next]) continue;
+            seen[next] = true;
+            stack[top++] = next;
+        }
+    }
+    return false;
+}
+
+// The import edges among the header steps: adj[i * n + j] when the module of step i imports the module of step j.
+static bool *smith_lang_import_edges(SmithBuild *b, size_t n) {
+    bool *adj = smith_alloc(n * n);
+    for (size_t i = 0; i < n; i++) {
+        const char *const *imports = smith_lang_imports_of(b, smith_lang_header_sources[i]);
+        for (size_t k = 0; imports[k] != nullptr; k++) { // bounded by the imports
+            const char *header = smith_text(".smith/include/%s.h", smith_lang_slashed(imports[k]));
+            for (size_t j = 0; j < n; j++) // bounded by the steps
+                adj[i * n + j] =
+                    adj[i * n + j] || (j != i && strcmp(smith_lang_header_steps[j].outputs[0], header) == 0);
+        }
+    }
+    return adj;
+}
+
+// Declares the header steps: each one's implicit inputs gain the header of every module it imports that this build
+// makes, or that is on disk (smith's own libraries', which smith writes before build.c runs). An edge that closes an
+// import cycle is left out: the graph would reject the cycle by file names, and the check of the imports
+// (smith_lang_check) names the modules.
+static void smith_lang_declare_header_steps(SmithBuild *b) {
+    size_t n = smith_lang_header_step_count;
+    bool *adj = smith_lang_import_edges(b, n);
+    for (size_t i = 0; i < n; i++) {
+        SmithStep step = smith_lang_header_steps[i];
+        const char *const *imports = smith_lang_imports_of(b, smith_lang_header_sources[i]);
+        for (size_t k = 0; imports[k] != nullptr; k++) { // bounded by the imports
+            const char *header = smith_text(".smith/include/%s.h", smith_lang_slashed(imports[k]));
+            if (strcmp(header, step.outputs[0]) == 0) continue;
+            bool ours = false;
+            bool cycle = false;
+            for (size_t j = 0; j < n && !cycle; j++) { // bounded by the steps
+                if (strcmp(smith_lang_header_steps[j].outputs[0], header) != 0) continue;
+                ours = true;
+                cycle = smith_lang_reaches(adj, n, j, i);
+            }
+            bool made = ours || access(header, R_OK) == 0;
+            for (size_t m = 0; m < smith_lang_module_count && !made; m++) // bounded by the modules
+                made = strcmp(smith_lang_module_headers[m], header) == 0;
+            if (made && !cycle) step.implicit_inputs = smith_cat(b, step.implicit_inputs, smith_one(header), nullptr);
+        }
+        smith_step(b, &step);
+    }
+    smith_lang_header_step_count = 0;
 }
 
 // What `smith prove` proved of a `.smith` source reaches a release compile through the graph (issue #221): the proof
@@ -2520,6 +2640,9 @@ void smith_program(SmithBuild *b, SmithProgram *program) {
     // image in a failure's trace, and the exported symbols are the names of its raw frames (lib/trace.c).
     const char *const *identity = smith_when(b, strcmp(b->os, "Linux") == 0,
                                              smith_list(b, "-Wl,--build-id=md5", "-Wl,--export-dynamic", nullptr));
+    // glibc keeps libm apart from libc (macOS's is in libSystem): a program that calls sqrtf or sin links -lm there,
+    // and one that does not loses nothing by it.
+    const char *const *math = smith_when(b, strcmp(b->os, "Linux") == 0, smith_list(b, "-lm", nullptr));
     // The effect summaries of the objects (an output of each compile that writes one): the link checks them (skill
     // smith-lang-effects), so a summary that changed reruns it even when its object did not (an attribute moved).
     const char **summaries = smith_new_list(count);
@@ -2533,7 +2656,7 @@ void smith_program(SmithBuild *b, SmithProgram *program) {
     const char *const *handlers = smith_program_handlers(b, &copy, &handlers_files);
     copy.step = (SmithStep){
         .command = smith_cat(b, smith_one(copy.linker), identity, copy.flags, (const char *const *)outputs,
-                             copy.libraries, handlers, tail, nullptr),
+                             copy.libraries, math, handlers, tail, nullptr),
         .inputs = (const char *const *)outputs,
         .implicit_inputs = smith_cat(b, smith_library_files(copy.libraries),
                                      smith_one(smith_compiler_file(copy.linker)), summaries, handlers_files, nullptr),
@@ -2642,22 +2765,28 @@ static bool smith_listed_before(size_t row) {
 // first_once: each source once, by its first compile (what clang-tidy reads); else each output, as the editor's file.
 static void smith_put_compile_commands(FILE *out, const SmithBuild *b, bool first_once) {
     fputs("[\n", out);
+    bool any = false; // the entries are separated, not each followed by a comma: the file is JSON when there are none
     for (size_t i = 0; i < smith_object_row_count; i++) {
         const SmithObject *object = &smith_object_rows[i].object;
         if (!smith_object_rows[i].listed || (first_once && smith_listed_before(i))) continue;
+        if (any) fputs(",\n", out);
+        any = true;
         smith_json_entry(out, b->root, object->source, object->output,
                          smith_cat((SmithBuild *)b, object->step.command,
                                    smith_module_advisories((SmithBuild *)b, object->source), nullptr));
-        fputs(",\n", out);
     }
     for (size_t i = 0; i < smith_command_row_count; i++) {
+        if (any) fputs(",\n", out);
+        any = true;
         smith_json_entry(out, b->root, smith_command_rows[i].source, nullptr,
                          smith_cat((SmithBuild *)b, smith_command_rows[i].arguments,
                                    smith_module_advisories((SmithBuild *)b, smith_command_rows[i].source), nullptr));
-        fputs(",\n", out);
     }
     const char *build_file = smith_build_file_name();
-    if (build_file != nullptr) smith_json_entry(out, b->root, build_file, nullptr, smith_build_file_words(build_file));
+    if (build_file != nullptr) {
+        if (any) fputs(",\n", out);
+        smith_json_entry(out, b->root, build_file, nullptr, smith_build_file_words(build_file));
+    }
     fputs("\n]\n", out);
 }
 

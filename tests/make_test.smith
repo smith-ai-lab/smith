@@ -287,12 +287,28 @@ static void drop_handlers_link(char *line) {
     }
 }
 
-// smith's link also builds and links the handlers runtime (a dylib beside the program), which make's does not: the step
-// and its three arguments are taken out.
+// Removes a word (with the space before it) from a line, where it is.
+static void drop_word(char *line, const char *word) {
+    usize at = find_text(line, word);
+    if (at != no_match && (line[at + c::strlen(word)] == ' ' || line[at + c::strlen(word)] == '\0')) {
+        cut(line, at, at + c::strlen(word), "");
+    }
+}
+
+// smith's link also builds and links the handlers runtime, which make's does not: on macOS a dylib beside the program,
+// on Linux an object compiled from .smith/lib/handlers.c and linked in (with the build-id and the exported symbols
+// that name an image in a failure's trace): the step and its arguments are taken out.
 static void drop_handlers(Commands *commands) {
     usize kept = 0;
     for (usize i = 0; i < commands->count; i++) {
-        if (c::strstr(commands->lines[i], " -dynamiclib ") != nullptr) continue;
+        if (c::strstr(commands->lines[i], " -dynamiclib ") != nullptr ||
+            c::strstr(commands->lines[i], " .smith/lib/handlers.c ") != nullptr) {
+            continue;
+        }
+        drop_word(commands->lines[i], " -Wl,--build-id=md5");
+        drop_word(commands->lines[i], " -Wl,--export-dynamic");
+        drop_word(commands->lines[i], " ./smith_handlers.o");
+        drop_word(commands->lines[i], " -lm"); // glibc: smith's link adds libm, make's does not
         drop_handlers_link(commands->lines[i]);
         usize at = find_text(commands->lines[i], " -lclang_rt.asan_osx_dynamic");
         if (at != no_match) cut(commands->lines[i], at, at + 28, "");
