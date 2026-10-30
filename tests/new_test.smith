@@ -128,7 +128,7 @@ export void test_new_hello_a_smith_project_is_written_and_committed(io::Io *io) 
                          "{\n  \"enabledPlugins\": {\n    \"smith@smith\": true\n  },\n  \"extraKnownMarketplaces\": "
                          "{\n    \"smith\": {\n"
                          "      \"source\": {\n        \"source\": \"github\",\n        \"repo\": "
-                         "\"adam-r-kowalski/smith\"\n      }\n    }\n  }\n}",
+                         "\"smith-ai-lab/smith\"\n      }\n    }\n  }\n}",
                          scratch::read(&p, "hello/.claude/settings.json"));
     scratch::expect_text("new hello: .claude/skills links to the skills", "../.agents/skills",
                          scratch::capture(&p, "readlink hello/.claude/skills"));
@@ -140,7 +140,7 @@ export void test_new_hello_a_smith_project_is_written_and_committed(io::Io *io) 
     scratch::expect_contains("new hello: the concept describes the .smith program",
                              scratch::read(&p, "hello/knowledge/program.md"), "primes::sum");
     scratch::expect_contains("new hello: the summary names the plugin", created.out,
-                             "/plugin marketplace add adam-r-kowalski/smith");
+                             "/plugin marketplace add smith-ai-lab/smith");
     scratch::expect_contains("new hello: the summary names the install", created.out, "/plugin install smith@smith");
     scratch::expect_lacks("new hello: no missing-entry report", created.out, "lacks \"smith@smith\"");
     scratch::expect_text("new hello: git is on main", "main",

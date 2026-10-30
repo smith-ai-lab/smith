@@ -5,12 +5,12 @@ description: "Neovim support from the smith repository: plugin/smith.lua, vim.pa
 
 # Neovim
 
-This skill ships in the smith plugin, from `.agents/skills/smith-neovim/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there. Reference: [neovim](../../../knowledge/neovim.md) in that repository. It needs Neovim 0.12 and `smith` on the PATH. The plugin enables nothing the user did not ask for and replaces none of their settings.
+This skill ships in the smith plugin, from `.agents/skills/smith-neovim/SKILL.md` in https://github.com/smith-ai-lab/smith. Change it there. Reference: [neovim](../../../knowledge/neovim.md) in that repository. It needs Neovim 0.12 and `smith` on the PATH. The plugin enables nothing the user did not ask for and replaces none of their settings.
 
 ## Install
 
 ```lua
-vim.pack.add({ "git@github.com:adam-r-kowalski/smith" }, { load = true })   -- HTTPS once the repository is public
+vim.pack.add({ "git@github.com:smith-ai-lab/smith" }, { load = true })   -- HTTPS once the repository is public
 vim.lsp.enable("smith")                                                      -- optional: the language server
 ```
 

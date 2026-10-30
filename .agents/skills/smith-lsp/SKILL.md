@@ -5,7 +5,7 @@ description: "The language server and editor intelligence: smith lsp (clangd fro
 
 # smith lsp: the language server
 
-This skill ships in the smith plugin, from `.agents/skills/smith-lsp/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there. Formatting and linting are in `smith-check`; Neovim's plugin in `smith-neovim`.
+This skill ships in the smith plugin, from `.agents/skills/smith-lsp/SKILL.md` in https://github.com/smith-ai-lab/smith. Change it there. Formatting and linting are in `smith-check`; Neovim's plugin in `smith-neovim`.
 
 `smith lsp` is clangd, from the same LLVM as the compiler, with the arguments unchanged. It also reads `.smith` files: the lowering that `smith cc` does runs inside clangd's own parses, so positions are those of the text as written, and names are shown as written (`box::area` in an importing file, `area` in the module). A stage0 smith runs Homebrew's clangd (`$SMITH_CLANGD`) and cannot read `.smith`.
 

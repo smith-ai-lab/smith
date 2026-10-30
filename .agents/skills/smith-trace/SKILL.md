@@ -5,7 +5,7 @@ description: "Failures with a call stack: <smith/trace.h>, smith_failure, the sm
 
 # Traces, `smith symbolize` and the sanitizers
 
-This skill ships in the smith plugin, from `.agents/skills/smith-trace/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there. The header is `.smith/include/smith/trace.h`; read it first.
+This skill ships in the smith plugin, from `.agents/skills/smith-trace/SKILL.md` in https://github.com/smith-ai-lab/smith. Change it there. The header is `.smith/include/smith/trace.h`; read it first.
 
 A program holds no symbolizer. When a contract, a check or an `assert`-like failure fires, it walks its stack by frame pointers and writes the addresses with each image's UUID and slide, as lines starting `smith-trace`. smith turns them into the failing line, the source text and the call chain with LLVM's symbolizer, reading the debug map of the binary (its object files, so build with `-g`; no dSYM and no `dsymutil` needed). A failure costs about 8 ms beyond smith's start.
 

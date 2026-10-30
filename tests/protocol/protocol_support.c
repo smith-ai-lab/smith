@@ -3,7 +3,10 @@
 
 #include <string.h>
 
-constexpr size_t protocol_test_capacity = 1 << 20;
+// A document's buffer. The largest document the random values write is about 2 KB (the most over 3000 keys), so 64 KB
+// leaves a wide margin, and a buffer that is too small fails the writer, loudly. Every writer of every key of every
+// test takes a new buffer from the arena, and at a megabyte each these tests cost twenty times what their checks do.
+constexpr size_t protocol_test_capacity = 1 << 16;
 constexpr SmithJsonLimits protocol_test_limits = {.depth = 64, .string_length = 1 << 20, .count = 1 << 20};
 
 SmithJsonWriter protocol_test_writer(SmithArena *arena) {

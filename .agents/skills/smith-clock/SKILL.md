@@ -5,7 +5,7 @@ description: "Using smith::clock (import smith::clock; clock::now, monotonic, sl
 
 # Time and sleeping: smith::clock
 
-This skill ships in the smith plugin, from `.agents/skills/smith-clock/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there.
+This skill ships in the smith plugin, from `.agents/skills/smith-clock/SKILL.md` in https://github.com/smith-ai-lab/smith. Change it there.
 
 Durations and times are nanoseconds: `u64` for a duration and the monotonic clock, `i64` for the wall clock. `clock::second`, `clock::millisecond` and `clock::microsecond` are the units.
 

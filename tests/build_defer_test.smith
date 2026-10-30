@@ -23,7 +23,17 @@ static const char *status_and(const scratch::Run *run, const char *text) {
     return buffer;
 }
 
-export void test_build_defer_a_fresh_tree_builds_every_output_in_one_build(io::Io *io) {
+// Back to a fresh tree: no output, no list, no record of the steps that ran, no manifest and no source but the
+// fixture's; the compiled build program stays, which is the same for every tree of this build.c.
+static void fresh_tree(const scratch::Project *p) {
+    (void)scratch::sh(p, "rm -rf ./*.out list ran && cd .smith && "
+                         "rm -rf build.ninja build.info .smith_log effects compile_commands.json");
+    scratch::write(p, "source", "a\nb\n");
+}
+
+// Four tests of one project: each used to make a project of its own, and each of those spent about 2 CPU-s building
+// the build program. Each step starts from a fresh tree. The assertions are the same.
+export void test_build_defer_stage_2_on_a_fresh_tree_a_d_option_and_clean(io::Io *io) {
     scratch::Project p = defer_project(io);
     scratch::Run first = scratch::build(&p, "");
     scratch::expect_text(
@@ -37,15 +47,48 @@ export void test_build_defer_a_fresh_tree_builds_every_output_in_one_build(io::I
     scratch::expect_count("defer: no other output step reran", 3, scratch::lines(&p, "ran"));
     scratch::Run settled = scratch::build(&p, "");
     scratch::expect_contains("defer: and the next run has no work", settled.out, "no work to do");
+    fresh_tree(&p);
+    scratch::Run run = scratch::build(&p, "b.out");
+    scratch::expect_text("defer: a stage 2 target can be named on a fresh tree", "0 b.out",
+                         status_and(&run, scratch::capture(&p, "ls ./*.out | sed 's|\\./||'")));
+    fresh_tree(&p);
+    (void)scratch::build(&p, "-Dsuffix=x");
+    scratch::expect_text("defer: a -D option reaches stage 2", "bx", scratch::read(&p, "b.out"));
+    fresh_tree(&p);
+    (void)scratch::build(&p, "-t clean");
+    scratch::Run built = scratch::build(&p, "");
+    scratch::expect_text("defer: clean, then smith build, works", "0 a b", status_and(&built, sorted(&p, "ran")));
+    (void)scratch::build(&p, "-t clean");
+    scratch::expect_text("defer: clean keeps the manifest", "present",
+                         scratch::exists(&p, ".smith/build.ninja") ? "present" : "");
+    scratch::Run again = scratch::build(&p, "");
+    char both[64];
+    __builtin_snprintf(both, sizeof both, "%d %s %s", again.status, scratch::exists(&p, "a.out") ? "present" : "",
+                       scratch::exists(&p, "list") ? "present" : "");
+    scratch::expect_text("defer: and builds again", "0 present present", both);
 }
 
 // A compile in a project with a deferred step: the regenerated manifest keeps the compile's effects outputs (#271).
-export void test_build_defer_with_a_compile_settles(io::Io *io) {
+//
+// Then the regeneration rule's command, run without SMITH_EFFECTS and SMITH_SELF (as ninja or a hand run would),
+// writes the manifest `smith build` wrote, byte for byte: the decision is an argument of the program, not the
+// environment. Two tests of one project: each used to make a project of its own, and each of those spent about 2 CPU-s
+// building the build program. The assertions are the same.
+export void test_build_defer_with_a_compile_settles_and_the_regeneration_writes_the_same_manifest(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", "defer_compile");
     scratch::Run first = scratch::build(&p, "");
     scratch::expect_text("defer compile: the first build passes", "0 ok", status_and(&first, "ok"));
     scratch::Run second = scratch::build(&p, "");
     scratch::expect_contains("defer compile: the second run has no work", second.out, "no work to do");
+    scratch::Run built = scratch::build(&p, "");
+    scratch::expect_text("defer regenerate: the build passes", "0 ok", status_and(&built, "ok"));
+    scratch::Run same = scratch::sh(
+        &p, "cp .smith/build.ninja before; "
+            "command=$(sed -n 's/^  command = \\(.smith\\/program --regenerate .*\\)$/\\1/p' .smith/build.ninja); "
+            "test -n \"$command\" && env -u SMITH_EFFECTS -u SMITH_SELF sh -c \"$command\" && cmp before "
+            ".smith/build.ninja");
+    scratch::expect_text("defer regenerate: the same manifest without the environment", "0 ok",
+                         status_and(&same, "ok"));
 }
 
 // A ThinLTO compile writes its effect summary like any other (the manifest names it as an output, and a step whose
@@ -67,49 +110,6 @@ export void test_build_defer_an_unsettled_manifest_names_what_is_out_of_date(io:
     scratch::expect_contains("unsettled: the build stops", run.err, "is still out of date after");
     scratch::expect_contains("unsettled: and names the output that does not exist", run.err,
                              "output list doesn't exist");
-}
-
-// The regeneration rule's command, run without SMITH_EFFECTS and SMITH_SELF (as ninja or a hand run would), writes
-// the manifest `smith build` wrote, byte for byte: the decision is an argument of the program, not the environment.
-export void test_build_defer_the_regeneration_writes_the_same_manifest_without_the_environment(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "defer_compile");
-    scratch::Run built = scratch::build(&p, "");
-    scratch::expect_text("defer regenerate: the build passes", "0 ok", status_and(&built, "ok"));
-    scratch::Run same = scratch::sh(
-        &p, "cp .smith/build.ninja before; "
-            "command=$(sed -n 's/^  command = \\(.smith\\/program --regenerate .*\\)$/\\1/p' .smith/build.ninja); "
-            "test -n \"$command\" && env -u SMITH_EFFECTS -u SMITH_SELF sh -c \"$command\" && cmp before "
-            ".smith/build.ninja");
-    scratch::expect_text("defer regenerate: the same manifest without the environment", "0 ok",
-                         status_and(&same, "ok"));
-}
-
-export void test_build_defer_a_stage_2_target_can_be_named_on_a_fresh_tree(io::Io *io) {
-    scratch::Project p = defer_project(io);
-    scratch::Run run = scratch::build(&p, "b.out");
-    scratch::expect_text("defer: a stage 2 target can be named on a fresh tree", "0 b.out",
-                         status_and(&run, scratch::capture(&p, "ls ./*.out | sed 's|\\./||'")));
-}
-
-export void test_build_defer_a_d_option_reaches_stage_2(io::Io *io) {
-    scratch::Project p = defer_project(io);
-    (void)scratch::build(&p, "-Dsuffix=x");
-    scratch::expect_text("defer: a -D option reaches stage 2", "bx", scratch::read(&p, "b.out"));
-}
-
-export void test_build_defer_clean_then_build_works(io::Io *io) {
-    scratch::Project p = defer_project(io);
-    (void)scratch::build(&p, "-t clean");
-    scratch::Run built = scratch::build(&p, "");
-    scratch::expect_text("defer: clean, then smith build, works", "0 a b", status_and(&built, sorted(&p, "ran")));
-    (void)scratch::build(&p, "-t clean");
-    scratch::expect_text("defer: clean keeps the manifest", "present",
-                         scratch::exists(&p, ".smith/build.ninja") ? "present" : "");
-    scratch::Run again = scratch::build(&p, "");
-    char both[64];
-    __builtin_snprintf(both, sizeof both, "%d %s %s", again.status, scratch::exists(&p, "a.out") ? "present" : "",
-                       scratch::exists(&p, "list") ? "present" : "");
-    scratch::expect_text("defer: and builds again", "0 present present", both);
 }
 
 // A chained defer: more defers on an output of a step it added.
@@ -136,7 +136,9 @@ export void test_build_lines_no_final_newline_still_gives_the_line(io::Io *io) {
                          status_and(&one, scratch::read(&p, "result")));
 }
 
-export void test_build_lines_an_empty_file_is_an_empty_list_and_a_missing_one_is_an_error_value(io::Io *io) {
+// An empty file, a missing one and one over 16 MiB: three builds of one project, which used to be two tests with a
+// project each (each spent about 2 CPU-s building the build program). The assertions are the same.
+export void test_build_lines_an_empty_file_a_missing_one_and_one_over_16_mib(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", "lines_empty");
     scratch::Run empty = scratch::build(&p, "");
     scratch::expect_text("lines: an empty file is an empty list", "0 empty",
@@ -145,10 +147,6 @@ export void test_build_lines_an_empty_file_is_an_empty_list_and_a_missing_one_is
     scratch::Run missing = scratch::build(&p, "");
     scratch::expect_text("lines: a missing file is the result's error, which the build file handles", "0 missing",
                          status_and(&missing, scratch::read(&p, "result")));
-}
-
-export void test_build_lines_a_file_over_16_mib_fails_the_build(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "lines_empty");
     (void)scratch::sh(&p, "head -c 17825792 /dev/zero > data");
     scratch::Run big = scratch::build(&p, "");
     scratch::expect_status("lines: a file over 16 MiB exits 2", 2, &big);

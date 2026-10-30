@@ -5,7 +5,7 @@ description: "Using smith::math, smith's numbers as generic functions of a type:
 
 # Numbers as functions of a type: smith's math
 
-This skill ships in the smith plugin, from `.agents/skills/smith-math/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there.
+This skill ships in the smith plugin, from `.agents/skills/smith-math/SKILL.md` in https://github.com/smith-ai-lab/smith. Change it there.
 
 `smith::math` (`lib/smith/math.smith`) holds what a `.smith` file used to reach through C's macros of `<math.h>` and `<stdint.h>`: a `c::` name that is a macro is the preprocessor, and `smith lint` (`smith-preprocessor`) refuses it. Every export is a **generic function** built on clang's builtins (a builtin is a function, not a macro), so it has no C spelling: the header holds only its record, and C keeps `<math.h>`. It holds only what smith's own libraries ask today; the first caller that needs another number function adds it.
 

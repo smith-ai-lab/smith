@@ -92,8 +92,17 @@ jobs:
             echo "linux: a pull request tests only what its change reaches, on macOS" >>"$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          matrix='{"os":"macos-26","shard":1,"count":4,"flags":""},{"os":"macos-26","shard":2,"count":4,"flags":""},{"os":"macos-26","shard":3,"count":4,"flags":""},{"os":"macos-26","shard":4,"count":4,"flags":""}'
-          oses='"macos-26"'
+          # The Linux parts (`--skip-macos`, advisory) fail until the prover runs on Linux (#820), and each one
+          # downloads the build (storage egress): they run only on a push to main, not on a pull request or the queue.
+          # When #820 lands, move them back to every full run.
+          if [ "$GITHUB_EVENT_NAME" != push ]; then
+            echo 'matrix={"include":[{"os":"macos-26","shard":1,"count":4,"flags":""},{"os":"macos-26","shard":2,"count":4,"flags":""},{"os":"macos-26","shard":3,"count":4,"flags":""},{"os":"macos-26","shard":4,"count":4,"flags":""}]}' >>"$GITHUB_OUTPUT"
+            echo 'oses=["macos-26"]' >>"$GITHUB_OUTPUT"
+            echo "linux: the Linux parts run only on a push to main (#820)" >>"$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          matrix=
+          oses=
           git tag --list 'stage0-*' >"$RUNNER_TEMP/tags"
           found=
           for tag in $(git rev-list HEAD | sed 's/^/stage0-/' | grep -Fx -f "$RUNNER_TEMP/tags" | head -n 30); do
@@ -101,9 +110,9 @@ jobs:
           done
           if [ -n "$found" ]; then
             for i in 1 2 3 4 5 6; do
-              matrix="$matrix"',{"os":"ubuntu-latest","shard":'$i',"count":6,"flags":"--skip-macos"}'
+              matrix="$matrix"${matrix:+,}'{"os":"ubuntu-latest","shard":'$i',"count":6,"flags":"--skip-macos"}'
             done
-            oses="$oses"',"ubuntu-latest"'
+            oses='"ubuntu-latest"'
             echo "linux: $found has $asset: the Linux parts run" >>"$GITHUB_STEP_SUMMARY"
           else
             echo "linux: no ancestor release has $asset yet: no Linux parts" >>"$GITHUB_STEP_SUMMARY"
@@ -116,7 +125,8 @@ jobs:
     # compiles from the step cache main saved, then the tests are built too. Every job after this one unpacks the
     # result instead of compiling smith again.
     needs: changes
-    if: needs.changes.outputs.scope == 'full' || needs.changes.outputs.scope == 'docs'
+    # a push to main builds only for the Linux parts (oses is then ["ubuntu-latest"], or empty)
+    if: needs.changes.outputs.scope == 'full' || needs.changes.outputs.scope == 'docs' || (needs.changes.outputs.scope == 'release' && needs.changes.outputs.oses != '[]')
     runs-on: ${{ startsWith(matrix.os, 'ubuntu') && 'ubuntu-latest' || fromJSON(needs.changes.outputs.mac) }}
     timeout-minutes: 40
     # the Linux part reports but does not block `ci` until the suite has been green on Linux
@@ -185,7 +195,7 @@ jobs:
     # .github/shard-costs.tsv; a file's tests stay together). The count is what gives the shortest run with the
     # hosted limit of 5 macOS jobs at once (knowledge/ci-hosted.md).
     needs: [changes, build]
-    if: needs.changes.outputs.scope == 'full'
+    if: needs.changes.outputs.scope == 'full' || (needs.changes.outputs.scope == 'release' && needs.changes.outputs.oses != '[]')
     runs-on: ${{ startsWith(matrix.os, 'ubuntu') && 'ubuntu-latest' || fromJSON(needs.changes.outputs.mac) }}
     timeout-minutes: 45
     # Linux parts report but do not block `ci` until the suite has been green on Linux (no run has passed there yet)

@@ -5,7 +5,7 @@ description: "smith run and smith test: running a project's program and its test
 
 # smith run and smith test
 
-This skill ships in the smith plugin, from `.agents/skills/smith-run-test/SKILL.md` in https://github.com/adam-r-kowalski/smith. Change it there. Writing tests is the smith-test skill; writing `build.c` is smith-build.
+This skill ships in the smith plugin, from `.agents/skills/smith-run-test/SKILL.md` in https://github.com/smith-ai-lab/smith. Change it there. Writing tests is the smith-test skill; writing `build.c` is smith-build.
 
 `smith run` and `smith test` act on what the project's `build.c` declares: the program is the default's, the tests are `smith_tests`'. There is no task to write and no list of files or programs anywhere else. A project with no build file (a `main.smith` or `main.c` at the root, `*_test.smith` and `*_test.c` files beside the modules they test) builds by convention: `smith run` runs `build/debug/<folder>`, and `smith test` runs every `*_test.smith` and `*_test.c` file below the root (the smith-build skill, "No build file").
 

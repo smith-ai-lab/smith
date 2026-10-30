@@ -1,3 +1,5 @@
+<img src=".github/logo.jpeg" alt="smith" width="96">
+
 # smith
 
 **smith is C minus the footguns, plus compile-time programming.**
@@ -769,7 +771,7 @@ and `gh` signed in. A clone builds with the release of its newest ancestor commi
 (`stage0-<commit>`, checksum checked):
 
 ```sh
-git clone git@github.com:adam-r-kowalski/smith && cd smith
+git clone git@github.com:smith-ai-lab/smith && cd smith
 mkdir -p .smith && clang -std=c23 -x c scripts/stage0.c -o .smith/stage0-tool
 .smith/stage0-tool llvm      # builds LLVM 23.1.3 (r9) into ~/.cache/smith/llvm, about 9 minutes, once
 .smith/stage0-tool install   # builds the full smith and installs smith, smith-cc and smith-c++ in ~/.local/bin
@@ -778,12 +780,12 @@ mkdir -p .smith && clang -std=c23 -x c scripts/stage0.c -o .smith/stage0-tool
 Put `~/.local/bin` on your `PATH`. To update, pull and run `smith build install`. smith unpacks clang's builtin headers to
 `~/.local/share/smith` on first use and never removes them.
 
-**Editors.** Claude Code: `/plugin marketplace add adam-r-kowalski/smith` then `/plugin install smith@smith` brings the skills
+**Editors.** Claude Code: `/plugin marketplace add smith-ai-lab/smith` then `/plugin install smith@smith` brings the skills
 and `smith lsp`. Neovim 0.12: this repository is the plugin ([knowledge/neovim.md](knowledge/neovim.md)). Any editor: run
 `smith lsp` as the language server and `smith dap` as the debug adapter.
 
 ## Where to read more
 
 [AGENTS.md](AGENTS.md) holds the decisions, one line each; [knowledge/](knowledge/index.md) what smith is, one concept per
-file; [.agents/skills/](.agents/skills/) how to do each thing; the [GitHub issues](https://github.com/adam-r-kowalski/smith/issues)
+file; [.agents/skills/](.agents/skills/) how to do each thing; the [GitHub issues](https://github.com/smith-ai-lab/smith/issues)
 everything planned, and the only place plans live.

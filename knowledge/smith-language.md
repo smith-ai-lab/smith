@@ -75,7 +75,7 @@ Corpus: `enum-type-function`, `enum-type-function-module`.
 A file opts
 into more, step by step: imports and sized type names work in any `.smith` file; a `module` line makes it a module, with
 exports and private names, and a function with `constexpr type T` or `auto` parameters is generic. The design and the issues it answers are in
-[issue #11](https://github.com/adam-r-kowalski/smith/issues/11); this page is what is built.
+[issue #11](https://github.com/smith-ai-lab/smith/issues/11); this page is what is built.
 
 ```c
 // src/game/replay.smith

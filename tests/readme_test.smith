@@ -17,9 +17,9 @@
 //   made and each file is syntax-checked with warnings as errors, as the tests of the skills do.
 // A block inside an HTML comment is checked and not shown. Also checked: every relative link of the README exists, and
 // every complete smith block passes smith's own idiom checks (no #include or #define, no standard C type names) and is
-// what `smith fmt` writes. There is a test for each project of the README, `project_case(io, "<project>")`, and one for
-// the blocks that belong to no project; a project added to the README needs one: `test_every_project_has_a_test` says
-// which.
+// what `smith fmt` writes. Every project of the README is named in a test, `project_case(io, "<project>")` or the list
+// of the projects that build by the conventions, and one test is for the blocks that belong to no project; a project
+// added to the README needs one: `test_every_project_has_a_test` says which.
 module readme_test;
 
 import smith::arena;
@@ -321,7 +321,8 @@ export void test_every_project_has_a_test(io::Io *io) {
     scratch::Run run =
         scratch::sh(&p, "for name in $(grep -o '^ *```[a-z]* .*project=[A-Za-z0-9_-]*' README.md | "
                         "grep -o 'project=[A-Za-z0-9_-]*' | sed 's/project=//' | sort -u); do "
-                        "grep -q \"project_case(io, \\\"$name\\\")\" tests/readme_test.smith || echo \"$name\"; done");
+                        "grep -qE \"project_case\\(io, \\\"$name\\\"\\)|\\\"$name\\\"[,}]\" tests/readme_test.smith || "
+                        "echo \"$name\"; done");
     scratch::expect_text("projects of the README with no test in tests/readme_test.smith", "", run.out);
 }
 
@@ -437,6 +438,36 @@ export void test_readme_every_relative_link_names_a_file_that_exists(io::Io *io)
 
 // --- the projects, one test each -----------------------------------------------------------------------------------
 
+// Back to an empty folder for the next project: every file of the folder goes, and in .smith what the last project made
+// (its plan, its log, its effects, its compile commands and the headers of its own modules). What stays is smith's own
+// build program for projects with no build file and the headers of its libraries, which are the same for every project
+// and cost about 2 CPU-s to make.
+static void empty_folder(const scratch::Project *p) {
+    (void)scratch::sh(p, "find . -mindepth 1 -maxdepth 1 ! -name .smith -exec rm -rf {} + && cd .smith && "
+                         "rm -rf build.ninja build.info .smith_log effects compile_commands.json log && "
+                         "find include -mindepth 1 -maxdepth 1 ! -name smith -exec rm -rf {} +");
+}
+
+// The projects of the README that build by the conventions and pass: one folder and one build program for all of them,
+// in the order of the README. (The projects that need a prover are tests of their own below, and the one that
+// translates a Makefile has a build file of its own.)
+export void test_readme_projects_that_build_by_the_conventions(io::Io *io) {
+    scratch::Project p = scratch::project(io, "p", nullptr);
+    Blocks blocks = {};
+    read_blocks(io, &p, &blocks);
+    const char *names[8] = {"slices", "memcopy", "refuse", "reflect", "pack", "packerror", "constcast", "ported"};
+    for (usize i = 0; i < countof(names); i++) {
+        empty_folder(&p);
+        const char *flags = flags_of(io, &blocks, names[i]);
+        Placed placed = {};
+        const char *base = base_of(io, flags);
+        if (base != nullptr) place_blocks(io, &p, &blocks, base, true, &placed);
+        placed.count = 0; // the project's own blocks may replace the files of its base
+        place_blocks(io, &p, &blocks, names[i], false, &placed);
+        check_project(io, &p, names[i], flags, first_line_of(&blocks, names[i]));
+    }
+}
+
 export void test_readme_project_bytes(io::Io *io) {
     project_case(io, "bytes");
 }
@@ -449,38 +480,6 @@ export void test_readme_project_gradient(io::Io *io) {
     project_case(io, "gradient");
 }
 
-export void test_readme_project_pack(io::Io *io) {
-    project_case(io, "pack");
-}
-
-export void test_readme_project_constcast(io::Io *io) {
-    project_case(io, "constcast");
-}
-
-export void test_readme_project_packerror(io::Io *io) {
-    project_case(io, "packerror");
-}
-
 export void test_readme_project_port(io::Io *io) {
     project_case(io, "port");
-}
-
-export void test_readme_project_ported(io::Io *io) {
-    project_case(io, "ported");
-}
-
-export void test_readme_project_reflect(io::Io *io) {
-    project_case(io, "reflect");
-}
-
-export void test_readme_project_slices(io::Io *io) {
-    project_case(io, "slices");
-}
-
-export void test_readme_project_refuse(io::Io *io) {
-    project_case(io, "refuse");
-}
-
-export void test_readme_project_memcopy(io::Io *io) {
-    project_case(io, "memcopy");
 }

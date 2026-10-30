@@ -1,9 +1,9 @@
 // The libraries json, text and inflate in the builds the units runner does not make, from tests/json.sh, tests/text.sh
 // and tests/inflate.sh (issue #292). Their tests (lib/json_test.smith, lib/smith/text_test.smith,
-// lib/smith/inflate_test.smith) run on smith's own runner under AddressSanitizer and UBSan; here each is built as a
-// scratch project's tests with smith_tests (the fixture tests/build_fixtures/library_units, whose -DMODE is fast, -O2,
-// or ndebug, -O2 -DNDEBUG) and must pass in the runner's workers and with a process per test (--isolate). Also the
-// heavy runs on more keys under the sanitizers, JSONTestSuite (fetched into $SMITH_JSON_SUITE_CACHE, else
+// lib/smith/inflate_test.smith) run on smith's own runner under AddressSanitizer and UBSan; here the three are built
+// together as a scratch project's tests with smith_tests (the fixture tests/build_fixtures/library_units, whose -DMODE
+// is fast, -O2, or ndebug, -O2 -DNDEBUG) and must pass in the runner's workers and with a process per test (--isolate).
+// Also the heavy runs on more keys under the sanitizers, JSONTestSuite (fetched into $SMITH_JSON_SUITE_CACHE, else
 // ~/.cache/smith-tests, pinned by hash; skipped offline), the C and .smith callers of one text header, and each
 // library compiled alone under the warnings of a new project and naming no libc function.
 module library_modes_test;
@@ -13,29 +13,40 @@ import smith::io;
 import smith::test;
 import scratch;
 
-// What a library is: where its test file is in the repository and in the project, and its libraries.
+// What a library is: where its test file is in the repository and in the project, the module of its tests (the runner's
+// filter for them), and its libraries.
 typedef struct {
     const char *source; // the test file in the repository
     const char *path;   // where the project holds it (the module's path must end in it)
+    const char *module; // the runner's filter for its tests
     const char *libs;   // comma separated
-    bool fixtures;      // tests/fixtures is copied to the project
 } Library;
 
-static const Library json = {"lib/json_test.smith", "json_test.smith", "arena,random,text,json", false};
-static const Library text = {"lib/smith/text_test.smith", "smith/text_test.smith", "arena,random,text", false};
-static const Library inflate = {"lib/smith/inflate_test.smith", "smith/inflate_test.smith", "arena,random,inflate",
-                                true};
+static const Library json = {"lib/json_test.smith", "json_test.smith", "json_test::", "arena,random,text,json"};
+static const Library text = {"lib/smith/text_test.smith", "smith/text_test.smith",
+                             "smith::text_test::", "arena,random,text"};
+static const Library inflate = {"lib/smith/inflate_test.smith", "smith/inflate_test.smith",
+                                "smith::inflate_test::", "arena,random,inflate"};
 
-static scratch::Project units_project(io::Io *io, const Library *library) {
+// One project holds the tests of all three libraries and is built once in a mode (the libraries and the test library
+// are compiled once for the three, not once for each); the runner's filter picks the tests of one library.
+static scratch::Project units_project(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", "library_units");
-    scratch::copy_tree(&p, library->source, library->path);
-    if (library->fixtures) scratch::copy_tree(&p, "tests/fixtures", "tests/fixtures");
+    scratch::copy_tree(&p, json.source, json.path);
+    scratch::copy_tree(&p, text.source, text.path);
+    scratch::copy_tree(&p, inflate.source, inflate.path);
+    scratch::copy_tree(&p, "tests/fixtures", "tests/fixtures"); // inflate's
     return p;
 }
 
-static scratch::Run build_mode(const scratch::Project *p, const Library *library, const char *mode) {
-    return scratch::build(
-        p, format::push(&p->io->arena, "-DMODE=", mode, " -DLIBS=", library->libs, " -DTEST=", library->path).data);
+static scratch::Project built_in_mode(io::Io *io, const char *mode) {
+    scratch::Project p = units_project(io);
+    scratch::Run built = scratch::build(&p, format::push(&io->arena, "-DMODE=", mode,
+                                                         " -DLIBS=arena,random,text,json,inflate -DTEST=", json.path,
+                                                         ",", text.path, ",", inflate.path)
+                                                .data);
+    scratch::expect_status(format::push(&io->arena, mode, ": the tests build").data, 0, &built);
+    return p;
 }
 
 // The runner's summary line, without its time: "N passed, 0 failed".
@@ -46,43 +57,31 @@ static const char *summary(const scratch::Project *p, const char *command) {
                                    .data);
 }
 
-// Both builds of a library pass every test, in the workers and with a process per test. The project, built in the mode,
-// is returned for the heavier runs of the same build (one build for them all).
-static scratch::Project passes_in_mode(io::Io *io, const Library *library, const char *mode) {
-    scratch::Project p = units_project(io, library);
-    scratch::Run built = build_mode(&p, library, mode);
-    scratch::expect_status(format::push(&io->arena, mode, ": the tests build").data, 0, &built);
+// Every test of a library passes, in the workers and with a process per test.
+static void passes(const scratch::Project *p, const Library *library, const char *mode) {
+    io::Io *io = p->io;
     const char *count =
-        scratch::capture(&p, format::push(&io->arena, "grep -c '^export void test_' ", library->path).data);
+        scratch::capture(p, format::push(&io->arena, "grep -c '^export void test_' ", library->path).data);
     const char *all = format::push(&io->arena, count, " passed, 0 failed").data;
-    scratch::expect_text(format::push(&io->arena, mode, ": all ", count, " tests pass").data, all,
-                         summary(&p, "env SMITH_JSON_SUITE= ./build/tests"));
-    scratch::expect_text(format::push(&io->arena, mode, ": all pass with a process per test").data, all,
-                         summary(&p, "env SMITH_JSON_SUITE= ./build/tests --isolate"));
+    const char *filter = format::push(&io->arena, " --test ", library->module).data;
+    scratch::expect_text(format::push(&io->arena, mode, " ", library->module, ": all ", count, " tests pass").data, all,
+                         summary(p, format::push(&io->arena, "env SMITH_JSON_SUITE= ./build/tests", filter).data));
+    scratch::expect_text(
+        format::push(&io->arena, mode, " ", library->module, ": all pass with a process per test").data, all,
+        summary(p, format::push(&io->arena, "env SMITH_JSON_SUITE= ./build/tests --isolate", filter).data));
+}
+
+// One build in a mode and the tests of the three libraries on it.
+static scratch::Project all_pass_in_mode(io::Io *io, const char *mode) {
+    scratch::Project p = built_in_mode(io, mode);
+    passes(&p, &json, mode);
+    passes(&p, &text, mode);
+    passes(&p, &inflate, mode);
     return p;
 }
 
-export void test_library_modes_json_ndebug(io::Io *io) {
-    passes_in_mode(io, &json, "ndebug");
-}
-
-// The build of text in the fast mode: its tests, and then the full size of the sweep on the same build.
-export void test_library_modes_text_fast(io::Io *io) {
-    scratch::Project p = passes_in_mode(io, &text, "fast");
-    scratch::expect_text("full: the sweep of the float patterns, sixteen times denser", "1 passed, 0 failed",
-                         summary(&p, "./build/tests --full --test f32_sweep"));
-}
-
-export void test_library_modes_text_ndebug(io::Io *io) {
-    passes_in_mode(io, &text, "ndebug");
-}
-
-export void test_library_modes_inflate_fast(io::Io *io) {
-    passes_in_mode(io, &inflate, "fast");
-}
-
-export void test_library_modes_inflate_ndebug(io::Io *io) {
-    passes_in_mode(io, &inflate, "ndebug");
+export void test_library_modes_ndebug(io::Io *io) {
+    all_pass_in_mode(io, "ndebug");
 }
 
 // JSONTestSuite, pinned by the hash of its archive: the folder of its test_parsing, or "" when it cannot be fetched.
@@ -116,9 +115,12 @@ static void json_conformance(const scratch::Project *p) {
                          scratch::capture(p, "tail -1 listing"));
 }
 
-// The build of json in the fast mode: its tests, and then JSONTestSuite on the same build.
-export void test_library_modes_json_fast(io::Io *io) {
-    scratch::Project p = passes_in_mode(io, &json, "fast");
+// The build in the fast mode: the tests of the three libraries, then on the same build the full size of text's sweep
+// (sixteen times denser) and JSONTestSuite.
+export void test_library_modes_fast(io::Io *io) {
+    scratch::Project p = all_pass_in_mode(io, "fast");
+    scratch::expect_text("full: the sweep of the float patterns, sixteen times denser", "1 passed, 0 failed",
+                         summary(&p, "./build/tests --full --test f32_sweep"));
     json_conformance(&p);
 }
 
@@ -130,29 +132,25 @@ static void fuzz(const scratch::Project *p, const char *name) {
                          summary(p, format::push(&p->io->arena, "./build/tests --test ", name, " --seeds 5000").data));
 }
 
-// The three fuzzers run on one build.
-export void test_library_modes_json_fuzz_damaged_documents_random_bytes_and_written_values(io::Io *io) {
-    scratch::Project p = units_project(io, &json);
-    scratch::Run built = build_mode(&p, &json, "asan");
-    scratch::expect_status("the tests build", 0, &built);
+// More trials for the damage, under the sanitizers: the heavy runs by hand are in the units runner's notes.
+static void damaged_inflate(const scratch::Project *p) {
+    const char *seeds[5] = {"1", "2", "3", "4", "5"};
+    for (usize i = 0; i < 5; i++) {
+        scratch::expect_text(format::push(&p->io->arena, "damaged input never misbehaves (--seed ", seeds[i], ")").data,
+                             "1 passed, 0 failed",
+                             summary(p, format::push(&p->io->arena, "./build/tests --seed ", seeds[i],
+                                                     " --test test_inflate_survives_corrupt_input")
+                                            .data));
+    }
+}
+
+// The build under the sanitizers: the three fuzzers of json and the damage to inflate's input.
+export void test_library_modes_asan_fuzz_json_and_damage_inflate(io::Io *io) {
+    scratch::Project p = built_in_mode(io, "asan");
     fuzz(&p, "json_damaged_documents_never_misbehave");
     fuzz(&p, "json_random_bytes_never_misbehave");
     fuzz(&p, "json_any_value_written");
-}
-
-// More trials for the damage, under the sanitizers: the heavy runs by hand are in the units runner's notes.
-export void test_library_modes_inflate_damaged_input_never_misbehaves(io::Io *io) {
-    scratch::Project p = units_project(io, &inflate);
-    scratch::Run built = build_mode(&p, &inflate, "asan");
-    scratch::expect_status("the tests build", 0, &built);
-    const char *seeds[5] = {"1", "2", "3", "4", "5"};
-    for (usize i = 0; i < 5; i++) {
-        scratch::expect_text(format::push(&io->arena, "damaged input never misbehaves (--seed ", seeds[i], ")").data,
-                             "1 passed, 0 failed",
-                             summary(&p, format::push(&io->arena, "./build/tests --seed ", seeds[i],
-                                                      " --test test_inflate_survives_corrupt_input")
-                                             .data));
-    }
+    damaged_inflate(&p);
 }
 
 // One header for C and for .smith: a project with smith_library(b, "text"), a C file that includes <smith/text.h> and

@@ -5,7 +5,7 @@ description: "Running and writing a project's build.c with smith build: builds b
 
 # Build with smith build
 
-`build.c` describes the build in C, explicitly and with no defaults. `smith build` compiles it, runs it, and runs the manifest it writes (a ninja-language file) with its own executor; no ninja is needed. The API is `.smith/include/smith/build.h` and its implementation is `.smith/runtime.c`. Every `smith build` writes both, and they match the installed smith exactly, so read them first. The source's home is https://github.com/adam-r-kowalski/smith (`include/smith/build.h`, `runtime/build_runtime.c`), and the design and its reasons are in `docs/build-c.md` there. The repository is private, so read it with `gh`, for example `gh api repos/adam-r-kowalski/smith/contents/knowledge/build-file.md -H 'Accept: application/vnd.github.raw'`.
+`build.c` describes the build in C, explicitly and with no defaults. `smith build` compiles it, runs it, and runs the manifest it writes (a ninja-language file) with its own executor; no ninja is needed. The API is `.smith/include/smith/build.h` and its implementation is `.smith/runtime.c`. Every `smith build` writes both, and they match the installed smith exactly, so read them first. The source's home is https://github.com/smith-ai-lab/smith (`include/smith/build.h`, `runtime/build_runtime.c`), and the design and its reasons are in `docs/build-c.md` there. The repository is private, so read it with `gh`, for example `gh api repos/smith-ai-lab/smith/contents/knowledge/build-file.md -H 'Accept: application/vnd.github.raw'`.
 
 ## No build file: the conventions
 
