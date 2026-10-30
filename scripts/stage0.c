@@ -13,8 +13,9 @@
 // ancestor "with a release" is the newest one that has the asset of this platform: `gh release view` lists them.
 // On Linux, when no release can be had (no ancestor has a Linux build yet, or the download fails), it builds smith
 // from source instead: scripts/seed_linux.c, the seed of the Linux release chain (issue #305), which takes the
-// published LLVM pack (minutes), or builds LLVM when there is none (about two hours). SMITH_STAGE0_SEED=1 asks for the seed directly, and SMITH_STAGE0_SEED=0 never builds it.
-// It compiles as strict ISO C (gcc's -std=c2x), so the POSIX names it uses are asked for here.
+// published LLVM pack (minutes), or builds LLVM when there is none (about two hours). SMITH_STAGE0_SEED=1 asks for the
+// seed directly, and SMITH_STAGE0_SEED=0 never builds it. It compiles as strict ISO C (gcc's -std=c2x), so the POSIX
+// names it uses are asked for here.
 #ifndef __APPLE__
 #define _POSIX_C_SOURCE 200809L
 #endif
