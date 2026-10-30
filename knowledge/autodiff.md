@@ -25,7 +25,7 @@ after Enzyme, and no UBSan** (owner's decision): debug compiles with `-fsanitize
 and no passes, so functions carry `sanitize_address` uninstrumented, and `shim/lld.cpp`'s plugin entry (smith's own,
 Enzyme's is weak) registers Enzyme and then ASan at the same full-LTO early extension point, so ASan instruments the
 gradients too (it skips a module that already has `asan.module_ctor`, so it never runs twice); the link keeps lld's
-object (`-Wl,-object_path_lto`) so reports have lines. UBSan's handlers break Enzyme and its trap mode loses its checks
+object (`-Wl,-object_path_lto`, lld ELF's `-Wl,--lto-obj-path=` on Linux) so reports have lines. UBSan's handlers break Enzyme and its trap mode loses its checks
 in the gradient (#59 tracks UB checks after Enzyme). Release and fast have none. `smith_autodiff_flags` in
 runtime/build_runtime.c is the one place. Programs that do not use it have unchanged commands. A smith with no Enzyme, or
 run with `SMITH_CLANG` or `SMITH_LINKER`, refuses an autodiff program (`SMITH_ENZYME=no` in the build program's
