@@ -84,7 +84,7 @@ jobs:
           echo "smith test exit status: $rc"
           grep -E '^[0-9]+ passed|passed|^FAIL |^FAILED:|build stopped' "$RUNNER_TEMP/test.log" | cut -c1-300 | sort | uniq -c | sort -rn | head -80
           echo "=== the build of the autodiff programs"
-          grep -B40 -m1 'FAILED: \[code=1\] build/debug/toy' "$RUNNER_TEMP/test.log" | cut -c1-600
+          grep -A12 -m1 'FAILED: \[code=1\] build/debug/toy' "$RUNNER_TEMP/test.log" | cut -c1-1500
           echo "=== the failures"
           grep -A16 '^FAIL ' "$RUNNER_TEMP/test.log" | cut -c1-400 | head -700
           cp "$RUNNER_TEMP/test.log" .smith/log/ci-test.log 2>/dev/null

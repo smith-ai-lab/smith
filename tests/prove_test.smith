@@ -13,6 +13,7 @@ import smith::format;
 import smith::io;
 import smith::test;
 import scratch;
+import target;
 
 static scratch::Project fresh(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
@@ -192,9 +193,13 @@ export void test_prove_loop_count_a_counter_bounded_by_a_constant_proves(io::Io 
 }
 
 export void test_prove_objective_c_a_message_send_is_an_error(io::Io *io) {
-    scratch::Project p = fresh(io);
-    scratch::Run run = prove(&p, "\"$c/message.m\"");
-    has("Objective-C: a message send is an error", &run, "message.m:10: cannot be proved: an Objective-C message send");
+    (void)io; // not read on Linux, which has no Objective-C runtime headers (<objc/NSObject.h>)
+    if constexpr (target::os == target::macos) {
+        scratch::Project p = fresh(io);
+        scratch::Run run = prove(&p, "\"$c/message.m\"");
+        has("Objective-C: a message send is an error", &run,
+            "message.m:10: cannot be proved: an Objective-C message send");
+    }
 }
 
 // 6b. A proof that grows past its memory limit is stopped, and says so (macOS enforces no RLIMIT_AS, so the parent
