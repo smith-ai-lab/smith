@@ -1015,13 +1015,15 @@ static const char *smith_compiler_file(const char *compiler) {
     return smith_text(".smith/compiler/%016" PRIx64, smith_hash_bytes(compiler, strlen(compiler)));
 }
 
-// The real path of an executable named by a path, or found on PATH; nullptr when there is none.
-static const char *smith_resolve_executable(const char *name) {
+// The path of an executable named by a path, or found on PATH; nullptr when there is none. With `resolve` the real
+// path (a symlink followed), else the path as found: smith-cc is a link to smith, and only the name it is run by says
+// that it is a compiler.
+static const char *smith_find_executable(const char *name, bool resolve) {
     char found[PATH_MAX];
     char real[PATH_MAX];
     if (strchr(name, '/') != nullptr) {
         if (realpath(name, real) == nullptr) return nullptr;
-        return smith_copy_string(real);
+        return smith_copy_string(resolve ? real : name);
     }
     const char *path = getenv("PATH");
     if (path == nullptr) return nullptr;
@@ -1031,7 +1033,7 @@ static const char *smith_resolve_executable(const char *name) {
         int written = snprintf(found, sizeof found, "%.*s/%s", (int)length, length > 0 ? start : ".", name);
         if (written > 0 && (size_t)written < sizeof found && access(found, X_OK) == 0 &&
             realpath(found, real) != nullptr)
-            return smith_copy_string(real);
+            return smith_copy_string(resolve ? real : found);
         if (end == nullptr) break;
         start = end + 1;
     }
@@ -1056,13 +1058,14 @@ static const char *smith_file_identity(const char *path) {
 // with clang linked in, "clang in-process <clang>" and "identity <the version of that LLVM and a hash of what is
 // linked>", so a smith rebuilt against the same LLVM is the same compiler; with an external clang ($SMITH_CLANG, or a
 // stage0's), "clang <path>", so it is that clang's file. Anything else that is named smith is taken for a compiler like
-// another.
-static const char *smith_compiler_identity(const char *real) {
+// another. `invoked` is the path as found (smith-cc, a link to smith): the program decides what it is by the name it is
+// run by, so `real` (the link followed: smith) would not answer.
+static const char *smith_compiler_identity(const char *real, const char *invoked) {
     const char *base = strrchr(real, '/');
     base = base != nullptr ? base + 1 : real;
     const char *own = smith_file_identity(real);
     if (strncmp(base, "smith", 5) != 0) return own;
-    const char *text = smith_capture_with((const char *[]){real, "--smith-which", "-c", "a.c", nullptr}, "", true);
+    const char *text = smith_capture_with((const char *[]){invoked, "--smith-which", "-c", "a.c", nullptr}, "", true);
     if (strncmp(text, "clang in-process ", 17) == 0) {
         const char *identity = strstr(text, "\nidentity ");
         return identity != nullptr ? smith_text("in-process %s", identity + 10) : own;
@@ -1075,9 +1078,10 @@ static const char *smith_compiler_identity(const char *real) {
 static void smith_write_compiler_files(void) {
     for (size_t i = 0; i < smith_compiler_count; i++) {
         const char *compiler = smith_compilers[i];
-        const char *real = smith_resolve_executable(compiler);
-        const char *text =
-            smith_text("%s\n%s\n", compiler, real != nullptr ? smith_compiler_identity(real) : "missing");
+        const char *real = smith_find_executable(compiler, true);
+        const char *text = smith_text(
+            "%s\n%s\n", compiler,
+            real != nullptr ? smith_compiler_identity(real, smith_find_executable(compiler, false)) : "missing");
         smith_write_if_different(smith_compiler_file(compiler), text, strlen(text));
     }
 }
