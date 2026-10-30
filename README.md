@@ -1,3 +1,5 @@
+<img src=".github/logo.jpeg" alt="smith" width="96">
+
 # smith
 
 **smith is C minus the footguns, plus compile-time programming.**
