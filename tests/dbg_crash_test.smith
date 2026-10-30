@@ -11,6 +11,33 @@ import smith::test;
 import scratch;
 import target;
 
+// What the tests debug is built once for each smith under test and set of sources, in $SMITH_TEST_CACHE/dbgcrash-<key>
+// (a lock folder makes one test the builder and the others wait, as runner.smith's shared build does) and copied into
+// each test's project (the C program, plain and under AddressSanitizer) or run in place (the `smith new` app): they
+// cost 2.5 s and 6 s of CPU in each of the tests that used them (#638). The debug information names the shared folder,
+// where prog.c and main.smith are too, so the source lines are found and shown relative to it: the debugger runs from
+// the shared folder (`.dir-c`, `.dir-app` name it) and writes its output into the project. ONE is "c" or "app".
+constexpr char shared_script[_] =
+    "if [ \"$(uname -s)\" = Darwin ]; then sf='-f %N_%m_%z'; else sf='-c %n_%Y_%s'; fi; "
+    "key=$( { stat $sf \"$SMITH_SELF\"; cat \"$SMITH_REPO\"/tests/build_fixtures/dbg_crash/*; } | shasum -a "
+    "256 | "
+    "cut -c1-20 ); c=$SMITH_TEST_CACHE/dbgcrash-$key; "
+    "if [ ! -e \"$c/$ONE.done\" ]; then "
+    "if mkdir \"$c.lock-$ONE\" 2>/dev/null; then "
+    "mkdir -p \"$c/$ONE\" && cp -R \"$SMITH_REPO\"/tests/build_fixtures/dbg_crash/. \"$c/$ONE\" && cd \"$c/$ONE\" && "
+    "{ if [ $ONE = c ]; then "
+    "smith cc -g -O0 -c prog.c -o prog.o && smith cc prog.o -o prog && smith cc -g -O0 -fsanitize=address -c prog.c "
+    "-o prog_asan.o && smith cc -fsanitize=address prog_asan.o -o prog_asan && "
+    "{ smith dbg --crash ./prog n 2>&1 | grep -q 'not debugged' || : >debuggable; }; "
+    "else mkdir w && cd w && smith new app >/dev/null 2>&1 && cd app && cp ../../app_main.smith main.smith && "
+    "rm -f primes.smith && smith build >build.txt 2>&1; fi; }; r=$?; "
+    "[ $r = 0 ] && : >\"$c/$ONE.done\"; rmdir \"$c.lock-$ONE\"; [ $r = 0 ] || exit 1; "
+    "else n=0; until [ -e \"$c/$ONE.done\" ]; do "
+    "[ -d \"$c.lock-$ONE\" ] || { echo \"the build did not finish\"; exit 1; }; "
+    "n=$((n + 1)); [ $n -lt 6000 ] || { echo \"timed out waiting for the build\"; exit 1; }; "
+    "perl -e 'select(undef, undef, undef, 0.2)'; done; fi; fi; echo \"$c/$ONE\" >\"$here/.dir-$ONE\"; "
+    "if [ $ONE = c ]; then cp -Rp \"$c/c/.\" \"$here\"; else mkdir -p \"$here/w/app\"; fi";
+
 // The folder with prog.c built plain and under AddressSanitizer. False when this smith cannot debug here.
 static bool make(io::Io *io, scratch::Project *p) {
     *p = scratch::project(io, "dbg", "dbg_crash");
@@ -20,18 +47,18 @@ static bool make(io::Io *io, scratch::Project *p) {
     if (usable.status != 0) {
         return false;
     }
-    scratch::Run built = scratch::sh(
-        p, "smith cc -g -O0 -c prog.c -o prog.o && smith cc prog.o -o prog && smith cc -g -O0 -fsanitize=address -c "
-           "prog.c -o prog_asan.o && smith cc -fsanitize=address prog_asan.o -o prog_asan");
+    scratch::Run built = scratch::sh(p, format::push(&io->arena, "ONE=c; here=$PWD; ", shared_script).data);
     scratch::expect_status("prog.c builds", 0, &built);
-    return !scratch::contains(scratch::sh(p, "smith dbg --crash ./prog n 2>&1").out, "not debugged");
+    return scratch::exists(p, "debuggable");
 }
 
 // The program's standard error after `smith dbg ARGUMENTS`, which the checks read; the status is the run's.
 static void note_output(const scratch::Project *p, const char *folder);
 
 static scratch::Run crash(const scratch::Project *p, io::Io *io, const char *arguments) {
-    scratch::Run run = scratch::sh(p, format::push(&io->arena, "smith dbg ", arguments, " >out.txt 2>err.txt").data);
+    scratch::Run run = scratch::sh(p, format::push(&io->arena, "here=$PWD; cd \"$(cat .dir-c)\" && smith dbg ",
+                                                   arguments, " >\"$here/out.txt\" 2>\"$here/err.txt\"")
+                                          .data);
     note_output(p, "");
     return run;
 }
@@ -46,7 +73,8 @@ static void note_output(const scratch::Project *p, const char *folder) {
 // smith dbg --crash on the .smith app, with the arguments of the program.
 static scratch::Run crash_app(const scratch::Project *p, io::Io *io, const char *arguments) {
     scratch::Run run = scratch::sh(
-        p, format::push(&io->arena, "cd w/app && smith dbg --crash build/debug/app ", arguments, " >out.txt 2>err.txt")
+        p, format::push(&io->arena, "here=$PWD; cd \"$(cat .dir-app)/w/app\" && smith dbg --crash build/debug/app ",
+                        arguments, " >\"$here/w/app/out.txt\" 2>\"$here/w/app/err.txt\"")
                .data);
     note_output(p, "w/app/");
     return run;
@@ -142,11 +170,9 @@ static bool make_smith_app(io::Io *io, scratch::Project *p) {
     if (!make(io, p)) {
         return false;
     }
-    scratch::Run made = scratch::sh(p, "mkdir w && cd w && smith new app >/dev/null 2>&1 && cd app && "
-                                       "cp ../../app_main.smith main.smith && rm -f primes.smith && "
-                                       "smith build >build.txt 2>&1");
+    scratch::Run made = scratch::sh(p, format::push(&io->arena, "ONE=app; here=$PWD; ", shared_script).data);
     if (made.status != 0) {
-        test::note("the .smith program does not build: %s", scratch::sh(p, "cat w/app/build.txt").out);
+        test::note("the .smith program does not build: %s", made.out);
     }
     scratch::expect_status("the .smith program builds", 0, &made);
     return made.status == 0;
