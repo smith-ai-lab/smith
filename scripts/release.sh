@@ -5,7 +5,7 @@
 #   release.sh publish <smith>        guard, package, add to the draft release, prune (CI, `smith build release`)
 #   release.sh finish <tag>           publish the draft release the jobs added to (CI's `publish` job)
 #   release.sh package <smith> <dir>  write the tarball and its checksum into <dir>
-#   release.sh fetch <tag> <dir>      gh release download, check the checksum, extract into <dir>
+#   release.sh fetch <tag> <dir>      download over plain HTTPS (curl, no gh), check the checksum, extract into <dir>
 #   release.sh prune                  read "tag date" lines on stdin, print the tags to delete
 #   release.sh guard                  succeed only when HEAD is main's tip
 set -eu
@@ -106,7 +106,10 @@ publish() {
 
 fetch() {
     mkdir -p "$2"
-    gh release download "$1" --pattern "$name" --pattern "$name.sha256" --dir "$2" --clobber
+    base=https://github.com/smith-ai-lab/smith/releases/download/$1
+    for file in "$name" "$name.sha256"; do
+        curl -fsSL --retry 3 -o "$2/$file" "$base/$file" || die "cannot download $base/$file"
+    done
     (cd "$2" && shasum -a 256 -c "$name.sha256" >/dev/null) || die "the checksum of $1 does not match"
     tar -C "$2" -xJf "$2/$name"
 }

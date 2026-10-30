@@ -1,0 +1,20 @@
+#!/bin/sh
+# A stub curl for the release URLs: https://github.com/<owner>/<repo>/releases/download/<tag>/<name> is the file
+# $GH_DIR/<tag>/<name>, an absent one is HTTP 404 (exit 22 with -f, and the status written for `-w %output{FILE}...`),
+# and every call is logged to $GH_LOG. $CURL_FAIL, when set, is a network that is cut (exit 6).
+echo "curl $*" >>"$GH_LOG"
+[ -z "${CURL_FAIL:-}" ] || exit 6
+out=
+format=
+while [ $# -gt 1 ]; do
+    case $1 in -o) out=$2; shift 2 ;; -w) format=$2; shift 2 ;; *) shift ;; esac
+done
+file=$GH_DIR/${1#*/releases/download/}
+code=200
+[ -f "$file" ] || code=404
+if [ -n "$format" ]; then
+    path=${format#*%output\{}
+    printf %s "$code" >"${path%%\}*}"
+fi
+[ "$code" = 200 ] || exit 22
+[ -z "$out" ] || cp "$file" "$out"

@@ -14,7 +14,7 @@ Smith's libraries", and "Getting rid of a second copy to maintain".
 **A clone with no smith** builds and runs `scripts/stage0.c`: a plain C23 file (a `.c`: the lint gate rejects a module-less `.smith`; the C
 rule keeps it the same as a `.smith`), so Apple's clang builds it (`mkdir -p .smith && clang -std=c23 -x c scripts/stage0.c -o .smith/stage0-tool &&
 .smith/stage0-tool [arguments of smith build]`) and the bootstrap needs no shell. It fetches the tags, walks `git rev-list HEAD` for the first commit that
-has a release `stage0-<commit>`, downloads it (`gh release download`, a child process; the repository is private and `gh` is signed in as it is to clone), checks the SHA-256 (`scripts/sha256.h`, smith's own, on every platform), unpacks it with `tar` into `.smith/stage0/` and runs
+has a release `stage0-<commit>`, downloads it (`curl` over plain HTTPS from the release's public URL, a child process; no `gh`, no login, no GraphQL, #829), checks the SHA-256 (`scripts/sha256.h`, smith's own, on every platform), unpacks it with `tar` into `.smith/stage0/` and runs
 `.smith/stage0/bin/smith build` with that `bin/` first on `PATH`, so its `smith-cc` is the `CC` of the build. Nothing in
 the repository records which release to use. `~/.cache/smith/llvm` (`smith build llvm`, about 9 minutes once) must be there
 already; `smith build` says so when it is not (the default target stops, `llvm` and `clean` still work).
@@ -50,8 +50,8 @@ while ([release](release.md)): a clone older than the 20 newest releases (and a 
 **On Linux** (issue #305) a release has a Linux build, `smith-linux-<arch>.tar.xz`, once the Linux CI job publishes it;
 `stage0.c` takes it the same way. When no release can be had (no Linux build yet, the chain broken, or the download
 failing) it builds smith from source instead: `scripts/seed_linux.c`, the seed (`SMITH_STAGE0_SEED=1` asks for it,
-`=0` never builds it), which takes the published LLVM pack of the configuration (`llvm-23.1.3-r12-linux-x86_64`, fetched and checked by `scripts/llvm_pack.c`, with `gh`) and builds the pinned LLVM with `scripts/llvm_linux.c` only when no pack exists (`llvm_pack fetch` exits 3; a pack that exists but fails to download stops the seed; `SMITH_SEED_FETCH=0` always builds), then stage A (`smith.c`, the shims
+`=0` never builds it), which takes the published LLVM pack of the configuration (`llvm-23.1.3-r12-linux-x86_64`, fetched with `curl` and checked by `scripts/llvm_pack.c`) and builds the pinned LLVM with `scripts/llvm_linux.c` only when no pack exists (`llvm_pack fetch` exits 3; a pack that exists but fails to download stops the seed; `SMITH_SEED_FETCH=0` always builds), then stage A (`smith.c`, the shims
 and LLVM, with weak stand-ins for the libraries made from their headers' `smith-names` and `smith-bodies` lines), the
 libraries compiled by stage A, stage B linked with them, and stage B's `smith build`. It needs the system's C and C++
-compiler (clang 19 or GCC 13 or later), lld (the link of smith), gh, tar and xz: with the pack that is minutes; without
+compiler (clang 19 or GCC 13 or later), lld (the link of smith), curl, tar and xz: with the pack that is minutes; without
 one it also needs cmake, ninja, python3, curl and patch, and about two hours and 15 GB the first time.

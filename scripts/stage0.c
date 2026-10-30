@@ -4,13 +4,15 @@
 //   of smith build]
 //   1. finds the release `stage0-<commit>` of the newest ancestor commit of HEAD that has one (git tags, walking
 //      `git rev-list HEAD`, after fetching the tags);
-//   2. downloads it with `gh release download` (the repository is private; gh is signed in as it is to clone), checks
-//      its SHA-256 (scripts/sha256.h) and unpacks it with tar into .smith/stage0/;
+//   2. downloads it with curl over plain HTTPS from the release's public URL (no gh, no login, no GraphQL: Claude
+//   Code's
+//      cloud sessions refuse that, #829), checks its SHA-256 (scripts/sha256.h) and unpacks it with tar into
+//      .smith/stage0/;
 //   3. runs .smith/stage0/bin/smith build, with that bin/ first on PATH so that its smith-cc is the CC of the build.
-// It needs git, gh, tar, the network, and `~/.cache/smith/llvm` (`smith build llvm`, about 9 minutes once). With a
+// It needs git, curl, tar, the network, and `~/.cache/smith/llvm` (`smith build llvm`, about 9 minutes once). With a
 // smith installed, `smith build` does all of this already. SMITH_STAGE0_RELEASE=<tag> names the release to use.
 // A release is one per commit holding a tarball per platform (macOS and Linux jobs add theirs, #799), so the newest
-// ancestor "with a release" is the newest one that has the asset of this platform: `gh release view` lists them.
+// ancestor "with a release" is the newest one that has the asset of this platform: a ranged request for its URL says.
 // On Linux, when no release can be had (no ancestor has a Linux build yet, or the download fails), it builds smith
 // from source instead: scripts/seed_linux.c, the seed of the Linux release chain (issue #305), which takes the
 // published LLVM pack (minutes), or builds LLVM when there is none (about two hours). SMITH_STAGE0_SEED=1 asks for the
@@ -97,14 +99,25 @@ static bool has_line(const char *text, const char *line) {
     return false;
 }
 
-// Whether the release has the tarball and its checksum for this platform: the names of its assets, one per line.
+// The public URL of a release's file: the repository is public, so no login is needed.
+static void asset_url(char *url, size_t capacity, const char *tag, const char *name) {
+    snprintf(url, capacity, "https://github.com/smith-ai-lab/smith/releases/download/%s/%s", tag, name);
+}
+
+// Whether the URL answers: one byte of it is asked for, since a signed storage URL refuses a HEAD request.
+static bool url_exists(const char *url) {
+    return succeeds((const char *[]){"curl", "-fsSL", "--retry", "3", "-r", "0-0", "-o", "/dev/null", url, nullptr});
+}
+
+// Whether the release has the tarball and its checksum for this platform.
 static bool has_asset(const char *tag, const char *name) {
     char sums[256];
     snprintf(sums, sizeof sums, "%s.sha256", name);
-    const char *assets =
-        run((const char *[]){"gh", "release", "view", tag, "--json", "assets", "--jq", ".assets[].name", nullptr}, true,
-            true);
-    return assets != nullptr && has_line(assets, name) && has_line(assets, sums);
+    char url[path_max];
+    asset_url(url, sizeof url, tag, name);
+    if (!url_exists(url)) return false;
+    asset_url(url, sizeof url, tag, sums);
+    return url_exists(url);
 }
 
 // The newest ancestor of HEAD with a release that has `name`: the tags name commits, so the first commit of
@@ -161,7 +174,7 @@ static bool file_digest(const char *path, char hex[hex_length + 1]) {
     return sha256_file(path, hex);
 }
 
-// Downloads the release into the folder, checks the tarball against its .sha256 and unpacks it.
+// Downloads the release (curl, plain HTTPS) into the folder, checks the tarball against its .sha256 and unpacks it.
 static void fetch(const char *tag, const char *folder, const char *name) {
     char sums[path_max];
     char tarball[path_max];
@@ -172,10 +185,13 @@ static void fetch(const char *tag, const char *folder, const char *name) {
     if (!succeeds((const char *[]){"rm", "-rf", folder, nullptr}) ||
         !succeeds((const char *[]){"mkdir", "-p", folder, nullptr}))
         die("cannot make", folder);
-    if (!succeeds((const char *[]){"gh", "release", "download", tag, "--pattern", name, "--pattern", sums, "--dir",
-                                   folder, "--clobber", nullptr})) {
-        die("cannot get", tag);
-    }
+    char url[path_max];
+    asset_url(url, sizeof url, tag, name);
+    if (!succeeds((const char *[]){"curl", "-fsSL", "--retry", "3", "-o", tarball, url, nullptr}))
+        die("cannot download", url);
+    asset_url(url, sizeof url, tag, sums);
+    if (!succeeds((const char *[]){"curl", "-fsSL", "--retry", "3", "-o", sums_path, url, nullptr}))
+        die("cannot download", url);
     char expected[256];
     char actual[hex_length + 1];
     if (!read_file(sums_path, expected, sizeof expected) || strlen(expected) < hex_length ||

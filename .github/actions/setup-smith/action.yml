@@ -5,8 +5,8 @@ description: >
   downloads it from its release instead of building it, #797), then smith itself, and with `tests: true` the tests
   too (the runner and every test program, so that a job that only runs tests has nothing to compile). Compiles come
   from the step cache (`~/.cache/smith/steps`, restored from the newest entry main saved). Sets SMITH to the built
-  smith's path. The caller has checked out the whole history (fetch-depth: 0) and set GH_TOKEN, which
-  `gh release download` reads.
+  smith's path. The caller has checked out the whole history (fetch-depth: 0); releases are fetched over
+  plain HTTPS.
 
 inputs:
   tests:

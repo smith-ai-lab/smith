@@ -22,10 +22,11 @@ constexpr char prelude[_] =
 static scratch::Project repository(io::Io *io) {
     scratch::Project p = scratch::project(io, "pack", nullptr);
     scratch::copy_tree(&p, "tests/build_fixtures/release/gh", "../bin/gh");
+    scratch::copy_tree(&p, "tests/build_fixtures/release/curl", "../bin/curl");
     scratch::copy_tree(&p, "scripts/llvm_pack.c", "llvm_pack.c");
     scratch::copy_tree(&p, "scripts/sha256.h", "sha256.h");
     scratch::Run made = scratch::sh(
-        &p, "mkdir ../gh && chmod +x ../bin/gh && : >../gh.log && "
+        &p, "mkdir ../gh && chmod +x ../bin/gh ../bin/curl && : >../gh.log && "
             "n=c1/llvm/n1; mkdir -p $n/install/lib/clang/23/include $n/install/include/x $n/install/bin "
             "$n/install/libexec $n/prove/lib $n/prove/share $n/build c1/enzyme/0.0.303-n1/lib "
             "c1/enzyme/build-0.0.303-n1 && "
@@ -106,11 +107,11 @@ export void test_llvm_pack_publish_then_fetch_gives_the_same_install(io::Io *io)
     scratch::expect_text("llvm_pack: fetch-leaves-nothing-else", "llvm",
                          capture(io, &p, "ls -A c2 | grep -v enzyme; ls -A c2/llvm | grep -v n1"));
     scratch::Run again = run(io, &p,
-                             "grep -c 'release download' \"$GH_LOG\" >../before; "
+                             "grep -c 'curl .*-o [^ ]*tar.xz' \"$GH_LOG\" >../before; "
                              "\"$tool\" fetch \"$PWD/c2\" n1 \"$PWD/stamp\" >/dev/null");
     scratch::expect_status("llvm_pack: a second fetch has nothing to do", 0, &again);
     scratch::expect_text("llvm_pack: a second fetch downloads nothing", capture(io, &p, "cat ../before"),
-                         capture(io, &p, "grep -c 'release download' \"$GH_LOG\""));
+                         capture(io, &p, "grep -c 'curl .*-o [^ ]*tar.xz' \"$GH_LOG\""));
 }
 
 // fetch that must not take the pack: a part that does not match its checksum is an error and leaves nothing that looks
@@ -126,6 +127,16 @@ export void test_llvm_pack_fetch_refuses_a_bad_part_and_says_when_to_build(io::I
                                  "mkdir -p c4/llvm/n1/build && \"$tool\" fetch \"$PWD/c4\" n1 \"$PWD/stamp\" "
                                  "2>/dev/null; echo $?"));
     scratch::expect_text("llvm_pack: the build is left alone", "build", capture(io, &p, "ls c4/llvm/n1"));
+    scratch::expect_contains(
+        "llvm_pack: a cut network is an error naming the URL, not 3",
+        capture(io, &p, "mkdir c6 && CURL_FAIL=1 \"$tool\" fetch \"$PWD/c6\" n1 \"$PWD/stamp\" 2>&1; echo \"rc=$?\""),
+        "https://github.com/smith-ai-lab/smith/releases/download/llvm-n1-");
+    scratch::expect_contains(
+        "llvm_pack: and rc 1",
+        capture(io, &p, "CURL_FAIL=1 \"$tool\" fetch \"$PWD/c6\" n1 \"$PWD/stamp\" >/dev/null 2>&1; echo \"rc=$?\""),
+        "rc=1");
+    scratch::expect_text("llvm_pack: a fetch never runs gh", "0",
+                         capture(io, &p, "grep -c '^gh release download' \"$GH_LOG\" || true"));
     scratch::Run corrupted = run(io, &p, "printf x >>\"../gh/$tag/$tag.tar.xz.001\"");
     scratch::expect_status("llvm_pack: corrupt a part", 0, &corrupted);
     scratch::expect_contains(
