@@ -15,6 +15,76 @@ constexpr int smith_slots_unlimited = -2; // smith_slots_extra: there is no pool
 static int smith_slots_fd = -1; // the base token this process holds; closed by the OS when the process ends
 static bool smith_slots_ci;     // this process runs for CI (SMITH_PRIORITY=ci)
 
+// What this run measured about the pool (issue #754), written to stderr when it ends, for a CI run or when
+// SMITH_SLOTS_LOG is set: how long the base token took, how often and for how long a worker found no token, and how
+// many workers the run had over its life.
+typedef struct {
+    bool on;
+    int pool;
+    int running; // workers now (the base worker counts from the start)
+    int peak;
+    long start_ms;      // when the run began to count workers
+    long last_ms;       // when `running` last changed
+    long worker_ms;     // the integral of `running` over time
+    long base_wait_ms;  // from the first ask for the base token until it was held
+    long denied;        // attempts that found no token for another worker
+    long want_ms;       // the time workers wanted a token and found none
+    long want_since_ms; // -1 when no worker waits
+} SmithSlotsStats;
+
+static SmithSlotsStats smith_slots_stats = {.want_since_ms = -1};
+
+static long smith_slots_now_ms(void) {
+    struct timespec now = {};
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (long)now.tv_sec * 1000L + now.tv_nsec / 1'000'000L;
+}
+
+static bool smith_slots_is_ci(void) {
+    const char *priority = getenv("SMITH_PRIORITY");
+    return priority != nullptr && strcmp(priority, "ci") == 0;
+}
+
+static void smith_slots_report(void) {
+    SmithSlotsStats *stats = &smith_slots_stats;
+    long now = smith_slots_now_ms();
+    stats->worker_ms += (long)stats->running * (now - stats->last_ms);
+    if (stats->want_since_ms >= 0) stats->want_ms += now - stats->want_since_ms;
+    long span = now - stats->start_ms > 0 ? now - stats->start_ms : 1;
+    long tenths = stats->worker_ms * 10 / span;
+    fprintf(stderr,
+            "smith: pool: waited %ld ms for the base core; %ld.%ld workers on average, %d at most, of %d cores; "
+            "%ld attempts for another worker found none, %ld ms wanting a core in all\n",
+            stats->base_wait_ms, tenths / 10, tenths % 10, stats->peak, stats->pool, stats->denied, stats->want_ms);
+}
+
+// Starts counting when the run's first worker begins (it rides on the base token, or on its parent's). Only a CI run or
+// SMITH_SLOTS_LOG says anything at its end.
+static void smith_slots_stats_begin(int pool) {
+    SmithSlotsStats *stats = &smith_slots_stats;
+    if (stats->on) return;
+    const char *log = getenv("SMITH_SLOTS_LOG");
+    if (!smith_slots_is_ci() && (log == nullptr || log[0] == '\0')) return;
+    stats->on = true;
+    stats->pool = pool;
+    stats->running = 1;
+    stats->peak = 1;
+    stats->start_ms = smith_slots_now_ms();
+    stats->last_ms = stats->start_ms;
+    atexit(smith_slots_report);
+}
+
+// A worker started (delta 1) or ended (-1).
+static void smith_slots_stats_workers(int delta) {
+    SmithSlotsStats *stats = &smith_slots_stats;
+    if (!stats->on) return;
+    long now = smith_slots_now_ms();
+    stats->worker_ms += (long)stats->running * (now - stats->last_ms);
+    stats->last_ms = now;
+    stats->running += delta;
+    if (stats->running > stats->peak) stats->peak = stats->running;
+}
+
 // The cores of the host: SMITH_CORES (also the size of the pool, and what a test sets as a fake host), else the
 // machine's. At least 1.
 static int smith_slots_cores(void) {
@@ -244,7 +314,10 @@ static void smith_slots_take(const char *verb) {
     const char *priority = getenv("SMITH_PRIORITY");
     bool ci = priority != nullptr && strcmp(priority, "ci") == 0;
     smith_slots_ci = ci;
+    long asked = smith_slots_now_ms();
     int fd = smith_slots_wait(folder, count, label, ci);
+    smith_slots_stats.base_wait_ms = smith_slots_now_ms() - asked;
+    smith_slots_stats_begin(count);
     if (fd < 0) {
         fprintf(stderr, "smith: no core after %ld hours; running without one\n", smith_slots_wait_max_ms / 3'600'000);
         return;
@@ -265,13 +338,7 @@ static void smith_slots_take(const char *verb) {
 // worker ends, smith_slots_denied when none is free (try again later), smith_slots_unlimited when there is no pool.
 // A waiting CI job is served first (a local run takes none meanwhile), and while a CI job holds a token a local run
 // takes one only if a quarter of the pool (at least one) stays free for CI.
-static int smith_slots_extra(void) {
-    int count = smith_slots_count();
-    if (count == 0 || (smith_slots_fd < 0 && !smith_slots_inherited())) return smith_slots_unlimited;
-    char folder[PATH_MAX];
-    smith_slots_folder(folder, sizeof folder);
-    const char *priority = getenv("SMITH_PRIORITY");
-    bool ci = priority != nullptr && strcmp(priority, "ci") == 0;
+static int smith_slots_extra_try(const char *folder, int count, bool ci) {
     if (!ci && smith_slots_ci_waiting(folder)) return smith_slots_denied;
     char label[256];
     smith_slots_label(label, sizeof label, "worker");
@@ -284,9 +351,35 @@ static int smith_slots_extra(void) {
     return smith_slots_denied;
 }
 
+static int smith_slots_extra(void) {
+    int count = smith_slots_count();
+    if (count == 0 || (smith_slots_fd < 0 && !smith_slots_inherited())) return smith_slots_unlimited;
+    char folder[PATH_MAX];
+    smith_slots_folder(folder, sizeof folder);
+    bool ci = smith_slots_is_ci();
+    smith_slots_stats_begin(count);
+    int fd = smith_slots_extra_try(folder, count, ci);
+    SmithSlotsStats *stats = &smith_slots_stats;
+    if (fd >= 0) {
+        if (stats->on && stats->want_since_ms >= 0) { // the wait of the workers ends with this one
+            stats->want_ms += smith_slots_now_ms() - stats->want_since_ms;
+            stats->want_since_ms = -1;
+        }
+        smith_slots_stats_workers(1);
+        return fd;
+    }
+    if (stats->on) {
+        stats->denied += 1;
+        if (stats->want_since_ms < 0) stats->want_since_ms = smith_slots_now_ms();
+    }
+    return smith_slots_denied;
+}
+
 // Gives a token back (a descriptor smith_slots_extra returned).
 static void smith_slots_give(int token) {
-    if (token >= 0) close(token);
+    if (token < 0) return;
+    close(token);
+    smith_slots_stats_workers(-1);
 }
 
 // The verbs that do heavy work arm the pool instead of taking a token: the executor takes it when it starts its first

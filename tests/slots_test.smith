@@ -180,3 +180,19 @@ export void test_preflight_takes_its_token_at_once_and_holds_it_for_the_whole_ru
     scratch::expect_text("the second waits, the first's inner build rides on its token", "done\n0\ninner-built\n",
                          run.out);
 }
+
+// A CI run, or any run with SMITH_SLOTS_LOG set, ends with one stderr line on what the pool gave it (issue #754): the
+// wait for its base token, the workers it had and the attempts that found no token. A run with neither says nothing.
+export void test_a_ci_run_reports_what_the_pool_gave_it(io::Io *io) {
+    const char *out =
+        slots_case(io, format::push(&io->arena, "export SMITH_CORES=4; ", three_steps,
+                                    "touch go; smith --smith-exec m.ninja >/dev/null 2>quiet.err; rm o1 o2 o3; "
+                                    "SMITH_PRIORITY=ci smith --smith-exec m.ninja >/dev/null 2>ci.err; "
+                                    "rm o1 o2 o3; "
+                                    "SMITH_SLOTS_LOG=1 smith --smith-exec m.ninja >/dev/null 2>log.err; "
+                                    "grep -c 'smith: pool:' quiet.err; "
+                                    "grep -c 'smith: pool: waited [0-9]* ms for the base core; .* of 4 "
+                                    "cores' ci.err log.err")
+                           .data);
+    scratch::expect_text("only a CI or logged run reports", "0\nci.err:1\nlog.err:1\n", out);
+}

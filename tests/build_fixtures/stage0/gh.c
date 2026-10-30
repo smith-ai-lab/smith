@@ -1,5 +1,7 @@
-// A stand-in for `gh release download <tag> --pattern P ... --dir D --clobber`: the "releases" are folders under
+// A stand-in for `gh release download <tag> --pattern P ... --dir D --clobber` and for `gh release view <tag> --json
+// assets --jq .assets[].name` (the file names of the release, one per line): the "releases" are folders under
 // $GH_DIR/<tag>, every call is appended to $GH_LOG, and a tag with no folder fails as gh does.
+#include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,6 +27,17 @@ int main(int argc, char **argv) {
         for (int i = 1; i < argc; i++) fprintf(log, " %s", argv[i]);
         fputc('\n', log);
         fclose(log);
+    }
+    if (argc >= 4 && strcmp(argv[1], "release") == 0 && strcmp(argv[2], "view") == 0) {
+        char folder[4096];
+        snprintf(folder, sizeof folder, "%s/%s", getenv("GH_DIR"), argv[3]);
+        DIR *assets = opendir(folder);
+        if (assets == nullptr) return 1;
+        for (struct dirent *entry = readdir(assets); entry != nullptr; entry = readdir(assets)) {
+            if (entry->d_name[0] != '.') puts(entry->d_name);
+        }
+        closedir(assets);
+        return 0;
     }
     if (argc < 4 || strcmp(argv[1], "release") != 0 || strcmp(argv[2], "download") != 0) return 0;
     const char *dir = ".";
