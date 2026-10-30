@@ -8,6 +8,7 @@
 #include <cerrno>
 #include <csignal>
 #include <cstddef>
+#include <cstdio>
 #include <cstring>
 #include <spawn.h>
 #include <sys/wait.h>
@@ -90,4 +91,28 @@ inline int smith_platform_spawn_suspended(pid_t *pid, const char *path, char *co
     if (waitpid(child, &status, WUNTRACED) != child || !WIFSTOPPED(status)) return ECHILD;
     *pid = child;
     return 0;
+}
+
+// The resident memory of a running process in bytes (the second field of /proc/<pid>/statm, in pages), false when it
+// cannot be read (`smith prove` stops a proof that grows past its limit, shim/prove.cpp).
+inline bool smith_platform_process_footprint(pid_t pid, double *bytes) {
+    char file[64];
+    std::snprintf(file, sizeof file, "/proc/%d/statm", static_cast<int>(pid));
+    std::FILE *statm = std::fopen(file, "r");
+    if (statm == nullptr) return false;
+    unsigned long long size = 0, resident = 0;
+    int read = std::fscanf(statm, "%llu %llu", &size, &resident);
+    std::fclose(statm);
+    if (read != 2) return false;
+    *bytes = static_cast<double>(resident) * static_cast<double>(sysconf(_SC_PAGESIZE));
+    return true;
+}
+
+// What `--load-pass-plugin=` names to load smith's own Enzyme entry (shim/lld.cpp): the empty name, which dlopen
+// answers with the handle of the running program. The executable's path would be refused: glibc does not load a
+// position-independent executable as a library.
+inline bool smith_platform_plugin_path(char *out, size_t size) {
+    if (size == 0) return false;
+    out[0] = '\0';
+    return true;
 }

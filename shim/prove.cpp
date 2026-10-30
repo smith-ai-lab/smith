@@ -25,7 +25,6 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
-#include <libproc.h>
 #include <string>
 #include <sys/resource.h>
 #include <sys/stat.h>
@@ -743,10 +742,9 @@ int prove_in_child(prove::Program &loaded, const std::string &name, const std::s
     for (;;) {
         pid_t done = wait4(child, &status, WNOHANG, &used);
         if (done == child) break;
-        rusage_info_v4 usage{};
-        if (polls++ % 5 == 0 &&
-            proc_pid_rusage(child, RUSAGE_INFO_V4, reinterpret_cast<rusage_info_t *>(&usage)) == 0 &&
-            static_cast<double>(usage.ri_phys_footprint) > options.memory_bytes) {
+        double footprint = 0;
+        if (polls++ % 5 == 0 && smith_platform_process_footprint(child, &footprint) &&
+            footprint > options.memory_bytes) {
             kill(child, SIGKILL);
             wait4(child, &status, 0, &used);
             std::printf(
@@ -754,8 +752,8 @@ int prove_in_child(prove::Program &loaded, const std::string &name, const std::s
                 "of CPU and was stopped; prove it in smaller pieces (a contract on the function that does most of "
                 "the work lets callers use that instead of its body, and a bound on a loop's count unrolls fewer "
                 "passes); --memory=GB changes the limit\n",
-                label.c_str(), options.memory_bytes / (1024.0 * 1024 * 1024),
-                static_cast<double>(usage.ri_phys_footprint) / (1024.0 * 1024 * 1024), cpu_of(used));
+                label.c_str(), options.memory_bytes / (1024.0 * 1024 * 1024), footprint / (1024.0 * 1024 * 1024),
+                cpu_of(used));
             return 1;
         }
         if (std::chrono::duration<double>(Clock::now() - begin).count() > allowed) {

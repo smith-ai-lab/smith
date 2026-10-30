@@ -39,6 +39,8 @@ includes:
 | `smith_platform_linker_version`: what the driver is told of its ld (`shim/clang.cpp`) | `-mlinker-version=1115.7.3` | nothing (the flag is Darwin's) |
 | `smith_platform_spawn_chdir` (`shim/lsp.cpp`) | `posix_spawn_file_actions_addchdir` (macOS 26, smith's floor: [deployment-target](deployment-target.md)) | `posix_spawn_file_actions_addchdir_np` |
 | `smith_platform_spawn_suspended`: a program a debugger attaches to (`shim/lldb_explain.cpp`) | `POSIX_SPAWN_START_SUSPENDED` | a child that stops itself with SIGSTOP before it runs the program |
+| `smith_platform_process_footprint`: the memory a proof's process holds (`shim/prove.cpp`) | `proc_pid_rusage`, the physical footprint | the resident pages of `/proc/<pid>/statm` |
+| `smith_platform_plugin_path`: what `--load-pass-plugin=` names to load Enzyme's entry from smith itself (`shim/lld.cpp`, [autodiff](autodiff.md)) | smith's own path, which `dlopen` answers with its handle | the empty name, which glibc's `dlopen` answers with the main program's handle (a PIE is refused by path) |
 
 On Linux `smith.c` also defines `_GNU_SOURCE` before its first include, because glibc hides `nftw`'s `FTW_PHYS` and
 `wait4` from plain C23 and macOS does not.
@@ -46,4 +48,4 @@ On Linux `smith.c` also defines `_GNU_SOURCE` before its first include, because 
 lldb's debug server differs too: macOS's lldb runs the system's debugserver, which Apple signs; on Linux smith is
 lldb-server itself, a clone in the programs folder ([debugger](debugger.md)). The LLVM build's post-install steps are
 `scripts/llvm_linux.c` and smith's own link is `build.c`'s `BuildPlatform` table. What still has no Linux side is
-listed in issue #305: the prover's process accounting and `smith::io`.
+listed in issue #305.

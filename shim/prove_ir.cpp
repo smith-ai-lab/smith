@@ -18,6 +18,7 @@
 
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 
 #include "llvm/ADT/DenseMap.h"
@@ -1012,6 +1013,165 @@ void hide_loop_tests(Function &function); // below, with the loops' own code
 void check_restrict_calls(Module &module);
 } // namespace
 
+namespace {
+
+// A slice (`T xs[:]`, the struct { T *data; usize count; }) is one argument of the type [2 x i64] on arm64 and two
+// arguments, (ptr data, i64 count), on x86_64 (the SysV classification splits a struct of two eightbytes), and the rest
+// of the prover reads the arm64 form: the source's parameter `i` is the argument `i`, and the unit builds its own slice
+// from the pair. A function of a program built for x86_64 is given that form here, once, after the files are linked:
+// each such pair of parameters becomes one [2 x i64] that the body takes apart (`inttoptr(extractvalue 0)`,
+// `extractvalue 1`) as the arm64 body does, and each call builds the pair with `ptrtoint` and `insertvalue`. The pairs
+// are found by the names clang gives the pieces of one parameter (`xs.coerce0`, `xs.coerce1`) and checked against the
+// source's types; a function whose parameters cannot be told apart this way, or whose address is taken, is left as it
+// is.
+void normalize_slice_arguments(Module &module) {
+    LLVMContext &context = module.getContext();
+    Type *i64 = Type::getInt64Ty(context);
+    Type *pair = ArrayType::get(i64, 2);
+    std::vector<Function *> functions;
+    for (Function &function : module) {
+        if (!function.isDeclaration() && function.getSubprogram() != nullptr) functions.push_back(&function);
+    }
+    for (Function *function : functions) {
+        DISubprogram *subprogram = function->getSubprogram();
+        if (subprogram->getType() == nullptr || function->isVarArg()) continue;
+        auto types = subprogram->getType()->getTypeArray();
+        // the IR arguments, grouped by the source parameter they come from
+        struct Group {
+            unsigned first, count;
+            bool merged;
+        };
+        std::vector<Group> groups;
+        unsigned hidden = function->arg_size() > 0 && function->getArg(0)->hasStructRetAttr() ? 1 : 0;
+        for (unsigned i = hidden; i < function->arg_size();) {
+            StringRef name = function->getArg(i)->getName();
+            size_t at = name.rfind(".coerce");
+            unsigned count = 1;
+            if (at != StringRef::npos) {
+                while (i + count < function->arg_size()) {
+                    StringRef next = function->getArg(i + count)->getName();
+                    size_t next_at = next.rfind(".coerce");
+                    if (next_at == StringRef::npos || next.take_front(next_at) != name.take_front(at)) break;
+                    count++;
+                }
+            }
+            groups.push_back({i, count, false});
+            i += count;
+        }
+        if (groups.size() + 1 != types.size()) continue;
+        bool any = false, usable = true;
+        for (size_t g = 0; g < groups.size(); g++) {
+            Group &group = groups[g];
+            uint64_t align = 1;
+            if (group.count == 2 && function->getArg(group.first)->getType()->isPointerTy() &&
+                function->getArg(group.first + 1)->getType()->isIntegerTy(64) &&
+                slice_element_bytes(types[g + 1], align) != 0)
+                group.merged = any = true;
+        }
+        if (!any) continue;
+        for (const Use &use : function->uses()) {
+            auto *call = dyn_cast<CallInst>(use.getUser());
+            if (call == nullptr || !call->isCallee(&use)) usable = false;
+        }
+        if (!usable) continue;
+        std::vector<Type *> parameters;
+        std::vector<AttributeSet> attributes;
+        AttributeList old_attributes = function->getAttributes();
+        for (unsigned i = 0; i < hidden; i++) {
+            parameters.push_back(function->getArg(i)->getType());
+            attributes.push_back(old_attributes.getParamAttrs(i));
+        }
+        for (const Group &group : groups) {
+            if (group.merged) {
+                parameters.push_back(pair);
+                attributes.push_back(AttributeSet());
+                continue;
+            }
+            for (unsigned k = 0; k < group.count; k++) {
+                parameters.push_back(function->getArg(group.first + k)->getType());
+                attributes.push_back(old_attributes.getParamAttrs(group.first + k));
+            }
+        }
+        auto *type = FunctionType::get(function->getReturnType(), parameters, false);
+        Function *unit = Function::Create(type, function->getLinkage(), "", &module);
+        unit->copyAttributesFrom(function);
+        unit->setAttributes(
+            AttributeList::get(context, old_attributes.getFnAttrs(), old_attributes.getRetAttrs(), attributes));
+        unit->copyMetadata(function, 0);
+        unit->setSubprogram(subprogram);
+        function->setSubprogram(nullptr);
+        std::string name = function->getName().str();
+        function->setName("smith.abi." + name);
+        unit->setName(name);
+        unit->splice(unit->end(), function);
+        // the calls
+        std::vector<CallInst *> calls;
+        for (const Use &use : function->uses())
+            calls.push_back(cast<CallInst>(use.getUser()));
+        for (CallInst *call : calls) {
+            IRBuilder<> at(call);
+            std::vector<Value *> arguments;
+            SmallVector<AttributeSet, 8> call_attributes;
+            AttributeList list = call->getAttributes();
+            for (unsigned i = 0; i < hidden; i++) {
+                arguments.push_back(call->getArgOperand(i));
+                call_attributes.push_back(list.getParamAttrs(i));
+            }
+            for (const Group &group : groups) {
+                if (group.merged) {
+                    Value *value = PoisonValue::get(pair);
+                    value = at.CreateInsertValue(value, at.CreatePtrToInt(call->getArgOperand(group.first), i64), 0);
+                    value = at.CreateInsertValue(value, call->getArgOperand(group.first + 1), 1);
+                    arguments.push_back(value);
+                    call_attributes.push_back(AttributeSet());
+                    continue;
+                }
+                for (unsigned k = 0; k < group.count; k++) {
+                    arguments.push_back(call->getArgOperand(group.first + k));
+                    call_attributes.push_back(list.getParamAttrs(group.first + k));
+                }
+            }
+            SmallVector<OperandBundleDef, 2> bundles;
+            call->getOperandBundlesAsDefs(bundles);
+            CallInst *replacement = at.CreateCall(type, unit, arguments, bundles);
+            replacement->setCallingConv(call->getCallingConv());
+            replacement->setTailCallKind(call->getTailCallKind());
+            replacement->setAttributes(
+                AttributeList::get(context, list.getFnAttrs(), list.getRetAttrs(), call_attributes));
+            replacement->copyMetadata(*call);
+            replacement->setDebugLoc(call->getDebugLoc());
+            call->replaceAllUsesWith(replacement);
+            call->eraseFromParent();
+        }
+        // the body: each pair is taken apart as the arm64 body does
+        IRBuilder<> builder(&*unit->getEntryBlock().getFirstInsertionPt());
+        unsigned next = hidden;
+        for (unsigned i = 0; i < hidden; i++) {
+            function->getArg(i)->replaceAllUsesWith(unit->getArg(i));
+            unit->getArg(i)->takeName(function->getArg(i));
+        }
+        for (const Group &group : groups) {
+            if (group.merged) {
+                Argument *both = unit->getArg(next++);
+                Argument *data = function->getArg(group.first);
+                Argument *count = function->getArg(group.first + 1);
+                both->setName(data->getName().take_front(data->getName().rfind(".coerce")) + ".coerce");
+                Value *address = builder.CreateExtractValue(both, 0);
+                data->replaceAllUsesWith(builder.CreateIntToPtr(address, data->getType()));
+                count->replaceAllUsesWith(builder.CreateExtractValue(both, 1));
+                continue;
+            }
+            for (unsigned k = 0; k < group.count; k++, next++) {
+                function->getArg(group.first + k)->replaceAllUsesWith(unit->getArg(next));
+                unit->getArg(next)->takeName(function->getArg(group.first + k));
+            }
+        }
+        function->eraseFromParent();
+    }
+}
+
+} // namespace
+
 bool program_load(Program &program, const std::vector<std::string> &bitcode, std::string &error, size_t libraries) {
     Clock::time_point begin = Clock::now();
     program.context = std::make_unique<LLVMContext>();
@@ -1034,6 +1194,7 @@ bool program_load(Program &program, const std::vector<std::string> &bitcode, std
         }
     }
     Module &module = *program.module;
+    normalize_slice_arguments(module);
     double read_seconds = seconds_since(begin);
     // Flattening every function costs far more than reading the module (a program of 300k instructions grew to 100M),
     // so it is done only when some function has a contract of its own (an assert included), which is what
