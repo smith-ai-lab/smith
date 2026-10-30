@@ -75,12 +75,12 @@ export void test_lsp_effects_chain_smith(io::Io *io) {
 
 // Across files: each compile leaves a summary beside its object (`x.o.fx`), and the link of objects that have one
 // checks the calls that cross files (smith-cc runs `--smith-effects`): an unannotated function of another file is
-// inferred, a function nobody defines is `c`, in C and in modules (a build).
+// inferred, a function nobody defines is `unknown`, in C and in modules (a build).
 constexpr char cross_expected[_] =
     "a.c:3:52: error: smith-effect: `bad` is [[smith::pure]], but it has the effects console, globals: bad -> noisy "
     "(a.c:3) -> "
     "printf (b.c:4)\n"
-    "a.c:4:41: error: smith-effect: `lost` is [[smith::pure]], but it has the effects c: lost -> ghost (a.c:4)";
+    "a.c:4:41: error: smith-effect: `lost` is [[smith::pure]], but it has the effects unknown: lost -> ghost (a.c:4)";
 
 static void write_cross(const scratch::Project *p) {
     scratch::write(p, "b.h", "int plain_add(int);\nint noisy(const char *);\nint ghost(void);\n");
@@ -116,7 +116,7 @@ export void test_across_files_in_c_one_command_that_compiles_and_links_names_the
 }
 
 // A link of more objects than any fixed count the check once had (it skipped the objects past 128, so a function of the
-// last one had no source and was `c`): the object that defines `noisy` comes last, after 200 others.
+// last one had no source and was `unknown`): the object that defines `noisy` comes last, after 200 others.
 export void test_across_files_in_c_a_link_of_many_objects_reads_every_summary(io::Io *io) {
     scratch::Project p = scratch::project(io, "p", nullptr);
     write_cross(&p);
@@ -414,7 +414,7 @@ export void test_the_fix_it_of_an_effects_error_replaces_the_attribute_and_the_f
 }
 
 // Inline assembly read by the assembler (issue #396): a block with no system call is pure, a system call has its libc
-// function's effects, an unknown number and a call through a register are `c`. The file is for AArch64 (macOS and
+// function's effects, an unknown number and a call through a register are `unknown`. The file is for AArch64 (macOS and
 // Linux); on another target its text is empty.
 export void test_effects_asm_c(io::Io *io) {
     if constexpr (target::arch == target::aarch64) {

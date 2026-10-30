@@ -1110,14 +1110,14 @@ export void test_lsp_hover_has_no_fails_for_a_proved_index(io::Io *io) {
     scratch::expect_status("the project builds", 0, &built);
     scratch::sh(&p, "rm -rf .smith/effects"); // #813: the editor starts with no summary, as on a loaded runner
     const char *before = session(io, &p, "open pick.smith -- hover pick.smith 4 12");
-    if (!scratch::contains(before, "effects: fails") || scratch::contains(before, "effects: c, fails")) { // #813
+    if (!scratch::contains(before, "effects: fails") || scratch::contains(before, "effects: unknown, fails")) { // #813
         scratch::Run state = scratch::sh(&p, state_dump);
         test::note("the hover before the proof is not `effects: fails`.\nhover: %s\nstate of the project:\n%s", before,
                    state.out);
     }
     scratch::expect_contains("before the proof the hover says fails", before, "effects: fails");
-    scratch::expect_lacks("before the proof the hover does not say c (a summary not yet written)", before,
-                          "effects: c, fails");
+    scratch::expect_lacks("before the proof the hover does not say unknown (a summary not yet written)", before,
+                          "effects: unknown, fails");
     scratch::Run proved = scratch::sh(&p, "smith prove 2>&1");
     scratch::expect_status("the index is proved", 0, &proved);
     scratch::Run rebuilt = scratch::build(&p, ""); // the editor reads the summaries a build writes

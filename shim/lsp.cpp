@@ -680,7 +680,7 @@ class Editor {
         if (root.empty()) return;
         // Pending from this message on, not from when the thread gets to run: clangd parses the first document
         // as soon as it is opened, and a parse that comes before the flag is set judges a function whose summary
-        // is not written yet as having no source (`c`), which is the flake of #813 on a loaded machine.
+        // is not written yet as having no source (`unknown`), which is the flake of #813 on a loaded machine.
         smith_effects_editor_pending(1);
         std::thread([this, root] { background(root); }).detach();
     }

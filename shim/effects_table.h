@@ -1,10 +1,11 @@
 // The effects of the C library: what each function of libc and libSystem does to the world (issue #207, skill
-// smith-lang-effects). A function a program declares with no body and no attribute is `c` (every effect); a system
-// header's function is looked up here by name, and one the table does not know is `c` too.
+// smith-lang-effects). A function a program declares with no body and no attribute is `unknown` (every effect); a
+// system header's function is looked up here by name, and one the table does not know is `unknown` too.
 //
 // Effects are one bit each, one per kind of handler: alloc, files, net, console, clock, process, env, entropy,
-// globals (writing a global or a function-local static), c (unchecked C), fails (a failure point). A function in the
-// "pure" list has none. Failing is an effect, `fails` (issue #325): a call that stops the task (`abort`,
+// globals (writing a global or a function-local static), unknown (code smith cannot see into), fails (a failure point).
+// A function in the "pure" list has none. Failing is an effect, `fails` (issue #325): a call that stops the task
+// (`abort`,
 // `__builtin_trap`, smith's `smith_failure` family, so a checked index, a slice bound and a contract) is a failure
 // point, and so is every caller.
 #pragma once
@@ -28,7 +29,7 @@ enum Effect : uint32_t {
     Env = 1u << 6,
     Entropy = 1u << 7,
     Globals = 1u << 8,
-    C = 1u << 9,
+    Unknown = 1u << 9,
     Fails = 1u << 10,
     Code = 1u << 11,
     Everything = (1u << 12) - 1,
@@ -39,10 +40,9 @@ struct Name {
     uint32_t bit;
 };
 
-inline constexpr Name names[] = {
-    {"alloc", Alloc},     {"files", Files}, {"net", Net},         {"console", Console}, {"clock", Clock},
-    {"process", Process}, {"env", Env},     {"entropy", Entropy}, {"globals", Globals}, {"c", C},
-    {"fails", Fails},     {"code", Code}};
+inline constexpr Name names[] = {{"alloc", Alloc},     {"files", Files},     {"net", Net},     {"console", Console},
+                                 {"clock", Clock},     {"process", Process}, {"env", Env},     {"entropy", Entropy},
+                                 {"globals", Globals}, {"unknown", Unknown}, {"fails", Fails}, {"code", Code}};
 
 // The names of the bits of a set, in the order of `names`, joined by ", ": "alloc, files". "none" for the empty set.
 inline std::string describe(uint32_t set) {
