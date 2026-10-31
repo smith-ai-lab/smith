@@ -1069,6 +1069,9 @@ static void build_front_units(SmithBuild *b, const BuildConfig *config, const ch
     const char *quoted[256];
     size_t quoted_count = 0;
     if (getenv("SMITH_TEST_STATS") != nullptr) quoted[quoted_count++] = "'--stats'";
+    // --partial: `--test a,b` (from --changed) names tests of every runner, so a selection with none of the front
+    // runner's is nothing to run here, not an error; a name no runner knows still fails in the units runner.
+    quoted[quoted_count++] = "'--partial'";
     for (size_t i = 0; given[i] != nullptr && quoted_count < 255; i++)
         quoted[quoted_count++] = smith_fmt(b, "'%s'", given[i]);
     quoted[quoted_count] = nullptr;
