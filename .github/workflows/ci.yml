@@ -54,7 +54,9 @@ jobs:
           # the owner's Mac if at least one runner labelled self-hosted, macOS and ARM64 is online right now, else a
           # hosted macos-26: a Mac that is off never stalls the run. No token, a fork, or a failed call: hosted.
           mac='"macos-26"'; cores=3; why="no secret"
+          TEMP_FORCE_OFFLINE=1
           if [ "$FORK" = true ]; then why="fork pull request"
+          elif [ "${TEMP_FORCE_OFFLINE:-}" = 1 ]; then why="forced offline (temporary test)"
           elif [ -n "$RUNNER_STATUS_TOKEN" ]; then
             if online=$(GH_TOKEN=$RUNNER_STATUS_TOKEN gh api "repos/$GITHUB_REPOSITORY/actions/runners" --paginate --jq \
               '.runners[] | select(.status == "online") | select([.labels[].name] | contains(["self-hosted", "macOS", "ARM64"])) | .name' 2>/dev/null); then
