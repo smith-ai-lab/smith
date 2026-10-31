@@ -1265,14 +1265,13 @@ typedef struct {
     size_t close;
     char slice_tag[smith_lang_eshape_params_max][smith_lang_tuple_name_max]; // an argument written `T[:]`: its struct
     SmithToken slice_elem[smith_lang_eshape_params_max][smith_lang_eshape_elem_max]; // and its element's tokens
-    size_t slice_elems[smith_lang_eshape_params_max];                               // (0: the argument is no slice)
+    size_t slice_elems[smith_lang_eshape_params_max];                                // (0: the argument is no slice)
 } SmithLangEnumCall;
 
 // An argument written as a slice, `option(f32[:])`, is the slice's struct, as `option(typeof(f32[:]))` would write it:
 // the argument becomes `struct smith_array_f32_n` and `smith_lang_eshape_define` defines that struct in front of the
 // option's when no earlier declaration did.
-static void smith_lang_eshape_slice_args(SmithLang *lang, const SmithHost *host, const SmithLangEnumShape *shape,
-                                         SmithLangEnumCall *call) {
+static void smith_lang_eshape_slice_args(SmithLang *lang, const SmithLangEnumShape *shape, SmithLangEnumCall *call) {
     for (size_t p = shape->param_count; p > 0; p--) { // the last first: a shorter argument shifts the ones after it
         size_t begin = call->begin[p - 1];
         size_t end = call->end[p - 1];
@@ -1384,7 +1383,7 @@ static bool smith_lang_eshape_call(SmithLang *lang, const SmithHost *host, const
     }
     if (argument < shape->param_count) call->end[argument] = call->count;
     if (argument + 1 == shape->param_count) {
-        smith_lang_eshape_slice_args(lang, host, shape, call);
+        smith_lang_eshape_slice_args(lang, shape, call);
         smith_lang_eshape_slice_names(lang, host, shape, call);
     }
     if (argument + 1 != shape->param_count) {
