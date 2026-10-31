@@ -1,0 +1,12 @@
+module repro;
+
+// `p[a:b]` on a pointer is a slice of `b - a` elements, in a plain function and in a generic body; `T[:]` is a valid
+// result type of a generic (an instance per `T`).
+
+export i32[:] plain(i32 *p, usize a, usize b) {
+    return p[a:b];
+}
+
+export T[:] window(constexpr type T, T *p, usize a, usize b) {
+    return p[a:b];
+}
