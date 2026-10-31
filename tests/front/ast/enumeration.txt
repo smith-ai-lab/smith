@@ -1,0 +1,9 @@
+(module shapes
+  (enum Shape exported
+    (enumerator circle (named Circle))
+    (enumerator rect (named Rect))
+    (enumerator empty))
+  (enum Color
+    (named U8)
+    (enumerator red (integer 1))
+    (enumerator green)))
