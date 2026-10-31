@@ -10,13 +10,15 @@
  LANGOPT(MicrosoftExt      , 1, 0, NotCompatible, "Microsoft C++ extensions")
 --- a/clang/lib/AST/ExprConstant.cpp
 +++ b/clang/lib/AST/ExprConstant.cpp
-@@ -1908,8 +1908,99 @@
-     else
-       Out << "<...>";
-   }
-+
-+  Out << ')';
-+}
+@@ -1912,11 +1912,114 @@ void CallStackFrame::describe(raw_ostream &Out) const {
+   Out << ')';
+ }
+ 
++/// Expr::isEvaluatable is a query ("can this be folded?"), not a context where C
++/// requires a constant: code generation asks it whether the arms of a `?:` are
++/// cheap enough to evaluate unconditionally, and running a C function there
++/// would run the call when C says it does not run. It sets this for its duration.
++static thread_local bool SmithEvaluatableQuery = false;
 +
 +/// smith: a C function body runs in the constant evaluator, as C++14 constexpr
 +/// functions do, when the front end is lowering a `.smith` file
@@ -31,9 +33,10 @@
 +static bool SmithCEval(const EvalInfo &Info) {
 +  const LangOptions &LO = Info.getLangOpts();
 +  return LO.SmithConstexprC && !LO.CPlusPlus && Info.InConstantContext &&
++         !SmithEvaluatableQuery &&
 +         Info.EvalMode != EvaluationMode::ConstantFold;
 +}
- 
++
 +static bool SmithEvalCAssign(const Expr *E, LValue &Result, EvalInfo &Info);
 +static bool SmithIsCAssign(EvalInfo &Info, const Expr *E) {
 +  E = E->IgnoreParens();
@@ -104,13 +107,13 @@
 +    else
 +      Out << "<...>";
 +  }
-   Out << ')';
++  Out << ')';
 +  Info.FFDiag(E->getExprLoc(), diag::note_constexpr_call_here) << Text;
 +  return false;
- }
- 
++}
++
  /// Evaluate an expression to see if it had side-effects, and discard its
-@@ -1917,6 +2008,11 @@
+ /// result.
  /// \return \c true if the caller should keep evaluating.
  static bool EvaluateIgnoredValue(EvalInfo &Info, const Expr *E) {
    assert(!E->isValueDependent());
@@ -122,7 +125,7 @@
    APValue Scratch;
    if (!Evaluate(Scratch, Info, E))
      // We don't need the value, but we might have skipped a side effect here.
-@@ -4127,7 +4223,7 @@
+@@ -4127,7 +4230,7 @@ struct CompleteObject {
      // In C++14 onwards, it is permitted to read a mutable member whose
      // lifetime began within the evaluation.
      // FIXME: Should we also allow this in C++11?
@@ -131,7 +134,7 @@
          AK != AccessKinds::AK_IsWithinLifetime)
        return false;
      return lifetimeStartedInEvaluation(Info, Base, /*MutableSubobject*/true);
-@@ -4605,7 +4701,7 @@
+@@ -4605,7 +4708,7 @@ static CompleteObject findCompleteObject(EvalInfo &Info, const Expr *E,
    APValue *BaseVal = nullptr;
    QualType BaseType = getType(LVal.Base);
  
@@ -140,7 +143,7 @@
        lifetimeStartedInEvaluation(Info, LVal.Base)) {
      // This is the object whose initializer we're evaluating, so its lifetime
      // started in the current evaluation.
-@@ -4678,7 +4774,7 @@
+@@ -4678,7 +4781,7 @@ static CompleteObject findCompleteObject(EvalInfo &Info, const Expr *E,
          // Access of a parameter that's not associated with a frame isn't going
          // to work out, but we can leave it to evaluateVarDeclInit to provide a
          // suitable diagnostic.
@@ -149,7 +152,7 @@
                   lifetimeStartedInEvaluation(Info, LVal.Base)) {
          // OK, we can read and modify an object if we're in the process of
          // evaluating its initializer, because its lifetime began in this
-@@ -4864,7 +4960,7 @@
+@@ -4864,7 +4967,7 @@ static CompleteObject findCompleteObject(EvalInfo &Info, const Expr *E,
    if (llvm::isa_and_nonnull<ParmVarDecl>(
            LVal.Base.dyn_cast<const ValueDecl *>()))
      ++VisibleDepth;
@@ -158,7 +161,7 @@
         Info.EvalStatus.HasSideEffects) ||
        (isModification(AK) && VisibleDepth < Info.SpeculativeEvaluationDepth))
      return CompleteObject();
-@@ -4959,7 +5055,7 @@
+@@ -4959,7 +5062,7 @@ static bool handleAssignment(EvalInfo &Info, const Expr *E, const LValue &LVal,
    if (LVal.Designator.Invalid)
      return false;
  
@@ -167,7 +170,7 @@
      Info.FFDiag(E);
      return false;
    }
-@@ -5108,7 +5204,7 @@
+@@ -5108,7 +5211,7 @@ static bool handleCompoundAssignment(EvalInfo &Info,
    if (LVal.Designator.Invalid)
      return false;
  
@@ -176,7 +179,7 @@
      Info.FFDiag(E);
      return false;
    }
-@@ -5256,7 +5352,7 @@
+@@ -5256,7 +5359,7 @@ static bool handleIncDec(EvalInfo &Info, const Expr *E, const LValue &LVal,
    if (LVal.Designator.Invalid)
      return false;
  
@@ -185,7 +188,7 @@
      Info.FFDiag(E);
      return false;
    }
-@@ -6415,7 +6511,8 @@
+@@ -6415,7 +6518,8 @@ static bool CheckConstexprFunction(EvalInfo &Info, SourceLocation CallLoc,
  
    // Can we evaluate this function call?
    if (Definition && Body &&
@@ -195,11 +198,10 @@
                                          Definition->hasAttr<MSConstexprAttr>())))
      return true;
  
-@@ -8919,6 +9016,17 @@
-                                Info.Ctx.getCanonicalTagType(DD->getParent())) &&
+@@ -8920,6 +9024,17 @@ public:
               CallScope.destroy();
      }
-+
+ 
 +    if (SmithCEval(Info))
 +      if (unsigned Kind = SmithCompileKind(FD)) {
 +        const APValue *Condition =
@@ -210,10 +212,11 @@
 +          return CallScope.destroy();
 +        return SmithCompileFailure(Info, E, FD, Call);
 +      }
- 
++
      const FunctionDecl *Definition = nullptr;
      Stmt *Body = FD->getBody(Definition);
-@@ -9094,7 +9202,7 @@
+     SourceLocation Loc = E->getExprLoc();
+@@ -9094,7 +9209,7 @@ public:
      return VisitUnaryPostIncDec(UO);
    }
    bool VisitUnaryPostIncDec(const UnaryOperator *UO) {
@@ -222,7 +225,7 @@
        return Error(UO);
  
      LValue LVal;
-@@ -9804,7 +9912,7 @@
+@@ -9804,7 +9919,7 @@ bool LValueExprEvaluator::VisitUnaryImag(const UnaryOperator *E) {
  }
  
  bool LValueExprEvaluator::VisitUnaryPreIncDec(const UnaryOperator *UO) {
@@ -231,7 +234,7 @@
      return Error(UO);
  
    if (!this->Visit(UO->getSubExpr()))
-@@ -9817,7 +9925,7 @@
+@@ -9817,7 +9932,7 @@ bool LValueExprEvaluator::VisitUnaryPreIncDec(const UnaryOperator *UO) {
  
  bool LValueExprEvaluator::VisitCompoundAssignOperator(
      const CompoundAssignOperator *CAO) {
@@ -240,7 +243,7 @@
      return Error(CAO);
  
    bool Success = true;
-@@ -9840,8 +9948,12 @@
+@@ -9840,8 +9955,12 @@ bool LValueExprEvaluator::VisitCompoundAssignOperator(
        CAO->getOpForCompoundAssignment(CAO->getOpcode()), RHS);
  }
  
@@ -254,7 +257,7 @@
      return Error(E);
  
    bool Success = true;
-@@ -19316,6 +19428,14 @@
+@@ -19316,6 +19435,14 @@ bool RecordExprEvaluator::VisitCXXParenListInitExpr(
  bool IntExprEvaluator::VisitBinaryOperator(const BinaryOperator *E) {
    // We don't support assignment in C. C++ assignments don't get here because
    // assignment is an lvalue in C++.
@@ -269,7 +272,7 @@
    if (E->isAssignmentOp()) {
      Error(E);
      if (!Info.noteFailure())
-@@ -21479,7 +21599,7 @@
+@@ -21479,7 +21606,7 @@ static bool Evaluate(APValue &Result, EvalInfo &Info, const Expr *E) {
        return false;
      Result = Value;
    } else if (T->isVoidType()) {
@@ -278,6 +281,21 @@
        Info.CCEDiag(E, diag::note_constexpr_nonliteral)
          << E->getType();
      if (!EvaluateVoid(E, Info))
+@@ -21998,8 +22125,12 @@ bool Expr::isEvaluatable(const ASTContext &Ctx, SideEffectsKind SEK) const {
+          "Expression evaluator can't be called on a dependent expression.");
+ 
+   EvalResult Result;
+-  return EvaluateAsRValue(Result, Ctx, /* in constant context */ true) &&
+-         !hasUnacceptableSideEffect(Result, SEK);
++  bool Saved = SmithEvaluatableQuery;
++  SmithEvaluatableQuery = true;
++  bool Evaluated =
++      EvaluateAsRValue(Result, Ctx, /* in constant context */ true);
++  SmithEvaluatableQuery = Saved;
++  return Evaluated && !hasUnacceptableSideEffect(Result, SEK);
+ }
+ 
+ APSInt Expr::EvaluateKnownConstInt(const ASTContext &Ctx) const {
 --- a/clang/lib/Sema/SemaInit.cpp
 +++ b/clang/lib/Sema/SemaInit.cpp
 @@ -8589,7 +8589,10 @@

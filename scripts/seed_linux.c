@@ -9,7 +9,7 @@
 // LLVM pack that is minutes. With no pack it also needs cmake, ninja, python3, curl, patch and git, and about 2 hours
 // and 15 GB the first time (LLVM). The stages, each in .smith/seed/:
 //   1. LLVM 23.1.3 in the package cache (as `smith build llvm` has it): the published pack of this configuration
-//      (`llvm-23.1.3-r12-linux-x86_64`, fetched and checked by scripts/llvm_pack.c, which needs `gh`) unless that
+//      (`llvm-23.1.3-r13-linux-x86_64`, fetched and checked by scripts/llvm_pack.c, which needs `gh`) unless that
 //      install is there already; only when no pack exists, built from the source pinned by SHA-256 by
 //      scripts/llvm_linux.c;
 //   2. the libraries' headers, which are build outputs and not in git: scripts/header_tool.c, the writer of
@@ -194,7 +194,7 @@ static void build_llvm(const char *cc) {
     const char *home = getenv("HOME");
     const char *name = getenv("SMITH_LLVM_NAME");
     char smith_cache[path_max]; // the package cache's smith folder
-    if (name == nullptr || *name == '\0') name = "23.1.3-r12";
+    if (name == nullptr || *name == '\0') name = "23.1.3-r13";
     if (cache != nullptr && *cache == '/') {
         join(smith_cache, "%s/smith", cache, "");
     } else if (home != nullptr && *home == '/') {

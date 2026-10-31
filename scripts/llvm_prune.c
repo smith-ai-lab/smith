@@ -5,8 +5,8 @@
 // allocation.
 //
 // Usage: llvm_prune LLVM_FOLDER KEEP_NAME KEEP_IDENTITY
-//   LLVM_FOLDER     <cache>/smith/llvm, with one folder per build (23.1.3-r12) holding install/lib/smith-clang.id
-//   KEEP_NAME       the folder just built (23.1.3-r12)
+//   LLVM_FOLDER     <cache>/smith/llvm, with one folder per build (23.1.3-r13) holding install/lib/smith-clang.id
+//   KEEP_NAME       the folder just built (23.1.3-r13)
 //   KEEP_IDENTITY   the contents of the smith-clang.id of the previous release's LLVM ("llvm-23.1.3 <hash>")
 // A folder with no id file (a build in progress, or not an LLVM at all) is never touched. Enzyme's folders are the
 // siblings <cache>/smith/enzyme/<version>-<name>. Prints each folder it removes.
