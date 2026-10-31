@@ -260,5 +260,3 @@ export void test_enum_read_unchecked_smith() {
 export void test_enum_tagged_c() {
     affine_case("enum_tagged.c");
 }
-
-int broken_xyz = undefined_name_q;
