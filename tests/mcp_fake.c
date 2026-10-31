@@ -11,7 +11,7 @@
 // apostrophe stands for a double quote.
 #include <smith/arena.h>
 #include <smith/contract.h>
-#include <smith/io.h>
+#include <runtime/io.h>
 #include <smith/random.h>
 #include "../lib/json.c"
 #include "../lib/trace.c"

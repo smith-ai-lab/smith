@@ -1235,7 +1235,7 @@ static const SmithLibrary smith_libraries[] = {
 // `smith --smith-explain`: the values of a failed check, read from the stopped test with lldb.
 #include "runtime/explain.c"
 // Packages, shared with the build runtime: the cache, the download and SHA-256.
-#include <smith/io.h>
+#include <runtime/io.h>
 
 #include "runtime/package.c"
 // `smith cache`, and the lock a build holds on the caches.

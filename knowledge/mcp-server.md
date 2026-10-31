@@ -7,7 +7,7 @@ tags: [mcp, debugger]
 # smith mcp
 
 **`smith mcp` is the debugger as an MCP server over stdio** (issue #22; `runtime/mcp*.c`, [smith mcp](mcp-server.md), skill smith-debug): eleven tools
-(`launch`, `breakpoint`, `continue`, the steps, `pause`, `stack`, `variables`, `evaluate`, `stop`) over `smith dap` children, on `<smith/io.h>` and the
+(`launch`, `breakpoint`, `continue`, the steps, `pause`, `stack`, `variables`, `evaluate`, `stop`) over `smith dap` children, on smith's private io layer (`runtime/io.smith`, `<runtime/io.h>`, until #888) and the
 generated protocol types, no malloc. Only the full smith has it (`-DSMITH_MCP`); the smith plugin declares it (`mcpServers`). `tests/mcp_test.smith` runs it on the
 fake io and end to end.
 
@@ -28,7 +28,7 @@ readers of a tool's arguments), `mcp_dap.c` (a session: the child, DAP's framing
 events), `mcp_show.c` (what a stop, a stack and variables look like), `mcp_tools.c` (the tools and their table) and
 `mcp_serve.c` (MCP: the messages, the versions, the loop). smith.c includes it after the JSON, text and protocol code.
 
-- **On `<smith/io.h>` and in one thread.** The server's stdin, every session's pipes and exit, and the clock are ops on
+- **On `<runtime/io.h>` and in one thread.** The server's stdin, every session's pipes and exit, and the clock are ops on
   one event loop. A tool call is a function that runs the loop (`smith_mcp_pump`) until what it waits for has happened or
   its time is up; input that arrives meanwhile is buffered, so a client that pipelines requests is answered in order.
   Nothing is allocated but in arenas (the io's), nothing recurses, every loop has a bound.

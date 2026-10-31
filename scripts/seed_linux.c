@@ -42,9 +42,9 @@ constexpr size_t text_max = 1 << 20;   // a header's first lines, or the identit
 static const char llvm_url[] =
     "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.3/llvm-project-23.1.3.src.tar.xz";
 static const char llvm_sha256[] = "c44186a7762ed28954be72e5ff6df9808e0779d4f1bf014ecc4e7e211d31ee34";
-static const char *const libraries[] = {"arena", "contract", "inflate", "io", "random", "text"}; // build.c's list
+static const char *const libraries[] = {"arena", "contract", "inflate", "random", "text"}; // build.c's list
 // The modules whose headers smith.c includes: the libraries it links, and smith::build's, which build_runtime.c reads.
-static const char *const header_modules[] = {"arena", "contract", "inflate", "io", "random", "text", "build"};
+static const char *const header_modules[] = {"arena", "contract", "inflate", "random", "text", "build"};
 static const char *const shims[] = {"clang",  "lld",           "format",      "tidy",     "clangd",       "symbolize",
                                     "hook",   "lsp",           "lldb",        "lldb_dap", "lldb_explain", "lldb_slices",
                                     "affine", "effects_infer", "lldb_server", "coverage"};
@@ -136,7 +136,7 @@ static bool read_text(const char *file, char *into, size_t capacity) {
 // Stage 2: the headers of the .smith modules smith.c includes, written by scripts/header_tool.c (a plain C program, no
 // smith needed) into .smith/seed/include/smith/, where stage A's compiles and stand-ins read them.
 static void write_headers(const char *cc) {
-    run((const char *[]){"mkdir", "-p", ".smith/seed/include/smith", nullptr});
+    run((const char *[]){"mkdir", "-p", ".smith/seed/include/smith", ".smith/seed/include/runtime", nullptr});
     // -lm: glibc keeps floor and the rest of <math.h> in libm, which the lowering in header_tool calls
     run((const char *[]){cc, "-std=gnu2x", "-O1", "-x", "c", "scripts/header_tool.c", "-o", ".smith/seed/header_tool",
                          "-lm", nullptr});
@@ -144,6 +144,9 @@ static void write_headers(const char *cc) {
         run((const char *[]){".smith/seed/header_tool", path("lib/smith/%s.smith", header_modules[i], ""), "-o",
                              path(".smith/seed/include/smith/%s.h", header_modules[i], ""), nullptr});
     }
+    // smith's private io layer (issue #903) is the module runtime::io, its header beside the others'
+    run((const char *[]){".smith/seed/header_tool", "runtime/io.smith", "-o", ".smith/seed/include/runtime/io.h",
+                         nullptr});
 }
 
 // Takes the LLVM pack of this configuration into the cache: true when it did, false when no pack exists (build
@@ -323,10 +326,9 @@ static void write_protocol(void) {
 
 // Stand-ins for the libraries' functions, for stage A: each name a library's header says has a body (its
 // `smith-bodies` line, by the C name its `smith-names` line gives it), a weak function that stops with a message.
-static void write_stand_ins(FILE *out, const char *library) {
+static void write_stand_ins(FILE *out, const char *header_path) {
     static char header[text_max];
-    if (!read_text(path(".smith/seed/include/smith/%s.h", library, ""), header, sizeof header))
-        die("cannot read the header of", library);
+    if (!read_text(header_path, header, sizeof header)) die("cannot read the header", header_path);
     const char *names = strstr(header, "// smith-names: ");
     const char *bodies = strstr(header, "// smith-bodies: ");
     if (names == nullptr || bodies == nullptr) return;
@@ -359,7 +361,8 @@ static const char *compile_stand_ins(void) {
           "    abort();\n}\n",
           out);
     for (size_t i = 0; i < sizeof libraries / sizeof libraries[0]; i++)
-        write_stand_ins(out, libraries[i]);
+        write_stand_ins(out, path(".smith/seed/include/smith/%s.h", libraries[i], ""));
+    write_stand_ins(out, ".smith/seed/include/runtime/io.h");
     if (fclose(out) != 0) die("cannot write", ".smith/seed/a/stand_ins.c");
     Args base = {};
     add_all(&base, cflags, sizeof cflags / sizeof cflags[0]);
@@ -436,6 +439,7 @@ int main(int argc, char **argv) {
         add(&stage_b, compile(".smith/seed/a/bin/smith-cc", path("lib/smith/%s.smith", libraries[i], ""), "b",
                               libraries[i], &flags_b));
     }
+    add(&stage_b, compile(".smith/seed/a/bin/smith-cc", "runtime/io.smith", "b", "runtime_io", &flags_b));
     link_smith(&stage_b, ".smith/seed/b/smith");
     make_bin(".smith/seed/b/bin", ".smith/seed/b/smith");
     printf("seed: stage B is .smith/seed/b/bin/smith; running its smith build\n");
