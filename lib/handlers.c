@@ -309,11 +309,15 @@ __attribute__((noinline)) static SmithScheduler *smith_handlers_scheduler_curren
     return smith_handlers_scheduler_get();
 }
 
+// The pthread mutexes the calling thread holds (issue #938), counted only while some scheduler is set.
+static thread_local int smith_handlers_locks_held;
+
 SmithScheduler *smith_handlers_set_scheduler(SmithScheduler *scheduler) {
     SmithScheduler *previous = smith_handlers_tab()->scheduler;
     smith_handlers_tab()->scheduler = scheduler;
     if (previous == nullptr && scheduler != nullptr) atomic_fetch_add(&smith_handlers_scheduler_active, 1);
     if (previous != nullptr && scheduler == nullptr) atomic_fetch_sub(&smith_handlers_scheduler_active, 1);
+    if (scheduler == nullptr) smith_handlers_locks_held = 0;
     return previous;
 }
 
@@ -321,17 +325,18 @@ SmithScheduler *smith_handlers_scheduler(void) {
     return smith_handlers_scheduler_current();
 }
 
-// The pthread mutexes the calling thread holds (issue #938), counted only while some scheduler is set. A task never
-// switches while it holds one, so per thread is per task. A routed call made above zero is the real call: parking there
-// could leave another task of the same worker blocked on that mutex for good.
-static thread_local int smith_handlers_locks_held;
-
+// A task never switches while it holds one, so per thread is per task. A routed call made above zero is the real call:
+// parking there could leave another task of the same worker blocked on that mutex for good.
 static void smith_handlers_lock_taken(void) {
     if (atomic_load_explicit(&smith_handlers_scheduler_active, memory_order_relaxed) != 0)
         smith_handlers_locks_held += 1;
 }
 
+// No thread-local is touched while no scheduler is set: libSystem's own initializer unlocks mutexes before
+// thread-locals work (macOS aborts in _tlv_bootstrap_error there). Setting a thread's scheduler to none resets its
+// count.
 static void smith_handlers_lock_given(void) {
+    if (atomic_load_explicit(&smith_handlers_scheduler_active, memory_order_relaxed) == 0) return;
     if (smith_handlers_locks_held > 0) smith_handlers_locks_held -= 1;
 }
 
