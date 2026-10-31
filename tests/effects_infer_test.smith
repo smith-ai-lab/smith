@@ -532,6 +532,12 @@ export void test_effects_code_c() {
     effects_case("effects_code.c");
 }
 
+// Starting a task is the effect `tasks` (#935): a declaration carries it, a pure caller is rejected, and a query sees
+// it.
+export void test_effects_tasks_smith() {
+    effects_case("effects_tasks.smith");
+}
+
 export void test_effects_args_c() {
     effects_case("effects_args.c");
 }
