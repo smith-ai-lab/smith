@@ -15,6 +15,7 @@ The syntax tree. Plain data: every type is exported with all its fields. `TypeEx
 - **Constructors** copy into the current allocator, so a caller that sets an arena as the allocator frees a tree at once: `new_expr`, `new_stmt`, `new_decl`, `new_type`, and short helpers (`name`, `integer`, `binary`, `call`, `named`, `block`, `function`, `variable`, `record_decl`, `enumeration`, `type_alias`, `import_module`, `import_c`, `new_module`, ...). A constructor that takes a list copies it, so a stack array can be passed.
 - **`ast::dump(module)`** is an S-expression, a node per line, two spaces a depth; a node with no statement under it and under 16 nodes is written on one line. Spans are not dumped. The layout is documented at the top of the file; the goldens in `tests/front/ast/` are what parser tickets compare against.
 - **For track C**: `Decl.from_c` (read from a C header, reached as `c::name`), `record.opaque` (an incomplete struct), and the `TypeExpr` kind `unsupported_c { spelling }`. A function pointer is `applied Fn(function {...})`; smith has no function-pointer syntax.
+- **Anonymous records**: the `TypeExpr` kind `record { fields, is_union }` is an anonymous struct or union used as a type (a payload variant `struct { I32 a; } one;`); its dump line is `(struct (field ...))` or `(union ...)`.
 - **No recursion**: a walk of the tree uses an explicit stack (a module may not recurse).
 
 **Names that differ from the ticket**, forced by today's smith (accepted on #1136):
@@ -26,6 +27,8 @@ The syntax tree. Plain data: every type is exported with all its fields. `TypeEx
 
 **Limits of today's smith found building it.** A string literal inside a nested initializer of a payload enum is not converted to `Str` across modules (pass names as arguments); a braced initializer is not accepted as an element assignment (`xs[i] = {...}`), only in a declaration, argument or return.
 
+**A limit for importers.** In a module that imports `front::ast`, a `case .name:` label on an ast payload enum makes the compiler read ast's body files ([body-files](body-files.md)), and that fails today (a private `typedef ExprRef ExprRefList[:]` loses its `;`, and a `mem` body says `smith_mem_allocator_name` is undeclared). Importers dispatch with `if (x->kind == .k)`. smith-enum narrowing is also lost once the node pointer is passed to a call, so read the payload fields into locals first.
+
 ## front::lex and front::parse (`front/lex.smith`, `front/parse.smith`, #1128)
 
 **The tokenizer** reads the text of a file and gives all its tokens at once, ending with an `end_of_file` token. A `Token` is a `kind` and a `span`; its text is `source[span.start:span.end]` (`lex::text`), never a copy. `lex::tokenize(source)` is a `Lexed` (`Result(Tokens, LexError)`), the first error stopping it; `lex::dump(tokens, source)` writes one token a line, `line:column kind text`, which the goldens in `tests/front/lex/` hold.
@@ -35,3 +38,7 @@ The syntax tree. Plain data: every type is exported with all its fields. `TypeEx
 - **Comments and white space** make no tokens; doc comments are a later ticket's question.
 
 **The parser core** is a `Parser` (the tokens, the source, a position, the errors, the hooks) and the cursor functions every parser file uses: `peek`, `peek_at`, `advance`, `at`, `accept`, `expect(p, kind, what)` (records `expected <what>, found <text>` and takes nothing), `text`, `error`, `span_from`. Expressions (A3), statements (A4) and declarations (A5) are parsed in three files that call each other only through `Parser.hooks` (`expression`, `type`, `statement`, `declaration`, function pointers) by way of `parse::expression(p)` and its three siblings, so each is tested with stubs before the others exist and A6 wires the real ones. A hook that is not set records an error and gives null. The errors are the current allocator's, as the tree is.
+
+## front::cimport (track C)
+
+Declarations read from C headers become these same nodes; its concept comes with #1117 (`c-header-import.md`), and links here once that file exists.
