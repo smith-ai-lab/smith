@@ -1,6 +1,6 @@
 // runtime::io, <runtime/io.h>: everything a program does to the world outside it, as values you hold and pass on. Its C
 // API is the generated header .smith/include/runtime/io.h (a build output, not in git). Every export has a short name
-// here and a C name (the attribute before it): `io::make` is `smith_io_make`, `io::Io` is `SmithIo`,
+// here and a C name (the attribute before it): `make` is `smith_io_make`, the value is `SmithIo`,
 // `io::console_printf` is `smith_console_printf`. The comments above an export are the header's doc comments, so they
 // name the Smith names; the first one says how a C name follows from them.
 // NOLINTBEGIN(smith-mem): lag rule: smith links io, the previous release has no smith::mem; convert to mem:: after it
@@ -44,46 +44,21 @@ if constexpr (target::os == target::macos) {
     import <sys/timerfd.h>;
 }
 
-// <smith/io.h>: everything a program does to the world outside it, as values you hold and pass on. One line in main
-// makes all of it:
+// <runtime/io.h>: smith's private layer for what the executor, `smith mcp` and the package code do to the world: the
+// console, files, processes, TLS connections, a clock and a loop that waits for them. One value holds all of it, made
+// once in the program's start (`SmithIo io = smith_io_make(argc, argv);`) and passed to the code that needs it. It is
+// not a library for programs: they call smith's direct modules (files, process, net, clock, console, env). The C names
+// are the Smith names with the prefix `smith_` or `Smith` (smith_io_make, SmithIo, smith_console_printf; a function of
+// a capability is smith_<capability>_<name>: smith_files_read). The comments below name the Smith names.
 //
-//   i32 main(i32 argc, char **argv) {
-//       io::Io io = io::make(argc, argv);
-//       ...
-//   }
-//
-// In C the same line is `SmithIo io = smith_io_make(argc, argv);`: the module's names are short (io::make, io::Io,
-// io::console_printf) and C calls them by the same words with the prefix `smith_` or `Smith` (smith_io_make, SmithIo,
-// smith_console_printf; a function of a capability is smith_<capability>_<name>: io::files_read is smith_files_read).
-// The comments below name the Smith names.
-//
-// io holds every capability the program has, as a field: io.arena (memory), io.key and io.seed (randomness), io.console
-// (stdin, stdout, stderr), io.files (the file system), io.clock (monotonic and wall time),
-// io.processes (spawn and wait), io.net (TLS connections) and io.args. Code can only do what it
-// was handed: a function that is not given a clock cannot depend on time, and one that is not given files cannot touch
-// the disk.
-//
-// A function takes the narrowest thing that covers what it uses.
-//   One or two capabilities: those alone.
-//     Mesh mesh_load(io::Files *files, arena::Arena *arena, const char *path);
-//     Mesh mesh = mesh_load(&io.files, &io.arena, "cube.obj");        // in main
-//   Most of io: the whole of it.
-//     void game_run(io::Io *io);
-//   A bundle several functions share: a struct the project defines, of the capabilities that group needs.
-//     typedef struct { io::Files *files; io::Console *console; arena::Arena *arena; } Editor;
-//     Editor editor = {&io.files, &io.console, &io.arena};
-//     editor_open(&editor, path);
-// If a signature wants four or more separate capabilities, take io::Io * or define the struct. The pointers point into
-// the io in main, so keep that one in place for as long as they are used.
-//
-// The types of the capabilities are marked [[clang::annotate("smith::capability")]], and io::make
-// [[clang::annotate("smith::main_only")]]: `smith lint` (the check smith-effects) reports a raw call such as fopen or
-// printf outside a capability's own implementation, and io::make called anywhere but main. A project marks its own
-// capability (a window, a GPU) the same way; the smith-io skill has the rules.
+// The value holds a field for each part: arena (memory), key and seed (randomness), console (stdin, stdout, stderr),
+// files (the file system), clock (monotonic and wall time), processes (spawn and wait), net (TLS connections) and args.
+// Code takes the narrowest thing that covers what it uses: one or two parts, or the whole value. The pointers point
+// into the value made at the start, so keep that one in place for as long as they are used.
 //
 // Errors are values. Every operation reports success or an io::Error with a message; nothing is printed behind your
 // back, and a function that can fail says so in its result. Only what the program cannot continue without stops it:
-// io::make failing to reserve memory, and (as in the arena) a push past the arena's capacity.
+// smith_io_make failing to reserve memory, and (as in the arena) a push past the arena's capacity.
 //
 // Blocking calls are for simple code:
 //   io::Read text = io::files_read(&io.files, &io.arena, "config.txt");
@@ -116,7 +91,7 @@ if constexpr (target::os == target::macos) {
 // call is an op submitted and run to completion on the same loop. Each platform's code is in an `if constexpr
 // (target::os == target::macos)` branch, so the other's headers are never read.
 //
-// For tests there is a fake with the same type: io::make_test. Its files are in memory, its console is scripted
+// For tests there is a fake with the same type: smith_io_make_test. Its files are in memory, its console is scripted
 // text with the output captured, its clock moves only when told to, its key is given, its servers are scripted, and its
 // memory is a buffer you provide. Code under test cannot tell it from the real one.
 //
@@ -3660,7 +3635,7 @@ args_get(const Args *args, usize i) {
 }
 
 // The value of an environment variable, or nullptr if it is not set. An empty value is "". The real io reads the
-// process's environment each time, so a setenv after io::make shows.
+// process's environment each time, so a setenv after smith_io_make shows.
 [[smith::c_name("smith_args_env")]] export [[clang::annotate("smith::edge")]] [[nodiscard]] const char *
 args_env(const Args *args, const char *name) {
     contract::trusted(); // a call into the system, the edge a proof cannot read; its callers prove what it requires

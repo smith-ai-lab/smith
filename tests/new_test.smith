@@ -415,7 +415,7 @@ export void test_new_language_c_a_c_project_is_written_and_committed() {
         expect_exists(&p, named("new --language c: writes no %s%s", absent[i], ""), path, "no");
     }
     scratch::expect_contains("new --language c: main.c names the program", scratch::read(&p, "hellc/main.c"),
-                             "smith_console_print(console, \"hello from hellc\\n\");");
+                             "hello from hellc\\n\", sum);");
     scratch::expect_contains("new --language c: the concept describes the C program",
                              scratch::read(&p, "hellc/knowledge/program.md"), "primes_sum");
     scratch::expect_text("new --language c: git tracks exactly the written files", c_files,

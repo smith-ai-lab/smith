@@ -22,6 +22,6 @@ It writes **no** `build.c` or `build.smith`, no `.clang-format` or `.clang-tidy`
 
 Then it runs a first build and commits on `main`. A folder that already has its own build file, a `main`, or another build system keeps its program, so `smith new` adds only what agents need.
 
-The program is the example of idiomatic Smith ([smith-idiom](../smith-idiom/SKILL.md)): a contract the prover proves, a test, and a `main` that takes the io.
+The program is the example of idiomatic Smith ([smith-idiom](../smith-idiom/SKILL.md)): a contract the prover proves, a test, and a `main` that calls the direct modules.
 
 Next: `smith run`, `smith test`, `smith check` ([smith-run-test](../smith-run-test/SKILL.md)).

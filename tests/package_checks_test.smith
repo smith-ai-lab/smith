@@ -17,7 +17,7 @@ constexpr char compile_prefix[_] =
     "-Wstrict-prototypes -Wvla -Werror -Wno-unused-function -I \"$SMITH_REPO/.smith/include\" ";
 constexpr char libraries[_] =
     " lib/smith/arena.smith lib/smith/contract.smith lib/smith/env.smith lib/smith/files.smith "
-    "lib/smith/inflate.smith lib/smith/io.smith lib/smith/mem.smith lib/smith/net.smith "
+    "lib/smith/inflate.smith lib/smith/mem.smith lib/smith/net.smith "
     "lib/smith/random.smith bin/handlers.o";
 
 static void package_project(const scratch::Project *p) {

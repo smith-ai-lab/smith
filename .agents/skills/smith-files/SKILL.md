@@ -1,10 +1,10 @@
 ---
 name: smith-files
-description: "Using smith::files (import smith::files; files::read_file, write_file, open, read, write, close, info, list, make_folder, remove, move, map, files::fake): files and folders by direct calls that return a result, with an in-memory fake for tests. Load when code imports smith::files or includes <smith/files.h>, or on reading or writing a file without io::Io."
+description: "Using smith::files (import smith::files; files::read_file, write_file, open, read, write, close, info, list, make_folder, remove, move, map, files::fake): files and folders by direct calls that return a result, with an in-memory fake for tests. Load when code imports smith::files or includes <smith/files.h>, or on reading or writing a file."
 ---
 
 # Files by direct calls: smith::files
-No `io::Io` value: call `files::` anywhere. A call returns `result(T, files::Error)`; the error is what the world said (`NotFound`, `Exists`, `Denied`, `IsFolder`, `NotFolder`, `NotEmpty`, `NameTooLong`, `NoSpace`, `ReadOnly`, `TooManyOpen`, `Other`). Paths are `const char path[:]` (a string literal converts). Memory a call returns comes from the current allocator (smith-mem) and is the caller's region: install an arena first and never free it one block at a time.
+Call `files::` anywhere. A call returns `result(T, files::Error)`; the error is what the world said (`NotFound`, `Exists`, `Denied`, `IsFolder`, `NotFolder`, `NotEmpty`, `NameTooLong`, `NoSpace`, `ReadOnly`, `TooManyOpen`, `Other`). Paths are `const char path[:]` (a string literal converts). Memory a call returns comes from the current allocator (smith-mem) and is the caller's region: install an arena first and never free it one block at a time.
 
 ```smith
 module scratch;
@@ -56,4 +56,4 @@ export usize config_size(arena::Arena *a) {
 ```
 The fake's bytes come from the allocator in force when written (a test runs under `mem::checked`). With `SMITH_READS_LOG` set (the test runner sets it), `open` for reading, `read_file`, `map` and `list` append the real path to that log, so `smith test --changed` selects the test when the file changes; a fake handler writes nothing. While set it also answers C's `open`, `read`, `write`, `close` and `fopen`.
 
-C names are `smith_fs_*` (io owns `smith_files_` until it goes). See also [smith-io-files](../smith-io-files/SKILL.md), [smith-mem](../smith-mem/SKILL.md), [files](../../../knowledge/files.md).
+C names are `smith_fs_*`. See also [smith-mem](../smith-mem/SKILL.md), [files](../../../knowledge/files.md).

@@ -131,7 +131,7 @@ export void test_build_tail_a_smith_builds_with_the_smith_cc_beside_it_not_the_o
                          scratch::capture(&p, "sort -u marker 2>/dev/null | tr '\\n' ' ' | sed 's/ $//'"));
 }
 
-// 13z. Naming a library is enough: smith_library(b, "contract") brings trace, and "io" brings the arena and random,
+// 13z. Naming a library is enough: smith_library(b, "contract") brings trace, and "random" brings the arena,
 // whether the project passes them to smith_program or not (smith_program adds what the libraries it links need).
 export void test_build_tail_library_contract_alone_links_and_brings_trace() {
     scratch::Project p = scratch::make("p", "tail_library_contract");

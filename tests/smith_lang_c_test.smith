@@ -137,10 +137,6 @@ export void test_the_arena_test_compiles_the_same_as_smith() {
     compare("tests/arena", "", false);
 }
 
-export void test_the_io_test_compiles_the_same_as_smith() {
-    compare("tests/io", "", false);
-}
-
 export void test_the_untar_test_compiles_the_same_as_smith() {
     compare("tests/untar", "", false);
 }

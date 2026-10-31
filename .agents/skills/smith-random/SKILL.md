@@ -44,7 +44,7 @@ for (usize i = 0; i < count; i++) {
 
 ## A fresh key from the system
 
-`random` is pure: it never asks the system for anything. A new `random::Key` from the system's entropy, a different one on every call, is `entropy::seed()` of `smith::entropy` (C: `smith_entropy_seed()`; [smith-entropy](../smith-entropy/SKILL.md)), which has the `entropy` effect. Print `key.bits` to replay a run: `random::key_make(bits)` is the same key. `io.key` and `io.seed` stay until io goes.
+`random` is pure: it never asks the system for anything. A new `random::Key` from the system's entropy, a different one on every call, is `entropy::seed()` of `smith::entropy` (C: `smith_entropy_seed()`; [smith-entropy](../smith-entropy/SKILL.md)), which has the `entropy` effect. Print `key.bits` to replay a run: `random::key_make(bits)` is the same key.
 
 ## The guarantees, and their limits
 

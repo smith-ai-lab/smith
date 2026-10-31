@@ -1,16 +1,16 @@
-#include <smith/io.h>
+#include "local_io.h"
 
 typedef struct {
-    SmithFiles *files;
+    LocalFiles *files;
 } Bundle;
 
-static SmithIo *global_io;
-SmithClock *global_clock;
+static LocalIo *global_io;
+LocalClock *global_clock;
 static Bundle bundle;
 static int number;
 
 void use(void) {
-    static SmithConsole console;
+    static LocalConsole console;
     static int counter;
     (void)console;
     counter++;

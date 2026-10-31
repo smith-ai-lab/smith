@@ -1,6 +1,6 @@
 // smith::clock, <smith/clock.h>: the time and sleeping, through the clock handler of the thread
 // (include/smith/handlers.h), so a test can stand in for them: a fake clock answers `now` and `monotonic` from a time
-// it holds, and its `sleep` advances that time and returns at once. Called directly, no `io::Io` value:
+// it holds, and its `sleep` advances that time and returns at once. Called directly, with no capability value to pass:
 //
 //   u64 start = clock::monotonic();
 //   clock::sleep(250 * clock::millisecond);

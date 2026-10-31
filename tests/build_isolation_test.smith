@@ -126,7 +126,7 @@ export void test_build_isolation_smith_modules_refuses_bad_folders() {
     refuses_the_folders(&p, "\"../inc\"");
 }
 
-// 11g. Modules: every header of smith's own libraries imports alone and together (io includes the arena and random).
+// 11g. Modules: every header of smith's own libraries imports alone and together (random includes the arena).
 export void test_build_isolation_smith_headers_import_alone_and_together() {
     arena::Arena memory = test::memory(1 << 26);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -138,8 +138,8 @@ export void test_build_isolation_smith_headers_import_alone_and_together() {
     scratch::expect_status("modules: smith's headers import alone and together", 0, &run);
     scratch::expect_contains("modules: the smith map is used", run.out,
                              "-fmodule-map-file=.smith/modules/smith.modulemap");
-    scratch::expect_contains("modules: the library map has io", scratch::read(&p, ".smith/modules/smith.modulemap"),
-                             "module smith_io {");
+    scratch::expect_contains("modules: the library map has arena", scratch::read(&p, ".smith/modules/smith.modulemap"),
+                             "module smith_arena {");
 }
 
 export void test_build_isolation_clangd_reports_no_errors_in_a_file_that_imports_smiths_headers() {
