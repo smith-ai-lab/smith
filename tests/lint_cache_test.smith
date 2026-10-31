@@ -1,14 +1,81 @@
 // `smith lint` keeps clang-tidy's result for each file (issue #621, knowledge/caches.md): a second lint runs clang-tidy
 // on no file and prints what the first did, a change reruns exactly the files it reaches, and a finding comes back
-// from the cache with its failing status. A scratch project of three C files and the build file
-// (tests/build_fixtures/lint_cache with its build.c: a.c and b.c include common.h, c.c includes nothing) in a cache of
-// its own.
+// from the cache with its failing status. The decisions (which files a change reaches, the key, what a stored finding
+// returns with its failing status) are checked in process through `smith_core_lint_plan`
+// (include/smith_core_lint_cache.h, issue #646) on a copy of tests/build_fixtures/lint_cache (a.c and b.c include
+// common.h, c.c includes nothing) in a scratch folder, with a fake clang-tidy that reads the files a case names. What
+// needs the real clang-tidy (that a second lint runs it on no file) or the verb (its summary of the files that failed,
+// `smith cache`) is a scratch project of that fixture and the build file in a cache of its own, run by the real smith.
 module lint_cache_test;
 
 import smith::arena;
 import smith::mem;
 import smith::test;
 import scratch;
+import smith::files;
+import smith::format;
+import <smith_core_lint_cache.h>;
+import <string.h>;
+
+constexpr usize output_capacity = 1U << 16;
+
+// What a lint run did, file by file: a.c, b.c, c.c and build.c in this order.
+typedef struct {
+    c::SmithCoreLintResult file[4];
+    const char *output;
+} Lint;
+
+static void put(const char *folder, const char *name, const char *text) {
+    char path[512];
+    (void)format::to(path, sizeof path, folder, "/", name);
+    const u8 *bytes = (const u8 *)text;
+    files::CountResult written = files::write_file(path[0:c::strlen(path)], bytes[0:c::strlen(text)], files::Replace);
+    test::check_condition(written == .ok);
+}
+
+// A source appended with a comment, as `printf '// edited\n' >> file` does.
+static void edit(const char *folder, const char *name, const char *original) {
+    char text[256];
+    (void)format::to(text, sizeof text, original, "// edited\n");
+    put(folder, name, text);
+}
+
+// One lint run of the project in `folder`, with the cache `cache`: a.c and b.c read common.h, c.c nothing else.
+// `third` is what the fake clang-tidy does for c.c (its status and output); `setting` is SMITH_LINT_CACHE.
+static Lint run(const char *folder, const char *cache, const char *setting, i32 status, const char *output) {
+    const c::SmithCoreLintFile files[_] = {
+        {"a.c", "clang\t-c\ta.c", "a.c\ncommon.h", 0, ""},
+        {"b.c", "clang\t-c\tb.c", "b.c\ncommon.h", 0, ""},
+        {"c.c", "clang\t-c\tc.c", "c.c", status, output},
+        {"build.c", "clang\t-c\tbuild.c", "build.c", 0, ""},
+    };
+    Lint lint = {};
+    char *text = mem::alloc_slice(char, output_capacity).data;
+    bool done =
+        c::smith_core_lint_plan(folder, cache, setting, files, countof(files), lint.file, text, output_capacity);
+    test::check_equal(done, true);
+    lint.output = text;
+    return lint;
+}
+
+static usize ran(const Lint *lint) {
+    usize count = 0;
+    for (usize i = 0; i < 4; i++)
+        count += lint->file[i].ran ? 1 : 0;
+    return count;
+}
+
+static usize cached(const Lint *lint) {
+    usize count = 0;
+    for (usize i = 0; i < 4; i++)
+        count += lint->file[i].cached ? 1 : 0;
+    return count;
+}
+
+static void expect_counts(const char *name, usize expected_ran, const Lint *lint) {
+    scratch::expect_count(name, expected_ran, ran(lint));
+    scratch::expect_count("... and the rest come from the cache", 4 - expected_ran, cached(lint));
+}
 
 // The project, with a cache of its own; made before the test's memory, since scratch::clean frees what it holds.
 static scratch::Project prepared() {
@@ -27,6 +94,24 @@ static const char *counts(const scratch::Project *p) {
     return scratch::capture(p, "SMITH_OUTPUT=full smith lint 2>&1 | grep -o '[0-9]* run, [0-9]* cached'");
 }
 
+// The cache folder of the lint results, which a run with the cache off must not make.
+static bool has_results(const scratch::Project *p) {
+    char path[512];
+    (void)format::to(path, sizeof path, p->cache, "/smith/lint/r");
+    files::InfoResult found = files::info(path[0:c::strlen(path)]);
+    return found == .ok;
+}
+
+// How many times `needle` is in `text`.
+static usize occurrences(const char *text, const char *needle) {
+    usize count = 0;
+    for (const char *at = c::strstr(text, needle); at != nullptr; at = c::strstr(at + 1, needle))
+        count++;
+    return count;
+}
+
+// The real clang-tidy, twice: only it shows that the files it reads are the ones the manifest keeps (the unit cases
+// below give the fake the files to read).
 export void test_lint_a_second_time_runs_clang_tidy_on_no_file() {
     scratch::Project p = prepared();
     defer scratch::clean(&p);
@@ -49,12 +134,14 @@ export void test_lint_with_one_file_changed_runs_only_it() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::Run first = lint(&p);
-    scratch::expect_status("the first lint passes", 0, &first);
-    scratch::Run edited = scratch::sh(&p, "printf '// edited\\n' >> b.c");
-    scratch::expect_status("b.c is edited", 0, &edited);
-    scratch::expect_text("only b.c runs", "1 run, 3 cached", counts(&p));
-    scratch::expect_text("... and the next lint runs none", "0 run, 4 cached", counts(&p));
+    Lint first = run(p.dir, p.cache, nullptr, 0, "");
+    expect_counts("the first lint runs every file", 4, &first);
+    edit(p.dir, "b.c", scratch::read(&p, "b.c"));
+    Lint edited = run(p.dir, p.cache, nullptr, 0, "");
+    expect_counts("only b.c runs", 1, &edited);
+    scratch::expect_text("... and it is b.c", "1", edited.file[1].ran ? "1" : "0");
+    Lint next = run(p.dir, p.cache, nullptr, 0, "");
+    expect_counts("... and the next lint runs none", 0, &next);
 }
 
 export void test_lint_with_a_header_changed_runs_the_files_that_include_it() {
@@ -64,11 +151,12 @@ export void test_lint_with_a_header_changed_runs_the_files_that_include_it() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::Run first = lint(&p);
-    scratch::expect_status("the first lint passes", 0, &first);
-    scratch::Run edited = scratch::sh(&p, "printf '// edited\\n' >> common.h");
-    scratch::expect_status("common.h is edited", 0, &edited);
-    scratch::expect_text("a.c and b.c run, c.c does not", "2 run, 2 cached", counts(&p));
+    Lint first = run(p.dir, p.cache, nullptr, 0, "");
+    expect_counts("the first lint runs every file", 4, &first);
+    edit(p.dir, "common.h", scratch::read(&p, "common.h"));
+    Lint edited = run(p.dir, p.cache, nullptr, 0, "");
+    expect_counts("a.c and b.c run, c.c does not", 2, &edited);
+    scratch::expect_text("... a.c and b.c are the two", "11", edited.file[0].ran && edited.file[1].ran ? "11" : "00");
 }
 
 export void test_lint_with_a_config_changed_runs_every_file() {
@@ -78,11 +166,11 @@ export void test_lint_with_a_config_changed_runs_every_file() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::Run first = lint(&p);
-    scratch::expect_status("the first lint passes", 0, &first);
-    scratch::Run edited = scratch::sh(&p, "printf '# edited\\n' >> .clang-tidy");
-    scratch::expect_status(".clang-tidy is edited", 0, &edited);
-    scratch::expect_text("every file runs", "4 run, 0 cached", counts(&p));
+    Lint first = run(p.dir, p.cache, nullptr, 0, "");
+    expect_counts("the first lint runs every file", 4, &first);
+    put(p.dir, ".clang-tidy", "# edited\n");
+    Lint edited = run(p.dir, p.cache, nullptr, 0, "");
+    expect_counts("every file runs", 4, &edited);
 }
 
 export void test_lint_replays_a_finding_and_the_failing_status_from_the_cache() {
@@ -92,23 +180,21 @@ export void test_lint_replays_a_finding_and_the_failing_status_from_the_cache() 
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::Run written =
-        scratch::sh(&p, "printf 'int third(int value, int unused) {\\n    return value;\\n}\\n' > c.c");
-    scratch::expect_status("c.c has an unused parameter", 0, &written);
-    scratch::Run first = lint(&p);
-    scratch::expect_status("the first lint fails on the finding", 1, &first);
-    scratch::expect_contains("... and reports it", first.out, "c.c:1:26: error: parameter 'unused' is unused");
-    scratch::Run second = lint(&p);
-    scratch::expect_status("the second lint fails too", 1, &second);
-    scratch::expect_contains("... from the cache", second.out, "0 run, 4 cached");
-    scratch::expect_contains("... with the same finding", second.out, "c.c:1:26: error: parameter 'unused' is unused");
-    scratch::expect_text(
-        "... printed once", "1",
-        scratch::capture(&p, "SMITH_OUTPUT=full smith lint 2>&1 | grep -c \"parameter 'unused' is unused\""));
+    constexpr const char *finding = "c.c:1:26: error: parameter 'unused' is unused\n";
+    put(p.dir, "c.c", "int third(int value, int unused) {\n    return value;\n}\n");
+    Lint first = run(p.dir, p.cache, nullptr, 1, finding);
+    scratch::expect_count("the first lint fails on the finding", 1, (usize)first.file[2].status);
+    scratch::expect_contains("... and reports it", first.output, finding);
+    Lint second = run(p.dir, p.cache, nullptr, 1, finding);
+    scratch::expect_count("the second lint fails too", 1, (usize)second.file[2].status);
+    expect_counts("... from the cache", 0, &second);
+    scratch::expect_contains("... with the same finding", second.output, finding);
+    scratch::expect_count("... printed once", 1, occurrences(second.output, "parameter 'unused' is unused"));
 }
 
 // A failure always says which file and how clang-tidy ended (a kill or a crash prints nothing of its own): the last
-// lines name each file, the log of the file ends with the same, and a result the cache kept is named too.
+// lines name each file, the log of the file ends with the same, and a result the cache kept is named too. The verb
+// prints these (runtime/verbs.c), so the real smith runs here.
 export void test_lint_names_each_file_that_failed_and_how_clang_tidy_ended() {
     scratch::Project p = prepared();
     defer scratch::clean(&p);
@@ -142,14 +228,14 @@ export void test_lint_cache_off_runs_every_file_each_time() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    scratch::Run first = scratch::sh(&p, "SMITH_LINT_CACHE=0 SMITH_OUTPUT=full smith lint 2>&1");
-    scratch::expect_contains("with SMITH_LINT_CACHE=0 every file runs", first.out, "4 run, 0 cached");
-    scratch::Run second = scratch::sh(&p, "SMITH_LINT_CACHE=0 SMITH_OUTPUT=full smith lint 2>&1");
-    scratch::expect_contains("... again", second.out, "4 run, 0 cached");
-    scratch::expect_text("... and nothing was stored", "no",
-                         scratch::capture(&p, "test -e \"$XDG_CACHE_HOME/smith/lint/r\" && echo yes || echo no"));
+    Lint first = run(p.dir, p.cache, "0", 0, "");
+    expect_counts("with SMITH_LINT_CACHE=0 every file runs", 4, &first);
+    Lint second = run(p.dir, p.cache, "0", 0, "");
+    expect_counts("... again", 4, &second);
+    scratch::expect_text("... and nothing was stored", "no", has_results(&p) ? "yes" : "no");
 }
 
+// `smith cache` and `smith cache clean lint` are the verb's wiring, over what the real lint stored.
 export void test_cache_shows_and_cleans_the_lint_results() {
     scratch::Project p = prepared();
     defer scratch::clean(&p);
