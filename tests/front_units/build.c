@@ -26,10 +26,10 @@ void build(SmithBuild *b) {
 #ifdef __APPLE__
     const char *const *libraries =
         smith_cat(b, archives, smith_list(b, "-lc++", "-lm", "-lcompression", nullptr), nullptr);
-    // No -dead_strip here: it drops smith_asan_options.o (a weak __asan_default_options that nothing references, which
-    // every sanitized program links on macOS, knowledge/handlers.md), and ASan then aborts at start-up with
-    // "interceptors not installed". Static archives link only the objects the runner reaches anyway.
-    const char *const *gc = smith_list(b, nullptr);
+    // -dead_strip drops smith_asan_options.o (a weak __asan_default_options that nothing references, which every
+    // sanitized program links on macOS, knowledge/handlers.md), and ASan then aborts at start-up with "interceptors not
+    // installed": -u makes the symbol a root.
+    const char *const *gc = smith_list(b, "-Wl,-dead_strip", "-Wl,-u,___asan_default_options", nullptr);
 #else
     const char *const *libraries =
         smith_cat(b, smith_list(b, "-Wl,--start-group", nullptr), archives,
