@@ -2606,7 +2606,8 @@ static const char *const *smith_handlers_link(SmithBuild *b, const SmithProgram 
 #endif
 
 // The arguments that link the handlers runtime into `program` (smith itself too: its clones find the dylib beside them,
-// see smith_programs_make in smith.c), and in *files the files the link waits for: on macOS the dylib of its folder (and ASan's options), on Linux the objects themselves.
+// see smith_programs_make in smith.c), and in *files the files the link waits for: on macOS the dylib of its folder
+// (and ASan's options), on Linux the objects themselves.
 static const char *const *smith_program_handlers(SmithBuild *b, const SmithProgram *program,
                                                  const char *const **files) {
     *files = smith_list(b, nullptr);
