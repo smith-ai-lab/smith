@@ -46,8 +46,8 @@ prebuilt library's and one loaded with `dlopen`. Owner (2026-10-24): "always int
   which glibc's `<stdio.h>` makes extern inline when optimized, are defined under those names by asm labels, and
   `getdelim`/`__getdelim` (an optimized `getline`) are the stream's too. `malloc_usable_size` stands for `malloc_size`;
   there are no zones. A sanitized program also links an `__asan_default_options` (strong: the runtime's weak one is first in the link) of `abort_on_error=1:detect_leaks=0`, so a report
-  stops with SIGABRT as on macOS and the leak check Linux's ASan adds at exit is off, as on macOS. Known gap: a program built with `_FORTIFY_SOURCE` calls `__printf_chk` and its kind,
-  which the runtime does not define.
+  stops with SIGABRT as on macOS and the leak check Linux's ASan adds at exit is off, as on macOS. A program built with `_FORTIFY_SOURCE` calls `__printf_chk` and its kind (`__fprintf_chk`, `__vfprintf_chk`, `__dprintf_chk`, `__fgets_chk`,
+  `__fread_chk`, `__read_chk`...); the runtime defines them as their plain forms, and with no handler set they call glibc's own `_chk` (ASan's when sanitized).
 - **An optimizer knows malloc**: it may drop or fold a malloc/free pair, so a handler is seen only through calls it cannot
   see through (`tests/handlers/project.c` keeps its pointers in `volatile`).
 
