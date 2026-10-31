@@ -1842,11 +1842,19 @@ class SmithHook final : public TokenHook, public NameSource {
     void undefineTargetMacros(SourceLocation at) {
         targetMacrosUndefined = true;
         const SourceManager &sources = PP.getSourceManager();
+        const auto &asked = PP.getPreprocessorOpts().Macros;
+        auto named = [&](StringRef name) {
+            for (const auto &[text, undefine] : asked) {
+                if (StringRef(text).split('=').first == name) return true;
+            }
+            return false;
+        };
         std::vector<IdentifierInfo *> plain;
         for (auto &entry : PP.macros()) {
             IdentifierInfo *info = const_cast<IdentifierInfo *>(entry.first);
             const MacroInfo *macro = PP.getMacroInfo(info);
             if (macro == nullptr || macro->isBuiltinMacro() || info->getName().starts_with("_")) continue;
+            if (named(info->getName())) continue; // the command line's `-DFAST` is the program's, in the same buffer
             if (sources.getBufferName(macro->getDefinitionLoc()) == "<built-in>") plain.push_back(info);
         }
         for (IdentifierInfo *info : plain)

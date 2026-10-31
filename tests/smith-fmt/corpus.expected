@@ -9418,6 +9418,27 @@ int main() {
     printf("main stays main\n");
     return 0;
 }
+==> module-name-linux/src/demo/linux.smith <==
+module demo::linux;
+
+// A module is named by what it is, and `linux` is a word the Linux target's compiler defines as 1 in C: not here.
+export i32 unix = 7;
+
+export i32 i386() {
+    return unix + 1;
+}
+==> module-name-linux/src/main.smith <==
+module main;
+
+import <stdio.h>;
+import demo::linux;
+
+// In a module the names `linux`, `unix` and `i386` are the program's own, whatever the target defines for C.
+i32 main() {
+    i32 unix = 42;
+    (void)c::printf("%d %d %d\n", unix, linux::unix, linux::i386());
+    return 0;
+}
 ==> module-names/src/main.smith <==
 import names::fields as f;
 #include <stdio.h>
