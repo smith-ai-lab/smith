@@ -651,6 +651,17 @@ static void smith_programs_make(const char *runtime, const char *programs, const
         snprintf(path, sizeof path, "%s/bin/%s", temporary, names[i]);
         if (!smith_platform_clone(self, path)) smith_die(smith_exit_usage, "cannot link", path);
     }
+#ifdef __APPLE__
+    // The clones are linked with the handlers runtime like every program (-lsmith_handlers, an @executable_path rpath),
+    // so its dylib is beside them: a clone of the one beside the running smith.
+    char dylib[PATH_MAX];
+    snprintf(dylib, sizeof dylib, "%s", self);
+    char *last = strrchr(dylib, '/');
+    SMITH_ASSERT(last != nullptr);
+    snprintf(last + 1, sizeof dylib - (size_t)(last + 1 - dylib), "libsmith_handlers.dylib");
+    snprintf(path, sizeof path, "%s/bin/libsmith_handlers.dylib", temporary);
+    if (!smith_platform_clone(dylib, path)) smith_die(smith_exit_usage, "cannot link", path);
+#endif
     char target[PATH_MAX];
     snprintf(target, sizeof target, "%s/lib", runtime);
     snprintf(path, sizeof path, "%s/lib", temporary);
