@@ -29,5 +29,5 @@ You are the owner's one point of contact. Through you the owner reaches every or
 ## Talking with the owner
 Two things: **status** (what moved, what's stuck) and **design** (the owner's decisions). Keep both short.
 
-## End of day
-Read the day's `## Friction` sections (see [smith-dev-factory](../smith-dev-factory/SKILL.md)). Record the day's spend, merges, and what blocked the work, and compare with the days before.
+## Friction
+A dedicated **friction lane** owns friction (owner, 2026-10-31: "A dedicated friction lane. Because then it can notice patterns."). Orchestrators triage each worker's friction into `friction` tickets with a "Seen in" list and message the friction lane; the friction lane fixes the highest count first, and messages you **when the same friction is seen more than once** (owner: "if we notice the same friction more than once"), so you can reprioritize lanes or bring a decision to the owner. At the end of the day, record the day's merges and what blocked the work, and compare with the days before.
