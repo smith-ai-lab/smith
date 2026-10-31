@@ -1,11 +1,16 @@
 name: pick-mac
 description: >
-  Where a macOS job runs (knowledge/ci-hosted.md): the owner's Mac when a runner labelled self-hosted, macOS, ARM64 is
-  online and not busy, else a hosted macos-26. No token, a fork pull request or a failed call: hosted. Shared by
+  Where a macOS job runs (knowledge/ci-hosted.md): a hosted macos-26 by default; the owner's Mac only as overflow, when
+  a runner labelled self-hosted, macOS, ARM64 is online and idle AND the hosted macOS pool is saturated (a macos-26 job
+  of another run is queued, or 5 are running). No token, a fork pull request or a failed call: hosted. Shared by
   ci.yml and llvm.yml, so the rule is written once.
 inputs:
   token:
     description: A token that may read the repository's runners (RUNNER_STATUS_TOKEN); empty means hosted
+    required: false
+    default: ""
+  github-token:
+    description: "The job's own token (actions read), which lists the repository's queued and running jobs"
     required: false
     default: ""
   fork:
@@ -27,21 +32,39 @@ runs:
       shell: bash
       env:
         RUNNER_STATUS_TOKEN: ${{ inputs.token }}
+        JOB_TOKEN: ${{ inputs.github-token }}
+        RUN_ID: ${{ github.run_id }}
         FORK: ${{ inputs.fork }}
         GH_REPO: ${{ github.repository }}
       run: |
-        # a Mac that is off never stalls a run, and neither does one whose runners are all busy: both go to hosted.
-        # Online and not busy (`.busy == false`) is a runner that would take the job now.
-        mac='"macos-26"'; cores=3; why="no secret"
+        # hosted by default; the Mac is overflow. A Mac that is off, a failed call or a fork never stalls a run.
+        # Saturated = another run has a macos-26 job queued (it is waiting for a slot), or 5 running (the free plan's cap).
+        mac='"macos-26"'; cores=3; why="hosted is the default"
         if [ "$FORK" = true ]; then why="fork pull request"
-        elif [ -n "$RUNNER_STATUS_TOKEN" ]; then
-          if json=$(GH_TOKEN=$RUNNER_STATUS_TOKEN gh api "repos/$GH_REPO/actions/runners" --paginate --jq \
-            '.runners[] | select([.labels[].name] | contains(["self-hosted", "macOS", "ARM64"])) | "\(.name) \(.status) \(.busy)"' 2>/dev/null); then
-            free=$(printf '%s\n' "$json" | awk '$2 == "online" && $3 == "false" { printf "%s ", $1 }')
-            if [ -n "$free" ]; then mac='["self-hosted","macOS","ARM64"]'; cores=5; why="online and idle: $free"
-            elif printf '%s' "$json" | grep -q ' online '; then why="all Mac runners busy"
-            else why="no Mac runner online"; fi
-          else why="runners call failed"; fi
+        elif [ -z "$RUNNER_STATUS_TOKEN" ] || [ -z "$JOB_TOKEN" ]; then why="no token"
+        elif ! runners=$(GH_TOKEN=$RUNNER_STATUS_TOKEN gh api "repos/$GH_REPO/actions/runners" --paginate --jq \
+          '.runners[] | select([.labels[].name] | contains(["self-hosted", "macOS", "ARM64"])) | "\(.name) \(.status) \(.busy)"' 2>/dev/null); then
+          why="runners call failed"
+        else
+          free=$(printf '%s\n' "$runners" | awk '$2 == "online" && $3 == "false" { printf "%s ", $1 }')
+          if [ -z "$free" ]; then why="no Mac runner online and idle"
+          else
+            queued=0; running=0; ok=1
+            for status in queued in_progress; do
+              ids=$(GH_TOKEN=$JOB_TOKEN gh api "repos/$GH_REPO/actions/runs?status=$status&per_page=100" --jq '.workflow_runs[].id' 2>/dev/null) || ok=0
+              for id in $ids; do
+                [ "$id" = "$RUN_ID" ] && continue
+                counts=$(GH_TOKEN=$JOB_TOKEN gh api "repos/$GH_REPO/actions/runs/$id/jobs?per_page=100" --jq \
+                  '[.jobs[] | select(.labels | index("macos-26"))] | "\(map(select(.status == "queued")) | length) \(map(select(.status == "in_progress")) | length)"' 2>/dev/null) || { ok=0; continue; }
+                queued=$((queued + ${counts% *})); running=$((running + ${counts#* }))
+              done
+            done
+            if [ "$ok" = 0 ]; then why="jobs call failed"
+            elif [ "$queued" -gt 0 ] || [ "$running" -ge 5 ]; then
+              mac='["self-hosted","macOS","ARM64"]'; cores=5
+              why="hosted macOS saturated ($queued queued, $running running); Mac idle: $free"
+            else why="hosted macOS has room ($queued queued, $running running); Mac stays quiet"; fi
+          fi
         fi
         echo "mac=$mac" >>"$GITHUB_OUTPUT"
         echo "cores=$cores" >>"$GITHUB_OUTPUT"

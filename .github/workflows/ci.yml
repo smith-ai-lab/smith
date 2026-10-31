@@ -34,11 +34,11 @@ jobs:
       base: ${{ steps.scope.outputs.base }}
       matrix: ${{ steps.linux.outputs.matrix }}
       linux: ${{ steps.linux.outputs.linux }}
-      # where the macOS jobs run (knowledge/ci-hosted.md): the owner's Mac when one of its runners is online, else
-      # hosted macos-26; picked per run by the step `Pick the macOS runner`
+      # where the macOS jobs run (knowledge/ci-hosted.md): hosted macos-26, the owner's Mac only as overflow when the
+      # hosted pool is saturated; picked per run by the step `Pick the macOS runner`
       pack: ${{ steps.pack.outputs.build }}
       mac: ${{ steps.mac.outputs.mac }}
-      # SMITH_CORES of a macOS job: the Mac's 16 cores shared by its 3 runners; a hosted runner has 3
+      # SMITH_CORES of a macOS job: the Mac's 16 cores shared by its 3 runners (overflow only); a hosted runner has 3
       cores: ${{ steps.mac.outputs.cores }}
     env:
       GH_TOKEN: ${{ github.token }}
@@ -51,6 +51,7 @@ jobs:
         uses: ./.github/actions/pick-mac
         with:
           token: ${{ secrets.RUNNER_STATUS_TOKEN }}
+          github-token: ${{ github.token }}
           fork: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
       - name: Is there a pack for this LLVM configuration
         id: pack
@@ -124,12 +125,13 @@ jobs:
 
   pack:
     # the LLVM pack of a configuration no release holds yet, built and published by llvm.yml (#1064) before the jobs
-    # that need it start; it runs on the Mac only when the Mac is online and idle, else on hosted runners
+    # that need it start; it runs on the Mac only as overflow (hosted pool saturated), else on hosted runners
     needs: changes
     if: needs.changes.outputs.pack == 'true'
     uses: ./.github/workflows/llvm.yml
     permissions:
       contents: write # gh release create
+      actions: read # llvm.yml's pick-mac lists the queued and running jobs
     secrets: inherit
 
   build:
@@ -161,7 +163,9 @@ jobs:
   mechanical:
     # fmt, docs, lint and the proofs of the project (the stages of `smith check` that are not tests)
     needs: [changes, build]
-    if: needs.changes.outputs.scope == 'full'
+    # `!cancelled()` and the build's result: without a status function the implicit success() also looks at the skipped
+    # ancestor `pack` and skips this job, which left fmt, lint, prove and the macOS tests unrun from #1067 on (#1139)
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.changes.outputs.scope == 'full' }}
     runs-on: ${{ fromJSON(needs.changes.outputs.mac) }}
     timeout-minutes: 40
     env:
@@ -199,7 +203,9 @@ jobs:
   test:
     # the macOS-only tests (`smith test --macos-only`, 3 of them, one part), on the Mac with the build of this run
     needs: [changes, build]
-    if: needs.changes.outputs.scope == 'full'
+    # `!cancelled()` and the build's result: without a status function the implicit success() also looks at the skipped
+    # ancestor `pack` and skips this job, which left fmt, lint, prove and the macOS tests unrun from #1067 on (#1139)
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.changes.outputs.scope == 'full' }}
     runs-on: ${{ fromJSON(needs.changes.outputs.mac) }}
     timeout-minutes: 45
     strategy:
@@ -358,7 +364,7 @@ jobs:
     # a change of the README, AGENTS.md, knowledge/ or the skills only: the docs check and the tests that read them
     # (a change that also touches code runs the full check, whose parts include both)
     needs: [changes, build]
-    if: needs.changes.outputs.scope == 'docs'
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.changes.outputs.scope == 'docs' }}
     runs-on: ${{ fromJSON(needs.changes.outputs.mac) }}
     timeout-minutes: 30
     env:
@@ -393,6 +399,10 @@ jobs:
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
           SCOPE: ${{ needs.changes.outputs.scope }}
+          MECHANICAL: ${{ needs.mechanical.result }}
+          TEST: ${{ needs.test.result }}
+          DOCS: ${{ needs.docs.result }}
+          TEST_LINUX: ${{ needs.test-linux.result }}
         run: |
           echo "scope: $SCOPE; jobs: $RESULTS" | tee -a "$GITHUB_STEP_SUMMARY"
           case " $RESULTS " in
@@ -401,6 +411,23 @@ jobs:
             exit 1
             ;;
           esac
+          # A skipped job passes only where `changes` said the area was not touched (#1139). The scope says which jobs
+          # the run owes: `full` owes mechanical, test and test-linux, `docs` owes docs, `release` (a push to main)
+          # owes test-linux, `none` owes nothing. A job that was owed and skipped (a skipped `pack` skipped the three
+          # macOS jobs for hours) fails the check.
+          case "$SCOPE" in
+          full) owed="MECHANICAL TEST TEST_LINUX" ;;
+          docs) owed="DOCS" ;;
+          release) owed="TEST_LINUX" ;;
+          *) owed="" ;;
+          esac
+          for name in $owed; do
+            eval "result=\$$name"
+            if [ "$result" != success ]; then
+              echo "::error::$name was owed by scope $SCOPE and its result is '$result', not success"
+              exit 1
+            fi
+          done
 
   warm:
     # a push to main (a commit the queue checked) builds smith and the tests once more only to save the step cache,

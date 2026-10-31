@@ -1,0 +1,22 @@
+2:1 kw_typedef typedef
+2:9 kw_unsigned unsigned
+2:18 kw_char char
+2:23 name u32
+2:26 semicolon ;
+3:1 kw_void void
+3:6 name f
+3:7 left_paren (
+3:8 right_paren )
+3:10 left_brace {
+4:5 name u32
+4:9 name x
+4:11 equal =
+4:13 string "hello"
+4:20 semicolon ;
+5:5 left_paren (
+5:6 kw_void void
+5:10 right_paren )
+5:11 name x
+5:12 semicolon ;
+6:1 right_brace }
+7:1 end_of_file

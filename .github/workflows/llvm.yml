@@ -9,8 +9,8 @@ name: llvm
 # before its own CI needs it: ci.yml's `pack` job calls this workflow (workflow_call) when no release holds the
 # configuration yet, and the PR's jobs wait for it (#1064). A push to main publishes what is still missing.
 #
-# The macOS pack builds on the owner's Mac only when one of its runners is online and idle (.github/actions/pick-mac,
-# the rule ci.yml uses); otherwise on a hosted macos-26. Nothing depends on the Mac.
+# The macOS pack builds on a hosted macos-26; the owner's Mac takes it only as overflow, when it is online and idle and
+# the hosted macOS pool is saturated (.github/actions/pick-mac, the rule ci.yml uses). Nothing depends on the Mac.
 on:
   workflow_call:
   workflow_dispatch:
@@ -26,6 +26,7 @@ on:
 
 permissions:
   contents: write # gh release create
+  actions: read # pick-mac lists the queued and running jobs
 
 jobs:
   pick:
@@ -42,6 +43,7 @@ jobs:
         uses: ./.github/actions/pick-mac
         with:
           token: ${{ secrets.RUNNER_STATUS_TOKEN }}
+          github-token: ${{ github.token }}
           fork: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
 
   macos:

@@ -1,0 +1,254 @@
+// Tests of front::ast (#1116): trees built by hand, as the emitter's first tests will build them, and their dumps
+// against the golden files of tests/front/ast (`smith test --update` writes a changed one). Each test builds in an
+// arena it sets as the current allocator.
+module front_ast_test;
+
+import front::ast;
+import std::arena;
+import std::mem;
+import std::test;
+
+static ast::Stmt *expression_statement(ast::Expr *value) {
+    return ast::stmt({.expression = {.value = value}});
+}
+
+static ast::Expr *assign(ast::AssignOp op, ast::Expr *target, ast::Expr *value) {
+    return ast::expr({.assign = {.op = op, .target = target, .value = value}});
+}
+
+// `I32 add(I32 a, I32 b) { return a + b; }`, exported.
+static ast::Decl *add_function() {
+    ast::Param params[2] = {ast::param("a", ast::named("I32")), ast::param("b", ast::named("I32"))};
+    ast::Expr *sum = ast::binary(.add, ast::name("a"), ast::name("b"));
+    ast::StmtRef statements[1] = {ast::return_value(sum)};
+    ast::Stmt *body = ast::block(statements);
+    ast::Decl *function = ast::function("add", params, ast::named("I32"), body);
+    function->exported = true;
+    return function;
+}
+
+export void test_front_ast_dump_of_the_add_function() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ast::DeclRef decls[1] = {add_function()};
+    ast::Module m = ast::new_module("math", decls);
+    test::golden("tests/front/ast/add.txt", ast::dump(&m));
+}
+
+// I32 count(I32 n) {
+//     I32 total = 0;
+//     for (I32 i = 0; i < n; i += 1) { if (i % 2 == 0) total += i; else continue; }
+//     switch (total) { case 0: case 1: return 1; default: return 2; }
+// }
+static ast::Decl *control_flow_function() {
+    ast::Decl *total = ast::variable("total", ast::named("I32"), ast::integer(0));
+    ast::Decl *index = ast::variable("i", ast::named("I32"), ast::integer(0));
+    ast::Expr *even = ast::binary(.equal, ast::binary(.remainder, ast::name("i"), ast::integer(2)), ast::integer(0));
+    ast::Stmt *branch =
+        ast::stmt({.if_stmt = {
+                       .condition = even,
+                       .then_branch = expression_statement(assign(.add, ast::name("total"), ast::name("i"))),
+                       .else_branch = ast::stmt(.continue_stmt),
+                   }});
+    ast::StmtRef loop_body[1] = {branch};
+    ast::Stmt *loop = ast::stmt({.for_stmt = {
+                                     .init = ast::stmt({.declaration = {.decl = index}}),
+                                     .condition = ast::binary(.less, ast::name("i"), ast::name("n")),
+                                     .step = assign(.add, ast::name("i"), ast::integer(1)),
+                                     .body = ast::block(loop_body),
+                                 }});
+    ast::ExprRef values_array[2] = {ast::integer(0), ast::integer(1)};
+    ast::ExprRef values[:] = values_array;
+    ast::StmtRef one[1] = {ast::return_value(ast::integer(1))};
+    ast::StmtRef two[1] = {ast::return_value(ast::integer(2))};
+    ast::SwitchCase cases[:] = mem::alloc_slice(ast::SwitchCase, 2);
+    cases[0] = ast::switch_case(values, false, one);
+    cases[1] = ast::switch_case(values[0:0], true, two);
+    ast::Stmt *choice = ast::stmt({.switch_stmt = {.value = ast::name("total"), .cases = cases}});
+    ast::StmtRef statements[3] = {ast::stmt({.declaration = {.decl = total}}), loop, choice};
+    ast::Stmt *body = ast::block(statements);
+    ast::Param params[1] = {ast::param("n", ast::named("I32"))};
+    return ast::function("count", params, ast::named("I32"), body);
+}
+
+export void test_front_ast_dump_of_if_for_and_switch() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ast::DeclRef decls[1] = {control_flow_function()};
+    ast::Module m = ast::new_module("flow", decls);
+    test::golden("tests/front/ast/control_flow.txt", ast::dump(&m));
+}
+
+// struct Point { I32 x; I32 y : 3; };  union Bits { U32 word; U8 byte; };
+export void test_front_ast_dump_of_a_struct_and_a_union() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ast::FieldDecl y = ast::field("y", ast::named("I32"));
+    y.bit_width = ast::integer(3);
+    ast::FieldDecl point_fields[2] = {ast::field("x", ast::named("I32")), y};
+    ast::Decl *point = ast::record_decl("Point", point_fields);
+    point->exported = true;
+    ast::FieldDecl bits_fields[2] = {ast::field("word", ast::named("U32")), ast::field("byte", ast::named("U8"))};
+    ast::Decl *bits = ast::record_decl("Bits", bits_fields);
+    if (bits->kind == .record) bits->kind.record.is_union = true;
+    ast::DeclRef decls[2] = {point, bits};
+    ast::Module m = ast::new_module("geometry", decls);
+    test::golden("tests/front/ast/record.txt", ast::dump(&m));
+}
+
+// typedef enum { Circle circle; Rect rect; empty; } Shape;  enum Color : U8 { red = 1, green };
+export void test_front_ast_dump_of_a_payload_enum() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ast::Enumerator variants[3] = {ast::enumerator("circle", nullptr, ast::named("Circle")),
+                                   ast::enumerator("rect", nullptr, ast::named("Rect")),
+                                   ast::enumerator("empty", nullptr, nullptr)};
+    ast::Decl *shape = ast::enumeration("Shape", nullptr, variants);
+    shape->exported = true;
+    ast::Enumerator colors[2] = {ast::enumerator("red", ast::integer(1), nullptr),
+                                 ast::enumerator("green", nullptr, nullptr)};
+    ast::Decl *color = ast::enumeration("Color", ast::named("U8"), colors);
+    ast::DeclRef decls[2] = {shape, color};
+    ast::Module m = ast::new_module("shapes", decls);
+    test::golden("tests/front/ast/enumeration.txt", ast::dump(&m));
+}
+
+// import std::arena;  import <stdio.h>;  import "x.h";  export void greet() { c::printf("hi\n\"\\"); }
+export void test_front_ast_dump_of_a_module_with_imports() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ast::ExprRef arguments[1] = {ast::string("hi\n\"\\")};
+    ast::Expr *call = ast::call(ast::name("c::printf"), arguments);
+    ast::Param no_param[1] = {};
+    ast::Param no_params[:] = no_param[0:0];
+    ast::StmtRef statements[1] = {expression_statement(call)};
+    ast::Decl *greet = ast::function("greet", no_params, ast::named("Void"), ast::block(statements));
+    greet->exported = true;
+    ast::DeclRef imports[4] = {ast::import_module("std::arena"), ast::import_c("stdio.h", true),
+                               ast::import_c("x.h", false), greet};
+    ast::Module m = ast::new_module("demo", imports);
+    test::golden("tests/front/ast/imports.txt", ast::dump(&m));
+}
+
+// Types of every shape, a flagged declaration, an attribute and an `if constexpr` at file scope.
+export void test_front_ast_dump_of_types_and_if_constexpr() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ast::TypeExpr *pointer = ast::make_type({.pointer = {.pointee = ast::named("U8")}});
+    pointer->qualifiers.is_const = true;
+    ast::TypeExpr *slice = ast::make_type({.slice = {.element = ast::named("c::FILE")}});
+    ast::TypeExpr *array = ast::make_type({.array = {.element = ast::named("I32"), .count = ast::integer(4)}});
+    ast::TypeArg arguments[:] = mem::alloc_slice(ast::TypeArg, 1);
+    ast::TypeArg argument = {.type = {.type = ast::named("I32")}};
+    arguments[0] = argument;
+    ast::TypeExpr *option = ast::make_type({.applied = {.name = ast::path("Option"), .args = arguments}});
+    ast::Decl *slice_alias = ast::type_alias("Files", slice);
+    slice_alias->is_static = true;
+    ast::Param no_param[1] = {};
+    ast::Param no_params[:] = no_param[0:0];
+    ast::Decl *pure = ast::function("f", no_params, ast::named("Void"), nullptr);
+    pure->attributes = mem::alloc_slice(ast::Attribute, 1);
+    pure->attributes[0] = ast::attribute("std::pure");
+    ast::DeclRef then_decls[1] = {ast::type_alias("Maybe", option)};
+    ast::DeclRef else_decls[1] = {pure};
+    ast::Decl *branch = ast::decl((ast::Decl){}, {.if_constexpr = {.condition = ast::name("target::linux"),
+                                                                   .then_decls = then_decls[0:1],
+                                                                   .else_decls = else_decls[0:1]}});
+    ast::DeclRef decls[4] = {ast::type_alias("Bytes", pointer), slice_alias, ast::type_alias("Four", array), branch};
+    ast::Module m = ast::new_module("kinds", decls);
+    test::golden("tests/front/ast/kinds.txt", ast::dump(&m));
+}
+
+// An anonymous struct and union used as types: `typedef struct { I32 a; I32 b; } Pair;`, `union { I32 i; F32 f; }`.
+export void test_front_ast_dump_of_anonymous_record_types() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ast::FieldDecl pair_fields[2] = {ast::field("a", ast::named("I32")), ast::field("b", ast::named("I32"))};
+    ast::TypeExpr *pair = ast::make_type({.record = {.fields = pair_fields[0:2]}});
+    ast::FieldDecl number_fields[2] = {ast::field("i", ast::named("I32")), ast::field("f", ast::named("F32"))};
+    ast::TypeExpr *number = ast::make_type({.record = {.fields = number_fields[0:2], .is_union = true}});
+    ast::DeclRef decls[2] = {ast::type_alias("Pair", pair), ast::type_alias("Number", number)};
+    ast::Module m = ast::new_module("anonymous", decls);
+    test::golden("tests/front/ast/anonymous.txt", ast::dump(&m));
+}
+
+// What a C header becomes: `typedef struct _IO_FILE FILE;` (opaque), `typedef int (*Handler)(int, long double);`
+// as an `Fn` applied to a function type (no function-pointer syntax) with an unsupported C type.
+export void test_front_ast_dump_of_declarations_read_from_a_c_header() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ast::FieldDecl none[1];
+    ast::Decl *file = ast::record_decl("FILE", none[0:0]);
+    if (file->kind == .record) file->kind.record.opaque = true;
+    file->from_c = true;
+    Str spelling = "long double";
+    ast::TypeRef parameters[2] = {ast::named("c::int"), ast::make_type({.unsupported_c = {.spelling = spelling}})};
+    ast::TypeExpr *signature =
+        ast::make_type({.function = {.params = parameters[0:2], .result = ast::named("c::int")}});
+    ast::TypeArg arguments[:] = mem::alloc_slice(ast::TypeArg, 1);
+    ast::TypeArg argument = {.type = {.type = signature}};
+    arguments[0] = argument;
+    ast::TypeExpr *handler = ast::make_type({.applied = {.name = ast::path("Fn"), .args = arguments}});
+    ast::Decl *alias = ast::type_alias("Handler", handler);
+    alias->from_c = true;
+    ast::DeclRef decls[2] = {file, alias};
+    ast::Module m = ast::new_module("c_header", decls);
+    test::golden("tests/front/ast/c_header.txt", ast::dump(&m));
+}
+
+export void test_front_ast_path_splits_on_double_colons() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ast::Path one = ast::path("x");
+    test::check_equal(countof(one.segments), 1);
+    ast::Path three = ast::path("a::bc::d");
+    test::check_equal(countof(three.segments), 3);
+    Str middle = three.segments[1].text;
+    test::check_equal(countof(middle), 2);
+    Str last = three.segments[2].text;
+    test::check_equal(last[0], 'd');
+}
+
+typedef struct {
+    alignas(arena::align_max) u8 bytes[1U << 16];
+} Memory;
+
+// A tree built and dumped with a fixed arena as the current allocator lives in that arena: a fixed arena cannot grow,
+// so a node or a text that was taken from the heap would not be owned by it.
+export void test_front_ast_a_tree_built_in_an_arena_makes_no_heap_allocation() {
+    static Memory memory;
+    arena::Arena a = arena::fixed(memory.bytes, sizeof memory.bytes);
+    arena::ArenaAllocator allocator = arena::allocator(&a);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ast::Decl *function = add_function();
+    ast::DeclRef decls[1] = {function};
+    ast::Module m = ast::new_module("math", decls);
+    Str text = ast::dump(&m);
+    test::check_condition(countof(text) > 0);
+    test::check_condition(a.used > 0);
+    test::check_condition(allocator.base.owns(&allocator.base, function));
+    test::check_condition(function->kind == .function);
+    if (function->kind == .function)
+        test::check_condition(allocator.base.owns(&allocator.base, function->kind.function.body));
+    test::check_condition(allocator.base.owns(&allocator.base, text.data));
+    test::check_condition(mem::allocator() == &allocator.base);
+}

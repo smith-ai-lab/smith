@@ -1,0 +1,3 @@
+(module anonymous
+  (typedef Pair (struct (field a (named I32)) (field b (named I32))))
+  (typedef Number (union (field i (named I32)) (field f (named F32)))))
