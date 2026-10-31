@@ -12,8 +12,10 @@ import smith::arena;
 import smith::mem;
 import smith::test;
 import scratch;
+import <smith_core_coverage.h>;
 
 constexpr usize memory_size = (usize)16 << 20; // 16 MiB
+constexpr usize report_capacity = 1U << 16;
 
 // Exit status 77 (the test is skipped) for a smith with no LLVM inside (the stage0), which cannot read profiles.
 constexpr char find_tools[_] = "smith symbolize --available || exit 77; ";
@@ -67,8 +69,40 @@ export void test_a_record_is_the_functions_a_test_ran() {
     scratch::expect_contains("the commit", run.out, "commit\tabc123");
 }
 
-// A changed line no test ran is reported, with the function it is in, and the totals are.
+// A changed line no test ran is reported, with the function it is in, and the totals are. In process
+// (`smith_core_coverage_report`, include/smith_core_coverage.h): the table is the one the first test's record makes of
+// the program above (a test that ran `first` and main), written by hand, and the added lines are given, so no compiler
+// and no git start. The verb's wiring (`smith test --coverage report` reading git's diff) is the end to end case that
+// follows.
 export void test_the_report_names_the_changed_lines_no_test_ran() {
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    const char *table = "smith-coverage 1\ncommit\tabc123\nfn\tprog.c\t1\t3\tprog.c:first\n"
+                        "fn\tprog.c\t4\t6\tprog.c:second\nfn\tprog.c\t7\t10\tmain\n"
+                        "inst\tprog.c\t1-10\ncov\tprog.c\t1-3,7-10\ntest\tt::one\t05\n";
+    const c::SmithCoreChanged changed[_] = {{"prog.c", 5, 1}, {"prog.c", 2, 1}, {"other.c", 1, 3}};
+    char *report = mem::alloc_slice(char, report_capacity).data;
+    bool done = c::smith_core_coverage_report(table, changed, countof(changed), report, report_capacity);
+    test::check_equal(done, true);
+    scratch::expect_contains("the totals", report, "coverage\tabc123\tlines\t7\t10\tfunctions\t2\t3");
+    scratch::expect_contains("the uncovered line", report, "uncovered\tprog.c\t5\tprog.c:second");
+    scratch::expect_lacks("a line a test ran", report, "uncovered\tprog.c\t2");
+    scratch::expect_contains("the count", report, "changed\t2\t1");
+    // Called again in the same process, the tables start empty.
+    done = c::smith_core_coverage_report("smith-coverage 1\ncommit\tdef456\n", changed, countof(changed), report,
+                                         report_capacity);
+    test::check_equal(done, true);
+    scratch::expect_contains("an empty table", report, "coverage\tdef456\tlines\t0\t0\tfunctions\t0\t0");
+    scratch::expect_contains("nothing counted", report, "changed\t0\t0");
+    done = c::smith_core_coverage_report("not a table", changed, countof(changed), report, report_capacity);
+    test::check_equal(done, false);
+}
+
+// The verb's wiring: `smith test --coverage report` reads git's diff from a base to HEAD and writes the file. A real
+// repository and a program built with coverage are what a unit test cannot show.
+export void test_the_report_verb_reads_git_diff() {
     scratch::Project p = scratch::make("p", nullptr);
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(memory_size);
