@@ -1,36 +1,73 @@
 // Fixed-size caps that used to drop input silently (issue #604): a count beyond the old cap is read whole.
 module caps_test;
 
-import smith::io;
+import smith::arena;
+import smith::mem;
 import smith::test;
 import scratch;
 
+// What a test's commands print goes to an arena of the runner's (test::memory), the current allocator from start to
+// finish, so the test frees none of it; the project is made and cleaned inside it.
+constexpr usize memory_size = 1U << 24;
+static arena::Arena memory;
+static arena::ArenaAllocator allocator;
+static mem::Allocator *outside;
+
+static scratch::Project start(const char *fixture) {
+    memory = test::memory(memory_size);
+    allocator = arena::allocator(&memory);
+    outside = mem::set_allocator(&allocator.base);
+    return scratch::make("p", fixture);
+}
+
+static void finish(scratch::Project *p) {
+    scratch::clean(p);
+    mem::set_allocator(outside);
+}
+
+// The output of a command as $(...) gives it, without trailing newlines (scratch::capture reads a project's io).
+static const char *captured(const scratch::Project *p, const char *command) {
+    const char *out = scratch::sh(p, command).out;
+    usize length = 0;
+    while (out[length] != '\0')
+        length++;
+    while (length > 0 && out[length - 1] == '\n')
+        length--;
+    char *text = arena::push_slice(&memory, char, length + 1).data;
+    mem::copy(text[0:length], out[0:length]);
+    text[length] = '\0';
+    return text;
+}
+
 // build.info kept 8192 lines of each kind, so `smith run` saw no program for a default that came after them.
-export void test_caps_run_reads_every_program_of_build_info(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", "verbs_many");
+export void test_caps_run_reads_every_program_of_build_info() {
+    scratch::Project p = start("verbs_many");
+    defer finish(&p);
     scratch::Run run = scratch::sh(&p, "smith run");
     scratch::expect_status("caps: smith run with 8200 programs", 0, &run);
     scratch::expect_contains("caps: ... runs the last program, past the old cap", run.out, "many");
     scratch::expect_text("caps: ... build.info holds all of them", "8200",
-                         scratch::capture(&p, "grep -c '^program' .smith/build.info"));
+                         captured(&p, "grep -c '^program' .smith/build.info"));
 }
 
 // smith fmt gave up smith's defaults (and -i) for 4089 or more arguments, and printed each file instead.
-export void test_caps_fmt_formats_more_than_4089_files(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_caps_fmt_formats_more_than_4089_files() {
+    scratch::Project p = start(nullptr);
+    defer finish(&p);
     (void)scratch::sh(&p, "for i in $(seq 1 4100); do echo \"int   f$i( void ){return   $i;}\" > f$i.c; done");
     scratch::Run run = scratch::sh(&p, "smith fmt f*.c");
     scratch::expect_status("caps: smith fmt with 4100 files", 0, &run);
     scratch::expect_text("caps: ... the first file is formatted in place, with smith's four spaces",
-                         "int f1(void) {\n    return 1;\n}", scratch::capture(&p, "cat f1.c"));
+                         "int f1(void) {\n    return 1;\n}", captured(&p, "cat f1.c"));
     scratch::expect_text("caps: ... so is the last", "int f4100(void) {\n    return 4100;\n}",
-                         scratch::capture(&p, "cat f4100.c"));
+                         captured(&p, "cat f4100.c"));
     scratch::expect_text("caps: ... and nothing was printed", "", run.out);
 }
 
 // SMITH_LANG_INPUTS and SMITH_LANG_FLAGS were cut at 8192 bytes; a stub compiler reports what it was given.
-export void test_caps_smith_inputs_and_flags_reach_the_compiler_whole(io::Io *io) {
-    scratch::Project p = scratch::project(io, "p", nullptr);
+export void test_caps_smith_inputs_and_flags_reach_the_compiler_whole() {
+    scratch::Project p = start(nullptr);
+    defer finish(&p);
     scratch::write(&p, "stub.sh",
                    "#!/bin/sh\n"
                    "echo \"inputs=$(printf %s \"$SMITH_LANG_INPUTS\" | wc -l | tr -d ' ')\"\n"

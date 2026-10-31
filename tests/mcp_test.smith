@@ -9,14 +9,24 @@
 //    Developer Tools permission (knowledge/debugger.md); without them these tests do nothing.
 module mcp_test;
 
+import smith::arena;
 import smith::format;
-import smith::io;
+import smith::mem;
 import smith::test;
 import scratch;
 
+// The pieces one after another, from the current allocator (the test's arena).
+const char *concatenated(auto... pieces) {
+    usize length = format::length(pieces...);
+    char *text = mem::alloc_slice(char, length + 1).data;
+    (void)format::to(text, length + 1, pieces...);
+    return text;
+}
+
+// A folder of the project as a project of its own; the root's `clean` removes it.
 static scratch::Project folder(const scratch::Project *root, const char *name) {
     scratch::Project f = *root;
-    f.dir = format::push(&root->io->arena, root->dir, "/", name).data;
+    f.dir = concatenated(root->dir, "/", name);
     return f;
 }
 
@@ -50,47 +60,48 @@ constexpr char proto_script[_] =
     "i=$((i + 1)); done; fi; "
     "[ -e \"$base/done\" ] && cp \"$base/dap.o\" \"$base/mcp.o\" .";
 
-static void check_fake(io::Io *io, const char *mode, const char *flags, bool linked) {
-    scratch::Project p = scratch::project(io, "fake", nullptr);
+static void check_fake(const char *mode, const char *flags, bool linked) {
+    scratch::Project p = scratch::make("fake", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     scratch::copy_tree(&p, "lib", "lib");
     scratch::copy_tree(&p, "tests/mcp_fake.c", "tests/mcp_fake.c");
     scratch::copy_tree(&p, "runtime", "runtime");
     if (linked) {
-        scratch::Run objects =
-            scratch::sh(&p, format::push(&io->arena, "flags='", proto_flags, "'; ", proto_script, " 2>&1").data);
+        scratch::Run objects = scratch::sh(&p, concatenated("flags='", proto_flags, "'; ", proto_script, " 2>&1"));
         if (objects.status != 0) {
             test::note("%s", objects.out);
         }
-        scratch::expect_status(format::push(&io->arena, "fake io, ", mode, ": the protocol objects build").data, 0,
-                               &objects);
+        scratch::expect_status(concatenated("fake io, ", mode, ": the protocol objects build"), 0, &objects);
     }
-    scratch::Run built = scratch::sh(
-        &p, format::push(&io->arena, "smith cc -std=gnu23 -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror ",
-                         flags, linked ? " -DMCP_FAKE_PROTOCOL_LINKED dap.o mcp.o" : "",
-                         " -I \"$SMITH_REPO/.smith/include\" -I \"$SMITH_REPO/.smith/protocol\" -I "
-                         "runtime/protocol ",
-                         fake_sources, " -o mcp_fake 2>build.log")
-                .data);
+    scratch::Run built =
+        scratch::sh(&p, concatenated("smith cc -std=gnu23 -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror ",
+                                     flags, linked ? " -DMCP_FAKE_PROTOCOL_LINKED dap.o mcp.o" : "",
+                                     " -I \"$SMITH_REPO/.smith/include\" -I \"$SMITH_REPO/.smith/protocol\" -I "
+                                     "runtime/protocol ",
+                                     fake_sources, " -o mcp_fake 2>build.log"));
     if (built.status != 0) {
         test::note("%s", scratch::read(&p, "build.log"));
     }
-    scratch::expect_status(format::push(&io->arena, "fake io, ", mode, ": tests/mcp_fake.c builds").data, 0, &built);
+    scratch::expect_status(concatenated("fake io, ", mode, ": tests/mcp_fake.c builds"), 0, &built);
     scratch::Run ran = scratch::sh(&p, "./mcp_fake 2>&1");
-    scratch::expect_status(format::push(&io->arena, "fake io, ", mode, ": the fake io's checks pass").data, 0, &ran);
-    scratch::expect_contains(format::push(&io->arena, "fake io, ", mode, ": the last line").data, ran.out,
-                             " checks, 0 failed");
+    scratch::expect_status(concatenated("fake io, ", mode, ": the fake io's checks pass"), 0, &ran);
+    scratch::expect_contains(concatenated("fake io, ", mode, ": the last line"), ran.out, " checks, 0 failed");
 }
 
-export void test_mcp_fake_io_under_the_sanitizers(io::Io *io) {
-    check_fake(io, "asan", "-g -O0 -fsanitize=address,undefined -fno-sanitize-recover=all", false);
+export void test_mcp_fake_io_under_the_sanitizers() {
+    check_fake("asan", "-g -O0 -fsanitize=address,undefined -fno-sanitize-recover=all", false);
 }
 
-export void test_mcp_fake_io_optimized(io::Io *io) {
-    check_fake(io, "fast", "-O2", true);
+export void test_mcp_fake_io_optimized() {
+    check_fake("fast", "-O2", true);
 }
 
-export void test_mcp_fake_io_optimized_without_assertions(io::Io *io) {
-    check_fake(io, "ndebug", "-O2 -DNDEBUG", true);
+export void test_mcp_fake_io_optimized_without_assertions() {
+    check_fake("ndebug", "-O2 -DNDEBUG", true);
 }
 
 // --- the stage0 -----------------------------------------------------------------------------------------------------
@@ -98,8 +109,13 @@ export void test_mcp_fake_io_optimized_without_assertions(io::Io *io) {
 constexpr char clang_inside[_] =
     "[ \"$(smith cc --smith-which -c a.c | head -n 1 | cut -d ' ' -f 1,2)\" = 'clang in-process' ]";
 
-export void test_mcp_the_stage0_says_smith_mcp_needs_the_full_smith(io::Io *io) {
-    scratch::Project p = scratch::project(io, "stage0", nullptr);
+export void test_mcp_the_stage0_says_smith_mcp_needs_the_full_smith() {
+    scratch::Project p = scratch::make("stage0", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     if (scratch::sh(&p, clang_inside).status == 0) {
         return;
     }
@@ -111,8 +127,13 @@ export void test_mcp_the_stage0_says_smith_mcp_needs_the_full_smith(io::Io *io) 
 // --- the connection, with the real binary
 // -----------------------------------------------------------------------------
 
-export void test_macos_mcp_the_connection_discover_initialize_and_tools(io::Io *io) {
-    scratch::Project root = scratch::project(io, "mcp", "mcp");
+export void test_macos_mcp_the_connection_discover_initialize_and_tools() {
+    scratch::Project root = scratch::make("mcp", "mcp");
+    defer scratch::clean(&root);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
     if (scratch::sh(&root, clang_inside).status != 0) {
         return;
     }
@@ -133,18 +154,16 @@ export void test_macos_mcp_the_connection_discover_initialize_and_tools(io::Io *
     const char *names[11] = {"launch", "breakpoint", "continue",  "step_over", "step_in", "step_out",
                              "pause",  "stack",      "variables", "evaluate",  "stop"};
     for (usize i = 0; i < 11; i++) {
-        scratch::expect_contains(format::push(&io->arena, "tools/list has ", names[i]).data, tools,
-                                 format::push(&io->arena, "\"name\":\"", names[i], "\"").data);
+        scratch::expect_contains(concatenated("tools/list has ", names[i]), tools,
+                                 concatenated("\"name\":\"", names[i], "\""));
     }
 }
 
 // --- can this account debug?
 // ------------------------------------------------------------------------------------------
 
-// The fixture, with the C program built. False when this smith has no clang or lldb inside, or the account may not
-// debug.
-static bool make(io::Io *io, scratch::Project *root) {
-    *root = scratch::project(io, "mcp", "mcp");
+// The C program of the fixture built. False when this smith has no clang or lldb inside, or the account may not debug.
+static bool can_debug(const scratch::Project *root) {
     if (scratch::sh(root, clang_inside).status != 0 ||
         scratch::sh(root, "smith dbg --version >/dev/null 2>&1").status != 0) {
         return false;
@@ -158,55 +177,56 @@ static bool make(io::Io *io, scratch::Project *root) {
 }
 
 // One line of calls: a request of the tool `tool` with the JSON `arguments`, as id `id`.
-static const char *call(io::Io *io, const char *jsonl, const char *id, const char *tool, const char *arguments) {
-    return format::push(&io->arena, jsonl, "{\"jsonrpc\":\"2.0\",\"id\":", id,
-                        ",\"method\":\"tools/call\",\"params\":{\"name\":\"", tool, "\",\"arguments\":", arguments,
-                        "}}\n")
-        .data;
+static const char *call(const char *jsonl, const char *id, const char *tool, const char *arguments) {
+    return concatenated(jsonl, "{\"jsonrpc\":\"2.0\",\"id\":", id, ",\"method\":\"tools/call\",\"params\":{\"name\":\"",
+                        tool, "\",\"arguments\":", arguments, "}}\n");
 }
 
 // Writes the calls, runs `smith mcp` on them and leaves the text of each answer in r<id>.txt (for the ids 1 to
 // `count`).
-static scratch::Run serve(io::Io *io, const scratch::Project *p, const char *calls, const char *count) {
+static scratch::Run serve(const scratch::Project *p, const char *calls, const char *count) {
     scratch::write(p, "in.jsonl", calls);
     scratch::Run run = scratch::sh(p, "smith mcp <in.jsonl >out.jsonl 2>err.txt");
-    scratch::Run replies = scratch::sh(p, format::push(&io->arena, ". ../reply; i=1; while [ $i -le ", count,
-                                                       " ]; do reply out.jsonl $i >r$i.txt; i=$((i + 1)); done")
-                                              .data);
+    scratch::Run replies = scratch::sh(p, concatenated(". ../reply; i=1; while [ $i -le ", count,
+                                                       " ]; do reply out.jsonl $i >r$i.txt; i=$((i + 1)); done"));
     scratch::expect_status("the answers are read", 0, &replies);
     return run;
 }
 
 static const char *answer(const scratch::Project *p, const char *id) {
-    return scratch::read(p, format::push(&p->io->arena, "r", id, ".txt").data);
+    return scratch::read(p, concatenated("r", id, ".txt"));
 }
 
 // --- a C program
 // ------------------------------------------------------------------------------------------------------
 
-export void test_macos_mcp_a_c_program_session(io::Io *io) {
-    scratch::Project root;
-    if (!make(io, &root)) {
+export void test_macos_mcp_a_c_program_session() {
+    scratch::Project root = scratch::make("mcp", "mcp");
+    defer scratch::clean(&root);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!can_debug(&root)) {
         return;
     }
     scratch::Project p = folder(&root, "c");
     const char *calls = "";
-    calls =
-        call(io, calls, "1", "launch", "{\"program\":\"prog\",\"breakpoints\":[{\"file\":\"prog.c\",\"line\":10}]}");
-    calls = call(io, calls, "2", "stack", "{}");
-    calls = call(io, calls, "3", "variables", "{\"frame\":1,\"depth\":2}");
-    calls = call(io, calls, "4", "evaluate", "{\"expression\":\"p.x + p.y\"}");
-    calls = call(io, calls, "5", "evaluate", "{\"expression\":\"sum = 9\"}");
-    calls = call(io, calls, "6", "breakpoint", "{\"file\":\"prog.c\",\"line\":17,\"condition\":\"r == 7\"}");
-    calls = call(io, calls, "7", "step_out", "{}");
-    calls = call(io, calls, "8", "step_over", "{}");
-    calls = call(io, calls, "9", "continue", "{}");
-    calls = call(io, calls, "10", "stack", "{}");
-    calls = call(io, calls, "11", "continue", "{}");
-    calls = call(io, calls, "12", "continue", "{}");
-    calls = call(io, calls, "13", "stop", "{}");
-    calls = call(io, calls, "14", "stack", "{}");
-    serve(io, &p, calls, "14");
+    calls = call(calls, "1", "launch", "{\"program\":\"prog\",\"breakpoints\":[{\"file\":\"prog.c\",\"line\":10}]}");
+    calls = call(calls, "2", "stack", "{}");
+    calls = call(calls, "3", "variables", "{\"frame\":1,\"depth\":2}");
+    calls = call(calls, "4", "evaluate", "{\"expression\":\"p.x + p.y\"}");
+    calls = call(calls, "5", "evaluate", "{\"expression\":\"sum = 9\"}");
+    calls = call(calls, "6", "breakpoint", "{\"file\":\"prog.c\",\"line\":17,\"condition\":\"r == 7\"}");
+    calls = call(calls, "7", "step_out", "{}");
+    calls = call(calls, "8", "step_over", "{}");
+    calls = call(calls, "9", "continue", "{}");
+    calls = call(calls, "10", "stack", "{}");
+    calls = call(calls, "11", "continue", "{}");
+    calls = call(calls, "12", "continue", "{}");
+    calls = call(calls, "13", "stop", "{}");
+    calls = call(calls, "14", "stack", "{}");
+    serve(&p, calls, "14");
     scratch::expect_text("a C session: nothing on stderr", "", scratch::read(&p, "err.txt"));
     scratch::expect_text("a C session: every line of stdout is a JSON message", "0",
                          scratch::capture(&p, "grep -vc '^{\"' out.jsonl"));
@@ -236,17 +256,22 @@ export void test_macos_mcp_a_c_program_session(io::Io *io) {
 }
 
 // A client that goes away while the program is stopped takes the program with it.
-export void test_macos_mcp_a_client_that_goes_away_takes_the_program_with_it(io::Io *io) {
-    scratch::Project root;
-    if (!make(io, &root)) {
+export void test_macos_mcp_a_client_that_goes_away_takes_the_program_with_it() {
+    scratch::Project root = scratch::make("mcp", "mcp");
+    defer scratch::clean(&root);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!can_debug(&root)) {
         return;
     }
     scratch::Project p = folder(&root, "c");
     scratch::Run built = scratch::sh(&p, "smith cc -g -O0 spin.c -o spin");
     scratch::expect_status("spin.c builds", 0, &built);
     const char *calls =
-        call(io, "", "1", "launch", "{\"program\":\"spin\",\"breakpoints\":[{\"file\":\"spin.c\",\"line\":9}]}");
-    serve(io, &p, calls, "1");
+        call("", "1", "launch", "{\"program\":\"spin\",\"breakpoints\":[{\"file\":\"spin.c\",\"line\":9}]}");
+    serve(&p, calls, "1");
     scratch::expect_contains("a launch stopped before sleep", answer(&p, "1"), "stopped: breakpoint");
     // The server ends the program when the input ends: wait for that (order, not a number of seconds), well inside
     // the 60 s the program sleeps. Not killed here: the program is no child of this test, so its pid may already be
@@ -261,9 +286,14 @@ export void test_macos_mcp_a_client_that_goes_away_takes_the_program_with_it(io:
 // --- a .smith program (names as written)
 // ---------------------------------------------------------------------------------
 
-export void test_macos_mcp_a_smith_program_session_has_names_as_written(io::Io *io) {
-    scratch::Project root;
-    if (!make(io, &root) ||
+export void test_macos_mcp_a_smith_program_session_has_names_as_written() {
+    scratch::Project root = scratch::make("mcp", "mcp");
+    defer scratch::clean(&root);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!can_debug(&root) ||
         scratch::sh(&root, "smith cc --smith-which -x c 2>/dev/null | grep -q 'token-hook yes'").status != 0) {
         return;
     }
@@ -275,13 +305,13 @@ export void test_macos_mcp_a_smith_program_session_has_names_as_written(io::Io *
         "main.o -o lang");
     scratch::expect_status("the .smith program builds", 0, &built);
     const char *calls = "";
-    calls = call(io, calls, "1", "launch",
+    calls = call(calls, "1", "launch",
                  "{\"program\":\"lang\",\"breakpoints\":[{\"file\":\"geometry/box.smith\",\"line\":4}]}");
-    calls = call(io, calls, "2", "stack", "{}");
-    calls = call(io, calls, "3", "variables", "{\"depth\":1}");
-    calls = call(io, calls, "4", "evaluate", "{\"expression\":\"b.w * b.h\"}");
-    calls = call(io, calls, "5", "continue", "{}");
-    serve(io, &p, calls, "5");
+    calls = call(calls, "2", "stack", "{}");
+    calls = call(calls, "3", "variables", "{\"depth\":1}");
+    calls = call(calls, "4", "evaluate", "{\"expression\":\"b.w * b.h\"}");
+    calls = call(calls, "5", "continue", "{}");
+    serve(&p, calls, "5");
     scratch::expect_text("a .smith session: nothing on stderr", "", scratch::read(&p, "err.txt"));
     scratch::expect_text(
         "launch stops in the module's function, named as written",
@@ -315,20 +345,25 @@ constexpr char build_project[_] =
     "else i=0; while [ ! -d \"$c\" ] && [ -d \"$lock\" ] && [ $i -lt 3000 ]; do sleep 0.2; i=$((i + 1)); done; fi; "
     "[ -d \"$c\" ] && cp -Rp \"$c/.\" . && env CC=smith-cc CXX=smith-c++ smith build >build.log 2>&1";
 
-static const char *project_calls(io::Io *io) {
+static const char *project_calls() {
     const char *calls = "";
-    calls = call(io, calls, "1", "launch",
+    calls = call(calls, "1", "launch",
                  "{\"test\":\"twice_doubles\",\"breakpoints\":[{\"file\":\"tests/test_a.c\",\"line\":5}]}");
-    calls = call(io, calls, "2", "variables", "{}");
-    calls = call(io, calls, "3", "stack", "{\"levels\":2}");
-    calls = call(io, calls, "4", "step_out", "{}");
-    calls = call(io, calls, "5", "continue", "{}");
-    return call(io, calls, "6", "launch", "{\"test\":\"twice_doubles\",\"runner\":\"build/nonesuch\"}");
+    calls = call(calls, "2", "variables", "{}");
+    calls = call(calls, "3", "stack", "{\"levels\":2}");
+    calls = call(calls, "4", "step_out", "{}");
+    calls = call(calls, "5", "continue", "{}");
+    return call(calls, "6", "launch", "{\"test\":\"twice_doubles\",\"runner\":\"build/nonesuch\"}");
 }
 
-export void test_macos_mcp_a_test_of_a_project_launched_by_its_name(io::Io *io) {
-    scratch::Project root;
-    if (!make(io, &root)) {
+export void test_macos_mcp_a_test_of_a_project_launched_by_its_name() {
+    scratch::Project root = scratch::make("mcp", "mcp");
+    defer scratch::clean(&root);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!can_debug(&root)) {
         return;
     }
     scratch::Project p = folder(&root, "project");
@@ -337,7 +372,7 @@ export void test_macos_mcp_a_test_of_a_project_launched_by_its_name(io::Io *io) 
         test::note("%s%s", built.err, scratch::read(&p, "build.log"));
     }
     scratch::expect_status("the scratch project builds", 0, &built);
-    serve(io, &p, project_calls(io), "6");
+    serve(&p, project_calls(), "6");
     scratch::expect_text("a test session: nothing on stderr", "", scratch::read(&p, "err.txt"));
     scratch::expect_text(
         "launch by the name of a test stops in the test",
@@ -358,9 +393,14 @@ export void test_macos_mcp_a_test_of_a_project_launched_by_its_name(io::Io *io) 
 }
 
 // The runner is the one build.info names, wherever it is: moved, with the line changed, no guess finds it.
-export void test_macos_mcp_the_runner_build_info_names_is_launched(io::Io *io) {
-    scratch::Project root;
-    if (!make(io, &root)) {
+export void test_macos_mcp_the_runner_build_info_names_is_launched() {
+    scratch::Project root = scratch::make("mcp", "mcp");
+    defer scratch::clean(&root);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!can_debug(&root)) {
         return;
     }
     scratch::Project p = folder(&root, "project");
@@ -370,9 +410,9 @@ export void test_macos_mcp_the_runner_build_info_names_is_launched(io::Io *io) {
         &p, "mv build/tests build/runner-elsewhere && sed \"s|^runner$(printf '\\t').*|runner$(printf "
             "'\\t')build/runner-elsewhere|\" .smith/build.info >build.info.new && mv build.info.new .smith/build.info");
     scratch::expect_status("the runner is moved", 0, &moved);
-    const char *calls = call(io, "", "1", "launch",
+    const char *calls = call("", "1", "launch",
                              "{\"test\":\"twice_doubles\",\"breakpoints\":[{\"file\":\"tests/test_a.c\",\"line\":5}]}");
-    serve(io, &p, calls, "1");
+    serve(&p, calls, "1");
     scratch::expect_contains("the runner build.info names is launched", answer(&p, "1"),
                              "DIR/project/build/runner-elsewhere --test twice_doubles --in-process");
 }
