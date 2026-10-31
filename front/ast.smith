@@ -1092,7 +1092,7 @@ static void type_children(Items *items, TypeExpr *t) {
     case .function:
         for (usize i = 0; i < countof(t->kind.function.params); i++)
             add_type(items, t->kind.function.params[i], false);
-        add_type(items, t->kind.function.result, false);
+        add_result(items, t->kind.function.result);
         break;
     case .applied:
         for (usize i = 0; i < countof(t->kind.applied.args); i++)
