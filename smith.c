@@ -1455,7 +1455,7 @@ static SmithBuildFile smith_build_file(void) {
 // The libraries the build program links, .smith modules that the smith doing the build compiles whatever compiler
 // compiles build.c itself (an external SMITH_CLANG knows no .smith): the runtime's package.c and the executor use them
 // through their headers. random declares -ffp-contract=off.
-static const char *const smith_build_program_libraries[] = {"arena", "contract", "files", "inflate", "io", "mem", "net", "random"};
+static const char *const smith_build_program_libraries[] = {"arena", "contract", "env", "files", "inflate", "io", "mem", "net", "random"};
 
 // The compiles are `-MD` and name the debug info's folder `.`, so the step cache serves them to every project whose
 // build file and libraries are the same (executor.md, "The step cache"): -MMD is refused by it, and a `-g` object
@@ -1514,6 +1514,15 @@ static size_t smith_build_program_manifest(char *out, size_t capacity, const cha
         SMITH_ASSERT(more > 0 && (size_t)more < sizeof objects - objects_length);
         objects_length += (size_t)more;
     }
+    // The libraries call the handlers' getters and setters (smith::mem, files, net), so the runtime is linked as an
+    // object (on macOS too, where it interposes nothing in the program that holds it: only its functions are used).
+    int handlers = snprintf(out + written, capacity - (size_t)written,
+                            "build .smith/build-program/handlers.o: cc .smith/lib/handlers.c\n");
+    SMITH_ASSERT(handlers > 0 && (size_t)handlers < capacity - (size_t)written);
+    written += handlers;
+    int more_objects = snprintf(objects + objects_length, sizeof objects - objects_length,
+                                " .smith/build-program/handlers.o");
+    SMITH_ASSERT(more_objects > 0 && (size_t)more_objects < sizeof objects - objects_length);
     int linked = snprintf(out + written, capacity - (size_t)written, "build .smith/program: link %s\n", objects);
     SMITH_ASSERT(linked > 0 && (size_t)linked < capacity - (size_t)written);
     return (size_t)written + (size_t)linked;

@@ -692,7 +692,7 @@ static const char *const build_smith_inputs[] = {
 // lldb loads.
 // The libraries smith links, .smith modules compiled by the smith that runs this build (smith.c and the runtime see
 // only their headers); text is its own object beside them.
-static const char *const build_linked_libraries[] = {"arena", "contract", "files", "inflate", "io", "mem", "net", "random", "text"};
+static const char *const build_linked_libraries[] = {"arena", "contract", "env", "files", "inflate", "io", "mem", "net", "random", "text"};
 
 // The step that stops the build when the LLVM install is not there, and says what to run: an input of what links it.
 // Only the default target runs it, so `smith build llvm` works on a smith with no LLVM install.
