@@ -38,6 +38,8 @@ the call of bytes::copy passes `dst` (restrict) and `src` slices or ranges that 
   - `modifies` is checked in the body: `FAIL f` / `file:12: the function writes here, outside the ranges its smith_modifies names`. At a call the callee's pointer arguments go to a scratch object and only its ranges are made arbitrary (the callee writes nothing else, being proved to), so the cost follows the ranges, not the object.
   - A caller that relies on something the callee does not promise is refuted with a counterexample (`first = 96` for a byte the callee overwrote), never proved.
 
+- **A lemma is such a call.** A function with a `smith_requires` and a `smith_ensures` and no result (`square_is_nonnegative(n)`) gives its `smith_ensures` at the arguments of the call, once the `smith_requires` is proved there; it may be the only step of the caller's proof. A function called inside a contract (`smith_ensures(twice(n) == 2 * n)`) is part of the claim: its body (a callee with no `smith_ensures` is inlined) or its contract says what its value is. A recursive function is neither proved nor usable through its contract yet (`recursion: ...`, #1054).
+
 A pointer a function returns, variadics and the cost of a contract: `smith-prove-pointers`.
 
 See `smith-prove`, `smith-contract` (`modifies`), `smith-contract-proof`.

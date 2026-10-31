@@ -32,3 +32,26 @@ export void check_input(bool holds) {
 - **A function with a precondition that cannot be proved is `requires` plus `smith_trusted()`** (first statement), with the reason in a comment (smith-prove-trusted).
 
 See `smith-contract`.
+
+## A lemma is a function
+
+A lemma's `requires` is its hypothesis and its `ensures` its claim; using it is calling it: the prover proves the `requires` at the call, then knows the `ensures` for the arguments passed. A function called inside a contract is read through its body (or its own contract), so a claim can be about its result.
+
+```smith
+module squares;
+
+import smith::contract;
+
+export void square_is_nonnegative(i32 n) {
+    contract::ensures((i64)n * (i64)n >= 0);
+}
+
+export i64 square(i32 n) {
+    square_is_nonnegative(n);                  // gives the claim at n
+    i64 result = (i64)n * (i64)n;
+    contract::ensures(result >= 0);
+    return result;
+}
+```
+
+A lemma called where its `requires` may be false is refused at the call. A recursive lemma is not usable yet (`smith-prove-calls`).

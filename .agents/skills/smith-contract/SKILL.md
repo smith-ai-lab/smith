@@ -51,4 +51,4 @@ export u32 count_pairs(u32 squares, u32 *moves) {
 
 Also in this family: [smith-contract-proof](../smith-contract-proof/SKILL.md) (`modifies`, a loop's invariant, compile time), [smith-contract-c](../smith-contract-c/SKILL.md), [smith-prove](../smith-prove/SKILL.md), [smith-prove-trusted](../smith-prove-trusted/SKILL.md), [smith-prove-cost](../smith-prove-cost/SKILL.md). `smith prove` and `smith check` say how many functions have a contract (`4 of 23 functions`): write the next one from `smith prove -v`.
 
-Where an assert, a `requires`, an `ensures` and a trusted check each go: `smith-contract-roles`.
+Where an assert, a `requires`, an `ensures` and a trusted check each go: `smith-contract-roles`, which also shows a lemma (a function whose `ensures` is used by calling it).
