@@ -214,6 +214,7 @@ class Presenter final : public DiagnosticConsumer {
             // definition's (and the compiler's, which has its own, is not).
             if (origin.isValid() && level != DiagnosticsEngine::Note && !tool && !instance) {
                 dropNotes = true;
+                if (level >= DiagnosticsEngine::Error) DiagnosticConsumer::HandleDiagnostic(level, info); // still fails
                 return;
             }
             if (instance &&
