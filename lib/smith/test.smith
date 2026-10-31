@@ -1,3 +1,4 @@
+// smith-build: header
 // smith::test, <smith/test.h>: tests, written once and done well. Its C API is the generated header
 // include/smith/test.h (a build output, not in git). Every export has a short name here and, where
 // C calls it, a C name (the attribute before it): `test::check_equal_i32` is `smith_check_equal_i32`, `test::Test` is

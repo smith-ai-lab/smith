@@ -1,3 +1,4 @@
+// smith-build: link
 // smith::inflate, <smith/inflate.h>: DEFLATE (RFC 1951) and the zlib (RFC 1950) and gzip (RFC 1952) formats around it.
 // Its C API is the generated header include/smith/inflate.h (a build output, not in git). Every
 // export has a short name here and a C name (the attribute before it): `inflate::decode` is `smith_inflate_decode`,

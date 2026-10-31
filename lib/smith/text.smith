@@ -1,3 +1,4 @@
+// smith-build: link
 // smith::text, <smith/text.h>: reading and writing small text formats by hand. Its C API is the generated header
 // include/smith/text.h (a build output, not in git). Every export has a short name here and a C
 // name (the attribute before it): `text::make` is `smith_text_make`. The comments above an

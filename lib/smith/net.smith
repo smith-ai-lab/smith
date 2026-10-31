@@ -1,3 +1,4 @@
+// smith-build: link
 // smith::net, <smith/net.h>: TCP and TLS by direct calls, with no capability value to pass: connect to a host (plain or
 // with TLS), listen on a port and accept, read and write bytes, close (#240). Its C API is the generated header
 // include/smith/net.h (committed; `smith build headers` regenerates it); the names follow the rule of arena.smith with

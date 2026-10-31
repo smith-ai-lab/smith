@@ -1,3 +1,4 @@
+// smith-build: header
 // smith::effects, <smith/effects.h>: what a function may do to the world, as a library states it of a function it is
 // given. The sets are masks, one bit for each kind of handler, and `|` makes a set of them:
 //

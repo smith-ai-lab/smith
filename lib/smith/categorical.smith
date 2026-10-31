@@ -1,3 +1,4 @@
+// smith-build: header
 // smith::categorical, <smith/categorical.h>: a random index with given weights (Vose's alias table), drawn from a
 // random::Key. Its C API is the generated header include/smith/categorical.h (a build output, not in git); the names
 // follow the rule of random.smith: `categorical::make` is `smith_categorical_table_make`, `categorical::Table` is
