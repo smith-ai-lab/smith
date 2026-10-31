@@ -5,7 +5,7 @@ description: "Using smith::mem (import smith::mem; mem::alloc, alloc_slice, try_
 
 # Memory from the allocator in force: smith::mem
 
-`mem::alloc(T)` is a zeroed `T *` from the allocator of the calling thread: the system's by default, an arena or a fake after `mem::set_allocator`. It is never null: a refusal (the OS out of memory, a fixed arena's budget) is a checked failure naming the size, which aborts for now (with tasks, #324, it fails the task and unwinds through `defer`). Code that can do something about a refusal calls `mem::try_alloc`, which returns an `option`. `malloc` keeps C's contract (null when refused).
+`mem::alloc(T)` is a zeroed `T *` from the allocator of the calling thread: the system's by default, an arena or a fake after `mem::set_allocator`. It is never null: a refusal (the OS out of memory, a fixed arena's budget) is a checked failure naming the size, which aborts for now (with tasks, #324, it fails the task and unwinds through `defer`). Code that can do something about a refusal calls `mem::try_alloc` or `mem::try_alloc_slice`, which return an `option`. `malloc` keeps C's contract (null when refused).
 
 ```smith
 module scratch;
@@ -30,7 +30,7 @@ export void fill(arena::Arena *a) {
 }
 ```
 
-- The calls: `mem::alloc(T)`, `mem::alloc_slice(T, sizes...)` (as `arena::push_slice`), `mem::try_alloc(T)`, `mem::free(p)`, `mem::set_allocator(a)` (returns the previous; null is the system's) and `mem::allocator()`. For C and sizes known at run time: `mem::alloc_raw(size, align)` (`smith_mem_alloc`), `alloc_array_raw`, `try_alloc_raw` (null when refused).
+- The calls: `mem::alloc(T)`, `mem::alloc_slice(T, sizes...)` (as `arena::push_slice`), `mem::try_alloc(T)`, `mem::try_alloc_slice(T, sizes...)` (the zeroed slice of `alloc_slice` as an `option`: `.none` when the allocator refuses or the size overflows, nothing allocated), `mem::free(p)`, `mem::set_allocator(a)` (returns the previous; null is the system's) and `mem::allocator()`. For C and sizes known at run time: `mem::alloc_raw(size, align)` (`smith_mem_alloc`), `alloc_array_raw`, `try_alloc_raw` (null when refused).
 - An `Allocator` is a struct whose first member is a `SmithAllocator` (`alloc`, `realloc`, `free`, `owns`, optional `size`, `<smith/handlers.h>`); the setter is per thread. `arena::allocator` makes one over an arena (a growing arena never refuses until its backing does); how `malloc` reaches it is in knowledge/handlers.md. 
 
 ## Finding mistakes: mem::checked
