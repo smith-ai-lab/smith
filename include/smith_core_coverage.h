@@ -20,3 +20,19 @@ typedef struct {
 // the buffer cannot be made.
 bool smith_core_coverage_report(const char *table, const SmithCoreChanged *changed, size_t count, char *output,
                                 size_t output_size);
+
+// A function a test ran: lines `first` to `last` of `path` (the project's relative path), as the coverage mapping gives
+// them.
+typedef struct {
+    const char *path;
+    const char *name;
+    uint32_t first;
+    uint32_t last;
+} SmithCoreFunction;
+
+// Writes the record of `test` in `folder`/.smith/records, as `smith test --coverage merge` does after a run under
+// coverage: `ran[0..count)` are the functions it executed (those of one file together, in the files' order), hashed
+// from the files in `folder`, and the files they include. `pass` is the test's last result. No compiler and no profile.
+// False when the file cannot be written.
+bool smith_core_coverage_record(const char *folder, const char *test, bool pass, const SmithCoreFunction *ran,
+                                size_t count);

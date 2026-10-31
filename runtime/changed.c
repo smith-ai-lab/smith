@@ -1235,6 +1235,7 @@ static void smith_changed_reset(void) {
     smith_changed_build_local = false;
     smith_changed_embedded_count = 0;
     smith_changed_makes_records = false;
+    smith_rec_reset();
 }
 
 // Gives each line of `text` to `line`.
