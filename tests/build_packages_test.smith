@@ -36,33 +36,31 @@ static Fixture fixture(arena::Arena *memory, const char *cache) {
     Fixture f = {.p = scratch::make("p", "packages"), .memory = memory};
     scratch::Run made = scratch::sh(&f.p, make_archives);
     test::check_equal(made.status, 0);
-    f.pk = format::push(memory, f.p.dir, "/pk").data;
+    f.pk = format::push(f.p.dir, "/pk").data;
     f.p.cache = cache_in(&f.p, cache);
-    f.url = format::push(memory, "file://", f.pk, "/pkg.tar.gz").data;
+    f.url = format::push("file://", f.pk, "/pkg.tar.gz").data;
     f.hex = scratch::capture(&f.p, "shasum -a 256 pk/pkg.tar.gz | cut -d' ' -f1");
-    f.hash = format::push(memory, "sha256:", f.hex).data;
+    f.hash = format::push("sha256:", f.hex).data;
     return f;
 }
 
 static scratch::Run build_with(const Fixture *f, const char *url, const char *hash, const char *extra) {
-    return scratch::build(&f->p, format::push(f->memory, "-DURL=", url, " -DHASH=", hash, extra).data);
+    return scratch::build(&f->p, format::push("-DURL=", url, " -DHASH=", hash, extra).data);
 }
 
 static const char *package_dir(const Fixture *f, const char *hex) {
-    return format::push(f->memory, f->p.cache, "/smith/packages/", hex).data;
+    return format::push(f->p.cache, "/smith/packages/", hex).data;
 }
 
 // Whether the cache holds a folder for the hash: "yes" or "no".
 static const char *in_cache(const Fixture *f, const char *hex) {
-    return scratch::capture(&f->p,
-                            format::push(f->memory, "[ -e ", package_dir(f, hex), " ] && echo yes || echo no").data);
+    return scratch::capture(&f->p, format::push("[ -e ", package_dir(f, hex), " ] && echo yes || echo no").data);
 }
 
 // How many temporary files (.tmp...) the cache's package folder holds.
 static const char *temporaries(const Fixture *f) {
     return scratch::capture(
-        &f->p,
-        format::push(f->memory, "ls -A ", f->p.cache, "/smith/packages 2>/dev/null | grep -c '^\\.tmp'; true").data);
+        &f->p, format::push("ls -A ", f->p.cache, "/smith/packages 2>/dev/null | grep -c '^\\.tmp'; true").data);
 }
 
 export void test_build_package_is_fetched_extracted_and_cached_by_hash() {
@@ -74,14 +72,13 @@ export void test_build_package_is_fetched_extracted_and_cached_by_hash() {
     defer scratch::clean(&f.p);
     scratch::Run first = build_with(&f, f.url, f.hash, "");
     scratch::expect_status("package: the first build exits 0", 0, &first);
-    scratch::expect_contains("package: it says it is fetching", first.err,
-                             format::push(&memory, "fetching ", f.url).data);
+    scratch::expect_contains("package: it says it is fetching", first.err, format::push("fetching ", f.url).data);
     scratch::expect_text("package: the path is in the cache, by hash", package_dir(&f, f.hex),
                          scratch::read(&f.p, "path.txt"));
     scratch::expect_text("package: the archive's one top folder is stripped and its files are used", "hello package",
                          scratch::read(&f.p, "out.txt"));
     scratch::expect_text("package: modes survive extraction", "tool ran",
-                         scratch::capture(&f.p, format::push(&memory, package_dir(&f, f.hex), "/bin/tool 2>&1").data));
+                         scratch::capture(&f.p, format::push(package_dir(&f, f.hex), "/bin/tool 2>&1").data));
     scratch::expect_text("package: no temporary file is left in the cache", "0", temporaries(&f));
 }
 
@@ -114,8 +111,8 @@ export void test_build_package_a_wrong_or_malformed_hash_fails() {
     scratch::Run run = build_with(&f, f.url, wrong, "");
     scratch::expect_failure("package: a wrong hash fails", &run);
     scratch::expect_contains("package: the message names the URL", run.err, f.url);
-    scratch::expect_contains("package: and the expected hash", run.err, format::push(&memory, "expected ", wrong).data);
-    scratch::expect_contains("package: and the actual hash", run.err, format::push(&memory, "actual   ", f.hash).data);
+    scratch::expect_contains("package: and the expected hash", run.err, format::push("expected ", wrong).data);
+    scratch::expect_contains("package: and the actual hash", run.err, format::push("actual   ", f.hash).data);
     scratch::expect_text("package: a wrong hash leaves nothing under it", "no", in_cache(&f, wrong + 7));
     scratch::expect_text("package: and no temporary file", "0", temporaries(&f));
     scratch::Run malformed = build_with(&f, f.url, "sha256:abc", "");
@@ -131,7 +128,7 @@ export void test_build_package_a_failed_fetch_leaves_nothing_and_the_next_build_
     defer mem::set_allocator(outside);
     Fixture f = fixture(&memory, "cache2");
     defer scratch::clean(&f.p);
-    const char *absent = format::push(&memory, "file://", f.pk, "/absent.tar.gz").data;
+    const char *absent = format::push("file://", f.pk, "/absent.tar.gz").data;
     scratch::Run failed = build_with(&f, absent, f.hash, "");
     scratch::expect_failure("package: a failed fetch fails the build", &failed);
     scratch::expect_contains("package: ... naming the URL", failed.err, absent);
@@ -165,20 +162,19 @@ export void test_build_package_smith_fetch_prints_the_hash_line_and_caches() {
     defer mem::set_allocator(outside);
     Fixture f = fixture(&memory, "cache3");
     defer scratch::clean(&f.p);
-    scratch::Run fetched = scratch::sh(&f.p, format::push(&memory, "smith fetch ", f.url).data);
-    scratch::expect_text("package: smith fetch prints the hash line",
-                         format::push(&memory, ".hash = \"", f.hash, "\",").data, fetched.out);
+    scratch::Run fetched = scratch::sh(&f.p, format::push("smith fetch ", f.url).data);
+    scratch::expect_text("package: smith fetch prints the hash line", format::push(".hash = \"", f.hash, "\",").data,
+                         fetched.out);
     scratch::expect_text(
         "package: and leaves the package in the cache", "hello package",
-        scratch::capture(&f.p, format::push(&memory, "cat ", package_dir(&f, f.hex), "/hello.txt 2>/dev/null").data));
+        scratch::capture(&f.p, format::push("cat ", package_dir(&f, f.hex), "/hello.txt 2>/dev/null").data));
     scratch::Run offline = build_with(&f, f.url, f.hash, " -DOFFLINE");
     char text[128];
     __builtin_snprintf(text, sizeof text, "%d %s", offline.status, scratch::read(&f.p, "out.txt"));
     scratch::expect_text("package: a build offline then uses it", "0 hello package", text);
     scratch::Run none = scratch::sh(&f.p, "smith fetch");
     scratch::expect_status("package: smith fetch needs a URL", 2, &none);
-    scratch::Run missing =
-        scratch::sh(&f.p, format::push(&memory, "smith fetch file://", f.pk, "/missing.tar.gz").data);
+    scratch::Run missing = scratch::sh(&f.p, format::push("smith fetch file://", f.pk, "/missing.tar.gz").data);
     scratch::expect_failure("package: smith fetch of a missing file fails", &missing);
 }
 
@@ -190,7 +186,7 @@ export void test_build_package_xz_extracts_and_a_zip_is_refused() {
     defer mem::set_allocator(outside);
     Fixture f = fixture(&memory, "cache-xz");
     defer scratch::clean(&f.p);
-    scratch::Run fetched = scratch::sh(&f.p, format::push(&memory, "smith fetch file://", f.pk, "/pkg.tar.xz").data);
+    scratch::Run fetched = scratch::sh(&f.p, format::push("smith fetch file://", f.pk, "/pkg.tar.xz").data);
     const char *line = fetched.out;
     const char *start = c::strchr(line, '"');
     char hash[128] = "";
@@ -204,20 +200,18 @@ export void test_build_package_xz_extracts_and_a_zip_is_refused() {
     }
     scratch::expect_text(
         "package: .tar.xz has the hash shasum gives",
-        format::push(&memory, "sha256:", scratch::capture(&f.p, "shasum -a 256 pk/pkg.tar.xz | cut -d' ' -f1")).data,
-        hash);
+        format::push("sha256:", scratch::capture(&f.p, "shasum -a 256 pk/pkg.tar.xz | cut -d' ' -f1")).data, hash);
     scratch::expect_text(
         "package: .tar.xz extracts", "hello package",
-        scratch::capture(
-            &f.p,
-            format::push(&memory, "cat ", f.p.cache, "/smith/packages/", hash + 7, "/hello.txt 2>/dev/null").data));
+        scratch::capture(&f.p,
+                         format::push("cat ", f.p.cache, "/smith/packages/", hash + 7, "/hello.txt 2>/dev/null").data));
     f.p.cache = cache_in(&f.p, "cache-zip");
-    scratch::Run zip = scratch::sh(&f.p, format::push(&memory, "smith fetch file://", f.pk, "/pkg.zip").data);
+    scratch::Run zip = scratch::sh(&f.p, format::push("smith fetch file://", f.pk, "/pkg.zip").data);
     scratch::expect_failure("package: a .zip is refused", &zip);
     scratch::expect_contains("package: and the message names the format and the archive", zip.err,
                              "zip archives are not supported");
     scratch::expect_text("package: and nothing is left in the cache", "0",
-                         scratch::capture(&f.p, format::push(&memory, "ls ", f.p.cache,
+                         scratch::capture(&f.p, format::push("ls ", f.p.cache,
                                                              "/smith/packages 2>/dev/null | grep -vc "
                                                              "'^\\.tmp\\|prune.timestamp\\|\\.used'; true")
                                                     .data));
@@ -230,14 +224,13 @@ export void test_build_package_without_xdg_cache_home_the_cache_is_dot_cache() {
     defer mem::set_allocator(outside);
     Fixture f = fixture(&memory, "cache");
     defer scratch::clean(&f.p);
-    scratch::Run run = scratch::sh(&f.p, format::push(&memory,
-                                                      "mkdir pk/home && env -u XDG_CACHE_HOME HOME=$PWD/pk/home "
+    scratch::Run run = scratch::sh(&f.p, format::push("mkdir pk/home && env -u XDG_CACHE_HOME HOME=$PWD/pk/home "
                                                       "smith fetch ",
                                                       f.url)
                                              .data);
     test::check_equal(run.status, 0);
     scratch::expect_text(
         "package: with no XDG_CACHE_HOME the cache is ~/.cache", "hello package",
-        scratch::capture(
-            &f.p, format::push(&memory, "cat pk/home/.cache/smith/packages/", f.hex, "/hello.txt 2>/dev/null").data));
+        scratch::capture(&f.p,
+                         format::push("cat pk/home/.cache/smith/packages/", f.hex, "/hello.txt 2>/dev/null").data));
 }

@@ -65,23 +65,23 @@ export void test_macos_sdk_cache_follows_developer_dir() {
                                          "-o bin/clang");
     scratch::expect_status("the stub compiler is built", 0, &built);
     // Same empty data folder for both runs; the stub clang prints the SDKROOT smith chose.
-    const char *prefix = format::push(arena, "env -u SDKROOT -u CLANG_NO_DEFAULT_CONFIG XDG_DATA_HOME=", p.dir,
+    const char *prefix = format::push("env -u SDKROOT -u CLANG_NO_DEFAULT_CONFIG XDG_DATA_HOME=", p.dir,
                                       "/data STUB_SHOW_ENV=1 SMITH_CLANG=", p.dir, "/bin/clang DEVELOPER_DIR=")
                              .data;
     const char *want_first =
-        scratch::capture(&p, format::push(arena, "DEVELOPER_DIR='", first, "' /usr/bin/xcrun --show-sdk-path").data);
+        scratch::capture(&p, format::push("DEVELOPER_DIR='", first, "' /usr/bin/xcrun --show-sdk-path").data);
     const char *want_second =
-        scratch::capture(&p, format::push(arena, "DEVELOPER_DIR='", second, "' /usr/bin/xcrun --show-sdk-path").data);
+        scratch::capture(&p, format::push("DEVELOPER_DIR='", second, "' /usr/bin/xcrun --show-sdk-path").data);
     scratch::expect_lacks("the two developer folders have different SDK paths", want_first, want_second);
-    scratch::Run one = scratch::sh(&p, format::push(arena, prefix, first, " \"$SMITH_SELF\" cc -c a.c").data);
+    scratch::Run one = scratch::sh(&p, format::push(prefix, first, " \"$SMITH_SELF\" cc -c a.c").data);
     scratch::expect_contains("the first developer folder's SDK is used", one.out,
-                             format::push(arena, "env SDKROOT=", want_first, "\n").data);
+                             format::push("env SDKROOT=", want_first, "\n").data);
     const char *key = scratch::read(&p, "data/smith/sdk");
     scratch::expect_contains("the answer is remembered with DEVELOPER_DIR in its key", key,
-                             format::push(arena, first, "|").data);
-    scratch::Run two = scratch::sh(&p, format::push(arena, prefix, second, " \"$SMITH_SELF\" cc -c a.c").data);
+                             format::push(first, "|").data);
+    scratch::Run two = scratch::sh(&p, format::push(prefix, second, " \"$SMITH_SELF\" cc -c a.c").data);
     scratch::expect_contains("another DEVELOPER_DIR asks again: the new SDK is used", two.out,
-                             format::push(arena, "env SDKROOT=", want_second, "\n").data);
+                             format::push("env SDKROOT=", want_second, "\n").data);
     scratch::expect_contains("... and the remembered key is the new one", scratch::read(&p, "data/smith/sdk"),
-                             format::push(arena, second, "|").data);
+                             format::push(second, "|").data);
 }

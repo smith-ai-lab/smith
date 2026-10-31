@@ -33,7 +33,7 @@ const char *own(auto... args) {
 
 // The arguments as a text: on the project's arena, or from the allocator in force in a project with no io.
 const char *text_in(const scratch::Project *p, auto... args) {
-    if (p->io != nullptr) return format::push(&p->io->arena, args...).data;
+    if (p->io != nullptr) return scratch::push(&p->io->arena, args...).data;
     return own(args...);
 }
 
@@ -59,7 +59,7 @@ static scratch::Run run_text(const scratch::Project *p, const char *command) {
 // A project: the build.c of `base` (runner_base, or runner_c for C only) with the files of the fixture `files` over it.
 export scratch::Project project(io::Io *io, const char *base, const char *files) {
     scratch::Project p = scratch::project(io, "p", base);
-    scratch::copy_tree(&p, format::push(&io->arena, "tests/build_fixtures/", files).data, "");
+    scratch::copy_tree(&p, scratch::push(&io->arena, "tests/build_fixtures/", files).data, "");
     return p;
 }
 
@@ -108,8 +108,8 @@ constexpr char copy_script[_] = "cp -Rp \"$c/proj/.\" .";
 // test that only runs `build/tests`; a test that builds again, or expects a failed build, uses those two.
 export scratch::Project built_project(io::Io *io, const char *base, const char *files, const char *arguments) {
     scratch::Project p = project(io, base, files);
-    scratch::Run run =
-        scratch::sh(&p, format::push(&io->arena, "ARGS='", arguments, "'; ", shared_script, link_script, " 2>&1").data);
+    scratch::Run run = scratch::sh(
+        &p, scratch::push(&io->arena, "ARGS='", arguments, "'; ", shared_script, link_script, " 2>&1").data);
     scratch::expect_status("runner: the runner builds", 0, &run);
     return p;
 }
@@ -133,8 +133,8 @@ export scratch::Project built_project_free(const char *base, const char *files, 
 // build `smith test` starts with has nothing to do.
 export scratch::Project built_copy(io::Io *io, const char *base, const char *files, const char *arguments) {
     scratch::Project p = project(io, base, files);
-    scratch::Run run =
-        scratch::sh(&p, format::push(&io->arena, "ARGS='", arguments, "'; ", shared_script, copy_script, " 2>&1").data);
+    scratch::Run run = scratch::sh(
+        &p, scratch::push(&io->arena, "ARGS='", arguments, "'; ", shared_script, copy_script, " 2>&1").data);
     scratch::expect_status("runner: the runner builds", 0, &run);
     return p;
 }
@@ -179,7 +179,7 @@ export const char *flag(usize mode) {
 // A check's name, saying the mode when it is the isolated one.
 export const char *label(io::Io *io, const char *iso, const char *name) {
     if (iso[0] == '\0') return name;
-    return format::push(&io->arena, name, " (", iso, ")").data;
+    return scratch::push(&io->arena, name, " (", iso, ")").data;
 }
 
 // `label` with no io: a text of its own in the isolated mode, else the name itself.

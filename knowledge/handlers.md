@@ -34,9 +34,10 @@ prebuilt library's and one loaded with `dlopen`. Owner (2026-10-24): "always int
   does not link the source as an object (`smith_app_library` skips it): the functions are the dylib's.
 - **ASan:** a program with `-fsanitize=address` is linked with `-lclang_rt.asan_osx_dynamic` before `-lsmith_handlers`, so
   the runtime's tuples sit ahead of ASan's and a call with no handler reaches ASan's allocator (spike 4 of #208, option A).
-- **smith itself is the exception** (its link is named `.../smith`, `smith_is_smith_itself`): its clones, `bin/clang` and
-  `bin/ld`, run from the programs folder, which has no dylib beside them. A field of `SmithProgram` replaces the name once a
-  release's header has it (the lag rule).
+- **smith links it like every program** (owner, #240, 2026-10-30: "no exceptions for anything. The compiler is just a
+  normal Smith program"), its `malloc` and LLVM's included. On macOS the dylib is beside the binary (the install, the
+  release archive) and a clone of it is written beside the clones (`bin/clang`, `bin/ld`) in the programs folder when
+  that is made; on Linux the object is linked in.
 - **Linux (issue #305)** has no interpose tuples, but an ELF program's own definitions win over a shared library's: the
   runtime is an object, `<folder>/smith_handlers.o` (one step per folder, never sanitized), linked into every program
   but smith, and `lib/handlers.c`'s Linux half defines `malloc`, `write`, `fwrite`... themselves. Each calls the next

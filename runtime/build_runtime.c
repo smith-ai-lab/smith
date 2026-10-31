@@ -2605,21 +2605,12 @@ static const char *const *smith_handlers_link(SmithBuild *b, const SmithProgram 
 }
 #endif
 
-// smith's own link is the one program that is not linked with the handlers runtime: its clones (clang, ld) run from the
-// programs folder, which has no dylib beside them. Named by the file (`.../smith`), until SmithProgram has a field for
-// it (the lag rule: build.c is built by the previous release, whose header has none). On Linux, where the runtime is
-// an object, smith leaves it out the same way.
-static bool smith_is_smith_itself(const char *output) {
-    const char *slash = strrchr(output, '/');
-    return strcmp(slash != nullptr ? slash + 1 : output, "smith") == 0;
-}
-
-// The arguments that link the handlers runtime into `program` (none for smith itself), and in *files the files the
-// link waits for: on macOS the dylib of its folder (and ASan's options), on Linux the objects themselves.
+// The arguments that link the handlers runtime into `program` (smith itself too: its clones find the dylib beside them,
+// see smith_programs_make in smith.c), and in *files the files the link waits for: on macOS the dylib of its folder
+// (and ASan's options), on Linux the objects themselves.
 static const char *const *smith_program_handlers(SmithBuild *b, const SmithProgram *program,
                                                  const char *const **files) {
     *files = smith_list(b, nullptr);
-    if (smith_is_smith_itself(program->output)) return smith_list(b, nullptr);
     const char *slash = strrchr(program->output, '/');
     const char *folder = slash != nullptr ? smith_text("%.*s", (int)(slash - program->output), program->output) : ".";
     const char *const *handlers = smith_handlers_link(b, program, folder);

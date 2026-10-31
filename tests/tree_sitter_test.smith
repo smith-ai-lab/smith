@@ -28,28 +28,25 @@ constexpr usize memory_size = 1U << 22;
 
 // The driver and the runtime, compiled by smith into ./driver in the project (the driver loads the parser by
 // `smith cc --smith-tree-sitter`). False when the runtime is not available.
-static bool make_driver(arena::Arena *memory, const scratch::Project *p) {
+static bool make_driver(const scratch::Project *p) {
     scratch::copy_tree(p, "tests/tree_sitter.c", "tests/tree_sitter.c");
     scratch::copy_tree(p, "tree-sitter/test/corpus", "tree-sitter/test/corpus");
     scratch::copy_tree(p, "tests/tree_sitter_cases", "tests/tree_sitter_cases");
-    scratch::Run fetched = scratch::sh(p, format::push(memory, "smith fetch ", runtime_url, " 2>&1").data);
+    scratch::Run fetched = scratch::sh(p, format::push("smith fetch ", runtime_url, " 2>&1").data);
     if (!scratch::contains(fetched.out, runtime_hash)) {
         return false;
     }
     const char *runtime =
-        format::push(
-            memory,
-            scratch::capture(
-                p, format::push(memory, "smith fetch ", runtime_url, " 2>&1 | sed -n 's/^smith: .* is in //p'").data),
-            "/lib")
+        format::push(scratch::capture(
+                         p, format::push("smith fetch ", runtime_url, " 2>&1 | sed -n 's/^smith: .* is in //p'").data),
+                     "/lib")
             .data;
-    const char *driver = format::push(memory, "smith cc -std=gnu23 -O1 -g -Wall -Wextra -Wpedantic -Werror -I ",
-                                      runtime, "/include -c tests/tree_sitter.c -o driver.o")
+    const char *driver = format::push("smith cc -std=gnu23 -O1 -g -Wall -Wextra -Wpedantic -Werror -I ", runtime,
+                                      "/include -c tests/tree_sitter.c -o driver.o")
                              .data;
-    const char *library =
-        format::push(memory, "smith cc -std=gnu11 -O2 -w -D_POSIX_C_SOURCE=200112L -D_DEFAULT_SOURCE -I ", runtime,
-                     "/include -I ", runtime, "/src -c ", runtime, "/src/lib.c -o runtime.o")
-            .data;
+    const char *library = format::push("smith cc -std=gnu11 -O2 -w -D_POSIX_C_SOURCE=200112L -D_DEFAULT_SOURCE -I ",
+                                       runtime, "/include -I ", runtime, "/src -c ", runtime, "/src/lib.c -o runtime.o")
+                              .data;
     scratch::Run run = scratch::sh(p, driver);
     scratch::expect_status("the driver compiles under -Werror", 0, &run);
     run = scratch::sh(p, library);
@@ -127,7 +124,7 @@ export void test_tree_sitter_the_grammar_parses_its_corpus_and_samples() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    if (!make_driver(&memory, &p)) {
+    if (!make_driver(&p)) {
         return;
     }
     check_corpus(&p);
@@ -155,7 +152,7 @@ static bool left_out(const char *name) {
 }
 
 // The top level of the repository, listed through smith::files and copied into own/ (the listing below runs there).
-static void copy_own_files(arena::Arena *memory, const scratch::Project *p) {
+static void copy_own_files(const scratch::Project *p) {
     env::Value repo = env::get("SMITH_REPO");
     const char *base = repo == .some ? repo.some.data : ".";
     files::EntriesResult listed = files::list(base[0:c::strlen(base)]);
@@ -163,7 +160,7 @@ static void copy_own_files(arena::Arena *memory, const scratch::Project *p) {
     if (listed != .ok) return;
     for (usize i = 0; i < countof(listed.ok); i++) {
         const char *name = listed.ok[i].name.data;
-        if (!left_out(name)) scratch::copy_tree(p, name, format::push(memory, "own/", name).data);
+        if (!left_out(name)) scratch::copy_tree(p, name, format::push("own/", name).data);
     }
 }
 
@@ -174,10 +171,10 @@ export void test_tree_sitter_smiths_own_c_parses_without_error_nodes() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    if (!make_driver(&memory, &p)) {
+    if (!make_driver(&p)) {
         return;
     }
-    copy_own_files(&memory, &p);
+    copy_own_files(&p);
     scratch::Run listed = scratch::sh(&p, own_c_files);
     scratch::expect_status("smith's own C: the files are listed", 0, &listed);
     scratch::expect_text("smith's own C: there are files", "yes",

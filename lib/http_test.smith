@@ -78,9 +78,9 @@ static c::SmithHttpResult get(Client *client, const char *url) {
 }
 
 static const char *body_of(Client *client) {
-    io::Read read = io::files_read(&client->io->files, &client->io->arena, client->path);
-    test::check_equal(read.error.code, 0);
-    return (const char *)read.data.data;
+    io::Read file = io::files_read(&client->io->files, &client->io->arena, client->path);
+    test::check_equal(file.error.code, 0);
+    return (const char *)file.data.data;
 }
 
 static bool request_starts(Client *client, const char *host, u16 port, usize n, const char *prefix) {
@@ -308,11 +308,11 @@ static void check_large(Client *client) {
     test::check_equal(result.error.code, 0);
     test::check_equal(result.size, body);
     test::check_equal(client->io->arena.used, used);
-    io::Read read = io::files_read(&client->io->files, &client->io->arena, client->path);
-    test::check_equal(read.error.code, 0);
-    test::check_equal(countof(read.data), body);
+    io::Read file = io::files_read(&client->io->files, &client->io->arena, client->path);
+    test::check_equal(file.error.code, 0);
+    test::check_equal(countof(file.data), body);
     for (usize i = 0; i < body; i++) {
-        if (read.data[i] != (u8)(i * 31 + i / 251)) {
+        if (file.data[i] != (u8)(i * 31 + i / 251)) {
             test::check_equal(i, body); // the first byte that differs
             break;
         }
