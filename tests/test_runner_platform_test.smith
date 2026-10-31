@@ -11,7 +11,7 @@ import runner;
 import scratch;
 
 export void test_runner_platform_the_only_flag_lists_the_marked_tests() {
-    scratch::Project p = runner::built_project_free("runner_base", "runner_platform", "");
+    scratch::Project p = runner::built_project("runner_base", "runner_platform", "");
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -26,7 +26,7 @@ export void test_runner_platform_the_only_flag_lists_the_marked_tests() {
 }
 
 export void test_runner_platform_the_skip_flag_lists_the_others() {
-    scratch::Project p = runner::built_project_free("runner_base", "runner_platform", "");
+    scratch::Project p = runner::built_project("runner_base", "runner_platform", "");
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -39,7 +39,7 @@ export void test_runner_platform_the_skip_flag_lists_the_others() {
 }
 
 export void test_runner_platform_the_two_halves_are_every_test_once() {
-    scratch::Project p = runner::built_project_free("runner_base", "runner_platform", "");
+    scratch::Project p = runner::built_project("runner_base", "runner_platform", "");
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -51,7 +51,7 @@ export void test_runner_platform_the_two_halves_are_every_test_once() {
 }
 
 export void test_runner_platform_a_run_runs_only_its_half() {
-    scratch::Project p = runner::built_project_free("runner_base", "runner_platform", "");
+    scratch::Project p = runner::built_project("runner_base", "runner_platform", "");
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -66,7 +66,7 @@ export void test_runner_platform_a_run_runs_only_its_half() {
 // A filter that names only the other half's tests (a pull request's --changed selection on the Mac part) runs nothing
 // and passes; a filter that names no test at all is still an error.
 export void test_runner_platform_a_filter_of_only_the_other_half_runs_nothing_and_passes() {
-    scratch::Project p = runner::built_project_free("runner_base", "runner_platform", "");
+    scratch::Project p = runner::built_project("runner_base", "runner_platform", "");
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
