@@ -292,10 +292,11 @@ static bool smith_lang_refuse_c_header(SmithLang *lang, const SmithHost *host, c
     SmithLangBinding *failed = smith_lang_binding_find(lang, bind, bind_length);
     if (failed != nullptr) failed->missing = true;
     smith_lang_error(lang, host, name->location,
-                     "`import %s;` found `%s`, which is a C header, not the header smith writes for the module (it "
-                     "has no `// smith-module:` line): rename the C header or the module, or import the C header as "
+                     "`import %s;` found `%s`, which is a C header, not the header smith writes for the module `%s` "
+                     "(%s.smith; the C header has no `// smith-module:` line): a module and a C header of one name "
+                     "cannot share an include path; rename the C header or the module, or import the C header as "
                      "`import \"%s\";`",
-                     name->colons, header, header);
+                     name->colons, header, name->colons, name->path, header);
     return true;
 }
 

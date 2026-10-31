@@ -46,8 +46,8 @@ prebuilt library's and one loaded with `dlopen`. Owner (2026-10-24): "always int
   which glibc's `<stdio.h>` makes extern inline when optimized, are defined under those names by asm labels, and
   `getdelim`/`__getdelim` (an optimized `getline`) are the stream's too. `malloc_usable_size` stands for `malloc_size`;
   there are no zones. A sanitized program also links an `__asan_default_options` (strong: the runtime's weak one is first in the link) of `abort_on_error=1:detect_leaks=0`, so a report
-  stops with SIGABRT as on macOS and the leak check Linux's ASan adds at exit is off, as on macOS. Known gap: a program built with `_FORTIFY_SOURCE` calls `__printf_chk` and its kind,
-  which the runtime does not define.
+  stops with SIGABRT as on macOS and the leak check Linux's ASan adds at exit is off, as on macOS. A program built with `_FORTIFY_SOURCE` calls `__printf_chk` and its kind (`__fprintf_chk`, `__vfprintf_chk`, `__dprintf_chk`, `__fgets_chk`,
+  `__fread_chk`, `__read_chk`...); the runtime defines them as their plain forms, and with no handler set they call glibc's own `_chk` (ASan's when sanitized).
 - **An optimizer knows malloc**: it may drop or fold a malloc/free pair, so a handler is seen only through calls it cannot
   see through (`tests/handlers/project.c` keeps its pointers in `volatile`).
 
@@ -91,7 +91,7 @@ allocator; `checked` (D2a), `failing` and the profiles (D2b).
 
 - **Allocation in .smith (step C2, owner 2026-10-25):** `smith::mem` (`lib/smith/mem.smith`) is the smith face of the
   allocator handler: `mem::set_allocator` returns the previous one (`defer` puts it back), `mem::alloc(T)` and
-  `mem::alloc_slice(T, n)` go through whatever `malloc` reaches and never return null, `mem::try_alloc` returns an
+  `mem::alloc_slice(T, n)` go through whatever `malloc` reaches and never return null, `mem::try_alloc` and `mem::try_alloc_slice` return an
   `option` for code that refuses, and the `malloc` itself keeps C's nullable contract. A refusal is a checked failure that
   names the size, for the cases "if you can handle it locally it is a result or an option, otherwise you let it crash":
   allocation is the second kind.
@@ -109,7 +109,7 @@ allocator; `checked` (D2a), `failing` and the profiles (D2b).
   handler, and none set is libc's. `gettimeofday`, `time` and the Mach clocks are not reached. A fake clock's `sleep`
   advances its time and returns, so sleeping on it never blocks. See [direct-call-modules](direct-call-modules.md).
 - **Processes (issue #240):** `SmithProcessHandler {start, read, write, close_input, wait, kill, close, cores}` is called by `smith::process` itself (no libc function is interposed); per thread, with a setter returning the previous handler, and none set is the real posix_spawn, pipes and waitpid. See [process](process.md).
-- **Network (issue #240):** `SmithNetHandler {connect, listen, port, accept, read, write, close}` is called by `smith::net` itself (no libc function is interposed); per thread, with a setter returning the previous handler, and none set is the real sockets and TLS. See [net](net.md).
+- **Network (issue #240):** `SmithNetHandler {connect, listen, port, accept, read, write, close, read_within}` is called by `smith::net` itself (no libc function is interposed); per thread, with a setter returning the previous handler, and none set is the real sockets and TLS; `read_within` is a read with a deadline (-1 with `ETIMEDOUT`), and a handler that leaves it null gets `read`. See [net](net.md).
 - **Entropy (issue #240):** `SmithEntropyHandler {fill}` answers `getentropy` (per thread, setter returns the previous
   one, none set is the system's; `fill` writes the bytes and never fails). `arc4random` and `getrandom` are not reached.
   `entropy::seed()` (`smith::entropy`) is the one caller in smith's libraries; it has the `entropy` effect

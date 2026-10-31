@@ -1246,10 +1246,17 @@ static uint32_t smith_lang_fields_cx_piece(const SmithLangCx *cx, uint32_t at, u
     smith_lang_fields_maker_name(cx->lang, maker, sizeof maker);
     char literal[smith_lang_ty_pieces_max * smith_lang_ty_piece_size];
     if (!smith_lang_ty_literal(handle, literal, sizeof literal)) return UINT32_MAX;
-    snprintf(piece, capacity,
-             "%s\x1f(\x1f\"%s\"\x1f,\x1f%zu\x1f,\x1f%s\x1f,\x1f\"\"\x1f,\x1f"
-             "0\x1f)",
-             maker, name, strlen(name), literal);
+    if (info.doc_overflow) return UINT32_MAX;
+    SmithLangFieldPieces doc;
+    doc.count = 0;
+    smith_lang_fields_doc_pieces(&doc, info.doc); // the same text a run-time read gets
+    int used = snprintf(piece, capacity, "%s\x1f(\x1f\"%s\"\x1f,\x1f%zu\x1f,\x1f%s\x1f,\x1f", maker, name, strlen(name),
+                        literal);
+    for (size_t i = 0; i < doc.count && used >= 0 && (size_t)used < capacity; i++)
+        used += snprintf(piece + used, capacity - (size_t)used, "%s\x1f", doc.text[i]);
+    if (used < 0 || (size_t)used >= capacity) return UINT32_MAX;
+    used += snprintf(piece + used, capacity - (size_t)used, ",\x1f%zu\x1f)", strlen(info.doc));
+    if ((size_t)used >= capacity) return UINT32_MAX;
     return after - at;
 }
 

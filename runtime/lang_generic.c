@@ -1123,6 +1123,9 @@ static void smith_lang_generic_placeholder(SmithLang *lang, const SmithHost *hos
 static void smith_lang_generic_finish(SmithLang *lang) {
     const SmithHost *host = lang->host_now;
     lang->recording = false;
+    // the body's `{` was counted by the `if constexpr` block around it (runtime/lang_stream.c), its `}` is not seen
+    // there
+    if (lang->ifc_count > 0) lang->ifc_braces -= 1;
     if (lang->recording_skip) { // a generic with an error in its head: nothing of it is kept
         lang->recording_skip = false;
         smith_lang_gt.count = lang->skip_mark;

@@ -1,0 +1,21 @@
+module effects_tasks;
+
+import smith::effects;
+
+// Starting a task is the effect `tasks` (#935): a declaration with no source that says so, and every caller up the chain.
+export [[smith::effects(tasks)]] void start(void);
+
+export [[smith::pure]] void pure_spawner(void) {
+    start();
+}
+
+export [[smith::effects(tasks)]] void spawner(void) {
+    start();
+}
+
+static void g(void) {
+    start();
+}
+
+static_assert(effects::within(g, effects::tasks), "g only starts a task");
+static_assert(effects::within(g, effects::none), "g starts a task");

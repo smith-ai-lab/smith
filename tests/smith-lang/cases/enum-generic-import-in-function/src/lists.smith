@@ -1,0 +1,8 @@
+module lists;
+
+export option(T) first(constexpr type T, T *p, usize n) {
+    if (n == 0) {
+        return .none;
+    }
+    return {.some = p[0]};
+}

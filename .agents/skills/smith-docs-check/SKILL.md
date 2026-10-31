@@ -5,7 +5,7 @@ description: "The checks of smith docs with their messages (path: message), conc
 
 # The check
 
-`smith docs [<root>]` checks the project of `<root>`, or, when none is named, of the nearest folder at or above the current one that has an `AGENTS.md`, looking no higher than the repository's root (a build.c in `repo/app/` checks the AGENTS.md and `knowledge/` of `repo/`; with none found it is the current folder). `smith check` uses the same rule. It prints each problem on stderr as `path: message`, in the order below, then `smith docs: N concepts, M problems` on stdout, and exits 1 if there was a problem. A folder with no `knowledge/` or no skills has nothing to check there.
+`smith docs [<root>]` checks the project of `<root>`, or, when none is named, of the nearest folder at or above the current one that has `knowledge/` or `.agents/skills/`, looking no higher than the repository's root (a build.c in `repo/app/` checks the `knowledge/` of `repo/`; `AGENTS.md` is never read; with none found it is the current folder). `smith check` uses the same rule. It prints each problem on stderr as `path: message`, in the order below, then `smith docs: N concepts, M problems` on stdout, and exits 1 if there was a problem. A folder with no `knowledge/` or no skills has nothing to check there.
 
 | Rule | Message |
 | --- | --- |
@@ -21,10 +21,10 @@ description: "The checks of smith docs with their messages (path: message), conc
 | a skill folder has no `SKILL.md`, no frontmatter, a wrong `name`, no `description` | `.agents/skills/a/SKILL.md: missing`, `no frontmatter`, `name 'b' does not match its folder`, `frontmatter lacks description` |
 | a skill has more than 60 lines | `.agents/skills/a/SKILL.md: 61 lines; a skill stays under 60: split it or shorten it` |
 | `.agents/skills` exists and `.claude/skills` is not a symlink to it | `.claude/skills: missing; it must be a symlink to ../.agents/skills`, `is not a symlink`, `links to X, not ../.agents/skills` |
-| a relative link in AGENTS.md, knowledge or a skill does not resolve (links in code, `#anchors` and URLs are ignored) | `AGENTS.md: broken link knowledge/gone.md` |
+| a relative link in knowledge or a skill does not resolve (links in code, `#anchors` and URLs are ignored) | `knowledge/x.md: broken link gone.md` |
 | a document of `knowledge/` links into a skill | `knowledge/x.md: links the skill ../.agents/skills/a/SKILL.md; knowledge never links skills` |
 | a project with `.claude-plugin/plugin.json` lists a dev skill (named `<plugin>-dev` or `<plugin>-dev-*`), a skill that is not on disk, or leaves out a skill that is not a dev skill | `.claude-plugin/plugin.json: lists the dev skill p-dev-x, which must not ship`, `lists gone, which is not a skill on disk`, `does not list the skill b` |
-| a merge-conflict marker | `AGENTS.md:12: merge-conflict marker` |
+| a merge-conflict marker | `knowledge/x.md:12: merge-conflict marker` |
 
 ## Concept types and required fields
 

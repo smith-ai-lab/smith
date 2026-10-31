@@ -1,28 +1,40 @@
 module reads_test;
 
+import smith::arena;
+import smith::files;
 import smith::format;
-import smith::io;
+import smith::mem;
 import smith::test;
+import <string.h>;
 
-// Reads one file through io: the record names it.
-export void test_reads_a_file(io::Io *io) {
-    io::Read read = io::files_read(&io->files, &io->arena, "data/a.txt");
-    test::check_equal(read.error.code, 0);
+// Reads one file: the record names it.
+export void test_reads_a_file() {
+    arena::Arena memory = test::memory(1U << 16);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    files::BytesResult first = files::read_file("data/a.txt");
+    test::check(first == .ok);
 }
 
 // Lists a folder and reads each file in it, as scratch::copy_tree does with a folder it copies.
-export void test_copies_a_folder(io::Io *io) {
-    io::FileList list = io::files_list(&io->files, &io->arena, "data/b");
-    test::check_equal(list.error.code, 0);
-    for (usize i = 0; i < list.count; i++) {
-        const char *path = format::push(&io->arena, "data/b/", list.entries[i].name).data;
-        io::Read file = io::files_read(&io->files, &io->arena, path);
-        test::check_equal(file.error.code, 0);
+export void test_copies_a_folder() {
+    arena::Arena memory = test::memory(1U << 16);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    files::EntriesResult list = files::list("data/b");
+    test::check(list == .ok);
+    if (list == .ok) {
+        for (usize i = 0; i < countof(list.ok); i++) {
+            const char *path = format::push(&memory, "data/b/", list.ok[i].name).data;
+            files::BytesResult file = files::read_file(path[0:c::strlen(path)]);
+            test::check(file == .ok);
+        }
     }
 }
 
 // Opens nothing of the project.
-export void test_reads_nothing(io::Io *io) {
-    (void)io;
+export void test_reads_nothing() {
     test::check(true);
 }

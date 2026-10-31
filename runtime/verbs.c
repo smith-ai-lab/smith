@@ -16,7 +16,10 @@ constexpr size_t smith_verbs_files_max = 16384;
 constexpr size_t smith_verbs_names_max = 16U << 20;
 constexpr size_t smith_verbs_batch = 128;
 constexpr size_t smith_verbs_info_max = 64U << 20; // .smith/build.info; bss, so only the pages a project fills are used
-constexpr size_t smith_verbs_lines_max = 131072;   // lines of one kind (twice smith_objects_max)
+constexpr size_t smith_verbs_lines_max =
+    131072; // lines of one kind; twice smith_objects_max, which `smith build` enforces
+// (smith_too_many), so a build.info it wrote cannot cross it; one written by hand that does stops with a message
+// (smith_info_add, smith_info_too_many).
 constexpr size_t smith_verbs_targets_max = 1024;
 constexpr size_t smith_verbs_jobs_max = 64;
 constexpr size_t smith_verbs_words_max = 131072;
@@ -1306,7 +1309,7 @@ static void smith_check_run(const char *self, const char *verb, const SmithVerbA
 // What smith trusts and does not check: the `P` lines of the effects summaries under `.smith/effects/` (an effects
 // attribute on a declaration with no source; a function that calls `smith_trusted()`). A header's promise is in the
 // summary of every file that includes it, so one is listed once, by place and name.
-constexpr size_t smith_promises_max = 1024;
+constexpr size_t smith_promises_max = 8192; // past it `smith check` stops with a message, never a short list
 constexpr size_t smith_promise_text = 192;
 static char smith_promise_list[smith_promises_max][smith_promise_text];
 static size_t smith_promise_count;
@@ -1321,7 +1324,14 @@ static void smith_promise_add(const char *place, const char *name) {
     for (size_t i = 0; i < smith_promise_count; i++) {
         if (strcmp(smith_promise_list[i], entry) == 0) return;
     }
-    if (smith_promise_count < smith_promises_max) strcpy(smith_promise_list[smith_promise_count++], entry);
+    if (smith_promise_count >= smith_promises_max) {
+        fprintf(stderr,
+                "smith check: more than %zu promises (the limit); %s is not counted, so the trusted boundary would be "
+                "understated; raise smith_promises_max in runtime/verbs.c\n",
+                smith_promises_max, entry);
+        exit(smith_exit_usage);
+    }
+    strcpy(smith_promise_list[smith_promise_count++], entry);
 }
 
 static void smith_promise_read(const char *path) {
