@@ -557,7 +557,7 @@ export void test_clamp_always_lands_inside(random::Key key) { // a property test
 }
 ```
 
-An `(io::Io *io)` test gets a real io in a scratch folder of its own. [smith-test](.agents/skills/smith-test/SKILL.md).
+A test takes no io: the world is reached through the direct libraries and their fakes. [smith-test](.agents/skills/smith-test/SKILL.md).
 
 ### Randomness is pure; the system's entropy is one effect
 

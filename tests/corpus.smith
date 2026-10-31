@@ -69,7 +69,7 @@ export const char *read_file(arena::Arena *arena, const char *path) {
 // the file is written by test::golden, which passes.
 export void golden(arena::Arena *arena, const char **differing, const char *path, const char *actual) {
     if (test::updating()) {
-        test::golden_free(path[0:c::strlen(path)], actual[0:c::strlen(actual)]);
+        test::golden(path[0:c::strlen(path)], actual[0:c::strlen(actual)]);
         return;
     }
     const char *found = difference(arena, path, read_file(arena, path), actual);
@@ -104,7 +104,7 @@ static const char *section_of(arena::Arena *arena, const char *text, const char 
 // appended to `differing` under its case's name.
 export void golden_sections(arena::Arena *arena, const char **differing, const char *path, const char *actual) {
     if (test::updating()) {
-        test::golden_free(path[0:c::strlen(path)], actual[0:c::strlen(actual)]);
+        test::golden(path[0:c::strlen(path)], actual[0:c::strlen(actual)]);
         return;
     }
     const char *expected = read_file(arena, path);

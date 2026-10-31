@@ -39,7 +39,7 @@ static void affine_case(const char *file) {
                      "(error|note|warning):' ../../compile.out; }")
             .data;
     scratch::Run run = scratch::sh(&p, command);
-    test::golden_free(slice_of(format::push("tests/affine/", file, ".expected").data), slice_of(run.out));
+    test::golden(slice_of(format::push("tests/affine/", file, ".expected").data), slice_of(run.out));
 }
 
 // The editor: clangd shows the error, for C and for `.smith`.

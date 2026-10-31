@@ -49,10 +49,10 @@ smith_tests(b, &tests);                              // tests.step is the task "
 ```
 
 - **A test's signature says what it may touch.** `void test_x(void)` is pure; `void test_x(random::Key key)` (`SmithKey`
-  in C) is a property test, with the key from the run's seed; `void test_x(io::Io *io)` (`SmithIo *io` in C) gets a
-  real io made for that one test by the runner (below). A test makes fakes (`io::make_test`) anywhere, but never a
-  real io: `smith-effects` allows `io::make` only in `main`, so the runner can always seed, sandbox and clean up
-  after a test.
+  in C) is a property test, with the key from the run's seed. A test takes no io: a signature with any other
+  parameter list is a build error naming the io-free forms, and a test reaches the world through the direct libraries
+  (`files`, `process`, `console`, ...) and replaces them with their fakes (owner, #727: "there is no region and no io
+  for a test").
 - **Checks are generic functions.** A failure shows the line that called the check and the call chain, read from the
   call stack and the source file (see "Failure reports"), so a check needs no macro to capture its text or its place.
   A test is a plain function too; there is no `TEST()` macro and no registration. `test::check(c)`,
@@ -70,38 +70,26 @@ smith_tests(b, &tests);                              // tests.step is the task "
   `<math.h>` names `sinf` and `sin`. C has the ordering checks only when a C caller needs one.
 - **Found by name, in the files build.c names.** build.c says which files are tests and how they compile and link,
   because only build.c knows that. A step scans them for lines that are exactly `void test_<name>(void) {`,
-  `void test_<name>(SmithKey key) {` or `void test_<name>(SmithIo *io) {` (`<name>` in `[a-z0-9_]`, the parameter's name
-  in `[a-z_]`) and writes `tests_list.h` (prototypes) and `tests_list.c` (the table, `{name, plain, property, with_io}`)
+  `void test_<name>(SmithKey key) {` (`<name>` in `[a-z0-9_]`, the parameter's name
+  in `[a-z_]`) and writes `tests_list.h` (prototypes) and `tests_list.c` (the table, `{name, plain, property, with_failing}`)
   beside the runner. Each test file compiles with
   `-include <tests_list.h> -Werror=missing-prototypes`, so a `test_` function the scan missed because it is formatted
   another way (`void test_x (void) {`) is a compile error. A `static` helper is not a test. A name defined twice is an
   error that names both files; a file with no tests is fine.
   - **Tests in `.smith` files** (name the files in `.sources`, `tests/**/*_test.smith`): in a file with no `module` line
     the same lines are tests, with the same names. In a module (`module geometry::box_test;`) a test is
-    `export void test_<name>(void) {`, `export void test_<name>(random::Key key) {` or
-    `export void test_<name>(io::Io *io) {` (`c::SmithKey` is the same type as `random::Key` for a file that imports
-    `<smith/test.h>` or `<smith/random.h>`, and `c::SmithIo` the same as `io::Io`; with `import smith::io as sio;` the
-    type is `sio::Io`); an `export` is needed, since a private function is `static` and nothing can
+    `export void test_<name>(void) {`, `export void test_<name>(random::Key key) {` (`c::SmithKey` is the same type as `random::Key` for a file that
+    imports `<smith/test.h>` or `<smith/random.h>`); an `export` is needed, since a private function is `static` and nothing can
     call it. Its C name is `geometry_box_test_test_area` and its symbol the export's `geometry::box_test::test_area`, so
     `tests_list.h` declares it with that `__asm__` label. The runner shows and `--test` selects a module's test by its name
     as written: `geometry::box_test::area` (the written `geometry::box_test::test_area`, `test_` of the last part dropped as
     for a C test); `--test` also takes the written form, `--test geometry::box_test::test_area` (or `test_area` for a C
     test). Two tests with the same C name are an error that names both files.
-- **A test that takes `SmithIo *io`** is run with a real io the runner makes for that test alone, in the worker: its key
-  and `seed` come from the run's seed (`--seed N` replays it; without `--seed` the seed is the runner's own, printed by
-  a failure as `with seed N` and `rerun: smith test --test name --seed N`), its arena is fresh, and it has a scratch
-  folder of its own, `test::scratch(io)` (`smith_test_scratch` in C), named `smith-test-<pid>-<row>.noindex` (Spotlight skips `.noindex`) by the runner's pid and the test's row under
-  `$TMPDIR` (else `/tmp`) and also set as `$TMPDIR` and `$SMITH_TEST_SCRATCH` while the test runs. The runner removes
-  the folder (with `rm -rf`, through its io's `processes`) when the test passed and keeps it, printing
-  `scratch folder (kept): <path>` under the failure, when it failed. The working directory stays the project root, so
-  fixtures resolve. The runner can make the io because `main` hands it `io::make` as a value (`Runner.make_io`).
-- **The runner's own effects are a capability.** The runner is `smith::test`'s `main`: it makes its io once
-  (`io::make`, in `main`) and hands `run_tests` a `Runner` (`smith_test_run`), a type marked as a capability
+- **The runner's own effects are a capability.** The runner is `smith::test`'s `main`: it hands `run_tests` a `Runner` (`smith_test_run`, which holds the command line), a type marked as a capability
   whose implementation is the module, so the forked workers, their pipes and sockets, the signals they catch and the
   memory they share are the module's own calls, and `smith lint` (smith-effects) checks them like any other module's:
-  every exported function that reaches one takes the `Runner`. What io has a part in goes through it: the runner's
-  console prints the report, its clock times the tests, its arguments hold `$TMPDIR` and `$NO_COLOR`, and its processes
-  remove a scratch folder. The checks reach the running test's state (the shared block the runner reads after the test)
+  every exported function that reaches one takes the `Runner`. The runner prints the report through `console`, times the tests with
+  `clock`, reads `$NO_COLOR` with `env` and lists processes with `popen`. The checks reach the running test's state (the shared block the runner reads after the test)
   through module variables, since a check takes no context parameter; they are the only state a test can reach.
 - **The shrinking hook is a field of the key.** `random::Key` has a `tap` (`nullptr` for every key a program makes) and
   `random::split` copies it. The runner gives the keys of its shrinking worker a tap whose `word` records each
@@ -149,7 +137,7 @@ smith_tests(b, &tests);                              // tests.step is the task "
   the cores), `--timeout <seconds>` (10 seconds of CPU time, per test and per key: a loaded machine slows a test and never fails it, as for `smith prove`), `--wall-timeout <seconds>` (the backstop for a test that is blocked and so spends no CPU time: 600 s by default, reported as a hang), `--idle-timeout <seconds>` (180 by default, 0 for none: every few seconds, once a test has run a while, the runner lists the processes with `ps`, adds up the CPU time of the test's worker and every process below it, and a test whose tree used less than 1% of the wall time for that long is killed and reported "used no CPU time for N s ...; it was waiting for: <the command of its deepest process>", or "the test itself" when it had none; the kill and every signal reach only the test's own process group: each worker and each `--isolate` child leads one, so a group signal from a test, or the kernel's SIGHUP to an orphaned group, never reaches the runner or the `smith build` that runs it; #754), `--shrink 0|1`, `--shrink-seconds <seconds>` (10, the
   time one shrink may take), `--shuffle <seed>`, `--shard <i>/<n>` (part i of n of the chosen tests, for CI: a test file stays whole in one part, files go heaviest first to the lightest part by the CPU seconds `--costs` names, 0.4 for a test it does not, so every part of one run agrees on the split, and the tests of a part start unknown first, then the heaviest first (`--cheapest` reverses that: `smith test --changed --cheapest-first` meets the cheap breakage first), so the longest test never starts last (#754); `--list` and the run show only that part), `--macos-only` / `--skip-macos` (only the macOS-only tests, or all the others: a test is macOS-only when its shown name has the word `macos`, a `test_macos_...` function or a `..._macos_test` module, so CI runs the others on Linux and these on a Mac; the name is the declaration, there is no list; #754; a filter that names only the other half's tests, a pull request's `--changed` selection on the Mac part, runs nothing and exits 0, while one that names no test at all is still `no test matches`), `--isolate`, `--in-process` (every test in the runner's own process with no fork, for a debugger that does not follow forks; a crash, an abort the test did not expect or a hang ends the whole run, state a test leaves reaches the next, and there is no timeout unless `--timeout` is given and no shrinking), `--stats`, `--trace`, `--color`, `--full`, `--update` (golden files, below), `--list` and `--verbose`. The run ends with `N passed, M failed in T s` and the five
   slowest tests; `--verbose` lists every test.
-- **Golden files: `test::golden(io, path, actual)`** (`lib/smith/test.smith`; owner-decided API, issue #292). The expected output of a case lives in a file in the repository and the test compares its text with it, so a corpus is one file per case and a change of output is a diff in version control, never a script's `UPDATE=1`. The path is relative to the project root (the working directory of the tests). A mismatch is a failed check with a unified diff (expected on the left, 3 lines of context, 40 lines at most, then `... N more lines`, last line `run smith test --update to accept`); a missing file is a failure that names the way to write it. A corpus case of the language (`tests/smith-lang/cases/<name>`) whose output depends on the machine (`u64` is `unsigned long` on Linux and `unsigned long long` on macOS, a program may read `__x86_64__`) keeps the macOS file in `expect/` and the Linux one at the same path in `expect-linux/`, which wins on Linux; the symbols of `expect/symbols` are macOS's (a leading underscore, `T` for a weak definition, `S` for zero-filled data) and Linux's `nm` is rewritten to them. `smith test --update` makes every golden that runs write its file when it differs and pass; the runner lists `wrote <path>` for each. `test::updating()` lets a test that checks a variable set of files write all it made. The diff is made in `smith::test` (a table of the longest common subsequence after the common head and tail are cut; a change too large for the table is shown whole), and `smith symbolize` keeps up to 48 detail lines for it.
+- **Golden files: `test::golden(path, actual)`** (`lib/smith/test.smith`; owner-decided API, issue #292). The expected output of a case lives in a file in the repository and the test compares its text with it, so a corpus is one file per case and a change of output is a diff in version control, never a script's `UPDATE=1`. The path is relative to the project root (the working directory of the tests). A mismatch is a failed check with a unified diff (expected on the left, 3 lines of context, 40 lines at most, then `... N more lines`, last line `run smith test --update to accept`); a missing file is a failure that names the way to write it. A corpus case of the language (`tests/smith-lang/cases/<name>`) whose output depends on the machine (`u64` is `unsigned long` on Linux and `unsigned long long` on macOS, a program may read `__x86_64__`) keeps the macOS file in `expect/` and the Linux one at the same path in `expect-linux/`, which wins on Linux; the symbols of `expect/symbols` are macOS's (a leading underscore, `T` for a weak definition, `S` for zero-filled data) and Linux's `nm` is rewritten to them. `smith test --update` makes every golden that runs write its file when it differs and pass; the runner lists `wrote <path>` for each. `test::updating()` lets a test that checks a variable set of files write all it made. The diff is made in `smith::test` (a table of the longest common subsequence after the common head and tail are cut; a change too large for the table is shown whole), and `smith symbolize` keeps up to 48 detail lines for it.
 - **Full size: `test::full()`** (`smith_test_full()`). It is false by default and true when the run was given `--full`. A test with a heavy check
   picks its size from it, such as 200 meshes by default and 20,000 with `--full`, and checks the same properties either
   way, so `smith test` stays fast and `smith test --full` is the slow pass. It replaces a second task such as game's
@@ -159,8 +147,8 @@ smith_tests(b, &tests);                              // tests.step is the task "
   them by their path, relative to the project's root, where `smith build` runs them.
 - **A property test's keys** are `smith_key_make(seed)`, with the seeds drawn from a fixed root, so a printed seed
   replays exactly.
-- **A failure prints** the test, the seed of a property test or an io test, the call chain, the values with their
-  types, the note, the kept scratch folder, the test's output, and the command that reruns it. The runner on its own
+- **A failure prints** the test, the seed of a property test, the call chain, the values with their
+  types, the note, the test's output, and the command that reruns it. The runner on its own
   (by hand) prints the raw trace of a failed check, then the values; `smith build test` prints the report of "Failure
   reports" in its place:
 

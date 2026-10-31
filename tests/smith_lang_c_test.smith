@@ -182,7 +182,7 @@ static void behave(const char *name) {
         scratch::Run built = scratch::sh(&p, build);
         scratch::expect_status(text("the .", kinds[i], " builds", ""), 0, &built);
         scratch::Run ran = scratch::sh(&p, format::push("./", name, ".", kinds[i], ".bin 2>&1").data);
-        test::golden_free(slice_of(format::push("tests/smith-lang-c/", name, ".out").data), slice_of(ran.out));
+        test::golden(slice_of(format::push("tests/smith-lang-c/", name, ".out").data), slice_of(ran.out));
     }
 }
 

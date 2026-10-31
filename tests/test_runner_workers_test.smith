@@ -628,19 +628,3 @@ export void test_runner_workers_a_signal_to_a_tests_group_never_reaches_the_runn
         runner::expect_has(iso, "group: its parent was sent no signal", &run, "parent signals: \n");
     }
 }
-
-// An io test sets TMPDIR (and three more variables) to its scratch folder, which is removed when it passed; the next
-// test in the same worker must see the environment the runner had (#841).
-export void test_runner_workers_an_io_test_leaves_the_environment_as_it_found_it() {
-    scratch::Project p = runner::built_project("runner_base", "runner_env", "");
-    defer scratch::clean(&p);
-    arena::Arena memory = test::memory(memory_size);
-    arena::ArenaAllocator allocator = arena::allocator(&memory);
-    mem::Allocator *outside = mem::set_allocator(&allocator.base);
-    defer mem::set_allocator(outside);
-    scratch::Run run = scratch::sh(
-        &p, "mkdir -p tmp && env -u SMITH_TEST_SCRATCH -u SMITH_SLOTS_DIR -u SMITH_CORES TMPDIR=\"$PWD/tmp\" "
-            "EXPECT_TMPDIR=\"$PWD/tmp\" build/tests --test test_env_ --jobs 1 --stats 2>&1");
-    runner::expect_has("", "env: both tests pass", &run, "2 passed, 0 failed");
-    scratch::expect_count("env: they ran in one worker (one fork)", 1, runner::forks_of(&run));
-}

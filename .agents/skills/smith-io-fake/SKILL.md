@@ -5,7 +5,7 @@ description: "The fake io for tests: io::Test, io::make_test, io::test_add_file,
 
 # The test io
 
-A test that takes `io::Io *io` (`test_x(io::Io *io)`, smith-test) gets a real io the runner made for it, seeded from the run's seed and with a scratch folder of its own (`test::scratch(io)`, also `$TMPDIR`), removed when the test passes. A test never makes a real io itself (`io::make` is for `main`, and smith-effects reports it anywhere else); to test code that takes a capability on a fake, make one:
+A test takes no io (smith-test): to test code that takes a capability on a fake, make one:
 
 ```smith
 import smith::arena;

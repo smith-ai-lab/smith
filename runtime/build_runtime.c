@@ -3025,16 +3025,21 @@ static void smith_write_build_info(SmithBuild *b) {
 constexpr size_t smith_tests_max = 65536;
 
 // The name in a line that defines a test, `void test_<name>(void) {`, `void test_<name>(SmithKey <key>) {` (a property
-// test) or `void test_<name>(SmithIo *<io>) {` (a test that takes a real io) with <name> in [a-z0-9_] and <key> and
-// <io> in [a-z_], or nullptr. A module's test in a `.smith` file is `export void test_...` (a private one is `static`,
+// test) with <name> in [a-z0-9_] and <key> in [a-z_], or nullptr. Any other parameter list is refused
+// (smith_tests_find). A module's test in a `.smith` file is `export void test_...` (a private one is `static`,
 // which nothing can call), its key may be written `c::SmithKey` or, with `import smith::random;`, `random::Key`
 // (`<alias>::Key` for `import smith::random as <alias>;`: `key_type` is that spelling, "random::Key", or nullptr), and
-// its io `c::SmithIo *` or, with `import smith::io;`, `io::Io *` (`<alias>::Io` for an alias). *length is the name's
+// a failing allocator beside it. *length is the name's
 // length, test_ not counted; *kind is how the test is called.
-typedef enum { SmithTestKind_Plain, SmithTestKind_Property, SmithTestKind_Io, SmithTestKind_Failing } SmithTestKind;
+typedef enum {
+    SmithTestKind_Plain,
+    SmithTestKind_Property,
+    SmithTestKind_Failing,
+    SmithTestKind_Refused
+} SmithTestKind;
 
-static const char *smith_tests_match(const char *line, bool module, const char *key_type, const char *io_type,
-                                     const char *failing_type, size_t *length, SmithTestKind *kind) {
+static const char *smith_tests_match_known(const char *line, bool module, const char *key_type,
+                                           const char *failing_type, size_t *length, SmithTestKind *kind) {
     const char *prefix = "void test_";
     if (module) {
         if (strncmp(line, "export ", strlen("export ")) != 0) return nullptr;
@@ -3056,16 +3061,6 @@ static const char *smith_tests_match(const char *line, bool module, const char *
     } else if (key_type != nullptr && rest[0] == '(' && strncmp(rest + 1, key_type, strlen(key_type)) == 0 &&
                rest[1 + strlen(key_type)] == ' ') {
         rest += 2 + strlen(key_type);
-    } else if (strncmp(rest, "(SmithIo *", strlen("(SmithIo *")) == 0) {
-        *kind = SmithTestKind_Io;
-        rest += strlen("(SmithIo *");
-    } else if (strncmp(rest, "(c::SmithIo *", strlen("(c::SmithIo *")) == 0) {
-        *kind = SmithTestKind_Io;
-        rest += strlen("(c::SmithIo *");
-    } else if (io_type != nullptr && rest[0] == '(' && strncmp(rest + 1, io_type, strlen(io_type)) == 0 &&
-               strncmp(rest + 1 + strlen(io_type), " *", 2) == 0) {
-        *kind = SmithTestKind_Io;
-        rest += 3 + strlen(io_type);
     } else {
         return nullptr;
     }
@@ -3123,9 +3118,24 @@ static const char *smith_tests_failing_type(const char *line) {
     return smith_tests_type_of_import(line, "failing", "Failing");
 }
 
-// The spelling of smith::io's type a `.smith` file's import line gives, "io::Io" or "<alias>::Io", or nullptr.
-static const char *smith_tests_io_type(const char *line) {
-    return smith_tests_type_of_import(line, "io", "Io");
+// A line that defines a test with a parameter list the runner does not call (`void test_x(Thing *thing) {`): the name,
+// with the kind Refused, so smith_tests_find can say what a test takes. Else nullptr.
+static const char *smith_tests_match(const char *line, bool module, const char *key_type, const char *failing_type,
+                                     size_t *length, SmithTestKind *kind) {
+    const char *name = smith_tests_match_known(line, module, key_type, failing_type, length, kind);
+    if (name != nullptr) return name;
+    if (module) {
+        if (strncmp(line, "export ", strlen("export ")) != 0) return nullptr;
+        line += strlen("export ");
+    }
+    if (strncmp(line, "void test_", strlen("void test_")) != 0) return nullptr;
+    name = line + strlen("void test_");
+    size_t size = strspn(name, "abcdefghijklmnopqrstuvwxyz0123456789_");
+    size_t end = strlen(name);
+    if (size == 0 || name[size] != '(' || end < 3 || strcmp(name + end - 3, ") {") != 0) return nullptr;
+    *length = size;
+    *kind = SmithTestKind_Refused;
+    return name;
 }
 
 // The module a `.smith` file's line declares, `module a::b;`, as written ("a::b"), or nullptr.
@@ -3189,18 +3199,23 @@ static bool smith_tests_find(SmithRun *run, SmithTestFound *found, size_t *count
         size_t before = *count;
         const char *module = nullptr;
         const char *key_type = nullptr;
-        const char *io_type = nullptr;
         const char *failing_type = nullptr;
         for (size_t j = 0; lines[j] != nullptr; j++) { // bounded by smith_split_lines
             if (in_smith && module == nullptr) module = smith_tests_module_line(lines[j]);
             if (in_smith && key_type == nullptr) key_type = smith_tests_key_type(lines[j]);
-            if (in_smith && io_type == nullptr) io_type = smith_tests_io_type(lines[j]);
             if (in_smith && failing_type == nullptr) failing_type = smith_tests_failing_type(lines[j]);
             size_t length = 0;
             SmithTestKind kind = SmithTestKind_Plain;
-            const char *name =
-                smith_tests_match(lines[j], module != nullptr, key_type, io_type, failing_type, &length, &kind);
+            const char *name = smith_tests_match(lines[j], module != nullptr, key_type, failing_type, &length, &kind);
             if (name == nullptr) continue;
+            if (kind == SmithTestKind_Refused) {
+                fprintf(stderr,
+                        "smith: smith_tests: %s: test_%.*s has parameters the runner does not pass; a test "
+                        "takes none: write `void test_%.*s(void)` or `(random::Key key)` and reach the world "
+                        "through smith::files, smith::process and the other direct libraries\n",
+                        run->inputs[i], (int)length, name, (int)length, name);
+                return false;
+            }
             const char *test = smith_text("test_%.*s", (int)length, name);
             const char *symbol = smith_tests_symbol(module, test);
             const char *written = module != nullptr ? smith_text("%s::%s", module, test) : test;
@@ -3245,7 +3260,6 @@ static int smith_tests_scan(SmithRun *run) {
     for (size_t i = 0; i < count; i++) {
         const char *argument = found[i].kind == SmithTestKind_Property  ? "SmithKey key"
                                : found[i].kind == SmithTestKind_Failing ? "SmithKey key, struct SmithFailing *failing"
-                               : found[i].kind == SmithTestKind_Io      ? "SmithIo *io"
                                                                         : "void";
         if (found[i].kind == SmithTestKind_Failing)
             thunks[thunk_count++] = smith_text("static void thunk_%s(SmithKey key, void *failing) {\n"
@@ -3253,23 +3267,22 @@ static int smith_tests_scan(SmithRun *run) {
                                                found[i].symbol, found[i].symbol);
         const char *label = found[i].label != nullptr ? smith_text(" __asm__(\"_%s\")", found[i].label) : "";
         prototypes[i] = smith_text("void %s(%s)%s;\n", found[i].symbol, argument, label);
-        const char *slot_names[] = {"nullptr", "nullptr", "nullptr", "nullptr"};
+        const char *slot_names[] = {"nullptr", "nullptr", "nullptr"};
         slot_names[found[i].kind] = found[i].symbol;
         if (found[i].kind == SmithTestKind_Failing) // the table's slot takes the allocator as a void * (test.smith)
-            slot_names[found[i].kind] = smith_text("thunk_%s", found[i].symbol);
-        rows[i] = smith_text("    {\"%s\", %s, %s, %s, %s},\n", found[i].name, slot_names[0], slot_names[1],
-                             slot_names[2], slot_names[3]);
+            slot_names[2] = smith_text("thunk_%s", found[i].symbol);
+        rows[i] = smith_text("    {\"%s\", %s, %s, %s},\n", found[i].name, slot_names[0], slot_names[1], slot_names[2]);
     }
     // The header declares the allocator's tag and does not include <smith/failing.h>: a test file that imports
     // smith::failing reads that header's instance section, which an earlier plain include would have skipped.
     const char *header = smith_text("// Generated by smith_tests from the test files; do not edit.\n#pragma once\n\n"
-                                    "#include <smith/io.h>\n#include <smith/random.h>\n\nstruct SmithFailing;\n\n%s",
+                                    "#include <smith/random.h>\n\nstruct SmithFailing;\n\n%s",
                                     smith_join(run->b, prototypes, ""));
     const char *base = strrchr(run->outputs[0], '/');
     const char *table = smith_text(
         "// Generated by smith_tests from the test files; do not edit.\n"
         "#include <smith/test.h>\n\n#include \"%s\"\n\n%s"
-        "static const SmithTest smith_test_rows[] = {\n%s    {nullptr, nullptr, nullptr, nullptr, nullptr},\n};\n"
+        "static const SmithTest smith_test_rows[] = {\n%s    {nullptr, nullptr, nullptr, nullptr},\n};\n"
         "const SmithTest *const smith_test_table = smith_test_rows;\n"
         "const size_t smith_test_count = sizeof smith_test_rows / sizeof "
         "smith_test_rows[0] - 1;\n\n"
@@ -3355,11 +3368,13 @@ static const char *const *smith_tests_imported(SmithBuild *b, const char *const 
 // The libraries the runner and the code under test call: the arena and random (the test library draws its keys and
 // memory from them), mem (the checked allocator it sets around each test) and failing (the refusing one a test may ask
 // for), trace (a failure's report), contract
-// (<smith/contract.h>) and io, then those the test files import. Each is compiled here, with the test flags, unless the
-// project links it itself in .objects, so no library is defined twice. Returns the new count of objects.
+// (<smith/contract.h>), format and the direct libraries the runner calls (env, clock, console, files), then
+// those the test files import. Each is compiled here, with the test flags, unless the project links it itself in
+// .objects, so no library is defined twice. Returns the new count of objects.
 static size_t smith_tests_libraries(SmithBuild *b, const SmithTests *copy, const SmithTests *tests,
                                     const char *const *imported, const char **objects, size_t used) {
-    static const char *const libraries[] = {"arena", "random", "trace", "contract", "io", "mem", "failing"};
+    static const char *const libraries[] = {"arena",  "random", "trace", "contract", "mem",  "failing",
+                                            "format", "env",    "clock", "console",  "files"};
     for (size_t i = 0; i < sizeof libraries / sizeof libraries[0]; i++) {
         const char *source = smith_library(b, libraries[i]); // C or a .smith module
         if (smith_tests_links(tests, source)) continue;

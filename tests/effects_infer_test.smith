@@ -40,7 +40,7 @@ static void effects_case(const char *file) {
                      "(error|note|warning):' ../../out; }")
             .data;
     scratch::Run run = scratch::sh(&p, command);
-    test::golden_free(slice_of(format::push("tests/effects/", file, ".expected").data), slice_of(run.out));
+    test::golden(slice_of(format::push("tests/effects/", file, ".expected").data), slice_of(run.out));
 }
 
 // The report-only pointer rule: the lines SMITH_EFFECTS_POINTERS gets, a call with the effects its type states.
@@ -56,7 +56,7 @@ export void test_effects_pointers_report() {
         scratch::sh(&p, "cd tests/effects_pointers && SMITH_EFFECTS_POINTERS=../../report smith cc "
                         "-std=gnu2y -I \"$SMITH_REPO/.smith/include\" -c pointers.c -o /dev/null >../../out 2>&1; "
                         "echo \"status $?\"; cat ../../report");
-    test::golden_free(slice_of("tests/effects_pointers/pointers.c.expected"), slice_of(run.out));
+    test::golden(slice_of("tests/effects_pointers/pointers.c.expected"), slice_of(run.out));
 }
 
 export void test_every_file_has_a_test() {

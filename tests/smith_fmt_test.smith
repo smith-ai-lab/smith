@@ -84,7 +84,7 @@ export void test_tuple_types_and_slice_declarators_stay_as_written() {
     scratch::copy_tree(&p, "tests/smith-fmt/tuples-slices.smith", "tuples-slices.smith");
     scratch::Run run = scratch::sh(&p, "smith fmt --style=\"file:.clang-format\" "
                                        "--assume-filename=\"$TMPDIR/case.smith\" < tuples-slices.smith 2>&1");
-    test::golden_free("tests/smith-fmt/tuples-slices.smith", slice_of(run.out));
+    test::golden("tests/smith-fmt/tuples-slices.smith", slice_of(run.out));
 }
 
 // --- the same as C -------------------------------------------------------------------------------------------------
@@ -291,7 +291,7 @@ export void test_a_payload_enum_and_the_dot_rule_are_kept_as_written() {
     scratch::copy_tree(&p, ".clang-format", ".clang-format");
     scratch::copy_tree(&p, "tests/smith-fmt/payload_enum.smith", "payload_enum.smith");
     scratch::Run run = scratch::sh(&p, "smith fmt --assume-filename=\"$PWD/x.smith\" < payload_enum.smith 2>&1");
-    test::golden_free("tests/smith-fmt/payload_enum.smith", slice_of(run.out));
+    test::golden("tests/smith-fmt/payload_enum.smith", slice_of(run.out));
 }
 
 // Lambdas (issue #316): clang-format lays a lambda out like its own C++ lambdas, and `[` starting an expression is
