@@ -1129,6 +1129,32 @@ i32 main(void) {
               none == .none ? "empty" : "full");
     return 0;
 }
+==> enum-option-slice/src/main.smith <==
+module main;
+import <stdio.h>;
+import smith::arena;
+
+static option(f32[:]) first(f32 x[:]) {
+    if (countof(x) == 0) return .none;
+    return {.some = x};
+}
+
+export option(arena::slice_of(T, countof(dims))) wrap(constexpr type T, T *p, auto... dims) {
+    struct smith_array_T_n result = {};
+    result.data = p;
+    result.count[0] = (usize)dims[0];
+    return {.some = result};
+}
+
+i32 main(void) {
+    f32 buf[3] = {1, 2, 3};
+    f32 xs[:] = buf[0:3];
+    option(f32[:]) o = first(xs);
+    c::printf("%d\n", o == .some ? (i32)countof(o.some) : -1);
+    auto w = wrap(f32, buf, 3);
+    c::printf("%d\n", w == .some ? (i32)countof(w.some) : -1);
+    return 0;
+}
 ==> enum-payload-lowering/src/shapes.smith <==
 module shapes;
 
