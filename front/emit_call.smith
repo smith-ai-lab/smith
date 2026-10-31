@@ -1,0 +1,21 @@
+// front::emit_call: calls and function declarations for the emitter (B3a, #1112). Stubs with their final signatures:
+// B3a fills the bodies without touching front/emit.smith. The protocol is at the top of front/emit.smith.
+module front::emit_call;
+
+import front::ast;
+import front::emit_state as state;
+
+// `Expr.call`.
+export state::Status call(state::Emitter *_, const ast::Expr *x, state::Hint _) {
+    return state::not_emitted("call", x->span);
+}
+
+// `return;` in a function with no result.
+export state::Status return_void(state::Emitter *_, const ast::Stmt *s) {
+    return state::not_emitted("return without a value", s->span);
+}
+
+// A `Decl.function` with no body, declared in the first pass (the function table gets it too).
+export state::Status prototype(state::Emitter *_, const ast::Decl *d) {
+    return state::not_emitted("prototype", d->span);
+}

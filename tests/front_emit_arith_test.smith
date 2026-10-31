@@ -1,0 +1,414 @@
+// Tests of front::emit (#1119, B1 of #1112): functions with integer arithmetic built by hand as a front::ast tree,
+// emitted as LLVM IR, JITted with LLJIT through front::emit_jit and called. Each test builds in an arena it sets as the
+// current allocator while it builds the tree, and puts the system's back before it emits: LLVM allocates with `malloc`,
+// which reaches the allocator in force, and keeps some of it from one test to the next. The emitter's messages and
+// everything it allocates are the system's then, freed by the test, so ASan's leak check sees a leak of either side.
+module front_emit_arith_test;
+
+import front::ast;
+import front::emit;
+import front::emit_jit;
+import std::arena;
+import std::mem;
+import std::test;
+import <llvm-c/Core.h>;
+import <string.h>;
+
+typedef I32 (*BinaryI32)(I32, I32);
+typedef I64 (*BinaryI64)(I64, I64);
+typedef U8 (*BinaryU8)(U8, U8);
+typedef U32 (*BinaryU32)(U32, U32);
+
+// ---------------------------------------------------------------------------------------------------------------
+// Building trees
+
+static ast::Expr *name(Str text) {
+    return ast::name(text);
+}
+
+static ast::Expr *number(U64 value) {
+    return ast::integer(value);
+}
+
+static ast::Expr *binary(ast::BinaryOp op, ast::Expr *left, ast::Expr *right) {
+    return ast::binary(op, left, right);
+}
+
+static ast::Expr *negate(ast::Expr *operand) {
+    ast::UnaryOp op = .negate;
+    ast::ExprKind kind = {.unary = {.op = op, .operand = operand}};
+    return ast::expr(kind);
+}
+
+static ast::Expr *complement(ast::Expr *operand) {
+    ast::UnaryOp op = .bit_not;
+    ast::ExprKind kind = {.unary = {.op = op, .operand = operand}};
+    return ast::expr(kind);
+}
+
+static ast::Expr *assign(ast::AssignOp op, Str target, ast::Expr *value) {
+    ast::ExprKind kind = {.assign = {.op = op, .target = ast::name(target), .value = value}};
+    return ast::expr(kind);
+}
+
+static ast::Stmt *expression(ast::Expr *value) {
+    ast::StmtKind kind = {.expression = {.value = value}};
+    return ast::stmt(kind);
+}
+
+static ast::Stmt *declare(ast::Decl *variable) {
+    ast::StmtKind kind = {.declaration = {.decl = variable}};
+    return ast::stmt(kind);
+}
+
+static ast::Stmt *give(ast::Expr *value) {
+    return ast::return_value(value);
+}
+
+// An exported function `type name(type a, type b) { items }`.
+static ast::Decl *function2(Str name, Str type, ast::StmtRef items[:]) {
+    ast::Param params[2] = {ast::param("a", ast::named(type)), ast::param("b", ast::named(type))};
+    ast::Decl *function = ast::function(name, params, ast::named(type), ast::block(items));
+    function->exported = true;
+    return function;
+}
+
+// `module front::test` with one function.
+static ast::Module module_of(ast::Decl *function) {
+    ast::DeclRef decls[1] = {function};
+    return ast::new_module("front::test", decls);
+}
+
+// `I32 add(I32 a, I32 b) { return a + b; }`
+static ast::Module add_module() {
+    ast::StmtRef items[1] = {give(binary(.add, name("a"), name("b")))};
+    return module_of(function2("add", "I32", items));
+}
+
+// A module with `a op b` as the body of `Type f(Type a, Type b)`.
+static ast::Module op_module(Str type, ast::BinaryOp op) {
+    ast::StmtRef items[1] = {give(binary(op, name("a"), name("b")))};
+    return module_of(function2("f", type, items));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Memory: the arena holds the tree; the system's allocator serves the emitter and LLVM
+
+struct TreeMemory {
+    arena::Arena memory;
+    arena::ArenaAllocator allocator;
+    mem::Allocator *outside;
+};
+
+static void tree_begin(TreeMemory *trees) {
+    trees->memory = test::memory(1U << 22);
+    trees->allocator = arena::allocator(&trees->memory);
+    trees->outside = mem::set_allocator(&trees->allocator.base);
+}
+
+static void tree_end(TreeMemory *trees) {
+    mem::set_allocator(trees->outside);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Running them
+
+// A target with a triple and no data layout.
+static emit::Target target_of(Str triple) {
+    emit::Target target = {};
+    target.triple = triple;
+    return target;
+}
+
+static emit::Options options_for(emit::Target target) {
+    emit::Options options = {};
+    options.target = target;
+    return options;
+}
+
+static emit_jit::Jit start_jit() {
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    emit_jit::Jit host = {};
+    if (started == .ok) host = started.ok;
+    return host;
+}
+
+// The module as a JIT symbol: emit, hand over to the JIT, look up `symbol`.
+static usize jit_function(emit_jit::Jit *host, const ast::Module *m, Str symbol) {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, m, options_for(host->target));
+    test::check_equal(emitted == .ok, true);
+    usize address = 0;
+    if (emitted == .ok) {
+        emit_jit::BoolResult added = emit_jit::add(host, context, emitted.ok);
+        test::check_equal(added == .ok, true);
+        emit_jit::AddressResult found = emit_jit::lookup(host, symbol);
+        test::check_equal(found == .ok, true);
+        if (found == .ok) address = found.ok;
+    }
+    return address;
+}
+
+// The IR of the module for a target, as text (LLVM's, disposed of by the caller).
+static char *ir_of(const ast::Module *m, emit::Target target) {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, m, options_for(target));
+    test::check_equal(emitted == .ok, true);
+    char *text = nullptr;
+    if (emitted == .ok) {
+        text = c::LLVMPrintModuleToString(emitted.ok);
+        c::LLVMDisposeModule(emitted.ok);
+    }
+    c::LLVMContextDispose(context);
+    return text;
+}
+
+static Bool contains(const char *text, Str needle) {
+    return c::strstr(text, needle.data) != nullptr; // a literal's text ends with a terminator
+}
+
+// The error of emitting the module, with the context and the half-built module gone. Its message is the caller's to
+// free.
+static emit::Error failure_of(const ast::Module *m) {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, m, options_for(target_of("x86_64-unknown-linux-gnu")));
+    test::check_equal(emitted == .error, true);
+    emit::Error error = {};
+    if (emitted == .error) error = emitted.error;
+    c::LLVMContextDispose(context);
+    return error;
+}
+
+// `text` without the lines that name the target (the triple and the data layout differ between hosts).
+static Str without_target_lines(const char *text) {
+    usize length = c::strlen(text);
+    char kept[:] = mem::alloc_slice(char, length + 1);
+    usize used = 0;
+    usize line = 0;
+    while (line < length) {
+        usize end = line;
+        while (end < length && text[end] != '\n')
+            end += 1;
+        if (end < length) end += 1;
+        Bool is_target =
+            c::strncmp(text + line, "target triple", 13) == 0 || c::strncmp(text + line, "target datalayout", 17) == 0;
+        if (!is_target) {
+            for (usize i = line; i < end; i++) {
+                kept[used] = text[i];
+                used += 1;
+            }
+        }
+        line = end;
+    }
+    return kept[0:used];
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Tests
+
+export void test_front_emit_add_two_numbers() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Module m = add_module();
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    BinaryI32 add = (BinaryI32)jit_function(&host, &m, "front::test::add");
+    test::check_equal(add(2, 3), 5);
+    test::check_equal(add(-7, 3), -4);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_golden_ir_of_add() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Module m = add_module();
+    tree_end(&trees);
+    char *text = ir_of(&m, target_of("x86_64-unknown-linux-gnu"));
+    Str kept = without_target_lines(text);
+    test::golden("tests/front/emit/add.ll", kept);
+    emit::free_text(kept);
+
+    c::LLVMDisposeMessage(text);
+}
+
+// I64 mix(I64 a, I64 b) {
+//     I64 t = a * b; t += a; t = t / b; t = t % 1000; t <<= 2; t >>= 1; t &= 65535; t ^= a; t |= 5;
+//     auto u = ~t;
+//     return -u + (a - b);
+// }
+// `>> 1` of a signed value rounds down.
+static I64 half_down(I64 value) {
+    if (value >= 0) return value / 2;
+    return -((-value + 1) / 2);
+}
+
+static I64 mix_expected(I64 a, I64 b) {
+    I64 t = a * b;
+    t += a;
+    t = t / b;
+    t = t % 1000;
+    t = t * 4; // << 2, the value is small
+    t = half_down(t);
+    // The bit operators in unsigned arithmetic: same bits, and no signed operand for a bitwise operator.
+    U64 bits = (U64)t;
+    bits &= 65535U;
+    bits ^= (U64)a;
+    bits |= 5U;
+    I64 u = (I64)(~bits);
+    return -u + (a - b);
+}
+
+export void test_front_emit_i64_with_locals_and_every_operator() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Decl *t = ast::variable("t", ast::named("I64"), binary(.multiply, name("a"), name("b")));
+    ast::Decl *u = ast::variable("u", ast::make_type(.auto_type), complement(name("t")));
+    ast::StmtRef items[11] = {
+        declare(t),
+        expression(assign(.add, "t", name("a"))),
+        expression(assign(.plain, "t", binary(.divide, name("t"), name("b")))),
+        expression(assign(.plain, "t", binary(.remainder, name("t"), number(1000)))),
+        expression(assign(.shift_left, "t", number(2))),
+        expression(assign(.shift_right, "t", number(1))),
+        expression(assign(.bit_and, "t", number(65535))),
+        expression(assign(.bit_xor, "t", name("a"))),
+        expression(assign(.bit_or, "t", number(5))),
+        declare(u),
+        give(binary(.add, negate(name("u")), binary(.subtract, name("a"), name("b")))),
+    };
+    ast::Module m = module_of(function2("mix", "I64", items));
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    BinaryI64 mix = (BinaryI64)jit_function(&host, &m, "front::test::mix");
+    test::check_equal(mix(7, 3), mix_expected(7, 3));
+    test::check_equal(mix(100, -9), mix_expected(100, -9));
+    test::check_equal(mix(-50, 4), mix_expected(-50, 4));
+    test::check_equal(mix(123456, 77), mix_expected(123456, 77));
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_unsigned_arithmetic_wraps() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Module sum = op_module("U8", .add);
+    ast::StmtRef minus[1] = {give(binary(.subtract, name("a"), name("b")))};
+    ast::Module other = module_of(function2("g", "U32", minus));
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    BinaryU8 add = (BinaryU8)jit_function(&host, &sum, "front::test::f");
+    test::check_equal(add(255, 1), (U8)0);
+    BinaryU32 subtract = (BinaryU32)jit_function(&host, &other, "front::test::g");
+    test::check_equal(subtract(0, 1), 4294967295U);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_signed_checks_branch_to_a_trap() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    // I32 inc(I32 a) { return a + 1; }: the IR is checked, not run (the trap would end the runner).
+    ast::Param params[1] = {ast::param("a", ast::named("I32"))};
+    ast::StmtRef items[1] = {give(binary(.add, name("a"), number(1)))};
+    ast::Decl *inc = ast::function("inc", params, ast::named("I32"), ast::block(items));
+    inc->exported = true;
+    ast::Module m = module_of(inc);
+    ast::Module divided = op_module("I32", .divide);
+    ast::Module shifted = op_module("I32", .shift_left);
+    tree_end(&trees);
+    char *text = ir_of(&m, target_of("x86_64-unknown-linux-gnu"));
+    test::check_equal(contains(text, "llvm.sadd.with.overflow"), true);
+    test::check_equal(contains(text, "llvm.trap"), true);
+    test::check_equal(contains(text, "define i32 @\"front::test::inc\""), true);
+    c::LLVMDisposeMessage(text);
+    // Division and shifts have their checks too.
+    char *division = ir_of(&divided, target_of("x86_64-unknown-linux-gnu"));
+    test::check_equal(contains(division, "sdiv"), true);
+    test::check_equal(contains(division, "llvm.trap"), true);
+    c::LLVMDisposeMessage(division);
+    char *shift = ir_of(&shifted, target_of("x86_64-unknown-linux-gnu"));
+    test::check_equal(contains(shift, "icmp uge"), true);
+    c::LLVMDisposeMessage(shift);
+}
+
+export void test_front_emit_division_runs_when_in_range() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Module divided = op_module("I32", .divide);
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    BinaryI32 divide = (BinaryI32)jit_function(&host, &divided, "front::test::f");
+    test::check_equal(divide(7, 2), 3);
+    test::check_equal(divide(-7, 2), -3);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_shifts_run_when_in_range() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::StmtRef right[1] = {give(binary(.shift_right, name("a"), name("b")))};
+    ast::Module shifted = module_of(function2("s", "I32", right));
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    BinaryI32 shift = (BinaryI32)jit_function(&host, &shifted, "front::test::s");
+    test::check_equal(shift(-16, 2), -4);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_other_targets_are_a_parameter() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Module m = add_module();
+    tree_end(&trees);
+    // A GPU triple and no data layout: the module verifies and names the triple.
+    char *text = ir_of(&m, target_of("nvptx64-nvidia-cuda"));
+    test::check_equal(contains(text, "target triple = \"nvptx64-nvidia-cuda\""), true);
+    c::LLVMDisposeMessage(text);
+}
+
+export void test_front_emit_different_operand_types_are_an_error_with_the_span() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Param params[2] = {ast::param("a", ast::named("I32")), ast::param("b", ast::named("I64"))};
+    ast::Expr *sum = binary(.add, name("a"), name("b"));
+    sum->span = (ast::Span){.start = 10, .end = 15};
+    ast::StmtRef items[1] = {give(sum)};
+    ast::Decl *f = ast::function("f", params, ast::named("I32"), ast::block(items));
+    ast::Module m = module_of(f);
+    tree_end(&trees);
+    emit::Error error = failure_of(&m);
+    test::check_equal(contains(error.message.data, "operands of different types"), true);
+    test::check_equal(error.span.start, 10U);
+    test::check_equal(error.span.end, 15U);
+    emit::free_error(error);
+}
+
+export void test_front_emit_an_unsupported_node_is_an_error_with_the_span() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::ExprRef args[1] = {number(1)};
+    ast::Expr *call = ast::call(name("f"), args);
+    call->span = (ast::Span){.start = 4, .end = 8};
+    ast::StmtRef items[1] = {give(call)};
+    ast::Param params[1] = {ast::param("a", ast::named("I32"))};
+    ast::Module m = module_of(ast::function("f", params, ast::named("I32"), ast::block(items)));
+    tree_end(&trees);
+    emit::Error error = failure_of(&m);
+    test::check_equal(contains(error.message.data, "not emitted yet: call"), true);
+    test::check_equal(error.span.start, 4U);
+    emit::free_error(error);
+}
+
+export void test_front_emit_a_literal_out_of_range_is_an_error_with_the_span() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Expr *big = number(200);
+    big->span = (ast::Span){.start = 7, .end = 10};
+    ast::StmtRef items[1] = {give(big)};
+    ast::Param none[1] = {};
+    ast::Module m = module_of(ast::function("f", none[0:0], ast::named("I8"), ast::block(items)));
+    tree_end(&trees);
+    emit::Error error = failure_of(&m);
+    test::check_equal(contains(error.message.data, "does not fit I8"), true);
+    test::check_equal(error.span.start, 7U);
+    emit::free_error(error);
+}
