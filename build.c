@@ -2147,6 +2147,34 @@ static void build_tree_sitter_data(SmithBuild *b, const BuildConfig *config, con
     smith_task(b, "tree-sitter", &task);
 }
 
+// Neovim for the editor tests (#1017): the plugin needs 0.11+ (`vim.uv`) and the hosted Linux runners have 0.9. The
+// task `nvim` fetches the pinned release (a .tar.gz, by version and sha256, extracted by smith's own reader) and links
+// it at $XDG_CACHE_HOME/smith/tools/nvim-0.11.5 (else ~/.cache/smith/tools), whose bin/ CI puts on the PATH. Linux
+// x86_64 only: a Mac has its own Neovim.
+static int build_nvim_run(SmithRun *run) {
+    SmithBuild *b = run->b;
+    if (!build_is_linux(b) || build_is_arm(b)) {
+        fprintf(stderr, "smith build nvim: only Linux x86_64 fetches Neovim; use your system's\n");
+        return 1;
+    }
+    const char *cache = smith_env(b, "XDG_CACHE_HOME", smith_fmt(b, "%s/.cache", smith_env(b, "HOME", "")));
+    const char *tools = smith_fmt(b, "%s/smith/tools", cache);
+    const char *link = smith_fmt(b, "%s/nvim-0.11.5", tools);
+    const char *source = build_package_path(
+        b, &(SmithPackage){.url = "https://github.com/neovim/neovim/releases/download/v0.11.5/nvim-linux-x86_64.tar.gz",
+                           .hash = "sha256:b2f91117be5b5ea39edd7297156dc2a4a8df4add6c95a90809a8df19e7ab6f52"});
+    if (build_make_folder(b, tools) != 0) return 1;
+    int status = build_remove(b, link);
+    status = status != 0 ? status : build_exec(smith_list(b, "/bin/ln", "-s", source, link, nullptr));
+    if (status == 0) printf("%s/bin\n", link);
+    return status;
+}
+
+static void build_nvim_task(SmithBuild *b) {
+    SmithStep task = {.run = build_nvim_run, .description = "fetching Neovim 0.11.5 for the editor tests"};
+    smith_task(b, "nvim", &task);
+}
+
 // ---- The docs gate (#313): AGENTS.md says a change that adds something updates its skill and its concept in the same
 // commit; this makes `smith check` say so. The commits on the branch since the base, taken together, must change
 // something under .agents/skills/ or knowledge/ when any of them has a subject starting with `feat`. On main itself,
@@ -2489,6 +2517,7 @@ void build(SmithBuild *b) {
     const char *const *tested = build_test(b, &config, config.binary, folder);
     build_install(b, &config, config.binary, tested);
     build_release(b, config.binary);
+    build_nvim_task(b);
     build_llvm(b);
     build_developer_tasks(b, config.binary);
     SmithStep clean = {.command = (const char *[]){"rm", "-rf", "build", nullptr}};

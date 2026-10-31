@@ -108,6 +108,12 @@ static void nvim(const char *name, const Start *start) {
             "function() vim.schedule(function() dofile('$SMITH_REPO/tests/neovim.lua') end) end})\" 2>&1")
             .data;
     scratch::Run run = scratch::sh(&p, command);
+    // The plugin's `smith cc --smith-tree-sitter` can outlive Neovim and still be unpacking into the data folder, so
+    // the scratch folder's removal found it half full (#1017). On Linux wait until no process has the scratch folder as
+    // its working directory (the job inherits Neovim's); elsewhere removing the folder was never raced.
+    scratch::sh(&p, "n=0; while [ $n -lt 100 ]; do busy=0; for c in /proc/[0-9]*/cwd; do "
+                    "[ \"$c\" = /proc/$$/cwd ] && continue; case $(readlink \"$c\" 2>/dev/null) in \"$PWD\"*) busy=1;; "
+                    "esac; done; [ $busy = 0 ] && break; n=$((n + 1)); sleep 0.1; done");
     if (run.status != 0 || !scratch::contains(run.out, "ok  ")) {
         test::note("%s (status %d)\n%s", name, run.status, run.out);
     }
