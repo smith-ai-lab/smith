@@ -719,7 +719,7 @@ function tests.neotest_results()
   equal(3, lost.errors[1].line, "the line is known")
   equal("check failed: c::check(1, 2);", lost.errors[1].message, "the check as written")
   local debugged = results_of("", { debugging = true }, 0)
-  equal("passed", debugged["/p/tests/test_primes.std::a"].status, "a debugged test that printed nothing and exited 0")
+  equal("passed", debugged["/p/tests/test_primes.smith::a"].status, "a debugged test that printed nothing and exited 0")
 end
 
 local function version_check()
