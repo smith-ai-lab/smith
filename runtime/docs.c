@@ -89,6 +89,7 @@ typedef struct {
     SmithDocsArena arena;   // everything the run reads
     SmithDocsArena depends; // the paths for the depfile, which a scope of arena never frees
     const char *root;       // the project, as given
+    FILE *errors;           // where the problems go: stderr, or the buffer of smith_core_docs_check
     const char *types[smith_docs_types_max];
     uint32_t type_count;
     SmithDocsRequirement requirements[smith_docs_requires_max];
@@ -112,9 +113,9 @@ static void *smith_docs_push(SmithDocsArena *arena, size_t bytes) {
 [[gnu::format(printf, 2, 3)]] static void smith_docs_report(SmithDocs *docs, const char *format, ...) {
     va_list arguments;
     va_start(arguments, format);
-    vfprintf(stderr, format, arguments);
+    vfprintf(docs->errors, format, arguments);
     va_end(arguments);
-    fputc('\n', stderr);
+    fputc('\n', docs->errors);
     docs->problems += 1;
 }
 
@@ -1194,7 +1195,7 @@ static const char *smith_docs_find_root(void) {
 }
 
 static int smith_docs_check(int count, char **args) {
-    SmithDocs docs = {.root = nullptr};
+    SmithDocs docs = {.root = nullptr, .errors = stderr};
     SmithDocsOutput output = smith_docs_arguments(&docs, count, args);
     if (docs.root == nullptr) docs.root = smith_docs_find_root();
     docs.arena = smith_docs_map(smith_docs_memory_size);
@@ -1214,3 +1215,23 @@ static int smith_docs_check(int count, char **args) {
 static int smith_docs_main(int count, char **args) {
     return smith_docs_check(smith_only_options(count, args) ? 0 : count, args);
 }
+
+#ifdef SMITH_CORE
+// include/smith_core_docs.h: the check of the project at `folder` in process, for the units runner.
+bool smith_core_docs_check(const char *folder, char *out, size_t out_size) {
+    FILE *text = fmemopen(out, out_size, "w");
+    if (text == nullptr) return false;
+    SmithDocs docs = {.root = folder, .errors = text};
+    docs.arena = smith_docs_map(smith_docs_memory_size);
+    docs.depends = smith_docs_map(smith_docs_depends_size);
+    docs.depended = SMITH_DOCS_PUSH(&docs.depends, const char *, smith_docs_depends_max);
+    smith_docs_declared(&docs);
+    smith_docs_run(&docs);
+    fprintf(text, "smith docs: %u concepts, %u problems\n", docs.concepts, docs.problems);
+    bool fits = ferror(text) == 0;
+    fclose(text);
+    munmap(docs.arena.base, docs.arena.size);
+    munmap(docs.depends.base, docs.depends.size);
+    return fits;
+}
+#endif
