@@ -639,7 +639,7 @@ static size_t smith_lint_changed(const char **files, const char **flags, size_t 
     if (result == SmithChanged_Failed)
         smith_die(smith_exit_usage, "git cannot say what changed", "pass --changed=<ref>");
     if (result == SmithChanged_Full) {
-        fprintf(stderr, "smith lint --changed: %s changed, so every file is linted\n", why);
+        smith_changed_lint_says_all(why);
         return count;
     }
     size_t kept = 0;
@@ -648,10 +648,7 @@ static size_t smith_lint_changed(const char **files, const char **flags, size_t 
         files[kept] = files[i];
         flags[kept++] = flags[i];
     }
-    size_t changed = smith_changed_lint_paths();
-    fprintf(stderr, "smith lint --changed: %zu changed file%s since %.12s: %zu of %zu files to lint\n", changed,
-            changed == 1 ? "" : "s", base, kept, count);
-    if (kept == 0) fputs("smith lint --changed: no file is affected, so nothing is linted\n", stderr);
+    smith_changed_lint_says(kept, count, base);
     return kept;
 }
 

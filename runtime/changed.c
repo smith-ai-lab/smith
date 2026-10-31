@@ -1179,6 +1179,19 @@ static void smith_changed_on_merge_base(char *text) {
     snprintf(smith_changed_text, 256, "%s", text);
 }
 
+// Decides, from the changes already read, whether one of them selects every file (SmithChanged_Full; `why` names the
+// path) or not (SmithChanged_Some, with the graph built: ask `smith_changed_lint_wants`).
+static SmithChangedResult smith_changed_lint_decide(const char **why) {
+    if (smith_changed_overflow) return SmithChanged_Full;
+    for (size_t p = 0; p < smith_changed_path_count; p++) {
+        if (!smith_changed_lints_all(smith_changed_paths[p])) continue;
+        *why = smith_changed_paths[p];
+        return SmithChanged_Full;
+    }
+    smith_changed_build_graph();
+    return SmithChanged_Some;
+}
+
 // Reads the changes and, unless one of them selects every file (false), the graph. `base` gets the ref compared with;
 // `given` is the one asked for, whose merge-base with HEAD is used when git has one. Returns SmithChanged_Failed,
 // SmithChanged_Full (every file; `why` names the path) or SmithChanged_Some (ask `smith_changed_lint_wants`).
@@ -1193,14 +1206,7 @@ static SmithChangedResult smith_changed_lint_select(const char *given, char *bas
         }
     }
     if (!smith_changed_collect(given, nullptr, true, "smith lint --changed", base, size)) return SmithChanged_Failed;
-    if (smith_changed_overflow) return SmithChanged_Full;
-    for (size_t p = 0; p < smith_changed_path_count; p++) {
-        if (!smith_changed_lints_all(smith_changed_paths[p])) continue;
-        *why = smith_changed_paths[p];
-        return SmithChanged_Full;
-    }
-    smith_changed_build_graph();
-    return SmithChanged_Some;
+    return smith_changed_lint_decide(why);
 }
 
 static size_t smith_changed_lint_paths(void) {
@@ -1211,6 +1217,18 @@ static size_t smith_changed_lint_paths(void) {
 static bool smith_changed_lint_wants(const char *path) {
     int at = smith_changed_find(path);
     return at < 0 || smith_changed_hit[at];
+}
+
+// What `smith lint --changed` says when every file is linted, and after a choice of `kept` of `count` files.
+static void smith_changed_lint_says_all(const char *why) {
+    fprintf(smith_changed_out(), "smith lint --changed: %s changed, so every file is linted\n", why);
+}
+
+static void smith_changed_lint_says(size_t kept, size_t count, const char *base) {
+    size_t changed = smith_changed_lint_paths();
+    fprintf(smith_changed_out(), "smith lint --changed: %zu changed file%s since %.12s: %zu of %zu files to lint\n",
+            changed, changed == 1 ? "" : "s", base, kept, count);
+    if (kept == 0) fputs("smith lint --changed: no file is affected, so nothing is linted\n", smith_changed_out());
 }
 
 #ifdef SMITH_CORE
@@ -1271,6 +1289,36 @@ bool smith_core_changed_select(const char *folder, const char *files, const char
                 fprintf(log, "smith test --changed: --test %s\n", smith_changed_buffer_text(&filter));
         }
         smith_changed_buffer_free(&filter);
+        smith_changed_log = nullptr;
+        ok = fchdir(home) == 0;
+    }
+    if (log != nullptr) fclose(log);
+    if (home >= 0) close(home);
+    return ok;
+}
+
+// include/smith_core_changed.h: the files `smith lint --changed` chooses, in process.
+bool smith_core_changed_lint(const char *folder, const char *files, const char *changes, char *out, size_t out_size) {
+    int home = open(".", O_RDONLY);
+    FILE *log = fmemopen(out, out_size, "w");
+    bool ok = home >= 0 && log != nullptr && chdir(folder) == 0;
+    if (ok) {
+        smith_changed_reset();
+        smith_changed_log = log;
+        smith_changed_each_line(files, smith_changed_on_file);
+        smith_changed_each_line(changes, smith_changed_on_diff);
+        const char *why = nullptr;
+        if (smith_changed_lint_decide(&why) == SmithChanged_Full) {
+            smith_changed_lint_says_all(why);
+        } else {
+            size_t kept = 0;
+            for (size_t i = 0; i < smith_changed_file_count; i++) { // bounded by the files
+                if (!smith_changed_lint_wants(smith_changed_files[i])) continue;
+                fprintf(log, "%s\n", smith_changed_files[i]);
+                kept++;
+            }
+            smith_changed_lint_says(kept, smith_changed_file_count, "HEAD");
+        }
         smith_changed_log = nullptr;
         ok = fchdir(home) == 0;
     }
