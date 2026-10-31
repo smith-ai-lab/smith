@@ -97,6 +97,13 @@ export typedef enum {
     } value;
 } TypeArg;
 
+export struct FieldDecl {
+    Str name;
+    TypeExpr *type;
+    Expr *bit_width;
+    Span span;
+};
+
 export typedef enum {
     struct {
         Path path;
@@ -127,6 +134,10 @@ export typedef enum {
     struct {
         Text spelling;
     } unsupported_c; // a C type with no smith equivalent (`long double`), as the header spells it
+    struct {
+        FieldDecl fields[:];
+        Bool is_union;
+    } record; // an anonymous struct or union used as a type: a payload variant `struct { I32 a; } one;`
 } TypeKind;
 
 export struct TypeExpr {
@@ -383,13 +394,6 @@ export struct Stmt {
 
 // ---------------------------------------------------------------------------------------------------------------
 // Declarations
-
-export struct FieldDecl {
-    Str name;
-    TypeExpr *type;
-    Expr *bit_width;
-    Span span;
-};
 
 export struct Enumerator {
     Str name;
@@ -1103,6 +1107,10 @@ static void type_children(Items *items, TypeExpr *t) {
         break;
     case .unsupported_c:
         break;
+    case .record:
+        for (usize i = 0; i < countof(t->kind.record.fields); i++)
+            add(items, {.field = &t->kind.record.fields[i]});
+        break;
     }
 }
 
@@ -1466,6 +1474,9 @@ static void type_head(Output *text, TypeExpr *t) {
     case .unsupported_c:
         put(text, "unsupported_c ");
         put_quoted(text, t->kind.unsupported_c.spelling);
+        break;
+    case .record:
+        put(text, pick(t->kind.record.is_union, "union", "struct"));
         break;
     }
     put_qualifiers(text, t->qualifiers);

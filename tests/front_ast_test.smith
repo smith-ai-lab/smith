@@ -171,6 +171,21 @@ export void test_front_ast_dump_of_types_and_if_constexpr() {
     test::golden("tests/front/ast/kinds.txt", ast::dump(&m));
 }
 
+// An anonymous struct and union used as types: `typedef struct { I32 a; I32 b; } Pair;`, `union { I32 i; F32 f; }`.
+export void test_front_ast_dump_of_anonymous_record_types() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ast::FieldDecl pair_fields[2] = {ast::field("a", ast::named("I32")), ast::field("b", ast::named("I32"))};
+    ast::TypeExpr *pair = ast::make_type({.record = {.fields = pair_fields[0:2]}});
+    ast::FieldDecl number_fields[2] = {ast::field("i", ast::named("I32")), ast::field("f", ast::named("F32"))};
+    ast::TypeExpr *number = ast::make_type({.record = {.fields = number_fields[0:2], .is_union = true}});
+    ast::DeclRef decls[2] = {ast::type_alias("Pair", pair), ast::type_alias("Number", number)};
+    ast::Module m = ast::new_module("anonymous", decls);
+    test::golden("tests/front/ast/anonymous.txt", ast::dump(&m));
+}
+
 // What a C header becomes: `typedef struct _IO_FILE FILE;` (opaque), `typedef int (*Handler)(int, long double);`
 // as an `Fn` applied to a function type (no function-pointer syntax) with an unsupported C type.
 export void test_front_ast_dump_of_declarations_read_from_a_c_header() {
