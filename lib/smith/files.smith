@@ -1,8 +1,8 @@
-// smith::files, <smith/files.h>: files and folders by direct calls, with no capability value to pass: open, read, write and close
-// a file, read or write a whole one, ask about a path, list a folder, make, remove and rename, map a file. Its C API is
-// the generated header include/smith/files.h (committed; `smith build headers` regenerates it); the names follow the
-// rule of arena.smith with one difference: the functions are `smith_fs_*` (`files::read_file` is `smith_fs_read_file`)
-// (the types are `SmithFiles*`).
+// smith::files, <smith/files.h>: files and folders by direct calls, with no capability value to pass: open, read, write
+// and close a file, read or write a whole one, ask about a path, list a folder, make, remove and rename, map a file.
+// Its C API is the generated header include/smith/files.h (committed; `smith build headers` regenerates it); the names
+// follow the rule of arena.smith with one difference: the functions are `smith_fs_*` (`files::read_file` is
+// `smith_fs_read_file`) (the types are `SmithFiles*`).
 //
 // Every call goes through the files handler of the calling thread (include/smith/handlers.h): none set is the real
 // file system, and `files::fake()` is an in-memory one a test sets with `files::set_handler`, so the code under test

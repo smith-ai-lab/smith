@@ -1454,8 +1454,8 @@ static SmithBuildFile smith_build_file(void) {
 // The libraries the build program links, .smith modules that the smith doing the build compiles whatever compiler
 // compiles build.c itself (an external SMITH_CLANG knows no .smith): the runtime's package.c and the executor use them
 // through their headers. random declares -ffp-contract=off.
-static const char *const smith_build_program_libraries[] = {"arena", "contract", "env", "files",
-                                                            "inflate", "mem",    "net", "random"};
+static const char *const smith_build_program_libraries[] = {"arena",   "contract", "env", "files",
+                                                            "inflate", "mem",      "net", "random"};
 
 // The compiles are `-MD` and name the debug info's folder `.`, so the step cache serves them to every project whose
 // build file and libraries are the same (executor.md, "The step cache"): -MMD is refused by it, and a `-g` object

@@ -46,10 +46,10 @@ if constexpr (target::os == target::macos) {
 
 // <runtime/io.h>: smith's private layer for what the executor, `smith mcp` and the package code do to the world: the
 // console, files, processes, TLS connections, a clock and a loop that waits for them. One value holds all of it, made
-// once in the program's start (`SmithIo io = smith_io_make(argc, argv);`) and passed to the code that needs it. It is not
-// a library for programs: they call smith's direct modules (files, process, net, clock, console, env). The C names are
-// the Smith names with the prefix `smith_` or `Smith` (smith_io_make, SmithIo, smith_console_printf; a function of a
-// capability is smith_<capability>_<name>: smith_files_read). The comments below name the Smith names.
+// once in the program's start (`SmithIo io = smith_io_make(argc, argv);`) and passed to the code that needs it. It is
+// not a library for programs: they call smith's direct modules (files, process, net, clock, console, env). The C names
+// are the Smith names with the prefix `smith_` or `Smith` (smith_io_make, SmithIo, smith_console_printf; a function of
+// a capability is smith_<capability>_<name>: smith_files_read). The comments below name the Smith names.
 //
 // The value holds a field for each part: arena (memory), key and seed (randomness), console (stdin, stdout, stderr),
 // files (the file system), clock (monotonic and wall time), processes (spawn and wait), net (TLS connections) and args.
