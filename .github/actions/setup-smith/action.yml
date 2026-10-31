@@ -85,15 +85,19 @@ runs:
       run: |
         start=$(date +%s)
         # `--list` builds the runner and every test program and runs none of them. The compiler's errors go to stdout
-        # (the executor prints a failed command's output there; stderr only says `build stopped`), so stdout is kept
-        # in a file, not thrown away (#1118): the list of tests stays out of the log, a failure shows its errors last
-        if ! "$SMITH" test --list >"$RUNNER_TEMP/build-tests.log" 2>&1; then
-          # the compiler's `file:line:col: error:` lines with their source lines, and the command that failed; the
-          # nested build's full output is in `.smith/log/.smith_task_*.log` (hidden, so a `*` glob misses it)
-          cat .smith/log/.smith_task_*.log "$RUNNER_TEMP/build-tests.log" 2>/dev/null |
+        # (stderr only says `build stopped`), so the output is kept in a file, not dropped with the list (#1115, #1118):
+        # a failure prints the end of smith's own output, then its error lines last, also in the job summary
+        if ! SMITH_OUTPUT=full "$SMITH" test --list >"$RUNNER_TEMP/list.out" 2>&1; then
+          tail -n 300 "$RUNNER_TEMP/list.out"
+          for runner in build/*/front-project/build/tests; do
+            [ -x "$runner" ] && { echo "::group::$runner --list"; "$runner" --list 2>&1 | tail -n 100; echo "::endgroup::"; }
+          done
+          # the compiler's `file:line:col: error:` lines with their source lines, and the command that failed (the
+          # nested build's full output is also in `.smith/log/.smith_task_*.log`, a hidden file a `*` glob misses)
+          cat .smith/log/.smith_task_*.log "$RUNNER_TEMP/list.out" 2>/dev/null |
             grep -hE -A3 '^[^ :]+:[0-9]+:[0-9]+: (fatal )?error|^FAILED:|^smith: build stopped' | grep -vE '^--$' | awk '!seen[$0]++' |
             tail -n 60 >"$RUNNER_TEMP/build-failed.txt" || true
-          [ -s "$RUNNER_TEMP/build-failed.txt" ] || tail -n 60 "$RUNNER_TEMP/build-tests.log" >"$RUNNER_TEMP/build-failed.txt"
+          [ -s "$RUNNER_TEMP/build-failed.txt" ] || tail -n 60 "$RUNNER_TEMP/list.out" >"$RUNNER_TEMP/build-failed.txt"
           { echo '### The tests did not build'; echo '```'; cat "$RUNNER_TEMP/build-failed.txt"; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
           echo "THE TESTS DID NOT BUILD:"
           cat "$RUNNER_TEMP/build-failed.txt"
